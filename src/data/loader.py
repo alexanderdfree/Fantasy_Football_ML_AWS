@@ -19,14 +19,31 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
     if os.path.exists(weekly_path):
         weekly = pd.read_parquet(weekly_path)
     else:
-        weekly = nfl.import_weekly_data(seasons)
+        # nfl_data_py only has player_stats up to 2024; 2025+ uses nflverse stats_player
+        old_seasons = [s for s in seasons if s <= 2024]
+        new_seasons = [s for s in seasons if s >= 2025]
+        parts = []
+        if old_seasons:
+            parts.append(nfl.import_weekly_data(old_seasons))
+        for s in new_seasons:
+            url = f"https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{s}.parquet"
+            df_new = pd.read_parquet(url)
+            # Harmonise column names to match old format
+            df_new = df_new.rename(columns={
+                "team": "recent_team",
+                "passing_interceptions": "interceptions",
+                "sacks_suffered": "sacks",
+                "sack_yards_lost": "sack_yards",
+            })
+            parts.append(df_new)
+        weekly = pd.concat(parts, ignore_index=True)
         weekly.to_parquet(weekly_path)
 
     # 2. Roster data for reliable position labels
     if os.path.exists(rosters_path):
         rosters = pd.read_parquet(rosters_path)
     else:
-        rosters = nfl.import_rosters(seasons)
+        rosters = nfl.import_seasonal_rosters(seasons)
         rosters.to_parquet(rosters_path)
 
     # 3. Schedule data for opponent info

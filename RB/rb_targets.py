@@ -77,4 +77,4 @@ def compute_fumble_adjustment(df: pd.DataFrame) -> pd.Series:
         "_total_fumbles"
     ].transform(lambda x: x.shift(1).rolling(8, min_periods=1).mean())
 
-    return fumble_rate * -2  # Convert to fantasy point penalty
+    return (fumble_rate * -2).fillna(0)  # Convert to fantasy point penalty

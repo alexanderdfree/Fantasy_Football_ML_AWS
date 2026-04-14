@@ -78,8 +78,9 @@ def _compute_rb_features(df: pd.DataFrame) -> None:
     team_rb_carries_roll = df_merged.groupby(["player_id", "season"])["team_rb_carries"].transform(
         lambda x: x.shift(1).rolling(3, min_periods=1).sum()
     )
-    df["team_rb_carry_share_L3"] = (player_carries_roll / team_rb_carries_roll).fillna(0)
-    df.loc[team_rb_carries_roll == 0, "team_rb_carry_share_L3"] = 0
+    carry_share = (player_carries_roll / team_rb_carries_roll).fillna(0)
+    carry_share[team_rb_carries_roll.values == 0] = 0
+    df["team_rb_carry_share_L3"] = carry_share.values
 
     # Target share
     player_targets_roll = df_merged.groupby(["player_id", "season"])["targets"].transform(
@@ -88,8 +89,9 @@ def _compute_rb_features(df: pd.DataFrame) -> None:
     team_rb_targets_roll = df_merged.groupby(["player_id", "season"])["team_rb_targets"].transform(
         lambda x: x.shift(1).rolling(3, min_periods=1).sum()
     )
-    df["team_rb_target_share_L3"] = (player_targets_roll / team_rb_targets_roll).fillna(0)
-    df.loc[team_rb_targets_roll == 0, "team_rb_target_share_L3"] = 0
+    target_share = (player_targets_roll / team_rb_targets_roll).fillna(0)
+    target_share[team_rb_targets_roll.values == 0] = 0
+    df["team_rb_target_share_L3"] = target_share.values
 
     # --- Feature 6: rushing_epa_per_attempt_L3 ---
     rushing_epa_roll = df.groupby(["player_id", "season"])["rushing_epa"].transform(

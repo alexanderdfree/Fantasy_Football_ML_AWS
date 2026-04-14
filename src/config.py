@@ -1,5 +1,5 @@
 # === Data ===
-SEASONS = list(range(2018, 2025))  # 2018-2024
+SEASONS = list(range(2018, 2026))  # 2018-2025
 POSITIONS = ["QB", "RB", "WR", "TE"]
 MIN_GAMES_PER_SEASON = 6
 CACHE_DIR = "data/raw"
@@ -14,9 +14,9 @@ SCORING = {
 }
 
 # === Split ===
-TRAIN_SEASONS = list(range(2018, 2023))
-VAL_SEASONS = [2023]
-TEST_SEASONS = [2024]
+TRAIN_SEASONS = list(range(2018, 2024))
+VAL_SEASONS = [2024]
+TEST_SEASONS = [2025]
 
 # === Features: Rolling ===
 ROLLING_WINDOWS = [3, 5, 8]
