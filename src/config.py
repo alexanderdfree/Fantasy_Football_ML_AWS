@@ -1,6 +1,6 @@
 # === Data ===
 SEASONS = list(range(2018, 2026))  # 2018-2025
-POSITIONS = ["QB", "RB", "WR", "TE"]
+POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 MIN_GAMES_PER_SEASON = 6
 CACHE_DIR = "data/raw"
 SPLITS_DIR = "data/splits"

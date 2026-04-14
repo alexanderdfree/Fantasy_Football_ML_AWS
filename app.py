@@ -59,6 +59,23 @@ from TE.te_config import (
     TE_NN_DROPOUT,
 )
 
+from K.k_data import filter_to_k
+from K.k_targets import compute_k_targets, compute_k_miss_adjustment
+from K.k_features import add_k_specific_features, get_k_feature_columns, fill_k_nans
+from K.k_config import (
+    K_TARGETS, K_SPECIFIC_FEATURES,
+    K_NN_BACKBONE_LAYERS, K_NN_HEAD_HIDDEN, K_NN_DROPOUT,
+)
+
+from DST.dst_data import filter_to_dst
+from DST.dst_targets import compute_dst_targets, compute_dst_adjustment
+from DST.dst_features import add_dst_specific_features, get_dst_feature_columns, fill_dst_nans
+from DST.dst_config import (
+    DST_TARGETS, DST_SPECIFIC_FEATURES,
+    DST_NN_BACKBONE_LAYERS, DST_NN_HEAD_HIDDEN, DST_NN_HEAD_HIDDEN_OVERRIDES,
+    DST_NN_DROPOUT,
+)
+
 app = Flask(__name__)
 
 _cache = {}
@@ -122,6 +139,35 @@ POSITION_REGISTRY = {
             dropout=TE_NN_DROPOUT, head_hidden_overrides=TE_NN_HEAD_HIDDEN_OVERRIDES,
         ),
     },
+    "K": {
+        "targets": K_TARGETS,
+        "specific_features": K_SPECIFIC_FEATURES,
+        "filter_fn": filter_to_k,
+        "compute_targets_fn": compute_k_targets,
+        "add_features_fn": add_k_specific_features,
+        "fill_nans_fn": fill_k_nans,
+        "get_feature_columns_fn": get_k_feature_columns,
+        "compute_adjustment_fn": compute_k_miss_adjustment,
+        "model_dir": "K/outputs/models",
+        "nn_file": "k_multihead_nn.pt",
+        "nn_kwargs": dict(backbone_layers=K_NN_BACKBONE_LAYERS, head_hidden=K_NN_HEAD_HIDDEN, dropout=K_NN_DROPOUT),
+    },
+    "DST": {
+        "targets": DST_TARGETS,
+        "specific_features": DST_SPECIFIC_FEATURES,
+        "filter_fn": filter_to_dst,
+        "compute_targets_fn": compute_dst_targets,
+        "add_features_fn": add_dst_specific_features,
+        "fill_nans_fn": fill_dst_nans,
+        "get_feature_columns_fn": get_dst_feature_columns,
+        "compute_adjustment_fn": compute_dst_adjustment,
+        "model_dir": "DST/outputs/models",
+        "nn_file": "dst_multihead_nn.pt",
+        "nn_kwargs": dict(
+            backbone_layers=DST_NN_BACKBONE_LAYERS, head_hidden=DST_NN_HEAD_HIDDEN,
+            dropout=DST_NN_DROPOUT, head_hidden_overrides=DST_NN_HEAD_HIDDEN_OVERRIDES,
+        ),
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -171,6 +217,27 @@ POSITION_INFO = {
         "adjustments": "Fumble rate (historical L8 rolling avg)",
         "specific_features": list(TE_SPECIFIC_FEATURES),
         "architecture": {"backbone": list(TE_NN_BACKBONE_LAYERS), "head_hidden": TE_NN_HEAD_HIDDEN},
+    },
+    "K": {
+        "label": "Kicker",
+        "targets": [
+            {"key": "fg_points", "label": "FG Points", "formula": "FG 0-39yd x 3 + FG 40-49yd x 4 + FG 50+yd x 5"},
+            {"key": "pat_points", "label": "PAT Points", "formula": "PAT_made x 1"},
+        ],
+        "adjustments": "Miss penalty (rolling L8 FG/PAT miss rate)",
+        "specific_features": list(K_SPECIFIC_FEATURES),
+        "architecture": {"backbone": list(K_NN_BACKBONE_LAYERS), "head_hidden": K_NN_HEAD_HIDDEN},
+    },
+    "DST": {
+        "label": "Defense/Special Teams",
+        "targets": [
+            {"key": "defensive_scoring", "label": "Defensive Scoring", "formula": "sacks x 1 + INT x 2 + fum_rec x 2 + safety x 2"},
+            {"key": "td_points", "label": "TD Points", "formula": "(def_TD + ST_TD) x 6"},
+            {"key": "pts_allowed_bonus", "label": "Pts Allowed Bonus", "formula": "tiered: 0pts=+10 ... 35+=−4"},
+        ],
+        "adjustments": "None (all components captured in targets)",
+        "specific_features": list(DST_SPECIFIC_FEATURES),
+        "architecture": {"backbone": list(DST_NN_BACKBONE_LAYERS), "head_hidden": DST_NN_HEAD_HIDDEN},
     },
 }
 
@@ -286,7 +353,7 @@ def _get_data():
     results["nn_pred"] = 0.0
 
     # Apply position-specific models
-    for pos in ["QB", "RB", "WR", "TE"]:
+    for pos in ["QB", "RB", "WR", "TE", "K", "DST"]:
         print(f"Applying {pos}-specific model...")
         _apply_position_models(train, val, test, pos, results)
 
@@ -466,7 +533,7 @@ def api_position_details():
     _get_data()  # ensure cache is populated
     details = _cache.get("position_details", {})
     result = {}
-    for pos in ["QB", "RB", "WR", "TE"]:
+    for pos in ["QB", "RB", "WR", "TE", "K", "DST"]:
         info = dict(POSITION_INFO[pos])
         info.update(details.get(pos, {}))
         result[pos] = info
