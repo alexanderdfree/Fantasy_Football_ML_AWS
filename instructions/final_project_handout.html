@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>final_project_handout.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+<link rel="stylesheet" href="file:///Users/brandonfain/Documents/Classes/CS372/spring26/Style.css" type="text/css">
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="final-project-in-cs-372-introduction-to-applied-machine-learning-spring-2026">Final Project in CS 372 Introduction to Applied Machine Learning Spring 2026</h1>
+<p><strong>Due 11:59 pm, Sunday, April 26th</strong></p>
+<p>This is a course on <strong>applied</strong> machine learning. In place of a final exam, we have a final project where you can bring all of your skills together to create something meaningful and your own.</p>
+<p>Think of the final project as an extended multi-week hackathon where you show what you're capable of using the best machine learning models and tools available on hard problems that really matter. Hopefully it will be more fun than an exam, and hopefully you will take the opportunity to build a valuable portfolio piece for your professional development.</p>
+<h2 id="project-introduction-and-logistics">Project Introduction and Logistics</h2>
+<p><strong>Read this first.</strong> The basic details of the project (basic specs, submission requirements, policies, etc.) are available on the <a href="https://sites.duke.edu/cs372s26/20-2/#Final_Project">course website assignments page here</a>. If you have not already, make sure to read this for the basics.</p>
+<h2 id="project-examples">Project Examples</h2>
+<p>Below are some examples to illustrate the scope and type of projects you might pursue. <strong>You are not limited to these examples</strong>—they are provided as inspiration to help you understand the expected level of complexity and technical depth.</p>
+<h3 id="example-1-build-a-general-purpose-duke-ai-assistant">Example 1: Build a General Purpose Duke AI Assistant</h3>
+<p>Build a user-facing multi-purpose AI Assistant designed to help Duke students learn, work, and thrive. What do you think are most important tasks for such an AI assistant at Duke? How do you think such an assistant should be designed? Make it your own!</p>
+<p>For example, you might include features like:</p>
+<ul>
+<li>Can take text, images, and files as input</li>
+<li>Can generate text and images as output</li>
+<li>Integrate one or multiple state of the art models backending</li>
+<li>Design the system prompt and chain-of-thought prompting to encourage performance for your assistant's tasks</li>
+<li>Uses an external knowledge base with retrieval augmented generation, for example to tailor responses to Duke or course specific information</li>
+<li>Built-in multilingual support / translation ability</li>
+<li>Fine-tune or design guard rails to block toxic outputs and ensure compliance with assistant policies and instructions</li>
+<li>Fine-tune or preference align your model to behave in accordance with your expectations and values</li>
+<li>Specialize as a question-answer platform, a code writing assistant, or a learning tutor</li>
+</ul>
+<p>You might not need to do all of these things to achieve full credit for the project (see rubric below). You might also choose to incorporate some different elements besides these; this list is not meant to be constraining.</p>
+<p>Keep in mind that you do not have to train everything from scratch (and probably shouldn't); most application systems like this start from pretrained state of the art models that are either open-source (such as Llama, Phi, or Gemma series of LLMs, YOLO models, CLIP, etc.) or available by API call.</p>
+<p>You might even go above and beyond in building a public portfolio piece for yourself by integrating everything into a user-facing web application. Note: full stack app development is not something we teach in this course, is not required, and shouldn't be the first thing you do - focus on the ML first - but it is an excellent way to pull all of your work together and showcase it to an audience beyond this course if you're interested!</p>
+<h3 id="example-2-compete-in-a-machine-learning-competition">Example 2: Compete in a Machine Learning Competition</h3>
+<p>Many conferences and platforms host machine learning competitions, challenges, and hackathons. Many of these provide unique datasets of interest, provide evaluation metrics and leaderboards, or otherwise help to identify novel and cutting edge tasks and applications.</p>
+<p>Note that if you decide to do a competition, you are welcome and encouraged but not actually required to submit your work to that external competition. You are also welcome to choose a competition that has already ended if it nonetheless piques your interest and still provides the relevant data, task, etc. - several competitions, even after conclusion, still allow you to compare your results to public leaderboards. Regardless you need to submit your work within the structure of the course project requirements.</p>
+<p>Here are some of the best sources to look for possible applied machine learning competitions.</p>
+<ul>
+<li>
+<p><strong><a href="https://blog.neurips.cc/2025/06/27/neurips-2025-competitions-announced/">2025 NeurIPS Competitions</a>.</strong> NeurIPS is one of the premier conferences in machine learning and takes place in December. It hosts a competition track with diverse open challenges in applied machine learning.</p>
+</li>
+<li>
+<p><strong><a href="https://www.kaggle.com/competitions">Kaggle Competitions</a>.</strong> The research, simulation, and hackathon categories are most appropriate (most getting started and playground competitions are too simple).</p>
+</li>
+<li>
+<p><strong><a href="https://cvpr.thecvf.com/Conferences/2025/workshop-list">CVPR Challenges</a>.</strong> CVPR is one of the premier conferences in computer vision and hosts a number of workshops organized around real-world challenges. The conference takes place in the summer, so the 2025 challenges have concluded, but many still provide excellent project topics.</p>
+</li>
+<li>
+<p><strong>KDD Cup Competitions.</strong> The KDD conference on Data Mining hosts annual &quot;KDD Cup&quot; Challenges such as the <a href="https://www.aicrowd.com/challenges/meta-crag-mm-challenge-2025">2025 meta-crag-mm challenge</a> or the <a href="https://www.aicrowd.com/challenges/amazon-kdd-cup-2024-multi-task-online-shopping-challenge-for-llms">2024 multi-task online shopping</a>.</p>
+</li>
+</ul>
+<h3 id="example-3-applied-machine-learning-research">Example 3: Applied Machine Learning Research</h3>
+<p>The rate of research in machine learning has been accelerating in recent years. Some of that work is highly theoretical, but much of it is applied and experimental as well. A research project is challenging and not necessarily recommended as a &quot;default option,&quot; but might be a great fit for those looking to dive deeper into the frontier of machine learning knowledge.</p>
+<p>Given the timeline, you <strong>do not</strong> have time to pursue a highly speculative research topic. Instead, one way to seek inspiration for a project is to look for a recent (applied) research paper in a premier machine learning publication venue (don't just google search and use papers if you don't know how credible they are!) that provides datasets, benchmark evaluations, and models for current approaches to a problem of interest, then try to (i) reproduce, and (ii) improve upon existing results.</p>
+<p>Some of the premier conferences in Machine Learning you might start with include:</p>
+<ul>
+<li>
+<p><strong><a href="https://icml.cc/virtual/2025/papers.html">International Conference on Machine Learning (ICML)</a>.</strong> ICML is one of the top general (all subfields) Machine Learning conferences. The link is to the 2025 publications with a helpful search feature.</p>
+</li>
+<li>
+<p><strong><a href="https://neurips.cc/virtual/2025/loc/san-diego/papers.html?filter=titles">Neural Information Processing Systems (NeurIPS)</a>.</strong> NeurIPS, traditional associated with neural networks, is also a top general machine learning conference. You might find the &quot;Datasets and Benchmarks&quot; track papers to be of particular interest for developing an applied project.</p>
+</li>
+<li>
+<p><strong><a href="https://aclanthology.org/events/acl-2025/#2025acl-long">Association for Computational Linguistics (ACL)</a>.</strong> ACL specializes in natural language processing research in particular, and as you can imagine there is a lot of work on large language models these days. The link is to the 2025 full research papers.</p>
+</li>
+<li>
+<p><strong><a href="https://cvpr.thecvf.com/virtual/2025/papers.html">Computer Vision and Pattern Recognition (CVPR)</a>.</strong> CVPR specializes in computer vision problems that deal with images and video in particular. The link is to the 2025 research papers.</p>
+</li>
+</ul>
+<p>Many experimental / applied research papers openly publish their data and code (look for links to repositories in the papers) to give you a concrete starting point. Be warned: Sometimes just getting someone else's code to run at all can be a challenge (of dependencies, computational demands, API keys, poor documentation, etc.) and trying to improve on existing research results is highly nontrivial.</p>
+<p>The good news is that you can likely receive a good course project grade just for making reasonable attempts, even if they don't turn out to work as well as you planned (that's part of the research process too, it turns out).</p>
+<h3 id="other-projects">Other Projects</h3>
+<p>Remember that these three examples are meant to help you brainstorm, but <strong>you are not limited to these examples.</strong> There are many more possible directions that might be of interest to you, some even going beyond the modalities we have focused on in the course:</p>
+<ul>
+<li>Models for music generation,</li>
+<li>Text-to-Speech and Speech-to-Text,</li>
+<li>Time-series prediction,</li>
+<li>Machine translation,</li>
+<li>Protein structure determination,</li>
+<li>Video generation models,</li>
+<li>Interpretable models for high stakes decision making (like medical diagnosis),</li>
+<li>Robotic motion planning,</li>
+<li>Game playing (e.g., Go, Starcraft, etc.),</li>
+</ul>
+<p>and much more! The goal of the project is for you to unleash your creativity and build something you're proud of using everything you have learned and the best modern tools in machine learning. Have an idea for AI startup that you've been whimsically thinking about? Try it out!</p>
+<h2 id="ai-tools-and-collaboration">AI Tools and Collaboration</h2>
+<h3 id="ai-tools">AI Tools</h3>
+<p>You are welcome but not required to use AI development tools (such as Cursor, Claude Code, GitHub Copilot, etc.) to help build your project — this reflects how ML practitioners often work in the real world. The best use of AI tools is collaborative rather than substitutive: using AI to accelerate implementation, syntax lookup, and debugging, while you retain the critical role of system and model designer, planning experiments, and critically evaluating results. Those who understand their systems deeply will naturally produce stronger technical walkthroughs, better-motivated design decisions, and more insightful evaluations — so invest in understanding what you're building, not just getting it to run.</p>
+<p>You must attribute AI-generated code as described on the course website: in ATTRIBUTION.md and in code comments at the function, class, or file level depending on the extent of AI generation. See also the &quot;Demonstrating Understanding&quot; rubric items in the Machine Learning category below.</p>
+<h3 id="human-collaboration-and-partnerships">Human Collaboration and Partnerships</h3>
+<p>You may work individually or with one partner (teams of 2). Both are valid paths to a strong project. The rubric includes a 10-point solo project credit under Machine Learning that reflects the additional workload of working alone, but of course working alone allows you to retain complete creative vision and avoid any coordination needs.</p>
+<p>For partner projects, your README must include an Individual Contributions section describing who did what. This is required under the Following Directions rubric.</p>
+<p>We only recommend that you work with a partner if you share a common interest and have prior collaborative experience and mutual trust. Note that <strong>both partners receive the same grade based on the submission.</strong> Your project grade is based on what you submit — the code, videos, and documentation — evaluated according to the rubric. In rare cases where one partner did not meaningfully contribute, it is possible that the non-contributing partner's grade may be lowered (based on the instructor meeting with both partners and documented evidence such as a lack of a git commit history), but the contributing partner's grade will still be based on what is submitted.</p>
+<h2 id="grading">Grading</h2>
+<p>An excellent project is one that follows all directions and creatively applies core machine learning concepts from the course (or beyond!) to relevant and challenging real world problems. You are not expected to incorporate every topic, but your project should demonstrate substantial engagement with the machine learning techniques we've studied to do something that matters.</p>
+<h3 id="principles">Principles</h3>
+<p>Toward this end, the grading system is designed with the following principles in mind:</p>
+<ol>
+<li>
+<p><strong>Encouraging Creativity.</strong> We want you to be able to explore topics and applications of interest to you in creative or different ways. The final project is not cookie-cutter or one-size-fits-all like homework assignments, and that is by design. We want the grading system to incentivize and reward that kind of creativity, not punish it -- there should be multiple ways to achieve a high grade.</p>
+</li>
+<li>
+<p><strong>Transparency and Fairness.</strong> We want you to know how you will be evaluated and not have to guess. We want different submissions to be graded fairly. This means rubric items should be as clear as possible, and students and graders alike should be able to tell whether a rubric item is being met. We want to keep the rubric as concrete as possible and make the entire rubric available to you in advance.</p>
+</li>
+<li>
+<p><strong>Substantial and Rewarding Excellence.</strong> An excellent project should be substantial -- going well beyond an individual homework assignment in terms of scope, scale, and integration of techniques. This should be required to earn a high grade. We also want to reward excellence, going above and beyond the basic requirements. For that reason, it is possible to score more than 100% on the final project, boosting your overall course grade. Some may feel that exams are not where they shine compared to building. If that describes you then this is your chance to shine and we want the grading to reflect that.</p>
+</li>
+</ol>
+<p><strong>Competency-Based Assessment.</strong> To achieve these principles, we use a competency-based rubric—a checklist of concrete machine learning capabilities and techniques you might demonstrate in your project. Each rubric item describes a specific skill or achievement with a clear point value.</p>
+<p>This approach offers you transparency and flexibility: you can see exactly what counts and choose which capabilities to demonstrate based on your project's needs. Rather than prescribing a single &quot;correct&quot; project or scoring on highly subjective categories, the rubric provides many possible paths to excellence through concrete identification of achievements. You select the items that align with your project goals, document your work clearly, and we evaluate based on what you accomplished.</p>
+<h3 id="levels-of-engagement">Levels of Engagement</h3>
+<p>Many rubric items involve working with machine learning models and tools. To help calibrate point values and set clear expectations, we distinguish three levels of technical engagement:</p>
+<ul>
+<li>
+<p><strong>Used</strong> — Applied an existing model or tool substantially as-is, with appropriate integration into your project. This includes making API calls, loading pretrained models for inference, and using high-level library pipelines. Selecting, integrating, and applying models well is a real and valued skill even if it may not demonstrate depth of implementation-level understanding.</p>
+</li>
+<li>
+<p><strong>Modified/Adapted</strong> — Made meaningful changes to a model's behavior, training, or configuration for your specific task. This includes fine-tuning, transfer learning with custom heads, prompt engineering with systematic evaluation, adapter layers, and similar work where you are changing how an existing model operates.</p>
+</li>
+<li>
+<p><strong>Developed</strong> — Built substantial components from scratch or made significant architectural/algorithmic contributions. This includes custom model architectures, training loops written by you, novel loss functions, custom environments, and similar work where you are writing the core implementation yourself.</p>
+</li>
+</ul>
+<p>These levels are not a hierarchy of worth — a creative application that <em>uses</em> several models well can be an excellent project. But the levels help us calibrate point values for rubric items fairly: developing something from scratch is generally harder and worth more points than calling a library that does it for you.</p>
+<p>Where relevant, rubric items below indicate which level of engagement they expect. Some items are split into tiers (e.g., &quot;Used ... (X pts)&quot; vs. &quot;Developed ... (Y pts)&quot;) — claim the one that matches your work; do not claim both tiers of the same item. This allows the rubric to distinguish between (for example) a project that utilizes RAG via a LangChain RetrievalQA (completely valid, but only a few lines of code requiring little understanding of the implementation) versus one that built a custom RAG pipeline.</p>
+<h2 id="rubric">Rubric</h2>
+<p>Your project will be graded out of <strong>100 points</strong> across three categories:</p>
+<ol>
+<li>
+<p><strong>Machine Learning (maximum 73 points).</strong> This assesses the key technical contributions and use of machine learning concepts from the class or beyond and is worth the bulk of the points.</p>
+</li>
+<li>
+<p><strong>Following Directions (maximum 15 points).</strong> This assesses meeting the submission requirements, formatting and documenting your project appropriately, participating in project workshop days, etc.</p>
+</li>
+<li>
+<p><strong>Project Cohesion and Motivation (maximum 15 points).</strong> This assesses the extent to which your project makes sense as a whole. A high score in this category means you chose a challenging real-world problem and everything you did was clearly related to addressing that problem. A low score indicates a project that used a lot of different ML techniques in a way that seem unrelated to one another or the central problem of the project.</p>
+</li>
+</ol>
+<p>The rubric is <strong>overparameterized</strong> in two senses:</p>
+<ul>
+<li>
+<p><strong>Possibility for Bonus Credit.</strong> 103 points are possible across the three categories, but the project is only scored out of 100 points. It is <strong>possible to get up to a 103% on the final project</strong> which would result in a boost to your overall course grade.</p>
+</li>
+<li>
+<p><strong>Multiple Pathways to Success Per Category.</strong> Within each of the categories, there are more total points possible than the maximum cap. That means there are multiple ways to achieve full credit within a given category, allowing flexibility in how you pursue the final project. For example, you can get full credit for following directions even if you don't attend project workshops, and you can get full credit for machine learning even if you don't work with some concepts (say Transformer language models) at all.</p>
+</li>
+</ul>
+<h3 id="self-assessment-process">Self-Assessment Process</h3>
+<p>When submitting your final project (a link to your repo), you will also submit a self-assessment document on Gradescope indicating which rubric items you believe your project achieves. For each claimed item, briefly note where evidence can be found (e.g., &quot;data augmentation in src/train.py lines 45-67&quot; or &quot;ablation study results in notebooks/experiments.ipynb&quot;).</p>
+<p>Several items ask for <strong>evidence of impact.</strong> For such items, we expect to see a quantitative comparison (e.g., metrics with vs. without the technique). A comparison table, chart, or documented metrics is sufficient. Alternatively, you could provide a qualitative analysis of examples with or without the technique (especially for generative models producing natural language text or images) with discussion.</p>
+<p><strong>Selection Limits:</strong></p>
+<ul>
+<li><strong>Machine Learning category:</strong> Select <strong>up to 15 items.</strong> If you completed more, choose your strongest 15 (strongest in the sense of the things you did best and the things which are worth the most points, indicative of substantial effort, in the rubric). If you select more than 15, only the first 15 will be graded. Note: stackable add-on items (marked &quot;+3 pts, stackable&quot;) count toward this limit as separate selections.</li>
+<li><strong>Following Directions category:</strong> Select all items that apply (no limit)</li>
+<li><strong>Project Cohesion category:</strong> Select all items that apply (no limit)</li>
+</ul>
+<p><strong>One piece of work, one item.</strong> Each distinct piece of work in your project should be claimed under at most one rubric item (plus any applicable stackable add-ons). If your work could match items in multiple sections — for example, fine-tuning a vision transformer could match items under both Transfer Learning and Computer Vision — claim the most specific or highest-value item, not both. When in doubt, ask yourself: &quot;Am I describing two different things I built, or two descriptions of the same thing?&quot;</p>
+<p>Course staff will review your code, videos, and documentation to verify your claims. To receive full credit, you must provide clear evidence for each claimed item.</p>
+<p>The self-assessment process is an opportunity for reflection. As you review the rubric and identify the strongest items your project achieves, you'll naturally evaluate your own work: What did you accomplish? What was significant and challenging? This metacognitive practice—thinking about your own learning and work—is valuable for your development as a practitioner and helps you articulate your technical contributions clearly, a skill that will serve you well in job interviews, grad school applications, and professional settings.</p>
+<p>The self-assessment also ensures you receive appropriate consideration and credit for your work. By pointing us to specific evidence in your code and documentation, you help the grading process go smoothly and ensure that we don't overlook what you consider to be your most important contributions.</p>
+<hr>
+<h3 id="category-1-machine-learning-maximum-73-points">Category 1: Machine Learning (Maximum 73 points)</h3>
+<h4 id="core-ml-fundamentals">Core ML Fundamentals</h4>
+<ul>
+<li><input type="checkbox" id="checkbox0"><label for="checkbox0">Modular code design with reusable functions and classes rather than monolithic scripts (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox1"><label for="checkbox1">Implemented proper train/validation/test split with documented split ratios (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox2"><label for="checkbox2">Tracked and visualized training curves showing loss and/or metrics over time (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox3"><label for="checkbox3">Used appropriate data loading with batching and shuffling (PyTorch DataLoader or equivalent) (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox4"><label for="checkbox4">Created baseline model for comparison (e.g., constant prediction, random, simple heuristic) (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox5"><label for="checkbox5">Applied regularization techniques to prevent overfitting (at least two of: L1/L2 penalty, dropout, early stopping) (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox6"><label for="checkbox6">Conducted systematic hyperparameter tuning using validation data or cross-validation (evidence: comparison of at least three configurations with documented results) (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox7"><label for="checkbox7">Implemented data augmentation appropriate to your data modality (evidence: code + evaluation of impact) (5 pts)</label></li>
+</ul>
+<h4 id="data-collection-preprocessing--feature-engineering">Data Collection, Preprocessing, &amp; Feature Engineering</h4>
+<ul>
+<li><input type="checkbox" id="checkbox8"><label for="checkbox8">Properly normalized or standardized input features/data appropriate to your modality (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox9"><label for="checkbox9">Applied basic preprocessing appropriate to your modality (e.g., image resizing, text tokenization, handling missing values) (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox10"><label for="checkbox10">Implemented preprocessing pipeline addressing at least two substantive data quality challenges (e.g., class imbalance, noisy labels, outlier handling, domain-specific cleaning) with documented evidence of impact on model performance (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox11"><label for="checkbox11">Applied feature engineering (created polynomial features, embeddings, or other derived features) (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox12"><label for="checkbox12">Performed feature selection or dimensionality reduction with justification (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox13"><label for="checkbox13">Collected or constructed original dataset through substantial engineering effort (e.g., API integration, web scraping, manual annotation/labeling, custom curation) with documented methodology (10 pts)</label></li>
+</ul>
+<h4 id="model-training--optimization">Model Training &amp; Optimization</h4>
+<ul>
+<li><input type="checkbox" id="checkbox14"><label for="checkbox14">Used learning rate scheduling (step decay, cosine annealing, warm-up, ReduceLROnPlateau, or similar) (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox15"><label for="checkbox15">Applied batch normalization or layer normalization in model architecture (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox16"><label for="checkbox16">Implemented gradient clipping, mixed precision training, or gradient accumulation for training stability/efficiency (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox17"><label for="checkbox17">Trained model using GPU/TPU/CUDA acceleration (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox18"><label for="checkbox18">Defined and trained a custom neural network architecture (substantially designed by you, not a pretrained model) using PyTorch or similar framework (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox19"><label for="checkbox19">Compared multiple optimizers (e.g., SGD vs Adam vs AdamW) with documented evaluation (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox20"><label for="checkbox20">Trained or fine-tuned an auxiliary model for the purpose of interpretability (e.g., Sparse Autoencoder, Transcoder) (7 pts)</label></li>
+</ul>
+<h4 id="transfer-learning--pretrained-models">Transfer Learning &amp; Pretrained Models</h4>
+<p><em>For items in this section, claim the tier that best matches your work. Do not claim both tiers of the same item.</em></p>
+<ul>
+<li><input type="checkbox" id="checkbox21"><label for="checkbox21"></label><strong>Used</strong> a pretrained model as a frozen feature extractor with a custom classifier head (5 pts)</li>
+<li><input type="checkbox" id="checkbox22"><label for="checkbox22"></label><strong>Modified/Adapted</strong> a pretrained model by fine-tuning it on your dataset (e.g., unfreezing layers, adapting output heads) (5 pts)</li>
+<li><input type="checkbox" id="checkbox23"><label for="checkbox23">Successfully adapted a pretrained model across substantially different domains or tasks (e.g., a language model adapted for code generation, an image model adapted to medical imaging) (7 pts)</label></li>
+</ul>
+<h4 id="computer-vision">Computer Vision</h4>
+<ul>
+<li><input type="checkbox" id="checkbox24"><label for="checkbox24"></label><strong>Used</strong> a pretrained vision CNN (e.g., ResNet, EfficientNet) for inference or as a frozen backbone (3 pts)</li>
+<li><input type="checkbox" id="checkbox25"><label for="checkbox25"></label><strong>Modified/Adapted</strong> a vision CNN by fine-tuning on your dataset (5 pts)</li>
+<li><input type="checkbox" id="checkbox26"><label for="checkbox26">Applied comprehensive image augmentation (at least 4 techniques: rotation, flipping, cropping, color jittering, etc.) (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox27"><label for="checkbox27">Processed and trained on substantial image dataset (&gt;10,000 images) (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox28"><label for="checkbox28"></label><strong>Used</strong> a vision transformer (ViT, Swin, DINO, etc.) for inference or as a frozen backbone (5 pts)</li>
+<li><input type="checkbox" id="checkbox29"><label for="checkbox29"></label><strong>Modified/Adapted</strong> a vision transformer by fine-tuning on your dataset (7 pts)</li>
+<li><input type="checkbox" id="checkbox30"><label for="checkbox30">Applied contrastive learning or self-supervised learning for vision (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox31"><label for="checkbox31"></label><strong>Used</strong> a vision-language model (CLIP, LLaVA, or similar) for multimodal tasks (text-to-image search, zero-shot classification, video understanding) (5 pts)</li>
+<li><input type="checkbox" id="checkbox32"><label for="checkbox32"></label><strong>Modified/Adapted</strong> a vision-language model by fine-tuning or building custom retrieval/classification pipeline on top of it (10 pts)</li>
+<li><input type="checkbox" id="checkbox33"><label for="checkbox33"></label><strong>Used</strong> an object detection model (YOLO, Faster R-CNN, DETR) for inference on your data (5 pts)</li>
+<li><input type="checkbox" id="checkbox34"><label for="checkbox34"></label><strong>Modified/Adapted</strong> an object detection model by fine-tuning or training on a custom dataset (10 pts)</li>
+<li><input type="checkbox" id="checkbox35"><label for="checkbox35"></label><strong>Used</strong> an image segmentation model for inference on your data (5 pts)</li>
+<li><input type="checkbox" id="checkbox36"><label for="checkbox36"></label><strong>Modified/Adapted</strong> an image segmentation model by fine-tuning or training on a custom dataset (10 pts)</li>
+</ul>
+<h4 id="natural-language-processing">Natural Language Processing</h4>
+<ul>
+<li><input type="checkbox" id="checkbox37"><label for="checkbox37">Implemented comprehensive text preprocessing and tokenization pipeline (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox38"><label for="checkbox38">Applied prompt engineering with evaluation of at least three prompt designs (evidence: comparison table of prompt variations and their results) (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox39"><label for="checkbox39">Used sentence embeddings for semantic similarity or retrieval (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox40"><label for="checkbox40">Implemented custom text generation with a sampling strategy (e.g., sampling with temperature, beam search, nucleus sampling) (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox41"><label for="checkbox41">Applied in-context learning with few-shot examples or chain-of-thought prompting (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox42"><label for="checkbox42"></label><strong>Modified</strong> a language model using Parameter-Efficient Fine-Tuning (PEFT) such as LoRA, adapters, or prefix tuning (+3 pts, stackable on top of fine-tuning item below)</li>
+<li><input type="checkbox" id="checkbox43"><label for="checkbox43">Made API calls to state-of-the-art model (GPT-4, Claude, Gemini) with meaningful integration into your system beyond a single isolated call (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox44"><label for="checkbox44"></label><strong>Used</strong> a transformer language model for inference (e.g., loaded a pretrained model and generated outputs) (3 pts)</li>
+<li><input type="checkbox" id="checkbox45"><label for="checkbox45"></label><strong>Modified/Adapted</strong> a transformer language model by fine-tuning for your task (7 pts)</li>
+<li><input type="checkbox" id="checkbox46"><label for="checkbox46">Applied instruction tuning or supervised fine-tuning (SFT) on a custom instruction-formatted dataset (+3 pts, stackable on top of fine-tuning item above)</label></li>
+<li><input type="checkbox" id="checkbox47"><label for="checkbox47">Built multi-turn conversation system with context management and history tracking (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox48"><label for="checkbox48"></label><strong>Used</strong> retrieval-augmented generation through a framework (e.g., LangChain RetrievalQA, LlamaIndex) with integration into your project (5 pts)</li>
+<li><input type="checkbox" id="checkbox49"><label for="checkbox49"></label><strong>Developed</strong> a retrieval-augmented generation system with a custom retrieval pipeline (at least two of: custom chunking strategy, embedding model selection with comparison, reranking, hybrid search) (10 pts)</li>
+</ul>
+<h4 id="generative-models">Generative Models</h4>
+<ul>
+<li><input type="checkbox" id="checkbox50"><label for="checkbox50"></label><strong>Used</strong> a pretrained diffusion model (Stable Diffusion, DALL-E, etc.) for image generation as part of your project (5 pts)</li>
+<li><input type="checkbox" id="checkbox51"><label for="checkbox51">Used conditioning controls in a diffusion model (text prompts, ControlNet, inpainting, image-to-image) with meaningful customization beyond default settings (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox52"><label for="checkbox52">Implemented or adapted neural style transfer (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox53"><label for="checkbox53"></label><strong>Modified/Adapted</strong> a diffusion model by fine-tuning, training custom LoRA weights, or implementing classifier-free guidance (7 pts)</li>
+<li><input type="checkbox" id="checkbox54"><label for="checkbox54">Generated synthetic training data using generative models and demonstrated value (evidence: comparison with/without synthetic data) (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox55"><label for="checkbox55">Applied video generation models (10 pts)</label></li>
+</ul>
+<h4 id="reinforcement-learning">Reinforcement Learning</h4>
+<ul>
+<li><input type="checkbox" id="checkbox56"><label for="checkbox56"></label><strong>Used</strong> Gymnasium (OpenAI Gym) or similar environment API (3 pts)</li>
+<li><input type="checkbox" id="checkbox57"><label for="checkbox57">Demonstrated convergence through learning curves and reward plots (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox58"><label for="checkbox58"></label><strong>Developed</strong> tabular Q-learning with epsilon-greedy exploration and demonstrated learning (5 pts)</li>
+<li><input type="checkbox" id="checkbox59"><label for="checkbox59"></label><strong>Used</strong> a Deep Q-Learning agent through a library (e.g., Stable Baselines3) with meaningful configuration and evaluation (5 pts)</li>
+<li><input type="checkbox" id="checkbox60"><label for="checkbox60"></label><strong>Developed</strong> Deep Q-Learning (DQN) with experience replay and target networks with substantial custom implementation (10 pts)</li>
+<li><input type="checkbox" id="checkbox61"><label for="checkbox61">Created custom reward function or custom Gymnasium environment with clear justification for design choices (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox62"><label for="checkbox62">Implemented multi-agent training or self-play for competitive or cooperative environments (10 pts)</label></li>
+<li><input type="checkbox" id="checkbox63"><label for="checkbox63"></label><strong>Used</strong> a policy gradient agent (PPO, A2C, etc.) through a library with meaningful configuration and evaluation (5 pts)</li>
+<li><input type="checkbox" id="checkbox64"><label for="checkbox64"></label><strong>Developed</strong> a policy gradient method (REINFORCE, A2C, PPO) with substantial custom implementation (10 pts)</li>
+<li><input type="checkbox" id="checkbox65"><label for="checkbox65"></label><strong>Developed</strong> an actor-critic architecture with substantial custom implementation (10 pts)</li>
+</ul>
+<h4 id="speech-audio-and-other-modalities">Speech, Audio, and Other Modalities</h4>
+<ul>
+<li><input type="checkbox" id="checkbox66"><label for="checkbox66">Implemented cross-modal generation or translation between substantially different modalities (e.g., image-to-audio, text-to-music, video-to-text) (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox67"><label for="checkbox67">Processed and trained on audio data with appropriate preprocessing (spectrograms, MFCCs, etc.) (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox68"><label for="checkbox68">Applied ML to time-series forecasting or anomaly detection (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox69"><label for="checkbox69">Implemented speech recognition system using pretrained or custom models (Whisper, Wav2Vec, etc.) (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox70"><label for="checkbox70">Implemented music generation or audio processing model (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox71"><label for="checkbox71">Applied ML to biological sequences (protein structure, DNA analysis, etc.) (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox72"><label for="checkbox72">Applied ML to robotics, game playing, natural sciences, or other specialized domain not covered above (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox73"><label for="checkbox73">Applied a distinct model architecture specific to these other modalities not otherwise covered in the class (e.g., LSTM for deep temporal modeling) (7 pts)</label></li>
+</ul>
+<h4 id="advanced-system-integration">Advanced System Integration</h4>
+<ul>
+<li><input type="checkbox" id="checkbox74"><label for="checkbox74">Substantially used a software framework not covered in class (e.g., TensorFlow/Keras, JAX) for core model development or training — not just imported or used for a minor utility (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox75"><label for="checkbox75">Built multi-stage ML pipeline connecting outputs of one model to inputs of another (e.g., vision model to a language model to a text-to-speech model) (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox76"><label for="checkbox76"></label><strong>Used</strong> an agentic framework (e.g., LangChain agents, AutoGen) with tool definitions and integration into your project (5 pts)</li>
+<li><input type="checkbox" id="checkbox77"><label for="checkbox77"></label><strong>Developed</strong> an agentic system with custom planning, execution, or tool-calling logic (10 pts)</li>
+<li><input type="checkbox" id="checkbox78"><label for="checkbox78">Implemented real-time ML inference with latency constraints (e.g., live video, streaming audio, interactive applications) (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox79"><label for="checkbox79">Implemented ensemble method combining predictions from at least two distinct models with evidence of impact (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox80"><label for="checkbox80">System guardrails against toxicity or inappropriate use employing at least two techniques (e.g., fine-tuning, system prompt, toxicity classifier, etc.) with evidence of impact (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox81"><label for="checkbox81">Designed and implemented custom architecture combining elements from multiple paradigms (e.g., transformer + CNN, attention + RNN) (10 pts)</label></li>
+</ul>
+<h4 id="deployment--production">Deployment &amp; Production</h4>
+<ul>
+<li><input type="checkbox" id="checkbox82"><label for="checkbox82">Deployed model as functional web application with user interface (10 pts)</label></li>
+<li><input type="checkbox" id="checkbox83"><label for="checkbox83">Implemented production-grade deployment (evidence of at least two considerations such as rate limiting, caching, monitoring, error handling, logging) (10 pts)</label></li>
+<li><input type="checkbox" id="checkbox84"><label for="checkbox84">Deployed model to edge device or embedded system (Raspberry Pi, mobile device, microcontroller) with documented evidence of working deployment (10 pts)</label></li>
+</ul>
+<h4 id="model-evaluation--analysis">Model Evaluation &amp; Analysis</h4>
+<ul>
+<li><input type="checkbox" id="checkbox85"><label for="checkbox85">Measured and reported inference time, throughput, or computational efficiency (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox86"><label for="checkbox86">Used at least three distinct and appropriate evaluation metrics for your task (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox87"><label for="checkbox87">Performed error analysis with visualization and discussion of failure cases, including analysis of why the model fails and what types of inputs are most challenging (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox88"><label for="checkbox88">Compared multiple model architectures or approaches quantitatively with controlled experimental setup (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox89"><label for="checkbox89">Analyzed model behavior on edge cases or out-of-distribution examples (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox90"><label for="checkbox90">Conducted both qualitative and quantitative evaluation with thoughtful discussion (5 pts)</label></li>
+<li><input type="checkbox" id="checkbox91"><label for="checkbox91">Conducted ablation study systematically varying at least two independent design choices — not just hyperparameter values, but architectural or methodological decisions (e.g., with/without attention, frozen vs. unfrozen backbone, different loss functions) — with controlled comparisons presented in a summary table or figure (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox92"><label for="checkbox92">Implemented simulation-based evaluation (e.g., backtesting, portfolio simulation, counterfactual replay) to assess model performance in realistic scenarios (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox93"><label for="checkbox93">Interpretable model design or explainability analysis conducted to understand model or prediction task (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox94"><label for="checkbox94">Conducted behavioral, counterfactual, or mechanistic analysis to validate or probe model's internal reasoning (7 pts)</label></li>
+<li><input type="checkbox" id="checkbox95"><label for="checkbox95">Documented at least two iterations of model improvement driven by evaluation results, showing what you tried, what you measured, what you changed, and how performance improved (5 pts)</label></li>
+</ul>
+<h4 id="demonstrating-understanding">Demonstrating Understanding</h4>
+<p>These items reward demonstrated understanding of the ML techniques you use, particularly for projects that rely heavily on pretrained models or API calls.</p>
+<ul>
+<li><input type="checkbox" id="checkbox96"><label for="checkbox96">In the technical walkthrough, explained the architecture or mechanism of a pretrained model used in the project beyond surface-level description — e.g., walking through how attention works in a transformer you fine-tuned, how the diffusion process works in a model you applied, or how experience replay works in a DQN you trained (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox97"><label for="checkbox97">Documented a design decision where you chose between ML approaches based on technical tradeoffs (e.g., accuracy vs. latency, model size vs. performance, open-source vs. API) with evidence supporting the decision (3 pts)</label></li>
+<li><input type="checkbox" id="checkbox98"><label for="checkbox98">In ATTRIBUTION.md, provided a substantive account of how AI development tools were used in the project, including what was generated, what was modified, and what you had to debug, fix, or substantially rework (3 pts)</label></li>
+</ul>
+<h4 id="exceptional-achievements-10-points-each">Exceptional Achievements (10 points each)</h4>
+<ul>
+<li><input type="checkbox" id="checkbox99"><label for="checkbox99">Reproduced quantitative results from published research paper with documented validation (10 pts)</label></li>
+<li><input type="checkbox" id="checkbox100"><label for="checkbox100">Achieved competitive ranking on established benchmark or competition leaderboard (top 25%), or demonstrated superior performance against widely-recognized real world baseline system with documentation (10 pts)</label></li>
+<li><input type="checkbox" id="checkbox101"><label for="checkbox101">Demonstrated improved performance over baseline from published or documented (e.g., preprint, research codebase) research paper, with documentation (10 pts)</label></li>
+<li><input type="checkbox" id="checkbox102"><label for="checkbox102">Processed and successfully trained on exceptionally large dataset (&gt;100K samples for vision, &gt;1M tokens for NLP, &gt;50K episodes for RL) (10 pts)</label></li>
+<li><input type="checkbox" id="checkbox103"><label for="checkbox103">Made substantial novel technical contribution or significant methodological extension beyond existing work (evidence: clear explanation of novelty) (10 pts)</label></li>
+<li><input type="checkbox" id="checkbox104"><label for="checkbox104">Applied RLHF or other preference-based alignment techniques to language models (10 pts)</label></li>
+<li><input type="checkbox" id="checkbox105"><label for="checkbox105">Implemented distributed training across multiple GPUs or machines (10 pts)</label></li>
+</ul>
+<h4 id="solo-project-credit">Solo Project Credit</h4>
+<ul>
+<li><input type="checkbox" id="checkbox106"><label for="checkbox106">Completed project individually without a partner (10 pts)</label></li>
+</ul>
+<h4 id="other-contributions-not-captured-above">Other Contributions Not Captured Above</h4>
+<ul>
+<li><input type="checkbox" id="checkbox107"><label for="checkbox107">Other: Describe a substantial ML contribution not captured above (3-10 pts, course staff discretion)</label></li>
+</ul>
+<p>If selecting this item, provide a detailed description of the contribution and a proposed point value (3-10) with justification. Note that course staff will use their judgment in assessing the final point value. This option should be used sparingly for substantial work not covered by other rubric items. If your contribution reasonably fits an existing item, claim that item instead.</p>
+<hr>
+<h3 id="category-2-following-directions-maximum-15-points">Category 2: Following Directions (Maximum 15 points)</h3>
+<p>This category assesses your adherence to the project requirements and submission guidelines.</p>
+<h4 id="submission-and-self-assessment-3-points-each">Submission and Self-Assessment (3 points each)</h4>
+<ul>
+<li><input type="checkbox" id="checkbox108"><label for="checkbox108">Self-assessment submitted that follows guidelines for at most 15 selections in Machine Learning with evidence (note that failing to submit a self-assessment may result in a loss of credit for some overlooked rubric items during grading).</label></li>
+</ul>
+<h4 id="documentation-1-points-each">Documentation (1 points each)</h4>
+<ul>
+<li><input type="checkbox" id="checkbox109"><label for="checkbox109">SETUP.md exists with clear, step-by-step installation instructions</label></li>
+<li><input type="checkbox" id="checkbox110"><label for="checkbox110">ATTRIBUTION.md exists with detailed attributions of all sources including AI-generation information</label></li>
+<li><input type="checkbox" id="checkbox111"><label for="checkbox111">requirements.txt or environment.yml file is included and accurate</label></li>
+<li><input type="checkbox" id="checkbox112"><label for="checkbox112">README.md has What it Does section that describes in one paragraph what your project does</label></li>
+<li><input type="checkbox" id="checkbox113"><label for="checkbox113">README.md has Quick Start section that concisely explains how to run your project</label></li>
+<li><input type="checkbox" id="checkbox114"><label for="checkbox114">README.md has Video Links section with direct links to your demo and technical walkthrough videos</label></li>
+<li><input type="checkbox" id="checkbox115"><label for="checkbox115">README.md has Evaluation section that presents any quantitative results, accuracy metrics, or qualitative outcomes from testing</label></li>
+<li><input type="checkbox" id="checkbox116"><label for="checkbox116">README.md has Individual Contributions section for group projects that describes who did what.</label></li>
+</ul>
+<h4 id="video-submissions-2-points-each">Video Submissions (2 points each)</h4>
+<ul>
+<li><input type="checkbox" id="checkbox117"><label for="checkbox117">Demo video is of the correct length and appropriate for non-specialist audience with no code shown</label></li>
+<li><input type="checkbox" id="checkbox118"><label for="checkbox118">Technical walkthrough is of the correct length and clearly explains code structure, ML techniques, and key contributions</label></li>
+</ul>
+<h4 id="project-workshop-days-1-points-each">Project Workshop Days (1 points each)</h4>
+<ul>
+<li><input type="checkbox" id="checkbox119"><label for="checkbox119">Attended a project workshop day</label></li>
+<li><input type="checkbox" id="checkbox120"><label for="checkbox120">Attended a second project workshop day</label></li>
+<li><input type="checkbox" id="checkbox121"><label for="checkbox121">Attended a third project workshop day</label></li>
+<li><input type="checkbox" id="checkbox122"><label for="checkbox122">Attended a fourth project workshop day</label></li>
+</ul>
+<hr>
+<h3 id="category-3-project-cohesion-and-motivation-maximum-15-points">Category 3: Project Cohesion and Motivation (Maximum 15 points)</h3>
+<p>This category evaluates whether your project forms a coherent, purposeful whole rather than a disconnected collection of techniques. High scores require that ML components work together synergistically toward a clear, well-motivated goal.</p>
+<h4 id="project-purpose-and-motivation-3-points-each">Project Purpose and Motivation (3 points each)</h4>
+<ul>
+<li><input type="checkbox" id="checkbox123"><label for="checkbox123">README clearly articulates a single, unified project goal or research question</label></li>
+<li><input type="checkbox" id="checkbox124"><label for="checkbox124">Project demo video effectively communicates why the project matters to a non-technical audience in non-technical terms</label></li>
+<li><input type="checkbox" id="checkbox125"><label for="checkbox125">Project addresses a real-world problem or explores a meaningful research question (meaning it should be connected to some concrete research papers or competitions)</label></li>
+</ul>
+<h4 id="technical-coherence-2-points-each">Technical Coherence (2 points each)</h4>
+<ul>
+<li><input type="checkbox" id="checkbox126"><label for="checkbox126">Technical walkthrough demonstrates how components work together synergistically (not just isolated experiments)</label></li>
+<li><input type="checkbox" id="checkbox127"><label for="checkbox127">Project shows clear progression from problem → approach → solution → evaluation</label></li>
+<li><input type="checkbox" id="checkbox128"><label for="checkbox128">Design choices are explicitly justified in videos or documentation</label></li>
+<li><input type="checkbox" id="checkbox129"><label for="checkbox129">Evaluation metrics directly measure the stated project objectives</label></li>
+<li><input type="checkbox" id="checkbox130"><label for="checkbox130">None of the major components awarded rubric item credit in the machine learning category are superfluous to the larger goals of the project (no unrelated &quot;point collecting&quot;)</label></li>
+<li><input type="checkbox" id="checkbox131"><label for="checkbox131">Clean codebase with readable code and no extraneous, stale, or unused files</label></li>
+</ul>
+
+</body>
+</html>
