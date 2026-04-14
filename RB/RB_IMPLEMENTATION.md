@@ -45,6 +45,79 @@ The RB model reuses the general pipeline's data loading and preprocessing. It co
 - Opponent defense stats (`opp_fantasy_pts_allowed_to_pos`) are computed by position, using all players of that position
 - Share features (target_share, carry_share) require the full team denominator
 
+### 2.1.1 nflverse Column Availability for RBs
+
+`nfl.import_weekly_data()` provides ~115 columns. The general pipeline uses a subset; the RB model exploits additional RB-relevant columns that are already present in the raw data but unused by the general pipeline. **No additional API calls are required.**
+
+**Columns already used by the general pipeline:**
+`carries`, `rushing_yards`, `rushing_tds`, `rushing_fumbles_lost`, `receptions`, `targets`, `receiving_yards`, `receiving_tds`, `sack_fumbles_lost`, `snap_pct`
+
+**Additional columns available for RB feature engineering (confirmed in nflverse data dictionary):**
+
+| Column | Type | RB Relevance |
+|--------|------|-------------|
+| `rushing_first_downs` | int | First downs gained on rush attempts — chain-moving signal |
+| `receiving_first_downs` | int | First downs on receptions — pass-catching value |
+| `rushing_epa` | float | Total expected points added on rush plays — context-adjusted efficiency |
+| `receiving_epa` | float | Total EPA on targets — context-adjusted receiving value |
+| `receiving_air_yards` | float | Total air yards on targets — average depth of target proxy |
+| `receiving_yards_after_catch` | float | YAC — RBs generate most receiving yards after catch |
+| `rushing_2pt_conversions` | int | 2-point conversion rushes — rare but contributes to scoring |
+| `receiving_2pt_conversions` | int | 2-point conversion receptions — rare but contributes to scoring |
+| `opponent_team` | str | Opponent abbreviation — directly available, no schedule merge needed for basic opponent lookup |
+| `fantasy_points_ppr` | float | Pre-computed PPR fantasy points by nflverse — use as validation check against our computation |
+| `target_share` | float | Weekly player targets / team targets — pre-computed snapshot (our rolling shares differ intentionally) |
+| `special_teams_tds` | int | Kick/punt return TDs — rare for RBs but nonzero for some (e.g., Cordarrelle Patterson) |
+
+**Columns NOT available in `import_weekly_data()` (common misconceptions):**
+- Red zone carries/targets — must be derived from play-by-play data (`import_pbp_data()`), which is ~700MB/season and out of scope for this project
+- Route participation rate — not tracked in summary stats
+- Yards before contact — only in Next Gen Stats (`import_ngs_data("rushing")`), limited season availability
+- Offensive line grades — external data source (PFF), not in nflverse
+
+### 2.1.2 Snap Count Merge Strategy (Corrected)
+
+Snap counts use `pfr_player_id` (Pro Football Reference), NOT the `player_id` (GSIS ID) used in weekly data. The correct merge path uses `nfl.import_ids()` as a bridge table:
+
+```python
+# Bridge table: maps between ID systems
+ids = nfl.import_ids()
+# Columns include: gsis_id, pfr_id, espn_id, name, ...
+
+# Create mapping: pfr_id -> gsis_id
+pfr_to_gsis = ids[["pfr_id", "gsis_id"]].dropna().drop_duplicates()
+
+# Merge snap_counts with bridge table first
+snap_counts = snap_counts.merge(pfr_to_gsis, left_on="pfr_player_id", right_on="pfr_id", how="left")
+
+# Now merge with weekly data on gsis_id (= player_id)
+weekly = weekly.merge(
+    snap_counts[["gsis_id", "season", "week", "offense_pct"]],
+    left_on=["player_id", "season", "week"],
+    right_on=["gsis_id", "season", "week"],
+    how="left"
+)
+weekly.rename(columns={"offense_pct": "snap_pct"}, inplace=True)
+```
+
+**Fallback for unmatched rows** (~2-5% typically): fill snap_pct with position-week median from successfully matched rows.
+
+### 2.1.3 Data Filtering Requirements
+
+```python
+# Filter to regular season only — nflverse includes playoff weeks
+df = df[df["season_type"] == "REG"]
+
+# Validate fantasy points computation against nflverse
+if "fantasy_points_ppr" in df.columns:
+    our_pts = compute_fantasy_points(df)
+    discrepancy = (df["fantasy_points_ppr"] - our_pts).abs()
+    n_mismatch = (discrepancy > 0.5).sum()
+    if n_mismatch > 0:
+        print(f"WARNING: {n_mismatch} rows differ from nflverse PPR points by > 0.5")
+        # Common cause: 2pt conversions not included in our scoring dict
+```
+
 ### 2.2 RB Filtering
 
 ```python
@@ -109,10 +182,14 @@ Each RB game-week row has four target components derived from raw stats:
 |--------|---------|-------------------|--------|
 | `rushing_floor` | `rushing_yards * 0.1` | Yards-only rushing production | Low variance, volume-driven |
 | `receiving_floor` | `receptions * 1.0 + receiving_yards * 0.1` | PPR catch value + receiving yards | Medium variance, role-dependent |
-| `td_points` | `rushing_tds * 6 + receiving_tds * 6` | All TD scoring | High variance, hard to predict |
+| `td_points` | `rushing_tds * 6 + receiving_tds * 6 + rushing_2pt_conversions * 2 + receiving_2pt_conversions * 2` | All scoring plays (TDs + 2pt conversions) | High variance, hard to predict |
 | `fumble_penalty` | `(sack_fumbles_lost + rushing_fumbles_lost) * -2` | Turnover penalty | Very low frequency, negative |
 
 **Total fantasy points** = rushing_floor + receiving_floor + td_points + fumble_penalty
+
+**Scoring completeness note:** Most PPR leagues award 2 points per 2-point conversion. `rushing_2pt_conversions` and `receiving_2pt_conversions` are available in `import_weekly_data()`. While rare (~0.5% of RB game-weeks have one), omitting them causes a systematic discrepancy vs nflverse's `fantasy_points_ppr`. Folding them into `td_points` is the cleanest decomposition since they co-occur with goal-line/red-zone usage patterns.
+
+**`special_teams_tds` exclusion:** Some RBs score on kick/punt returns. Most standard PPR leagues do NOT award these to the individual player (they go to D/ST scoring). We exclude them from our target to match standard PPR rules. If league rules differ, add `special_teams_tds * 6` to td_points.
 
 ### 3.2 Implementation
 
@@ -140,7 +217,9 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     df["td_points"] = (
         df["rushing_tds"].fillna(0) * 6 +
-        df["receiving_tds"].fillna(0) * 6
+        df["receiving_tds"].fillna(0) * 6 +
+        df["rushing_2pt_conversions"].fillna(0) * 2 +
+        df["receiving_2pt_conversions"].fillna(0) * 2
     )
 
     df["fumble_penalty"] = (
@@ -157,7 +236,6 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     # For RBs, passing_yards contribution is negligible (~0 for 99.9% of rows)
     # but we note the discrepancy: fantasy_points includes passing_yards * 0.04 + passing_tds * 4
-    # Log any rows where difference > 0.5 pts.
     passing_component = (
         df["passing_yards"].fillna(0) * 0.04 +
         df["passing_tds"].fillna(0) * 4 +
@@ -167,6 +245,13 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
     if (discrepancy > 0.01).any():
         n_bad = (discrepancy > 0.01).sum()
         print(f"WARNING: {n_bad} rows have target decomposition discrepancy > 0.01 pts")
+
+    # Cross-validate against nflverse pre-computed PPR points
+    if "fantasy_points_ppr" in df.columns:
+        nfl_discrepancy = (df["fantasy_points"] - df["fantasy_points_ppr"]).abs()
+        n_nfl_mismatch = (nfl_discrepancy > 0.5).sum()
+        if n_nfl_mismatch > 0:
+            print(f"INFO: {n_nfl_mismatch} rows differ from nflverse fantasy_points_ppr by > 0.5 pts")
 
     return df
 ```
@@ -212,39 +297,91 @@ Note: td_points has a median of 0 because many RB games produce 0 TDs. This zero
 
 ## 4. Feature Engineering
 
-### 4.1 General Features Retained (140 features)
+### 4.1 General Features: Inherited and Pruned (~114 features)
 
-The RB model inherits all general features from `build_features()`, MINUS the 4 position encoding features (pos_QB, pos_RB, pos_WR, pos_TE) since all rows are RB. This yields **~140 base features**.
+The RB model inherits general features from `build_features()`, then **prunes position-irrelevant features** to improve signal-to-noise ratio. With only ~7K training samples, every noise feature hurts generalization.
 
-Breakdown of the inherited features:
+#### Features DROPPED for the RB model (30 features removed)
 
-| Category | Count | Examples |
+The general pipeline rolls 10 stats, but 2 are QB-specific and nearly all-zero for RBs:
+
+| Dropped Category | Stat | Features Removed | Reason |
+|-----------------|------|-----------------|--------|
+| Rolling (mean/std/max) | `passing_yards` | 9 (3 windows × 3 aggs) | RBs pass in <0.1% of games; all-zero features add pure noise |
+| Rolling (mean/std/max) | `attempts` (passing attempts) | 9 | Same — QB volume metric |
+| EWMA | `passing_yards` | 2 (2 spans) | Near-zero for all RBs |
+| Prior-season summary | `passing_yards` | 3 (mean/std/max) | Zero signal |
+| Prior-season summary | `attempts` | 3 (mean/std/max) | Zero signal |
+| Position encoding | `pos_QB/RB/WR/TE` | 4 | All rows are RB — zero variance |
+| **Total dropped** | | **30** | |
+
+**Why this matters:** Reducing from ~144 to ~114 inherited features improves the samples-per-feature ratio from ~48 to ~61 (targeting >50 for stable Ridge/NN generalization). Noise features don't just waste model capacity — in Ridge regression, they consume regularization budget; in neural nets, they add gradient noise that slows convergence.
+
+#### Features RETAINED (~114 features)
+
+| Category | Count | Key Examples |
 |----------|-------|---------|
-| Rolling mean/std/max | 90 | `rolling_mean_fantasy_points_L3`, `rolling_std_carries_L5` |
+| Rolling mean/std/max (8 RB-relevant stats) | 72 | `rolling_mean_fantasy_points_L3`, `rolling_std_carries_L5`, `rolling_max_rushing_yards_L8` |
 | Rolling min (fantasy_points only) | 3 | `rolling_min_fantasy_points_L3/L5/L8` |
-| Prior-season summaries | 24 | `prior_season_mean_rushing_yards`, `prior_season_std_targets` |
-| EWMA | 14 | `ewma_fantasy_points_L3`, `ewma_carries_L5` |
-| Trend/momentum | 4 | `trend_fantasy_points`, `trend_carries` |
+| Prior-season summaries (8 stats) | 24 | `prior_season_mean_rushing_yards`, `prior_season_std_targets` |
+| EWMA (6 RB-relevant stats) | 12 | `ewma_fantasy_points_L3`, `ewma_carries_L5`, `ewma_rushing_yards_L3` |
+| Trend/momentum | 4 | `trend_fantasy_points`, `trend_carries`, `trend_targets`, `trend_snap_pct` |
 | Share features | 6 | `target_share_L3/L5`, `carry_share_L3/L5`, `snap_pct`, `air_yards_share` |
-| Matchup | 4 | `opp_fantasy_pts_allowed_to_pos`, `opp_rush_pts_allowed_to_pos` |
+| Matchup/opponent | 4 | `opp_fantasy_pts_allowed_to_pos`, `opp_rush_pts_allowed_to_pos` |
 | Contextual | 4 | `is_home`, `week`, `is_returning_from_absence`, `days_rest` |
-| ~~Position encoding~~ | ~~4~~ | ~~Removed: pos_QB, pos_RB, pos_WR, pos_TE~~ |
 
-**Note on matchup features**: The general pipeline computes `opp_rush_pts_allowed_to_pos` and `opp_recv_pts_allowed_to_pos` separately. These are especially valuable for RBs — an RB facing a defense weak against the run but strong against dump-offs gets a different (and more accurate) projection than one facing the reverse.
+**Rolling stats retained (8):** `fantasy_points`, `fantasy_points_floor`, `targets`, `receptions`, `carries`, `rushing_yards`, `receiving_yards`, `snap_pct`
 
-### 4.2 New RB-Specific Features (6 features)
+**Note on `air_yards_share`:** Confirmed available in `import_weekly_data()` as a pre-computed weekly column. For RBs, this captures how much of the passing game is directed at the RB. Low values are typical (RBs get short targets), but week-to-week variation is predictive of receiving workload changes.
 
-These 6 features are computed AFTER the general `build_features()` and AFTER filtering to RB rows. They add RB-specific efficiency and workload context.
+**Note on matchup features**: `opp_rush_pts_allowed_to_pos` and `opp_recv_pts_allowed_to_pos` are especially valuable for RBs — an RB facing a defense weak against the run but strong against dump-offs gets a different (and more accurate) projection than one facing the reverse.
 
-All RB-specific features use L3 (3-week) rolling windows for responsiveness to recent form. All use `.shift(1)` within `(player_id, season)` groups to prevent leakage.
+```python
+# In RB/rb_features.py
+
+# Features to drop from the general pipeline for RB model
+RB_DROP_FEATURES = []
+
+# Passing-specific rolling features (noise for RBs)
+for stat in ["passing_yards", "attempts"]:
+    for window in [3, 5, 8]:
+        for agg in ["mean", "std", "max"]:
+            RB_DROP_FEATURES.append(f"rolling_{agg}_{stat}_L{window}")
+
+# Passing-specific EWMA features
+for span in [3, 5]:
+    RB_DROP_FEATURES.append(f"ewma_passing_yards_L{span}")
+
+# Passing-specific prior-season features
+for stat in ["passing_yards", "attempts"]:
+    for agg in ["mean", "std", "max"]:
+        RB_DROP_FEATURES.append(f"prior_season_{agg}_{stat}")
+
+# Position encoding (zero variance for RB-only data)
+RB_DROP_FEATURES += ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]
+```
+
+### 4.2 RB-Specific Features (8 features)
+
+These features are computed AFTER the general `build_features()` and AFTER filtering to RB rows. They exploit RB-specific efficiency metrics, workload context, and nflverse columns not used by the general pipeline.
+
+All features use L3 (3-week) rolling windows for responsiveness to recent form. All use `.shift(1)` within `(player_id, season)` groups to prevent leakage.
+
+**Design principles for feature selection:**
+1. **Incremental signal**: Each feature must capture something the ~114 inherited features do NOT. Ratio features (efficiency) are incremental because the inherited features only have raw volume rolling stats, not their ratios.
+2. **Data grounded**: Only use columns confirmed available in `import_weekly_data()` (see §2.1.1).
+3. **Stable denominators**: Ratio features require sufficient denominator volume. L3 windows aggregate 3 games, reducing single-game noise in low-volume stats (e.g., targets for early-down backs).
+4. **Individual player projection focus**: Features prioritize predicting a specific player's next-week output over league-wide ranking. This means efficiency and usage share features matter more than raw counting stats (which are already captured in inherited rolling features).
 
 ---
 
 #### Feature 1: `yards_per_carry_L3`
 
-**Rationale**: Captures rushing efficiency. A back averaging 5.0 YPC is likely to score more per carry than one averaging 3.2 YPC. The rolling window captures recent efficiency trends rather than just raw volume.
+**Rationale**: Captures rushing efficiency independent of volume. The inherited features have `rolling_mean_rushing_yards_L3` and `rolling_mean_carries_L3` separately, but their *ratio* is not captured. A back averaging 5.0 YPC on 15 carries projects very differently from one averaging 3.2 YPC on 15 carries — same volume, different efficiency.
 
 **Formula**: `rolling_sum(rushing_yards, L3) / rolling_sum(carries, L3)` (both shifted)
+
+**Why ratio of sums, not mean of ratios**: `sum(yards)/sum(carries)` correctly weights high-volume games. Mean of per-game YPC would let a 2-carry, 30-yard game (15.0 YPC) dominate.
 
 ```python
 rush_yds_roll = df.groupby(["player_id", "season"])["rushing_yards"].transform(
@@ -254,7 +391,6 @@ carries_roll = df.groupby(["player_id", "season"])["carries"].transform(
     lambda x: x.shift(1).rolling(3, min_periods=1).sum()
 )
 df["yards_per_carry_L3"] = (rush_yds_roll / carries_roll).fillna(0)
-# Handle div-by-zero: if carries_roll == 0, fill with 0
 df.loc[carries_roll == 0, "yards_per_carry_L3"] = 0
 ```
 
@@ -262,7 +398,7 @@ df.loc[carries_roll == 0, "yards_per_carry_L3"] = 0
 
 #### Feature 2: `reception_rate_L3`
 
-**Rationale**: Catch rate distinguishes pass-catching backs from early-down grinders. A back with an 85% catch rate converts targets to PPR points more reliably than one at 60%.
+**Rationale**: Catch rate distinguishes reliable pass-catching backs from early-down grinders. A back with an 85% catch rate converts targets to PPR points more efficiently than one at 60%. This is especially important for the `receiving_floor` sub-target, where each reception = 1 PPR point.
 
 **Formula**: `rolling_sum(receptions, L3) / rolling_sum(targets, L3)` (both shifted)
 
@@ -281,7 +417,7 @@ df.loc[tgt_roll == 0, "reception_rate_L3"] = 0
 
 #### Feature 3: `weighted_opportunities_L3`
 
-**Rationale**: In PPR scoring, a target is worth more than a carry because a reception alone is worth 1 point. `carries + 2*targets` approximates the PPR-adjusted volume. This is a well-established fantasy analytics metric that better captures a back's total opportunity value.
+**Rationale**: In PPR scoring, a target is worth more than a carry because a reception alone = 1 point. `carries + 2×targets` is a well-established fantasy analytics metric (popularized by analysts like JJ Zachariason) that captures PPR-adjusted volume. This is NOT captured by inherited features which track carries and targets separately without the PPR weighting.
 
 **Formula**: `rolling_mean(carries + 2*targets, L3)` (shifted)
 
@@ -299,7 +435,7 @@ df.drop(columns=["_raw_weighted_opps"], inplace=True)
 
 #### Feature 4: `team_rb_carry_share_L3`
 
-**Rationale**: Detects committee vs. bellcow situations. A back with 70% of his team's RB carries is a bellcow; one with 30% is in a committee. This differs from the general `carry_share_L{w}` which divides by ALL team carries (including QB scrambles); this divides by RB-only carries for a more position-specific signal.
+**Rationale**: Detects committee vs. bellcow situations. A back with 70% of his team's RB carries is a bellcow; one with 30% is in a committee. This differs from the inherited `carry_share_L{w}` which divides by ALL team carries (including QB scrambles, WR end-arounds); this divides by RB-only carries for a cleaner position-specific signal.
 
 **Formula**: `rolling_sum(player_carries, L3) / rolling_sum(team_rb_carries, L3)` (both shifted)
 
@@ -320,7 +456,6 @@ def compute_team_rb_totals(full_rb_df: pd.DataFrame) -> pd.DataFrame:
     return team_rb_totals
 
 # Step 2: Merge team totals back and compute rolling share
-# (After merge, team_rb_carries column is available on each RB row)
 player_carries_roll = df.groupby(["player_id", "season"])["carries"].transform(
     lambda x: x.shift(1).rolling(3, min_periods=1).sum()
 )
@@ -335,7 +470,7 @@ df.loc[team_rb_carries_roll == 0, "team_rb_carry_share_L3"] = 0
 
 #### Feature 5: `team_rb_target_share_L3`
 
-**Rationale**: Same logic as carry share but for targets. A back who commands 50% of team RB targets is the primary pass-catching back and should have a higher receiving_floor. This is especially important in PPR where receiving work drives a significant portion of RB value.
+**Rationale**: Identifies the primary pass-catching back on each team. A back commanding 50%+ of team RB targets is the PPR-valuable receiving back. This is especially important because in PPR, the difference between a 3-target-per-game and a 6-target-per-game back is massive (~3+ expected PPR points per game from receptions alone).
 
 **Formula**: `rolling_sum(player_targets, L3) / rolling_sum(team_rb_targets, L3)` (both shifted)
 
@@ -352,27 +487,88 @@ df.loc[team_rb_targets_roll == 0, "team_rb_target_share_L3"] = 0
 
 ---
 
-#### Feature 6: `yards_per_touch_L3`
+#### Feature 6: `rushing_epa_per_attempt_L3` *(NEW — replaces `yards_per_touch_L3`)*
 
-**Rationale**: Composite efficiency metric combining rushing and receiving yards per touch (carry or reception). Useful for backs who contribute in both phases — a dual-threat back with 6.0 yards per touch is more efficient overall than one with 4.0 regardless of how those touches are split between rushing and receiving.
+**Rationale**: Expected Points Added per rush attempt is a strictly better efficiency metric than YPC. EPA captures game context that raw yardage cannot: 3 yards on 3rd-and-2 (first down, ~+1.5 EPA) is far more valuable than 3 yards on 1st-and-10 (~-0.2 EPA). A back with positive EPA/attempt is creating value above expectation. This is available directly from `import_weekly_data()` as `rushing_epa` (total EPA on all rush plays).
 
-**Formula**: `rolling_sum(rushing_yards + receiving_yards, L3) / rolling_sum(carries + receptions, L3)` (both shifted)
+**Formula**: `rolling_sum(rushing_epa, L3) / rolling_sum(carries, L3)` (both shifted)
+
+**Why this replaces `yards_per_touch_L3`**: The removed feature was a composite of YPC and receiving efficiency — redundant with Feature 1 (YPC) and the inherited receiving_yards rolling features. EPA/attempt adds genuinely orthogonal signal by capturing play context.
+
+**Correlation with `yards_per_carry_L3`**: Expected ~0.5-0.7 correlation. The residual captures down-and-distance efficiency, game-script leverage, and field-position value that YPC misses.
 
 ```python
-df["_total_yards"] = df["rushing_yards"].fillna(0) + df["receiving_yards"].fillna(0)
+rushing_epa_roll = df.groupby(["player_id", "season"])["rushing_epa"].transform(
+    lambda x: x.shift(1).rolling(3, min_periods=1).sum()
+)
+carries_roll = df.groupby(["player_id", "season"])["carries"].transform(
+    lambda x: x.shift(1).rolling(3, min_periods=1).sum()
+)
+df["rushing_epa_per_attempt_L3"] = (rushing_epa_roll / carries_roll).fillna(0)
+df.loc[carries_roll == 0, "rushing_epa_per_attempt_L3"] = 0
+```
+
+---
+
+#### Feature 7: `first_down_rate_L3` *(NEW)*
+
+**Rationale**: First down rate = chain-moving ability = staying on the field. An RB who converts first downs sustains drives, which leads to more snaps, more touches, and more scoring opportunities in the same game. `rushing_first_downs` and `receiving_first_downs` are directly available in `import_weekly_data()`. This captures drive-sustaining value that yardage alone misses — a back who grinds 4-yard runs on 3rd-and-3 is more valuable to sustained drives (and therefore to continued usage) than one who rips 8-yard runs on 1st-and-10 but can't convert.
+
+**Formula**: `rolling_sum(rushing_first_downs + receiving_first_downs, L3) / rolling_sum(carries + receptions, L3)` (both shifted)
+
+```python
+df["_total_first_downs"] = (
+    df["rushing_first_downs"].fillna(0) + df["receiving_first_downs"].fillna(0)
+)
 df["_total_touches"] = df["carries"].fillna(0) + df["receptions"].fillna(0)
 
-total_yds_roll = df.groupby(["player_id", "season"])["_total_yards"].transform(
+first_downs_roll = df.groupby(["player_id", "season"])["_total_first_downs"].transform(
     lambda x: x.shift(1).rolling(3, min_periods=1).sum()
 )
-total_touches_roll = df.groupby(["player_id", "season"])["_total_touches"].transform(
+touches_roll = df.groupby(["player_id", "season"])["_total_touches"].transform(
     lambda x: x.shift(1).rolling(3, min_periods=1).sum()
 )
-df["yards_per_touch_L3"] = (total_yds_roll / total_touches_roll).fillna(0)
-df.loc[total_touches_roll == 0, "yards_per_touch_L3"] = 0
+df["first_down_rate_L3"] = (first_downs_roll / touches_roll).fillna(0)
+df.loc[touches_roll == 0, "first_down_rate_L3"] = 0
 
-df.drop(columns=["_total_yards", "_total_touches"], inplace=True)
+df.drop(columns=["_total_first_downs", "_total_touches"], inplace=True)
 ```
+
+---
+
+#### Feature 8: `yac_per_reception_L3` *(NEW)*
+
+**Rationale**: Yards After Catch per reception isolates an RB's ability to create yardage after the catch — the dominant component of RB receiving production. Most RB targets are short (screens, checkdowns, dump-offs with aDOT < 3 yards), so the difference between a productive and unproductive receiving back is almost entirely post-catch creation. `receiving_yards_after_catch` is directly available in `import_weekly_data()`.
+
+**Why this matters for projection**: Two backs with identical target volumes and catch rates can have wildly different receiving_floor projections based on YAC ability. A back averaging 8 YAC/reception (e.g., Austin Ekeler, Alvin Kamara) produces ~0.8 more receiving_floor points per catch than one averaging 3 YAC/reception.
+
+**Formula**: `rolling_sum(receiving_yards_after_catch, L3) / rolling_sum(receptions, L3)` (both shifted)
+
+```python
+yac_roll = df.groupby(["player_id", "season"])["receiving_yards_after_catch"].transform(
+    lambda x: x.shift(1).rolling(3, min_periods=1).sum()
+)
+rec_roll = df.groupby(["player_id", "season"])["receptions"].transform(
+    lambda x: x.shift(1).rolling(3, min_periods=1).sum()
+)
+df["yac_per_reception_L3"] = (yac_roll / rec_roll).fillna(0)
+df.loc[rec_roll == 0, "yac_per_reception_L3"] = 0
+```
+
+---
+
+#### Feature Redundancy Analysis
+
+| Feature | Correlated Inherited Features | Why It's Still Incremental |
+|---------|------------------------------|---------------------------|
+| `yards_per_carry_L3` | `rolling_mean_rushing_yards`, `rolling_mean_carries` | Ratio captures efficiency; volume features don't |
+| `reception_rate_L3` | `rolling_mean_receptions`, `rolling_mean_targets` | Catch rate is a player skill; raw counts are opportunity |
+| `weighted_opportunities_L3` | `rolling_mean_carries`, `rolling_mean_targets` | PPR-adjusted weighting (2×targets) changes the signal |
+| `team_rb_carry_share_L3` | `carry_share_L3` (general) | RB-only denominator vs all-position team denominator |
+| `team_rb_target_share_L3` | `target_share_L3` (general) | RB-only denominator vs all-position team denominator |
+| `rushing_epa_per_attempt_L3` | `yards_per_carry_L3` (~0.6 corr) | Context-adjusted: captures down/distance/field-position value |
+| `first_down_rate_L3` | `rolling_mean_rushing_yards` (~0.4 corr) | Conversion-specific signal; yards don't distinguish 1st-down vs not |
+| `yac_per_reception_L3` | `rolling_mean_receiving_yards` (~0.5 corr) | Post-catch creation; total rec yards includes air yards component |
 
 ---
 
@@ -387,22 +583,37 @@ RB_SPECIFIC_FEATURES = [
     "weighted_opportunities_L3",
     "team_rb_carry_share_L3",
     "team_rb_target_share_L3",
-    "yards_per_touch_L3",
+    "rushing_epa_per_attempt_L3",
+    "first_down_rate_L3",
+    "yac_per_reception_L3",
 ]
+
+# Columns from the general pipeline that are noise for RB-only data
+RB_DROP_FEATURES = set()
+for stat in ["passing_yards", "attempts"]:
+    for window in [3, 5, 8]:
+        for agg in ["mean", "std", "max"]:
+            RB_DROP_FEATURES.add(f"rolling_{agg}_{stat}_L{window}")
+for span in [3, 5]:
+    RB_DROP_FEATURES.add(f"ewma_passing_yards_L{span}")
+for stat in ["passing_yards", "attempts"]:
+    for agg in ["mean", "std", "max"]:
+        RB_DROP_FEATURES.add(f"prior_season_{agg}_{stat}")
+RB_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
+
 
 def get_rb_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the RB model.
 
-    Starts with the general feature columns (minus position encoding),
-    then appends RB-specific features.
+    Starts with general feature columns, prunes QB-specific noise features
+    and position encoding, then appends RB-specific features.
     """
     from src.features.engineer import get_feature_columns
 
     general_cols = get_feature_columns()
 
-    # Remove position encoding columns
-    pos_cols = {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
-    rb_cols = [c for c in general_cols if c not in pos_cols]
+    # Remove position-irrelevant features (passing stats, position encoding)
+    rb_cols = [c for c in general_cols if c not in RB_DROP_FEATURES]
 
     # Append RB-specific features
     rb_cols.extend(RB_SPECIFIC_FEATURES)
@@ -412,17 +623,35 @@ def get_rb_feature_columns() -> list[str]:
 
 ### 4.4 Total Feature Count
 
-- General features minus position encoding: ~140
-- RB-specific features: 6
-- **Total: ~146 features**
+| Category | Count |
+|----------|-------|
+| General features inherited | 144 |
+| QB-specific features dropped (passing_yards, attempts rolling/ewma/prior) | -26 |
+| Position encoding dropped | -4 |
+| RB-specific features added | +8 |
+| **Total** | **~122 features** |
+
+**Samples-per-feature ratio**: ~7,000 train / 122 features ≈ **57 samples/feature**. This is adequate for Ridge regression (which handles high feature counts well with L2 regularization) and for the multi-head NN (which has ~33K parameters and benefits from the reduced noise dimensionality).
+
+**Comparison to original design**: The original 146-feature count gave ~48 samples/feature. The revised 122-feature count achieves a 27% improvement in this ratio while adding more discriminative RB-specific features — a strict Pareto improvement.
 
 ### 4.5 NaN Handling for RB-Specific Features
 
-RB-specific features are ratio-based and may produce NaN or inf from division by zero. All are guarded with `.fillna(0)` and explicit zero-denominator checks. A separate RB-specific NaN fill handles the 6 new columns:
+RB-specific features are ratio-based and may produce NaN or inf from division by zero. All are guarded with `.fillna(0)` and explicit zero-denominator checks at computation time. A separate RB-specific NaN fill handles the 8 new columns after train/val/test split:
 
 ```python
 def fill_rb_nans(train_df, val_df, test_df, rb_feature_cols):
-    """Fill NaNs in RB-specific feature columns using training set statistics."""
+    """Fill NaNs in RB-specific feature columns using training set statistics.
+
+    Called AFTER temporal_split() and AFTER add_rb_specific_features().
+    Uses ONLY training set statistics to prevent leakage.
+    """
+    # Replace any inf values with NaN first (from div-by-zero edge cases)
+    for split_df in [train_df, val_df, test_df]:
+        split_df[rb_feature_cols] = split_df[rb_feature_cols].replace(
+            [np.inf, -np.inf], np.nan
+        )
+
     # Compute training set means for RB-specific features
     train_means = train_df[rb_feature_cols].mean()
 
@@ -432,6 +661,18 @@ def fill_rb_nans(train_df, val_df, test_df, rb_feature_cols):
 
     return train_df, val_df, test_df
 ```
+
+**NaN sources for RB-specific features:**
+| Feature | NaN When | Fill Value |
+|---------|----------|------------|
+| `yards_per_carry_L3` | 0 carries in L3 window | Train mean (~4.2) |
+| `reception_rate_L3` | 0 targets in L3 window | Train mean (~0.75) |
+| `weighted_opportunities_L3` | Week 1, first season appearance | Train mean (~18) |
+| `team_rb_carry_share_L3` | 0 team RB carries (bye-adjacent) | Train mean (~0.45) |
+| `team_rb_target_share_L3` | 0 team RB targets | Train mean (~0.35) |
+| `rushing_epa_per_attempt_L3` | 0 carries in L3 window | Train mean (~0.0) |
+| `first_down_rate_L3` | 0 touches in L3 window | Train mean (~0.22) |
+| `yac_per_reception_L3` | 0 receptions in L3 window | Train mean (~5.5) |
 
 ---
 
@@ -518,8 +759,8 @@ class RBMultiHeadNet(nn.Module):
     """Multi-head neural network for RB fantasy point decomposition.
 
     Architecture:
-        Input (~146 features)
-            -> Shared backbone [Linear(146, 128) -> BN -> ReLU -> Dropout(0.3)]
+        Input (~122 features)
+            -> Shared backbone [Linear(122, 128) -> BN -> ReLU -> Dropout(0.3)]
             -> Shared backbone [Linear(128, 64) -> BN -> ReLU -> Dropout(0.3)]
             -> Head 1 (rushing_floor):  Linear(64, 32) -> ReLU -> Linear(32, 1)
             -> Head 2 (receiving_floor): Linear(64, 32) -> ReLU -> Linear(32, 1)
@@ -609,10 +850,10 @@ class RBMultiHeadNet(nn.Module):
 ### 5.3 Architecture Diagram
 
 ```
-Input (batch_size, ~146)
+Input (batch_size, ~122)
     |
     v
-[Linear(146, 128)] -> [BatchNorm1d(128)] -> [ReLU] -> [Dropout(0.3)]
+[Linear(122, 128)] -> [BatchNorm1d(128)] -> [ReLU] -> [Dropout(0.3)]
     |
     v
 [Linear(128, 64)] -> [BatchNorm1d(64)] -> [ReLU] -> [Dropout(0.3)]
@@ -635,14 +876,14 @@ Total = Head1 + Head2 + Head3    (shape: batch_size,)
 
 | Component | Parameters |
 |-----------|-----------|
-| Backbone Linear(146, 128) + bias | 146*128 + 128 = 18,816 |
+| Backbone Linear(122, 128) + bias | 122*128 + 128 = 15,744 |
 | Backbone BN(128) | 256 (gamma + beta) |
 | Backbone Linear(128, 64) + bias | 128*64 + 64 = 8,256 |
 | Backbone BN(64) | 128 |
 | Head 1: Linear(64, 32) + Linear(32, 1) | 64*32+32 + 32*1+1 = 2,113 |
 | Head 2: same | 2,113 |
 | Head 3: same | 2,113 |
-| **Total** | **~33,800** |
+| **Total** | **~30,700** |
 
 This is a modest network suitable for ~7K training samples.
 
@@ -1477,10 +1718,11 @@ if __name__ == "__main__":
 | Stage | Shape | Description |
 |-------|-------|-------------|
 | General splits loaded | ~25K / ~5K / ~5K rows, ~155 cols | Full position data |
-| After `filter_to_rb()` | ~7K / ~1.4K / ~1.4K rows, ~151 cols | RB only, no pos encoding |
-| After `compute_rb_targets()` | same rows, +4 cols | Added target decomposition |
-| After `add_rb_specific_features()` | same rows, +6 cols | Added RB features |
-| Feature matrix X | (n_samples, ~146) | Ready for models |
+| After `filter_to_rb()` | ~7K / ~1.4K / ~1.4K rows, ~151 cols | RB only, pos encoding dropped |
+| After `compute_rb_targets()` | same rows, +4 cols | Added target decomposition (with 2pt conversions) |
+| After `add_rb_specific_features()` | same rows, +8 cols | Added 8 RB features |
+| After QB-feature pruning | same rows, -26 cols | Dropped passing_yards/attempts rolling/ewma/prior |
+| Feature matrix X | (n_samples, ~122) | Ready for models |
 | Target dict y | 4 arrays each (n_samples,) | rushing_floor, receiving_floor, td_points, total |
 | NN output | dict of 4 tensors each (batch,) | Per-head + sum predictions |
 
@@ -1509,7 +1751,9 @@ The default loss weights (1.0, 1.0, 1.0, 0.5) treat all three targets equally an
 
 ### On Potential Future Improvements (Out of Scope)
 
-- Game script features (implied pass/rush ratio from Vegas lines)
-- Red zone carry share (data not available in nfl_data_py)
-- Injury report integration (external data source needed)
-- Zero-inflated regression for td_points (distribution is heavily zero-inflated)
+- **Game script features**: Implied pass/rush ratio from Vegas lines (external data, not in nflverse)
+- **Red zone carry/target share**: Derivable from `nfl.import_pbp_data()` by filtering `yardline_100 <= 20`, but PBP data is ~700MB/season. Strong predictor of td_points if compute budget allows.
+- **Next Gen Stats rushing metrics**: `nfl.import_ngs_data("rushing")` provides rush yards over expected (RYOE), time behind line of scrimmage, etc. Limited to recent seasons and fewer players.
+- **Injury report integration**: `nfl.import_injuries()` exists in nfl_data_py — could model availability likelihood and return-from-injury snap ramps
+- **Depth chart position**: `nfl.import_depth_charts()` provides weekly starter/backup designation — a leading indicator of workload changes before they show up in stats
+- **Zero-inflated regression for td_points**: Distribution is heavily zero-inflated (median = 0). A two-stage model (predict P(TD>0), then predict TD count | TD>0) may outperform MSE regression on this target
