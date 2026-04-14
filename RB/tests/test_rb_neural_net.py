@@ -1,16 +1,21 @@
-"""Tests for RB.rb_neural_net — RBMultiHeadNet."""
+"""Tests for shared.neural_net.MultiHeadNet (using RB targets)."""
 
 import numpy as np
 import torch
 import pytest
 
-from RB.rb_neural_net import RBMultiHeadNet
+from shared.neural_net import MultiHeadNet
+
+RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 
 
-class TestRBMultiHeadNet:
+class TestMultiHeadNet:
     @pytest.fixture
     def model(self):
-        return RBMultiHeadNet(input_dim=10, backbone_layers=[32, 16], head_hidden=8, dropout=0.1)
+        return MultiHeadNet(
+            input_dim=10, target_names=RB_TARGETS,
+            backbone_layers=[32, 16], head_hidden=8, dropout=0.1,
+        )
 
     def test_output_keys(self, model):
         x = torch.randn(4, 10)
@@ -32,21 +37,21 @@ class TestRBMultiHeadNet:
         expected = out["rushing_floor"] + out["receiving_floor"] + out["td_points"]
         torch.testing.assert_close(out["total"], expected)
 
-    def test_default_backbone_layers(self):
-        model = RBMultiHeadNet(input_dim=20)
-        x = torch.randn(4, 20)
-        out = model(x)
-        assert out["total"].shape == (4,)
-
     def test_custom_backbone(self):
-        model = RBMultiHeadNet(input_dim=5, backbone_layers=[64, 32, 16])
+        model = MultiHeadNet(
+            input_dim=5, target_names=RB_TARGETS,
+            backbone_layers=[64, 32, 16],
+        )
         x = torch.randn(2, 5)
         out = model(x)
         assert out["total"].shape == (2,)
 
     def test_single_sample_eval_mode(self):
         """Batch norm can fail with batch_size=1 in train mode; eval mode should work."""
-        model = RBMultiHeadNet(input_dim=10, backbone_layers=[16, 8])
+        model = MultiHeadNet(
+            input_dim=10, target_names=RB_TARGETS,
+            backbone_layers=[16, 8],
+        )
         model.eval()
         with torch.no_grad():
             x = torch.randn(1, 10)
@@ -54,7 +59,10 @@ class TestRBMultiHeadNet:
         assert out["total"].shape == (1,)
 
     def test_predict_numpy(self):
-        model = RBMultiHeadNet(input_dim=10, backbone_layers=[16, 8])
+        model = MultiHeadNet(
+            input_dim=10, target_names=RB_TARGETS,
+            backbone_layers=[16, 8],
+        )
         X = np.random.randn(5, 10).astype(np.float32)
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
@@ -65,7 +73,10 @@ class TestRBMultiHeadNet:
             assert preds[key].shape == (5,)
 
     def test_predict_numpy_single_sample(self):
-        model = RBMultiHeadNet(input_dim=5, backbone_layers=[8, 4])
+        model = MultiHeadNet(
+            input_dim=5, target_names=RB_TARGETS,
+            backbone_layers=[8, 4],
+        )
         X = np.random.randn(1, 5).astype(np.float32)
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
@@ -82,7 +93,10 @@ class TestRBMultiHeadNet:
 
     def test_dropout_effect(self):
         """Train mode (dropout active) vs eval mode should give different outputs."""
-        model = RBMultiHeadNet(input_dim=10, backbone_layers=[32, 16], dropout=0.5)
+        model = MultiHeadNet(
+            input_dim=10, target_names=RB_TARGETS,
+            backbone_layers=[32, 16], dropout=0.5,
+        )
         x = torch.randn(8, 10)
 
         model.train()
@@ -93,8 +107,6 @@ class TestRBMultiHeadNet:
         with torch.no_grad():
             out_eval = model(x)
 
-        # With 50% dropout, outputs should differ between train and eval
-        # (statistically near-certain with 8 samples)
         assert not torch.allclose(out_train["total"].detach(), out_eval["total"])
 
     def test_no_nan_output(self, model):
@@ -113,3 +125,17 @@ class TestRBMultiHeadNet:
             out = model(x)
         for key in out:
             assert not torch.isnan(out[key]).any()
+
+    def test_head_hidden_overrides(self):
+        """Per-head hidden size overrides should produce different architecture."""
+        model = MultiHeadNet(
+            input_dim=10, target_names=RB_TARGETS,
+            backbone_layers=[32, 16], head_hidden=8,
+            head_hidden_overrides={"td_points": 32},
+        )
+        x = torch.randn(4, 10)
+        out = model(x)
+        assert out["total"].shape == (4,)
+        # td_points head first linear should be 16->32 (not 16->8)
+        td_head = model.heads["td_points"]
+        assert td_head[0].out_features == 32
