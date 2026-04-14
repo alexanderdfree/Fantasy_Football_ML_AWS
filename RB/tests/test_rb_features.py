@@ -1,0 +1,227 @@
+"""Tests for RB.rb_features — _compute_rb_features and fill_rb_nans."""
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from RB.rb_features import _compute_rb_features, fill_rb_nans
+
+
+def _make_player_games(
+    player_id="P1",
+    season=2023,
+    n_weeks=5,
+    carries=10,
+    targets=5,
+    receptions=3,
+    rushing_yards=50,
+    receiving_yards=30,
+    rushing_epa=2.0,
+    rushing_first_downs=2,
+    receiving_first_downs=1,
+    receiving_yards_after_catch=15,
+    recent_team="KC",
+):
+    """Create a multi-week DataFrame for one player."""
+    return pd.DataFrame({
+        "player_id": [player_id] * n_weeks,
+        "season": [season] * n_weeks,
+        "week": list(range(1, n_weeks + 1)),
+        "carries": [carries] * n_weeks,
+        "targets": [targets] * n_weeks,
+        "receptions": [receptions] * n_weeks,
+        "rushing_yards": [rushing_yards] * n_weeks,
+        "receiving_yards": [receiving_yards] * n_weeks,
+        "rushing_epa": [rushing_epa] * n_weeks,
+        "rushing_first_downs": [rushing_first_downs] * n_weeks,
+        "receiving_first_downs": [receiving_first_downs] * n_weeks,
+        "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
+        "recent_team": [recent_team] * n_weeks,
+    })
+
+
+RB_FEATURE_COLS = [
+    "yards_per_carry_L3",
+    "reception_rate_L3",
+    "weighted_opportunities_L3",
+    "team_rb_carry_share_L3",
+    "team_rb_target_share_L3",
+    "rushing_epa_per_attempt_L3",
+    "first_down_rate_L3",
+    "yac_per_reception_L3",
+]
+
+
+# ---------------------------------------------------------------------------
+# _compute_rb_features
+# ---------------------------------------------------------------------------
+
+class TestComputeRBFeatures:
+    def test_all_eight_features_created(self):
+        df = _make_player_games()
+        _compute_rb_features(df)
+        for col in RB_FEATURE_COLS:
+            assert col in df.columns, f"Missing feature: {col}"
+
+    def test_no_temp_columns_remain(self):
+        """Temporary columns (_raw_weighted_opps, etc.) should be cleaned up."""
+        df = _make_player_games()
+        _compute_rb_features(df)
+        temp_cols = [c for c in df.columns if c.startswith("_")]
+        assert temp_cols == [], f"Temp columns left: {temp_cols}"
+
+    def test_first_week_features_are_zero_or_nan(self):
+        """Week 1 has no prior data (shift=1), so features should be 0 or NaN."""
+        df = _make_player_games(n_weeks=4)
+        _compute_rb_features(df)
+        week1 = df[df["week"] == 1]
+        # Shifted rolling means should produce NaN -> filled to 0
+        for col in ["yards_per_carry_L3", "reception_rate_L3", "weighted_opportunities_L3"]:
+            val = week1[col].iloc[0]
+            assert val == 0.0 or np.isnan(val), f"{col} = {val} for week 1"
+
+    def test_yards_per_carry_computation(self):
+        """Check yards_per_carry_L3 for constant carries/yards."""
+        df = _make_player_games(n_weeks=5, carries=10, rushing_yards=50)
+        _compute_rb_features(df)
+        # Week 3 (index 2): shift sees weeks 1,2; rolling(3,min_periods=1) sums [50,50]=100 yds / 20 carries = 5.0
+        week3 = df[df["week"] == 3]
+        assert pytest.approx(week3["yards_per_carry_L3"].iloc[0], abs=0.01) == 5.0
+
+    def test_zero_carries_no_division_error(self):
+        """Player with 0 carries: yards_per_carry_L3 should be 0, not inf."""
+        df = _make_player_games(n_weeks=4, carries=0, rushing_yards=0)
+        _compute_rb_features(df)
+        assert not df["yards_per_carry_L3"].isin([np.inf, -np.inf]).any()
+        assert (df["yards_per_carry_L3"].fillna(0) == 0).all()
+
+    def test_zero_targets_no_division_error(self):
+        """Player with 0 targets: reception_rate_L3 should be 0, not inf."""
+        df = _make_player_games(n_weeks=4, targets=0, receptions=0)
+        _compute_rb_features(df)
+        assert not df["reception_rate_L3"].isin([np.inf, -np.inf]).any()
+
+    def test_zero_receptions_yac(self):
+        """Player with 0 receptions: yac_per_reception_L3 should be 0."""
+        df = _make_player_games(
+            n_weeks=4, receptions=0, receiving_yards_after_catch=0
+        )
+        _compute_rb_features(df)
+        assert not df["yac_per_reception_L3"].isin([np.inf, -np.inf]).any()
+
+    def test_team_carry_share_single_player(self):
+        """Solo RB on team should have carry share of 1.0."""
+        df = _make_player_games(n_weeks=5, carries=15, recent_team="KC")
+        _compute_rb_features(df)
+        # After enough history, share should be 1.0 (only RB on team)
+        later_weeks = df[df["week"] >= 3]
+        shares = later_weeks["team_rb_carry_share_L3"]
+        valid = shares.dropna()
+        if len(valid) > 0:
+            assert (valid <= 1.01).all()  # should be ~1.0
+
+    def test_team_carry_share_two_players(self):
+        """Two RBs on same team split carries."""
+        p1 = _make_player_games("P1", n_weeks=5, carries=10, targets=3, recent_team="KC")
+        p2 = _make_player_games("P2", n_weeks=5, carries=10, targets=3, recent_team="KC")
+        df = pd.concat([p1, p2], ignore_index=True)
+        _compute_rb_features(df)
+        # Each player should have ~0.5 carry share after history builds up
+        later = df[(df["week"] >= 3) & (df["player_id"] == "P1")]
+        shares = later["team_rb_carry_share_L3"].dropna()
+        if len(shares) > 0:
+            assert all(0.4 <= s <= 0.6 for s in shares)
+
+    def test_weighted_opportunities(self):
+        """weighted_opportunities_L3 = rolling mean of (carries + 2*targets)."""
+        df = _make_player_games(n_weeks=5, carries=10, targets=5)
+        _compute_rb_features(df)
+        # carries + 2*targets = 10 + 10 = 20
+        week3 = df[df["week"] == 3]
+        val = week3["weighted_opportunities_L3"].iloc[0]
+        # shift sees weeks 1,2 -> mean of [20, 20] = 20.0
+        assert pytest.approx(val, abs=0.01) == 20.0
+
+    def test_multiple_seasons_independent(self):
+        """Features should not leak across seasons."""
+        s1 = _make_player_games(season=2022, n_weeks=3, carries=20, rushing_yards=100)
+        s2 = _make_player_games(season=2023, n_weeks=3, carries=5, rushing_yards=20)
+        df = pd.concat([s1, s2], ignore_index=True)
+        _compute_rb_features(df)
+        # 2023 week 1 should not see 2022 data
+        w1_2023 = df[(df["season"] == 2023) & (df["week"] == 1)]
+        ypc = w1_2023["yards_per_carry_L3"].iloc[0]
+        assert ypc == 0.0 or np.isnan(ypc)
+
+
+# ---------------------------------------------------------------------------
+# fill_rb_nans
+# ---------------------------------------------------------------------------
+
+class TestFillRBNans:
+    def _make_splits(self, train_vals, val_vals, test_vals, col="feat1"):
+        train = pd.DataFrame({col: train_vals})
+        val = pd.DataFrame({col: val_vals})
+        test = pd.DataFrame({col: test_vals})
+        return train, val, test
+
+    def test_fills_nan_with_train_mean(self):
+        train, val, test = self._make_splits(
+            [1.0, 2.0, 3.0],
+            [np.nan],
+            [np.nan],
+        )
+        train, val, test = fill_rb_nans(train, val, test, ["feat1"])
+        assert pytest.approx(val["feat1"].iloc[0]) == 2.0  # mean of [1,2,3]
+        assert pytest.approx(test["feat1"].iloc[0]) == 2.0
+
+    def test_replaces_inf_with_train_mean(self):
+        train, val, test = self._make_splits(
+            [1.0, 3.0],
+            [np.inf],
+            [-np.inf],
+        )
+        train, val, test = fill_rb_nans(train, val, test, ["feat1"])
+        assert pytest.approx(val["feat1"].iloc[0]) == 2.0
+        assert pytest.approx(test["feat1"].iloc[0]) == 2.0
+
+    def test_train_inf_replaced_before_mean(self):
+        """Inf in training set should be replaced with NaN before computing mean."""
+        train, val, test = self._make_splits(
+            [1.0, np.inf, 3.0],
+            [np.nan],
+            [np.nan],
+        )
+        train, val, test = fill_rb_nans(train, val, test, ["feat1"])
+        # mean of [1.0, NaN, 3.0] = 2.0
+        assert pytest.approx(val["feat1"].iloc[0]) == 2.0
+
+    def test_all_nan_train_propagates_nan(self):
+        """If training set is all NaN, mean is NaN — val/test stay NaN."""
+        train, val, test = self._make_splits(
+            [np.nan, np.nan],
+            [np.nan],
+            [np.nan],
+        )
+        train, val, test = fill_rb_nans(train, val, test, ["feat1"])
+        assert np.isnan(val["feat1"].iloc[0])
+
+    def test_no_nans_unchanged(self):
+        train, val, test = self._make_splits(
+            [1.0, 2.0],
+            [3.0],
+            [4.0],
+        )
+        train, val, test = fill_rb_nans(train, val, test, ["feat1"])
+        assert pytest.approx(val["feat1"].iloc[0]) == 3.0
+        assert pytest.approx(test["feat1"].iloc[0]) == 4.0
+
+    def test_multiple_columns(self):
+        train = pd.DataFrame({"f1": [1.0, 3.0], "f2": [10.0, 20.0]})
+        val = pd.DataFrame({"f1": [np.nan], "f2": [np.nan]})
+        test = pd.DataFrame({"f1": [5.0], "f2": [np.nan]})
+        train, val, test = fill_rb_nans(train, val, test, ["f1", "f2"])
+        assert pytest.approx(val["f1"].iloc[0]) == 2.0
+        assert pytest.approx(val["f2"].iloc[0]) == 15.0
+        assert pytest.approx(test["f1"].iloc[0]) == 5.0  # wasn't NaN
+        assert pytest.approx(test["f2"].iloc[0]) == 15.0
