@@ -8,7 +8,7 @@
 
 **Goal:** Build a machine learning system that predicts weekly fantasy football points (PPR scoring) for NFL skill-position players (QB, RB, WR, TE), comparing a Linear Regression baseline against a custom PyTorch neural network.
 
-**Data source:** `nfl_data_py` (Python wrapper for nflverse), pulling weekly player stats, roster data, and schedule data from the 2018–2025 NFL seasons.
+**Data source:** `nfl_data_py` (Python wrapper for nflverse), pulling weekly player stats, roster data, and schedule data from the 2018–2024 NFL seasons.
 
 **Core question:** Can a neural network with engineered temporal features meaningfully outperform linear regression at predicting weekly fantasy output, and what features matter most?
 
@@ -136,7 +136,7 @@ All magic numbers live here. Nothing is hardcoded in other files.
 
 ```python
 # Key constants to define:
-SEASONS = list(range(2018, 2026))       # nfl_data_py seasons to pull
+SEASONS = list(range(2018, 2025))       # nfl_data_py seasons to pull (2018-2024)
 POSITIONS = ["QB", "RB", "WR", "TE"]
 SCORING = {"passing_yards": 0.04, "passing_tds": 4, "interceptions": -2,
            "rushing_yards": 0.1, "rushing_tds": 6,
@@ -167,11 +167,12 @@ NN_PATIENCE = 15                        # early stopping
 
 ```python
 # Responsibilities:
-# 1. Pull weekly player stats via nfl_data_py.import_weekly_data(SEASONS)
+# 1. Pull weekly player stats via nfl_data_py.import_weekly_data(SEASONS)  # 2018-2024
 # 2. Pull roster data via nfl_data_py.import_rosters(SEASONS) for position info
 # 3. Pull schedule/game data via nfl_data_py.import_schedules(SEASONS) for opponent info
-# 4. Merge into a single player-week DataFrame
-# 5. Cache to data/raw/ as parquet to avoid re-pulling
+# 4. Pull snap counts via nfl_data_py.import_snap_counts(SEASONS) for snap_pct
+# 5. Merge into a single player-week DataFrame
+# 6. Cache to data/raw/ as parquet to avoid re-pulling
 #
 # Key function signatures:
 #   load_raw_data(seasons, cache_dir) -> pd.DataFrame
@@ -186,7 +187,9 @@ NN_PATIENCE = 15                        # early stopping
 - `import_snap_counts()` gives snap count and snap percentage — very useful feature
 
 **Snap count integration:**
-- Merge snap counts on (`player_id`, `season`, `week`) — these are the join keys
+- `import_snap_counts()` uses `pfr_player_id` (Pro Football Reference ID), NOT the GSIS `player_id` used in weekly data. These are different ID systems.
+- Merge strategy: use `pfr_player_id` if roster data provides it, otherwise fall back to name + team + season + week matching
+- After merge, rename `offense_pct` → `snap_pct`
 - If snap count data is unavailable for certain seasons/weeks, fill `snap_pct` with NaN (handled in preprocessing)
 
 **Fantasy point computation — fumble column mapping:**
@@ -253,12 +256,12 @@ This is the most critical module. The model is only as good as its features.
 # Key stats to roll: fantasy_points, targets, receptions, carries,
 #                     rushing_yards, receiving_yards, passing_yards, snap_pct
 #
-# === USAGE / OPPORTUNITY FEATURES ===
-#   - target_share:      player_targets / team_total_targets (last w weeks)
-#   - carry_share:       player_carries / team_total_carries
-#   - snap_pct:          from snap count data (direct feature)
-#   - air_yards_share:   player_air_yards / team_air_yards
-#   - redzone_targets_share: (if available in data)
+# === USAGE / OPPORTUNITY FEATURES (5-week rolling shares) ===
+#   - target_share:      rolling_sum(player_targets, L5) / rolling_sum(team_targets, L5), shifted
+#   - carry_share:       rolling_sum(player_carries, L5) / rolling_sum(team_carries, L5), shifted
+#   - snap_pct:          from snap count data (direct feature, not derived)
+#   - air_yards_share:   rolling_sum(player_air_yards, L5) / rolling_sum(team_air_yards, L5), shifted
+#   - redzone_targets_share: same rolling pattern (if column available, else fill 0)
 #
 # === MATCHUP / OPPONENT FEATURES ===
 #   - opp_fantasy_pts_allowed_to_pos: rolling average of fantasy points the
@@ -278,28 +281,41 @@ This is the most critical module. The model is only as good as its features.
 # === TEAM-LEVEL AGGREGATION (for share features) ===
 # 1. Group by (recent_team, season, week) and sum targets, carries, air_yards
 # 2. Merge team totals back to player rows
-# 3. Compute share = player_stat / team_total_stat
-# 4. IMPORTANT: Team totals must also use shift(1) to avoid leakage —
-#    use rolling team totals from prior weeks, not current week
+# 3. Compute 5-week rolling sums for BOTH player and team stats (shifted)
+# 4. Share = player_rolling_sum / team_rolling_sum
+# 5. IMPORTANT: Both numerator and denominator use shift(1) + rolling to
+#    prevent leakage from the current week. Handle 0/0 by filling with 0.
 #
-# === OPPONENT FEATURE PIPELINE ===
+# === OPPONENT FEATURE PIPELINE (leakage-safe) ===
 # 1. From schedule data, get each team's opponent for each week
 # 2. Merge opponent info onto player rows (via player's team + week)
-# 3. Compute: for each (team, position, week), sum fantasy points allowed
-# 4. Rolling mean over last 5 weeks of opponent's points allowed to position
-# 5. Also compute rank (1 = most points allowed = best matchup for offense)
-# 6. Join back to player rows by (opponent_team, position, week)
+# 3. Compute: for each (team_as_defense, position, week), sum fantasy points
+#    that opposing players of that position scored against them
+# 4. shift(1) the defense stats per (team, position) BEFORE rolling —
+#    this ensures week W's matchup feature does NOT include week W's game
+# 5. Rolling 5-week mean of the shifted defense stats
+# 6. Rank within each week (1 = most points allowed = best matchup)
+# 7. Join back to player rows by (opponent_team, position, week)
 #
 # === CRITICAL IMPLEMENTATION NOTES ===
+# 0. SORT the DataFrame by (player_id, season, week) before any rolling
+#    operations. Unsorted data causes shift(1) to return wrong rows.
 # 1. ALL rolling features must use .shift(1) before .rolling() to prevent
 #    data leakage — you cannot use the current week's stats to predict
 #    the current week's points.
-# 2. The first few weeks of each season will have NaN rolling features.
+# 2. Rolling operations MUST stay within player groups. Use
+#    df.groupby("player_id")[stat].transform(lambda x: x.shift(1).rolling(...))
+#    NOT: groupby().shift() followed by bare .rolling() — the latter rolls
+#    across adjacent players' rows, silently corrupting all features.
+# 3. rolling std with min_periods=1 still returns NaN for single observations
+#    (std of one value is undefined). First row per player per season will
+#    have NaN for all 24 std features. Handled by NaN filling strategy.
+# 4. The first few weeks of each season will have NaN rolling features.
 #    Strategy: fill with the player's full prior season mean where available,
 #    then fill remaining NaNs with position-level mean from the training set,
 #    then fill any still-remaining NaNs with 0.
-# 3. Group all rolling computations by player_id.
-# 4. Rookies in test season: no prior season data → use position-level
+# 5. Group all rolling computations by player_id.
+# 6. Rookies in test season: no prior season data → use position-level
 #    training set averages for all rolling features.
 #
 # === EXPECTED FEATURE COUNT ===
@@ -348,11 +364,14 @@ This is the most critical module. The model is only as good as its features.
 # Wrap in a class with .fit(X_train, y_train) and .predict(X) interface.
 # Store the fitted scaler for use by the neural net too (shared preprocessing).
 #
-# Scaler sharing details:
-#   - Fit StandardScaler on TRAINING data only
-#   - Save fitted scaler to outputs/models/scaler.pkl via joblib
-#   - Neural net loads this same scaler for its input preprocessing
+# Scaler sharing — the pipeline (run_pipeline.py) owns the scaling step:
+#   1. RidgeModel.fit() internally fits a StandardScaler on training data
+#   2. After fitting Ridge, the pipeline extracts the scaler: ridge_model.scaler
+#   3. The pipeline uses this scaler to transform train/val/test data for the NN
+#   4. The NN Trainer receives PRE-SCALED numpy arrays — it has no scaler awareness
+#   5. Save fitted scaler to outputs/models/scaler.pkl via joblib (for inference)
 #   - This ensures identical feature scaling across models for fair comparison
+#   - The Trainer class does NOT handle scaling — the pipeline does
 #
 # Also extract and save .coef_ for feature importance analysis.
 ```
@@ -457,6 +476,8 @@ This is the most critical module. The model is only as good as its features.
 #   1. Use model to predict fantasy points for all players
 #   2. "Draft" the optimal starting lineup based on predictions:
 #      - 1 QB, 2 RB, 2 WR, 1 TE, 1 FLEX (best remaining RB/WR/TE)
+#      - Fill positions greedily in order: QB → RB → WR → TE → FLEX
+#        (FLEX is filled last from remaining RB/WR/TE pool)
 #   3. Score the drafted lineup using ACTUAL points
 #   4. Compare against:
 #      a. Oracle lineup (best possible lineup with perfect knowledge)
@@ -465,9 +486,12 @@ This is the most critical module. The model is only as good as its features.
 #      d. Neural net-drafted lineup
 #
 # Missing predictions handling:
-#   - Players with insufficient rolling history for a prediction:
-#     fall back to the baseline (season average) prediction
-#   - This ensures all active players are available for lineup selection
+#   - After the 3-stage NaN filling strategy (player prior season mean →
+#     position training set mean → zero), ALL feature columns are populated.
+#     Ridge/NN models will produce predictions for every player.
+#   - For players with mostly zero-filled features (e.g., rookies with no
+#     prior data), model predictions may be unreliable but are still produced.
+#   - No fallback mechanism is needed — all active players get a prediction.
 #
 # Output metrics:
 #   - Total season points scored per strategy
@@ -569,10 +593,12 @@ This is the most critical module. The model is only as good as its features.
 # 2. PREPROCESS: preprocessing.preprocess(raw_df)
 # 3. FEATURES:  engineer.build_features(clean_df)
 # 4. SPLIT:     split.temporal_split(featured_df, ...)
-# 5. SCALE:     StandardScaler fit on train, transform all
-# 6. BASELINE:  Evaluate SeasonAverageBaseline and LastWeekBaseline
-# 7. LINEAR:    Fit Ridge, evaluate, save model + feature importances
-# 8. NEURAL:    Train FantasyPointsNet, evaluate, save model + training curves
+# 5. BASELINE:  Evaluate SeasonAverageBaseline and LastWeekBaseline
+#               (baselines operate on unscaled DataFrames with fantasy_points column)
+# 6. LINEAR:    Fit Ridge (internally fits StandardScaler), evaluate, save model
+# 7. SCALE:     Extract scaler from Ridge (ridge_model.scaler), use it to
+#               transform train/val/test feature arrays for the neural net
+# 8. NEURAL:    Train FantasyPointsNet on pre-scaled arrays, evaluate, save model
 # 9. COMPARE:   Side-by-side metrics table (all 4 approaches)
 # 10. BACKTEST:  Run fantasy draft simulation
 # 11. SAVE:      All figures, metrics, and model artifacts to outputs/
@@ -776,6 +802,8 @@ Follow this order to ensure each step can be validated before moving on:
 - **Injured players:** Players who are active but leave early will have low stats. This is inherently unpredictable and should appear in error analysis as a known failure mode.
 - **Rookies in test season:** Rookies in 2024 have no prior-season data. Fill their rolling features with positional averages. Flag this in error analysis.
 - **Week 1 of each season:** No in-season rolling features exist. Use prior season averages as fallback.
+- **Players changing positions mid-career:** Some players (e.g., Taysom Hill) appear as QB in some weeks and TE in others. Use the roster-based position (from `import_rosters()`) which is the season-level designation. If a player's position differs between seasons, use the most recent season's roster position. Do not use weekly position labels.
+- **Snap count data coverage:** `nfl_data_py.import_snap_counts()` may not cover all seasons (earlier seasons may lack data). If snap counts are unavailable for certain seasons, `snap_pct` will be NaN for those rows — handled by the position-median fill in preprocessing.
 
 ---
 

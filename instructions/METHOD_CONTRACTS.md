@@ -17,6 +17,7 @@ import nfl_data_py as nfl
 
 # 1. Weekly player stats — primary data source
 weekly = nfl.import_weekly_data(seasons)
+# Seasons: 2018-2024 (must match config.SEASONS)
 # Columns: player_id, player_name, position, recent_team, season, week,
 #   completions, attempts, passing_yards, passing_tds, interceptions,
 #   carries, rushing_yards, rushing_tds, receptions, targets,
@@ -35,8 +36,14 @@ schedules = nfl.import_schedules(seasons)
 
 # 4. Snap counts — snap percentage feature
 snap_counts = nfl.import_snap_counts(seasons)
-# Columns: player (name), team, season, week, offense_snaps, offense_pct, ...
-# Merge on player_id + season + week (may need name-based matching fallback)
+# Columns: pfr_player_id, player, team, season, week, offense_snaps, offense_pct, ...
+# WARNING: snap_counts uses pfr_player_id (Pro Football Reference ID), NOT
+# the GSIS player_id used in weekly data. Merge strategy:
+#   a. Try merge on (pfr_player_id) if rosters provide a pfr_player_id column
+#   b. Fallback: merge on (player [name], team, season, week) — less reliable
+#      due to name formatting differences (e.g., "Jr." vs "Jr")
+#   c. Use fuzzy name matching or a manual mapping table as last resort
+# After merge, rename offense_pct → snap_pct for consistency
 ```
 
 **Merge strategy:**
@@ -68,28 +75,45 @@ snap_counts = nfl.import_snap_counts(seasons)
 | snap_pct | float | Offensive snap percentage (0-100) |
 
 **Caching:**
-- `data/raw/weekly_2018_2025.parquet`
-- `data/raw/rosters_2018_2025.parquet`
-- `data/raw/schedules_2018_2025.parquet`
-- `data/raw/snap_counts_2018_2025.parquet`
+- `data/raw/weekly_2018_2024.parquet`
+- `data/raw/rosters_2018_2024.parquet`
+- `data/raw/schedules_2018_2024.parquet`
+- `data/raw/snap_counts_2018_2024.parquet`
 - Check `os.path.exists()` before pulling; delete file to force refresh
 
-#### `compute_fantasy_points(df: pd.DataFrame, scoring: dict) -> pd.Series`
+#### `compute_fantasy_points(df: pd.DataFrame, scoring: dict = None) -> pd.Series`
 
-**Exact column mapping:**
+**Uses `config.SCORING` dict — no hardcoded weights.**
+
 ```python
-# Standard PPR scoring
-fantasy_points = (
-    df["passing_yards"].fillna(0) * 0.04 +
-    df["passing_tds"].fillna(0) * 4 +
-    df["interceptions"].fillna(0) * -2 +
-    df["rushing_yards"].fillna(0) * 0.1 +
-    df["rushing_tds"].fillna(0) * 6 +
-    df["receptions"].fillna(0) * 1 +
-    df["receiving_yards"].fillna(0) * 0.1 +
-    df["receiving_tds"].fillna(0) * 6 +
-    (df["sack_fumbles_lost"].fillna(0) + df["rushing_fumbles_lost"].fillna(0)) * -2
-)
+from src.config import SCORING
+
+def compute_fantasy_points(df, scoring=None):
+    if scoring is None:
+        scoring = SCORING
+
+    # Map config keys to DataFrame columns.
+    # "fumbles_lost" is a virtual key: sum of sack_fumbles_lost + rushing_fumbles_lost
+    col_map = {
+        "passing_yards": "passing_yards",
+        "passing_tds": "passing_tds",
+        "interceptions": "interceptions",
+        "rushing_yards": "rushing_yards",
+        "rushing_tds": "rushing_tds",
+        "receptions": "receptions",
+        "receiving_yards": "receiving_yards",
+        "receiving_tds": "receiving_tds",
+    }
+
+    fantasy_points = pd.Series(0.0, index=df.index)
+    for key, weight in scoring.items():
+        if key == "fumbles_lost":
+            # Special case: sum all *_fumbles_lost columns
+            val = df["sack_fumbles_lost"].fillna(0) + df["rushing_fumbles_lost"].fillna(0)
+        else:
+            val = df[col_map[key]].fillna(0)
+        fantasy_points += val * weight
+    return fantasy_points
 ```
 
 ---
@@ -151,38 +175,64 @@ For each combination of stat × window × aggregation:
 **Naming convention:** `rolling_{agg}_{stat}_L{window}`
 - Example: `rolling_mean_fantasy_points_L3`, `rolling_std_targets_L5`, `rolling_max_rushing_yards_L8`
 
-**Code pattern (critical — prevents leakage):**
+**PREREQUISITE:** DataFrame must be sorted by `(player_id, season, week)` before any rolling operations. Unsorted data causes `shift(1)` to return the wrong row.
+
 ```python
-# Group by player, shift(1) FIRST, then rolling
+df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
+```
+
+**Code pattern (critical — prevents leakage AND cross-player bleed):**
+```python
+# Group by player, shift(1) FIRST, then rolling — MUST re-group for rolling
+# to prevent the rolling window from mixing adjacent players' rows.
 for stat in ROLL_STATS:
     for window in ROLLING_WINDOWS:
-        shifted = df.groupby("player_id")[stat].shift(1)
-        df[f"rolling_mean_{stat}_L{window}"] = shifted.rolling(window, min_periods=1).mean()
-        df[f"rolling_std_{stat}_L{window}"]  = shifted.rolling(window, min_periods=1).std()
-        df[f"rolling_max_{stat}_L{window}"]  = shifted.rolling(window, min_periods=1).max()
+        df[f"rolling_mean_{stat}_L{window}"] = df.groupby("player_id")[stat].transform(
+            lambda x: x.shift(1).rolling(window, min_periods=1).mean()
+        )
+        df[f"rolling_std_{stat}_L{window}"] = df.groupby("player_id")[stat].transform(
+            lambda x: x.shift(1).rolling(window, min_periods=1).std()
+        )
+        df[f"rolling_max_{stat}_L{window}"] = df.groupby("player_id")[stat].transform(
+            lambda x: x.shift(1).rolling(window, min_periods=1).max()
+        )
+# NOTE: rolling std with min_periods=1 returns NaN for single observations
+# (std of one value is undefined). The first valid row per player per season
+# will have NaN for all std features. This is handled by the NaN filling strategy.
 ```
 
 ##### Share / Usage Features (5 features)
 
 | Feature | Formula | Notes |
 |---------|---------|-------|
-| `target_share` | player_targets / team_targets (rolling, shifted) | Team totals from groupby(recent_team, season, week) |
-| `carry_share` | player_carries / team_carries (rolling, shifted) | Same team groupby |
+| `target_share` | rolling_sum(player_targets, L5) / rolling_sum(team_targets, L5), both shifted | 5-week rolling share; see code pattern below |
+| `carry_share` | rolling_sum(player_carries, L5) / rolling_sum(team_carries, L5), both shifted | Same rolling pattern as target_share |
 | `snap_pct` | Direct from data (already exists) | Not a derived feature |
-| `air_yards_share` | player_air_yards / team_air_yards (rolling, shifted) | If column available |
-| `redzone_targets_share` | player_rz_targets / team_rz_targets (rolling, shifted) | If column available; fill 0 if not |
+| `air_yards_share` | rolling_sum(player_air_yards, L5) / rolling_sum(team_air_yards, L5), both shifted | If column available |
+| `redzone_targets_share` | rolling_sum(player_rz_targets, L5) / rolling_sum(team_rz_targets, L5), both shifted | If column available; fill 0 if not |
 
-**Team-level aggregation pattern:**
+**Team-level aggregation pattern (rolling, not single-week):**
 ```python
 # Compute team totals per week
 team_totals = df.groupby(["recent_team", "season", "week"])["targets"].sum().reset_index()
 team_totals.rename(columns={"targets": "team_targets"}, inplace=True)
 
-# Merge back, then shift and compute share
+# Merge back to player rows
 df = df.merge(team_totals, on=["recent_team", "season", "week"], how="left")
-df["team_targets_shifted"] = df.groupby("player_id")["team_targets"].shift(1)
-df["player_targets_shifted"] = df.groupby("player_id")["targets"].shift(1)
-df["target_share"] = df["player_targets_shifted"] / df["team_targets_shifted"]
+
+# Rolling share over last 5 weeks (shifted to prevent leakage)
+# Player's rolling targets / team's rolling targets — both shifted and rolled
+df["player_targets_roll"] = df.groupby("player_id")["targets"].transform(
+    lambda x: x.shift(1).rolling(5, min_periods=1).sum()
+)
+df["team_targets_roll"] = df.groupby("player_id")["team_targets"].transform(
+    lambda x: x.shift(1).rolling(5, min_periods=1).sum()
+)
+df["target_share"] = df["player_targets_roll"] / df["team_targets_roll"]
+df["target_share"] = df["target_share"].fillna(0)  # handle 0/0 cases
+
+# Clean up intermediate columns
+df.drop(columns=["team_targets", "player_targets_roll", "team_targets_roll"], inplace=True)
 ```
 
 ##### Matchup / Opponent Features (2 features)
@@ -192,13 +242,32 @@ df["target_share"] = df["player_targets_shifted"] / df["team_targets_shifted"]
 | `opp_fantasy_pts_allowed_to_pos` | 5-week rolling mean of fantasy points the opponent defense allowed to this position |
 | `opp_def_rank_vs_pos` | Rank of opponent (1 = most points allowed = best matchup for offense) |
 
-**Pipeline:**
+**Pipeline (leakage-safe — defense stats use only prior weeks):**
 1. From `schedules`, determine each team's opponent for each week
 2. Merge opponent onto player rows: `df["opponent"] = lookup(recent_team, season, week)`
-3. Compute defense stats: for each (team_as_defense, position, week), sum fantasy points scored against them
-4. Rolling 5-week mean (shifted) of points allowed per position
-5. Rank within each week (1 = most points allowed)
+3. Compute defense stats: for each (team_as_defense, position, week), sum the
+   fantasy points scored AGAINST that defense by that position in that week.
+   This uses actual fantasy_points from the offensive players who faced them.
+4. **CRITICAL:** shift(1) the defense stats per (team_as_defense, position) BEFORE
+   rolling — this ensures week W's defense stat does NOT include week W's game.
+   Then compute 5-week rolling mean of the shifted values.
+5. Rank within each week across all teams (1 = most points allowed = best matchup)
 6. Join back to player rows on (opponent, position, week)
+
+```python
+# Step 3-4 detail:
+# def_pts = points scored AGAINST each defense, per position, per week
+def_pts = df.groupby(["opponent", "position", "season", "week"])["fantasy_points"].sum().reset_index()
+def_pts.rename(columns={"fantasy_points": "pts_allowed_to_pos"}, inplace=True)
+
+# Shift FIRST (so week W doesn't include week W), then rolling mean
+def_pts = def_pts.sort_values(["opponent", "position", "season", "week"])
+def_pts["opp_fantasy_pts_allowed_to_pos"] = def_pts.groupby(
+    ["opponent", "position"]
+)["pts_allowed_to_pos"].transform(
+    lambda x: x.shift(1).rolling(5, min_periods=1).mean()
+)
+```
 
 ##### Contextual Features (4 features)
 
@@ -209,6 +278,17 @@ df["target_share"] = df["player_targets_shifted"] / df["team_targets_shifted"]
 | `season_games_played` | int | Cumulative count of games for this player this season |
 | `days_rest` | int | Days since player's last game (7 = normal, 14 = post-bye) |
 
+**`days_rest` derivation (requires schedule data):**
+```python
+# 1. From schedules, extract game dates: (season, week, home_team, away_team, gameday)
+# 2. Melt to one row per (team, season, week, gameday):
+#    home rows + away rows → each team has a gameday per week
+# 3. Merge onto player rows via (recent_team, season, week) → adds gameday
+# 4. Sort by (player_id, season, week), then compute:
+#    df["days_rest"] = df.groupby("player_id")["gameday"].diff().dt.days
+# 5. Fill NaN (week 1 / first appearance) with 7 (assume normal rest)
+```
+
 ##### Position Encoding (4 features)
 
 One-hot: `pos_QB`, `pos_RB`, `pos_WR`, `pos_TE` (using `pd.get_dummies`)
@@ -217,7 +297,28 @@ One-hot: `pos_QB`, `pos_RB`, `pos_WR`, `pos_TE` (using `pd.get_dummies`)
 
 #### `get_feature_columns() -> list[str]`
 
-Returns the ordered list of all 87 feature column names. Used by models to select input columns from the DataFrame.
+**Dynamically generates** the ordered list of all feature column names based on
+`config.ROLL_STATS`, `config.ROLLING_WINDOWS`, and `config.ROLL_AGGS`. Do NOT
+hardcode the list — it must stay in sync with `build_features()` automatically.
+
+```python
+def get_feature_columns() -> list[str]:
+    cols = []
+    # Rolling features
+    for stat in ROLL_STATS:
+        for window in ROLLING_WINDOWS:
+            for agg in ROLL_AGGS:
+                cols.append(f"rolling_{agg}_{stat}_L{window}")
+    # Share features
+    cols += ["target_share", "carry_share", "snap_pct", "air_yards_share", "redzone_targets_share"]
+    # Matchup features
+    cols += ["opp_fantasy_pts_allowed_to_pos", "opp_def_rank_vs_pos"]
+    # Contextual features
+    cols += ["is_home", "week", "season_games_played", "days_rest"]
+    # Position encoding
+    cols += ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]
+    return cols
+```
 
 #### NaN Filling Strategy
 
@@ -248,11 +349,19 @@ for col in feature_columns:
 
 ```python
 class SeasonAverageBaseline:
-    """Predict each player's expanding season-to-date average fantasy points."""
+    """Predict each player's expanding season-to-date average fantasy points.
+
+    NOTE: This baseline requires the 'fantasy_points' column in df to compute
+    predictions (it uses prior weeks' actual points). This is valid for
+    backtesting — it simulates a fantasy manager who knows historical scores
+    but not the current week's outcome. The predict() method uses only data
+    available BEFORE each week (via shift + expanding mean).
+    """
 
     def predict(self, df: pd.DataFrame) -> np.ndarray:
         # For each row, compute the mean of fantasy_points for that player
         # in that season, using only PRIOR weeks (shift + expanding mean)
+        # df MUST be sorted by (player_id, season, week)
         # Returns: array of predictions, same length as df
         pass
 ```
@@ -325,7 +434,9 @@ class FantasyPointsNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Pass through all hidden blocks
-        # Return shape: (batch_size, 1) or (batch_size,)
+        # Final linear outputs (batch_size, 1) — squeeze to (batch_size,)
+        # MUST squeeze so shape matches y tensors in MSELoss.
+        # return self.net(x).squeeze(-1)  # shape: (batch_size,)
         pass
 ```
 
@@ -334,8 +445,10 @@ class FantasyPointsNet(nn.Module):
 Input (~87) → Linear(87, 128) → BatchNorm(128) → ReLU → Dropout(0.3)
            → Linear(128, 64)  → BatchNorm(64)  → ReLU → Dropout(0.3)
            → Linear(64, 32)   → BatchNorm(32)  → ReLU → Dropout(0.3)
-           → Linear(32, 1)    → Output (predicted fantasy points)
+           → Linear(32, 1)    → squeeze(-1)    → Output shape: (batch_size,)
 ```
+
+**Output shape contract:** `forward()` returns shape `(batch_size,)` after squeezing, matching the shape of `y` tensors passed to `MSELoss`. Without squeezing, the `(batch_size, 1)` vs `(batch_size,)` mismatch causes silent broadcasting bugs in loss computation.
 
 **Optimizer and loss:**
 ```python
@@ -344,6 +457,11 @@ criterion = nn.MSELoss()
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, mode="min", patience=5, factor=0.5
 )
+# Interaction with early stopping: LR scheduler patience (5) < early stopping
+# patience (15). The LR will halve up to ~3 times before early stopping fires.
+# With factor=0.5 applied 3x, LR drops to 1/8 of initial (1e-3 → 1.25e-4).
+# This is intentional: give the model a chance to escape plateaus via LR
+# reduction before giving up entirely.
 ```
 
 ---
@@ -401,6 +519,14 @@ class Trainer:
 
 ```python
 def make_dataloaders(X_train, y_train, X_val, y_val, batch_size=256):
+    """
+    Expects PRE-SCALED numpy arrays. The pipeline (run_pipeline.py) is
+    responsible for scaling using the scaler fitted by RidgeModel:
+        scaler = ridge_model.scaler
+        X_train_scaled = scaler.transform(X_train)
+        X_val_scaled = scaler.transform(X_val)
+    Do NOT fit a second scaler here.
+    """
     train_ds = TensorDataset(torch.FloatTensor(X_train), torch.FloatTensor(y_train))
     val_ds   = TensorDataset(torch.FloatTensor(X_val),   torch.FloatTensor(y_val))
 
@@ -477,6 +603,15 @@ def run_backtest(test_df: pd.DataFrame, models_dict: dict) -> dict:
     Lineup format (best-ball):
         1 QB, 2 RB, 2 WR, 1 TE, 1 FLEX (best remaining RB/WR/TE)
         Pick best available per position from FULL player pool each week.
+
+    Position filling order (deterministic):
+        1. For each week, sort all players by predicted points descending
+        2. Fill positional slots greedily in order: QB → RB → WR → TE
+           (take top-N by predicted points for each position)
+        3. Fill FLEX last: from remaining (unselected) RB/WR/TE players,
+           take the single highest predicted scorer
+        This order matters — filling FLEX last ensures positional slots
+        get priority, and FLEX is truly the best remaining player.
 
     Returns:
         {
@@ -559,7 +694,7 @@ Complete list of all configurable values:
 
 ```python
 # === Data ===
-SEASONS = list(range(2018, 2026))
+SEASONS = list(range(2018, 2025))  # 2018-2024 only — must match union of split seasons
 POSITIONS = ["QB", "RB", "WR", "TE"]
 MIN_GAMES_PER_SEASON = 6
 CACHE_DIR = "data/raw"
