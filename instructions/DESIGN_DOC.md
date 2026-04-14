@@ -150,6 +150,23 @@ TEST_SEASONS  = [2024]                   # 2024
 
 # Rolling feature windows
 ROLLING_WINDOWS = [3, 5, 8]             # weeks lookback
+ROLL_STATS = [                           # stats to compute rolling features for
+    "fantasy_points", "fantasy_points_floor", "targets", "receptions",
+    "carries", "rushing_yards", "receiving_yards", "passing_yards",
+    "attempts", "snap_pct",
+]
+ROLL_AGGS = ["mean", "std", "max"]
+
+# EWMA (exponentially weighted moving averages)
+EWMA_STATS = ["fantasy_points", "targets", "carries", "receiving_yards",
+              "rushing_yards", "passing_yards", "snap_pct"]
+EWMA_SPANS = [3, 5]
+
+# Trend/momentum
+TREND_STATS = ["fantasy_points", "targets", "carries", "snap_pct"]
+
+# Share features (multi-window)
+SHARE_WINDOWS = [3, 5]
 
 # Neural net defaults
 NN_HIDDEN_LAYERS = [128, 64, 32]
@@ -213,9 +230,14 @@ NN_PATIENCE = 15                        # early stopping
 # 3. Handle missing values:
 #    - Statistical columns: fill with 0 (player didn't record that stat)
 #    - Snap percentage: fill with position median for that week
-# 4. Remove partial-season players (< 6 games in a season) to ensure
-#    enough history for rolling features
-# 5. Compute target variable: fantasy_points using config.SCORING
+# 4. Compute target variable: fantasy_points using config.SCORING
+# 5. Compute fantasy_points_floor (yardage + receptions only, no TDs)
+#
+# NOTE: The min-games filter (< 6 games/season) is NOT applied here.
+# It is deferred to build_features() AFTER team totals are computed,
+# so that fringe players' stats contribute to correct team denominators
+# for share features. Filtering before team totals would inflate
+# target_share and carry_share for remaining players.
 #
 # Key function:
 #   preprocess(raw_df) -> pd.DataFrame
@@ -247,32 +269,52 @@ NN_PATIENCE = 15                        # early stopping
 This is the most critical module. The model is only as good as its features.
 
 ```python
-# === PLAYER ROLLING FEATURES (per player, per window in ROLLING_WINDOWS) ===
+# === PLAYER ROLLING FEATURES (per player, per season, per window) ===
 # For each stat and window w, compute using ONLY past data (shift(1) before rolling):
 #   - rolling_mean_{stat}_L{w}       (e.g., rolling_mean_fantasy_points_L3)
 #   - rolling_std_{stat}_L{w}        (volatility / consistency)
 #   - rolling_max_{stat}_L{w}        (ceiling indicator)
+#   - rolling_min_fantasy_points_L{w} (floor indicator — fantasy_points only)
 #
-# Key stats to roll: fantasy_points, targets, receptions, carries,
-#                     rushing_yards, receiving_yards, passing_yards, snap_pct
+# Key stats to roll: fantasy_points, fantasy_points_floor, targets, receptions,
+#                     carries, rushing_yards, receiving_yards, passing_yards,
+#                     attempts (passing_attempts), snap_pct
+# NOTE: "attempts" added for QB volume signal; "fantasy_points_floor" separates
+#       stable yardage production from volatile TD-dependent upside.
 #
-# === USAGE / OPPORTUNITY FEATURES (5-week rolling shares) ===
-#   - target_share:      rolling_sum(player_targets, L5) / rolling_sum(team_targets, L5), shifted
-#   - carry_share:       rolling_sum(player_carries, L5) / rolling_sum(team_carries, L5), shifted
+# === PRIOR-SEASON SUMMARY FEATURES ===
+# Per-player, per-season aggregates (mean/std/max) shifted by 1 season.
+# Provides stable signal for early-season weeks where within-season
+# rolling features are NaN. Also captures offseason changes in role.
+#
+# === EWMA FEATURES (exponentially weighted moving averages) ===
+# Recency-weighted averages with spans [3, 5] for key stats.
+# Weight recent games more heavily — a player who scored 25 last week
+# is more likely to score well than one who scored 25 three weeks ago.
+#
+# === TREND / MOMENTUM FEATURES ===
+# trend_{stat} = rolling_mean_L3 - rolling_mean_L8
+# Positive = player trending up (breakout signal); negative = declining.
+#
+# === USAGE / OPPORTUNITY FEATURES (multi-window rolling shares) ===
+#   - target_share_L3, target_share_L5: multi-window to distinguish
+#     recent usage breakouts from stable workload
+#   - carry_share_L3, carry_share_L5: same pattern
 #   - snap_pct:          from snap count data (direct feature, not derived)
-#   - air_yards_share:   rolling_sum(player_air_yards, L5) / rolling_sum(team_air_yards, L5), shifted
-#   - redzone_targets_share: same rolling pattern (if column available, else fill 0)
+#   - air_yards_share:   rolling_sum(player_air_yards, L5) / team, shifted
+#   NOTE: Share features use stint-aware grouping to handle mid-season trades.
 #
 # === MATCHUP / OPPONENT FEATURES ===
-#   - opp_fantasy_pts_allowed_to_pos: rolling average of fantasy points the
+#   - opp_fantasy_pts_allowed_to_pos: rolling average of total fantasy points the
 #     upcoming opponent has allowed to this position over last 5 weeks
-#     (e.g., "how many PPR points have the Cowboys allowed to WRs recently?")
-#   - opp_def_rank_vs_pos: rank version of the above (1 = worst D = best matchup)
+#   - opp_rush_pts_allowed_to_pos: rushing-only fantasy points allowed (rush yds + rush TDs)
+#   - opp_recv_pts_allowed_to_pos: receiving-only fantasy points allowed (recv yds + recv TDs + receptions)
+#   - opp_def_rank_vs_pos: rank version of total (1 = worst D = best matchup)
 #
 # === CONTEXTUAL FEATURES ===
 #   - is_home:           binary, home vs away
 #   - week:              integer 1-18 (captures early/late season patterns)
-#   - season_games_played: cumulative games for this player this season
+#   - is_returning_from_absence: binary, did player miss 1+ games before this week
 #   - days_rest:         days since last game (bye week detection)
 #
 # === POSITION ENCODING ===
@@ -280,10 +322,14 @@ This is the most critical module. The model is only as good as its features.
 #
 # === TEAM-LEVEL AGGREGATION (for share features) ===
 # 1. Group by (recent_team, season, week) and sum targets, carries, air_yards
+#    — computed BEFORE min-games filter so fringe players' stats are included
 # 2. Merge team totals back to player rows
-# 3. Compute 5-week rolling sums for BOTH player and team stats (shifted)
-# 4. Share = player_rolling_sum / team_rolling_sum
-# 5. IMPORTANT: Both numerator and denominator use shift(1) + rolling to
+# 3. Apply min-games filter AFTER team totals are computed
+# 4. Detect mid-season team changes, create stint_id per (player_id, season)
+# 5. Compute multi-window rolling sums for BOTH player and team stats (shifted)
+#    using (player_id, season, stint_id) grouping for trade safety
+# 6. Share = player_rolling_sum / team_rolling_sum
+# 7. IMPORTANT: Both numerator and denominator use shift(1) + rolling to
 #    prevent leakage from the current week. Handle 0/0 by filling with 0.
 #
 # === OPPONENT FEATURE PIPELINE (leakage-safe) ===
@@ -303,28 +349,43 @@ This is the most critical module. The model is only as good as its features.
 # 1. ALL rolling features must use .shift(1) before .rolling() to prevent
 #    data leakage — you cannot use the current week's stats to predict
 #    the current week's points.
-# 2. Rolling operations MUST stay within player groups. Use
-#    df.groupby("player_id")[stat].transform(lambda x: x.shift(1).rolling(...))
-#    NOT: groupby().shift() followed by bare .rolling() — the latter rolls
-#    across adjacent players' rows, silently corrupting all features.
+# 2. Rolling operations MUST stay within (player_id, season) groups. Use
+#    df.groupby(["player_id", "season"])[stat].transform(lambda x: x.shift(1).rolling(...))
+#    Grouping by player_id alone causes cross-season contamination:
+#    shift(1) on Week 1 of 2020 would return Week 17 of 2019, bridging
+#    the 4-8 month offseason gap with stale data from potentially
+#    different teams, coaches, and schemes.
+#    Also do NOT use: groupby().shift() followed by bare .rolling() —
+#    the latter rolls across adjacent players' rows.
 # 3. rolling std with min_periods=1 still returns NaN for single observations
 #    (std of one value is undefined). First row per player per season will
-#    have NaN for all 24 std features. Handled by NaN filling strategy.
+#    have NaN for all std features. Handled by fill_nans_safe().
 # 4. The first few weeks of each season will have NaN rolling features.
-#    Strategy: fill with the player's full prior season mean where available,
-#    then fill remaining NaNs with position-level mean from the training set,
-#    then fill any still-remaining NaNs with 0.
-# 5. Group all rolling computations by player_id.
-# 6. Rookies in test season: no prior season data → use position-level
-#    training set averages for all rolling features.
+#    Explicit prior-season summary features (mean/std/max per player per
+#    prior season) provide stable fallback signal for early-season weeks.
+#    Remaining NaNs are filled by fill_nans_safe() AFTER temporal_split(),
+#    using ONLY training set statistics to prevent data leakage.
+# 5. Group all rolling computations by (player_id, season).
+# 6. Rookies in test season: no prior season data → fill_nans_safe() uses
+#    position-level training set averages for all rolling features.
 #
 # === EXPECTED FEATURE COUNT ===
-# Rolling: 8 stats × 3 windows × 3 aggs (mean/std/max) = 72
-# Share: target_share, carry_share, snap_pct, air_yards_share, redzone_targets_share = 5
-# Matchup: opp_fantasy_pts_allowed_to_pos, opp_def_rank_vs_pos = 2
-# Contextual: is_home, week, season_games_played, days_rest = 4
-# Position: one-hot (QB, RB, WR, TE) = 4
-# TOTAL: ~87 features
+# Rolling (mean/std/max): 10 stats × 3 windows × 3 aggs = 90
+# Rolling min (fp only):  1 stat × 3 windows = 3
+# Prior-season summary:   10 stats × 3 aggs = 30
+# EWMA:                   7 stats × 2 spans = 14
+# Trend:                  4 stats = 4
+# Share:                  target_share × 2 windows + carry_share × 2 windows
+#                         + snap_pct + air_yards_share = 6
+# Matchup:                opp_fantasy_pts_allowed_to_pos + opp_rush_pts_allowed_to_pos
+#                         + opp_recv_pts_allowed_to_pos + opp_def_rank_vs_pos = 4
+# Contextual:             is_home, week, is_returning_from_absence, days_rest = 4
+# Position:               one-hot (QB, RB, WR, TE) = 4
+# TOTAL: ~159 features
+#
+# NOTE: Exact count depends on which nfl_data_py columns are available
+#       (air_yards_share may be absent). The NN input_dim should be set
+#       dynamically from len(get_feature_columns()).
 #
 # Key function:
 #   build_features(df) -> pd.DataFrame   # adds feature columns, returns full df
@@ -385,8 +446,10 @@ This is the most critical module. The model is only as good as its features.
 #
 # class FantasyPointsNet(nn.Module):
 #     def __init__(self, input_dim, hidden_layers=[128, 64, 32], dropout=0.3):
-#         # Expected input_dim: ~87 (see feature count estimate in 4.5)
-#         # This validates the layer sizing: 87 -> 128 -> 64 -> 32 -> 1
+#         # Expected input_dim: ~159 (see feature count estimate in 4.5)
+#         # Set dynamically: input_dim = len(get_feature_columns())
+#         # Layer sizing: ~159 -> 128 -> 64 -> 32 -> 1
+#         # Consider testing hidden=[256, 128, 64] during hyperparameter tuning
 #         #
 #         # For each hidden layer:
 #         #   Linear -> BatchNorm1d -> ReLU -> Dropout
@@ -578,18 +641,20 @@ This is the most critical module. The model is only as good as its features.
 # This script runs the full pipeline in order:
 #
 # 1. LOAD:      loader.load_raw_data(SEASONS)
-# 2. PREPROCESS: preprocessing.preprocess(raw_df)
-# 3. FEATURES:  engineer.build_features(clean_df)
+# 2. PREPROCESS: preprocessing.preprocess(raw_df)  — NO min-games filter here
+# 3. FEATURES:  engineer.build_features(clean_df)  — computes team totals THEN filters min-games
 # 4. SPLIT:     split.temporal_split(featured_df, ...)
-# 5. BASELINE:  Evaluate SeasonAverageBaseline and LastWeekBaseline
+# 5. NaN FILL:  engineer.fill_nans_safe(train, val, test, feature_cols)
+#               — uses ONLY training set statistics to prevent leakage
+# 6. BASELINE:  Evaluate SeasonAverageBaseline and LastWeekBaseline
 #               (baselines operate on unscaled DataFrames with fantasy_points column)
-# 6. LINEAR:    Fit Ridge (internally fits StandardScaler), evaluate, save model
-# 7. SCALE:     Extract scaler from Ridge (ridge_model.scaler), use it to
+# 7. LINEAR:    Fit Ridge (internally fits StandardScaler), evaluate, save model
+# 8. SCALE:     Extract scaler from Ridge (ridge_model.scaler), use it to
 #               transform train/val/test feature arrays for the neural net
-# 8. NEURAL:    Train FantasyPointsNet on pre-scaled arrays, evaluate, save model
-# 9. COMPARE:   Side-by-side metrics table (all 4 approaches)
-# 10. BACKTEST:  Run week-by-week prediction simulation
-# 11. SAVE:      All figures, metrics, and model artifacts to outputs/
+# 9. NEURAL:    Train FantasyPointsNet on pre-scaled arrays, evaluate, save model
+# 10. COMPARE:  Side-by-side metrics table (all 4 approaches)
+# 11. BACKTEST: Run week-by-week prediction simulation
+# 12. SAVE:     All figures, metrics, and model artifacts to outputs/
 #
 # Should be runnable with: python scripts/run_pipeline.py
 # Expected runtime: ~5-10 minutes on a laptop (no GPU required for this scale)
@@ -786,11 +851,11 @@ Follow this order to ensure each step can be validated before moving on:
 ## 11. Potential Pitfalls & Edge Cases
 
 - **nfl_data_py API changes:** Pin the version. If a function signature changes, the cache files in `data/raw/` will still work.
-- **Players changing teams mid-season:** Use `recent_team` from the weekly data, not roster data, for that week's team context.
+- **Players changing teams mid-season (trades):** Use `recent_team` from the weekly data, not roster data, for that week's team context. Share features (target_share, carry_share) must use stint-aware grouping — detect team changes via `stint_id` and reset rolling denominators on trade. Rolling player stats (non-share) do NOT reset because a player's individual production is meaningful across teams.
 - **Bye weeks:** A player on bye has no row in weekly data — that's correct. But the *following* week's rolling features should NOT treat the bye as a zero-point game. Filter on `games_played > 0` or similar before rolling.
-- **Injured players:** Players who are active but leave early will have low stats. This is inherently unpredictable and should appear in error analysis as a known failure mode.
-- **Rookies in test season:** Rookies in 2024 have no prior-season data. Fill their rolling features with positional averages. Flag this in error analysis.
-- **Week 1 of each season:** No in-season rolling features exist. Use prior season averages as fallback.
+- **Injured players:** Players who are active but leave early will have low stats. This is inherently unpredictable and should appear in error analysis as a known failure mode. The `is_returning_from_absence` feature flags players coming back from missed games.
+- **Rookies in test season:** Rookies in 2024 have no prior-season data. `fill_nans_safe()` uses position-level training set averages for all their features. Flag this in error analysis.
+- **Week 1 of each season:** No in-season rolling features exist. Prior-season summary features provide stable fallback signal. Remaining NaNs filled by `fill_nans_safe()` using train-set statistics only.
 - **Players changing positions mid-career:** Some players (e.g., Taysom Hill) appear as QB in some weeks and TE in others. Use the roster-based position (from `import_rosters()`) which is the season-level designation. If a player's position differs between seasons, use the most recent season's roster position. Do not use weekly position labels.
 - **Snap count data coverage:** `nfl_data_py.import_snap_counts()` may not cover all seasons (earlier seasons may lack data). If snap counts are unavailable for certain seasons, `snap_pct` will be NaN for those rows — handled by the position-median fill in preprocessing.
 
@@ -808,7 +873,7 @@ The Gradescope self-assessment (3 pts) requires mapping each claimed rubric item
 | 4 | Error analysis | `notebooks/03_error_analysis.ipynb` | Residual plots, failure cases |
 | 5 | Time-series forecasting | `src/features/engineer.py` | Rolling temporal features + temporal split |
 | 6 | Simulation-based eval | `src/evaluation/backtest.py` | Week-by-week prediction accuracy simulation |
-| 7 | Feature engineering | `src/features/engineer.py` | 87+ derived features |
+| 7 | Feature engineering | `src/features/engineer.py` | 150+ derived features |
 | 8 | Custom neural network | `src/models/neural_net.py` | PyTorch MLP definition |
 | 9 | Hyperparameter tuning | `notebooks/02_experiments.ipynb` | 3+ configs per model |
 | 10 | Regularization | `src/models/neural_net.py`, `src/training/trainer.py` | Dropout + L2 + early stopping |

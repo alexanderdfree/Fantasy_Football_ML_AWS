@@ -114,6 +114,18 @@ def compute_fantasy_points(df, scoring=None):
             val = df[col_map[key]].fillna(0)
         fantasy_points += val * weight
     return fantasy_points
+
+
+def compute_fantasy_points_floor(df) -> pd.Series:
+    """Yardage + receptions only (no TDs, no turnovers).
+    Separates the stable, predictable component of fantasy scoring
+    from high-variance touchdown production."""
+    return (
+        df["passing_yards"].fillna(0) * 0.04 +
+        df["rushing_yards"].fillna(0) * 0.1 +
+        df["receiving_yards"].fillna(0) * 0.1 +
+        df["receptions"].fillna(0) * 1.0
+    )
 ```
 
 ---
@@ -131,9 +143,16 @@ def compute_fantasy_points(df, scoring=None):
 | 3 | Fill missing stat columns with 0 | No row removal |
 | 4 | Fill missing `snap_pct` with position-week median | No row removal |
 | 5 | Compute `fantasy_points` target via `compute_fantasy_points()` | Adds column |
-| 6 | Remove players with < 6 games in a season | Removes low-sample players |
+| 6 | Compute `fantasy_points_floor` (yardage + receptions only, no TDs) | Adds column |
 
-**Expected output:** ~30-35K rows with all stat columns + `fantasy_points` target.
+**NOTE:** The min-games filter (< 6 games in a season) is intentionally NOT applied
+here. It is applied in `build_features()` AFTER team totals are computed, so that
+fringe players' targets/carries/air_yards contribute to correct team denominators
+for share features. Filtering before team totals would inflate target_share and
+carry_share for remaining players.
+
+**Expected output:** ~35-40K rows with all stat columns + `fantasy_points` + `fantasy_points_floor` targets.
+Rows are reduced to ~30-35K after the min-games filter in `build_features()`.
 
 ---
 
@@ -162,15 +181,15 @@ def compute_fantasy_points(df, scoring=None):
 
 **Complete feature catalog:**
 
-##### Rolling Features (72 features)
+##### Rolling Features (93 features: 90 mean/std/max + 3 min)
 
 For each combination of stat × window × aggregation:
 
-**Stats (8):** `fantasy_points`, `targets`, `receptions`, `carries`, `rushing_yards`, `receiving_yards`, `passing_yards`, `snap_pct`
+**Stats (10):** `fantasy_points`, `fantasy_points_floor`, `targets`, `receptions`, `carries`, `rushing_yards`, `receiving_yards`, `passing_yards`, `attempts`, `snap_pct`
 
 **Windows (3):** 3, 5, 8 weeks
 
-**Aggregations (3):** mean, std, max
+**Aggregations (3):** mean, std, max — plus `min` for `fantasy_points` only (floor indicator)
 
 **Naming convention:** `rolling_{agg}_{stat}_L{window}`
 - Example: `rolling_mean_fantasy_points_L3`, `rolling_std_targets_L5`, `rolling_max_rushing_yards_L8`
@@ -181,73 +200,201 @@ For each combination of stat × window × aggregation:
 df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 ```
 
-**Code pattern (critical — prevents leakage AND cross-player bleed):**
+**Code pattern (critical — prevents leakage, cross-player bleed, AND cross-season contamination):**
 ```python
-# Group by player, shift(1) FIRST, then rolling — MUST re-group for rolling
-# to prevent the rolling window from mixing adjacent players' rows.
+# Group by (player_id, season) — NOT just player_id — so rolling windows
+# stay within a single season. Without the season boundary, shift(1) on
+# Week 1 of 2020 returns Week 17 of 2019, and the L3/L5 windows for
+# early-season weeks are entirely built from stale cross-offseason data.
+# Players who changed teams/roles/schemes would carry misleading signal.
 for stat in ROLL_STATS:
     for window in ROLLING_WINDOWS:
-        df[f"rolling_mean_{stat}_L{window}"] = df.groupby("player_id")[stat].transform(
+        df[f"rolling_mean_{stat}_L{window}"] = df.groupby(
+            ["player_id", "season"]
+        )[stat].transform(
             lambda x: x.shift(1).rolling(window, min_periods=1).mean()
         )
-        df[f"rolling_std_{stat}_L{window}"] = df.groupby("player_id")[stat].transform(
+        df[f"rolling_std_{stat}_L{window}"] = df.groupby(
+            ["player_id", "season"]
+        )[stat].transform(
             lambda x: x.shift(1).rolling(window, min_periods=1).std()
         )
-        df[f"rolling_max_{stat}_L{window}"] = df.groupby("player_id")[stat].transform(
+        df[f"rolling_max_{stat}_L{window}"] = df.groupby(
+            ["player_id", "season"]
+        )[stat].transform(
             lambda x: x.shift(1).rolling(window, min_periods=1).max()
         )
+        # Rolling min for fantasy_points only (floor indicator)
+        if stat == "fantasy_points":
+            df[f"rolling_min_{stat}_L{window}"] = df.groupby(
+                ["player_id", "season"]
+            )[stat].transform(
+                lambda x: x.shift(1).rolling(window, min_periods=1).min()
+            )
 # NOTE: rolling std with min_periods=1 returns NaN for single observations
 # (std of one value is undefined). The first valid row per player per season
-# will have NaN for all std features. This is handled by the NaN filling strategy.
+# will have NaN for all std features. This is handled by fill_nans_safe().
 ```
 
-##### Share / Usage Features (5 features)
+##### Prior-Season Summary Features (24 features)
+
+Since within-season rolling features are NaN for early weeks, we provide
+explicit prior-season summaries as stable fallback signal.
+
+```python
+# Compute per-player, per-season aggregates
+prior = df.groupby(["player_id", "season"]).agg(
+    {stat: ["mean", "std", "max"] for stat in ROLL_STATS}
+)
+prior.columns = [f"prior_season_{agg}_{stat}" for stat, agg in prior.columns]
+
+# Shift by one season: season S gets stats from season S-1
+prior = prior.reset_index()
+prior["season"] = prior["season"] + 1  # align S-1 stats with season S rows
+df = df.merge(prior, on=["player_id", "season"], how="left")
+# Rookies / first-year players will have NaN here → handled by fill_nans_safe()
+```
+
+##### EWMA Features (14 features)
+
+Exponentially weighted moving averages weight recent games more heavily than
+older games, capturing momentum better than equal-weight rolling means.
+
+**Stats (7):** `fantasy_points`, `targets`, `carries`, `receiving_yards`, `rushing_yards`, `passing_yards`, `snap_pct`
+
+**Spans (2):** 3, 5
+
+**Naming convention:** `ewma_{stat}_L{span}`
+
+```python
+for stat in EWMA_STATS:
+    for span in EWMA_SPANS:
+        df[f"ewma_{stat}_L{span}"] = df.groupby(
+            ["player_id", "season"]
+        )[stat].transform(
+            lambda x: x.shift(1).ewm(span=span, min_periods=1).mean()
+        )
+# EWMA with span=3 gives ~86% weight to the last 3 observations
+# but with exponential decay, making it more responsive than rolling mean.
+```
+
+##### Trend / Momentum Features (4 features)
+
+Captures whether a player is trending up or down. Positive trend = recent
+performance exceeds longer-term average (breakout signal).
+
+**Stats (4):** `fantasy_points`, `targets`, `carries`, `snap_pct`
+
+**Formula:** `trend_{stat} = rolling_mean_{stat}_L3 - rolling_mean_{stat}_L8`
+
+```python
+for stat in TREND_STATS:
+    short = df.groupby(["player_id", "season"])[stat].transform(
+        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
+    )
+    long = df.groupby(["player_id", "season"])[stat].transform(
+        lambda x: x.shift(1).rolling(8, min_periods=1).mean()
+    )
+    df[f"trend_{stat}"] = short - long
+```
+
+##### Share / Usage Features (6 features)
 
 | Feature | Formula | Notes |
 |---------|---------|-------|
-| `target_share` | rolling_sum(player_targets, L5) / rolling_sum(team_targets, L5), both shifted | 5-week rolling share; see code pattern below |
-| `carry_share` | rolling_sum(player_carries, L5) / rolling_sum(team_carries, L5), both shifted | Same rolling pattern as target_share |
+| `target_share_L3` | rolling_sum(player_targets, L3) / rolling_sum(team_targets, L3), both shifted | Short-window: captures recent usage changes |
+| `target_share_L5` | rolling_sum(player_targets, L5) / rolling_sum(team_targets, L5), both shifted | Longer-window: captures stable workload |
+| `carry_share_L3` | rolling_sum(player_carries, L3) / rolling_sum(team_carries, L3), both shifted | Short-window carry share |
+| `carry_share_L5` | rolling_sum(player_carries, L5) / rolling_sum(team_carries, L5), both shifted | Longer-window carry share |
 | `snap_pct` | Direct from data (already exists) | Not a derived feature |
-| `air_yards_share` | rolling_sum(player_air_yards, L5) / rolling_sum(team_air_yards, L5), both shifted | If column available |
-| `redzone_targets_share` | rolling_sum(player_rz_targets, L5) / rolling_sum(team_rz_targets, L5), both shifted | If column available; fill 0 if not |
+| `air_yards_share` | rolling_sum(player_air_yards, L5) / rolling_sum(team_air_yards, L5), both shifted | If column available; drop if not |
 
-**Team-level aggregation pattern (rolling, not single-week):**
+**NOTE:** `redzone_targets_share` is removed — nfl_data_py does not provide redzone
+target data in weekly stats. An all-zero feature adds no signal.
+
+**Team-level aggregation pattern (computed BEFORE min-games filter):**
 ```python
-# Compute team totals per week
-team_totals = df.groupby(["recent_team", "season", "week"])["targets"].sum().reset_index()
-team_totals.rename(columns={"targets": "team_targets"}, inplace=True)
+# Compute team totals per week — uses ALL players including fringe/filtered ones
+team_totals = df.groupby(["recent_team", "season", "week"]).agg(
+    team_targets=("targets", "sum"),
+    team_carries=("carries", "sum"),
+).reset_index()
 
 # Merge back to player rows
 df = df.merge(team_totals, on=["recent_team", "season", "week"], how="left")
 
-# Rolling share over last 5 weeks (shifted to prevent leakage)
-# Player's rolling targets / team's rolling targets — both shifted and rolled
-df["player_targets_roll"] = df.groupby("player_id")["targets"].transform(
-    lambda x: x.shift(1).rolling(5, min_periods=1).sum()
-)
-df["team_targets_roll"] = df.groupby("player_id")["team_targets"].transform(
-    lambda x: x.shift(1).rolling(5, min_periods=1).sum()
-)
-df["target_share"] = df["player_targets_roll"] / df["team_targets_roll"]
-df["target_share"] = df["target_share"].fillna(0)  # handle 0/0 cases
-
-# Clean up intermediate columns
-df.drop(columns=["team_targets", "player_targets_roll", "team_targets_roll"], inplace=True)
+# === Apply min-games filter HERE, after team totals are computed ===
+games_per_season = df.groupby(["player_id", "season"])["week"].transform("count")
+df = df[games_per_season >= MIN_GAMES_PER_SEASON].copy()
 ```
 
-##### Matchup / Opponent Features (2 features)
+**Trade-safe share computation (uses stint_id to reset on team change):**
+```python
+# Detect team changes within a season
+df = df.sort_values(["player_id", "season", "week"])
+df["team_changed"] = (
+    df.groupby(["player_id", "season"])["recent_team"].shift(1) != df["recent_team"]
+).fillna(False)
+df["stint_id"] = df.groupby(["player_id", "season"])["team_changed"].cumsum()
+
+# Multi-window rolling shares with stint-aware grouping
+for window in SHARE_WINDOWS:  # [3, 5]
+    df[f"player_targets_roll_L{window}"] = df.groupby(
+        ["player_id", "season", "stint_id"]
+    )["targets"].transform(
+        lambda x: x.shift(1).rolling(window, min_periods=1).sum()
+    )
+    df[f"team_targets_roll_L{window}"] = df.groupby(
+        ["player_id", "season", "stint_id"]
+    )["team_targets"].transform(
+        lambda x: x.shift(1).rolling(window, min_periods=1).sum()
+    )
+    df[f"target_share_L{window}"] = (
+        df[f"player_targets_roll_L{window}"] /
+        df[f"team_targets_roll_L{window}"]
+    ).fillna(0)
+
+    # Same pattern for carry_share
+    df[f"player_carries_roll_L{window}"] = df.groupby(
+        ["player_id", "season", "stint_id"]
+    )["carries"].transform(
+        lambda x: x.shift(1).rolling(window, min_periods=1).sum()
+    )
+    df[f"team_carries_roll_L{window}"] = df.groupby(
+        ["player_id", "season", "stint_id"]
+    )["team_carries"].transform(
+        lambda x: x.shift(1).rolling(window, min_periods=1).sum()
+    )
+    df[f"carry_share_L{window}"] = (
+        df[f"player_carries_roll_L{window}"] /
+        df[f"team_carries_roll_L{window}"]
+    ).fillna(0)
+
+# Clean up intermediate columns
+drop_cols = [c for c in df.columns if c.startswith(("player_targets_roll", "team_targets",
+             "player_carries_roll", "team_carries", "team_changed", "stint_id"))]
+df.drop(columns=drop_cols, inplace=True)
+```
+
+##### Matchup / Opponent Features (4 features)
 
 | Feature | Formula |
 |---------|---------|
-| `opp_fantasy_pts_allowed_to_pos` | 5-week rolling mean of fantasy points the opponent defense allowed to this position |
+| `opp_fantasy_pts_allowed_to_pos` | 5-week rolling mean of total fantasy points the opponent defense allowed to this position |
+| `opp_rush_pts_allowed_to_pos` | 5-week rolling mean of rushing fantasy points (rush yards + rush TDs) the opponent allowed to this position |
+| `opp_recv_pts_allowed_to_pos` | 5-week rolling mean of receiving fantasy points (rec yards + rec TDs + receptions) the opponent allowed to this position |
 | `opp_def_rank_vs_pos` | Rank of opponent (1 = most points allowed = best matchup for offense) |
+
+**Splitting rush vs receiving points provides position-specific matchup signal:**
+an RB facing a defense weak against the run but strong against dump-offs gets
+a different (and more accurate) projection than one facing the reverse.
 
 **Pipeline (leakage-safe — defense stats use only prior weeks):**
 1. From `schedules`, determine each team's opponent for each week
 2. Merge opponent onto player rows: `df["opponent"] = lookup(recent_team, season, week)`
 3. Compute defense stats: for each (team_as_defense, position, week), sum the
    fantasy points scored AGAINST that defense by that position in that week.
-   This uses actual fantasy_points from the offensive players who faced them.
+   Compute total, rushing-only, and receiving-only fantasy points separately.
 4. **CRITICAL:** shift(1) the defense stats per (team_as_defense, position) BEFORE
    rolling — this ensures week W's defense stat does NOT include week W's game.
    Then compute 5-week rolling mean of the shifted values.
@@ -256,17 +403,31 @@ df.drop(columns=["team_targets", "player_targets_roll", "team_targets_roll"], in
 
 ```python
 # Step 3-4 detail:
+# Compute rushing and receiving fantasy point components per player-week
+df["rush_fantasy"] = df["rushing_yards"] * 0.1 + df["rushing_tds"] * 6
+df["recv_fantasy"] = df["receiving_yards"] * 0.1 + df["receiving_tds"] * 6 + df["receptions"] * 1
+
 # def_pts = points scored AGAINST each defense, per position, per week
-def_pts = df.groupby(["opponent", "position", "season", "week"])["fantasy_points"].sum().reset_index()
-def_pts.rename(columns={"fantasy_points": "pts_allowed_to_pos"}, inplace=True)
+def_pts = df.groupby(["opponent", "position", "season", "week"]).agg(
+    pts_allowed_to_pos=("fantasy_points", "sum"),
+    rush_pts_allowed_to_pos=("rush_fantasy", "sum"),
+    recv_pts_allowed_to_pos=("recv_fantasy", "sum"),
+).reset_index()
 
 # Shift FIRST (so week W doesn't include week W), then rolling mean
 def_pts = def_pts.sort_values(["opponent", "position", "season", "week"])
-def_pts["opp_fantasy_pts_allowed_to_pos"] = def_pts.groupby(
-    ["opponent", "position"]
-)["pts_allowed_to_pos"].transform(
-    lambda x: x.shift(1).rolling(5, min_periods=1).mean()
-)
+for col in ["pts_allowed_to_pos", "rush_pts_allowed_to_pos", "recv_pts_allowed_to_pos"]:
+    def_pts[f"opp_{col}"] = def_pts.groupby(
+        ["opponent", "position"]
+    )[col].transform(
+        lambda x: x.shift(1).rolling(5, min_periods=1).mean()
+    )
+# Rename to final feature names
+def_pts.rename(columns={
+    "opp_pts_allowed_to_pos": "opp_fantasy_pts_allowed_to_pos",
+    "opp_rush_pts_allowed_to_pos": "opp_rush_pts_allowed_to_pos",
+    "opp_recv_pts_allowed_to_pos": "opp_recv_pts_allowed_to_pos",
+}, inplace=True)
 ```
 
 ##### Contextual Features (4 features)
@@ -275,8 +436,23 @@ def_pts["opp_fantasy_pts_allowed_to_pos"] = def_pts.groupby(
 |---------|------|--------|
 | `is_home` | int (0/1) | From schedule data: player's team == home_team |
 | `week` | int (1-18) | Direct from data |
-| `season_games_played` | int | Cumulative count of games for this player this season |
+| `is_returning_from_absence` | int (0/1) | Did the player miss 1+ games before this week? |
 | `days_rest` | int | Days since player's last game (7 = normal, 14 = post-bye) |
+
+**NOTE:** `season_games_played` was removed — it is nearly perfectly correlated
+with `week` for healthy players (zero marginal signal). `is_returning_from_absence`
+captures the actionable signal: players returning from injury/suspension often
+have depressed first-game-back performance.
+
+**`is_returning_from_absence` derivation:**
+```python
+# Detect gaps > 1 week between appearances
+df["weeks_since_last_game"] = df.groupby(
+    ["player_id", "season"]
+)["week"].diff().fillna(1)
+df["is_returning_from_absence"] = (df["weeks_since_last_game"] > 1).astype(int)
+df.drop(columns=["weeks_since_last_game"], inplace=True)
+```
 
 **`days_rest` derivation (requires schedule data):**
 ```python
@@ -285,7 +461,7 @@ def_pts["opp_fantasy_pts_allowed_to_pos"] = def_pts.groupby(
 #    home rows + away rows → each team has a gameday per week
 # 3. Merge onto player rows via (recent_team, season, week) → adds gameday
 # 4. Sort by (player_id, season, week), then compute:
-#    df["days_rest"] = df.groupby("player_id")["gameday"].diff().dt.days
+#    df["days_rest"] = df.groupby(["player_id", "season"])["gameday"].diff().dt.days
 # 5. Fill NaN (week 1 / first appearance) with 7 (assume normal rest)
 ```
 
@@ -293,50 +469,95 @@ def_pts["opp_fantasy_pts_allowed_to_pos"] = def_pts.groupby(
 
 One-hot: `pos_QB`, `pos_RB`, `pos_WR`, `pos_TE` (using `pd.get_dummies`)
 
-##### Total: ~87 features
+##### Total: ~144 features
 
 #### `get_feature_columns() -> list[str]`
 
 **Dynamically generates** the ordered list of all feature column names based on
-`config.ROLL_STATS`, `config.ROLLING_WINDOWS`, and `config.ROLL_AGGS`. Do NOT
-hardcode the list — it must stay in sync with `build_features()` automatically.
+config constants. Do NOT hardcode the list — it must stay in sync with
+`build_features()` automatically.
 
 ```python
 def get_feature_columns() -> list[str]:
     cols = []
-    # Rolling features
+
+    # Rolling features (mean/std/max for all stats, + min for fantasy_points)
     for stat in ROLL_STATS:
         for window in ROLLING_WINDOWS:
-            for agg in ROLL_AGGS:
+            for agg in ROLL_AGGS:  # ["mean", "std", "max"]
                 cols.append(f"rolling_{agg}_{stat}_L{window}")
-    # Share features
-    cols += ["target_share", "carry_share", "snap_pct", "air_yards_share", "redzone_targets_share"]
+            if stat == "fantasy_points":
+                cols.append(f"rolling_min_{stat}_L{window}")
+
+    # Prior-season summary features
+    for stat in ROLL_STATS:
+        for agg in ROLL_AGGS:
+            cols.append(f"prior_season_{agg}_{stat}")
+
+    # EWMA features
+    for stat in EWMA_STATS:
+        for span in EWMA_SPANS:
+            cols.append(f"ewma_{stat}_L{span}")
+
+    # Trend features
+    for stat in TREND_STATS:
+        cols.append(f"trend_{stat}")
+
+    # Share features (multi-window)
+    for window in SHARE_WINDOWS:
+        cols.append(f"target_share_L{window}")
+        cols.append(f"carry_share_L{window}")
+    cols += ["snap_pct", "air_yards_share"]
+
     # Matchup features
-    cols += ["opp_fantasy_pts_allowed_to_pos", "opp_def_rank_vs_pos"]
+    cols += ["opp_fantasy_pts_allowed_to_pos", "opp_rush_pts_allowed_to_pos",
+             "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos"]
+
     # Contextual features
-    cols += ["is_home", "week", "season_games_played", "days_rest"]
+    cols += ["is_home", "week", "is_returning_from_absence", "days_rest"]
+
     # Position encoding
     cols += ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]
     return cols
 ```
 
-#### NaN Filling Strategy
+#### `fill_nans_safe(train_df, val_df, test_df, feature_cols) -> (train_df, val_df, test_df)`
 
-Applied AFTER all features are computed, BEFORE model training:
+**CRITICAL: Called AFTER `temporal_split()`, NOT inside `build_features()`.
+Uses ONLY training set statistics for fill values to prevent data leakage.**
 
-1. **Player prior season mean:** For each player + feature, fill NaN with that player's full prior-season mean for that feature
-2. **Position-level training set mean:** Fill remaining NaNs with the mean of that feature across all players of the same position in the training set
+Steps:
+1. **Player prior season mean:** For each player + feature, fill NaN with that player's full prior-season mean for that feature (safe: prior season is always known data)
+2. **Position-level training set mean:** Fill remaining NaNs with the mean of that feature across all players of the same position **in the training set only**
 3. **Zero fill:** Fill any still-remaining NaNs with 0
 
 ```python
-# Pseudocode
-for col in feature_columns:
-    # Step 1: player prior season mean (computed separately)
-    df[col] = df[col].fillna(player_prior_season_means)
-    # Step 2: position-level training set mean
-    df[col] = df.groupby("position")[col].transform(lambda x: x.fillna(x.mean()))
-    # Step 3: zero
-    df[col] = df[col].fillna(0)
+def fill_nans_safe(train_df, val_df, test_df, feature_cols):
+    """Fill NaNs using ONLY training set statistics. Must be called AFTER temporal_split."""
+
+    # Step 1: Player prior-season mean (computed per player from train data)
+    # This is safe for val/test too — prior-season data is always historical
+    player_feature_means = train_df.groupby("player_id")[feature_cols].mean()
+    for split_df in [train_df, val_df, test_df]:
+        for col in feature_cols:
+            mask = split_df[col].isna()
+            split_df.loc[mask, col] = split_df.loc[mask, "player_id"].map(
+                player_feature_means[col]
+            )
+
+    # Step 2: Position-level mean from TRAINING SET ONLY
+    pos_means = train_df.groupby("position")[feature_cols].mean()
+    for split_df in [train_df, val_df, test_df]:
+        for col in feature_cols:
+            for pos in ["QB", "RB", "WR", "TE"]:
+                mask = (split_df[col].isna()) & (split_df["position"] == pos)
+                split_df.loc[mask, col] = pos_means.loc[pos, col]
+
+    # Step 3: Zero fill for any remaining NaNs (e.g., rookies with no history)
+    for split_df in [train_df, val_df, test_df]:
+        split_df[feature_cols] = split_df[feature_cols].fillna(0)
+
+    return train_df, val_df, test_df
 ```
 
 ---
@@ -442,11 +663,14 @@ class FantasyPointsNet(nn.Module):
 
 **Architecture diagram:**
 ```
-Input (~87) → Linear(87, 128) → BatchNorm(128) → ReLU → Dropout(0.3)
-           → Linear(128, 64)  → BatchNorm(64)  → ReLU → Dropout(0.3)
-           → Linear(64, 32)   → BatchNorm(32)  → ReLU → Dropout(0.3)
-           → Linear(32, 1)    → squeeze(-1)    → Output shape: (batch_size,)
+Input (~159) → Linear(159, 128) → BatchNorm(128) → ReLU → Dropout(0.3)
+            → Linear(128, 64)   → BatchNorm(64)  → ReLU → Dropout(0.3)
+            → Linear(64, 32)    → BatchNorm(32)  → ReLU → Dropout(0.3)
+            → Linear(32, 1)     → squeeze(-1)    → Output shape: (batch_size,)
 ```
+**NOTE:** input_dim should be set dynamically: `input_dim = len(get_feature_columns())`.
+Consider testing `hidden_layers=[256, 128, 64]` during hyperparameter tuning given
+the larger feature space.
 
 **Output shape contract:** `forward()` returns shape `(batch_size,)` after squeezing, matching the shape of `y` tensors passed to `MSELoss`. Without squeezing, the `(batch_size, 1)` vs `(batch_size,)` mismatch causes silent broadcasting bugs in loss computation.
 
@@ -714,13 +938,32 @@ TRAIN_SEASONS = list(range(2018, 2023))
 VAL_SEASONS = [2023]
 TEST_SEASONS = [2024]
 
-# === Features ===
+# === Features: Rolling ===
 ROLLING_WINDOWS = [3, 5, 8]
 ROLL_STATS = [
-    "fantasy_points", "targets", "receptions", "carries",
-    "rushing_yards", "receiving_yards", "passing_yards", "snap_pct",
+    "fantasy_points", "fantasy_points_floor", "targets", "receptions",
+    "carries", "rushing_yards", "receiving_yards", "passing_yards",
+    "attempts", "snap_pct",
 ]
+# NOTE: "attempts" = passing_attempts from nfl_data_py (key QB volume signal)
+# NOTE: "fantasy_points_floor" = yardage + receptions only (no TDs), computed
+#        in preprocessing.py. Separates stable yardage floor from volatile TD upside.
 ROLL_AGGS = ["mean", "std", "max"]
+# rolling_min is computed only for fantasy_points (floor indicator)
+
+# === Features: EWMA (exponentially weighted moving averages) ===
+EWMA_STATS = ["fantasy_points", "targets", "carries", "receiving_yards",
+              "rushing_yards", "passing_yards", "snap_pct"]
+EWMA_SPANS = [3, 5]
+
+# === Features: Trend/Momentum ===
+TREND_STATS = ["fantasy_points", "targets", "carries", "snap_pct"]
+# trend = rolling_mean_L3 - rolling_mean_L8 (positive = trending up)
+
+# === Features: Share ===
+SHARE_WINDOWS = [3, 5]  # multi-window for target_share and carry_share
+
+# === Features: Opponent/Matchup ===
 OPP_ROLLING_WINDOW = 5  # for matchup features
 
 # === Ridge ===
