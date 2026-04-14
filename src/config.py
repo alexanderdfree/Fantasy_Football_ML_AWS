@@ -5,13 +5,29 @@ MIN_GAMES_PER_SEASON = 6
 CACHE_DIR = "data/raw"
 SPLITS_DIR = "data/splits"
 
-# === Scoring (PPR) ===
-SCORING = {
+# === Scoring ===
+# Base scoring (shared across all formats)
+_BASE_SCORING = {
     "passing_yards": 0.04, "passing_tds": 4, "interceptions": -2,
     "rushing_yards": 0.1, "rushing_tds": 6,
-    "receptions": 1, "receiving_yards": 0.1, "receiving_tds": 6,
+    "receiving_yards": 0.1, "receiving_tds": 6,
     "fumbles_lost": -2,
 }
+
+# Reception weights per format
+PPR_FORMATS = {
+    "standard": 0.0,
+    "half_ppr": 0.5,
+    "ppr": 1.0,
+}
+
+# Full scoring dicts per format
+SCORING_STANDARD = {**_BASE_SCORING, "receptions": 0.0}
+SCORING_HALF_PPR = {**_BASE_SCORING, "receptions": 0.5}
+SCORING_PPR = {**_BASE_SCORING, "receptions": 1.0}
+
+# Default (full PPR) — backwards compatible
+SCORING = SCORING_PPR
 
 # === Split ===
 TRAIN_SEASONS = list(range(2018, 2024))

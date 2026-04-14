@@ -1,6 +1,9 @@
 import pandas as pd
 from src.config import POSITIONS
-from src.data.loader import compute_fantasy_points, compute_fantasy_points_floor
+from src.data.loader import (
+    compute_fantasy_points, compute_fantasy_points_floor,
+    compute_all_scoring_formats, compute_all_floor_formats,
+)
 
 
 def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
@@ -48,8 +51,8 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
         df["snap_pct"] = df["snap_pct"].fillna(medians)
         df["snap_pct"] = df["snap_pct"].fillna(0)
 
-    # Step 5: Compute fantasy_points
-    df["fantasy_points"] = compute_fantasy_points(df)
+    # Step 5: Compute fantasy points for all scoring formats
+    df = compute_all_scoring_formats(df)
 
     # Validate against nflverse pre-computed
     if "fantasy_points_ppr" in df.columns:
@@ -58,7 +61,7 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
         if n_mismatch > 0:
             print(f"WARNING: {n_mismatch} rows differ from nflverse PPR points by > 0.5")
 
-    # Step 6: Compute fantasy_points_floor
-    df["fantasy_points_floor"] = compute_fantasy_points_floor(df)
+    # Step 6: Compute fantasy points floor for all scoring formats
+    df = compute_all_floor_formats(df)
 
     return df

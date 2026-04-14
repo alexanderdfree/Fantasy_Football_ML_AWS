@@ -92,8 +92,6 @@ def compute_fantasy_points(df, scoring=None):
     if scoring is None:
         scoring = SCORING
 
-    # Map config keys to DataFrame columns.
-    # "fumbles_lost" is a virtual key: sum of sack_fumbles_lost + rushing_fumbles_lost
     col_map = {
         "passing_yards": "passing_yards",
         "passing_tds": "passing_tds",
@@ -108,24 +106,52 @@ def compute_fantasy_points(df, scoring=None):
     fantasy_points = pd.Series(0.0, index=df.index)
     for key, weight in scoring.items():
         if key == "fumbles_lost":
-            # Special case: sum all *_fumbles_lost columns
             val = df["sack_fumbles_lost"].fillna(0) + df["rushing_fumbles_lost"].fillna(0)
         else:
             val = df[col_map[key]].fillna(0)
         fantasy_points += val * weight
     return fantasy_points
+```
 
+#### `compute_all_scoring_formats(df: pd.DataFrame) -> pd.DataFrame`
 
-def compute_fantasy_points_floor(df) -> pd.Series:
-    """Yardage + receptions only (no TDs, no turnovers).
-    Separates the stable, predictable component of fantasy scoring
-    from high-variance touchdown production."""
+Computes fantasy points for all three scoring formats. Adds columns:
+`fantasy_points_standard`, `fantasy_points_half_ppr`, `fantasy_points` (full PPR).
+
+```python
+def compute_all_scoring_formats(df):
+    df["fantasy_points_standard"] = compute_fantasy_points(df, SCORING_STANDARD)
+    df["fantasy_points_half_ppr"] = compute_fantasy_points(df, SCORING_HALF_PPR)
+    df["fantasy_points"] = compute_fantasy_points(df, SCORING_PPR)
+    return df
+```
+
+#### `compute_fantasy_points_floor(df: pd.DataFrame, ppr_weight: float = 1.0) -> pd.Series`
+
+Yardage + receptions only (no TDs, no turnovers). The `ppr_weight` parameter
+controls the reception value (0.0 for standard, 0.5 for half-PPR, 1.0 for full PPR).
+
+```python
+def compute_fantasy_points_floor(df, ppr_weight=1.0):
     return (
         df["passing_yards"].fillna(0) * 0.04 +
         df["rushing_yards"].fillna(0) * 0.1 +
         df["receiving_yards"].fillna(0) * 0.1 +
-        df["receptions"].fillna(0) * 1.0
+        df["receptions"].fillna(0) * ppr_weight
     )
+```
+
+#### `compute_all_floor_formats(df: pd.DataFrame) -> pd.DataFrame`
+
+Computes floor for all three formats. Adds columns:
+`fantasy_points_floor_standard`, `fantasy_points_floor_half_ppr`, `fantasy_points_floor`.
+
+```python
+def compute_all_floor_formats(df):
+    df["fantasy_points_floor_standard"] = compute_fantasy_points_floor(df, ppr_weight=0.0)
+    df["fantasy_points_floor_half_ppr"] = compute_fantasy_points_floor(df, ppr_weight=0.5)
+    df["fantasy_points_floor"] = compute_fantasy_points_floor(df, ppr_weight=1.0)
+    return df
 ```
 
 ---
@@ -142,8 +168,8 @@ def compute_fantasy_points_floor(df) -> pd.Series:
 | 2 | Remove rows where player didn't play (0 snaps or NaN snap_pct AND all stats are 0) | Removes bye weeks, inactive players |
 | 3 | Fill missing stat columns with 0 | No row removal |
 | 4 | Fill missing `snap_pct` with position-week median | No row removal |
-| 5 | Compute `fantasy_points` target via `compute_fantasy_points()` | Adds column |
-| 6 | Compute `fantasy_points_floor` (yardage + receptions only, no TDs) | Adds column |
+| 5 | Compute fantasy points for all scoring formats via `compute_all_scoring_formats()` | Adds `fantasy_points_standard`, `fantasy_points_half_ppr`, `fantasy_points` |
+| 6 | Compute fantasy points floor for all formats via `compute_all_floor_formats()` | Adds `fantasy_points_floor_standard`, `fantasy_points_floor_half_ppr`, `fantasy_points_floor` |
 
 **NOTE:** The min-games filter (< 6 games in a season) is intentionally NOT applied
 here. It is applied in `build_features()` AFTER team totals are computed, so that
@@ -151,7 +177,7 @@ fringe players' targets/carries/air_yards contribute to correct team denominator
 for share features. Filtering before team totals would inflate target_share and
 carry_share for remaining players.
 
-**Expected output:** ~35-40K rows with all stat columns + `fantasy_points` + `fantasy_points_floor` targets.
+**Expected output:** ~35-40K rows with all stat columns + fantasy points columns for all three scoring formats (standard, half-PPR, full PPR) and their corresponding floor columns.
 Rows are reduced to ~30-35K after the min-games filter in `build_features()`.
 
 ---
@@ -925,13 +951,18 @@ MIN_GAMES_PER_SEASON = 6
 CACHE_DIR = "data/raw"
 SPLITS_DIR = "data/splits"
 
-# === Scoring (PPR) ===
-SCORING = {
+# === Scoring ===
+_BASE_SCORING = {
     "passing_yards": 0.04, "passing_tds": 4, "interceptions": -2,
     "rushing_yards": 0.1, "rushing_tds": 6,
-    "receptions": 1, "receiving_yards": 0.1, "receiving_tds": 6,
+    "receiving_yards": 0.1, "receiving_tds": 6,
     "fumbles_lost": -2,  # sum of sack_fumbles_lost + rushing_fumbles_lost
 }
+PPR_FORMATS = {"standard": 0.0, "half_ppr": 0.5, "ppr": 1.0}
+SCORING_STANDARD = {**_BASE_SCORING, "receptions": 0.0}
+SCORING_HALF_PPR = {**_BASE_SCORING, "receptions": 0.5}
+SCORING_PPR      = {**_BASE_SCORING, "receptions": 1.0}
+SCORING = SCORING_PPR  # Default (backwards compatible)
 
 # === Split ===
 TRAIN_SEASONS = list(range(2018, 2023))

@@ -1,7 +1,10 @@
 import os
 import pandas as pd
 import nfl_data_py as nfl
-from src.config import SCORING, CACHE_DIR, SEASONS
+from src.config import (
+    SCORING, SCORING_STANDARD, SCORING_HALF_PPR, SCORING_PPR,
+    PPR_FORMATS, CACHE_DIR, SEASONS,
+)
 
 
 def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.DataFrame:
@@ -102,7 +105,7 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
 
 
 def compute_fantasy_points(df: pd.DataFrame, scoring: dict = None) -> pd.Series:
-    """Compute PPR fantasy points from raw stat columns."""
+    """Compute fantasy points from raw stat columns for a given scoring dict."""
     if scoring is None:
         scoring = SCORING
 
@@ -127,11 +130,34 @@ def compute_fantasy_points(df: pd.DataFrame, scoring: dict = None) -> pd.Series:
     return fantasy_points
 
 
-def compute_fantasy_points_floor(df: pd.DataFrame) -> pd.Series:
+def compute_all_scoring_formats(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute fantasy points for standard, half-PPR, and full PPR formats.
+
+    Adds columns: fantasy_points_standard, fantasy_points_half_ppr, fantasy_points
+    """
+    df["fantasy_points_standard"] = compute_fantasy_points(df, SCORING_STANDARD)
+    df["fantasy_points_half_ppr"] = compute_fantasy_points(df, SCORING_HALF_PPR)
+    df["fantasy_points"] = compute_fantasy_points(df, SCORING_PPR)
+    return df
+
+
+def compute_fantasy_points_floor(df: pd.DataFrame, ppr_weight: float = 1.0) -> pd.Series:
     """Yardage + receptions only (no TDs, no turnovers)."""
     return (
         df["passing_yards"].fillna(0) * 0.04
         + df["rushing_yards"].fillna(0) * 0.1
         + df["receiving_yards"].fillna(0) * 0.1
-        + df["receptions"].fillna(0) * 1.0
+        + df["receptions"].fillna(0) * ppr_weight
     )
+
+
+def compute_all_floor_formats(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute fantasy points floor for all three scoring formats.
+
+    Adds columns: fantasy_points_floor_standard, fantasy_points_floor_half_ppr,
+    fantasy_points_floor
+    """
+    df["fantasy_points_floor_standard"] = compute_fantasy_points_floor(df, ppr_weight=0.0)
+    df["fantasy_points_floor_half_ppr"] = compute_fantasy_points_floor(df, ppr_weight=0.5)
+    df["fantasy_points_floor"] = compute_fantasy_points_floor(df, ppr_weight=1.0)
+    return df

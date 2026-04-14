@@ -1,2 +1,25 @@
 __pycache__/
 *.pyc
+*.pyo
+
+# Data (large parquet files)
+data/raw/
+data/splits/
+
+# Model outputs
+outputs/models/
+outputs/figures/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# pytest
+.pytest_cache/

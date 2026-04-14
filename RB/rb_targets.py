@@ -1,25 +1,36 @@
 import pandas as pd
 import numpy as np
 
+from src.config import PPR_FORMATS
+
 
 def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
     """Compute the 3 prediction targets + fumble penalty for RB rows.
+
+    Computes targets for all scoring formats (standard, half_ppr, ppr).
+    The receiving_floor varies by format; rushing_floor and td_points are the same.
 
     Args:
         df: DataFrame filtered to RB rows only, with raw stat columns available.
 
     Returns:
-        df with added columns: rushing_floor, receiving_floor, td_points,
-        fumble_penalty, fantasy_points_check
+        df with added columns per format:
+          - rushing_floor (same across formats)
+          - receiving_floor_standard, receiving_floor_half_ppr, receiving_floor
+          - td_points (same across formats)
+          - fumble_penalty (same across formats)
+          - fantasy_points_check
     """
     df = df.copy()
 
     df["rushing_floor"] = df["rushing_yards"].fillna(0) * 0.1
 
-    df["receiving_floor"] = (
-        df["receptions"].fillna(0) * 1.0
-        + df["receiving_yards"].fillna(0) * 0.1
-    )
+    # Receiving floor varies by PPR format (reception weight differs)
+    rec_yards_pts = df["receiving_yards"].fillna(0) * 0.1
+    receptions = df["receptions"].fillna(0)
+    for fmt, weight in PPR_FORMATS.items():
+        suffix = "" if fmt == "ppr" else f"_{fmt}"
+        df[f"receiving_floor{suffix}"] = receptions * weight + rec_yards_pts
 
     df["td_points"] = (
         df["rushing_tds"].fillna(0) * 6
@@ -34,7 +45,7 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
         + df["receiving_fumbles_lost"].fillna(0)
     ) * -2
 
-    # Sanity check: sum should match fantasy_points minus passing component
+    # Sanity check: sum should match fantasy_points minus passing component (full PPR)
     df["fantasy_points_check"] = (
         df["rushing_floor"] + df["receiving_floor"]
         + df["td_points"] + df["fumble_penalty"]

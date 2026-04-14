@@ -178,42 +178,55 @@ RB-specific model training and evaluation
 
 Each RB game-week row has four target components derived from raw stats:
 
-| Target | Formula | PPR Scoring Logic | Nature |
-|--------|---------|-------------------|--------|
-| `rushing_floor` | `rushing_yards * 0.1` | Yards-only rushing production | Low variance, volume-driven |
-| `receiving_floor` | `receptions * 1.0 + receiving_yards * 0.1` | PPR catch value + receiving yards | Medium variance, role-dependent |
-| `td_points` | `rushing_tds * 6 + receiving_tds * 6 + rushing_2pt_conversions * 2 + receiving_2pt_conversions * 2` | All scoring plays (TDs + 2pt conversions) | High variance, hard to predict |
-| `fumble_penalty` | `(sack_fumbles_lost + rushing_fumbles_lost) * -2` | Turnover penalty | Very low frequency, negative |
+| Target | Formula | Scoring Logic | Nature |
+|--------|---------|---------------|--------|
+| `rushing_floor` | `rushing_yards * 0.1` | Yards-only rushing production (same across all formats) | Low variance, volume-driven |
+| `receiving_floor` | `receptions * ppr_weight + receiving_yards * 0.1` | Reception value varies by format (0/0.5/1.0) | Medium variance, role-dependent |
+| `td_points` | `rushing_tds * 6 + receiving_tds * 6 + rushing_2pt_conversions * 2 + receiving_2pt_conversions * 2` | All scoring plays (same across all formats) | High variance, hard to predict |
+| `fumble_penalty` | `(sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost) * -2` | Turnover penalty (same across all formats) | Very low frequency, negative |
+
+**Multi-format receiving floor:** The receiving_floor is the only component that varies across scoring formats. The system computes:
+- `receiving_floor_standard`: `receiving_yards * 0.1` (no reception value)
+- `receiving_floor_half_ppr`: `receptions * 0.5 + receiving_yards * 0.1`
+- `receiving_floor`: `receptions * 1.0 + receiving_yards * 0.1` (full PPR, default)
 
 **Total fantasy points** = rushing_floor + receiving_floor + td_points + fumble_penalty
 
-**Scoring completeness note:** Most PPR leagues award 2 points per 2-point conversion. `rushing_2pt_conversions` and `receiving_2pt_conversions` are available in `import_weekly_data()`. While rare (~0.5% of RB game-weeks have one), omitting them causes a systematic discrepancy vs nflverse's `fantasy_points_ppr`. Folding them into `td_points` is the cleanest decomposition since they co-occur with goal-line/red-zone usage patterns.
+**Scoring completeness note:** Most leagues award 2 points per 2-point conversion. `rushing_2pt_conversions` and `receiving_2pt_conversions` are available in `import_weekly_data()`. While rare (~0.5% of RB game-weeks have one), omitting them causes a systematic discrepancy vs nflverse's `fantasy_points_ppr`. Folding them into `td_points` is the cleanest decomposition since they co-occur with goal-line/red-zone usage patterns.
 
-**`special_teams_tds` exclusion:** Some RBs score on kick/punt returns. Most standard PPR leagues do NOT award these to the individual player (they go to D/ST scoring). We exclude them from our target to match standard PPR rules. If league rules differ, add `special_teams_tds * 6` to td_points.
+**`special_teams_tds` exclusion:** Some RBs score on kick/punt returns. Most standard leagues do NOT award these to the individual player (they go to D/ST scoring). We exclude them from our target to match standard rules. If league rules differ, add `special_teams_tds * 6` to td_points.
 
 ### 3.2 Implementation
 
 ```python
 # In RB/rb_targets.py
 
+from src.config import PPR_FORMATS
+
 def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
     """Compute the 3 prediction targets + fumble penalty for RB rows.
 
-    Args:
-        df: DataFrame filtered to RB rows only, with raw stat columns available.
+    Computes targets for all scoring formats (standard, half_ppr, ppr).
+    The receiving_floor varies by format; rushing_floor and td_points are the same.
 
     Returns:
-        df with added columns: rushing_floor, receiving_floor, td_points,
-        fumble_penalty, fantasy_points_check
+        df with added columns per format:
+          - rushing_floor (same across formats)
+          - receiving_floor_standard, receiving_floor_half_ppr, receiving_floor
+          - td_points (same across formats)
+          - fumble_penalty (same across formats)
+          - fantasy_points_check
     """
     df = df.copy()
 
     df["rushing_floor"] = df["rushing_yards"].fillna(0) * 0.1
 
-    df["receiving_floor"] = (
-        df["receptions"].fillna(0) * 1.0 +
-        df["receiving_yards"].fillna(0) * 0.1
-    )
+    # Receiving floor varies by PPR format (reception weight differs)
+    rec_yards_pts = df["receiving_yards"].fillna(0) * 0.1
+    receptions = df["receptions"].fillna(0)
+    for fmt, weight in PPR_FORMATS.items():
+        suffix = "" if fmt == "ppr" else f"_{fmt}"
+        df[f"receiving_floor{suffix}"] = receptions * weight + rec_yards_pts
 
     df["td_points"] = (
         df["rushing_tds"].fillna(0) * 6 +
@@ -224,35 +237,16 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     df["fumble_penalty"] = (
         df["sack_fumbles_lost"].fillna(0) +
-        df["rushing_fumbles_lost"].fillna(0)
+        df["rushing_fumbles_lost"].fillna(0) +
+        df["receiving_fumbles_lost"].fillna(0)
     ) * -2
 
-    # Sanity check: sum should match fantasy_points (minus passing component,
-    # which is ~0 for RBs except rare trick plays)
+    # Sanity check: sum should match fantasy_points minus passing component (full PPR)
     df["fantasy_points_check"] = (
         df["rushing_floor"] + df["receiving_floor"] +
         df["td_points"] + df["fumble_penalty"]
     )
-
-    # For RBs, passing_yards contribution is negligible (~0 for 99.9% of rows)
-    # but we note the discrepancy: fantasy_points includes passing_yards * 0.04 + passing_tds * 4
-    passing_component = (
-        df["passing_yards"].fillna(0) * 0.04 +
-        df["passing_tds"].fillna(0) * 4 +
-        df["interceptions"].fillna(0) * -2
-    )
-    discrepancy = (df["fantasy_points"] - df["fantasy_points_check"] - passing_component).abs()
-    if (discrepancy > 0.01).any():
-        n_bad = (discrepancy > 0.01).sum()
-        print(f"WARNING: {n_bad} rows have target decomposition discrepancy > 0.01 pts")
-
-    # Cross-validate against nflverse pre-computed PPR points
-    if "fantasy_points_ppr" in df.columns:
-        nfl_discrepancy = (df["fantasy_points"] - df["fantasy_points_ppr"]).abs()
-        n_nfl_mismatch = (nfl_discrepancy > 0.5).sum()
-        if n_nfl_mismatch > 0:
-            print(f"INFO: {n_nfl_mismatch} rows differ from nflverse fantasy_points_ppr by > 0.5 pts")
-
+    ...
     return df
 ```
 

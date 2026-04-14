@@ -6,7 +6,7 @@
 
 ## 1. Project Overview
 
-**Goal:** Build a machine learning system that predicts weekly fantasy football points (PPR scoring) for NFL skill-position players (QB, RB, WR, TE), comparing a Linear Regression baseline against a custom PyTorch neural network.
+**Goal:** Build a machine learning system that predicts weekly fantasy football points for NFL skill-position players (QB, RB, WR, TE), comparing a Linear Regression baseline against a custom PyTorch neural network. Supports three scoring formats: Standard (0 PPR), Half-PPR, and Full PPR.
 
 **Data source:** `nfl_data_py` (Python wrapper for nflverse), pulling weekly player stats, roster data, and schedule data from the 2018–2024 NFL seasons.
 
@@ -138,10 +138,20 @@ All magic numbers live here. Nothing is hardcoded in other files.
 # Key constants to define:
 SEASONS = list(range(2018, 2025))       # nfl_data_py seasons to pull (2018-2024)
 POSITIONS = ["QB", "RB", "WR", "TE"]
-SCORING = {"passing_yards": 0.04, "passing_tds": 4, "interceptions": -2,
-           "rushing_yards": 0.1, "rushing_tds": 6,
-           "receptions": 1, "receiving_yards": 0.1, "receiving_tds": 6,
-           "fumbles_lost": -2}          # Standard PPR
+# Base scoring (shared across all formats)
+_BASE_SCORING = {"passing_yards": 0.04, "passing_tds": 4, "interceptions": -2,
+                 "rushing_yards": 0.1, "rushing_tds": 6,
+                 "receiving_yards": 0.1, "receiving_tds": 6,
+                 "fumbles_lost": -2}
+
+# Reception weights per format
+PPR_FORMATS = {"standard": 0.0, "half_ppr": 0.5, "ppr": 1.0}
+
+# Full scoring dicts per format
+SCORING_STANDARD = {**_BASE_SCORING, "receptions": 0.0}
+SCORING_HALF_PPR = {**_BASE_SCORING, "receptions": 0.5}
+SCORING_PPR      = {**_BASE_SCORING, "receptions": 1.0}
+SCORING = SCORING_PPR  # Default (backwards compatible)
 
 # Temporal split boundaries (season-based, NOT random)
 TRAIN_SEASONS = list(range(2018, 2023))  # 2018-2022
@@ -672,7 +682,7 @@ These are decisions you should explain in the technical walkthrough video and RE
 
 3. **MLP vs RNN/LSTM:** An LSTM could model sequences more naturally, but an MLP with hand-crafted rolling features is simpler, more interpretable, and performs comparably on tabular data. The feature engineering essentially does what an RNN would learn. You could mention LSTM as future work.
 
-4. **PPR scoring system:** Standard PPR is the most common fantasy format and makes receptions valuable, which increases the signal for WR/TE prediction.
+4. **Multi-format scoring:** The system computes fantasy points for Standard (0 PPR), Half-PPR (0.5), and Full PPR (1.0) formats. The only difference is the reception weight. All three columns are computed during preprocessing, enabling format-specific modeling and comparison. Full PPR remains the default.
 
 ---
 
