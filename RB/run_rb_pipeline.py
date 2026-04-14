@@ -10,6 +10,7 @@ import sys
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.preprocessing import StandardScaler
 
 # Ensure project root is on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -150,11 +151,11 @@ def run_rb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
 
     # --- Step 9: Multi-head NN ---
     print("\n=== RB Multi-Head Neural Net ===")
-    # Scale features using the rushing Ridge model's scaler
-    scaler = ridge_model.rushing_model.scaler
-    X_train_scaled = scaler.transform(X_train)
-    X_val_scaled = scaler.transform(X_val)
-    X_test_scaled = scaler.transform(X_test)
+    # Dedicated scaler for NN (decoupled from Ridge's internal state)
+    nn_scaler = StandardScaler()
+    X_train_scaled = nn_scaler.fit_transform(X_train)
+    X_val_scaled = nn_scaler.transform(X_val)
+    X_test_scaled = nn_scaler.transform(X_test)
 
     # Create dataloaders
     train_loader, val_loader = make_rb_dataloaders(

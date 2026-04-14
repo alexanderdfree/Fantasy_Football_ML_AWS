@@ -27,11 +27,15 @@ class RBRidgeMultiTarget:
         self.td_model.fit(X_train, y_train_dict["td_points"])
 
     def predict(self, X: np.ndarray) -> dict:
-        """Returns dict of per-target predictions plus total."""
+        """Returns dict of per-target predictions plus total.
+
+        Sub-target predictions are clamped to non-negative since these
+        represent physical quantities (yards*0.1, receptions+yards*0.1, TDs*6).
+        """
         preds = {
-            "rushing_floor": self.rushing_model.predict(X),
-            "receiving_floor": self.receiving_model.predict(X),
-            "td_points": self.td_model.predict(X),
+            "rushing_floor": np.maximum(self.rushing_model.predict(X), 0),
+            "receiving_floor": np.maximum(self.receiving_model.predict(X), 0),
+            "td_points": np.maximum(self.td_model.predict(X), 0),
         }
         preds["total"] = preds["rushing_floor"] + preds["receiving_floor"] + preds["td_points"]
         return preds

@@ -8,8 +8,11 @@ import matplotlib.pyplot as plt
 class MultiTargetLoss(nn.Module):
     """Combined loss for multi-head RB network.
 
-    Loss = w1 * MSE(rushing_floor) + w2 * MSE(receiving_floor) + w3 * MSE(td_points)
-           + w_total * MSE(total_pred, total_actual)
+    Loss = w1 * Huber(rushing_floor) + w2 * Huber(receiving_floor) + w3 * Huber(td_points)
+           + w_total * Huber(total_pred, total_actual)
+
+    Uses Huber loss (delta=1.0) instead of MSE for robustness to outlier games
+    (e.g. backup RBs exploding for 30+ pts, or starters injured for 0).
     """
 
     def __init__(
@@ -24,13 +27,13 @@ class MultiTargetLoss(nn.Module):
         self.w_receiving = w_receiving
         self.w_td = w_td
         self.w_total = w_total
-        self.mse = nn.MSELoss()
+        self.huber = nn.HuberLoss(delta=1.0)
 
     def forward(self, preds: dict, targets: dict) -> tuple:
-        loss_rushing = self.mse(preds["rushing_floor"], targets["rushing_floor"])
-        loss_receiving = self.mse(preds["receiving_floor"], targets["receiving_floor"])
-        loss_td = self.mse(preds["td_points"], targets["td_points"])
-        loss_total = self.mse(preds["total"], targets["total"])
+        loss_rushing = self.huber(preds["rushing_floor"], targets["rushing_floor"])
+        loss_receiving = self.huber(preds["receiving_floor"], targets["receiving_floor"])
+        loss_td = self.huber(preds["td_points"], targets["td_points"])
+        loss_total = self.huber(preds["total"], targets["total"])
 
         combined = (
             self.w_rushing * loss_rushing
@@ -114,6 +117,7 @@ class RBMultiHeadTrainer:
                 preds = self.model(X_batch)
                 loss, _ = self.criterion(preds, y_batch)
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
 
                 epoch_train_loss += loss.item()

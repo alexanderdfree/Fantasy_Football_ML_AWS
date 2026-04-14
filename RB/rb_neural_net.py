@@ -79,6 +79,13 @@ class RBMultiHeadNet(nn.Module):
         receiving = self.receiving_head(shared).squeeze(-1)
         td = self.td_head(shared).squeeze(-1)
 
+        # Clamp to non-negative: these targets are physically >= 0
+        # (rushing_yards*0.1, receptions+recv_yards*0.1, TDs*6)
+        if not self.training:
+            rushing = torch.clamp(rushing, min=0)
+            receiving = torch.clamp(receiving, min=0)
+            td = torch.clamp(td, min=0)
+
         return {
             "rushing_floor": rushing,
             "receiving_floor": receiving,

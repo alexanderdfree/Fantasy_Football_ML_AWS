@@ -31,6 +31,7 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
     df["fumble_penalty"] = (
         df["sack_fumbles_lost"].fillna(0)
         + df["rushing_fumbles_lost"].fillna(0)
+        + df["receiving_fumbles_lost"].fillna(0)
     ) * -2
 
     # Sanity check: sum should match fantasy_points minus passing component
@@ -65,7 +66,9 @@ def compute_fumble_adjustment(df: pd.DataFrame) -> pd.Series:
     Uses the rolling mean of total fumbles over L8 window (shifted, no leakage).
     """
     total_fumbles = (
-        df["sack_fumbles_lost"].fillna(0) + df["rushing_fumbles_lost"].fillna(0)
+        df["sack_fumbles_lost"].fillna(0)
+        + df["rushing_fumbles_lost"].fillna(0)
+        + df["receiving_fumbles_lost"].fillna(0)
     )
     # Need a named column for groupby transform
     df = df.copy()

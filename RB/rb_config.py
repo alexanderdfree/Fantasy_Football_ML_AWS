@@ -43,9 +43,12 @@ RB_NN_BATCH_SIZE = 256
 RB_NN_PATIENCE = 15
 
 # === Loss Weights ===
+# TD weight is higher because td_points is discrete/zero-inflated (0, 6, 12, ...)
+# and needs more optimization pressure. Rushing/receiving floors are continuous
+# with higher variance and naturally dominate the loss signal at equal weights.
 RB_LOSS_W_RUSHING = 1.0
 RB_LOSS_W_RECEIVING = 1.0
-RB_LOSS_W_TD = 1.0
+RB_LOSS_W_TD = 2.0
 RB_LOSS_W_TOTAL = 0.5
 
 # === LR Scheduler ===

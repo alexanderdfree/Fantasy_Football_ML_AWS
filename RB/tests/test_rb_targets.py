@@ -19,6 +19,7 @@ def _make_rb_row(**overrides):
         "receiving_2pt_conversions": 0,
         "sack_fumbles_lost": 0,
         "rushing_fumbles_lost": 0,
+        "receiving_fumbles_lost": 0,
         "passing_yards": 0,
         "passing_tds": 0,
         "interceptions": 0,
@@ -33,7 +34,8 @@ def _make_rb_row(**overrides):
             + defaults["receiving_yards"] * 0.1
             + (defaults["rushing_tds"] + defaults["receiving_tds"]) * 6
             + (defaults["rushing_2pt_conversions"] + defaults["receiving_2pt_conversions"]) * 2
-            + (defaults["sack_fumbles_lost"] + defaults["rushing_fumbles_lost"]) * -2
+            + (defaults["sack_fumbles_lost"] + defaults["rushing_fumbles_lost"]
+               + defaults["receiving_fumbles_lost"]) * -2
             + defaults["passing_yards"] * 0.04
             + defaults["passing_tds"] * 4
             + defaults["interceptions"] * -2
@@ -98,6 +100,7 @@ class TestComputeRBTargets:
             "receiving_2pt_conversions": np.nan,
             "sack_fumbles_lost": np.nan,
             "rushing_fumbles_lost": np.nan,
+            "receiving_fumbles_lost": np.nan,
             "passing_yards": np.nan,
             "passing_tds": np.nan,
             "interceptions": np.nan,
@@ -150,6 +153,7 @@ class TestComputeFumbleAdjustment:
             "week": list(range(1, n + 1)),
             "sack_fumbles_lost": player_fumbles,
             "rushing_fumbles_lost": [0] * n,
+            "receiving_fumbles_lost": [0] * n,
         })
 
     def test_first_game_is_nan(self):
@@ -187,6 +191,7 @@ class TestComputeFumbleAdjustment:
             "week": [1, 2, 1, 2],
             "sack_fumbles_lost": [1, 0, 0, 0],
             "rushing_fumbles_lost": [0, 0, 0, 0],
+            "receiving_fumbles_lost": [0, 0, 0, 0],
         })
         result = compute_fumble_adjustment(df)
         # P1 game 2: sees [1] -> -2.0
@@ -204,6 +209,7 @@ class TestComputeFumbleAdjustment:
             "week": [1, 2, 1, 2],
             "sack_fumbles_lost": [1, 1, 0, 0],
             "rushing_fumbles_lost": [0, 0, 0, 0],
+            "receiving_fumbles_lost": [0, 0, 0, 0],
         })
         result = compute_fumble_adjustment(df)
         # 2023 game 1: first game of new season, shift produces NaN
