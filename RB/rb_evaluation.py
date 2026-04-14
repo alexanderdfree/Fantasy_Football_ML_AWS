@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -56,8 +57,10 @@ def compute_rb_ranking_metrics(
 
         hit_rate = len(actual_top_k & pred_top_k) / top_k
 
-        # Spearman rank correlation
-        corr, _ = spearmanr(week_df[pred_col], week_df[true_col])
+        # Spearman rank correlation (suppress ConstantInputWarning for constant predictions)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            corr, _ = spearmanr(week_df[pred_col], week_df[true_col])
 
         weekly_results.append({
             "week": week,

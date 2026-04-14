@@ -26,6 +26,9 @@ for _stat in ["passing_yards", "attempts"]:
         RB_DROP_FEATURES.add(f"prior_season_{_agg}_{_stat}")
 RB_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
 
+# Drop current-week features that cause data leakage (not available at prediction time)
+RB_DROP_FEATURES |= {"snap_pct", "air_yards_share"}
+
 # === Ridge ===
 RB_RIDGE_ALPHAS = [0.01, 0.1, 1.0, 10.0, 100.0]
 

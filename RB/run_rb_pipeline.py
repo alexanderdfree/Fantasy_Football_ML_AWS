@@ -38,8 +38,12 @@ from RB.rb_evaluation import (
 from RB.rb_backtest import run_rb_weekly_simulation, plot_rb_weekly_accuracy
 
 
-def run_rb_pipeline(train_df=None, val_df=None, test_df=None):
+def run_rb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     """Run the full RB position model pipeline."""
+
+    # --- Reproducibility ---
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
     # --- Step 1: Load data ---
     if train_df is None:
@@ -89,10 +93,15 @@ def run_rb_pipeline(train_df=None, val_df=None, test_df=None):
     X_test = rb_test[feature_cols_final].values.astype(np.float32)
 
     y_train_dict = {t: rb_train[t].values for t in RB_TARGETS}
-    y_train_dict["total"] = rb_train["fantasy_points"].values
     y_val_dict = {t: rb_val[t].values for t in RB_TARGETS}
-    y_val_dict["total"] = rb_val["fantasy_points"].values
     y_test_dict = {t: rb_test[t].values for t in RB_TARGETS}
+
+    # Training/val totals use sub-target sum (no fumble penalty) so the NN's
+    # total loss is internally consistent with its 3-head output.
+    # Fumble adjustment is applied only at inference time.
+    y_train_dict["total"] = sum(rb_train[t].values for t in RB_TARGETS)
+    y_val_dict["total"] = sum(rb_val[t].values for t in RB_TARGETS)
+    # Test total uses actual fantasy_points for final evaluation
     y_test_dict["total"] = rb_test["fantasy_points"].values
 
     print(f"  Feature matrix shape: {X_train.shape}")
@@ -106,13 +115,19 @@ def run_rb_pipeline(train_df=None, val_df=None, test_df=None):
 
     # --- Step 8: Ridge multi-target with alpha tuning ---
     print("\n=== RB Ridge Multi-Target ===")
+    fumble_adj_val = compute_fumble_adjustment(rb_val)
+    fumble_adj_test = compute_fumble_adjustment(rb_test)
+    # Actual fantasy_points for val/test (includes fumbles) for fair evaluation
+    y_val_actual_total = rb_val["fantasy_points"].values
     best_alpha = None
     best_val_mae = float("inf")
     for alpha in RB_RIDGE_ALPHAS:
         ridge = RBRidgeMultiTarget(alpha=alpha)
         ridge.fit(X_train, y_train_dict)
         val_preds = ridge.predict(X_val)
-        val_mae = np.mean(np.abs(val_preds["total"] - y_val_dict["total"]))
+        # Include fumble adjustment so alpha tuning matches final evaluation
+        val_total_adj = val_preds["total"] + fumble_adj_val.values
+        val_mae = np.mean(np.abs(val_total_adj - y_val_actual_total))
         print(f"  Alpha={alpha:.2f}: Val MAE={val_mae:.3f}")
         if val_mae < best_val_mae:
             best_val_mae = val_mae
@@ -124,12 +139,11 @@ def run_rb_pipeline(train_df=None, val_df=None, test_df=None):
     ridge_test_preds = ridge_model.predict(X_test)
 
     # Add fumble adjustment to Ridge predictions
-    fumble_adj = compute_fumble_adjustment(rb_test)
     ridge_test_preds["total"] = (
         ridge_test_preds["rushing_floor"]
         + ridge_test_preds["receiving_floor"]
         + ridge_test_preds["td_points"]
-        + fumble_adj.values
+        + fumble_adj_test.values
     )
 
     ridge_metrics = compute_rb_metrics(y_test_dict, ridge_test_preds)
@@ -183,7 +197,7 @@ def run_rb_pipeline(train_df=None, val_df=None, test_df=None):
         nn_test_preds["rushing_floor"]
         + nn_test_preds["receiving_floor"]
         + nn_test_preds["td_points"]
-        + fumble_adj.values
+        + fumble_adj_test.values
     )
     nn_metrics = compute_rb_metrics(y_test_dict, nn_test_preds)
 
