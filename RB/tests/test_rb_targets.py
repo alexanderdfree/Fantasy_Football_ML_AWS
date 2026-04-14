@@ -156,11 +156,11 @@ class TestComputeFumbleAdjustment:
             "receiving_fumbles_lost": [0] * n,
         })
 
-    def test_first_game_is_nan(self):
-        """First game has no prior history — shift(1) produces NaN."""
+    def test_first_game_is_zero(self):
+        """First game has no prior history — shift(1) produces NaN, filled to 0."""
         df = self._make_fumble_df([1, 0, 0])
         result = compute_fumble_adjustment(df)
-        assert np.isnan(result.iloc[0])
+        assert result.iloc[0] == 0.0
 
     def test_second_game_uses_first(self):
         """Second game should see the first game's fumble."""
@@ -212,7 +212,7 @@ class TestComputeFumbleAdjustment:
             "receiving_fumbles_lost": [0, 0, 0, 0],
         })
         result = compute_fumble_adjustment(df)
-        # 2023 game 1: first game of new season, shift produces NaN
-        assert np.isnan(result.iloc[2])
+        # 2023 game 1: first game of new season, shift produces NaN, filled to 0
+        assert result.iloc[2] == 0.0
         # 2023 game 2: sees only [0] from 2023 week 1 -> 0.0
         assert pytest.approx(result.iloc[3]) == 0.0

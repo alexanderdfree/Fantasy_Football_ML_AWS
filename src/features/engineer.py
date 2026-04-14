@@ -112,14 +112,22 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
             / df[f"team_carries_roll_L{window}"]
         ).fillna(0)
 
-    # air_yards_share
+    # air_yards_share (lagged to prevent data leakage)
     if "receiving_air_yards" in df.columns:
         team_air_yards = df.groupby(["recent_team", "season", "week"])[
             "receiving_air_yards"
         ].transform("sum")
-        df["air_yards_share"] = (df["receiving_air_yards"] / team_air_yards).fillna(0)
+        df["_raw_air_yards_share"] = (df["receiving_air_yards"] / team_air_yards).fillna(0)
+        df["air_yards_share"] = df.groupby(
+            ["player_id", "season"]
+        )["_raw_air_yards_share"].shift(1).fillna(0)
+        df.drop(columns=["_raw_air_yards_share"], inplace=True)
     else:
         df["air_yards_share"] = 0.0
+
+    # Lag snap_pct to prevent data leakage (use prior week's snap percentage)
+    if "snap_pct" in df.columns:
+        df["snap_pct"] = df.groupby(["player_id", "season"])["snap_pct"].shift(1).fillna(0)
 
     # Clean up intermediate columns
     drop_cols = [c for c in df.columns if c.startswith((

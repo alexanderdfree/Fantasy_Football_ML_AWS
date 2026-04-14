@@ -123,7 +123,9 @@ def compute_fantasy_points(df: pd.DataFrame, scoring: dict = None) -> pd.Series:
     fantasy_points = pd.Series(0.0, index=df.index)
     for key, weight in scoring.items():
         if key == "fumbles_lost":
-            val = df["sack_fumbles_lost"].fillna(0) + df["rushing_fumbles_lost"].fillna(0)
+            val = (df["sack_fumbles_lost"].fillna(0)
+                   + df["rushing_fumbles_lost"].fillna(0)
+                   + df["receiving_fumbles_lost"].fillna(0))
         else:
             val = df[col_map[key]].fillna(0)
         fantasy_points += val * weight
