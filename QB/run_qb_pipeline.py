@@ -26,14 +26,14 @@ from QB.qb_data import filter_to_qb
 from QB.qb_targets import compute_qb_targets, compute_qb_adjustment
 from QB.qb_features import add_qb_specific_features, get_qb_feature_columns, fill_qb_nans
 
-from shared.models import MultiTargetRidge
-from shared.neural_net import MultiHeadNet
-from shared.training import MultiTargetLoss, MultiHeadTrainer, make_multi_target_dataloaders
-from shared.evaluation import (
-    compute_multi_target_metrics, compute_ranking_metrics,
-    print_comparison_table, plot_pred_vs_actual,
+from QB.qb_models import QBRidgeMultiTarget
+from QB.qb_neural_net import QBMultiHeadNet
+from QB.qb_training import MultiTargetLoss, QBMultiHeadTrainer, make_qb_dataloaders
+from QB.qb_evaluation import (
+    compute_qb_metrics, compute_qb_ranking_metrics,
+    print_qb_comparison_table, plot_qb_pred_vs_actual,
 )
-from shared.backtest import run_weekly_simulation, plot_weekly_accuracy
+from QB.qb_backtest import run_qb_weekly_simulation, plot_qb_weekly_accuracy
 
 import matplotlib
 matplotlib.use("Agg")
@@ -112,7 +112,7 @@ def run_qb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
 
     best_alpha, best_val_mae = None, float("inf")
     for alpha in QB_RIDGE_ALPHAS:
-        ridge = MultiTargetRidge(QB_TARGETS, alpha=alpha)
+        ridge = QBRidgeMultiTarget(alpha=alpha)
         ridge.fit(X_train, y_train_dict)
         val_preds = ridge.predict(X_val)
         val_total_adj = val_preds["total"] + adj_val.values
@@ -123,13 +123,13 @@ def run_qb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
             best_alpha = alpha
 
     print(f"  Best alpha: {best_alpha}")
-    ridge_model = MultiTargetRidge(QB_TARGETS, alpha=best_alpha)
+    ridge_model = QBRidgeMultiTarget(alpha=best_alpha)
     ridge_model.fit(X_train, y_train_dict)
     ridge_test_preds = ridge_model.predict(X_test)
     ridge_test_preds["total"] = (
         sum(ridge_test_preds[t] for t in QB_TARGETS) + adj_test.values
     )
-    ridge_metrics = compute_multi_target_metrics(y_test_dict, ridge_test_preds, QB_TARGETS)
+    ridge_metrics = compute_qb_metrics(y_test_dict, ridge_test_preds)
 
     # Multi-head NN
     print("\n=== QB Multi-Head Neural Net ===")
@@ -138,13 +138,13 @@ def run_qb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     X_val_s = nn_scaler.transform(X_val)
     X_test_s = nn_scaler.transform(X_test)
 
-    train_loader, val_loader = make_multi_target_dataloaders(
+    train_loader, val_loader = make_qb_dataloaders(
         X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=QB_NN_BATCH_SIZE,
     )
 
     device = torch.device("cpu")
-    model = MultiHeadNet(
-        input_dim=X_train_s.shape[1], target_names=QB_TARGETS,
+    model = QBMultiHeadNet(
+        input_dim=X_train_s.shape[1],
         backbone_layers=QB_NN_BACKBONE_LAYERS, head_hidden=QB_NN_HEAD_HIDDEN,
         dropout=QB_NN_DROPOUT,
     ).to(device)
@@ -155,12 +155,17 @@ def run_qb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
         epochs=QB_NN_EPOCHS, steps_per_epoch=len(train_loader),
         pct_start=QB_ONECYCLE_PCT_START,
     )
-    criterion = MultiTargetLoss(QB_TARGETS, QB_LOSS_WEIGHTS, QB_LOSS_W_TOTAL,
-                                huber_deltas=QB_HUBER_DELTAS)
+    criterion = MultiTargetLoss(
+        w_passing=QB_LOSS_WEIGHTS["passing_floor"],
+        w_rushing=QB_LOSS_WEIGHTS["rushing_floor"],
+        w_td=QB_LOSS_WEIGHTS["td_points"],
+        w_total=QB_LOSS_W_TOTAL,
+        huber_deltas=QB_HUBER_DELTAS,
+    )
 
-    trainer = MultiHeadTrainer(
+    trainer = QBMultiHeadTrainer(
         model=model, optimizer=optimizer, scheduler=scheduler,
-        criterion=criterion, device=device, target_names=QB_TARGETS,
+        criterion=criterion, device=device,
         patience=QB_NN_PATIENCE, scheduler_per_batch=True,
     )
     history = trainer.train(train_loader, val_loader, n_epochs=QB_NN_EPOCHS)
@@ -169,14 +174,14 @@ def run_qb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     nn_test_preds["total"] = (
         sum(nn_test_preds[t] for t in QB_TARGETS) + adj_test.values
     )
-    nn_metrics = compute_multi_target_metrics(y_test_dict, nn_test_preds, QB_TARGETS)
+    nn_metrics = compute_qb_metrics(y_test_dict, nn_test_preds)
 
     # Comparison
-    print_comparison_table({
+    print_qb_comparison_table({
         "Season Average Baseline": baseline_metrics,
         "QB Ridge Multi-Target": ridge_metrics,
         "QB Multi-Head NN": nn_metrics,
-    }, QB_TARGETS, pos_label="QB")
+    })
 
     # Ranking metrics
     qb_test = qb_test.copy()
@@ -184,14 +189,14 @@ def run_qb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     qb_test["pred_nn_total"] = nn_test_preds["total"]
     qb_test["pred_baseline"] = baseline_preds
 
-    ridge_ranking = compute_ranking_metrics(qb_test, pred_col="pred_ridge_total")
-    nn_ranking = compute_ranking_metrics(qb_test, pred_col="pred_nn_total")
+    ridge_ranking = compute_qb_ranking_metrics(qb_test, pred_col="pred_ridge_total")
+    nn_ranking = compute_qb_ranking_metrics(qb_test, pred_col="pred_nn_total")
     print(f"\nRidge Top-12 Hit Rate: {ridge_ranking['season_avg_hit_rate']:.3f}")
     print(f"NN Top-12 Hit Rate:    {nn_ranking['season_avg_hit_rate']:.3f}")
 
     # Weekly backtest
     print("\n=== Weekly Backtest ===")
-    sim_results = run_weekly_simulation(
+    sim_results = run_qb_weekly_simulation(
         qb_test,
         pred_columns={"Season Avg": "pred_baseline", "Ridge": "pred_ridge_total", "Neural Net": "pred_nn_total"},
     )
@@ -206,10 +211,10 @@ def run_qb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     torch.save(model.state_dict(), "QB/outputs/models/qb_multihead_nn.pt")
     joblib.dump(nn_scaler, "QB/outputs/models/nn_scaler.pkl")
 
-    trainer.plot_training_curves(history, "QB/outputs/figures/qb_training_curves.png", pos_label="QB")
-    plot_weekly_accuracy(sim_results, "QB/outputs/figures/qb_weekly_mae.png", pos_label="QB")
-    plot_pred_vs_actual(
-        y_test_dict, nn_test_preds, QB_TARGETS, "QB Multi-Head NN",
+    trainer.plot_training_curves(history, "QB/outputs/figures/qb_training_curves.png")
+    plot_qb_weekly_accuracy(sim_results, "QB/outputs/figures/qb_weekly_mae.png")
+    plot_qb_pred_vs_actual(
+        y_test_dict, nn_test_preds, "QB Multi-Head NN",
         "QB/outputs/figures/qb_pred_vs_actual_scatter.png",
     )
 

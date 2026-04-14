@@ -26,14 +26,14 @@ from TE.te_data import filter_to_te
 from TE.te_targets import compute_te_targets, compute_te_fumble_adjustment
 from TE.te_features import add_te_specific_features, get_te_feature_columns, fill_te_nans
 
-from shared.models import MultiTargetRidge
-from shared.neural_net import MultiHeadNet
-from shared.training import MultiTargetLoss, MultiHeadTrainer, make_multi_target_dataloaders
-from shared.evaluation import (
-    compute_multi_target_metrics, compute_ranking_metrics,
-    print_comparison_table, plot_pred_vs_actual,
+from TE.te_models import TERidgeMultiTarget
+from TE.te_neural_net import TEMultiHeadNet
+from TE.te_training import MultiTargetLoss, TEMultiHeadTrainer, make_te_dataloaders
+from TE.te_evaluation import (
+    compute_te_metrics, compute_te_ranking_metrics,
+    print_te_comparison_table, plot_te_pred_vs_actual,
 )
-from shared.backtest import run_weekly_simulation, plot_weekly_accuracy
+from TE.te_backtest import run_te_weekly_simulation, plot_te_weekly_accuracy
 
 import matplotlib
 matplotlib.use("Agg")
@@ -107,7 +107,7 @@ def run_te_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
 
     best_alpha, best_val_mae = None, float("inf")
     for alpha in TE_RIDGE_ALPHAS:
-        ridge = MultiTargetRidge(TE_TARGETS, alpha=alpha)
+        ridge = TERidgeMultiTarget(alpha=alpha)
         ridge.fit(X_train, y_train_dict)
         val_preds = ridge.predict(X_val)
         val_total_adj = val_preds["total"] + adj_val.values
@@ -118,13 +118,13 @@ def run_te_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
             best_alpha = alpha
 
     print(f"  Best alpha: {best_alpha}")
-    ridge_model = MultiTargetRidge(TE_TARGETS, alpha=best_alpha)
+    ridge_model = TERidgeMultiTarget(alpha=best_alpha)
     ridge_model.fit(X_train, y_train_dict)
     ridge_test_preds = ridge_model.predict(X_test)
     ridge_test_preds["total"] = (
         sum(ridge_test_preds[t] for t in TE_TARGETS) + adj_test.values
     )
-    ridge_metrics = compute_multi_target_metrics(y_test_dict, ridge_test_preds, TE_TARGETS)
+    ridge_metrics = compute_te_metrics(y_test_dict, ridge_test_preds)
 
     # NN
     print("\n=== TE Multi-Head Neural Net ===")
@@ -133,16 +133,16 @@ def run_te_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     X_val_s = nn_scaler.transform(X_val)
     X_test_s = nn_scaler.transform(X_test)
 
-    train_loader, val_loader = make_multi_target_dataloaders(
+    train_loader, val_loader = make_te_dataloaders(
         X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=TE_NN_BATCH_SIZE,
     )
 
     device = torch.device("cpu")
-    model = MultiHeadNet(
-        input_dim=X_train_s.shape[1], target_names=TE_TARGETS,
+    model = TEMultiHeadNet(
+        input_dim=X_train_s.shape[1],
         backbone_layers=TE_NN_BACKBONE_LAYERS, head_hidden=TE_NN_HEAD_HIDDEN,
+        td_head_hidden=TE_NN_HEAD_HIDDEN_OVERRIDES.get("td_points"),
         dropout=TE_NN_DROPOUT,
-        head_hidden_overrides=TE_NN_HEAD_HIDDEN_OVERRIDES,
     ).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=TE_NN_LR, weight_decay=TE_NN_WEIGHT_DECAY)
@@ -151,12 +151,17 @@ def run_te_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
         epochs=TE_NN_EPOCHS, steps_per_epoch=len(train_loader),
         pct_start=TE_ONECYCLE_PCT_START,
     )
-    criterion = MultiTargetLoss(TE_TARGETS, TE_LOSS_WEIGHTS, TE_LOSS_W_TOTAL,
-                                huber_deltas=TE_HUBER_DELTAS)
+    criterion = MultiTargetLoss(
+        w_receiving=TE_LOSS_WEIGHTS["receiving_floor"],
+        w_rushing=TE_LOSS_WEIGHTS["rushing_floor"],
+        w_td=TE_LOSS_WEIGHTS["td_points"],
+        w_total=TE_LOSS_W_TOTAL,
+        huber_deltas=TE_HUBER_DELTAS,
+    )
 
-    trainer = MultiHeadTrainer(
+    trainer = TEMultiHeadTrainer(
         model=model, optimizer=optimizer, scheduler=scheduler,
-        criterion=criterion, device=device, target_names=TE_TARGETS,
+        criterion=criterion, device=device,
         patience=TE_NN_PATIENCE, scheduler_per_batch=True,
     )
     history = trainer.train(train_loader, val_loader, n_epochs=TE_NN_EPOCHS)
@@ -165,26 +170,26 @@ def run_te_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     nn_test_preds["total"] = (
         sum(nn_test_preds[t] for t in TE_TARGETS) + adj_test.values
     )
-    nn_metrics = compute_multi_target_metrics(y_test_dict, nn_test_preds, TE_TARGETS)
+    nn_metrics = compute_te_metrics(y_test_dict, nn_test_preds)
 
-    print_comparison_table({
+    print_te_comparison_table({
         "Season Average Baseline": baseline_metrics,
         "TE Ridge Multi-Target": ridge_metrics,
         "TE Multi-Head NN": nn_metrics,
-    }, TE_TARGETS, pos_label="TE")
+    })
 
     te_test = te_test.copy()
     te_test["pred_ridge_total"] = ridge_test_preds["total"]
     te_test["pred_nn_total"] = nn_test_preds["total"]
     te_test["pred_baseline"] = baseline_preds
 
-    ridge_ranking = compute_ranking_metrics(te_test, pred_col="pred_ridge_total")
-    nn_ranking = compute_ranking_metrics(te_test, pred_col="pred_nn_total")
+    ridge_ranking = compute_te_ranking_metrics(te_test, pred_col="pred_ridge_total")
+    nn_ranking = compute_te_ranking_metrics(te_test, pred_col="pred_nn_total")
     print(f"\nRidge Top-12 Hit Rate: {ridge_ranking['season_avg_hit_rate']:.3f}")
     print(f"NN Top-12 Hit Rate:    {nn_ranking['season_avg_hit_rate']:.3f}")
 
     print("\n=== Weekly Backtest ===")
-    sim_results = run_weekly_simulation(
+    sim_results = run_te_weekly_simulation(
         te_test,
         pred_columns={"Season Avg": "pred_baseline", "Ridge": "pred_ridge_total", "Neural Net": "pred_nn_total"},
     )
@@ -198,10 +203,10 @@ def run_te_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     torch.save(model.state_dict(), "TE/outputs/models/te_multihead_nn.pt")
     joblib.dump(nn_scaler, "TE/outputs/models/nn_scaler.pkl")
 
-    trainer.plot_training_curves(history, "TE/outputs/figures/te_training_curves.png", pos_label="TE")
-    plot_weekly_accuracy(sim_results, "TE/outputs/figures/te_weekly_mae.png", pos_label="TE")
-    plot_pred_vs_actual(
-        y_test_dict, nn_test_preds, TE_TARGETS, "TE Multi-Head NN",
+    trainer.plot_training_curves(history, "TE/outputs/figures/te_training_curves.png")
+    plot_te_weekly_accuracy(sim_results, "TE/outputs/figures/te_weekly_mae.png")
+    plot_te_pred_vs_actual(
+        y_test_dict, nn_test_preds, "TE Multi-Head NN",
         "TE/outputs/figures/te_pred_vs_actual_scatter.png",
     )
 

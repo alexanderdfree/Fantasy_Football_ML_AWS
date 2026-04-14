@@ -26,14 +26,14 @@ from WR.wr_data import filter_to_wr
 from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
 from WR.wr_features import add_wr_specific_features, get_wr_feature_columns, fill_wr_nans
 
-from shared.models import MultiTargetRidge
-from shared.neural_net import MultiHeadNet
-from shared.training import MultiTargetLoss, MultiHeadTrainer, make_multi_target_dataloaders
-from shared.evaluation import (
-    compute_multi_target_metrics, compute_ranking_metrics,
-    print_comparison_table, plot_pred_vs_actual,
+from WR.wr_models import WRRidgeMultiTarget
+from WR.wr_neural_net import WRMultiHeadNet
+from WR.wr_training import MultiTargetLoss, WRMultiHeadTrainer, make_wr_dataloaders
+from WR.wr_evaluation import (
+    compute_wr_metrics, compute_wr_ranking_metrics,
+    print_wr_comparison_table, plot_wr_pred_vs_actual,
 )
-from shared.backtest import run_weekly_simulation, plot_weekly_accuracy
+from WR.wr_backtest import run_wr_weekly_simulation, plot_wr_weekly_accuracy
 
 import matplotlib
 matplotlib.use("Agg")
@@ -107,7 +107,7 @@ def run_wr_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
 
     best_alpha, best_val_mae = None, float("inf")
     for alpha in WR_RIDGE_ALPHAS:
-        ridge = MultiTargetRidge(WR_TARGETS, alpha=alpha)
+        ridge = WRRidgeMultiTarget(alpha=alpha)
         ridge.fit(X_train, y_train_dict)
         val_preds = ridge.predict(X_val)
         val_total_adj = val_preds["total"] + adj_val.values
@@ -118,13 +118,13 @@ def run_wr_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
             best_alpha = alpha
 
     print(f"  Best alpha: {best_alpha}")
-    ridge_model = MultiTargetRidge(WR_TARGETS, alpha=best_alpha)
+    ridge_model = WRRidgeMultiTarget(alpha=best_alpha)
     ridge_model.fit(X_train, y_train_dict)
     ridge_test_preds = ridge_model.predict(X_test)
     ridge_test_preds["total"] = (
         sum(ridge_test_preds[t] for t in WR_TARGETS) + adj_test.values
     )
-    ridge_metrics = compute_multi_target_metrics(y_test_dict, ridge_test_preds, WR_TARGETS)
+    ridge_metrics = compute_wr_metrics(y_test_dict, ridge_test_preds)
 
     # NN
     print("\n=== WR Multi-Head Neural Net ===")
@@ -133,13 +133,13 @@ def run_wr_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     X_val_s = nn_scaler.transform(X_val)
     X_test_s = nn_scaler.transform(X_test)
 
-    train_loader, val_loader = make_multi_target_dataloaders(
+    train_loader, val_loader = make_wr_dataloaders(
         X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=WR_NN_BATCH_SIZE,
     )
 
     device = torch.device("cpu")
-    model = MultiHeadNet(
-        input_dim=X_train_s.shape[1], target_names=WR_TARGETS,
+    model = WRMultiHeadNet(
+        input_dim=X_train_s.shape[1],
         backbone_layers=WR_NN_BACKBONE_LAYERS, head_hidden=WR_NN_HEAD_HIDDEN,
         dropout=WR_NN_DROPOUT,
     ).to(device)
@@ -148,12 +148,17 @@ def run_wr_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=WR_COSINE_T0, T_mult=WR_COSINE_T_MULT, eta_min=WR_COSINE_ETA_MIN,
     )
-    criterion = MultiTargetLoss(WR_TARGETS, WR_LOSS_WEIGHTS, WR_LOSS_W_TOTAL,
-                                huber_deltas=WR_HUBER_DELTAS)
+    criterion = MultiTargetLoss(
+        w_receiving=WR_LOSS_WEIGHTS["receiving_floor"],
+        w_rushing=WR_LOSS_WEIGHTS["rushing_floor"],
+        w_td=WR_LOSS_WEIGHTS["td_points"],
+        w_total=WR_LOSS_W_TOTAL,
+        huber_deltas=WR_HUBER_DELTAS,
+    )
 
-    trainer = MultiHeadTrainer(
+    trainer = WRMultiHeadTrainer(
         model=model, optimizer=optimizer, scheduler=scheduler,
-        criterion=criterion, device=device, target_names=WR_TARGETS,
+        criterion=criterion, device=device,
         patience=WR_NN_PATIENCE,
     )
     history = trainer.train(train_loader, val_loader, n_epochs=WR_NN_EPOCHS)
@@ -162,26 +167,26 @@ def run_wr_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     nn_test_preds["total"] = (
         sum(nn_test_preds[t] for t in WR_TARGETS) + adj_test.values
     )
-    nn_metrics = compute_multi_target_metrics(y_test_dict, nn_test_preds, WR_TARGETS)
+    nn_metrics = compute_wr_metrics(y_test_dict, nn_test_preds)
 
-    print_comparison_table({
+    print_wr_comparison_table({
         "Season Average Baseline": baseline_metrics,
         "WR Ridge Multi-Target": ridge_metrics,
         "WR Multi-Head NN": nn_metrics,
-    }, WR_TARGETS, pos_label="WR")
+    })
 
     wr_test = wr_test.copy()
     wr_test["pred_ridge_total"] = ridge_test_preds["total"]
     wr_test["pred_nn_total"] = nn_test_preds["total"]
     wr_test["pred_baseline"] = baseline_preds
 
-    ridge_ranking = compute_ranking_metrics(wr_test, pred_col="pred_ridge_total")
-    nn_ranking = compute_ranking_metrics(wr_test, pred_col="pred_nn_total")
+    ridge_ranking = compute_wr_ranking_metrics(wr_test, pred_col="pred_ridge_total")
+    nn_ranking = compute_wr_ranking_metrics(wr_test, pred_col="pred_nn_total")
     print(f"\nRidge Top-12 Hit Rate: {ridge_ranking['season_avg_hit_rate']:.3f}")
     print(f"NN Top-12 Hit Rate:    {nn_ranking['season_avg_hit_rate']:.3f}")
 
     print("\n=== Weekly Backtest ===")
-    sim_results = run_weekly_simulation(
+    sim_results = run_wr_weekly_simulation(
         wr_test,
         pred_columns={"Season Avg": "pred_baseline", "Ridge": "pred_ridge_total", "Neural Net": "pred_nn_total"},
     )
@@ -195,10 +200,10 @@ def run_wr_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     torch.save(model.state_dict(), "WR/outputs/models/wr_multihead_nn.pt")
     joblib.dump(nn_scaler, "WR/outputs/models/nn_scaler.pkl")
 
-    trainer.plot_training_curves(history, "WR/outputs/figures/wr_training_curves.png", pos_label="WR")
-    plot_weekly_accuracy(sim_results, "WR/outputs/figures/wr_weekly_mae.png", pos_label="WR")
-    plot_pred_vs_actual(
-        y_test_dict, nn_test_preds, WR_TARGETS, "WR Multi-Head NN",
+    trainer.plot_training_curves(history, "WR/outputs/figures/wr_training_curves.png")
+    plot_wr_weekly_accuracy(sim_results, "WR/outputs/figures/wr_weekly_mae.png")
+    plot_wr_pred_vs_actual(
+        y_test_dict, nn_test_preds, "WR Multi-Head NN",
         "WR/outputs/figures/wr_pred_vs_actual_scatter.png",
     )
 

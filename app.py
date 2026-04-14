@@ -56,9 +56,13 @@ from TE.te_config import (
     TE_NN_BACKBONE_LAYERS, TE_NN_HEAD_HIDDEN, TE_NN_HEAD_HIDDEN_OVERRIDES,
     TE_NN_DROPOUT,
 )
-# --- Shared models ---
-from shared.models import MultiTargetRidge
-from shared.neural_net import MultiHeadNet
+# --- Position-specific models ---
+from QB.qb_models import QBRidgeMultiTarget
+from QB.qb_neural_net import QBMultiHeadNet
+from WR.wr_models import WRRidgeMultiTarget
+from WR.wr_neural_net import WRMultiHeadNet
+from TE.te_models import TERidgeMultiTarget
+from TE.te_neural_net import TEMultiHeadNet
 
 app = Flask(__name__)
 
@@ -140,14 +144,13 @@ def _apply_position_models(train, val, test, pos, results):
         adj = compute_qb_adjustment(pos_test)
         nn_file = "qb_multihead_nn.pt"
         nn_cls_args = dict(
-            target_names=QB_TARGETS,
             backbone_layers=QB_NN_BACKBONE_LAYERS,
             head_hidden=QB_NN_HEAD_HIDDEN,
             dropout=QB_NN_DROPOUT,
         )
-        ridge_cls = MultiTargetRidge
-        ridge_args = dict(target_names=QB_TARGETS)
-        nn_cls = MultiHeadNet
+        ridge_cls = QBRidgeMultiTarget
+        ridge_args = {}
+        nn_cls = QBMultiHeadNet
 
     elif pos == "RB":
         model_dir = "RB/outputs/models"
@@ -183,14 +186,13 @@ def _apply_position_models(train, val, test, pos, results):
         adj = compute_wr_fumble_adjustment(pos_test)
         nn_file = "wr_multihead_nn.pt"
         nn_cls_args = dict(
-            target_names=WR_TARGETS,
             backbone_layers=WR_NN_BACKBONE_LAYERS,
             head_hidden=WR_NN_HEAD_HIDDEN,
             dropout=WR_NN_DROPOUT,
         )
-        ridge_cls = MultiTargetRidge
-        ridge_args = dict(target_names=WR_TARGETS)
-        nn_cls = MultiHeadNet
+        ridge_cls = WRRidgeMultiTarget
+        ridge_args = {}
+        nn_cls = WRMultiHeadNet
 
     elif pos == "TE":
         model_dir = "TE/outputs/models"
@@ -205,15 +207,14 @@ def _apply_position_models(train, val, test, pos, results):
         adj = compute_te_fumble_adjustment(pos_test)
         nn_file = "te_multihead_nn.pt"
         nn_cls_args = dict(
-            target_names=TE_TARGETS,
             backbone_layers=TE_NN_BACKBONE_LAYERS,
             head_hidden=TE_NN_HEAD_HIDDEN,
+            td_head_hidden=TE_NN_HEAD_HIDDEN_OVERRIDES.get("td_points"),
             dropout=TE_NN_DROPOUT,
-            head_hidden_overrides=TE_NN_HEAD_HIDDEN_OVERRIDES,
         )
-        ridge_cls = MultiTargetRidge
-        ridge_args = dict(target_names=TE_TARGETS)
-        nn_cls = MultiHeadNet
+        ridge_cls = TERidgeMultiTarget
+        ridge_args = {}
+        nn_cls = TEMultiHeadNet
 
     # Prepare features
     feature_cols = [c for c in feature_cols if c in pos_train.columns]
