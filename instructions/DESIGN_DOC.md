@@ -25,7 +25,7 @@ Below are the 15 Machine Learning rubric items this project is designed to hit. 
 | 3 | **Compared multiple model architectures quantitatively** (Linear Reg vs Neural Net, controlled setup) | 7 | `src/models/`, `notebooks/experiments.ipynb` |
 | 4 | **Error analysis with visualization and discussion of failure cases** | 7 | `notebooks/error_analysis.ipynb` |
 | 5 | **Applied ML to time-series forecasting** (weekly player projections using rolling temporal features) | 7 | `src/features/`, `src/models/` |
-| 6 | **Simulation-based evaluation** (season-long fantasy draft backtesting) | 7 | `src/evaluation/backtest.py` |
+| 6 | **Simulation-based evaluation** (week-by-week prediction accuracy simulation) | 7 | `src/evaluation/backtest.py` |
 | 7 | **Feature engineering** (rolling averages, snap %, target share, matchup strength, etc.) | 5 | `src/features/engineer.py` |
 | 8 | **Defined and trained a custom neural network architecture** (PyTorch) | 5 | `src/models/neural_net.py` |
 | 9 | **Systematic hyperparameter tuning** (≥3 configs documented) | 5 | `notebooks/experiments.ipynb` |
@@ -461,46 +461,34 @@ This is the most critical module. The model is only as good as its features.
 #   print_comparison_table(results_dict) -> None  # pretty-print baseline vs LR vs NN
 ```
 
-### 4.11 `src/evaluation/backtest.py` — Fantasy Draft Simulation
+### 4.11 `src/evaluation/backtest.py` — Week-by-Week Prediction Simulation
 
 **Rubric target: "Simulation-based evaluation" (7 pts)**
 
 ```python
-# Simulate a weekly fantasy season using model predictions vs actuals.
+# Simulate deploying the model week-by-week across the 2024 test season,
+# evaluating individual player prediction quality over time.
+# NO lineup construction — this is purely about projection accuracy.
 #
-# Format: Best-ball — pick best available per position per week from
-# the full player pool. No roster limits, no waiver wire, no trades.
-# This isolates prediction quality from roster management strategy.
+# For each week W in the test season (2024):
+#   1. Generate predictions for all active players using each model
+#   2. Compute per-week metrics: MAE, RMSE, R² (per model)
+#   3. Compute per-week ranking accuracy per position:
+#      - Among top-12 actual scorers at each position, how many did the
+#        model rank in its own top-12? (hit rate / precision@12)
+#      - Spearman rank correlation between predicted and actual rankings
+#   4. Track whether accuracy improves as the season progresses
+#      (more rolling history available → potentially better features)
 #
-# Approach: For each week in the test season (2024):
-#   1. Use model to predict fantasy points for all players
-#   2. "Draft" the optimal starting lineup based on predictions:
-#      - 1 QB, 2 RB, 2 WR, 1 TE, 1 FLEX (best remaining RB/WR/TE)
-#      - Fill positions greedily in order: QB → RB → WR → TE → FLEX
-#        (FLEX is filled last from remaining RB/WR/TE pool)
-#   3. Score the drafted lineup using ACTUAL points
-#   4. Compare against:
-#      a. Oracle lineup (best possible lineup with perfect knowledge)
-#      b. Baseline-drafted lineup (using season average predictions)
-#      c. Linear regression-drafted lineup
-#      d. Neural net-drafted lineup
+# Output:
+#   - Per-week MAE for each model (line chart across weeks 1-18)
+#   - Per-week top-12 hit rate per position (shows ranking quality)
+#   - Aggregate season metrics for each model
+#   - Visualization: accuracy trend over the season
+#   - Discussion: does more data (later weeks) improve predictions?
 #
-# Missing predictions handling:
-#   - After the 3-stage NaN filling strategy (player prior season mean →
-#     position training set mean → zero), ALL feature columns are populated.
-#     Ridge/NN models will produce predictions for every player.
-#   - For players with mostly zero-filled features (e.g., rookies with no
-#     prior data), model predictions may be unreliable but are still produced.
-#   - No fallback mechanism is needed — all active players get a prediction.
-#
-# Output metrics:
-#   - Total season points scored per strategy
-#   - Weekly win rate vs baseline strategy
-#   - "Optimal lineup capture rate" = % of oracle points achieved
-#   - Visualization: cumulative points over the season for each strategy
-#
-# This is the most compelling evaluation for the demo video — it answers
-# "would this model actually help you win your fantasy league?"
+# This answers: "how reliable are these projections for individual players,
+# and does prediction quality change over the course of a season?"
 ```
 
 ### 4.12 `notebooks/02_experiments.ipynb` — Hyperparameter Tuning
@@ -600,7 +588,7 @@ This is the most critical module. The model is only as good as its features.
 #               transform train/val/test feature arrays for the neural net
 # 8. NEURAL:    Train FantasyPointsNet on pre-scaled arrays, evaluate, save model
 # 9. COMPARE:   Side-by-side metrics table (all 4 approaches)
-# 10. BACKTEST:  Run fantasy draft simulation
+# 10. BACKTEST:  Run week-by-week prediction simulation
 # 11. SAVE:      All figures, metrics, and model artifacts to outputs/
 #
 # Should be runnable with: python scripts/run_pipeline.py
@@ -682,15 +670,16 @@ These are decisions you should explain in the technical walkthrough video and RE
 - **What it Does:** A machine learning system that predicts weekly fantasy football PPR points for NFL skill-position players. Compares a Ridge Regression baseline against a custom PyTorch neural network using engineered temporal and matchup features from 7 seasons of NFL data. Includes a season-long fantasy draft backtesting simulation.
 - **Quick Start:** Clone, install, run pipeline command. 3-5 lines max.
 - **Video Links:** Direct links to demo video and technical walkthrough (YouTube or similar).
-- **Evaluation:** Summary table of MAE, RMSE, R² for each model (baseline, Ridge, NN) overall and per position. Backtest results (total season points per strategy).
+- **Evaluation:** Summary table of MAE, RMSE, R² for each model (baseline, Ridge, NN) overall and per position. Week-by-week accuracy trends and per-position ranking quality.
 
 ### 7.4 Video Content Plans
 
 **Demo Video** (non-technical audience, no code shown):
 - Open with the problem: "Every week, millions of fantasy football managers need to decide which players to start"
-- Show what the system does: takes NFL stats → predicts weekly points → recommends lineups
-- Show backtest results: cumulative points chart comparing strategies, highlight win rate
-- Conclude with key finding: does the ML model actually help win fantasy matchups?
+- Show what the system does: takes NFL stats → predicts weekly fantasy points per player
+- Show prediction accuracy: weekly MAE trends, per-position ranking accuracy
+- Show example predictions: "here's what the model predicted vs actual for top players in week X"
+- Conclude with key finding: does the NN meaningfully outperform Ridge for individual projections?
 - Check course website for exact duration requirements
 
 **Technical Walkthrough Video** (code + architecture):
@@ -712,7 +701,7 @@ Everything in this project serves one goal: **predict weekly fantasy football po
 - **Problem** → Fantasy football managers need weekly projections; existing free tools are often inaccurate.
 - **Data** → NFL weekly player stats from nflverse, the gold standard open NFL data source.
 - **Approach** → Feature engineering captures temporal trends and matchup context; two model families (linear and neural) are compared fairly.
-- **Evaluation** → Standard ML metrics *plus* a realistic fantasy draft simulation that answers "would this actually help you win?"
+- **Evaluation** → Standard ML metrics *plus* a week-by-week simulation showing how prediction accuracy evolves over a season and how well models rank players within each position.
 
 No component is superfluous — every feature, model, and evaluation ties back to that central goal.
 
@@ -786,7 +775,7 @@ Follow this order to ensure each step can be validated before moving on:
 10. **`src/training/trainer.py`** — Training loop with early stopping + curve logging
 11. **Train + evaluate neural net**, compare to linear and baselines
 12. **`notebooks/02_experiments.ipynb`** — Hyperparameter search
-13. **`src/evaluation/backtest.py`** — Fantasy draft simulation
+13. **`src/evaluation/backtest.py`** — Week-by-week prediction simulation
 14. **`notebooks/03_error_analysis.ipynb`** — Deep-dive on failures
 15. **`notebooks/01_eda.ipynb`** — Can be done anytime, but polish last
 16. **`scripts/run_pipeline.py`** — Wire everything together
@@ -818,7 +807,7 @@ The Gradescope self-assessment (3 pts) requires mapping each claimed rubric item
 | 3 | Compared architectures | `notebooks/02_experiments.ipynb` | Controlled comparison table |
 | 4 | Error analysis | `notebooks/03_error_analysis.ipynb` | Residual plots, failure cases |
 | 5 | Time-series forecasting | `src/features/engineer.py` | Rolling temporal features + temporal split |
-| 6 | Simulation-based eval | `src/evaluation/backtest.py` | Season-long fantasy draft backtest |
+| 6 | Simulation-based eval | `src/evaluation/backtest.py` | Week-by-week prediction accuracy simulation |
 | 7 | Feature engineering | `src/features/engineer.py` | 87+ derived features |
 | 8 | Custom neural network | `src/models/neural_net.py` | PyTorch MLP definition |
 | 9 | Hyperparameter tuning | `notebooks/02_experiments.ipynb` | 3+ configs per model |

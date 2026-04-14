@@ -587,52 +587,53 @@ def print_comparison_table(results: dict) -> None:
 
 ### 5.2 `src/evaluation/backtest.py`
 
-#### `run_backtest(test_df, models_dict) -> dict`
+#### `run_weekly_simulation(test_df, pred_columns, true_col="fantasy_points") -> dict`
 
 ```python
-def run_backtest(test_df: pd.DataFrame, models_dict: dict) -> dict:
+def run_weekly_simulation(test_df: pd.DataFrame, pred_columns: dict,
+                          true_col: str = "fantasy_points") -> dict:
     """
-    Simulate weekly fantasy season using different prediction strategies.
+    Week-by-week prediction accuracy simulation across the test season.
+    Evaluates individual player projection quality — NO lineup construction.
 
     Args:
-        test_df: Test set with actual fantasy_points + model predictions
-        models_dict: {"strategy_name": "prediction_column_name", ...}
-            e.g., {"Season Avg": "pred_baseline", "Ridge": "pred_ridge", ...}
-            Must also include "Oracle": "fantasy_points" (perfect knowledge)
-
-    Lineup format (best-ball):
-        1 QB, 2 RB, 2 WR, 1 TE, 1 FLEX (best remaining RB/WR/TE)
-        Pick best available per position from FULL player pool each week.
-
-    Position filling order (deterministic):
-        1. For each week, sort all players by predicted points descending
-        2. Fill positional slots greedily in order: QB → RB → WR → TE
-           (take top-N by predicted points for each position)
-        3. Fill FLEX last: from remaining (unselected) RB/WR/TE players,
-           take the single highest predicted scorer
-        This order matters — filling FLEX last ensures positional slots
-        get priority, and FLEX is truly the best remaining player.
+        test_df: Test set with actual fantasy_points + model prediction columns
+        pred_columns: {"model_name": "prediction_column_name", ...}
+            e.g., {"Season Avg": "pred_baseline", "Ridge": "pred_ridge",
+                    "Neural Net": "pred_nn"}
+        true_col: Column name for actual fantasy points
 
     Returns:
         {
-            "weekly_points": {strategy: [week1_pts, week2_pts, ...]},
-            "total_points": {strategy: float},
-            "weekly_wins_vs_baseline": {strategy: int},  # weeks beating baseline
-            "oracle_capture_rate": {strategy: float},     # total_pts / oracle_pts
+            "weekly_metrics": {
+                model_name: [{"week": int, "mae": float, "rmse": float, "r2": float}, ...]
+            },
+            "weekly_ranking": {
+                model_name: [{
+                    "week": int, "position": str,
+                    "top12_hit_rate": float,   # precision@12
+                    "spearman_corr": float,    # rank correlation
+                }, ...]
+            },
+            "season_summary": {
+                model_name: {"mae": float, "rmse": float, "r2": float}
+            },
         }
     """
     pass
 ```
 
-#### `plot_cumulative_points(backtest_results, save_path) -> None`
+#### `plot_weekly_accuracy(sim_results, save_path) -> None`
 
 ```python
-def plot_cumulative_points(backtest_results: dict, save_path: str) -> None:
-    """Line chart: cumulative fantasy points over the season for each strategy."""
-    # X-axis: week number
-    # Y-axis: cumulative points
-    # One line per strategy, different colors
-    # Legend with total season points
+def plot_weekly_accuracy(sim_results: dict, save_path: str) -> None:
+    """Two-panel figure showing prediction quality over the season.
+
+    Left panel:  Per-week MAE for each model (line chart, weeks 1-18)
+    Right panel: Per-week top-12 hit rate averaged across positions
+
+    Highlights whether predictions improve as rolling features accumulate.
+    """
     pass
 ```
 
@@ -739,8 +740,7 @@ SCHEDULER_PATIENCE = 5
 SCHEDULER_FACTOR = 0.5
 
 # === Backtest ===
-LINEUP = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1}  # FLEX = best RB/WR/TE
-FLEX_POSITIONS = ["RB", "WR", "TE"]
+TOP_K_RANKING = 12  # Evaluate precision@K for per-position ranking accuracy
 
 # === Paths ===
 FIGURES_DIR = "outputs/figures"
