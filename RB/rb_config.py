@@ -46,9 +46,11 @@ RB_NN_PATIENCE = 20
 # === Loss Weights ===
 # Rushing is the primary RB floor component; slight boost.
 # TD weight elevated for discrete/zero-inflated nature.
-RB_LOSS_W_RUSHING = 1.2
-RB_LOSS_W_RECEIVING = 1.0
-RB_LOSS_W_TD = 2.0
+RB_LOSS_WEIGHTS = {
+    "rushing_floor": 1.2,
+    "receiving_floor": 1.0,
+    "td_points": 2.0,
+}
 RB_LOSS_W_TOTAL = 0.4
 
 # === Huber Deltas (per-target) ===

@@ -1,4 +1,4 @@
-"""WR-specific weekly backtest simulation."""
+"""Generic weekly backtest simulation for any position."""
 
 import numpy as np
 import pandas as pd
@@ -7,16 +7,16 @@ from scipy.stats import spearmanr
 from src.evaluation.metrics import compute_metrics
 
 
-def run_wr_weekly_simulation(
+def run_weekly_simulation(
     test_df: pd.DataFrame,
     pred_columns: dict,
     true_col: str = "fantasy_points",
     top_k: int = 12,
 ) -> dict:
-    """Week-by-week simulation for WR models across the test season.
+    """Week-by-week simulation across the test season.
 
     Args:
-        test_df: WR-only test DataFrame
+        test_df: Position-filtered test DataFrame
         pred_columns: {"model_name": "pred_column_name", ...}
         true_col: Actual fantasy points column
         top_k: Top-K for ranking metrics
@@ -45,12 +45,10 @@ def run_wr_weekly_simulation(
             y_pred = week_df[pred_col].values
             season_preds[model_name].extend(y_pred)
 
-            # Per-week error metrics
             metrics = compute_metrics(y_true, y_pred)
             metrics["week"] = week
             weekly_metrics[model_name].append(metrics)
 
-            # Ranking metrics
             if len(week_df) >= top_k:
                 actual_top_k = set(week_df.nlargest(top_k, true_col)["player_id"])
                 pred_top_k = set(week_df.nlargest(top_k, pred_col)["player_id"])
@@ -81,8 +79,8 @@ def run_wr_weekly_simulation(
     }
 
 
-def plot_wr_weekly_accuracy(sim_results: dict, save_path: str) -> None:
-    """Two-panel figure: weekly MAE and top-12 hit rate for WR models."""
+def plot_weekly_accuracy(sim_results: dict, position: str, save_path: str) -> None:
+    """Two-panel figure: weekly MAE and top-12 hit rate."""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
     for model_name, weekly in sim_results["weekly_metrics"].items():
@@ -91,7 +89,7 @@ def plot_wr_weekly_accuracy(sim_results: dict, save_path: str) -> None:
         ax1.plot(weeks, maes, label=model_name, marker="o", markersize=3)
     ax1.set_xlabel("Week")
     ax1.set_ylabel("MAE")
-    ax1.set_title("WR Weekly MAE by Model")
+    ax1.set_title(f"{position} Weekly MAE by Model")
     ax1.legend()
 
     for model_name, weekly in sim_results["weekly_ranking"].items():
@@ -102,7 +100,7 @@ def plot_wr_weekly_accuracy(sim_results: dict, save_path: str) -> None:
         ax2.plot(weeks, hit_rates, label=model_name, marker="o", markersize=3)
     ax2.set_xlabel("Week")
     ax2.set_ylabel("Top-12 Hit Rate")
-    ax2.set_title("WR Weekly Top-12 Hit Rate")
+    ax2.set_title(f"{position} Weekly Top-12 Hit Rate")
     ax2.legend()
 
     plt.tight_layout()

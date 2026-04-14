@@ -1,4 +1,4 @@
-"""TE-specific training infrastructure: loss, dataset, dataloaders, and trainer."""
+"""Generic training infrastructure: loss, dataset, dataloaders, and trainer."""
 
 import numpy as np
 import torch
@@ -8,61 +8,52 @@ import matplotlib.pyplot as plt
 
 
 class MultiTargetLoss(nn.Module):
-    """Combined loss for multi-head TE network.
+    """Combined Huber loss for a multi-head network.
 
-    Loss = w_receiving * Huber(receiving_floor) + w_rushing * Huber(rushing_floor)
-           + w_td * Huber(td_points) + w_total * Huber(total_pred, total_actual)
+    Loss = sum(weight[t] * Huber(pred[t], target[t]) for t in targets)
+           + w_total * Huber(total_pred, total_actual)
 
-    Uses Huber loss instead of MSE for robustness to outlier games
-    (e.g. TEs with boom/bust TD-dependent scoring).
-    Per-target deltas allow different MSE-to-MAE thresholds per target.
+    Uses Huber loss for robustness to outlier games.
+    Per-target deltas allow different MSE-to-MAE thresholds.
     """
 
     def __init__(
         self,
-        w_receiving: float = 1.0,
-        w_rushing: float = 1.0,
-        w_td: float = 1.0,
+        target_names: list[str],
+        loss_weights: dict[str, float],
+        huber_deltas: dict[str, float] = None,
         w_total: float = 0.5,
-        huber_deltas: dict = None,
     ):
         super().__init__()
-        self.w_receiving = w_receiving
-        self.w_rushing = w_rushing
-        self.w_td = w_td
+        self.target_names = target_names
+        self.loss_weights = loss_weights
         self.w_total = w_total
         if huber_deltas is None:
             huber_deltas = {}
-        self.huber_receiving = nn.HuberLoss(delta=huber_deltas.get("receiving_floor", 1.0))
-        self.huber_rushing = nn.HuberLoss(delta=huber_deltas.get("rushing_floor", 1.0))
-        self.huber_td = nn.HuberLoss(delta=huber_deltas.get("td_points", 1.0))
+        self.huber_fns = nn.ModuleDict({
+            name: nn.HuberLoss(delta=huber_deltas.get(name, 1.0))
+            for name in target_names
+        })
         self.huber_total = nn.HuberLoss(delta=huber_deltas.get("total", 1.0))
 
     def forward(self, preds: dict, targets: dict) -> tuple:
-        loss_receiving = self.huber_receiving(preds["receiving_floor"], targets["receiving_floor"])
-        loss_rushing = self.huber_rushing(preds["rushing_floor"], targets["rushing_floor"])
-        loss_td = self.huber_td(preds["td_points"], targets["td_points"])
+        per_target_losses = {}
+        combined = torch.tensor(0.0, device=next(iter(preds.values())).device)
+        for name in self.target_names:
+            loss = self.huber_fns[name](preds[name], targets[name])
+            per_target_losses[name] = loss
+            combined = combined + self.loss_weights.get(name, 1.0) * loss
+
         loss_total = self.huber_total(preds["total"], targets["total"])
+        combined = combined + self.w_total * loss_total
 
-        combined = (
-            self.w_receiving * loss_receiving
-            + self.w_rushing * loss_rushing
-            + self.w_td * loss_td
-            + self.w_total * loss_total
-        )
-
-        components = {
-            "loss_receiving": loss_receiving.item(),
-            "loss_rushing": loss_rushing.item(),
-            "loss_td": loss_td.item(),
-            "loss_total_aux": loss_total.item(),
-            "loss_combined": combined.item(),
-        }
-
+        components = {f"loss_{name}": loss.item() for name, loss in per_target_losses.items()}
+        components["loss_total_aux"] = loss_total.item()
+        components["loss_combined"] = combined.item()
         return combined, components
 
 
-class TEMultiTargetDataset(Dataset):
+class MultiTargetDataset(Dataset):
     """Dataset that returns features + dict of targets."""
 
     def __init__(self, X: np.ndarray, y_dict: dict):
@@ -78,11 +69,10 @@ class TEMultiTargetDataset(Dataset):
         return x, y
 
 
-def make_te_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
-    """Create DataLoaders for multi-target TE training."""
-    train_ds = TEMultiTargetDataset(X_train, y_train_dict)
-    val_ds = TEMultiTargetDataset(X_val, y_val_dict)
-
+def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
+    """Create DataLoaders for multi-target training."""
+    train_ds = MultiTargetDataset(X_train, y_train_dict)
+    val_ds = MultiTargetDataset(X_val, y_val_dict)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
                               num_workers=0, pin_memory=False)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
@@ -90,16 +80,17 @@ def make_te_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256
     return train_loader, val_loader
 
 
-class TEMultiHeadTrainer:
-    """Training loop for multi-head TE network."""
+class MultiHeadTrainer:
+    """Training loop for any multi-head position network."""
 
     def __init__(self, model, optimizer, scheduler, criterion, device,
-                 patience=15, scheduler_per_batch=False):
+                 target_names, patience=15, scheduler_per_batch=False):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.criterion = criterion
         self.device = device
+        self.target_names = target_names
         self.patience = patience
         self.scheduler_per_batch = scheduler_per_batch
         self.best_val_loss = float("inf")
@@ -107,10 +98,11 @@ class TEMultiHeadTrainer:
         self.epochs_without_improvement = 0
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
+        all_keys = self.target_names + ["total"]
         history = {k: [] for k in [
             "train_loss", "val_loss",
-            "val_loss_receiving", "val_loss_rushing", "val_loss_td",
-            "val_mae_total", "val_mae_receiving", "val_mae_rushing", "val_mae_td",
+            *[f"val_loss_{t}" for t in self.target_names],
+            "val_mae_total", *[f"val_mae_{t}" for t in self.target_names],
             "val_rmse_total",
         ]}
 
@@ -141,8 +133,8 @@ class TEMultiHeadTrainer:
 
             # --- Validation pass ---
             self.model.eval()
-            all_preds = {k: [] for k in ["receiving_floor", "rushing_floor", "td_points", "total"]}
-            all_targets = {k: [] for k in ["receiving_floor", "rushing_floor", "td_points", "total"]}
+            all_preds = {k: [] for k in all_keys}
+            all_targets = {k: [] for k in all_keys}
             epoch_val_loss = 0.0
             val_components_accum = {}
             n_val_batches = 0
@@ -160,7 +152,7 @@ class TEMultiHeadTrainer:
                         val_components_accum[k] = val_components_accum.get(k, 0) + components[k]
                     n_val_batches += 1
 
-                    for k in all_preds:
+                    for k in all_keys:
                         all_preds[k].append(preds[k].cpu().numpy())
                         all_targets[k].append(y_batch[k].cpu().numpy())
 
@@ -168,29 +160,18 @@ class TEMultiHeadTrainer:
             history["val_loss"].append(avg_val_loss)
 
             # Per-target val losses
-            history["val_loss_receiving"].append(
-                val_components_accum.get("loss_receiving", 0) / n_val_batches
-            )
-            history["val_loss_rushing"].append(
-                val_components_accum.get("loss_rushing", 0) / n_val_batches
-            )
-            history["val_loss_td"].append(
-                val_components_accum.get("loss_td", 0) / n_val_batches
-            )
+            for t in self.target_names:
+                history[f"val_loss_{t}"].append(
+                    val_components_accum.get(f"loss_{t}", 0) / n_val_batches
+                )
 
             # Compute MAE per target
-            for k in ["receiving_floor", "rushing_floor", "td_points", "total"]:
+            for k in all_keys:
                 y_pred_all = np.concatenate(all_preds[k])
                 y_true_all = np.concatenate(all_targets[k])
                 mae = np.mean(np.abs(y_pred_all - y_true_all))
-                if k == "receiving_floor":
-                    history["val_mae_receiving"].append(mae)
-                elif k == "rushing_floor":
-                    history["val_mae_rushing"].append(mae)
-                elif k == "td_points":
-                    history["val_mae_td"].append(mae)
-                elif k == "total":
-                    history["val_mae_total"].append(mae)
+                history[f"val_mae_{k}"].append(mae)
+                if k == "total":
                     history["val_rmse_total"].append(
                         np.sqrt(np.mean((y_pred_all - y_true_all) ** 2))
                     )
@@ -218,56 +199,61 @@ class TEMultiHeadTrainer:
 
             # --- Logging ---
             if (epoch + 1) % 10 == 0:
+                target_maes = " | ".join(
+                    f"{t}: {history[f'val_mae_{t}'][-1]:.3f}"
+                    for t in self.target_names
+                )
                 print(
                     f"Epoch {epoch+1:3d} | "
                     f"Train: {avg_train_loss:.4f} | "
                     f"Val: {avg_val_loss:.4f} | "
                     f"MAE total: {history['val_mae_total'][-1]:.3f} | "
-                    f"recv: {history['val_mae_receiving'][-1]:.3f} | "
-                    f"rush: {history['val_mae_rushing'][-1]:.3f} | "
-                    f"td: {history['val_mae_td'][-1]:.3f}"
+                    f"{target_maes}"
                 )
 
         return history
 
-    def plot_training_curves(self, history: dict, save_path: str) -> None:
-        """Multi-panel figure for TE multi-head training."""
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
-        # Panel 1: Overall loss
-        axes[0, 0].plot(history["train_loss"], label="Train Loss")
-        axes[0, 0].plot(history["val_loss"], label="Val Loss")
-        axes[0, 0].set_xlabel("Epoch")
-        axes[0, 0].set_ylabel("Combined Loss")
-        axes[0, 0].set_title("Training & Validation Loss")
-        axes[0, 0].legend()
+def plot_training_curves(history: dict, target_names: list[str], save_path: str) -> None:
+    """Multi-panel figure for multi-head training."""
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
-        # Panel 2: Per-target val losses
-        axes[0, 1].plot(history["val_loss_receiving"], label="Receiving Floor")
-        axes[0, 1].plot(history["val_loss_rushing"], label="Rushing Floor")
-        axes[0, 1].plot(history["val_loss_td"], label="TD Points")
-        axes[0, 1].set_xlabel("Epoch")
-        axes[0, 1].set_ylabel("Huber Loss")
-        axes[0, 1].set_title("Per-Target Validation Loss")
-        axes[0, 1].legend()
+    # Panel 1: Overall loss
+    axes[0, 0].plot(history["train_loss"], label="Train Loss")
+    axes[0, 0].plot(history["val_loss"], label="Val Loss")
+    axes[0, 0].set_xlabel("Epoch")
+    axes[0, 0].set_ylabel("Combined Loss")
+    axes[0, 0].set_title("Training & Validation Loss")
+    axes[0, 0].legend()
 
-        # Panel 3: Per-target MAE
-        axes[1, 0].plot(history["val_mae_receiving"], label="Receiving Floor")
-        axes[1, 0].plot(history["val_mae_rushing"], label="Rushing Floor")
-        axes[1, 0].plot(history["val_mae_td"], label="TD Points")
-        axes[1, 0].set_xlabel("Epoch")
-        axes[1, 0].set_ylabel("MAE")
-        axes[1, 0].set_title("Per-Target Validation MAE")
-        axes[1, 0].legend()
+    # Panel 2: Per-target val losses
+    for t in target_names:
+        key = f"val_loss_{t}"
+        if key in history:
+            axes[0, 1].plot(history[key], label=t.replace("_", " ").title())
+    axes[0, 1].set_xlabel("Epoch")
+    axes[0, 1].set_ylabel("Huber Loss")
+    axes[0, 1].set_title("Per-Target Validation Loss")
+    axes[0, 1].legend()
 
-        # Panel 4: Total MAE and RMSE
-        axes[1, 1].plot(history["val_mae_total"], label="Total MAE")
-        axes[1, 1].plot(history["val_rmse_total"], label="Total RMSE")
-        axes[1, 1].set_xlabel("Epoch")
-        axes[1, 1].set_ylabel("Error")
-        axes[1, 1].set_title("Total Fantasy Points Metrics")
-        axes[1, 1].legend()
+    # Panel 3: Per-target MAE
+    for t in target_names:
+        key = f"val_mae_{t}"
+        if key in history:
+            axes[1, 0].plot(history[key], label=t.replace("_", " ").title())
+    axes[1, 0].set_xlabel("Epoch")
+    axes[1, 0].set_ylabel("MAE")
+    axes[1, 0].set_title("Per-Target Validation MAE")
+    axes[1, 0].legend()
 
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=150)
-        plt.close()
+    # Panel 4: Total MAE and RMSE
+    axes[1, 1].plot(history["val_mae_total"], label="Total MAE")
+    axes[1, 1].plot(history["val_rmse_total"], label="Total RMSE")
+    axes[1, 1].set_xlabel("Epoch")
+    axes[1, 1].set_ylabel("Error")
+    axes[1, 1].set_title("Total Fantasy Points Metrics")
+    axes[1, 1].legend()
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()

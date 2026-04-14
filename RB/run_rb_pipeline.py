@@ -1,284 +1,54 @@
-"""
-End-to-end RB position model pipeline.
-
-Can be run standalone (loads general splits from disk) or called from
-the general run_pipeline.py with DataFrames passed directly.
-"""
+"""End-to-end RB position model pipeline."""
 
 import os
 import sys
-import numpy as np
-import pandas as pd
-import torch
-import joblib
-from sklearn.preprocessing import StandardScaler
-
-# Ensure project root is on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from src.config import SPLITS_DIR
-from src.evaluation.metrics import compute_metrics
-from src.models.baseline import SeasonAverageBaseline
 
 from RB.rb_config import (
     RB_TARGETS, RB_RIDGE_ALPHAS, RB_SPECIFIC_FEATURES,
     RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_DROPOUT,
     RB_NN_LR, RB_NN_WEIGHT_DECAY, RB_NN_EPOCHS, RB_NN_BATCH_SIZE,
     RB_NN_PATIENCE,
-    RB_LOSS_W_RUSHING, RB_LOSS_W_RECEIVING, RB_LOSS_W_TD, RB_LOSS_W_TOTAL,
-    RB_HUBER_DELTAS,
+    RB_LOSS_WEIGHTS, RB_LOSS_W_TOTAL, RB_HUBER_DELTAS,
     RB_SCHEDULER_TYPE, RB_COSINE_T0, RB_COSINE_T_MULT, RB_COSINE_ETA_MIN,
 )
 from RB.rb_data import filter_to_rb
 from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
 from RB.rb_features import add_rb_specific_features, get_rb_feature_columns, fill_rb_nans
-from RB.rb_models import RBRidgeMultiTarget
-from RB.rb_neural_net import RBMultiHeadNet
-from RB.rb_training import MultiTargetLoss, RBMultiHeadTrainer, make_rb_dataloaders
-from RB.rb_evaluation import (
-    compute_rb_metrics, compute_rb_ranking_metrics,
-    print_rb_comparison_table, plot_rb_pred_vs_actual,
-)
-from RB.rb_backtest import run_rb_weekly_simulation, plot_rb_weekly_accuracy
+from shared.pipeline import run_pipeline
+
+RB_CONFIG = {
+    "targets": RB_TARGETS,
+    "ridge_alphas": RB_RIDGE_ALPHAS,
+    "specific_features": RB_SPECIFIC_FEATURES,
+    "filter_fn": filter_to_rb,
+    "compute_targets_fn": compute_rb_targets,
+    "add_features_fn": add_rb_specific_features,
+    "fill_nans_fn": fill_rb_nans,
+    "get_feature_columns_fn": get_rb_feature_columns,
+    "compute_adjustment_fn": compute_fumble_adjustment,
+    "nn_backbone_layers": RB_NN_BACKBONE_LAYERS,
+    "nn_head_hidden": RB_NN_HEAD_HIDDEN,
+    "nn_dropout": RB_NN_DROPOUT,
+    "nn_head_hidden_overrides": None,
+    "nn_lr": RB_NN_LR,
+    "nn_weight_decay": RB_NN_WEIGHT_DECAY,
+    "nn_epochs": RB_NN_EPOCHS,
+    "nn_batch_size": RB_NN_BATCH_SIZE,
+    "nn_patience": RB_NN_PATIENCE,
+    "loss_weights": RB_LOSS_WEIGHTS,
+    "loss_w_total": RB_LOSS_W_TOTAL,
+    "huber_deltas": RB_HUBER_DELTAS,
+    "scheduler_type": RB_SCHEDULER_TYPE,
+    "cosine_t0": RB_COSINE_T0,
+    "cosine_t_mult": RB_COSINE_T_MULT,
+    "cosine_eta_min": RB_COSINE_ETA_MIN,
+}
 
 
 def run_rb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
-    """Run the full RB position model pipeline."""
-
-    # --- Reproducibility ---
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    # --- Step 1: Load data ---
-    if train_df is None:
-        print("Loading general splits from disk...")
-        train_df = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
-        val_df = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
-        test_df = pd.read_parquet(f"{SPLITS_DIR}/test.parquet")
-
-    # --- Step 2: Filter to RB ---
-    print("Filtering to RB...")
-    rb_train = filter_to_rb(train_df)
-    rb_val = filter_to_rb(val_df)
-    rb_test = filter_to_rb(test_df)
-    print(f"  RB splits: train={len(rb_train)}, val={len(rb_val)}, test={len(rb_test)}")
-
-    # --- Step 3: Compute targets ---
-    print("Computing RB targets...")
-    rb_train = compute_rb_targets(rb_train)
-    rb_val = compute_rb_targets(rb_val)
-    rb_test = compute_rb_targets(rb_test)
-
-    # --- Step 4: Add RB-specific features ---
-    print("Adding RB-specific features...")
-    rb_train, rb_val, rb_test = add_rb_specific_features(rb_train, rb_val, rb_test)
-
-    # --- Step 5: Fill NaNs for RB features ---
-    rb_train, rb_val, rb_test = fill_rb_nans(rb_train, rb_val, rb_test, RB_SPECIFIC_FEATURES)
-
-    # --- Step 6: Prepare feature arrays ---
-    feature_cols = get_rb_feature_columns()
-    # Only keep columns that actually exist in the data
-    available_cols = [c for c in feature_cols if c in rb_train.columns]
-    missing_cols = [c for c in feature_cols if c not in rb_train.columns]
-    if missing_cols:
-        print(f"  WARNING: {len(missing_cols)} feature columns missing, filling with 0")
-        for col in missing_cols:
-            for df in [rb_train, rb_val, rb_test]:
-                df[col] = 0.0
-    feature_cols_final = feature_cols
-
-    # Replace any remaining NaN/inf
-    for df in [rb_train, rb_val, rb_test]:
-        df[feature_cols_final] = df[feature_cols_final].replace([np.inf, -np.inf], np.nan).fillna(0)
-
-    X_train = rb_train[feature_cols_final].values.astype(np.float32)
-    X_val = rb_val[feature_cols_final].values.astype(np.float32)
-    X_test = rb_test[feature_cols_final].values.astype(np.float32)
-
-    y_train_dict = {t: rb_train[t].values for t in RB_TARGETS}
-    y_val_dict = {t: rb_val[t].values for t in RB_TARGETS}
-    y_test_dict = {t: rb_test[t].values for t in RB_TARGETS}
-
-    # Training/val totals use sub-target sum (no fumble penalty) so the NN's
-    # total loss is internally consistent with its 3-head output.
-    # Fumble adjustment is applied only at inference time.
-    y_train_dict["total"] = sum(rb_train[t].values for t in RB_TARGETS)
-    y_val_dict["total"] = sum(rb_val[t].values for t in RB_TARGETS)
-    # Test total uses actual fantasy_points for final evaluation
-    y_test_dict["total"] = rb_test["fantasy_points"].values
-
-    print(f"  Feature matrix shape: {X_train.shape}")
-
-    # --- Step 7: Baseline ---
-    print("\n=== RB Baseline ===")
-    baseline = SeasonAverageBaseline()
-    baseline_preds = baseline.predict(rb_test)
-    baseline_metrics = {"total": compute_metrics(y_test_dict["total"], baseline_preds)}
-    print(f"  Season Avg Baseline MAE: {baseline_metrics['total']['mae']:.3f}")
-
-    # --- Step 8: Ridge multi-target with alpha tuning ---
-    print("\n=== RB Ridge Multi-Target ===")
-    fumble_adj_val = compute_fumble_adjustment(rb_val)
-    fumble_adj_test = compute_fumble_adjustment(rb_test)
-    # Actual fantasy_points for val/test (includes fumbles) for fair evaluation
-    y_val_actual_total = rb_val["fantasy_points"].values
-    best_alpha = None
-    best_val_mae = float("inf")
-    for alpha in RB_RIDGE_ALPHAS:
-        ridge = RBRidgeMultiTarget(alpha=alpha)
-        ridge.fit(X_train, y_train_dict)
-        val_preds = ridge.predict(X_val)
-        # Include fumble adjustment so alpha tuning matches final evaluation
-        val_total_adj = val_preds["total"] + fumble_adj_val.values
-        val_mae = np.mean(np.abs(val_total_adj - y_val_actual_total))
-        print(f"  Alpha={alpha:.2f}: Val MAE={val_mae:.3f}")
-        if val_mae < best_val_mae:
-            best_val_mae = val_mae
-            best_alpha = alpha
-
-    print(f"  Best alpha: {best_alpha}")
-    ridge_model = RBRidgeMultiTarget(alpha=best_alpha)
-    ridge_model.fit(X_train, y_train_dict)
-    ridge_test_preds = ridge_model.predict(X_test)
-
-    # Add fumble adjustment to Ridge predictions
-    ridge_test_preds["total"] = (
-        ridge_test_preds["rushing_floor"]
-        + ridge_test_preds["receiving_floor"]
-        + ridge_test_preds["td_points"]
-        + fumble_adj_test.values
-    )
-
-    ridge_metrics = compute_rb_metrics(y_test_dict, ridge_test_preds)
-
-    # --- Step 9: Multi-head NN ---
-    print("\n=== RB Multi-Head Neural Net ===")
-    # Dedicated scaler for NN (decoupled from Ridge's internal state)
-    nn_scaler = StandardScaler()
-    X_train_scaled = nn_scaler.fit_transform(X_train)
-    X_val_scaled = nn_scaler.transform(X_val)
-    X_test_scaled = nn_scaler.transform(X_test)
-
-    # Create dataloaders
-    train_loader, val_loader = make_rb_dataloaders(
-        X_train_scaled, y_train_dict, X_val_scaled, y_val_dict,
-        batch_size=RB_NN_BATCH_SIZE,
-    )
-
-    # Initialize model
-    device = torch.device("cpu")
-    input_dim = X_train_scaled.shape[1]
-    model = RBMultiHeadNet(
-        input_dim=input_dim,
-        backbone_layers=RB_NN_BACKBONE_LAYERS,
-        head_hidden=RB_NN_HEAD_HIDDEN,
-        dropout=RB_NN_DROPOUT,
-    ).to(device)
-
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=RB_NN_LR, weight_decay=RB_NN_WEIGHT_DECAY,
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=RB_COSINE_T0, T_mult=RB_COSINE_T_MULT, eta_min=RB_COSINE_ETA_MIN,
-    )
-    criterion = MultiTargetLoss(
-        w_rushing=RB_LOSS_W_RUSHING, w_receiving=RB_LOSS_W_RECEIVING,
-        w_td=RB_LOSS_W_TD, w_total=RB_LOSS_W_TOTAL,
-        huber_deltas=RB_HUBER_DELTAS,
-    )
-
-    trainer = RBMultiHeadTrainer(
-        model=model, optimizer=optimizer, scheduler=scheduler,
-        criterion=criterion, device=device, patience=RB_NN_PATIENCE,
-    )
-
-    history = trainer.train(train_loader, val_loader, n_epochs=RB_NN_EPOCHS)
-
-    # Test predictions
-    nn_test_preds = model.predict_numpy(X_test_scaled, device)
-    # Add fumble adjustment
-    nn_test_preds["total"] = (
-        nn_test_preds["rushing_floor"]
-        + nn_test_preds["receiving_floor"]
-        + nn_test_preds["td_points"]
-        + fumble_adj_test.values
-    )
-    nn_metrics = compute_rb_metrics(y_test_dict, nn_test_preds)
-
-    # --- Step 10: Comparison ---
-    print_rb_comparison_table({
-        "Season Average Baseline": baseline_metrics,
-        "RB Ridge Multi-Target": ridge_metrics,
-        "RB Multi-Head NN": nn_metrics,
-    })
-
-    # --- Step 11: Ranking metrics ---
-    rb_test = rb_test.copy()
-    rb_test["pred_ridge_total"] = ridge_test_preds["total"]
-    rb_test["pred_nn_total"] = nn_test_preds["total"]
-    rb_test["pred_baseline"] = baseline_preds
-
-    ridge_ranking = compute_rb_ranking_metrics(rb_test, pred_col="pred_ridge_total")
-    nn_ranking = compute_rb_ranking_metrics(rb_test, pred_col="pred_nn_total")
-
-    print(f"\nRidge Top-12 Hit Rate: {ridge_ranking['season_avg_hit_rate']:.3f}")
-    print(f"NN Top-12 Hit Rate:    {nn_ranking['season_avg_hit_rate']:.3f}")
-    print(f"Ridge Spearman:        {ridge_ranking['season_avg_spearman']:.3f}")
-    print(f"NN Spearman:           {nn_ranking['season_avg_spearman']:.3f}")
-
-    # --- Step 12: Weekly backtest ---
-    print("\n=== Weekly Backtest ===")
-    sim_results = run_rb_weekly_simulation(
-        rb_test,
-        pred_columns={
-            "Season Avg": "pred_baseline",
-            "Ridge": "pred_ridge_total",
-            "Neural Net": "pred_nn_total",
-        },
-    )
-    for model_name, summary in sim_results["season_summary"].items():
-        print(f"  {model_name}: MAE={summary['mae']:.3f}, R2={summary['r2']:.3f}")
-
-    # --- Step 13: Save outputs ---
-    os.makedirs("RB/outputs/models", exist_ok=True)
-    os.makedirs("RB/outputs/figures", exist_ok=True)
-
-    ridge_model.save("RB/outputs/models")
-    torch.save(model.state_dict(), "RB/outputs/models/rb_multihead_nn.pt")
-    joblib.dump(nn_scaler, "RB/outputs/models/nn_scaler.pkl")
-
-    # Save figures
-    trainer.plot_training_curves(history, "RB/outputs/figures/rb_training_curves.png")
-    plot_rb_weekly_accuracy(sim_results, "RB/outputs/figures/rb_weekly_mae.png")
-    plot_rb_pred_vs_actual(
-        y_test_dict, nn_test_preds, "RB Multi-Head NN",
-        "RB/outputs/figures/rb_pred_vs_actual_scatter.png",
-    )
-
-    # Ridge feature importance
-    feature_importance = ridge_model.get_feature_importance(feature_cols_final)
-    import matplotlib.pyplot as plt
-    fig, axes = plt.subplots(1, 3, figsize=(18, 8))
-    for ax, (target, importance) in zip(axes, feature_importance.items()):
-        importance.head(15).plot(kind="barh", ax=ax)
-        ax.set_title(f"Ridge: {target} Top-15 Features")
-        ax.set_xlabel("Absolute Coefficient")
-    plt.tight_layout()
-    plt.savefig("RB/outputs/figures/rb_ridge_feature_importance.png", dpi=150)
-    plt.close()
-
-    print("\nRB pipeline complete. Outputs saved to RB/outputs/")
-
-    return {
-        "ridge_metrics": ridge_metrics,
-        "nn_metrics": nn_metrics,
-        "ridge_ranking": ridge_ranking,
-        "nn_ranking": nn_ranking,
-        "history": history,
-        "sim_results": sim_results,
-    }
+    return run_pipeline("RB", RB_CONFIG, train_df, val_df, test_df, seed)
 
 
 if __name__ == "__main__":
-    results = run_rb_pipeline()
+    run_rb_pipeline()

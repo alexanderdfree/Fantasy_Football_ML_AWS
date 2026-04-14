@@ -22,7 +22,10 @@ from src.features.engineer import get_feature_columns, fill_nans_safe
 from src.data.loader import compute_fantasy_points
 from src.evaluation.metrics import compute_metrics, compute_positional_metrics
 
-# --- QB imports ---
+from shared.models import RidgeMultiTarget
+from shared.neural_net import MultiHeadNet
+
+# --- Position-specific imports (data, targets, features, config) ---
 from QB.qb_data import filter_to_qb
 from QB.qb_targets import compute_qb_targets, compute_qb_adjustment
 from QB.qb_features import add_qb_specific_features, get_qb_feature_columns, fill_qb_nans
@@ -30,16 +33,15 @@ from QB.qb_config import (
     QB_TARGETS, QB_SPECIFIC_FEATURES,
     QB_NN_BACKBONE_LAYERS, QB_NN_HEAD_HIDDEN, QB_NN_DROPOUT,
 )
-# --- RB imports ---
+
 from RB.rb_data import filter_to_rb
 from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
 from RB.rb_features import add_rb_specific_features, get_rb_feature_columns, fill_rb_nans
 from RB.rb_config import (
-    RB_SPECIFIC_FEATURES, RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_DROPOUT,
+    RB_TARGETS, RB_SPECIFIC_FEATURES,
+    RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_DROPOUT,
 )
-from RB.rb_models import RBRidgeMultiTarget
-from RB.rb_neural_net import RBMultiHeadNet
-# --- WR imports ---
+
 from WR.wr_data import filter_to_wr
 from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
 from WR.wr_features import add_wr_specific_features, get_wr_feature_columns, fill_wr_nans
@@ -47,7 +49,7 @@ from WR.wr_config import (
     WR_TARGETS, WR_SPECIFIC_FEATURES,
     WR_NN_BACKBONE_LAYERS, WR_NN_HEAD_HIDDEN, WR_NN_DROPOUT,
 )
-# --- TE imports ---
+
 from TE.te_data import filter_to_te
 from TE.te_targets import compute_te_targets, compute_te_fumble_adjustment
 from TE.te_features import add_te_specific_features, get_te_feature_columns, fill_te_nans
@@ -56,20 +58,74 @@ from TE.te_config import (
     TE_NN_BACKBONE_LAYERS, TE_NN_HEAD_HIDDEN, TE_NN_HEAD_HIDDEN_OVERRIDES,
     TE_NN_DROPOUT,
 )
-# --- Position-specific models ---
-from QB.qb_models import QBRidgeMultiTarget
-from QB.qb_neural_net import QBMultiHeadNet
-from WR.wr_models import WRRidgeMultiTarget
-from WR.wr_neural_net import WRMultiHeadNet
-from TE.te_models import TERidgeMultiTarget
-from TE.te_neural_net import TEMultiHeadNet
 
 app = Flask(__name__)
 
 _cache = {}
 
 # ---------------------------------------------------------------------------
-# Position model metadata (static)
+# Position registry — replaces per-position if/elif chains
+# ---------------------------------------------------------------------------
+POSITION_REGISTRY = {
+    "QB": {
+        "targets": QB_TARGETS,
+        "specific_features": QB_SPECIFIC_FEATURES,
+        "filter_fn": filter_to_qb,
+        "compute_targets_fn": compute_qb_targets,
+        "add_features_fn": add_qb_specific_features,
+        "fill_nans_fn": fill_qb_nans,
+        "get_feature_columns_fn": get_qb_feature_columns,
+        "compute_adjustment_fn": compute_qb_adjustment,
+        "model_dir": "QB/outputs/models",
+        "nn_file": "qb_multihead_nn.pt",
+        "nn_kwargs": dict(backbone_layers=QB_NN_BACKBONE_LAYERS, head_hidden=QB_NN_HEAD_HIDDEN, dropout=QB_NN_DROPOUT),
+    },
+    "RB": {
+        "targets": RB_TARGETS,
+        "specific_features": RB_SPECIFIC_FEATURES,
+        "filter_fn": filter_to_rb,
+        "compute_targets_fn": compute_rb_targets,
+        "add_features_fn": add_rb_specific_features,
+        "fill_nans_fn": fill_rb_nans,
+        "get_feature_columns_fn": get_rb_feature_columns,
+        "compute_adjustment_fn": compute_fumble_adjustment,
+        "model_dir": "RB/outputs/models",
+        "nn_file": "rb_multihead_nn.pt",
+        "nn_kwargs": dict(backbone_layers=RB_NN_BACKBONE_LAYERS, head_hidden=RB_NN_HEAD_HIDDEN, dropout=RB_NN_DROPOUT),
+    },
+    "WR": {
+        "targets": WR_TARGETS,
+        "specific_features": WR_SPECIFIC_FEATURES,
+        "filter_fn": filter_to_wr,
+        "compute_targets_fn": compute_wr_targets,
+        "add_features_fn": add_wr_specific_features,
+        "fill_nans_fn": fill_wr_nans,
+        "get_feature_columns_fn": get_wr_feature_columns,
+        "compute_adjustment_fn": compute_wr_fumble_adjustment,
+        "model_dir": "WR/outputs/models",
+        "nn_file": "wr_multihead_nn.pt",
+        "nn_kwargs": dict(backbone_layers=WR_NN_BACKBONE_LAYERS, head_hidden=WR_NN_HEAD_HIDDEN, dropout=WR_NN_DROPOUT),
+    },
+    "TE": {
+        "targets": TE_TARGETS,
+        "specific_features": TE_SPECIFIC_FEATURES,
+        "filter_fn": filter_to_te,
+        "compute_targets_fn": compute_te_targets,
+        "add_features_fn": add_te_specific_features,
+        "fill_nans_fn": fill_te_nans,
+        "get_feature_columns_fn": get_te_feature_columns,
+        "compute_adjustment_fn": compute_te_fumble_adjustment,
+        "model_dir": "TE/outputs/models",
+        "nn_file": "te_multihead_nn.pt",
+        "nn_kwargs": dict(
+            backbone_layers=TE_NN_BACKBONE_LAYERS, head_hidden=TE_NN_HEAD_HIDDEN,
+            dropout=TE_NN_DROPOUT, head_hidden_overrides=TE_NN_HEAD_HIDDEN_OVERRIDES,
+        ),
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Position model metadata (static, for the UI)
 # ---------------------------------------------------------------------------
 POSITION_INFO = {
     "QB": {
@@ -130,91 +186,27 @@ def _compute_scoring_formats(df):
 def _apply_position_models(train, val, test, pos, results):
     """Load pre-trained position-specific models and write predictions into results."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    reg = POSITION_REGISTRY[pos]
 
-    if pos == "QB":
-        model_dir = "QB/outputs/models"
-        pos_train, pos_val, pos_test = filter_to_qb(train), filter_to_qb(val), filter_to_qb(test)
-        pos_train = compute_qb_targets(pos_train)
-        pos_val = compute_qb_targets(pos_val)
-        pos_test = compute_qb_targets(pos_test)
-        pos_train, pos_val, pos_test = add_qb_specific_features(pos_train, pos_val, pos_test)
-        pos_train, pos_val, pos_test = fill_qb_nans(pos_train, pos_val, pos_test, QB_SPECIFIC_FEATURES)
-        feature_cols = get_qb_feature_columns()
-        targets = QB_TARGETS
-        adj = compute_qb_adjustment(pos_test)
-        nn_file = "qb_multihead_nn.pt"
-        nn_cls_args = dict(
-            backbone_layers=QB_NN_BACKBONE_LAYERS,
-            head_hidden=QB_NN_HEAD_HIDDEN,
-            dropout=QB_NN_DROPOUT,
-        )
-        ridge_cls = QBRidgeMultiTarget
-        ridge_args = {}
-        nn_cls = QBMultiHeadNet
+    targets = reg["targets"]
+    model_dir = reg["model_dir"]
 
-    elif pos == "RB":
-        model_dir = "RB/outputs/models"
-        pos_train, pos_val, pos_test = filter_to_rb(train), filter_to_rb(val), filter_to_rb(test)
-        pos_train = compute_rb_targets(pos_train)
-        pos_val = compute_rb_targets(pos_val)
-        pos_test = compute_rb_targets(pos_test)
-        pos_train, pos_val, pos_test = add_rb_specific_features(pos_train, pos_val, pos_test)
-        pos_train, pos_val, pos_test = fill_rb_nans(pos_train, pos_val, pos_test, RB_SPECIFIC_FEATURES)
-        feature_cols = get_rb_feature_columns()
-        targets = ["rushing_floor", "receiving_floor", "td_points"]
-        adj = compute_fumble_adjustment(pos_test)
-        nn_file = "rb_multihead_nn.pt"
-        nn_cls_args = dict(
-            backbone_layers=RB_NN_BACKBONE_LAYERS,
-            head_hidden=RB_NN_HEAD_HIDDEN,
-            dropout=RB_NN_DROPOUT,
-        )
-        ridge_cls = RBRidgeMultiTarget
-        ridge_args = {}
-        nn_cls = RBMultiHeadNet
+    # Prepare position data
+    pos_train = reg["filter_fn"](train)
+    pos_val = reg["filter_fn"](val)
+    pos_test = reg["filter_fn"](test)
 
-    elif pos == "WR":
-        model_dir = "WR/outputs/models"
-        pos_train, pos_val, pos_test = filter_to_wr(train), filter_to_wr(val), filter_to_wr(test)
-        pos_train = compute_wr_targets(pos_train)
-        pos_val = compute_wr_targets(pos_val)
-        pos_test = compute_wr_targets(pos_test)
-        pos_train, pos_val, pos_test = add_wr_specific_features(pos_train, pos_val, pos_test)
-        pos_train, pos_val, pos_test = fill_wr_nans(pos_train, pos_val, pos_test, WR_SPECIFIC_FEATURES)
-        feature_cols = get_wr_feature_columns()
-        targets = WR_TARGETS
-        adj = compute_wr_fumble_adjustment(pos_test)
-        nn_file = "wr_multihead_nn.pt"
-        nn_cls_args = dict(
-            backbone_layers=WR_NN_BACKBONE_LAYERS,
-            head_hidden=WR_NN_HEAD_HIDDEN,
-            dropout=WR_NN_DROPOUT,
-        )
-        ridge_cls = WRRidgeMultiTarget
-        ridge_args = {}
-        nn_cls = WRMultiHeadNet
+    pos_train = reg["compute_targets_fn"](pos_train)
+    pos_val = reg["compute_targets_fn"](pos_val)
+    pos_test = reg["compute_targets_fn"](pos_test)
 
-    elif pos == "TE":
-        model_dir = "TE/outputs/models"
-        pos_train, pos_val, pos_test = filter_to_te(train), filter_to_te(val), filter_to_te(test)
-        pos_train = compute_te_targets(pos_train)
-        pos_val = compute_te_targets(pos_val)
-        pos_test = compute_te_targets(pos_test)
-        pos_train, pos_val, pos_test = add_te_specific_features(pos_train, pos_val, pos_test)
-        pos_train, pos_val, pos_test = fill_te_nans(pos_train, pos_val, pos_test, TE_SPECIFIC_FEATURES)
-        feature_cols = get_te_feature_columns()
-        targets = TE_TARGETS
-        adj = compute_te_fumble_adjustment(pos_test)
-        nn_file = "te_multihead_nn.pt"
-        nn_cls_args = dict(
-            backbone_layers=TE_NN_BACKBONE_LAYERS,
-            head_hidden=TE_NN_HEAD_HIDDEN,
-            td_head_hidden=TE_NN_HEAD_HIDDEN_OVERRIDES.get("td_points"),
-            dropout=TE_NN_DROPOUT,
-        )
-        ridge_cls = TERidgeMultiTarget
-        ridge_args = {}
-        nn_cls = TEMultiHeadNet
+    pos_train, pos_val, pos_test = reg["add_features_fn"](pos_train, pos_val, pos_test)
+    pos_train, pos_val, pos_test = reg["fill_nans_fn"](
+        pos_train, pos_val, pos_test, reg["specific_features"]
+    )
+
+    feature_cols = reg["get_feature_columns_fn"]()
+    adj = reg["compute_adjustment_fn"](pos_test)
 
     # Prepare features
     feature_cols = [c for c in feature_cols if c in pos_train.columns]
@@ -224,7 +216,7 @@ def _apply_position_models(train, val, test, pos, results):
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)
 
     # Ridge predictions
-    ridge = ridge_cls(**ridge_args)
+    ridge = RidgeMultiTarget(target_names=targets)
     ridge.load(model_dir)
     ridge_preds = ridge.predict(X_test_pos)
     ridge_total = sum(ridge_preds[t] for t in targets) + adj.values
@@ -233,9 +225,11 @@ def _apply_position_models(train, val, test, pos, results):
     nn_scaler = joblib.load(f"{model_dir}/nn_scaler.pkl")
     X_test_scaled = nn_scaler.transform(X_test_pos)
 
-    nn_model = nn_cls(input_dim=len(feature_cols), **nn_cls_args).to(device)
+    nn_model = MultiHeadNet(
+        input_dim=len(feature_cols), target_names=targets, **reg["nn_kwargs"]
+    ).to(device)
     nn_model.load_state_dict(
-        torch.load(f"{model_dir}/{nn_file}", map_location=device, weights_only=True)
+        torch.load(f"{model_dir}/{reg['nn_file']}", map_location=device, weights_only=True)
     )
     nn_preds = nn_model.predict_numpy(X_test_scaled, device)
     nn_total = sum(nn_preds[t] for t in targets) + adj.values
