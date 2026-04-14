@@ -11,8 +11,9 @@ class MultiTargetLoss(nn.Module):
     Loss = w1 * Huber(rushing_floor) + w2 * Huber(receiving_floor) + w3 * Huber(td_points)
            + w_total * Huber(total_pred, total_actual)
 
-    Uses Huber loss (delta=1.0) instead of MSE for robustness to outlier games
+    Uses Huber loss instead of MSE for robustness to outlier games
     (e.g. backup RBs exploding for 30+ pts, or starters injured for 0).
+    Per-target deltas allow different MSE-to-MAE thresholds per target.
     """
 
     def __init__(
@@ -21,19 +22,25 @@ class MultiTargetLoss(nn.Module):
         w_receiving: float = 1.0,
         w_td: float = 1.0,
         w_total: float = 0.5,
+        huber_deltas: dict = None,
     ):
         super().__init__()
         self.w_rushing = w_rushing
         self.w_receiving = w_receiving
         self.w_td = w_td
         self.w_total = w_total
-        self.huber = nn.HuberLoss(delta=1.0)
+        if huber_deltas is None:
+            huber_deltas = {}
+        self.huber_rushing = nn.HuberLoss(delta=huber_deltas.get("rushing_floor", 1.0))
+        self.huber_receiving = nn.HuberLoss(delta=huber_deltas.get("receiving_floor", 1.0))
+        self.huber_td = nn.HuberLoss(delta=huber_deltas.get("td_points", 1.0))
+        self.huber_total = nn.HuberLoss(delta=huber_deltas.get("total", 1.0))
 
     def forward(self, preds: dict, targets: dict) -> tuple:
-        loss_rushing = self.huber(preds["rushing_floor"], targets["rushing_floor"])
-        loss_receiving = self.huber(preds["receiving_floor"], targets["receiving_floor"])
-        loss_td = self.huber(preds["td_points"], targets["td_points"])
-        loss_total = self.huber(preds["total"], targets["total"])
+        loss_rushing = self.huber_rushing(preds["rushing_floor"], targets["rushing_floor"])
+        loss_receiving = self.huber_receiving(preds["receiving_floor"], targets["receiving_floor"])
+        loss_td = self.huber_td(preds["td_points"], targets["td_points"])
+        loss_total = self.huber_total(preds["total"], targets["total"])
 
         combined = (
             self.w_rushing * loss_rushing
@@ -84,13 +91,15 @@ def make_rb_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256
 class RBMultiHeadTrainer:
     """Training loop for multi-head RB network."""
 
-    def __init__(self, model, optimizer, scheduler, criterion, device, patience=15):
+    def __init__(self, model, optimizer, scheduler, criterion, device,
+                 patience=15, scheduler_per_batch=False):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.criterion = criterion
         self.device = device
         self.patience = patience
+        self.scheduler_per_batch = scheduler_per_batch
         self.best_val_loss = float("inf")
         self.best_model_state = None
         self.epochs_without_improvement = 0
@@ -119,6 +128,8 @@ class RBMultiHeadTrainer:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
+                if self.scheduler_per_batch:
+                    self.scheduler.step()
 
                 epoch_train_loss += loss.item()
                 n_train_batches += 1
@@ -183,7 +194,11 @@ class RBMultiHeadTrainer:
                     )
 
             # --- LR Scheduler ---
-            self.scheduler.step(avg_val_loss)
+            if not self.scheduler_per_batch:
+                if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    self.scheduler.step(avg_val_loss)
+                else:
+                    self.scheduler.step()
 
             # --- Early Stopping ---
             if avg_val_loss < self.best_val_loss:

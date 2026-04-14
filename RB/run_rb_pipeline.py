@@ -10,6 +10,7 @@ import sys
 import numpy as np
 import pandas as pd
 import torch
+import joblib
 from sklearn.preprocessing import StandardScaler
 
 # Ensure project root is on path
@@ -23,8 +24,10 @@ from RB.rb_config import (
     RB_TARGETS, RB_RIDGE_ALPHAS, RB_SPECIFIC_FEATURES,
     RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_DROPOUT,
     RB_NN_LR, RB_NN_WEIGHT_DECAY, RB_NN_EPOCHS, RB_NN_BATCH_SIZE,
-    RB_NN_PATIENCE, RB_SCHEDULER_PATIENCE, RB_SCHEDULER_FACTOR,
+    RB_NN_PATIENCE,
     RB_LOSS_W_RUSHING, RB_LOSS_W_RECEIVING, RB_LOSS_W_TD, RB_LOSS_W_TOTAL,
+    RB_HUBER_DELTAS,
+    RB_SCHEDULER_TYPE, RB_COSINE_T0, RB_COSINE_T_MULT, RB_COSINE_ETA_MIN,
 )
 from RB.rb_data import filter_to_rb
 from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
@@ -176,12 +179,13 @@ def run_rb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=RB_NN_LR, weight_decay=RB_NN_WEIGHT_DECAY,
     )
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", patience=RB_SCHEDULER_PATIENCE, factor=RB_SCHEDULER_FACTOR,
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=RB_COSINE_T0, T_mult=RB_COSINE_T_MULT, eta_min=RB_COSINE_ETA_MIN,
     )
     criterion = MultiTargetLoss(
         w_rushing=RB_LOSS_W_RUSHING, w_receiving=RB_LOSS_W_RECEIVING,
         w_td=RB_LOSS_W_TD, w_total=RB_LOSS_W_TOTAL,
+        huber_deltas=RB_HUBER_DELTAS,
     )
 
     trainer = RBMultiHeadTrainer(
@@ -242,6 +246,7 @@ def run_rb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
 
     ridge_model.save("RB/outputs/models")
     torch.save(model.state_dict(), "RB/outputs/models/rb_multihead_nn.pt")
+    joblib.dump(nn_scaler, "RB/outputs/models/nn_scaler.pkl")
 
     # Save figures
     trainer.plot_training_curves(history, "RB/outputs/figures/rb_training_curves.png")

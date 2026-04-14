@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fantasy Football Predictor</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <h1 class="logo">Fantasy Football Predictor</h1>
+            <span class="subtitle">Position-Specific ML Predictions</span>
+        </div>
+        <div class="header-right">
+            <div class="search-box">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                </svg>
+                <input type="text" id="search-input" placeholder="Search players...">
+            </div>
+        </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+        <button class="tab active" data-view="predictions">Predictions</button>
+        <button class="tab" data-view="standings">Season Leaders</button>
+        <button class="tab" data-view="model-performance">Model Performance</button>
+    </nav>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <p>Loading models & generating predictions...</p>
+            <p class="loading-sub">This may take a moment on first load</p>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- ============ PREDICTIONS VIEW ============ -->
+        <section id="view-predictions" class="view active">
+            <!-- Filters -->
+            <div class="filters-bar">
+                <div class="filter-group">
+                    <label>Position</label>
+                    <div class="pill-group" id="position-filter">
+                        <button class="pill active" data-value="ALL">All</button>
+                        <button class="pill" data-value="QB">QB</button>
+                        <button class="pill" data-value="RB">RB</button>
+                        <button class="pill" data-value="WR">WR</button>
+                        <button class="pill" data-value="TE">TE</button>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <label>Week</label>
+                    <select id="week-filter">
+                        <option value="ALL">All Weeks</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Scoring</label>
+                    <select id="scoring-filter">
+                        <option value="ppr">Full PPR</option>
+                        <option value="half_ppr">Half PPR</option>
+                        <option value="standard">Standard</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Model</label>
+                    <select id="model-display">
+                        <option value="both">Both Models</option>
+                        <option value="ridge">Ridge Regression</option>
+                        <option value="nn">Neural Network</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Results count -->
+            <div class="results-info">
+                <span id="results-count">0 players</span>
+            </div>
+
+            <!-- Player Table -->
+            <div class="table-container">
+                <table id="predictions-table">
+                    <thead>
+                        <tr>
+                            <th class="col-rank">#</th>
+                            <th class="col-player">Player</th>
+                            <th class="col-pos">Pos</th>
+                            <th class="col-team">Team</th>
+                            <th class="col-week">Wk</th>
+                            <th class="col-actual sortable active-sort" data-sort="actual">
+                                Actual <span class="sort-arrow">&#9660;</span>
+                            </th>
+                            <th class="col-pred sortable ridge-col" data-sort="ridge_pred">
+                                Ridge <span class="sort-arrow"></span>
+                            </th>
+                            <th class="col-pred sortable nn-col" data-sort="nn_pred">
+                                NN <span class="sort-arrow"></span>
+                            </th>
+                            <th class="col-delta ridge-col">Ridge Err</th>
+                            <th class="col-delta nn-col">NN Err</th>
+                        </tr>
+                    </thead>
+                    <tbody id="predictions-body">
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            <div class="pagination" id="pagination"></div>
+        </section>
+
+        <!-- ============ STANDINGS VIEW ============ -->
+        <section id="view-standings" class="view">
+            <div class="filters-bar">
+                <div class="filter-group">
+                    <label>Position</label>
+                    <div class="pill-group" id="standings-position-filter">
+                        <button class="pill active" data-value="ALL">All</button>
+                        <button class="pill" data-value="QB">QB</button>
+                        <button class="pill" data-value="RB">RB</button>
+                        <button class="pill" data-value="WR">WR</button>
+                        <button class="pill" data-value="TE">TE</button>
+                    </div>
+                </div>
+            </div>
+            <div class="table-container">
+                <table id="standings-table">
+                    <thead>
+                        <tr>
+                            <th class="col-rank">#</th>
+                            <th class="col-player">Player</th>
+                            <th class="col-pos">Pos</th>
+                            <th class="col-team">Team</th>
+                            <th class="col-games">GP</th>
+                            <th class="col-actual">Avg Actual</th>
+                            <th class="col-pred">Avg Ridge</th>
+                            <th class="col-pred">Avg NN</th>
+                        </tr>
+                    </thead>
+                    <tbody id="standings-body">
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============ MODEL PERFORMANCE VIEW ============ -->
+        <section id="view-model-performance" class="view">
+            <!-- Approach Banner -->
+            <div class="approach-banner">
+                <div class="approach-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+                    </svg>
+                </div>
+                <div>
+                    <div class="approach-title">Position-Specific Modeling</div>
+                    <div class="approach-desc">Each position has a dedicated multi-target model that decomposes fantasy points into position-relevant sub-components, with tailored features and architecture.</div>
+                </div>
+            </div>
+
+            <!-- Overall Metric Cards -->
+            <div class="section-header">Overall Accuracy (All Positions)</div>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-card-header">Ridge Regression</div>
+                    <div class="metric-card-body" id="ridge-metrics">
+                        <div class="metric-row">
+                            <span class="metric-label">MAE</span>
+                            <span class="metric-value" id="ridge-mae">--</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">RMSE</span>
+                            <span class="metric-value" id="ridge-rmse">--</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">R&sup2;</span>
+                            <span class="metric-value" id="ridge-r2">--</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-card-header">Neural Network</div>
+                    <div class="metric-card-body" id="nn-metrics">
+                        <div class="metric-row">
+                            <span class="metric-label">MAE</span>
+                            <span class="metric-value" id="nn-mae">--</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">RMSE</span>
+                            <span class="metric-value" id="nn-rmse">--</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">R&sup2;</span>
+                            <span class="metric-value" id="nn-r2">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Position Model Breakdown -->
+            <div class="section-header">Position Model Breakdown</div>
+            <div class="pos-model-section">
+                <div class="pill-group" id="perf-position-filter">
+                    <button class="pill active" data-value="QB">QB</button>
+                    <button class="pill" data-value="RB">RB</button>
+                    <button class="pill" data-value="WR">WR</button>
+                    <button class="pill" data-value="TE">TE</button>
+                </div>
+                <div id="pos-model-detail" class="pos-model-detail"></div>
+            </div>
+
+            <!-- Position Accuracy Charts -->
+            <div class="section-header">Accuracy by Position</div>
+            <div class="charts-row">
+                <div class="chart-box">
+                    <canvas id="position-mae-chart"></canvas>
+                </div>
+                <div class="chart-box">
+                    <canvas id="position-r2-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Weekly MAE Chart -->
+            <div class="section-header">Weekly Prediction Accuracy</div>
+            <div class="chart-box wide">
+                <canvas id="weekly-mae-chart"></canvas>
+            </div>
+        </section>
+    </main>
+
+    <!-- Player Detail Modal -->
+    <div id="player-modal" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" id="modal-close">&times;</button>
+            <div class="modal-header">
+                <img id="modal-headshot" class="modal-headshot" src="" alt="">
+                <div>
+                    <h2 id="modal-name"></h2>
+                    <span id="modal-pos-team" class="modal-pos-team"></span>
+                </div>
+            </div>
+            <div class="modal-stats">
+                <div class="modal-stat">
+                    <span class="modal-stat-label">Season Avg</span>
+                    <span class="modal-stat-value" id="modal-avg"></span>
+                </div>
+                <div class="modal-stat">
+                    <span class="modal-stat-label">Season Total</span>
+                    <span class="modal-stat-value" id="modal-total"></span>
+                </div>
+            </div>
+            <div class="chart-box">
+                <canvas id="player-chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

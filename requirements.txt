@@ -5,3 +5,5 @@ torch
 scipy
 matplotlib
 pytest
+flask
+nfl_data_py
