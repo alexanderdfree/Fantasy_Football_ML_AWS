@@ -79,6 +79,11 @@ def run_one(position, cv=False):
     elif position == "WR":
         from WR.run_wr_pipeline import run_wr_pipeline, run_wr_cv_pipeline
         return run_wr_cv_pipeline() if cv else run_wr_pipeline()
+    elif position == "TE":
+        from TE.run_te_pipeline import run_te_pipeline
+        if cv:
+            raise ValueError("TE CV pipeline not implemented yet")
+        return run_te_pipeline()
     else:
         raise ValueError(f"Unknown position: {position}")
 

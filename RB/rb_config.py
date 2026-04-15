@@ -53,13 +53,12 @@ RB_RIDGE_ALPHA_GRIDS = {
 }
 
 # === Neural Net ===
-# Single wide layer outperforms deep narrow funnels on this data scale.
-# [128,64,32] had 27K params (0.3:1 data ratio) and MAE 3.849.
-# [64] has 13K params (0.6:1) and MAE 3.808 — 63% closer to Ridge.
-# Depth compresses information before heads can use it; width preserves it.
-RB_NN_BACKBONE_LAYERS = [64]
+# 2012+ dataset: wider single layer to exploit ~2x more training data.
+# [64] was optimal at 0.6:1 data ratio; [96] targets ~0.5:1 with expanded data.
+# Still single-layer — depth compresses information before heads can use it.
+RB_NN_BACKBONE_LAYERS = [96]
 RB_NN_HEAD_HIDDEN = 32
-RB_NN_DROPOUT = 0.3
+RB_NN_DROPOUT = 0.25
 RB_NN_LR = 8e-4
 RB_NN_WEIGHT_DECAY = 2e-4
 RB_NN_EPOCHS = 300

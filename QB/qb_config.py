@@ -34,6 +34,22 @@ QB_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
 # Leakage
 QB_DROP_FEATURES |= {"snap_pct"}
 
+# Drop EWMA features — they correlate >0.98 with rolling means of the same stat,
+# adding multicollinearity without unique signal.
+from src.config import EWMA_STATS, EWMA_SPANS
+_already_dropped_ewma = {"targets", "receiving_yards", "passing_yards"}
+for _stat in EWMA_STATS:
+    if _stat not in _already_dropped_ewma:
+        for _span in EWMA_SPANS:
+            QB_DROP_FEATURES.add(f"ewma_{_stat}_L{_span}")
+
+# Drop L5 rolling means/std/max — sandwiched between L3 and L8 with >0.97 corr to both,
+# contributing to ill-conditioned feature matrix without meaningful unique signal.
+for _stat in ["fantasy_points", "fantasy_points_floor", "carries", "rushing_yards",
+              "passing_yards", "attempts"]:
+    for _agg in ["mean", "std", "max"]:
+        QB_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L5")
+
 # === Ridge ===
 import numpy as np
 QB_RIDGE_ALPHA_GRIDS = {
@@ -42,14 +58,14 @@ QB_RIDGE_ALPHA_GRIDS = {
     "td_points":     [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
-# === Neural Net (smaller architecture — fewer QB rows, more regularization) ===
-QB_NN_BACKBONE_LAYERS = [80, 40]
+# === Neural Net (2012+ dataset: wider backbone, relaxed regularization) ===
+QB_NN_BACKBONE_LAYERS = [96, 48]
 QB_NN_HEAD_HIDDEN = 20
-QB_NN_DROPOUT = 0.40
+QB_NN_DROPOUT = 0.35
 QB_NN_LR = 5e-4
-QB_NN_WEIGHT_DECAY = 5e-4
+QB_NN_WEIGHT_DECAY = 3e-4
 QB_NN_EPOCHS = 300
-QB_NN_BATCH_SIZE = 64
+QB_NN_BATCH_SIZE = 128
 QB_NN_PATIENCE = 25
 
 # === Loss Weights ===
@@ -60,7 +76,7 @@ QB_LOSS_WEIGHTS = {
     "rushing_floor": 0.8,
     "td_points": 2.5,
 }
-QB_LOSS_W_TOTAL = 0.3
+QB_LOSS_W_TOTAL = 0.4
 
 # === Huber Deltas (per-target) ===
 QB_HUBER_DELTAS = {

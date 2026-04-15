@@ -37,15 +37,15 @@ DST_RIDGE_ALPHA_GRIDS = {
     "pts_allowed_bonus": [round(x, 4) for x in np.logspace(-1, 3, 15)],
 }
 
-# === Neural Net (medium — ~3K training rows, tuned) ===
+# === Neural Net (2012+ dataset: relaxed regularization, larger batches) ===
 DST_NN_BACKBONE_LAYERS = [96, 48]
 DST_NN_HEAD_HIDDEN = 24
 DST_NN_HEAD_HIDDEN_OVERRIDES = {"td_points": 32}  # Larger head for sparse target
-DST_NN_DROPOUT = 0.30
+DST_NN_DROPOUT = 0.25
 DST_NN_LR = 6e-4
 DST_NN_WEIGHT_DECAY = 2e-4
 DST_NN_EPOCHS = 250
-DST_NN_BATCH_SIZE = 64
+DST_NN_BATCH_SIZE = 128
 DST_NN_PATIENCE = 25
 
 # === Loss Weights ===

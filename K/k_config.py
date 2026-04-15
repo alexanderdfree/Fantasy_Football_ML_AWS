@@ -36,14 +36,14 @@ K_RIDGE_CV_FOLDS = 3
 K_CV_SPLIT_COLUMN = "week"
 K_RIDGE_REFINE_POINTS = 0
 
-# === Neural Net (small — limited dataset, tuned) ===
+# === Neural Net (2012+ dataset: relaxed regularization, larger batches) ===
 K_NN_BACKBONE_LAYERS = [48, 24]
 K_NN_HEAD_HIDDEN = 12
-K_NN_DROPOUT = 0.35
+K_NN_DROPOUT = 0.30
 K_NN_LR = 3e-4
-K_NN_WEIGHT_DECAY = 3e-4
+K_NN_WEIGHT_DECAY = 2e-4
 K_NN_EPOCHS = 200
-K_NN_BATCH_SIZE = 32
+K_NN_BATCH_SIZE = 64
 K_NN_PATIENCE = 25
 
 # === Loss Weights ===

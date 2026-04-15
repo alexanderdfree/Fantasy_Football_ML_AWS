@@ -30,6 +30,22 @@ WR_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
 # Leakage
 WR_DROP_FEATURES |= {"snap_pct", "air_yards_share"}
 
+# Drop EWMA features — they correlate >0.98 with rolling means of the same stat,
+# adding multicollinearity without unique signal.
+from src.config import EWMA_STATS, EWMA_SPANS
+_already_dropped_ewma = {"passing_yards"}
+for _stat in EWMA_STATS:
+    if _stat not in _already_dropped_ewma:
+        for _span in EWMA_SPANS:
+            WR_DROP_FEATURES.add(f"ewma_{_stat}_L{_span}")
+
+# Drop L5 rolling means/std/max — sandwiched between L3 and L8 with >0.97 corr to both,
+# contributing to ill-conditioned feature matrix without meaningful unique signal.
+for _stat in ["fantasy_points", "fantasy_points_floor", "targets", "receptions",
+              "carries", "rushing_yards", "receiving_yards"]:
+    for _agg in ["mean", "std", "max"]:
+        WR_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L5")
+
 # === Ridge ===
 import numpy as np
 WR_RIDGE_ALPHA_GRIDS = {
@@ -39,17 +55,16 @@ WR_RIDGE_ALPHA_GRIDS = {
 }
 
 # === Neural Net ===
-# Single wide layer outperforms 3-layer funnel: [128,96,48] had 35K params
-# (0.3:1 ratio) and MAE 4.299.  [96] has ~13K params and MAE 4.233.
-# Depth compresses information through bottlenecks; width preserves it.
-WR_NN_BACKBONE_LAYERS = [96]
+# 2012+ dataset: widened from [96] to [128] to exploit largest training set.
+# Largest position dataset can support more capacity with less overfitting risk.
+WR_NN_BACKBONE_LAYERS = [128]
 WR_NN_HEAD_HIDDEN = 32
-WR_NN_DROPOUT = 0.25
+WR_NN_DROPOUT = 0.20
 WR_NN_LR = 1e-3
 WR_NN_WEIGHT_DECAY = 1e-4
 WR_NN_EPOCHS = 250
 WR_NN_BATCH_SIZE = 512
-WR_NN_PATIENCE = 20
+WR_NN_PATIENCE = 25
 
 # === Loss Weights ===
 # Receiving floor is the dominant WR component; boost its weight.
@@ -59,7 +74,7 @@ WR_LOSS_WEIGHTS = {
     "rushing_floor": 0.3,
     "td_points": 2.0,
 }
-WR_LOSS_W_TOTAL = 0.3
+WR_LOSS_W_TOTAL = 0.4
 
 # === Huber Deltas (per-target) ===
 WR_HUBER_DELTAS = {

@@ -30,6 +30,22 @@ TE_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
 # Leakage
 TE_DROP_FEATURES |= {"snap_pct", "air_yards_share"}
 
+# Drop EWMA features — they correlate >0.98 with rolling means of the same stat,
+# adding multicollinearity without unique signal.
+from src.config import EWMA_STATS, EWMA_SPANS
+_already_dropped_ewma = {"passing_yards"}
+for _stat in EWMA_STATS:
+    if _stat not in _already_dropped_ewma:
+        for _span in EWMA_SPANS:
+            TE_DROP_FEATURES.add(f"ewma_{_stat}_L{_span}")
+
+# Drop L5 rolling means/std/max — sandwiched between L3 and L8 with >0.97 corr to both,
+# contributing to ill-conditioned feature matrix without meaningful unique signal.
+for _stat in ["fantasy_points", "fantasy_points_floor", "targets", "receptions",
+              "carries", "rushing_yards", "receiving_yards"]:
+    for _agg in ["mean", "std", "max"]:
+        TE_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L5")
+
 # === Ridge ===
 import numpy as np
 TE_RIDGE_ALPHA_GRIDS = {
@@ -38,13 +54,13 @@ TE_RIDGE_ALPHA_GRIDS = {
     "td_points":       [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
-# === Neural Net (moderate data, more regularization) ===
+# === Neural Net (2012+ dataset: relaxed regularization) ===
 TE_NN_BACKBONE_LAYERS = [96, 48]
 TE_NN_HEAD_HIDDEN = 24
 TE_NN_HEAD_HIDDEN_OVERRIDES = {"td_points": 32}  # larger TD head for boom/bust TEs
-TE_NN_DROPOUT = 0.35
+TE_NN_DROPOUT = 0.30
 TE_NN_LR = 5e-4
-TE_NN_WEIGHT_DECAY = 5e-4
+TE_NN_WEIGHT_DECAY = 3e-4
 TE_NN_EPOCHS = 300
 TE_NN_BATCH_SIZE = 128
 TE_NN_PATIENCE = 25
@@ -57,7 +73,7 @@ TE_LOSS_WEIGHTS = {
     "rushing_floor": 0.2,
     "td_points": 3.0,
 }
-TE_LOSS_W_TOTAL = 0.3
+TE_LOSS_W_TOTAL = 0.4
 
 # === Huber Deltas (per-target) ===
 TE_HUBER_DELTAS = {

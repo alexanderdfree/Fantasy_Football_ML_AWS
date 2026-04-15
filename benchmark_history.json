@@ -589,5 +589,301 @@
         "elapsed_sec": 22.4
       }
     ]
+  },
+  {
+    "run_id": "2026-04-15T03:55:35_a8951eb",
+    "timestamp": "2026-04-15T03:55:35",
+    "git_hash": "a8951eb",
+    "note": "2012+ dataset re-tune: wider backbones (QB [96,48], RB [96], WR [128]), reduced dropout/weight-decay, larger batch sizes",
+    "positions": [
+      "RB",
+      "QB",
+      "WR"
+    ],
+    "config": {
+      "global": {
+        "train_seasons": [
+          2012,
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023
+        ],
+        "val_seasons": [
+          2024
+        ],
+        "test_seasons": [
+          2025
+        ],
+        "nn_epochs": 200,
+        "nn_batch_size": 256,
+        "nn_patience": 15,
+        "nn_dropout": 0.3,
+        "nn_lr": 0.001
+      },
+      "rb": {
+        "targets": [
+          "rushing_floor",
+          "receiving_floor",
+          "td_points"
+        ],
+        "nn_backbone_layers": [
+          96
+        ],
+        "nn_head_hidden": 32,
+        "nn_dropout": 0.25,
+        "nn_lr": 0.0008,
+        "nn_weight_decay": 0.0002,
+        "nn_epochs": 300,
+        "nn_batch_size": 256,
+        "nn_patience": 30,
+        "loss_weights": {
+          "rushing_floor": 1.2,
+          "receiving_floor": 1.0,
+          "td_points": 2.0
+        },
+        "loss_w_total": 0.6,
+        "huber_deltas": {
+          "rushing_floor": 1.0,
+          "receiving_floor": 1.0,
+          "td_points": 2.0
+        },
+        "scheduler_type": "plateau",
+        "plateau_factor": 0.5,
+        "plateau_patience": 8
+      },
+      "qb": {
+        "targets": [
+          "passing_floor",
+          "rushing_floor",
+          "td_points"
+        ],
+        "nn_backbone_layers": [
+          96,
+          48
+        ],
+        "nn_head_hidden": 20,
+        "nn_dropout": 0.35,
+        "nn_lr": 0.0005,
+        "nn_weight_decay": 0.0003,
+        "nn_epochs": 300,
+        "nn_batch_size": 128,
+        "nn_patience": 25,
+        "loss_weights": {
+          "passing_floor": 1.5,
+          "rushing_floor": 0.8,
+          "td_points": 2.5
+        },
+        "loss_w_total": 0.3,
+        "huber_deltas": {
+          "passing_floor": 1.5,
+          "rushing_floor": 1.0,
+          "td_points": 2.0
+        },
+        "scheduler_type": "onecycle",
+        "onecycle_max_lr": 0.002,
+        "onecycle_pct_start": 0.3
+      },
+      "wr": {
+        "targets": [
+          "receiving_floor",
+          "rushing_floor",
+          "td_points"
+        ],
+        "nn_backbone_layers": [
+          128
+        ],
+        "nn_head_hidden": 32,
+        "nn_dropout": 0.2,
+        "nn_lr": 0.001,
+        "nn_weight_decay": 0.0001,
+        "nn_epochs": 250,
+        "nn_batch_size": 512,
+        "nn_patience": 20,
+        "loss_weights": {
+          "receiving_floor": 1.5,
+          "rushing_floor": 0.3,
+          "td_points": 2.0
+        },
+        "loss_w_total": 0.3,
+        "huber_deltas": {
+          "receiving_floor": 1.5,
+          "rushing_floor": 0.5,
+          "td_points": 2.0
+        },
+        "scheduler_type": "cosine_warm_restarts",
+        "cosine_t0": 40,
+        "cosine_t_mult": 2,
+        "cosine_eta_min": 1e-05
+      }
+    },
+    "results": [
+      {
+        "position": "RB",
+        "ridge_mae": 4.683,
+        "ridge_r2": 0.42,
+        "nn_mae": 4.418,
+        "nn_r2": 0.403,
+        "nn_wins_mae": true,
+        "nn_per_target": {
+          "rushing_floor": 1.914,
+          "receiving_floor": 1.93,
+          "td_points": 2.16
+        },
+        "ridge_per_target": {
+          "rushing_floor": 2.013,
+          "receiving_floor": 2.002,
+          "td_points": 2.455
+        },
+        "ridge_top12": 0.449,
+        "nn_top12": 0.463,
+        "elapsed_sec": 28.3
+      },
+      {
+        "position": "QB",
+        "ridge_mae": 6.75,
+        "ridge_r2": 0.12,
+        "nn_mae": 6.621,
+        "nn_r2": 0.132,
+        "nn_wins_mae": true,
+        "nn_per_target": {
+          "passing_floor": 2.522,
+          "rushing_floor": 1.162,
+          "td_points": 4.203
+        },
+        "ridge_per_target": {
+          "passing_floor": 2.623,
+          "rushing_floor": 1.21,
+          "td_points": 4.273
+        },
+        "ridge_top12": 0.5,
+        "nn_top12": 0.528,
+        "elapsed_sec": 20.4
+      },
+      {
+        "position": "WR",
+        "ridge_mae": 4.866,
+        "ridge_r2": 0.303,
+        "nn_mae": 4.25,
+        "nn_r2": 0.346,
+        "nn_wins_mae": true,
+        "nn_per_target": {
+          "receiving_floor": 3.275,
+          "rushing_floor": 0.134,
+          "td_points": 1.484
+        },
+        "ridge_per_target": {
+          "receiving_floor": 3.673,
+          "rushing_floor": 0.157,
+          "td_points": 1.96
+        },
+        "ridge_top12": 0.352,
+        "nn_top12": 0.352,
+        "elapsed_sec": 35.0
+      }
+    ]
+  },
+  {
+    "run_id": "2026-04-15T04:01:07_a8951eb",
+    "timestamp": "2026-04-15T04:01:07",
+    "git_hash": "a8951eb",
+    "note": "2012+ dataset re-tune: TE with reduced dropout (0.30), weight decay (3e-4), plus EWMA/L5 feature drops",
+    "positions": [
+      "TE"
+    ],
+    "config": {
+      "global": {
+        "train_seasons": [
+          2012,
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023
+        ],
+        "val_seasons": [
+          2024
+        ],
+        "test_seasons": [
+          2025
+        ],
+        "nn_epochs": 200,
+        "nn_batch_size": 256,
+        "nn_patience": 15,
+        "nn_dropout": 0.3,
+        "nn_lr": 0.001
+      },
+      "te": {
+        "targets": [
+          "receiving_floor",
+          "rushing_floor",
+          "td_points"
+        ],
+        "nn_backbone_layers": [
+          96,
+          48
+        ],
+        "nn_head_hidden": 24,
+        "nn_head_hidden_overrides": {
+          "td_points": 32
+        },
+        "nn_dropout": 0.3,
+        "nn_lr": 0.0005,
+        "nn_weight_decay": 0.0003,
+        "nn_epochs": 300,
+        "nn_batch_size": 128,
+        "nn_patience": 25,
+        "loss_weights": {
+          "receiving_floor": 1.2,
+          "rushing_floor": 0.2,
+          "td_points": 3.0
+        },
+        "loss_w_total": 0.4,
+        "huber_deltas": {
+          "receiving_floor": 1.5,
+          "rushing_floor": 0.5,
+          "td_points": 3.0
+        },
+        "scheduler_type": "onecycle",
+        "onecycle_max_lr": 0.002,
+        "onecycle_pct_start": 0.3
+      }
+    },
+    "results": [
+      {
+        "position": "TE",
+        "ridge_mae": 3.822,
+        "ridge_r2": 0.302,
+        "nn_mae": 3.619,
+        "nn_r2": 0.295,
+        "nn_wins_mae": true,
+        "nn_per_target": {
+          "receiving_floor": 2.639,
+          "rushing_floor": 0.033,
+          "td_points": 1.566
+        },
+        "ridge_per_target": {
+          "receiving_floor": 2.768,
+          "rushing_floor": 0.028,
+          "td_points": 1.832
+        },
+        "ridge_top12": 0.454,
+        "nn_top12": 0.463,
+        "elapsed_sec": 35.0
+      }
+    ]
   }
 ]
