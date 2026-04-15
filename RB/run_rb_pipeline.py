@@ -10,7 +10,7 @@ from RB.rb_config import (
     RB_NN_LR, RB_NN_WEIGHT_DECAY, RB_NN_EPOCHS, RB_NN_BATCH_SIZE,
     RB_NN_PATIENCE,
     RB_LOSS_WEIGHTS, RB_LOSS_W_TOTAL, RB_HUBER_DELTAS,
-    RB_SCHEDULER_TYPE, RB_PLATEAU_FACTOR, RB_PLATEAU_PATIENCE,
+    RB_SCHEDULER_TYPE, RB_COSINE_T0, RB_COSINE_T_MULT, RB_COSINE_ETA_MIN,
 )
 from RB.rb_data import filter_to_rb
 from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
@@ -40,8 +40,10 @@ RB_CONFIG = {
     "loss_w_total": RB_LOSS_W_TOTAL,
     "huber_deltas": RB_HUBER_DELTAS,
     "scheduler_type": RB_SCHEDULER_TYPE,
-    "plateau_factor": RB_PLATEAU_FACTOR,
-    "plateau_patience": RB_PLATEAU_PATIENCE,
+    "cosine_t0": RB_COSINE_T0,
+    "cosine_t_mult": RB_COSINE_T_MULT,
+    "cosine_eta_min": RB_COSINE_ETA_MIN,
+    "train_weather_nn": True,
 }
 
 

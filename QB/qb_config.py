@@ -11,6 +11,11 @@ QB_SPECIFIC_FEATURES = [
     "qb_rushing_share_L3",
     "passing_epa_per_dropback_L3",
     "deep_ball_rate_L3",
+    "pass_first_down_rate_L3",
+    "rushing_epa_per_carry_L3",
+    "rush_first_down_rate_L3",
+    "yac_rate_L3",
+    "sack_damage_per_dropback_L3",
 ]
 
 # Features to drop from the general pipeline for QB model
@@ -31,6 +36,8 @@ QB_DROP_FEATURES |= {"target_share_L3", "target_share_L5"}
 QB_DROP_FEATURES |= {"air_yards_share"}
 # Position encoding (all QB, no variance)
 QB_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
+# QBs have ~0 targets — trend_targets is pure noise
+QB_DROP_FEATURES.add("trend_targets")
 # NOTE: snap_pct is already lagged (shift=1) in engineer.py, safe to keep.
 
 # Drop EWMA features — they correlate >0.98 with rolling means of the same stat,
@@ -73,15 +80,15 @@ QB_NN_PATIENCE = 25
 QB_LOSS_WEIGHTS = {
     "passing_floor": 1.5,
     "rushing_floor": 0.8,
-    "td_points": 2.5,
+    "td_points": 3.0,
 }
-QB_LOSS_W_TOTAL = 0.4
+QB_LOSS_W_TOTAL = 0.3
 
 # === Huber Deltas (per-target) ===
 QB_HUBER_DELTAS = {
     "passing_floor": 1.5,
     "rushing_floor": 1.0,
-    "td_points": 2.0,
+    "td_points": 3.0,
 }
 
 # === LR Scheduler ===

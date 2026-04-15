@@ -29,6 +29,7 @@ from shared.evaluation import (
     print_comparison_table, plot_pred_vs_actual,
 )
 from shared.backtest import run_weekly_simulation, plot_weekly_accuracy
+from shared.weather_features import merge_schedule_features, get_weather_feature_columns
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +220,61 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
             pos_train, pos_val, pos_test, feature_cols)
 
 
+def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
+              cfg, targets, seed):
+    """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history).
+
+    Shared by the regular NN and Weather NN to guarantee identical training.
+    The only thing that differs between them is the input feature matrix.
+    """
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    nn_scaler = StandardScaler()
+    X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
+    X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
+    X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
+
+    train_loader, val_loader = make_dataloaders(
+        X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=cfg["nn_batch_size"],
+    )
+
+    device = torch.device("cpu")
+    model = MultiHeadNet(
+        input_dim=X_train_s.shape[1],
+        target_names=targets,
+        backbone_layers=cfg["nn_backbone_layers"],
+        head_hidden=cfg["nn_head_hidden"],
+        dropout=cfg["nn_dropout"],
+        head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
+        non_negative_targets=cfg.get("nn_non_negative_targets"),
+    ).to(device)
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=cfg["nn_lr"], weight_decay=cfg["nn_weight_decay"],
+    )
+    scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
+    criterion = MultiTargetLoss(
+        target_names=targets,
+        loss_weights=cfg["loss_weights"],
+        huber_deltas=cfg["huber_deltas"],
+        w_total=cfg["loss_w_total"],
+    )
+
+    trainer = MultiHeadTrainer(
+        model=model, optimizer=optimizer, scheduler=scheduler,
+        criterion=criterion, device=device, target_names=targets,
+        patience=cfg["nn_patience"], scheduler_per_batch=scheduler_per_batch,
+    )
+    history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
+
+    test_preds = model.predict_numpy(X_test_s, device)
+    test_preds["total"] = sum(test_preds[t] for t in targets)
+    metrics = compute_target_metrics(y_test_dict, test_preds, targets)
+
+    return model, nn_scaler, test_preds, metrics, history
+
+
 def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=42):
     """Run the full position model pipeline.
 
@@ -302,51 +358,44 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     ridge_model = RidgeMultiTarget(target_names=targets, alpha=best_alphas)
     ridge_model.fit(X_train, y_train_dict)
     ridge_test_preds = ridge_model.predict(X_test)
-    ridge_test_preds["total"] = sum(ridge_test_preds[t] for t in targets) + adj_test.values
+    # Evaluate total as sum(per-target preds) without adjustment — matches
+    # the training total target (sum of clean targets, no penalties).
+    # Adjustment is only applied at inference (app.py).
+    ridge_test_preds["total"] = sum(ridge_test_preds[t] for t in targets)
     ridge_metrics = compute_target_metrics(y_test_dict, ridge_test_preds, targets)
 
     # --- Multi-head NN ---
     print(f"\n=== {pos} Multi-Head Neural Net ===")
-    nn_scaler = StandardScaler()
-    X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
-    X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
-    X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
-
-    train_loader, val_loader = make_dataloaders(
-        X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=cfg["nn_batch_size"],
+    model, nn_scaler, nn_test_preds, nn_metrics, history = _train_nn(
+        X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
+        cfg, targets, seed,
     )
 
-    device = torch.device("cpu")
-    model = MultiHeadNet(
-        input_dim=X_train_s.shape[1],
-        target_names=targets,
-        backbone_layers=cfg["nn_backbone_layers"],
-        head_hidden=cfg["nn_head_hidden"],
-        dropout=cfg["nn_dropout"],
-        head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
-    ).to(device)
+    # --- Weather NN (identical architecture, weather/Vegas features appended) ---
+    weather_nn_test_preds = None
+    weather_nn_metrics = None
+    weather_model = None
+    weather_nn_scaler = None
+    weather_history = None
+    if cfg.get("train_weather_nn", False) and pos in ("QB", "RB", "WR", "TE"):
+        print(f"\n=== {pos} Weather Multi-Head Neural Net ===")
+        for df in [pos_train, pos_val, pos_test]:
+            merge_schedule_features(df)
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=cfg["nn_lr"], weight_decay=cfg["nn_weight_decay"],
-    )
-    scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
-    criterion = MultiTargetLoss(
-        target_names=targets,
-        loss_weights=cfg["loss_weights"],
-        huber_deltas=cfg["huber_deltas"],
-        w_total=cfg["loss_w_total"],
-    )
+        weather_cols = get_weather_feature_columns(pos, feature_cols)
+        weather_cols = [c for c in weather_cols if c in pos_train.columns]
+        for df in [pos_train, pos_val, pos_test]:
+            df[weather_cols] = df[weather_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
-    trainer = MultiHeadTrainer(
-        model=model, optimizer=optimizer, scheduler=scheduler,
-        criterion=criterion, device=device, target_names=targets,
-        patience=cfg["nn_patience"], scheduler_per_batch=scheduler_per_batch,
-    )
-    history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
+        X_train_w = pos_train[weather_cols].values.astype(np.float32)
+        X_val_w = pos_val[weather_cols].values.astype(np.float32)
+        X_test_w = pos_test[weather_cols].values.astype(np.float32)
+        print(f"  Weather feature matrix shape: {X_train_w.shape}")
 
-    nn_test_preds = model.predict_numpy(X_test_s, device)
-    nn_test_preds["total"] = sum(nn_test_preds[t] for t in targets) + adj_test.values
-    nn_metrics = compute_target_metrics(y_test_dict, nn_test_preds, targets)
+        weather_model, weather_nn_scaler, weather_nn_test_preds, weather_nn_metrics, weather_history = _train_nn(
+            X_train_w, X_val_w, X_test_w, y_train_dict, y_val_dict, y_test_dict,
+            cfg, targets, seed,
+        )
 
     # --- Ensemble: average Ridge + NN ---
     # Ridge has good calibration (near-zero bias), NN has better per-target
@@ -358,12 +407,15 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     ensemble_metrics = compute_target_metrics(y_test_dict, ensemble_preds, targets)
 
     # --- Comparison ---
-    print_comparison_table({
+    comparison = {
         "Season Average Baseline": baseline_metrics,
         f"{pos} Ridge Multi-Target": ridge_metrics,
         f"{pos} Multi-Head NN": nn_metrics,
         f"{pos} Ensemble (Ridge+NN)": ensemble_metrics,
-    }, position=pos, target_names=targets)
+    }
+    if weather_nn_metrics is not None:
+        comparison[f"{pos} Weather NN"] = weather_nn_metrics
+    print_comparison_table(comparison, position=pos, target_names=targets)
 
     # --- Ranking metrics ---
     pos_test = pos_test.copy()
@@ -372,6 +424,13 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     pos_test["pred_ensemble"] = ensemble_preds["total"]
     pos_test["pred_baseline"] = baseline_preds
 
+    backtest_pred_columns = {
+        "Season Avg": "pred_baseline",
+        "Ridge": "pred_ridge_total",
+        "Neural Net": "pred_nn_total",
+        "Ensemble": "pred_ensemble",
+    }
+
     ridge_ranking = compute_ranking_metrics(pos_test, pred_col="pred_ridge_total")
     nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_nn_total")
     ensemble_ranking = compute_ranking_metrics(pos_test, pred_col="pred_ensemble")
@@ -379,17 +438,16 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     print(f"NN Top-12 Hit Rate:       {nn_ranking['season_avg_hit_rate']:.3f}")
     print(f"Ensemble Top-12 Hit Rate: {ensemble_ranking['season_avg_hit_rate']:.3f}")
 
+    weather_nn_ranking = None
+    if weather_nn_test_preds is not None:
+        pos_test["pred_weather_nn_total"] = weather_nn_test_preds["total"]
+        backtest_pred_columns["Weather NN"] = "pred_weather_nn_total"
+        weather_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_weather_nn_total")
+        print(f"Weather NN Top-12 Hit Rate: {weather_nn_ranking['season_avg_hit_rate']:.3f}")
+
     # --- Weekly backtest ---
     print("\n=== Weekly Backtest ===")
-    sim_results = run_weekly_simulation(
-        pos_test,
-        pred_columns={
-            "Season Avg": "pred_baseline",
-            "Ridge": "pred_ridge_total",
-            "Neural Net": "pred_nn_total",
-            "Ensemble": "pred_ensemble",
-        },
-    )
+    sim_results = run_weekly_simulation(pos_test, pred_columns=backtest_pred_columns)
     for model_name, summary in sim_results["season_summary"].items():
         print(f"  {model_name}: MAE={summary['mae']:.3f}, R2={summary['r2']:.3f}")
 
@@ -400,6 +458,10 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     ridge_model.save(f"{output_dir}/models")
     torch.save(model.state_dict(), f"{output_dir}/models/{pos_lower}_multihead_nn.pt")
     joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
+
+    if weather_model is not None:
+        torch.save(weather_model.state_dict(), f"{output_dir}/models/{pos_lower}_weather_nn.pt")
+        joblib.dump(weather_nn_scaler, f"{output_dir}/models/weather_nn_scaler.pkl")
 
     plot_training_curves(history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png")
     plot_weekly_accuracy(sim_results, pos, f"{output_dir}/figures/{pos_lower}_weekly_mae.png")
@@ -421,7 +483,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     plt.close()
 
     print(f"\n{pos} pipeline complete. Outputs saved to {output_dir}/")
-    return {
+    result = {
         "ridge_metrics": ridge_metrics,
         "nn_metrics": nn_metrics,
         "ridge_ranking": ridge_ranking,
@@ -429,6 +491,10 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         "history": history,
         "sim_results": sim_results,
     }
+    if weather_nn_metrics is not None:
+        result["weather_nn_metrics"] = weather_nn_metrics
+        result["weather_nn_ranking"] = weather_nn_ranking
+    return result
 
 
 def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
@@ -614,53 +680,40 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     ridge_model = RidgeMultiTarget(target_names=targets, alpha=best_cv_alphas)
     ridge_model.fit(X_train, y_train_dict)
     ridge_test_preds = ridge_model.predict(X_test)
-    ridge_test_preds["total"] = sum(ridge_test_preds[t] for t in targets) + adj_test.values
+    ridge_test_preds["total"] = sum(ridge_test_preds[t] for t in targets)
     ridge_metrics = compute_target_metrics(y_test_dict, ridge_test_preds, targets)
 
     # NN
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    nn_scaler = StandardScaler()
-    X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
-    X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
-    X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
-
-    train_loader, val_loader = make_dataloaders(
-        X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=cfg["nn_batch_size"],
+    print(f"\n=== {pos} Multi-Head NN (Final Holdout) ===")
+    model, nn_scaler, nn_test_preds, nn_metrics, history = _train_nn(
+        X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
+        cfg, targets, seed,
     )
 
-    device = torch.device("cpu")
-    model = MultiHeadNet(
-        input_dim=X_train_s.shape[1],
-        target_names=targets,
-        backbone_layers=cfg["nn_backbone_layers"],
-        head_hidden=cfg["nn_head_hidden"],
-        dropout=cfg["nn_dropout"],
-        head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
-    ).to(device)
+    # Weather NN
+    weather_nn_test_preds = None
+    weather_nn_metrics = None
+    weather_model = None
+    weather_nn_scaler = None
+    if cfg.get("train_weather_nn", False) and pos in ("QB", "RB", "WR", "TE"):
+        print(f"\n=== {pos} Weather Multi-Head Neural Net ===")
+        for df in [pos_train, pos_val, pos_test]:
+            merge_schedule_features(df)
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=cfg["nn_lr"], weight_decay=cfg["nn_weight_decay"],
-    )
-    scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
-    criterion = MultiTargetLoss(
-        target_names=targets,
-        loss_weights=cfg["loss_weights"],
-        huber_deltas=cfg["huber_deltas"],
-        w_total=cfg["loss_w_total"],
-    )
+        weather_cols = get_weather_feature_columns(pos, feature_cols)
+        weather_cols = [c for c in weather_cols if c in pos_train.columns]
+        for df in [pos_train, pos_val, pos_test]:
+            df[weather_cols] = df[weather_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
-    trainer = MultiHeadTrainer(
-        model=model, optimizer=optimizer, scheduler=scheduler,
-        criterion=criterion, device=device, target_names=targets,
-        patience=cfg["nn_patience"], scheduler_per_batch=scheduler_per_batch,
-    )
-    history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
+        X_train_w = pos_train[weather_cols].values.astype(np.float32)
+        X_val_w = pos_val[weather_cols].values.astype(np.float32)
+        X_test_w = pos_test[weather_cols].values.astype(np.float32)
+        print(f"  Weather feature matrix shape: {X_train_w.shape}")
 
-    nn_test_preds = model.predict_numpy(X_test_s, device)
-    nn_test_preds["total"] = sum(nn_test_preds[t] for t in targets) + adj_test.values
-    nn_metrics = compute_target_metrics(y_test_dict, nn_test_preds, targets)
+        weather_model, weather_nn_scaler, weather_nn_test_preds, weather_nn_metrics, _ = _train_nn(
+            X_train_w, X_val_w, X_test_w, y_train_dict, y_val_dict, y_test_dict,
+            cfg, targets, seed,
+        )
 
     # Ensemble
     ensemble_preds = {}
@@ -670,12 +723,15 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     ensemble_metrics = compute_target_metrics(y_test_dict, ensemble_preds, targets)
 
     # Comparison
-    print_comparison_table({
+    comparison = {
         "Season Average Baseline": baseline_metrics,
         f"{pos} Ridge (per-target CV alphas)": ridge_metrics,
         f"{pos} Multi-Head NN": nn_metrics,
         f"{pos} Ensemble (Ridge+NN)": ensemble_metrics,
-    }, position=pos, target_names=targets)
+    }
+    if weather_nn_metrics is not None:
+        comparison[f"{pos} Weather NN"] = weather_nn_metrics
+    print_comparison_table(comparison, position=pos, target_names=targets)
 
     # Ranking metrics
     pos_test = pos_test.copy()
@@ -684,6 +740,13 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     pos_test["pred_ensemble"] = ensemble_preds["total"]
     pos_test["pred_baseline"] = baseline_preds
 
+    backtest_pred_columns = {
+        "Season Avg": "pred_baseline",
+        "Ridge": "pred_ridge_total",
+        "Neural Net": "pred_nn_total",
+        "Ensemble": "pred_ensemble",
+    }
+
     ridge_ranking = compute_ranking_metrics(pos_test, pred_col="pred_ridge_total")
     nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_nn_total")
     ensemble_ranking = compute_ranking_metrics(pos_test, pred_col="pred_ensemble")
@@ -691,17 +754,16 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     print(f"NN Top-12 Hit Rate:       {nn_ranking['season_avg_hit_rate']:.3f}")
     print(f"Ensemble Top-12 Hit Rate: {ensemble_ranking['season_avg_hit_rate']:.3f}")
 
+    weather_nn_ranking = None
+    if weather_nn_test_preds is not None:
+        pos_test["pred_weather_nn_total"] = weather_nn_test_preds["total"]
+        backtest_pred_columns["Weather NN"] = "pred_weather_nn_total"
+        weather_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_weather_nn_total")
+        print(f"Weather NN Top-12 Hit Rate: {weather_nn_ranking['season_avg_hit_rate']:.3f}")
+
     # Weekly backtest
     print("\n=== Weekly Backtest ===")
-    sim_results = run_weekly_simulation(
-        pos_test,
-        pred_columns={
-            "Season Avg": "pred_baseline",
-            "Ridge": "pred_ridge_total",
-            "Neural Net": "pred_nn_total",
-            "Ensemble": "pred_ensemble",
-        },
-    )
+    sim_results = run_weekly_simulation(pos_test, pred_columns=backtest_pred_columns)
     for model_name, summary in sim_results["season_summary"].items():
         print(f"  {model_name}: MAE={summary['mae']:.3f}, R2={summary['r2']:.3f}")
 
@@ -712,6 +774,10 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     ridge_model.save(f"{output_dir}/models")
     torch.save(model.state_dict(), f"{output_dir}/models/{pos_lower}_multihead_nn.pt")
     joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
+
+    if weather_model is not None:
+        torch.save(weather_model.state_dict(), f"{output_dir}/models/{pos_lower}_weather_nn.pt")
+        joblib.dump(weather_nn_scaler, f"{output_dir}/models/weather_nn_scaler.pkl")
 
     plot_training_curves(history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png")
     plot_weekly_accuracy(sim_results, pos, f"{output_dir}/figures/{pos_lower}_weekly_mae.png")
@@ -733,7 +799,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     plt.close()
 
     print(f"\n{pos} CV pipeline complete. Outputs saved to {output_dir}/")
-    return {
+    result = {
         "cv_metrics": cv_metrics,
         "best_cv_alphas": best_cv_alphas,
         "ridge_metrics": ridge_metrics,
@@ -743,3 +809,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         "history": history,
         "sim_results": sim_results,
     }
+    if weather_nn_metrics is not None:
+        result["weather_nn_metrics"] = weather_nn_metrics
+        result["weather_nn_ranking"] = weather_nn_ranking
+    return result

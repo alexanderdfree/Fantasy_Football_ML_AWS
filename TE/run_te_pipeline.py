@@ -42,6 +42,7 @@ TE_CONFIG = {
     "scheduler_type": TE_SCHEDULER_TYPE,
     "onecycle_max_lr": TE_ONECYCLE_MAX_LR,
     "onecycle_pct_start": TE_ONECYCLE_PCT_START,
+    "train_weather_nn": True,
 }
 
 

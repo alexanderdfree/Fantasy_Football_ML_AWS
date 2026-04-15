@@ -6,21 +6,19 @@ K_TARGETS = ["fg_points", "pat_points"]
 
 # === K-Specific Features ===
 K_SPECIFIC_FEATURES = [
-    # Original rolling features
+    # Rolling performance
     "fg_attempts_L3",
     "fg_accuracy_L5",
     "pat_volume_L3",
     "total_k_pts_L3",
-    "total_k_pts_L5",
     "long_fg_rate_L3",
     "k_pts_trend",
     "k_pts_std_L3",
-    # PBP Tier 1: distance & difficulty
+    # PBP: distance & difficulty
     "avg_fg_distance_L3",
     "avg_fg_prob_L3",
-    # PBP Tier 2: situational accuracy
+    # PBP: situational accuracy
     "fg_pct_40plus_L5",
-    "clutch_fg_rate_L5",
     "q4_fg_rate_L5",
     "xp_accuracy_L5",
 ]

@@ -22,7 +22,7 @@ def add_rb_specific_features(
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
 ) -> tuple:
-    """Add 8 RB-specific engineered features to each split.
+    """Add 11 RB-specific engineered features to each split.
 
     Features are computed independently per split to prevent leakage.
     Team RB totals are computed from each split's own data.
@@ -33,7 +33,7 @@ def add_rb_specific_features(
 
 
 def _compute_rb_features(df: pd.DataFrame) -> None:
-    """Compute all 8 RB-specific features in-place."""
+    """Compute all 11 RB-specific features in-place."""
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
     # --- Feature 1: yards_per_carry_L3 ---
@@ -104,31 +104,42 @@ def _compute_rb_features(df: pd.DataFrame) -> None:
     df["rushing_epa_per_attempt_L3"] = (rushing_epa_roll / carries_roll_epa).fillna(0)
     df.loc[carries_roll_epa == 0, "rushing_epa_per_attempt_L3"] = 0
 
-    # --- Feature 7: first_down_rate_L3 ---
-    df["_total_first_downs"] = (
-        df["rushing_first_downs"].fillna(0) + df["receiving_first_downs"].fillna(0)
-    )
-    df["_total_touches"] = df["carries"].fillna(0) + df["receptions"].fillna(0)
-
-    first_downs_roll = df.groupby(["player_id", "season"])["_total_first_downs"].transform(
+    # --- Features 7 & 8: split first-down rates (replaces combined first_down_rate_L3
+    #     to avoid collinearity — combined rate ≈ weighted avg of the two) ---
+    rush_fd_roll = df.groupby(["player_id", "season"])["rushing_first_downs"].transform(
         lambda x: x.shift(1).rolling(3, min_periods=1).sum()
     )
-    touches_roll = df.groupby(["player_id", "season"])["_total_touches"].transform(
+    df["rushing_first_down_rate_L3"] = (rush_fd_roll / carries_roll).fillna(0)
+    df.loc[carries_roll == 0, "rushing_first_down_rate_L3"] = 0
+
+    recv_fd_roll = df.groupby(["player_id", "season"])["receiving_first_downs"].transform(
         lambda x: x.shift(1).rolling(3, min_periods=1).sum()
     )
-    df["first_down_rate_L3"] = (first_downs_roll / touches_roll).fillna(0)
-    df.loc[touches_roll == 0, "first_down_rate_L3"] = 0
-    df.drop(columns=["_total_first_downs", "_total_touches"], inplace=True)
+    df["receiving_first_down_rate_L3"] = (recv_fd_roll / rec_roll).fillna(0)
+    df.loc[rec_roll == 0, "receiving_first_down_rate_L3"] = 0
 
-    # --- Feature 8: yac_per_reception_L3 ---
+    # --- Feature 9: yac_per_reception_L3 ---
     yac_roll = df.groupby(["player_id", "season"])["receiving_yards_after_catch"].transform(
         lambda x: x.shift(1).rolling(3, min_periods=1).sum()
     )
-    rec_roll_yac = df.groupby(["player_id", "season"])["receptions"].transform(
+    df["yac_per_reception_L3"] = (yac_roll / rec_roll).fillna(0)
+    df.loc[rec_roll == 0, "yac_per_reception_L3"] = 0
+
+    # --- Feature 10: receiving_epa_per_target_L3 ---
+    recv_epa_roll = df.groupby(["player_id", "season"])["receiving_epa"].transform(
         lambda x: x.shift(1).rolling(3, min_periods=1).sum()
     )
-    df["yac_per_reception_L3"] = (yac_roll / rec_roll_yac).fillna(0)
-    df.loc[rec_roll_yac == 0, "yac_per_reception_L3"] = 0
+    df["receiving_epa_per_target_L3"] = (recv_epa_roll / tgt_roll).fillna(0)
+    df.loc[tgt_roll == 0, "receiving_epa_per_target_L3"] = 0
+
+    # --- Feature 11: air_yards_per_target_L3 ---
+    # Distinct from yac_per_reception (air yards = intended depth, YAC = post-catch;
+    # low collinearity since backs can have high YAC with low air yards or vice versa)
+    air_yds_roll = df.groupby(["player_id", "season"])["receiving_air_yards"].transform(
+        lambda x: x.shift(1).rolling(3, min_periods=1).sum()
+    )
+    df["air_yards_per_target_L3"] = (air_yds_roll / tgt_roll).fillna(0)
+    df.loc[tgt_roll == 0, "air_yards_per_target_L3"] = 0
 
 
 def fill_rb_nans(

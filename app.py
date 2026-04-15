@@ -24,6 +24,7 @@ from src.evaluation.metrics import compute_metrics, compute_positional_metrics
 
 from shared.models import RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
+from shared.weather_features import merge_schedule_features, get_weather_feature_columns
 
 # --- Position-specific imports (data, targets, features, config) ---
 from QB.qb_data import filter_to_qb
@@ -59,7 +60,7 @@ from TE.te_config import (
     TE_NN_DROPOUT,
 )
 
-from K.k_data import filter_to_k, load_kicker_data, kicker_week_split
+from K.k_data import filter_to_k, load_kicker_data, kicker_season_split
 from K.k_targets import compute_k_targets, compute_k_miss_adjustment
 from K.k_features import compute_k_features, add_k_specific_features, get_k_feature_columns, fill_k_nans
 from K.k_config import (
@@ -73,7 +74,7 @@ from DST.dst_features import compute_dst_features, add_dst_specific_features, ge
 from DST.dst_config import (
     DST_TARGETS, DST_SPECIFIC_FEATURES,
     DST_NN_BACKBONE_LAYERS, DST_NN_HEAD_HIDDEN, DST_NN_HEAD_HIDDEN_OVERRIDES,
-    DST_NN_DROPOUT,
+    DST_NN_DROPOUT, DST_NN_NON_NEGATIVE_TARGETS,
 )
 
 app = Flask(__name__)
@@ -166,6 +167,7 @@ POSITION_REGISTRY = {
         "nn_kwargs": dict(
             backbone_layers=DST_NN_BACKBONE_LAYERS, head_hidden=DST_NN_HEAD_HIDDEN,
             dropout=DST_NN_DROPOUT, head_hidden_overrides=DST_NN_HEAD_HIDDEN_OVERRIDES,
+            non_negative_targets=DST_NN_NON_NEGATIVE_TARGETS,
         ),
     },
 }
@@ -231,11 +233,11 @@ POSITION_INFO = {
     "DST": {
         "label": "Defense/Special Teams",
         "targets": [
-            {"key": "defensive_scoring", "label": "Defensive Scoring", "formula": "sacks x 1 + INT x 2 + fum_rec x 2 + safety x 2"},
-            {"key": "td_points", "label": "TD Points", "formula": "(def_TD + ST_TD) x 6"},
+            {"key": "defensive_scoring", "label": "Defensive Scoring", "formula": "sacks x 1 + INT x 2 + fum_rec x 2"},
+            {"key": "td_points", "label": "TD Points", "formula": "ST_TD x 6"},
             {"key": "pts_allowed_bonus", "label": "Pts Allowed Bonus", "formula": "tiered: 0pts=+10 ... 35+=−4"},
         ],
-        "adjustments": "None (all components captured in targets)",
+        "adjustments": "Defensive TDs + safeties (nflreadr 2025-only; excluded from targets)",
         "specific_features": list(DST_SPECIFIC_FEATURES),
         "architecture": {"backbone": list(DST_NN_BACKBONE_LAYERS), "head_hidden": DST_NN_HEAD_HIDDEN},
     },
@@ -259,7 +261,7 @@ def _load_k_splits():
     k_df = load_kicker_data()
     k_df = compute_k_targets(k_df)
     compute_k_features(k_df)
-    return kicker_week_split(k_df)
+    return kicker_season_split(k_df)
 
 
 def _load_dst_splits():
@@ -328,25 +330,60 @@ def _apply_position_models(train, val, test, pos, results):
     nn_preds = nn_model.predict_numpy(X_test_scaled, device)
     nn_total = sum(nn_preds[t] for t in targets) + adj.values
 
+    # Weather NN predictions (only if model was trained, QB/RB/WR/TE only)
+    weather_nn_total = None
+    weather_nn_preds = None
+    weather_nn_file = f"{model_dir}/{pos.lower()}_weather_nn.pt"
+    if os.path.exists(weather_nn_file) and pos in ("QB", "RB", "WR", "TE"):
+        for df in [pos_train, pos_val, pos_test]:
+            merge_schedule_features(df)
+
+        weather_cols = get_weather_feature_columns(pos, feature_cols)
+        weather_cols = [c for c in weather_cols if c in pos_test.columns]
+
+        for df in [pos_train, pos_val, pos_test]:
+            df[weather_cols] = df[weather_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
+
+        X_test_weather = pos_test[weather_cols].values.astype(np.float32)
+        weather_scaler = joblib.load(f"{model_dir}/weather_nn_scaler.pkl")
+        X_test_weather_scaled = np.clip(weather_scaler.transform(X_test_weather), -4, 4)
+
+        weather_model = MultiHeadNet(
+            input_dim=len(weather_cols), target_names=targets, **reg["nn_kwargs"]
+        ).to(device)
+        weather_model.load_state_dict(
+            torch.load(weather_nn_file, map_location=device, weights_only=True)
+        )
+        weather_nn_preds = weather_model.predict_numpy(X_test_weather_scaled, device)
+        weather_nn_total = sum(weather_nn_preds[t] for t in targets) + adj.values
+
     # Write into results
     pos_index = pos_test.index
     results.loc[pos_index, "ridge_pred"] = np.round(ridge_total, 2).astype(np.float32)
     results.loc[pos_index, "nn_pred"] = np.round(nn_total, 2).astype(np.float32)
+    if weather_nn_total is not None:
+        results.loc[pos_index, "weather_nn_pred"] = np.round(weather_nn_total, 2).astype(np.float32)
 
     # Cache per-target metrics for /api/position_details
     target_metrics = {}
     for t in targets:
         if t in pos_test.columns:
             actual_t = pos_test[t].values
-            target_metrics[t] = {
+            tm = {
                 "ridge_mae": round(float(np.mean(np.abs(ridge_preds[t] - actual_t))), 3),
                 "nn_mae": round(float(np.mean(np.abs(nn_preds[t] - actual_t))), 3),
             }
+            if weather_nn_preds is not None:
+                tm["weather_nn_mae"] = round(float(np.mean(np.abs(weather_nn_preds[t] - actual_t))), 3)
+            target_metrics[t] = tm
     total_actual = pos_test["fantasy_points"].values
-    target_metrics["total"] = {
+    total_tm = {
         "ridge_mae": round(float(np.mean(np.abs(ridge_total - total_actual))), 3),
         "nn_mae": round(float(np.mean(np.abs(nn_total - total_actual))), 3),
     }
+    if weather_nn_total is not None:
+        total_tm["weather_nn_mae"] = round(float(np.mean(np.abs(weather_nn_total - total_actual))), 3)
+    target_metrics["total"] = total_tm
     _cache.setdefault("position_details", {})[pos] = {
         "n_features": len(feature_cols),
         "n_samples_test": len(pos_test),
@@ -404,6 +441,7 @@ def _get_data():
 
     results["ridge_pred"] = 0.0
     results["nn_pred"] = 0.0
+    results["weather_nn_pred"] = np.nan
 
     # Apply position-specific models (general positions use general splits)
     for pos in ["QB", "RB", "WR", "TE"]:
@@ -419,13 +457,27 @@ def _get_data():
     # Compute metrics from combined results (all positions)
     y_all = results["fantasy_points"].values
     metrics = {}
-    for name, pred_col in [("Ridge Regression", "ridge_pred"), ("Neural Network", "nn_pred")]:
-        preds = results[pred_col].values
-        overall = compute_metrics(y_all, preds)
+    model_cols = [("Ridge Regression", "ridge_pred"), ("Neural Network", "nn_pred")]
+    if results["weather_nn_pred"].notna().any():
+        model_cols.append(("Weather NN", "weather_nn_pred"))
+    for name, pred_col in model_cols:
+        mask = results[pred_col].notna()
+        preds_full = results[pred_col].fillna(0).values
+        overall = compute_metrics(y_all, preds_full)
         pos_df = results[["position"]].copy()
-        pos_df["pred"] = preds
+        pos_df["pred"] = preds_full
         pos_df["actual"] = y_all
         pos_metrics = compute_positional_metrics(pos_df, "pred", "actual")
+        # For Weather NN, also compute metrics only on positions that have it
+        if pred_col == "weather_nn_pred":
+            wnn_mask = mask
+            wnn_y = y_all[wnn_mask]
+            wnn_preds = results.loc[wnn_mask, pred_col].values
+            overall = compute_metrics(wnn_y, wnn_preds)
+            pos_df_w = results.loc[wnn_mask, ["position"]].copy()
+            pos_df_w["pred"] = wnn_preds
+            pos_df_w["actual"] = wnn_y
+            pos_metrics = compute_positional_metrics(pos_df_w, "pred", "actual")
         metrics[name] = {
             "overall": {k: round(v, 4) for k, v in overall.items()},
             "by_position": pos_metrics.to_dict(orient="records"),
@@ -474,7 +526,7 @@ def api_predictions():
     rows = []
     for _, r in df.iterrows():
         actual = round(r[scoring_col], 2) if scoring_col in r.index else round(r["fantasy_points"], 2)
-        rows.append({
+        row = {
             "player_id": r["player_id"],
             "name": r["player_display_name"],
             "position": r["position"],
@@ -484,11 +536,14 @@ def api_predictions():
             "ridge_pred": r["ridge_pred"],
             "nn_pred": r["nn_pred"],
             "headshot": r.get("headshot_url", ""),
-        })
+        }
+        wnn = r.get("weather_nn_pred")
+        row["weather_nn_pred"] = round(float(wnn), 2) if pd.notna(wnn) else None
+        rows.append(row)
 
     reverse = order == "desc"
-    if sort_by in ("actual", "ridge_pred", "nn_pred", "week"):
-        rows.sort(key=lambda x: x.get(sort_by, 0), reverse=reverse)
+    if sort_by in ("actual", "ridge_pred", "nn_pred", "weather_nn_pred", "week"):
+        rows.sort(key=lambda x: x.get(sort_by, 0) or 0, reverse=reverse)
     else:
         rows.sort(key=lambda x: x.get("actual", 0), reverse=reverse)
 
@@ -518,12 +573,15 @@ def api_player(player_id):
     info = df.iloc[0]
     weekly = []
     for _, r in df.iterrows():
-        weekly.append({
+        entry = {
             "week": int(r["week"]),
             "actual": round(r["fantasy_points"], 2),
             "ridge_pred": r["ridge_pred"],
             "nn_pred": r["nn_pred"],
-        })
+        }
+        wnn = r.get("weather_nn_pred")
+        entry["weather_nn_pred"] = round(float(wnn), 2) if pd.notna(wnn) else None
+        weekly.append(entry)
 
     return jsonify({
         "player_id": player_id,
@@ -546,18 +604,23 @@ def api_top_players():
     if position != "ALL":
         df = df[df["position"] == position]
 
+    agg_dict = {
+        "avg_actual": ("fantasy_points", "mean"),
+        "avg_ridge": ("ridge_pred", "mean"),
+        "avg_nn": ("nn_pred", "mean"),
+        "games": ("week", "count"),
+    }
+    if "weather_nn_pred" in df.columns and df["weather_nn_pred"].notna().any():
+        agg_dict["avg_weather_nn"] = ("weather_nn_pred", "mean")
     avg = df.groupby(["player_id", "player_display_name", "position", "recent_team"]).agg(
-        avg_actual=("fantasy_points", "mean"),
-        avg_ridge=("ridge_pred", "mean"),
-        avg_nn=("nn_pred", "mean"),
-        games=("week", "count"),
+        **agg_dict,
     ).reset_index()
     avg = avg[avg["games"] >= 6]
     avg = avg.sort_values("avg_actual", ascending=False).head(25)
 
     rows = []
     for _, r in avg.iterrows():
-        rows.append({
+        row = {
             "player_id": r["player_id"],
             "name": r["player_display_name"],
             "position": r["position"],
@@ -566,7 +629,10 @@ def api_top_players():
             "avg_ridge": round(r["avg_ridge"], 2),
             "avg_nn": round(r["avg_nn"], 2),
             "games": int(r["games"]),
-        })
+        }
+        if "avg_weather_nn" in r.index and pd.notna(r["avg_weather_nn"]):
+            row["avg_weather_nn"] = round(r["avg_weather_nn"], 2)
+        rows.append(row)
 
     return jsonify({"players": rows})
 
@@ -575,7 +641,10 @@ def api_top_players():
 def api_weekly_accuracy():
     results, _ = _get_data()
     weeks = sorted(results["week"].unique())
+    has_weather = results["weather_nn_pred"].notna().any()
     data = {"weeks": [], "ridge_mae": [], "nn_mae": []}
+    if has_weather:
+        data["weather_nn_mae"] = []
 
     for w in weeks:
         wdf = results[results["week"] == w]
@@ -583,6 +652,17 @@ def api_weekly_accuracy():
         data["weeks"].append(int(w))
         data["ridge_mae"].append(round(np.mean(np.abs(actual - wdf["ridge_pred"].values)), 3))
         data["nn_mae"].append(round(np.mean(np.abs(actual - wdf["nn_pred"].values)), 3))
+        if has_weather:
+            wnn_mask = wdf["weather_nn_pred"].notna()
+            if wnn_mask.any():
+                data["weather_nn_mae"].append(
+                    round(np.mean(np.abs(
+                        wdf.loc[wnn_mask, "fantasy_points"].values -
+                        wdf.loc[wnn_mask, "weather_nn_pred"].values
+                    )), 3)
+                )
+            else:
+                data["weather_nn_mae"].append(None)
 
     return jsonify(data)
 
@@ -600,4 +680,4 @@ def api_position_details():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5050)
+    app.run(debug=True, port=5050, use_reloader=False)

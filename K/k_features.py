@@ -22,7 +22,7 @@ def compute_k_features(df: pd.DataFrame) -> None:
         df["fg_points"] + df["pat_points"] + df["miss_penalty"]
     )
 
-    grp = ["player_id", "season"]
+    grp = ["player_id"]  # cross-season: kickers have stable multi-year careers
 
     # --- Feature 1: fg_attempts_L3 ---
     df["fg_attempts_L3"] = df.groupby(grp)["fg_att"].transform(
@@ -44,13 +44,12 @@ def compute_k_features(df: pd.DataFrame) -> None:
         lambda x: x.shift(1).rolling(3, min_periods=1).mean()
     ).fillna(0)
 
-    # --- Features 4 & 5: total_k_pts_L3, total_k_pts_L5 ---
-    for w in [3, 5]:
-        df[f"total_k_pts_L{w}"] = df.groupby(grp)[
-            "_k_total_pts"
-        ].transform(
-            lambda x, window=w: x.shift(1).rolling(window, min_periods=1).mean()
-        ).fillna(0)
+    # --- Feature 4: total_k_pts_L3 ---
+    df["total_k_pts_L3"] = df.groupby(grp)[
+        "_k_total_pts"
+    ].transform(
+        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
+    ).fillna(0)
 
     # --- Feature 6: long_fg_rate_L3 (40+ yard FG proportion) ---
     df["_long_fg_att"] = (
@@ -104,16 +103,6 @@ def compute_k_features(df: pd.DataFrame) -> None:
     ).fillna(0)
     df["fg_pct_40plus_L5"] = (long_made_roll / long_att_roll).fillna(0)
     df.loc[long_att_roll == 0, "fg_pct_40plus_L5"] = 0
-
-    # --- Tier 2: clutch_fg_rate_L5 (make% in close games) ---
-    clutch_made_roll = df.groupby(grp)["clutch_fg_made"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).sum()
-    ).fillna(0)
-    clutch_att_roll = df.groupby(grp)["clutch_fg_att"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).sum()
-    ).fillna(0)
-    df["clutch_fg_rate_L5"] = (clutch_made_roll / clutch_att_roll).fillna(0)
-    df.loc[clutch_att_roll == 0, "clutch_fg_rate_L5"] = 0
 
     # --- Tier 2: q4_fg_rate_L5 (make% in 4th quarter + OT) ---
     q4_made_roll = df.groupby(grp)["q4_fg_made"].transform(

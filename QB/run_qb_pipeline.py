@@ -42,6 +42,7 @@ QB_CONFIG = {
     "scheduler_type": QB_SCHEDULER_TYPE,
     "onecycle_max_lr": QB_ONECYCLE_MAX_LR,
     "onecycle_pct_start": QB_ONECYCLE_PCT_START,
+    "train_weather_nn": True,
 }
 
 

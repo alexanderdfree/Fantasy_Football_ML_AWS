@@ -37,6 +37,7 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
         "rushing_first_downs", "receiving_first_downs",
         "rushing_epa", "receiving_epa",
         "receiving_yards_after_catch", "receiving_air_yards",
+        "passing_first_downs", "passing_yards_after_catch", "sack_yards",
         "special_teams_tds",
     ]
     for col in fill_zero_cols:

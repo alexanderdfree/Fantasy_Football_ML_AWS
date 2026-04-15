@@ -43,6 +43,7 @@ WR_CONFIG = {
     "cosine_t0": WR_COSINE_T0,
     "cosine_t_mult": WR_COSINE_T_MULT,
     "cosine_eta_min": WR_COSINE_ETA_MIN,
+    "train_weather_nn": True,
 }
 
 

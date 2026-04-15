@@ -9,8 +9,11 @@ RB_SPECIFIC_FEATURES = [
     "team_rb_carry_share_L3",
     "team_rb_target_share_L3",
     "rushing_epa_per_attempt_L3",
-    "first_down_rate_L3",
+    "rushing_first_down_rate_L3",
+    "receiving_first_down_rate_L3",
     "yac_per_reception_L3",
+    "receiving_epa_per_target_L3",
+    "air_yards_per_target_L3",
 ]
 
 # Features to drop from the general pipeline for RB model
@@ -48,19 +51,18 @@ for _stat in ["fantasy_points", "fantasy_points_floor", "targets", "receptions",
 import numpy as np
 RB_RIDGE_ALPHA_GRIDS = {
     "rushing_floor":   [round(x, 4) for x in np.logspace(-2, 3, 15)],
-    "receiving_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "receiving_floor": [round(x, 4) for x in np.logspace(-2, 2.5, 20)],
     "td_points":       [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
 # === Neural Net ===
-# 2012+ dataset: wider single layer to exploit ~2x more training data.
-# [64] was optimal at 0.6:1 data ratio; [96] targets ~0.5:1 with expanded data.
-# Still single-layer — depth compresses information before heads can use it.
-RB_NN_BACKBONE_LAYERS = [96]
-RB_NN_HEAD_HIDDEN = 32
-RB_NN_DROPOUT = 0.25
-RB_NN_LR = 8e-4
-RB_NN_WEIGHT_DECAY = 2e-4
+# [128, 64] two-layer backbone — single [128] was underfitting (early stop epoch 54,
+# flat val loss from epoch 3). Added depth + larger heads + less regularization.
+RB_NN_BACKBONE_LAYERS = [128, 64]
+RB_NN_HEAD_HIDDEN = 48
+RB_NN_DROPOUT = 0.15
+RB_NN_LR = 1e-3
+RB_NN_WEIGHT_DECAY = 5e-5
 RB_NN_EPOCHS = 300
 RB_NN_BATCH_SIZE = 256
 RB_NN_PATIENCE = 30
@@ -73,16 +75,17 @@ RB_LOSS_WEIGHTS = {
     "receiving_floor": 1.0,
     "td_points": 2.0,
 }
-RB_LOSS_W_TOTAL = 0.6
+RB_LOSS_W_TOTAL = 0.4
 
 # === Huber Deltas (per-target) ===
 RB_HUBER_DELTAS = {
     "rushing_floor": 1.0,
-    "receiving_floor": 1.0,
+    "receiving_floor": 1.5,
     "td_points": 2.0,
 }
 
 # === LR Scheduler ===
-RB_SCHEDULER_TYPE = "plateau"
-RB_PLATEAU_FACTOR = 0.5
-RB_PLATEAU_PATIENCE = 8
+RB_SCHEDULER_TYPE = "cosine_warm_restarts"
+RB_COSINE_T0 = 40
+RB_COSINE_T_MULT = 2
+RB_COSINE_ETA_MIN = 1e-5

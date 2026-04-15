@@ -24,9 +24,15 @@ class MultiHeadNet(nn.Module):
         head_hidden: int = 32,
         dropout: float = 0.3,
         head_hidden_overrides: dict = None,
+        non_negative_targets: set = None,
     ):
         super().__init__()
         self.target_names = target_names
+        # Which heads are clamped to >= 0. Default: all targets.
+        # Override for targets that can be negative (e.g. DST pts_allowed_bonus).
+        self.non_negative_targets = (
+            set(target_names) if non_negative_targets is None else non_negative_targets
+        )
 
         # === Shared Backbone ===
         backbone_blocks = []
@@ -59,13 +65,8 @@ class MultiHeadNet(nn.Module):
         preds = {}
         for name, head in self.heads.items():
             val = head(shared).squeeze(-1)
-            # Clamp to non-negative: fantasy point components can't be negative.
-            # clamp(min=0) is equivalent to ReLU on the output layer.  Unlike
-            # softplus (which has a ~0.693 floor at zero), clamp allows exact
-            # zeros, matching the Ridge model's np.maximum(..., 0) semantics
-            # and eliminating the ~2-point floor that softplus imposed when
-            # summing across 3 heads.
-            val = torch.clamp(val, min=0.0)
+            if name in self.non_negative_targets:
+                val = torch.clamp(val, min=0.0)
             preds[name] = val
         preds["total"] = sum(preds[t] for t in self.target_names)
         return preds

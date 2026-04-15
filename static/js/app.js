@@ -20,9 +20,11 @@ Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Rob
 const COLORS = {
     ridge: "#3b82f6",
     nn: "#22c55e",
+    weatherNn: "#f59e0b",
     actual: "#e8eaed",
     ridgeBg: "rgba(59, 130, 246, 0.2)",
     nnBg: "rgba(34, 197, 94, 0.2)",
+    weatherNnBg: "rgba(245, 158, 11, 0.2)",
 };
 
 // ---------------------------------------------------------------------------
@@ -120,9 +122,10 @@ function setupSearch() {
 function setupModelToggle() {
     document.getElementById("model-display").addEventListener("change", e => {
         const val = e.target.value;
-        document.body.classList.remove("model-ridge", "model-nn");
+        document.body.classList.remove("model-ridge", "model-nn", "model-weather_nn");
         if (val === "ridge") document.body.classList.add("model-ridge");
         else if (val === "nn") document.body.classList.add("model-nn");
+        else if (val === "weather_nn") document.body.classList.add("model-weather_nn");
     });
 }
 
@@ -199,6 +202,10 @@ function renderTable() {
         const nnDelta = (p.nn_pred - p.actual).toFixed(1);
         const ridgeCls = deltaClass(ridgeDelta);
         const nnCls = deltaClass(nnDelta);
+        const hasWnn = p.weather_nn_pred != null;
+        const wnnVal = hasWnn ? p.weather_nn_pred.toFixed(1) : "--";
+        const wnnDelta = hasWnn ? (p.weather_nn_pred - p.actual).toFixed(1) : "--";
+        const wnnCls = hasWnn ? deltaClass(wnnDelta) : "";
         const headshot = p.headshot
             ? `<img class="player-headshot" src="${p.headshot}" alt="" loading="lazy">`
             : `<div class="player-headshot"></div>`;
@@ -212,8 +219,10 @@ function renderTable() {
             <td class="col-actual"><strong>${p.actual.toFixed(1)}</strong></td>
             <td class="col-pred ridge-col">${p.ridge_pred.toFixed(1)}</td>
             <td class="col-pred nn-col">${p.nn_pred.toFixed(1)}</td>
+            <td class="col-pred weather-nn-col">${wnnVal}</td>
             <td class="col-delta ridge-col ${ridgeCls}">${fmtDelta(ridgeDelta)}</td>
             <td class="col-delta nn-col ${nnCls}">${fmtDelta(nnDelta)}</td>
+            <td class="col-delta weather-nn-col ${wnnCls}">${hasWnn ? fmtDelta(wnnDelta) : "--"}</td>
         </tr>`;
     }).join("");
 
@@ -290,6 +299,7 @@ async function loadStandings() {
                 <td class="col-actual"><strong>${p.avg_actual.toFixed(1)}</strong></td>
                 <td class="col-pred">${p.avg_ridge.toFixed(1)}</td>
                 <td class="col-pred">${p.avg_nn.toFixed(1)}</td>
+                <td class="col-pred">${p.avg_weather_nn != null ? p.avg_weather_nn.toFixed(1) : "--"}</td>
             </tr>
         `).join("");
 
@@ -318,19 +328,26 @@ async function loadMetrics() {
         // Overall metrics cards
         const ridge = metrics["Ridge Regression"];
         const nn = metrics["Neural Network"];
+        const wnn = metrics["Weather NN"];
         document.getElementById("ridge-mae").textContent = ridge.overall.mae.toFixed(3);
         document.getElementById("ridge-rmse").textContent = ridge.overall.rmse.toFixed(3);
         document.getElementById("ridge-r2").textContent = ridge.overall.r2.toFixed(3);
         document.getElementById("nn-mae").textContent = nn.overall.mae.toFixed(3);
         document.getElementById("nn-rmse").textContent = nn.overall.rmse.toFixed(3);
         document.getElementById("nn-r2").textContent = nn.overall.r2.toFixed(3);
+        if (wnn) {
+            document.getElementById("weather-nn-card").style.display = "";
+            document.getElementById("weather-nn-mae").textContent = wnn.overall.mae.toFixed(3);
+            document.getElementById("weather-nn-rmse").textContent = wnn.overall.rmse.toFixed(3);
+            document.getElementById("weather-nn-r2").textContent = wnn.overall.r2.toFixed(3);
+        }
 
         // Position model breakdown
         setupPerfPositionFilter();
         renderPositionModelDetail(getActivePosition("perf-position-filter"));
 
         // Position charts
-        renderPositionCharts(ridge.by_position, nn.by_position);
+        renderPositionCharts(ridge.by_position, nn.by_position, wnn ? wnn.by_position : null);
 
         // Weekly MAE chart
         renderWeeklyChart(weekly);
@@ -357,6 +374,8 @@ function renderPositionModelDetail(pos) {
     const d = positionDetailsData[pos];
     const tm = d.target_metrics || {};
 
+    const hasWnn = tm["total"] && tm["total"].weather_nn_mae != null;
+
     // Target decomposition rows
     const targetRows = (d.targets || []).map(t => {
         const m = tm[t.key] || {};
@@ -365,6 +384,7 @@ function renderPositionModelDetail(pos) {
             <td class="tm-formula">${t.formula}</td>
             <td class="tm-val">${m.ridge_mae != null ? m.ridge_mae.toFixed(2) : '--'}</td>
             <td class="tm-val">${m.nn_mae != null ? m.nn_mae.toFixed(2) : '--'}</td>
+            ${hasWnn ? `<td class="tm-val">${m.weather_nn_mae != null ? m.weather_nn_mae.toFixed(2) : '--'}</td>` : ''}
         </tr>`;
     }).join("");
 
@@ -374,6 +394,7 @@ function renderPositionModelDetail(pos) {
         <td class="tm-formula">${d.adjustments || ''}</td>
         <td class="tm-val"><strong>${totalM.ridge_mae != null ? totalM.ridge_mae.toFixed(2) : '--'}</strong></td>
         <td class="tm-val"><strong>${totalM.nn_mae != null ? totalM.nn_mae.toFixed(2) : '--'}</strong></td>
+        ${hasWnn ? `<td class="tm-val"><strong>${totalM.weather_nn_mae != null ? totalM.weather_nn_mae.toFixed(2) : '--'}</strong></td>` : ''}
     </tr>`;
 
     // Feature badges
@@ -402,6 +423,7 @@ function renderPositionModelDetail(pos) {
                             <th>Formula</th>
                             <th>Ridge MAE</th>
                             <th>NN MAE</th>
+                            ${hasWnn ? '<th>Weather NN MAE</th>' : ''}
                         </tr>
                     </thead>
                     <tbody>
@@ -420,23 +442,32 @@ function renderPositionModelDetail(pos) {
     `;
 }
 
-function renderPositionCharts(ridgePos, nnPos) {
+function renderPositionCharts(ridgePos, nnPos, wnnPos) {
     const positions = ridgePos.map(p => p.position);
     const ridgeMAE = ridgePos.map(p => p.mae);
     const nnMAE = nnPos.map(p => p.mae);
     const ridgeR2 = ridgePos.map(p => p.r2);
     const nnR2 = nnPos.map(p => p.r2);
 
+    const maeDatasets = [
+        { label: "Ridge", data: ridgeMAE, backgroundColor: COLORS.ridgeBg, borderColor: COLORS.ridge, borderWidth: 1.5 },
+        { label: "Neural Net", data: nnMAE, backgroundColor: COLORS.nnBg, borderColor: COLORS.nn, borderWidth: 1.5 },
+    ];
+    const r2Datasets = [
+        { label: "Ridge", data: ridgeR2, backgroundColor: COLORS.ridgeBg, borderColor: COLORS.ridge, borderWidth: 1.5 },
+        { label: "Neural Net", data: nnR2, backgroundColor: COLORS.nnBg, borderColor: COLORS.nn, borderWidth: 1.5 },
+    ];
+    if (wnnPos) {
+        const wnnMAE = wnnPos.map(p => p.mae);
+        const wnnR2 = wnnPos.map(p => p.r2);
+        maeDatasets.push({ label: "Weather NN", data: wnnMAE, backgroundColor: COLORS.weatherNnBg, borderColor: COLORS.weatherNn, borderWidth: 1.5 });
+        r2Datasets.push({ label: "Weather NN", data: wnnR2, backgroundColor: COLORS.weatherNnBg, borderColor: COLORS.weatherNn, borderWidth: 1.5 });
+    }
+
     if (positionMaeChart) positionMaeChart.destroy();
     positionMaeChart = new Chart(document.getElementById("position-mae-chart"), {
         type: "bar",
-        data: {
-            labels: positions,
-            datasets: [
-                { label: "Ridge", data: ridgeMAE, backgroundColor: COLORS.ridgeBg, borderColor: COLORS.ridge, borderWidth: 1.5 },
-                { label: "Neural Net", data: nnMAE, backgroundColor: COLORS.nnBg, borderColor: COLORS.nn, borderWidth: 1.5 },
-            ],
-        },
+        data: { labels: positions, datasets: maeDatasets },
         options: {
             responsive: true,
             plugins: { title: { display: true, text: "MAE by Position (Lower is Better)", color: "#e8eaed" } },
@@ -447,13 +478,7 @@ function renderPositionCharts(ridgePos, nnPos) {
     if (positionR2Chart) positionR2Chart.destroy();
     positionR2Chart = new Chart(document.getElementById("position-r2-chart"), {
         type: "bar",
-        data: {
-            labels: positions,
-            datasets: [
-                { label: "Ridge", data: ridgeR2, backgroundColor: COLORS.ridgeBg, borderColor: COLORS.ridge, borderWidth: 1.5 },
-                { label: "Neural Net", data: nnR2, backgroundColor: COLORS.nnBg, borderColor: COLORS.nn, borderWidth: 1.5 },
-            ],
-        },
+        data: { labels: positions, datasets: r2Datasets },
         options: {
             responsive: true,
             plugins: { title: { display: true, text: "R\u00B2 by Position (Higher is Better)", color: "#e8eaed" } },
@@ -464,33 +489,43 @@ function renderPositionCharts(ridgePos, nnPos) {
 
 function renderWeeklyChart(weekly) {
     if (weeklyMaeChart) weeklyMaeChart.destroy();
+    const datasets = [
+        {
+            label: "Ridge MAE",
+            data: weekly.ridge_mae,
+            borderColor: COLORS.ridge,
+            backgroundColor: COLORS.ridgeBg,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+        },
+        {
+            label: "Neural Net MAE",
+            data: weekly.nn_mae,
+            borderColor: COLORS.nn,
+            backgroundColor: COLORS.nnBg,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+        },
+    ];
+    if (weekly.weather_nn_mae) {
+        datasets.push({
+            label: "Weather NN MAE",
+            data: weekly.weather_nn_mae,
+            borderColor: COLORS.weatherNn,
+            backgroundColor: COLORS.weatherNnBg,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+        });
+    }
     weeklyMaeChart = new Chart(document.getElementById("weekly-mae-chart"), {
         type: "line",
-        data: {
-            labels: weekly.weeks.map(w => `Wk ${w}`),
-            datasets: [
-                {
-                    label: "Ridge MAE",
-                    data: weekly.ridge_mae,
-                    borderColor: COLORS.ridge,
-                    backgroundColor: COLORS.ridgeBg,
-                    fill: true,
-                    tension: 0.3,
-                    pointRadius: 4,
-                    pointHoverRadius: 6,
-                },
-                {
-                    label: "Neural Net MAE",
-                    data: weekly.nn_mae,
-                    borderColor: COLORS.nn,
-                    backgroundColor: COLORS.nnBg,
-                    fill: true,
-                    tension: 0.3,
-                    pointRadius: 4,
-                    pointHoverRadius: 6,
-                },
-            ],
-        },
+        data: { labels: weekly.weeks.map(w => `Wk ${w}`), datasets },
         options: {
             responsive: true,
             plugins: {
@@ -535,18 +570,22 @@ async function openPlayerModal(playerId) {
         const actual = data.weekly.map(w => w.actual);
         const ridge = data.weekly.map(w => w.ridge_pred);
         const nn = data.weekly.map(w => w.nn_pred);
+        const hasWnn = data.weekly.some(w => w.weather_nn_pred != null);
+        const weatherNn = hasWnn ? data.weekly.map(w => w.weather_nn_pred) : null;
+
+        const chartDatasets = [
+            { label: "Actual", data: actual, borderColor: COLORS.actual, borderWidth: 2.5, tension: 0.3, pointRadius: 5, pointHoverRadius: 7 },
+            { label: "Ridge Pred", data: ridge, borderColor: COLORS.ridge, borderWidth: 2, borderDash: [6, 3], tension: 0.3, pointRadius: 4 },
+            { label: "NN Pred", data: nn, borderColor: COLORS.nn, borderWidth: 2, borderDash: [6, 3], tension: 0.3, pointRadius: 4 },
+        ];
+        if (weatherNn) {
+            chartDatasets.push({ label: "Weather NN", data: weatherNn, borderColor: COLORS.weatherNn, borderWidth: 2, borderDash: [6, 3], tension: 0.3, pointRadius: 4 });
+        }
 
         if (playerChart) playerChart.destroy();
         playerChart = new Chart(document.getElementById("player-chart"), {
             type: "line",
-            data: {
-                labels: weeks,
-                datasets: [
-                    { label: "Actual", data: actual, borderColor: COLORS.actual, borderWidth: 2.5, tension: 0.3, pointRadius: 5, pointHoverRadius: 7 },
-                    { label: "Ridge Pred", data: ridge, borderColor: COLORS.ridge, borderWidth: 2, borderDash: [6, 3], tension: 0.3, pointRadius: 4 },
-                    { label: "NN Pred", data: nn, borderColor: COLORS.nn, borderWidth: 2, borderDash: [6, 3], tension: 0.3, pointRadius: 4 },
-                ],
-            },
+            data: { labels: weeks, datasets: chartDatasets },
             options: {
                 responsive: true,
                 plugins: { title: { display: true, text: "Weekly Fantasy Points: Actual vs Predicted", color: "#e8eaed" } },

@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from DST.dst_config import (
     DST_TARGETS, DST_RIDGE_ALPHA_GRIDS, DST_SPECIFIC_FEATURES,
     DST_NN_BACKBONE_LAYERS, DST_NN_HEAD_HIDDEN, DST_NN_HEAD_HIDDEN_OVERRIDES,
-    DST_NN_DROPOUT,
+    DST_NN_DROPOUT, DST_NN_NON_NEGATIVE_TARGETS,
     DST_NN_LR, DST_NN_WEIGHT_DECAY, DST_NN_EPOCHS, DST_NN_BATCH_SIZE,
     DST_NN_PATIENCE,
     DST_LOSS_WEIGHTS, DST_LOSS_W_TOTAL, DST_HUBER_DELTAS,
@@ -63,6 +63,7 @@ def run_dst_pipeline(seed=42):
         "nn_head_hidden": DST_NN_HEAD_HIDDEN,
         "nn_dropout": DST_NN_DROPOUT,
         "nn_head_hidden_overrides": DST_NN_HEAD_HIDDEN_OVERRIDES,
+        "nn_non_negative_targets": DST_NN_NON_NEGATIVE_TARGETS,
         "nn_lr": DST_NN_LR,
         "nn_weight_decay": DST_NN_WEIGHT_DECAY,
         "nn_epochs": DST_NN_EPOCHS,

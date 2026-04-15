@@ -48,7 +48,7 @@ def compute_k_miss_adjustment(df: pd.DataFrame) -> pd.Series:
     total_misses = df["fg_missed"].fillna(0) + df["pat_missed"].fillna(0)
     df = df.copy()
     df["_total_misses"] = total_misses
-    miss_rate = df.groupby(["player_id", "season"])[
+    miss_rate = df.groupby(["player_id"])[
         "_total_misses"
     ].transform(lambda x: x.shift(1).rolling(8, min_periods=1).mean())
 

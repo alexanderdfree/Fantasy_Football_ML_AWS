@@ -4,7 +4,7 @@
     {
       "name": "fantasy-football",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["app.py"],
+      "runtimeArgs": ["-u", "app.py"],
       "port": 5050
     }
   ]

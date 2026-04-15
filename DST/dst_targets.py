@@ -26,39 +26,53 @@ def _pts_allowed_to_bonus(pts: float) -> float:
 def compute_dst_targets(df: pd.DataFrame) -> pd.DataFrame:
     """Compute the 3 prediction targets for D/ST.
 
-    Target decomposition:
-      defensive_scoring = sacks * 1 + INTs * 2 + fumble_rec * 2 + safeties * 2
-      td_points          = (def_tds + special_teams_tds) * 6
+    Target decomposition (predictable components only):
+      defensive_scoring = sacks * 1 + INTs * 2 + fumble_rec * 2
+      td_points          = special_teams_tds * 6
       pts_allowed_bonus  = tiered scoring based on points allowed
 
-    Total D/ST fantasy points = defensive_scoring + td_points + pts_allowed_bonus
+    Excluded from targets (moved to adjustment):
+      - def_tds: nflreadr only populates individual defensive player stats
+        from 2025 onward (0% fill for 2012-2024). Including them creates a
+        train/test distribution shift (~+0.31 pts/game bias in 2025).
+      - def_safeties: same data gap; negligible magnitude (~0.03 pts/game).
+
+    Total D/ST fantasy points = targets + adjustment (def_tds*6 + safeties*2)
     """
     df = df.copy()
 
-    # 1. Defensive scoring (base production)
+    # 1. Defensive scoring (base production — excludes safeties)
     df["defensive_scoring"] = (
         df["def_sacks"].fillna(0) * 1
         + df["def_ints"].fillna(0) * 2
         + df["def_fumble_rec"].fillna(0) * 2
-        + df["def_safeties"].fillna(0) * 2
     )
 
-    # 2. Touchdown points (high-variance big plays)
-    df["td_points"] = (
-        df["def_tds"].fillna(0) + df["special_teams_tds"].fillna(0)
-    ) * 6
+    # 2. Touchdown points (special teams only — excludes defensive TDs)
+    df["td_points"] = df["special_teams_tds"].fillna(0) * 6
 
     # 3. Points-allowed bonus (opponent-dependent, tiered)
     df["pts_allowed_bonus"] = df["points_allowed"].fillna(21).apply(_pts_allowed_to_bonus)
 
-    # Total D/ST fantasy points
+    # Unpredictable component (for adjustment at inference)
+    df["_dst_adjustment"] = (
+        df["def_tds"].fillna(0) * 6
+        + df["def_safeties"].fillna(0) * 2
+    )
+
+    # Total D/ST fantasy points (full, including adjustment)
     df["fantasy_points"] = (
         df["defensive_scoring"] + df["td_points"] + df["pts_allowed_bonus"]
+        + df["_dst_adjustment"]
     )
 
     return df
 
 
 def compute_dst_adjustment(df: pd.DataFrame) -> pd.Series:
-    """No adjustment needed — all D/ST scoring is captured in the three targets."""
-    return pd.Series(0.0, index=df.index)
+    """Return unpredictable D/ST scoring: defensive TDs + safeties.
+
+    These stats have no training history (nflreadr 2025-only), so they
+    are excluded from model targets and captured here as irreducible noise.
+    """
+    return df["_dst_adjustment"] if "_dst_adjustment" in df.columns else pd.Series(0.0, index=df.index)

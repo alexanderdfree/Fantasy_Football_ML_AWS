@@ -38,6 +38,12 @@ def _compute_qb_features(df: pd.DataFrame) -> None:
     rush_yds_roll = _roll_sum("rushing_yards")
     pass_epa_roll = _roll_sum("passing_epa")
     air_yds_roll = _roll_sum("passing_air_yards")
+    carries_roll = _roll_sum("carries")
+    pass_first_downs_roll = _roll_sum("passing_first_downs")
+    rush_first_downs_roll = _roll_sum("rushing_first_downs")
+    rush_epa_roll = _roll_sum("rushing_epa")
+    pass_yac_roll = _roll_sum("passing_yards_after_catch")
+    sack_yds_roll = _roll_sum("sack_yards")
 
     dropbacks = attempts_roll + sacks_roll
 
@@ -73,6 +79,26 @@ def _compute_qb_features(df: pd.DataFrame) -> None:
     # 8. deep_ball_rate_L3 (air yards per attempt)
     df["deep_ball_rate_L3"] = (air_yds_roll / attempts_roll).fillna(0)
     df.loc[attempts_roll == 0, "deep_ball_rate_L3"] = 0
+
+    # 9. pass_first_down_rate_L3 (first downs per attempt — drive-sustaining ability)
+    df["pass_first_down_rate_L3"] = (pass_first_downs_roll / attempts_roll).fillna(0)
+    df.loc[attempts_roll == 0, "pass_first_down_rate_L3"] = 0
+
+    # 10. rushing_epa_per_carry_L3 (rushing quality beyond raw yards)
+    df["rushing_epa_per_carry_L3"] = (rush_epa_roll / carries_roll).fillna(0)
+    df.loc[carries_roll == 0, "rushing_epa_per_carry_L3"] = 0
+
+    # 11. rush_first_down_rate_L3 (rushing first downs per carry)
+    df["rush_first_down_rate_L3"] = (rush_first_downs_roll / carries_roll).fillna(0)
+    df.loc[carries_roll == 0, "rush_first_down_rate_L3"] = 0
+
+    # 12. yac_rate_L3 (YAC / passing yards — scheme & receiver quality)
+    df["yac_rate_L3"] = (pass_yac_roll / pass_yds_roll).fillna(0)
+    df.loc[pass_yds_roll == 0, "yac_rate_L3"] = 0
+
+    # 13. sack_damage_per_dropback_L3 (sack yards lost per dropback — OL quality)
+    df["sack_damage_per_dropback_L3"] = (sack_yds_roll / dropbacks).fillna(0)
+    df.loc[dropbacks == 0, "sack_damage_per_dropback_L3"] = 0
 
 
 def fill_qb_nans(train_df, val_df, test_df, qb_feature_cols):

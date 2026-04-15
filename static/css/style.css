@@ -788,5 +788,9 @@ tbody tr:last-child td {
 }
 
 /* === Column visibility for model toggle === */
-body.model-ridge .nn-col { display: none; }
-body.model-nn .ridge-col { display: none; }
+body.model-ridge .nn-col,
+body.model-ridge .weather-nn-col { display: none; }
+body.model-nn .ridge-col,
+body.model-nn .weather-nn-col { display: none; }
+body.model-weather_nn .ridge-col,
+body.model-weather_nn .nn-col { display: none; }
