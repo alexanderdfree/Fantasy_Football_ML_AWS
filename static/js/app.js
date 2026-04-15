@@ -54,7 +54,6 @@ async function init() {
 
     // Attach filter change listeners
     document.getElementById("week-filter").addEventListener("change", () => { currentPage = 1; loadPredictions(); });
-    document.getElementById("scoring-filter").addEventListener("change", () => { currentPage = 1; loadPredictions(); });
 
     // Initial data load
     await loadPredictions();
@@ -158,11 +157,10 @@ function setupSortHeaders() {
 async function loadPredictions() {
     const position = getActivePosition("position-filter");
     const week = document.getElementById("week-filter").value;
-    const scoring = document.getElementById("scoring-filter").value;
     const search = document.getElementById("search-input").value;
 
     const params = new URLSearchParams({
-        position, week, scoring, search,
+        position, week, search,
         sort: currentSort,
         order: currentOrder,
     });

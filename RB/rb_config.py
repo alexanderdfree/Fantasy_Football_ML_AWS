@@ -26,8 +26,23 @@ for _stat in ["passing_yards", "attempts"]:
         RB_DROP_FEATURES.add(f"prior_season_{_agg}_{_stat}")
 RB_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
 
-# Drop current-week features that cause data leakage (not available at prediction time)
-RB_DROP_FEATURES |= {"snap_pct", "air_yards_share"}
+# NOTE: snap_pct and air_yards_share are already lagged (shift=1) in engineer.py
+# so they ARE available at prediction time and should NOT be dropped.
+
+# Drop EWMA features — they correlate >0.98 with rolling means of the same stat,
+# adding multicollinearity without unique signal.
+from src.config import EWMA_STATS, EWMA_SPANS
+for _stat in EWMA_STATS:
+    if _stat not in ("passing_yards",):  # already dropped above
+        for _span in EWMA_SPANS:
+            RB_DROP_FEATURES.add(f"ewma_{_stat}_L{_span}")
+
+# Drop L5 rolling means/std/max — sandwiched between L3 and L8 with >0.97 corr to both,
+# contributing to ill-conditioned feature matrix without meaningful unique signal.
+for _stat in ["fantasy_points", "fantasy_points_floor", "targets", "receptions",
+              "carries", "rushing_yards", "receiving_yards", "snap_pct"]:
+    for _agg in ["mean", "std", "max"]:
+        RB_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L5")
 
 # === Ridge ===
 import numpy as np
@@ -39,9 +54,9 @@ RB_NN_HEAD_HIDDEN = 32
 RB_NN_DROPOUT = 0.3
 RB_NN_LR = 8e-4
 RB_NN_WEIGHT_DECAY = 2e-4
-RB_NN_EPOCHS = 250
+RB_NN_EPOCHS = 300
 RB_NN_BATCH_SIZE = 256
-RB_NN_PATIENCE = 20
+RB_NN_PATIENCE = 30
 
 # === Loss Weights ===
 # Rushing is the primary RB floor component; slight boost.
@@ -51,7 +66,7 @@ RB_LOSS_WEIGHTS = {
     "receiving_floor": 1.0,
     "td_points": 2.0,
 }
-RB_LOSS_W_TOTAL = 0.4
+RB_LOSS_W_TOTAL = 0.6
 
 # === Huber Deltas (per-target) ===
 RB_HUBER_DELTAS = {
@@ -61,7 +76,9 @@ RB_HUBER_DELTAS = {
 }
 
 # === LR Scheduler ===
-RB_SCHEDULER_TYPE = "cosine_warm_restarts"
-RB_COSINE_T0 = 30
-RB_COSINE_T_MULT = 2
-RB_COSINE_ETA_MIN = 1e-5
+# ReduceLROnPlateau: adaptively lowers LR when val loss stalls,
+# better suited than cosine warm restarts for finding minima
+# on a flat loss surface with this dataset size.
+RB_SCHEDULER_TYPE = "plateau"
+RB_PLATEAU_FACTOR = 0.5
+RB_PLATEAU_PATIENCE = 8

@@ -47,6 +47,13 @@ def _build_scheduler(optimizer, cfg, train_loader):
             T_mult=cfg["cosine_t_mult"],
             eta_min=cfg["cosine_eta_min"],
         ), False  # scheduler_per_batch=False
+    elif sched_type == "plateau":
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=cfg["plateau_factor"],
+            patience=cfg["plateau_patience"],
+        ), False  # scheduler_per_batch=False
     else:
         raise ValueError(f"Unknown scheduler type: {sched_type}")
 
@@ -141,8 +148,12 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     y_val_dict = {t: pos_val[t].values for t in targets}
     y_test_dict = {t: pos_test[t].values for t in targets}
 
-    y_train_dict["total"] = sum(pos_train[t].values for t in targets)
-    y_val_dict["total"] = sum(pos_val[t].values for t in targets)
+    # Use actual fantasy_points as the total target across all splits.
+    # sum(targets) omits fumble penalty and passing component, creating a
+    # train/test mismatch.  Using fantasy_points gives the total-loss term
+    # a consistent signal aligned with the evaluation metric.
+    y_train_dict["total"] = pos_train["fantasy_points"].values
+    y_val_dict["total"] = pos_val["fantasy_points"].values
     y_test_dict["total"] = pos_test["fantasy_points"].values
 
     print(f"  Feature matrix shape: {X_train.shape}")
@@ -222,23 +233,36 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     nn_test_preds["total"] = sum(nn_test_preds[t] for t in targets) + adj_test.values
     nn_metrics = compute_target_metrics(y_test_dict, nn_test_preds, targets)
 
+    # --- Ensemble: average Ridge + NN ---
+    # Ridge has good calibration (near-zero bias), NN has better per-target
+    # precision.  Simple average combines both strengths.
+    ensemble_preds = {}
+    for t in targets:
+        ensemble_preds[t] = 0.5 * ridge_test_preds[t] + 0.5 * nn_test_preds[t]
+    ensemble_preds["total"] = 0.5 * ridge_test_preds["total"] + 0.5 * nn_test_preds["total"]
+    ensemble_metrics = compute_target_metrics(y_test_dict, ensemble_preds, targets)
+
     # --- Comparison ---
     print_comparison_table({
         "Season Average Baseline": baseline_metrics,
         f"{pos} Ridge Multi-Target": ridge_metrics,
         f"{pos} Multi-Head NN": nn_metrics,
+        f"{pos} Ensemble (Ridge+NN)": ensemble_metrics,
     }, position=pos, target_names=targets)
 
     # --- Ranking metrics ---
     pos_test = pos_test.copy()
     pos_test["pred_ridge_total"] = ridge_test_preds["total"]
     pos_test["pred_nn_total"] = nn_test_preds["total"]
+    pos_test["pred_ensemble"] = ensemble_preds["total"]
     pos_test["pred_baseline"] = baseline_preds
 
     ridge_ranking = compute_ranking_metrics(pos_test, pred_col="pred_ridge_total")
     nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_nn_total")
-    print(f"\nRidge Top-12 Hit Rate: {ridge_ranking['season_avg_hit_rate']:.3f}")
-    print(f"NN Top-12 Hit Rate:    {nn_ranking['season_avg_hit_rate']:.3f}")
+    ensemble_ranking = compute_ranking_metrics(pos_test, pred_col="pred_ensemble")
+    print(f"\nRidge Top-12 Hit Rate:    {ridge_ranking['season_avg_hit_rate']:.3f}")
+    print(f"NN Top-12 Hit Rate:       {nn_ranking['season_avg_hit_rate']:.3f}")
+    print(f"Ensemble Top-12 Hit Rate: {ensemble_ranking['season_avg_hit_rate']:.3f}")
 
     # --- Weekly backtest ---
     print("\n=== Weekly Backtest ===")
@@ -248,6 +272,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             "Season Avg": "pred_baseline",
             "Ridge": "pred_ridge_total",
             "Neural Net": "pred_nn_total",
+            "Ensemble": "pred_ensemble",
         },
     )
     for model_name, summary in sim_results["season_summary"].items():

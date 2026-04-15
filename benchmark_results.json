@@ -1,0 +1,23 @@
+[
+  {
+    "position": "RB",
+    "ridge_mae": 3.784,
+    "ridge_r2": 0.551,
+    "nn_mae": 3.852,
+    "nn_r2": 0.505,
+    "nn_wins_mae": false,
+    "nn_per_target": {
+      "rushing_floor": 1.688,
+      "receiving_floor": 1.731,
+      "td_points": 2.08
+    },
+    "ridge_per_target": {
+      "rushing_floor": 1.69,
+      "receiving_floor": 1.739,
+      "td_points": 2.257
+    },
+    "ridge_top12": 0.491,
+    "nn_top12": 0.477,
+    "elapsed_sec": 12.4
+  }
+]

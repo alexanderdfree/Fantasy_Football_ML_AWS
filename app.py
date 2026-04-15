@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import joblib
 
-from src.config import SCORING_STANDARD, SCORING_HALF_PPR
+from src.config import SCORING_STANDARD, SCORING_HALF_PPR, TRAIN_SEASONS, VAL_SEASONS, TEST_SEASONS
 from src.features.engineer import get_feature_columns, fill_nans_safe
 from src.data.loader import compute_fantasy_points
 from src.evaluation.metrics import compute_metrics, compute_positional_metrics
@@ -59,17 +59,17 @@ from TE.te_config import (
     TE_NN_DROPOUT,
 )
 
-from K.k_data import filter_to_k
+from K.k_data import filter_to_k, load_kicker_data, kicker_week_split
 from K.k_targets import compute_k_targets, compute_k_miss_adjustment
-from K.k_features import add_k_specific_features, get_k_feature_columns, fill_k_nans
+from K.k_features import compute_k_features, add_k_specific_features, get_k_feature_columns, fill_k_nans
 from K.k_config import (
     K_TARGETS, K_SPECIFIC_FEATURES,
     K_NN_BACKBONE_LAYERS, K_NN_HEAD_HIDDEN, K_NN_DROPOUT,
 )
 
-from DST.dst_data import filter_to_dst
+from DST.dst_data import filter_to_dst, build_dst_data
 from DST.dst_targets import compute_dst_targets, compute_dst_adjustment
-from DST.dst_features import add_dst_specific_features, get_dst_feature_columns, fill_dst_nans
+from DST.dst_features import compute_dst_features, add_dst_specific_features, get_dst_feature_columns, fill_dst_nans
 from DST.dst_config import (
     DST_TARGETS, DST_SPECIFIC_FEATURES,
     DST_NN_BACKBONE_LAYERS, DST_NN_HEAD_HIDDEN, DST_NN_HEAD_HIDDEN_OVERRIDES,
@@ -250,6 +250,33 @@ def _compute_scoring_formats(df):
     return df
 
 
+def _load_k_splits():
+    """Load kicker data with features pre-computed on full dataset.
+
+    K uses its own data pipeline because kicking stats (FG/PAT) are only
+    available for 2025 in nflverse, and uses within-season temporal splits.
+    """
+    k_df = load_kicker_data()
+    k_df = compute_k_targets(k_df)
+    compute_k_features(k_df)
+    return kicker_week_split(k_df)
+
+
+def _load_dst_splits():
+    """Load D/ST data with features pre-computed on full dataset.
+
+    D/ST operates at team level (not player level), built from schedule
+    scores and opponent offensive stats.
+    """
+    dst_df = build_dst_data()
+    dst_df = compute_dst_targets(dst_df)
+    compute_dst_features(dst_df)
+    train = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()
+    val = dst_df[dst_df["season"].isin(VAL_SEASONS)].copy()
+    test = dst_df[dst_df["season"].isin(TEST_SEASONS)].copy()
+    return train, val, test
+
+
 def _apply_position_models(train, val, test, pos, results):
     """Load pre-trained position-specific models and write predictions into results."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -340,7 +367,13 @@ def _get_data():
     for df in [train, val, test]:
         _compute_scoring_formats(df)
 
-    # Build results frame
+    # K and DST use their own data pipelines (not the general splits)
+    print("Loading kicker data...")
+    k_train, k_val, k_test = _load_k_splits()
+    print("Loading D/ST data...")
+    dst_train, dst_val, dst_test = _load_dst_splits()
+
+    # Build results frame from general test + K/DST test data
     keep_cols = [
         "player_id", "player_display_name", "position", "recent_team",
         "season", "week", "headshot_url",
@@ -349,23 +382,49 @@ def _get_data():
     ]
     keep_cols = [c for c in keep_cols if c in test.columns]
     results = test[keep_cols].copy()
+
+    # Append K/DST test rows with non-overlapping indices
+    for pos_test_df in [k_test, dst_test]:
+        offset = results.index.max() + 1
+        pos_rows = pd.DataFrame(index=range(offset, offset + len(pos_test_df)))
+        for col in keep_cols:
+            if col in pos_test_df.columns:
+                pos_rows[col] = pos_test_df[col].values
+            elif col in ("fantasy_points_half_ppr", "fantasy_points_standard"):
+                # K/DST scoring doesn't vary by format (no receptions)
+                pos_rows[col] = pos_test_df["fantasy_points"].values
+            elif col == "headshot_url":
+                pos_rows[col] = ""
+            else:
+                pos_rows[col] = np.nan
+        # Sync position test data index so _apply_position_models can
+        # map predictions back to the correct results rows
+        pos_test_df.index = pos_rows.index
+        results = pd.concat([results, pos_rows])
+
     results["ridge_pred"] = 0.0
     results["nn_pred"] = 0.0
 
-    # Apply position-specific models
-    for pos in ["QB", "RB", "WR", "TE", "K", "DST"]:
+    # Apply position-specific models (general positions use general splits)
+    for pos in ["QB", "RB", "WR", "TE"]:
         print(f"Applying {pos}-specific model...")
         _apply_position_models(train, val, test, pos, results)
 
-    # Compute metrics using position-specific predictions
-    y_test = test["fantasy_points"].values
+    # K and DST use their own pre-processed splits
+    print("Applying K-specific model...")
+    _apply_position_models(k_train, k_val, k_test, "K", results)
+    print("Applying DST-specific model...")
+    _apply_position_models(dst_train, dst_val, dst_test, "DST", results)
+
+    # Compute metrics from combined results (all positions)
+    y_all = results["fantasy_points"].values
     metrics = {}
     for name, pred_col in [("Ridge Regression", "ridge_pred"), ("Neural Network", "nn_pred")]:
         preds = results[pred_col].values
-        overall = compute_metrics(y_test, preds)
-        pos_df = test[["position"]].copy()
+        overall = compute_metrics(y_all, preds)
+        pos_df = results[["position"]].copy()
         pos_df["pred"] = preds
-        pos_df["actual"] = y_test
+        pos_df["actual"] = y_all
         pos_metrics = compute_positional_metrics(pos_df, "pred", "actual")
         metrics[name] = {
             "overall": {k: round(v, 4) for k, v in overall.items()},
