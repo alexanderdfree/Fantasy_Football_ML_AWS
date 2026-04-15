@@ -10,7 +10,10 @@ def compute_wr_targets(df: pd.DataFrame) -> pd.DataFrame:
     Targets:
       - receiving_floor: receptions * PPR_weight + receiving_yards * 0.1
       - rushing_floor: rushing_yards * 0.1
-      - td_points: receiving_tds * 6 + rushing_tds * 6 + 2pt conversions * 2
+      - td_points: receiving_tds * 6 + rushing_tds * 6
+
+    Note: td_points intentionally excludes 2pt conversions to align with
+    SCORING_PPR used by compute_fantasy_points().
     """
     df = df.copy()
 
@@ -25,8 +28,6 @@ def compute_wr_targets(df: pd.DataFrame) -> pd.DataFrame:
     df["td_points"] = (
         df["receiving_tds"].fillna(0) * 6
         + df["rushing_tds"].fillna(0) * 6
-        + df["receiving_2pt_conversions"].fillna(0) * 2
-        + df["rushing_2pt_conversions"].fillna(0) * 2
     )
 
     df["fumble_penalty"] = (
@@ -34,6 +35,21 @@ def compute_wr_targets(df: pd.DataFrame) -> pd.DataFrame:
         + df["rushing_fumbles_lost"].fillna(0)
         + df["receiving_fumbles_lost"].fillna(0)
     ) * -2
+
+    # Sanity check: sum should match fantasy_points minus passing component (full PPR)
+    fantasy_points_check = (
+        df["receiving_floor"] + df["rushing_floor"]
+        + df["td_points"] + df["fumble_penalty"]
+    )
+    passing_component = (
+        df["passing_yards"].fillna(0) * 0.04
+        + df["passing_tds"].fillna(0) * 4
+        + df["interceptions"].fillna(0) * -2
+    )
+    discrepancy = (df["fantasy_points"] - fantasy_points_check - passing_component).abs()
+    if (discrepancy > 0.01).any():
+        n_bad = (discrepancy > 0.01).sum()
+        print(f"WARNING: {n_bad} WR rows have target decomposition discrepancy > 0.01 pts")
 
     return df
 

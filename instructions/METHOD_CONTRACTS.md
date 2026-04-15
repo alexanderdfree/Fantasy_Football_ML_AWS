@@ -17,7 +17,7 @@ import nfl_data_py as nfl
 
 # 1. Weekly player stats — primary data source
 weekly = nfl.import_weekly_data(seasons)
-# Seasons: 2018-2024 (must match config.SEASONS)
+# Seasons: 2012-2025 (must match config.SEASONS)
 # Columns: player_id, player_name, position, recent_team, season, week,
 #   completions, attempts, passing_yards, passing_tds, interceptions,
 #   carries, rushing_yards, rushing_tds, receptions, targets,
@@ -56,9 +56,9 @@ snap_counts = nfl.import_snap_counts(seasons)
 |--------|------|-------------|
 | player_id | str | GSIS ID, stable across seasons |
 | player_name | str | Display name |
-| position | str | QB/RB/WR/TE (from roster data) |
+| position | str | QB/RB/WR/TE/K/DST (from roster data) |
 | recent_team | str | Team abbreviation for that week |
-| season | int | 2018-2025 |
+| season | int | 2012-2025 |
 | week | int | 1-18 |
 | passing_yards | float | Raw stat |
 | rushing_yards | float | Raw stat |
@@ -75,10 +75,10 @@ snap_counts = nfl.import_snap_counts(seasons)
 | snap_pct | float | Offensive snap percentage (0-100) |
 
 **Caching:**
-- `data/raw/weekly_2018_2024.parquet`
-- `data/raw/rosters_2018_2024.parquet`
-- `data/raw/schedules_2018_2024.parquet`
-- `data/raw/snap_counts_2018_2024.parquet`
+- `data/raw/weekly_2012_2025.parquet`
+- `data/raw/rosters_2012_2025.parquet`
+- `data/raw/schedules_2012_2025.parquet`
+- `data/raw/snap_counts_2012_2025.parquet`
 - Check `os.path.exists()` before pulling; delete file to force refresh
 
 #### `compute_fantasy_points(df: pd.DataFrame, scoring: dict = None) -> pd.Series`
@@ -164,7 +164,7 @@ def compute_all_floor_formats(df):
 
 | Step | Action | Expected Impact |
 |------|--------|-----------------|
-| 1 | Filter to `position in ["QB", "RB", "WR", "TE"]` | Removes K, DEF, OL, etc. |
+| 1 | Filter to `position in ["QB", "RB", "WR", "TE", "K", "DST"]` | Removes OL, etc. |
 | 2 | Remove rows where player didn't play (0 snaps or NaN snap_pct AND all stats are 0) | Removes bye weeks, inactive players |
 | 3 | Fill missing stat columns with 0 | No row removal |
 | 4 | Fill missing `snap_pct` with position-week median | No row removal |
@@ -188,9 +188,9 @@ Rows are reduced to ~30-35K after the min-games filter in `build_features()`.
 
 | Split | Seasons | Expected Rows |
 |-------|---------|---------------|
-| Train | 2018-2022 | ~25,000 |
-| Val | 2023 | ~5,000 |
-| Test | 2024 | ~5,000 |
+| Train | 2012-2023 | ~12 seasons of data |
+| Val | 2024 | ~1 season |
+| Test | 2025 | ~1 season |
 
 **Post-split actions:**
 - Print split sizes to console
@@ -495,7 +495,11 @@ df.drop(columns=["weeks_since_last_game"], inplace=True)
 
 One-hot: `pos_QB`, `pos_RB`, `pos_WR`, `pos_TE` (using `pd.get_dummies`)
 
-##### Total: ~144 features
+##### Total: ~144 general features (before position-specific additions/drops)
+
+Each position then adds its own features (8 per position for QB/RB/WR/TE) and drops
+irrelevant ones (e.g., QBs drop receiver-centric features, RBs drop passing features).
+K and DST bypass the general feature pipeline entirely and use custom features.
 
 #### `get_feature_columns() -> list[str]`
 
@@ -575,7 +579,7 @@ def fill_nans_safe(train_df, val_df, test_df, feature_cols):
     pos_means = train_df.groupby("position")[feature_cols].mean()
     for split_df in [train_df, val_df, test_df]:
         for col in feature_cols:
-            for pos in ["QB", "RB", "WR", "TE"]:
+            for pos in ["QB", "RB", "WR", "TE", "K", "DST"]:
                 mask = (split_df[col].isna()) & (split_df["position"] == pos)
                 split_df.loc[mask, col] = pos_means.loc[pos, col]
 
@@ -626,165 +630,148 @@ class LastWeekBaseline:
         pass
 ```
 
-### 3.2 `src/models/linear.py`
+### 3.2 `shared/models.py`
 
-#### `class RidgeModel`
-
-```python
-class RidgeModel:
-    def __init__(self, alpha: float = 1.0):
-        self.scaler = StandardScaler()
-        self.model = Ridge(alpha=alpha)
-
-    def fit(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
-        # 1. Fit scaler on X_train
-        # 2. Transform X_train
-        # 3. Fit Ridge on scaled X_train, y_train
-        pass
-
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        # 1. Transform X with fitted scaler
-        # 2. Return Ridge predictions
-        pass
-
-    def get_feature_importance(self, feature_names: list[str]) -> pd.Series:
-        # Return |coef_| sorted descending, indexed by feature name
-        pass
-
-    def save(self, model_dir: str = "outputs/models") -> None:
-        # Save scaler to {model_dir}/scaler.pkl
-        # Save model to {model_dir}/ridge_model.pkl
-        pass
-
-    def load(self, model_dir: str = "outputs/models") -> None:
-        # Load scaler and model from disk
-        pass
-```
-
-### 3.3 `src/models/neural_net.py`
-
-#### `class FantasyPointsNet(nn.Module)`
+#### `class RidgeMultiTarget`
 
 ```python
-class FantasyPointsNet(nn.Module):
-    def __init__(self, input_dim: int, hidden_layers: list[int] = [128, 64, 32],
-                 dropout: float = 0.3):
-        super().__init__()
-        # Build sequential blocks:
-        # For each hidden layer size:
-        #   nn.Linear(prev_dim, hidden_dim)
-        #   nn.BatchNorm1d(hidden_dim)   # pre-activation normalization
-        #   nn.ReLU()
-        #   nn.Dropout(dropout)
-        # Final: nn.Linear(last_hidden, 1)  # single regression output
+class RidgeMultiTarget:
+    """Wrapper around scikit-learn Ridge for multi-target prediction.
+    Each target gets an independent Ridge model with separate alpha."""
+
+    def __init__(self, target_names: list[str], alphas: dict[str, float]):
+        # Creates one Ridge model per target with its own alpha
         pass
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Pass through all hidden blocks
-        # Final linear outputs (batch_size, 1) — squeeze to (batch_size,)
-        # MUST squeeze so shape matches y tensors in MSELoss.
-        # return self.net(x).squeeze(-1)  # shape: (batch_size,)
+    def fit(self, X_train: np.ndarray, y_dict: dict[str, np.ndarray]) -> None:
+        # Fit each Ridge model on its target
+        pass
+
+    def predict(self, X: np.ndarray) -> dict[str, np.ndarray]:
+        # Returns dict of per-target predictions (clamped >= 0) + "total" (sum)
+        pass
+
+    def get_feature_importance(self, target_name: str) -> pd.Series:
+        # Return |coef_| for a specific target
         pass
 ```
 
-**Architecture diagram:**
-```
-Input (~159) → Linear(159, 128) → BatchNorm(128) → ReLU → Dropout(0.3)
-            → Linear(128, 64)   → BatchNorm(64)  → ReLU → Dropout(0.3)
-            → Linear(64, 32)    → BatchNorm(32)  → ReLU → Dropout(0.3)
-            → Linear(32, 1)     → squeeze(-1)    → Output shape: (batch_size,)
-```
-**NOTE:** input_dim should be set dynamically: `input_dim = len(get_feature_columns())`.
-Consider testing `hidden_layers=[256, 128, 64]` during hyperparameter tuning given
-the larger feature space.
+### 3.3 `shared/neural_net.py`
 
-**Output shape contract:** `forward()` returns shape `(batch_size,)` after squeezing, matching the shape of `y` tensors passed to `MSELoss`. Without squeezing, the `(batch_size, 1)` vs `(batch_size,)` mismatch causes silent broadcasting bugs in loss computation.
+#### `class MultiHeadNet(nn.Module)`
+
+```python
+class MultiHeadNet(nn.Module):
+    def __init__(self, input_dim: int, target_names: list[str],
+                 backbone_layers: list[int], head_hidden: int = 32,
+                 dropout: float = 0.3, head_hidden_overrides: dict = None):
+        # Shared backbone: [Linear → BatchNorm → ReLU → Dropout] × len(backbone_layers)
+        # Per-target heads: Linear(backbone_out, head_hidden) → ReLU → Linear(head_hidden, 1)
+        pass
+
+    def forward(self, x: torch.Tensor) -> dict:
+        # Returns dict with per-target predictions + "total"
+        # Each head output passes through Softplus(beta=1.0) for non-negativity
+        pass
+
+    def predict_numpy(self, X: np.ndarray, device: torch.device) -> dict:
+        # Convenience method: numpy in → numpy out
+        pass
+```
+
+**Architecture diagram (example: RB with backbone=[96]):**
+```
+Input (N features) → Linear(N, 96) → BatchNorm(96) → ReLU → Dropout(0.25)
+                   ├→ rushing_floor head:   Linear(96, 32) → ReLU → Linear(32, 1) → Softplus
+                   ├→ receiving_floor head: Linear(96, 32) → ReLU → Linear(32, 1) → Softplus
+                   └→ td_points head:      Linear(96, 32) → ReLU → Linear(32, 1) → Softplus
+                   Total = sum of all heads
+```
 
 **Optimizer and loss:**
 ```python
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-criterion = nn.MSELoss()
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode="min", patience=5, factor=0.5
+optimizer = torch.optim.AdamW(model.parameters(), lr=8e-4, weight_decay=2e-4)
+criterion = MultiTargetLoss(
+    target_names=["rushing_floor", "receiving_floor", "td_points"],
+    loss_weights={"rushing_floor": 1.2, "receiving_floor": 1.0, "td_points": 2.0},
+    huber_deltas={"rushing_floor": 1.0, "receiving_floor": 1.0, "td_points": 2.0},
+    w_total=0.6,
 )
-# Interaction with early stopping: LR scheduler patience (5) < early stopping
-# patience (15). The LR will halve up to ~3 times before early stopping fires.
-# With factor=0.5 applied 3x, LR drops to 1/8 of initial (1e-3 → 1.25e-4).
-# This is intentional: give the model a chance to escape plateaus via LR
-# reduction before giving up entirely.
+# Scheduler varies by position: ReduceLROnPlateau, OneCycleLR, or CosineWarmRestarts
 ```
 
 ---
 
 ## 4. Training
 
-### 4.1 `src/training/trainer.py`
+### 4.1 `shared/training.py`
 
-#### `class Trainer`
+#### `class MultiTargetLoss(nn.Module)`
 
 ```python
-class Trainer:
-    def __init__(self, model, optimizer, scheduler, criterion, device, patience=15):
-        self.model = model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
-        self.criterion = criterion
-        self.device = device
-        self.patience = patience
-        self.best_val_loss = float("inf")
-        self.best_model_state = None
-        self.epochs_without_improvement = 0
+class MultiTargetLoss(nn.Module):
+    """Combined Huber loss for multi-head network.
+    Loss = sum(weight[t] * Huber(pred[t], target[t])) + w_total * Huber(total_pred, total_actual)
+    Per-target Huber deltas allow different MSE-to-MAE thresholds.
+    """
+    def __init__(self, target_names, loss_weights, huber_deltas=None, w_total=0.5):
+        pass
+
+    def forward(self, preds: dict, targets: dict) -> tuple:
+        # Returns (combined_loss, components_dict)
+        pass
+```
+
+#### `class MultiHeadTrainer`
+
+```python
+class MultiHeadTrainer:
+    def __init__(self, model, optimizer, scheduler, criterion, device,
+                 target_names, patience=15, scheduler_per_batch=False):
+        pass
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
         """
         Returns history dict:
         {
-            "train_loss": [float, ...],    # per epoch
+            "train_loss": [float, ...],
             "val_loss": [float, ...],
-            "val_mae": [float, ...],
-            "val_rmse": [float, ...],
+            "val_loss_{target}": [float, ...],   # per target
+            "val_mae_{target}": [float, ...],    # per target
+            "val_mae_total": [float, ...],
+            "val_rmse_total": [float, ...],
         }
         """
         # For each epoch:
-        #   1. model.train() → iterate train_loader → forward, loss, backward, step
-        #   2. model.eval() → iterate val_loader → compute val_loss, val_MAE, val_RMSE
-        #   3. scheduler.step(val_loss)
-        #   4. Early stopping check:
-        #      if val_loss < best_val_loss:
-        #          save model state, reset patience counter
-        #      else:
-        #          increment counter; if counter >= patience: restore best, break
-        #   5. Log to history
-        pass
-
-    def plot_training_curves(self, history: dict, save_path: str) -> None:
-        """Two-panel figure saved to outputs/figures/training_curves.png"""
-        # Left panel:  train_loss and val_loss vs epoch
-        # Right panel:  val_mae and val_rmse vs epoch
-        # Mark early stopping point with vertical line
+        #   1. Train: forward → loss → backward → gradient clipping (max_norm=1.0) → step
+        #   2. Val: per-target + total MAE/RMSE
+        #   3. LR scheduler step (supports ReduceLROnPlateau, OneCycleLR, CosineWarmRestarts)
+        #   4. Early stopping: restore best weights if no improvement in `patience` epochs
         pass
 ```
 
-#### `make_dataloaders(X, y, batch_size, shuffle) -> DataLoader`
+#### `make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size)`
 
 ```python
-def make_dataloaders(X_train, y_train, X_val, y_val, batch_size=256):
+def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
+    """Creates DataLoaders for multi-target training.
+    y_train_dict/y_val_dict: {target_name: np.ndarray, "total": np.ndarray}
+    Train: shuffle=True, drop_last=True; Val: shuffle=False
     """
-    Expects PRE-SCALED numpy arrays. The pipeline (run_pipeline.py) is
-    responsible for scaling using the scaler fitted by RidgeModel:
-        scaler = ridge_model.scaler
-        X_train_scaled = scaler.transform(X_train)
-        X_val_scaled = scaler.transform(X_val)
-    Do NOT fit a second scaler here.
-    """
-    train_ds = TensorDataset(torch.FloatTensor(X_train), torch.FloatTensor(y_train))
-    val_ds   = TensorDataset(torch.FloatTensor(X_val),   torch.FloatTensor(y_val))
+    pass
+```
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=0, pin_memory=False)
-    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
-                              num_workers=0, pin_memory=False)
-    return train_loader, val_loader
+#### `plot_training_curves(history, target_names, save_path)`
+
+```python
+def plot_training_curves(history, target_names, save_path):
+    """Four-panel figure:
+    Top-left: overall train/val loss
+    Top-right: per-target validation losses
+    Bottom-left: per-target MAE
+    Bottom-right: total MAE and RMSE
+    """
+    pass
 ```
 
 ---
@@ -810,7 +797,7 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
 def compute_positional_metrics(df, pred_col, true_col) -> pd.DataFrame:
     """Returns DataFrame with columns: position, mae, rmse, r2, n_samples"""
     results = []
-    for pos in ["QB", "RB", "WR", "TE"]:
+    for pos in ["QB", "RB", "WR", "TE", "K", "DST"]:
         mask = df["position"] == pos
         metrics = compute_metrics(df.loc[mask, true_col], df.loc[mask, pred_col])
         metrics["position"] = pos
@@ -891,51 +878,15 @@ def plot_weekly_accuracy(sim_results: dict, save_path: str) -> None:
 
 ## 6. Explainability
 
-### Location: `notebooks/03_error_analysis.ipynb` (Part B)
+### Ridge Coefficient Analysis
 
-#### Ridge Coefficient Analysis
+Per-target feature importance is available via `RidgeMultiTarget.get_feature_importance(target_name)`,
+which returns `|coef_|` sorted descending for any target.
 
-```python
-# Get feature importance from Ridge model
-importance = ridge_model.get_feature_importance(feature_names)
+### Neural Net Permutation Importance
 
-# Plot top 20 features
-importance.head(20).plot(kind="barh", figsize=(10, 8))
-plt.title("Ridge Regression: Top 20 Feature Importances (|coefficient|)")
-plt.xlabel("Absolute Coefficient Value")
-plt.tight_layout()
-plt.savefig("outputs/figures/ridge_feature_importance.png")
-```
-
-#### Neural Net Permutation Importance
-
-```python
-from sklearn.inspection import permutation_importance
-
-# Wrap PyTorch model in sklearn-compatible interface
-# (or use a simple wrapper that implements .predict())
-perm_result = permutation_importance(
-    model_wrapper, X_val, y_val,
-    n_repeats=10, random_state=42, scoring="neg_mean_absolute_error"
-)
-
-# Plot top 20
-perm_importance = pd.Series(perm_result.importances_mean, index=feature_names)
-perm_importance.nlargest(20).plot(kind="barh", figsize=(10, 8))
-plt.title("Neural Net: Top 20 Features by Permutation Importance")
-plt.xlabel("Mean MAE Increase When Permuted")
-plt.tight_layout()
-plt.savefig("outputs/figures/nn_permutation_importance.png")
-```
-
-#### Side-by-Side Comparison
-
-```python
-# Combine Ridge and NN top features into one comparison
-# Discuss: do both models agree on what matters?
-# Expected finding: both likely value rolling_mean_fantasy_points_L3 highly,
-# but NN may also pick up interaction effects (e.g., matchup × usage)
-```
+`MultiHeadNet.predict_numpy()` provides a convenient numpy interface for permutation importance analysis
+using `sklearn.inspection.permutation_importance`.
 
 ---
 
@@ -945,8 +896,8 @@ Complete list of all configurable values:
 
 ```python
 # === Data ===
-SEASONS = list(range(2018, 2025))  # 2018-2024 only — must match union of split seasons
-POSITIONS = ["QB", "RB", "WR", "TE"]
+SEASONS = list(range(2012, 2026))  # 2012-2025 (snap counts available from 2012+)
+POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 MIN_GAMES_PER_SEASON = 6
 CACHE_DIR = "data/raw"
 SPLITS_DIR = "data/splits"
@@ -962,12 +913,15 @@ PPR_FORMATS = {"standard": 0.0, "half_ppr": 0.5, "ppr": 1.0}
 SCORING_STANDARD = {**_BASE_SCORING, "receptions": 0.0}
 SCORING_HALF_PPR = {**_BASE_SCORING, "receptions": 0.5}
 SCORING_PPR      = {**_BASE_SCORING, "receptions": 1.0}
-SCORING = SCORING_PPR  # Default (backwards compatible)
+SCORING = SCORING_PPR  # Default (full PPR)
 
 # === Split ===
-TRAIN_SEASONS = list(range(2018, 2023))
-VAL_SEASONS = [2023]
-TEST_SEASONS = [2024]
+TRAIN_SEASONS = list(range(2012, 2024))  # 2012-2023
+VAL_SEASONS = [2024]
+TEST_SEASONS = [2025]
+
+# === Cross-Validation (expanding window) ===
+CV_VAL_SEASONS = [2021, 2022, 2023, 2024]
 
 # === Features: Rolling ===
 ROLLING_WINDOWS = [3, 5, 8]
@@ -976,31 +930,26 @@ ROLL_STATS = [
     "carries", "rushing_yards", "receiving_yards", "passing_yards",
     "attempts", "snap_pct",
 ]
-# NOTE: "attempts" = passing_attempts from nfl_data_py (key QB volume signal)
-# NOTE: "fantasy_points_floor" = yardage + receptions only (no TDs), computed
-#        in preprocessing.py. Separates stable yardage floor from volatile TD upside.
 ROLL_AGGS = ["mean", "std", "max"]
-# rolling_min is computed only for fantasy_points (floor indicator)
 
-# === Features: EWMA (exponentially weighted moving averages) ===
+# === Features: EWMA ===
 EWMA_STATS = ["fantasy_points", "targets", "carries", "receiving_yards",
               "rushing_yards", "passing_yards", "snap_pct"]
 EWMA_SPANS = [3, 5]
 
 # === Features: Trend/Momentum ===
 TREND_STATS = ["fantasy_points", "targets", "carries", "snap_pct"]
-# trend = rolling_mean_L3 - rolling_mean_L8 (positive = trending up)
 
 # === Features: Share ===
-SHARE_WINDOWS = [3, 5]  # multi-window for target_share and carry_share
+SHARE_WINDOWS = [3, 5]
 
 # === Features: Opponent/Matchup ===
-OPP_ROLLING_WINDOW = 5  # for matchup features
+OPP_ROLLING_WINDOW = 5
 
 # === Ridge ===
 RIDGE_ALPHAS = [0.01, 0.1, 1.0, 10.0, 100.0]
 
-# === Neural Net ===
+# === Neural Net (global defaults; overridden per-position in {POS}/{pos}_config.py) ===
 NN_HIDDEN_LAYERS = [128, 64, 32]
 NN_DROPOUT = 0.3
 NN_LR = 1e-3
@@ -1014,9 +963,19 @@ SCHEDULER_PATIENCE = 5
 SCHEDULER_FACTOR = 0.5
 
 # === Backtest ===
-TOP_K_RANKING = 12  # Evaluate precision@K for per-position ranking accuracy
+TOP_K_RANKING = 12
 
 # === Paths ===
 FIGURES_DIR = "outputs/figures"
 MODELS_DIR = "outputs/models"
 ```
+
+**Position-specific configs** are in `{POS}/{pos}_config.py` and override the global defaults.
+Each position config defines:
+- Target decomposition (`{POS}_TARGETS`)
+- Position-specific features (`{POS}_SPECIFIC_FEATURES`)
+- Features to drop (`{POS}_DROP_FEATURES`)
+- Ridge alpha grids per target
+- NN architecture (backbone, head hidden, dropout, learning rate, etc.)
+- Loss weights and Huber deltas per target
+- LR scheduler type and parameters

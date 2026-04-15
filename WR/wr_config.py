@@ -27,8 +27,7 @@ for _stat in ["passing_yards", "attempts"]:
         WR_DROP_FEATURES.add(f"prior_season_{_agg}_{_stat}")
 # Position encoding (all WR, no variance)
 WR_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
-# Leakage
-WR_DROP_FEATURES |= {"snap_pct", "air_yards_share"}
+# NOTE: snap_pct and air_yards_share are already lagged (shift=1) in engineer.py, safe to keep.
 
 # Drop EWMA features — they correlate >0.98 with rolling means of the same stat,
 # adding multicollinearity without unique signal.

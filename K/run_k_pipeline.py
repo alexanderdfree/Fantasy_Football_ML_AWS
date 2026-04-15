@@ -1,8 +1,7 @@
 """End-to-end K (Kicker) position model pipeline.
 
-Unlike QB/RB/WR/TE, kicker data is only available for 2025 in nflverse.
-This pipeline uses within-season temporal splits and builds all features
-from kicker-specific stats (FG/PAT breakdowns, Vegas lines).
+Uses PBP-reconstructed kicker data from 2015-2025 (post-PAT rule change).
+Cross-season splits: train 2015-2023, val 2024, test 2025.
 """
 
 import os
@@ -17,9 +16,8 @@ from K.k_config import (
     K_NN_PATIENCE,
     K_LOSS_WEIGHTS, K_LOSS_W_TOTAL, K_HUBER_DELTAS,
     K_SCHEDULER_TYPE, K_ONECYCLE_MAX_LR, K_ONECYCLE_PCT_START,
-    K_VAL_WEEKS, K_TEST_WEEKS,
 )
-from K.k_data import load_kicker_data, filter_to_k, kicker_week_split
+from K.k_data import load_kicker_data, filter_to_k, kicker_season_split
 from K.k_targets import compute_k_targets, compute_k_miss_adjustment
 from K.k_features import (
     compute_k_features, add_k_specific_features,
@@ -42,10 +40,8 @@ def run_k_pipeline(seed=42):
     print("Computing kicker features on full dataset...")
     compute_k_features(k_df)
 
-    # --- Within-season split ---
-    train_df, val_df, test_df = kicker_week_split(
-        k_df, val_weeks=K_VAL_WEEKS, test_weeks=K_TEST_WEEKS
-    )
+    # --- Cross-season split ---
+    train_df, val_df, test_df = kicker_season_split(k_df)
 
     # --- Run shared pipeline ---
     K_CONFIG = {

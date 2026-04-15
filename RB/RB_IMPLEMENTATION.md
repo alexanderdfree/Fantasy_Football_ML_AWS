@@ -14,7 +14,7 @@ Build an RB-only fantasy football points predictor that lives as a self-containe
 
 1. Filtering all data to RB-only rows
 2. Decomposing the prediction target into three sub-targets (rushing_floor, receiving_floor, td_points) plus a fumble penalty term
-3. Adding 6 RB-specific engineered features beyond the general 144
+3. Adding 8 RB-specific engineered features beyond the general features
 4. Using a multi-head neural network architecture where a shared backbone feeds three separate output heads
 5. Training 3 separate Ridge models (one per sub-target) for the linear baseline
 
@@ -145,10 +145,9 @@ Based on general estimates (~30-35K total rows after min-games filter, RBs ~25-2
 
 | Split | General (all positions) | RB-only (estimated) |
 |-------|------------------------|---------------------|
-| Train (2018-2022) | ~25,000 | ~6,500 - 7,500 |
-| Val (2023) | ~5,000 | ~1,300 - 1,500 |
-| Test (2024) | ~5,000 | ~1,300 - 1,500 |
-| **Total** | **~35,000** | **~9,100 - 10,500** |
+| Train (2012-2023) | ~12 seasons of data | Expanded with 2012+ data |
+| Val (2024) | ~1 season | ~1 season |
+| Test (2025) | ~1 season | ~1 season |
 
 ### 2.4 Pipeline Integration Point
 
@@ -182,7 +181,7 @@ Each RB game-week row has four target components derived from raw stats:
 |--------|---------|---------------|--------|
 | `rushing_floor` | `rushing_yards * 0.1` | Yards-only rushing production (same across all formats) | Low variance, volume-driven |
 | `receiving_floor` | `receptions * ppr_weight + receiving_yards * 0.1` | Reception value varies by format (0/0.5/1.0) | Medium variance, role-dependent |
-| `td_points` | `rushing_tds * 6 + receiving_tds * 6 + rushing_2pt_conversions * 2 + receiving_2pt_conversions * 2` | All scoring plays (same across all formats) | High variance, hard to predict |
+| `td_points` | `rushing_tds * 6 + receiving_tds * 6` | Touchdown scoring plays only (same across all formats). 2pt conversions excluded to align with SCORING_PPR. | High variance, hard to predict |
 | `fumble_penalty` | `(sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost) * -2` | Turnover penalty (same across all formats) | Very low frequency, negative |
 
 **Multi-format receiving floor:** The receiving_floor is the only component that varies across scoring formats. The system computes:
@@ -192,7 +191,7 @@ Each RB game-week row has four target components derived from raw stats:
 
 **Total fantasy points** = rushing_floor + receiving_floor + td_points + fumble_penalty
 
-**Scoring completeness note:** Most leagues award 2 points per 2-point conversion. `rushing_2pt_conversions` and `receiving_2pt_conversions` are available in `import_weekly_data()`. While rare (~0.5% of RB game-weeks have one), omitting them causes a systematic discrepancy vs nflverse's `fantasy_points_ppr`. Folding them into `td_points` is the cleanest decomposition since they co-occur with goal-line/red-zone usage patterns.
+**Scoring completeness note:** The `td_points` target intentionally excludes 2-point conversions to align with the `SCORING_PPR` dict used by `compute_fantasy_points()`. While `rushing_2pt_conversions` and `receiving_2pt_conversions` are available in `import_weekly_data()`, they are rare (~0.5% of RB game-weeks) and their omission is consistent with the scoring system. The small discrepancy vs nflverse's `fantasy_points_ppr` is validated by the sanity check in `compute_rb_targets()`.
 
 **`special_teams_tds` exclusion:** Some RBs score on kick/punt returns. Most standard leagues do NOT award these to the individual player (they go to D/ST scoring). We exclude them from our target to match standard rules. If league rules differ, add `special_teams_tds * 6` to td_points.
 

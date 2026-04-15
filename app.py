@@ -179,7 +179,7 @@ POSITION_INFO = {
         "targets": [
             {"key": "passing_floor", "label": "Passing Floor", "formula": "passing_yards x 0.04"},
             {"key": "rushing_floor", "label": "Rushing Floor", "formula": "rushing_yards x 0.1"},
-            {"key": "td_points", "label": "TD Points", "formula": "pass_TD x 4 + rush_TD x 6 + 2pt x 2"},
+            {"key": "td_points", "label": "TD Points", "formula": "pass_TD x 4 + rush_TD x 6"},
         ],
         "adjustments": "Interception penalty + fumble rate + receiving component (historical L8 rolling avg)",
         "specific_features": QB_SPECIFIC_FEATURES,
@@ -190,7 +190,7 @@ POSITION_INFO = {
         "targets": [
             {"key": "rushing_floor", "label": "Rushing Floor", "formula": "rushing_yards x 0.1"},
             {"key": "receiving_floor", "label": "Receiving Floor", "formula": "receptions x PPR + recv_yards x 0.1"},
-            {"key": "td_points", "label": "TD Points", "formula": "rush_TD x 6 + recv_TD x 6 + 2pt x 2"},
+            {"key": "td_points", "label": "TD Points", "formula": "rush_TD x 6 + recv_TD x 6"},
         ],
         "adjustments": "Fumble rate (historical L8 rolling avg)",
         "specific_features": list(RB_SPECIFIC_FEATURES),
@@ -201,7 +201,7 @@ POSITION_INFO = {
         "targets": [
             {"key": "receiving_floor", "label": "Receiving Floor", "formula": "receptions x PPR + recv_yards x 0.1"},
             {"key": "rushing_floor", "label": "Rushing Floor", "formula": "rushing_yards x 0.1"},
-            {"key": "td_points", "label": "TD Points", "formula": "recv_TD x 6 + rush_TD x 6 + 2pt x 2"},
+            {"key": "td_points", "label": "TD Points", "formula": "recv_TD x 6 + rush_TD x 6"},
         ],
         "adjustments": "Fumble rate (historical L8 rolling avg)",
         "specific_features": list(WR_SPECIFIC_FEATURES),
@@ -212,7 +212,7 @@ POSITION_INFO = {
         "targets": [
             {"key": "receiving_floor", "label": "Receiving Floor", "formula": "receptions x PPR + recv_yards x 0.1"},
             {"key": "rushing_floor", "label": "Rushing Floor", "formula": "rushing_yards x 0.1"},
-            {"key": "td_points", "label": "TD Points", "formula": "recv_TD x 6 + rush_TD x 6 + 2pt x 2"},
+            {"key": "td_points", "label": "TD Points", "formula": "recv_TD x 6 + rush_TD x 6"},
         ],
         "adjustments": "Fumble rate (historical L8 rolling avg)",
         "specific_features": list(TE_SPECIFIC_FEATURES),
@@ -317,7 +317,7 @@ def _apply_position_models(train, val, test, pos, results):
 
     # NN predictions
     nn_scaler = joblib.load(f"{model_dir}/nn_scaler.pkl")
-    X_test_scaled = nn_scaler.transform(X_test_pos)
+    X_test_scaled = np.clip(nn_scaler.transform(X_test_pos), -4, 4)
 
     nn_model = MultiHeadNet(
         input_dim=len(feature_cols), target_names=targets, **reg["nn_kwargs"]

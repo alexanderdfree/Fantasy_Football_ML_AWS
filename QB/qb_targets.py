@@ -9,7 +9,9 @@ def compute_qb_targets(df: pd.DataFrame) -> pd.DataFrame:
       - passing_floor: passing_yards * 0.04
       - rushing_floor: rushing_yards * 0.1
       - td_points: passing_tds * 4 + rushing_tds * 6 + receiving_tds * 6
-                    + passing_2pt * 2 + rushing_2pt * 2 + receiving_2pt * 2
+
+    Note: td_points intentionally excludes 2pt conversions to align with
+    SCORING_PPR used by compute_fantasy_points().
     """
     df = df.copy()
 
@@ -20,9 +22,6 @@ def compute_qb_targets(df: pd.DataFrame) -> pd.DataFrame:
         df["passing_tds"].fillna(0) * 4
         + df["rushing_tds"].fillna(0) * 6
         + df["receiving_tds"].fillna(0) * 6
-        + df["passing_2pt_conversions"].fillna(0) * 2
-        + df["rushing_2pt_conversions"].fillna(0) * 2
-        + df["receiving_2pt_conversions"].fillna(0) * 2
     )
 
     # Penalty components (not predicted, applied post-hoc)
@@ -38,6 +37,17 @@ def compute_qb_targets(df: pd.DataFrame) -> pd.DataFrame:
         df["receptions"].fillna(0) * 1.0  # PPR
         + df["receiving_yards"].fillna(0) * 0.1
     )
+
+    # Sanity check: targets + penalties + receiving should ≈ fantasy_points
+    fantasy_points_check = (
+        df["passing_floor"] + df["rushing_floor"] + df["td_points"]
+        + df["interception_penalty"] + df["fumble_penalty"]
+        + df["receiving_component"]
+    )
+    discrepancy = (df["fantasy_points"] - fantasy_points_check).abs()
+    if (discrepancy > 0.01).any():
+        n_bad = (discrepancy > 0.01).sum()
+        print(f"WARNING: {n_bad} QB rows have target decomposition discrepancy > 0.01 pts")
 
     return df
 

@@ -26,14 +26,14 @@ def _make_rb_row(**overrides):
         "fantasy_points": 0.0,  # will be computed below
     }
     defaults.update(overrides)
-    # Compute correct fantasy_points if not explicitly overridden
+    # Compute correct fantasy_points if not explicitly overridden.
+    # Must match SCORING_PPR (no 2pt conversions) used by compute_fantasy_points().
     if "fantasy_points" not in overrides:
         fp = (
             defaults["rushing_yards"] * 0.1
             + defaults["receptions"] * 1.0
             + defaults["receiving_yards"] * 0.1
             + (defaults["rushing_tds"] + defaults["receiving_tds"]) * 6
-            + (defaults["rushing_2pt_conversions"] + defaults["receiving_2pt_conversions"]) * 2
             + (defaults["sack_fumbles_lost"] + defaults["rushing_fumbles_lost"]
                + defaults["receiving_fumbles_lost"]) * -2
             + defaults["passing_yards"] * 0.04
@@ -65,11 +65,12 @@ class TestComputeRBTargets:
         result = compute_rb_targets(df)
         assert pytest.approx(result["td_points"].iloc[0]) == 12.0
 
-    def test_td_points_with_2pt_conversions(self):
+    def test_td_points_excludes_2pt_conversions(self):
+        """2pt conversions are excluded from td_points to match SCORING_PPR."""
         df = _make_rb_row(rushing_tds=1, receiving_tds=1, rushing_2pt_conversions=1)
         result = compute_rb_targets(df)
-        # 1*6 + 1*6 + 1*2 = 14
-        assert pytest.approx(result["td_points"].iloc[0]) == 14.0
+        # 1*6 + 1*6 = 12 (2pt conversions intentionally excluded)
+        assert pytest.approx(result["td_points"].iloc[0]) == 12.0
 
     def test_fumble_penalty(self):
         df = _make_rb_row(sack_fumbles_lost=1, rushing_fumbles_lost=1)

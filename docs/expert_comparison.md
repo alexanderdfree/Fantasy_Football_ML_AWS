@@ -5,11 +5,14 @@
 This document compares our model's weekly fantasy point predictions against published accuracy benchmarks from industry expert sources and academic ML research.
 
 **Our evaluation setup:**
-- **Test set:** 2025 NFL season (held out entirely from training)
+- **Training data:** 2012-2023 NFL seasons (~12 seasons of weekly player data)
+- **Validation set:** 2024 NFL season (for hyperparameter tuning and early stopping)
+- **Test set:** 2025 NFL season (held out entirely from training and validation)
 - **Scoring format:** Full PPR (1 point per reception)
 - **Primary metric:** MAE (Mean Absolute Error) on total weekly fantasy points
 - **Player pool:** All rostered players at each position with recorded game stats
 - **Prediction style:** Pure pre-game projections using only data available before kickoff
+- **Architecture:** Multi-head neural network (shared backbone + per-target heads) and Ridge regression (separate model per target), trained per position (QB, RB, WR, TE)
 
 **Important caveats on comparability:**
 - Expert sites and our model were not evaluated on identical player pools or seasons. Expert accuracy rankings (e.g., from Fantasy Football Analytics) cover 2019-2023 and use curated pools (top 20 QBs, top 50 RBs/WRs, top 20 TEs), while our test set covers all 2025 rostered players.

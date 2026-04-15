@@ -10,6 +10,9 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
     Computes targets for all scoring formats (standard, half_ppr, ppr).
     The receiving_floor varies by format; rushing_floor and td_points are the same.
 
+    Note: td_points intentionally excludes 2pt conversions to align with
+    SCORING_PPR used by compute_fantasy_points().
+
     Args:
         df: DataFrame filtered to RB rows only, with raw stat columns available.
 
@@ -35,8 +38,6 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
     df["td_points"] = (
         df["rushing_tds"].fillna(0) * 6
         + df["receiving_tds"].fillna(0) * 6
-        + df["rushing_2pt_conversions"].fillna(0) * 2
-        + df["receiving_2pt_conversions"].fillna(0) * 2
     )
 
     df["fumble_penalty"] = (

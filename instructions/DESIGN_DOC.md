@@ -6,11 +6,11 @@
 
 ## 1. Project Overview
 
-**Goal:** Build a machine learning system that predicts weekly fantasy football points for NFL skill-position players (QB, RB, WR, TE), comparing a Linear Regression baseline against a custom PyTorch neural network. Supports three scoring formats: Standard (0 PPR), Half-PPR, and Full PPR.
+**Goal:** Build a machine learning system that predicts weekly fantasy football points for NFL players (QB, RB, WR, TE, K, DST), comparing a Ridge Regression baseline against a custom PyTorch multi-head neural network. Supports three scoring formats: Standard (0 PPR), Half-PPR, and Full PPR.
 
-**Data source:** `nfl_data_py` (Python wrapper for nflverse), pulling weekly player stats, roster data, and schedule data from the 2018–2024 NFL seasons.
+**Data source:** `nfl_data_py` (Python wrapper for nflverse), pulling weekly player stats, roster data, and schedule data from the 2012–2025 NFL seasons.
 
-**Core question:** Can a neural network with engineered temporal features meaningfully outperform linear regression at predicting weekly fantasy output, and what features matter most?
+**Core question:** Can a multi-head neural network with engineered temporal features and target decomposition meaningfully outperform Ridge regression at predicting weekly fantasy output, and what features matter most?
 
 ---
 
@@ -22,20 +22,20 @@ Below are the 15 Machine Learning rubric items this project is designed to hit. 
 |---|-------------|-----|---------------|
 | 1 | **Solo project credit** | 10 | N/A |
 | 2 | **Collected/constructed original dataset through API integration** (`nfl_data_py` ingestion, multi-season join, feature build) | 10 | `src/data/` |
-| 3 | **Compared multiple model architectures quantitatively** (Linear Reg vs Neural Net, controlled setup) | 7 | `src/models/`, `notebooks/experiments.ipynb` |
-| 4 | **Error analysis with visualization and discussion of failure cases** | 7 | `notebooks/error_analysis.ipynb` |
-| 5 | **Applied ML to time-series forecasting** (weekly player projections using rolling temporal features) | 7 | `src/features/`, `src/models/` |
-| 6 | **Simulation-based evaluation** (week-by-week prediction accuracy simulation) | 7 | `src/evaluation/backtest.py` |
+| 3 | **Compared multiple model architectures quantitatively** (Ridge vs Multi-Head Neural Net, controlled setup) | 7 | `shared/models.py`, `shared/neural_net.py`, position configs |
+| 4 | **Error analysis with visualization and discussion of failure cases** | 7 | `docs/expert_comparison.md`, pipeline outputs |
+| 5 | **Applied ML to time-series forecasting** (weekly player projections using rolling temporal features) | 7 | `src/features/engineer.py`, position pipelines |
+| 6 | **Simulation-based evaluation** (week-by-week prediction accuracy simulation) | 7 | `shared/backtest.py` |
 | 7 | **Feature engineering** (rolling averages, snap %, target share, matchup strength, etc.) | 5 | `src/features/engineer.py` |
-| 8 | **Defined and trained a custom neural network architecture** (PyTorch) | 5 | `src/models/neural_net.py` |
-| 9 | **Systematic hyperparameter tuning** (≥3 configs documented) | 5 | `notebooks/experiments.ipynb` |
-| 10 | **Regularization** (L2 + dropout + early stopping — at least 2 required) | 5 | `src/models/neural_net.py`, `src/training/trainer.py` |
-| 11 | **Modular code design** with reusable functions/classes | 3 | Entire `src/` package |
+| 8 | **Defined and trained a custom neural network architecture** (PyTorch) | 5 | `shared/neural_net.py` |
+| 9 | **Systematic hyperparameter tuning** (≥3 configs documented) | 5 | Position-specific configs (`QB/qb_config.py`, etc.) |
+| 10 | **Regularization** (L2 + dropout + early stopping — at least 2 required) | 5 | `shared/neural_net.py`, `shared/training.py` |
+| 11 | **Modular code design** with reusable functions/classes | 3 | `src/`, `shared/`, position folders |
 | 12 | **Train/validation/test split** with documented ratios | 3 | `src/data/split.py` |
-| 13 | **Training curves** (loss and metrics over time) | 3 | `src/training/trainer.py` |
+| 13 | **Training curves** (loss and metrics over time) | 3 | `shared/training.py` |
 | 14 | **Baseline model** (constant prediction = player's season average) | 3 | `src/models/baseline.py` |
 | 15 | **Used ≥3 distinct evaluation metrics** | 3 | `src/evaluation/metrics.py` |
-| 16 | **Interpretable model design or explainability analysis** (Ridge coefficients + permutation importance for NN) | 7 | `notebooks/03_error_analysis.ipynb` |
+| 16 | **Interpretable model design or explainability analysis** (Ridge coefficients + permutation importance for NN) | 7 | Pipeline outputs, `docs/expert_comparison.md` |
 
 **Total if all hit: 90 pts (capped at 73).** Only 15 of 16 items need to land to cap out, giving a 17-pt buffer. The rubric grades only the first 15 selected items, so list the strongest 15 in the self-assessment and keep the 16th as insurance.
 
@@ -45,11 +45,11 @@ These items are naturally implemented by the project but are **not** claimed as 
 
 | Rubric Item | Pts | Where in Code |
 |-------------|-----|---------------|
-| Properly normalized/standardized input features | 3 | `src/models/linear.py` (StandardScaler) |
+| Properly normalized/standardized input features | 3 | `shared/models.py` (StandardScaler in RidgeMultiTarget) |
 | Applied basic preprocessing appropriate to modality | 3 | `src/data/preprocessing.py` |
-| Used appropriate data loading with batching and shuffling | 3 | `src/training/trainer.py` (DataLoader) |
-| Used learning rate scheduling | 3 | `src/training/trainer.py` (ReduceLROnPlateau) |
-| Applied batch normalization | 3 | `src/models/neural_net.py` (BatchNorm1d) |
+| Used appropriate data loading with batching and shuffling | 3 | `shared/training.py` (DataLoader) |
+| Used learning rate scheduling | 3 | `shared/training.py` (ReduceLROnPlateau, OneCycleLR, CosineWarmRestarts) |
+| Applied batch normalization | 3 | `shared/neural_net.py` (BatchNorm1d) |
 | Documented design decision with technical tradeoffs | 3 | Section 6 of this doc + technical walkthrough |
 | Substantive ATTRIBUTION.md on AI tool usage | 3 | `ATTRIBUTION.md` |
 
@@ -61,10 +61,10 @@ The rubric states each piece of work can claim at most one item (plus stackable 
 |------|--------------|----------------|
 | Rolling window features + share stats + matchup features | #7 (Feature engineering, 5 pts) | — |
 | Temporal split + rolling window modeling paradigm | #5 (Time-series forecasting, 7 pts) | — |
-| PyTorch MLP architecture definition | #8 (Custom neural network, 5 pts) | — |
-| Dropout + L2 weight decay + early stopping | #10 (Regularization, 5 pts) | — |
-| Hyperparameter grid search across configs | #9 (Systematic tuning, 5 pts) | — |
-| Ridge vs NN controlled comparison | #3 (Architecture comparison, 7 pts) | — |
+| Multi-head PyTorch architecture (shared backbone + per-target heads) | #8 (Custom neural network, 5 pts) | — |
+| Dropout + L2 weight decay + early stopping + BatchNorm | #10 (Regularization, 5 pts) | — |
+| Per-position config tuning (6 positions × architecture/loss/scheduler) | #9 (Systematic tuning, 5 pts) | — |
+| RidgeMultiTarget vs MultiHeadNet controlled comparison | #3 (Architecture comparison, 7 pts) | — |
 | Ridge coefficients + permutation importance | #16 (Explainability, 7 pts) | — |
 
 ---
@@ -72,58 +72,80 @@ The rubric states each piece of work can claim at most one item (plus stackable 
 ## 3. Repository Structure
 
 ```
-fantasy-football-predictor/
-├── README.md                  # What it does, quick start, video links, evaluation results
-├── SETUP.md                   # Step-by-step installation
-├── ATTRIBUTION.md             # AI tool usage + data source attribution
-├── requirements.txt           # Pinned dependencies
+Final-Project/
+├── app.py                         # Flask web application (main entry point + predictions dashboard)
+├── requirements.txt               # Pinned dependencies
+├── benchmark_nn.py                # Neural network benchmarking script
 ├── .gitignore
 │
-├── src/
-│   ├── __init__.py
-│   ├── config.py              # All hyperparams, paths, constants, scoring weights
-│   │
+├── src/                           # General multi-position pipeline
+│   ├── config.py                  # Central config: scoring, seasons, hyperparams
 │   ├── data/
-│   │   ├── __init__.py
-│   │   ├── loader.py          # nfl_data_py ingestion + caching
-│   │   ├── preprocessing.py   # Cleaning, missing values, filtering
-│   │   └── split.py           # Temporal train/val/test split
-│   │
+│   │   ├── loader.py              # nfl_data_py ingestion + caching
+│   │   ├── preprocessing.py       # Cleaning, missing values, filtering
+│   │   └── split.py               # Temporal train/val/test split
 │   ├── features/
-│   │   ├── __init__.py
-│   │   └── engineer.py        # All feature engineering logic
-│   │
+│   │   └── engineer.py            # All feature engineering logic
 │   ├── models/
-│   │   ├── __init__.py
-│   │   ├── baseline.py        # Constant-prediction baseline
-│   │   ├── linear.py          # Scikit-learn Linear/Ridge Regression
-│   │   └── neural_net.py      # PyTorch custom MLP
-│   │
+│   │   ├── baseline.py            # Constant-prediction baseline
+│   │   └── linear.py              # Scikit-learn Ridge Regression
 │   ├── training/
-│   │   ├── __init__.py
-│   │   └── trainer.py         # Training loop, early stopping, LR scheduling, curve logging
-│   │
+│   │   └── trainer.py             # Legacy trainer (see shared/training.py)
 │   └── evaluation/
-│       ├── __init__.py
-│       ├── metrics.py         # MAE, RMSE, R², per-position breakdown
-│       └── backtest.py        # Season-long fantasy draft simulation
+│       ├── metrics.py             # MAE, RMSE, R², per-position breakdown
+│       └── backtest.py            # Season-long fantasy simulation
 │
-├── notebooks/
-│   ├── 01_eda.ipynb           # Exploratory data analysis + visualizations
-│   ├── 02_experiments.ipynb   # Hyperparameter tuning + model comparison
-│   └── 03_error_analysis.ipynb# Failure case deep-dive
+├── shared/                        # Generic multi-target infrastructure
+│   ├── neural_net.py              # MultiHeadNet: shared backbone + per-target heads
+│   ├── models.py                  # RidgeMultiTarget: separate Ridge per target
+│   ├── training.py                # MultiHeadTrainer, MultiTargetLoss, dataloaders
+│   ├── pipeline.py                # Position pipeline template
+│   ├── evaluation.py              # Evaluation utilities
+│   └── backtest.py                # Simulation/evaluation helpers
 │
-├── data/                      # .gitignore this — generated at runtime
-│   ├── raw/                   # Cached nfl_data_py pulls
-│   ├── processed/             # Feature-engineered datasets
-│   └── splits/                # Train/val/test CSVs
+├── QB/                            # QB-specific model (config, data, targets, features, pipeline)
+│   ├── qb_config.py
+│   ├── qb_data.py
+│   ├── qb_targets.py
+│   ├── qb_features.py
+│   ├── run_qb_pipeline.py
+│   └── outputs/                   # Trained models + figures
 │
-├── outputs/
-│   ├── figures/               # Training curves, comparison charts, error plots
-│   └── models/                # Saved model weights (.pt) and sklearn pickles
+├── RB/                            # RB-specific model
+│   ├── rb_config.py               # (same structure as QB/)
+│   ├── rb_data.py
+│   ├── rb_targets.py
+│   ├── rb_features.py
+│   ├── run_rb_pipeline.py
+│   ├── outputs/
+│   └── tests/
 │
-└── scripts/
-    └── run_pipeline.py        # End-to-end: load → features → train → evaluate
+├── WR/                            # WR-specific model (same structure)
+├── TE/                            # TE-specific model (same structure)
+├── K/                             # Kicker model (bypasses general feature pipeline)
+├── DST/                           # D/ST model (bypasses general feature pipeline)
+│
+├── templates/
+│   └── index.html                 # Main dashboard HTML
+├── static/
+│   └── css/style.css              # CSS styling
+│
+├── tests/
+│   └── test_feature_leakage.py    # Verifies no future data leakage
+│
+├── data/                          # .gitignore — generated at runtime
+│   ├── raw/                       # Cached nfl_data_py pulls
+│   └── splits/                    # Train/val/test parquet files
+│
+├── instructions/                  # Project specification documents
+│   ├── DESIGN_DOC.md              # This file
+│   ├── METHOD_CONTRACTS.md        # Function signatures & data schemas
+│   └── final_project_handout.html # Original assignment handout
+│
+└── docs/                          # Technical design documents
+    ├── expert_comparison.md       # Comparison against published benchmarks
+    ├── design_lstm_multihead.md   # LSTM + sequential modeling proposal
+    └── design_weather_and_odds.md # Vegas odds & venue features proposal
 ```
 
 ---
@@ -136,8 +158,10 @@ All magic numbers live here. Nothing is hardcoded in other files.
 
 ```python
 # Key constants to define:
-SEASONS = list(range(2018, 2025))       # nfl_data_py seasons to pull (2018-2024)
-POSITIONS = ["QB", "RB", "WR", "TE"]
+SEASONS = list(range(2012, 2026))       # nfl_data_py seasons to pull (2012-2025)
+POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
+MIN_GAMES_PER_SEASON = 6
+
 # Base scoring (shared across all formats)
 _BASE_SCORING = {"passing_yards": 0.04, "passing_tds": 4, "interceptions": -2,
                  "rushing_yards": 0.1, "rushing_tds": 6,
@@ -151,12 +175,15 @@ PPR_FORMATS = {"standard": 0.0, "half_ppr": 0.5, "ppr": 1.0}
 SCORING_STANDARD = {**_BASE_SCORING, "receptions": 0.0}
 SCORING_HALF_PPR = {**_BASE_SCORING, "receptions": 0.5}
 SCORING_PPR      = {**_BASE_SCORING, "receptions": 1.0}
-SCORING = SCORING_PPR  # Default (backwards compatible)
+SCORING = SCORING_PPR  # Default (full PPR)
 
 # Temporal split boundaries (season-based, NOT random)
-TRAIN_SEASONS = list(range(2018, 2023))  # 2018-2022
-VAL_SEASONS   = [2023]                   # 2023
-TEST_SEASONS  = [2024]                   # 2024
+TRAIN_SEASONS = list(range(2012, 2024))  # 2012-2023
+VAL_SEASONS   = [2024]                   # 2024
+TEST_SEASONS  = [2025]                   # 2025
+
+# Cross-validation (expanding window)
+CV_VAL_SEASONS = [2021, 2022, 2023, 2024]
 
 # Rolling feature windows
 ROLLING_WINDOWS = [3, 5, 8]             # weeks lookback
@@ -178,7 +205,7 @@ TREND_STATS = ["fantasy_points", "targets", "carries", "snap_pct"]
 # Share features (multi-window)
 SHARE_WINDOWS = [3, 5]
 
-# Neural net defaults
+# Neural net defaults (global; overridden per-position in {POS}/{pos}_config.py)
 NN_HIDDEN_LAYERS = [128, 64, 32]
 NN_DROPOUT = 0.3
 NN_LR = 1e-3
@@ -188,13 +215,24 @@ NN_BATCH_SIZE = 256
 NN_PATIENCE = 15                        # early stopping
 ```
 
+**Position-specific overrides (from `{POS}/{pos}_config.py`):**
+
+| Position | Backbone | Head Hidden | Dropout | LR | Epochs | Patience | Batch | Scheduler |
+|----------|----------|-------------|---------|-----|--------|----------|-------|-----------|
+| QB | [96, 48] | 20 | 0.35 | 5e-4 | 300 | 25 | 128 | OneCycleLR |
+| RB | [96] | 32 | 0.25 | 8e-4 | 300 | 30 | 256 | ReduceLROnPlateau |
+| WR | [128] | 32 | 0.20 | 1e-3 | 250 | 25 | 512 | CosineWarmRestarts |
+| TE | [96, 48] | 24 | 0.30 | 5e-4 | 300 | 25 | 128 | OneCycleLR |
+| K | [48, 24] | 12 | 0.30 | 3e-4 | 200 | 25 | 64 | OneCycleLR |
+| DST | [96, 48] | 24 | 0.25 | 6e-4 | 250 | 25 | 128 | CosineWarmRestarts |
+
 ### 4.2 `src/data/loader.py` — Data Ingestion
 
 **Rubric target: "Collected/constructed original dataset through API integration" (10 pts)**
 
 ```python
 # Responsibilities:
-# 1. Pull weekly player stats via nfl_data_py.import_weekly_data(SEASONS)  # 2018-2024
+# 1. Pull weekly player stats via nfl_data_py.import_weekly_data(SEASONS)  # 2012-2025
 # 2. Pull roster data via nfl_data_py.import_rosters(SEASONS) for position info
 # 3. Pull schedule/game data via nfl_data_py.import_schedules(SEASONS) for opponent info
 # 4. Pull snap counts via nfl_data_py.import_snap_counts(SEASONS) for snap_pct
@@ -235,7 +273,7 @@ NN_PATIENCE = 15                        # early stopping
 
 ```python
 # Responsibilities:
-# 1. Filter to skill positions (QB, RB, WR, TE)
+# 1. Filter to positions (QB, RB, WR, TE, K, DST)
 # 2. Remove bye weeks / players with 0 snaps (did not play)
 # 3. Handle missing values:
 #    - Statistical columns: fill with 0 (player didn't record that stat)
@@ -261,9 +299,11 @@ NN_PATIENCE = 15                        # early stopping
 # CRITICAL: This is time-series data. DO NOT use random splits.
 # Split by SEASON to prevent data leakage from future weeks.
 #
-#   Train: 2018-2022 seasons (~5 seasons × ~17 weeks × ~300 players ≈ 25K+ rows)
-#   Val:   2023 season (~5K rows)
-#   Test:  2024 season (~5K rows)
+#   Train: 2012-2023 seasons (~12 seasons of data)
+#   Val:   2024 season
+#   Test:  2025 season
+#
+# Cross-validation uses expanding window with CV_VAL_SEASONS = [2021, 2022, 2023, 2024]
 #
 # Key function:
 #   temporal_split(df, train_seasons, val_seasons, test_seasons)
@@ -391,7 +431,8 @@ This is the most critical module. The model is only as good as its features.
 #                         + opp_recv_pts_allowed_to_pos + opp_def_rank_vs_pos = 4
 # Contextual:             is_home, week, is_returning_from_absence, days_rest = 4
 # Position:               one-hot (QB, RB, WR, TE) = 4
-# TOTAL: ~159 features
+# TOTAL: ~144 general features (before position-specific adds/drops)
+# Each position then adds ~8 specific features and drops irrelevant ones.
 #
 # NOTE: Exact count depends on which nfl_data_py columns are available
 #       (air_yards_share may be absent). The NN input_dim should be set
@@ -447,71 +488,91 @@ This is the most critical module. The model is only as good as its features.
 # Also extract and save .coef_ for feature importance analysis.
 ```
 
-### 4.8 `src/models/neural_net.py` — Custom PyTorch MLP
+### 4.8 `shared/neural_net.py` — Multi-Head Neural Network
 
 **Rubric targets: "Custom neural network" (5 pts) + "Regularization" (5 pts) + "Compared multiple architectures" (7 pts, part 2)**
 
 ```python
-# Architecture: Multi-Layer Perceptron for tabular regression
+# Architecture: Multi-Head MLP for position-agnostic fantasy point decomposition
 #
-# class FantasyPointsNet(nn.Module):
-#     def __init__(self, input_dim, hidden_layers=[128, 64, 32], dropout=0.3):
-#         # Expected input_dim: ~159 (see feature count estimate in 4.5)
-#         # Set dynamically: input_dim = len(get_feature_columns())
-#         # Layer sizing: ~159 -> 128 -> 64 -> 32 -> 1
-#         # Consider testing hidden=[256, 128, 64] during hyperparameter tuning
+# class MultiHeadNet(nn.Module):
+#     def __init__(self, input_dim, target_names, backbone_layers, head_hidden=32,
+#                  dropout=0.3, head_hidden_overrides=None):
+#         # input_dim set dynamically from feature count (varies per position)
 #         #
-#         # For each hidden layer:
-#         #   Linear -> BatchNorm1d -> ReLU -> Dropout
-#         #   (BatchNorm BEFORE activation = pre-activation normalization)
-#         # Final layer: Linear -> single output (predicted fantasy points)
+#         # Shared backbone:
+#         #   For each layer in backbone_layers:
+#         #     Linear -> BatchNorm1d -> ReLU -> Dropout
+#         #
+#         # Per-target output heads (one per target_names entry):
+#         #   Linear(backbone_out, head_hidden) -> ReLU -> Linear(head_hidden, 1)
+#         #   -> Softplus(beta=1.0)  # ensures non-negative outputs
+#         #
+#         # Total prediction = sum of all heads
 #
-#     def forward(self, x):
-#         # Pass through hidden blocks, return single float prediction
+#     def forward(self, x) -> dict:
+#         # Returns dict with per-target predictions + "total"
+#
+# Example target decompositions:
+#   QB: ["passing_floor", "rushing_floor", "td_points"]
+#   RB: ["rushing_floor", "receiving_floor", "td_points"]
+#   WR: ["receiving_floor", "rushing_floor", "td_points"]
+#   TE: ["receiving_floor", "rushing_floor", "td_points"]
+#   K:  ["fg_points", "pat_points"]
+#   DST: ["defensive_scoring", "td_points", "pts_allowed_bonus"]
+#
+# Softplus (not clamp) ensures differentiable non-negativity during
+# both training and inference — eliminates train/test distribution mismatch.
+#
+# Backward compatibility: load_state_dict() handles old naming convention
+# (e.g., "rushing_head" -> "heads.rushing_floor").
 #
 # Regularization employed (need at least 2 for rubric):
-#   1. Dropout (0.3) between hidden layers
-#   2. L2 weight decay (1e-4) via AdamW optimizer
-#   3. Early stopping (patience=15 on validation loss)
+#   1. Dropout (position-specific, 0.20–0.35)
+#   2. L2 weight decay (1e-4 to 3e-4) via AdamW optimizer
+#   3. Early stopping (patience 25–30 on validation loss)
+#   4. BatchNorm acts as mild regularizer
 #
-# Optionally also: BatchNorm acts as mild regularizer
-#
-# Loss function: MSELoss (standard for regression)
+# Loss function: Huber loss (per-target + total, with per-target weights and deltas)
 # Optimizer: AdamW (Adam with decoupled weight decay)
 ```
 
-### 4.9 `src/training/trainer.py` — Training Loop
+### 4.9 `shared/training.py` — Training Loop
 
 **Rubric targets: "Training curves" (3 pts) + "Regularization/early stopping" (5 pts)**
 
 ```python
-# class Trainer:
-#     def __init__(self, model, optimizer, scheduler, device, patience):
-#         ...
+# class MultiTargetLoss(nn.Module):
+#     # Combined Huber loss for multi-head network
+#     # Loss = sum(weight[t] * Huber(pred[t], target[t])) + w_total * Huber(total, actual_total)
+#     # Per-target Huber deltas allow different MSE-to-MAE thresholds
 #
-#     def train(self, train_loader, val_loader, n_epochs):
+# class MultiTargetDataset(Dataset):
+#     # Returns features + dict of per-target values
+#
+# def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size):
+#     # Train: shuffle=True, drop_last=True; Val: shuffle=False
+#     # num_workers=0, pin_memory=False (CPU-only)
+#
+# class MultiHeadTrainer:
+#     def __init__(self, model, optimizer, scheduler, criterion, device,
+#                  target_names, patience, scheduler_per_batch=False):
+#
+#     def train(self, train_loader, val_loader, n_epochs) -> dict:
 #         # For each epoch:
-#         #   1. Train pass: forward, loss, backward, optimizer step
-#         #   2. Validation pass: compute val loss + metrics (no grad)
-#         #   3. Log train_loss, val_loss, val_MAE, val_RMSE to history dict
-#         #   4. Step the LR scheduler (ReduceLROnPlateau on val_loss)
-#         #   5. Early stopping check: if val_loss hasn't improved in
-#         #      `patience` epochs, restore best weights and stop
-#         #   6. Save best model checkpoint
+#         #   1. Train pass: forward, loss, backward, gradient clipping (max_norm=1.0), step
+#         #   2. Validation pass: per-target + total MAE/RMSE (no grad)
+#         #   3. Log per-target losses, per-target MAE, total MAE/RMSE
+#         #   4. Step LR scheduler (supports ReduceLROnPlateau, OneCycleLR, CosineWarmRestarts)
+#         #   5. Early stopping: restore best weights if no improvement in `patience` epochs
 #         # Return: history dict with all logged metrics per epoch
 #
-#     def plot_training_curves(self, history, save_path):
-#         # Two-panel figure:
-#         #   Left: train loss vs val loss over epochs
-#         #   Right: val MAE and val RMSE over epochs
-#         # Save to outputs/figures/training_curves.png
-#
-# Also create standard PyTorch DataLoaders:
-#   def make_dataloaders(X_train, y_train, X_val, y_val, batch_size):
-#       # Convert to TensorDataset, wrap in DataLoader
-#       # Train: shuffle=True; Val/Test: shuffle=False
-#       # num_workers=0 (simplicity, CPU-only)
-#       # pin_memory=False (no GPU)
+# def plot_training_curves(history, target_names, save_path):
+#     # Four-panel figure:
+#     #   Top-left: overall train/val loss
+#     #   Top-right: per-target val losses
+#     #   Bottom-left: per-target MAE
+#     #   Bottom-right: total MAE and RMSE
 ```
 
 ### 4.10 `src/evaluation/metrics.py` — Evaluation Metrics
@@ -564,110 +625,61 @@ This is the most critical module. The model is only as good as its features.
 # and does prediction quality change over the course of a season?"
 ```
 
-### 4.12 `notebooks/02_experiments.ipynb` — Hyperparameter Tuning
+### 4.12 Hyperparameter Tuning — Per-Position Config Files
 
 **Rubric target: "Systematic hyperparameter tuning" (5 pts)**
 
-```python
-# Document at least 3 configurations with results for EACH model:
-#
-# Linear Regression:
-#   - Ridge alpha values: [0.01, 0.1, 1.0, 10.0, 100.0]
-#   - Record val MAE/RMSE/R² for each
-#
-# Neural Network (vary one at a time from defaults):
-#   Config 1 (baseline):  hidden=[128,64,32], dropout=0.3, lr=1e-3
-#   Config 2 (wider):     hidden=[256,128,64], dropout=0.3, lr=1e-3
-#   Config 3 (shallower): hidden=[128,64],     dropout=0.3, lr=1e-3
-#   Config 4 (less dropout): hidden=[128,64,32], dropout=0.1, lr=1e-3
-#   Config 5 (lower LR):    hidden=[128,64,32], dropout=0.3, lr=3e-4
-#
-# Present results in a comparison table and identify best config.
-# Use validation set for selection, then report final test metrics only once.
-#
-# Visualizations:
-#   - Training curves overlay for each NN config (val loss vs epoch)
-#   - Bar chart of val MAE across all configs (Ridge + NN variants)
-#   - Table: config → val MAE / val RMSE / val R²
-```
+Hyperparameter tuning is documented through the per-position config files (`{POS}/{pos}_config.py`).
+Each position has been tuned independently with different architectures, dropout rates, learning rates,
+loss weights, Huber deltas, and LR schedulers. The config files serve as the record of tuning decisions.
 
-### 4.13 `notebooks/03_error_analysis.ipynb` — Error Analysis + Explainability
+Key tuning dimensions per position:
+- **Backbone architecture**: Single wide layer vs two-layer (e.g., RB [96] vs QB [96, 48])
+- **Dropout**: 0.20 (WR) to 0.35 (QB) — higher for positions with less training data
+- **Loss weights**: TD weight elevated (2.0–3.0) for zero-inflated target; floor weights vary by position
+- **Huber deltas**: Per-target thresholds controlling MSE-to-MAE transition
+- **LR scheduler**: ReduceLROnPlateau (RB), OneCycleLR (QB, TE, K), CosineWarmRestarts (WR, DST)
+- **Ridge alpha grids**: Position-specific logspace grids per target
+
+### 4.13 Error Analysis + Explainability
 
 **Rubric targets: "Error analysis with visualization and discussion" (7 pts) + "Interpretable model design or explainability analysis" (7 pts)**
 
-```python
-# === PART A: ERROR ANALYSIS ===
-# Investigate WHERE and WHY the model fails:
-#
-# 1. Residual distribution plot (histogram of predicted - actual)
-# 2. Scatter plot: predicted vs actual, color-coded by position
-# 3. Worst predictions table: top 20 biggest misses, with context
-#    (was the player injured mid-game? was it a blowout? first game back?)
-# 4. Error by player archetype:
-#    - Consistent high-volume players (e.g., top-20 WRs by targets)
-#    - Boom/bust players (high variance)
-#    - Backup/handcuff RBs (unpredictable usage)
-# 5. Error by week-of-season (are early-season predictions worse due to
-#    less rolling history?)
-# 6. Discussion: What types of events does the model fundamentally cannot
-#    predict? (injuries, game script, weather, coaching decisions)
-#
-# === PART B: EXPLAINABILITY ANALYSIS ===
-# 7. Ridge coefficient analysis:
-#    - Bar chart of top 20 features by |coef_| (absolute coefficient value)
-#    - Discuss which features the linear model relies on most
-# 8. Neural net permutation importance:
-#    - Use sklearn.inspection.permutation_importance on validation set
-#    - Bar chart of top 20 features by importance
-# 9. Side-by-side comparison:
-#    - Do both models agree on which features matter?
-#    - Discussion of differences (e.g., NN may capture non-linear interactions)
-```
+Error analysis and benchmark comparison are documented in `docs/expert_comparison.md`, which includes:
+- Per-position MAE and R² for both Ridge and NN models
+- Per-target MAE breakdown (floor, TD points)
+- Comparison against academic benchmarks (Stanford CS 229, INST 414, arXiv)
+- Comparison against industry expert sources (FantasyPros, FFA rankings)
+- Position-by-position analysis of where/why the model succeeds or fails
 
-### 4.14 `notebooks/01_eda.ipynb` — Exploratory Data Analysis
-
-```python
-# Visualizations and analysis to understand the dataset:
-#
-# 1. Fantasy points distribution by position (box plots or violin plots)
-#    - Shows scoring range differences: QBs highest, TEs lowest
-# 2. Correlation heatmap of key features vs fantasy_points
-# 3. Target variable distribution (histogram + summary stats)
-# 4. Seasonal trends: average fantasy points per position per season
-# 5. Top player analysis: top-10 scorers per position per season
-# 6. Feature distributions: snap_pct, target_share, rolling averages
-# 7. Missing data summary: how many NaNs in each feature after engineering
-# 8. Train/val/test split visualization: data volume per season
-#
-# This notebook is for understanding the data — no model training here.
-# Can be developed anytime but polish last.
-```
+Ridge coefficient analysis provides feature importance per target via `RidgeMultiTarget.get_feature_importance()`.
 
 ---
 
-## 5. End-to-End Pipeline (`scripts/run_pipeline.py`)
+## 5. End-to-End Pipeline (per-position: `{POS}/run_{pos}_pipeline.py`)
+
+Each position has its own pipeline script that orchestrates training. The general flow:
 
 ```python
-# This script runs the full pipeline in order:
+# Per-position pipeline (e.g., RB/run_rb_pipeline.py):
 #
-# 1. LOAD:      loader.load_raw_data(SEASONS)
+# 1. LOAD:      loader.load_raw_data(SEASONS) + cache as parquet
 # 2. PREPROCESS: preprocessing.preprocess(raw_df)  — NO min-games filter here
 # 3. FEATURES:  engineer.build_features(clean_df)  — computes team totals THEN filters min-games
-# 4. SPLIT:     split.temporal_split(featured_df, ...)
-# 5. NaN FILL:  engineer.fill_nans_safe(train, val, test, feature_cols)
-#               — uses ONLY training set statistics to prevent leakage
-# 6. BASELINE:  Evaluate SeasonAverageBaseline and LastWeekBaseline
-#               (baselines operate on unscaled DataFrames with fantasy_points column)
-# 7. LINEAR:    Fit Ridge (internally fits StandardScaler), evaluate, save model
-# 8. SCALE:     Extract scaler from Ridge (ridge_model.scaler), use it to
-#               transform train/val/test feature arrays for the neural net
-# 9. NEURAL:    Train FantasyPointsNet on pre-scaled arrays, evaluate, save model
-# 10. COMPARE:  Side-by-side metrics table (all 4 approaches)
-# 11. BACKTEST: Run week-by-week prediction simulation
-# 12. SAVE:     All figures, metrics, and model artifacts to outputs/
+# 4. FILTER:    {pos}_data.filter_to_{pos}(featured_df)  — position-specific rows
+# 5. TARGETS:   {pos}_targets.compute_{pos}_targets(df)  — target decomposition
+# 6. POS FEATS: {pos}_features.add_{pos}_specific_features(df)  — position-specific features
+# 7. DROP:      Remove features listed in {POS}_DROP_FEATURES (QB-only stats, etc.)
+# 8. SPLIT:     split.temporal_split(df, ...)
+# 9. NaN FILL:  Position-specific NaN filling using training set statistics
+# 10. RIDGE:    Train RidgeMultiTarget (one Ridge per target), evaluate
+# 11. NEURAL:   Train MultiHeadNet with MultiHeadTrainer, evaluate
+# 12. SAVE:     Models to {POS}/outputs/models/, figures to {POS}/outputs/figures/
 #
-# Should be runnable with: python scripts/run_pipeline.py
-# Expected runtime: ~5-10 minutes on a laptop (no GPU required for this scale)
+# The Flask web app (app.py) loads pre-trained models from all positions and
+# serves predictions via a dashboard with API endpoints:
+#   /api/predictions, /api/metrics, /api/weekly_accuracy,
+#   /api/player/<player_id>, /api/top_players, /api/position_details
 ```
 
 ---
@@ -678,11 +690,15 @@ These are decisions you should explain in the technical walkthrough video and RE
 
 1. **Temporal split vs random split:** Random split would leak future information (a player's week 15 stats informing a week 10 prediction). Season-based split is the correct approach for time-series, even though it gives less training data.
 
-2. **Ridge Regression vs plain Linear Regression:** Ridge adds L2 regularization which prevents overfitting on correlated features (many rolling stats are correlated). This is the fair comparison — "best linear model" vs "neural network."
+2. **Ridge Regression vs plain Linear Regression:** Ridge adds L2 regularization which prevents overfitting on correlated features (many rolling stats are correlated). Implemented as `RidgeMultiTarget` in `shared/models.py` — one Ridge per sub-target, with position-specific alpha grids.
 
-3. **MLP vs RNN/LSTM:** An LSTM could model sequences more naturally, but an MLP with hand-crafted rolling features is simpler, more interpretable, and performs comparably on tabular data. The feature engineering essentially does what an RNN would learn. You could mention LSTM as future work.
+3. **Multi-head MLP vs single-output MLP vs RNN/LSTM:** Target decomposition (e.g., rushing_floor + receiving_floor + td_points) with a shared backbone + per-target heads outperforms a single-output network. An LSTM could model sequences more naturally, but the MLP with hand-crafted rolling features is simpler and performs comparably on tabular data. LSTM is documented as future work in `docs/design_lstm_multihead.md`.
 
-4. **Multi-format scoring:** The system computes fantasy points for Standard (0 PPR), Half-PPR (0.5), and Full PPR (1.0) formats. The only difference is the reception weight. All three columns are computed during preprocessing, enabling format-specific modeling and comparison. Full PPR remains the default.
+4. **Huber loss vs MSE:** Huber loss is robust to outlier games (e.g., a RB scoring 40+ in a blowout). Per-target deltas allow different thresholds — higher delta for TD points (more volatile) makes the loss more MAE-like for that target.
+
+5. **Softplus vs clamp for non-negativity:** Fantasy point components are non-negative. Softplus is differentiable (unlike clamp), so gradients flow cleanly through zero during training. This eliminates the train/test distribution mismatch that eval-only clamping caused.
+
+6. **Multi-format scoring:** The system computes fantasy points for Standard (0 PPR), Half-PPR (0.5), and Full PPR (1.0) formats. The only difference is the reception weight. All three columns are computed during preprocessing, enabling format-specific modeling and comparison. Full PPR remains the default.
 
 ---
 
@@ -712,11 +728,10 @@ These are decisions you should explain in the technical walkthrough video and RE
 2. Clone the repo: git clone <url> && cd fantasy-football-predictor
 3. Create virtual environment: python -m venv venv && source venv/bin/activate
 4. Install dependencies: pip install -r requirements.txt
-5. Download/cache data: python scripts/run_pipeline.py --data-only
-   (or: data is auto-downloaded on first pipeline run)
-6. Run full pipeline: python scripts/run_pipeline.py
-7. Run notebooks: jupyter notebook notebooks/
-8. Expected runtime: ~5-10 minutes on a laptop (no GPU required)
+5. Download/cache data: data is auto-downloaded on first pipeline run
+6. Run position pipelines: python -m RB.run_rb_pipeline (etc.)
+7. Start web dashboard: python app.py
+8. Expected runtime: under a minute per position on CPU (no GPU required)
 ```
 
 ### 7.2 ATTRIBUTION.md Content Outline
@@ -742,8 +757,8 @@ These are decisions you should explain in the technical walkthrough video and RE
 
 ### 7.3 README Section Outlines
 
-- **What it Does:** A machine learning system that predicts weekly fantasy football PPR points for NFL skill-position players. Compares a Ridge Regression baseline against a custom PyTorch neural network using engineered temporal and matchup features from 7 seasons of NFL data. Includes a season-long fantasy draft backtesting simulation.
-- **Quick Start:** Clone, install, run pipeline command. 3-5 lines max.
+- **What it Does:** A machine learning system that predicts weekly fantasy football PPR points for all NFL positions (QB, RB, WR, TE, K, DST). Compares Ridge Regression against a custom PyTorch multi-head neural network using engineered temporal features from 14 seasons (2012-2025) of NFL data. Includes a Flask web dashboard for predictions and analysis.
+- **Quick Start:** Clone, install, run position pipelines, start web dashboard. 3-5 lines max.
 - **Video Links:** Direct links to demo video and technical walkthrough (YouTube or similar).
 - **Evaluation:** Summary table of MAE, RMSE, R² for each model (baseline, Ridge, NN) overall and per position. Week-by-week accuracy trends and per-position ranking quality.
 
@@ -819,42 +834,38 @@ These references should be included in the README to satisfy the "meaningful res
 ## 9. Dependencies (`requirements.txt`)
 
 ```
-nfl_data_py>=0.3.0
-pandas>=2.0
-numpy>=1.24
-scikit-learn>=1.3
-torch>=2.0
-matplotlib>=3.7
-seaborn>=0.12
-jupyter>=1.0
-tqdm>=4.65
+numpy==2.4.1
+pandas==2.3.3
+scikit-learn==1.8.0
+torch==2.11.0
+scipy==1.17.1
+matplotlib==3.10.8
+pytest==9.0.3
+flask==3.1.3
+nfl_data_py==0.3.3
 ```
 
-No GPU required. The dataset is ~35K rows and the MLP is small — trains in under a minute on CPU.
+No GPU required. The dataset trains in under a minute per position on CPU. Flask serves the prediction dashboard.
 
 ---
 
-## 10. Implementation Order (Suggested for Claude Code)
+## 10. Implementation Order
 
-Follow this order to ensure each step can be validated before moving on:
+The actual implementation order followed:
 
-1. **`src/config.py`** — Set up all constants first
-2. **`src/data/loader.py`** — Pull and cache data, verify shape and columns
-3. **`src/data/preprocessing.py`** — Clean data, compute fantasy points target
-4. **`src/data/split.py`** — Temporal split, print split sizes
-5. **`src/features/engineer.py`** — Build all features, verify no leakage (assert no current-week stats in features)
-6. **`src/evaluation/metrics.py`** — Metric functions (needed for all model evaluation)
-7. **`src/models/baseline.py`** — Implement and evaluate baselines first
-8. **`src/models/linear.py`** — Ridge regression, evaluate, compare to baselines
-9. **`src/models/neural_net.py`** — Define architecture
-10. **`src/training/trainer.py`** — Training loop with early stopping + curve logging
-11. **Train + evaluate neural net**, compare to linear and baselines
-12. **`notebooks/02_experiments.ipynb`** — Hyperparameter search
-13. **`src/evaluation/backtest.py`** — Week-by-week prediction simulation
-14. **`notebooks/03_error_analysis.ipynb`** — Deep-dive on failures
-15. **`notebooks/01_eda.ipynb`** — Can be done anytime, but polish last
-16. **`scripts/run_pipeline.py`** — Wire everything together
-17. **Documentation** — README, SETUP.md, ATTRIBUTION.md
+1. **`src/config.py`** — Central constants and scoring
+2. **`src/data/loader.py`** — nfl_data_py ingestion + caching
+3. **`src/data/preprocessing.py`** — Cleaning, fantasy points computation
+4. **`src/features/engineer.py`** — Rolling, EWMA, trend, share, matchup features
+5. **`src/data/split.py`** — Temporal split
+6. **`shared/neural_net.py`** — MultiHeadNet architecture
+7. **`shared/models.py`** — RidgeMultiTarget wrapper
+8. **`shared/training.py`** — MultiHeadTrainer, MultiTargetLoss, dataloaders
+9. **Position folders** — Per-position configs, targets, features, data filters, pipelines
+   (QB, RB, WR, TE first; K and DST added later with custom pipelines)
+10. **`tests/`** — Feature leakage tests, RB target tests
+11. **`app.py`** — Flask web dashboard + prediction API
+12. **`docs/`** — Expert comparison, future work proposals
 
 ---
 
@@ -878,21 +889,21 @@ The Gradescope self-assessment (3 pts) requires mapping each claimed rubric item
 | # | Rubric Item | Evidence Location | Description |
 |---|-------------|-------------------|-------------|
 | 1 | Solo project credit | N/A | Completed individually |
-| 2 | Original dataset via API | `src/data/loader.py` | nfl_data_py multi-table ingestion + merge |
-| 3 | Compared architectures | `notebooks/02_experiments.ipynb` | Controlled comparison table |
-| 4 | Error analysis | `notebooks/03_error_analysis.ipynb` | Residual plots, failure cases |
+| 2 | Original dataset via API | `src/data/loader.py` | nfl_data_py multi-table ingestion + merge (2012-2025) |
+| 3 | Compared architectures | `shared/models.py`, `shared/neural_net.py`, position configs | RidgeMultiTarget vs MultiHeadNet per position |
+| 4 | Error analysis | `docs/expert_comparison.md`, pipeline outputs | Per-target breakdown, benchmark comparison |
 | 5 | Time-series forecasting | `src/features/engineer.py` | Rolling temporal features + temporal split |
-| 6 | Simulation-based eval | `src/evaluation/backtest.py` | Week-by-week prediction accuracy simulation |
-| 7 | Feature engineering | `src/features/engineer.py` | 150+ derived features |
-| 8 | Custom neural network | `src/models/neural_net.py` | PyTorch MLP definition |
-| 9 | Hyperparameter tuning | `notebooks/02_experiments.ipynb` | 3+ configs per model |
-| 10 | Regularization | `src/models/neural_net.py`, `src/training/trainer.py` | Dropout + L2 + early stopping |
-| 11 | Modular code design | `src/` package | Reusable modules and classes |
-| 12 | Train/val/test split | `src/data/split.py` | Temporal split with documented ratios |
-| 13 | Training curves | `src/training/trainer.py` | Loss + metrics over epochs |
+| 6 | Simulation-based eval | `shared/backtest.py` | Week-by-week prediction accuracy simulation |
+| 7 | Feature engineering | `src/features/engineer.py`, `{POS}/{pos}_features.py` | 130+ general + position-specific derived features |
+| 8 | Custom neural network | `shared/neural_net.py` | Multi-head PyTorch architecture |
+| 9 | Hyperparameter tuning | `{POS}/{pos}_config.py` files | Per-position configs with tuned architectures |
+| 10 | Regularization | `shared/neural_net.py`, `shared/training.py` | Dropout + L2 + early stopping + BatchNorm |
+| 11 | Modular code design | `src/`, `shared/`, position folders | Reusable modules and classes |
+| 12 | Train/val/test split | `src/data/split.py` | Temporal split (2012-2023 / 2024 / 2025) |
+| 13 | Training curves | `shared/training.py` | 4-panel: loss, per-target loss, per-target MAE, total MAE/RMSE |
 | 14 | Baseline model | `src/models/baseline.py` | Season average + last week baselines |
-| 15 | ≥3 evaluation metrics | `src/evaluation/metrics.py` | MAE, RMSE, R² |
-| 16 | Explainability analysis | `notebooks/03_error_analysis.ipynb` | Ridge coefficients + permutation importance |
+| 15 | ≥3 evaluation metrics | `src/evaluation/metrics.py`, `shared/evaluation.py` | MAE, RMSE, R² |
+| 16 | Explainability analysis | Pipeline outputs, `docs/expert_comparison.md` | Ridge coefficients + permutation importance |
 
 ---
 
@@ -912,17 +923,14 @@ The Gradescope self-assessment (3 pts) requires mapping each claimed rubric item
 
 Validate correctness at each pipeline stage before moving on:
 
-1. **Smoke test:** Run pipeline on a single season (e.g., 2023 only) to verify all modules execute without error
-2. **Data leakage check:** Assert that no feature column contains current-week data:
-   - After `build_features()`, verify rolling features for week W do NOT include week W stats
-   - Check that `.shift(1)` is applied before every `.rolling()` call
-3. **Shape checks:** At each pipeline step, print and verify DataFrame shape:
-   - After load: ~35K rows × ~50 raw columns
-   - After preprocessing: slightly fewer rows (filtered)
-   - After features: same rows × ~87 feature columns + target + metadata
-   - After split: train ~25K, val ~5K, test ~5K
-4. **Baseline sanity checks:** Verify baseline MAE is in a reasonable range (roughly 5-10 PPR points) — if it's 0 or 50+, something is wrong
+1. **Feature leakage tests:** `tests/test_feature_leakage.py` (328 lines) comprehensively verifies no future data leaks into features
+2. **Unit tests:** `RB/tests/test_rb_targets.py` validates target decomposition correctness
+3. **Shape checks:** At each pipeline step, print and verify DataFrame shape
+4. **Target decomposition sanity checks:** Each `compute_{pos}_targets()` function includes a
+   `fantasy_points_check` that verifies the sum of decomposed targets matches total fantasy points
 5. **Model sanity check:** Verify trained models produce predictions in a reasonable range (0-50 PPR points typically)
+6. **Cross-validation with nflverse:** `rb_targets.py` cross-validates computed fantasy points against
+   nflverse pre-computed `fantasy_points_ppr` column when available
 
 ---
 

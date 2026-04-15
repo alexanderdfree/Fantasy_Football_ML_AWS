@@ -1,41 +1,216 @@
+import os
 import pandas as pd
-from K.k_config import K_MIN_GAMES
+import nfl_data_py as nfl
+from K.k_config import K_MIN_GAMES, K_SEASONS
 from src.config import CACHE_DIR, SEASONS
 
 
-def load_kicker_data() -> pd.DataFrame:
-    """Load raw kicker data from weekly parquet, merge with schedule info.
+# ---------------------------------------------------------------------------
+# PBP-based kicker reconstruction (2015-2024)
+# ---------------------------------------------------------------------------
 
-    Kicker FG/PAT data is only available for 2025 in the nflverse weekly stats.
-    Earlier seasons only have offensive stats for kickers (trick plays).
+def reconstruct_kicker_weekly_from_pbp(
+    seasons: list[int],
+    cache_dir: str = CACHE_DIR,
+) -> pd.DataFrame:
+    """Reconstruct weekly kicker stats from play-by-play data.
+
+    PBP has FG/XP play-level data from 1999+, while import_weekly_data()
+    only has kicker columns starting in 2025. This function aggregates PBP
+    plays into a weekly kicker-level dataframe matching the schema expected
+    by k_targets.py, plus additional PBP-derived columns for features.
     """
-    weekly = pd.read_parquet(f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet")
-    schedules = pd.read_parquet(f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
+    cache_path = f"{cache_dir}/kicker_pbp_{seasons[0]}_{seasons[-1]}.parquet"
+    if os.path.exists(cache_path):
+        return pd.read_parquet(cache_path)
 
-    # Filter to K position with actual kicking data, regular season only
-    k_df = weekly[
-        (weekly["position"] == "K")
-        & (weekly["season_type"] == "REG")
-    ].copy()
-    k_df = k_df[k_df["fg_att"].fillna(0) + k_df["pat_att"].fillna(0) > 0].copy()
+    pbp_cols = [
+        "season", "week", "season_type", "game_id",
+        "field_goal_attempt", "extra_point_attempt",
+        "kicker_player_id", "kicker_player_name", "posteam",
+        "kick_distance", "field_goal_result", "extra_point_result",
+        "score_differential", "wp", "game_seconds_remaining", "qtr",
+        "fg_prob", "extra_point_prob",
+        "temp", "wind", "roof", "surface",
+    ]
+
+    all_weekly = []
+    for yr in seasons:
+        print(f"  Loading PBP for {yr}...")
+        pbp = nfl.import_pbp_data([yr], downcast=True)
+        # Keep only regular season
+        pbp = pbp[pbp["season_type"] == "REG"]
+
+        # --- Field goals ---
+        fg = pbp[pbp["field_goal_attempt"] == 1].copy()
+        fg["fg_made_flag"] = (fg["field_goal_result"] == "made").astype(int)
+        fg["fg_missed_flag"] = (fg["field_goal_result"] != "made").astype(int)
+        # Distance buckets matching weekly_data schema
+        d = fg["kick_distance"]
+        made = fg["fg_made_flag"].astype(bool)
+        fg["fg_made_0_19"] = ((d < 20) & made).astype(int)
+        fg["fg_made_20_29"] = ((d >= 20) & (d < 30) & made).astype(int)
+        fg["fg_made_30_39"] = ((d >= 30) & (d < 40) & made).astype(int)
+        fg["fg_made_40_49"] = ((d >= 40) & (d < 50) & made).astype(int)
+        fg["fg_made_50_59"] = ((d >= 50) & (d < 60) & made).astype(int)
+        fg["fg_made_60_"] = ((d >= 60) & made).astype(int)
+        # Missed buckets
+        missed = fg["fg_missed_flag"].astype(bool)
+        fg["fg_missed_40_49"] = ((d >= 40) & (d < 50) & missed).astype(int)
+        fg["fg_missed_50_59"] = ((d >= 50) & (d < 60) & missed).astype(int)
+        fg["fg_missed_60_"] = ((d >= 60) & missed).astype(int)
+        # PBP-only situational flags
+        fg["is_clutch"] = (fg["score_differential"].abs() <= 7).astype(int)
+        fg["clutch_made"] = (fg["is_clutch"] & fg["fg_made_flag"]).astype(int)
+        fg["is_q4"] = (fg["qtr"] >= 4).astype(int)
+        fg["q4_made"] = (fg["is_q4"] & fg["fg_made_flag"]).astype(int)
+        fg["is_long"] = (d >= 40).astype(int)
+        fg["long_made"] = (fg["is_long"] & fg["fg_made_flag"]).astype(int)
+
+        weekly_fg = fg.groupby(
+            ["kicker_player_id", "kicker_player_name", "posteam", "season", "week"]
+        ).agg(
+            fg_att=("fg_made_flag", "count"),
+            fg_made=("fg_made_flag", "sum"),
+            fg_missed=("fg_missed_flag", "sum"),
+            fg_made_0_19=("fg_made_0_19", "sum"),
+            fg_made_20_29=("fg_made_20_29", "sum"),
+            fg_made_30_39=("fg_made_30_39", "sum"),
+            fg_made_40_49=("fg_made_40_49", "sum"),
+            fg_made_50_59=("fg_made_50_59", "sum"),
+            fg_made_60_=("fg_made_60_", "sum"),
+            fg_missed_40_49=("fg_missed_40_49", "sum"),
+            fg_missed_50_59=("fg_missed_50_59", "sum"),
+            fg_missed_60_=("fg_missed_60_", "sum"),
+            # PBP-derived aggregates
+            avg_fg_distance=("kick_distance", "mean"),
+            max_fg_distance=("kick_distance", "max"),
+            avg_fg_prob=("fg_prob", "mean"),
+            clutch_fg_att=("is_clutch", "sum"),
+            clutch_fg_made=("clutch_made", "sum"),
+            q4_fg_att=("is_q4", "sum"),
+            q4_fg_made=("q4_made", "sum"),
+            long_fg_att=("is_long", "sum"),
+            long_fg_made=("long_made", "sum"),
+            # Weather (game-level, same for all plays in a game)
+            game_wind=("wind", "first"),
+            game_temp=("temp", "first"),
+            roof=("roof", "first"),
+            surface=("surface", "first"),
+        ).reset_index()
+
+        # --- Extra points ---
+        xp = pbp[pbp["extra_point_attempt"] == 1].copy()
+        xp["xp_made"] = (xp["extra_point_result"] == "good").astype(int)
+        xp["xp_missed"] = (xp["extra_point_result"] != "good").astype(int)
+
+        weekly_xp = xp.groupby(
+            ["kicker_player_id", "season", "week"]
+        ).agg(
+            pat_att=("xp_made", "count"),
+            pat_made=("xp_made", "sum"),
+            pat_missed=("xp_missed", "sum"),
+        ).reset_index()
+
+        # Merge FG + XP
+        weekly_k = weekly_fg.merge(
+            weekly_xp, on=["kicker_player_id", "season", "week"], how="outer"
+        )
+        all_weekly.append(weekly_k)
+
+    result = pd.concat(all_weekly, ignore_index=True)
+
+    # Fill NaN for kicker-weeks with only FGs or only XPs
+    for col in result.columns:
+        if col not in ["kicker_player_id", "kicker_player_name", "posteam",
+                        "season", "week", "roof", "surface"]:
+            result[col] = result[col].fillna(0)
+
+    # Rename to match expected pipeline columns
+    result.rename(columns={
+        "kicker_player_id": "player_id",
+        "kicker_player_name": "player_name",
+        "posteam": "recent_team",
+    }, inplace=True)
+    result["position"] = "K"
+    result["season_type"] = "REG"
+
+    # Derive venue features
+    result["is_dome"] = result["roof"].isin(["dome", "closed"]).astype(int)
+
+    os.makedirs(cache_dir, exist_ok=True)
+    result.to_parquet(cache_path)
+    print(f"  Cached PBP kicker data: {len(result)} rows -> {cache_path}")
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Main loader
+# ---------------------------------------------------------------------------
+
+def load_kicker_data() -> pd.DataFrame:
+    """Load kicker data combining PBP reconstruction (2015-2024) + weekly (2025).
+
+    Merges schedule info for Vegas lines and home/away.
+    """
+    pbp_seasons = [s for s in K_SEASONS if s <= 2024]
+    weekly_seasons = [s for s in K_SEASONS if s >= 2025]
+
+    parts = []
+
+    # --- PBP-reconstructed data (2015-2024) ---
+    if pbp_seasons:
+        print("Reconstructing kicker weekly stats from PBP...")
+        pbp_df = reconstruct_kicker_weekly_from_pbp(pbp_seasons)
+        parts.append(pbp_df)
+
+    # --- Existing weekly data for 2025+ ---
+    if weekly_seasons:
+        weekly = pd.read_parquet(
+            f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+        )
+        k_weekly = weekly[
+            (weekly["position"] == "K")
+            & (weekly["season_type"] == "REG")
+            & (weekly["season"].isin(weekly_seasons))
+        ].copy()
+        k_weekly = k_weekly[
+            k_weekly["fg_att"].fillna(0) + k_weekly["pat_att"].fillna(0) > 0
+        ].copy()
+        # Add PBP-derived columns with NaN (will be filled later)
+        for col in ["avg_fg_distance", "max_fg_distance", "avg_fg_prob",
+                     "clutch_fg_att", "clutch_fg_made",
+                     "q4_fg_att", "q4_fg_made",
+                     "long_fg_att", "long_fg_made",
+                     "game_wind", "game_temp", "roof", "surface", "is_dome"]:
+            if col not in k_weekly.columns:
+                k_weekly[col] = float("nan")
+        parts.append(k_weekly)
+
+    k_df = pd.concat(parts, ignore_index=True)
+
+    # --- Backfill PBP-derived columns for 2025 from PBP ---
+    if weekly_seasons:
+        _backfill_2025_pbp_columns(k_df, weekly_seasons)
 
     # Apply min-games filter
     games_per_season = k_df.groupby(["player_id", "season"])["week"].transform("count")
     k_df = k_df[games_per_season >= K_MIN_GAMES].copy()
 
-    # Merge schedule info (is_home, Vegas lines)
+    # --- Merge schedule info (is_home, Vegas lines) ---
+    schedules = pd.read_parquet(
+        f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    )
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
 
     home = schedules_reg[["season", "week", "home_team", "spread_line", "total_line"]].copy()
     home.columns = ["season", "week", "recent_team", "spread_line", "total_line"]
     home["is_home"] = 1
-    # Implied team total: (total - spread) / 2 for home team
     home["implied_team_total"] = (home["total_line"] - home["spread_line"]) / 2
 
     away = schedules_reg[["season", "week", "away_team", "spread_line", "total_line"]].copy()
     away.columns = ["season", "week", "recent_team", "spread_line", "total_line"]
     away["is_home"] = 0
-    # Implied team total: (total + spread) / 2 for away team
     away["implied_team_total"] = (away["total_line"] + away["spread_line"]) / 2
 
     schedule_info = pd.concat([home, away], ignore_index=True)
@@ -50,7 +225,63 @@ def load_kicker_data() -> pd.DataFrame:
     if "is_home" not in k_df.columns or k_df["is_home"].isna().any():
         k_df["is_home"] = k_df["is_home"].fillna(0)
 
+    print(f"  Kicker data: {len(k_df)} rows, {k_df['player_id'].nunique()} kickers, "
+          f"seasons {int(k_df['season'].min())}-{int(k_df['season'].max())}")
+
     return k_df
+
+
+def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
+    """Backfill PBP-derived columns for 2025 rows from PBP data."""
+    mask = k_df["season"].isin(seasons)
+    if not mask.any():
+        return
+
+    try:
+        for yr in seasons:
+            pbp = nfl.import_pbp_data([yr], downcast=True)
+            pbp = pbp[pbp["season_type"] == "REG"]
+
+            fg = pbp[pbp["field_goal_attempt"] == 1].copy()
+            d = fg["kick_distance"]
+            fg["fg_made_flag"] = (fg["field_goal_result"] == "made").astype(int)
+            fg["is_clutch"] = (fg["score_differential"].abs() <= 7).astype(int)
+            fg["clutch_made"] = (fg["is_clutch"] & fg["fg_made_flag"]).astype(int)
+            fg["is_q4"] = (fg["qtr"] >= 4).astype(int)
+            fg["q4_made"] = (fg["is_q4"] & fg["fg_made_flag"]).astype(int)
+            fg["is_long"] = (d >= 40).astype(int)
+            fg["long_made"] = (fg["is_long"] & fg["fg_made_flag"]).astype(int)
+
+            weekly_pbp = fg.groupby(
+                ["kicker_player_id", "season", "week"]
+            ).agg(
+                avg_fg_distance=("kick_distance", "mean"),
+                max_fg_distance=("kick_distance", "max"),
+                avg_fg_prob=("fg_prob", "mean"),
+                clutch_fg_att=("is_clutch", "sum"),
+                clutch_fg_made=("clutch_made", "sum"),
+                q4_fg_att=("is_q4", "sum"),
+                q4_fg_made=("q4_made", "sum"),
+                long_fg_att=("is_long", "sum"),
+                long_fg_made=("long_made", "sum"),
+                game_wind=("wind", "first"),
+                game_temp=("temp", "first"),
+                roof=("roof", "first"),
+                surface=("surface", "first"),
+            ).reset_index()
+            weekly_pbp["is_dome"] = weekly_pbp["roof"].isin(["dome", "closed"]).astype(int)
+
+            yr_mask = k_df["season"] == yr
+            for _, row in weekly_pbp.iterrows():
+                row_mask = yr_mask & (k_df["player_id"] == row["kicker_player_id"]) & (k_df["week"] == row["week"])
+                for col in ["avg_fg_distance", "max_fg_distance", "avg_fg_prob",
+                            "clutch_fg_att", "clutch_fg_made",
+                            "q4_fg_att", "q4_fg_made",
+                            "long_fg_att", "long_fg_made",
+                            "game_wind", "game_temp", "is_dome"]:
+                    k_df.loc[row_mask, col] = row[col]
+    except Exception as e:
+        print(f"  WARNING: 2025 PBP backfill failed ({e}), PBP features will be NaN for 2025")
 
 
 def filter_to_k(df: pd.DataFrame) -> pd.DataFrame:
@@ -58,27 +289,18 @@ def filter_to_k(df: pd.DataFrame) -> pd.DataFrame:
     return df.copy()
 
 
-def kicker_week_split(
-    k_df: pd.DataFrame,
-    val_weeks: int = 3,
-    test_weeks: int = 2,
-) -> tuple:
-    """Split kicker data by week within the season.
+def kicker_season_split(k_df: pd.DataFrame) -> tuple:
+    """Split kicker data by season (cross-season, matching other positions).
 
-    Since kicker data is single-season (2025), we use within-season
-    temporal splits instead of cross-season splits.
+    Train: 2015-2023, Val: 2024, Test: 2025
     """
-    max_week = int(k_df["week"].max())
-    test_start = max_week - test_weeks + 1
-    val_start = test_start - val_weeks
+    train = k_df[k_df["season"] <= 2023].copy()
+    val = k_df[k_df["season"] == 2024].copy()
+    test = k_df[k_df["season"] == 2025].copy()
 
-    train = k_df[k_df["week"] < val_start].copy()
-    val = k_df[(k_df["week"] >= val_start) & (k_df["week"] < test_start)].copy()
-    test = k_df[k_df["week"] >= test_start].copy()
-
-    print(f"K within-season split (max_week={max_week}):")
-    print(f"  Train: weeks 1-{val_start - 1} ({len(train)} rows)")
-    print(f"  Val:   weeks {val_start}-{test_start - 1} ({len(val)} rows)")
-    print(f"  Test:  weeks {test_start}-{max_week} ({len(test)} rows)")
+    print(f"K cross-season split:")
+    print(f"  Train: {int(train['season'].min())}-{int(train['season'].max())} ({len(train)} rows)")
+    print(f"  Val:   2024 ({len(val)} rows)")
+    print(f"  Test:  2025 ({len(test)} rows)")
 
     return train, val, test

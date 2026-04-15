@@ -59,11 +59,13 @@ class MultiHeadNet(nn.Module):
         preds = {}
         for name, head in self.heads.items():
             val = head(shared).squeeze(-1)
-            # Softplus ensures non-negative outputs during BOTH training and
-            # inference, eliminating the train/test distribution mismatch that
-            # the old eval-only clamp caused.  Softplus is differentiable
-            # (unlike clamp) so gradients flow cleanly through zero.
-            val = nn.functional.softplus(val, beta=1.0)
+            # Clamp to non-negative: fantasy point components can't be negative.
+            # clamp(min=0) is equivalent to ReLU on the output layer.  Unlike
+            # softplus (which has a ~0.693 floor at zero), clamp allows exact
+            # zeros, matching the Ridge model's np.maximum(..., 0) semantics
+            # and eliminating the ~2-point floor that softplus imposed when
+            # summing across 3 heads.
+            val = torch.clamp(val, min=0.0)
             preds[name] = val
         preds["total"] = sum(preds[t] for t in self.target_names)
         return preds

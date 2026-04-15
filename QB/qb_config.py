@@ -31,8 +31,7 @@ QB_DROP_FEATURES |= {"target_share_L3", "target_share_L5"}
 QB_DROP_FEATURES |= {"air_yards_share"}
 # Position encoding (all QB, no variance)
 QB_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
-# Leakage
-QB_DROP_FEATURES |= {"snap_pct"}
+# NOTE: snap_pct is already lagged (shift=1) in engineer.py, safe to keep.
 
 # Drop EWMA features — they correlate >0.98 with rolling means of the same stat,
 # adding multicollinearity without unique signal.

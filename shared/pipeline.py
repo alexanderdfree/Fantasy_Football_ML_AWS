@@ -205,10 +205,14 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
     y_val_dict = {t: pos_val[t].values for t in targets}
     y_test_dict = {t: pos_test[t].values for t in targets} if pos_test is not None else None
 
-    y_train_dict["total"] = pos_train["fantasy_points"].values
-    y_val_dict["total"] = pos_val["fantasy_points"].values
+    # Total target = sum of decomposed targets (NOT fantasy_points, which
+    # includes adjustments like INT/fumble penalties that are added post-hoc).
+    # Using fantasy_points here causes the total aux loss to train heads to
+    # absorb adjustments, which then get double-counted at inference.
+    y_train_dict["total"] = sum(pos_train[t].values for t in targets)
+    y_val_dict["total"] = sum(pos_val[t].values for t in targets)
     if y_test_dict is not None:
-        y_test_dict["total"] = pos_test["fantasy_points"].values
+        y_test_dict["total"] = sum(pos_test[t].values for t in targets)
 
     return (X_train, X_val, X_test,
             y_train_dict, y_val_dict, y_test_dict,
@@ -304,9 +308,9 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     # --- Multi-head NN ---
     print(f"\n=== {pos} Multi-Head Neural Net ===")
     nn_scaler = StandardScaler()
-    X_train_s = nn_scaler.fit_transform(X_train)
-    X_val_s = nn_scaler.transform(X_val)
-    X_test_s = nn_scaler.transform(X_test)
+    X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
+    X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
+    X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
 
     train_loader, val_loader = make_dataloaders(
         X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=cfg["nn_batch_size"],
@@ -507,8 +511,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
 
         # NN training for this fold
         nn_scaler = StandardScaler()
-        X_train_s = nn_scaler.fit_transform(X_train)
-        X_val_s = nn_scaler.transform(X_val)
+        X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
+        X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
 
         train_loader, val_loader = make_dataloaders(
             X_train_s, y_train_dict, X_val_s, y_val_dict,
@@ -618,9 +622,9 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     torch.manual_seed(seed)
 
     nn_scaler = StandardScaler()
-    X_train_s = nn_scaler.fit_transform(X_train)
-    X_val_s = nn_scaler.transform(X_val)
-    X_test_s = nn_scaler.transform(X_test)
+    X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
+    X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
+    X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
 
     train_loader, val_loader = make_dataloaders(
         X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=cfg["nn_batch_size"],

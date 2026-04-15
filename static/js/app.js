@@ -10,6 +10,7 @@ let positionMaeChart = null;
 let positionR2Chart = null;
 let weeklyMaeChart = null;
 let positionDetailsData = null;
+let perfFilterInitialized = false;
 
 // Chart.js defaults
 Chart.defaults.color = "#9aa0b0";
@@ -339,6 +340,8 @@ async function loadMetrics() {
 }
 
 function setupPerfPositionFilter() {
+    if (perfFilterInitialized) return;
+    perfFilterInitialized = true;
     setupPillGroup("perf-position-filter", () => {
         renderPositionModelDetail(getActivePosition("perf-position-filter"));
     });
