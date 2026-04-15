@@ -14,7 +14,7 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
 def compute_positional_metrics(df, pred_col, true_col) -> pd.DataFrame:
     """Returns DataFrame with columns: position, mae, rmse, r2, n_samples."""
     results = []
-    for pos in ["QB", "RB", "WR", "TE"]:
+    for pos in ["QB", "RB", "WR", "TE", "K", "DST"]:
         mask = df["position"] == pos
         if mask.sum() == 0:
             continue

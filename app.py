@@ -1,6 +1,6 @@
 """Flask web application for the Fantasy Football Points Predictor.
 
-All predictions come from position-specific models (QB, RB, WR, TE).
+All predictions come from position-specific models (QB, RB, WR, TE, K, DST).
 No general cross-position model is used.
 """
 import sys

@@ -1,5 +1,6 @@
 import pandas as pd
 from K.k_config import K_MIN_GAMES
+from src.config import CACHE_DIR, SEASONS
 
 
 def load_kicker_data() -> pd.DataFrame:
@@ -8,8 +9,8 @@ def load_kicker_data() -> pd.DataFrame:
     Kicker FG/PAT data is only available for 2025 in the nflverse weekly stats.
     Earlier seasons only have offensive stats for kickers (trick plays).
     """
-    weekly = pd.read_parquet("data/raw/weekly_2018_2025.parquet")
-    schedules = pd.read_parquet("data/raw/schedules_2018_2025.parquet")
+    weekly = pd.read_parquet(f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet")
+    schedules = pd.read_parquet(f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
 
     # Filter to K position with actual kicking data, regular season only
     k_df = weekly[

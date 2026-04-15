@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from src.config import CACHE_DIR, SEASONS
 
 
 def build_dst_data() -> pd.DataFrame:
@@ -14,8 +15,8 @@ def build_dst_data() -> pd.DataFrame:
       - Safeties: from individual defensive player stats (partial; fill 0)
       - Special teams TDs: from player stats per team (mostly complete)
     """
-    weekly = pd.read_parquet("data/raw/weekly_2018_2025.parquet")
-    schedules = pd.read_parquet("data/raw/schedules_2018_2025.parquet")
+    weekly = pd.read_parquet(f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet")
+    schedules = pd.read_parquet(f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
 
     # --- 1. Points allowed from schedule scores ---
