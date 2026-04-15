@@ -3,6 +3,7 @@ import numpy as np
 from src.config import (
     ROLLING_WINDOWS, ROLL_STATS, ROLL_AGGS, EWMA_STATS, EWMA_SPANS,
     TREND_STATS, SHARE_WINDOWS, OPP_ROLLING_WINDOW,
+    CACHE_DIR, SEASONS,
 )
 
 
@@ -135,6 +136,9 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     # --- Matchup / Opponent Features (4) ---
     df = _build_matchup_features(df)
 
+    # --- Defense Matchup Features (7) ---
+    df = _build_defense_matchup_features(df)
+
     # --- Contextual Features (4) ---
     df = _build_contextual_features(df)
 
@@ -201,6 +205,106 @@ def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Build detailed opposing-defense features from team-level aggregations.
+
+    Computes 5 rolling defense stats (sacks, pass yds/TDs allowed, INTs, rush yds allowed),
+    1 schedule-derived stat (points allowed), and 1 Vegas feature (implied team total).
+    """
+    # --- 1. Defense stats derived from opponent offensive data ---
+    if "opponent_team" not in df.columns or df["opponent_team"].isna().all():
+        for col in [
+            "opp_def_sacks_L5", "opp_def_pass_yds_allowed_L5",
+            "opp_def_pass_td_allowed_L5", "opp_def_ints_L5",
+            "opp_def_rush_yds_allowed_L5", "opp_def_pts_allowed_L5",
+            "implied_team_total",
+        ]:
+            df[col] = 0.0
+        return df
+
+    # Aggregate offensive stats allowed by each defense per game
+    def_stats = df.groupby(["opponent_team", "season", "week"]).agg(
+        _def_sacks=("sacks", "sum"),
+        _def_pass_yds=("passing_yards", "sum"),
+        _def_pass_tds=("passing_tds", "sum"),
+        _def_ints=("interceptions", "sum"),
+        _def_rush_yds=("rushing_yards", "sum"),
+    ).reset_index()
+
+    def_stats.sort_values(["opponent_team", "season", "week"], inplace=True)
+
+    # L5 rolling averages with shift(1) for leakage prevention
+    stat_map = {
+        "_def_sacks": "opp_def_sacks_L5",
+        "_def_pass_yds": "opp_def_pass_yds_allowed_L5",
+        "_def_pass_tds": "opp_def_pass_td_allowed_L5",
+        "_def_ints": "opp_def_ints_L5",
+        "_def_rush_yds": "opp_def_rush_yds_allowed_L5",
+    }
+    for raw_col, out_col in stat_map.items():
+        def_stats[out_col] = def_stats.groupby(
+            ["opponent_team", "season"]
+        )[raw_col].transform(
+            lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
+        )
+
+    # Merge onto player rows via opponent_team
+    merge_cols = ["opponent_team", "season", "week"] + list(stat_map.values())
+    def_merge = def_stats[merge_cols].drop_duplicates()
+    df = df.merge(def_merge, on=["opponent_team", "season", "week"], how="left")
+
+    # --- 2. Points allowed from schedule scores ---
+    schedules = pd.read_parquet(f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
+    schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
+
+    away_pts = schedules_reg[["season", "week", "away_team", "home_score"]].copy()
+    away_pts.columns = ["season", "week", "team", "points_allowed"]
+    home_pts = schedules_reg[["season", "week", "home_team", "away_score"]].copy()
+    home_pts.columns = ["season", "week", "team", "points_allowed"]
+    pts_allowed = pd.concat([away_pts, home_pts], ignore_index=True)
+    pts_allowed.sort_values(["team", "season", "week"], inplace=True)
+
+    pts_allowed["opp_def_pts_allowed_L5"] = pts_allowed.groupby(
+        ["team", "season"]
+    )["points_allowed"].transform(
+        lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
+    )
+
+    pts_merge = pts_allowed[["team", "season", "week", "opp_def_pts_allowed_L5"]].drop_duplicates()
+    df = df.merge(
+        pts_merge,
+        left_on=["opponent_team", "season", "week"],
+        right_on=["team", "season", "week"],
+        how="left",
+    )
+    df.drop(columns=["team"], errors="ignore", inplace=True)
+
+    # --- 3. Implied team total from Vegas lines ---
+    home_impl = schedules_reg[["season", "week", "home_team", "spread_line", "total_line"]].copy()
+    home_impl["implied_team_total"] = (home_impl["total_line"] - home_impl["spread_line"]) / 2
+    home_impl = home_impl[["season", "week", "home_team", "implied_team_total"]]
+    home_impl.columns = ["season", "week", "recent_team", "implied_team_total"]
+
+    away_impl = schedules_reg[["season", "week", "away_team", "spread_line", "total_line"]].copy()
+    away_impl["implied_team_total"] = (away_impl["total_line"] + away_impl["spread_line"]) / 2
+    away_impl = away_impl[["season", "week", "away_team", "implied_team_total"]]
+    away_impl.columns = ["season", "week", "recent_team", "implied_team_total"]
+
+    impl_lookup = pd.concat([home_impl, away_impl], ignore_index=True).drop_duplicates(
+        subset=["season", "week", "recent_team"]
+    )
+
+    if "implied_team_total" in df.columns:
+        df.drop(columns=["implied_team_total"], inplace=True)
+    df = df.merge(impl_lookup, on=["season", "week", "recent_team"], how="left")
+
+    # Fill NaNs (early-season games with no prior history)
+    for col in list(stat_map.values()) + ["opp_def_pts_allowed_L5", "implied_team_total"]:
+        df[col] = df[col].fillna(0)
+
+    return df
+
+
 def _build_contextual_features(df: pd.DataFrame) -> pd.DataFrame:
     """Build contextual features: is_home, week, is_returning_from_absence, days_rest."""
     # is_home (default 0 if can't determine)
@@ -260,6 +364,14 @@ def get_feature_columns() -> list[str]:
     cols += [
         "opp_fantasy_pts_allowed_to_pos", "opp_rush_pts_allowed_to_pos",
         "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos",
+    ]
+
+    # Defense matchup (detailed) — Vegas implied_team_total excluded;
+    # it belongs in the Weather NN feature set only (weather_features.py).
+    cols += [
+        "opp_def_sacks_L5", "opp_def_pass_yds_allowed_L5",
+        "opp_def_pass_td_allowed_L5", "opp_def_ints_L5",
+        "opp_def_rush_yds_allowed_L5", "opp_def_pts_allowed_L5",
     ]
 
     # Contextual

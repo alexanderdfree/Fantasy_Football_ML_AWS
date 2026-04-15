@@ -47,17 +47,23 @@ Older fixed issues are kept for reference — they show patterns worth watching 
 
 ## Open — Moderate Issues
 
-### [MODERATE] Predictions are always PPR but API serves multiple scoring formats
-- **File:** `app.py:468-472, 476`
+### [FIXED] Predictions are always PPR but API serves multiple scoring formats
+- **File:** `app.py:505-561`
 - **What:** `/api/predictions` accepts a `scoring` param (standard, half_ppr, ppr). It selects the correct *actual* column, but `ridge_pred` and `nn_pred` are always trained on PPR targets. When a user selects "standard" scoring, actuals change but predictions don't — the comparison is apples-to-oranges.
-- **Fix:** Either train separate models per format, or clearly label predictions as "PPR" regardless of the scoring toggle.
-- **Impact:** Misleading accuracy display in the UI when scoring != ppr.
+- **Fix:** Added `scoring_note` field to API response when scoring != ppr. UI already displays a "PPR Scoring" badge and has no scoring selector, so users aren't misled. Training separate models per format is out of scope.
+- **Impact:** API consumers now get a clear warning.
 
-### [MODERATE] K features use cross-season rolling windows
+### [ACKNOWLEDGED] K features use cross-season rolling windows
 - **File:** `K/k_features.py:25`
-- **What:** Kicker features group by `["player_id"]` only (no season reset), so rolling windows span across seasons. A kicker's late-season 2024 stats influence early-2025 predictions. Comment says "kickers have stable multi-year careers" — plausible but undocumented and untested.
-- **Risk:** If a kicker changes teams or role between seasons, stale cross-season features could mislead the model. All other positions reset per-season.
-- **Impact:** Probably small for kickers, but worth validating.
+- **What:** Kicker features group by `["player_id"]` only (no season reset), so rolling windows span across seasons. A kicker's late-season 2024 stats influence early-2025 predictions.
+- **Rationale:** Kickers have stable multi-year careers and small per-season sample sizes (~17 games), so cross-season windows provide more signal. Comment expanded with this rationale.
+- **Risk:** If a kicker changes teams or role between seasons, stale cross-season features could mislead the model. Likely small impact.
+
+### [FIXED] RB test fixture missing `receiving_epa` and `receiving_air_yards` columns
+- **File:** `RB/tests/test_rb_features.py:10-52`
+- **What:** `_make_player_games()` fixture didn't include `receiving_epa` or `receiving_air_yards` columns added with features 10-11. The feature list `RB_FEATURE_COLS` also had stale names (`first_down_rate_L3` instead of split `rushing_first_down_rate_L3` / `receiving_first_down_rate_L3`). 11 tests failed with `KeyError: 'receiving_epa'`.
+- **Fix:** Added missing columns to the fixture and updated `RB_FEATURE_COLS` to match the current 11 features in `rb_config.py`.
+- **Lesson:** When adding new features to `*_features.py`, update the corresponding test fixture and expected feature list.
 
 ### [FIXED] DST prior-season feature alignment used `.values`
 - **File:** `DST/dst_features.py:74-86`
@@ -68,15 +74,15 @@ Older fixed issues are kept for reference — they show patterns worth watching 
 
 ## Open — Low / Uncertain Issues
 
-### [LOW] Feature column filtering could silently drop features at inference
-- **File:** `app.py:306`
-- **What:** `feature_cols = [c for c in feature_cols if c in pos_train.columns]` filters to available columns. If a feature from training is missing, the model gets fewer features than expected → dimension mismatch → crash. The crash would happen, but the error message won't identify which feature is missing.
-- **Risk:** Only triggers if data loading changes. Low probability but hard to debug.
+### [FIXED] Feature column filtering could silently drop features at inference
+- **File:** `app.py:308-311`
+- **What:** `feature_cols = [c for c in feature_cols if c in pos_train.columns]` filters to available columns. If a feature from training is missing, the model gets fewer features than expected → dimension mismatch → crash. The crash would happen, but the error message wouldn't identify which feature is missing.
+- **Fix:** Added count comparison and warning log when columns are dropped.
 
-### [LOW] No API error handling
-- **Files:** `app.py:449-572`
-- **What:** All API routes lack try/except. If `_get_data()` or model loading fails, the user sees a generic 500 with no useful message.
-- **Impact:** Poor UX, hard to debug in production.
+### [FIXED] No API error handling
+- **Files:** `app.py:85-90`
+- **What:** All API routes lacked try/except. If `_get_data()` or model loading failed, the user saw a generic 500 with no useful message.
+- **Fix:** Added Flask `@app.errorhandler(Exception)` that returns JSON `{"error": ...}` for `/api/` routes. Logs full traceback to console.
 
 ### [LOW] `_cache` dict grows without eviction
 - **File:** `app.py:359`

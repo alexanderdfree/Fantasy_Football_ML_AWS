@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import matplotlib
 matplotlib.use("Agg")
 
+import traceback
 from flask import Flask, render_template, jsonify, request
 import pandas as pd
 import numpy as np
@@ -80,6 +81,16 @@ from DST.dst_config import (
 app = Flask(__name__)
 
 _cache = {}
+
+
+@app.errorhandler(Exception)
+def handle_api_error(e):
+    """Return JSON errors for /api/ routes, default HTML for others."""
+    if request.path.startswith("/api/"):
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    raise e
+
 
 # ---------------------------------------------------------------------------
 # Position registry — replaces per-position if/elif chains
@@ -305,7 +316,11 @@ def _apply_position_models(train, val, test, pos, results):
     adj = reg["compute_adjustment_fn"](pos_test)
 
     # Prepare features
+    expected_count = len(feature_cols)
     feature_cols = [c for c in feature_cols if c in pos_train.columns]
+    if len(feature_cols) < expected_count:
+        missing = expected_count - len(feature_cols)
+        print(f"  WARNING: {pos} dropped {missing} feature cols not found in data")
     for df in [pos_train, pos_val, pos_test]:
         df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
@@ -547,7 +562,14 @@ def api_predictions():
     else:
         rows.sort(key=lambda x: x.get("actual", 0), reverse=reverse)
 
-    return jsonify({"players": rows, "total": len(rows)})
+    scoring_note = None
+    if scoring != "ppr":
+        scoring_note = "Predictions are PPR-trained; actuals reflect selected scoring format"
+
+    resp = {"players": rows, "total": len(rows)}
+    if scoring_note:
+        resp["scoring_note"] = scoring_note
+    return jsonify(resp)
 
 
 @app.route("/api/metrics")

@@ -120,6 +120,57 @@ def build_dst_data() -> pd.DataFrame:
     ).reset_index()
     team_sacks_allowed.columns = ["team", "season", "week", "team_sacks_allowed"]
 
+    # 7d. Opposing QB quality — isolate quarterback-level signal from team noise.
+    #     EPA captures efficiency, INT/sack rates predict D/ST scoring components
+    #     directly, and rush yards flag mobile QBs who suppress sack production.
+    qb_weekly = weekly_copy[weekly_copy["position"] == "QB"].copy()
+    qb_team = qb_weekly.groupby(["recent_team", "season", "week"]).agg(
+        qb_passing_epa=("passing_epa", "sum"),
+        qb_interceptions=("interceptions", "sum"),
+        qb_sacks=("sacks", "sum"),
+        qb_pass_attempts=("attempts", "sum"),
+        qb_rush_yards=("rushing_yards", "sum"),
+    ).reset_index()
+    qb_team.columns = [
+        "team", "season", "week",
+        "qb_passing_epa", "qb_interceptions", "qb_sacks",
+        "qb_pass_attempts", "qb_rush_yards",
+    ]
+    # Per-game rates before rolling — each game weighted equally
+    qb_team["qb_int_rate"] = np.where(
+        qb_team["qb_pass_attempts"] > 0,
+        qb_team["qb_interceptions"] / qb_team["qb_pass_attempts"],
+        0,
+    )
+    qb_team["qb_sack_rate"] = np.where(
+        (qb_team["qb_pass_attempts"] + qb_team["qb_sacks"]) > 0,
+        qb_team["qb_sacks"] / (qb_team["qb_pass_attempts"] + qb_team["qb_sacks"]),
+        0,
+    )
+
+    # 7d (cont). Lagged rolling windows for opposing QB metrics
+    qb_team_sorted = qb_team.sort_values(["team", "season", "week"])
+    for raw_col, out_col in [
+        ("qb_passing_epa", "qb_epa_L5"),
+        ("qb_int_rate", "qb_int_rate_L5"),
+        ("qb_sack_rate", "qb_sack_rate_L5"),
+        ("qb_rush_yards", "qb_rush_yds_L5"),
+    ]:
+        qb_team_sorted[out_col] = qb_team_sorted.groupby(
+            ["team", "season"]
+        )[raw_col].transform(
+            lambda x: x.shift(1).rolling(5, min_periods=1).mean()
+        )
+    opp_qb = qb_team_sorted[
+        ["team", "season", "week", "qb_epa_L5", "qb_int_rate_L5",
+         "qb_sack_rate_L5", "qb_rush_yds_L5"]
+    ].copy()
+    opp_qb.columns = [
+        "opponent_team", "season", "week",
+        "opp_qb_epa_L5", "opp_qb_int_rate_L5",
+        "opp_qb_sack_rate_L5", "opp_qb_rush_yds_L5",
+    ]
+
     # --- Merge everything into a single team-week DataFrame ---
     dst_df = pts_allowed.copy()
     dst_df = dst_df.merge(context, on=["season", "week", "team"], how="left")
@@ -171,6 +222,9 @@ def build_dst_data() -> pd.DataFrame:
     opp_sa.columns = ["opponent_team", "season", "week", "opp_sacks_allowed_L5"]
     dst_df = dst_df.merge(opp_sa, on=["opponent_team", "season", "week"], how="left")
 
+    # Opposing QB quality features
+    dst_df = dst_df.merge(opp_qb, on=["opponent_team", "season", "week"], how="left")
+
     # Fill missing values
     for col in ["def_sacks", "def_ints", "def_fumble_rec", "def_tds",
                  "def_safeties", "special_teams_tds"]:
@@ -193,6 +247,10 @@ def build_dst_data() -> pd.DataFrame:
     dst_df["opp_sacks_allowed_L5"] = dst_df["opp_sacks_allowed_L5"].fillna(
         dst_df["opp_sacks_allowed_L5"].median()
     )
+    # Opposing QB features: EPA fills with 0 (league-average), rates/yards with median
+    dst_df["opp_qb_epa_L5"] = dst_df["opp_qb_epa_L5"].fillna(0)
+    for col in ["opp_qb_int_rate_L5", "opp_qb_sack_rate_L5", "opp_qb_rush_yds_L5"]:
+        dst_df[col] = dst_df[col].fillna(dst_df[col].median())
 
     # Add pipeline-compatible columns
     dst_df["player_id"] = dst_df["team"]

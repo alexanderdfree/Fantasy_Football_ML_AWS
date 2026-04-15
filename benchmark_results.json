@@ -1,23 +1,23 @@
 [
   {
     "position": "QB",
-    "ridge_mae": 6.333,
-    "ridge_r2": 0.178,
-    "nn_mae": 6.388,
-    "nn_r2": 0.127,
-    "nn_wins_mae": false,
+    "ridge_mae": 6.375,
+    "ridge_r2": 0.302,
+    "nn_mae": 6.206,
+    "nn_r2": 0.291,
+    "nn_wins_mae": true,
     "nn_per_target": {
-      "passing_floor": 2.609,
-      "rushing_floor": 1.161,
-      "td_points": 4.137
+      "passing_floor": 2.632,
+      "rushing_floor": 1.112,
+      "td_points": 3.808
     },
     "ridge_per_target": {
-      "passing_floor": 2.606,
-      "rushing_floor": 1.227,
-      "td_points": 4.192
+      "passing_floor": 2.734,
+      "rushing_floor": 1.184,
+      "td_points": 4.016
     },
-    "ridge_top12": 0.505,
-    "nn_top12": 0.523,
-    "elapsed_sec": 21.0
+    "ridge_top12": 0.481,
+    "nn_top12": 0.509,
+    "elapsed_sec": 27.4
   }
 ]

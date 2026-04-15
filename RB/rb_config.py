@@ -75,13 +75,16 @@ RB_LOSS_WEIGHTS = {
     "receiving_floor": 1.0,
     "td_points": 2.0,
 }
-RB_LOSS_W_TOTAL = 0.4
+RB_LOSS_W_TOTAL = 0.25
 
 # === Huber Deltas (per-target) ===
+# Widened from 1.0/1.5/2.0 — tight deltas caused flat gradient plateau,
+# encouraging mean-clustering. Wider deltas keep quadratic (MSE-like) gradient
+# signal for errors up to 2-3 pts, only switching to robust linear for outliers.
 RB_HUBER_DELTAS = {
-    "rushing_floor": 1.0,
-    "receiving_floor": 1.5,
-    "td_points": 2.0,
+    "rushing_floor": 2.0,
+    "receiving_floor": 2.5,
+    "td_points": 3.0,
 }
 
 # === LR Scheduler ===

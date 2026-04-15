@@ -27,7 +27,7 @@ DST_SPECIFIC_FEATURES = [
     "dst_scoring_std_L3",    # Base scoring consistency
 ]
 
-# Contextual / matchup features (13 features)
+# Contextual / matchup features (17 features)
 DST_CONTEXTUAL_FEATURES = [
     "is_home",
     "week",
@@ -37,6 +37,11 @@ DST_CONTEXTUAL_FEATURES = [
     "opp_scoring_L5",
     "opp_turnovers_L5",     # Opponent turnover proneness
     "opp_sacks_allowed_L5", # Opponent OL sack vulnerability
+    # Opposing QB quality (isolates QB signal from team-level noise)
+    "opp_qb_epa_L5",        # QB efficiency — low EPA → struggling offense
+    "opp_qb_int_rate_L5",   # QB interception tendency — predicts def_ints component
+    "opp_qb_sack_rate_L5",  # QB pocket vulnerability — complements OL signal
+    "opp_qb_rush_yds_L5",   # QB mobility — mobile QBs suppress sack production
     "rest_days",             # Days since last game (short rest = worse D)
     "div_game",              # Divisional games — different scoring patterns
     "is_dome",               # Dome games — weather-controlled
@@ -57,8 +62,8 @@ DST_RIDGE_ALPHA_GRIDS = {
     "pts_allowed_bonus": [round(x, 4) for x in np.logspace(-1, 3.5, 20)],
 }
 
-# === Neural Net (30 features, 2012-2025 dataset) ===
-DST_NN_BACKBONE_LAYERS = [128, 64]   # Wider backbone for 30 features
+# === Neural Net (34 features, 2012-2025 dataset) ===
+DST_NN_BACKBONE_LAYERS = [128, 64]   # Wider backbone for 34 features
 DST_NN_HEAD_HIDDEN = 32
 DST_NN_HEAD_HIDDEN_OVERRIDES = {
     "td_points": 16,             # ST-only target is simpler (mostly 0), smaller head

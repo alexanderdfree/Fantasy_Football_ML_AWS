@@ -22,7 +22,10 @@ def compute_k_features(df: pd.DataFrame) -> None:
         df["fg_points"] + df["pat_points"] + df["miss_penalty"]
     )
 
-    grp = ["player_id"]  # cross-season: kickers have stable multi-year careers
+    # Cross-season grouping (no season reset): kickers have stable multi-year
+    # careers and small sample sizes per season, so cross-season windows provide
+    # more signal than single-season windows. All other positions reset per-season.
+    grp = ["player_id"]
 
     # --- Feature 1: fg_attempts_L3 ---
     df["fg_attempts_L3"] = df.groupby(grp)["fg_att"].transform(

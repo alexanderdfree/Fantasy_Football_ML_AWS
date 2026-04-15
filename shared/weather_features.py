@@ -101,8 +101,12 @@ def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         The same DataFrame with 12 new columns added.
     """
-    if "implied_team_total" in df.columns:
+    if "implied_team_total" in df.columns and df["implied_team_total"].abs().sum() > 0:
         return df
+    # Drop any zero-filled placeholders so the merge produces real values
+    for col in WEATHER_FEATURES_ALL:
+        if col in df.columns:
+            df.drop(columns=[col], inplace=True)
 
     schedules = _load_schedules()
     lookup = _build_team_schedule_lookup(schedules)

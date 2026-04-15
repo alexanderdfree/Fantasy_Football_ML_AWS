@@ -20,6 +20,8 @@ def _make_player_games(
     rushing_first_downs=2,
     receiving_first_downs=1,
     receiving_yards_after_catch=15,
+    receiving_epa=1.5,
+    receiving_air_yards=20,
     recent_team="KC",
 ):
     """Create a multi-week DataFrame for one player."""
@@ -36,6 +38,8 @@ def _make_player_games(
         "rushing_first_downs": [rushing_first_downs] * n_weeks,
         "receiving_first_downs": [receiving_first_downs] * n_weeks,
         "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
+        "receiving_epa": [receiving_epa] * n_weeks,
+        "receiving_air_yards": [receiving_air_yards] * n_weeks,
         "recent_team": [recent_team] * n_weeks,
     })
 
@@ -47,8 +51,11 @@ RB_FEATURE_COLS = [
     "team_rb_carry_share_L3",
     "team_rb_target_share_L3",
     "rushing_epa_per_attempt_L3",
-    "first_down_rate_L3",
+    "rushing_first_down_rate_L3",
+    "receiving_first_down_rate_L3",
     "yac_per_reception_L3",
+    "receiving_epa_per_target_L3",
+    "air_yards_per_target_L3",
 ]
 
 
