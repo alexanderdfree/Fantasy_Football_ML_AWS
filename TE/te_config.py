@@ -89,8 +89,11 @@ TE_ONECYCLE_PCT_START = 0.3
 # === Attention NN (game history variant) ===
 TE_TRAIN_ATTENTION_NN = True
 TE_ATTN_D_MODEL = 32
-TE_ATTN_N_HEADS = 2
+TE_ATTN_N_HEADS = 4
+TE_ATTN_ENCODER_HIDDEN_DIM = 48
 TE_ATTN_MAX_SEQ_LEN = 17
+TE_ATTN_POSITIONAL_ENCODING = True
+TE_ATTN_DROPOUT = 0.08
 TE_ATTN_HISTORY_STATS = [
     "fantasy_points", "fantasy_points_floor",
     "receiving_yards", "rushing_yards",

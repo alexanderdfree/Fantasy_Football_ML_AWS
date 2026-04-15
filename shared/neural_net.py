@@ -212,6 +212,7 @@ class MultiHeadNetWithHistory(nn.Module):
         max_seq_len: int = 17,
         use_gated_fusion: bool = False,
         attn_dropout: float = 0.0,
+        encoder_hidden_dim: int = 0,
     ):
         super().__init__()
         self.target_names = target_names
@@ -221,10 +222,19 @@ class MultiHeadNetWithHistory(nn.Module):
         self.d_model = d_model
 
         # === Game History Branch ===
-        self.game_encoder = nn.Sequential(
-            nn.Linear(game_dim, d_model),
-            nn.ReLU(),
-        )
+        if encoder_hidden_dim > 0:
+            self.game_encoder = nn.Sequential(
+                nn.Linear(game_dim, encoder_hidden_dim),
+                nn.ReLU(),
+                nn.LayerNorm(encoder_hidden_dim),
+                nn.Linear(encoder_hidden_dim, d_model),
+                nn.ReLU(),
+            )
+        else:
+            self.game_encoder = nn.Sequential(
+                nn.Linear(game_dim, d_model),
+                nn.ReLU(),
+            )
 
         # Positional encoding: gives the model temporal ordering signal
         # so it can distinguish recent games from older ones.

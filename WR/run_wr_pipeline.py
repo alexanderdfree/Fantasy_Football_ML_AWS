@@ -12,7 +12,9 @@ from WR.wr_config import (
     WR_LOSS_WEIGHTS, WR_LOSS_W_TOTAL, WR_HUBER_DELTAS,
     WR_SCHEDULER_TYPE, WR_COSINE_T0, WR_COSINE_T_MULT, WR_COSINE_ETA_MIN,
     WR_TRAIN_ATTENTION_NN, WR_ATTN_D_MODEL, WR_ATTN_N_HEADS,
-    WR_ATTN_MAX_SEQ_LEN, WR_ATTN_HISTORY_STATS,
+    WR_ATTN_ENCODER_HIDDEN_DIM, WR_ATTN_MAX_SEQ_LEN,
+    WR_ATTN_POSITIONAL_ENCODING, WR_ATTN_DROPOUT,
+    WR_ATTN_HISTORY_STATS,
 )
 from WR.wr_data import filter_to_wr
 from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
@@ -50,6 +52,9 @@ WR_CONFIG = {
     "attn_d_model": WR_ATTN_D_MODEL,
     "attn_n_heads": WR_ATTN_N_HEADS,
     "attn_max_seq_len": WR_ATTN_MAX_SEQ_LEN,
+    "attn_encoder_hidden_dim": WR_ATTN_ENCODER_HIDDEN_DIM,
+    "attn_positional_encoding": WR_ATTN_POSITIONAL_ENCODING,
+    "attn_dropout": WR_ATTN_DROPOUT,
     "attn_history_stats": WR_ATTN_HISTORY_STATS,
 }
 

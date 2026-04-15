@@ -100,7 +100,8 @@ RB_COSINE_ETA_MIN = 1e-5
 RB_TRAIN_ATTENTION_NN = True
 # Keep d_model=32 (proven baseline) and n_heads=2 (larger values overfit on 15K samples).
 RB_ATTN_D_MODEL = 32
-RB_ATTN_N_HEADS = 2
+RB_ATTN_N_HEADS = 4
+RB_ATTN_ENCODER_HIDDEN_DIM = 48
 RB_ATTN_MAX_SEQ_LEN = 17
 # K/V projections disabled — at d_model=32 the 2K extra params hurt optimization
 # more than they help (tested: 4.330 MAE with vs 4.228 without).
@@ -110,7 +111,7 @@ RB_ATTN_PROJECT_KV = False
 RB_ATTN_POSITIONAL_ENCODING = True
 RB_ATTN_GATED_FUSION = False
 # Very light attention dropout for regularization.
-RB_ATTN_DROPOUT = 0.05
+RB_ATTN_DROPOUT = 0.08
 # Standard training params match the base NN.
 RB_ATTN_LR = 1e-3
 RB_ATTN_WEIGHT_DECAY = 5e-5

@@ -334,6 +334,7 @@ def _train_attention_nn(X_train, X_val, X_test,
         max_seq_len=cfg.get("attn_max_seq_len", 17),
         use_gated_fusion=cfg.get("attn_gated_fusion", False),
         attn_dropout=cfg.get("attn_dropout", 0.0),
+        encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
     ).to(device)
 
     attn_lr = cfg.get("attn_lr", cfg["nn_lr"])
@@ -502,15 +503,6 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         history_stats = cfg.get("attn_history_stats", None)
         max_seq_len = cfg.get("attn_max_seq_len", 17)
 
-        # Static features for attention NN: drop rolling/EWMA/trend/share
-        # features that are collinear with the attention's learned history.
-        attn_feature_cols = get_attn_static_columns(feature_cols)
-        X_train_attn = pos_train[attn_feature_cols].values.astype(np.float32)
-        X_val_attn = pos_val[attn_feature_cols].values.astype(np.float32)
-        X_test_attn = pos_test[attn_feature_cols].values.astype(np.float32)
-        print(f"  Attn static features: {X_train_attn.shape[1]} "
-              f"(dropped {X_train.shape[1] - X_train_attn.shape[1]} temporal)")
-
         hist_train, mask_train = build_game_history_arrays(
             pos_train, history_stats=history_stats, max_seq_len=max_seq_len)
         hist_val, mask_val = build_game_history_arrays(
@@ -521,7 +513,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
         attn_model, attn_nn_scaler, attn_nn_val_preds, attn_nn_test_preds, attn_nn_metrics, attn_history = (
             _train_attention_nn(
-                X_train_attn, X_val_attn, X_test_attn,
+                X_train, X_val, X_test,
                 hist_train, mask_train, hist_val, mask_val,
                 hist_test, mask_test,
                 y_train_dict, y_val_dict, y_test_dict,

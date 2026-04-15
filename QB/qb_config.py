@@ -99,10 +99,12 @@ QB_ONECYCLE_PCT_START = 0.3
 # === Attention NN (game history variant) ===
 QB_TRAIN_ATTENTION_NN = True
 QB_ATTN_D_MODEL = 32        # projection dim for each game vector
-QB_ATTN_N_HEADS = 2          # number of learned query vectors
-QB_ATTN_MAX_SEQ_LEN = 17    # max games of history (full regular season)
-# Per-game stats fed to the attention branch (raw stats before rolling aggregation).
-# These are the same stats the rolling features are derived from.
+QB_ATTN_N_HEADS = 4
+QB_ATTN_ENCODER_HIDDEN_DIM = 48
+QB_ATTN_MAX_SEQ_LEN = 17
+QB_ATTN_POSITIONAL_ENCODING = True
+QB_ATTN_DROPOUT = 0.10
+QB_ATTN_PATIENCE = 35
 QB_ATTN_HISTORY_STATS = [
     "fantasy_points", "fantasy_points_floor",
     "passing_yards", "rushing_yards",

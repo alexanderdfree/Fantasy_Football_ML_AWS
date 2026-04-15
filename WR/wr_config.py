@@ -56,7 +56,7 @@ WR_RIDGE_ALPHA_GRIDS = {
 # === Neural Net ===
 # 2012+ dataset: widened from [96] to [128] to exploit largest training set.
 # Largest position dataset can support more capacity with less overfitting risk.
-WR_NN_BACKBONE_LAYERS = [128]
+WR_NN_BACKBONE_LAYERS = [128, 64]
 WR_NN_HEAD_HIDDEN = 32
 WR_NN_DROPOUT = 0.20
 WR_NN_LR = 1e-3
@@ -91,8 +91,11 @@ WR_COSINE_ETA_MIN = 1e-5
 # === Attention NN (game history variant) ===
 WR_TRAIN_ATTENTION_NN = True
 WR_ATTN_D_MODEL = 32
-WR_ATTN_N_HEADS = 2
+WR_ATTN_N_HEADS = 4
+WR_ATTN_ENCODER_HIDDEN_DIM = 48
 WR_ATTN_MAX_SEQ_LEN = 17
+WR_ATTN_POSITIONAL_ENCODING = True
+WR_ATTN_DROPOUT = 0.08
 WR_ATTN_HISTORY_STATS = [
     "fantasy_points", "fantasy_points_floor",
     "receiving_yards", "rushing_yards",

@@ -1,129 +1,15 @@
 [
   {
-    "position": "RB",
-    "ridge_mae": 4.424,
-    "ridge_r2": 0.431,
-    "nn_mae": 4.275,
-    "nn_r2": 0.38,
-    "nn_wins_mae": true,
-    "nn_per_target": {
-      "rushing_floor": 1.865,
-      "receiving_floor": 1.818,
-      "td_points": 2.02
-    },
-    "ridge_per_target": {
-      "rushing_floor": 1.917,
-      "receiving_floor": 1.919,
-      "td_points": 2.259
-    },
-    "ridge_top12": 0.44,
-    "nn_top12": 0.444,
-    "attn_nn_mae": 4.315,
-    "attn_nn_r2": 0.346,
-    "attn_nn_per_target": {
-      "rushing_floor": 1.842,
-      "receiving_floor": 1.837,
-      "td_points": 2.057
-    },
-    "attn_nn_top12": 0.435,
-    "ensemble_mae": 4.293,
-    "ensemble_r2": 0.358,
-    "ensemble_per_target": {
-      "rushing_floor": 1.838,
-      "receiving_floor": 1.828,
-      "td_points": 2.02
-    },
-    "ensemble_top12": 0.435,
-    "ensemble_weights": {
-      "rushing_floor": {
-        "Ridge": 0.04325110016688309,
-        "NN": 0.1756325528419673,
-        "Weather": 0.32792558491864593,
-        "Attn": 0.45319076207250375
-      },
-      "receiving_floor": {
-        "Ridge": 0.0,
-        "NN": 0.15690305432137586,
-        "Weather": 0.16798547755361945,
-        "Attn": 0.6751114681250048
-      },
-      "td_points": {
-        "Ridge": 0.0,
-        "NN": 1.0,
-        "Weather": 0.0,
-        "Attn": 5.551115109942592e-16
-      }
-    },
-    "elapsed_sec": 55.3
-  },
-  {
-    "position": "QB",
-    "ridge_mae": 6.545,
-    "ridge_r2": 0.242,
-    "nn_mae": 6.663,
-    "nn_r2": 0.154,
-    "nn_wins_mae": false,
-    "nn_per_target": {
-      "passing_floor": 2.881,
-      "rushing_floor": 1.134,
-      "td_points": 3.88
-    },
-    "ridge_per_target": {
-      "passing_floor": 2.819,
-      "rushing_floor": 1.114,
-      "td_points": 3.997
-    },
-    "ridge_top12": 0.481,
-    "nn_top12": 0.505,
-    "attn_nn_mae": 6.714,
-    "attn_nn_r2": 0.139,
-    "attn_nn_per_target": {
-      "passing_floor": 2.965,
-      "rushing_floor": 1.144,
-      "td_points": 3.92
-    },
-    "attn_nn_top12": 0.463,
-    "ensemble_mae": 6.601,
-    "ensemble_r2": 0.18,
-    "ensemble_per_target": {
-      "passing_floor": 2.85,
-      "rushing_floor": 1.098,
-      "td_points": 3.884
-    },
-    "ensemble_top12": 0.5,
-    "ensemble_weights": {
-      "passing_floor": {
-        "Ridge": 0.3081579563018129,
-        "NN": 1.8932872141016444e-18,
-        "Weather": 0.2719869542690406,
-        "Attn": 0.4198550894291464
-      },
-      "rushing_floor": {
-        "Ridge": 0.2973108688303453,
-        "NN": 0.2493105625987651,
-        "Weather": 0.38257107442194205,
-        "Attn": 0.0708074941489476
-      },
-      "td_points": {
-        "Ridge": 7.345559541183903e-17,
-        "NN": 8.914042477808201e-20,
-        "Weather": 0.4449055723318749,
-        "Attn": 0.5550944276681252
-      }
-    },
-    "elapsed_sec": 44.4
-  },
-  {
     "position": "WR",
     "ridge_mae": 4.507,
     "ridge_r2": 0.341,
-    "nn_mae": 4.175,
-    "nn_r2": 0.327,
+    "nn_mae": 4.17,
+    "nn_r2": 0.34,
     "nn_wins_mae": true,
     "nn_per_target": {
-      "receiving_floor": 3.208,
-      "rushing_floor": 0.113,
-      "td_points": 1.408
+      "receiving_floor": 3.201,
+      "rushing_floor": 0.144,
+      "td_points": 1.403
     },
     "ridge_per_target": {
       "receiving_floor": 3.405,
@@ -131,43 +17,43 @@
       "td_points": 1.826
     },
     "ridge_top12": 0.352,
-    "nn_top12": 0.352,
-    "attn_nn_mae": 4.223,
-    "attn_nn_r2": 0.341,
+    "nn_top12": 0.375,
+    "attn_nn_mae": 4.129,
+    "attn_nn_r2": 0.338,
     "attn_nn_per_target": {
-      "receiving_floor": 3.262,
-      "rushing_floor": 0.142,
-      "td_points": 1.446
+      "receiving_floor": 3.181,
+      "rushing_floor": 0.127,
+      "td_points": 1.396
     },
-    "attn_nn_top12": 0.319,
-    "ensemble_mae": 4.159,
-    "ensemble_r2": 0.331,
+    "attn_nn_top12": 0.361,
+    "ensemble_mae": 4.138,
+    "ensemble_r2": 0.338,
     "ensemble_per_target": {
-      "receiving_floor": 3.192,
-      "rushing_floor": 0.113,
-      "td_points": 1.408
+      "receiving_floor": 3.18,
+      "rushing_floor": 0.128,
+      "td_points": 1.403
     },
-    "ensemble_top12": 0.338,
+    "ensemble_top12": 0.343,
     "ensemble_weights": {
       "receiving_floor": {
-        "Ridge": 1.8735891217355445e-17,
-        "NN": 1.425917384683689e-17,
-        "Weather": 0.7330294995081729,
-        "Attn": 0.2669705004918272
+        "Ridge": 0.01840990790402156,
+        "NN": 0.009820528567073432,
+        "Weather": 0.3867658183756842,
+        "Attn": 0.5850037451532207
       },
       "rushing_floor": {
         "Ridge": 0.0,
-        "NN": 1.0,
-        "Weather": 1.5265566588595902e-16,
-        "Attn": 1.0408340855860843e-17
+        "NN": 2.0816681711721685e-17,
+        "Weather": 1.0,
+        "Attn": 0.0
       },
       "td_points": {
-        "Ridge": 1.482270560887291e-15,
-        "NN": 0.9999999999999984,
+        "Ridge": 0.0,
+        "NN": 0.9999999999999953,
         "Weather": 0.0,
-        "Attn": 1.6479873021779667e-16
+        "Attn": 7.716050021144838e-15
       }
     },
-    "elapsed_sec": 97.2
+    "elapsed_sec": 66.5
   }
 ]
