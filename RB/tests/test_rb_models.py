@@ -110,3 +110,45 @@ class TestRidgeMultiTarget:
         model.fit(X, y_dict)
         preds = model.predict(X)
         assert np.allclose(preds["td_points"], 0.0, atol=1.0)
+
+    def test_per_target_alpha_construction(self, simple_data):
+        """Per-target alphas produce different results than uniform alpha."""
+        X, y_dict = simple_data
+        alpha_dict = {"rushing_floor": 0.01, "receiving_floor": 1.0, "td_points": 100.0}
+        m_per = RidgeMultiTarget(target_names=RB_TARGETS, alpha=alpha_dict)
+        m_uniform = RidgeMultiTarget(target_names=RB_TARGETS, alpha=1.0)
+        m_per.fit(X, y_dict)
+        m_uniform.fit(X, y_dict)
+        p_per = m_per.predict(X)
+        p_uniform = m_uniform.predict(X)
+        # At least one target should differ
+        any_different = any(
+            not np.allclose(p_per[t], p_uniform[t]) for t in RB_TARGETS
+        )
+        assert any_different
+
+    def test_per_target_alpha_save_load(self, simple_data, tmp_path):
+        """Save/load round-trips correctly with per-target alphas."""
+        X, y_dict = simple_data
+        alpha_dict = {"rushing_floor": 0.1, "receiving_floor": 10.0, "td_points": 500.0}
+        model = RidgeMultiTarget(target_names=RB_TARGETS, alpha=alpha_dict)
+        model.fit(X, y_dict)
+        preds_before = model.predict(X)
+
+        model_dir = str(tmp_path / "per_target_model")
+        model.save(model_dir)
+
+        model2 = RidgeMultiTarget(target_names=RB_TARGETS)
+        model2.load(model_dir)
+        preds_after = model2.predict(X)
+
+        for key in preds_before:
+            np.testing.assert_allclose(preds_before[key], preds_after[key], atol=1e-6)
+
+    def test_alpha_dict_missing_key_raises(self):
+        """Missing target key in alpha dict raises ValueError."""
+        with pytest.raises(ValueError, match="missing keys"):
+            RidgeMultiTarget(
+                target_names=RB_TARGETS,
+                alpha={"rushing_floor": 1.0, "receiving_floor": 1.0},
+            )

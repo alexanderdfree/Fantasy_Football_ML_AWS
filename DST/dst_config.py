@@ -31,7 +31,11 @@ DST_DROP_FEATURES = set()
 
 # === Ridge ===
 import numpy as np
-DST_RIDGE_ALPHAS = [round(x, 4) for x in np.logspace(-1, 3, 13)]
+DST_RIDGE_ALPHA_GRIDS = {
+    "defensive_scoring": [round(x, 4) for x in np.logspace(-1, 3, 15)],
+    "td_points":         [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "pts_allowed_bonus": [round(x, 4) for x in np.logspace(-1, 3, 15)],
+}
 
 # === Neural Net (medium — ~3K training rows, tuned) ===
 DST_NN_BACKBONE_LAYERS = [96, 48]

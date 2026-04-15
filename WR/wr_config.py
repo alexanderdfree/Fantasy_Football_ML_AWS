@@ -32,7 +32,11 @@ WR_DROP_FEATURES |= {"snap_pct", "air_yards_share"}
 
 # === Ridge ===
 import numpy as np
-WR_RIDGE_ALPHAS = [round(x, 4) for x in np.logspace(-2, 3, 13)]
+WR_RIDGE_ALPHA_GRIDS = {
+    "receiving_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "rushing_floor":   [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "td_points":       [round(x, 4) for x in np.logspace(-1, 4, 15)],
+}
 
 # === Neural Net ===
 # Single wide layer outperforms 3-layer funnel: [128,96,48] had 35K params

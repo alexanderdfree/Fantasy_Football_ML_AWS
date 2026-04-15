@@ -36,7 +36,11 @@ QB_DROP_FEATURES |= {"snap_pct"}
 
 # === Ridge ===
 import numpy as np
-QB_RIDGE_ALPHAS = [round(x, 4) for x in np.logspace(-2, 3, 13)]
+QB_RIDGE_ALPHA_GRIDS = {
+    "passing_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "rushing_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "td_points":     [round(x, 4) for x in np.logspace(-1, 4, 15)],
+}
 
 # === Neural Net (smaller architecture — fewer QB rows, more regularization) ===
 QB_NN_BACKBONE_LAYERS = [80, 40]

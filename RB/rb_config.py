@@ -46,7 +46,11 @@ for _stat in ["fantasy_points", "fantasy_points_floor", "targets", "receptions",
 
 # === Ridge ===
 import numpy as np
-RB_RIDGE_ALPHAS = [round(x, 4) for x in np.logspace(-2, 3, 13)]
+RB_RIDGE_ALPHA_GRIDS = {
+    "rushing_floor":   [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "receiving_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "td_points":       [round(x, 4) for x in np.logspace(-1, 4, 15)],
+}
 
 # === Neural Net ===
 # Single wide layer outperforms deep narrow funnels on this data scale.

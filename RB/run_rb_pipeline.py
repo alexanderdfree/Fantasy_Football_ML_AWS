@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from RB.rb_config import (
-    RB_TARGETS, RB_RIDGE_ALPHAS, RB_SPECIFIC_FEATURES,
+    RB_TARGETS, RB_RIDGE_ALPHA_GRIDS, RB_SPECIFIC_FEATURES,
     RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_DROPOUT,
     RB_NN_LR, RB_NN_WEIGHT_DECAY, RB_NN_EPOCHS, RB_NN_BATCH_SIZE,
     RB_NN_PATIENCE,
@@ -15,11 +15,11 @@ from RB.rb_config import (
 from RB.rb_data import filter_to_rb
 from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
 from RB.rb_features import add_rb_specific_features, get_rb_feature_columns, fill_rb_nans
-from shared.pipeline import run_pipeline
+from shared.pipeline import run_pipeline, run_cv_pipeline
 
 RB_CONFIG = {
     "targets": RB_TARGETS,
-    "ridge_alphas": RB_RIDGE_ALPHAS,
+    "ridge_alpha_grids": RB_RIDGE_ALPHA_GRIDS,
     "specific_features": RB_SPECIFIC_FEATURES,
     "filter_fn": filter_to_rb,
     "compute_targets_fn": compute_rb_targets,
@@ -49,5 +49,16 @@ def run_rb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     return run_pipeline("RB", RB_CONFIG, train_df, val_df, test_df, seed)
 
 
+def run_rb_cv_pipeline(full_df=None, test_df=None, seed=42):
+    return run_cv_pipeline("RB", RB_CONFIG, full_df, test_df, seed)
+
+
 if __name__ == "__main__":
-    run_rb_pipeline()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cv", action="store_true", help="Use expanding-window CV")
+    args = parser.parse_args()
+    if args.cv:
+        run_rb_cv_pipeline()
+    else:
+        run_rb_pipeline()

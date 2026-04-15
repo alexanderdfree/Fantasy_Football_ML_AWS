@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from WR.wr_config import (
-    WR_TARGETS, WR_RIDGE_ALPHAS, WR_SPECIFIC_FEATURES,
+    WR_TARGETS, WR_RIDGE_ALPHA_GRIDS, WR_SPECIFIC_FEATURES,
     WR_NN_BACKBONE_LAYERS, WR_NN_HEAD_HIDDEN, WR_NN_DROPOUT,
     WR_NN_LR, WR_NN_WEIGHT_DECAY, WR_NN_EPOCHS, WR_NN_BATCH_SIZE,
     WR_NN_PATIENCE,
@@ -15,11 +15,11 @@ from WR.wr_config import (
 from WR.wr_data import filter_to_wr
 from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
 from WR.wr_features import add_wr_specific_features, get_wr_feature_columns, fill_wr_nans
-from shared.pipeline import run_pipeline
+from shared.pipeline import run_pipeline, run_cv_pipeline
 
 WR_CONFIG = {
     "targets": WR_TARGETS,
-    "ridge_alphas": WR_RIDGE_ALPHAS,
+    "ridge_alpha_grids": WR_RIDGE_ALPHA_GRIDS,
     "specific_features": WR_SPECIFIC_FEATURES,
     "filter_fn": filter_to_wr,
     "compute_targets_fn": compute_wr_targets,
@@ -50,5 +50,16 @@ def run_wr_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     return run_pipeline("WR", WR_CONFIG, train_df, val_df, test_df, seed)
 
 
+def run_wr_cv_pipeline(full_df=None, test_df=None, seed=42):
+    return run_cv_pipeline("WR", WR_CONFIG, full_df, test_df, seed)
+
+
 if __name__ == "__main__":
-    run_wr_pipeline()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cv", action="store_true", help="Use expanding-window CV")
+    args = parser.parse_args()
+    if args.cv:
+        run_wr_cv_pipeline()
+    else:
+        run_wr_pipeline()

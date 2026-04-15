@@ -8,11 +8,19 @@ class RidgeMultiTarget:
     """Separate Ridge models for each target in a multi-target decomposition.
 
     Works for any position — target names are passed at construction time.
+    Accepts a single alpha (shared) or a dict mapping target names to alphas.
     """
 
-    def __init__(self, target_names: list[str], alpha: float = 1.0):
+    def __init__(self, target_names: list[str], alpha: float | dict[str, float] = 1.0):
         self.target_names = target_names
-        self._models = {name: RidgeModel(alpha=alpha) for name in target_names}
+        if isinstance(alpha, dict):
+            missing = set(target_names) - set(alpha)
+            if missing:
+                raise ValueError(f"alpha dict missing keys for targets: {missing}")
+            self._alphas = {name: alpha[name] for name in target_names}
+        else:
+            self._alphas = {name: alpha for name in target_names}
+        self._models = {name: RidgeModel(alpha=self._alphas[name]) for name in target_names}
 
     def fit(self, X_train: np.ndarray, y_train_dict: dict) -> None:
         for name, model in self._models.items():

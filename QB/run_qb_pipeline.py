@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from QB.qb_config import (
-    QB_TARGETS, QB_RIDGE_ALPHAS, QB_SPECIFIC_FEATURES,
+    QB_TARGETS, QB_RIDGE_ALPHA_GRIDS, QB_SPECIFIC_FEATURES,
     QB_NN_BACKBONE_LAYERS, QB_NN_HEAD_HIDDEN, QB_NN_DROPOUT,
     QB_NN_LR, QB_NN_WEIGHT_DECAY, QB_NN_EPOCHS, QB_NN_BATCH_SIZE,
     QB_NN_PATIENCE,
@@ -15,11 +15,11 @@ from QB.qb_config import (
 from QB.qb_data import filter_to_qb
 from QB.qb_targets import compute_qb_targets, compute_qb_adjustment
 from QB.qb_features import add_qb_specific_features, get_qb_feature_columns, fill_qb_nans
-from shared.pipeline import run_pipeline
+from shared.pipeline import run_pipeline, run_cv_pipeline
 
 QB_CONFIG = {
     "targets": QB_TARGETS,
-    "ridge_alphas": QB_RIDGE_ALPHAS,
+    "ridge_alpha_grids": QB_RIDGE_ALPHA_GRIDS,
     "specific_features": QB_SPECIFIC_FEATURES,
     "filter_fn": filter_to_qb,
     "compute_targets_fn": compute_qb_targets,
@@ -49,5 +49,16 @@ def run_qb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
     return run_pipeline("QB", QB_CONFIG, train_df, val_df, test_df, seed)
 
 
+def run_qb_cv_pipeline(full_df=None, test_df=None, seed=42):
+    return run_cv_pipeline("QB", QB_CONFIG, full_df, test_df, seed)
+
+
 if __name__ == "__main__":
-    run_qb_pipeline()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cv", action="store_true", help="Use expanding-window CV")
+    args = parser.parse_args()
+    if args.cv:
+        run_qb_cv_pipeline()
+    else:
+        run_qb_pipeline()

@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from DST.dst_config import (
-    DST_TARGETS, DST_RIDGE_ALPHAS, DST_SPECIFIC_FEATURES,
+    DST_TARGETS, DST_RIDGE_ALPHA_GRIDS, DST_SPECIFIC_FEATURES,
     DST_NN_BACKBONE_LAYERS, DST_NN_HEAD_HIDDEN, DST_NN_HEAD_HIDDEN_OVERRIDES,
     DST_NN_DROPOUT,
     DST_NN_LR, DST_NN_WEIGHT_DECAY, DST_NN_EPOCHS, DST_NN_BATCH_SIZE,
@@ -51,7 +51,7 @@ def run_dst_pipeline(seed=42):
     # --- Run shared pipeline ---
     DST_CONFIG = {
         "targets": DST_TARGETS,
-        "ridge_alphas": DST_RIDGE_ALPHAS,
+        "ridge_alpha_grids": DST_RIDGE_ALPHA_GRIDS,
         "specific_features": DST_SPECIFIC_FEATURES,
         "filter_fn": filter_to_dst,
         "compute_targets_fn": compute_dst_targets,

@@ -160,7 +160,7 @@ class TestMakeDataloaders:
         assert batch_x.shape[0] == 32
 
     def test_iterate_all_batches(self):
-        n = 100
+        n = 128
         X = np.random.randn(n, 3).astype(np.float32)
         y = {"rushing_floor": np.random.randn(n).astype(np.float32)}
         loader, _ = make_dataloaders(X, y, X[:10], y, batch_size=32)

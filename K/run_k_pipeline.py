@@ -10,7 +10,8 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from K.k_config import (
-    K_TARGETS, K_RIDGE_ALPHAS, K_SPECIFIC_FEATURES,
+    K_TARGETS, K_RIDGE_ALPHA_GRIDS, K_SPECIFIC_FEATURES,
+    K_RIDGE_CV_FOLDS, K_CV_SPLIT_COLUMN, K_RIDGE_REFINE_POINTS,
     K_NN_BACKBONE_LAYERS, K_NN_HEAD_HIDDEN, K_NN_DROPOUT,
     K_NN_LR, K_NN_WEIGHT_DECAY, K_NN_EPOCHS, K_NN_BATCH_SIZE,
     K_NN_PATIENCE,
@@ -49,7 +50,10 @@ def run_k_pipeline(seed=42):
     # --- Run shared pipeline ---
     K_CONFIG = {
         "targets": K_TARGETS,
-        "ridge_alphas": K_RIDGE_ALPHAS,
+        "ridge_alpha_grids": K_RIDGE_ALPHA_GRIDS,
+        "ridge_cv_folds": K_RIDGE_CV_FOLDS,
+        "cv_split_column": K_CV_SPLIT_COLUMN,
+        "ridge_refine_points": K_RIDGE_REFINE_POINTS,
         "specific_features": K_SPECIFIC_FEATURES,
         "filter_fn": filter_to_k,
         "compute_targets_fn": compute_k_targets,

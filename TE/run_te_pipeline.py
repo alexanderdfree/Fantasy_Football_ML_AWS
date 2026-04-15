@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from TE.te_config import (
-    TE_TARGETS, TE_RIDGE_ALPHAS, TE_SPECIFIC_FEATURES,
+    TE_TARGETS, TE_RIDGE_ALPHA_GRIDS, TE_SPECIFIC_FEATURES,
     TE_NN_BACKBONE_LAYERS, TE_NN_HEAD_HIDDEN, TE_NN_HEAD_HIDDEN_OVERRIDES,
     TE_NN_DROPOUT, TE_NN_LR, TE_NN_WEIGHT_DECAY, TE_NN_EPOCHS, TE_NN_BATCH_SIZE,
     TE_NN_PATIENCE,
@@ -19,7 +19,7 @@ from shared.pipeline import run_pipeline
 
 TE_CONFIG = {
     "targets": TE_TARGETS,
-    "ridge_alphas": TE_RIDGE_ALPHAS,
+    "ridge_alpha_grids": TE_RIDGE_ALPHA_GRIDS,
     "specific_features": TE_SPECIFIC_FEATURES,
     "filter_fn": filter_to_te,
     "compute_targets_fn": compute_te_targets,

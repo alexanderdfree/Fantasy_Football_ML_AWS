@@ -28,7 +28,13 @@ K_DROP_FEATURES = set()  # Not used; kickers bypass the general feature pipeline
 
 # === Ridge ===
 import numpy as np
-K_RIDGE_ALPHAS = [round(x, 4) for x in np.logspace(-1, 4, 15)]
+K_RIDGE_ALPHA_GRIDS = {
+    "fg_points":  [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "pat_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+}
+K_RIDGE_CV_FOLDS = 3
+K_CV_SPLIT_COLUMN = "week"
+K_RIDGE_REFINE_POINTS = 0
 
 # === Neural Net (small — limited dataset, tuned) ===
 K_NN_BACKBONE_LAYERS = [48, 24]

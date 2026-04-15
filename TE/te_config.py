@@ -32,7 +32,11 @@ TE_DROP_FEATURES |= {"snap_pct", "air_yards_share"}
 
 # === Ridge ===
 import numpy as np
-TE_RIDGE_ALPHAS = [round(x, 4) for x in np.logspace(-2, 3, 13)]
+TE_RIDGE_ALPHA_GRIDS = {
+    "receiving_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "rushing_floor":   [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "td_points":       [round(x, 4) for x in np.logspace(-1, 4, 15)],
+}
 
 # === Neural Net (moderate data, more regularization) ===
 TE_NN_BACKBONE_LAYERS = [96, 48]

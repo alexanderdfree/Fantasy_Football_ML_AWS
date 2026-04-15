@@ -34,6 +34,9 @@ TRAIN_SEASONS = list(range(2012, 2024))
 VAL_SEASONS = [2024]
 TEST_SEASONS = [2025]
 
+# === Cross-Validation (expanding window) ===
+CV_VAL_SEASONS = [2021, 2022, 2023, 2024]
+
 # === Features: Rolling ===
 ROLLING_WINDOWS = [3, 5, 8]
 ROLL_STATS = [

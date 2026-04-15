@@ -51,7 +51,7 @@ def collect_pos_config(pos):
             for k, v in vars(mod).items()
             if k.startswith(prefix)
             and not k.endswith("FEATURES")
-            and k != f"{prefix}RIDGE_ALPHAS"}
+            and k != f"{prefix}RIDGE_ALPHA_GRIDS"}
 
 
 def append_to_history(run_entry):
@@ -65,20 +65,20 @@ def append_to_history(run_entry):
         json.dump(history, f, indent=2)
     print(f"Run appended to {HISTORY_FILE}")
 
-def run_one(position):
+def run_one(position, cv=False):
     """Run a single position pipeline and return its metrics dict."""
     np.random.seed(42)
     torch.manual_seed(42)
 
     if position == "RB":
-        from RB.run_rb_pipeline import run_rb_pipeline
-        return run_rb_pipeline()
+        from RB.run_rb_pipeline import run_rb_pipeline, run_rb_cv_pipeline
+        return run_rb_cv_pipeline() if cv else run_rb_pipeline()
     elif position == "QB":
-        from QB.run_qb_pipeline import run_qb_pipeline
-        return run_qb_pipeline()
+        from QB.run_qb_pipeline import run_qb_pipeline, run_qb_cv_pipeline
+        return run_qb_cv_pipeline() if cv else run_qb_pipeline()
     elif position == "WR":
-        from WR.run_wr_pipeline import run_wr_pipeline
-        return run_wr_pipeline()
+        from WR.run_wr_pipeline import run_wr_pipeline, run_wr_cv_pipeline
+        return run_wr_cv_pipeline() if cv else run_wr_pipeline()
     else:
         raise ValueError(f"Unknown position: {position}")
 
@@ -87,7 +87,7 @@ def summarize(position, result):
     """Extract the key metrics we care about."""
     ridge = result["ridge_metrics"]["total"]
     nn = result["nn_metrics"]["total"]
-    return {
+    summary = {
         "position": position,
         "ridge_mae": round(ridge["mae"], 3),
         "ridge_r2":  round(ridge["r2"], 3),
@@ -106,9 +106,19 @@ def summarize(position, result):
         "ridge_top12": round(result["ridge_ranking"]["season_avg_hit_rate"], 3),
         "nn_top12":    round(result["nn_ranking"]["season_avg_hit_rate"], 3),
     }
+    if "cv_metrics" in result:
+        cv = result["cv_metrics"]
+        summary["cv_ridge_mae_mean"] = round(cv["ridge"]["total"]["mae_mean"], 3)
+        summary["cv_ridge_mae_std"] = round(cv["ridge"]["total"]["mae_std"], 3)
+        summary["cv_nn_mae_mean"] = round(cv["nn"]["total"]["mae_mean"], 3)
+        summary["cv_nn_mae_std"] = round(cv["nn"]["total"]["mae_std"], 3)
+        summary["best_cv_alpha"] = result["best_cv_alpha"]
+    return summary
 
 
 def print_table(summaries):
+    has_cv = any("cv_ridge_mae_mean" in s for s in summaries)
+
     print("\n" + "=" * 72)
     print(f"{'Pos':<5} {'Ridge MAE':>10} {'NN MAE':>10} {'Delta':>8} {'Ridge R2':>9} {'NN R2':>9} {'NN Wins?':>9}")
     print("-" * 72)
@@ -118,22 +128,39 @@ def print_table(summaries):
         print(f"{s['position']:<5} {s['ridge_mae']:>10.3f} {s['nn_mae']:>10.3f} {delta:>+8.3f} {s['ridge_r2']:>9.3f} {s['nn_r2']:>9.3f} {marker:>9}")
     print("=" * 72)
 
+    if has_cv:
+        print("\n" + "=" * 72)
+        print("Cross-Validation Metrics (mean +/- std across 4 folds)")
+        print("=" * 72)
+        print(f"{'Pos':<5} {'Ridge MAE':>20} {'NN MAE':>20} {'Best Alpha':>12}")
+        print("-" * 60)
+        for s in summaries:
+            if "cv_ridge_mae_mean" in s:
+                print(f"{s['position']:<5} "
+                      f"{s['cv_ridge_mae_mean']:>8.3f} +/- {s['cv_ridge_mae_std']:<6.3f} "
+                      f"{s['cv_nn_mae_mean']:>8.3f} +/- {s['cv_nn_mae_std']:<6.3f} "
+                      f"{s['best_cv_alpha']:>10.2f}")
+        print("=" * 72)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark NN pipelines")
     parser.add_argument("positions", nargs="*", default=["RB", "QB", "WR"],
                         help="Positions to benchmark (e.g. RB QB)")
     parser.add_argument("--note", default="", help="Describe what changed in this run")
+    parser.add_argument("--cv", action="store_true",
+                        help="Use expanding-window cross-validation")
     args = parser.parse_args()
 
     positions = args.positions
     summaries = []
     for pos in positions:
         t0 = time.time()
+        mode = "CV" if args.cv else "SINGLE-SPLIT"
         print(f"\n{'#' * 60}")
-        print(f"# BENCHMARKING {pos}")
+        print(f"# BENCHMARKING {pos} ({mode})")
         print(f"{'#' * 60}")
-        result = run_one(pos)
+        result = run_one(pos, cv=args.cv)
         elapsed = time.time() - t0
         s = summarize(pos, result)
         s["elapsed_sec"] = round(elapsed, 1)

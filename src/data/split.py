@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from src.config import TRAIN_SEASONS, VAL_SEASONS, TEST_SEASONS, SPLITS_DIR
+from src.config import TRAIN_SEASONS, VAL_SEASONS, TEST_SEASONS, SPLITS_DIR, CV_VAL_SEASONS
 
 
 def temporal_split(
@@ -35,3 +35,31 @@ def temporal_split(
     test_df.to_parquet(f"{SPLITS_DIR}/test.parquet", index=False)
 
     return train_df, val_df, test_df
+
+
+def expanding_window_folds(
+    df: pd.DataFrame,
+    val_seasons: list[int] = None,
+    min_train_season: int = 2012,
+) -> list[tuple]:
+    """Generate expanding-window CV folds.
+
+    For each val season, training data includes all seasons from
+    min_train_season up to (but not including) the val season.
+
+    Returns:
+        List of (fold_idx, train_df, val_df) tuples.
+    """
+    if val_seasons is None:
+        val_seasons = CV_VAL_SEASONS
+
+    folds = []
+    for i, val_season in enumerate(val_seasons):
+        train_seasons = list(range(min_train_season, val_season))
+        train_df = df[df["season"].isin(train_seasons)].copy()
+        val_df = df[df["season"] == val_season].copy()
+        print(f"  Fold {i+1}: train seasons {train_seasons[0]}-{train_seasons[-1]} "
+              f"({len(train_df)} rows), val season {val_season} ({len(val_df)} rows)")
+        folds.append((i, train_df, val_df))
+
+    return folds
