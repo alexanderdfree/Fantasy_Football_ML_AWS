@@ -305,10 +305,11 @@ def _train_attention_nn(X_train, X_val, X_test,
             result.append(hist_arr[i, :seq_len])
         return result
 
+    attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
     train_loader, val_loader = make_history_dataloaders(
         X_train_s, _to_history_list(hist_train, mask_train), y_train_dict,
         X_val_s, _to_history_list(hist_val, mask_val), y_val_dict,
-        batch_size=cfg["nn_batch_size"],
+        batch_size=attn_batch_size,
     )
 
     game_dim = hist_train.shape[2]
@@ -324,10 +325,17 @@ def _train_attention_nn(X_train, X_val, X_test,
         dropout=cfg["nn_dropout"],
         head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
         non_negative_targets=cfg.get("nn_non_negative_targets"),
+        project_kv=cfg.get("attn_project_kv", False),
+        use_positional_encoding=cfg.get("attn_positional_encoding", False),
+        max_seq_len=cfg.get("attn_max_seq_len", 17),
+        use_gated_fusion=cfg.get("attn_gated_fusion", False),
+        attn_dropout=cfg.get("attn_dropout", 0.0),
     ).to(device)
 
+    attn_lr = cfg.get("attn_lr", cfg["nn_lr"])
+    attn_wd = cfg.get("attn_weight_decay", cfg["nn_weight_decay"])
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=cfg["nn_lr"], weight_decay=cfg["nn_weight_decay"],
+        model.parameters(), lr=attn_lr, weight_decay=attn_wd,
     )
     scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
     criterion = MultiTargetLoss(
@@ -337,10 +345,11 @@ def _train_attention_nn(X_train, X_val, X_test,
         w_total=cfg["loss_w_total"],
     )
 
+    attn_patience = cfg.get("attn_patience", cfg["nn_patience"])
     trainer = MultiHeadHistoryTrainer(
         model=model, optimizer=optimizer, scheduler=scheduler,
         criterion=criterion, device=device, target_names=targets,
-        patience=cfg["nn_patience"], scheduler_per_batch=scheduler_per_batch,
+        patience=attn_patience, scheduler_per_batch=scheduler_per_batch,
     )
     history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 

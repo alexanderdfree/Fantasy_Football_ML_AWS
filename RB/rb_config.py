@@ -66,6 +66,9 @@ RB_NN_WEIGHT_DECAY = 5e-5
 RB_NN_EPOCHS = 300
 RB_NN_BATCH_SIZE = 256
 RB_NN_PATIENCE = 30
+# TD head gets a larger hidden layer — td_points has the highest MAE (zero-inflated,
+# discrete) and benefits from more capacity to model the sparse signal.
+RB_NN_HEAD_HIDDEN_OVERRIDES = {"td_points": 64}
 
 # === Loss Weights ===
 # Rushing is the primary RB floor component; slight boost.
@@ -95,13 +98,29 @@ RB_COSINE_ETA_MIN = 1e-5
 
 # === Attention NN (game history variant) ===
 RB_TRAIN_ATTENTION_NN = True
+# Keep d_model=32 (proven baseline) and n_heads=2 (larger values overfit on 15K samples).
 RB_ATTN_D_MODEL = 32
 RB_ATTN_N_HEADS = 2
 RB_ATTN_MAX_SEQ_LEN = 17
+# K/V projections disabled — at d_model=32 the 2K extra params hurt optimization
+# more than they help (tested: 4.330 MAE with vs 4.228 without).
+RB_ATTN_PROJECT_KV = False
+# Positional encoding: lightweight (17×32=544 params) temporal ordering signal so
+# attention can distinguish recent games from older ones.
+RB_ATTN_POSITIONAL_ENCODING = True
+RB_ATTN_GATED_FUSION = False
+# Very light attention dropout for regularization.
+RB_ATTN_DROPOUT = 0.05
+# Standard training params match the base NN.
+RB_ATTN_LR = 1e-3
+RB_ATTN_WEIGHT_DECAY = 5e-5
+RB_ATTN_BATCH_SIZE = 256
+RB_ATTN_PATIENCE = 35
 RB_ATTN_HISTORY_STATS = [
     "fantasy_points", "fantasy_points_floor",
     "rushing_yards", "receiving_yards",
     "rushing_tds", "receiving_tds",
     "carries", "targets", "receptions",
     "snap_pct",
+    "rushing_first_downs", "receiving_first_downs",
 ]

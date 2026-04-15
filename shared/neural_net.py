@@ -121,14 +121,25 @@ class AttentionPool(nn.Module):
     Uses n_heads learned query vectors to attend over a padded sequence,
     producing a fixed-size output regardless of sequence length.
     Masking ensures padded positions are ignored.
+
+    Optional K/V projections separate "what to attend to" from "what to extract",
+    giving the attention more expressivity.
     """
 
-    def __init__(self, d_model: int, n_heads: int = 2):
+    def __init__(self, d_model: int, n_heads: int = 2,
+                 project_kv: bool = False, attn_dropout: float = 0.0):
         super().__init__()
         self.queries = nn.Parameter(torch.randn(n_heads, d_model) * 0.02)
         self.scale = d_model ** -0.5
         self.n_heads = n_heads
         self.d_model = d_model
+        self.project_kv = project_kv
+
+        if project_kv:
+            self.key_proj = nn.Linear(d_model, d_model, bias=False)
+            self.value_proj = nn.Linear(d_model, d_model, bias=False)
+
+        self.attn_drop = nn.Dropout(attn_dropout) if attn_dropout > 0 else nn.Identity()
 
     def forward(self, keys: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
         """
@@ -140,10 +151,18 @@ class AttentionPool(nn.Module):
             [batch, n_heads * d_model] — pooled history representation
         """
         batch_size = keys.size(0)
+
+        if self.project_kv:
+            k = self.key_proj(keys)
+            v = self.value_proj(keys)
+        else:
+            k = keys
+            v = keys
+
         # queries: [n_heads, d_model] -> [batch, n_heads, d_model]
         q = self.queries.unsqueeze(0).expand(batch_size, -1, -1)
         # attn scores: [batch, n_heads, seq_len]
-        attn = torch.bmm(q, keys.transpose(1, 2)) * self.scale
+        attn = torch.bmm(q, k.transpose(1, 2)) * self.scale
 
         if mask is not None:
             # mask: [batch, seq_len] -> [batch, 1, seq_len]
@@ -152,8 +171,9 @@ class AttentionPool(nn.Module):
         weights = F.softmax(attn, dim=-1)
         # Handle all-padding rows (softmax of all -inf = nan)
         weights = weights.nan_to_num(0.0)
+        weights = self.attn_drop(weights)
         # pooled: [batch, n_heads, d_model]
-        pooled = torch.bmm(weights, keys)
+        pooled = torch.bmm(weights, v)
         return pooled.reshape(batch_size, -1)  # [batch, n_heads * d_model]
 
 
@@ -165,8 +185,10 @@ class MultiHeadNetWithHistory(nn.Module):
             -> (passed through directly)
 
         Game history [batch, seq_len, game_dim]
-            -> GameEncoder: Linear(game_dim, d_model)
+            -> GameEncoder: Linear(game_dim, d_model) -> ReLU
+            -> (optional) Learned positional encoding
             -> AttentionPool(d_model, n_heads) -> [batch, n_heads * d_model]
+            -> (optional) Gated fusion with static features
 
         Concatenated [batch, static_dim + n_heads * d_model]
             -> Shared backbone [Linear -> BN -> ReLU -> Dropout] x N
@@ -185,6 +207,11 @@ class MultiHeadNetWithHistory(nn.Module):
         dropout: float = 0.3,
         head_hidden_overrides: dict = None,
         non_negative_targets: set = None,
+        project_kv: bool = False,
+        use_positional_encoding: bool = False,
+        max_seq_len: int = 17,
+        use_gated_fusion: bool = False,
+        attn_dropout: float = 0.0,
     ):
         super().__init__()
         self.target_names = target_names
@@ -198,11 +225,32 @@ class MultiHeadNetWithHistory(nn.Module):
             nn.Linear(game_dim, d_model),
             nn.ReLU(),
         )
-        self.attn_pool = AttentionPool(d_model, n_heads=n_attn_heads)
-        self.history_norm = nn.LayerNorm(n_attn_heads * d_model)
+
+        # Positional encoding: gives the model temporal ordering signal
+        # so it can distinguish recent games from older ones.
+        self.use_positional_encoding = use_positional_encoding
+        if use_positional_encoding:
+            self.pos_embedding = nn.Embedding(max_seq_len, d_model)
+
+        self.attn_pool = AttentionPool(
+            d_model, n_heads=n_attn_heads,
+            project_kv=project_kv, attn_dropout=attn_dropout,
+        )
+
+        attn_out_dim = n_attn_heads * d_model
+        self.history_norm = nn.LayerNorm(attn_out_dim)
+
+        # Gated fusion: static features control how much to trust history.
+        # Prevents noisy attention signal from degrading static feature quality.
+        self.use_gated_fusion = use_gated_fusion
+        if use_gated_fusion:
+            self.fusion_gate = nn.Sequential(
+                nn.Linear(static_dim + attn_out_dim, attn_out_dim),
+                nn.Sigmoid(),
+            )
 
         # === Shared Backbone (static + history concatenated) ===
-        combined_dim = static_dim + n_attn_heads * d_model
+        combined_dim = static_dim + attn_out_dim
         backbone_blocks = []
         prev_dim = combined_dim
         for hidden_dim in backbone_layers:
@@ -240,10 +288,23 @@ class MultiHeadNetWithHistory(nn.Module):
             x_history: [batch, seq_len, game_dim] — padded game history
             history_mask: [batch, seq_len] — True for real games
         """
-        # Encode and pool game history
+        # Encode game history
         encoded = self.game_encoder(x_history)       # [batch, seq_len, d_model]
+
+        # Add positional encoding so attention can weight by recency
+        if self.use_positional_encoding:
+            seq_len = encoded.size(1)
+            positions = torch.arange(seq_len, device=encoded.device)
+            encoded = encoded + self.pos_embedding(positions)
+
+        # Pool via attention
         history_vec = self.attn_pool(encoded, history_mask)  # [batch, n_heads * d_model]
         history_vec = self.history_norm(history_vec)
+
+        # Gated fusion: let static features modulate history contribution
+        if self.use_gated_fusion:
+            gate = self.fusion_gate(torch.cat([x_static, history_vec], dim=-1))
+            history_vec = gate * history_vec
 
         # Concatenate with static features
         combined = torch.cat([x_static, history_vec], dim=-1)

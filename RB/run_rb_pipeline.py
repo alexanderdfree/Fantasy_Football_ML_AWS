@@ -8,11 +8,14 @@ from RB.rb_config import (
     RB_TARGETS, RB_RIDGE_ALPHA_GRIDS, RB_SPECIFIC_FEATURES,
     RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_DROPOUT,
     RB_NN_LR, RB_NN_WEIGHT_DECAY, RB_NN_EPOCHS, RB_NN_BATCH_SIZE,
-    RB_NN_PATIENCE,
+    RB_NN_PATIENCE, RB_NN_HEAD_HIDDEN_OVERRIDES,
     RB_LOSS_WEIGHTS, RB_LOSS_W_TOTAL, RB_HUBER_DELTAS,
     RB_SCHEDULER_TYPE, RB_COSINE_T0, RB_COSINE_T_MULT, RB_COSINE_ETA_MIN,
     RB_TRAIN_ATTENTION_NN, RB_ATTN_D_MODEL, RB_ATTN_N_HEADS,
     RB_ATTN_MAX_SEQ_LEN, RB_ATTN_HISTORY_STATS,
+    RB_ATTN_PROJECT_KV, RB_ATTN_POSITIONAL_ENCODING,
+    RB_ATTN_GATED_FUSION, RB_ATTN_DROPOUT,
+    RB_ATTN_LR, RB_ATTN_WEIGHT_DECAY, RB_ATTN_BATCH_SIZE, RB_ATTN_PATIENCE,
 )
 from RB.rb_data import filter_to_rb
 from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
@@ -32,7 +35,7 @@ RB_CONFIG = {
     "nn_backbone_layers": RB_NN_BACKBONE_LAYERS,
     "nn_head_hidden": RB_NN_HEAD_HIDDEN,
     "nn_dropout": RB_NN_DROPOUT,
-    "nn_head_hidden_overrides": None,
+    "nn_head_hidden_overrides": RB_NN_HEAD_HIDDEN_OVERRIDES,
     "nn_lr": RB_NN_LR,
     "nn_weight_decay": RB_NN_WEIGHT_DECAY,
     "nn_epochs": RB_NN_EPOCHS,
@@ -51,6 +54,14 @@ RB_CONFIG = {
     "attn_n_heads": RB_ATTN_N_HEADS,
     "attn_max_seq_len": RB_ATTN_MAX_SEQ_LEN,
     "attn_history_stats": RB_ATTN_HISTORY_STATS,
+    "attn_project_kv": RB_ATTN_PROJECT_KV,
+    "attn_positional_encoding": RB_ATTN_POSITIONAL_ENCODING,
+    "attn_gated_fusion": RB_ATTN_GATED_FUSION,
+    "attn_dropout": RB_ATTN_DROPOUT,
+    "attn_lr": RB_ATTN_LR,
+    "attn_weight_decay": RB_ATTN_WEIGHT_DECAY,
+    "attn_batch_size": RB_ATTN_BATCH_SIZE,
+    "attn_patience": RB_ATTN_PATIENCE,
 }
 
 
