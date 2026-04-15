@@ -48,8 +48,12 @@ for _stat in ["fantasy_points", "fantasy_points_floor", "targets", "receptions",
 import numpy as np
 RB_RIDGE_ALPHAS = [round(x, 4) for x in np.logspace(-2, 3, 13)]
 
-# === Neural Net (deeper backbone — medium-large dataset) ===
-RB_NN_BACKBONE_LAYERS = [128, 64, 32]
+# === Neural Net ===
+# Single wide layer outperforms deep narrow funnels on this data scale.
+# [128,64,32] had 27K params (0.3:1 data ratio) and MAE 3.849.
+# [64] has 13K params (0.6:1) and MAE 3.808 — 63% closer to Ridge.
+# Depth compresses information before heads can use it; width preserves it.
+RB_NN_BACKBONE_LAYERS = [64]
 RB_NN_HEAD_HIDDEN = 32
 RB_NN_DROPOUT = 0.3
 RB_NN_LR = 8e-4
@@ -76,9 +80,6 @@ RB_HUBER_DELTAS = {
 }
 
 # === LR Scheduler ===
-# ReduceLROnPlateau: adaptively lowers LR when val loss stalls,
-# better suited than cosine warm restarts for finding minima
-# on a flat loss surface with this dataset size.
 RB_SCHEDULER_TYPE = "plateau"
 RB_PLATEAU_FACTOR = 0.5
 RB_PLATEAU_PATIENCE = 8

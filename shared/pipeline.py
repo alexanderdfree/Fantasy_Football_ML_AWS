@@ -148,10 +148,11 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     y_val_dict = {t: pos_val[t].values for t in targets}
     y_test_dict = {t: pos_test[t].values for t in targets}
 
-    # Use actual fantasy_points as the total target across all splits.
-    # sum(targets) omits fumble penalty and passing component, creating a
-    # train/test mismatch.  Using fantasy_points gives the total-loss term
-    # a consistent signal aligned with the evaluation metric.
+    # Use fantasy_points as the total target for training.  While sum(targets)
+    # would be theoretically cleaner (matching what the NN heads produce),
+    # fantasy_points provides useful signal about adjustment components
+    # (fumbles, receiving) that helps the backbone learn richer representations.
+    # The small gradient inconsistency is outweighed by the richer signal.
     y_train_dict["total"] = pos_train["fantasy_points"].values
     y_val_dict["total"] = pos_val["fantasy_points"].values
     y_test_dict["total"] = pos_test["fantasy_points"].values

@@ -91,6 +91,49 @@ class TestMultiHeadNet:
         assert x.grad is not None
         assert x.grad.shape == (4, 10)
 
+    def test_softplus_gradient_near_zero(self):
+        """Softplus is differentiable at zero (unlike clamp), so gradients flow smoothly."""
+        model = MultiHeadNet(
+            input_dim=5, target_names=RB_TARGETS,
+            backbone_layers=[16], head_hidden=4, dropout=0.0,
+        )
+        model.train()
+        torch.manual_seed(0)
+        x = torch.randn(4, 5) * 0.01  # small but varied (avoids BatchNorm degenerate case)
+        x.requires_grad_(True)
+        out = model(x)
+        loss = out["total"].sum()
+        loss.backward()
+        assert x.grad is not None
+        assert not torch.isnan(x.grad).any(), "NaN gradient near zero"
+        assert (x.grad != 0).any(), "Gradients should be non-zero near zero"
+
+    def test_total_equals_sum_train_mode(self):
+        """Total = sum of heads should hold in train mode too (softplus applied uniformly)."""
+        model = MultiHeadNet(
+            input_dim=10, target_names=RB_TARGETS,
+            backbone_layers=[32, 16], head_hidden=8, dropout=0.0,
+        )
+        model.train()
+        x = torch.randn(4, 10)
+        out = model(x)
+        expected = out["rushing_floor"] + out["receiving_floor"] + out["td_points"]
+        torch.testing.assert_close(out["total"], expected)
+
+    def test_single_backbone_layer(self):
+        """Single-layer backbone (current RB config) should work correctly."""
+        model = MultiHeadNet(
+            input_dim=10, target_names=RB_TARGETS,
+            backbone_layers=[64], head_hidden=32, dropout=0.3,
+        )
+        model.eval()
+        x = torch.randn(4, 10)
+        with torch.no_grad():
+            out = model(x)
+        assert out["total"].shape == (4,)
+        for key in RB_TARGETS:
+            assert (out[key] >= 0).all()
+
     def test_dropout_effect(self):
         """Train mode (dropout active) vs eval mode should give different outputs."""
         model = MultiHeadNet(
@@ -108,6 +151,23 @@ class TestMultiHeadNet:
             out_eval = model(x)
 
         assert not torch.allclose(out_train["total"].detach(), out_eval["total"])
+
+    def test_outputs_non_negative_eval(self, model):
+        """Softplus ensures all head outputs are non-negative in eval mode."""
+        model.eval()
+        x = torch.randn(4, 10)
+        with torch.no_grad():
+            out = model(x)
+        for key in RB_TARGETS:
+            assert (out[key] >= 0).all(), f"Negative value in {key} (eval)"
+
+    def test_outputs_non_negative_train(self, model):
+        """Softplus ensures non-negative outputs during training too (unlike old clamp)."""
+        model.train()
+        x = torch.randn(4, 10)
+        out = model(x)
+        for key in RB_TARGETS:
+            assert (out[key] >= 0).all(), f"Negative value in {key} (train)"
 
     def test_no_nan_output(self, model):
         model.eval()

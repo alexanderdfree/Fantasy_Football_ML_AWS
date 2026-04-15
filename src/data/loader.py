@@ -47,6 +47,11 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
         rosters = pd.read_parquet(rosters_path)
     else:
         rosters = nfl.import_seasonal_rosters(seasons)
+        # Coerce mixed-type columns that break parquet serialization
+        # (e.g. jersey_number is str in older seasons, int in newer)
+        for col in rosters.columns:
+            if rosters[col].dtype == object:
+                rosters[col] = rosters[col].astype(str)
         rosters.to_parquet(rosters_path)
 
     # 3. Schedule data for opponent info
@@ -56,11 +61,12 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
         schedules = nfl.import_schedules(seasons)
         schedules.to_parquet(schedules_path)
 
-    # 4. Snap counts
+    # 4. Snap counts (only available from 2012+)
     if os.path.exists(snap_path):
         snap_counts = pd.read_parquet(snap_path)
     else:
-        snap_counts = nfl.import_snap_counts(seasons)
+        snap_seasons = [s for s in seasons if s >= 2012]
+        snap_counts = nfl.import_snap_counts(snap_seasons) if snap_seasons else pd.DataFrame()
         snap_counts.to_parquet(snap_path)
 
     # --- Merge rosters for position override ---

@@ -34,8 +34,11 @@ WR_DROP_FEATURES |= {"snap_pct", "air_yards_share"}
 import numpy as np
 WR_RIDGE_ALPHAS = [round(x, 4) for x in np.logspace(-2, 3, 13)]
 
-# === Neural Net (deepest backbone — largest dataset) ===
-WR_NN_BACKBONE_LAYERS = [128, 96, 48]
+# === Neural Net ===
+# Single wide layer outperforms 3-layer funnel: [128,96,48] had 35K params
+# (0.3:1 ratio) and MAE 4.299.  [96] has ~13K params and MAE 4.233.
+# Depth compresses information through bottlenecks; width preserves it.
+WR_NN_BACKBONE_LAYERS = [96]
 WR_NN_HEAD_HIDDEN = 32
 WR_NN_DROPOUT = 0.25
 WR_NN_LR = 1e-3

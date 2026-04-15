@@ -59,8 +59,11 @@ class MultiHeadNet(nn.Module):
         preds = {}
         for name, head in self.heads.items():
             val = head(shared).squeeze(-1)
-            if not self.training:
-                val = torch.clamp(val, min=0)
+            # Softplus ensures non-negative outputs during BOTH training and
+            # inference, eliminating the train/test distribution mismatch that
+            # the old eval-only clamp caused.  Softplus is differentiable
+            # (unlike clamp) so gradients flow cleanly through zero.
+            val = nn.functional.softplus(val, beta=1.0)
             preds[name] = val
         preds["total"] = sum(preds[t] for t in self.target_names)
         return preds

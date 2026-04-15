@@ -1,17 +1,58 @@
 """Benchmark script: runs RB, QB, WR pipelines and prints a comparison table.
 
 Usage:
-    python benchmark_nn.py          # run all 3 positions
-    python benchmark_nn.py RB       # run one position
+    python benchmark_nn.py                          # run all 3 positions
+    python benchmark_nn.py RB                       # run one position
+    python benchmark_nn.py --note "tuned WR dropout" # annotate the run
 """
 
-import sys, os, time, json
+import sys, os, time, json, argparse, subprocess, datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 import numpy as np
 import torch
 
 RESULTS_FILE = "benchmark_results.json"
+HISTORY_FILE = "benchmark_history.json"
+
+
+def get_git_hash():
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return "unknown"
+
+
+def collect_global_config():
+    from src.config import (
+        TRAIN_SEASONS, VAL_SEASONS, TEST_SEASONS,
+        NN_EPOCHS, NN_BATCH_SIZE, NN_PATIENCE, NN_DROPOUT, NN_LR,
+    )
+    return {
+        "train_seasons": TRAIN_SEASONS,
+        "val_seasons": VAL_SEASONS,
+        "test_seasons": TEST_SEASONS,
+        "nn_epochs": NN_EPOCHS,
+        "nn_batch_size": NN_BATCH_SIZE,
+        "nn_patience": NN_PATIENCE,
+        "nn_dropout": NN_DROPOUT,
+        "nn_lr": NN_LR,
+    }
+
+
+def append_to_history(run_entry):
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE) as f:
+            history = json.load(f)
+    else:
+        history = []
+    history.append(run_entry)
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=2)
+    print(f"Run appended to {HISTORY_FILE}")
 
 def run_one(position):
     """Run a single position pipeline and return its metrics dict."""
@@ -68,7 +109,13 @@ def print_table(summaries):
 
 
 if __name__ == "__main__":
-    positions = sys.argv[1:] if len(sys.argv) > 1 else ["RB", "QB", "WR"]
+    parser = argparse.ArgumentParser(description="Benchmark NN pipelines")
+    parser.add_argument("positions", nargs="*", default=["RB", "QB", "WR"],
+                        help="Positions to benchmark (e.g. RB QB)")
+    parser.add_argument("--note", default="", help="Describe what changed in this run")
+    args = parser.parse_args()
+
+    positions = args.positions
     summaries = []
     for pos in positions:
         t0 = time.time()
@@ -84,7 +131,20 @@ if __name__ == "__main__":
 
     print_table(summaries)
 
-    # Save to JSON for before/after comparison
+    # Save latest results (backwards compat)
     with open(RESULTS_FILE, "w") as f:
         json.dump(summaries, f, indent=2)
     print(f"\nResults saved to {RESULTS_FILE}")
+
+    # Append to history
+    git_hash = get_git_hash()
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+    append_to_history({
+        "run_id": f"{now}_{git_hash}",
+        "timestamp": now,
+        "git_hash": git_hash,
+        "note": args.note,
+        "positions": positions,
+        "config": {"global": collect_global_config()},
+        "results": summaries,
+    })

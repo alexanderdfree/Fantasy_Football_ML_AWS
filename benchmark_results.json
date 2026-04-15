@@ -1,23 +1,23 @@
 [
   {
     "position": "RB",
-    "ridge_mae": 3.784,
-    "ridge_r2": 0.551,
-    "nn_mae": 3.852,
-    "nn_r2": 0.505,
-    "nn_wins_mae": false,
+    "ridge_mae": 4.688,
+    "ridge_r2": 0.419,
+    "nn_mae": 4.388,
+    "nn_r2": 0.393,
+    "nn_wins_mae": true,
     "nn_per_target": {
-      "rushing_floor": 1.688,
-      "receiving_floor": 1.731,
-      "td_points": 2.08
+      "rushing_floor": 1.91,
+      "receiving_floor": 1.891,
+      "td_points": 2.16
     },
     "ridge_per_target": {
-      "rushing_floor": 1.69,
-      "receiving_floor": 1.739,
-      "td_points": 2.257
+      "rushing_floor": 2.003,
+      "receiving_floor": 1.996,
+      "td_points": 2.468
     },
-    "ridge_top12": 0.491,
-    "nn_top12": 0.477,
-    "elapsed_sec": 12.4
+    "ridge_top12": 0.444,
+    "nn_top12": 0.458,
+    "elapsed_sec": 28.3
   }
 ]
