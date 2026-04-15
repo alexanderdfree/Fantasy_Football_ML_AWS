@@ -32,8 +32,9 @@ from shared.evaluation import (
     print_comparison_table, plot_pred_vs_actual,
 )
 from shared.backtest import run_weekly_simulation, plot_weekly_accuracy
+from shared.ensemble import LearnedEnsemble
 from shared.weather_features import merge_schedule_features, get_weather_feature_columns
-from src.features.engineer import build_game_history_arrays
+from src.features.engineer import build_game_history_arrays, get_attn_static_columns
 
 
 # ---------------------------------------------------------------------------
@@ -272,11 +273,14 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
     )
     history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
+    val_preds = model.predict_numpy(X_val_s, device)
+    val_preds["total"] = sum(val_preds[t] for t in targets)
+
     test_preds = model.predict_numpy(X_test_s, device)
     test_preds["total"] = sum(test_preds[t] for t in targets)
     metrics = compute_target_metrics(y_test_dict, test_preds, targets)
 
-    return model, nn_scaler, test_preds, metrics, history
+    return model, nn_scaler, val_preds, test_preds, metrics, history
 
 
 def _train_attention_nn(X_train, X_val, X_test,
@@ -353,11 +357,14 @@ def _train_attention_nn(X_train, X_val, X_test,
     )
     history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
+    val_preds = model.predict_numpy(X_val_s, hist_val, mask_val, device)
+    val_preds["total"] = sum(val_preds[t] for t in targets)
+
     test_preds = model.predict_numpy(X_test_s, hist_test, mask_test, device)
     test_preds["total"] = sum(test_preds[t] for t in targets)
     metrics = compute_target_metrics(y_test_dict, test_preds, targets)
 
-    return model, nn_scaler, test_preds, metrics, history
+    return model, nn_scaler, val_preds, test_preds, metrics, history
 
 
 def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=42):
@@ -451,12 +458,13 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     # --- Multi-head NN ---
     print(f"\n=== {pos} Multi-Head Neural Net ===")
-    model, nn_scaler, nn_test_preds, nn_metrics, history = _train_nn(
+    model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
         X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
         cfg, targets, seed,
     )
 
     # --- Weather NN (identical architecture, weather/Vegas features appended) ---
+    weather_nn_val_preds = None
     weather_nn_test_preds = None
     weather_nn_metrics = None
     weather_model = None
@@ -477,12 +485,13 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         X_test_w = pos_test[weather_cols].values.astype(np.float32)
         print(f"  Weather feature matrix shape: {X_train_w.shape}")
 
-        weather_model, weather_nn_scaler, weather_nn_test_preds, weather_nn_metrics, weather_history = _train_nn(
+        weather_model, weather_nn_scaler, weather_nn_val_preds, weather_nn_test_preds, weather_nn_metrics, weather_history = _train_nn(
             X_train_w, X_val_w, X_test_w, y_train_dict, y_val_dict, y_test_dict,
             cfg, targets, seed,
         )
 
     # --- Attention NN (game history as variable-length sequences) ---
+    attn_nn_val_preds = None
     attn_nn_test_preds = None
     attn_nn_metrics = None
     attn_model = None
@@ -493,6 +502,15 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         history_stats = cfg.get("attn_history_stats", None)
         max_seq_len = cfg.get("attn_max_seq_len", 17)
 
+        # Static features for attention NN: drop rolling/EWMA/trend/share
+        # features that are collinear with the attention's learned history.
+        attn_feature_cols = get_attn_static_columns(feature_cols)
+        X_train_attn = pos_train[attn_feature_cols].values.astype(np.float32)
+        X_val_attn = pos_val[attn_feature_cols].values.astype(np.float32)
+        X_test_attn = pos_test[attn_feature_cols].values.astype(np.float32)
+        print(f"  Attn static features: {X_train_attn.shape[1]} "
+              f"(dropped {X_train.shape[1] - X_train_attn.shape[1]} temporal)")
+
         hist_train, mask_train = build_game_history_arrays(
             pos_train, history_stats=history_stats, max_seq_len=max_seq_len)
         hist_val, mask_val = build_game_history_arrays(
@@ -501,9 +519,9 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             pos_test, history_stats=history_stats, max_seq_len=max_seq_len)
         print(f"  History shape: {hist_train.shape} (game_dim={hist_train.shape[2]})")
 
-        attn_model, attn_nn_scaler, attn_nn_test_preds, attn_nn_metrics, attn_history = (
+        attn_model, attn_nn_scaler, attn_nn_val_preds, attn_nn_test_preds, attn_nn_metrics, attn_history = (
             _train_attention_nn(
-                X_train, X_val, X_test,
+                X_train_attn, X_val_attn, X_test_attn,
                 hist_train, mask_train, hist_val, mask_val,
                 hist_test, mask_test,
                 y_train_dict, y_val_dict, y_test_dict,
@@ -511,21 +529,32 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             )
         )
 
-    # --- Ensemble: average Ridge + NN ---
-    # Ridge has good calibration (near-zero bias), NN has better per-target
-    # precision.  Simple average combines both strengths.
-    ensemble_preds = {}
-    for t in targets:
-        ensemble_preds[t] = 0.5 * ridge_test_preds[t] + 0.5 * nn_test_preds[t]
-    ensemble_preds["total"] = 0.5 * ridge_test_preds["total"] + 0.5 * nn_test_preds["total"]
+    # --- Learned Ensemble: per-target optimized weights across all models ---
+    # Collect val/test predictions from all trained models
+    ridge_val_preds = ridge_model.predict(X_val)
+    ridge_val_preds["total"] = sum(ridge_val_preds[t] for t in targets)
+
+    val_preds_by_model = {"Ridge": ridge_val_preds, "NN": nn_val_preds}
+    test_preds_by_model = {"Ridge": ridge_test_preds, "NN": nn_test_preds}
+    if weather_nn_val_preds is not None:
+        val_preds_by_model["Weather"] = weather_nn_val_preds
+        test_preds_by_model["Weather"] = weather_nn_test_preds
+    if attn_nn_val_preds is not None:
+        val_preds_by_model["Attn"] = attn_nn_val_preds
+        test_preds_by_model["Attn"] = attn_nn_test_preds
+
+    ensemble = LearnedEnsemble(target_names=targets, model_names=list(val_preds_by_model.keys()))
+    ensemble.fit(val_preds_by_model, y_val_dict)
+    ensemble_preds = ensemble.predict(test_preds_by_model)
     ensemble_metrics = compute_target_metrics(y_test_dict, ensemble_preds, targets)
+    ensemble.print_weights()
 
     # --- Comparison ---
     comparison = {
         "Season Average Baseline": baseline_metrics,
         f"{pos} Ridge Multi-Target": ridge_metrics,
         f"{pos} Multi-Head NN": nn_metrics,
-        f"{pos} Ensemble (Ridge+NN)": ensemble_metrics,
+        f"{pos} Learned Ensemble": ensemble_metrics,
     }
     if weather_nn_metrics is not None:
         comparison[f"{pos} Weather NN"] = weather_nn_metrics
@@ -533,12 +562,16 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         comparison[f"{pos} Attention NN"] = attn_nn_metrics
     print_comparison_table(comparison, position=pos, target_names=targets)
 
-    # --- Ranking metrics ---
+    # --- Attach predictions to test DataFrame ---
     pos_test = pos_test.copy()
     pos_test["pred_ridge_total"] = ridge_test_preds["total"]
     pos_test["pred_nn_total"] = nn_test_preds["total"]
     pos_test["pred_ensemble"] = ensemble_preds["total"]
     pos_test["pred_baseline"] = baseline_preds
+    for t in targets:
+        pos_test[f"pred_ridge_{t}"] = ridge_test_preds[t]
+        pos_test[f"pred_nn_{t}"] = nn_test_preds[t]
+        pos_test[f"pred_ensemble_{t}"] = ensemble_preds[t]
 
     backtest_pred_columns = {
         "Season Avg": "pred_baseline",
@@ -557,6 +590,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     weather_nn_ranking = None
     if weather_nn_test_preds is not None:
         pos_test["pred_weather_nn_total"] = weather_nn_test_preds["total"]
+        for t in targets:
+            pos_test[f"pred_weather_nn_{t}"] = weather_nn_test_preds[t]
         backtest_pred_columns["Weather NN"] = "pred_weather_nn_total"
         weather_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_weather_nn_total")
         print(f"Weather NN Top-12 Hit Rate: {weather_nn_ranking['season_avg_hit_rate']:.3f}")
@@ -564,6 +599,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     attn_nn_ranking = None
     if attn_nn_test_preds is not None:
         pos_test["pred_attn_nn_total"] = attn_nn_test_preds["total"]
+        for t in targets:
+            pos_test[f"pred_attn_nn_{t}"] = attn_nn_test_preds[t]
         backtest_pred_columns["Attention NN"] = "pred_attn_nn_total"
         attn_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_attn_nn_total")
         print(f"Attention NN Top-12 Hit Rate: {attn_nn_ranking['season_avg_hit_rate']:.3f}")
@@ -613,13 +650,29 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     plt.close()
 
     print(f"\n{pos} pipeline complete. Outputs saved to {output_dir}/")
+    per_target_preds = {
+        "ridge": ridge_test_preds,
+        "nn": nn_test_preds,
+        "ensemble": ensemble_preds,
+    }
+    if weather_nn_test_preds is not None:
+        per_target_preds["weather_nn"] = weather_nn_test_preds
+    if attn_nn_test_preds is not None:
+        per_target_preds["attn_nn"] = attn_nn_test_preds
+
     result = {
         "ridge_metrics": ridge_metrics,
         "nn_metrics": nn_metrics,
+        "ensemble_metrics": ensemble_metrics,
+        "ensemble_weights": {t: {m: float(w) for m, w in zip(ensemble.model_names, ensemble.weights[t])}
+                            for t in targets},
         "ridge_ranking": ridge_ranking,
         "nn_ranking": nn_ranking,
+        "ensemble_ranking": ensemble_ranking,
         "history": history,
         "sim_results": sim_results,
+        "test_df": pos_test,
+        "per_target_preds": per_target_preds,
     }
     if weather_nn_metrics is not None:
         result["weather_nn_metrics"] = weather_nn_metrics
@@ -818,12 +871,13 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
 
     # NN
     print(f"\n=== {pos} Multi-Head NN (Final Holdout) ===")
-    model, nn_scaler, nn_test_preds, nn_metrics, history = _train_nn(
+    model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
         X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
         cfg, targets, seed,
     )
 
     # Weather NN
+    weather_nn_val_preds = None
     weather_nn_test_preds = None
     weather_nn_metrics = None
     weather_model = None
@@ -843,24 +897,33 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         X_test_w = pos_test[weather_cols].values.astype(np.float32)
         print(f"  Weather feature matrix shape: {X_train_w.shape}")
 
-        weather_model, weather_nn_scaler, weather_nn_test_preds, weather_nn_metrics, _ = _train_nn(
+        weather_model, weather_nn_scaler, weather_nn_val_preds, weather_nn_test_preds, weather_nn_metrics, _ = _train_nn(
             X_train_w, X_val_w, X_test_w, y_train_dict, y_val_dict, y_test_dict,
             cfg, targets, seed,
         )
 
-    # Ensemble
-    ensemble_preds = {}
-    for t in targets:
-        ensemble_preds[t] = 0.5 * ridge_test_preds[t] + 0.5 * nn_test_preds[t]
-    ensemble_preds["total"] = 0.5 * ridge_test_preds["total"] + 0.5 * nn_test_preds["total"]
+    # Learned Ensemble
+    ridge_val_preds_cv = ridge_model.predict(X_val)
+    ridge_val_preds_cv["total"] = sum(ridge_val_preds_cv[t] for t in targets)
+
+    val_preds_by_model = {"Ridge": ridge_val_preds_cv, "NN": nn_val_preds}
+    test_preds_by_model = {"Ridge": ridge_test_preds, "NN": nn_test_preds}
+    if weather_nn_val_preds is not None:
+        val_preds_by_model["Weather"] = weather_nn_val_preds
+        test_preds_by_model["Weather"] = weather_nn_test_preds
+
+    ensemble = LearnedEnsemble(target_names=targets, model_names=list(val_preds_by_model.keys()))
+    ensemble.fit(val_preds_by_model, y_val_dict)
+    ensemble_preds = ensemble.predict(test_preds_by_model)
     ensemble_metrics = compute_target_metrics(y_test_dict, ensemble_preds, targets)
+    ensemble.print_weights()
 
     # Comparison
     comparison = {
         "Season Average Baseline": baseline_metrics,
         f"{pos} Ridge (per-target CV alphas)": ridge_metrics,
         f"{pos} Multi-Head NN": nn_metrics,
-        f"{pos} Ensemble (Ridge+NN)": ensemble_metrics,
+        f"{pos} Learned Ensemble": ensemble_metrics,
     }
     if weather_nn_metrics is not None:
         comparison[f"{pos} Weather NN"] = weather_nn_metrics
@@ -937,8 +1000,12 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         "best_cv_alphas": best_cv_alphas,
         "ridge_metrics": ridge_metrics,
         "nn_metrics": nn_metrics,
+        "ensemble_metrics": ensemble_metrics,
+        "ensemble_weights": {t: {m: float(w) for m, w in zip(ensemble.model_names, ensemble.weights[t])}
+                            for t in targets},
         "ridge_ranking": ridge_ranking,
         "nn_ranking": nn_ranking,
+        "ensemble_ranking": ensemble_ranking,
         "history": history,
         "sim_results": sim_results,
     }

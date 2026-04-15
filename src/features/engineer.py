@@ -473,6 +473,22 @@ def get_feature_columns() -> list[str]:
     return cols
 
 
+def get_attn_static_columns(all_feature_cols: list[str]) -> list[str]:
+    """Return feature columns for the attention NN, excluding temporal aggregations.
+
+    The attention mechanism learns its own temporal representation from raw game
+    history, so rolling/EWMA/trend/share features are redundant (and collinear).
+    Prior-season features are kept — they cover a different season than the
+    attention's within-season lookback.
+    """
+    exclude_prefixes = ("rolling_", "ewma_", "trend_")
+    exclude_exact = set()
+    for w in SHARE_WINDOWS:
+        exclude_exact.update([f"target_share_L{w}", f"carry_share_L{w}"])
+    return [c for c in all_feature_cols
+            if not c.startswith(exclude_prefixes) and c not in exclude_exact]
+
+
 def fill_nans_safe(train_df, val_df, test_df, feature_cols) -> tuple:
     """Fill NaNs using ONLY training set statistics. Called AFTER temporal_split()."""
     # Step 1: Player-level means from training set
