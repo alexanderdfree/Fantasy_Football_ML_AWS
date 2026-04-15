@@ -43,6 +43,17 @@ def collect_global_config():
     }
 
 
+def collect_pos_config(pos):
+    import importlib
+    mod = importlib.import_module(f"{pos}.{pos.lower()}_config")
+    prefix = f"{pos}_"
+    return {k[len(prefix):].lower(): v
+            for k, v in vars(mod).items()
+            if k.startswith(prefix)
+            and not k.endswith("FEATURES")
+            and k != f"{prefix}RIDGE_ALPHAS"}
+
+
 def append_to_history(run_entry):
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE) as f:
@@ -145,6 +156,9 @@ if __name__ == "__main__":
         "git_hash": git_hash,
         "note": args.note,
         "positions": positions,
-        "config": {"global": collect_global_config()},
+        "config": {
+            "global": collect_global_config(),
+            **{p.lower(): collect_pos_config(p) for p in positions},
+        },
         "results": summaries,
     })

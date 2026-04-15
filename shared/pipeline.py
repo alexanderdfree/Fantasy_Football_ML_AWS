@@ -15,7 +15,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from src.config import SPLITS_DIR
+from src.config import SPLITS_DIR, MIN_GAMES_PER_SEASON
 from src.evaluation.metrics import compute_metrics
 from src.models.baseline import SeasonAverageBaseline
 
@@ -113,6 +113,13 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     pos_train = cfg["filter_fn"](train_df)
     pos_val = cfg["filter_fn"](val_df)
     pos_test = cfg["filter_fn"](test_df)
+
+    # Min-games filter: training only.  Applying this to val/test would be
+    # survivorship bias — at prediction time we can't know how many games a
+    # player will finish the season with.
+    games_per_season = pos_train.groupby(["player_id", "season"])["week"].transform("count")
+    pos_train = pos_train[games_per_season >= MIN_GAMES_PER_SEASON].copy()
+
     print(f"  {pos} splits: train={len(pos_train)}, val={len(pos_val)}, test={len(pos_test)}")
 
     # --- Compute targets ---

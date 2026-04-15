@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from src.config import (
     ROLLING_WINDOWS, ROLL_STATS, ROLL_AGGS, EWMA_STATS, EWMA_SPANS,
-    TREND_STATS, SHARE_WINDOWS, OPP_ROLLING_WINDOW, MIN_GAMES_PER_SEASON,
+    TREND_STATS, SHARE_WINDOWS, OPP_ROLLING_WINDOW,
 )
 
 
@@ -63,16 +63,11 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"trend_{stat}"] = short - long
 
     # --- Share / Usage Features (6) ---
-    # Team totals (computed BEFORE min-games filter)
     team_totals = df.groupby(["recent_team", "season", "week"]).agg(
         team_targets=("targets", "sum"),
         team_carries=("carries", "sum"),
     ).reset_index()
     df = df.merge(team_totals, on=["recent_team", "season", "week"], how="left")
-
-    # Min-games filter
-    games_per_season = df.groupby(["player_id", "season"])["week"].transform("count")
-    df = df[games_per_season >= MIN_GAMES_PER_SEASON].copy()
 
     # Detect team changes for stint-aware grouping
     df = df.sort_values(["player_id", "season", "week"])

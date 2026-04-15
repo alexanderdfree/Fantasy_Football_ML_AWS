@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import nfl_data_py as nfl
 from src.config import CACHE_DIR, SEASONS
 
 
@@ -127,7 +128,14 @@ def build_dst_data() -> pd.DataFrame:
     dst_df["player_name"] = dst_df["team"]
     dst_df["recent_team"] = dst_df["team"]
     dst_df["position"] = "DST"
-    dst_df["headshot_url"] = ""
+
+    # Team logos from nfl_data_py
+    try:
+        team_desc = nfl.import_team_desc()
+        logo_map = team_desc.set_index("team_abbr")["team_logo_espn"].to_dict()
+        dst_df["headshot_url"] = dst_df["team"].map(logo_map).fillna("")
+    except Exception:
+        dst_df["headshot_url"] = ""
 
     dst_df = dst_df.sort_values(["team", "season", "week"]).reset_index(drop=True)
     return dst_df

@@ -74,7 +74,7 @@ def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
     train_ds = MultiTargetDataset(X_train, y_train_dict)
     val_ds = MultiTargetDataset(X_val, y_val_dict)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=0, pin_memory=False)
+                              num_workers=0, pin_memory=False, drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                             num_workers=0, pin_memory=False)
     return train_loader, val_loader
