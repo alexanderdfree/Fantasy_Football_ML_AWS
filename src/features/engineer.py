@@ -252,7 +252,7 @@ def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
         def_pts = def_pts.sort_values(["opponent", "position", "season", "week"])
         for col in ["pts_allowed_to_pos", "rush_pts_allowed_to_pos", "recv_pts_allowed_to_pos"]:
             def_pts[f"opp_{col}"] = def_pts.groupby(
-                ["opponent", "position"]
+                ["opponent", "position", "season"]
             )[col].transform(
                 lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
             )
