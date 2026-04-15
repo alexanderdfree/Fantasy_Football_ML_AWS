@@ -11,6 +11,8 @@ from RB.rb_config import (
     RB_NN_PATIENCE,
     RB_LOSS_WEIGHTS, RB_LOSS_W_TOTAL, RB_HUBER_DELTAS,
     RB_SCHEDULER_TYPE, RB_COSINE_T0, RB_COSINE_T_MULT, RB_COSINE_ETA_MIN,
+    RB_TRAIN_ATTENTION_NN, RB_ATTN_D_MODEL, RB_ATTN_N_HEADS,
+    RB_ATTN_MAX_SEQ_LEN, RB_ATTN_HISTORY_STATS,
 )
 from RB.rb_data import filter_to_rb
 from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
@@ -44,6 +46,11 @@ RB_CONFIG = {
     "cosine_t_mult": RB_COSINE_T_MULT,
     "cosine_eta_min": RB_COSINE_ETA_MIN,
     "train_weather_nn": True,
+    "train_attention_nn": RB_TRAIN_ATTENTION_NN,
+    "attn_d_model": RB_ATTN_D_MODEL,
+    "attn_n_heads": RB_ATTN_N_HEADS,
+    "attn_max_seq_len": RB_ATTN_MAX_SEQ_LEN,
+    "attn_history_stats": RB_ATTN_HISTORY_STATS,
 }
 
 

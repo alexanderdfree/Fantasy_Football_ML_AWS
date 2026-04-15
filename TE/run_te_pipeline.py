@@ -11,6 +11,8 @@ from TE.te_config import (
     TE_NN_PATIENCE,
     TE_LOSS_WEIGHTS, TE_LOSS_W_TOTAL, TE_HUBER_DELTAS,
     TE_SCHEDULER_TYPE, TE_ONECYCLE_MAX_LR, TE_ONECYCLE_PCT_START,
+    TE_TRAIN_ATTENTION_NN, TE_ATTN_D_MODEL, TE_ATTN_N_HEADS,
+    TE_ATTN_MAX_SEQ_LEN, TE_ATTN_HISTORY_STATS,
 )
 from TE.te_data import filter_to_te
 from TE.te_targets import compute_te_targets, compute_te_fumble_adjustment
@@ -43,6 +45,11 @@ TE_CONFIG = {
     "onecycle_max_lr": TE_ONECYCLE_MAX_LR,
     "onecycle_pct_start": TE_ONECYCLE_PCT_START,
     "train_weather_nn": True,
+    "train_attention_nn": TE_TRAIN_ATTENTION_NN,
+    "attn_d_model": TE_ATTN_D_MODEL,
+    "attn_n_heads": TE_ATTN_N_HEADS,
+    "attn_max_seq_len": TE_ATTN_MAX_SEQ_LEN,
+    "attn_history_stats": TE_ATTN_HISTORY_STATS,
 }
 
 

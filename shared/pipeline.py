@@ -22,14 +22,18 @@ from src.models.linear import RidgeModel
 from src.data.split import expanding_window_folds
 
 from shared.models import RidgeMultiTarget
-from shared.neural_net import MultiHeadNet
-from shared.training import MultiTargetLoss, MultiHeadTrainer, make_dataloaders, plot_training_curves
+from shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory
+from shared.training import (
+    MultiTargetLoss, MultiHeadTrainer, MultiHeadHistoryTrainer,
+    make_dataloaders, make_history_dataloaders, plot_training_curves,
+)
 from shared.evaluation import (
     compute_target_metrics, compute_ranking_metrics,
     print_comparison_table, plot_pred_vs_actual,
 )
 from shared.backtest import run_weekly_simulation, plot_weekly_accuracy
 from shared.weather_features import merge_schedule_features, get_weather_feature_columns
+from src.features.engineer import build_game_history_arrays
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +279,78 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
     return model, nn_scaler, test_preds, metrics, history
 
 
+def _train_attention_nn(X_train, X_val, X_test,
+                        hist_train, mask_train, hist_val, mask_val,
+                        hist_test, mask_test,
+                        y_train_dict, y_val_dict, y_test_dict,
+                        cfg, targets, seed):
+    """Train a MultiHeadNetWithHistory and return (model, scaler, test_preds, metrics, history).
+
+    Like _train_nn but feeds both static features and game history sequences.
+    """
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    nn_scaler = StandardScaler()
+    X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
+    X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
+    X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
+
+    # Convert history arrays to lists-of-arrays for the variable-length dataset
+    def _to_history_list(hist_arr, mask_arr):
+        """Convert padded [n, max_len, dim] to list of [actual_len, dim]."""
+        result = []
+        for i in range(len(hist_arr)):
+            seq_len = mask_arr[i].sum()
+            result.append(hist_arr[i, :seq_len])
+        return result
+
+    train_loader, val_loader = make_history_dataloaders(
+        X_train_s, _to_history_list(hist_train, mask_train), y_train_dict,
+        X_val_s, _to_history_list(hist_val, mask_val), y_val_dict,
+        batch_size=cfg["nn_batch_size"],
+    )
+
+    game_dim = hist_train.shape[2]
+    device = torch.device("cpu")
+    model = MultiHeadNetWithHistory(
+        static_dim=X_train_s.shape[1],
+        game_dim=game_dim,
+        target_names=targets,
+        backbone_layers=cfg["nn_backbone_layers"],
+        d_model=cfg.get("attn_d_model", 32),
+        n_attn_heads=cfg.get("attn_n_heads", 2),
+        head_hidden=cfg["nn_head_hidden"],
+        dropout=cfg["nn_dropout"],
+        head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
+        non_negative_targets=cfg.get("nn_non_negative_targets"),
+    ).to(device)
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=cfg["nn_lr"], weight_decay=cfg["nn_weight_decay"],
+    )
+    scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
+    criterion = MultiTargetLoss(
+        target_names=targets,
+        loss_weights=cfg["loss_weights"],
+        huber_deltas=cfg["huber_deltas"],
+        w_total=cfg["loss_w_total"],
+    )
+
+    trainer = MultiHeadHistoryTrainer(
+        model=model, optimizer=optimizer, scheduler=scheduler,
+        criterion=criterion, device=device, target_names=targets,
+        patience=cfg["nn_patience"], scheduler_per_batch=scheduler_per_batch,
+    )
+    history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
+
+    test_preds = model.predict_numpy(X_test_s, hist_test, mask_test, device)
+    test_preds["total"] = sum(test_preds[t] for t in targets)
+    metrics = compute_target_metrics(y_test_dict, test_preds, targets)
+
+    return model, nn_scaler, test_preds, metrics, history
+
+
 def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=42):
     """Run the full position model pipeline.
 
@@ -397,6 +473,35 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             cfg, targets, seed,
         )
 
+    # --- Attention NN (game history as variable-length sequences) ---
+    attn_nn_test_preds = None
+    attn_nn_metrics = None
+    attn_model = None
+    attn_nn_scaler = None
+    attn_history = None
+    if cfg.get("train_attention_nn", False):
+        print(f"\n=== {pos} Attention Multi-Head Neural Net ===")
+        history_stats = cfg.get("attn_history_stats", None)
+        max_seq_len = cfg.get("attn_max_seq_len", 17)
+
+        hist_train, mask_train = build_game_history_arrays(
+            pos_train, history_stats=history_stats, max_seq_len=max_seq_len)
+        hist_val, mask_val = build_game_history_arrays(
+            pos_val, history_stats=history_stats, max_seq_len=max_seq_len)
+        hist_test, mask_test = build_game_history_arrays(
+            pos_test, history_stats=history_stats, max_seq_len=max_seq_len)
+        print(f"  History shape: {hist_train.shape} (game_dim={hist_train.shape[2]})")
+
+        attn_model, attn_nn_scaler, attn_nn_test_preds, attn_nn_metrics, attn_history = (
+            _train_attention_nn(
+                X_train, X_val, X_test,
+                hist_train, mask_train, hist_val, mask_val,
+                hist_test, mask_test,
+                y_train_dict, y_val_dict, y_test_dict,
+                cfg, targets, seed,
+            )
+        )
+
     # --- Ensemble: average Ridge + NN ---
     # Ridge has good calibration (near-zero bias), NN has better per-target
     # precision.  Simple average combines both strengths.
@@ -415,6 +520,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     }
     if weather_nn_metrics is not None:
         comparison[f"{pos} Weather NN"] = weather_nn_metrics
+    if attn_nn_metrics is not None:
+        comparison[f"{pos} Attention NN"] = attn_nn_metrics
     print_comparison_table(comparison, position=pos, target_names=targets)
 
     # --- Ranking metrics ---
@@ -445,6 +552,13 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         weather_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_weather_nn_total")
         print(f"Weather NN Top-12 Hit Rate: {weather_nn_ranking['season_avg_hit_rate']:.3f}")
 
+    attn_nn_ranking = None
+    if attn_nn_test_preds is not None:
+        pos_test["pred_attn_nn_total"] = attn_nn_test_preds["total"]
+        backtest_pred_columns["Attention NN"] = "pred_attn_nn_total"
+        attn_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_attn_nn_total")
+        print(f"Attention NN Top-12 Hit Rate: {attn_nn_ranking['season_avg_hit_rate']:.3f}")
+
     # --- Weekly backtest ---
     print("\n=== Weekly Backtest ===")
     sim_results = run_weekly_simulation(pos_test, pred_columns=backtest_pred_columns)
@@ -463,7 +577,14 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         torch.save(weather_model.state_dict(), f"{output_dir}/models/{pos_lower}_weather_nn.pt")
         joblib.dump(weather_nn_scaler, f"{output_dir}/models/weather_nn_scaler.pkl")
 
+    if attn_model is not None:
+        torch.save(attn_model.state_dict(), f"{output_dir}/models/{pos_lower}_attention_nn.pt")
+        joblib.dump(attn_nn_scaler, f"{output_dir}/models/attention_nn_scaler.pkl")
+
     plot_training_curves(history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png")
+    if attn_history is not None:
+        plot_training_curves(attn_history, targets,
+                             f"{output_dir}/figures/{pos_lower}_attention_training_curves.png")
     plot_weekly_accuracy(sim_results, pos, f"{output_dir}/figures/{pos_lower}_weekly_mae.png")
     plot_pred_vs_actual(
         y_test_dict, nn_test_preds, targets, f"{pos} Multi-Head NN",
@@ -494,6 +615,9 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     if weather_nn_metrics is not None:
         result["weather_nn_metrics"] = weather_nn_metrics
         result["weather_nn_ranking"] = weather_nn_ranking
+    if attn_nn_metrics is not None:
+        result["attn_nn_metrics"] = attn_nn_metrics
+        result["attn_nn_ranking"] = attn_nn_ranking
     return result
 
 

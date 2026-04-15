@@ -11,6 +11,8 @@ from WR.wr_config import (
     WR_NN_PATIENCE,
     WR_LOSS_WEIGHTS, WR_LOSS_W_TOTAL, WR_HUBER_DELTAS,
     WR_SCHEDULER_TYPE, WR_COSINE_T0, WR_COSINE_T_MULT, WR_COSINE_ETA_MIN,
+    WR_TRAIN_ATTENTION_NN, WR_ATTN_D_MODEL, WR_ATTN_N_HEADS,
+    WR_ATTN_MAX_SEQ_LEN, WR_ATTN_HISTORY_STATS,
 )
 from WR.wr_data import filter_to_wr
 from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
@@ -44,6 +46,11 @@ WR_CONFIG = {
     "cosine_t_mult": WR_COSINE_T_MULT,
     "cosine_eta_min": WR_COSINE_ETA_MIN,
     "train_weather_nn": True,
+    "train_attention_nn": WR_TRAIN_ATTENTION_NN,
+    "attn_d_model": WR_ATTN_D_MODEL,
+    "attn_n_heads": WR_ATTN_N_HEADS,
+    "attn_max_seq_len": WR_ATTN_MAX_SEQ_LEN,
+    "attn_history_stats": WR_ATTN_HISTORY_STATS,
 }
 
 

@@ -87,3 +87,16 @@ WR_SCHEDULER_TYPE = "cosine_warm_restarts"
 WR_COSINE_T0 = 40
 WR_COSINE_T_MULT = 2
 WR_COSINE_ETA_MIN = 1e-5
+
+# === Attention NN (game history variant) ===
+WR_TRAIN_ATTENTION_NN = True
+WR_ATTN_D_MODEL = 32
+WR_ATTN_N_HEADS = 2
+WR_ATTN_MAX_SEQ_LEN = 17
+WR_ATTN_HISTORY_STATS = [
+    "fantasy_points", "fantasy_points_floor",
+    "receiving_yards", "rushing_yards",
+    "receiving_tds", "rushing_tds",
+    "targets", "receptions", "carries",
+    "snap_pct",
+]

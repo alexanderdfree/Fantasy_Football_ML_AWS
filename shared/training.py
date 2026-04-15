@@ -69,6 +69,71 @@ class MultiTargetDataset(Dataset):
         return x, y
 
 
+class MultiTargetHistoryDataset(Dataset):
+    """Dataset that returns static features + variable-length game history + targets."""
+
+    def __init__(self, X_static: np.ndarray, X_history: list[np.ndarray], y_dict: dict):
+        """
+        Args:
+            X_static: [n_samples, static_dim] static feature array
+            X_history: list of n_samples arrays, each [seq_len_i, game_dim]
+            y_dict: dict of target arrays
+        """
+        self.X_static = torch.FloatTensor(X_static)
+        self.histories = [torch.FloatTensor(h) for h in X_history]
+        self.targets = {k: torch.FloatTensor(v) for k, v in y_dict.items()}
+
+    def __len__(self):
+        return len(self.X_static)
+
+    def __getitem__(self, idx):
+        return self.X_static[idx], self.histories[idx], {k: v[idx] for k, v in self.targets.items()}
+
+
+def collate_with_history(batch):
+    """Custom collate that pads variable-length game histories within each batch."""
+    statics, histories, targets = zip(*batch)
+    statics = torch.stack(statics)
+
+    # Pad histories to the longest sequence in this batch
+    game_dim = histories[0].size(-1) if histories[0].dim() > 0 and histories[0].size(0) > 0 else 0
+    max_len = max(h.size(0) for h in histories) if histories else 0
+    max_len = max(max_len, 1)  # at least 1 to avoid empty tensors
+
+    if game_dim == 0:
+        # Edge case: determine game_dim from any non-empty history
+        for h in histories:
+            if h.dim() > 0 and h.size(0) > 0:
+                game_dim = h.size(-1)
+                break
+
+    padded = torch.zeros(len(histories), max_len, game_dim)
+    masks = torch.zeros(len(histories), max_len, dtype=torch.bool)
+    for i, h in enumerate(histories):
+        seq_len = h.size(0) if h.dim() > 0 else 0
+        if seq_len > 0:
+            padded[i, :seq_len] = h
+            masks[i, :seq_len] = True
+
+    target_dict = {k: torch.stack([t[k] for t in targets]) for k in targets[0]}
+    return statics, padded, masks, target_dict
+
+
+def make_history_dataloaders(X_train_static, X_train_history, y_train_dict,
+                             X_val_static, X_val_history, y_val_dict,
+                             batch_size=256):
+    """Create DataLoaders for attention model with game history."""
+    train_ds = MultiTargetHistoryDataset(X_train_static, X_train_history, y_train_dict)
+    val_ds = MultiTargetHistoryDataset(X_val_static, X_val_history, y_val_dict)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                              num_workers=0, pin_memory=False, drop_last=True,
+                              collate_fn=collate_with_history)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                            num_workers=0, pin_memory=False,
+                            collate_fn=collate_with_history)
+    return train_loader, val_loader
+
+
 def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
     """Create DataLoaders for multi-target training."""
     train_ds = MultiTargetDataset(X_train, y_train_dict)
@@ -166,6 +231,128 @@ class MultiHeadTrainer:
                 )
 
             # Compute MAE per target
+            for k in all_keys:
+                y_pred_all = np.concatenate(all_preds[k])
+                y_true_all = np.concatenate(all_targets[k])
+                mae = np.mean(np.abs(y_pred_all - y_true_all))
+                history[f"val_mae_{k}"].append(mae)
+                if k == "total":
+                    history["val_rmse_total"].append(
+                        np.sqrt(np.mean((y_pred_all - y_true_all) ** 2))
+                    )
+
+            # --- LR Scheduler ---
+            if not self.scheduler_per_batch:
+                if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    self.scheduler.step(avg_val_loss)
+                else:
+                    self.scheduler.step()
+
+            # --- Early Stopping ---
+            if avg_val_loss < self.best_val_loss:
+                self.best_val_loss = avg_val_loss
+                self.best_model_state = {
+                    k: v.clone() for k, v in self.model.state_dict().items()
+                }
+                self.epochs_without_improvement = 0
+            else:
+                self.epochs_without_improvement += 1
+                if self.epochs_without_improvement >= self.patience:
+                    print(f"Early stopping at epoch {epoch + 1}")
+                    self.model.load_state_dict(self.best_model_state)
+                    break
+
+            # --- Logging ---
+            if (epoch + 1) % 10 == 0:
+                target_maes = " | ".join(
+                    f"{t}: {history[f'val_mae_{t}'][-1]:.3f}"
+                    for t in self.target_names
+                )
+                print(
+                    f"Epoch {epoch+1:3d} | "
+                    f"Train: {avg_train_loss:.4f} | "
+                    f"Val: {avg_val_loss:.4f} | "
+                    f"MAE total: {history['val_mae_total'][-1]:.3f} | "
+                    f"{target_maes}"
+                )
+
+        return history
+
+
+class MultiHeadHistoryTrainer(MultiHeadTrainer):
+    """Training loop for the attention-based model with game history input."""
+
+    def train(self, train_loader, val_loader, n_epochs) -> dict:
+        all_keys = self.target_names + ["total"]
+        history = {k: [] for k in [
+            "train_loss", "val_loss",
+            *[f"val_loss_{t}" for t in self.target_names],
+            "val_mae_total", *[f"val_mae_{t}" for t in self.target_names],
+            "val_rmse_total",
+        ]}
+
+        for epoch in range(n_epochs):
+            # --- Training pass ---
+            self.model.train()
+            epoch_train_loss = 0.0
+            n_train_batches = 0
+
+            for X_static, X_hist, hist_mask, y_batch in train_loader:
+                X_static = X_static.to(self.device)
+                X_hist = X_hist.to(self.device)
+                hist_mask = hist_mask.to(self.device)
+                y_batch = {k: v.to(self.device) for k, v in y_batch.items()}
+
+                self.optimizer.zero_grad()
+                preds = self.model(X_static, X_hist, hist_mask)
+                loss, _ = self.criterion(preds, y_batch)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                self.optimizer.step()
+                if self.scheduler_per_batch:
+                    self.scheduler.step()
+
+                epoch_train_loss += loss.item()
+                n_train_batches += 1
+
+            avg_train_loss = epoch_train_loss / n_train_batches
+            history["train_loss"].append(avg_train_loss)
+
+            # --- Validation pass ---
+            self.model.eval()
+            all_preds = {k: [] for k in all_keys}
+            all_targets = {k: [] for k in all_keys}
+            epoch_val_loss = 0.0
+            val_components_accum = {}
+            n_val_batches = 0
+
+            with torch.no_grad():
+                for X_static, X_hist, hist_mask, y_batch in val_loader:
+                    X_static = X_static.to(self.device)
+                    X_hist = X_hist.to(self.device)
+                    hist_mask = hist_mask.to(self.device)
+                    y_batch = {k: v.to(self.device) for k, v in y_batch.items()}
+
+                    preds = self.model(X_static, X_hist, hist_mask)
+                    loss, components = self.criterion(preds, y_batch)
+
+                    epoch_val_loss += loss.item()
+                    for k in components:
+                        val_components_accum[k] = val_components_accum.get(k, 0) + components[k]
+                    n_val_batches += 1
+
+                    for k in all_keys:
+                        all_preds[k].append(preds[k].cpu().numpy())
+                        all_targets[k].append(y_batch[k].cpu().numpy())
+
+            avg_val_loss = epoch_val_loss / n_val_batches
+            history["val_loss"].append(avg_val_loss)
+
+            for t in self.target_names:
+                history[f"val_loss_{t}"].append(
+                    val_components_accum.get(f"loss_{t}", 0) / n_val_batches
+                )
+
             for k in all_keys:
                 y_pred_all = np.concatenate(all_preds[k])
                 y_true_all = np.concatenate(all_targets[k])

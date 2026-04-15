@@ -11,6 +11,8 @@ from QB.qb_config import (
     QB_NN_PATIENCE,
     QB_LOSS_WEIGHTS, QB_LOSS_W_TOTAL, QB_HUBER_DELTAS,
     QB_SCHEDULER_TYPE, QB_ONECYCLE_MAX_LR, QB_ONECYCLE_PCT_START,
+    QB_TRAIN_ATTENTION_NN, QB_ATTN_D_MODEL, QB_ATTN_N_HEADS,
+    QB_ATTN_MAX_SEQ_LEN, QB_ATTN_HISTORY_STATS,
 )
 from QB.qb_data import filter_to_qb
 from QB.qb_targets import compute_qb_targets, compute_qb_adjustment
@@ -43,6 +45,11 @@ QB_CONFIG = {
     "onecycle_max_lr": QB_ONECYCLE_MAX_LR,
     "onecycle_pct_start": QB_ONECYCLE_PCT_START,
     "train_weather_nn": True,
+    "train_attention_nn": QB_TRAIN_ATTENTION_NN,
+    "attn_d_model": QB_ATTN_D_MODEL,
+    "attn_n_heads": QB_ATTN_N_HEADS,
+    "attn_max_seq_len": QB_ATTN_MAX_SEQ_LEN,
+    "attn_history_stats": QB_ATTN_HISTORY_STATS,
 }
 
 

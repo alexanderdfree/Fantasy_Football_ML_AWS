@@ -149,6 +149,85 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# === Game History Extraction (for attention model) ===
+
+# Default per-game stats to include in history vectors.
+# These are the raw stats that the rolling features are derived from.
+GAME_HISTORY_STATS = [
+    "fantasy_points", "fantasy_points_floor",
+    "passing_yards", "rushing_yards", "receiving_yards",
+    "passing_tds", "rushing_tds", "receiving_tds",
+    "attempts", "completions", "carries",
+    "targets", "receptions", "snap_pct",
+    "interceptions",
+]
+
+
+def build_game_history_arrays(
+    df: pd.DataFrame,
+    history_stats: list[str] = None,
+    max_seq_len: int = 17,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extract per-player game history as padded arrays for the attention model.
+
+    For each player-week row, gathers that player's prior games within the same
+    season (shifted by 1 to prevent leakage — same convention as rolling features).
+
+    Args:
+        df: DataFrame with player_id, season, week, and stat columns.
+            Must already be sorted by [player_id, season, week].
+        history_stats: list of column names to include per game.
+        max_seq_len: maximum history length (pad/truncate to this).
+
+    Returns:
+        X_history: [n_samples, max_seq_len, game_dim] float32 array (zero-padded)
+        history_mask: [n_samples, max_seq_len] bool array (True = real game)
+    """
+    if history_stats is None:
+        history_stats = GAME_HISTORY_STATS
+    # Only use stats that exist in the DataFrame
+    history_stats = [s for s in history_stats if s in df.columns]
+    game_dim = len(history_stats)
+
+    n = len(df)
+    X_history = np.zeros((n, max_seq_len, game_dim), dtype=np.float32)
+    history_mask = np.zeros((n, max_seq_len), dtype=bool)
+
+    # Group by player-season for efficient lookback
+    df_sorted = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
+    stat_values = df_sorted[history_stats].values.astype(np.float32)
+
+    # Build index mapping: (player_id, season) -> list of row indices in order
+    group_indices = {}
+    for idx, (pid, season) in enumerate(zip(df_sorted["player_id"], df_sorted["season"])):
+        key = (pid, season)
+        if key not in group_indices:
+            group_indices[key] = []
+        group_indices[key].append(idx)
+
+    # For each row, look back at prior games in the same player-season
+    for key, indices in group_indices.items():
+        for pos_in_group, row_idx in enumerate(indices):
+            # Games before this one (shift=1 equivalent)
+            n_prior = pos_in_group  # games 0..pos_in_group-1
+            if n_prior == 0:
+                continue  # no history for first game of season
+
+            # Take most recent games, up to max_seq_len
+            start = max(0, n_prior - max_seq_len)
+            prior_indices = indices[start:pos_in_group]
+            seq_len = len(prior_indices)
+
+            # Fill from the end so most recent game is last
+            X_history[row_idx, :seq_len] = stat_values[prior_indices]
+            history_mask[row_idx, :seq_len] = True
+
+    # Replace NaN with 0 in history
+    np.nan_to_num(X_history, copy=False, nan=0.0)
+
+    return X_history, history_mask
+
+
 def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     """Build opponent/matchup features."""
     # Determine opponent from schedule or opponent_team column
@@ -325,6 +404,16 @@ def _build_contextual_features(df: pd.DataFrame) -> pd.DataFrame:
     )["week"].diff().fillna(1) * 7
     df["days_rest"] = df["days_rest"].clip(lower=4, upper=21)
 
+    # Injury status (merged in loader; ensure defaults for missing data)
+    if "practice_status" not in df.columns:
+        df["practice_status"] = 2.0
+    if "game_status" not in df.columns:
+        df["game_status"] = 1.0
+
+    # Depth chart rank (merged in loader; ensure default)
+    if "depth_chart_rank" not in df.columns:
+        df["depth_chart_rank"] = 1.0
+
     return df
 
 
@@ -375,7 +464,8 @@ def get_feature_columns() -> list[str]:
     ]
 
     # Contextual
-    cols += ["is_home", "week", "is_returning_from_absence", "days_rest"]
+    cols += ["is_home", "week", "is_returning_from_absence", "days_rest",
+             "practice_status", "game_status", "depth_chart_rank"]
 
     # Position encoding
     cols += ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]

@@ -104,6 +104,65 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
         if "snap_pct" not in weekly.columns:
             weekly["snap_pct"] = float("nan")
 
+    # 5. Injury reports
+    injury_path = f"{cache_dir}/injuries_{seasons[0]}_{seasons[-1]}.parquet"
+    if os.path.exists(injury_path):
+        injuries = pd.read_parquet(injury_path)
+    else:
+        injuries = nfl.import_injuries(seasons)
+        injuries.to_parquet(injury_path)
+
+    practice_map = {
+        "Full Participation in Practice": 2,
+        "Limited Participation in Practice": 1,
+        "Did Not Participate In Practice": 0,
+    }
+    injuries["practice_status_num"] = injuries["practice_status"].map(practice_map)
+
+    status_map = {"Questionable": 0.5, "Doubtful": 0.1, "Out": 0.0}
+    injuries["game_status_num"] = injuries["report_status"].map(status_map).fillna(1.0)
+
+    # Worst practice/game status per player-week (multiple injuries possible)
+    inj_agg = injuries.groupby(["gsis_id", "season", "week"]).agg(
+        practice_status=("practice_status_num", "min"),
+        game_status=("game_status_num", "min"),
+    ).reset_index()
+
+    weekly = weekly.merge(
+        inj_agg,
+        left_on=["player_id", "season", "week"],
+        right_on=["gsis_id", "season", "week"],
+        how="left",
+    )
+    weekly.drop(columns=["gsis_id"], errors="ignore", inplace=True)
+    weekly["practice_status"] = weekly["practice_status"].fillna(2.0)
+    weekly["game_status"] = weekly["game_status"].fillna(1.0)
+
+    # 6. Depth charts (Offense formation, most recent entry per player-week)
+    depth_path = f"{cache_dir}/depth_charts_{seasons[0]}_{seasons[-1]}.parquet"
+    if os.path.exists(depth_path):
+        depth = pd.read_parquet(depth_path)
+    else:
+        depth = nfl.import_depth_charts(seasons)
+        depth.to_parquet(depth_path)
+
+    depth_off = depth[depth["formation"] == "Offense"].copy()
+    depth_off["depth_team"] = pd.to_numeric(depth_off["depth_team"], errors="coerce")
+    # One row per player-week: take the most recent (last) entry per week
+    depth_off = depth_off.sort_values(["gsis_id", "season", "week"])
+    depth_agg = depth_off.groupby(["gsis_id", "season", "week"]).agg(
+        depth_chart_rank=("depth_team", "last"),
+    ).reset_index()
+
+    weekly = weekly.merge(
+        depth_agg,
+        left_on=["player_id", "season", "week"],
+        right_on=["gsis_id", "season", "week"],
+        how="left",
+    )
+    weekly.drop(columns=["gsis_id"], errors="ignore", inplace=True)
+    weekly["depth_chart_rank"] = weekly["depth_chart_rank"].fillna(3).clip(upper=3)
+
     # Store schedules for later use
     weekly.attrs["schedules"] = schedules
 

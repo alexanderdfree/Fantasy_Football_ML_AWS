@@ -85,3 +85,16 @@ TE_HUBER_DELTAS = {
 TE_SCHEDULER_TYPE = "onecycle"
 TE_ONECYCLE_MAX_LR = 2e-3
 TE_ONECYCLE_PCT_START = 0.3
+
+# === Attention NN (game history variant) ===
+TE_TRAIN_ATTENTION_NN = True
+TE_ATTN_D_MODEL = 32
+TE_ATTN_N_HEADS = 2
+TE_ATTN_MAX_SEQ_LEN = 17
+TE_ATTN_HISTORY_STATS = [
+    "fantasy_points", "fantasy_points_floor",
+    "receiving_yards", "rushing_yards",
+    "receiving_tds", "rushing_tds",
+    "targets", "receptions", "carries",
+    "snap_pct",
+]

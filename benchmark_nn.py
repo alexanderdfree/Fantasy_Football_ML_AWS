@@ -111,6 +111,16 @@ def summarize(position, result):
         "ridge_top12": round(result["ridge_ranking"]["season_avg_hit_rate"], 3),
         "nn_top12":    round(result["nn_ranking"]["season_avg_hit_rate"], 3),
     }
+    # Attention NN metrics (if trained)
+    if "attn_nn_metrics" in result:
+        attn = result["attn_nn_metrics"]["total"]
+        summary["attn_nn_mae"] = round(attn["mae"], 3)
+        summary["attn_nn_r2"] = round(attn["r2"], 3)
+        summary["attn_nn_per_target"] = {
+            t: round(result["attn_nn_metrics"][t]["mae"], 3)
+            for t in result["attn_nn_metrics"] if t != "total"
+        }
+        summary["attn_nn_top12"] = round(result["attn_nn_ranking"]["season_avg_hit_rate"], 3)
     if "cv_metrics" in result:
         cv = result["cv_metrics"]
         summary["cv_ridge_mae_mean"] = round(cv["ridge"]["total"]["mae_mean"], 3)
@@ -123,15 +133,29 @@ def summarize(position, result):
 
 def print_table(summaries):
     has_cv = any("cv_ridge_mae_mean" in s for s in summaries)
+    has_attn = any("attn_nn_mae" in s for s in summaries)
 
-    print("\n" + "=" * 72)
-    print(f"{'Pos':<5} {'Ridge MAE':>10} {'NN MAE':>10} {'Delta':>8} {'Ridge R2':>9} {'NN R2':>9} {'NN Wins?':>9}")
-    print("-" * 72)
-    for s in summaries:
-        delta = s["nn_mae"] - s["ridge_mae"]
-        marker = "YES" if s["nn_wins_mae"] else "no"
-        print(f"{s['position']:<5} {s['ridge_mae']:>10.3f} {s['nn_mae']:>10.3f} {delta:>+8.3f} {s['ridge_r2']:>9.3f} {s['nn_r2']:>9.3f} {marker:>9}")
-    print("=" * 72)
+    if has_attn:
+        print("\n" + "=" * 95)
+        print(f"{'Pos':<5} {'Ridge MAE':>10} {'NN MAE':>10} {'Attn MAE':>10} {'Attn-NN':>9} {'Ridge R2':>9} {'NN R2':>9} {'Attn R2':>9}")
+        print("-" * 95)
+        for s in summaries:
+            attn_mae = s.get("attn_nn_mae", float("nan"))
+            attn_r2 = s.get("attn_nn_r2", float("nan"))
+            attn_delta = attn_mae - s["nn_mae"] if "attn_nn_mae" in s else float("nan")
+            print(f"{s['position']:<5} {s['ridge_mae']:>10.3f} {s['nn_mae']:>10.3f} "
+                  f"{attn_mae:>10.3f} {attn_delta:>+9.3f} "
+                  f"{s['ridge_r2']:>9.3f} {s['nn_r2']:>9.3f} {attn_r2:>9.3f}")
+        print("=" * 95)
+    else:
+        print("\n" + "=" * 72)
+        print(f"{'Pos':<5} {'Ridge MAE':>10} {'NN MAE':>10} {'Delta':>8} {'Ridge R2':>9} {'NN R2':>9} {'NN Wins?':>9}")
+        print("-" * 72)
+        for s in summaries:
+            delta = s["nn_mae"] - s["ridge_mae"]
+            marker = "YES" if s["nn_wins_mae"] else "no"
+            print(f"{s['position']:<5} {s['ridge_mae']:>10.3f} {s['nn_mae']:>10.3f} {delta:>+8.3f} {s['ridge_r2']:>9.3f} {s['nn_r2']:>9.3f} {marker:>9}")
+        print("=" * 72)
 
     if has_cv:
         print("\n" + "=" * 72)
