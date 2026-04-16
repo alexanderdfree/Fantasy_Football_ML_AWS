@@ -350,6 +350,7 @@ class TestMainIntegration:
                  "S3_BUCKET": "test-bucket",
                  "TRAINING_DATA_DIR": "/data",
                  "MODEL_OUTPUT_DIR": "/model",
+                 "REQUIRE_GPU": "0",
              }), \
              mock.patch("batch.train.POSITIONS", {
                  "RB": ("fake_runner_mod", "fake_runner", True),
@@ -389,7 +390,7 @@ class TestMainIntegration:
             return original_import(name, *args, **kwargs)
 
         with mock.patch("sys.argv", ["train.py", "--position", "K"]), \
-             mock.patch.dict(os.environ, {"MODEL_OUTPUT_DIR": "/model"}), \
+             mock.patch.dict(os.environ, {"MODEL_OUTPUT_DIR": "/model", "REQUIRE_GPU": "0"}), \
              mock.patch("batch.train.POSITIONS", {
                  "K": ("fake_k_mod", "fake_k_runner", False),
              }), \

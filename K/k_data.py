@@ -237,7 +237,16 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
     if not mask.any():
         return
 
+    backfill_cols = [
+        "avg_fg_distance", "max_fg_distance", "avg_fg_prob",
+        "clutch_fg_att", "clutch_fg_made",
+        "q4_fg_att", "q4_fg_made",
+        "long_fg_att", "long_fg_made",
+        "game_wind", "game_temp", "roof", "surface", "is_dome",
+    ]
+
     try:
+        all_weekly = []
         for yr in seasons:
             pbp = nfl.import_pbp_data([yr], downcast=True)
             pbp = pbp[pbp["season_type"] == "REG"]
@@ -270,16 +279,20 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
                 surface=("surface", "first"),
             ).reset_index()
             weekly_pbp["is_dome"] = weekly_pbp["roof"].isin(["dome", "closed"]).astype(int)
+            weekly_pbp.rename(columns={"kicker_player_id": "player_id"}, inplace=True)
+            all_weekly.append(weekly_pbp)
 
-            yr_mask = k_df["season"] == yr
-            for _, row in weekly_pbp.iterrows():
-                row_mask = yr_mask & (k_df["player_id"] == row["kicker_player_id"]) & (k_df["week"] == row["week"])
-                for col in ["avg_fg_distance", "max_fg_distance", "avg_fg_prob",
-                            "clutch_fg_att", "clutch_fg_made",
-                            "q4_fg_att", "q4_fg_made",
-                            "long_fg_att", "long_fg_made",
-                            "game_wind", "game_temp", "is_dome"]:
-                    k_df.loc[row_mask, col] = row[col]
+        pbp_all = pd.concat(all_weekly, ignore_index=True)
+        key = ["player_id", "season", "week"]
+        # roof/surface are initialized as float NaN upstream; cast to object so
+        # DataFrame.update can write the string values pulled from PBP.
+        for str_col in ("roof", "surface"):
+            if k_df[str_col].dtype != object:
+                k_df[str_col] = k_df[str_col].astype(object)
+        # DataFrame.update aligns on index and overwrites non-NaN values from the source
+        k_df.set_index(key, inplace=True)
+        k_df.update(pbp_all.set_index(key)[backfill_cols])
+        k_df.reset_index(inplace=True)
     except Exception as e:
         print(f"  WARNING: 2025 PBP backfill failed ({e}), PBP features will be NaN for 2025")
 
