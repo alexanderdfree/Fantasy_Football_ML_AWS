@@ -165,6 +165,13 @@ body {
     margin-bottom: 4px;
 }
 
+.error-message {
+    color: var(--red);
+    text-align: center;
+    padding: 24px 16px;
+    font-size: 14px;
+}
+
 .loading-sub {
     font-size: 13px !important;
     color: var(--text-muted) !important;
@@ -622,7 +629,7 @@ tbody tr:last-child td {
         align-items: stretch;
     }
     .search-box { width: 100%; }
-    .filters-bar { flex-direction: column; gap: 12px; }
+    .filters-bar { flex-direction: column; gap: 12px; align-items: stretch; }
     .charts-row { grid-template-columns: 1fr; }
     .subtitle { display: none; }
 }

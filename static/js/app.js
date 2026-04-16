@@ -17,6 +17,12 @@ Chart.defaults.color = "#9aa0b0";
 Chart.defaults.borderColor = "#2e3347";
 Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 
+async function fetchJSON(url) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    return resp.json();
+}
+
 const COLORS = {
     ridge: "#3b82f6",
     nn: "#22c55e",
@@ -42,8 +48,7 @@ async function init() {
 
     // Load weeks dropdown
     try {
-        const weeksResp = await fetch("/api/weeks");
-        const weeksData = await weeksResp.json();
+        const weeksData = await fetchJSON("/api/weeks");
         const weekSelect = document.getElementById("week-filter");
         weeksData.weeks.forEach(w => {
             const opt = document.createElement("option");
@@ -170,12 +175,14 @@ async function loadPredictions() {
     });
 
     try {
-        const resp = await fetch(`/api/predictions?${params}`);
-        const data = await resp.json();
-        allPlayers = data.players;
+        const data = await fetchJSON(`/api/predictions?${params}`);
+        allPlayers = data.players || [];
         renderTable();
     } catch (e) {
         console.error("Failed to load predictions:", e);
+        allPlayers = [];
+        document.getElementById("predictions-body").innerHTML =
+            '<tr><td colspan="12" class="error-message">Failed to load predictions.</td></tr>';
     }
 }
 
@@ -285,8 +292,7 @@ async function loadStandings() {
     const position = getActivePosition("standings-position-filter");
 
     try {
-        const resp = await fetch(`/api/top_players?position=${position}`);
-        const data = await resp.json();
+        const data = await fetchJSON(`/api/top_players?position=${position}`);
 
         const tbody = document.getElementById("standings-body");
         tbody.innerHTML = data.players.map((p, i) => `
@@ -308,6 +314,8 @@ async function loadStandings() {
         });
     } catch (e) {
         console.error("Failed to load standings:", e);
+        document.getElementById("standings-body").innerHTML =
+            '<tr><td colspan="9" class="error-message">Failed to load standings.</td></tr>';
     }
 }
 
@@ -316,14 +324,12 @@ async function loadStandings() {
 // ---------------------------------------------------------------------------
 async function loadMetrics() {
     try {
-        const [metricsResp, weeklyResp, posResp] = await Promise.all([
-            fetch("/api/metrics"),
-            fetch("/api/weekly_accuracy"),
-            fetch("/api/position_details"),
+        const [metrics, weekly, posDetails] = await Promise.all([
+            fetchJSON("/api/metrics"),
+            fetchJSON("/api/weekly_accuracy"),
+            fetchJSON("/api/position_details"),
         ]);
-        const metrics = await metricsResp.json();
-        const weekly = await weeklyResp.json();
-        positionDetailsData = await posResp.json();
+        positionDetailsData = posDetails;
 
         // Overall metrics cards
         const ridge = metrics["Ridge Regression"];
@@ -353,6 +359,8 @@ async function loadMetrics() {
         renderWeeklyChart(weekly);
     } catch (e) {
         console.error("Failed to load metrics:", e);
+        document.querySelector("#view-model-performance .metrics-grid").innerHTML =
+            '<p class="error-message">Failed to load model metrics.</p>';
     }
 }
 
@@ -552,8 +560,7 @@ function setupModal() {
 
 async function openPlayerModal(playerId) {
     try {
-        const resp = await fetch(`/api/player/${playerId}`);
-        const data = await resp.json();
+        const data = await fetchJSON(`/api/player/${playerId}`);
         if (data.error) return;
 
         document.getElementById("modal-name").textContent = data.name;
@@ -599,6 +606,9 @@ async function openPlayerModal(playerId) {
         document.getElementById("player-modal").classList.add("open");
     } catch (e) {
         console.error("Failed to load player:", e);
+        document.getElementById("modal-name").textContent = "Error loading player";
+        document.getElementById("modal-pos-team").textContent = "";
+        document.getElementById("player-modal").classList.add("open");
     }
 }
 
