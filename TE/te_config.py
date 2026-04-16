@@ -146,3 +146,35 @@ TE_LGBM_REG_ALPHA = 0.0129827
 TE_LGBM_MIN_CHILD_SAMPLES = 80
 TE_LGBM_MIN_SPLIT_GAIN = 0.267235
 TE_LGBM_OBJECTIVE = "fair"
+
+
+# === Tiny config for E2E smoke tests ===
+# Shrunken NN (2 layers x 8 units), 1 epoch — keeps pipeline round-trip
+# under the 20s budget while exercising the full orchestration.
+TE_CONFIG_TINY = {
+    "targets": TE_TARGETS,
+    # Tiny ridge grid — single alpha per target, no refinement.
+    "ridge_alpha_grids": {t: [1.0] for t in TE_TARGETS},
+    "specific_features": TE_SPECIFIC_FEATURES,
+    # NN hyperparams: 2 layers x 8 units, 1 epoch, no LightGBM/attention.
+    "nn_backbone_layers": [8, 8],
+    "nn_head_hidden": 4,
+    "nn_dropout": 0.0,
+    "nn_head_hidden_overrides": None,
+    "nn_lr": 1e-3,
+    "nn_weight_decay": 0.0,
+    "nn_epochs": 1,
+    "nn_batch_size": 32,
+    "nn_patience": 10,
+    "loss_weights": TE_LOSS_WEIGHTS,
+    "loss_w_total": TE_LOSS_W_TOTAL,
+    "huber_deltas": TE_HUBER_DELTAS,
+    "scheduler_type": "onecycle",
+    "onecycle_max_lr": 1e-3,
+    "onecycle_pct_start": 0.3,
+    "ridge_cv_folds": 2,
+    "ridge_refine_points": 0,
+    # Disable attention and LightGBM — they balloon runtime.
+    "train_attention_nn": False,
+    "train_lightgbm": False,
+}

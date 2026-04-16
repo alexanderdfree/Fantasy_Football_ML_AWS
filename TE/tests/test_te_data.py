@@ -10,42 +10,32 @@ from TE.te_data import filter_to_te, compute_team_te_totals
 # filter_to_te
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestFilterToTE:
-    def _make_df(self, positions, has_pos_cols=True):
-        data = {"position": positions, "receiving_yards": range(len(positions))}
-        if has_pos_cols:
-            data.update({
-                "pos_QB": [1 if p == "QB" else 0 for p in positions],
-                "pos_RB": [1 if p == "RB" else 0 for p in positions],
-                "pos_WR": [1 if p == "WR" else 0 for p in positions],
-                "pos_TE": [1 if p == "TE" else 0 for p in positions],
-            })
-        return pd.DataFrame(data)
-
-    def test_filters_only_te_rows(self):
-        df = self._make_df(["QB", "RB", "WR", "TE", "TE"])
+    def test_filters_only_te_rows(self, te_position_df_factory):
+        df = te_position_df_factory(["QB", "RB", "WR", "TE", "TE"])
         result = filter_to_te(df)
         assert len(result) == 2
         assert (result["position"] == "TE").all()
 
-    def test_drops_position_encoding_columns(self):
-        df = self._make_df(["TE", "TE"])
+    def test_drops_position_encoding_columns(self, te_position_df_factory):
+        df = te_position_df_factory(["TE", "TE"])
         result = filter_to_te(df)
         for col in ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]:
             assert col not in result.columns
 
-    def test_keeps_non_position_columns(self):
-        df = self._make_df(["TE"])
+    def test_keeps_non_position_columns(self, te_position_df_factory):
+        df = te_position_df_factory(["TE"])
         result = filter_to_te(df)
         assert "receiving_yards" in result.columns
 
-    def test_no_position_encoding_columns(self):
-        df = self._make_df(["TE", "QB"], has_pos_cols=False)
+    def test_no_position_encoding_columns(self, te_position_df_factory):
+        df = te_position_df_factory(["TE", "QB"], has_pos_cols=False)
         result = filter_to_te(df)
         assert len(result) == 1
 
-    def test_empty_result_when_no_tes(self):
-        df = self._make_df(["QB", "RB", "WR"])
+    def test_empty_result_when_no_tes(self, te_position_df_factory):
+        df = te_position_df_factory(["QB", "RB", "WR"])
         result = filter_to_te(df)
         assert len(result) == 0
         assert isinstance(result, pd.DataFrame)
@@ -55,8 +45,8 @@ class TestFilterToTE:
         result = filter_to_te(df)
         assert len(result) == 0
 
-    def test_does_not_mutate_original(self):
-        df = self._make_df(["TE", "QB"])
+    def test_does_not_mutate_original(self, te_position_df_factory):
+        df = te_position_df_factory(["TE", "QB"])
         original_cols = list(df.columns)
         _ = filter_to_te(df)
         assert list(df.columns) == original_cols
@@ -67,6 +57,7 @@ class TestFilterToTE:
 # compute_team_te_totals
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeTeamTETotals:
     def test_basic_aggregation(self):
         df = pd.DataFrame({

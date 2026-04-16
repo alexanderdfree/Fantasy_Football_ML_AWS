@@ -53,6 +53,7 @@ TE_FEATURE_COLS = [
 # _compute_te_features
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeTEFeatures:
     def test_all_eight_features_created(self):
         df = _make_player_games()
@@ -138,32 +139,27 @@ class TestComputeTEFeatures:
 # fill_te_nans
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestFillTENans:
-    def _make_splits(self, train_vals, val_vals, test_vals, col="feat1"):
-        train = pd.DataFrame({col: train_vals})
-        val = pd.DataFrame({col: val_vals})
-        test = pd.DataFrame({col: test_vals})
-        return train, val, test
-
-    def test_fills_nan_with_train_mean(self):
-        train, val, test = self._make_splits([1.0, 2.0, 3.0], [np.nan], [np.nan])
+    def test_fills_nan_with_train_mean(self, te_splits_factory):
+        train, val, test = te_splits_factory([1.0, 2.0, 3.0], [np.nan], [np.nan])
         train, val, test = fill_te_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 2.0
         assert pytest.approx(test["feat1"].iloc[0]) == 2.0
 
-    def test_replaces_inf_with_train_mean(self):
-        train, val, test = self._make_splits([1.0, 3.0], [np.inf], [-np.inf])
+    def test_replaces_inf_with_train_mean(self, te_splits_factory):
+        train, val, test = te_splits_factory([1.0, 3.0], [np.inf], [-np.inf])
         train, val, test = fill_te_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 2.0
         assert pytest.approx(test["feat1"].iloc[0]) == 2.0
 
-    def test_train_inf_replaced_before_mean(self):
-        train, val, test = self._make_splits([1.0, np.inf, 3.0], [np.nan], [np.nan])
+    def test_train_inf_replaced_before_mean(self, te_splits_factory):
+        train, val, test = te_splits_factory([1.0, np.inf, 3.0], [np.nan], [np.nan])
         train, val, test = fill_te_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 2.0
 
-    def test_no_nans_unchanged(self):
-        train, val, test = self._make_splits([1.0, 2.0], [3.0], [4.0])
+    def test_no_nans_unchanged(self, te_splits_factory):
+        train, val, test = te_splits_factory([1.0, 2.0], [3.0], [4.0])
         train, val, test = fill_te_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 3.0
         assert pytest.approx(test["feat1"].iloc[0]) == 4.0
