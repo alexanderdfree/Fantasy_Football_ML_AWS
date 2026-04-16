@@ -10,6 +10,7 @@ from K.k_data import filter_to_k, kicker_season_split
 # filter_to_k — identity filter
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestFilterToK:
     """Kicker data is pre-filtered; filter_to_k is an identity (copy)."""
 
@@ -65,42 +66,42 @@ class TestFilterToK:
 # kicker_season_split
 # ---------------------------------------------------------------------------
 
-class TestKickerSeasonSplit:
-    def _make_multi_season(self):
-        rows = []
-        for season in [2020, 2022, 2023, 2024, 2025]:
-            for week in range(1, 4):
-                rows.append({
-                    "player_id": "K1",
-                    "season": season,
-                    "week": week,
-                    "fg_att": 2,
-                })
-        return pd.DataFrame(rows)
+@pytest.fixture
+def multi_season_df():
+    """Multi-season kicker DataFrame spanning the train/val/test boundary."""
+    rows = []
+    for season in [2020, 2022, 2023, 2024, 2025]:
+        for week in range(1, 4):
+            rows.append({
+                "player_id": "K1",
+                "season": season,
+                "week": week,
+                "fg_att": 2,
+            })
+    return pd.DataFrame(rows)
 
-    def test_split_boundaries(self):
+
+@pytest.mark.unit
+class TestKickerSeasonSplit:
+    def test_split_boundaries(self, multi_season_df):
         """Train: 2015-2023, Val: 2024, Test: 2025."""
-        df = self._make_multi_season()
-        train, val, test = kicker_season_split(df)
+        train, val, test = kicker_season_split(multi_season_df)
         assert train["season"].max() <= 2023
         assert (val["season"] == 2024).all()
         assert (test["season"] == 2025).all()
 
-    def test_all_rows_allocated(self):
-        df = self._make_multi_season()
-        train, val, test = kicker_season_split(df)
-        assert len(train) + len(val) + len(test) == len(df)
+    def test_all_rows_allocated(self, multi_season_df):
+        train, val, test = kicker_season_split(multi_season_df)
+        assert len(train) + len(val) + len(test) == len(multi_season_df)
 
-    def test_train_contains_earlier_seasons(self):
-        df = self._make_multi_season()
-        train, _, _ = kicker_season_split(df)
+    def test_train_contains_earlier_seasons(self, multi_season_df):
+        train, _, _ = kicker_season_split(multi_season_df)
         assert 2020 in train["season"].values
         assert 2022 in train["season"].values
         assert 2023 in train["season"].values
 
-    def test_returns_dataframes(self):
-        df = self._make_multi_season()
-        train, val, test = kicker_season_split(df)
+    def test_returns_dataframes(self, multi_season_df):
+        train, val, test = kicker_season_split(multi_season_df)
         assert isinstance(train, pd.DataFrame)
         assert isinstance(val, pd.DataFrame)
         assert isinstance(test, pd.DataFrame)

@@ -12,6 +12,7 @@ from shared.neural_net import MultiHeadNet
 K_TARGETS = ["fg_points", "pat_points"]
 
 
+@pytest.mark.unit
 class TestMultiHeadNet:
     @pytest.fixture
     def model(self):
