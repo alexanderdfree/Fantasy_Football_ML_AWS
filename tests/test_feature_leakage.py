@@ -1,5 +1,7 @@
 """Tests that central feature engineering (src/features/engineer.py) is free of data leakage."""
 
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -33,6 +35,7 @@ def _make_games(
     interceptions=0,
     fumbles_lost=0,
     receiving_air_yards=20.0,
+    sacks=1,
 ):
     """Create a synthetic multi-week DataFrame for one player."""
     return pd.DataFrame({
@@ -58,8 +61,36 @@ def _make_games(
         "interceptions": [interceptions] * n_weeks,
         "fumbles_lost": [fumbles_lost] * n_weeks,
         "receiving_air_yards": [receiving_air_yards] * n_weeks,
+        "sacks": [sacks] * n_weeks,
         "is_home": [1, 0] * (n_weeks // 2) + [1] * (n_weeks % 2),
     })
+
+
+def _fake_schedules():
+    """Create minimal fake schedule data covering teams/seasons used in tests."""
+    rows = []
+    for season in [2022, 2023]:
+        for week in range(1, 19):
+            rows.append({
+                "game_type": "REG",
+                "season": season,
+                "week": week,
+                "away_team": "SF",
+                "home_team": "KC",
+                "home_score": 24,
+                "away_score": 17,
+                "spread_line": -3.0,
+                "total_line": 47.0,
+            })
+    return pd.DataFrame(rows)
+
+
+@pytest.fixture(autouse=True)
+def _mock_schedule_parquet():
+    """Prevent tests from reading real parquet files."""
+    fake = _fake_schedules()
+    with patch("src.features.engineer.pd.read_parquet", return_value=fake):
+        yield
 
 
 def _two_player_df(n_weeks=8):

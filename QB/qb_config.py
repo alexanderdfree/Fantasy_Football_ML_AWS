@@ -62,10 +62,10 @@ QB_INCLUDE_FEATURES = {
         "is_home", "week", "is_returning_from_absence", "days_rest",
         "practice_status", "game_status", "depth_chart_rank",
     ],
-    # Keep 6 weather/Vegas features with |r|>0.04 or |r|>0.015+MI>0.005
     "weather_vegas": [
-        "implied_opp_total", "wind_adjusted", "is_divisional",
-        "implied_total_x_dome", "temp_adjusted", "is_dome",
+        "implied_team_total", "implied_opp_total",
+        "wind_adjusted", "is_dome", "is_divisional",
+        "implied_total_x_dome", "temp_adjusted",
     ],
     "specific": QB_SPECIFIC_FEATURES,
 }
@@ -79,9 +79,9 @@ QB_RIDGE_ALPHA_GRIDS = {
 }
 
 # === Neural Net (2012+ dataset: wider backbone, relaxed regularization) ===
-QB_NN_BACKBONE_LAYERS = [96, 48]
-QB_NN_HEAD_HIDDEN = 20
-QB_NN_DROPOUT = 0.35
+QB_NN_BACKBONE_LAYERS = [128]
+QB_NN_HEAD_HIDDEN = 32
+QB_NN_DROPOUT = 0.20
 QB_NN_LR = 5e-4
 QB_NN_WEIGHT_DECAY = 3e-4
 QB_NN_EPOCHS = 300
@@ -106,9 +106,10 @@ QB_HUBER_DELTAS = {
 }
 
 # === LR Scheduler ===
-QB_SCHEDULER_TYPE = "onecycle"
-QB_ONECYCLE_MAX_LR = 2e-3
-QB_ONECYCLE_PCT_START = 0.3
+QB_SCHEDULER_TYPE = "cosine_warm_restarts"
+QB_COSINE_T0 = 40
+QB_COSINE_T_MULT = 2
+QB_COSINE_ETA_MIN = 1e-5
 
 # === Attention NN (game history variant) ===
 QB_TRAIN_ATTENTION_NN = True
@@ -118,7 +119,10 @@ QB_ATTN_ENCODER_HIDDEN_DIM = 0
 QB_ATTN_MAX_SEQ_LEN = 17
 QB_ATTN_POSITIONAL_ENCODING = True
 QB_ATTN_DROPOUT = 0.05
-QB_ATTN_PATIENCE = 25
+QB_ATTN_PATIENCE = 35
+QB_ATTN_LR = 1e-3
+QB_ATTN_WEIGHT_DECAY = 5e-5
+QB_ATTN_BATCH_SIZE = 256
 QB_ATTN_HISTORY_STATS = [
     "fantasy_points", "fantasy_points_floor",
     "passing_yards", "rushing_yards",
@@ -131,3 +135,16 @@ QB_ATTN_HISTORY_STATS = [
 QB_ATTN_GATED_TD = True
 QB_ATTN_TD_GATE_HIDDEN = 16
 QB_ATTN_TD_GATE_WEIGHT = 1.0
+
+# === LightGBM (Optuna-tuned, 50 trials, CV MAE 5.7415) ===
+QB_TRAIN_LIGHTGBM = True
+QB_LGBM_N_ESTIMATORS = 1500
+QB_LGBM_LEARNING_RATE = 0.0612763
+QB_LGBM_NUM_LEAVES = 31
+QB_LGBM_SUBSAMPLE = 0.867443
+QB_LGBM_COLSAMPLE_BYTREE = 0.907776
+QB_LGBM_REG_LAMBDA = 6.75023
+QB_LGBM_REG_ALPHA = 0.00309259
+QB_LGBM_MIN_CHILD_SAMPLES = 59
+QB_LGBM_MIN_SPLIT_GAIN = 0.0632242
+QB_LGBM_OBJECTIVE = "fair"

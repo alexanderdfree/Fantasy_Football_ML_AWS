@@ -21,7 +21,7 @@ from src.models.baseline import SeasonAverageBaseline
 from src.models.linear import RidgeModel
 from src.data.split import expanding_window_folds
 
-from shared.models import RidgeMultiTarget
+from shared.models import RidgeMultiTarget, LightGBMMultiTarget
 from shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory
 from shared.training import (
     MultiTargetLoss, MultiHeadTrainer, MultiHeadHistoryTrainer,
@@ -32,7 +32,7 @@ from shared.evaluation import (
     print_comparison_table, plot_pred_vs_actual,
 )
 from shared.backtest import run_weekly_simulation, plot_weekly_accuracy
-from shared.weather_features import merge_schedule_features, get_weather_feature_columns
+from shared.weather_features import merge_schedule_features
 from src.features.engineer import build_game_history_arrays, get_attn_static_columns
 
 
@@ -292,13 +292,23 @@ def _train_attention_nn(X_train, X_val, X_test,
                         hist_train, mask_train, hist_val, mask_val,
                         hist_test, mask_test,
                         y_train_dict, y_val_dict, y_test_dict,
-                        cfg, targets, seed):
+                        cfg, targets, seed, feature_cols=None):
     """Train a MultiHeadNetWithHistory and return (model, scaler, test_preds, metrics, history).
 
     Like _train_nn but feeds both static features and game history sequences.
     """
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+    # Filter out rolling/EWMA/trend/share features that duplicate game history —
+    # the attention branch learns its own temporal representation from raw game stats.
+    if feature_cols is not None:
+        static_cols = get_attn_static_columns(feature_cols)
+        col_idx = [i for i, c in enumerate(feature_cols) if c in set(static_cols)]
+        X_train = X_train[:, col_idx]
+        X_val = X_val[:, col_idx]
+        X_test = X_test[:, col_idx]
+        print(f"  Attention static features: {len(col_idx)}/{len(feature_cols)} (filtered)")
 
     nn_scaler = StandardScaler()
     X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
@@ -374,6 +384,32 @@ def _train_attention_nn(X_train, X_val, X_test,
     metrics = compute_target_metrics(y_test_dict, test_preds, targets)
 
     return model, nn_scaler, val_preds, test_preds, metrics, history
+
+
+def _train_lightgbm(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
+                    cfg, targets, feature_cols, seed):
+    """Train a LightGBM multi-target model. Returns (model, val_preds, test_preds, metrics)."""
+    model = LightGBMMultiTarget(
+        target_names=targets,
+        n_estimators=cfg.get("lgbm_n_estimators", 500),
+        learning_rate=cfg.get("lgbm_learning_rate", 0.05),
+        num_leaves=cfg.get("lgbm_num_leaves", 31),
+        max_depth=cfg.get("lgbm_max_depth", -1),
+        subsample=cfg.get("lgbm_subsample", 0.8),
+        colsample_bytree=cfg.get("lgbm_colsample_bytree", 0.8),
+        reg_lambda=cfg.get("lgbm_reg_lambda", 1.0),
+        reg_alpha=cfg.get("lgbm_reg_alpha", 0.0),
+        min_child_samples=cfg.get("lgbm_min_child_samples", 20),
+        min_split_gain=cfg.get("lgbm_min_split_gain", 0.0),
+        objective=cfg.get("lgbm_objective", "huber"),
+        seed=seed,
+    )
+    model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
+
+    val_preds = model.predict(X_val)
+    test_preds = model.predict(X_test)
+    metrics = compute_target_metrics(y_test_dict, test_preds, targets)
+    return model, val_preds, test_preds, metrics
 
 
 def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=42):
@@ -487,33 +523,6 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         cfg, targets, seed,
     )
 
-    # --- Weather NN (identical architecture, weather/Vegas features appended) ---
-    weather_nn_val_preds = None
-    weather_nn_test_preds = None
-    weather_nn_metrics = None
-    weather_model = None
-    weather_nn_scaler = None
-    weather_history = None
-    if cfg.get("train_weather_nn", False) and pos in ("QB", "RB", "WR", "TE"):
-        print(f"\n=== {pos} Weather Multi-Head Neural Net ===")
-        for df in [pos_train, pos_val, pos_test]:
-            merge_schedule_features(df)
-
-        weather_cols = get_weather_feature_columns(pos, feature_cols)
-        weather_cols = [c for c in weather_cols if c in pos_train.columns]
-        for df in [pos_train, pos_val, pos_test]:
-            df[weather_cols] = df[weather_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
-
-        X_train_w = pos_train[weather_cols].values.astype(np.float32)
-        X_val_w = pos_val[weather_cols].values.astype(np.float32)
-        X_test_w = pos_test[weather_cols].values.astype(np.float32)
-        print(f"  Weather feature matrix shape: {X_train_w.shape}")
-
-        weather_model, weather_nn_scaler, weather_nn_val_preds, weather_nn_test_preds, weather_nn_metrics, weather_history = _train_nn(
-            X_train_w, X_val_w, X_test_w, y_train_dict, y_val_dict, y_test_dict,
-            cfg, targets, seed,
-        )
-
     # --- Attention NN (game history as variable-length sequences) ---
     attn_nn_val_preds = None
     attn_nn_test_preds = None
@@ -541,7 +550,20 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                 hist_test, mask_test,
                 y_train_dict, y_val_dict, y_test_dict,
                 cfg, targets, seed,
+                feature_cols=feature_cols,
             )
+        )
+
+    # --- LightGBM Multi-Target (conditional) ---
+    lgbm_val_preds = None
+    lgbm_test_preds = None
+    lgbm_metrics = None
+    lgbm_model = None
+    if cfg.get("train_lightgbm", False):
+        print(f"\n=== {pos} LightGBM Multi-Target ===")
+        lgbm_model, lgbm_val_preds, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
+            X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
+            cfg, targets, feature_cols, seed,
         )
 
     # --- Comparison ---
@@ -550,10 +572,10 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         f"{pos} Ridge Multi-Target": ridge_metrics,
         f"{pos} Multi-Head NN": nn_metrics,
     }
-    if weather_nn_metrics is not None:
-        comparison[f"{pos} Weather NN"] = weather_nn_metrics
     if attn_nn_metrics is not None:
         comparison[f"{pos} Attention NN"] = attn_nn_metrics
+    if lgbm_metrics is not None:
+        comparison[f"{pos} LightGBM"] = lgbm_metrics
     print_comparison_table(comparison, position=pos, target_names=targets)
 
     # --- Attach predictions to test DataFrame ---
@@ -576,15 +598,6 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     print(f"\nRidge Top-12 Hit Rate:    {ridge_ranking['season_avg_hit_rate']:.3f}")
     print(f"NN Top-12 Hit Rate:       {nn_ranking['season_avg_hit_rate']:.3f}")
 
-    weather_nn_ranking = None
-    if weather_nn_test_preds is not None:
-        pos_test["pred_weather_nn_total"] = weather_nn_test_preds["total"]
-        for t in targets:
-            pos_test[f"pred_weather_nn_{t}"] = weather_nn_test_preds[t]
-        backtest_pred_columns["Weather NN"] = "pred_weather_nn_total"
-        weather_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_weather_nn_total")
-        print(f"Weather NN Top-12 Hit Rate: {weather_nn_ranking['season_avg_hit_rate']:.3f}")
-
     attn_nn_ranking = None
     if attn_nn_test_preds is not None:
         pos_test["pred_attn_nn_total"] = attn_nn_test_preds["total"]
@@ -593,6 +606,15 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         backtest_pred_columns["Attention NN"] = "pred_attn_nn_total"
         attn_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_attn_nn_total")
         print(f"Attention NN Top-12 Hit Rate: {attn_nn_ranking['season_avg_hit_rate']:.3f}")
+
+    lgbm_ranking = None
+    if lgbm_test_preds is not None:
+        pos_test["pred_lgbm_total"] = lgbm_test_preds["total"]
+        for t in targets:
+            pos_test[f"pred_lgbm_{t}"] = lgbm_test_preds[t]
+        backtest_pred_columns["LightGBM"] = "pred_lgbm_total"
+        lgbm_ranking = compute_ranking_metrics(pos_test, pred_col="pred_lgbm_total")
+        print(f"LightGBM Top-12 Hit Rate: {lgbm_ranking['season_avg_hit_rate']:.3f}")
 
     # --- Weekly backtest ---
     print("\n=== Weekly Backtest ===")
@@ -608,13 +630,12 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     torch.save(model.state_dict(), f"{output_dir}/models/{pos_lower}_multihead_nn.pt")
     joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
 
-    if weather_model is not None:
-        torch.save(weather_model.state_dict(), f"{output_dir}/models/{pos_lower}_weather_nn.pt")
-        joblib.dump(weather_nn_scaler, f"{output_dir}/models/weather_nn_scaler.pkl")
-
     if attn_model is not None:
         torch.save(attn_model.state_dict(), f"{output_dir}/models/{pos_lower}_attention_nn.pt")
         joblib.dump(attn_nn_scaler, f"{output_dir}/models/attention_nn_scaler.pkl")
+
+    if lgbm_model is not None:
+        lgbm_model.save(f"{output_dir}/models")
 
     plot_training_curves(history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png")
     if attn_history is not None:
@@ -638,15 +659,28 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     plt.savefig(f"{output_dir}/figures/{pos_lower}_ridge_feature_importance.png", dpi=150)
     plt.close()
 
+    if lgbm_model is not None:
+        lgbm_importance = lgbm_model.get_feature_importance(feature_cols)
+        fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
+        if len(targets) == 1:
+            axes = [axes]
+        for ax, (target, importance) in zip(axes, lgbm_importance.items()):
+            importance.head(15).plot(kind="barh", ax=ax)
+            ax.set_title(f"LightGBM: {target} Top-15 Features")
+            ax.set_xlabel("Gain")
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/figures/{pos_lower}_lgbm_feature_importance.png", dpi=150)
+        plt.close()
+
     print(f"\n{pos} pipeline complete. Outputs saved to {output_dir}/")
     per_target_preds = {
         "ridge": ridge_test_preds,
         "nn": nn_test_preds,
     }
-    if weather_nn_test_preds is not None:
-        per_target_preds["weather_nn"] = weather_nn_test_preds
     if attn_nn_test_preds is not None:
         per_target_preds["attn_nn"] = attn_nn_test_preds
+    if lgbm_test_preds is not None:
+        per_target_preds["lgbm"] = lgbm_test_preds
 
     result = {
         "ridge_metrics": ridge_metrics,
@@ -658,12 +692,12 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         "test_df": pos_test,
         "per_target_preds": per_target_preds,
     }
-    if weather_nn_metrics is not None:
-        result["weather_nn_metrics"] = weather_nn_metrics
-        result["weather_nn_ranking"] = weather_nn_ranking
     if attn_nn_metrics is not None:
         result["attn_nn_metrics"] = attn_nn_metrics
         result["attn_nn_ranking"] = attn_nn_ranking
+    if lgbm_metrics is not None:
+        result["lgbm_metrics"] = lgbm_metrics
+        result["lgbm_ranking"] = lgbm_ranking
     return result
 
 
@@ -726,6 +760,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     # --- Per-fold training ---
     fold_nn_metrics = []
     fold_ridge_metrics = []
+    fold_lgbm_metrics = []
 
     for fold_idx, fold_train_df, fold_val_df in folds:
         print(f"\n--- Fold {fold_idx + 1} ---")
@@ -797,6 +832,31 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             compute_target_metrics(y_val_dict, nn_val_preds, targets)
         )
 
+        # LightGBM for this fold
+        if cfg.get("train_lightgbm", False):
+            lgbm_fold = LightGBMMultiTarget(
+                target_names=targets,
+                n_estimators=cfg.get("lgbm_n_estimators", 500),
+                learning_rate=cfg.get("lgbm_learning_rate", 0.05),
+                num_leaves=cfg.get("lgbm_num_leaves", 31),
+                max_depth=cfg.get("lgbm_max_depth", -1),
+                subsample=cfg.get("lgbm_subsample", 0.8),
+                colsample_bytree=cfg.get("lgbm_colsample_bytree", 0.8),
+                reg_lambda=cfg.get("lgbm_reg_lambda", 1.0),
+                reg_alpha=cfg.get("lgbm_reg_alpha", 0.0),
+                min_child_samples=cfg.get("lgbm_min_child_samples", 20),
+                min_split_gain=cfg.get("lgbm_min_split_gain", 0.0),
+                objective=cfg.get("lgbm_objective", "huber"),
+                seed=seed,
+            )
+            lgbm_fold.fit(X_train, y_train_dict, X_val, y_val_dict,
+                          feature_names=feature_cols)
+            lgbm_val_preds = lgbm_fold.predict(X_val)
+            lgbm_val_preds["total"] = sum(lgbm_val_preds[t] for t in targets)
+            fold_lgbm_metrics.append(
+                compute_target_metrics(y_val_dict, lgbm_val_preds, targets)
+            )
+
     # --- Aggregate CV results ---
     print(f"\n{'=' * 60}")
     print(f"  {pos} Cross-Validation Results ({len(folds)} folds)")
@@ -807,7 +867,11 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
 
     # Aggregate per-fold metrics
     cv_metrics = {"ridge": {}, "nn": {}}
-    for model_name, fold_metrics_list in [("ridge", fold_ridge_metrics), ("nn", fold_nn_metrics)]:
+    model_fold_pairs = [("ridge", fold_ridge_metrics), ("nn", fold_nn_metrics)]
+    if fold_lgbm_metrics:
+        cv_metrics["lgbm"] = {}
+        model_fold_pairs.append(("lgbm", fold_lgbm_metrics))
+    for model_name, fold_metrics_list in model_fold_pairs:
         for key in ["total"] + targets:
             maes = [fm[key]["mae"] for fm in fold_metrics_list]
             r2s = [fm[key]["r2"] for fm in fold_metrics_list]
@@ -820,9 +884,10 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
                 "r2_per_fold": r2s,
             }
 
+    cv_model_names = ["ridge", "nn"] + (["lgbm"] if fold_lgbm_metrics else [])
     print(f"\n{'Model':<12} {'MAE (mean +/- std)':>22} {'R2 (mean +/- std)':>22}")
     print("-" * 58)
-    for model_name in ["ridge", "nn"]:
+    for model_name in cv_model_names:
         m = cv_metrics[model_name]["total"]
         print(f"{model_name.upper():<12} {m['mae_mean']:>8.3f} +/- {m['mae_std']:<8.3f} "
               f"{m['r2_mean']:>8.3f} +/- {m['r2_std']:<8.3f}")
@@ -873,30 +938,15 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         cfg, targets, seed,
     )
 
-    # Weather NN
-    weather_nn_val_preds = None
-    weather_nn_test_preds = None
-    weather_nn_metrics = None
-    weather_model = None
-    weather_nn_scaler = None
-    if cfg.get("train_weather_nn", False) and pos in ("QB", "RB", "WR", "TE"):
-        print(f"\n=== {pos} Weather Multi-Head Neural Net ===")
-        for df in [pos_train, pos_val, pos_test]:
-            merge_schedule_features(df)
-
-        weather_cols = get_weather_feature_columns(pos, feature_cols)
-        weather_cols = [c for c in weather_cols if c in pos_train.columns]
-        for df in [pos_train, pos_val, pos_test]:
-            df[weather_cols] = df[weather_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
-
-        X_train_w = pos_train[weather_cols].values.astype(np.float32)
-        X_val_w = pos_val[weather_cols].values.astype(np.float32)
-        X_test_w = pos_test[weather_cols].values.astype(np.float32)
-        print(f"  Weather feature matrix shape: {X_train_w.shape}")
-
-        weather_model, weather_nn_scaler, weather_nn_val_preds, weather_nn_test_preds, weather_nn_metrics, _ = _train_nn(
-            X_train_w, X_val_w, X_test_w, y_train_dict, y_val_dict, y_test_dict,
-            cfg, targets, seed,
+    # LightGBM
+    lgbm_test_preds = None
+    lgbm_metrics = None
+    lgbm_model = None
+    if cfg.get("train_lightgbm", False):
+        print(f"\n=== {pos} LightGBM Multi-Target (Final Holdout) ===")
+        lgbm_model, _, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
+            X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
+            cfg, targets, feature_cols, seed,
         )
 
     # Comparison
@@ -905,8 +955,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         f"{pos} Ridge (per-target CV alphas)": ridge_metrics,
         f"{pos} Multi-Head NN": nn_metrics,
     }
-    if weather_nn_metrics is not None:
-        comparison[f"{pos} Weather NN"] = weather_nn_metrics
+    if lgbm_metrics is not None:
+        comparison[f"{pos} LightGBM"] = lgbm_metrics
     print_comparison_table(comparison, position=pos, target_names=targets)
 
     # Ranking metrics
@@ -926,12 +976,14 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     print(f"\nRidge Top-12 Hit Rate:    {ridge_ranking['season_avg_hit_rate']:.3f}")
     print(f"NN Top-12 Hit Rate:       {nn_ranking['season_avg_hit_rate']:.3f}")
 
-    weather_nn_ranking = None
-    if weather_nn_test_preds is not None:
-        pos_test["pred_weather_nn_total"] = weather_nn_test_preds["total"]
-        backtest_pred_columns["Weather NN"] = "pred_weather_nn_total"
-        weather_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_weather_nn_total")
-        print(f"Weather NN Top-12 Hit Rate: {weather_nn_ranking['season_avg_hit_rate']:.3f}")
+    lgbm_ranking = None
+    if lgbm_test_preds is not None:
+        pos_test["pred_lgbm_total"] = lgbm_test_preds["total"]
+        for t in targets:
+            pos_test[f"pred_lgbm_{t}"] = lgbm_test_preds[t]
+        backtest_pred_columns["LightGBM"] = "pred_lgbm_total"
+        lgbm_ranking = compute_ranking_metrics(pos_test, pred_col="pred_lgbm_total")
+        print(f"LightGBM Top-12 Hit Rate: {lgbm_ranking['season_avg_hit_rate']:.3f}")
 
     # Weekly backtest
     print("\n=== Weekly Backtest ===")
@@ -947,9 +999,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     torch.save(model.state_dict(), f"{output_dir}/models/{pos_lower}_multihead_nn.pt")
     joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
 
-    if weather_model is not None:
-        torch.save(weather_model.state_dict(), f"{output_dir}/models/{pos_lower}_weather_nn.pt")
-        joblib.dump(weather_nn_scaler, f"{output_dir}/models/weather_nn_scaler.pkl")
+    if lgbm_model is not None:
+        lgbm_model.save(f"{output_dir}/models")
 
     plot_training_curves(history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png")
     plot_weekly_accuracy(sim_results, pos, f"{output_dir}/figures/{pos_lower}_weekly_mae.png")
@@ -970,6 +1021,19 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     plt.savefig(f"{output_dir}/figures/{pos_lower}_ridge_feature_importance.png", dpi=150)
     plt.close()
 
+    if lgbm_model is not None:
+        lgbm_importance = lgbm_model.get_feature_importance(feature_cols)
+        fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
+        if len(targets) == 1:
+            axes = [axes]
+        for ax, (target, importance) in zip(axes, lgbm_importance.items()):
+            importance.head(15).plot(kind="barh", ax=ax)
+            ax.set_title(f"LightGBM: {target} Top-15 Features")
+            ax.set_xlabel("Gain")
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/figures/{pos_lower}_lgbm_feature_importance.png", dpi=150)
+        plt.close()
+
     print(f"\n{pos} CV pipeline complete. Outputs saved to {output_dir}/")
     result = {
         "cv_metrics": cv_metrics,
@@ -981,7 +1045,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         "history": history,
         "sim_results": sim_results,
     }
-    if weather_nn_metrics is not None:
-        result["weather_nn_metrics"] = weather_nn_metrics
-        result["weather_nn_ranking"] = weather_nn_ranking
+    if lgbm_metrics is not None:
+        result["lgbm_metrics"] = lgbm_metrics
+        result["lgbm_ranking"] = lgbm_ranking
     return result

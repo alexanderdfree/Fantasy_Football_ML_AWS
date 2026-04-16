@@ -20,6 +20,11 @@ from RB.rb_config import (
     RB_ATTN_GATED_FUSION, RB_ATTN_DROPOUT,
     RB_ATTN_LR, RB_ATTN_WEIGHT_DECAY, RB_ATTN_BATCH_SIZE, RB_ATTN_PATIENCE,
     RB_ATTN_GATED_TD, RB_ATTN_TD_GATE_HIDDEN, RB_ATTN_TD_GATE_WEIGHT,
+    RB_TRAIN_LIGHTGBM, RB_LGBM_N_ESTIMATORS, RB_LGBM_LEARNING_RATE,
+    RB_LGBM_NUM_LEAVES, RB_LGBM_MAX_DEPTH, RB_LGBM_SUBSAMPLE,
+    RB_LGBM_COLSAMPLE_BYTREE,
+    RB_LGBM_REG_LAMBDA, RB_LGBM_REG_ALPHA, RB_LGBM_MIN_CHILD_SAMPLES,
+    RB_LGBM_MIN_SPLIT_GAIN, RB_LGBM_OBJECTIVE,
 )
 from RB.rb_data import filter_to_rb
 from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
@@ -59,7 +64,6 @@ RB_CONFIG = {
     "cosine_t0": RB_COSINE_T0,
     "cosine_t_mult": RB_COSINE_T_MULT,
     "cosine_eta_min": RB_COSINE_ETA_MIN,
-    "train_weather_nn": True,
     "train_attention_nn": RB_TRAIN_ATTENTION_NN,
     "attn_d_model": RB_ATTN_D_MODEL,
     "attn_n_heads": RB_ATTN_N_HEADS,
@@ -77,6 +81,18 @@ RB_CONFIG = {
     "attn_gated_td": RB_ATTN_GATED_TD,
     "attn_td_gate_hidden": RB_ATTN_TD_GATE_HIDDEN,
     "attn_td_gate_weight": RB_ATTN_TD_GATE_WEIGHT,
+    "train_lightgbm": RB_TRAIN_LIGHTGBM,
+    "lgbm_n_estimators": RB_LGBM_N_ESTIMATORS,
+    "lgbm_learning_rate": RB_LGBM_LEARNING_RATE,
+    "lgbm_num_leaves": RB_LGBM_NUM_LEAVES,
+    "lgbm_max_depth": RB_LGBM_MAX_DEPTH,
+    "lgbm_subsample": RB_LGBM_SUBSAMPLE,
+    "lgbm_colsample_bytree": RB_LGBM_COLSAMPLE_BYTREE,
+    "lgbm_reg_lambda": RB_LGBM_REG_LAMBDA,
+    "lgbm_reg_alpha": RB_LGBM_REG_ALPHA,
+    "lgbm_min_child_samples": RB_LGBM_MIN_CHILD_SAMPLES,
+    "lgbm_min_split_gain": RB_LGBM_MIN_SPLIT_GAIN,
+    "lgbm_objective": RB_LGBM_OBJECTIVE,
 }
 
 

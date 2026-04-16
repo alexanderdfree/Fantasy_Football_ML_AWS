@@ -10,13 +10,17 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from DST.dst_config import (
-    DST_TARGETS, DST_RIDGE_ALPHA_GRIDS, DST_SPECIFIC_FEATURES,
+    DST_TARGETS, DST_RIDGE_ALPHA_GRIDS, DST_RIDGE_PCA_COMPONENTS,
+    DST_SPECIFIC_FEATURES,
     DST_NN_BACKBONE_LAYERS, DST_NN_HEAD_HIDDEN, DST_NN_HEAD_HIDDEN_OVERRIDES,
     DST_NN_DROPOUT, DST_NN_NON_NEGATIVE_TARGETS,
     DST_NN_LR, DST_NN_WEIGHT_DECAY, DST_NN_EPOCHS, DST_NN_BATCH_SIZE,
     DST_NN_PATIENCE,
     DST_LOSS_WEIGHTS, DST_LOSS_W_TOTAL, DST_HUBER_DELTAS,
     DST_SCHEDULER_TYPE, DST_COSINE_T0, DST_COSINE_T_MULT, DST_COSINE_ETA_MIN,
+    DST_TRAIN_LIGHTGBM, DST_LGBM_N_ESTIMATORS, DST_LGBM_LEARNING_RATE,
+    DST_LGBM_NUM_LEAVES, DST_LGBM_SUBSAMPLE, DST_LGBM_COLSAMPLE_BYTREE,
+    DST_LGBM_REG_LAMBDA, DST_LGBM_REG_ALPHA, DST_LGBM_MIN_CHILD_SAMPLES,
 )
 from DST.dst_data import build_dst_data, filter_to_dst
 from DST.dst_targets import compute_dst_targets, compute_dst_adjustment
@@ -52,6 +56,7 @@ def run_dst_pipeline(seed=42):
     DST_CONFIG = {
         "targets": DST_TARGETS,
         "ridge_alpha_grids": DST_RIDGE_ALPHA_GRIDS,
+        "ridge_pca_components": DST_RIDGE_PCA_COMPONENTS,
         "specific_features": DST_SPECIFIC_FEATURES,
         "filter_fn": filter_to_dst,
         "compute_targets_fn": compute_dst_targets,
@@ -76,6 +81,15 @@ def run_dst_pipeline(seed=42):
         "cosine_t0": DST_COSINE_T0,
         "cosine_t_mult": DST_COSINE_T_MULT,
         "cosine_eta_min": DST_COSINE_ETA_MIN,
+        "train_lightgbm": DST_TRAIN_LIGHTGBM,
+        "lgbm_n_estimators": DST_LGBM_N_ESTIMATORS,
+        "lgbm_learning_rate": DST_LGBM_LEARNING_RATE,
+        "lgbm_num_leaves": DST_LGBM_NUM_LEAVES,
+        "lgbm_subsample": DST_LGBM_SUBSAMPLE,
+        "lgbm_colsample_bytree": DST_LGBM_COLSAMPLE_BYTREE,
+        "lgbm_reg_lambda": DST_LGBM_REG_LAMBDA,
+        "lgbm_reg_alpha": DST_LGBM_REG_ALPHA,
+        "lgbm_min_child_samples": DST_LGBM_MIN_CHILD_SAMPLES,
     }
 
     return run_pipeline("DST", DST_CONFIG, train_df, val_df, test_df, seed)

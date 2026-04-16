@@ -16,6 +16,9 @@ from K.k_config import (
     K_NN_PATIENCE,
     K_LOSS_WEIGHTS, K_LOSS_W_TOTAL, K_HUBER_DELTAS,
     K_SCHEDULER_TYPE, K_ONECYCLE_MAX_LR, K_ONECYCLE_PCT_START,
+    K_TRAIN_LIGHTGBM, K_LGBM_N_ESTIMATORS, K_LGBM_LEARNING_RATE,
+    K_LGBM_NUM_LEAVES, K_LGBM_SUBSAMPLE, K_LGBM_COLSAMPLE_BYTREE,
+    K_LGBM_REG_LAMBDA, K_LGBM_REG_ALPHA, K_LGBM_MIN_CHILD_SAMPLES,
 )
 from K.k_data import load_kicker_data, filter_to_k, kicker_season_split
 from K.k_targets import compute_k_targets, compute_k_miss_adjustment
@@ -72,6 +75,15 @@ def run_k_pipeline(seed=42):
         "scheduler_type": K_SCHEDULER_TYPE,
         "onecycle_max_lr": K_ONECYCLE_MAX_LR,
         "onecycle_pct_start": K_ONECYCLE_PCT_START,
+        "train_lightgbm": K_TRAIN_LIGHTGBM,
+        "lgbm_n_estimators": K_LGBM_N_ESTIMATORS,
+        "lgbm_learning_rate": K_LGBM_LEARNING_RATE,
+        "lgbm_num_leaves": K_LGBM_NUM_LEAVES,
+        "lgbm_subsample": K_LGBM_SUBSAMPLE,
+        "lgbm_colsample_bytree": K_LGBM_COLSAMPLE_BYTREE,
+        "lgbm_reg_lambda": K_LGBM_REG_LAMBDA,
+        "lgbm_reg_alpha": K_LGBM_REG_ALPHA,
+        "lgbm_min_child_samples": K_LGBM_MIN_CHILD_SAMPLES,
     }
 
     return run_pipeline("K", K_CONFIG, train_df, val_df, test_df, seed)

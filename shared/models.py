@@ -1,11 +1,13 @@
-"""Generic Ridge regression multi-target model for any position."""
+"""Generic multi-target models for any position (Ridge, Ordinal, LightGBM)."""
 
 import json
 import os
 
 import numpy as np
+import pandas as pd
 from sklearn.linear_model import Ridge, LogisticRegression
 from sklearn.preprocessing import StandardScaler
+import lightgbm as lgb
 import mord
 
 from src.models.linear import RidgeModel
@@ -326,3 +328,79 @@ class RidgeMultiTarget:
             else:
                 self._models[name] = RidgeModel()
             self._models[name].load(target_dir)
+
+
+class LightGBMMultiTarget:
+    """Separate LightGBM regressors per target (mirrors RidgeMultiTarget interface)."""
+
+    def __init__(self, target_names, n_estimators=500, learning_rate=0.05,
+                 num_leaves=31, max_depth=-1, subsample=0.8,
+                 colsample_bytree=0.8, reg_lambda=1.0, reg_alpha=0.0,
+                 min_child_samples=20, min_split_gain=0.0,
+                 objective="huber", seed=42):
+        self.target_names = target_names
+        self._params = dict(
+            n_estimators=n_estimators, learning_rate=learning_rate,
+            num_leaves=num_leaves, max_depth=max_depth,
+            subsample=subsample, colsample_bytree=colsample_bytree,
+            reg_lambda=reg_lambda, reg_alpha=reg_alpha,
+            min_child_samples=min_child_samples,
+            min_split_gain=min_split_gain,
+            objective=objective, random_state=seed, n_jobs=1,
+            verbosity=-1,
+        )
+        self._models = {name: lgb.LGBMRegressor(**self._params)
+                        for name in target_names}
+        self._feature_names = None
+
+    def fit(self, X_train, y_train_dict, X_val=None, y_val_dict=None,
+            feature_names=None):
+        self._feature_names = feature_names
+        for name, model in self._models.items():
+            callbacks = [lgb.early_stopping(30, verbose=False),
+                         lgb.log_evaluation(0)]
+            if X_val is not None and y_val_dict is not None:
+                model.fit(X_train, y_train_dict[name],
+                          eval_set=[(X_val, y_val_dict[name])],
+                          callbacks=callbacks)
+                print(f"  {name}: best_iteration={model.best_iteration_}")
+            else:
+                model.fit(X_train, y_train_dict[name])
+
+    def predict(self, X):
+        X_in = pd.DataFrame(X, columns=self._feature_names) if self._feature_names is not None else X
+        preds = {name: np.maximum(model.predict(X_in), 0)
+                 for name, model in self._models.items()}
+        preds["total"] = sum(preds[t] for t in self.target_names)
+        return preds
+
+    def get_feature_importance(self, feature_names):
+        result = {}
+        for name, model in self._models.items():
+            importance = model.feature_importances_
+            s = pd.Series(importance, index=feature_names)
+            result[name] = s.sort_values(ascending=False)
+        return result
+
+    def save(self, model_dir):
+        import joblib
+        lgb_dir = f"{model_dir}/lightgbm"
+        os.makedirs(lgb_dir, exist_ok=True)
+        for name, model in self._models.items():
+            joblib.dump(model, f"{lgb_dir}/{name}.pkl")
+        meta = {"target_names": self.target_names, "params": self._params}
+        if self._feature_names is not None:
+            meta["feature_names"] = list(self._feature_names)
+        with open(f"{lgb_dir}/meta.json", "w") as f:
+            json.dump(meta, f)
+
+    def load(self, model_dir):
+        import joblib
+        lgb_dir = f"{model_dir}/lightgbm"
+        with open(f"{lgb_dir}/meta.json") as f:
+            meta = json.load(f)
+        self.target_names = meta["target_names"]
+        self._feature_names = meta.get("feature_names")
+        self._models = {}
+        for name in self.target_names:
+            self._models[name] = joblib.load(f"{lgb_dir}/{name}.pkl")

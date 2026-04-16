@@ -60,10 +60,10 @@ WR_INCLUDE_FEATURES = {
         "is_home", "week", "is_returning_from_absence", "days_rest",
         "practice_status", "game_status", "depth_chart_rank",
     ],
-    # Keep 6 features with signal
     "weather_vegas": [
-        "implied_opp_total", "is_dome", "implied_total_x_dome",
-        "wind_adjusted", "temp_adjusted", "total_line",
+        "implied_team_total", "implied_opp_total",
+        "wind_adjusted", "is_dome",
+        "implied_total_x_dome", "temp_adjusted",
     ],
     "specific": WR_SPECIFIC_FEATURES,
 }
@@ -133,3 +133,16 @@ WR_ATTN_HISTORY_STATS = [
 WR_ATTN_GATED_TD = True
 WR_ATTN_TD_GATE_HIDDEN = 16
 WR_ATTN_TD_GATE_WEIGHT = 1.0
+
+# === LightGBM (Optuna-tuned, 50 trials, CV MAE 4.7319) ===
+WR_TRAIN_LIGHTGBM = True
+WR_LGBM_N_ESTIMATORS = 900
+WR_LGBM_LEARNING_RATE = 0.0183694
+WR_LGBM_NUM_LEAVES = 58
+WR_LGBM_SUBSAMPLE = 0.588592
+WR_LGBM_COLSAMPLE_BYTREE = 0.401101
+WR_LGBM_REG_LAMBDA = 9.57554
+WR_LGBM_REG_ALPHA = 0.674656
+WR_LGBM_MIN_CHILD_SAMPLES = 37
+WR_LGBM_MIN_SPLIT_GAIN = 0.370048
+WR_LGBM_OBJECTIVE = "fair"

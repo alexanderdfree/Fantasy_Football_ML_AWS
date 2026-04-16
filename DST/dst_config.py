@@ -2,12 +2,12 @@
 DST_TARGETS = ["defensive_scoring", "td_points", "pts_allowed_bonus"]
 
 # === DST-Specific Features ===
-# Rolling defense stats (17 features)
+# Rolling defense stats (15 features)
+# NOTE: turnovers_L3 removed — exactly ints_L3 + fumble_rec_L3 (perfect linear dependency)
 DST_SPECIFIC_FEATURES = [
     # Core production rolling windows
     "sacks_L3",
     "sacks_L5",              # Longer sack stability anchor
-    "turnovers_L3",
     "ints_L3",               # INTs separated — secondary quality signal
     "fumble_rec_L3",         # Fumble recoveries — more stochastic component
     "pts_allowed_L3",
@@ -56,6 +56,8 @@ DST_DROP_FEATURES = set()
 
 # === Ridge ===
 import numpy as np
+DST_RIDGE_PCA_COMPONENTS = 20  # 32 features → 20 components; removes collinear dimensions
+
 DST_RIDGE_ALPHA_GRIDS = {
     "defensive_scoring": [round(x, 4) for x in np.logspace(-1, 3.5, 20)],
     "td_points":         [round(x, 4) for x in np.logspace(0, 4, 15)],   # Higher floor — sparse target needs strong reg
@@ -102,3 +104,14 @@ DST_SCHEDULER_TYPE = "cosine_warm_restarts"
 DST_COSINE_T0 = 30              # Longer first cycle for wider backbone
 DST_COSINE_T_MULT = 2
 DST_COSINE_ETA_MIN = 1e-5
+
+# === LightGBM ===
+DST_TRAIN_LIGHTGBM = False
+DST_LGBM_N_ESTIMATORS = 300
+DST_LGBM_LEARNING_RATE = 0.03
+DST_LGBM_NUM_LEAVES = 15
+DST_LGBM_SUBSAMPLE = 0.75
+DST_LGBM_COLSAMPLE_BYTREE = 0.8
+DST_LGBM_REG_LAMBDA = 2.0
+DST_LGBM_REG_ALPHA = 0.1
+DST_LGBM_MIN_CHILD_SAMPLES = 25

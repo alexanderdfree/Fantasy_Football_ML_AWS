@@ -187,8 +187,21 @@ RB_ATTN_HISTORY_STATS = [
     "game_carry_hhi", "game_target_hhi",
 ]
 # Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
-# Tuned: gate_weight 3.0 > 1.0 (stronger BCE signal), gate_hidden 24 > 16,
-# Huber delta tightened 3.0 → 2.0 (gate handles zero-mass so value head needs less tolerance)
+# Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
 RB_ATTN_GATED_TD = True
-RB_ATTN_TD_GATE_HIDDEN = 24
-RB_ATTN_TD_GATE_WEIGHT = 3.0
+RB_ATTN_TD_GATE_HIDDEN = 16
+RB_ATTN_TD_GATE_WEIGHT = 1.0
+
+# === LightGBM (Optuna-tuned, 50 trials, CV MAE 4.5149) ===
+RB_TRAIN_LIGHTGBM = True
+RB_LGBM_N_ESTIMATORS = 1400
+RB_LGBM_LEARNING_RATE = 0.0704275
+RB_LGBM_NUM_LEAVES = 54
+RB_LGBM_MAX_DEPTH = 9
+RB_LGBM_SUBSAMPLE = 0.830769
+RB_LGBM_COLSAMPLE_BYTREE = 0.401929
+RB_LGBM_REG_LAMBDA = 0.0371884
+RB_LGBM_REG_ALPHA = 0.718914
+RB_LGBM_MIN_CHILD_SAMPLES = 69
+RB_LGBM_MIN_SPLIT_GAIN = 0.302108
+RB_LGBM_OBJECTIVE = "fair"

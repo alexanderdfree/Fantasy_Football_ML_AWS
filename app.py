@@ -25,7 +25,7 @@ from src.evaluation.metrics import compute_metrics, compute_positional_metrics
 
 from shared.models import RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
-from shared.weather_features import merge_schedule_features, get_weather_feature_columns
+from shared.weather_features import merge_schedule_features
 
 # --- Position-specific imports (data, targets, features, config) ---
 from QB.qb_data import filter_to_qb
@@ -327,57 +327,36 @@ def _apply_position_models(train, val, test, pos, results):
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)
 
     # Ridge predictions
-    ridge = RidgeMultiTarget(target_names=targets)
-    ridge.load(model_dir)
-    ridge_preds = ridge.predict(X_test_pos)
-    ridge_total = sum(ridge_preds[t] for t in targets) + adj.values
+    try:
+        ridge = RidgeMultiTarget(target_names=targets)
+        ridge.load(model_dir)
+        ridge_preds = ridge.predict(X_test_pos)
+        ridge_total = sum(ridge_preds[t] for t in targets) + adj.values
+    except Exception as e:
+        print(f"  ERROR: Failed to load Ridge model for {pos}: {e}")
+        return
 
     # NN predictions
-    nn_scaler = joblib.load(f"{model_dir}/nn_scaler.pkl")
-    X_test_scaled = np.clip(nn_scaler.transform(X_test_pos), -4, 4)
+    try:
+        nn_scaler = joblib.load(f"{model_dir}/nn_scaler.pkl")
+        X_test_scaled = np.clip(nn_scaler.transform(X_test_pos), -4, 4)
 
-    nn_model = MultiHeadNet(
-        input_dim=len(feature_cols), target_names=targets, **reg["nn_kwargs"]
-    ).to(device)
-    nn_model.load_state_dict(
-        torch.load(f"{model_dir}/{reg['nn_file']}", map_location=device, weights_only=True)
-    )
-    nn_preds = nn_model.predict_numpy(X_test_scaled, device)
-    nn_total = sum(nn_preds[t] for t in targets) + adj.values
-
-    # Weather NN predictions (only if model was trained, QB/RB/WR/TE only)
-    weather_nn_total = None
-    weather_nn_preds = None
-    weather_nn_file = f"{model_dir}/{pos.lower()}_weather_nn.pt"
-    if os.path.exists(weather_nn_file) and pos in ("QB", "RB", "WR", "TE"):
-        for df in [pos_train, pos_val, pos_test]:
-            merge_schedule_features(df)
-
-        weather_cols = get_weather_feature_columns(pos, feature_cols)
-        weather_cols = [c for c in weather_cols if c in pos_test.columns]
-
-        for df in [pos_train, pos_val, pos_test]:
-            df[weather_cols] = df[weather_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
-
-        X_test_weather = pos_test[weather_cols].values.astype(np.float32)
-        weather_scaler = joblib.load(f"{model_dir}/weather_nn_scaler.pkl")
-        X_test_weather_scaled = np.clip(weather_scaler.transform(X_test_weather), -4, 4)
-
-        weather_model = MultiHeadNet(
-            input_dim=len(weather_cols), target_names=targets, **reg["nn_kwargs"]
+        nn_model = MultiHeadNet(
+            input_dim=len(feature_cols), target_names=targets, **reg["nn_kwargs"]
         ).to(device)
-        weather_model.load_state_dict(
-            torch.load(weather_nn_file, map_location=device, weights_only=True)
+        nn_model.load_state_dict(
+            torch.load(f"{model_dir}/{reg['nn_file']}", map_location=device, weights_only=True)
         )
-        weather_nn_preds = weather_model.predict_numpy(X_test_weather_scaled, device)
-        weather_nn_total = sum(weather_nn_preds[t] for t in targets) + adj.values
+        nn_preds = nn_model.predict_numpy(X_test_scaled, device)
+        nn_total = sum(nn_preds[t] for t in targets) + adj.values
+    except Exception as e:
+        print(f"  ERROR: Failed to load NN model for {pos}: {e}")
+        return
 
     # Write into results
     pos_index = pos_test.index
     results.loc[pos_index, "ridge_pred"] = np.round(ridge_total, 2).astype(np.float32)
     results.loc[pos_index, "nn_pred"] = np.round(nn_total, 2).astype(np.float32)
-    if weather_nn_total is not None:
-        results.loc[pos_index, "weather_nn_pred"] = np.round(weather_nn_total, 2).astype(np.float32)
 
     # Cache per-target metrics for /api/position_details
     target_metrics = {}
@@ -388,16 +367,12 @@ def _apply_position_models(train, val, test, pos, results):
                 "ridge_mae": round(float(np.mean(np.abs(ridge_preds[t] - actual_t))), 3),
                 "nn_mae": round(float(np.mean(np.abs(nn_preds[t] - actual_t))), 3),
             }
-            if weather_nn_preds is not None:
-                tm["weather_nn_mae"] = round(float(np.mean(np.abs(weather_nn_preds[t] - actual_t))), 3)
             target_metrics[t] = tm
     total_actual = pos_test["fantasy_points"].values
     total_tm = {
         "ridge_mae": round(float(np.mean(np.abs(ridge_total - total_actual))), 3),
         "nn_mae": round(float(np.mean(np.abs(nn_total - total_actual))), 3),
     }
-    if weather_nn_total is not None:
-        total_tm["weather_nn_mae"] = round(float(np.mean(np.abs(weather_nn_total - total_actual))), 3)
     target_metrics["total"] = total_tm
     _cache.setdefault("position_details", {})[pos] = {
         "n_features": len(feature_cols),
@@ -456,7 +431,6 @@ def _get_data():
 
     results["ridge_pred"] = 0.0
     results["nn_pred"] = 0.0
-    results["weather_nn_pred"] = np.nan
 
     # Apply position-specific models (general positions use general splits)
     for pos in ["QB", "RB", "WR", "TE"]:
@@ -473,8 +447,6 @@ def _get_data():
     y_all = results["fantasy_points"].values
     metrics = {}
     model_cols = [("Ridge Regression", "ridge_pred"), ("Neural Network", "nn_pred")]
-    if results["weather_nn_pred"].notna().any():
-        model_cols.append(("Weather NN", "weather_nn_pred"))
     for name, pred_col in model_cols:
         mask = results[pred_col].notna()
         preds_full = results[pred_col].fillna(0).values
@@ -483,16 +455,6 @@ def _get_data():
         pos_df["pred"] = preds_full
         pos_df["actual"] = y_all
         pos_metrics = compute_positional_metrics(pos_df, "pred", "actual")
-        # For Weather NN, also compute metrics only on positions that have it
-        if pred_col == "weather_nn_pred":
-            wnn_mask = mask
-            wnn_y = y_all[wnn_mask]
-            wnn_preds = results.loc[wnn_mask, pred_col].values
-            overall = compute_metrics(wnn_y, wnn_preds)
-            pos_df_w = results.loc[wnn_mask, ["position"]].copy()
-            pos_df_w["pred"] = wnn_preds
-            pos_df_w["actual"] = wnn_y
-            pos_metrics = compute_positional_metrics(pos_df_w, "pred", "actual")
         metrics[name] = {
             "overall": {k: round(v, 4) for k, v in overall.items()},
             "by_position": pos_metrics.to_dict(orient="records"),
@@ -552,12 +514,10 @@ def api_predictions():
             "nn_pred": r["nn_pred"],
             "headshot": r.get("headshot_url", ""),
         }
-        wnn = r.get("weather_nn_pred")
-        row["weather_nn_pred"] = round(float(wnn), 2) if pd.notna(wnn) else None
         rows.append(row)
 
     reverse = order == "desc"
-    if sort_by in ("actual", "ridge_pred", "nn_pred", "weather_nn_pred", "week"):
+    if sort_by in ("actual", "ridge_pred", "nn_pred", "week"):
         rows.sort(key=lambda x: x.get(sort_by, 0) or 0, reverse=reverse)
     else:
         rows.sort(key=lambda x: x.get("actual", 0), reverse=reverse)
@@ -601,8 +561,6 @@ def api_player(player_id):
             "ridge_pred": r["ridge_pred"],
             "nn_pred": r["nn_pred"],
         }
-        wnn = r.get("weather_nn_pred")
-        entry["weather_nn_pred"] = round(float(wnn), 2) if pd.notna(wnn) else None
         weekly.append(entry)
 
     return jsonify({
@@ -632,8 +590,6 @@ def api_top_players():
         "avg_nn": ("nn_pred", "mean"),
         "games": ("week", "count"),
     }
-    if "weather_nn_pred" in df.columns and df["weather_nn_pred"].notna().any():
-        agg_dict["avg_weather_nn"] = ("weather_nn_pred", "mean")
     avg = df.groupby(["player_id", "player_display_name", "position", "recent_team"]).agg(
         **agg_dict,
     ).reset_index()
@@ -652,8 +608,6 @@ def api_top_players():
             "avg_nn": round(r["avg_nn"], 2),
             "games": int(r["games"]),
         }
-        if "avg_weather_nn" in r.index and pd.notna(r["avg_weather_nn"]):
-            row["avg_weather_nn"] = round(r["avg_weather_nn"], 2)
         rows.append(row)
 
     return jsonify({"players": rows})
@@ -663,10 +617,7 @@ def api_top_players():
 def api_weekly_accuracy():
     results, _ = _get_data()
     weeks = sorted(results["week"].unique())
-    has_weather = results["weather_nn_pred"].notna().any()
     data = {"weeks": [], "ridge_mae": [], "nn_mae": []}
-    if has_weather:
-        data["weather_nn_mae"] = []
 
     for w in weeks:
         wdf = results[results["week"] == w]
@@ -674,17 +625,6 @@ def api_weekly_accuracy():
         data["weeks"].append(int(w))
         data["ridge_mae"].append(round(np.mean(np.abs(actual - wdf["ridge_pred"].values)), 3))
         data["nn_mae"].append(round(np.mean(np.abs(actual - wdf["nn_pred"].values)), 3))
-        if has_weather:
-            wnn_mask = wdf["weather_nn_pred"].notna()
-            if wnn_mask.any():
-                data["weather_nn_mae"].append(
-                    round(np.mean(np.abs(
-                        wdf.loc[wnn_mask, "fantasy_points"].values -
-                        wdf.loc[wnn_mask, "weather_nn_pred"].values
-                    )), 3)
-                )
-            else:
-                data["weather_nn_mae"].append(None)
 
     return jsonify(data)
 

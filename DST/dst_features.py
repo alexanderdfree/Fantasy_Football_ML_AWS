@@ -31,12 +31,9 @@ def compute_dst_features(df: pd.DataFrame) -> None:
         lambda x: x.shift(1).rolling(3, min_periods=1).mean()
     ).fillna(0)
 
-    # --- Feature 2: turnovers_L3 ---
-    df["turnovers_L3"] = grp["_turnovers"].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    ).fillna(0)
+    # turnovers_L3 removed — exactly ints_L3 + fumble_rec_L3 (perfect linear dependency)
 
-    # --- Feature 3: ints_L3 (INTs separated — secondary quality signal) ---
+    # --- Feature 2: ints_L3 (INTs separated — secondary quality signal) ---
     df["ints_L3"] = grp["def_ints"].transform(
         lambda x: x.shift(1).rolling(3, min_periods=1).mean()
     ).fillna(0)

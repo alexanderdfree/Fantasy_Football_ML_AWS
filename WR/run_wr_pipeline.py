@@ -16,6 +16,10 @@ from WR.wr_config import (
     WR_ATTN_POSITIONAL_ENCODING, WR_ATTN_DROPOUT,
     WR_ATTN_HISTORY_STATS,
     WR_ATTN_GATED_TD, WR_ATTN_TD_GATE_HIDDEN, WR_ATTN_TD_GATE_WEIGHT,
+    WR_TRAIN_LIGHTGBM, WR_LGBM_N_ESTIMATORS, WR_LGBM_LEARNING_RATE,
+    WR_LGBM_NUM_LEAVES, WR_LGBM_SUBSAMPLE, WR_LGBM_COLSAMPLE_BYTREE,
+    WR_LGBM_REG_LAMBDA, WR_LGBM_REG_ALPHA, WR_LGBM_MIN_CHILD_SAMPLES,
+    WR_LGBM_MIN_SPLIT_GAIN, WR_LGBM_OBJECTIVE,
 )
 from WR.wr_data import filter_to_wr
 from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
@@ -49,7 +53,6 @@ WR_CONFIG = {
     "cosine_t0": WR_COSINE_T0,
     "cosine_t_mult": WR_COSINE_T_MULT,
     "cosine_eta_min": WR_COSINE_ETA_MIN,
-    "train_weather_nn": True,
     "train_attention_nn": WR_TRAIN_ATTENTION_NN,
     "attn_d_model": WR_ATTN_D_MODEL,
     "attn_n_heads": WR_ATTN_N_HEADS,
@@ -61,6 +64,17 @@ WR_CONFIG = {
     "attn_gated_td": WR_ATTN_GATED_TD,
     "attn_td_gate_hidden": WR_ATTN_TD_GATE_HIDDEN,
     "attn_td_gate_weight": WR_ATTN_TD_GATE_WEIGHT,
+    "train_lightgbm": WR_TRAIN_LIGHTGBM,
+    "lgbm_n_estimators": WR_LGBM_N_ESTIMATORS,
+    "lgbm_learning_rate": WR_LGBM_LEARNING_RATE,
+    "lgbm_num_leaves": WR_LGBM_NUM_LEAVES,
+    "lgbm_subsample": WR_LGBM_SUBSAMPLE,
+    "lgbm_colsample_bytree": WR_LGBM_COLSAMPLE_BYTREE,
+    "lgbm_reg_lambda": WR_LGBM_REG_LAMBDA,
+    "lgbm_reg_alpha": WR_LGBM_REG_ALPHA,
+    "lgbm_min_child_samples": WR_LGBM_MIN_CHILD_SAMPLES,
+    "lgbm_min_split_gain": WR_LGBM_MIN_SPLIT_GAIN,
+    "lgbm_objective": WR_LGBM_OBJECTIVE,
 }
 
 

@@ -91,7 +91,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"target_share_L{window}"] = (
             df[f"player_targets_roll_L{window}"]
             / df[f"team_targets_roll_L{window}"]
-        ).fillna(0)
+        ).replace([np.inf, -np.inf], 0).fillna(0)
 
         df[f"player_carries_roll_L{window}"] = df.groupby(
             ["player_id", "season", "stint_id"]
@@ -106,14 +106,14 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"carry_share_L{window}"] = (
             df[f"player_carries_roll_L{window}"]
             / df[f"team_carries_roll_L{window}"]
-        ).fillna(0)
+        ).replace([np.inf, -np.inf], 0).fillna(0)
 
     # air_yards_share (lagged to prevent data leakage)
     if "receiving_air_yards" in df.columns:
         team_air_yards = df.groupby(["recent_team", "season", "week"])[
             "receiving_air_yards"
         ].transform("sum")
-        df["_raw_air_yards_share"] = (df["receiving_air_yards"] / team_air_yards).fillna(0)
+        df["_raw_air_yards_share"] = (df["receiving_air_yards"] / team_air_yards).replace([np.inf, -np.inf], 0).fillna(0)
         df["air_yards_share"] = df.groupby(
             ["player_id", "season"]
         )["_raw_air_yards_share"].shift(1).fillna(0)

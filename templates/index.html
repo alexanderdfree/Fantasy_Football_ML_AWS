@@ -73,7 +73,6 @@
                             <option value="all">All Models</option>
                             <option value="ridge">Ridge Regression</option>
                             <option value="nn">Neural Network</option>
-                            <option value="weather_nn">Weather NN</option>
                         </select>
                     </div>
                     <div class="filter-meta">
@@ -107,12 +106,8 @@
                             <th class="col-pred sortable nn-col" data-sort="nn_pred">
                                 NN <span class="sort-arrow"></span>
                             </th>
-                            <th class="col-pred sortable weather-nn-col" data-sort="weather_nn_pred">
-                                Wth NN <span class="sort-arrow"></span>
-                            </th>
                             <th class="col-delta ridge-col">Ridge Err</th>
                             <th class="col-delta nn-col">NN Err</th>
-                            <th class="col-delta weather-nn-col">Wth Err</th>
                         </tr>
                     </thead>
                     <tbody id="predictions-body">
@@ -210,23 +205,6 @@
                         <div class="metric-row">
                             <span class="metric-label">R&sup2;</span>
                             <span class="metric-value" id="nn-r2">--</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="metric-card" id="weather-nn-card" style="display:none">
-                    <div class="metric-card-header">Weather NN</div>
-                    <div class="metric-card-body" id="weather-nn-metrics">
-                        <div class="metric-row">
-                            <span class="metric-label">MAE</span>
-                            <span class="metric-value" id="weather-nn-mae">--</span>
-                        </div>
-                        <div class="metric-row">
-                            <span class="metric-label">RMSE</span>
-                            <span class="metric-value" id="weather-nn-rmse">--</span>
-                        </div>
-                        <div class="metric-row">
-                            <span class="metric-label">R&sup2;</span>
-                            <span class="metric-value" id="weather-nn-r2">--</span>
                         </div>
                     </div>
                 </div>

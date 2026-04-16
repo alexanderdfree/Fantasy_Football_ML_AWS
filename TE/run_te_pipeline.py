@@ -16,6 +16,10 @@ from TE.te_config import (
     TE_ATTN_POSITIONAL_ENCODING, TE_ATTN_DROPOUT,
     TE_ATTN_HISTORY_STATS,
     TE_ATTN_GATED_TD, TE_ATTN_TD_GATE_HIDDEN, TE_ATTN_TD_GATE_WEIGHT,
+    TE_TRAIN_LIGHTGBM, TE_LGBM_N_ESTIMATORS, TE_LGBM_LEARNING_RATE,
+    TE_LGBM_NUM_LEAVES, TE_LGBM_SUBSAMPLE, TE_LGBM_COLSAMPLE_BYTREE,
+    TE_LGBM_REG_LAMBDA, TE_LGBM_REG_ALPHA, TE_LGBM_MIN_CHILD_SAMPLES,
+    TE_LGBM_MIN_SPLIT_GAIN, TE_LGBM_OBJECTIVE,
 )
 from TE.te_data import filter_to_te
 from TE.te_targets import compute_te_targets, compute_te_fumble_adjustment
@@ -47,7 +51,6 @@ TE_CONFIG = {
     "scheduler_type": TE_SCHEDULER_TYPE,
     "onecycle_max_lr": TE_ONECYCLE_MAX_LR,
     "onecycle_pct_start": TE_ONECYCLE_PCT_START,
-    "train_weather_nn": True,
     "train_attention_nn": TE_TRAIN_ATTENTION_NN,
     "attn_d_model": TE_ATTN_D_MODEL,
     "attn_n_heads": TE_ATTN_N_HEADS,
@@ -59,6 +62,17 @@ TE_CONFIG = {
     "attn_gated_td": TE_ATTN_GATED_TD,
     "attn_td_gate_hidden": TE_ATTN_TD_GATE_HIDDEN,
     "attn_td_gate_weight": TE_ATTN_TD_GATE_WEIGHT,
+    "train_lightgbm": TE_TRAIN_LIGHTGBM,
+    "lgbm_n_estimators": TE_LGBM_N_ESTIMATORS,
+    "lgbm_learning_rate": TE_LGBM_LEARNING_RATE,
+    "lgbm_num_leaves": TE_LGBM_NUM_LEAVES,
+    "lgbm_subsample": TE_LGBM_SUBSAMPLE,
+    "lgbm_colsample_bytree": TE_LGBM_COLSAMPLE_BYTREE,
+    "lgbm_reg_lambda": TE_LGBM_REG_LAMBDA,
+    "lgbm_reg_alpha": TE_LGBM_REG_ALPHA,
+    "lgbm_min_child_samples": TE_LGBM_MIN_CHILD_SAMPLES,
+    "lgbm_min_split_gain": TE_LGBM_MIN_SPLIT_GAIN,
+    "lgbm_objective": TE_LGBM_OBJECTIVE,
 }
 
 
