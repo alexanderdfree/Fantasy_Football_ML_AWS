@@ -1,4 +1,11 @@
-# Design Document 2:LSTM + Multi-Head Architecture for Sequential Understanding
+# Design Document 2: LSTM + Multi-Head Architecture for Sequential Understanding
+
+> **Status: SUPERSEDED by Attention-based model.** Instead of an LSTM, a `MultiHeadNetWithHistory`
+> architecture was implemented in `shared/neural_net.py` using learned-query `AttentionPool` over
+> padded game history sequences (up to 17 games). This achieves the same goal of learning from
+> raw game-by-game sequences while being simpler to train. The attention model is trained for
+> QB, RB, WR, and TE (configurable via `{POS}_TRAIN_ATTENTION_NN` in position configs).
+> A `GatedTDHead` (sigmoid gate × Softplus value) handles zero-inflated TD prediction.
 
 ## Motivation
 

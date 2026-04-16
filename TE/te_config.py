@@ -87,20 +87,26 @@ TE_NN_BATCH_SIZE = 128
 TE_NN_PATIENCE = 25
 
 # === Loss Weights ===
-# TEs are very TD-dependent (boom/bust) — highest TD weight across positions.
-# Rushing is negligible; reduce further.
+# Equal per-target weights: training objective now aligned with evaluation
+# metric (total MAE), where all targets contribute equally to the total.
+# Previous scheme (1.2/0.2/3.0) heavily over-weighted td_points (3x)
+# and almost ignored rushing_floor (0.2x). w_total raised to 1.0.
 TE_LOSS_WEIGHTS = {
-    "receiving_floor": 1.2,
-    "rushing_floor": 0.2,
-    "td_points": 3.0,
+    "receiving_floor": 1.0,
+    "rushing_floor": 1.0,
+    "td_points": 1.0,
 }
-TE_LOSS_W_TOTAL = 0.4
+TE_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target) ===
+# Harmonized to 2.0 across targets. Previous scheme (1.5/0.5/3.0) was
+# the most skewed — rushing_floor errors went linear at 0.5 while
+# td_points errors stayed quadratic up to 3.0.
 TE_HUBER_DELTAS = {
-    "receiving_floor": 1.5,
-    "rushing_floor": 0.5,
-    "td_points": 3.0,
+    "receiving_floor": 2.0,
+    "rushing_floor": 2.0,
+    "td_points": 2.0,
+    "total": 2.5,       # explicit delta for total aux loss (TEs score lower)
 }
 
 # === LR Scheduler ===

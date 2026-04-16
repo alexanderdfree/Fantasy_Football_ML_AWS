@@ -81,22 +81,23 @@ DST_NN_BATCH_SIZE = 128
 DST_NN_PATIENCE = 35
 
 # === Loss Weights ===
-# With corrected targets (no def_tds/safeties noise):
-# - defensive_scoring: most predictable, largest contribution to total
-# - pts_allowed_bonus: highest variance, biggest swing factor
-# - td_points: now ST-only, very sparse, don't over-weight
+# Equal per-target weights: training objective now aligned with evaluation
+# metric (total MAE). Previous scheme over-weighted pts_allowed_bonus (2.0x).
+# w_total raised to 1.0.
 DST_LOSS_WEIGHTS = {
     "defensive_scoring": 1.0,
-    "td_points": 1.5,           # Lowered — ST TDs are sparse, less signal to learn
-    "pts_allowed_bonus": 2.0,   # Raised — this is where matchup features shine
+    "td_points": 1.0,
+    "pts_allowed_bonus": 1.0,
 }
-DST_LOSS_W_TOTAL = 0.5          # Raised — total coherence matters more for fantasy
+DST_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target) ===
+# Harmonized to 2.0 across targets.
 DST_HUBER_DELTAS = {
-    "defensive_scoring": 2.5,   # Slightly wider — reduce over-penalizing big sack games
-    "td_points": 2.0,           # Tighter — ST TDs are mostly 0, focus on that
-    "pts_allowed_bonus": 3.0,
+    "defensive_scoring": 2.0,
+    "td_points": 2.0,
+    "pts_allowed_bonus": 2.0,
+    "total": 3.0,               # explicit delta for total aux loss
 }
 
 # === LR Scheduler ===

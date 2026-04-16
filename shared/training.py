@@ -29,8 +29,11 @@ class MultiTargetLoss(nn.Module):
     ):
         super().__init__()
         self.target_names = target_names
-        self.loss_weights = loss_weights
-        self.w_total = w_total
+        # Normalize so per-target weights + w_total sum to 1.0,
+        # preserving relative proportions across positions.
+        total_weight = sum(loss_weights.get(n, 1.0) for n in target_names) + w_total
+        self.loss_weights = {n: loss_weights.get(n, 1.0) / total_weight for n in target_names}
+        self.w_total = w_total / total_weight
         self.td_gate_weight = td_gate_weight
         if huber_deltas is None:
             huber_deltas = {}
@@ -160,10 +163,15 @@ def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
 
 
 class MultiHeadTrainer:
-    """Training loop for any multi-head position network."""
+    """Training loop for any multi-head position network.
+
+    Subclass and override _forward_batch() to support different input formats
+    (e.g., attention models with game history).
+    """
 
     def __init__(self, model, optimizer, scheduler, criterion, device,
-                 target_names, patience=15, scheduler_per_batch=False):
+                 target_names, patience=15, scheduler_per_batch=False,
+                 log_every=10):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -172,9 +180,22 @@ class MultiHeadTrainer:
         self.target_names = target_names
         self.patience = patience
         self.scheduler_per_batch = scheduler_per_batch
-        self.best_val_loss = float("inf")
+        self.log_every = log_every
+        self.best_val_metric = float("inf")
         self.best_model_state = None
         self.epochs_without_improvement = 0
+
+    def _forward_batch(self, batch) -> tuple[dict, dict]:
+        """Unpack a DataLoader batch, move to device, and run the forward pass.
+
+        Returns:
+            (preds_dict, targets_dict) — both on device.
+        """
+        X_batch, y_batch = batch
+        X_batch = X_batch.to(self.device)
+        y_batch = {k: v.to(self.device) for k, v in y_batch.items()}
+        preds = self.model(X_batch)
+        return preds, y_batch
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
         all_keys = self.target_names + ["total"]
@@ -191,12 +212,10 @@ class MultiHeadTrainer:
             epoch_train_loss = 0.0
             n_train_batches = 0
 
-            for X_batch, y_batch in train_loader:
-                X_batch = X_batch.to(self.device)
-                y_batch = {k: v.to(self.device) for k, v in y_batch.items()}
+            for batch in train_loader:
+                preds, y_batch = self._forward_batch(batch)
 
                 self.optimizer.zero_grad()
-                preds = self.model(X_batch)
                 loss, _ = self.criterion(preds, y_batch)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -219,11 +238,8 @@ class MultiHeadTrainer:
             n_val_batches = 0
 
             with torch.no_grad():
-                for X_batch, y_batch in val_loader:
-                    X_batch = X_batch.to(self.device)
-                    y_batch = {k: v.to(self.device) for k, v in y_batch.items()}
-
-                    preds = self.model(X_batch)
+                for batch in val_loader:
+                    preds, y_batch = self._forward_batch(batch)
                     loss, components = self.criterion(preds, y_batch)
 
                     epoch_val_loss += loss.item()
@@ -262,9 +278,10 @@ class MultiHeadTrainer:
                 else:
                     self.scheduler.step()
 
-            # --- Early Stopping ---
-            if avg_val_loss < self.best_val_loss:
-                self.best_val_loss = avg_val_loss
+            # --- Early Stopping (on total MAE, not combined loss) ---
+            val_mae_total = history["val_mae_total"][-1]
+            if val_mae_total < self.best_val_metric:
+                self.best_val_metric = val_mae_total
                 self.best_model_state = {
                     k: v.clone() for k, v in self.model.state_dict().items()
                 }
@@ -277,7 +294,7 @@ class MultiHeadTrainer:
                     break
 
             # --- Logging ---
-            if (epoch + 1) % 10 == 0:
+            if (epoch + 1) % self.log_every == 0:
                 target_maes = " | ".join(
                     f"{t}: {history[f'val_mae_{t}'][-1]:.3f}"
                     for t in self.target_names
@@ -294,125 +311,20 @@ class MultiHeadTrainer:
 
 
 class MultiHeadHistoryTrainer(MultiHeadTrainer):
-    """Training loop for the attention-based model with game history input."""
+    """Training loop for the attention-based model with game history input.
 
-    def train(self, train_loader, val_loader, n_epochs) -> dict:
-        all_keys = self.target_names + ["total"]
-        history = {k: [] for k in [
-            "train_loss", "val_loss",
-            *[f"val_loss_{t}" for t in self.target_names],
-            "val_mae_total", *[f"val_mae_{t}" for t in self.target_names],
-            "val_rmse_total",
-        ]}
+    Only overrides _forward_batch to handle the 4-tuple (static, history, mask, targets)
+    batch format from the history DataLoader.
+    """
 
-        for epoch in range(n_epochs):
-            # --- Training pass ---
-            self.model.train()
-            epoch_train_loss = 0.0
-            n_train_batches = 0
-
-            for X_static, X_hist, hist_mask, y_batch in train_loader:
-                X_static = X_static.to(self.device)
-                X_hist = X_hist.to(self.device)
-                hist_mask = hist_mask.to(self.device)
-                y_batch = {k: v.to(self.device) for k, v in y_batch.items()}
-
-                self.optimizer.zero_grad()
-                preds = self.model(X_static, X_hist, hist_mask)
-                loss, _ = self.criterion(preds, y_batch)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                self.optimizer.step()
-                if self.scheduler_per_batch:
-                    self.scheduler.step()
-
-                epoch_train_loss += loss.item()
-                n_train_batches += 1
-
-            avg_train_loss = epoch_train_loss / n_train_batches
-            history["train_loss"].append(avg_train_loss)
-
-            # --- Validation pass ---
-            self.model.eval()
-            all_preds = {k: [] for k in all_keys}
-            all_targets = {k: [] for k in all_keys}
-            epoch_val_loss = 0.0
-            val_components_accum = {}
-            n_val_batches = 0
-
-            with torch.no_grad():
-                for X_static, X_hist, hist_mask, y_batch in val_loader:
-                    X_static = X_static.to(self.device)
-                    X_hist = X_hist.to(self.device)
-                    hist_mask = hist_mask.to(self.device)
-                    y_batch = {k: v.to(self.device) for k, v in y_batch.items()}
-
-                    preds = self.model(X_static, X_hist, hist_mask)
-                    loss, components = self.criterion(preds, y_batch)
-
-                    epoch_val_loss += loss.item()
-                    for k in components:
-                        val_components_accum[k] = val_components_accum.get(k, 0) + components[k]
-                    n_val_batches += 1
-
-                    for k in all_keys:
-                        all_preds[k].append(preds[k].cpu().numpy())
-                        all_targets[k].append(y_batch[k].cpu().numpy())
-
-            avg_val_loss = epoch_val_loss / n_val_batches
-            history["val_loss"].append(avg_val_loss)
-
-            for t in self.target_names:
-                history[f"val_loss_{t}"].append(
-                    val_components_accum.get(f"loss_{t}", 0) / n_val_batches
-                )
-
-            for k in all_keys:
-                y_pred_all = np.concatenate(all_preds[k])
-                y_true_all = np.concatenate(all_targets[k])
-                mae = np.mean(np.abs(y_pred_all - y_true_all))
-                history[f"val_mae_{k}"].append(mae)
-                if k == "total":
-                    history["val_rmse_total"].append(
-                        np.sqrt(np.mean((y_pred_all - y_true_all) ** 2))
-                    )
-
-            # --- LR Scheduler ---
-            if not self.scheduler_per_batch:
-                if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    self.scheduler.step(avg_val_loss)
-                else:
-                    self.scheduler.step()
-
-            # --- Early Stopping ---
-            if avg_val_loss < self.best_val_loss:
-                self.best_val_loss = avg_val_loss
-                self.best_model_state = {
-                    k: v.clone() for k, v in self.model.state_dict().items()
-                }
-                self.epochs_without_improvement = 0
-            else:
-                self.epochs_without_improvement += 1
-                if self.epochs_without_improvement >= self.patience:
-                    print(f"Early stopping at epoch {epoch + 1}")
-                    self.model.load_state_dict(self.best_model_state)
-                    break
-
-            # --- Logging ---
-            if (epoch + 1) % 10 == 0:
-                target_maes = " | ".join(
-                    f"{t}: {history[f'val_mae_{t}'][-1]:.3f}"
-                    for t in self.target_names
-                )
-                print(
-                    f"Epoch {epoch+1:3d} | "
-                    f"Train: {avg_train_loss:.4f} | "
-                    f"Val: {avg_val_loss:.4f} | "
-                    f"MAE total: {history['val_mae_total'][-1]:.3f} | "
-                    f"{target_maes}"
-                )
-
-        return history
+    def _forward_batch(self, batch) -> tuple[dict, dict]:
+        X_static, X_hist, hist_mask, y_batch = batch
+        X_static = X_static.to(self.device)
+        X_hist = X_hist.to(self.device)
+        hist_mask = hist_mask.to(self.device)
+        y_batch = {k: v.to(self.device) for k, v in y_batch.items()}
+        preds = self.model(X_static, X_hist, hist_mask)
+        return preds, y_batch
 
 
 def plot_training_curves(history: dict, target_names: list[str], save_path: str) -> None:

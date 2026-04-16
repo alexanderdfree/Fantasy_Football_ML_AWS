@@ -262,7 +262,7 @@ for stat in ROLL_STATS:
 # will have NaN for all std features. This is handled by fill_nans_safe().
 ```
 
-##### Prior-Season Summary Features (24 features)
+##### Prior-Season Summary Features (30 features)
 
 Since within-season rolling features are NaN for early weeks, we provide
 explicit prior-season summaries as stable fallback signal.
@@ -495,10 +495,12 @@ df.drop(columns=["weeks_since_last_game"], inplace=True)
 
 One-hot: `pos_QB`, `pos_RB`, `pos_WR`, `pos_TE` (using `pd.get_dummies`)
 
-##### Total: ~144 general features (before position-specific additions/drops)
+##### Total: ~155 general features (before position-specific additions/drops)
 
-Each position then adds its own features (8 per position for QB/RB/WR/TE) and drops
+Each position then adds its own specific features (varying count per position) and drops
 irrelevant ones (e.g., QBs drop receiver-centric features, RBs drop passing features).
+Weather/Vegas features (implied_team_total, implied_opp_total, is_dome, etc.) are added
+per-position from `shared/weather_features.py`.
 K and DST bypass the general feature pipeline entirely and use custom features.
 
 #### `get_feature_columns() -> list[str]`
@@ -671,7 +673,8 @@ class MultiHeadNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> dict:
         # Returns dict with per-target predictions + "total"
-        # Each head output passes through Softplus(beta=1.0) for non-negativity
+        # Each head output passes through clamp(min=0) for non-negativity
+        # (configurable per-target via non_negative_targets parameter)
         pass
 
     def predict_numpy(self, X: np.ndarray, device: torch.device) -> dict:
@@ -679,25 +682,29 @@ class MultiHeadNet(nn.Module):
         pass
 ```
 
-**Architecture diagram (example: RB with backbone=[96]):**
+**Architecture diagram (example: RB with backbone=[128, 64]):**
 ```
-Input (N features) → Linear(N, 96) → BatchNorm(96) → ReLU → Dropout(0.25)
-                   ├→ rushing_floor head:   Linear(96, 32) → ReLU → Linear(32, 1) → Softplus
-                   ├→ receiving_floor head: Linear(96, 32) → ReLU → Linear(32, 1) → Softplus
-                   └→ td_points head:      Linear(96, 32) → ReLU → Linear(32, 1) → Softplus
+Input (N features) → Linear(N, 128) → BatchNorm(128) → ReLU → Dropout(0.15)
+                   → Linear(128, 64) → BatchNorm(64) → ReLU → Dropout(0.15)
+                   ├→ rushing_floor head:   Linear(64, 48) → ReLU → Linear(48, 1) → clamp(min=0)
+                   ├→ receiving_floor head: Linear(64, 48) → ReLU → Linear(48, 1) → clamp(min=0)
+                   └→ td_points head:      Linear(64, 64) → ReLU → Linear(64, 1) → clamp(min=0)
                    Total = sum of all heads
 ```
 
+**Note:** `non_negative_targets` controls which heads are clamped. By default all targets
+are clamped to >= 0. DST overrides this to leave `pts_allowed_bonus` unconstrained (range: -4 to +10).
+
 **Optimizer and loss:**
 ```python
-optimizer = torch.optim.AdamW(model.parameters(), lr=8e-4, weight_decay=2e-4)
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-5)
 criterion = MultiTargetLoss(
     target_names=["rushing_floor", "receiving_floor", "td_points"],
     loss_weights={"rushing_floor": 1.2, "receiving_floor": 1.0, "td_points": 2.0},
-    huber_deltas={"rushing_floor": 1.0, "receiving_floor": 1.0, "td_points": 2.0},
-    w_total=0.6,
+    huber_deltas={"rushing_floor": 2.0, "receiving_floor": 2.5, "td_points": 2.0},
+    w_total=0.25,
 )
-# Scheduler varies by position: ReduceLROnPlateau, OneCycleLR, or CosineWarmRestarts
+# Scheduler varies by position: OneCycleLR (TE, K) or CosineWarmRestarts (QB, RB, WR, DST)
 ```
 
 ---

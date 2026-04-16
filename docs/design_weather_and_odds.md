@@ -1,5 +1,9 @@
 # Design Document 1: Weather & Implied-Odds Features for the Existing Neural Network
 
+> **Status: IMPLEMENTED.** Weather and Vegas features are now computed in `shared/weather_features.py`
+> and used by all position pipelines. Position-specific subsets are configured in each `{pos}_config.py`
+> under the `weather_vegas` key in the include-features dict.
+
 ## Motivation
 
 Your schedule data (loaded in `src/data/loader.py`) already contains `roof`, `surface`, `temp`, `wind`, `spread_line`, and `total_line` columns but none of these flow into the feature engineering pipeline. Multiple papers (Landers & Duperrouzel 2019, IBM Watson 2018/2019) found venue/context features to be among the highest-correlated predictors. The Vegas implied team total is widely regarded as the single strongest publicly available prior for expected offensive output.

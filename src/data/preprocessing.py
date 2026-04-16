@@ -32,7 +32,7 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
         "passing_yards", "passing_tds", "interceptions",
         "rushing_yards", "rushing_tds", "carries",
         "receiving_yards", "receiving_tds", "receptions", "targets",
-        "sack_fumbles_lost", "rushing_fumbles_lost", "attempts",
+        "sack_fumbles_lost", "rushing_fumbles_lost", "receiving_fumbles_lost", "attempts",
         "rushing_2pt_conversions", "receiving_2pt_conversions",
         "rushing_first_downs", "receiving_first_downs",
         "rushing_epa", "receiving_epa",

@@ -249,7 +249,7 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
         X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=cfg["nn_batch_size"],
     )
 
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = MultiHeadNet(
         input_dim=X_train_s.shape[1],
         target_names=targets,
@@ -275,6 +275,7 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
         model=model, optimizer=optimizer, scheduler=scheduler,
         criterion=criterion, device=device, target_names=targets,
         patience=cfg["nn_patience"], scheduler_per_batch=scheduler_per_batch,
+        log_every=cfg.get("nn_log_every", 10),
     )
     history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
@@ -332,7 +333,7 @@ def _train_attention_nn(X_train, X_val, X_test,
     )
 
     game_dim = hist_train.shape[2]
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = MultiHeadNetWithHistory(
         static_dim=X_train_s.shape[1],
         game_dim=game_dim,
@@ -373,6 +374,7 @@ def _train_attention_nn(X_train, X_val, X_test,
         model=model, optimizer=optimizer, scheduler=scheduler,
         criterion=criterion, device=device, target_names=targets,
         patience=attn_patience, scheduler_per_batch=scheduler_per_batch,
+        log_every=cfg.get("nn_log_every", 10),
     )
     history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
@@ -773,8 +775,6 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             position, cfg, fold_train_df, fold_val_df
         )
 
-        adj_val = cfg["compute_adjustment_fn"](pos_val)
-
         ridge_fold = RidgeMultiTarget(
             target_names=targets, alpha=best_alphas,
             two_stage_targets=cfg.get("two_stage_targets", {}),
@@ -783,7 +783,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         )
         ridge_fold.fit(X_train, y_train_dict)
         ridge_val_preds = ridge_fold.predict(X_val)
-        ridge_val_preds["total"] = sum(ridge_val_preds[t] for t in targets) + adj_val.values
+        ridge_val_preds["total"] = sum(ridge_val_preds[t] for t in targets)
         fold_ridge_metrics.append(
             compute_target_metrics(y_val_dict, ridge_val_preds, targets)
         )
@@ -798,7 +798,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             batch_size=cfg["nn_batch_size"],
         )
 
-        device = torch.device("cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = MultiHeadNet(
             input_dim=X_train_s.shape[1],
             target_names=targets,
@@ -806,6 +806,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             head_hidden=cfg["nn_head_hidden"],
             dropout=cfg["nn_dropout"],
             head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
+            non_negative_targets=cfg.get("nn_non_negative_targets"),
         ).to(device)
 
         optimizer = torch.optim.AdamW(
@@ -823,11 +824,12 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             model=model, optimizer=optimizer, scheduler=scheduler,
             criterion=criterion, device=device, target_names=targets,
             patience=cfg["nn_patience"], scheduler_per_batch=scheduler_per_batch,
+            log_every=cfg.get("nn_log_every", 10),
         )
         trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
         nn_val_preds = model.predict_numpy(X_val_s, device)
-        nn_val_preds["total"] = sum(nn_val_preds[t] for t in targets) + adj_val.values
+        nn_val_preds["total"] = sum(nn_val_preds[t] for t in targets)
         fold_nn_metrics.append(
             compute_target_metrics(y_val_dict, nn_val_preds, targets)
         )
@@ -915,9 +917,6 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     baseline_metrics = {"total": compute_metrics(y_test_dict["total"], baseline_preds)}
 
     # Ridge with per-target CV alphas tuned on full training data
-    adj_val = cfg["compute_adjustment_fn"](pos_val)
-    adj_test = cfg["compute_adjustment_fn"](pos_test)
-
     best_cv_alphas = best_alphas
 
     ridge_model = RidgeMultiTarget(

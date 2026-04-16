@@ -96,12 +96,13 @@ Final-Project/
 │       └── backtest.py            # Season-long fantasy simulation
 │
 ├── shared/                        # Generic multi-target infrastructure
-│   ├── neural_net.py              # MultiHeadNet: shared backbone + per-target heads
-│   ├── models.py                  # RidgeMultiTarget: separate Ridge per target
+│   ├── neural_net.py              # MultiHeadNet, MultiHeadNetWithHistory (attention), GatedTDHead
+│   ├── models.py                  # RidgeMultiTarget, TwoStageRidge
 │   ├── training.py                # MultiHeadTrainer, MultiTargetLoss, dataloaders
 │   ├── pipeline.py                # Position pipeline template
 │   ├── evaluation.py              # Evaluation utilities
-│   └── backtest.py                # Simulation/evaluation helpers
+│   ├── backtest.py                # Simulation/evaluation helpers
+│   └── weather_features.py        # Vegas odds + venue/weather feature engineering
 │
 ├── QB/                            # QB-specific model (config, data, targets, features, pipeline)
 │   ├── qb_config.py
@@ -122,8 +123,8 @@ Final-Project/
 │
 ├── WR/                            # WR-specific model (same structure)
 ├── TE/                            # TE-specific model (same structure)
-├── K/                             # Kicker model (bypasses general feature pipeline)
-├── DST/                           # D/ST model (bypasses general feature pipeline)
+├── K/                             # Kicker model (custom feature pipeline, bypasses general features)
+├── DST/                           # D/ST model (custom feature pipeline, bypasses general features)
 │
 ├── templates/
 │   └── index.html                 # Main dashboard HTML
@@ -219,12 +220,12 @@ NN_PATIENCE = 15                        # early stopping
 
 | Position | Backbone | Head Hidden | Dropout | LR | Epochs | Patience | Batch | Scheduler |
 |----------|----------|-------------|---------|-----|--------|----------|-------|-----------|
-| QB | [96, 48] | 20 | 0.35 | 5e-4 | 300 | 25 | 128 | OneCycleLR |
-| RB | [96] | 32 | 0.25 | 8e-4 | 300 | 30 | 256 | ReduceLROnPlateau |
+| QB | [128] | 32 | 0.20 | 5e-4 | 300 | 25 | 128 | CosineWarmRestarts |
+| RB | [128, 64] | 48 (td: 64) | 0.15 | 1e-3 | 300 | 30 | 256 | CosineWarmRestarts |
 | WR | [128] | 32 | 0.20 | 1e-3 | 250 | 25 | 512 | CosineWarmRestarts |
-| TE | [96, 48] | 24 | 0.30 | 5e-4 | 300 | 25 | 128 | OneCycleLR |
-| K | [48, 24] | 12 | 0.30 | 3e-4 | 200 | 25 | 64 | OneCycleLR |
-| DST | [96, 48] | 24 | 0.25 | 6e-4 | 250 | 25 | 128 | CosineWarmRestarts |
+| TE | [96, 48] | 24 (td: 32) | 0.30 | 5e-4 | 300 | 25 | 128 | OneCycleLR |
+| K | [64, 32] | 16 | 0.25 | 3e-4 | 250 | 30 | 128 | OneCycleLR |
+| DST | [128, 64] | 32/16/48 | 0.30 | 3e-4 | 300 | 35 | 128 | CosineWarmRestarts |
 
 ### 4.2 `src/data/loader.py` — Data Ingestion
 
@@ -431,8 +432,9 @@ This is the most critical module. The model is only as good as its features.
 #                         + opp_recv_pts_allowed_to_pos + opp_def_rank_vs_pos = 4
 # Contextual:             is_home, week, is_returning_from_absence, days_rest = 4
 # Position:               one-hot (QB, RB, WR, TE) = 4
-# TOTAL: ~144 general features (before position-specific adds/drops)
-# Each position then adds ~8 specific features and drops irrelevant ones.
+# TOTAL: ~155 general features (before position-specific adds/drops)
+# Each position then adds specific features and drops irrelevant ones.
+# Weather/Vegas features (from shared/weather_features.py) are added per-position.
 #
 # NOTE: Exact count depends on which nfl_data_py columns are available
 #       (air_yards_share may be absent). The NN input_dim should be set
@@ -506,7 +508,7 @@ This is the most critical module. The model is only as good as its features.
 #         #
 #         # Per-target output heads (one per target_names entry):
 #         #   Linear(backbone_out, head_hidden) -> ReLU -> Linear(head_hidden, 1)
-#         #   -> Softplus(beta=1.0)  # ensures non-negative outputs
+#         #   -> clamp(min=0)  # ensures non-negative outputs (configurable per-target)
 #         #
 #         # Total prediction = sum of all heads
 #
@@ -521,8 +523,10 @@ This is the most critical module. The model is only as good as its features.
 #   K:  ["fg_points", "pat_points"]
 #   DST: ["defensive_scoring", "td_points", "pts_allowed_bonus"]
 #
-# Softplus (not clamp) ensures differentiable non-negativity during
-# both training and inference — eliminates train/test distribution mismatch.
+# clamp(min=0) ensures non-negativity with exact zeros (replaced
+# Softplus, which created a ~0.69/head floor — see TODO.md [FIXED]).
+# The non_negative_targets parameter controls which heads are clamped,
+# allowing targets like DST pts_allowed_bonus to go negative.
 #
 # Backward compatibility: load_state_dict() handles old naming convention
 # (e.g., "rushing_head" -> "heads.rushing_floor").
@@ -535,6 +539,26 @@ This is the most critical module. The model is only as good as its features.
 #
 # Loss function: Huber loss (per-target + total, with per-target weights and deltas)
 # Optimizer: AdamW (Adam with decoupled weight decay)
+#
+# === Additional Architectures ===
+#
+# MultiHeadNetWithHistory: Extends MultiHeadNet with a parallel attention branch
+# over raw game history sequences (up to 17 games). Uses learned-query
+# AttentionPool to compress variable-length history into a fixed representation,
+# concatenated with static features before the shared backbone.
+# Trained for QB, RB, WR, TE (not K/DST).
+#
+# GatedTDHead: Two-stage hurdle head for zero-inflated TD prediction.
+# Stage 1 (gate): P(TD > 0) via sigmoid
+# Stage 2 (value): E[TD | TD > 0] via Softplus (always positive)
+# Output: gate_prob × cond_value = E[TD]
+# Used by attention NN variants across all skill positions.
+#
+# LightGBM: Gradient-boosted tree model (Optuna-tuned) trained for QB, RB, WR, TE.
+# Provides a non-neural, non-linear baseline. Uses the same feature set as Ridge.
+#
+# TwoStageRidge / Ordinal / Gated-Ordinal: Alternative TD models for RB.
+# Currently using gated_ordinal (binary gate + ordinal classes {0,6,12,18}).
 ```
 
 ### 4.9 `shared/training.py` — Training Loop
@@ -696,9 +720,11 @@ These are decisions you should explain in the technical walkthrough video and RE
 
 4. **Huber loss vs MSE:** Huber loss is robust to outlier games (e.g., a RB scoring 40+ in a blowout). Per-target deltas allow different thresholds — higher delta for TD points (more volatile) makes the loss more MAE-like for that target.
 
-5. **Softplus vs clamp for non-negativity:** Fantasy point components are non-negative. Softplus is differentiable (unlike clamp), so gradients flow cleanly through zero during training. This eliminates the train/test distribution mismatch that eval-only clamping caused.
+5. **Clamp for non-negativity (replaced Softplus):** Fantasy point components are non-negative. Softplus was initially chosen for differentiability, but `softplus(0) ≈ 0.693` per head created a ~2 point floor across 3 heads (no player could be predicted below ~2 pts). Replaced with `torch.clamp(min=0)` which allows exact zeros. A `non_negative_targets` parameter controls which heads are clamped, so DST's `pts_allowed_bonus` (range: -4 to +10) can go negative.
 
 6. **Multi-format scoring:** The system computes fantasy points for Standard (0 PPR), Half-PPR (0.5), and Full PPR (1.0) formats. The only difference is the reception weight. All three columns are computed during preprocessing, enabling format-specific modeling and comparison. Full PPR remains the default.
+
+7. **Weather and Vegas features:** Vegas-derived features (implied_team_total, implied_opp_total, total_line, spread_line) and venue features (is_dome, wind_adjusted, temp_adjusted) are computed in `shared/weather_features.py`. These provide game-environment context that pure player stats miss — a high implied total signals a projected shootout, while dome games boost passing. Implemented for all positions, with position-specific subsets.
 
 ---
 

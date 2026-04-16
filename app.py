@@ -307,6 +307,9 @@ def _apply_position_models(train, val, test, pos, results):
     pos_val = reg["compute_targets_fn"](pos_val)
     pos_test = reg["compute_targets_fn"](pos_test)
 
+    for _df in [pos_train, pos_val, pos_test]:
+        merge_schedule_features(_df)
+
     pos_train, pos_val, pos_test = reg["add_features_fn"](pos_train, pos_val, pos_test)
     pos_train, pos_val, pos_test = reg["fill_nans_fn"](
         pos_train, pos_val, pos_test, reg["specific_features"]
@@ -315,12 +318,13 @@ def _apply_position_models(train, val, test, pos, results):
     feature_cols = reg["get_feature_columns_fn"]()
     adj = reg["compute_adjustment_fn"](pos_test)
 
-    # Prepare features
-    expected_count = len(feature_cols)
-    feature_cols = [c for c in feature_cols if c in pos_train.columns]
-    if len(feature_cols) < expected_count:
-        missing = expected_count - len(feature_cols)
-        print(f"  WARNING: {pos} dropped {missing} feature cols not found in data")
+    # Prepare features — fill missing columns with 0 (must match training dimension)
+    missing_cols = [c for c in feature_cols if c not in pos_train.columns]
+    if missing_cols:
+        print(f"  WARNING: {pos} filling {len(missing_cols)} missing feature cols with 0")
+        for col in missing_cols:
+            for df in [pos_train, pos_val, pos_test]:
+                df[col] = 0.0
     for df in [pos_train, pos_val, pos_test]:
         df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
@@ -490,9 +494,12 @@ def api_predictions():
     if position != "ALL":
         df = df[df["position"] == position]
     if week != "ALL":
-        df = df[df["week"] == int(week)]
+        try:
+            df = df[df["week"] == int(week)]
+        except (ValueError, TypeError):
+            return jsonify({"error": f"Invalid week: {week}"}), 400
     if search:
-        df = df[df["player_display_name"].str.lower().str.contains(search, na=False)]
+        df = df[df["player_display_name"].str.lower().str.contains(search, na=False, regex=False)]
 
     scoring_col = {
         "ppr": "fantasy_points",

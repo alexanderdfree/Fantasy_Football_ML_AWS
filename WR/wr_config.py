@@ -92,20 +92,25 @@ WR_NN_BATCH_SIZE = 512
 WR_NN_PATIENCE = 25
 
 # === Loss Weights ===
-# Receiving floor is the dominant WR component; boost its weight.
-# Rushing is negligible for most WRs; reduce further.
+# Equal per-target weights: training objective now aligned with evaluation
+# metric (total MAE), where all targets contribute equally to the total.
+# Previous scheme (1.5/0.3/2.0) severely under-weighted rushing_floor.
+# w_total raised to 1.0 for total prediction quality.
 WR_LOSS_WEIGHTS = {
-    "receiving_floor": 1.5,
-    "rushing_floor": 0.3,
-    "td_points": 2.0,
+    "receiving_floor": 1.0,
+    "rushing_floor": 1.0,
+    "td_points": 1.0,
 }
-WR_LOSS_W_TOTAL = 0.4
+WR_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target) ===
+# Harmonized to 2.0 across targets. Previous scheme (1.5/0.5/2.0)
+# gave rushing_floor errors much tighter MAE-like treatment than others.
 WR_HUBER_DELTAS = {
-    "receiving_floor": 1.5,
-    "rushing_floor": 0.5,
+    "receiving_floor": 2.0,
+    "rushing_floor": 2.0,
     "td_points": 2.0,
+    "total": 3.0,       # explicit delta for total aux loss
 }
 
 # === LR Scheduler ===

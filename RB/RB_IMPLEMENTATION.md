@@ -14,7 +14,7 @@ Build an RB-only fantasy football points predictor that lives as a self-containe
 
 1. Filtering all data to RB-only rows
 2. Decomposing the prediction target into three sub-targets (rushing_floor, receiving_floor, td_points) plus a fumble penalty term
-3. Adding 8 RB-specific engineered features beyond the general features
+3. Adding 15 RB-specific engineered features beyond the general features
 4. Using a multi-head neural network architecture where a shared backbone feeds three separate output heads
 5. Training 3 separate Ridge models (one per sub-target) for the linear baseline
 
@@ -294,21 +294,17 @@ Note: td_points has a median of 0 because many RB games produce 0 TDs. This zero
 
 The RB model inherits general features from `build_features()`, then **prunes position-irrelevant features** to improve signal-to-noise ratio. With only ~7K training samples, every noise feature hurts generalization.
 
-#### Features DROPPED for the RB model (30 features removed)
+#### Feature Selection: Whitelist Approach
 
-The general pipeline rolls 10 stats, but 2 are QB-specific and nearly all-zero for RBs:
+The RB model uses an explicit **whitelist** (`RB_INCLUDE_FEATURES` in `rb_config.py`) rather than a blacklist. New columns must be opted in, preventing silent leakage. Key pruning decisions:
 
-| Dropped Category | Stat | Features Removed | Reason |
-|-----------------|------|-----------------|--------|
-| Rolling (mean/std/max) | `passing_yards` | 9 (3 windows × 3 aggs) | RBs pass in <0.1% of games; all-zero features add pure noise |
-| Rolling (mean/std/max) | `attempts` (passing attempts) | 9 | Same — QB volume metric |
-| EWMA | `passing_yards` | 2 (2 spans) | Near-zero for all RBs |
-| Prior-season summary | `passing_yards` | 3 (mean/std/max) | Zero signal |
-| Prior-season summary | `attempts` | 3 (mean/std/max) | Zero signal |
-| Position encoding | `pos_QB/RB/WR/TE` | 4 | All rows are RB — zero variance |
-| **Total dropped** | | **30** | |
-
-**Why this matters:** Reducing from ~144 to ~114 inherited features improves the samples-per-feature ratio from ~48 to ~61 (targeting >50 for stable Ridge/NN generalization). Noise features don't just waste model capacity — in Ridge regression, they consume regularization budget; in neural nets, they add gradient noise that slows convergence.
+- **L5 rolling windows dropped**: >0.97 correlation with L3/L8 combinations. Only L3 and L8 retained (except `rolling_min_fantasy_points_L5`).
+- **All EWMA features dropped**: >0.98 correlation with rolling means.
+- **Passing-specific features dropped**: `passing_yards` and `attempts` rolling/prior-season features are near-zero for RBs.
+- **Position encoding dropped**: All rows are RB — zero variance.
+- **Defense stats added**: `opp_def_sacks_L5`, `opp_def_pass_yds_allowed_L5`, etc. (6 features).
+- **Weather/Vegas features added**: `implied_team_total`, `implied_opp_total`, `is_dome`, `rest_advantage`.
+- **Contextual features expanded**: `practice_status`, `game_status`, `depth_chart_rank` added alongside original contextual features.
 
 #### Features RETAINED (~114 features)
 
@@ -354,14 +350,31 @@ for stat in ["passing_yards", "attempts"]:
 RB_DROP_FEATURES += ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]
 ```
 
-### 4.2 RB-Specific Features (8 features)
+### 4.2 RB-Specific Features (15 features)
 
 These features are computed AFTER the general `build_features()` and AFTER filtering to RB rows. They exploit RB-specific efficiency metrics, workload context, and nflverse columns not used by the general pipeline.
 
 All features use L3 (3-week) rolling windows for responsiveness to recent form. All use `.shift(1)` within `(player_id, season)` groups to prevent leakage.
 
+**Current feature list** (from `rb_config.py:RB_SPECIFIC_FEATURES`):
+1. `yards_per_carry_L3` — rushing efficiency
+2. `reception_rate_L3` — catch rate
+3. `weighted_opportunities_L3` — PPR-adjusted volume (carries + 2×targets)
+4. `team_rb_carry_share_L3` — bellcow vs committee signal
+5. `team_rb_target_share_L3` — pass-catching back identification
+6. `rushing_epa_per_attempt_L3` — context-adjusted rushing efficiency
+7. `rushing_first_down_rate_L3` — rushing chain-moving ability
+8. `receiving_first_down_rate_L3` — receiving chain-moving ability
+9. `yac_per_reception_L3` — post-catch creation
+10. `receiving_epa_per_target_L3` — context-adjusted receiving value
+11. `air_yards_per_target_L3` — average depth of target
+12. `career_carries` — experience/durability proxy
+13. `team_rb_carry_hhi_L3` — backfield carry concentration (Herfindahl index)
+14. `team_rb_target_hhi_L3` — backfield target concentration
+15. `opportunity_index_L3` — composite opportunity metric
+
 **Design principles for feature selection:**
-1. **Incremental signal**: Each feature must capture something the ~114 inherited features do NOT. Ratio features (efficiency) are incremental because the inherited features only have raw volume rolling stats, not their ratios.
+1. **Incremental signal**: Each feature must capture something the inherited features do NOT. Ratio features (efficiency) are incremental because the inherited features only have raw volume rolling stats, not their ratios.
 2. **Data grounded**: Only use columns confirmed available in `import_weekly_data()` (see §2.1.1).
 3. **Stable denominators**: Ratio features require sufficient denominator volume. L3 windows aggregate 3 games, reducing single-game noise in low-volume stats (e.g., targets for early-down backs).
 4. **Individual player projection focus**: Features prioritize predicting a specific player's next-week output over league-wide ranking. This means efficiency and usage share features matter more than raw counting stats (which are already captured in inherited rolling features).
@@ -577,56 +590,46 @@ RB_SPECIFIC_FEATURES = [
     "team_rb_carry_share_L3",
     "team_rb_target_share_L3",
     "rushing_epa_per_attempt_L3",
-    "first_down_rate_L3",
+    "rushing_first_down_rate_L3",
+    "receiving_first_down_rate_L3",
     "yac_per_reception_L3",
+    "receiving_epa_per_target_L3",
+    "air_yards_per_target_L3",
+    "career_carries",
+    "team_rb_carry_hhi_L3",
+    "team_rb_target_hhi_L3",
+    "opportunity_index_L3",
 ]
 
-# Columns from the general pipeline that are noise for RB-only data
-RB_DROP_FEATURES = set()
-for stat in ["passing_yards", "attempts"]:
-    for window in [3, 5, 8]:
-        for agg in ["mean", "std", "max"]:
-            RB_DROP_FEATURES.add(f"rolling_{agg}_{stat}_L{window}")
-for span in [3, 5]:
-    RB_DROP_FEATURES.add(f"ewma_passing_yards_L{span}")
-for stat in ["passing_yards", "attempts"]:
-    for agg in ["mean", "std", "max"]:
-        RB_DROP_FEATURES.add(f"prior_season_{agg}_{stat}")
-RB_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
-
-
-def get_rb_feature_columns() -> list[str]:
-    """Return the complete ordered list of feature columns for the RB model.
-
-    Starts with general feature columns, prunes QB-specific noise features
-    and position encoding, then appends RB-specific features.
-    """
-    from src.features.engineer import get_feature_columns
-
-    general_cols = get_feature_columns()
-
-    # Remove position-irrelevant features (passing stats, position encoding)
-    rb_cols = [c for c in general_cols if c not in RB_DROP_FEATURES]
-
-    # Append RB-specific features
-    rb_cols.extend(RB_SPECIFIC_FEATURES)
-
-    return rb_cols
+# The RB model uses an explicit WHITELIST (RB_INCLUDE_FEATURES) rather than
+# a blacklist. Features are grouped by category: rolling, prior_season, ewma,
+# trend, share, matchup, defense, contextual, weather_vegas, specific.
+# New columns must be explicitly added to the whitelist to prevent silent leakage.
 ```
 
 ### 4.4 Total Feature Count
 
-| Category | Count |
-|----------|-------|
-| General features inherited | 144 |
-| QB-specific features dropped (passing_yards, attempts rolling/ewma/prior) | -26 |
-| Position encoding dropped | -4 |
-| RB-specific features added | +8 |
-| **Total** | **~122 features** |
+The RB model uses an explicit whitelist (`RB_INCLUDE_FEATURES` in `rb_config.py`) that groups features by category:
 
-**Samples-per-feature ratio**: ~7,000 train / 122 features ≈ **57 samples/feature**. This is adequate for Ridge regression (which handles high feature counts well with L2 regularization) and for the multi-head NN (which has ~33K parameters and benefits from the reduced noise dimensionality).
+| Category | Count | Notes |
+|----------|-------|-------|
+| Rolling (L3/L8 only, L5 dropped) | ~53 | 8 stats × 2 windows × 3 aggs + min for fp |
+| Prior-season summaries | 24 | 8 RB-relevant stats × 3 aggs |
+| EWMA | 0 | All dropped (>0.98 corr with rolling means) |
+| Trend/momentum | 4 | fantasy_points, targets, carries, snap_pct |
+| Share features | 6 | target_share, carry_share (L3/L5), snap_pct, air_yards_share |
+| Matchup features | 4 | Standard opponent matchup features |
+| Defense stats | 6 | opp_def_sacks_L5, rush/pass yds allowed, etc. |
+| Contextual | 7 | is_home, week, absence, days_rest, practice/game status, depth chart |
+| Weather/Vegas | 4 | implied_team_total, implied_opp_total, is_dome, rest_advantage |
+| RB-specific features | 15 | Efficiency ratios, HHI, career carries, etc. |
+| **Total** | **~123 features** | |
 
-**Comparison to original design**: The original 146-feature count gave ~48 samples/feature. The revised 122-feature count achieves a 27% improvement in this ratio while adding more discriminative RB-specific features — a strict Pareto improvement.
+**Key changes from original design:**
+- L5 rolling windows removed (>0.97 corr with L3/L8)
+- All EWMA features removed (>0.98 corr with rolling means)
+- Defense stats, weather/Vegas, and expanded contextual features added
+- RB-specific features expanded from 8 to 15 (added HHI, career carries, split first-down rates, receiving EPA, air yards per target)
 
 ### 4.5 NaN Handling for RB-Specific Features
 
@@ -752,12 +755,12 @@ class RBMultiHeadNet(nn.Module):
     """Multi-head neural network for RB fantasy point decomposition.
 
     Architecture:
-        Input (~122 features)
-            -> Shared backbone [Linear(122, 128) -> BN -> ReLU -> Dropout(0.3)]
-            -> Shared backbone [Linear(128, 64) -> BN -> ReLU -> Dropout(0.3)]
-            -> Head 1 (rushing_floor):  Linear(64, 32) -> ReLU -> Linear(32, 1)
-            -> Head 2 (receiving_floor): Linear(64, 32) -> ReLU -> Linear(32, 1)
-            -> Head 3 (td_points):      Linear(64, 32) -> ReLU -> Linear(32, 1)
+        Input (N features)
+            -> Shared backbone [Linear(N, 128) -> BN -> ReLU -> Dropout(0.15)]
+            -> Shared backbone [Linear(128, 64) -> BN -> ReLU -> Dropout(0.15)]
+            -> Head 1 (rushing_floor):  Linear(64, 48) -> ReLU -> Linear(48, 1) -> clamp(min=0)
+            -> Head 2 (receiving_floor): Linear(64, 48) -> ReLU -> Linear(48, 1) -> clamp(min=0)
+            -> Head 3 (td_points):      Linear(64, 64) -> ReLU -> Linear(64, 1) -> clamp(min=0)
 
     Total prediction = head1 + head2 + head3 + fumble_adjustment
     """
@@ -843,24 +846,24 @@ class RBMultiHeadNet(nn.Module):
 ### 5.3 Architecture Diagram
 
 ```
-Input (batch_size, ~122)
+Input (batch_size, N)
     |
     v
-[Linear(122, 128)] -> [BatchNorm1d(128)] -> [ReLU] -> [Dropout(0.3)]
+[Linear(N, 128)] -> [BatchNorm1d(128)] -> [ReLU] -> [Dropout(0.15)]
     |
     v
-[Linear(128, 64)] -> [BatchNorm1d(64)] -> [ReLU] -> [Dropout(0.3)]
+[Linear(128, 64)] -> [BatchNorm1d(64)] -> [ReLU] -> [Dropout(0.15)]
     |
     +---> Shared representation (batch_size, 64)
     |
     |--- Head 1 (rushing_floor) ---+
-    |   [Linear(64, 32)] -> [ReLU] -> [Linear(32, 1)] -> squeeze -> (batch_size,)
+    |   [Linear(64, 48)] -> [ReLU] -> [Linear(48, 1)] -> clamp(min=0) -> (batch_size,)
     |
     |--- Head 2 (receiving_floor) ---+
-    |   [Linear(64, 32)] -> [ReLU] -> [Linear(32, 1)] -> squeeze -> (batch_size,)
+    |   [Linear(64, 48)] -> [ReLU] -> [Linear(48, 1)] -> clamp(min=0) -> (batch_size,)
     |
     |--- Head 3 (td_points) ---+
-        [Linear(64, 32)] -> [ReLU] -> [Linear(32, 1)] -> squeeze -> (batch_size,)
+        [Linear(64, 64)] -> [ReLU] -> [Linear(64, 1)] -> clamp(min=0) -> (batch_size,)
 
 Total = Head1 + Head2 + Head3    (shape: batch_size,)
 ```
@@ -890,27 +893,27 @@ This is a modest network suitable for ~7K training samples.
 # In RB/rb_training.py
 
 class MultiTargetLoss(nn.Module):
-    """Combined loss for multi-head RB network.
+    """Combined Huber loss for multi-head RB network.
 
-    Loss = w1 * MSE(rushing_floor) + w2 * MSE(receiving_floor) + w3 * MSE(td_points)
-           + w_total * MSE(total_pred, total_actual)
+    Loss = sum(weight[t] * Huber(pred[t], target[t], delta[t]))
+           + w_total * Huber(total_pred, total_actual)
 
+    Per-target Huber deltas allow different MSE-to-MAE transition thresholds.
     The auxiliary total loss keeps the sum calibrated even if individual heads drift.
     """
 
     def __init__(
         self,
-        w_rushing: float = 1.0,
-        w_receiving: float = 1.0,
-        w_td: float = 1.0,
-        w_total: float = 0.5,  # Auxiliary sum loss, lower weight
+        target_names: list[str],
+        loss_weights: dict[str, float],
+        huber_deltas: dict[str, float] = None,
+        w_total: float = 0.25,
     ):
         super().__init__()
-        self.w_rushing = w_rushing
-        self.w_receiving = w_receiving
-        self.w_td = w_td
+        self.target_names = target_names
+        self.loss_weights = loss_weights
+        self.huber_deltas = huber_deltas or {}
         self.w_total = w_total
-        self.mse = nn.MSELoss()
 
     def forward(self, preds: dict, targets: dict) -> tuple:
         """
@@ -1158,28 +1161,49 @@ class RBMultiHeadTrainer:
 # === RB Model Config ===
 RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 
-# Ridge
-RB_RIDGE_ALPHAS = [0.01, 0.1, 1.0, 10.0, 100.0]  # Same as general
+# Ridge (per-target alpha grids, tuned via logspace search)
+RB_RIDGE_ALPHA_GRIDS = {
+    "rushing_floor":   np.logspace(-2, 3, 15),
+    "receiving_floor": np.logspace(-2, 2.5, 20),
+    "td_points":       np.logspace(-1, 4, 15),
+}
+RB_RIDGE_PCA_COMPONENTS = 80  # PCR: retains 99.8% variance, drops condition number
+
+# TD model: "ridge" | "two_stage" | "ordinal" | "gated_ordinal"
+RB_TD_MODEL_TYPE = "gated_ordinal"
 
 # Neural Net
 RB_NN_BACKBONE_LAYERS = [128, 64]
-RB_NN_HEAD_HIDDEN = 32
-RB_NN_DROPOUT = 0.3
+RB_NN_HEAD_HIDDEN = 48
+RB_NN_HEAD_HIDDEN_OVERRIDES = {"td_points": 64}  # Larger head for sparse TD signal
+RB_NN_DROPOUT = 0.15
 RB_NN_LR = 1e-3
-RB_NN_WEIGHT_DECAY = 1e-4
-RB_NN_EPOCHS = 200
+RB_NN_WEIGHT_DECAY = 5e-5
+RB_NN_EPOCHS = 300
 RB_NN_BATCH_SIZE = 256
-RB_NN_PATIENCE = 15
+RB_NN_PATIENCE = 30
 
 # Loss weights
-RB_LOSS_W_RUSHING = 1.0
-RB_LOSS_W_RECEIVING = 1.0
-RB_LOSS_W_TD = 1.0
-RB_LOSS_W_TOTAL = 0.5  # Auxiliary sum-calibration loss
+RB_LOSS_WEIGHTS = {"rushing_floor": 1.2, "receiving_floor": 1.0, "td_points": 2.0}
+RB_LOSS_W_TOTAL = 0.25
 
-# LR Scheduler
-RB_SCHEDULER_PATIENCE = 5
-RB_SCHEDULER_FACTOR = 0.5
+# Huber deltas (per-target MSE-to-MAE transition thresholds)
+RB_HUBER_DELTAS = {"rushing_floor": 2.0, "receiving_floor": 2.5, "td_points": 2.0}
+
+# LR Scheduler (CosineWarmRestarts)
+RB_SCHEDULER_TYPE = "cosine_warm_restarts"
+RB_COSINE_T0 = 40
+RB_COSINE_T_MULT = 2
+RB_COSINE_ETA_MIN = 1e-5
+
+# Attention NN (game history variant)
+RB_TRAIN_ATTENTION_NN = True
+RB_ATTN_D_MODEL = 32
+RB_ATTN_N_HEADS = 2
+RB_ATTN_GATED_TD = True  # Sigmoid gate P(TD>0) × Softplus E[TD|TD>0]
+
+# LightGBM (Optuna-tuned, 50 trials, CV MAE 4.51)
+RB_TRAIN_LIGHTGBM = True
 ```
 
 ### 6.5 Training Script Initialization
@@ -1189,31 +1213,36 @@ RB_SCHEDULER_FACTOR = 0.5
 
 device = torch.device("cpu")  # No GPU required for this scale
 
-input_dim = len(get_rb_feature_columns())  # ~146
+input_dim = len(feature_cols)  # ~123
 
-model = RBMultiHeadNet(
+model = MultiHeadNet(
     input_dim=input_dim,
-    backbone_layers=RB_NN_BACKBONE_LAYERS,
-    head_hidden=RB_NN_HEAD_HIDDEN,
-    dropout=RB_NN_DROPOUT,
+    target_names=RB_TARGETS,
+    backbone_layers=RB_NN_BACKBONE_LAYERS,      # [128, 64]
+    head_hidden=RB_NN_HEAD_HIDDEN,               # 48
+    dropout=RB_NN_DROPOUT,                       # 0.15
+    head_hidden_overrides=RB_NN_HEAD_HIDDEN_OVERRIDES,  # {"td_points": 64}
 ).to(device)
 
 optimizer = torch.optim.AdamW(
     model.parameters(), lr=RB_NN_LR, weight_decay=RB_NN_WEIGHT_DECAY,
 )
 
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode="min", patience=RB_SCHEDULER_PATIENCE, factor=RB_SCHEDULER_FACTOR,
+scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    optimizer, T_0=RB_COSINE_T0, T_mult=RB_COSINE_T_MULT, eta_min=RB_COSINE_ETA_MIN,
 )
 
 criterion = MultiTargetLoss(
-    w_rushing=RB_LOSS_W_RUSHING, w_receiving=RB_LOSS_W_RECEIVING,
-    w_td=RB_LOSS_W_TD, w_total=RB_LOSS_W_TOTAL,
+    target_names=RB_TARGETS,
+    loss_weights=RB_LOSS_WEIGHTS,
+    huber_deltas=RB_HUBER_DELTAS,
+    w_total=RB_LOSS_W_TOTAL,
 )
 
-trainer = RBMultiHeadTrainer(
+trainer = MultiHeadTrainer(
     model=model, optimizer=optimizer, scheduler=scheduler,
-    criterion=criterion, device=device, patience=RB_NN_PATIENCE,
+    criterion=criterion, device=device, target_names=RB_TARGETS,
+    patience=RB_NN_PATIENCE,
 )
 ```
 
@@ -1711,11 +1740,11 @@ if __name__ == "__main__":
 | Stage | Shape | Description |
 |-------|-------|-------------|
 | General splits loaded | ~25K / ~5K / ~5K rows, ~155 cols | Full position data |
-| After `filter_to_rb()` | ~7K / ~1.4K / ~1.4K rows, ~151 cols | RB only, pos encoding dropped |
+| After `filter_to_rb()` | ~7K / ~1.4K / ~1.4K rows | RB only, pos encoding dropped |
 | After `compute_rb_targets()` | same rows, +4 cols | Added target decomposition (with 2pt conversions) |
-| After `add_rb_specific_features()` | same rows, +8 cols | Added 8 RB features |
-| After QB-feature pruning | same rows, -26 cols | Dropped passing_yards/attempts rolling/ewma/prior |
-| Feature matrix X | (n_samples, ~122) | Ready for models |
+| After `add_rb_specific_features()` | same rows, +15 cols | Added 15 RB features |
+| After whitelist filtering | same rows | Only whitelisted features retained (~123 cols) |
+| Feature matrix X | (n_samples, ~123) | Ready for models |
 | Target dict y | 4 arrays each (n_samples,) | rushing_floor, receiving_floor, td_points, total |
 | NN output | dict of 4 tensors each (batch,) | Per-head + sum predictions |
 
@@ -1736,11 +1765,12 @@ total_pred = rushing_pred + receiving_pred + td_pred + fumble_adjustment
 
 ### On Loss Weight Tuning
 
-The default loss weights (1.0, 1.0, 1.0, 0.5) treat all three targets equally and add a half-weight auxiliary total loss. Tuning guidance:
+The current loss weights (rushing: 1.2, receiving: 1.0, td: 2.0, total: 0.25) reflect tuning on the validation set:
 
-- If td_points MAE is disproportionately high (expected), consider reducing `w_td` slightly (e.g., 0.8) to prevent the TD head from dominating the shared backbone's gradient
-- If the total prediction diverges from the sum of components, increase `w_total` (e.g., to 1.0)
-- These are hyperparameters to tune on the validation set during experiments
+- Rushing floor gets a slight boost (1.2) as the primary RB floor component
+- TD weight elevated (2.0) for the zero-inflated, discrete nature of the target
+- Total auxiliary weight reduced (0.25) to prevent it from overwhelming per-target gradients
+- Huber deltas widened (2.0-2.5) from initial tight values — tight deltas caused flat gradient plateaus encouraging mean-clustering
 
 ### On Potential Future Improvements (Out of Scope)
 

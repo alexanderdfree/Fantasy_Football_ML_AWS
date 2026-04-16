@@ -43,6 +43,28 @@ Older fixed issues are kept for reference — they show patterns worth watching 
 - **Fix:** Removed `+ adj_test.values` from evaluation totals. Adjustment is only applied at inference in `app.py`.
 - **Lesson:** When changing a training target, trace all downstream consumers — evaluation metrics, ensemble computation, and plotting all need to stay consistent. This was a cascading side-effect of Fix 1 that we caught.
 
+### [FIXED] `run_cv_pipeline` missing `non_negative_targets` on MultiHeadNet
+- **File:** `shared/pipeline.py:804`
+- **What:** `_train_nn` and `_train_attention_nn` both pass `non_negative_targets` to `MultiHeadNet`, but `run_cv_pipeline` constructed its own `MultiHeadNet` without it. DST's `pts_allowed_bonus` (range [-4, +10]) was incorrectly clamped to >= 0 during CV.
+- **Fix:** Added `non_negative_targets=cfg.get("nn_non_negative_targets")` to the CV pipeline's `MultiHeadNet` call.
+- **Lesson:** When the same model is constructed in multiple code paths, all paths must pass the same kwargs. `_train_nn` is the reference — any manual `MultiHeadNet(...)` call elsewhere must mirror it.
+
+### [FIXED] Dead `adj_val`/`adj_test` variables after adjustment removal
+- **File:** `shared/pipeline.py:778, 921-922`
+- **What:** After removing `+ adj_val.values` from CV and holdout totals (Fix 6), the `adj_val` and `adj_test` variables were still computed but never used.
+- **Fix:** Deleted the dead lines.
+
+### [FIXED] Weather/Vegas features missing at inference in `app.py`
+- **File:** `app.py:310-311`
+- **What:** Training pipeline (`_prepare_position_data`) merged schedule features, but `app.py`'s inference path (`_apply_position_models`) did not. Models trained with 12 weather/Vegas features received zeros at serving time.
+- **Fix:** Added `merge_schedule_features(_df)` calls in `_apply_position_models` before feature computation.
+- **Lesson:** Any feature engineering done in the training pipeline must also be done in the inference/serving path. Diff the two code paths when adding new features.
+
+### [FIXED] ReDoS risk in `/api/predictions` search and `int(week)` crash
+- **File:** `app.py:496-498`
+- **What:** User search input was passed directly to `str.contains()` as a regex pattern (ReDoS risk). Also, `int(week)` could crash with `ValueError` on invalid input.
+- **Fix:** Added `regex=False` to `str.contains()` and wrapped `int(week)` in try/except with 400 response.
+
 ---
 
 ## Open — Moderate Issues

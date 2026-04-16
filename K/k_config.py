@@ -61,17 +61,20 @@ K_NN_BATCH_SIZE = 128
 K_NN_PATIENCE = 30
 
 # === Loss Weights ===
-# FG points dominate variance; heavier weight.
+# Equal per-target weights: training objective now aligned with evaluation
+# metric (total MAE). w_total raised to 1.0.
 K_LOSS_WEIGHTS = {
-    "fg_points": 1.5,
+    "fg_points": 1.0,
     "pat_points": 1.0,
 }
-K_LOSS_W_TOTAL = 0.5
+K_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target) ===
+# Harmonized to 2.0 across targets.
 K_HUBER_DELTAS = {
-    "fg_points": 3.0,
-    "pat_points": 1.5,
+    "fg_points": 2.0,
+    "pat_points": 2.0,
+    "total": 2.0,       # explicit delta for total aux loss (kickers have narrow range)
 }
 
 # === LR Scheduler ===

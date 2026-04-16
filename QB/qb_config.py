@@ -89,20 +89,27 @@ QB_NN_BATCH_SIZE = 128
 QB_NN_PATIENCE = 25
 
 # === Loss Weights ===
-# Passing floor is the primary QB scoring driver; boost its weight.
-# TD weight elevated for discrete/zero-inflated nature.
+# Equal per-target weights: training objective now aligned with evaluation
+# metric (total MAE), where all targets contribute equally to the total.
+# Previous scheme (1.5/0.8/3.0) over-optimized td_points at the expense
+# of floor predictions. w_total raised to 1.0 so total prediction quality
+# gets equal gradient signal alongside per-target losses.
 QB_LOSS_WEIGHTS = {
-    "passing_floor": 1.5,
-    "rushing_floor": 0.8,
-    "td_points": 3.0,
+    "passing_floor": 1.0,
+    "rushing_floor": 1.0,
+    "td_points": 1.0,
 }
-QB_LOSS_W_TOTAL = 0.3
+QB_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target) ===
+# Harmonized to 2.0 across targets so equal-magnitude errors get equal
+# treatment regardless of which target they come from. Previous scheme
+# (1.5/1.0/3.0) created uneven gradient landscapes.
 QB_HUBER_DELTAS = {
-    "passing_floor": 1.5,
-    "rushing_floor": 1.0,
-    "td_points": 3.0,
+    "passing_floor": 2.0,
+    "rushing_floor": 2.0,
+    "td_points": 2.0,
+    "total": 4.0,       # explicit delta for total aux loss (QBs score highest)
 }
 
 # === LR Scheduler ===

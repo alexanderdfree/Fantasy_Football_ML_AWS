@@ -130,23 +130,26 @@ RB_NN_PATIENCE = 30
 RB_NN_HEAD_HIDDEN_OVERRIDES = {"td_points": 64}
 
 # === Loss Weights ===
-# Rushing is the primary RB floor component; slight boost.
-# TD weight elevated for discrete/zero-inflated nature.
+# Equal per-target weights: training objective now aligned with evaluation
+# metric (total MAE), where all targets contribute equally to the total.
+# Previous scheme (1.2/1.0/2.0) over-weighted td_points. w_total raised
+# to 1.0 so total prediction quality gets equal gradient signal.
 RB_LOSS_WEIGHTS = {
-    "rushing_floor": 1.2,
+    "rushing_floor": 1.0,
     "receiving_floor": 1.0,
-    "td_points": 2.0,
+    "td_points": 1.0,
 }
-RB_LOSS_W_TOTAL = 0.25
+RB_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target) ===
-# Widened from 1.0/1.5/2.0 — tight deltas caused flat gradient plateau,
-# encouraging mean-clustering. Wider deltas keep quadratic (MSE-like) gradient
-# signal for errors up to 2-3 pts, only switching to robust linear for outliers.
+# Harmonized to 2.0 across targets so equal-magnitude errors get equal
+# treatment. Previous scheme (2.0/2.5/2.0) was already close; total
+# delta kept at 3.0 since total variance is larger.
 RB_HUBER_DELTAS = {
     "rushing_floor": 2.0,
-    "receiving_floor": 2.5,
-    "td_points": 2.0,  # tightened from 3.0 — gated TD head handles zero-mass
+    "receiving_floor": 2.0,
+    "td_points": 2.0,
+    "total": 3.0,       # explicit delta for total aux loss
 }
 
 # === LR Scheduler ===

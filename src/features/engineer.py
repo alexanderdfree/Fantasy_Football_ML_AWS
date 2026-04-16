@@ -193,17 +193,27 @@ def build_game_history_arrays(
     X_history = np.zeros((n, max_seq_len, game_dim), dtype=np.float32)
     history_mask = np.zeros((n, max_seq_len), dtype=bool)
 
-    # Group by player-season for efficient lookback
-    df_sorted = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
+    # Sort for groupby lookback, but track original row positions so the
+    # output arrays align with the caller's DataFrame order (not the sorted order).
+    sort_order = df.sort_values(["player_id", "season", "week"]).index
+    # Map from sorted position -> caller's positional index
+    original_pos = {orig_idx: caller_pos for caller_pos, orig_idx in enumerate(df.index)}
+    sorted_to_caller = [original_pos[idx] for idx in sort_order]
+
+    df_sorted = df.loc[sort_order].reset_index(drop=True)
     stat_values = df_sorted[history_stats].values.astype(np.float32)
 
-    # Build index mapping: (player_id, season) -> list of row indices in order
+    # Build index mapping: (player_id, season) -> list of row indices in sorted order
     group_indices = {}
     for idx, (pid, season) in enumerate(zip(df_sorted["player_id"], df_sorted["season"])):
         key = (pid, season)
         if key not in group_indices:
             group_indices[key] = []
         group_indices[key].append(idx)
+
+    # Temporary arrays aligned with sorted order
+    hist_sorted = np.zeros_like(X_history)
+    mask_sorted = np.zeros_like(history_mask)
 
     # For each row, look back at prior games in the same player-season
     for key, indices in group_indices.items():
@@ -219,8 +229,13 @@ def build_game_history_arrays(
             seq_len = len(prior_indices)
 
             # Fill from the end so most recent game is last
-            X_history[row_idx, :seq_len] = stat_values[prior_indices]
-            history_mask[row_idx, :seq_len] = True
+            hist_sorted[row_idx, :seq_len] = stat_values[prior_indices]
+            mask_sorted[row_idx, :seq_len] = True
+
+    # Map back to caller's row ordering
+    for sorted_pos, caller_pos in enumerate(sorted_to_caller):
+        X_history[caller_pos] = hist_sorted[sorted_pos]
+        history_mask[caller_pos] = mask_sorted[sorted_pos]
 
     # Replace NaN with 0 in history
     np.nan_to_num(X_history, copy=False, nan=0.0)
@@ -274,7 +289,10 @@ def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
             "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos",
         ]
         def_pts_merge = def_pts[merge_cols].drop_duplicates()
+        n_before = len(df)
         df = df.merge(def_pts_merge, on=["opponent", "position", "season", "week"], how="left")
+        if len(df) != n_before:
+            df = df.drop_duplicates(subset=["player_id", "season", "week"], keep="first")
     else:
         for col in ["opp_fantasy_pts_allowed_to_pos", "opp_rush_pts_allowed_to_pos",
                      "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos"]:
@@ -330,7 +348,10 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     # Merge onto player rows via opponent_team
     merge_cols = ["opponent_team", "season", "week"] + list(stat_map.values())
     def_merge = def_stats[merge_cols].drop_duplicates()
+    n_before = len(df)
     df = df.merge(def_merge, on=["opponent_team", "season", "week"], how="left")
+    if len(df) != n_before:
+        df = df.drop_duplicates(subset=["player_id", "season", "week"], keep="first")
 
     # --- 2. Points allowed from schedule scores ---
     schedules = pd.read_parquet(f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
@@ -350,12 +371,15 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     pts_merge = pts_allowed[["team", "season", "week", "opp_def_pts_allowed_L5"]].drop_duplicates()
+    n_before = len(df)
     df = df.merge(
         pts_merge,
         left_on=["opponent_team", "season", "week"],
         right_on=["team", "season", "week"],
         how="left",
     )
+    if len(df) != n_before:
+        df = df.drop_duplicates(subset=["player_id", "season", "week"], keep="first")
     df.drop(columns=["team"], errors="ignore", inplace=True)
 
     # --- 3. Implied team total from Vegas lines ---
@@ -375,7 +399,10 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
 
     if "implied_team_total" in df.columns:
         df.drop(columns=["implied_team_total"], inplace=True)
+    n_before = len(df)
     df = df.merge(impl_lookup, on=["season", "week", "recent_team"], how="left")
+    if len(df) != n_before:
+        df = df.drop_duplicates(subset=["player_id", "season", "week"], keep="first")
 
     # Fill NaNs (early-season games with no prior history)
     for col in list(stat_map.values()) + ["opp_def_pts_allowed_L5", "implied_team_total"]:
