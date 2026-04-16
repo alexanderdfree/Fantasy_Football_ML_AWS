@@ -6,6 +6,8 @@ import pytest
 
 from shared.models import RidgeMultiTarget
 
+pytestmark = pytest.mark.unit
+
 TE_TARGETS = ["receiving_floor", "rushing_floor", "td_points"]
 
 

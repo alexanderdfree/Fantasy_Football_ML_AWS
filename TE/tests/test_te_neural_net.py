@@ -6,6 +6,8 @@ import pytest
 
 from shared.neural_net import MultiHeadNet
 
+pytestmark = pytest.mark.unit
+
 TE_TARGETS = ["receiving_floor", "rushing_floor", "td_points"]
 
 
