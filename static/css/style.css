@@ -190,14 +190,20 @@ body {
 /* === Filters === */
 .filters-bar {
     display: flex;
-    align-items: flex-end;
-    gap: 20px;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 12px;
     margin-bottom: 16px;
     padding: 16px;
     background: var(--bg-secondary);
     border-radius: var(--radius-lg);
     border: 1px solid var(--border);
+}
+
+.filters-row-bottom {
+    display: flex;
+    align-items: flex-end;
+    gap: 16px;
+    flex-wrap: wrap;
 }
 
 .filter-group label {
@@ -629,7 +635,7 @@ tbody tr:last-child td {
         align-items: stretch;
     }
     .search-box { width: 100%; }
-    .filters-bar { flex-direction: column; gap: 12px; align-items: stretch; }
+    .filter-meta { margin-left: 0; }
     .charts-row { grid-template-columns: 1fr; }
     .subtitle { display: none; }
 }

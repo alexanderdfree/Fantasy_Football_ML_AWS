@@ -56,6 +56,14 @@ for _stat in ["fantasy_points", "fantasy_points_floor", "carries", "rushing_yard
     for _agg in ["mean", "std", "max"]:
         QB_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L5")
 
+# Weather/Vegas drops — keep 6 features with |r|>0.04 or |r|>0.015+MI>0.005:
+#   implied_opp_total, wind_adjusted, is_divisional, implied_total_x_dome,
+#   temp_adjusted, is_dome
+QB_DROP_FEATURES |= {
+    "is_grass", "days_rest_improved", "rest_advantage",
+    "implied_total_x_wind", "implied_team_total", "total_line",
+}
+
 # === Ridge ===
 import numpy as np
 QB_RIDGE_ALPHA_GRIDS = {

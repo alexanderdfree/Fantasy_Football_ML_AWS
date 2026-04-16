@@ -45,6 +45,14 @@ for _stat in ["fantasy_points", "fantasy_points_floor", "targets", "receptions",
     for _agg in ["mean", "std", "max"]:
         TE_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L5")
 
+# Weather/Vegas drops — keep 3 features with signal:
+#   implied_team_total (r=-0.035), implied_opp_total (r=0.029), is_dome (r=0.027)
+TE_DROP_FEATURES |= {
+    "is_grass", "temp_adjusted", "wind_adjusted", "implied_total_x_wind",
+    "total_line", "is_divisional", "days_rest_improved",
+    "rest_advantage", "implied_total_x_dome",
+}
+
 # === Ridge ===
 import numpy as np
 TE_RIDGE_ALPHA_GRIDS = {

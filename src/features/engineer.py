@@ -455,8 +455,7 @@ def get_feature_columns() -> list[str]:
         "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos",
     ]
 
-    # Defense matchup (detailed) — Vegas implied_team_total excluded;
-    # it belongs in the Weather NN feature set only (weather_features.py).
+    # Defense matchup (detailed)
     cols += [
         "opp_def_sacks_L5", "opp_def_pass_yds_allowed_L5",
         "opp_def_pass_td_allowed_L5", "opp_def_ints_L5",
@@ -466,6 +465,15 @@ def get_feature_columns() -> list[str]:
     # Contextual
     cols += ["is_home", "week", "is_returning_from_absence", "days_rest",
              "practice_status", "game_status", "depth_chart_rank"]
+
+    # Weather, venue, and Vegas implied-odds features
+    # (merged from schedule data in pipeline; per-position drops in *_config.py)
+    cols += [
+        "implied_team_total", "implied_opp_total", "total_line",
+        "is_dome", "is_grass", "temp_adjusted", "wind_adjusted",
+        "is_divisional", "days_rest_improved", "rest_advantage",
+        "implied_total_x_dome", "implied_total_x_wind",
+    ]
 
     # Position encoding
     cols += ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]

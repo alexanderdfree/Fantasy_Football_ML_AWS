@@ -172,6 +172,11 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
     )
     print(f"  {pos} splits: {sizes}")
 
+    # Merge schedule-derived weather/Vegas features before target & feature computation
+    from shared.weather_features import merge_schedule_features
+    for _df in dfs_for_features:
+        merge_schedule_features(_df)
+
     # Compute targets
     targets = cfg["targets"]
     pos_train = cfg["compute_targets_fn"](pos_train)

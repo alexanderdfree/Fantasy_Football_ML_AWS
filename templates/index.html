@@ -46,36 +46,40 @@
         <section id="view-predictions" class="view active">
             <!-- Filters -->
             <div class="filters-bar">
-                <div class="filter-group">
-                    <label>Position</label>
-                    <div class="pill-group" id="position-filter">
-                        <button class="pill active" data-value="ALL">All</button>
-                        <button class="pill" data-value="QB">QB</button>
-                        <button class="pill" data-value="RB">RB</button>
-                        <button class="pill" data-value="WR">WR</button>
-                        <button class="pill" data-value="TE">TE</button>
-                        <button class="pill" data-value="K">K</button>
-                        <button class="pill" data-value="DST">DST</button>
+                <div class="filters-row-top">
+                    <div class="filter-group">
+                        <label>Position</label>
+                        <div class="pill-group" id="position-filter">
+                            <button class="pill active" data-value="ALL">All</button>
+                            <button class="pill" data-value="QB">QB</button>
+                            <button class="pill" data-value="RB">RB</button>
+                            <button class="pill" data-value="WR">WR</button>
+                            <button class="pill" data-value="TE">TE</button>
+                            <button class="pill" data-value="K">K</button>
+                            <button class="pill" data-value="DST">DST</button>
+                        </div>
                     </div>
                 </div>
-                <div class="filter-group">
-                    <label>Week</label>
-                    <select id="week-filter">
-                        <option value="ALL">All Weeks</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Model</label>
-                    <select id="model-display">
-                        <option value="all">All Models</option>
-                        <option value="ridge">Ridge Regression</option>
-                        <option value="nn">Neural Network</option>
-                        <option value="weather_nn">Weather NN</option>
-                    </select>
-                </div>
-                <div class="filter-meta">
-                    <span class="meta-badge">2025 Season</span>
-                    <span class="meta-badge">PPR Scoring</span>
+                <div class="filters-row-bottom">
+                    <div class="filter-group">
+                        <label>Week</label>
+                        <select id="week-filter">
+                            <option value="ALL">All Weeks</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Model</label>
+                        <select id="model-display">
+                            <option value="all">All Models</option>
+                            <option value="ridge">Ridge Regression</option>
+                            <option value="nn">Neural Network</option>
+                            <option value="weather_nn">Weather NN</option>
+                        </select>
+                    </div>
+                    <div class="filter-meta">
+                        <span class="meta-badge">2025 Season</span>
+                        <span class="meta-badge">PPR Scoring</span>
+                    </div>
                 </div>
             </div>
 

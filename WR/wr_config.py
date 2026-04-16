@@ -47,6 +47,14 @@ for _stat in ["fantasy_points", "fantasy_points_floor", "targets", "receptions",
     for _agg in ["mean", "std", "max"]:
         WR_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L5")
 
+# Weather/Vegas drops — keep 6 features with signal:
+#   implied_opp_total, is_dome, implied_total_x_dome, wind_adjusted,
+#   temp_adjusted, total_line
+WR_DROP_FEATURES |= {
+    "is_grass", "rest_advantage", "implied_total_x_wind",
+    "is_divisional", "days_rest_improved", "implied_team_total",
+}
+
 # === Ridge ===
 import numpy as np
 # PCR: 30 components. Benchmark showed -0.094 MAE vs no-PCA baseline (4.507 → 4.413).
