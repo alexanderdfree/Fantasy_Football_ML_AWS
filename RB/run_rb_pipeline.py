@@ -5,7 +5,9 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from RB.rb_config import (
-    RB_TARGETS, RB_RIDGE_ALPHA_GRIDS, RB_SPECIFIC_FEATURES,
+    RB_TARGETS, RB_RIDGE_ALPHA_GRIDS, RB_TWO_STAGE_TARGETS,
+    RB_ORDINAL_TARGETS, RB_GATED_ORDINAL_TARGETS, RB_TD_MODEL_TYPE,
+    RB_RIDGE_PCA_COMPONENTS, RB_SPECIFIC_FEATURES,
     RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_DROPOUT,
     RB_NN_LR, RB_NN_WEIGHT_DECAY, RB_NN_EPOCHS, RB_NN_BATCH_SIZE,
     RB_NN_PATIENCE, RB_NN_HEAD_HIDDEN_OVERRIDES,
@@ -26,6 +28,13 @@ from shared.pipeline import run_pipeline, run_cv_pipeline
 RB_CONFIG = {
     "targets": RB_TARGETS,
     "ridge_alpha_grids": RB_RIDGE_ALPHA_GRIDS,
+    "two_stage_targets": RB_TWO_STAGE_TARGETS if RB_TD_MODEL_TYPE == "two_stage" else {},
+    "classification_targets": (
+        RB_ORDINAL_TARGETS if RB_TD_MODEL_TYPE == "ordinal"
+        else RB_GATED_ORDINAL_TARGETS if RB_TD_MODEL_TYPE == "gated_ordinal"
+        else {}
+    ),
+    "ridge_pca_components": RB_RIDGE_PCA_COMPONENTS,
     "specific_features": RB_SPECIFIC_FEATURES,
     "filter_fn": filter_to_rb,
     "compute_targets_fn": compute_rb_targets,

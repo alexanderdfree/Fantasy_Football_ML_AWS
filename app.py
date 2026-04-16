@@ -701,5 +701,10 @@ def api_position_details():
     return jsonify(result)
 
 
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5050, use_reloader=False)

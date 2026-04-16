@@ -1,59 +1,59 @@
 [
   {
     "position": "WR",
-    "ridge_mae": 4.507,
-    "ridge_r2": 0.341,
-    "nn_mae": 4.17,
-    "nn_r2": 0.34,
+    "ridge_mae": 4.413,
+    "ridge_r2": 0.343,
+    "nn_mae": 4.204,
+    "nn_r2": 0.311,
     "nn_wins_mae": true,
     "nn_per_target": {
-      "receiving_floor": 3.201,
-      "rushing_floor": 0.144,
-      "td_points": 1.403
+      "receiving_floor": 3.225,
+      "rushing_floor": 0.14,
+      "td_points": 1.398
     },
     "ridge_per_target": {
-      "receiving_floor": 3.405,
-      "rushing_floor": 0.154,
-      "td_points": 1.826
+      "receiving_floor": 3.336,
+      "rushing_floor": 0.151,
+      "td_points": 1.78
     },
-    "ridge_top12": 0.352,
-    "nn_top12": 0.375,
+    "ridge_top12": 0.319,
+    "nn_top12": 0.338,
     "attn_nn_mae": 4.129,
-    "attn_nn_r2": 0.338,
+    "attn_nn_r2": 0.349,
     "attn_nn_per_target": {
+      "receiving_floor": 3.172,
+      "rushing_floor": 0.12,
+      "td_points": 1.417
+    },
+    "attn_nn_top12": 0.352,
+    "ensemble_mae": 4.155,
+    "ensemble_r2": 0.326,
+    "ensemble_per_target": {
       "receiving_floor": 3.181,
-      "rushing_floor": 0.127,
+      "rushing_floor": 0.09,
       "td_points": 1.396
     },
-    "attn_nn_top12": 0.361,
-    "ensemble_mae": 4.138,
-    "ensemble_r2": 0.338,
-    "ensemble_per_target": {
-      "receiving_floor": 3.18,
-      "rushing_floor": 0.128,
-      "td_points": 1.403
-    },
-    "ensemble_top12": 0.343,
+    "ensemble_top12": 0.352,
     "ensemble_weights": {
       "receiving_floor": {
-        "Ridge": 0.01840990790402156,
-        "NN": 0.009820528567073432,
-        "Weather": 0.3867658183756842,
-        "Attn": 0.5850037451532207
+        "Ridge": 1.9795696142491673e-17,
+        "NN": 0.5569349808171619,
+        "Weather": 0.0,
+        "Attn": 0.44306501918283814
       },
       "rushing_floor": {
-        "Ridge": 0.0,
-        "NN": 2.0816681711721685e-17,
+        "Ridge": 9.020562075079397e-17,
+        "NN": 0.0,
         "Weather": 1.0,
         "Attn": 0.0
       },
       "td_points": {
         "Ridge": 0.0,
-        "NN": 0.9999999999999953,
-        "Weather": 0.0,
-        "Attn": 7.716050021144838e-15
+        "NN": 0.0,
+        "Weather": 0.9999999999999958,
+        "Attn": 4.935288289154016e-15
       }
     },
-    "elapsed_sec": 66.5
+    "elapsed_sec": 73.3
   }
 ]

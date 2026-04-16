@@ -64,11 +64,11 @@ def _build_expanding_cv_folds(split_values, n_folds):
     return folds
 
 
-def _eval_alpha_cv(X, y, folds, alpha):
+def _eval_alpha_cv(X, y, folds, alpha, pca_n_components=None):
     """Evaluate a single Ridge alpha across CV folds, returning mean MAE."""
     maes = []
     for train_idx, val_idx in folds:
-        model = RidgeModel(alpha=alpha)
+        model = RidgeModel(alpha=alpha, pca_n_components=pca_n_components)
         model.fit(X[train_idx], y[train_idx])
         preds = np.maximum(model.predict(X[val_idx]), 0)
         maes.append(np.mean(np.abs(preds - y[val_idx])))
@@ -76,7 +76,8 @@ def _eval_alpha_cv(X, y, folds, alpha):
 
 
 def _tune_ridge_alphas_cv(X_train, y_train_dict, split_values, targets,
-                          alpha_grids, n_cv_folds=4, refine_points=5):
+                          alpha_grids, n_cv_folds=4, refine_points=5,
+                          pca_n_components=None):
     """Per-target Ridge alpha tuning with expanding-window CV.
 
     Pass 1: coarse grid search across CV folds.
@@ -94,7 +95,7 @@ def _tune_ridge_alphas_cv(X_train, y_train_dict, split_values, targets,
         # --- Pass 1: coarse search ---
         best_mae, best_alpha = float("inf"), grid[0]
         for alpha in grid:
-            mae = _eval_alpha_cv(X_train, y, folds, alpha)
+            mae = _eval_alpha_cv(X_train, y, folds, alpha, pca_n_components)
             if mae < best_mae:
                 best_mae = mae
                 best_alpha = alpha
@@ -105,7 +106,7 @@ def _tune_ridge_alphas_cv(X_train, y_train_dict, split_values, targets,
             center = np.log10(best_alpha)
             fine_grid = np.logspace(center - log_step, center + log_step, refine_points)
             for alpha in fine_grid:
-                mae = _eval_alpha_cv(X_train, y, folds, alpha)
+                mae = _eval_alpha_cv(X_train, y, folds, alpha, pca_n_components)
                 if mae < best_mae:
                     best_mae = mae
                     best_alpha = alpha
@@ -440,15 +441,30 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     adj_test = cfg["compute_adjustment_fn"](pos_test)
 
     cv_col = cfg.get("cv_split_column", "season")
+    two_stage_targets = cfg.get("two_stage_targets", {})
+    classification_targets = cfg.get("classification_targets", {})
+    pca_n = cfg.get("ridge_pca_components")
+    special_targets = set(two_stage_targets) | set(classification_targets)
+    ridge_tune_targets = [t for t in targets if t not in special_targets]
+    ridge_tune_grids = {t: cfg["ridge_alpha_grids"][t] for t in ridge_tune_targets}
     best_alphas = _tune_ridge_alphas_cv(
         X_train, y_train_dict, pos_train[cv_col].values,
-        targets=targets,
-        alpha_grids=cfg["ridge_alpha_grids"],
+        targets=ridge_tune_targets,
+        alpha_grids=ridge_tune_grids,
         n_cv_folds=cfg.get("ridge_cv_folds", 4),
         refine_points=cfg.get("ridge_refine_points", 5),
-    )
-
-    ridge_model = RidgeMultiTarget(target_names=targets, alpha=best_alphas)
+        pca_n_components=pca_n,
+    ) if ridge_tune_targets else {}
+    if two_stage_targets:
+        print(f"  Two-stage targets: {list(two_stage_targets.keys())}")
+    if classification_targets:
+        print(f"  Ordinal classification targets: {list(classification_targets.keys())}")
+    if pca_n:
+        print(f"  PCR: {pca_n} components")
+    ridge_model = RidgeMultiTarget(target_names=targets, alpha=best_alphas,
+                                   two_stage_targets=two_stage_targets,
+                                   classification_targets=classification_targets,
+                                   pca_n_components=pca_n)
     ridge_model.fit(X_train, y_train_dict)
     ridge_test_preds = ridge_model.predict(X_test)
     # Evaluate total as sum(per-target preds) without adjustment — matches
@@ -721,9 +737,12 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         position, cfg, alpha_train_df, alpha_val_df
     )
     cv_col = cfg.get("cv_split_column", "season")
+    cv_special = set(cfg.get("two_stage_targets", {})) | set(cfg.get("classification_targets", {}))
+    cv_ridge_targets = [t for t in targets if t not in cv_special]
+    cv_ridge_grids = {t: cfg["ridge_alpha_grids"][t] for t in cv_ridge_targets}
     best_alphas = _tune_ridge_alphas_cv(
         X_alpha, y_alpha_dict, pos_alpha[cv_col].values,
-        targets=targets, alpha_grids=cfg["ridge_alpha_grids"],
+        targets=cv_ridge_targets, alpha_grids=cv_ridge_grids,
         n_cv_folds=cfg.get("ridge_cv_folds", 4),
         refine_points=cfg.get("ridge_refine_points", 5),
     )
@@ -745,7 +764,12 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
 
         adj_val = cfg["compute_adjustment_fn"](pos_val)
 
-        ridge_fold = RidgeMultiTarget(target_names=targets, alpha=best_alphas)
+        ridge_fold = RidgeMultiTarget(
+            target_names=targets, alpha=best_alphas,
+            two_stage_targets=cfg.get("two_stage_targets", {}),
+            classification_targets=cfg.get("classification_targets", {}),
+            pca_n_components=cfg.get("ridge_pca_components"),
+        )
         ridge_fold.fit(X_train, y_train_dict)
         ridge_val_preds = ridge_fold.predict(X_val)
         ridge_val_preds["total"] = sum(ridge_val_preds[t] for t in targets) + adj_val.values
@@ -855,7 +879,12 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
 
     best_cv_alphas = best_alphas
 
-    ridge_model = RidgeMultiTarget(target_names=targets, alpha=best_cv_alphas)
+    ridge_model = RidgeMultiTarget(
+        target_names=targets, alpha=best_cv_alphas,
+        two_stage_targets=cfg.get("two_stage_targets", {}),
+        classification_targets=cfg.get("classification_targets", {}),
+        pca_n_components=cfg.get("ridge_pca_components"),
+    )
     ridge_model.fit(X_train, y_train_dict)
     ridge_test_preds = ridge_model.predict(X_test)
     ridge_test_preds["total"] = sum(ridge_test_preds[t] for t in targets)

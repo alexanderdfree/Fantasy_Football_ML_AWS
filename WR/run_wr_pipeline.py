@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from WR.wr_config import (
-    WR_TARGETS, WR_RIDGE_ALPHA_GRIDS, WR_SPECIFIC_FEATURES,
+    WR_TARGETS, WR_RIDGE_ALPHA_GRIDS, WR_RIDGE_PCA_COMPONENTS, WR_SPECIFIC_FEATURES,
     WR_NN_BACKBONE_LAYERS, WR_NN_HEAD_HIDDEN, WR_NN_DROPOUT,
     WR_NN_LR, WR_NN_WEIGHT_DECAY, WR_NN_EPOCHS, WR_NN_BATCH_SIZE,
     WR_NN_PATIENCE,
@@ -24,6 +24,7 @@ from shared.pipeline import run_pipeline, run_cv_pipeline
 WR_CONFIG = {
     "targets": WR_TARGETS,
     "ridge_alpha_grids": WR_RIDGE_ALPHA_GRIDS,
+    "ridge_pca_components": WR_RIDGE_PCA_COMPONENTS,
     "specific_features": WR_SPECIFIC_FEATURES,
     "filter_fn": filter_to_wr,
     "compute_targets_fn": compute_wr_targets,

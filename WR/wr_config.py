@@ -27,6 +27,8 @@ for _stat in ["passing_yards", "attempts"]:
         WR_DROP_FEATURES.add(f"prior_season_{_agg}_{_stat}")
 # Position encoding (all WR, no variance)
 WR_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
+# is_home has zero variance in training data (rank-deficient column)
+WR_DROP_FEATURES.add("is_home")
 # NOTE: snap_pct and air_yards_share are already lagged (shift=1) in engineer.py, safe to keep.
 
 # Drop EWMA features — they correlate >0.98 with rolling means of the same stat,
@@ -47,6 +49,9 @@ for _stat in ["fantasy_points", "fantasy_points_floor", "targets", "receptions",
 
 # === Ridge ===
 import numpy as np
+# PCR: 30 components. Benchmark showed -0.094 MAE vs no-PCA baseline (4.507 → 4.413).
+# PCA removes collinear directions the alpha grid can't fully address.
+WR_RIDGE_PCA_COMPONENTS = 30
 WR_RIDGE_ALPHA_GRIDS = {
     "receiving_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
     "rushing_floor":   [round(x, 4) for x in np.logspace(-1, 4, 15)],
@@ -56,7 +61,7 @@ WR_RIDGE_ALPHA_GRIDS = {
 # === Neural Net ===
 # 2012+ dataset: widened from [96] to [128] to exploit largest training set.
 # Largest position dataset can support more capacity with less overfitting risk.
-WR_NN_BACKBONE_LAYERS = [128, 64]
+WR_NN_BACKBONE_LAYERS = [128]
 WR_NN_HEAD_HIDDEN = 32
 WR_NN_DROPOUT = 0.20
 WR_NN_LR = 1e-3
@@ -91,11 +96,11 @@ WR_COSINE_ETA_MIN = 1e-5
 # === Attention NN (game history variant) ===
 WR_TRAIN_ATTENTION_NN = True
 WR_ATTN_D_MODEL = 32
-WR_ATTN_N_HEADS = 4
-WR_ATTN_ENCODER_HIDDEN_DIM = 48
+WR_ATTN_N_HEADS = 2
+WR_ATTN_ENCODER_HIDDEN_DIM = 0
 WR_ATTN_MAX_SEQ_LEN = 17
 WR_ATTN_POSITIONAL_ENCODING = True
-WR_ATTN_DROPOUT = 0.08
+WR_ATTN_DROPOUT = 0.0
 WR_ATTN_HISTORY_STATS = [
     "fantasy_points", "fantasy_points_floor",
     "receiving_yards", "rushing_yards",

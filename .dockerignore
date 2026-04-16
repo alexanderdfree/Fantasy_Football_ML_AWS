@@ -1,0 +1,9 @@
+.git
+__pycache__
+*.pyc
+venv/
+.claude/
+docs/
+instructions/
+tests/
+.github/

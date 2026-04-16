@@ -27,7 +27,9 @@ for _span in [3, 5]:
 for _stat in ["passing_yards", "attempts"]:
     for _agg in ["mean", "std", "max"]:
         RB_DROP_FEATURES.add(f"prior_season_{_agg}_{_stat}")
-RB_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
+# is_home is constant zero for RB rows (filled 0 by NaN handling), creating a
+# singular feature matrix (condition number 2.6e18 → 1.8e8 after removal).
+RB_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE", "is_home"}
 
 # NOTE: snap_pct and air_yards_share are already lagged (shift=1) in engineer.py
 # so they ARE available at prediction time and should NOT be dropped.
@@ -54,6 +56,40 @@ RB_RIDGE_ALPHA_GRIDS = {
     "receiving_floor": [round(x, 4) for x in np.logspace(-2, 2.5, 20)],
     "td_points":       [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
+
+# Two-stage model for td_points: zero-inflated (73.5% zeros), discrete (0,6,12,...).
+# Hard-threshold classify-then-regress drops td_points MAE from 2.259 to 1.851.
+RB_TWO_STAGE_TARGETS = {
+    "td_points": {"clf_C": 0.001, "ridge_alpha": 0.01, "threshold": 0.5},
+}
+
+# Ordinal classification for td_points: classes = {0,1,2,3+} TDs, predicts
+# E[td_points] via class probabilities.  Monotonic cumulative probs.
+RB_ORDINAL_TARGETS = {
+    "td_points": {
+        "type": "ordinal",
+        "class_values": [0, 6, 12, 18],  # 0/1/2/3+ TDs * 6 pts each
+        "alpha": 1.0,                      # mord LogisticAT regularization
+    },
+}
+
+# Gated ordinal: binary gate (like two-stage) + ordinal on positives.
+RB_GATED_ORDINAL_TARGETS = {
+    "td_points": {
+        "type": "gated_ordinal",
+        "class_values": [0, 6, 12, 18],
+        "alpha": 1.0,
+        "clf_C": 0.001,
+        "threshold": 0.5,
+    },
+}
+
+# Which td_points model to use: "ridge" | "two_stage" | "ordinal" | "gated_ordinal"
+RB_TD_MODEL_TYPE = "gated_ordinal"
+
+# PCR: 80 components retains 99.8% variance, drops condition number from 1.8e8
+# (after is_home removal) to 49.8.  Both floor targets improve by ~0.002 MAE.
+RB_RIDGE_PCA_COMPONENTS = 80
 
 # === Neural Net ===
 # [128, 64] two-layer backbone — single [128] was underfitting (early stop epoch 54,
@@ -100,8 +136,8 @@ RB_COSINE_ETA_MIN = 1e-5
 RB_TRAIN_ATTENTION_NN = True
 # Keep d_model=32 (proven baseline) and n_heads=2 (larger values overfit on 15K samples).
 RB_ATTN_D_MODEL = 32
-RB_ATTN_N_HEADS = 4
-RB_ATTN_ENCODER_HIDDEN_DIM = 48
+RB_ATTN_N_HEADS = 2
+RB_ATTN_ENCODER_HIDDEN_DIM = 0
 RB_ATTN_MAX_SEQ_LEN = 17
 # K/V projections disabled — at d_model=32 the 2K extra params hurt optimization
 # more than they help (tested: 4.330 MAE with vs 4.228 without).
@@ -111,7 +147,7 @@ RB_ATTN_PROJECT_KV = False
 RB_ATTN_POSITIONAL_ENCODING = True
 RB_ATTN_GATED_FUSION = False
 # Very light attention dropout for regularization.
-RB_ATTN_DROPOUT = 0.08
+RB_ATTN_DROPOUT = 0.05
 # Standard training params match the base NN.
 RB_ATTN_LR = 1e-3
 RB_ATTN_WEIGHT_DECAY = 5e-5
