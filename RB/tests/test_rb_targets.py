@@ -7,79 +7,43 @@ import pytest
 from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
 
 
-def _make_rb_row(**overrides):
-    """Create a single-row RB DataFrame with sensible defaults."""
-    defaults = {
-        "rushing_yards": 60,
-        "receiving_yards": 30,
-        "receptions": 3,
-        "rushing_tds": 1,
-        "receiving_tds": 0,
-        "rushing_2pt_conversions": 0,
-        "receiving_2pt_conversions": 0,
-        "sack_fumbles_lost": 0,
-        "rushing_fumbles_lost": 0,
-        "receiving_fumbles_lost": 0,
-        "passing_yards": 0,
-        "passing_tds": 0,
-        "interceptions": 0,
-        "fantasy_points": 0.0,  # will be computed below
-    }
-    defaults.update(overrides)
-    # Compute correct fantasy_points if not explicitly overridden.
-    # Must match SCORING_PPR (no 2pt conversions) used by compute_fantasy_points().
-    if "fantasy_points" not in overrides:
-        fp = (
-            defaults["rushing_yards"] * 0.1
-            + defaults["receptions"] * 1.0
-            + defaults["receiving_yards"] * 0.1
-            + (defaults["rushing_tds"] + defaults["receiving_tds"]) * 6
-            + (defaults["sack_fumbles_lost"] + defaults["rushing_fumbles_lost"]
-               + defaults["receiving_fumbles_lost"]) * -2
-            + defaults["passing_yards"] * 0.04
-            + defaults["passing_tds"] * 4
-            + defaults["interceptions"] * -2
-        )
-        defaults["fantasy_points"] = fp
-    return pd.DataFrame([defaults])
-
-
 # ---------------------------------------------------------------------------
 # compute_rb_targets
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeRBTargets:
-    def test_rushing_floor(self):
-        df = _make_rb_row(rushing_yards=100)
+    def test_rushing_floor(self, make_rb_row):
+        df = make_rb_row(rushing_yards=100)
         result = compute_rb_targets(df)
         assert pytest.approx(result["rushing_floor"].iloc[0]) == 10.0
 
-    def test_receiving_floor(self):
-        df = _make_rb_row(receptions=5, receiving_yards=50)
+    def test_receiving_floor(self, make_rb_row):
+        df = make_rb_row(receptions=5, receiving_yards=50)
         result = compute_rb_targets(df)
         # 5 * 1.0 + 50 * 0.1 = 10.0
         assert pytest.approx(result["receiving_floor"].iloc[0]) == 10.0
 
-    def test_td_points_rushing_only(self):
-        df = _make_rb_row(rushing_tds=2, receiving_tds=0)
+    def test_td_points_rushing_only(self, make_rb_row):
+        df = make_rb_row(rushing_tds=2, receiving_tds=0)
         result = compute_rb_targets(df)
         assert pytest.approx(result["td_points"].iloc[0]) == 12.0
 
-    def test_td_points_excludes_2pt_conversions(self):
+    def test_td_points_excludes_2pt_conversions(self, make_rb_row):
         """2pt conversions are excluded from td_points to match SCORING_PPR."""
-        df = _make_rb_row(rushing_tds=1, receiving_tds=1, rushing_2pt_conversions=1)
+        df = make_rb_row(rushing_tds=1, receiving_tds=1, rushing_2pt_conversions=1)
         result = compute_rb_targets(df)
         # 1*6 + 1*6 = 12 (2pt conversions intentionally excluded)
         assert pytest.approx(result["td_points"].iloc[0]) == 12.0
 
-    def test_fumble_penalty(self):
-        df = _make_rb_row(sack_fumbles_lost=1, rushing_fumbles_lost=1)
+    def test_fumble_penalty(self, make_rb_row):
+        df = make_rb_row(sack_fumbles_lost=1, rushing_fumbles_lost=1)
         result = compute_rb_targets(df)
         assert pytest.approx(result["fumble_penalty"].iloc[0]) == -4.0
 
-    def test_fantasy_points_check_matches(self):
-        df = _make_rb_row(rushing_yards=80, receptions=4, receiving_yards=40,
-                          rushing_tds=1, receiving_tds=0, rushing_fumbles_lost=1)
+    def test_fantasy_points_check_matches(self, make_rb_row):
+        df = make_rb_row(rushing_yards=80, receptions=4, receiving_yards=40,
+                         rushing_tds=1, receiving_tds=0, rushing_fumbles_lost=1)
         result = compute_rb_targets(df)
         expected = (
             result["rushing_floor"].iloc[0]
@@ -113,15 +77,15 @@ class TestComputeRBTargets:
         assert result["td_points"].iloc[0] == 0.0
         assert result["fumble_penalty"].iloc[0] == 0.0
 
-    def test_does_not_mutate_original(self):
-        df = _make_rb_row()
+    def test_does_not_mutate_original(self, make_rb_row):
+        df = make_rb_row()
         original_cols = set(df.columns)
         _ = compute_rb_targets(df)
         assert set(df.columns) == original_cols
 
-    def test_zero_yard_game(self):
+    def test_zero_yard_game(self, make_rb_row):
         """RB with 0 yards, 0 touches — everything should be 0."""
-        df = _make_rb_row(
+        df = make_rb_row(
             rushing_yards=0, receiving_yards=0, receptions=0,
             rushing_tds=0, receiving_tds=0,
         )
@@ -130,10 +94,10 @@ class TestComputeRBTargets:
         assert result["receiving_floor"].iloc[0] == 0.0
         assert result["td_points"].iloc[0] == 0.0
 
-    def test_large_game(self):
+    def test_large_game(self, make_rb_row):
         """Extreme stat line — no overflow."""
-        df = _make_rb_row(rushing_yards=300, receiving_yards=200, receptions=10,
-                          rushing_tds=4, receiving_tds=2)
+        df = make_rb_row(rushing_yards=300, receiving_yards=200, receptions=10,
+                         rushing_tds=4, receiving_tds=2)
         result = compute_rb_targets(df)
         assert result["rushing_floor"].iloc[0] == 30.0
         assert result["receiving_floor"].iloc[0] == 30.0  # 10 + 20
@@ -144,41 +108,30 @@ class TestComputeRBTargets:
 # compute_fumble_adjustment
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeFumbleAdjustment:
-    def _make_fumble_df(self, player_fumbles, season=2023):
-        """Create DataFrame with multiple games for one player."""
-        n = len(player_fumbles)
-        return pd.DataFrame({
-            "player_id": ["P1"] * n,
-            "season": [season] * n,
-            "week": list(range(1, n + 1)),
-            "sack_fumbles_lost": player_fumbles,
-            "rushing_fumbles_lost": [0] * n,
-            "receiving_fumbles_lost": [0] * n,
-        })
-
-    def test_first_game_is_zero(self):
+    def test_first_game_is_zero(self, make_fumble_df):
         """First game has no prior history — shift(1) produces NaN, filled to 0."""
-        df = self._make_fumble_df([1, 0, 0])
+        df = make_fumble_df([1, 0, 0])
         result = compute_fumble_adjustment(df)
         assert result.iloc[0] == 0.0
 
-    def test_second_game_uses_first(self):
+    def test_second_game_uses_first(self, make_fumble_df):
         """Second game should see the first game's fumble."""
-        df = self._make_fumble_df([1, 0, 0, 0])
+        df = make_fumble_df([1, 0, 0, 0])
         result = compute_fumble_adjustment(df)
         # Game 2 sees rolling mean of [1] -> rate = 1.0 -> penalty = -2.0
         assert pytest.approx(result.iloc[1]) == -2.0
 
-    def test_rolling_window(self):
+    def test_rolling_window(self, make_fumble_df):
         """After several games, rolling mean averages correctly."""
-        df = self._make_fumble_df([1, 1, 0, 0, 0, 0, 0, 0, 0])
+        df = make_fumble_df([1, 1, 0, 0, 0, 0, 0, 0, 0])
         result = compute_fumble_adjustment(df)
         # Game 9 (index 8): shift(1) sees games 1-8, rolling(8) of [1,1,0,0,0,0,0,0] = 0.25
         assert pytest.approx(result.iloc[8]) == -0.5
 
-    def test_player_with_no_fumbles(self):
-        df = self._make_fumble_df([0, 0, 0, 0])
+    def test_player_with_no_fumbles(self, make_fumble_df):
+        df = make_fumble_df([0, 0, 0, 0])
         result = compute_fumble_adjustment(df)
         # Game 2 onward should be 0.0 (0 fumbles * -2)
         assert pytest.approx(result.iloc[1]) == 0.0

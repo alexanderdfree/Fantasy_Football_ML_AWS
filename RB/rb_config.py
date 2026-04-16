@@ -208,3 +208,14 @@ RB_LGBM_REG_ALPHA = 0.718914
 RB_LGBM_MIN_CHILD_SAMPLES = 69
 RB_LGBM_MIN_SPLIT_GAIN = 0.302108
 RB_LGBM_OBJECTIVE = "fair"
+
+# === Tiny config for end-to-end smoke tests ===
+# Shrunk copy of the production config: 1 epoch, 2-layer x 8-unit backbone,
+# attention and LightGBM disabled to keep the E2E smoke under 20s.
+# Keeps every behavior toggle identical to RB_CONFIG so test coverage
+# exercises the same code paths.
+RB_NN_BACKBONE_LAYERS_TINY = [8, 8]
+RB_NN_HEAD_HIDDEN_TINY = 4
+RB_NN_EPOCHS_TINY = 1
+RB_NN_BATCH_SIZE_TINY = 64
+RB_NN_PATIENCE_TINY = 1
