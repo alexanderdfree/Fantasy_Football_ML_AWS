@@ -13,6 +13,7 @@ TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 # GatedTDHead
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestGatedTDHead:
     def test_output_shapes(self):
         head = GatedTDHead(in_dim=16)
@@ -59,6 +60,7 @@ class TestGatedTDHead:
 # AttentionPool
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestAttentionPool:
     def test_output_shape(self):
         pool = AttentionPool(d_model=16, n_heads=2)
@@ -141,6 +143,7 @@ class TestAttentionPool:
 # MultiHeadNetWithHistory
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestMultiHeadNetWithHistory:
     @pytest.fixture
     def model(self):

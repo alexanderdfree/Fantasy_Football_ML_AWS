@@ -3,7 +3,6 @@
 from unittest.mock import patch
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from shared.weather_features import (
@@ -12,66 +11,6 @@ from shared.weather_features import (
     get_weather_feature_columns,
     merge_schedule_features,
 )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _fake_schedules():
-    """Minimal schedule data covering teams/seasons used in tests."""
-    rows = []
-    for season in [2022, 2023]:
-        for week in range(1, 19):
-            rows.append({
-                "game_type": "REG",
-                "season": season,
-                "week": week,
-                "away_team": "SF",
-                "home_team": "KC",
-                "home_score": 24,
-                "away_score": 17,
-                "spread_line": -3.0,
-                "total_line": 47.0,
-                "roof": "outdoors",
-                "surface": "grass",
-                "temp": 72,
-                "wind": 8,
-                "home_rest": 7,
-                "away_rest": 7,
-                "div_game": 0,
-            })
-            # Dome game
-            rows.append({
-                "game_type": "REG",
-                "season": season,
-                "week": week,
-                "away_team": "DAL",
-                "home_team": "NO",
-                "home_score": 21,
-                "away_score": 20,
-                "spread_line": -1.0,
-                "total_line": 50.0,
-                "roof": "dome",
-                "surface": "a_turf",
-                "temp": 72,
-                "wind": 0,
-                "home_rest": 7,
-                "away_rest": 7,
-                "div_game": 0,
-            })
-    return pd.DataFrame(rows)
-
-
-def _make_player_df(team="KC", n_weeks=4, season=2023):
-    """Small player DataFrame for merge tests."""
-    return pd.DataFrame({
-        "player_id": ["P1"] * n_weeks,
-        "season": [season] * n_weeks,
-        "week": list(range(1, n_weeks + 1)),
-        "recent_team": [team] * n_weeks,
-        "fantasy_points": [10.0] * n_weeks,
-    })
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +26,7 @@ def _clear_schedule_cache():
 # get_weather_feature_columns
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestGetWeatherFeatureColumns:
     def test_qb_drops_is_grass(self):
         result = get_weather_feature_columns("QB", [])
@@ -121,38 +61,39 @@ class TestGetWeatherFeatureColumns:
 # merge_schedule_features
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestMergeScheduleFeatures:
     @patch("shared.weather_features._load_schedules")
-    def test_adds_weather_columns(self, mock_load):
-        mock_load.return_value = _fake_schedules()
-        df = _make_player_df("KC", n_weeks=4)
+    def test_adds_weather_columns(self, mock_load, fake_schedules, player_df_factory):
+        mock_load.return_value = fake_schedules
+        df = player_df_factory("KC", n_weeks=4)
         result = merge_schedule_features(df)
         for col in WEATHER_FEATURES_ALL:
             assert col in result.columns, f"Missing column: {col}"
 
     @patch("shared.weather_features._load_schedules")
-    def test_idempotent(self, mock_load):
-        mock_load.return_value = _fake_schedules()
-        df = _make_player_df("KC", n_weeks=4)
+    def test_idempotent(self, mock_load, fake_schedules, player_df_factory):
+        mock_load.return_value = fake_schedules
+        df = player_df_factory("KC", n_weeks=4)
         result1 = merge_schedule_features(df)
         vals_before = result1["implied_total_x_wind"].values.copy()
         result2 = merge_schedule_features(result1)
         np.testing.assert_array_equal(result2["implied_total_x_wind"].values, vals_before)
 
     @patch("shared.weather_features._load_schedules")
-    def test_dome_flags(self, mock_load):
-        mock_load.return_value = _fake_schedules()
-        df = _make_player_df("NO", n_weeks=2)  # NO plays in dome
+    def test_dome_flags(self, mock_load, fake_schedules, player_df_factory):
+        mock_load.return_value = fake_schedules
+        df = player_df_factory("NO", n_weeks=2)  # NO plays in dome
         result = merge_schedule_features(df)
         assert (result["is_dome"] == 1).all()
         assert (result["temp_adjusted"] == 65.0).all()
         assert (result["wind_adjusted"] == 0.0).all()
 
     @patch("shared.weather_features._load_schedules")
-    def test_implied_totals_math(self, mock_load):
-        mock_load.return_value = _fake_schedules()
+    def test_implied_totals_math(self, mock_load, fake_schedules, player_df_factory):
+        mock_load.return_value = fake_schedules
         # KC is home team with spread_line=-3.0, total_line=47.0
-        df = _make_player_df("KC", n_weeks=1)
+        df = player_df_factory("KC", n_weeks=1)
         result = merge_schedule_features(df)
         # implied_team_total = (47 - (-3)) / 2 = 25.0
         assert pytest.approx(result["implied_team_total"].iloc[0], abs=0.1) == 25.0
@@ -160,9 +101,9 @@ class TestMergeScheduleFeatures:
         assert pytest.approx(result["implied_opp_total"].iloc[0], abs=0.1) == 22.0
 
     @patch("shared.weather_features._load_schedules")
-    def test_unmatched_team_keeps_nan(self, mock_load):
-        mock_load.return_value = _fake_schedules()
-        df = _make_player_df("XYZ", n_weeks=2)  # team not in schedule
+    def test_unmatched_team_keeps_nan(self, mock_load, fake_schedules, player_df_factory):
+        mock_load.return_value = fake_schedules
+        df = player_df_factory("XYZ", n_weeks=2)  # team not in schedule
         result = merge_schedule_features(df)
         # Unmatched games should have NaN Vegas features so the error surfaces
         assert result["implied_team_total"].isna().all()

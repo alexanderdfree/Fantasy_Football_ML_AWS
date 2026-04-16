@@ -18,31 +18,13 @@ TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_test_df(n=100):
-    np.random.seed(42)
-    return pd.DataFrame({
-        "player_id": [f"P{i}" for i in range(n)],
-        "week": np.random.randint(1, 18, size=n),
-        "snap_pct": np.random.rand(n) * 100,
-        "opp_def_rank_vs_pos": np.random.randint(1, 33, size=n),
-        "is_home": np.random.choice([0, 1], size=n),
-        "td_points": np.random.choice([0.0, 6.0, 12.0], size=n, p=[0.6, 0.3, 0.1]),
-        "rolling_std_fantasy_points_L3": np.random.rand(n) * 5,
-        "fantasy_points": np.random.rand(n) * 20,
-        "pred_total": np.random.rand(n) * 20,
-    })
-
-
-# ---------------------------------------------------------------------------
 # add_stratification_columns
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestAddStratificationColumns:
-    def test_adds_all_bucket_columns(self):
-        df = _make_test_df()
+    def test_adds_all_bucket_columns(self, error_df_factory):
+        df = error_df_factory()
         result = add_stratification_columns(df, TARGETS)
         for col in ["snap_bucket", "opp_tier", "week_phase", "td_bucket",
                      "volatility_q", "home_away"]:
@@ -84,6 +66,7 @@ class TestAddStratificationColumns:
 # compute_stratum_metrics
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeStratumMetrics:
     def test_output_columns(self):
         df = pd.DataFrame({
@@ -129,9 +112,10 @@ class TestComputeStratumMetrics:
 # run_stratified_analysis
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestRunStratifiedAnalysis:
-    def test_output_structure(self):
-        df = _make_test_df()
+    def test_output_structure(self, error_df_factory):
+        df = error_df_factory()
         add_stratification_columns(df, TARGETS)
         model_pred_cols = {"Ridge": {"total": "pred_total"}}
         target_cols = {"total": "fantasy_points"}
@@ -141,16 +125,16 @@ class TestRunStratifiedAnalysis:
             assert "Ridge" in result[stratum]
             assert "total" in result[stratum]["Ridge"]
 
-    def test_skips_missing_columns(self):
-        df = _make_test_df()
+    def test_skips_missing_columns(self, error_df_factory):
+        df = error_df_factory()
         add_stratification_columns(df, TARGETS)
         model_pred_cols = {"Ridge": {"total": "pred_total"}}
         target_cols = {"total": "fantasy_points"}
         result = run_stratified_analysis(df, model_pred_cols, target_cols, ["nonexistent_col"])
         assert "nonexistent_col" not in result
 
-    def test_skips_low_cardinality(self):
-        df = _make_test_df()
+    def test_skips_low_cardinality(self, error_df_factory):
+        df = error_df_factory()
         df["constant_col"] = "same"  # single unique value
         model_pred_cols = {"Ridge": {"total": "pred_total"}}
         target_cols = {"total": "fantasy_points"}
@@ -162,24 +146,24 @@ class TestRunStratifiedAnalysis:
 # find_top_error_sources
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestFindTopErrorSources:
-    def _make_results(self):
-        df = _make_test_df(200)
+    @pytest.fixture
+    def stratified_results(self, error_df_factory):
+        df = error_df_factory(200)
         add_stratification_columns(df, TARGETS)
         model_pred_cols = {"Ridge": {"total": "pred_total"}}
         target_cols = {"total": "fantasy_points"}
         strata = ["week_phase", "home_away", "td_bucket"]
         return run_stratified_analysis(df, model_pred_cols, target_cols, strata)
 
-    def test_returns_sorted_by_metric(self):
-        results = self._make_results()
-        sources = find_top_error_sources(results, "Ridge", metric="mae", top_k=5, min_n=1)
+    def test_returns_sorted_by_metric(self, stratified_results):
+        sources = find_top_error_sources(stratified_results, "Ridge", metric="mae", top_k=5, min_n=1)
         if len(sources) >= 2:
             assert sources[0]["mae"] >= sources[1]["mae"]
 
-    def test_min_n_filter(self):
-        results = self._make_results()
-        sources = find_top_error_sources(results, "Ridge", min_n=9999)
+    def test_min_n_filter(self, stratified_results):
+        sources = find_top_error_sources(stratified_results, "Ridge", min_n=9999)
         assert len(sources) == 0
 
 
@@ -187,9 +171,11 @@ class TestFindTopErrorSources:
 # Plotting (non-crash tests)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestPlotting:
-    def _make_results_and_df(self):
-        df = _make_test_df(200)
+    @pytest.fixture
+    def results_and_df(self, error_df_factory):
+        df = error_df_factory(200)
         add_stratification_columns(df, TARGETS)
         model_pred_cols = {"Ridge": {"total": "pred_total"}}
         target_cols = {"total": "fantasy_points"}
@@ -197,20 +183,20 @@ class TestPlotting:
         results = run_stratified_analysis(df, model_pred_cols, target_cols, strata)
         return results, df
 
-    def test_plot_error_by_stratum(self, tmp_path):
-        results, _ = self._make_results_and_df()
+    def test_plot_error_by_stratum(self, results_and_df, tmp_path):
+        results, _ = results_and_df
         save_path = str(tmp_path / "error.png")
         plot_error_by_stratum(results, "Ridge", "week_phase", ["total"], save_path)
         assert (tmp_path / "error.png").exists()
 
-    def test_plot_bias_heatmap(self, tmp_path):
-        results, _ = self._make_results_and_df()
+    def test_plot_bias_heatmap(self, results_and_df, tmp_path):
+        results, _ = results_and_df
         save_path = str(tmp_path / "bias.png")
         plot_bias_heatmap(results, "Ridge", ["week_phase", "home_away"], ["total"], save_path)
         assert (tmp_path / "bias.png").exists()
 
-    def test_plot_td_zero_vs_scored(self, tmp_path):
-        _, df = self._make_results_and_df()
+    def test_plot_td_zero_vs_scored(self, results_and_df, tmp_path):
+        _, df = results_and_df
         save_path = str(tmp_path / "td.png")
         plot_td_zero_vs_scored(df, "pred_total", "td_points", save_path)
         assert (tmp_path / "td.png").exists()

@@ -56,6 +56,7 @@ def multi_target_data():
 # TwoStageRidge
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestTwoStageRidge:
     def test_fit_and_predict_shapes(self, zero_inflated_data):
         X, y = zero_inflated_data
@@ -120,11 +121,30 @@ class TestTwoStageRidge:
         # With very high threshold, most predictions should be zero
         assert (preds == 0).sum() > len(X) * 0.5
 
+    def test_classifier_trained_on_all_rows_regressor_on_positives(self, zero_inflated_data):
+        """Stage 1 (gate) sees every row; Stage 2 (regressor) only sees y > 0."""
+        X, y = zero_inflated_data
+        model = TwoStageRidge()
+        model.fit(X, y)
+        # Classifier sees all rows and distinguishes 2 classes (zero vs positive)
+        assert model.clf.classes_.tolist() == [0, 1]
+        # Classifier's scaler was fit on full X (mean vector shape matches feature count)
+        assert model.scaler_clf.mean_.shape == (X.shape[1],)
+        # Regressor's scaler was fit only on the positive subset — its mean
+        # must match the mean of the positive rows (not the full dataset).
+        pos_mask = y > 0
+        np.testing.assert_allclose(
+            model.scaler_reg.mean_, X[pos_mask].mean(axis=0), atol=1e-6,
+        )
+        # The two scalers are therefore distinct objects with distinct means.
+        assert model.scaler_clf is not model.scaler_reg
+
 
 # ---------------------------------------------------------------------------
 # OrdinalTDClassifier
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestOrdinalTDClassifier:
     def test_fit_and_predict_shapes(self, td_class_data):
         X, y = td_class_data
@@ -196,6 +216,7 @@ class TestOrdinalTDClassifier:
 # GatedOrdinalTDClassifier
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestGatedOrdinalTDClassifier:
     def test_fit_and_predict_shapes(self, td_class_data):
         X, y = td_class_data
@@ -258,6 +279,7 @@ class TestGatedOrdinalTDClassifier:
 # LightGBMMultiTarget
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestLightGBMMultiTarget:
     def test_fit_and_predict_shapes(self, multi_target_data):
         X, y_dict = multi_target_data
