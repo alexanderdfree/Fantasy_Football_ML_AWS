@@ -1,9 +1,85 @@
+# Git
 .git
+.gitignore
+.gitattributes
+
+# Python bytecode / build artifacts
 __pycache__
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
 venv/
+.venv/
+env/
+
+# IDE / Editor
 .claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs / non-runtime
 docs/
 instructions/
+README.md
+TODO.md
+*.md
+
+# Tests
 tests/
+**/tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# CI
 .github/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Logs
+*.log
+logs/
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Analysis / scratch (not needed in production containers)
+analysis_output/
+analysis_*.py
+
+# Training data (re-downloaded from S3 at runtime by batch/train.py)
+data/
+
+# Per-position outputs (model artifacts, cached CV, plots — regenerated each run)
+**/outputs/
+
+# Benchmark / tuning artifacts (local scratch, not needed at runtime)
+benchmark_*.json
+tune_*.json
+tune_*.db
+*.db
+
+# Dockerfiles themselves (don't need copies inside the image)
+Dockerfile
+Dockerfile.*
+.dockerignore
+
+# Local dev databases / caches
+*.sqlite
+*.sqlite3
