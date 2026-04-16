@@ -1,0 +1,117 @@
+name: Build & Push Batch Training Image
+
+# Builds batch/Dockerfile.train, pushes to ECR, and registers a new revision
+# of the Batch job definition pinned to the new image digest.
+# Only runs on main when the training image surface actually changes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "batch/**"
+      - "shared/**"
+      - "QB/**"
+      - "RB/**"
+      - "WR/**"
+      - "TE/**"
+      - "K/**"
+      - "DST/**"
+      - "src/**"
+      - "requirements.txt"
+      - ".github/workflows/batch-image.yml"
+  workflow_dispatch: {}
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: ff-training
+  JOB_DEFINITION: ff-training-job
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install torch (CPU wheels)
+        run: pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest tests/ QB/tests/ RB/tests/ WR/tests/ TE/tests/ K/tests/ DST/tests/ batch/tests/ shared/tests/ -v
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push training image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=false \
+            --file batch/Dockerfile.train \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --tag "$IMAGE_URI:$IMAGE_TAG" \
+            --tag "$IMAGE_URI:latest" \
+            --push .
+          echo "image_uri=$IMAGE_URI:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Register new job definition revision
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+        run: |
+          # Pull the current definition, replace the image, re-register as a
+          # new revision. Never deregisters existing revisions, so operator
+          # rollback is always possible.
+          aws batch describe-job-definitions \
+            --job-definition-name "$JOB_DEFINITION" \
+            --status ACTIVE \
+            --max-results 1 \
+            --region "$AWS_REGION" > current.json
+
+          jq --arg image "$IMAGE_URI" '
+            .jobDefinitions[0] as $d |
+            {
+              jobDefinitionName: $d.jobDefinitionName,
+              type: $d.type,
+              containerProperties: ($d.containerProperties | .image = $image),
+              retryStrategy: ($d.retryStrategy // empty),
+              timeout: ($d.timeout // empty),
+              platformCapabilities: ($d.platformCapabilities // []),
+              propagateTags: ($d.propagateTags // false),
+              tags: ($d.tags // {})
+            } | with_entries(select(.value != null and .value != "" and .value != []))
+          ' current.json > new.json
+
+          aws batch register-job-definition \
+            --cli-input-json file://new.json \
+            --region "$AWS_REGION" \
+            --query 'revision' \
+            --output text \
+            | xargs -I {} echo "Registered new revision of $JOB_DEFINITION: revision {}"

@@ -1,12 +1,40 @@
-FROM --platform=linux/amd64 pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
+# Base image served via an optional ECR pull-through cache (strategy 2c).
+# When PULL_THROUGH_PREFIX is set, the pytorch base is pulled from ECR
+# instead of Docker Hub — first pull in the region seeds the ECR cache,
+# every subsequent Batch instance pulls from the local AWS network.
+#
+# Example:
+#   --build-arg PULL_THROUGH_PREFIX=123456789012.dkr.ecr.us-east-1.amazonaws.com/dockerhub/
+# Leave unset to pull directly from Docker Hub (original behavior).
+ARG PULL_THROUGH_PREFIX=
+FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
 
 WORKDIR /opt/ml/code
 
+# Single pip-install layer: any change to requirements.txt invalidates exactly
+# one cached layer. nfl_data_py needs --no-deps (mord/old-numpy conflict), so
+# it runs in the same RUN but as a separate pip call. appdirs/fastparquet are
+# runtime deps of nfl_data_py that we install explicitly since --no-deps
+# skipped them.
 COPY batch/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir nfl_data_py==0.3.3 && \
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt \
+      appdirs fastparquet && \
+    pip install --no-cache-dir --break-system-packages --no-deps nfl_data_py==0.3.3 && \
     pip check
 
-COPY . .
+# Only copy paths that batch/train.py actually imports (strategy 2b).
+# Previously this was `COPY . .`, which pulled in app.py, static/, templates/,
+# tune_*.py, benchmark_*.py, etc. — none of which the training entrypoint uses.
+# .dockerignore handles the coarse exclusions; these explicit COPYs shrink
+# the final layer by dropping the Flask UI and scratch scripts from the image.
+COPY batch/ batch/
+COPY shared/ shared/
+COPY src/ src/
+COPY QB/ QB/
+COPY RB/ RB/
+COPY WR/ WR/
+COPY TE/ TE/
+COPY K/ K/
+COPY DST/ DST/
 
 ENTRYPOINT ["python", "batch/train.py"]

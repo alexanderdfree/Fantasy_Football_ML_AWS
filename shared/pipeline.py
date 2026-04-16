@@ -36,6 +36,24 @@ from shared.weather_features import merge_schedule_features
 from src.features.engineer import build_game_history_arrays, get_attn_static_columns
 
 
+def _resolve_nn_log_every(cfg):
+    """Resolve nn_log_every: cfg wins, else LOG_EVERY env var, else 10.
+
+    Batch jobs set LOG_EVERY=1 via containerOverrides so training prints every
+    epoch without requiring a code edit. Position runners that don't know about
+    that env var still get sensible behavior via the cfg key.
+    """
+    if "nn_log_every" in cfg and cfg["nn_log_every"] is not None:
+        return int(cfg["nn_log_every"])
+    env_val = os.environ.get("LOG_EVERY")
+    if env_val is not None:
+        try:
+            return int(env_val)
+        except ValueError:
+            pass
+    return 10
+
+
 # ---------------------------------------------------------------------------
 # Ridge hyperparameter tuning helpers
 # ---------------------------------------------------------------------------
@@ -276,7 +294,7 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
         model=model, optimizer=optimizer, scheduler=scheduler,
         criterion=criterion, device=device, target_names=targets,
         patience=cfg["nn_patience"], scheduler_per_batch=scheduler_per_batch,
-        log_every=cfg.get("nn_log_every", 10),
+        log_every=_resolve_nn_log_every(cfg),
     )
     history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
@@ -377,7 +395,7 @@ def _train_attention_nn(X_train, X_val, X_test,
         model=model, optimizer=optimizer, scheduler=scheduler,
         criterion=criterion, device=device, target_names=targets,
         patience=attn_patience, scheduler_per_batch=scheduler_per_batch,
-        log_every=cfg.get("nn_log_every", 10),
+        log_every=_resolve_nn_log_every(cfg),
     )
     history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
@@ -830,7 +848,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             model=model, optimizer=optimizer, scheduler=scheduler,
             criterion=criterion, device=device, target_names=targets,
             patience=cfg["nn_patience"], scheduler_per_batch=scheduler_per_batch,
-            log_every=cfg.get("nn_log_every", 10),
+            log_every=_resolve_nn_log_every(cfg),
         )
         trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 

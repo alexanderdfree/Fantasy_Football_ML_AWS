@@ -22,6 +22,10 @@ function escapeHtml(str) {
         .replace(/'/g, "&#039;");
 }
 
+function fmt(n, d = 1) {
+    return (n == null || isNaN(n)) ? "--" : Number(n).toFixed(d);
+}
+
 // Chart.js defaults
 Chart.defaults.color = "#9aa0b0";
 Chart.defaults.borderColor = "#2e3347";
@@ -95,6 +99,7 @@ function setupNavTabs() {
 
             if (view === "model-performance") loadMetrics();
             if (view === "standings") loadStandings();
+            if (view === "model-architecture") loadModelArchitecture();
         });
     });
 }
@@ -186,6 +191,8 @@ async function loadPredictions() {
         order: currentOrder,
     });
 
+    const container = document.querySelector("#view-predictions .table-container");
+    container.classList.add("loading");
     try {
         const data = await fetchJSON(`/api/predictions?${params}`);
         allPlayers = data.players || [];
@@ -194,7 +201,9 @@ async function loadPredictions() {
         console.error("Failed to load predictions:", e);
         allPlayers = [];
         document.getElementById("predictions-body").innerHTML =
-            '<tr><td colspan="12" class="error-message">Failed to load predictions.</td></tr>';
+            '<tr><td colspan="10" class="error-message">Failed to load predictions.</td></tr>';
+    } finally {
+        container.classList.remove("loading");
     }
 }
 
@@ -217,10 +226,10 @@ function renderTable() {
     const tbody = document.getElementById("predictions-body");
     tbody.innerHTML = page.map((p, i) => {
         const rank = start + i + 1;
-        const ridgeDelta = (p.ridge_pred - p.actual).toFixed(1);
-        const nnDelta = (p.nn_pred - p.actual).toFixed(1);
-        const ridgeCls = deltaClass(ridgeDelta);
-        const nnCls = deltaClass(nnDelta);
+        const ridgeDelta = (p.ridge_pred != null && p.actual != null) ? (p.ridge_pred - p.actual).toFixed(1) : null;
+        const nnDelta = (p.nn_pred != null && p.actual != null) ? (p.nn_pred - p.actual).toFixed(1) : null;
+        const ridgeCls = ridgeDelta != null ? deltaClass(ridgeDelta) : "delta-neutral";
+        const nnCls = nnDelta != null ? deltaClass(nnDelta) : "delta-neutral";
         const headshot = p.headshot
             ? `<img class="player-headshot" src="${escapeHtml(p.headshot)}" alt="" loading="lazy">`
             : `<div class="player-headshot"></div>`;
@@ -231,11 +240,11 @@ function renderTable() {
             <td class="col-pos"><span class="pos-badge pos-${escapeHtml(p.position)}">${escapeHtml(p.position)}</span></td>
             <td class="col-team">${escapeHtml(p.team)}</td>
             <td class="col-week">${p.week}</td>
-            <td class="col-actual"><strong>${p.actual.toFixed(1)}</strong></td>
-            <td class="col-pred ridge-col">${p.ridge_pred.toFixed(1)}</td>
-            <td class="col-pred nn-col">${p.nn_pred.toFixed(1)}</td>
-            <td class="col-delta ridge-col ${ridgeCls}">${fmtDelta(ridgeDelta)}</td>
-            <td class="col-delta nn-col ${nnCls}">${fmtDelta(nnDelta)}</td>
+            <td class="col-actual"><strong>${fmt(p.actual)}</strong></td>
+            <td class="col-pred ridge-col">${fmt(p.ridge_pred)}</td>
+            <td class="col-pred nn-col">${fmt(p.nn_pred)}</td>
+            <td class="col-delta ridge-col ${ridgeCls}">${ridgeDelta != null ? fmtDelta(ridgeDelta) : "--"}</td>
+            <td class="col-delta nn-col ${nnCls}">${nnDelta != null ? fmtDelta(nnDelta) : "--"}</td>
         </tr>`;
     }).join("");
 
@@ -296,6 +305,8 @@ function renderPagination(totalPages) {
 // ---------------------------------------------------------------------------
 async function loadStandings() {
     const position = getActivePosition("standings-position-filter");
+    const container = document.querySelector("#view-standings .table-container");
+    container.classList.add("loading");
 
     try {
         const data = await fetchJSON(`/api/top_players?position=${position}`);
@@ -308,9 +319,9 @@ async function loadStandings() {
                 <td class="col-pos"><span class="pos-badge pos-${escapeHtml(p.position)}">${escapeHtml(p.position)}</span></td>
                 <td class="col-team">${escapeHtml(p.team)}</td>
                 <td class="col-games">${p.games}</td>
-                <td class="col-actual"><strong>${p.avg_actual.toFixed(1)}</strong></td>
-                <td class="col-pred">${p.avg_ridge.toFixed(1)}</td>
-                <td class="col-pred">${p.avg_nn.toFixed(1)}</td>
+                <td class="col-actual"><strong>${fmt(p.avg_actual)}</strong></td>
+                <td class="col-pred">${fmt(p.avg_ridge)}</td>
+                <td class="col-pred">${fmt(p.avg_nn)}</td>
             </tr>
         `).join("");
 
@@ -320,7 +331,9 @@ async function loadStandings() {
     } catch (e) {
         console.error("Failed to load standings:", e);
         document.getElementById("standings-body").innerHTML =
-            '<tr><td colspan="9" class="error-message">Failed to load standings.</td></tr>';
+            '<tr><td colspan="8" class="error-message">Failed to load standings.</td></tr>';
+    } finally {
+        container.classList.remove("loading");
     }
 }
 
@@ -535,16 +548,22 @@ function setupModal() {
 async function openPlayerModal(playerId) {
     try {
         const data = await fetchJSON(`/api/player/${playerId}`);
-        if (data.error) return;
 
         document.getElementById("modal-name").textContent = data.name;
         document.getElementById("modal-pos-team").textContent = `${data.position} - ${data.team}`;
-        document.getElementById("modal-avg").textContent = data.season_avg.toFixed(1);
-        document.getElementById("modal-total").textContent = data.season_total.toFixed(1);
+        document.getElementById("modal-avg").textContent = fmt(data.season_avg);
+        document.getElementById("modal-total").textContent = fmt(data.season_total);
 
         const img = document.getElementById("modal-headshot");
-        if (data.headshot) { img.src = data.headshot; img.style.display = "block"; }
-        else { img.style.display = "none"; }
+        if (data.headshot) {
+            img.src = data.headshot;
+            img.alt = data.name;
+            img.style.display = "block";
+        } else {
+            img.removeAttribute("src");
+            img.alt = "";
+            img.style.display = "none";
+        }
 
         // Chart
         const weeks = data.weekly.map(w => `Wk ${w.week}`);
@@ -582,4 +601,127 @@ async function openPlayerModal(playerId) {
 
 function closeModal() {
     document.getElementById("player-modal").classList.remove("open");
+}
+
+// ---------------------------------------------------------------------------
+// Model Architecture
+// ---------------------------------------------------------------------------
+let modelArchitectureLoaded = false;
+
+const ARCH_CATEGORY_LABELS = {
+    specific: "Position-specific",
+    rolling: "Rolling windows (L3 / L5 / L8)",
+    prior_season: "Prior season",
+    ewma: "EWMA",
+    trend: "Trend",
+    share: "Share / HHI",
+    matchup: "Matchup vs opponent",
+    defense: "Opponent defense",
+    contextual: "Contextual",
+    weather_vegas: "Weather / Vegas",
+    attention_history: "Attention history (per-game inputs)",
+    other: "Other",
+};
+
+const ARCH_POSITION_ORDER = ["QB", "RB", "WR", "TE", "K", "DST"];
+
+function fmtList(arr) {
+    return (arr || []).join(", ") || "—";
+}
+
+function fmtLayers(arr) {
+    return Array.isArray(arr) && arr.length ? `[${arr.join(", ")}]` : "—";
+}
+
+function fmtNum(v, digits = 4) {
+    if (v === null || v === undefined) return "—";
+    if (typeof v === "number") {
+        if (Math.abs(v) < 0.01 && v !== 0) return v.toExponential(1);
+        return Number(v.toFixed(digits)).toString();
+    }
+    return String(v);
+}
+
+function renderArchConfigTable(positions) {
+    const cols = [
+        { key: "targets",            label: "Targets",    render: p => fmtList(p.targets) },
+        { key: "backbone_layers",    label: "Backbone",   render: p => fmtLayers(p.backbone_layers) },
+        { key: "head_hidden",        label: "Head",       render: p => fmtNum(p.head_hidden) },
+        { key: "dropout",            label: "Dropout",    render: p => fmtNum(p.dropout) },
+        { key: "lr",                 label: "LR",         render: p => fmtNum(p.lr) },
+        { key: "weight_decay",       label: "WD",         render: p => fmtNum(p.weight_decay) },
+        { key: "batch_size",         label: "Batch",      render: p => fmtNum(p.batch_size) },
+        { key: "epochs",             label: "Epochs",     render: p => fmtNum(p.epochs) },
+        { key: "patience",           label: "Patience",   render: p => fmtNum(p.patience) },
+        { key: "scheduler",          label: "Scheduler",  render: p => p.scheduler || "—" },
+        { key: "attention_enabled",  label: "Attn",       render: p => p.attention_enabled ? "✓" : "—" },
+        { key: "lightgbm_enabled",   label: "LGBM",       render: p => p.lightgbm_enabled ? "✓" : "—" },
+        { key: "feature_count",      label: "# Features", render: p => fmtNum(p.feature_count) },
+    ];
+
+    const head = `<tr><th>Position</th>${cols.map(c => `<th>${c.label}</th>`).join("")}</tr>`;
+    const rows = ARCH_POSITION_ORDER.map(pos => {
+        const p = positions[pos];
+        if (!p) return "";
+        const cells = cols.map(c => `<td>${c.render(p)}</td>`).join("");
+        return `<tr><td class="arch-pos-cell">${pos}</td>${cells}</tr>`;
+    }).join("");
+
+    return `<table class="arch-table"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderArchFeatureAccordions(positions) {
+    return ARCH_POSITION_ORDER.map(pos => {
+        const p = positions[pos];
+        if (!p) return "";
+        const features = p.features || {};
+        const overrides = p.head_hidden_overrides || {};
+        const overrideStr = Object.keys(overrides).length
+            ? Object.entries(overrides).map(([k, v]) => `${k}: ${v}`).join(", ")
+            : null;
+
+        const sections = Object.keys(ARCH_CATEGORY_LABELS)
+            .filter(key => features[key] && features[key].length)
+            .map(key => {
+                const chips = features[key].map(f => `<span class="feature-chip">${f}</span>`).join("");
+                return `<div class="feature-category">
+                    <div class="feature-category-title">${ARCH_CATEGORY_LABELS[key]} <span class="feature-category-count">(${features[key].length})</span></div>
+                    <div class="feature-chip-row">${chips}</div>
+                </div>`;
+            }).join("");
+
+        const meta = [
+            `<span><strong>Targets:</strong> ${fmtList(p.targets)}</span>`,
+            `<span><strong>Huber δ (total):</strong> ${fmtNum(p.huber_delta_total)}</span>`,
+            overrideStr ? `<span><strong>Head overrides:</strong> ${overrideStr}</span>` : "",
+        ].filter(Boolean).join(" · ");
+
+        return `<details class="arch-accordion">
+            <summary>
+                <span class="arch-pos-label">${pos}</span>
+                <span class="arch-pos-count">${p.feature_count} features</span>
+            </summary>
+            <div class="arch-accordion-body">
+                <div class="arch-accordion-meta">${meta}</div>
+                ${sections}
+            </div>
+        </details>`;
+    }).join("");
+}
+
+async function loadModelArchitecture() {
+    if (modelArchitectureLoaded) return;
+    const tableEl = document.getElementById("arch-config-table");
+    const accEl = document.getElementById("arch-feature-accordions");
+    try {
+        const data = await fetchJSON("/api/model_architecture");
+        if (data.error) throw new Error(data.error);
+        tableEl.innerHTML = renderArchConfigTable(data.positions || {});
+        accEl.innerHTML = renderArchFeatureAccordions(data.positions || {});
+        modelArchitectureLoaded = true;
+    } catch (e) {
+        console.error("Failed to load model architecture:", e);
+        tableEl.innerHTML = `<p class="arch-error">Failed to load: ${e.message}</p>`;
+        accEl.innerHTML = "";
+    }
 }

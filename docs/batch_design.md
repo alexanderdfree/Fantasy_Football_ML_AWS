@@ -105,9 +105,20 @@ ENTRYPOINT ["python", "batch/train.py"]
 |---|---|---|
 | `TRAINING_DATA_DIR` | `/opt/ml/input/data/training/` | Where parquet files are downloaded to |
 | `MODEL_OUTPUT_DIR` | `/opt/ml/model/` | Where model artifacts are written |
-| `LOG_EVERY` | `1` | Epoch logging frequency |
+| `LOG_EVERY` | `1` (batch) / `10` (default) | Epoch logging frequency; read by `shared.pipeline._resolve_nn_log_every` |
 | `S3_BUCKET` | (required) | S3 bucket for data and artifacts |
 | `S3_DATA_PREFIX` | `data` | S3 key prefix for training data |
+| `REQUIRE_GPU` | `1` | Fail fast if CUDA unavailable. **Auto-skipped for K/DST** (CPU-only pipelines). |
+
+### Launcher Environment Variables (`batch/launch.py`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `FF_S3_BUCKET` | `ff-predictor-training` | Override bucket name (for staging accounts) |
+| `FF_JOB_QUEUE` | `ff-training-queue` | Override Batch job queue |
+| `FF_JOB_DEFINITION` | `ff-training-job` | Override Batch job definition (GPU) |
+| `FF_JOB_DEFINITION_CPU` | (unset) | **Optional CPU job definition for K/DST.** When set, K/DST jobs submit here instead of the GPU queue — saves ~60% of Spot spend on those positions. Falls back to the GPU definition when unset. |
+| `FF_WAIT_TIMEOUT` | `10800` (3h) | Wall-clock cap for `wait_for_jobs` |
 
 ### Container Dependencies (`batch/requirements.txt`)
 
@@ -301,3 +312,106 @@ docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/ff-training:latest
 The existing Flask Dockerfile and `app.py` inference code are completely unaffected.
 CUDA auto-detection in `shared/pipeline.py` falls back to CPU. Local pipeline scripts
 (`python -m QB.run_qb_pipeline`) work identically without any AWS dependencies.
+
+## CPU-only Queue for K/DST (optional)
+
+K and DST pipelines are Ridge/LGBM only — they never touch CUDA. Running them on
+g4dn.xlarge Spot costs ~$0.16/hr of GPU time they won't use. To route them to a
+cheaper CPU Spot pool:
+
+1. Register a CPU compute env (e.g. `c6i.large` Spot) + job queue + CPU job
+   definition (`ff-training-job-cpu`) pointing at the same ECR image.
+2. Export `FF_JOB_DEFINITION_CPU=ff-training-job-cpu` before running
+   `batch/launch.py`. K and DST will submit there; QB/RB/WR/TE stay on the GPU
+   queue.
+3. When `FF_JOB_DEFINITION_CPU` is unset, K/DST fall back to the GPU definition —
+   so it's safe to deploy this code before the CPU infra exists.
+
+## CI/CD
+
+Two workflows cover the training image and the inference service:
+
+- `.github/workflows/batch-image.yml` — builds `batch/Dockerfile.train`, pushes
+  to ECR (`ff-training`), and registers a new revision of the `ff-training-job`
+  Batch job definition pinned to the new image SHA. Triggered by changes under
+  `batch/`, `shared/`, position dirs, `src/`, or `requirements.txt`.
+- `.github/workflows/deploy.yml` — builds the inference `Dockerfile`, pushes to
+  ECR (`fantasy-predictor`), and updates the ECS service. Now gated on the
+  full test suite.
+- `.github/workflows/tests.yml` — runs pytest across **all** position test
+  directories plus `batch/` and `shared/` on every push and PR.
+
+## Cold-start optimization (image pull acceleration)
+
+The largest chunk of per-job wall time on a cold Spot instance is pulling the
+~7–8 GB `pytorch/pytorch:*-cuda12.6-cudnn9-runtime` base image from a public
+registry. Three stacking optimizations target this:
+
+### 2b. Explicit COPYs in Dockerfile.train
+
+`batch/Dockerfile.train` used to end with `COPY . .`, shipping the Flask UI
+(`app.py`, `static/`, `templates/`), scratch scripts (`tune_*.py`,
+`benchmark_*.py`, `analysis_*.py`), and everything else at the repo root into
+the training image. The Dockerfile now copies only the dirs that
+`batch/train.py` actually imports: `batch/`, `shared/`, `src/`, and the six
+position dirs. `.dockerignore` handles the coarse exclusions (caches, outputs,
+`*.db` files, `data/`).
+
+### 2c. ECR pull-through cache for the base image
+
+One-time AWS setup:
+
+```bash
+aws ecr create-pull-through-cache-rule \
+  --ecr-repository-prefix dockerhub \
+  --upstream-registry-url registry-1.docker.io \
+  --region us-east-1
+```
+
+Ensure the Batch instance role (and any CI role doing the build) has
+`ecr:BatchImportUpstreamImage` in addition to the standard pull permissions —
+without it the pull-through rule silently falls back to the upstream fetch.
+
+The Dockerfile accepts a `PULL_THROUGH_PREFIX` build arg so the base `FROM`
+can be routed through ECR:
+
+```bash
+--build-arg PULL_THROUGH_PREFIX=<account>.dkr.ecr.us-east-1.amazonaws.com/dockerhub/
+```
+
+After the first pull seeds the cache, every subsequent Batch instance in the
+region pulls the base layers from ECR's local endpoints instead of Docker Hub.
+
+### 2a. SOCI (Seekable OCI) lazy loading
+
+SOCI v2 is enabled by default on all ECS accounts (and AWS Batch uses ECS
+under the hood). Publishing a SOCI index alongside the image in ECR lets the
+container start executing before the full image is pulled — essential files
+stream first, the rest loads in the background.
+
+One-time developer setup: install the `soci` CLI from
+[soci-snapshotter releases](https://github.com/awslabs/soci-snapshotter/releases).
+No Batch or ECS configuration changes are required.
+
+### Build & push
+
+`batch/build_and_push.sh` wires all three together:
+
+```bash
+./batch/build_and_push.sh                        # defaults: us-east-1, ff-training:latest
+IMAGE_TAG=$(git rev-parse --short HEAD) ./batch/build_and_push.sh
+USE_PULL_THROUGH=0 ./batch/build_and_push.sh     # bypass pull-through (for debugging)
+SKIP_SOCI=1 ./batch/build_and_push.sh            # skip SOCI index even if soci is installed
+```
+
+The script logs in to ECR, builds with the pull-through base, pushes the
+image, and then (if `soci` is present) creates and pushes the SOCI index
+next to the image tag. If `soci` isn't installed, the script warns and
+exits cleanly — image still works, cold starts just aren't accelerated.
+
+### Expected impact
+
+Pull phase of a cold Batch job startup: ~120 s → ~20–40 s. Combined with the
+existing ~30–60 s of boot + data load, total Batch startup lands at ~60–90 s
+on the current `g4dn.xlarge`.
+

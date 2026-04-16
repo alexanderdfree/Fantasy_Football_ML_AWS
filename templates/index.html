@@ -29,6 +29,7 @@
         <button class="tab active" data-view="predictions">Predictions</button>
         <button class="tab" data-view="standings">Season Leaders</button>
         <button class="tab" data-view="model-performance">Model Performance</button>
+        <button class="tab" data-view="model-architecture">Model Architecture</button>
     </nav>
 
     <!-- Loading Overlay -->
@@ -147,7 +148,6 @@
                             <th class="col-actual">Avg Actual</th>
                             <th class="col-pred">Avg Ridge</th>
                             <th class="col-pred">Avg NN</th>
-                            <th class="col-pred">Avg Wth NN</th>
                         </tr>
                     </thead>
                     <tbody id="standings-body">
@@ -241,6 +241,62 @@
                 <canvas id="weekly-mae-chart"></canvas>
             </div>
         </section>
+
+        <!-- ============ MODEL ARCHITECTURE VIEW ============ -->
+        <section id="view-model-architecture" class="view">
+            <div class="approach-banner">
+                <div class="approach-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+                    </svg>
+                </div>
+                <div>
+                    <div class="approach-title">Per-Position Multi-Head Neural Networks</div>
+                    <div class="approach-desc">Each position has a dedicated multi-target model that decomposes fantasy points into position-relevant sub-components (e.g. passing / rushing / TDs for QB). Ensembled with Ridge regression, an attention-based game-history variant, and LightGBM where applicable. Config and features below are loaded live from the Python config modules.</div>
+                </div>
+            </div>
+
+            <div class="section-header">Neural Network Architecture</div>
+            <pre class="arch-diagram">MultiHeadNet (dense)
+    Input (static features)
+      └─ Shared backbone: [Linear → BatchNorm1d → ReLU → Dropout] × N
+         └─ Per-target head: Linear → ReLU → Linear → (optional clamp ≥ 0)
+      └─ "total" output = sum of target heads
+
+MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
+    Static features ─────────────────────────────┐
+    Game history [B, seq_len, game_dim]          │
+     └─ GameEncoder: Linear → ReLU               │
+     └─ (optional) Positional embedding          │
+     └─ AttentionPool: learned queries,          │
+        multi-head scaled dot-product attn ──────┤
+                                                 ▼
+                    Concat [static_dim + n_heads * d_model]
+                     └─ Shared backbone (BatchNorm + Dropout)
+                     └─ Per-target heads (GatedTDHead for td_points)</pre>
+
+            <div class="section-header">Training Loop</div>
+            <ul class="arch-bullets">
+                <li><strong>Optimizer:</strong> <code>AdamW</code> with per-position LR and weight decay.</li>
+                <li><strong>Loss:</strong> <code>MultiTargetLoss</code> — sum of per-target Huber + <code>w_total · Huber(total)</code> + optional BCE on the TD gate logit.</li>
+                <li><strong>Scaling:</strong> <code>StandardScaler</code> fit on train, applied and clipped to <code>[-4, 4]</code>.</li>
+                <li><strong>Gradient clipping:</strong> <code>clip_grad_norm_(max_norm=1.0)</code> each step.</li>
+                <li><strong>Schedulers:</strong> <code>CosineAnnealingWarmRestarts</code>, <code>OneCycleLR</code>, or <code>ReduceLROnPlateau</code> (per-position).</li>
+                <li><strong>Early stopping:</strong> tracks <code>val_mae_total</code>; restores the best <code>state_dict</code> when patience expires.</li>
+                <li><strong>Data split:</strong> Train 2012–2023, Val 2024, Test 2025 (Kickers: 2015+ only, post-PAT rule change).</li>
+                <li><strong>Artifacts:</strong> <code>{pos}_multihead_nn.pt</code>, <code>{pos}_attention_nn.pt</code>, <code>nn_scaler.pkl</code>, Ridge/LightGBM models — tarred and uploaded to S3.</li>
+            </ul>
+
+            <div class="section-header">Per-Position Configuration</div>
+            <div id="arch-config-table" class="arch-table-wrap">
+                <p class="arch-loading">Loading configuration…</p>
+            </div>
+
+            <div class="section-header">Features by Position</div>
+            <div id="arch-feature-accordions">
+                <p class="arch-loading">Loading features…</p>
+            </div>
+        </section>
     </main>
 
     <!-- Player Detail Modal -->
@@ -248,7 +304,7 @@
         <div class="modal-content">
             <button class="modal-close" id="modal-close">&times;</button>
             <div class="modal-header">
-                <img id="modal-headshot" class="modal-headshot" src="" alt="">
+                <img id="modal-headshot" class="modal-headshot" alt="" loading="lazy">
                 <div>
                     <h2 id="modal-name"></h2>
                     <span id="modal-pos-team" class="modal-pos-team"></span>

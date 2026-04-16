@@ -1,10 +1,8 @@
 """Tests for batch/train.py — position registry, S3 staging, artifact handling."""
 import argparse
-import json
 import os
 import shutil
 import sys
-import tarfile
 import tempfile
 from pathlib import Path
 from unittest import mock
@@ -112,96 +110,65 @@ class TestArgumentParsing:
 
 
 # ---------------------------------------------------------------------------
-# Environment variable handling
+# _assert_gpu: CPU-only bypass
 # ---------------------------------------------------------------------------
 
-class TestEnvironmentVariables:
-    def test_training_data_dir_default(self):
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("TRAINING_DATA_DIR", None)
-            data_dir = os.environ.get("TRAINING_DATA_DIR", "/opt/ml/input/data/training")
-            assert data_dir == "/opt/ml/input/data/training"
+class TestAssertGpu:
+    def test_cpu_only_position_skips_require_gpu(self):
+        """K/DST should never fail _assert_gpu even when REQUIRE_GPU=1."""
+        from batch.train import _assert_gpu
+        with mock.patch.dict(os.environ, {"REQUIRE_GPU": "1"}), \
+             mock.patch("batch.train.torch.cuda.is_available", return_value=False):
+            # Should NOT raise for K or DST
+            _assert_gpu("K")
+            _assert_gpu("DST")
 
-    def test_training_data_dir_override(self):
-        with mock.patch.dict(os.environ, {"TRAINING_DATA_DIR": "/custom/data"}):
-            data_dir = os.environ.get("TRAINING_DATA_DIR", "/opt/ml/input/data/training")
-            assert data_dir == "/custom/data"
+    def test_gpu_position_raises_when_require_gpu_and_no_cuda(self):
+        from batch.train import _assert_gpu
+        with mock.patch.dict(os.environ, {"REQUIRE_GPU": "1"}), \
+             mock.patch("batch.train.torch.cuda.is_available", return_value=False):
+            with pytest.raises(RuntimeError, match="REQUIRE_GPU=1"):
+                _assert_gpu("RB")
 
-    def test_model_output_dir_default(self):
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("MODEL_OUTPUT_DIR", None)
-            model_dir = os.environ.get("MODEL_OUTPUT_DIR", "/opt/ml/model")
-            assert model_dir == "/opt/ml/model"
+    def test_gpu_position_passes_when_require_gpu_off(self):
+        from batch.train import _assert_gpu
+        with mock.patch.dict(os.environ, {"REQUIRE_GPU": "0"}), \
+             mock.patch("batch.train.torch.cuda.is_available", return_value=False):
+            _assert_gpu("RB")  # should not raise
 
-    def test_s3_bucket_default(self):
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("S3_BUCKET", None)
-            bucket = os.environ.get("S3_BUCKET", "ff-predictor-training")
-            assert bucket == "ff-predictor-training"
 
-    def test_s3_bucket_override(self):
-        with mock.patch.dict(os.environ, {"S3_BUCKET": "my-bucket"}):
-            bucket = os.environ.get("S3_BUCKET", "ff-predictor-training")
-            assert bucket == "my-bucket"
+# ---------------------------------------------------------------------------
+# LOG_EVERY env-var plumbing (replaces old monkey-patch tests)
+# ---------------------------------------------------------------------------
 
-    def test_log_every_default(self):
+class TestResolveNnLogEvery:
+    """shared.pipeline._resolve_nn_log_every is the new injection point."""
+
+    def test_cfg_wins(self):
+        from shared.pipeline import _resolve_nn_log_every
+        with mock.patch.dict(os.environ, {"LOG_EVERY": "99"}):
+            assert _resolve_nn_log_every({"nn_log_every": 3}) == 3
+
+    def test_env_var_used_when_cfg_missing(self):
+        from shared.pipeline import _resolve_nn_log_every
+        with mock.patch.dict(os.environ, {"LOG_EVERY": "1"}):
+            assert _resolve_nn_log_every({}) == 1
+
+    def test_default_when_neither_set(self):
+        from shared.pipeline import _resolve_nn_log_every
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("LOG_EVERY", None)
-            log_every = int(os.environ.get("LOG_EVERY", "1"))
-            assert log_every == 1
+            assert _resolve_nn_log_every({}) == 10
 
-    def test_log_every_override(self):
-        with mock.patch.dict(os.environ, {"LOG_EVERY": "5"}):
-            log_every = int(os.environ.get("LOG_EVERY", "1"))
-            assert log_every == 5
+    def test_non_int_env_var_falls_back_to_default(self):
+        from shared.pipeline import _resolve_nn_log_every
+        with mock.patch.dict(os.environ, {"LOG_EVERY": "not-a-number"}):
+            assert _resolve_nn_log_every({}) == 10
 
-
-# ---------------------------------------------------------------------------
-# Monkey-patching of run_pipeline
-# ---------------------------------------------------------------------------
-
-class TestRunPipelinePatching:
-    def test_patch_injects_nn_log_every(self):
-        import shared.pipeline as pipeline_mod
-        _orig = pipeline_mod.run_pipeline
-
-        captured = {}
-
-        def _patched(position, cfg, *a, **kw):
-            captured["cfg"] = dict(cfg)
-            return None
-
-        log_every = 1
-        def _patched_with_inject(position, cfg, *a, **kw):
-            cfg["nn_log_every"] = log_every
-            return _patched(position, cfg, *a, **kw)
-
-        pipeline_mod.run_pipeline = _patched_with_inject
-        try:
-            pipeline_mod.run_pipeline("TEST", {"some_key": "value"})
-            assert captured["cfg"]["nn_log_every"] == 1
-        finally:
-            pipeline_mod.run_pipeline = _orig
-
-    def test_patch_preserves_existing_cfg_keys(self):
-        import shared.pipeline as pipeline_mod
-        _orig = pipeline_mod.run_pipeline
-
-        captured = {}
-
-        def _patched_with_inject(position, cfg, *a, **kw):
-            cfg["nn_log_every"] = 1
-            captured["cfg"] = dict(cfg)
-            return None
-
-        pipeline_mod.run_pipeline = _patched_with_inject
-        try:
-            pipeline_mod.run_pipeline("TEST", {"existing_key": 42, "other": "val"})
-            assert captured["cfg"]["existing_key"] == 42
-            assert captured["cfg"]["other"] == "val"
-            assert captured["cfg"]["nn_log_every"] == 1
-        finally:
-            pipeline_mod.run_pipeline = _orig
+    def test_null_cfg_value_treated_as_missing(self):
+        from shared.pipeline import _resolve_nn_log_every
+        with mock.patch.dict(os.environ, {"LOG_EVERY": "7"}):
+            assert _resolve_nn_log_every({"nn_log_every": None}) == 7
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +204,7 @@ class TestDownloadData:
 
 
 # ---------------------------------------------------------------------------
-# S3 artifact upload logic
+# S3 artifact upload logic — empty-dir and missing-metrics guards
 # ---------------------------------------------------------------------------
 
 class TestUploadArtifacts:
@@ -249,9 +216,10 @@ class TestUploadArtifacts:
         mock_boto_client.return_value = mock_s3
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create fake model files
+            # Create fake model files + required metrics file
             Path(tmpdir, "ridge_model.pkl").write_text("fake")
             Path(tmpdir, "nn_model.pt").write_text("fake")
+            Path(tmpdir, "benchmark_metrics.json").write_text("{}")
 
             upload_artifacts("my-bucket", "RB", tmpdir)
 
@@ -259,6 +227,27 @@ class TestUploadArtifacts:
         call_args = mock_s3.upload_file.call_args
         assert call_args.args[1] == "my-bucket"
         assert call_args.args[2] == "models/RB/model.tar.gz"
+
+    def test_raises_on_empty_model_dir(self, tmp_path):
+        from batch.train import upload_artifacts
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        with pytest.raises(RuntimeError, match="empty"):
+            upload_artifacts("bucket", "RB", str(empty))
+
+    def test_raises_when_model_dir_missing(self, tmp_path):
+        from batch.train import upload_artifacts
+        missing = tmp_path / "not-there"
+        with pytest.raises(RuntimeError, match="does not exist"):
+            upload_artifacts("bucket", "RB", str(missing))
+
+    def test_raises_when_metrics_missing(self, tmp_path):
+        from batch.train import upload_artifacts
+        d = tmp_path / "m"
+        d.mkdir()
+        (d / "ridge_model.pkl").write_text("x")
+        with pytest.raises(RuntimeError, match="benchmark_metrics.json"):
+            upload_artifacts("bucket", "RB", str(d))
 
 
 # ---------------------------------------------------------------------------
@@ -315,12 +304,6 @@ class TestArtifactCopy:
         assert (dst / "ridge_model.pkl").exists()
         assert (dst / "nn_model.pt").exists()
 
-    def test_no_copy_when_src_missing(self, tmp_path):
-        src_model_dir = str(tmp_path / "RB" / "outputs" / "models")
-        assert not os.path.isdir(src_model_dir)
-        if os.path.isdir(src_model_dir):
-            pytest.fail("Should not reach here")
-
 
 # ---------------------------------------------------------------------------
 # Full main() integration test (mocked)
@@ -329,10 +312,9 @@ class TestArtifactCopy:
 class TestMainIntegration:
     @mock.patch("batch.train.upload_artifacts")
     @mock.patch("batch.train.shutil.copytree")
-    @mock.patch("batch.train.os.path.isdir", return_value=True)
     @mock.patch("batch.train.download_data")
     @mock.patch("batch.train.pd.read_parquet")
-    def test_main_standard_position(self, mock_parquet, mock_download, mock_isdir, mock_copytree, mock_upload):
+    def test_main_standard_position(self, mock_parquet, mock_download, mock_copytree, mock_upload, tmp_path):
         import pandas as pd
         mock_df = pd.DataFrame({"col": [1, 2, 3]})
         mock_parquet.return_value = mock_df
@@ -340,16 +322,21 @@ class TestMainIntegration:
         runner_called = {}
         fake_mod = mock.MagicMock()
 
+        # Pipeline must return a non-None result now — return a minimal metrics dict
         def fake_runner(train_df, val_df, test_df, seed=42):
             runner_called["args"] = (len(train_df), len(val_df), len(test_df), seed)
+            return {"ridge_metrics": {"total": {"mae": 1.0, "r2": 0.5}}}
 
         fake_mod.fake_runner = fake_runner
+
+        model_dir = tmp_path / "model"
+        data_dir = tmp_path / "data"
 
         with mock.patch("sys.argv", ["train.py", "--position", "RB"]), \
              mock.patch.dict(os.environ, {
                  "S3_BUCKET": "test-bucket",
-                 "TRAINING_DATA_DIR": "/data",
-                 "MODEL_OUTPUT_DIR": "/model",
+                 "TRAINING_DATA_DIR": str(data_dir),
+                 "MODEL_OUTPUT_DIR": str(model_dir),
                  "REQUIRE_GPU": "0",
              }), \
              mock.patch("batch.train.POSITIONS", {
@@ -369,17 +356,19 @@ class TestMainIntegration:
         assert mock_parquet.call_count == 3
         assert "args" in runner_called
         mock_upload.assert_called_once()
+        # Metrics file must have been written before upload
+        assert (model_dir / "benchmark_metrics.json").exists()
 
     @mock.patch("batch.train.upload_artifacts")
     @mock.patch("batch.train.shutil.copytree")
-    @mock.patch("batch.train.os.path.isdir", return_value=True)
-    def test_main_special_position_no_download(self, mock_isdir, mock_copytree, mock_upload):
-        """main() for K/DST should NOT download data from S3."""
+    def test_main_special_position_no_download(self, mock_copytree, mock_upload, tmp_path):
+        """main() for K/DST should NOT download data from S3, and skip REQUIRE_GPU."""
         runner_called = {}
         fake_mod = mock.MagicMock()
 
         def fake_k_runner(seed=42):
             runner_called["seed"] = seed
+            return {"ridge_metrics": {"total": {"mae": 1.0, "r2": 0.5}}}
 
         fake_mod.fake_k_runner = fake_k_runner
 
@@ -389,14 +378,20 @@ class TestMainIntegration:
                 return fake_mod
             return original_import(name, *args, **kwargs)
 
+        model_dir = tmp_path / "model"
+
         with mock.patch("sys.argv", ["train.py", "--position", "K"]), \
-             mock.patch.dict(os.environ, {"MODEL_OUTPUT_DIR": "/model", "REQUIRE_GPU": "0"}), \
+             mock.patch.dict(os.environ, {"MODEL_OUTPUT_DIR": str(model_dir), "REQUIRE_GPU": "1"}), \
              mock.patch("batch.train.POSITIONS", {
                  "K": ("fake_k_mod", "fake_k_runner", False),
              }), \
+             mock.patch("batch.train.torch.cuda.is_available", return_value=False), \
              mock.patch("builtins.__import__", side_effect=patched_import):
             from batch.train import main
+            # REQUIRE_GPU=1 with no CUDA would normally raise, but K is in
+            # CPU_ONLY_POSITIONS so _assert_gpu skips the check.
             main()
 
         assert runner_called["seed"] == 42
         mock_upload.assert_called_once()
+        assert (model_dir / "benchmark_metrics.json").exists()

@@ -78,9 +78,41 @@ from DST.dst_config import (
     DST_NN_DROPOUT, DST_NN_NON_NEGATIVE_TARGETS,
 )
 
+# Full config modules (used by /api/model_architecture to surface per-position
+# hyperparameters, feature lists, and training flags to the frontend).
+import QB.qb_config as qb_cfg
+import RB.rb_config as rb_cfg
+import WR.wr_config as wr_cfg
+import TE.te_config as te_cfg
+import K.k_config as k_cfg
+import DST.dst_config as dst_cfg
+from shared.weather_features import WEATHER_FEATURES_ALL
+
 app = Flask(__name__)
 
 _cache = {}
+
+
+def _safe_num(v):
+    """Convert NaN/inf to None so jsonify produces valid JSON (browsers reject NaN)."""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(f):
+        return None
+    return f
+
+
+def _safe_str(v, default=""):
+    """Return default for NaN/None/non-string values."""
+    if v is None:
+        return default
+    if isinstance(v, float) and not np.isfinite(v):
+        return default
+    return str(v)
 
 
 @app.errorhandler(Exception)
@@ -487,7 +519,6 @@ def api_predictions():
     position = request.args.get("position", "ALL")
     week = request.args.get("week", "ALL")
     search = request.args.get("search", "").strip().lower()
-    scoring = request.args.get("scoring", "ppr")
     sort_by = request.args.get("sort", "fantasy_points")
     order = request.args.get("order", "desc")
 
@@ -501,42 +532,28 @@ def api_predictions():
     if search:
         df = df[df["player_display_name"].str.lower().str.contains(search, na=False, regex=False)]
 
-    scoring_col = {
-        "ppr": "fantasy_points",
-        "half_ppr": "fantasy_points_half_ppr",
-        "standard": "fantasy_points_standard",
-    }.get(scoring, "fantasy_points")
-
     rows = []
     for _, r in df.iterrows():
-        actual = round(r[scoring_col], 2) if scoring_col in r.index else round(r["fantasy_points"], 2)
         row = {
-            "player_id": r["player_id"],
-            "name": r["player_display_name"],
-            "position": r["position"],
-            "team": r["recent_team"],
+            "player_id": _safe_str(r["player_id"]),
+            "name": _safe_str(r["player_display_name"]),
+            "position": _safe_str(r["position"]),
+            "team": _safe_str(r["recent_team"]),
             "week": int(r["week"]),
-            "actual": actual,
-            "ridge_pred": r["ridge_pred"],
-            "nn_pred": r["nn_pred"],
-            "headshot": r.get("headshot_url", ""),
+            "actual": _safe_num(round(r["fantasy_points"], 2)),
+            "ridge_pred": _safe_num(r["ridge_pred"]),
+            "nn_pred": _safe_num(r["nn_pred"]),
+            "headshot": _safe_str(r.get("headshot_url", "")),
         }
         rows.append(row)
 
     reverse = order == "desc"
     if sort_by in ("actual", "ridge_pred", "nn_pred", "week"):
-        rows.sort(key=lambda x: x.get(sort_by, 0) or 0, reverse=reverse)
+        rows.sort(key=lambda x: x.get(sort_by) or 0, reverse=reverse)
     else:
-        rows.sort(key=lambda x: x.get("actual", 0), reverse=reverse)
+        rows.sort(key=lambda x: x.get("actual") or 0, reverse=reverse)
 
-    scoring_note = None
-    if scoring != "ppr":
-        scoring_note = "Predictions are PPR-trained; actuals reflect selected scoring format"
-
-    resp = {"players": rows, "total": len(rows)}
-    if scoring_note:
-        resp["scoring_note"] = scoring_note
-    return jsonify(resp)
+    return jsonify({"players": rows, "total": len(rows)})
 
 
 @app.route("/api/metrics")
@@ -564,21 +581,21 @@ def api_player(player_id):
     for _, r in df.iterrows():
         entry = {
             "week": int(r["week"]),
-            "actual": round(r["fantasy_points"], 2),
-            "ridge_pred": r["ridge_pred"],
-            "nn_pred": r["nn_pred"],
+            "actual": _safe_num(round(r["fantasy_points"], 2)),
+            "ridge_pred": _safe_num(r["ridge_pred"]),
+            "nn_pred": _safe_num(r["nn_pred"]),
         }
         weekly.append(entry)
 
     return jsonify({
         "player_id": player_id,
-        "name": info["player_display_name"],
-        "position": info["position"],
-        "team": info["recent_team"],
-        "headshot": info.get("headshot_url", ""),
+        "name": _safe_str(info["player_display_name"]),
+        "position": _safe_str(info["position"]),
+        "team": _safe_str(info["recent_team"]),
+        "headshot": _safe_str(info.get("headshot_url", "")),
         "weekly": weekly,
-        "season_avg": round(df["fantasy_points"].mean(), 2),
-        "season_total": round(df["fantasy_points"].sum(), 2),
+        "season_avg": _safe_num(round(df["fantasy_points"].mean(), 2)),
+        "season_total": _safe_num(round(df["fantasy_points"].sum(), 2)),
     })
 
 
@@ -606,13 +623,13 @@ def api_top_players():
     rows = []
     for _, r in avg.iterrows():
         row = {
-            "player_id": r["player_id"],
-            "name": r["player_display_name"],
-            "position": r["position"],
-            "team": r["recent_team"],
-            "avg_actual": round(r["avg_actual"], 2),
-            "avg_ridge": round(r["avg_ridge"], 2),
-            "avg_nn": round(r["avg_nn"], 2),
+            "player_id": _safe_str(r["player_id"]),
+            "name": _safe_str(r["player_display_name"]),
+            "position": _safe_str(r["position"]),
+            "team": _safe_str(r["recent_team"]),
+            "avg_actual": _safe_num(round(r["avg_actual"], 2)),
+            "avg_ridge": _safe_num(round(r["avg_ridge"], 2)),
+            "avg_nn": _safe_num(round(r["avg_nn"], 2)),
             "games": int(r["games"]),
         }
         rows.append(row)
@@ -646,6 +663,162 @@ def api_position_details():
         info.update(details.get(pos, {}))
         result[pos] = info
     return jsonify(result)
+
+
+def _categorize_features(features):
+    """Bucket feature names into human-readable categories by prefix."""
+    weather_set = set(WEATHER_FEATURES_ALL) | {"game_wind", "game_temp"}
+    categories = {
+        "rolling": [], "prior_season": [], "ewma": [], "trend": [],
+        "share": [], "matchup": [], "defense": [], "weather_vegas": [],
+        "contextual": [], "other": [],
+    }
+    contextual_set = {
+        "is_home", "week", "is_returning_from_absence", "days_rest",
+        "practice_status", "game_status", "depth_chart_rank", "rest_days",
+        "div_game", "spread_line",
+    }
+    for f in features:
+        if f in weather_set:
+            categories["weather_vegas"].append(f)
+        elif f.startswith("rolling_"):
+            categories["rolling"].append(f)
+        elif f.startswith("prior_season_"):
+            categories["prior_season"].append(f)
+        elif f.startswith("ewma_"):
+            categories["ewma"].append(f)
+        elif f.startswith("trend_") or f.endswith("_trend"):
+            categories["trend"].append(f)
+        elif "share" in f or "hhi" in f:
+            categories["share"].append(f)
+        elif f.startswith("opp_def_") or (f.startswith("opp_") and "def" in f):
+            categories["defense"].append(f)
+        elif f.startswith("opp_") or f.endswith("_rank_vs_pos"):
+            categories["matchup"].append(f)
+        elif f in contextual_set:
+            categories["contextual"].append(f)
+        else:
+            categories["other"].append(f)
+    return {k: v for k, v in categories.items() if v}
+
+
+def _position_arch_payload(pos, cfg, specific, targets, include_features,
+                           attn_history=None):
+    """Build the per-position JSON payload for /api/model_architecture.
+
+    `include_features` may be a categorized dict (QB/RB/WR/TE) or a flat list
+    (K/DST contextual); either shape is normalized to categorized groups.
+    """
+    get = lambda name, default=None: getattr(cfg, name, default)
+    prefix = pos.upper()
+
+    # Scheduler summary string
+    scheduler = get(f"{prefix}_SCHEDULER_TYPE", "unknown")
+    if scheduler == "cosine_warm_restarts":
+        t0 = get(f"{prefix}_COSINE_T0", "?")
+        tm = get(f"{prefix}_COSINE_T_MULT", "?")
+        em = get(f"{prefix}_COSINE_ETA_MIN", "?")
+        scheduler_str = f"CosineAnnealingWarmRestarts(T0={t0}, T_mult={tm}, eta_min={em})"
+    elif scheduler == "onecycle":
+        mx = get(f"{prefix}_ONECYCLE_MAX_LR", "?")
+        ps = get(f"{prefix}_ONECYCLE_PCT_START", "?")
+        scheduler_str = f"OneCycleLR(max_lr={mx}, pct_start={ps})"
+    elif scheduler == "plateau":
+        scheduler_str = "ReduceLROnPlateau"
+    else:
+        scheduler_str = str(scheduler)
+
+    # Normalize feature groupings
+    if isinstance(include_features, dict):
+        grouped = {k: list(v) for k, v in include_features.items() if v}
+        # Ensure position-specific features surface even if not keyed in dict
+        if "specific" not in grouped and specific:
+            grouped["specific"] = list(specific)
+        flat_features = [f for group in grouped.values() for f in group]
+    else:
+        flat = list(include_features or [])
+        grouped = {"specific": list(specific or [])}
+        grouped.update(_categorize_features(flat))
+        flat_features = list(specific or []) + flat
+
+    payload = {
+        "targets": list(targets),
+        "backbone_layers": list(get(f"{prefix}_NN_BACKBONE_LAYERS", [])),
+        "head_hidden": get(f"{prefix}_NN_HEAD_HIDDEN"),
+        "head_hidden_overrides": dict(get(f"{prefix}_NN_HEAD_HIDDEN_OVERRIDES", {}) or {}),
+        "dropout": get(f"{prefix}_NN_DROPOUT"),
+        "lr": get(f"{prefix}_NN_LR"),
+        "weight_decay": get(f"{prefix}_NN_WEIGHT_DECAY"),
+        "batch_size": get(f"{prefix}_NN_BATCH_SIZE"),
+        "epochs": get(f"{prefix}_NN_EPOCHS"),
+        "patience": get(f"{prefix}_NN_PATIENCE"),
+        "scheduler": scheduler_str,
+        "huber_delta_total": (get(f"{prefix}_HUBER_DELTAS", {}) or {}).get("total"),
+        "attention_enabled": bool(get(f"{prefix}_TRAIN_ATTENTION_NN", False)),
+        "lightgbm_enabled": bool(get(f"{prefix}_TRAIN_LIGHTGBM", False)),
+        "feature_count": len(flat_features),
+        "features": grouped,
+    }
+    if attn_history:
+        payload["features"]["attention_history"] = list(attn_history)
+    return payload
+
+
+@app.route("/api/model_architecture")
+def api_model_architecture():
+    try:
+        positions = {
+            "QB": _position_arch_payload(
+                "QB", qb_cfg, QB_SPECIFIC_FEATURES, QB_TARGETS,
+                getattr(qb_cfg, "QB_INCLUDE_FEATURES", []),
+                getattr(qb_cfg, "QB_ATTN_HISTORY_STATS", None),
+            ),
+            "RB": _position_arch_payload(
+                "RB", rb_cfg, RB_SPECIFIC_FEATURES, RB_TARGETS,
+                getattr(rb_cfg, "RB_INCLUDE_FEATURES", []),
+                getattr(rb_cfg, "RB_ATTN_HISTORY_STATS", None),
+            ),
+            "WR": _position_arch_payload(
+                "WR", wr_cfg, WR_SPECIFIC_FEATURES, WR_TARGETS,
+                getattr(wr_cfg, "WR_INCLUDE_FEATURES", []),
+                getattr(wr_cfg, "WR_ATTN_HISTORY_STATS", None),
+            ),
+            "TE": _position_arch_payload(
+                "TE", te_cfg, TE_SPECIFIC_FEATURES, TE_TARGETS,
+                getattr(te_cfg, "TE_INCLUDE_FEATURES", []),
+                getattr(te_cfg, "TE_ATTN_HISTORY_STATS", None),
+            ),
+            "K": _position_arch_payload(
+                "K", k_cfg, K_SPECIFIC_FEATURES, K_TARGETS,
+                getattr(k_cfg, "K_CONTEXTUAL_FEATURES", []),
+            ),
+            "DST": _position_arch_payload(
+                "DST", dst_cfg, DST_SPECIFIC_FEATURES, DST_TARGETS,
+                getattr(dst_cfg, "DST_CONTEXTUAL_FEATURES", []),
+            ),
+        }
+        return jsonify({
+            "overview": {
+                "framework": "PyTorch 2.11 + CUDA 12.6 (AWS Batch)",
+                "device": "CUDA if available, else CPU",
+                "data_splits": "Train 2012-2023, Val 2024, Test 2025 (K uses 2015+)",
+                "ensemble": ["Season-average baseline", "Ridge multi-target",
+                             "MultiHeadNet (dense)",
+                             "MultiHeadNetWithHistory (attention)", "LightGBM"],
+            },
+            "training_loop": {
+                "optimizer": "AdamW",
+                "loss": "MultiTargetLoss: sum of per-target Huber + w_total * Huber(total) + optional BCE on TD gate",
+                "gradient_clip": "clip_grad_norm_(max_norm=1.0)",
+                "feature_scaling": "StandardScaler, clipped to [-4, 4]",
+                "early_stopping": "Best val_mae_total restored on patience",
+                "checkpoint": "Best state_dict kept in memory, saved as .pt",
+            },
+            "positions": positions,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/health")

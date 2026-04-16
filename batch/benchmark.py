@@ -316,12 +316,12 @@ def main():
                 except Exception as e:
                     print(f"[{pos}] FAILED to submit: {e}")
 
-        # Wait for completion
+        # Wait for completion. wait_for_jobs now returns (status, stopped_at_ms).
         results = wait_for_jobs(job_ids)
         total_elapsed = time.time() - total_t0
         print(f"\nAll jobs completed in {total_elapsed:.0f}s wall time")
 
-        failed = [p for p, s in results.items() if s == "FAILED"]
+        failed = [p for p, (status, _) in results.items() if status == "FAILED"]
         if failed:
             print(f"Failed positions: {failed}")
 

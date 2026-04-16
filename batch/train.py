@@ -28,11 +28,20 @@ import pandas as pd
 import torch
 
 
-def _assert_gpu():
+# Positions that don't use a neural net — Ridge/LGBM only. Running these on
+# a GPU instance wastes Spot-hours, so we skip the REQUIRE_GPU assertion for
+# them even when the job happens to land on a GPU queue.
+CPU_ONLY_POSITIONS = {"K", "DST"}
+
+
+def _assert_gpu(position: str):
     """Log GPU status and fail fast if REQUIRE_GPU=1 and CUDA is unavailable.
 
     This catches the silent-CPU-on-GPU-billed-instance failure mode where
     the Batch job definition forgets `resourceRequirements: [{type: GPU, ...}]`.
+
+    For CPU-only positions (K, DST) we don't enforce REQUIRE_GPU even if the
+    env var is set — those pipelines never touch CUDA.
     """
     available = torch.cuda.is_available()
     print(f"[gpu] torch.cuda.is_available() = {available}")
@@ -41,6 +50,9 @@ def _assert_gpu():
     if available:
         print(f"[gpu] device count              = {torch.cuda.device_count()}")
         print(f"[gpu] device 0 name             = {torch.cuda.get_device_name(0)}")
+    if position in CPU_ONLY_POSITIONS:
+        print(f"[gpu] {position} is CPU-only; skipping REQUIRE_GPU assertion")
+        return
     require_gpu = os.environ.get("REQUIRE_GPU", "1") == "1"
     if require_gpu and not available:
         raise RuntimeError(
@@ -82,14 +94,36 @@ def download_data(s3_bucket, s3_prefix, local_dir):
 
 
 def upload_artifacts(s3_bucket, position, model_dir):
-    """Tar model artifacts and upload to S3."""
+    """Tar model artifacts and upload to S3.
+
+    Fails fast if model_dir is empty or missing benchmark_metrics.json — an
+    empty tarball shipped to S3 would silently mask a broken pipeline run
+    until someone tried to download the model weeks later.
+    """
+    if not os.path.isdir(model_dir):
+        raise RuntimeError(
+            f"Model directory {model_dir} does not exist — pipeline did not "
+            "produce artifacts."
+        )
+    items = os.listdir(model_dir)
+    if not items:
+        raise RuntimeError(
+            f"Model directory {model_dir} is empty — refusing to upload an "
+            "empty tarball. Pipeline likely returned None or failed silently."
+        )
+    if "benchmark_metrics.json" not in items:
+        raise RuntimeError(
+            f"benchmark_metrics.json not found in {model_dir}. Contents: "
+            f"{sorted(items)}"
+        )
+
     s3 = boto3.client("s3")
     with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
         tmp_path = tmp.name
 
     try:
         with tarfile.open(tmp_path, "w:gz") as tar:
-            for item in os.listdir(model_dir):
+            for item in items:
                 full_path = os.path.join(model_dir, item)
                 tar.add(full_path, arcname=item)
 
@@ -142,26 +176,21 @@ def main():
         _hash = hashlib.sha256(_f.read()).hexdigest()[:12]
     print(f"[batch/train.py] build fingerprint: {_hash}")
 
-    _assert_gpu()
+    _assert_gpu(pos)
     _seed_everything(args.seed)
 
     s3_bucket = os.environ.get("S3_BUCKET", "ff-predictor-training")
     s3_prefix = os.environ.get("S3_DATA_PREFIX", "data")
     data_dir = os.environ.get("TRAINING_DATA_DIR", "/opt/ml/input/data/training")
     model_dir = os.environ.get("MODEL_OUTPUT_DIR", "/opt/ml/model")
-    log_every = int(os.environ.get("LOG_EVERY", "1"))
+    # LOG_EVERY is consumed directly by shared.pipeline._resolve_nn_log_every()
+    # so we don't need to inject it into cfg from here. Historically we
+    # monkey-patched run_pipeline, but that only worked if callers used
+    # `import shared.pipeline as pipeline_mod; pipeline_mod.run_pipeline(...)`.
+    # All position runners use `from shared.pipeline import run_pipeline`, so
+    # the patch was dead code. Env-var resolution sidesteps the issue.
 
     os.makedirs(model_dir, exist_ok=True)
-
-    # Patch run_pipeline to inject nn_log_every BEFORE importing runners.
-    import shared.pipeline as pipeline_mod
-    _orig_run_pipeline = pipeline_mod.run_pipeline
-
-    def _patched_run_pipeline(position, cfg, *a, **kw):
-        cfg["nn_log_every"] = log_every
-        return _orig_run_pipeline(position, cfg, *a, **kw)
-
-    pipeline_mod.run_pipeline = _patched_run_pipeline
 
     mod_path, func_name, accepts_df = POSITIONS[pos]
     mod = __import__(mod_path, fromlist=[func_name])
@@ -188,15 +217,21 @@ def main():
     else:
         print(f"WARNING: No model directory found at {src_model_dir}")
 
-    # Save benchmark metrics as JSON (after artifacts so it can't be overwritten)
-    if result is not None:
-        metrics = _extract_metrics(pos, result)
-        metrics_path = os.path.join(model_dir, "benchmark_metrics.json")
-        with open(metrics_path, "w") as f:
-            json.dump(metrics, f, indent=2)
-        print(f"Saved benchmark metrics to {metrics_path}")
+    # Save benchmark metrics as JSON (after artifacts so it can't be overwritten).
+    # upload_artifacts() requires benchmark_metrics.json, so this must come
+    # before the upload.
+    if result is None:
+        raise RuntimeError(
+            f"Pipeline for {pos} returned None — cannot extract metrics. "
+            "Refusing to upload incomplete artifacts."
+        )
+    metrics = _extract_metrics(pos, result)
+    metrics_path = os.path.join(model_dir, "benchmark_metrics.json")
+    with open(metrics_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Saved benchmark metrics to {metrics_path}")
 
-    # Upload artifacts to S3
+    # Upload artifacts to S3 (raises if model_dir is empty or metrics missing)
     upload_artifacts(s3_bucket, pos, model_dir)
 
 

@@ -803,3 +803,165 @@ tbody tr:last-child td {
 /* === Column visibility for model toggle === */
 body.model-ridge .nn-col { display: none; }
 body.model-nn .ridge-col { display: none; }
+
+/* === Loading state for table re-fetch === */
+.table-container.loading { opacity: 0.5; pointer-events: none; transition: opacity 0.15s; }
+
+/* === Model Architecture View === */
+.arch-diagram {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px 18px;
+    margin-bottom: 24px;
+    overflow-x: auto;
+    white-space: pre;
+}
+.arch-bullets {
+    list-style: disc;
+    padding-left: 22px;
+    margin: 0 0 24px 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.7;
+}
+.arch-bullets li { margin-bottom: 4px; }
+.arch-bullets strong { color: var(--text-primary); font-weight: 600; }
+.arch-bullets code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    padding: 1px 6px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    color: var(--text-primary);
+}
+
+.arch-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    margin-bottom: 24px;
+}
+.arch-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    min-width: 900px;
+}
+.arch-table th,
+.arch-table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+}
+.arch-table th {
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-primary);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.arch-table tbody tr:last-child td { border-bottom: none; }
+.arch-table tbody tr:hover { background: var(--bg-primary); }
+.arch-pos-cell { font-weight: 600; color: var(--accent); }
+
+.arch-loading,
+.arch-error {
+    padding: 16px 18px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+.arch-error { color: #f87171; }
+
+#arch-feature-accordions {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    overflow: hidden;
+    margin-bottom: 24px;
+}
+.arch-accordion { border-bottom: 1px solid var(--border); }
+.arch-accordion:last-child { border-bottom: none; }
+.arch-accordion summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    transition: background 0.15s;
+    user-select: none;
+}
+.arch-accordion summary::-webkit-details-marker { display: none; }
+.arch-accordion summary::after {
+    content: "▸";
+    color: var(--text-secondary);
+    font-size: 12px;
+    transition: transform 0.2s;
+    margin-left: auto;
+}
+.arch-accordion[open] summary::after { transform: rotate(90deg); }
+.arch-accordion summary:hover { background: var(--bg-primary); }
+.arch-pos-label {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--accent);
+    min-width: 48px;
+}
+.arch-pos-count {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.arch-accordion-body {
+    padding: 4px 18px 18px 18px;
+    background: var(--bg-primary);
+}
+.arch-accordion-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 10px 0 14px 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+    line-height: 1.6;
+}
+.arch-accordion-meta strong { color: var(--text-primary); font-weight: 600; }
+
+.feature-category { margin-bottom: 14px; }
+.feature-category:last-child { margin-bottom: 0; }
+.feature-category-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+.feature-category-count {
+    color: var(--accent);
+    font-weight: 500;
+    margin-left: 4px;
+}
+.feature-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.feature-chip {
+    display: inline-block;
+    padding: 3px 9px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
