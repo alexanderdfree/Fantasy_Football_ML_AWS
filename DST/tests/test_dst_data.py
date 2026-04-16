@@ -10,6 +10,7 @@ import pytest
 from DST.dst_data import filter_to_dst
 
 
+@pytest.mark.unit
 class TestFilterToDST:
     """D/ST data is team-level and pre-built; filter_to_dst is identity (copy)."""
 
@@ -47,26 +48,13 @@ class TestFilterToDST:
         result = filter_to_dst(df)
         assert len(result) == 0
 
-    def test_preserves_all_columns(self):
+    def test_preserves_all_columns(self, make_df):
         """Identity filter must not drop columns — DST has many team-level fields."""
-        df = pd.DataFrame({
-            "team": ["KC"],
-            "season": [2023],
-            "week": [1],
-            "opponent_team": ["LV"],
-            "def_sacks": [3],
-            "def_ints": [1],
-            "def_fumble_rec": [1],
-            "points_allowed": [10],
-            "special_teams_tds": [0],
-            "def_tds": [0],
-            "def_safeties": [0],
-            "is_home": [1],
-            "is_dome": [0],
-            "div_game": [1],
-            "rest_days": [7],
-            "opp_qb_epa_L5": [0.1],
-        })
+        df = make_df(
+            season=2023, week=1, opponent_team="LV",
+            is_home=1, is_dome=0, div_game=1, rest_days=7,
+            opp_qb_epa_L5=0.1, team="KC",
+        )
         result = filter_to_dst(df)
         assert set(result.columns) == set(df.columns)
 

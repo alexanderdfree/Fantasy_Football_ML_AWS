@@ -116,3 +116,36 @@ DST_LGBM_COLSAMPLE_BYTREE = 0.8
 DST_LGBM_REG_LAMBDA = 2.0
 DST_LGBM_REG_ALPHA = 0.1
 DST_LGBM_MIN_CHILD_SAMPLES = 25
+
+
+# ===========================================================================
+# DST_CONFIG_TINY — shrunk config for E2E smoke tests.
+# Used by DST/tests/test_dst_pipeline_e2e.py to exercise the full pipeline
+# end-to-end in < 20s on tiny synthetic data: 2 backbone layers x 8 units,
+# 1 epoch, no LightGBM, no attention.  Only the NN-training hyperparameters
+# are shrunk; the rest of the config matches production to keep coverage
+# representative.
+# ===========================================================================
+DST_CONFIG_TINY = {
+    "nn_backbone_layers": [8, 8],
+    "nn_head_hidden": 4,
+    "nn_dropout": 0.0,
+    "nn_lr": 1e-3,
+    "nn_weight_decay": 0.0,
+    "nn_epochs": 1,
+    "nn_batch_size": 32,
+    "nn_patience": 1,
+    "nn_head_hidden_overrides": None,
+    "nn_non_negative_targets": DST_NN_NON_NEGATIVE_TARGETS,
+    "scheduler_type": "cosine_warm_restarts",
+    "cosine_t0": 1,
+    "cosine_t_mult": 2,
+    "cosine_eta_min": 1e-5,
+    "train_lightgbm": False,
+    "train_attention_nn": False,
+    "ridge_pca_components": None,   # tiny synthetic data has few features
+    "ridge_cv_folds": 2,
+    "ridge_refine_points": 0,
+    "loss_w_total": 1.0,
+    "nn_log_every": 100,            # suppress per-epoch prints during tests
+}
