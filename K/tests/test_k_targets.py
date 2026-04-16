@@ -28,6 +28,7 @@ def _make_k_row(**overrides):
 # compute_k_targets
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeKTargets:
     def test_fg_points_short_range(self):
         """FGs under 40yds = 3 pts each."""
@@ -133,6 +134,7 @@ class TestComputeKTargets:
 # compute_k_miss_adjustment
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeKMissAdjustment:
     def _make_miss_df(self, fg_missed, pat_missed=None, player_ids=None, seasons=None):
         n = len(fg_missed)
