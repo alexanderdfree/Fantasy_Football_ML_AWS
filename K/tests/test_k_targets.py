@@ -74,8 +74,12 @@ class TestComputeKTargets:
 
     def test_fantasy_points_override(self):
         """compute_k_targets overrides fantasy_points with K-specific formula."""
-        df = _make_k_row(fg_made_20_29=1, pat_made=2, fg_missed=1)
-        # expected: 1*3 (FG) + 2*1 (PAT) + (-1) (miss) = 4
+        df = _make_k_row(
+            fg_made_0_19=0, fg_made_20_29=1, fg_made_30_39=0,
+            fg_made_40_49=0, fg_made_50_59=0, fg_made_60_=0,
+            pat_made=2, fg_missed=1, pat_missed=0,
+        )
+        # expected: 1*3 (FG 20-29yd) + 2*1 (PAT) + (-1) (miss) = 4
         result = compute_k_targets(df)
         assert pytest.approx(result["fantasy_points"].iloc[0]) == 4.0
 

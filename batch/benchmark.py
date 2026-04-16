@@ -18,6 +18,7 @@ import sys
 import tarfile
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3
 
@@ -28,6 +29,7 @@ from batch.launch import (
     JOB_QUEUE,
     JOB_DEFINITION,
     ALL_POSITIONS,
+    AWS_REGION,
     POLL_INTERVAL_SECONDS,
     TERMINAL_STATES,
     upload_data,
@@ -51,7 +53,7 @@ def get_git_hash():
 
 def download_metrics(positions):
     """Download benchmark_metrics.json from each position's model artifacts."""
-    s3 = boto3.client("s3")
+    s3 = boto3.client("s3", region_name=AWS_REGION)
     all_metrics = {}
 
     for pos in positions:
@@ -297,16 +299,22 @@ def main():
         print("Uploading data splits to S3...")
         upload_data(S3_BUCKET)
 
-        # Submit all jobs
+        # Submit all jobs in parallel (mirrors batch/launch.py:main)
         total_t0 = time.time()
         print(f"Submitting {len(args.positions)} benchmark jobs: {args.positions}")
         job_ids = {}
-        for pos in args.positions:
-            try:
-                pos, job_id = submit_job(pos, args.seed)
-                job_ids[pos] = job_id
-            except Exception as e:
-                print(f"[{pos}] FAILED to submit: {e}")
+        with ThreadPoolExecutor(max_workers=len(args.positions)) as pool:
+            futures = {
+                pool.submit(submit_job, pos, args.seed): pos
+                for pos in args.positions
+            }
+            for future in as_completed(futures):
+                pos = futures[future]
+                try:
+                    pos, job_id = future.result()
+                    job_ids[pos] = job_id
+                except Exception as e:
+                    print(f"[{pos}] FAILED to submit: {e}")
 
         # Wait for completion
         results = wait_for_jobs(job_ids)

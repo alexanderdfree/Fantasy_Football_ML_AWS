@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import shutil
 import sys
 import tarfile
@@ -22,7 +23,39 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import boto3
+import numpy as np
 import pandas as pd
+import torch
+
+
+def _assert_gpu():
+    """Log GPU status and fail fast if REQUIRE_GPU=1 and CUDA is unavailable.
+
+    This catches the silent-CPU-on-GPU-billed-instance failure mode where
+    the Batch job definition forgets `resourceRequirements: [{type: GPU, ...}]`.
+    """
+    available = torch.cuda.is_available()
+    print(f"[gpu] torch.cuda.is_available() = {available}")
+    print(f"[gpu] torch.version.cuda        = {torch.version.cuda}")
+    print(f"[gpu] torch.__version__         = {torch.__version__}")
+    if available:
+        print(f"[gpu] device count              = {torch.cuda.device_count()}")
+        print(f"[gpu] device 0 name             = {torch.cuda.get_device_name(0)}")
+    require_gpu = os.environ.get("REQUIRE_GPU", "1") == "1"
+    if require_gpu and not available:
+        raise RuntimeError(
+            "REQUIRE_GPU=1 but torch.cuda.is_available() is False. "
+            "Check the Batch job definition's resourceRequirements for GPU=1 "
+            "and the compute environment's ECS GPU-optimized AMI."
+        )
+
+
+def _seed_everything(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 # Position registry: (module_path, runner_function_name, accepts_dataframes)
@@ -109,6 +142,9 @@ def main():
         _hash = hashlib.sha256(_f.read()).hexdigest()[:12]
     print(f"[batch/train.py] build fingerprint: {_hash}")
 
+    _assert_gpu()
+    _seed_everything(args.seed)
+
     s3_bucket = os.environ.get("S3_BUCKET", "ff-predictor-training")
     s3_prefix = os.environ.get("S3_DATA_PREFIX", "data")
     data_dir = os.environ.get("TRAINING_DATA_DIR", "/opt/ml/input/data/training")
@@ -143,21 +179,22 @@ def main():
         # K/DST: self-contained data loading
         result = run_fn(seed=args.seed)
 
-    # Save benchmark metrics as JSON
-    if result is not None:
-        metrics = _extract_metrics(pos, result)
-        metrics_path = os.path.join(model_dir, "benchmark_metrics.json")
-        with open(metrics_path, "w") as f:
-            json.dump(metrics, f, indent=2)
-        print(f"Saved benchmark metrics to {metrics_path}")
-
-    # Copy model artifacts to output dir
+    # Copy model artifacts to output dir FIRST so a later metrics write cannot
+    # be clobbered by a same-named file under src_model_dir.
     src_model_dir = os.path.join(pos, "outputs", "models")
     if os.path.isdir(src_model_dir):
         print(f"Copying model artifacts from {src_model_dir} to {model_dir}")
         shutil.copytree(src_model_dir, model_dir, dirs_exist_ok=True)
     else:
         print(f"WARNING: No model directory found at {src_model_dir}")
+
+    # Save benchmark metrics as JSON (after artifacts so it can't be overwritten)
+    if result is not None:
+        metrics = _extract_metrics(pos, result)
+        metrics_path = os.path.join(model_dir, "benchmark_metrics.json")
+        with open(metrics_path, "w") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"Saved benchmark metrics to {metrics_path}")
 
     # Upload artifacts to S3
     upload_artifacts(s3_bucket, pos, model_dir)

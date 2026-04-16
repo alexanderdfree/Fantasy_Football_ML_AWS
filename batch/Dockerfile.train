@@ -1,10 +1,11 @@
-FROM pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
+FROM --platform=linux/amd64 pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
 
 WORKDIR /opt/ml/code
 
 COPY batch/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir --no-deps nfl_data_py==0.3.3
+    pip install --no-cache-dir nfl_data_py==0.3.3 && \
+    pip check
 
 COPY . .
 

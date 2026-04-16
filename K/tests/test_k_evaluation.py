@@ -118,7 +118,7 @@ class TestComputeRankingMetrics:
             })
         df = pd.DataFrame(rows)
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=12)
-        assert result["weekly"][0]["spearman"] == 0.0
+        assert np.isnan(result["weekly"][0]["spearman"])
 
     def test_empty_dataframe(self):
         df = pd.DataFrame(columns=["week", "player_id", "pred_total", "fantasy_points"])
