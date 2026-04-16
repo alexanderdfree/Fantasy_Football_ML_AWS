@@ -1,0 +1,22 @@
+[tool.pytest.ini_options]
+markers = [
+    "unit: fast unit tests (<1s each)",
+    "integration: multi-component tests (<10s)",
+    "e2e: full-pipeline tests (<60s)",
+    "regression: model quality thresholds",
+    "slow: excluded from default run",
+]
+timeout = 60
+timeout_method = "thread"
+addopts = "--strict-markers"
+testpaths = [
+    "tests",
+    "QB/tests",
+    "RB/tests",
+    "WR/tests",
+    "TE/tests",
+    "K/tests",
+    "DST/tests",
+    "batch/tests",
+    "shared/tests",
+]
