@@ -151,3 +151,36 @@ WR_LGBM_REG_ALPHA = 0.674656
 WR_LGBM_MIN_CHILD_SAMPLES = 37
 WR_LGBM_MIN_SPLIT_GAIN = 0.370048
 WR_LGBM_OBJECTIVE = "fair"
+
+
+# === Tiny-scale config for E2E smoke tests ===
+# Shrunk copy of the production hyperparameters: 1 epoch, 2-layer NN with 8
+# units, no attention, no LightGBM. Keeps the full-pipeline E2E test under
+# ~20s while still exercising every stage of run_pipeline().
+WR_CONFIG_TINY = {
+    "targets": WR_TARGETS,
+    "specific_features": WR_SPECIFIC_FEATURES,
+    "ridge_alpha_grids": {t: [1.0, 10.0] for t in WR_TARGETS},
+    "ridge_pca_components": None,
+    "ridge_cv_folds": 2,
+    "ridge_refine_points": 0,
+    "nn_backbone_layers": [8, 8],
+    "nn_head_hidden": 4,
+    "nn_dropout": 0.0,
+    "nn_head_hidden_overrides": None,
+    "nn_lr": 1e-3,
+    "nn_weight_decay": 0.0,
+    "nn_epochs": 1,
+    "nn_batch_size": 64,
+    "nn_patience": 1,
+    "nn_log_every": 1,
+    "loss_weights": WR_LOSS_WEIGHTS,
+    "loss_w_total": WR_LOSS_W_TOTAL,
+    "huber_deltas": WR_HUBER_DELTAS,
+    "scheduler_type": "cosine_warm_restarts",
+    "cosine_t0": 1,
+    "cosine_t_mult": 2,
+    "cosine_eta_min": 1e-5,
+    "train_attention_nn": False,
+    "train_lightgbm": False,
+}

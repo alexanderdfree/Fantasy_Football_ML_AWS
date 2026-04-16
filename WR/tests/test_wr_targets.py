@@ -45,6 +45,7 @@ def _make_wr_row(**overrides):
 # compute_wr_targets
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeWRTargets:
     def test_receiving_floor(self):
         """receiving_floor = receptions * PPR_weight + receiving_yards * 0.1."""
@@ -134,6 +135,7 @@ class TestComputeWRTargets:
 # compute_wr_fumble_adjustment
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeWRFumbleAdjustment:
     def _make_fumble_df(self, receiving_fumbles, season=2023):
         n = len(receiving_fumbles)
