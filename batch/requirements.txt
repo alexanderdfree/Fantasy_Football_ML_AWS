@@ -1,0 +1,11 @@
+numpy==2.4.1
+pandas==2.3.3
+scikit-learn==1.8.0
+scipy==1.17.1
+matplotlib==3.10.8
+joblib==1.5.3
+mord==0.7
+lightgbm==4.6.0
+optuna>=3.6.0
+boto3>=1.34
+nfl_data_py==0.3.3

@@ -7378,5 +7378,446 @@
         "elapsed_sec": 60.1
       }
     ]
-  }
-]
+  },
+  {
+    "run_id": "2026-04-16T13:05:43_eedacfc",
+    "timestamp": "2026-04-16T13:05:43",
+    "git_hash": "eedacfc",
+    "note": "local benchmark for GPU comparison",
+    "positions": [
+      "QB",
+      "RB",
+      "WR",
+      "TE",
+      "K",
+      "DST"
+    ],
+    "config": {
+      "global": {
+        "train_seasons": [
+          2012,
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023
+        ],
+        "val_seasons": [
+          2024
+        ],
+        "test_seasons": [
+          2025
+        ],
+        "nn_epochs": 200,
+        "nn_batch_size": 256,
+        "nn_patience": 15,
+        "nn_dropout": 0.3,
+        "nn_lr": 0.001
+      },
+      "qb": {
+        "targets": [
+          "passing_floor",
+          "rushing_floor",
+          "td_points"
+        ],
+        "nn_backbone_layers": [
+          128
+        ],
+        "nn_head_hidden": 32,
+        "nn_dropout": 0.2,
+        "nn_lr": 0.0005,
+        "nn_weight_decay": 0.0003,
+        "nn_epochs": 300,
+        "nn_batch_size": 128,
+        "nn_patience": 25,
+        "loss_weights": {
+          "passing_floor": 1.0,
+          "rushing_floor": 1.0,
+          "td_points": 1.0
+        },
+        "loss_w_total": 1.0,
+        "huber_deltas": {
+          "passing_floor": 2.0,
+          "rushing_floor": 2.0,
+          "td_points": 2.0,
+          "total": 4.0
+        },
+        "scheduler_type": "cosine_warm_restarts",
+        "cosine_t0": 40,
+        "cosine_t_mult": 2,
+        "cosine_eta_min": 1e-05,
+        "train_attention_nn": true,
+        "attn_d_model": 32,
+        "attn_n_heads": 2,
+        "attn_encoder_hidden_dim": 0,
+        "attn_max_seq_len": 17,
+        "attn_positional_encoding": true,
+        "attn_dropout": 0.05,
+        "attn_patience": 35,
+        "attn_lr": 0.001,
+        "attn_weight_decay": 5e-05,
+        "attn_batch_size": 256,
+        "attn_history_stats": [
+          "fantasy_points",
+          "fantasy_points_floor",
+          "passing_yards",
+          "rushing_yards",
+          "passing_tds",
+          "rushing_tds",
+          "attempts",
+          "completions",
+          "carries",
+          "interceptions",
+          "snap_pct",
+          "sacks",
+          "sack_yards"
+        ],
+        "attn_gated_td": true,
+        "attn_td_gate_hidden": 16,
+        "attn_td_gate_weight": 1.0,
+        "train_lightgbm": true,
+        "lgbm_n_estimators": 1500,
+        "lgbm_learning_rate": 0.0612763,
+        "lgbm_num_leaves": 31,
+        "lgbm_subsample": 0.867443,
+        "lgbm_colsample_bytree": 0.907776,
+        "lgbm_reg_lambda": 6.75023,
+        "lgbm_reg_alpha": 0.00309259,
+        "lgbm_min_child_samples": 59,
+        "lgbm_min_split_gain": 0.0632242,
+        "lgbm_objective": "fair"
+      },
+      "rb": {
+        "targets": [
+          "rushing_floor",
+          "receiving_floor",
+          "td_points"
+        ],
+        "two_stage_targets": {
+          "td_points": {
+            "clf_C": 0.001,
+            "ridge_alpha": 0.01,
+            "threshold": 0.5
+          }
+        },
+        "ordinal_targets": {
+          "td_points": {
+            "type": "ordinal",
+            "class_values": [
+              0,
+              6,
+              12,
+              18
+            ],
+            "alpha": 1.0
+          }
+        },
+        "gated_ordinal_targets": {
+          "td_points": {
+            "type": "gated_ordinal",
+            "class_values": [
+              0,
+              6,
+              12,
+              18
+            ],
+            "alpha": 1.0,
+            "clf_C": 0.001,
+            "threshold": 0.5
+          }
+        },
+        "td_model_type": "gated_ordinal",
+        "ridge_pca_components": 80,
+        "nn_backbone_layers": [
+          128,
+          64
+        ],
+        "nn_head_hidden": 48,
+        "nn_dropout": 0.15,
+        "nn_lr": 0.001,
+        "nn_weight_decay": 5e-05,
+        "nn_epochs": 300,
+        "nn_batch_size": 256,
+        "nn_patience": 30,
+        "nn_head_hidden_overrides": {
+          "td_points": 64
+        },
+        "loss_weights": {
+          "rushing_floor": 1.0,
+          "receiving_floor": 1.0,
+          "td_points": 1.0
+        },
+        "loss_w_total": 1.0,
+        "huber_deltas": {
+          "rushing_floor": 2.0,
+          "receiving_floor": 2.0,
+          "td_points": 2.0,
+          "total": 3.0
+        },
+        "scheduler_type": "cosine_warm_restarts",
+        "cosine_t0": 40,
+        "cosine_t_mult": 2,
+        "cosine_eta_min": 1e-05,
+        "train_attention_nn": true,
+        "attn_d_model": 32,
+        "attn_n_heads": 2,
+        "attn_encoder_hidden_dim": 0,
+        "attn_max_seq_len": 17,
+        "attn_project_kv": false,
+        "attn_positional_encoding": true,
+        "attn_gated_fusion": false,
+        "attn_dropout": 0.05,
+        "attn_lr": 0.001,
+        "attn_weight_decay": 5e-05,
+        "attn_batch_size": 256,
+        "attn_patience": 35,
+        "attn_history_stats": [
+          "fantasy_points",
+          "fantasy_points_floor",
+          "rushing_yards",
+          "receiving_yards",
+          "rushing_tds",
+          "receiving_tds",
+          "carries",
+          "targets",
+          "receptions",
+          "snap_pct",
+          "rushing_first_downs",
+          "receiving_first_downs",
+          "game_carry_share",
+          "game_target_share",
+          "game_carry_hhi",
+          "game_target_hhi"
+        ],
+        "attn_gated_td": true,
+        "attn_td_gate_hidden": 16,
+        "attn_td_gate_weight": 1.0,
+        "train_lightgbm": true,
+        "lgbm_n_estimators": 1400,
+        "lgbm_learning_rate": 0.0704275,
+        "lgbm_num_leaves": 54,
+        "lgbm_max_depth": 9,
+        "lgbm_subsample": 0.830769,
+        "lgbm_colsample_bytree": 0.401929,
+        "lgbm_reg_lambda": 0.0371884,
+        "lgbm_reg_alpha": 0.718914,
+        "lgbm_min_child_samples": 69,
+        "lgbm_min_split_gain": 0.302108,
+        "lgbm_objective": "fair"
+      },
+      "wr": {
+        "targets": [
+          "receiving_floor",
+          "rushing_floor",
+          "td_points"
+        ],
+        "ridge_pca_components": 30,
+        "nn_backbone_layers": [
+          128
+        ],
+        "nn_head_hidden": 32,
+        "nn_dropout": 0.2,
+        "nn_lr": 0.001,
+        "nn_weight_decay": 0.0001,
+        "nn_epochs": 250,
+        "nn_batch_size": 512,
+        "nn_patience": 25,
+        "loss_weights": {
+          "receiving_floor": 1.0,
+          "rushing_floor": 1.0,
+          "td_points": 1.0
+        },
+        "loss_w_total": 1.0,
+        "huber_deltas": {
+          "receiving_floor": 2.0,
+          "rushing_floor": 2.0,
+          "td_points": 2.0,
+          "total": 3.0
+        },
+        "scheduler_type": "cosine_warm_restarts",
+        "cosine_t0": 40,
+        "cosine_t_mult": 2,
+        "cosine_eta_min": 1e-05,
+        "train_attention_nn": true,
+        "attn_d_model": 32,
+        "attn_n_heads": 2,
+        "attn_encoder_hidden_dim": 0,
+        "attn_max_seq_len": 17,
+        "attn_positional_encoding": true,
+        "attn_dropout": 0.0,
+        "attn_history_stats": [
+          "fantasy_points",
+          "fantasy_points_floor",
+          "receiving_yards",
+          "rushing_yards",
+          "receiving_tds",
+          "rushing_tds",
+          "targets",
+          "receptions",
+          "carries",
+          "snap_pct"
+        ],
+        "attn_gated_td": true,
+        "attn_td_gate_hidden": 16,
+        "attn_td_gate_weight": 1.0,
+        "train_lightgbm": true,
+        "lgbm_n_estimators": 900,
+        "lgbm_learning_rate": 0.0183694,
+        "lgbm_num_leaves": 58,
+        "lgbm_subsample": 0.588592,
+        "lgbm_colsample_bytree": 0.401101,
+        "lgbm_reg_lambda": 9.57554,
+        "lgbm_reg_alpha": 0.674656,
+        "lgbm_min_child_samples": 37,
+        "lgbm_min_split_gain": 0.370048,
+        "lgbm_objective": "fair"
+      },
+      "te": {
+        "targets": [
+          "receiving_floor",
+          "rushing_floor",
+          "td_points"
+        ],
+        "nn_backbone_layers": [
+          96,
+          48
+        ],
+        "nn_head_hidden": 24,
+        "nn_head_hidden_overrides": {
+          "td_points": 32
+        },
+        "nn_dropout": 0.3,
+        "nn_lr": 0.0005,
+        "nn_weight_decay": 0.0003,
+        "nn_epochs": 300,
+        "nn_batch_size": 128,
+        "nn_patience": 25,
+        "loss_weights": {
+          "receiving_floor": 1.0,
+          "rushing_floor": 1.0,
+          "td_points": 1.0
+        },
+        "loss_w_total": 1.0,
+        "huber_deltas": {
+          "receiving_floor": 2.0,
+          "rushing_floor": 2.0,
+          "td_points": 2.0,
+          "total": 2.5
+        },
+        "scheduler_type": "onecycle",
+        "onecycle_max_lr": 0.002,
+        "onecycle_pct_start": 0.3,
+        "train_attention_nn": true,
+        "attn_d_model": 32,
+        "attn_n_heads": 2,
+        "attn_encoder_hidden_dim": 0,
+        "attn_max_seq_len": 17,
+        "attn_positional_encoding": true,
+        "attn_dropout": 0.0,
+        "attn_history_stats": [
+          "fantasy_points",
+          "fantasy_points_floor",
+          "receiving_yards",
+          "rushing_yards",
+          "receiving_tds",
+          "rushing_tds",
+          "targets",
+          "receptions",
+          "carries",
+          "snap_pct"
+        ],
+        "attn_gated_td": true,
+        "attn_td_gate_hidden": 16,
+        "attn_td_gate_weight": 1.0,
+        "train_lightgbm": true,
+        "lgbm_n_estimators": 1300,
+        "lgbm_learning_rate": 0.0900384,
+        "lgbm_num_leaves": 29,
+        "lgbm_subsample": 0.854792,
+        "lgbm_colsample_bytree": 0.469154,
+        "lgbm_reg_lambda": 0.011196,
+        "lgbm_reg_alpha": 0.0129827,
+        "lgbm_min_child_samples": 80,
+        "lgbm_min_split_gain": 0.267235,
+        "lgbm_objective": "fair"
+      },
+      "k": {
+        "seasons": [
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024,
+          2025
+        ],
+        "targets": [
+          "fg_points",
+          "pat_points"
+        ],
+        "ridge_cv_folds": 3,
+        "cv_split_column": "season",
+        "ridge_refine_points": 0,
+        "nn_backbone_layers": [
+          64,
+          32
+        ],
+        "nn_head_hidden": 16,
+        "nn_dropout": 0.25,
+        "nn_lr": 0.0003,
+        "nn_weight_decay": 0.0002,
+        "nn_epochs": 250,
+        "nn_batch_size": 128,
+        "nn_patience": 30,
+        "loss_weights": {
+          "fg_points": 1.0,
+          "pat_points": 1.0
+        },
+        "loss_w_total": 1.0,
+        "huber_deltas": {
+          "fg_points": 2.0,
+          "pat_points": 2.0,
+          "total": 2.0
+        },
+        "scheduler_type": "onecycle",
+        "onecycle_max_lr": 0.001,
+        "onecycle_pct_start": 0.3,
+        "min_games": 4,
+        "train_lightgbm": false,
+        "lgbm_n_estimators": 300,
+        "lgbm_learning_rate": 0.05,
+        "lgbm_num_leaves": 15,
+        "lgbm_subsample": 0.8,
+        "lgbm_colsample_bytree": 0.8,
+        "lgbm_reg_lambda": 2.0,
+        "lgbm_reg_alpha": 0.1,
+        "lgbm_min_child_samples": 30
+      },
+      "dst": {
+        "targets": [
+          "defensive_scoring",
+          "td_points",
+          "pts_allowed_bonus"
+        ],
+        "ridge_pca_components": 20,
+        "nn_backbone_layers": [
+          128,
+          64
+        ],
+        "nn_head_hidden": 32,
+        "nn_head_hidden_overrides": {
+          "td_points": 16,
+          "pts_allowed_bonus": 48
+        },
+        "nn_dropout": 0.3,
+        "nn_non_negative_targets": 

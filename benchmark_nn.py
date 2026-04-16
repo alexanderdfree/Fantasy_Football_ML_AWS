@@ -84,6 +84,16 @@ def run_one(position, cv=False):
         if cv:
             raise ValueError("TE CV pipeline not implemented yet")
         return run_te_pipeline()
+    elif position == "K":
+        from K.run_k_pipeline import run_k_pipeline
+        if cv:
+            raise ValueError("K CV pipeline not implemented yet")
+        return run_k_pipeline()
+    elif position == "DST":
+        from DST.run_dst_pipeline import run_dst_pipeline
+        if cv:
+            raise ValueError("DST CV pipeline not implemented yet")
+        return run_dst_pipeline()
     else:
         raise ValueError(f"Unknown position: {position}")
 
@@ -99,13 +109,15 @@ def summarize(position, result):
         "nn_mae":    round(nn["mae"], 3),
         "nn_r2":     round(nn["r2"], 3),
         "nn_wins_mae": nn["mae"] < ridge["mae"],
-        # Per-target NN MAE
+        # Per-target metrics (MAE + R2)
         "nn_per_target": {
-            t: round(result["nn_metrics"][t]["mae"], 3)
+            t: {"mae": round(result["nn_metrics"][t]["mae"], 3),
+                "r2": round(result["nn_metrics"][t]["r2"], 3)}
             for t in result["nn_metrics"] if t != "total"
         },
         "ridge_per_target": {
-            t: round(result["ridge_metrics"][t]["mae"], 3)
+            t: {"mae": round(result["ridge_metrics"][t]["mae"], 3),
+                "r2": round(result["ridge_metrics"][t]["r2"], 3)}
             for t in result["ridge_metrics"] if t != "total"
         },
         "ridge_top12": round(result["ridge_ranking"]["season_avg_hit_rate"], 3),
@@ -117,10 +129,22 @@ def summarize(position, result):
         summary["attn_nn_mae"] = round(attn["mae"], 3)
         summary["attn_nn_r2"] = round(attn["r2"], 3)
         summary["attn_nn_per_target"] = {
-            t: round(result["attn_nn_metrics"][t]["mae"], 3)
+            t: {"mae": round(result["attn_nn_metrics"][t]["mae"], 3),
+                "r2": round(result["attn_nn_metrics"][t]["r2"], 3)}
             for t in result["attn_nn_metrics"] if t != "total"
         }
         summary["attn_nn_top12"] = round(result["attn_nn_ranking"]["season_avg_hit_rate"], 3)
+    # LightGBM metrics (if trained)
+    if "lgbm_metrics" in result:
+        lgbm = result["lgbm_metrics"]["total"]
+        summary["lgbm_mae"] = round(lgbm["mae"], 3)
+        summary["lgbm_r2"] = round(lgbm["r2"], 3)
+        summary["lgbm_per_target"] = {
+            t: {"mae": round(result["lgbm_metrics"][t]["mae"], 3),
+                "r2": round(result["lgbm_metrics"][t]["r2"], 3)}
+            for t in result["lgbm_metrics"] if t != "total"
+        }
+        summary["lgbm_top12"] = round(result["lgbm_ranking"]["season_avg_hit_rate"], 3)
     if "cv_metrics" in result:
         cv = result["cv_metrics"]
         summary["cv_ridge_mae_mean"] = round(cv["ridge"]["total"]["mae_mean"], 3)
@@ -131,34 +155,129 @@ def summarize(position, result):
     return summary
 
 
+def _best_model(s):
+    """Return (name, mae) of the best model for a summary row."""
+    models = {"Ridge": s["ridge_mae"], "NN": s["nn_mae"]}
+    if "attn_nn_mae" in s:
+        models["Attn"] = s["attn_nn_mae"]
+    if "lgbm_mae" in s:
+        models["LGBM"] = s["lgbm_mae"]
+    best = min(models, key=models.get)
+    return best, models[best]
+
+
 def print_table(summaries):
     has_cv = any("cv_ridge_mae_mean" in s for s in summaries)
     has_attn = any("attn_nn_mae" in s for s in summaries)
+    has_lgbm = any("lgbm_mae" in s for s in summaries)
 
+    # -- MAE comparison table --
+    hdr = f"{'Pos':<5} {'Ridge':>9} {'NN':>9}"
     if has_attn:
-        print("\n" + "=" * 95)
-        print(f"{'Pos':<5} {'Ridge MAE':>10} {'NN MAE':>10} {'Attn MAE':>10} {'Attn-NN':>9} {'Ridge R2':>9} {'NN R2':>9} {'Attn R2':>9}")
-        print("-" * 95)
+        hdr += f" {'Attn NN':>9}"
+    if has_lgbm:
+        hdr += f" {'LGBM':>9}"
+    hdr += f" {'Best':>9} {'Time':>8}"
+    w = len(hdr)
+
+    print(f"\n{'=' * w}")
+    print("MAE Comparison (test set)")
+    print(f"{'=' * w}")
+    print(hdr)
+    print("-" * w)
+    for s in summaries:
+        best_name, _ = _best_model(s)
+        line = f"{s['position']:<5} {s['ridge_mae']:>9.3f} {s['nn_mae']:>9.3f}"
+        if has_attn:
+            line += f" {s.get('attn_nn_mae', float('nan')):>9.3f}"
+        if has_lgbm:
+            line += f" {s.get('lgbm_mae', float('nan')):>9.3f}"
+        line += f" {best_name:>9}"
+        line += f" {s.get('elapsed_sec', 0):>7.0f}s"
+        print(line)
+    print("=" * w)
+
+    # -- R2 comparison --
+    print(f"\n{'R-squared':>5}")
+    print("-" * w)
+    for s in summaries:
+        models = {"Ridge": s["ridge_r2"], "NN": s["nn_r2"]}
+        if "attn_nn_r2" in s:
+            models["Attn"] = s["attn_nn_r2"]
+        if "lgbm_r2" in s:
+            models["LGBM"] = s["lgbm_r2"]
+        best = max(models, key=models.get)
+        line = f"{s['position']:<5} {s['ridge_r2']:>9.3f} {s['nn_r2']:>9.3f}"
+        if has_attn:
+            line += f" {s.get('attn_nn_r2', float('nan')):>9.3f}"
+        if has_lgbm:
+            line += f" {s.get('lgbm_r2', float('nan')):>9.3f}"
+        line += f" {best:>9}"
+        print(line)
+    print("=" * w)
+
+    # -- Top-12 hit rate --
+    print(f"\n{'Top-12 Hit Rate':>5}")
+    print("-" * w)
+    for s in summaries:
+        models = {"Ridge": s["ridge_top12"], "NN": s["nn_top12"]}
+        if "attn_nn_top12" in s:
+            models["Attn"] = s["attn_nn_top12"]
+        if "lgbm_top12" in s:
+            models["LGBM"] = s["lgbm_top12"]
+        best = max(models, key=models.get)
+        line = f"{s['position']:<5} {s['ridge_top12']:>9.3f} {s['nn_top12']:>9.3f}"
+        if has_attn:
+            line += f" {s.get('attn_nn_top12', 0):>9.3f}"
+        if has_lgbm:
+            line += f" {s.get('lgbm_top12', 0):>9.3f}"
+        line += f" {best:>9}"
+        print(line)
+    print("=" * w)
+
+    # -- Per-target breakdown (all models) --
+    tgt_w, col_w = 20, 9
+    pt_hdr = f"  {'Target':<{tgt_w}} {'Ridge':>{col_w}} {'NN':>{col_w}}"
+    if has_attn:
+        pt_hdr += f" {'Attn NN':>{col_w}}"
+    if has_lgbm:
+        pt_hdr += f" {'LGBM':>{col_w}}"
+    pt_hdr += f" {'Best':>{col_w}}"
+
+    for metric_key, label, higher_better in [("mae", "Per-Target MAE", False),
+                                              ("r2", "Per-Target R\u00b2", True)]:
+        print(f"\n{label}")
+        print("=" * len(pt_hdr))
         for s in summaries:
-            attn_mae = s.get("attn_nn_mae", float("nan"))
-            attn_r2 = s.get("attn_nn_r2", float("nan"))
-            attn_delta = attn_mae - s["nn_mae"] if "attn_nn_mae" in s else float("nan")
-            print(f"{s['position']:<5} {s['ridge_mae']:>10.3f} {s['nn_mae']:>10.3f} "
-                  f"{attn_mae:>10.3f} {attn_delta:>+9.3f} "
-                  f"{s['ridge_r2']:>9.3f} {s['nn_r2']:>9.3f} {attn_r2:>9.3f}")
-        print("=" * 95)
-    else:
-        print("\n" + "=" * 72)
-        print(f"{'Pos':<5} {'Ridge MAE':>10} {'NN MAE':>10} {'Delta':>8} {'Ridge R2':>9} {'NN R2':>9} {'NN Wins?':>9}")
-        print("-" * 72)
-        for s in summaries:
-            delta = s["nn_mae"] - s["ridge_mae"]
-            marker = "YES" if s["nn_wins_mae"] else "no"
-            print(f"{s['position']:<5} {s['ridge_mae']:>10.3f} {s['nn_mae']:>10.3f} {delta:>+8.3f} {s['ridge_r2']:>9.3f} {s['nn_r2']:>9.3f} {marker:>9}")
-        print("=" * 72)
+            print(f"\n  {s['position']}")
+            print(pt_hdr)
+            print("  " + "-" * (len(pt_hdr) - 2))
+            targets = list(s.get("nn_per_target",
+                                 s.get("ridge_per_target", {})).keys())
+            for t in targets:
+                models = {}
+                for mname, key in [("Ridge", "ridge_per_target"),
+                                    ("NN", "nn_per_target"),
+                                    ("Attn", "attn_nn_per_target"),
+                                    ("LGBM", "lgbm_per_target")]:
+                    if key in s and t in s[key]:
+                        models[mname] = s[key][t][metric_key]
+                if not models:
+                    continue
+                best = (max if higher_better else min)(models, key=models.get)
+                line = f"  {t:<{tgt_w}}"
+                line += f" {models.get('Ridge', float('nan')):>{col_w}.3f}"
+                line += f" {models.get('NN', float('nan')):>{col_w}.3f}"
+                if has_attn:
+                    line += f" {models.get('Attn', float('nan')):>{col_w}.3f}"
+                if has_lgbm:
+                    line += f" {models.get('LGBM', float('nan')):>{col_w}.3f}"
+                line += f" {best:>{col_w}}"
+                print(line)
+        print("=" * len(pt_hdr))
 
     if has_cv:
-        print("\n" + "=" * 72)
+        print(f"\n{'=' * 72}")
         print("Cross-Validation Metrics (mean +/- std across 4 folds)")
         print("=" * 72)
         print(f"{'Pos':<5} {'Ridge MAE':>20} {'NN MAE':>20} {'Best Alpha':>12}")
@@ -174,7 +293,7 @@ def print_table(summaries):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark NN pipelines")
-    parser.add_argument("positions", nargs="*", default=["RB", "QB", "WR"],
+    parser.add_argument("positions", nargs="*", default=["QB", "RB", "WR", "TE", "K", "DST"],
                         help="Positions to benchmark (e.g. RB QB)")
     parser.add_argument("--note", default="", help="Describe what changed in this run")
     parser.add_argument("--cv", action="store_true",

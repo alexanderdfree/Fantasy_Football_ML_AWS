@@ -29,11 +29,8 @@ class MultiTargetLoss(nn.Module):
     ):
         super().__init__()
         self.target_names = target_names
-        # Normalize so per-target weights + w_total sum to 1.0,
-        # preserving relative proportions across positions.
-        total_weight = sum(loss_weights.get(n, 1.0) for n in target_names) + w_total
-        self.loss_weights = {n: loss_weights.get(n, 1.0) / total_weight for n in target_names}
-        self.w_total = w_total / total_weight
+        self.loss_weights = {n: loss_weights.get(n, 1.0) for n in target_names}
+        self.w_total = w_total
         self.td_gate_weight = td_gate_weight
         if huber_deltas is None:
             huber_deltas = {}
@@ -49,7 +46,7 @@ class MultiTargetLoss(nn.Module):
         for name in self.target_names:
             loss = self.huber_fns[name](preds[name], targets[name])
             per_target_losses[name] = loss
-            combined = combined + self.loss_weights.get(name, 1.0) * loss
+            combined = combined + self.loss_weights[name] * loss
 
         loss_total = self.huber_total(preds["total"], targets["total"])
         combined = combined + self.w_total * loss_total

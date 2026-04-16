@@ -1,60 +1,190 @@
 [
   {
     "position": "QB",
-    "ridge_mae": 6.538,
-    "ridge_r2": 0.238,
-    "nn_mae": 6.59,
-    "nn_r2": 0.171,
-    "nn_wins_mae": false,
+    "ridge_mae": 6.469,
+    "ridge_r2": 0.251,
+    "nn_mae": 6.445,
+    "nn_r2": 0.236,
+    "nn_wins_mae": true,
     "nn_per_target": {
-      "passing_floor": 2.8,
-      "rushing_floor": 1.156,
-      "td_points": 3.832
+      "passing_floor": 2.73,
+      "rushing_floor": 1.135,
+      "td_points": 3.893
     },
     "ridge_per_target": {
-      "passing_floor": 2.83,
-      "rushing_floor": 1.115,
-      "td_points": 4.003
+      "passing_floor": 2.795,
+      "rushing_floor": 1.113,
+      "td_points": 3.982
     },
-    "ridge_top12": 0.531,
-    "nn_top12": 0.491,
-    "attn_nn_mae": 6.691,
-    "attn_nn_r2": 0.135,
+    "ridge_top12": 0.526,
+    "nn_top12": 0.496,
+    "attn_nn_mae": 6.346,
+    "attn_nn_r2": 0.262,
     "attn_nn_per_target": {
-      "passing_floor": 2.806,
-      "rushing_floor": 1.18,
-      "td_points": 3.896
+      "passing_floor": 2.688,
+      "rushing_floor": 1.125,
+      "td_points": 3.888
     },
-    "attn_nn_top12": 0.504,
-    "elapsed_sec": 49.5
+    "attn_nn_top12": 0.526,
+    "lgbm_mae": 6.309,
+    "lgbm_r2": 0.283,
+    "lgbm_per_target": {
+      "passing_floor": 2.675,
+      "rushing_floor": 1.11,
+      "td_points": 3.925
+    },
+    "lgbm_top12": 0.526,
+    "elapsed_sec": 23.9
+  },
+  {
+    "position": "RB",
+    "ridge_mae": 4.358,
+    "ridge_r2": 0.368,
+    "nn_mae": 4.199,
+    "nn_r2": 0.401,
+    "nn_wins_mae": true,
+    "nn_per_target": {
+      "rushing_floor": 1.851,
+      "receiving_floor": 1.831,
+      "td_points": 1.956
+    },
+    "ridge_per_target": {
+      "rushing_floor": 1.895,
+      "receiving_floor": 1.917,
+      "td_points": 1.778
+    },
+    "ridge_top12": 0.488,
+    "nn_top12": 0.496,
+    "attn_nn_mae": 4.219,
+    "attn_nn_r2": 0.407,
+    "attn_nn_per_target": {
+      "rushing_floor": 1.854,
+      "receiving_floor": 1.864,
+      "td_points": 1.942
+    },
+    "attn_nn_top12": 0.5,
+    "lgbm_mae": 4.191,
+    "lgbm_r2": 0.417,
+    "lgbm_per_target": {
+      "rushing_floor": 1.843,
+      "receiving_floor": 1.844,
+      "td_points": 1.91
+    },
+    "lgbm_top12": 0.5,
+    "elapsed_sec": 46.7
   },
   {
     "position": "WR",
-    "ridge_mae": 4.42,
-    "ridge_r2": 0.34,
-    "nn_mae": 4.215,
-    "nn_r2": 0.318,
+    "ridge_mae": 4.437,
+    "ridge_r2": 0.344,
+    "nn_mae": 4.192,
+    "nn_r2": 0.35,
     "nn_wins_mae": true,
     "nn_per_target": {
-      "receiving_floor": 3.228,
-      "rushing_floor": 0.146,
-      "td_points": 1.413
+      "receiving_floor": 3.219,
+      "rushing_floor": 0.166,
+      "td_points": 1.435
     },
     "ridge_per_target": {
-      "receiving_floor": 3.345,
-      "rushing_floor": 0.148,
-      "td_points": 1.785
+      "receiving_floor": 3.348,
+      "rushing_floor": 0.149,
+      "td_points": 1.817
     },
-    "ridge_top12": 0.357,
-    "nn_top12": 0.381,
-    "attn_nn_mae": 4.1,
-    "attn_nn_r2": 0.338,
+    "ridge_top12": 0.381,
+    "nn_top12": 0.401,
+    "attn_nn_mae": 4.173,
+    "attn_nn_r2": 0.354,
     "attn_nn_per_target": {
-      "receiving_floor": 3.133,
-      "rushing_floor": 0.125,
-      "td_points": 1.405
+      "receiving_floor": 3.202,
+      "rushing_floor": 0.189,
+      "td_points": 1.445
     },
-    "attn_nn_top12": 0.381,
-    "elapsed_sec": 60.1
+    "attn_nn_top12": 0.373,
+    "lgbm_mae": 4.225,
+    "lgbm_r2": 0.345,
+    "lgbm_per_target": {
+      "receiving_floor": 3.269,
+      "rushing_floor": 0.124,
+      "td_points": 1.378
+    },
+    "lgbm_top12": 0.393,
+    "elapsed_sec": 59.5
+  },
+  {
+    "position": "TE",
+    "ridge_mae": 3.592,
+    "ridge_r2": 0.318,
+    "nn_mae": 3.485,
+    "nn_r2": 0.273,
+    "nn_wins_mae": true,
+    "nn_per_target": {
+      "receiving_floor": 2.565,
+      "rushing_floor": 0.02,
+      "td_points": 1.342
+    },
+    "ridge_per_target": {
+      "receiving_floor": 2.609,
+      "rushing_floor": 0.031,
+      "td_points": 1.67
+    },
+    "ridge_top12": 0.471,
+    "nn_top12": 0.492,
+    "attn_nn_mae": 3.495,
+    "attn_nn_r2": 0.295,
+    "attn_nn_per_target": {
+      "receiving_floor": 2.565,
+      "rushing_floor": 0.026,
+      "td_points": 1.351
+    },
+    "attn_nn_top12": 0.462,
+    "lgbm_mae": 3.524,
+    "lgbm_r2": 0.298,
+    "lgbm_per_target": {
+      "receiving_floor": 2.629,
+      "rushing_floor": 0.024,
+      "td_points": 1.306
+    },
+    "lgbm_top12": 0.463,
+    "elapsed_sec": 65.0
+  },
+  {
+    "position": "K",
+    "ridge_mae": 3.645,
+    "ridge_r2": 0.031,
+    "nn_mae": 3.693,
+    "nn_r2": -0.004,
+    "nn_wins_mae": false,
+    "nn_per_target": {
+      "fg_points": 3.733,
+      "pat_points": 1.123
+    },
+    "ridge_per_target": {
+      "fg_points": 3.734,
+      "pat_points": 1.106
+    },
+    "ridge_top12": 0.454,
+    "nn_top12": 0.426,
+    "elapsed_sec": 10.7
+  },
+  {
+    "position": "DST",
+    "ridge_mae": 3.837,
+    "ridge_r2": 0.051,
+    "nn_mae": 3.847,
+    "nn_r2": 0.011,
+    "nn_wins_mae": false,
+    "nn_per_target": {
+      "defensive_scoring": 2.431,
+      "td_points": 0.344,
+      "pts_allowed_bonus": 1.771
+    },
+    "ridge_per_target": {
+      "defensive_scoring": 2.448,
+      "td_points": 0.505,
+      "pts_allowed_bonus": 1.805
+    },
+    "ridge_top12": 0.472,
+    "nn_top12": 0.449,
+    "elapsed_sec": 14.4
   }
 ]

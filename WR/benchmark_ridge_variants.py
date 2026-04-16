@@ -215,6 +215,21 @@ def main():
 
     print(f"{'='*110}")
 
+    # Per-target R2 table
+    print(f"\n{'='*80}")
+    print("  PER-TARGET R\u00b2 BY VARIANT")
+    print(f"{'='*80}")
+    r2_hdr = (f"{'Variant':<28} {'Total':>8} {'recv_fl':>8} "
+              f"{'rush_fl':>8} {'td_pts':>8}")
+    print(r2_hdr)
+    print("-" * 80)
+    for r in results:
+        m = r["metrics"]
+        print(f"{r['name']:<28} {m['total']['r2']:>8.3f} "
+              f"{m['receiving_floor']['r2']:>8.3f} {m['rushing_floor']['r2']:>8.3f} "
+              f"{m['td_points']['r2']:>8.3f}")
+    print(f"{'='*80}")
+
     # Best variant
     best = min(results, key=lambda r: r["metrics"]["total"]["mae"])
     print(f"\nBest variant: {best['name']} "
