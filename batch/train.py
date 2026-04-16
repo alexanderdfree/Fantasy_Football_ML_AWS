@@ -162,10 +162,41 @@ def _extract_metrics(position, result):
     return metrics
 
 
+def _dry_run_artifacts(position: str, model_dir: str, seed: int) -> None:
+    """Write minimal stub artifacts for --dry-run mode.
+
+    Exercises the post-training side of main() (artifact layout, metric
+    serialization, non-None result guard) without invoking the heavy per-
+    position pipeline. This lets the CLI be smoke-tested end-to-end in
+    under a second with no S3 / data / GPU dependencies.
+    """
+    os.makedirs(model_dir, exist_ok=True)
+    # Stub model file so model_dir is non-empty (upload_artifacts invariant).
+    stub_path = os.path.join(model_dir, f"{position.lower()}_model.stub")
+    with open(stub_path, "w") as f:
+        f.write(f"dry-run stub for {position} (seed={seed})\n")
+    metrics = {
+        "position": position,
+        "dry_run": True,
+        "seed": seed,
+        "ridge_metrics": {"total": {"mae": 0.0, "r2": 0.0}},
+    }
+    with open(os.path.join(model_dir, "benchmark_metrics.json"), "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"[dry-run] Wrote stub artifacts to {model_dir}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--position", required=True, choices=list(POSITIONS.keys()))
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Skip S3 download/upload and the real pipeline. Writes stub "
+             "artifacts so main() can be smoke-tested end-to-end without "
+             "AWS credentials or training data.",
+    )
     args = parser.parse_args()
 
     pos = args.position
@@ -176,7 +207,11 @@ def main():
         _hash = hashlib.sha256(_f.read()).hexdigest()[:12]
     print(f"[batch/train.py] build fingerprint: {_hash}")
 
-    _assert_gpu(pos)
+    # Skip the GPU assertion in dry-run — local/CI smoke tests rarely have CUDA.
+    if args.dry_run:
+        print(f"[dry-run] skipping _assert_gpu for {pos}")
+    else:
+        _assert_gpu(pos)
     _seed_everything(args.seed)
 
     s3_bucket = os.environ.get("S3_BUCKET", "ff-predictor-training")
@@ -191,6 +226,14 @@ def main():
     # the patch was dead code. Env-var resolution sidesteps the issue.
 
     os.makedirs(model_dir, exist_ok=True)
+
+    if args.dry_run:
+        # Stub out S3 and the pipeline — we still exercise arg parsing,
+        # seed setup, model-dir setup, metrics serialization, and the
+        # skip-S3 code path.
+        _dry_run_artifacts(pos, model_dir, args.seed)
+        print(f"[dry-run] Completed for {pos}; skipping S3 upload.")
+        return
 
     mod_path, func_name, accepts_df = POSITIONS[pos]
     mod = __import__(mod_path, fromlist=[func_name])
