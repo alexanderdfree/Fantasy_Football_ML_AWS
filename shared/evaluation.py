@@ -50,15 +50,19 @@ def compute_ranking_metrics(
             warnings.simplefilter("ignore")
             corr, _ = spearmanr(week_df[pred_col], week_df[true_col])
 
+        if np.isnan(corr):
+            print(f"  WARNING: Spearman correlation is NaN for week {week} "
+                  f"(pred_col={pred_col}, n={len(week_df)})")
+
         weekly_results.append({
             "week": week,
             "top_k_hit_rate": hit_rate,
-            "spearman": corr if not np.isnan(corr) else 0.0,
+            "spearman": corr,
         })
 
     if weekly_results:
         avg_hit_rate = np.mean([r["top_k_hit_rate"] for r in weekly_results])
-        avg_spearman = np.mean([r["spearman"] for r in weekly_results])
+        avg_spearman = np.nanmean([r["spearman"] for r in weekly_results])
     else:
         avg_hit_rate = 0.0
         avg_spearman = 0.0
@@ -106,8 +110,15 @@ def plot_pred_vs_actual(
     targets = [("total", "Total Fantasy Points")]
     targets += [(t, t.replace("_", " ").title()) for t in target_names]
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    for ax, (target, title) in zip(axes.flat, targets):
+    n = len(targets)
+    ncols = min(n, 2)
+    nrows = (n + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(6 * ncols, 5 * nrows))
+    if n == 1:
+        axes = [axes]
+    else:
+        axes = list(np.asarray(axes).flat)
+    for ax, (target, title) in zip(axes, targets):
         y_true = y_true_dict[target]
         y_pred = y_pred_dict[target]
         ax.scatter(y_true, y_pred, alpha=0.3, s=10)
@@ -116,6 +127,9 @@ def plot_pred_vs_actual(
         ax.set_xlabel("Actual")
         ax.set_ylabel("Predicted")
         ax.set_title(f"{model_name}: {title}")
+    # Hide unused subplots
+    for ax in axes[n:]:
+        ax.set_visible(False)
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)

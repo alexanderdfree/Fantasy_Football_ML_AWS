@@ -65,7 +65,7 @@ QB_INCLUDE_FEATURES = {
     "weather_vegas": [
         "implied_team_total", "implied_opp_total",
         "wind_adjusted", "is_dome", "is_divisional",
-        "implied_total_x_dome", "temp_adjusted",
+        "temp_adjusted",
     ],
     "specific": QB_SPECIFIC_FEATURES,
 }

@@ -499,7 +499,7 @@ def get_feature_columns() -> list[str]:
         "implied_team_total", "implied_opp_total", "total_line",
         "is_dome", "is_grass", "temp_adjusted", "wind_adjusted",
         "is_divisional", "days_rest_improved", "rest_advantage",
-        "implied_total_x_dome", "implied_total_x_wind",
+        "implied_total_x_wind",
     ]
 
     # Position encoding

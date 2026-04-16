@@ -7,7 +7,7 @@ RUN apt-get update && \
 WORKDIR /opt/ml/code
 
 COPY batch/requirements.txt .
-RUN pip3 install --no-cache-dir torch==2.11.0 --index-url https://download.pytorch.org/whl/cu121 && \
+RUN pip3 install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121 && \
     pip3 install --no-cache-dir -r requirements.txt
 
 COPY . .

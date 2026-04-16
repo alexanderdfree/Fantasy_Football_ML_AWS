@@ -244,6 +244,7 @@ class MultiHeadNetWithHistory(nn.Module):
         encoder_hidden_dim: int = 0,
         gated_td: bool = False,
         td_gate_hidden: int = 16,
+        gated_td_target: str = "td_points",
     ):
         super().__init__()
         self.target_names = target_names
@@ -251,6 +252,7 @@ class MultiHeadNetWithHistory(nn.Module):
             set(target_names) if non_negative_targets is None else non_negative_targets
         )
         self.gated_td = gated_td
+        self.gated_td_target = gated_td_target
         self.d_model = d_model
 
         # === Game History Branch ===
@@ -312,7 +314,7 @@ class MultiHeadNetWithHistory(nn.Module):
         self.heads = nn.ModuleDict()
         for name in target_names:
             h = overrides.get(name, head_hidden)
-            if gated_td and name == "td_points":
+            if gated_td and name == gated_td_target:
                 self.heads[name] = GatedTDHead(
                     in_dim=backbone_out_dim,
                     gate_hidden=td_gate_hidden,

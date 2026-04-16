@@ -26,9 +26,11 @@ class MultiTargetLoss(nn.Module):
         huber_deltas: dict[str, float] = None,
         w_total: float = 0.5,
         td_gate_weight: float = 1.0,
+        gated_td_target: str = "td_points",
     ):
         super().__init__()
         self.target_names = target_names
+        self.gated_td_target = gated_td_target
         self.loss_weights = {n: loss_weights.get(n, 1.0) for n in target_names}
         self.w_total = w_total
         self.td_gate_weight = td_gate_weight
@@ -55,10 +57,10 @@ class MultiTargetLoss(nn.Module):
         components["loss_total_aux"] = loss_total.item()
 
         # Gated TD: add BCE supervision on the gate logit
-        gate_key = "td_points_gate_logit"
+        gate_key = f"{self.gated_td_target}_gate_logit"
         if gate_key in preds:
             gate_loss = F.binary_cross_entropy_with_logits(
-                preds[gate_key], (targets["td_points"] > 0).float()
+                preds[gate_key], (targets[self.gated_td_target] > 0).float()
             )
             combined = combined + self.td_gate_weight * gate_loss
             components["loss_td_gate"] = gate_loss.item()
@@ -287,7 +289,10 @@ class MultiHeadTrainer:
                 self.epochs_without_improvement += 1
                 if self.epochs_without_improvement >= self.patience:
                     print(f"Early stopping at epoch {epoch + 1}")
-                    self.model.load_state_dict(self.best_model_state)
+                    if self.best_model_state is not None:
+                        self.model.load_state_dict(self.best_model_state)
+                    else:
+                        print("  WARNING: no valid checkpoint saved (all epochs had NaN MAE)")
                     break
 
             # --- Logging ---

@@ -31,10 +31,15 @@ def add_stratification_columns(df: pd.DataFrame, targets: list[str]) -> pd.DataF
 
     Modifies df in-place and returns it. Handles missing columns gracefully.
     """
-    # Snap percentage buckets — handle both 0-1 (decimal) and 0-100 (percent) formats
+    # Snap percentage buckets — handle both 0-1 (decimal) and 0-100 (percent) formats.
+    # Detect format by checking the median of non-zero values: in decimal format the
+    # median will be well below 2 (typical starter ~0.7), while in percent format
+    # the median will be in the 50-80 range. Using the median is robust against
+    # outliers and small samples, unlike max() which can be fooled by edge cases.
     if "snap_pct" in df.columns and df["snap_pct"].notna().any():
         snap = df["snap_pct"].fillna(0)
-        if snap.max() <= 1.5:  # decimal format
+        nonzero_median = snap[snap > 0].median() if (snap > 0).any() else 0
+        if nonzero_median <= 1.5:  # decimal format
             bins = [b / 100 for b in SNAP_BINS]
         else:
             bins = SNAP_BINS

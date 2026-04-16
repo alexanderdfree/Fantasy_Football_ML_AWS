@@ -258,8 +258,14 @@ class RidgeMultiTarget:
     def __init__(self, target_names: list[str], alpha: float | dict[str, float] = 1.0,
                  two_stage_targets: dict | None = None,
                  classification_targets: dict | None = None,
-                 pca_n_components: int | None = None):
+                 pca_n_components: int | None = None,
+                 non_negative_targets: set | None = None):
         self.target_names = target_names
+        # Which targets are clamped to >= 0. Default: all targets.
+        # Override for targets that can be negative (e.g. DST pts_allowed_bonus).
+        self.non_negative_targets = (
+            set(target_names) if non_negative_targets is None else non_negative_targets
+        )
         self._two_stage_targets = two_stage_targets or {}
         self._classification_targets = classification_targets or {}
         special = set(self._two_stage_targets) | set(self._classification_targets)
@@ -290,11 +296,13 @@ class RidgeMultiTarget:
             model.fit(X_train, y_train_dict[name])
 
     def predict(self, X: np.ndarray) -> dict:
-        """Returns dict of per-target predictions (clamped >= 0) plus total."""
-        preds = {
-            name: np.maximum(model.predict(X), 0)
-            for name, model in self._models.items()
-        }
+        """Returns dict of per-target predictions plus total."""
+        preds = {}
+        for name, model in self._models.items():
+            pred = model.predict(X)
+            if name in self.non_negative_targets:
+                pred = np.maximum(pred, 0)
+            preds[name] = pred
         preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
 

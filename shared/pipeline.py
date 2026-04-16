@@ -190,9 +190,10 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
             pos_train, pos_val, pos_test, cfg["specific_features"]
         )
     else:
-        pos_train, pos_val, _dummy = cfg["add_features_fn"](pos_train, pos_val, pos_val)
+        empty = pos_val.iloc[:0].copy()
+        pos_train, pos_val, _dummy = cfg["add_features_fn"](pos_train, pos_val, empty)
         pos_train, pos_val, _dummy = cfg["fill_nans_fn"](
-            pos_train, pos_val, pos_val, cfg["specific_features"]
+            pos_train, pos_val, empty, cfg["specific_features"]
         )
 
     # Build feature arrays
@@ -353,6 +354,7 @@ def _train_attention_nn(X_train, X_val, X_test,
         encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
         gated_td=cfg.get("attn_gated_td", False),
         td_gate_hidden=cfg.get("attn_td_gate_hidden", 16),
+        gated_td_target=cfg.get("gated_td_target", "td_points"),
     ).to(device)
 
     attn_lr = cfg.get("attn_lr", cfg["nn_lr"])
@@ -367,6 +369,7 @@ def _train_attention_nn(X_train, X_val, X_test,
         huber_deltas=cfg["huber_deltas"],
         w_total=cfg["loss_w_total"],
         td_gate_weight=cfg.get("attn_td_gate_weight", 1.0),
+        gated_td_target=cfg.get("gated_td_target", "td_points"),
     )
 
     attn_patience = cfg.get("attn_patience", cfg["nn_patience"])
@@ -506,10 +509,12 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         print(f"  Ordinal classification targets: {list(classification_targets.keys())}")
     if pca_n:
         print(f"  PCR: {pca_n} components")
+    ridge_non_neg = cfg.get("nn_non_negative_targets")
     ridge_model = RidgeMultiTarget(target_names=targets, alpha=best_alphas,
                                    two_stage_targets=two_stage_targets,
                                    classification_targets=classification_targets,
-                                   pca_n_components=pca_n)
+                                   pca_n_components=pca_n,
+                                   non_negative_targets=ridge_non_neg)
     ridge_model.fit(X_train, y_train_dict)
     ridge_test_preds = ridge_model.predict(X_test)
     # Evaluate total as sum(per-target preds) without adjustment — matches
@@ -780,6 +785,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             two_stage_targets=cfg.get("two_stage_targets", {}),
             classification_targets=cfg.get("classification_targets", {}),
             pca_n_components=cfg.get("ridge_pca_components"),
+            non_negative_targets=cfg.get("nn_non_negative_targets"),
         )
         ridge_fold.fit(X_train, y_train_dict)
         ridge_val_preds = ridge_fold.predict(X_val)
@@ -924,6 +930,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         two_stage_targets=cfg.get("two_stage_targets", {}),
         classification_targets=cfg.get("classification_targets", {}),
         pca_n_components=cfg.get("ridge_pca_components"),
+        non_negative_targets=cfg.get("nn_non_negative_targets"),
     )
     ridge_model.fit(X_train, y_train_dict)
     ridge_test_preds = ridge_model.predict(X_test)

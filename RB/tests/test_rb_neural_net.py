@@ -91,8 +91,8 @@ class TestMultiHeadNet:
         assert x.grad is not None
         assert x.grad.shape == (4, 10)
 
-    def test_softplus_gradient_near_zero(self):
-        """Softplus is differentiable at zero (unlike clamp), so gradients flow smoothly."""
+    def test_gradient_near_zero(self):
+        """Verify gradients flow near zero outputs (clamp has zero grad below 0, but inputs near 0 still propagate)."""
         model = MultiHeadNet(
             input_dim=5, target_names=RB_TARGETS,
             backbone_layers=[16], head_hidden=4, dropout=0.0,
@@ -109,7 +109,7 @@ class TestMultiHeadNet:
         assert (x.grad != 0).any(), "Gradients should be non-zero near zero"
 
     def test_total_equals_sum_train_mode(self):
-        """Total = sum of heads should hold in train mode too (softplus applied uniformly)."""
+        """Total = sum of heads should hold in train mode too (clamp applied uniformly)."""
         model = MultiHeadNet(
             input_dim=10, target_names=RB_TARGETS,
             backbone_layers=[32, 16], head_hidden=8, dropout=0.0,
@@ -153,7 +153,7 @@ class TestMultiHeadNet:
         assert not torch.allclose(out_train["total"].detach(), out_eval["total"])
 
     def test_outputs_non_negative_eval(self, model):
-        """Softplus ensures all head outputs are non-negative in eval mode."""
+        """Clamp ensures all head outputs are non-negative in eval mode."""
         model.eval()
         x = torch.randn(4, 10)
         with torch.no_grad():
@@ -162,7 +162,7 @@ class TestMultiHeadNet:
             assert (out[key] >= 0).all(), f"Negative value in {key} (eval)"
 
     def test_outputs_non_negative_train(self, model):
-        """Softplus ensures non-negative outputs during training too (unlike old clamp)."""
+        """Clamp ensures non-negative outputs during training."""
         model.train()
         x = torch.randn(4, 10)
         out = model(x)

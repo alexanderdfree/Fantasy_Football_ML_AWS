@@ -1,3 +1,4 @@
+# Python bytecode
 __pycache__/
 *.pyc
 *.pyo
@@ -6,9 +7,17 @@ __pycache__/
 data/raw/
 data/splits/
 
-# Model outputs
-outputs/models/
-outputs/figures/
+# Model artifacts (all positions)
+**/outputs/models/
+**/outputs/figures/
+*.pkl
+*.pt
+
+# Hyperparameter tuning databases (Optuna)
+*.db
+
+# Analysis output
+analysis_output/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -23,3 +32,14 @@ venv/
 
 # pytest
 .pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python packaging
+*.egg-info/
+dist/
+build/

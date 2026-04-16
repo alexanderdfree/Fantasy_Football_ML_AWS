@@ -36,7 +36,7 @@ POSITIONS = {
 VEGAS_FEATURES = ["implied_team_total", "implied_opp_total", "total_line"]
 VENUE_FEATURES = ["is_dome", "is_grass", "temp_adjusted", "wind_adjusted"]
 CONTEXT_FEATURES = ["is_divisional", "days_rest_improved", "rest_advantage"]
-INTERACTION_FEATURES = ["implied_total_x_dome", "implied_total_x_wind"]
+INTERACTION_FEATURES = ["implied_total_x_wind"]
 
 ALL_FEATURES = VEGAS_FEATURES + VENUE_FEATURES + CONTEXT_FEATURES + INTERACTION_FEATURES
 

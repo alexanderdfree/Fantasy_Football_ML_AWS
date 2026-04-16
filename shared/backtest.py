@@ -55,7 +55,9 @@ def run_weekly_simulation(
                 hit_rate = len(actual_top_k & pred_top_k) / top_k
 
                 corr, _ = spearmanr(week_df[pred_col], week_df[true_col])
-                corr = corr if not np.isnan(corr) else 0.0
+                if np.isnan(corr):
+                    print(f"  WARNING: Spearman NaN for {model_name} week {week} "
+                          f"(n={len(week_df)})")
 
                 weekly_ranking[model_name].append({
                     "week": week,

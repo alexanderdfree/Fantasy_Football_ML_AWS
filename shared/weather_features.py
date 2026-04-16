@@ -25,7 +25,6 @@ WEATHER_FEATURES_ALL = [
     "is_divisional",
     "days_rest_improved",
     "rest_advantage",
-    "implied_total_x_dome",
     "implied_total_x_wind",
 ]
 
@@ -33,7 +32,7 @@ WEATHER_FEATURES_ALL = [
 WEATHER_DROPS_BY_POSITION = {
     "QB": {"is_grass"},
     "RB": {"is_dome", "temp_adjusted", "wind_adjusted",
-           "implied_total_x_dome", "implied_total_x_wind"},
+           "implied_total_x_wind"},
     "WR": {"is_grass"},
     "TE": {"is_grass", "temp_adjusted", "wind_adjusted", "implied_total_x_wind"},
 }
@@ -101,10 +100,10 @@ def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         The same DataFrame with 12 new columns added.
     """
-    if "implied_total_x_dome" in df.columns and df["implied_total_x_dome"].abs().sum() > 0:
+    if "_schedule_merged" in df.columns:
         return df
-    # Drop any zero-filled placeholders so the merge produces real values
-    for col in WEATHER_FEATURES_ALL:
+    # Drop any stale placeholders so the merge produces fresh values
+    for col in WEATHER_FEATURES_ALL + ["implied_total_x_dome"]:
         if col in df.columns:
             df.drop(columns=[col], inplace=True)
 
@@ -153,13 +152,14 @@ def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     df["rest_advantage"] = df["days_rest_improved"] - pd.to_numeric(opp_rest, errors="coerce").fillna(7)
 
     # --- Interaction features ---
-    df["implied_total_x_dome"] = df["implied_team_total"].fillna(0) * df["is_dome"]
     wind_factor = (1 - df["wind_adjusted"] / 40).clip(0, 1)
     df["implied_total_x_wind"] = df["implied_team_total"].fillna(0) * wind_factor
 
-    # --- Fill remaining NaNs in Vegas features ---
-    for col in ["implied_team_total", "implied_opp_total", "total_line"]:
-        df[col] = df[col].fillna(0)
+    # NaN Vegas features indicate unmatched games — leave them as NaN
+    # so downstream code can detect and handle them explicitly.
+    n_missing = df["implied_team_total"].isna().sum()
+    if n_missing > 0:
+        print(f"  WARNING: {n_missing} rows have no schedule match (Vegas features are NaN)")
 
     # Populate is_home from the schedule merge (before cleanup deletes is_home_sched)
     if "is_home_sched" in df.columns:
@@ -171,6 +171,7 @@ def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df.drop(columns=[col], inplace=True, errors="ignore")
 
+    df["_schedule_merged"] = True
     return df
 
 

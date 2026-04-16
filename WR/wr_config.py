@@ -63,7 +63,7 @@ WR_INCLUDE_FEATURES = {
     "weather_vegas": [
         "implied_team_total", "implied_opp_total",
         "wind_adjusted", "is_dome",
-        "implied_total_x_dome", "temp_adjusted",
+        "temp_adjusted",
     ],
     "specific": WR_SPECIFIC_FEATURES,
 }
