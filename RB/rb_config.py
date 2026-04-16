@@ -14,47 +14,62 @@ RB_SPECIFIC_FEATURES = [
     "yac_per_reception_L3",
     "receiving_epa_per_target_L3",
     "air_yards_per_target_L3",
+    "career_carries",
+    "team_rb_carry_hhi_L3",
+    "team_rb_target_hhi_L3",
+    "opportunity_index_L3",
 ]
 
-# Features to drop from the general pipeline for RB model
-RB_DROP_FEATURES = set()
-for _stat in ["passing_yards", "attempts"]:
-    for _window in [3, 5, 8]:
-        for _agg in ["mean", "std", "max"]:
-            RB_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L{_window}")
-for _span in [3, 5]:
-    RB_DROP_FEATURES.add(f"ewma_passing_yards_L{_span}")
-for _stat in ["passing_yards", "attempts"]:
-    for _agg in ["mean", "std", "max"]:
-        RB_DROP_FEATURES.add(f"prior_season_{_agg}_{_stat}")
-# is_home is constant zero for RB rows (filled 0 by NaN handling), creating a
-# singular feature matrix (condition number 2.6e18 → 1.8e8 after removal).
-RB_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE", "is_home"}
+# === RB Feature Whitelist ===
+# Explicit include list — new columns must be opted in, preventing silent leakage.
+_RB_ROLLING_STATS = [
+    "fantasy_points", "fantasy_points_floor", "targets", "receptions",
+    "carries", "rushing_yards", "receiving_yards", "snap_pct",
+]
 
-# NOTE: snap_pct and air_yards_share are already lagged (shift=1) in engineer.py
-# so they ARE available at prediction time and should NOT be dropped.
-
-# Drop EWMA features — they correlate >0.98 with rolling means of the same stat,
-# adding multicollinearity without unique signal.
-from src.config import EWMA_STATS, EWMA_SPANS
-for _stat in EWMA_STATS:
-    if _stat not in ("passing_yards",):  # already dropped above
-        for _span in EWMA_SPANS:
-            RB_DROP_FEATURES.add(f"ewma_{_stat}_L{_span}")
-
-# Drop L5 rolling means/std/max — sandwiched between L3 and L8 with >0.97 corr to both,
-# contributing to ill-conditioned feature matrix without meaningful unique signal.
-for _stat in ["fantasy_points", "fantasy_points_floor", "targets", "receptions",
-              "carries", "rushing_yards", "receiving_yards", "snap_pct"]:
-    for _agg in ["mean", "std", "max"]:
-        RB_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L5")
-
-# Weather/Vegas drops — keep 3 features with signal:
-#   implied_opp_total (r=0.052), total_line (r=0.023), rest_advantage (r=0.019)
-RB_DROP_FEATURES |= {
-    "is_dome", "temp_adjusted", "wind_adjusted",
-    "implied_total_x_dome", "implied_total_x_wind",
-    "is_grass", "is_divisional", "days_rest_improved", "implied_team_total",
+RB_INCLUDE_FEATURES = {
+    # L3/L8 only — all L5 dropped (>0.97 corr with L3/L8).
+    # min variant only exists for fantasy_points (kept at all windows).
+    "rolling": [
+        col
+        for stat in _RB_ROLLING_STATS
+        for w in [3, 8]
+        for col in (
+            [f"rolling_{a}_{stat}_L{w}" for a in ["mean", "std", "max"]]
+            + ([f"rolling_min_{stat}_L{w}"] if stat == "fantasy_points" else [])
+        )
+    ] + [f"rolling_min_fantasy_points_L5"],
+    "prior_season": [
+        f"prior_season_{a}_{stat}"
+        for stat in _RB_ROLLING_STATS
+        for a in ["mean", "std", "max"]
+    ],
+    # All EWMA dropped (>0.98 corr with rolling means)
+    "ewma": [],
+    "trend": ["trend_fantasy_points", "trend_targets", "trend_carries", "trend_snap_pct"],
+    "share": [
+        "target_share_L3", "target_share_L5",
+        "carry_share_L3", "carry_share_L5",
+        "snap_pct", "air_yards_share",
+    ],
+    "matchup": [
+        "opp_fantasy_pts_allowed_to_pos", "opp_rush_pts_allowed_to_pos",
+        "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos",
+    ],
+    "defense": [
+        "opp_def_sacks_L5", "opp_def_pass_yds_allowed_L5",
+        "opp_def_pass_td_allowed_L5", "opp_def_ints_L5",
+        "opp_def_rush_yds_allowed_L5", "opp_def_pts_allowed_L5",
+    ],
+    "contextual": [
+        "is_home", "week", "is_returning_from_absence", "days_rest",
+        "practice_status", "game_status", "depth_chart_rank",
+    ],
+    # implied_team + implied_opp encodes both game total and spread direction
+    # without the perfect collinearity of keeping total_line alongside either.
+    # is_dome: dome premium on receiving (r=0.023 receiving_floor).
+    "weather_vegas": ["implied_team_total", "implied_opp_total", "is_dome", "rest_advantage"],
+    "specific": RB_SPECIFIC_FEATURES,
 }
 
 # === Ridge ===
@@ -131,7 +146,7 @@ RB_LOSS_W_TOTAL = 0.25
 RB_HUBER_DELTAS = {
     "rushing_floor": 2.0,
     "receiving_floor": 2.5,
-    "td_points": 3.0,
+    "td_points": 2.0,  # tightened from 3.0 — gated TD head handles zero-mass
 }
 
 # === LR Scheduler ===
@@ -168,4 +183,12 @@ RB_ATTN_HISTORY_STATS = [
     "carries", "targets", "receptions",
     "snap_pct",
     "rushing_first_downs", "receiving_first_downs",
+    "game_carry_share", "game_target_share",
+    "game_carry_hhi", "game_target_hhi",
 ]
+# Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
+# Tuned: gate_weight 3.0 > 1.0 (stronger BCE signal), gate_hidden 24 > 16,
+# Huber delta tightened 3.0 → 2.0 (gate handles zero-mass so value head needs less tolerance)
+RB_ATTN_GATED_TD = True
+RB_ATTN_TD_GATE_HIDDEN = 24
+RB_ATTN_TD_GATE_WEIGHT = 3.0

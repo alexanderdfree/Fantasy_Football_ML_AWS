@@ -161,6 +161,10 @@ def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     for col in ["implied_team_total", "implied_opp_total", "total_line"]:
         df[col] = df[col].fillna(0)
 
+    # Populate is_home from the schedule merge (before cleanup deletes is_home_sched)
+    if "is_home_sched" in df.columns:
+        df["is_home"] = df["is_home_sched"].fillna(0).astype(int)
+
     # Clean up intermediate merge columns
     for col in ["spread_line", "roof", "surface", "temp", "wind",
                 "team_rest", "opp_rest", "div_game", "is_home_sched"]:

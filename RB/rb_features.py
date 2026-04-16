@@ -1,20 +1,13 @@
 import numpy as np
 import pandas as pd
-from src.features.engineer import get_feature_columns
-from RB.rb_config import RB_DROP_FEATURES, RB_SPECIFIC_FEATURES
+from src.features.engineer import flatten_include_features
+from RB.rb_config import RB_INCLUDE_FEATURES
 from RB.rb_data import compute_team_rb_totals
 
 
 def get_rb_feature_columns() -> list[str]:
-    """Return the complete ordered list of feature columns for the RB model.
-
-    Starts with general feature columns, prunes QB-specific noise features
-    and position encoding, then appends RB-specific features.
-    """
-    general_cols = get_feature_columns()
-    rb_cols = [c for c in general_cols if c not in RB_DROP_FEATURES]
-    rb_cols.extend(RB_SPECIFIC_FEATURES)
-    return rb_cols
+    """Return the complete ordered list of feature columns for the RB model."""
+    return flatten_include_features(RB_INCLUDE_FEATURES)
 
 
 def add_rb_specific_features(
@@ -22,18 +15,30 @@ def add_rb_specific_features(
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
 ) -> tuple:
-    """Add 11 RB-specific engineered features to each split.
+    """Add 14 RB-specific engineered features to each split.
 
     Features are computed independently per split to prevent leakage.
     Team RB totals are computed from each split's own data.
     """
+    # Career carries: cumulative across all seasons, shifted to prevent leakage.
+    # Must combine splits to capture cross-season history (e.g., 2024 val needs 2018-2023 carries).
+    combined = pd.concat([train_df, val_df, test_df], ignore_index=True)
+    combined = combined.sort_values(["player_id", "season", "week"])
+    combined["career_carries"] = combined.groupby("player_id")["carries"].transform(
+        lambda x: x.fillna(0).cumsum().shift(1)
+    ).fillna(0)
+    lookup = combined.groupby(["player_id", "season", "week"])["career_carries"].first()
+    for df in [train_df, val_df, test_df]:
+        keys = pd.MultiIndex.from_arrays([df["player_id"], df["season"], df["week"]])
+        df["career_carries"] = lookup.reindex(keys).values
+
     for df in [train_df, val_df, test_df]:
         _compute_rb_features(df)
     return train_df, val_df, test_df
 
 
 def _compute_rb_features(df: pd.DataFrame) -> None:
-    """Compute all 11 RB-specific features in-place."""
+    """Compute all 14 RB-specific features in-place."""
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
     # --- Feature 1: yards_per_carry_L3 ---
@@ -92,6 +97,40 @@ def _compute_rb_features(df: pd.DataFrame) -> None:
     target_share = (player_targets_roll / team_rb_targets_roll).fillna(0)
     target_share[team_rb_targets_roll.values == 0] = 0
     df["team_rb_target_share_L3"] = target_share.values
+
+    # --- Game-level shares (for attention history) ---
+    _carries = df_merged["carries"].fillna(0).values
+    _targets = df_merged["targets"].fillna(0).values
+    _team_carries = df_merged["team_rb_carries"].values
+    _team_targets = df_merged["team_rb_targets"].values
+
+    df["game_carry_share"] = np.where(_team_carries > 0, _carries / _team_carries, 0.0)
+    df["game_target_share"] = np.where(_team_targets > 0, _targets / _team_targets, 0.0)
+
+    # --- Game-level HHI (team carry/target concentration) ---
+    df["game_carry_hhi"] = df.groupby(["recent_team", "season", "week"])[
+        "game_carry_share"
+    ].transform(lambda x: (x ** 2).sum())
+    df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
+        "game_target_share"
+    ].transform(lambda x: (x ** 2).sum())
+
+    # --- Features 12 & 13: rolling HHI (L3) for Ridge ---
+    df["team_rb_carry_hhi_L3"] = df.groupby(["player_id", "season"])[
+        "game_carry_hhi"
+    ].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+    df["team_rb_target_hhi_L3"] = df.groupby(["player_id", "season"])[
+        "game_target_hhi"
+    ].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+
+    # --- Feature 14: opportunity_index_L3 (weighted opp share) ---
+    _team_w_opps = _team_carries + 2 * _team_targets
+    _player_w_opps = _carries + 2 * _targets
+    df["_game_opp_idx"] = np.where(_team_w_opps > 0, _player_w_opps / _team_w_opps, 0.0)
+    df["opportunity_index_L3"] = df.groupby(["player_id", "season"])[
+        "_game_opp_idx"
+    ].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+    df.drop(columns=["_game_opp_idx"], inplace=True)
 
     # --- Feature 6: rushing_epa_per_attempt_L3 ---
     rushing_epa_roll = df.groupby(["player_id", "season"])["rushing_epa"].transform(

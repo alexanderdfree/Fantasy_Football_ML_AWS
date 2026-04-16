@@ -481,6 +481,24 @@ def get_feature_columns() -> list[str]:
     return cols
 
 
+# ── Whitelist-based feature selection ────────────────────────────────────────
+INCLUDE_CATEGORY_ORDER = [
+    "rolling", "prior_season", "ewma", "trend", "share",
+    "matchup", "defense", "contextual", "weather_vegas", "specific",
+]
+
+
+def flatten_include_features(include_dict: dict[str, list[str]]) -> list[str]:
+    """Flatten a whitelist feature dictionary into an ordered column list."""
+    unknown = set(include_dict) - set(INCLUDE_CATEGORY_ORDER)
+    if unknown:
+        raise ValueError(f"Unknown feature categories: {unknown}")
+    cols = []
+    for key in INCLUDE_CATEGORY_ORDER:
+        cols.extend(include_dict.get(key, []))
+    return cols
+
+
 def get_attn_static_columns(all_feature_cols: list[str]) -> list[str]:
     """Return feature columns for the attention NN, excluding temporal aggregations.
 

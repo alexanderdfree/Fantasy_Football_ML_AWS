@@ -1,16 +1,13 @@
 import numpy as np
 import pandas as pd
-from src.features.engineer import get_feature_columns
-from TE.te_config import TE_DROP_FEATURES, TE_SPECIFIC_FEATURES
+from src.features.engineer import flatten_include_features
+from TE.te_config import TE_INCLUDE_FEATURES
 from TE.te_data import compute_team_te_totals
 
 
 def get_te_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the TE model."""
-    general_cols = get_feature_columns()
-    te_cols = [c for c in general_cols if c not in TE_DROP_FEATURES]
-    te_cols.extend(TE_SPECIFIC_FEATURES)
-    return te_cols
+    return flatten_include_features(TE_INCLUDE_FEATURES)
 
 
 def add_te_specific_features(train_df, val_df, test_df):

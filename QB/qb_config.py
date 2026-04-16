@@ -18,50 +18,56 @@ QB_SPECIFIC_FEATURES = [
     "sack_damage_per_dropback_L3",
 ]
 
-# Features to drop from the general pipeline for QB model
-QB_DROP_FEATURES = set()
-# QBs don't receive passes — drop receiver-centric rolling features
-for _stat in ["targets", "receptions", "receiving_yards"]:
-    for _window in [3, 5, 8]:
-        for _agg in ["mean", "std", "max"]:
-            QB_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L{_window}")
-for _span in [3, 5]:
-    for _stat in ["targets", "receiving_yards"]:
-        QB_DROP_FEATURES.add(f"ewma_{_stat}_L{_span}")
-for _stat in ["targets", "receptions", "receiving_yards"]:
-    for _agg in ["mean", "std", "max"]:
-        QB_DROP_FEATURES.add(f"prior_season_{_agg}_{_stat}")
-# Drop share features designed for skill position players
-QB_DROP_FEATURES |= {"target_share_L3", "target_share_L5"}
-QB_DROP_FEATURES |= {"air_yards_share"}
-# Position encoding (all QB, no variance)
-QB_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
-# QBs have ~0 targets — trend_targets is pure noise
-QB_DROP_FEATURES.add("trend_targets")
-# NOTE: snap_pct is already lagged (shift=1) in engineer.py, safe to keep.
+# === QB Feature Whitelist ===
+# Explicit include list — new columns must be opted in, preventing silent leakage.
+_QB_ROLLING_STATS = [
+    "fantasy_points", "fantasy_points_floor", "carries",
+    "rushing_yards", "passing_yards", "attempts", "snap_pct",
+]
 
-# Drop EWMA features — they correlate >0.98 with rolling means of the same stat,
-# adding multicollinearity without unique signal.
-from src.config import EWMA_STATS, EWMA_SPANS
-_already_dropped_ewma = {"targets", "receiving_yards", "passing_yards"}
-for _stat in EWMA_STATS:
-    if _stat not in _already_dropped_ewma:
-        for _span in EWMA_SPANS:
-            QB_DROP_FEATURES.add(f"ewma_{_stat}_L{_span}")
-
-# Drop L5 rolling means/std/max — sandwiched between L3 and L8 with >0.97 corr to both,
-# contributing to ill-conditioned feature matrix without meaningful unique signal.
-for _stat in ["fantasy_points", "fantasy_points_floor", "carries", "rushing_yards",
-              "passing_yards", "attempts"]:
-    for _agg in ["mean", "std", "max"]:
-        QB_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L5")
-
-# Weather/Vegas drops — keep 6 features with |r|>0.04 or |r|>0.015+MI>0.005:
-#   implied_opp_total, wind_adjusted, is_divisional, implied_total_x_dome,
-#   temp_adjusted, is_dome
-QB_DROP_FEATURES |= {
-    "is_grass", "days_rest_improved", "rest_advantage",
-    "implied_total_x_wind", "implied_team_total", "total_line",
+QB_INCLUDE_FEATURES = {
+    # L3/L8 for all stats; snap_pct also keeps L5.
+    # min variant only exists for fantasy_points (kept at all windows).
+    # L5 mean/std/max dropped (>0.97 corr with L3/L8) except snap_pct.
+    "rolling": [
+        col
+        for stat in _QB_ROLLING_STATS
+        for w in [3, 5, 8]
+        for col in (
+            ([f"rolling_{a}_{stat}_L{w}" for a in ["mean", "std", "max"]]
+             if w != 5 or stat == "snap_pct" else [])
+            + ([f"rolling_min_{stat}_L{w}"] if stat == "fantasy_points" else [])
+        )
+    ],
+    "prior_season": [
+        f"prior_season_{a}_{stat}"
+        for stat in _QB_ROLLING_STATS
+        for a in ["mean", "std", "max"]
+    ],
+    # Keep passing_yards EWMA only — other EWMA >0.98 corr with rolling means
+    "ewma": ["ewma_passing_yards_L3", "ewma_passing_yards_L5"],
+    "trend": ["trend_fantasy_points", "trend_carries", "trend_snap_pct"],
+    # No target_share/air_yards_share — QBs have ~0 targets
+    "share": ["carry_share_L3", "carry_share_L5", "snap_pct"],
+    "matchup": [
+        "opp_fantasy_pts_allowed_to_pos", "opp_rush_pts_allowed_to_pos",
+        "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos",
+    ],
+    "defense": [
+        "opp_def_sacks_L5", "opp_def_pass_yds_allowed_L5",
+        "opp_def_pass_td_allowed_L5", "opp_def_ints_L5",
+        "opp_def_rush_yds_allowed_L5", "opp_def_pts_allowed_L5",
+    ],
+    "contextual": [
+        "is_home", "week", "is_returning_from_absence", "days_rest",
+        "practice_status", "game_status", "depth_chart_rank",
+    ],
+    # Keep 6 weather/Vegas features with |r|>0.04 or |r|>0.015+MI>0.005
+    "weather_vegas": [
+        "implied_opp_total", "wind_adjusted", "is_divisional",
+        "implied_total_x_dome", "temp_adjusted", "is_dome",
+    ],
+    "specific": QB_SPECIFIC_FEATURES,
 }
 
 # === Ridge ===
@@ -121,3 +127,7 @@ QB_ATTN_HISTORY_STATS = [
     "interceptions", "snap_pct",
     "sacks", "sack_yards",
 ]
+# Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
+QB_ATTN_GATED_TD = True
+QB_ATTN_TD_GATE_HIDDEN = 16
+QB_ATTN_TD_GATE_WEIGHT = 1.0

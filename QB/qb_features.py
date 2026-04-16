@@ -1,15 +1,12 @@
 import numpy as np
 import pandas as pd
-from src.features.engineer import get_feature_columns
-from QB.qb_config import QB_DROP_FEATURES, QB_SPECIFIC_FEATURES
+from src.features.engineer import flatten_include_features
+from QB.qb_config import QB_INCLUDE_FEATURES
 
 
 def get_qb_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the QB model."""
-    general_cols = get_feature_columns()
-    qb_cols = [c for c in general_cols if c not in QB_DROP_FEATURES]
-    qb_cols.extend(QB_SPECIFIC_FEATURES)
-    return qb_cols
+    return flatten_include_features(QB_INCLUDE_FEATURES)
 
 
 def add_qb_specific_features(train_df, val_df, test_df):

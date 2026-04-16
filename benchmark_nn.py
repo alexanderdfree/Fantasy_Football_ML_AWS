@@ -121,17 +121,6 @@ def summarize(position, result):
             for t in result["attn_nn_metrics"] if t != "total"
         }
         summary["attn_nn_top12"] = round(result["attn_nn_ranking"]["season_avg_hit_rate"], 3)
-    # Learned ensemble metrics
-    if "ensemble_metrics" in result:
-        ens = result["ensemble_metrics"]["total"]
-        summary["ensemble_mae"] = round(ens["mae"], 3)
-        summary["ensemble_r2"] = round(ens["r2"], 3)
-        summary["ensemble_per_target"] = {
-            t: round(result["ensemble_metrics"][t]["mae"], 3)
-            for t in result["ensemble_metrics"] if t != "total"
-        }
-        summary["ensemble_top12"] = round(result["ensemble_ranking"]["season_avg_hit_rate"], 3)
-        summary["ensemble_weights"] = result.get("ensemble_weights", {})
     if "cv_metrics" in result:
         cv = result["cv_metrics"]
         summary["cv_ridge_mae_mean"] = round(cv["ridge"]["total"]["mae_mean"], 3)
@@ -145,27 +134,8 @@ def summarize(position, result):
 def print_table(summaries):
     has_cv = any("cv_ridge_mae_mean" in s for s in summaries)
     has_attn = any("attn_nn_mae" in s for s in summaries)
-    has_ensemble = any("ensemble_mae" in s for s in summaries)
 
-    if has_ensemble:
-        print("\n" + "=" * 110)
-        print(f"{'Pos':<5} {'Ridge MAE':>10} {'NN MAE':>10} {'Attn MAE':>10} {'Ens MAE':>10} {'Ens-Best':>9} {'Ridge R2':>9} {'Ens R2':>9} {'Ens Top12':>10}")
-        print("-" * 110)
-        for s in summaries:
-            attn_mae = s.get("attn_nn_mae", float("nan"))
-            ens_mae = s.get("ensemble_mae", float("nan"))
-            ens_r2 = s.get("ensemble_r2", float("nan"))
-            ens_top12 = s.get("ensemble_top12", float("nan"))
-            # Best individual model MAE
-            best_individual = min(s["ridge_mae"], s["nn_mae"])
-            if "attn_nn_mae" in s:
-                best_individual = min(best_individual, s["attn_nn_mae"])
-            ens_delta = ens_mae - best_individual if "ensemble_mae" in s else float("nan")
-            print(f"{s['position']:<5} {s['ridge_mae']:>10.3f} {s['nn_mae']:>10.3f} "
-                  f"{attn_mae:>10.3f} {ens_mae:>10.3f} {ens_delta:>+9.3f} "
-                  f"{s['ridge_r2']:>9.3f} {ens_r2:>9.3f} {ens_top12:>10.3f}")
-        print("=" * 110)
-    elif has_attn:
+    if has_attn:
         print("\n" + "=" * 95)
         print(f"{'Pos':<5} {'Ridge MAE':>10} {'NN MAE':>10} {'Attn MAE':>10} {'Attn-NN':>9} {'Ridge R2':>9} {'NN R2':>9} {'Attn R2':>9}")
         print("-" * 95)

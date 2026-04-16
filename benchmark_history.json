@@ -6992,5 +6992,179 @@
         "elapsed_sec": 73.3
       }
     ]
+  },
+  {
+    "run_id": "2026-04-16T10:56:22_7c4e560",
+    "timestamp": "2026-04-16T10:56:22",
+    "git_hash": "7c4e560",
+    "note": "",
+    "positions": [
+      "RB"
+    ],
+    "config": {
+      "global": {
+        "train_seasons": [
+          2012,
+          2013,
+          2014,
+          2015,
+          2016,
+          2017,
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023
+        ],
+        "val_seasons": [
+          2024
+        ],
+        "test_seasons": [
+          2025
+        ],
+        "nn_epochs": 200,
+        "nn_batch_size": 256,
+        "nn_patience": 15,
+        "nn_dropout": 0.3,
+        "nn_lr": 0.001
+      },
+      "rb": {
+        "targets": [
+          "rushing_floor",
+          "receiving_floor",
+          "td_points"
+        ],
+        "two_stage_targets": {
+          "td_points": {
+            "clf_C": 0.001,
+            "ridge_alpha": 0.01,
+            "threshold": 0.5
+          }
+        },
+        "ordinal_targets": {
+          "td_points": {
+            "type": "ordinal",
+            "class_values": [
+              0,
+              6,
+              12,
+              18
+            ],
+            "alpha": 1.0
+          }
+        },
+        "gated_ordinal_targets": {
+          "td_points": {
+            "type": "gated_ordinal",
+            "class_values": [
+              0,
+              6,
+              12,
+              18
+            ],
+            "alpha": 1.0,
+            "clf_C": 0.001,
+            "threshold": 0.5
+          }
+        },
+        "td_model_type": "gated_ordinal",
+        "ridge_pca_components": 80,
+        "nn_backbone_layers": [
+          128,
+          64
+        ],
+        "nn_head_hidden": 48,
+        "nn_dropout": 0.15,
+        "nn_lr": 0.001,
+        "nn_weight_decay": 5e-05,
+        "nn_epochs": 300,
+        "nn_batch_size": 256,
+        "nn_patience": 30,
+        "nn_head_hidden_overrides": {
+          "td_points": 64
+        },
+        "loss_weights": {
+          "rushing_floor": 1.2,
+          "receiving_floor": 1.0,
+          "td_points": 2.0
+        },
+        "loss_w_total": 0.25,
+        "huber_deltas": {
+          "rushing_floor": 2.0,
+          "receiving_floor": 2.5,
+          "td_points": 2.0
+        },
+        "scheduler_type": "cosine_warm_restarts",
+        "cosine_t0": 40,
+        "cosine_t_mult": 2,
+        "cosine_eta_min": 1e-05,
+        "train_attention_nn": true,
+        "attn_d_model": 32,
+        "attn_n_heads": 2,
+        "attn_encoder_hidden_dim": 0,
+        "attn_max_seq_len": 17,
+        "attn_project_kv": false,
+        "attn_positional_encoding": true,
+        "attn_gated_fusion": false,
+        "attn_dropout": 0.05,
+        "attn_lr": 0.001,
+        "attn_weight_decay": 5e-05,
+        "attn_batch_size": 256,
+        "attn_patience": 35,
+        "attn_history_stats": [
+          "fantasy_points",
+          "fantasy_points_floor",
+          "rushing_yards",
+          "receiving_yards",
+          "rushing_tds",
+          "receiving_tds",
+          "carries",
+          "targets",
+          "receptions",
+          "snap_pct",
+          "rushing_first_downs",
+          "receiving_first_downs",
+          "game_carry_share",
+          "game_target_share",
+          "game_carry_hhi",
+          "game_target_hhi"
+        ],
+        "attn_gated_td": true,
+        "attn_td_gate_hidden": 24,
+        "attn_td_gate_weight": 3.0
+      }
+    },
+    "results": [
+      {
+        "position": "RB",
+        "ridge_mae": 4.389,
+        "ridge_r2": 0.362,
+        "nn_mae": 4.251,
+        "nn_r2": 0.387,
+        "nn_wins_mae": true,
+        "nn_per_target": {
+          "rushing_floor": 1.848,
+          "receiving_floor": 1.845,
+          "td_points": 1.919
+        },
+        "ridge_per_target": {
+          "rushing_floor": 1.896,
+          "receiving_floor": 1.916,
+          "td_points": 1.814
+        },
+        "ridge_top12": 0.496,
+        "nn_top12": 0.508,
+        "attn_nn_mae": 4.304,
+        "attn_nn_r2": 0.375,
+        "attn_nn_per_target": {
+          "rushing_floor": 1.853,
+          "receiving_floor": 1.862,
+          "td_points": 1.945
+        },
+        "attn_nn_top12": 0.508,
+        "elapsed_sec": 57.4
+      }
+    ]
   }
 ]

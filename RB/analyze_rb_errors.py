@@ -42,7 +42,6 @@ def build_model_pred_cols(df, targets):
         ("pred_ridge_", "Ridge"),
         ("pred_nn_", "NN"),
         ("pred_attn_nn_", "Attention NN"),
-        ("pred_ensemble_", "Ensemble"),
     ]:
         pred_map = {}
         for t in targets + ["total"]:

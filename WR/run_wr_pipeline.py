@@ -15,6 +15,7 @@ from WR.wr_config import (
     WR_ATTN_ENCODER_HIDDEN_DIM, WR_ATTN_MAX_SEQ_LEN,
     WR_ATTN_POSITIONAL_ENCODING, WR_ATTN_DROPOUT,
     WR_ATTN_HISTORY_STATS,
+    WR_ATTN_GATED_TD, WR_ATTN_TD_GATE_HIDDEN, WR_ATTN_TD_GATE_WEIGHT,
 )
 from WR.wr_data import filter_to_wr
 from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
@@ -57,6 +58,9 @@ WR_CONFIG = {
     "attn_positional_encoding": WR_ATTN_POSITIONAL_ENCODING,
     "attn_dropout": WR_ATTN_DROPOUT,
     "attn_history_stats": WR_ATTN_HISTORY_STATS,
+    "attn_gated_td": WR_ATTN_GATED_TD,
+    "attn_td_gate_hidden": WR_ATTN_TD_GATE_HIDDEN,
+    "attn_td_gate_weight": WR_ATTN_TD_GATE_WEIGHT,
 }
 
 

@@ -15,6 +15,7 @@ from TE.te_config import (
     TE_ATTN_ENCODER_HIDDEN_DIM, TE_ATTN_MAX_SEQ_LEN,
     TE_ATTN_POSITIONAL_ENCODING, TE_ATTN_DROPOUT,
     TE_ATTN_HISTORY_STATS,
+    TE_ATTN_GATED_TD, TE_ATTN_TD_GATE_HIDDEN, TE_ATTN_TD_GATE_WEIGHT,
 )
 from TE.te_data import filter_to_te
 from TE.te_targets import compute_te_targets, compute_te_fumble_adjustment
@@ -55,6 +56,9 @@ TE_CONFIG = {
     "attn_positional_encoding": TE_ATTN_POSITIONAL_ENCODING,
     "attn_dropout": TE_ATTN_DROPOUT,
     "attn_history_stats": TE_ATTN_HISTORY_STATS,
+    "attn_gated_td": TE_ATTN_GATED_TD,
+    "attn_td_gate_hidden": TE_ATTN_TD_GATE_HIDDEN,
+    "attn_td_gate_weight": TE_ATTN_TD_GATE_WEIGHT,
 }
 
 

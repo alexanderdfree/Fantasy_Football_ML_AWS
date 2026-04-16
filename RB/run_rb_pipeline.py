@@ -19,6 +19,7 @@ from RB.rb_config import (
     RB_ATTN_PROJECT_KV, RB_ATTN_POSITIONAL_ENCODING,
     RB_ATTN_GATED_FUSION, RB_ATTN_DROPOUT,
     RB_ATTN_LR, RB_ATTN_WEIGHT_DECAY, RB_ATTN_BATCH_SIZE, RB_ATTN_PATIENCE,
+    RB_ATTN_GATED_TD, RB_ATTN_TD_GATE_HIDDEN, RB_ATTN_TD_GATE_WEIGHT,
 )
 from RB.rb_data import filter_to_rb
 from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
@@ -73,6 +74,9 @@ RB_CONFIG = {
     "attn_weight_decay": RB_ATTN_WEIGHT_DECAY,
     "attn_batch_size": RB_ATTN_BATCH_SIZE,
     "attn_patience": RB_ATTN_PATIENCE,
+    "attn_gated_td": RB_ATTN_GATED_TD,
+    "attn_td_gate_hidden": RB_ATTN_TD_GATE_HIDDEN,
+    "attn_td_gate_weight": RB_ATTN_TD_GATE_WEIGHT,
 }
 
 

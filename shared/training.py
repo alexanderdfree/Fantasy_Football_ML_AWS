@@ -3,6 +3,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 import matplotlib.pyplot as plt
 
@@ -12,6 +13,7 @@ class MultiTargetLoss(nn.Module):
 
     Loss = sum(weight[t] * Huber(pred[t], target[t]) for t in targets)
            + w_total * Huber(total_pred, total_actual)
+           + td_gate_weight * BCE(gate_logit, td > 0)   [when gated TD is active]
 
     Uses Huber loss for robustness to outlier games.
     Per-target deltas allow different MSE-to-MAE thresholds.
@@ -23,11 +25,13 @@ class MultiTargetLoss(nn.Module):
         loss_weights: dict[str, float],
         huber_deltas: dict[str, float] = None,
         w_total: float = 0.5,
+        td_gate_weight: float = 1.0,
     ):
         super().__init__()
         self.target_names = target_names
         self.loss_weights = loss_weights
         self.w_total = w_total
+        self.td_gate_weight = td_gate_weight
         if huber_deltas is None:
             huber_deltas = {}
         self.huber_fns = nn.ModuleDict({
@@ -49,6 +53,16 @@ class MultiTargetLoss(nn.Module):
 
         components = {f"loss_{name}": loss.item() for name, loss in per_target_losses.items()}
         components["loss_total_aux"] = loss_total.item()
+
+        # Gated TD: add BCE supervision on the gate logit
+        gate_key = "td_points_gate_logit"
+        if gate_key in preds:
+            gate_loss = F.binary_cross_entropy_with_logits(
+                preds[gate_key], (targets["td_points"] > 0).float()
+            )
+            combined = combined + self.td_gate_weight * gate_loss
+            components["loss_td_gate"] = gate_loss.item()
+
         components["loss_combined"] = combined.item()
         return combined, components
 

@@ -27,7 +27,7 @@ from WR.wr_features import (
 from WR.wr_config import WR_TARGETS, WR_RIDGE_ALPHA_GRIDS, WR_SPECIFIC_FEATURES
 
 
-# ── Aggressive feature drops (on top of existing WR_DROP_FEATURES) ───────────
+# ── Aggressive feature drops (on top of WR_INCLUDE_FEATURES whitelist) ────────
 EXTRA_DROPS = {
     # Zero variance
     "is_home",

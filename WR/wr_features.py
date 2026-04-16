@@ -1,16 +1,13 @@
 import numpy as np
 import pandas as pd
-from src.features.engineer import get_feature_columns
-from WR.wr_config import WR_DROP_FEATURES, WR_SPECIFIC_FEATURES
+from src.features.engineer import flatten_include_features
+from WR.wr_config import WR_INCLUDE_FEATURES
 from WR.wr_data import compute_team_wr_totals
 
 
 def get_wr_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the WR model."""
-    general_cols = get_feature_columns()
-    wr_cols = [c for c in general_cols if c not in WR_DROP_FEATURES]
-    wr_cols.extend(WR_SPECIFIC_FEATURES)
-    return wr_cols
+    return flatten_include_features(WR_INCLUDE_FEATURES)
 
 
 def add_wr_specific_features(train_df, val_df, test_df):

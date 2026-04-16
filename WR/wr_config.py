@@ -13,46 +13,59 @@ WR_SPECIFIC_FEATURES = [
     "receiving_first_down_rate_L3",
 ]
 
-# Features to drop from the general pipeline for WR model
-WR_DROP_FEATURES = set()
-# WRs don't pass — drop QB passing rolling features
-for _stat in ["passing_yards", "attempts"]:
-    for _window in [3, 5, 8]:
-        for _agg in ["mean", "std", "max"]:
-            WR_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L{_window}")
-for _span in [3, 5]:
-    WR_DROP_FEATURES.add(f"ewma_passing_yards_L{_span}")
-for _stat in ["passing_yards", "attempts"]:
-    for _agg in ["mean", "std", "max"]:
-        WR_DROP_FEATURES.add(f"prior_season_{_agg}_{_stat}")
-# Position encoding (all WR, no variance)
-WR_DROP_FEATURES |= {"pos_QB", "pos_RB", "pos_WR", "pos_TE"}
-# is_home has zero variance in training data (rank-deficient column)
-WR_DROP_FEATURES.add("is_home")
-# NOTE: snap_pct and air_yards_share are already lagged (shift=1) in engineer.py, safe to keep.
+# === WR Feature Whitelist ===
+# Explicit include list — new columns must be opted in, preventing silent leakage.
+_WR_ROLLING_STATS = [
+    "fantasy_points", "fantasy_points_floor", "targets", "receptions",
+    "carries", "rushing_yards", "receiving_yards", "snap_pct",
+]
 
-# Drop EWMA features — they correlate >0.98 with rolling means of the same stat,
-# adding multicollinearity without unique signal.
-from src.config import EWMA_STATS, EWMA_SPANS
-_already_dropped_ewma = {"passing_yards"}
-for _stat in EWMA_STATS:
-    if _stat not in _already_dropped_ewma:
-        for _span in EWMA_SPANS:
-            WR_DROP_FEATURES.add(f"ewma_{_stat}_L{_span}")
-
-# Drop L5 rolling means/std/max — sandwiched between L3 and L8 with >0.97 corr to both,
-# contributing to ill-conditioned feature matrix without meaningful unique signal.
-for _stat in ["fantasy_points", "fantasy_points_floor", "targets", "receptions",
-              "carries", "rushing_yards", "receiving_yards"]:
-    for _agg in ["mean", "std", "max"]:
-        WR_DROP_FEATURES.add(f"rolling_{_agg}_{_stat}_L5")
-
-# Weather/Vegas drops — keep 6 features with signal:
-#   implied_opp_total, is_dome, implied_total_x_dome, wind_adjusted,
-#   temp_adjusted, total_line
-WR_DROP_FEATURES |= {
-    "is_grass", "rest_advantage", "implied_total_x_wind",
-    "is_divisional", "days_rest_improved", "implied_team_total",
+WR_INCLUDE_FEATURES = {
+    # L3/L8 for all stats; snap_pct also keeps L5.
+    # L5 mean/std/max dropped (>0.97 corr with L3/L8) except snap_pct.
+    # min variant only exists for fantasy_points (kept at all windows).
+    "rolling": [
+        col
+        for stat in _WR_ROLLING_STATS
+        for w in [3, 5, 8]
+        for col in (
+            ([f"rolling_{a}_{stat}_L{w}" for a in ["mean", "std", "max"]]
+             if w != 5 or stat == "snap_pct" else [])
+            + ([f"rolling_min_{stat}_L{w}"] if stat == "fantasy_points" else [])
+        )
+    ],
+    "prior_season": [
+        f"prior_season_{a}_{stat}"
+        for stat in _WR_ROLLING_STATS
+        for a in ["mean", "std", "max"]
+    ],
+    # All EWMA dropped (>0.98 corr with rolling means)
+    "ewma": [],
+    "trend": ["trend_fantasy_points", "trend_targets", "trend_carries", "trend_snap_pct"],
+    "share": [
+        "target_share_L3", "target_share_L5",
+        "carry_share_L3", "carry_share_L5",
+        "snap_pct", "air_yards_share",
+    ],
+    "matchup": [
+        "opp_fantasy_pts_allowed_to_pos", "opp_rush_pts_allowed_to_pos",
+        "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos",
+    ],
+    "defense": [
+        "opp_def_sacks_L5", "opp_def_pass_yds_allowed_L5",
+        "opp_def_pass_td_allowed_L5", "opp_def_ints_L5",
+        "opp_def_rush_yds_allowed_L5", "opp_def_pts_allowed_L5",
+    ],
+    "contextual": [
+        "is_home", "week", "is_returning_from_absence", "days_rest",
+        "practice_status", "game_status", "depth_chart_rank",
+    ],
+    # Keep 6 features with signal
+    "weather_vegas": [
+        "implied_opp_total", "is_dome", "implied_total_x_dome",
+        "wind_adjusted", "temp_adjusted", "total_line",
+    ],
+    "specific": WR_SPECIFIC_FEATURES,
 }
 
 # === Ridge ===
@@ -116,3 +129,7 @@ WR_ATTN_HISTORY_STATS = [
     "targets", "receptions", "carries",
     "snap_pct",
 ]
+# Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
+WR_ATTN_GATED_TD = True
+WR_ATTN_TD_GATE_HIDDEN = 16
+WR_ATTN_TD_GATE_WEIGHT = 1.0

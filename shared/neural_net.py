@@ -6,6 +6,35 @@ import torch.nn.functional as F
 import numpy as np
 
 
+class GatedTDHead(nn.Module):
+    """Two-stage hurdle head for zero-inflated TD prediction.
+
+    Stage 1 (gate): P(TD > 0) via sigmoid
+    Stage 2 (value): E[TD | TD > 0] via Softplus (always positive)
+    Output: gate_prob * cond_value = E[TD]
+    """
+
+    def __init__(self, in_dim: int, gate_hidden: int = 16, value_hidden: int = 48):
+        super().__init__()
+        self.gate = nn.Sequential(
+            nn.Linear(in_dim, gate_hidden),
+            nn.ReLU(),
+            nn.Linear(gate_hidden, 1),
+        )
+        self.value = nn.Sequential(
+            nn.Linear(in_dim, value_hidden),
+            nn.ReLU(),
+            nn.Linear(value_hidden, 1),
+            nn.Softplus(),
+        )
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        gate_logit = self.gate(x).squeeze(-1)
+        cond_value = self.value(x).squeeze(-1)
+        td_pred = torch.sigmoid(gate_logit) * cond_value
+        return td_pred, gate_logit
+
+
 class MultiHeadNet(nn.Module):
     """Multi-head neural network for position-agnostic fantasy point decomposition.
 
@@ -213,12 +242,15 @@ class MultiHeadNetWithHistory(nn.Module):
         use_gated_fusion: bool = False,
         attn_dropout: float = 0.0,
         encoder_hidden_dim: int = 0,
+        gated_td: bool = False,
+        td_gate_hidden: int = 16,
     ):
         super().__init__()
         self.target_names = target_names
         self.non_negative_targets = (
             set(target_names) if non_negative_targets is None else non_negative_targets
         )
+        self.gated_td = gated_td
         self.d_model = d_model
 
         # === Game History Branch ===
@@ -280,11 +312,18 @@ class MultiHeadNetWithHistory(nn.Module):
         self.heads = nn.ModuleDict()
         for name in target_names:
             h = overrides.get(name, head_hidden)
-            self.heads[name] = nn.Sequential(
-                nn.Linear(backbone_out_dim, h),
-                nn.ReLU(),
-                nn.Linear(h, 1),
-            )
+            if gated_td and name == "td_points":
+                self.heads[name] = GatedTDHead(
+                    in_dim=backbone_out_dim,
+                    gate_hidden=td_gate_hidden,
+                    value_hidden=h,
+                )
+            else:
+                self.heads[name] = nn.Sequential(
+                    nn.Linear(backbone_out_dim, h),
+                    nn.ReLU(),
+                    nn.Linear(h, 1),
+                )
 
     def forward(
         self,
@@ -323,10 +362,15 @@ class MultiHeadNetWithHistory(nn.Module):
         shared = self.backbone(combined)
         preds = {}
         for name, head in self.heads.items():
-            val = head(shared).squeeze(-1)
-            if name in self.non_negative_targets:
-                val = torch.clamp(val, min=0.0)
-            preds[name] = val
+            if isinstance(head, GatedTDHead):
+                td_pred, gate_logit = head(shared)
+                preds[name] = torch.clamp(td_pred, min=0.0)
+                preds[f"{name}_gate_logit"] = gate_logit
+            else:
+                val = head(shared).squeeze(-1)
+                if name in self.non_negative_targets:
+                    val = torch.clamp(val, min=0.0)
+                preds[name] = val
         preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
 

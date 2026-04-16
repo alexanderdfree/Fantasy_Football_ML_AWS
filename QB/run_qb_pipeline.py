@@ -15,6 +15,7 @@ from QB.qb_config import (
     QB_ATTN_ENCODER_HIDDEN_DIM, QB_ATTN_MAX_SEQ_LEN,
     QB_ATTN_POSITIONAL_ENCODING, QB_ATTN_DROPOUT, QB_ATTN_PATIENCE,
     QB_ATTN_HISTORY_STATS,
+    QB_ATTN_GATED_TD, QB_ATTN_TD_GATE_HIDDEN, QB_ATTN_TD_GATE_WEIGHT,
 )
 from QB.qb_data import filter_to_qb
 from QB.qb_targets import compute_qb_targets, compute_qb_adjustment
@@ -56,6 +57,9 @@ QB_CONFIG = {
     "attn_dropout": QB_ATTN_DROPOUT,
     "attn_patience": QB_ATTN_PATIENCE,
     "attn_history_stats": QB_ATTN_HISTORY_STATS,
+    "attn_gated_td": QB_ATTN_GATED_TD,
+    "attn_td_gate_hidden": QB_ATTN_TD_GATE_HIDDEN,
+    "attn_td_gate_weight": QB_ATTN_TD_GATE_WEIGHT,
 }
 
 
