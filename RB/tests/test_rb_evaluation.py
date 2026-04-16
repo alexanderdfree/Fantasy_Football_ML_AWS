@@ -14,6 +14,7 @@ RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 # compute_target_metrics
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeTargetMetrics:
     def _make_dicts(self, n=50):
         np.random.seed(42)
@@ -61,46 +62,34 @@ class TestComputeTargetMetrics:
 # compute_ranking_metrics
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeRankingMetrics:
-    def _make_test_df(self, n_weeks=3, n_players=15):
-        rows = []
-        np.random.seed(42)
-        for week in range(1, n_weeks + 1):
-            for pid in range(1, n_players + 1):
-                rows.append({
-                    "week": week,
-                    "player_id": f"P{pid}",
-                    "pred_total": np.random.rand() * 20,
-                    "fantasy_points": np.random.rand() * 20,
-                })
-        return pd.DataFrame(rows)
-
-    def test_basic_structure(self):
-        df = self._make_test_df()
+    def test_basic_structure(self, make_ranking_df):
+        df = make_ranking_df(n_weeks=3, n_players=15)
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=5)
         assert "weekly" in result
         assert "season_avg_hit_rate" in result
         assert "season_avg_spearman" in result
 
-    def test_weekly_count_matches(self):
-        df = self._make_test_df(n_weeks=4, n_players=15)
+    def test_weekly_count_matches(self, make_ranking_df):
+        df = make_ranking_df(n_weeks=4, n_players=15)
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=12)
         assert len(result["weekly"]) == 4
 
-    def test_hit_rate_bounds(self):
-        df = self._make_test_df(n_weeks=2, n_players=20)
+    def test_hit_rate_bounds(self, make_ranking_df):
+        df = make_ranking_df(n_weeks=2, n_players=20)
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=10)
         for week_result in result["weekly"]:
             assert 0.0 <= week_result["top_k_hit_rate"] <= 1.0
 
-    def test_perfect_predictions_hit_rate(self):
-        df = self._make_test_df(n_weeks=1, n_players=15)
+    def test_perfect_predictions_hit_rate(self, make_ranking_df):
+        df = make_ranking_df(n_weeks=1, n_players=15)
         df["pred_total"] = df["fantasy_points"]
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=12)
         assert pytest.approx(result["weekly"][0]["top_k_hit_rate"]) == 1.0
 
-    def test_spearman_on_perfect_prediction(self):
-        df = self._make_test_df(n_weeks=1, n_players=20)
+    def test_spearman_on_perfect_prediction(self, make_ranking_df):
+        df = make_ranking_df(n_weeks=1, n_players=20)
         df["pred_total"] = df["fantasy_points"]
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=10)
         assert pytest.approx(result["weekly"][0]["spearman"], abs=0.01) == 1.0
@@ -135,8 +124,8 @@ class TestComputeRankingMetrics:
         assert len(result["weekly"]) == 0
         assert result["season_avg_hit_rate"] == 0.0
 
-    def test_single_week(self):
-        df = self._make_test_df(n_weeks=1, n_players=15)
+    def test_single_week(self, make_ranking_df):
+        df = make_ranking_df(n_weeks=1, n_players=15)
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=12)
         assert len(result["weekly"]) == 1
         assert result["season_avg_hit_rate"] == result["weekly"][0]["top_k_hit_rate"]

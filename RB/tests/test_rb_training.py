@@ -21,41 +21,27 @@ RB_LOSS_WEIGHTS = {"rushing_floor": 1.0, "receiving_floor": 1.0, "td_points": 1.
 # MultiTargetLoss
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestMultiTargetLoss:
-    def _make_tensors(self, n=10):
-        preds = {
-            "rushing_floor": torch.randn(n),
-            "receiving_floor": torch.randn(n),
-            "td_points": torch.randn(n),
-            "total": torch.randn(n),
-        }
-        targets = {
-            "rushing_floor": torch.randn(n),
-            "receiving_floor": torch.randn(n),
-            "td_points": torch.randn(n),
-            "total": torch.randn(n),
-        }
-        return preds, targets
-
-    def test_output_types(self):
+    def test_output_types(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
-        preds, targets = self._make_tensors()
+        preds, targets = make_tensors()
         combined, components = loss_fn(preds, targets)
         assert isinstance(combined, torch.Tensor)
         assert isinstance(components, dict)
 
-    def test_component_keys(self):
+    def test_component_keys(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
-        preds, targets = self._make_tensors()
+        preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
         assert set(components.keys()) == {
             "loss_rushing_floor", "loss_receiving_floor", "loss_td_points",
             "loss_total_aux", "loss_combined",
         }
 
-    def test_components_are_scalars(self):
+    def test_components_are_scalars(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
-        preds, targets = self._make_tensors()
+        preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
         for key, val in components.items():
             assert isinstance(val, float), f"{key} is not a float"
@@ -71,8 +57,8 @@ class TestMultiTargetLoss:
         combined, components = loss_fn(targets, targets)
         assert pytest.approx(combined.item(), abs=1e-6) == 0.0
 
-    def test_weights_affect_loss(self):
-        preds, targets = self._make_tensors()
+    def test_weights_affect_loss(self, make_tensors):
+        preds, targets = make_tensors()
         loss_equal = MultiTargetLoss(
             target_names=RB_TARGETS,
             loss_weights={"rushing_floor": 1.0, "receiving_floor": 1.0, "td_points": 1.0},
@@ -87,9 +73,9 @@ class TestMultiTargetLoss:
         c2, _ = loss_rush_heavy(preds, targets)
         assert c1.item() != c2.item()
 
-    def test_combined_loss_is_positive(self):
+    def test_combined_loss_is_positive(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
-        preds, targets = self._make_tensors()
+        preds, targets = make_tensors()
         combined, _ = loss_fn(preds, targets)
         assert combined.item() >= 0
 
@@ -108,6 +94,7 @@ class TestMultiTargetLoss:
 # MultiTargetDataset
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestMultiTargetDataset:
     def test_length(self):
         X = np.random.randn(20, 5).astype(np.float32)
@@ -140,6 +127,7 @@ class TestMultiTargetDataset:
 # make_dataloaders
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestMakeDataloaders:
     def test_returns_two_loaders(self):
         X_train = np.random.randn(50, 5).astype(np.float32)
@@ -172,6 +160,7 @@ class TestMakeDataloaders:
 # MultiHeadTrainer (integration)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.integration
 class TestMultiHeadTrainer:
     @pytest.fixture
     def setup_trainer(self):

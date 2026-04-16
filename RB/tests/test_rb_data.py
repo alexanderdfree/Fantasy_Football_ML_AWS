@@ -10,44 +10,33 @@ from RB.rb_data import filter_to_rb, compute_team_rb_totals
 # filter_to_rb
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestFilterToRB:
-    def _make_df(self, positions, has_pos_cols=True):
-        """Helper: build a minimal DataFrame with position column + optional encoding."""
-        data = {"position": positions, "rushing_yards": range(len(positions))}
-        if has_pos_cols:
-            data.update({
-                "pos_QB": [1 if p == "QB" else 0 for p in positions],
-                "pos_RB": [1 if p == "RB" else 0 for p in positions],
-                "pos_WR": [1 if p == "WR" else 0 for p in positions],
-                "pos_TE": [1 if p == "TE" else 0 for p in positions],
-            })
-        return pd.DataFrame(data)
-
-    def test_filters_only_rb_rows(self):
-        df = self._make_df(["QB", "RB", "WR", "RB", "TE"])
+    def test_filters_only_rb_rows(self, make_position_df):
+        df = make_position_df(["QB", "RB", "WR", "RB", "TE"])
         result = filter_to_rb(df)
         assert len(result) == 2
         assert (result["position"] == "RB").all()
 
-    def test_drops_position_encoding_columns(self):
-        df = self._make_df(["RB", "RB"])
+    def test_drops_position_encoding_columns(self, make_position_df):
+        df = make_position_df(["RB", "RB"])
         result = filter_to_rb(df)
         for col in ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]:
             assert col not in result.columns
 
-    def test_keeps_non_position_columns(self):
-        df = self._make_df(["RB"])
+    def test_keeps_non_position_columns(self, make_position_df):
+        df = make_position_df(["RB"])
         result = filter_to_rb(df)
         assert "rushing_yards" in result.columns
 
-    def test_no_position_encoding_columns(self):
+    def test_no_position_encoding_columns(self, make_position_df):
         """Should not crash when pos_XX columns are absent."""
-        df = self._make_df(["RB", "QB"], has_pos_cols=False)
+        df = make_position_df(["RB", "QB"], has_pos_cols=False)
         result = filter_to_rb(df)
         assert len(result) == 1
 
-    def test_empty_result_when_no_rbs(self):
-        df = self._make_df(["QB", "WR", "TE"])
+    def test_empty_result_when_no_rbs(self, make_position_df):
+        df = make_position_df(["QB", "WR", "TE"])
         result = filter_to_rb(df)
         assert len(result) == 0
         assert isinstance(result, pd.DataFrame)
@@ -57,8 +46,8 @@ class TestFilterToRB:
         result = filter_to_rb(df)
         assert len(result) == 0
 
-    def test_does_not_mutate_original(self):
-        df = self._make_df(["RB", "QB"])
+    def test_does_not_mutate_original(self, make_position_df):
+        df = make_position_df(["RB", "QB"])
         original_cols = list(df.columns)
         _ = filter_to_rb(df)
         assert list(df.columns) == original_cols
@@ -69,6 +58,7 @@ class TestFilterToRB:
 # compute_team_rb_totals
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeTeamRBTotals:
     def test_basic_aggregation(self):
         df = pd.DataFrame({
