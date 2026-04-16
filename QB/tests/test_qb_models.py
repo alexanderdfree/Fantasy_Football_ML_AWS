@@ -23,6 +23,7 @@ def simple_data():
     return X, y_dict
 
 
+@pytest.mark.unit
 class TestRidgeMultiTarget:
     def test_fit_and_predict_shapes(self, simple_data):
         X, y_dict = simple_data
