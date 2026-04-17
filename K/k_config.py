@@ -95,3 +95,33 @@ K_LGBM_COLSAMPLE_BYTREE = 0.8
 K_LGBM_REG_LAMBDA = 2.0
 K_LGBM_REG_ALPHA = 0.1
 K_LGBM_MIN_CHILD_SAMPLES = 30
+
+
+# === Tiny config for E2E smoke tests ===
+# Shrunk to 1 epoch with a 2-layer x 8-unit NN so the full pipeline runs
+# in well under 20s on CPU. Used by K/tests/test_k_pipeline_e2e.py.
+K_CONFIG_TINY = {
+    "targets": K_TARGETS,
+    "ridge_alpha_grids": {t: [1.0] for t in K_TARGETS},
+    "ridge_cv_folds": 2,
+    "cv_split_column": K_CV_SPLIT_COLUMN,
+    "ridge_refine_points": 0,
+    "specific_features": K_SPECIFIC_FEATURES,
+    "nn_backbone_layers": [8, 8],
+    "nn_head_hidden": 4,
+    "nn_dropout": 0.0,
+    "nn_head_hidden_overrides": None,
+    "nn_lr": 1e-3,
+    "nn_weight_decay": 0.0,
+    "nn_epochs": 1,
+    "nn_batch_size": 32,
+    "nn_patience": 1,
+    "nn_log_every": 1,
+    "loss_weights": K_LOSS_WEIGHTS,
+    "loss_w_total": K_LOSS_W_TOTAL,
+    "huber_deltas": K_HUBER_DELTAS,
+    "scheduler_type": "onecycle",
+    "onecycle_max_lr": 1e-3,
+    "onecycle_pct_start": 0.3,
+    "train_lightgbm": False,
+}
