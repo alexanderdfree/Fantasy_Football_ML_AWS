@@ -9,23 +9,10 @@ from shared.models import RidgeMultiTarget
 RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 
 
-@pytest.fixture
-def simple_data():
-    """Small training dataset with 20 samples and 5 features."""
-    np.random.seed(42)
-    n, d = 20, 5
-    X = np.random.randn(n, d).astype(np.float32)
-    y_dict = {
-        "rushing_floor": np.random.rand(n).astype(np.float32) * 10,
-        "receiving_floor": np.random.rand(n).astype(np.float32) * 8,
-        "td_points": np.random.rand(n).astype(np.float32) * 6,
-    }
-    return X, y_dict
-
-
+@pytest.mark.unit
 class TestRidgeMultiTarget:
-    def test_fit_and_predict_shapes(self, simple_data):
-        X, y_dict = simple_data
+    def test_fit_and_predict_shapes(self, simple_ridge_data):
+        X, y_dict = simple_ridge_data
         model = RidgeMultiTarget(target_names=RB_TARGETS, alpha=1.0)
         model.fit(X, y_dict)
         preds = model.predict(X)
@@ -34,8 +21,8 @@ class TestRidgeMultiTarget:
         for key in preds:
             assert preds[key].shape == (len(X),)
 
-    def test_total_is_sum_of_components(self, simple_data):
-        X, y_dict = simple_data
+    def test_total_is_sum_of_components(self, simple_ridge_data):
+        X, y_dict = simple_ridge_data
         model = RidgeMultiTarget(target_names=RB_TARGETS, alpha=1.0)
         model.fit(X, y_dict)
         preds = model.predict(X)
@@ -43,17 +30,17 @@ class TestRidgeMultiTarget:
         expected_total = preds["rushing_floor"] + preds["receiving_floor"] + preds["td_points"]
         np.testing.assert_allclose(preds["total"], expected_total, atol=1e-6)
 
-    def test_predict_total_matches(self, simple_data):
-        X, y_dict = simple_data
+    def test_predict_total_matches(self, simple_ridge_data):
+        X, y_dict = simple_ridge_data
         model = RidgeMultiTarget(target_names=RB_TARGETS, alpha=1.0)
         model.fit(X, y_dict)
         total = model.predict_total(X)
         preds = model.predict(X)
         np.testing.assert_allclose(total, preds["total"], atol=1e-6)
 
-    def test_different_alphas(self, simple_data):
+    def test_different_alphas(self, simple_ridge_data):
         """Different regularization strengths produce different predictions."""
-        X, y_dict = simple_data
+        X, y_dict = simple_ridge_data
         m1 = RidgeMultiTarget(target_names=RB_TARGETS, alpha=0.01)
         m2 = RidgeMultiTarget(target_names=RB_TARGETS, alpha=100.0)
         m1.fit(X, y_dict)
@@ -62,16 +49,16 @@ class TestRidgeMultiTarget:
         p2 = m2.predict_total(X)
         assert not np.allclose(p1, p2)
 
-    def test_single_sample_prediction(self, simple_data):
-        X, y_dict = simple_data
+    def test_single_sample_prediction(self, simple_ridge_data):
+        X, y_dict = simple_ridge_data
         model = RidgeMultiTarget(target_names=RB_TARGETS, alpha=1.0)
         model.fit(X, y_dict)
         single = X[:1]
         preds = model.predict(single)
         assert preds["total"].shape == (1,)
 
-    def test_feature_importance_keys(self, simple_data):
-        X, y_dict = simple_data
+    def test_feature_importance_keys(self, simple_ridge_data):
+        X, y_dict = simple_ridge_data
         model = RidgeMultiTarget(target_names=RB_TARGETS, alpha=1.0)
         model.fit(X, y_dict)
         names = [f"feat_{i}" for i in range(X.shape[1])]
@@ -81,8 +68,8 @@ class TestRidgeMultiTarget:
             assert isinstance(series, pd.Series)
             assert len(series) == X.shape[1]
 
-    def test_save_and_load(self, simple_data, tmp_path):
-        X, y_dict = simple_data
+    def test_save_and_load(self, simple_ridge_data, tmp_path):
+        X, y_dict = simple_ridge_data
         model = RidgeMultiTarget(target_names=RB_TARGETS, alpha=1.0)
         model.fit(X, y_dict)
         preds_before = model.predict(X)
@@ -111,9 +98,9 @@ class TestRidgeMultiTarget:
         preds = model.predict(X)
         assert np.allclose(preds["td_points"], 0.0, atol=1.0)
 
-    def test_per_target_alpha_construction(self, simple_data):
+    def test_per_target_alpha_construction(self, simple_ridge_data):
         """Per-target alphas produce different results than uniform alpha."""
-        X, y_dict = simple_data
+        X, y_dict = simple_ridge_data
         alpha_dict = {"rushing_floor": 0.01, "receiving_floor": 1.0, "td_points": 100.0}
         m_per = RidgeMultiTarget(target_names=RB_TARGETS, alpha=alpha_dict)
         m_uniform = RidgeMultiTarget(target_names=RB_TARGETS, alpha=1.0)
@@ -127,9 +114,9 @@ class TestRidgeMultiTarget:
         )
         assert any_different
 
-    def test_per_target_alpha_save_load(self, simple_data, tmp_path):
+    def test_per_target_alpha_save_load(self, simple_ridge_data, tmp_path):
         """Save/load round-trips correctly with per-target alphas."""
-        X, y_dict = simple_data
+        X, y_dict = simple_ridge_data
         alpha_dict = {"rushing_floor": 0.1, "receiving_floor": 10.0, "td_points": 500.0}
         model = RidgeMultiTarget(target_names=RB_TARGETS, alpha=alpha_dict)
         model.fit(X, y_dict)
