@@ -1,14 +1,8 @@
-"""Shared fixtures and pytest configuration for TE tests.
+"""Shared fixtures for TE tests — thin wrappers over shared.tests.position_fixtures.
 
-Consolidates helpers previously duplicated across TE test files:
-  - `_make_sim_df`  -> `te_sim_df_factory`, `te_sim_df`
-  - `_make_test_df` -> `te_test_df_factory`, `te_test_df`
-  - `_make_tensors` -> `te_tensor_factory`, `te_tensors`
-  - `_make_splits`  -> `te_splits_factory`
-  - `_make_df`      -> `te_position_df_factory`
-
-TE-specific scoring scale (15 pts range) is preserved via the factory
-defaults. Registers `unit`, `integration`, `e2e`, and `regression` markers.
+Generic factories are imported from ``shared.tests.position_fixtures``;
+this conftest binds them to the TE scoring scale (~15) and targets, and
+keeps the TE-specific tiny-splits fixture used by E2E and regression tests.
 """
 
 from __future__ import annotations
@@ -19,64 +13,43 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-import torch
 
-# Ensure project root is importable when tests are run from arbitrary cwd.
 PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-
-# ---------------------------------------------------------------------------
-# Marker registration
-# ---------------------------------------------------------------------------
-
-def pytest_configure(config):
-    """Register TE test markers. Mirrors the project-wide pytest marker plan."""
-    config.addinivalue_line("markers", "unit: fast unit tests (< 1s each)")
-    config.addinivalue_line(
-        "markers", "integration: multi-component tests (< 10s each)"
-    )
-    config.addinivalue_line("markers", "e2e: full-pipeline tests (< 60s each)")
-    config.addinivalue_line(
-        "markers", "regression: model quality thresholds"
-    )
-    config.addinivalue_line("markers", "slow: excluded from default run")
-
-
-# ---------------------------------------------------------------------------
-# TE target constant (re-exported from config so fixtures stay in sync)
-# ---------------------------------------------------------------------------
-
+from shared.tests.position_fixtures import (  # noqa: E402
+    make_position_df as _make_position_df,
+    make_sim_df as _make_sim_df,
+    make_splits as _make_splits,
+    make_tensors as _make_tensors,
+    make_test_df as _make_test_df,
+    register_position_markers,
+)
 from TE.te_config import TE_TARGETS  # noqa: E402
 
+# TE fantasy points typically span 0-15 (lower than WRs).
+TE_SCORING_SCALE = 15
+
+
+def pytest_configure(config):
+    register_position_markers(
+        config,
+        extra=[("slow", "excluded from default run")],
+    )
+
 
 # ---------------------------------------------------------------------------
-# Weekly-simulation fixtures (formerly `_make_sim_df`)
+# Generic TE fixtures — bind shared factories to TE scale / prefix / targets
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
 def te_sim_df_factory():
-    """Factory for synthetic weekly-simulation DataFrames with TE scoring.
-
-    TE scoring scale is ~15 points (much lower than WR) — preserved here.
-    """
-
+    """Factory for synthetic weekly-simulation DataFrames with TE scoring."""
     def _factory(n_weeks: int = 4, n_players: int = 15, seed: int = 42):
-        rows = []
-        rng = np.random.default_rng(seed)
-        for week in range(1, n_weeks + 1):
-            for pid in range(1, n_players + 1):
-                fp = rng.random() * 15  # TEs score lower than WRs
-                rows.append({
-                    "week": week,
-                    "player_id": f"TE{pid}",
-                    "fantasy_points": fp,
-                    "pred_ridge": fp + rng.standard_normal() * 2,
-                    "pred_nn": fp + rng.standard_normal() * 3,
-                })
-        return pd.DataFrame(rows)
-
+        return _make_sim_df(
+            TE_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="TE", rng_kind="default",
+        )
     return _factory
 
 
@@ -86,27 +59,13 @@ def te_sim_df(te_sim_df_factory):
     return te_sim_df_factory()
 
 
-# ---------------------------------------------------------------------------
-# Ranking-metrics fixtures (formerly `_make_test_df`)
-# ---------------------------------------------------------------------------
-
 @pytest.fixture(scope="session")
 def te_test_df_factory():
     """Factory for synthetic ranking-metrics DataFrames with TE scoring scale."""
-
     def _factory(n_weeks: int = 3, n_players: int = 15, seed: int = 42):
-        rows = []
-        rng = np.random.default_rng(seed)
-        for week in range(1, n_weeks + 1):
-            for pid in range(1, n_players + 1):
-                rows.append({
-                    "week": week,
-                    "player_id": f"TE{pid}",
-                    "pred_total": rng.random() * 15,
-                    "fantasy_points": rng.random() * 15,
-                })
-        return pd.DataFrame(rows)
-
+        return _make_test_df(
+            TE_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="TE", rng_kind="default",
+        )
     return _factory
 
 
@@ -116,23 +75,11 @@ def te_test_df(te_test_df_factory):
     return te_test_df_factory()
 
 
-# ---------------------------------------------------------------------------
-# Loss-function tensor fixtures (formerly `_make_tensors`)
-# ---------------------------------------------------------------------------
-
 @pytest.fixture(scope="session")
 def te_tensor_factory():
     """Factory for random TE (preds, targets) tensor dicts used by loss tests."""
-
     def _factory(n: int = 10, seed: int = 42):
-        # Fresh generator per call keeps fixtures reproducible regardless of order.
-        gen = torch.Generator().manual_seed(seed)
-        preds = {t: torch.randn(n, generator=gen) for t in TE_TARGETS}
-        preds["total"] = torch.randn(n, generator=gen)
-        targets = {t: torch.randn(n, generator=gen) for t in TE_TARGETS}
-        targets["total"] = torch.randn(n, generator=gen)
-        return preds, targets
-
+        return _make_tensors(TE_TARGETS, n=n, seed=seed)
     return _factory
 
 
@@ -142,47 +89,22 @@ def te_tensors(te_tensor_factory):
     return te_tensor_factory()
 
 
-# ---------------------------------------------------------------------------
-# NaN-filling splits fixture (formerly `_make_splits`)
-# ---------------------------------------------------------------------------
-
 @pytest.fixture(scope="session")
 def te_splits_factory():
     """Factory for (train, val, test) DataFrames used by fill_te_nans tests."""
+    return _make_splits
 
-    def _factory(train_vals, val_vals, test_vals, col: str = "feat1"):
-        train = pd.DataFrame({col: train_vals})
-        val = pd.DataFrame({col: val_vals})
-        test = pd.DataFrame({col: test_vals})
-        return train, val, test
-
-    return _factory
-
-
-# ---------------------------------------------------------------------------
-# Position-filter DataFrame fixture (formerly `_make_df` in test_te_data.py)
-# ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
 def te_position_df_factory():
     """Factory for position-encoded DataFrames used by filter_to_te tests."""
-
-    def _factory(positions: list[str], has_pos_cols: bool = True):
-        data = {"position": positions, "receiving_yards": range(len(positions))}
-        if has_pos_cols:
-            data.update({
-                "pos_QB": [1 if p == "QB" else 0 for p in positions],
-                "pos_RB": [1 if p == "RB" else 0 for p in positions],
-                "pos_WR": [1 if p == "WR" else 0 for p in positions],
-                "pos_TE": [1 if p == "TE" else 0 for p in positions],
-            })
-        return pd.DataFrame(data)
-
+    def _factory(positions, has_pos_cols: bool = True):
+        return _make_position_df(positions, stat_col="receiving_yards", has_pos_cols=has_pos_cols)
     return _factory
 
 
 # ---------------------------------------------------------------------------
-# Tiny E2E dataset fixture (used by test_te_pipeline_e2e and test_te_regression)
+# TE-specific: tiny synthetic dataset for E2E + regression tests
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
@@ -199,7 +121,7 @@ def te_tiny_splits():
 def _build_tiny_te_splits(seed: int = 42):
     """Construct fully-featured tiny TE splits.
 
-    Shared by `te_tiny_splits` and callable directly for tests that need
+    Shared by ``te_tiny_splits`` and callable directly for tests that need
     two fresh independent builds (e.g. reproducibility assertions).
     """
     from src.features.engineer import build_features

@@ -1,32 +1,10 @@
-"""Shared fixtures and pytest configuration for DST tests.
+"""Shared fixtures for DST tests — thin wrappers over shared.tests.position_fixtures.
 
-Promotes the helpers that used to be duplicated across each
-``DST/tests/test_dst_*.py`` file into session-scoped factory fixtures:
-
-* ``make_df``        — single-row team-game frame with the DST target inputs
-  (``def_sacks``, ``points_allowed``, etc.).  Replaces ``_make_dst_row``.
-* ``make_team_games`` — multi-week frame for one team with pre-computed
-  targets.  Replaces ``_make_team_games`` (kept name split so the intent is
-  obvious — ``make_df`` = single-row, ``make_team_games`` = multi-week).
-* ``make_splits``    — (train, val, test) single-column DataFrames for
-  ``fill_dst_nans`` tests.
-* ``make_sim_df``    — team-level weekly simulation frame (``player_id`` =
-  team code) used by backtest/evaluation tests.  DST is team-level, so the
-  scoring scale is 5–15 fantasy points/week (vs ~20 for QB).
-* ``make_test_df``   — player-level ranking frame used by
-  ``compute_ranking_metrics`` tests.
-* ``make_tensors``   — per-target torch tensors for ``MultiTargetLoss``
-  tests (includes the 'total' aux target).
-
-The fixtures use the ``factory`` pattern — the fixture returns a callable,
-so each test gets a fresh object with its own keyword arguments.  Scope is
-``session`` because the callables themselves are stateless and cheap to
-reuse; the DataFrames they produce are freshly materialised per call and
-safe to mutate.
-
-Also registers the ``unit`` / ``integration`` / ``e2e`` / ``regression``
-markers so tests can be filtered (``pytest -m unit``) without triggering
-``PytestUnknownMarkWarning``.
+Generic factories come from ``shared/tests/position_fixtures.py``; this
+conftest binds them to the DST scale (~15 fantasy pts), targets, and
+team-level ``player_id`` convention, and keeps DST-specific helpers for
+single-row target rows, multi-week team frames, and the tiny synthetic
+pipeline dataset used by E2E / regression tests.
 """
 
 from __future__ import annotations
@@ -38,37 +16,77 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# Ensure the project root is on sys.path so `DST.*` and `shared.*` imports
-# work when pytest is invoked from an arbitrary directory.  Mirrors the
-# convention used by shared/tests/conftest.py and batch/tests/conftest.py.
 _PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+from DST.dst_config import DST_TARGETS  # noqa: E402
+from shared.tests.position_fixtures import (  # noqa: E402
+    make_sim_df as _make_sim_df,
+    make_splits as _make_splits,
+    make_tensors as _make_tensors,
+    make_test_df as _make_test_df,
+    register_position_markers,
+)
 
-# ---------------------------------------------------------------------------
-# pytest markers
-# ---------------------------------------------------------------------------
+# DST scoring scale: team defenses typically score 5-15 fantasy pts/week.
+DST_SCORING_SCALE = 15
+
 
 def pytest_configure(config):
-    """Register markers so `pytest -m unit` works without warnings."""
-    config.addinivalue_line("markers", "unit: fast unit tests (<1s each)")
-    config.addinivalue_line(
-        "markers",
-        "integration: multi-component tests that exercise shared modules together",
-    )
-    config.addinivalue_line(
-        "markers",
-        "e2e: full-pipeline smoke tests (run_pipeline end-to-end)",
-    )
-    config.addinivalue_line(
-        "markers",
-        "regression: model-quality threshold tests (MAE/R2 on a stable slice)",
-    )
+    register_position_markers(config)
 
 
 # ---------------------------------------------------------------------------
-# Factory fixtures — DataFrame / tensor builders
+# Generic DST fixtures — DST scale, team-level ``TEAM`` prefix
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def make_sim_df():
+    """Factory: team-level weekly simulation DataFrame for backtest tests.
+
+    DST is team-level — ``player_id`` holds the team code (``TEAM1`` ..).
+    Fantasy-point scale is 5-15 per week (team-level D/ST scoring), not
+    the 20+ range that applies to QB/RB/WR.
+    """
+    def _factory(n_weeks: int = 4, n_players: int = 15, seed: int = 42):
+        return _make_sim_df(
+            DST_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="TEAM",
+        )
+    return _factory
+
+
+@pytest.fixture(scope="session")
+def make_test_df():
+    """Factory: player-level ranking DataFrame for compute_ranking_metrics tests."""
+    def _factory(n_weeks: int = 3, n_players: int = 15, seed: int = 42):
+        return _make_test_df(
+            DST_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="TEAM",
+        )
+    return _factory
+
+
+@pytest.fixture(scope="session")
+def make_tensors():
+    """Factory: per-target torch tensors for MultiTargetLoss tests.
+
+    Defaults to ``seed=None`` — same as the original DST fixture — so
+    callers don't perturb torch's global RNG state unless they ask for
+    determinism explicitly.
+    """
+    def _factory(n: int = 10, seed: int | None = None):
+        return _make_tensors(DST_TARGETS, n=n, seed=seed)
+    return _factory
+
+
+@pytest.fixture(scope="session")
+def make_splits():
+    """Factory: (train, val, test) single-column DataFrames for NaN-fill tests."""
+    return _make_splits
+
+
+# ---------------------------------------------------------------------------
+# DST-specific fixtures (not generalisable across positions)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
@@ -97,13 +115,7 @@ def make_df():
 
 @pytest.fixture(scope="session")
 def make_team_games():
-    """Factory: multi-week DST DataFrame for one team, with targets pre-computed.
-
-    Replaces ``_make_team_games`` from test_dst_features.py.  Includes the
-    three DST target columns (``defensive_scoring``, ``td_points``,
-    ``pts_allowed_bonus``) because ``compute_dst_features`` depends on them
-    for the rolling/EWMA features over total DST points.
-    """
+    """Factory: multi-week DST DataFrame for one team, with targets pre-computed."""
     def _factory(
         team: str = "KC",
         n_weeks: int = 6,
@@ -134,89 +146,6 @@ def make_team_games():
     return _factory
 
 
-@pytest.fixture(scope="session")
-def make_splits():
-    """Factory: (train, val, test) single-column DataFrames for NaN-fill tests."""
-    def _factory(train_vals, val_vals, test_vals, col: str = "feat1"):
-        train = pd.DataFrame({col: train_vals})
-        val = pd.DataFrame({col: val_vals})
-        test = pd.DataFrame({col: test_vals})
-        return train, val, test
-
-    return _factory
-
-
-@pytest.fixture(scope="session")
-def make_sim_df():
-    """Factory: team-level weekly simulation DataFrame for backtest tests.
-
-    DST is team-level — ``player_id`` holds the team code (``TEAM1`` ..).
-    Fantasy-point scale is 5–15 per week (team-level D/ST scoring), not
-    the 20+ range that applies to QB/RB/WR.  The fixture injects two
-    noisy prediction columns (``pred_ridge``, ``pred_nn``) to support
-    multi-model backtest tests.
-    """
-    def _factory(n_weeks: int = 4, n_players: int = 15, seed: int = 42):
-        rng = np.random.RandomState(seed)
-        rows = []
-        for week in range(1, n_weeks + 1):
-            for pid in range(1, n_players + 1):
-                fp = rng.rand() * 15  # team-level DST scale
-                rows.append({
-                    "week": week,
-                    "player_id": f"TEAM{pid}",  # team code — DST player_id convention
-                    "fantasy_points": fp,
-                    "pred_ridge": fp + rng.randn() * 2,
-                    "pred_nn": fp + rng.randn() * 3,
-                })
-        return pd.DataFrame(rows)
-
-    return _factory
-
-
-@pytest.fixture(scope="session")
-def make_test_df():
-    """Factory: player-level ranking DataFrame for compute_ranking_metrics tests."""
-    def _factory(n_weeks: int = 3, n_players: int = 15, seed: int = 42):
-        rng = np.random.RandomState(seed)
-        rows = []
-        for week in range(1, n_weeks + 1):
-            for pid in range(1, n_players + 1):
-                rows.append({
-                    "week": week,
-                    "player_id": f"TEAM{pid}",
-                    "pred_total": rng.rand() * 15,
-                    "fantasy_points": rng.rand() * 15,
-                })
-        return pd.DataFrame(rows)
-
-    return _factory
-
-
-@pytest.fixture(scope="session")
-def make_tensors():
-    """Factory: per-target torch tensors for MultiTargetLoss tests.
-
-    Returns (preds, targets) — each a dict keyed by the three DST targets
-    plus ``total`` (the aux-loss anchor).  Imports torch lazily so collecting
-    tests that don't need tensors doesn't pay the torch-import cost.
-    """
-    import torch
-
-    DST_TARGETS = ["defensive_scoring", "td_points", "pts_allowed_bonus"]
-
-    def _factory(n: int = 10, seed: int | None = None):
-        if seed is not None:
-            torch.manual_seed(seed)
-        preds = {t: torch.randn(n) for t in DST_TARGETS}
-        preds["total"] = torch.randn(n)
-        targets = {t: torch.randn(n) for t in DST_TARGETS}
-        targets["total"] = torch.randn(n)
-        return preds, targets
-
-    return _factory
-
-
 # ---------------------------------------------------------------------------
 # Synthetic pipeline dataset — used by E2E and regression tests
 # ---------------------------------------------------------------------------
@@ -228,15 +157,7 @@ def tiny_dst_dataset():
     32 teams x 4 seasons x 17 weeks = 2176 team-week rows.  Targets,
     features, and the min_games-per-season filter will reduce this to a
     few hundred trainable rows — plenty for a 1-epoch smoke test, tiny
-    enough to finish in < 20s.  Seed is pinned; regenerating the fixture
-    yields identical frames.
-
-    Shape contract:
-    * Every NFL team plays all 17 regular-season weeks in every season.
-    * ``team`` / ``recent_team`` / ``player_id`` all agree (DST is
-      team-level; ``player_id`` = team abbr, per ``build_dst_data``).
-    * ``fantasy_points`` is NOT added here — the pipeline derives it from
-      ``compute_dst_targets`` after we patch the scraper.
+    enough to finish in < 20s.
     """
     return _build_tiny_dst_dataset(seed=42)
 

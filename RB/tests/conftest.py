@@ -1,14 +1,11 @@
-"""Shared fixtures and marker registration for RB test suite.
+"""Shared fixtures for RB tests — thin wrappers over shared.tests.position_fixtures.
 
-Consolidates the duplicated test helpers (`_make_sim_df`, `_make_test_df`,
-`_make_tensors`, `_make_splits`, `_make_df`, `_make_player_games`,
-`_make_rb_row`, `_make_fumble_df`) into a single source of truth.
-
-Markers:
-    @pytest.mark.unit         — fast isolated tests (<=1s, no training)
-    @pytest.mark.integration  — tests hitting shared training loop or run_pipeline
-    @pytest.mark.e2e          — full pipeline smokes
-    @pytest.mark.regression   — numeric regression thresholds
+Generic factories (``make_sim_df``, ``make_ranking_df``, ``make_tensors``,
+``make_splits``, ``make_position_df``) now come from
+``shared/tests/position_fixtures.py``.  Only RB-specific helpers remain
+here: the multi-week player-games frame, single-row target row, fumble
+DataFrame, synthetic pipeline dataset for E2E/regression tests, and the
+Ridge training data factory.
 """
 
 from __future__ import annotations
@@ -19,61 +16,38 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-import torch
 
 PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from RB.rb_config import RB_TARGETS  # noqa: E402
+from shared.tests.position_fixtures import (  # noqa: E402
+    make_position_df as _make_position_df,
+    make_sim_df as _make_sim_df,
+    make_splits as _make_splits,
+    make_tensors as _make_tensors,
+    make_test_df as _make_ranking_df_shared,
+    register_position_markers,
+)
 
-# ---------------------------------------------------------------------------
-# Marker registration
-# ---------------------------------------------------------------------------
+# RB scoring scale: ~20 fantasy points typical.
+RB_SCORING_SCALE = 20
+
 
 def pytest_configure(config):
-    """Register RB test markers locally so -m filters don't warn."""
-    for marker, desc in [
-        ("unit", "fast isolated unit test (<=1s, no I/O or training)"),
-        ("integration", "hits run_pipeline or shared training loop"),
-        ("e2e", "full pipeline end-to-end smoke"),
-        ("regression", "numeric regression threshold check"),
-    ]:
-        config.addinivalue_line("markers", f"{marker}: {desc}")
+    register_position_markers(config)
 
 
 # ---------------------------------------------------------------------------
-# Simulation DataFrame fixtures (backtest / ranking)
+# Generic simulation / ranking / tensor / split fixtures
 # ---------------------------------------------------------------------------
-
-def _build_sim_df(n_weeks: int, n_players: int, seed: int = 42) -> pd.DataFrame:
-    """RB-scale synthetic simulation DataFrame (fp ~ U(0,20)).
-
-    Uses numpy legacy RandomState so assertions across tests stay stable.
-    """
-    rows = []
-    np.random.seed(seed)
-    for week in range(1, n_weeks + 1):
-        for pid in range(1, n_players + 1):
-            fp = np.random.rand() * 20
-            rows.append({
-                "week": week,
-                "player_id": f"P{pid}",
-                "fantasy_points": fp,
-                "pred_ridge": fp + np.random.randn() * 2,
-                "pred_nn": fp + np.random.randn() * 3,
-            })
-    return pd.DataFrame(rows)
-
 
 @pytest.fixture(scope="session")
 def make_sim_df():
-    """Factory fixture for RB-scale simulation DataFrames.
-
-    Usage:
-        def test_foo(make_sim_df):
-            df = make_sim_df(n_weeks=4, n_players=15)
-    """
-    return _build_sim_df
+    def _make(n_weeks: int, n_players: int, seed: int = 42):
+        return _make_sim_df(RB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="P")
+    return _make
 
 
 @pytest.fixture(scope="session")
@@ -82,99 +56,34 @@ def sim_df_default(make_sim_df):
     return make_sim_df(n_weeks=4, n_players=15)
 
 
-# ---------------------------------------------------------------------------
-# Ranking evaluation DataFrame fixture
-# ---------------------------------------------------------------------------
-
-def _build_ranking_df(n_weeks: int, n_players: int, seed: int = 42) -> pd.DataFrame:
-    """Ranking-eval DataFrame mirroring the legacy _make_test_df helper."""
-    rows = []
-    np.random.seed(seed)
-    for week in range(1, n_weeks + 1):
-        for pid in range(1, n_players + 1):
-            rows.append({
-                "week": week,
-                "player_id": f"P{pid}",
-                "pred_total": np.random.rand() * 20,
-                "fantasy_points": np.random.rand() * 20,
-            })
-    return pd.DataFrame(rows)
-
-
 @pytest.fixture(scope="session")
 def make_ranking_df():
-    """Factory for ranking-evaluation DataFrames (pred_total + fantasy_points)."""
-    return _build_ranking_df
-
-
-# ---------------------------------------------------------------------------
-# Tensor fixtures (multi-target loss)
-# ---------------------------------------------------------------------------
-
-def _build_multi_target_tensors(n: int = 10, seed: int = 42) -> tuple[dict, dict]:
-    torch.manual_seed(seed)
-    preds = {
-        "rushing_floor": torch.randn(n),
-        "receiving_floor": torch.randn(n),
-        "td_points": torch.randn(n),
-        "total": torch.randn(n),
-    }
-    targets = {
-        "rushing_floor": torch.randn(n),
-        "receiving_floor": torch.randn(n),
-        "td_points": torch.randn(n),
-        "total": torch.randn(n),
-    }
-    return preds, targets
+    def _make(n_weeks: int, n_players: int, seed: int = 42):
+        return _make_ranking_df_shared(RB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="P")
+    return _make
 
 
 @pytest.fixture(scope="session")
 def make_tensors():
-    """Factory for (preds, targets) tensor dicts for MultiTargetLoss tests."""
-    return _build_multi_target_tensors
-
-
-# ---------------------------------------------------------------------------
-# Train/val/test split fixtures (NaN fill)
-# ---------------------------------------------------------------------------
-
-def _build_splits(train_vals, val_vals, test_vals, col: str = "feat1"):
-    train = pd.DataFrame({col: train_vals})
-    val = pd.DataFrame({col: val_vals})
-    test = pd.DataFrame({col: test_vals})
-    return train, val, test
+    def _make(n: int = 10, seed: int = 42):
+        return _make_tensors(RB_TARGETS, n=n, seed=seed)
+    return _make
 
 
 @pytest.fixture(scope="session")
 def make_splits():
-    """Factory for 1-column (train, val, test) triples used by fill_rb_nans tests."""
-    return _build_splits
-
-
-# ---------------------------------------------------------------------------
-# Position-encoded filter DataFrame
-# ---------------------------------------------------------------------------
-
-def _build_position_df(positions, has_pos_cols: bool = True) -> pd.DataFrame:
-    data = {"position": positions, "rushing_yards": range(len(positions))}
-    if has_pos_cols:
-        data.update({
-            "pos_QB": [1 if p == "QB" else 0 for p in positions],
-            "pos_RB": [1 if p == "RB" else 0 for p in positions],
-            "pos_WR": [1 if p == "WR" else 0 for p in positions],
-            "pos_TE": [1 if p == "TE" else 0 for p in positions],
-        })
-    return pd.DataFrame(data)
+    return _make_splits
 
 
 @pytest.fixture(scope="session")
 def make_position_df():
-    """Factory for the filter_to_rb input DataFrame (with optional pos_XX columns)."""
-    return _build_position_df
+    def _make(positions, has_pos_cols: bool = True):
+        return _make_position_df(positions, stat_col="rushing_yards", has_pos_cols=has_pos_cols)
+    return _make
 
 
 # ---------------------------------------------------------------------------
-# RB feature DataFrame fixture (_compute_rb_features inputs)
+# RB-specific fixtures (not generalisable across positions)
 # ---------------------------------------------------------------------------
 
 def _build_player_games(
@@ -218,10 +127,6 @@ def make_player_games():
     """Factory for multi-week single-player DataFrames (RB feature inputs)."""
     return _build_player_games
 
-
-# ---------------------------------------------------------------------------
-# RB target row fixture (compute_rb_targets inputs)
-# ---------------------------------------------------------------------------
 
 def _build_rb_row(**overrides) -> pd.DataFrame:
     """Single-row RB DataFrame with sensible defaults. fantasy_points auto-computed."""
@@ -281,10 +186,6 @@ def make_fumble_df():
     """Factory for the compute_fumble_adjustment input DataFrame."""
     return _build_fumble_df
 
-
-# ---------------------------------------------------------------------------
-# Ridge training data fixture
-# ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
 def simple_ridge_data():
