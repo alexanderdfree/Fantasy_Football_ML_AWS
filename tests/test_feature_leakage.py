@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.features.engineer import build_features, fill_nans_safe
+from src.features.engineer import build_features, fill_nans_safe, get_feature_columns
 
 
 # ---------------------------------------------------------------------------
@@ -363,3 +363,150 @@ class TestFillNansSafe:
         # Should be 15.0 (train mean), not influenced by val/test
         assert val_out["feat"].iloc[0] == pytest.approx(15.0)
         assert test_out["feat"].iloc[0] == pytest.approx(15.0)
+
+
+# ---------------------------------------------------------------------------
+# Feature column contract (P2.1)
+# ---------------------------------------------------------------------------
+#
+# `build_features` is the single source of truth for the model-input feature
+# set. A silent column rename, deletion, or dtype change would cause every
+# downstream model (ridge, NN, LGBM) to either error or — worse — silently
+# fill zeros and degrade quality. This class pins the contract: stable count,
+# full coverage of documented columns, numeric dtypes, bounded NaN rate.
+
+# Weather/Vegas columns are added by shared.weather_features.merge_schedule_features,
+# not by build_features. Excluded from build_features()-only assertions.
+_WEATHER_VEGAS_FEATURES = frozenset({
+    "implied_opp_total", "total_line",
+    "is_dome", "is_grass", "temp_adjusted", "wind_adjusted",
+    "is_divisional", "days_rest_improved", "rest_advantage",
+    "implied_total_x_wind",
+})
+
+
+def _build_features_owned_cols() -> list[str]:
+    """Documented columns that build_features (not the schedule merge) owns."""
+    return [c for c in get_feature_columns() if c not in _WEATHER_VEGAS_FEATURES]
+
+
+@pytest.fixture(scope="module")
+def contract_features_df():
+    """Run build_features once per module — tests below are read-only.
+
+    Two RBs across two seasons (2022 + 2023), 8 weeks each. Two seasons
+    are required so prior_season_* features have real values; two players
+    on opposing teams ensure matchup features populate.
+    """
+    def _two_seasons(player_id, team, opponent, pts, targets, carries, ry, recy):
+        return pd.concat([
+            _make_games(player_id, season=2022, n_weeks=8, position="RB",
+                        recent_team=team, opponent_team=opponent,
+                        fantasy_points=pts, targets=targets, carries=carries,
+                        rushing_yards=ry, receiving_yards=recy),
+            _make_games(player_id, season=2023, n_weeks=8, position="RB",
+                        recent_team=team, opponent_team=opponent,
+                        fantasy_points=pts, targets=targets, carries=carries,
+                        rushing_yards=ry, receiving_yards=recy),
+        ], ignore_index=True)
+
+    df = pd.concat([
+        _two_seasons("P1", "KC", "SF", 15.0, 6, 14, 70, 40),
+        _two_seasons("P2", "SF", "KC", 10.0, 4, 10, 50, 30),
+    ], ignore_index=True)
+    with patch("src.features.engineer.pd.read_parquet",
+               return_value=_fake_schedules()):
+        return build_features(df)
+
+
+@pytest.mark.unit
+class TestFeatureColumnContract:
+    """Pin the build_features() output schema — catches silent regressions."""
+
+    EXPECTED_FEATURE_COUNT = 179
+
+    def test_get_feature_columns_count_is_stable(self):
+        """If this fails, update EXPECTED_FEATURE_COUNT intentionally."""
+        cols = get_feature_columns()
+        assert len(cols) == self.EXPECTED_FEATURE_COUNT, (
+            f"get_feature_columns() returned {len(cols)} columns, expected "
+            f"{self.EXPECTED_FEATURE_COUNT}. If this change is intentional, "
+            "bump EXPECTED_FEATURE_COUNT in this test and update any "
+            "downstream column-count consumers."
+        )
+
+    def test_get_feature_columns_has_no_duplicates(self):
+        cols = get_feature_columns()
+        dupes = [c for c in set(cols) if cols.count(c) > 1]
+        assert not dupes, f"Duplicate feature names in get_feature_columns(): {dupes}"
+
+    def test_build_features_produces_all_core_columns(self, contract_features_df):
+        """Every column build_features owns must be present in the output.
+
+        Weather/Vegas columns are added by a separate merge step
+        (shared.weather_features.merge_schedule_features) and are not part of
+        the build_features contract.
+        """
+        missing = [c for c in _build_features_owned_cols()
+                   if c not in contract_features_df.columns]
+        assert not missing, (
+            f"build_features() dropped {len(missing)} documented columns: "
+            f"{missing[:10]}"
+        )
+
+    def test_engineered_features_are_numeric(self, contract_features_df):
+        """All build_features outputs must be numeric (float/int), not object."""
+        present = [c for c in _build_features_owned_cols()
+                   if c in contract_features_df.columns]
+        non_numeric = [
+            c for c in present
+            if not pd.api.types.is_numeric_dtype(contract_features_df[c])
+        ]
+        assert not non_numeric, (
+            f"Non-numeric feature columns (will break NN/Ridge training): "
+            f"{[(c, str(contract_features_df[c].dtype)) for c in non_numeric]}"
+        )
+
+    def test_per_feature_nan_rate_ceiling_post_warmup(self, contract_features_df):
+        """After the warmup window, no feature should be majority-NaN.
+
+        Rolling / EWMA / trend features are NaN for the first few weeks of
+        season 1 (no prior data). Restrict to season 2, week >= 5 — a
+        steady-state window where every feature should be populated from
+        player history and season-1 priors.
+
+        Catches bugs where a groupby / merge produces all-NaN for an entire
+        feature column (a whole-population dropout the NN can't recover from).
+        """
+        steady = contract_features_df[
+            (contract_features_df["season"] == 2023)
+            & (contract_features_df["week"] >= 5)
+        ]
+        assert len(steady) > 0, "Fixture change broke the steady-state sample"
+
+        present = [c for c in _build_features_owned_cols()
+                   if c in contract_features_df.columns]
+        nan_rates = steady[present].isna().mean()
+        # 15% ceiling per-feature is generous enough for sparse features
+        # (e.g. QB receiving stats) but tight enough to catch columns that
+        # accidentally drop out entirely.
+        over_ceiling = nan_rates[nan_rates > 0.15]
+        assert over_ceiling.empty, (
+            f"{len(over_ceiling)} features exceed 15% NaN in steady state "
+            f"(post-warmup), suggesting silent column dropout:\n"
+            f"{over_ceiling.sort_values(ascending=False).to_string()}"
+        )
+
+    def test_no_inf_values_in_engineered_features(self, contract_features_df):
+        """Inf/-Inf would silently poison the StandardScaler. Division-by-zero
+        guards in build_features must catch every case — this pins that."""
+        present = [c for c in _build_features_owned_cols()
+                   if c in contract_features_df.columns]
+        inf_cols = [
+            c for c in present
+            if np.isinf(contract_features_df[c].to_numpy(
+                dtype=float, na_value=0.0)).any()
+        ]
+        assert not inf_cols, (
+            f"Features contain +/-Inf (will break StandardScaler): {inf_cols}"
+        )
