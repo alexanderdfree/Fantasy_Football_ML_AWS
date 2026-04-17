@@ -1,0 +1,148 @@
+"""End-to-end pipeline smoke test for the WR position.
+
+Runs the full ``shared.pipeline.run_pipeline`` with a shrunk config
+(2-layer × 8-unit NN, 1 epoch, no attention/LightGBM) on a tiny
+slice of real data (50 players × 2 seasons). Asserts:
+
+  * pipeline completes without exception
+  * predictions are finite with correct shape
+  * bit-identical predictions across two runs with the same seed
+
+Budget: < 20s.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from WR.wr_config import WR_CONFIG_TINY, WR_TARGETS
+from WR.wr_data import filter_to_wr
+from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
+from WR.wr_features import add_wr_specific_features, get_wr_feature_columns, fill_wr_nans
+from shared.pipeline import run_pipeline
+
+
+SPLITS_DIR = Path(__file__).resolve().parents[2] / "data" / "splits"
+_ALL_TARGETS = (*WR_TARGETS, "total")
+
+
+def _build_tiny_cfg() -> dict:
+    """Assemble the tiny config with position-specific callables attached."""
+    cfg = dict(WR_CONFIG_TINY)
+    cfg.update({
+        "filter_fn": filter_to_wr,
+        "compute_targets_fn": compute_wr_targets,
+        "add_features_fn": add_wr_specific_features,
+        "fill_nans_fn": fill_wr_nans,
+        "get_feature_columns_fn": get_wr_feature_columns,
+        "compute_adjustment_fn": compute_wr_fumble_adjustment,
+    })
+    return cfg
+
+
+def _load_tiny_splits(
+    n_players: int = 50, train_seasons=(2022, 2023),
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Slice the real engineered parquets to a tiny deterministic subset.
+
+    Uses real pre-engineered data because run_pipeline expects 100+ upstream
+    feature columns that would be impractical to synthesize. Deterministic
+    because we pick the ``n_players`` with the most games (stable ordering).
+    """
+    train = pd.read_parquet(SPLITS_DIR / "train.parquet")
+    wr_train_all = train[train["position"] == "WR"]
+
+    # Top-n_players by game count — stable because pandas sort is stable and
+    # game counts have wide enough spread that ties don't matter at n=50.
+    top_players = (
+        wr_train_all.groupby("player_id").size()
+        .sort_values(ascending=False).head(n_players).index
+    )
+    wr_train = wr_train_all[
+        wr_train_all["season"].isin(train_seasons)
+        & wr_train_all["player_id"].isin(top_players)
+    ].copy()
+
+    val_full = pd.read_parquet(SPLITS_DIR / "val.parquet")
+    wr_val = val_full[
+        (val_full["position"] == "WR") & val_full["player_id"].isin(top_players)
+    ].copy()
+
+    test_full = pd.read_parquet(SPLITS_DIR / "test.parquet")
+    wr_test = test_full[
+        (test_full["position"] == "WR") & test_full["player_id"].isin(top_players)
+    ].copy()
+
+    return wr_train, wr_val, wr_test
+
+
+@pytest.fixture(scope="module")
+def tiny_splits():
+    """Load and cache the tiny split once per module."""
+    splits_dir = SPLITS_DIR
+    if not (splits_dir / "train.parquet").exists():
+        pytest.skip("data/splits/train.parquet not available")
+    return _load_tiny_splits()
+
+
+def _run(tiny_splits, tmp_outputs_dir, seed: int = 42):
+    """Run the WR pipeline inside ``tmp_outputs_dir`` and return (predictions).
+
+    The pipeline hard-codes ``WR/outputs`` for artifact saves; we ``chdir`` into
+    a tmp workspace and symlink ``data/`` so the pipeline finds splits without
+    polluting the checked-in outputs directory.
+    """
+    cfg = _build_tiny_cfg()
+    train_df, val_df, test_df = tiny_splits
+
+    cwd = os.getcwd()
+    Path(tmp_outputs_dir).mkdir(parents=True, exist_ok=True)
+    try:
+        os.chdir(tmp_outputs_dir)
+        # Symlink data/ so schedule/roster parquet reads inside run_pipeline work
+        data_link = Path(tmp_outputs_dir) / "data"
+        if not data_link.exists():
+            data_link.symlink_to(Path(cwd) / "data", target_is_directory=True)
+        result = run_pipeline("WR", cfg, train_df, val_df, test_df, seed=seed)
+    finally:
+        os.chdir(cwd)
+    return result
+
+
+@pytest.mark.e2e
+def test_pipeline_completes_and_predictions_finite(tiny_splits, tmp_path):
+    """run_pipeline executes end-to-end with finite, correctly-shaped outputs."""
+    result = _run(tiny_splits, tmp_path)
+
+    assert "per_target_preds" in result
+    ridge = result["per_target_preds"]["ridge"]
+    nn = result["per_target_preds"]["nn"]
+
+    expected_n = len(result["test_df"])
+    for preds, name in [(ridge, "ridge"), (nn, "nn")]:
+        for key in _ALL_TARGETS:
+            arr = np.asarray(preds[key])
+            assert arr.shape == (expected_n,), f"{name}.{key} has shape {arr.shape}"
+            assert np.isfinite(arr).all(), f"{name}.{key} has non-finite values"
+
+
+@pytest.mark.e2e
+def test_pipeline_deterministic_across_runs(tiny_splits, tmp_path):
+    """Two runs with the same seed produce bit-identical predictions."""
+    r1 = _run(tiny_splits, tmp_path / "run1", seed=42)
+    r2 = _run(tiny_splits, tmp_path / "run2", seed=42)
+
+    for backbone in ("ridge", "nn"):
+        p1 = r1["per_target_preds"][backbone]
+        p2 = r2["per_target_preds"][backbone]
+        for key in _ALL_TARGETS:
+            np.testing.assert_array_equal(
+                np.asarray(p1[key]),
+                np.asarray(p2[key]),
+                err_msg=f"{backbone}.{key} differed across identical-seed runs",
+            )
