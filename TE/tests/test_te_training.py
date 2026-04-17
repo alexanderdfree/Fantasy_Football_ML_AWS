@@ -16,33 +16,27 @@ TE_TARGETS = ["receiving_floor", "rushing_floor", "td_points"]
 TE_LOSS_WEIGHTS = {"receiving_floor": 1.0, "rushing_floor": 1.0, "td_points": 1.0}
 
 
+@pytest.mark.unit
 class TestMultiTargetLoss:
-    def _make_tensors(self, n=10):
-        preds = {t: torch.randn(n) for t in TE_TARGETS}
-        preds["total"] = torch.randn(n)
-        targets = {t: torch.randn(n) for t in TE_TARGETS}
-        targets["total"] = torch.randn(n)
-        return preds, targets
-
-    def test_output_types(self):
+    def test_output_types(self, te_tensors):
         loss_fn = MultiTargetLoss(target_names=TE_TARGETS, loss_weights=TE_LOSS_WEIGHTS)
-        preds, targets = self._make_tensors()
+        preds, targets = te_tensors
         combined, components = loss_fn(preds, targets)
         assert isinstance(combined, torch.Tensor)
         assert isinstance(components, dict)
 
-    def test_component_keys(self):
+    def test_component_keys(self, te_tensors):
         loss_fn = MultiTargetLoss(target_names=TE_TARGETS, loss_weights=TE_LOSS_WEIGHTS)
-        preds, targets = self._make_tensors()
+        preds, targets = te_tensors
         _, components = loss_fn(preds, targets)
         assert set(components.keys()) == {
             "loss_receiving_floor", "loss_rushing_floor", "loss_td_points",
             "loss_total_aux", "loss_combined",
         }
 
-    def test_components_are_scalars(self):
+    def test_components_are_scalars(self, te_tensors):
         loss_fn = MultiTargetLoss(target_names=TE_TARGETS, loss_weights=TE_LOSS_WEIGHTS)
-        preds, targets = self._make_tensors()
+        preds, targets = te_tensors
         _, components = loss_fn(preds, targets)
         for key, val in components.items():
             assert isinstance(val, float), f"{key} is not a float"
@@ -58,8 +52,8 @@ class TestMultiTargetLoss:
         combined, _ = loss_fn(targets, targets)
         assert pytest.approx(combined.item(), abs=1e-6) == 0.0
 
-    def test_weights_affect_loss(self):
-        preds, targets = self._make_tensors()
+    def test_weights_affect_loss(self, te_tensors):
+        preds, targets = te_tensors
         loss_equal = MultiTargetLoss(
             target_names=TE_TARGETS,
             loss_weights={"receiving_floor": 1.0, "rushing_floor": 1.0, "td_points": 1.0},
@@ -74,9 +68,9 @@ class TestMultiTargetLoss:
         c2, _ = loss_td_heavy(preds, targets)
         assert c1.item() != c2.item()
 
-    def test_combined_loss_is_positive(self):
+    def test_combined_loss_is_positive(self, te_tensors):
         loss_fn = MultiTargetLoss(target_names=TE_TARGETS, loss_weights=TE_LOSS_WEIGHTS)
-        preds, targets = self._make_tensors()
+        preds, targets = te_tensors
         combined, _ = loss_fn(preds, targets)
         assert combined.item() >= 0
 
@@ -90,6 +84,7 @@ class TestMultiTargetLoss:
             assert preds[k].grad is not None
 
 
+@pytest.mark.unit
 class TestMultiTargetDataset:
     def test_length(self):
         X = np.random.randn(20, 5).astype(np.float32)
@@ -118,6 +113,7 @@ class TestMultiTargetDataset:
         assert pytest.approx(y_item["td_points"].item()) == 6.0
 
 
+@pytest.mark.unit
 class TestMakeDataloaders:
     def test_returns_two_loaders(self):
         X_train = np.random.randn(50, 5).astype(np.float32)
@@ -146,6 +142,7 @@ class TestMakeDataloaders:
         assert total == n
 
 
+@pytest.mark.integration
 class TestMultiHeadTrainer:
     @pytest.fixture
     def setup_trainer(self):

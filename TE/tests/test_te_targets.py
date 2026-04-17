@@ -6,6 +6,8 @@ import pytest
 
 from TE.te_targets import compute_te_targets, compute_te_fumble_adjustment
 
+pytestmark = pytest.mark.unit
+
 
 def _make_te_row(**overrides):
     """Create a single-row TE DataFrame with sensible defaults."""
