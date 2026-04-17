@@ -1,8 +1,9 @@
-"""Test fixtures for Flask API contract tests (P0.1).
+"""Shared pytest config for tests/.
 
-Provides session-scoped `client` fixture backed by `app.Flask.test_client()`,
-plus a `tiny_qb_model` fixture that demonstrates the artifact layout app.py
-expects (Ridge joblib dumps, NN state_dict, scaler, feature columns).
+Ensures the project root is on ``sys.path`` and registers the pytest markers
+used across the Flask API contract suite (Unit 8), the loader schema contract
+suite (Unit 9), and cross-position pipeline E2E/reproducibility suites
+(Unit 10). Also provides session-scoped fixtures for the API tests.
 
 The strategy doc (swift-roaming-bumblebee) describes a `/predict_json` endpoint
 as an aspirational API surface. The current app.py exposes a set of read-only
@@ -21,17 +22,22 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# Ensure project root importable (app.py lives there, uses relative model paths).
+# Ensure project root importable (app.py lives there, uses relative model paths;
+# `from src.data.loader import ...` needs this for the loader-contract suite).
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def pytest_configure(config):
-    """Register the `integration` marker (pytest tolerates duplicate registration)."""
+def pytest_configure(config) -> None:
+    """Register markers used across tests/ (pytest tolerates duplicate registration)."""
     config.addinivalue_line(
         "markers",
-        "integration: tests that cross the Flask boundary via test_client",
+        "unit: lightweight test that only inspects checked-in fixture data",
+    )
+    config.addinivalue_line(
+        "markers",
+        "integration: test that exercises real code paths (mocked; no network)",
     )
 
 
