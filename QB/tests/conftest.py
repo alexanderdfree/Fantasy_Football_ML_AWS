@@ -1,144 +1,66 @@
-"""Shared pytest fixtures and marker registration for QB/tests/.
+"""Shared fixtures for QB tests — thin wrappers over shared.tests.position_fixtures.
 
-Consolidates helpers previously duplicated across test files:
-- make_sim_df: simulation DataFrame for backtest tests (QB scoring scale, ~25 pts)
-- make_test_df: ranking DataFrame for evaluation tests
-- make_tensors: pytorch tensor dicts for loss/training tests
-- make_splits: train/val/test tuple for NaN-fill tests
-- make_df: position-encoded DataFrame for filter_to_qb tests
-
-All fixtures seed numpy with seed=42 for determinism.
-Markers are registered in pytest_configure so the unit works standalone.
+The generic pieces (``make_sim_df``, ``make_test_df``, ``make_tensors``,
+``make_splits``, ``make_df``) live in ``shared/tests/position_fixtures.py``.
+This conftest only binds the QB-specific scale (~25 fantasy points) and
+target list to those factories.
 """
 
 import sys
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import pytest
-import torch
 
-# Ensure project root is importable when tests run from QB/tests/
 PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from QB.qb_config import QB_TARGETS  # noqa: E402 -- needs sys.path tweak above
+from QB.qb_config import QB_TARGETS  # noqa: E402
+from shared.tests.position_fixtures import (  # noqa: E402
+    make_position_df as _make_position_df,
+    make_sim_df as _make_sim_df,
+    make_splits as _make_splits,
+    make_tensors as _make_tensors,
+    make_test_df as _make_test_df,
+    register_position_markers,
+)
+
+# QBs score higher than any other skill position (~25-pt scale).
+QB_SCORING_SCALE = 25
 
 
 def pytest_configure(config):
-    """Register markers locally so pytest doesn't warn about unregistered ones."""
-    markers = [
-        "unit: fast isolated test (<=1s), no external I/O, no training loops",
-        "integration: hits run_pipeline or shared training loop",
-        "e2e: full-pipeline smoke test (synthetic data)",
-        "regression: numerical-performance assertion (MAE thresholds)",
-    ]
-    for m in markers:
-        config.addinivalue_line("markers", m)
-
-
-# ---------------------------------------------------------------------------
-# make_sim_df — simulation DataFrame for backtest tests
-# ---------------------------------------------------------------------------
-
-def _build_sim_df(n_weeks=4, n_players=15, seed=42):
-    """Create a test DataFrame for run_weekly_simulation."""
-    rows = []
-    np.random.seed(seed)
-    for week in range(1, n_weeks + 1):
-        for pid in range(1, n_players + 1):
-            fp = np.random.rand() * 25  # QBs score higher than RBs
-            rows.append({
-                "week": week,
-                "player_id": f"QB{pid}",
-                "fantasy_points": fp,
-                "pred_ridge": fp + np.random.randn() * 2,
-                "pred_nn": fp + np.random.randn() * 3,
-            })
-    return pd.DataFrame(rows)
+    register_position_markers(config)
 
 
 @pytest.fixture
 def make_sim_df():
-    """Factory fixture: call make_sim_df(n_weeks=..., n_players=...)."""
-    return _build_sim_df
-
-
-# ---------------------------------------------------------------------------
-# make_test_df — ranking DataFrame for evaluation tests
-# ---------------------------------------------------------------------------
-
-def _build_test_df(n_weeks=3, n_players=15, seed=42):
-    rows = []
-    np.random.seed(seed)
-    for week in range(1, n_weeks + 1):
-        for pid in range(1, n_players + 1):
-            rows.append({
-                "week": week,
-                "player_id": f"QB{pid}",
-                "pred_total": np.random.rand() * 25,
-                "fantasy_points": np.random.rand() * 25,
-            })
-    return pd.DataFrame(rows)
+    def _make(n_weeks=4, n_players=15, seed=42):
+        return _make_sim_df(QB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="QB")
+    return _make
 
 
 @pytest.fixture
 def make_test_df():
-    return _build_test_df
-
-
-# ---------------------------------------------------------------------------
-# make_tensors — tensor dicts for MultiTargetLoss tests
-# ---------------------------------------------------------------------------
-
-def _build_tensors(n=10, seed=42):
-    torch.manual_seed(seed)
-    preds = {t: torch.randn(n) for t in QB_TARGETS}
-    preds["total"] = torch.randn(n)
-    targets = {t: torch.randn(n) for t in QB_TARGETS}
-    targets["total"] = torch.randn(n)
-    return preds, targets
+    def _make(n_weeks=3, n_players=15, seed=42):
+        return _make_test_df(QB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="QB")
+    return _make
 
 
 @pytest.fixture
 def make_tensors():
-    return _build_tensors
-
-
-# ---------------------------------------------------------------------------
-# make_splits — (train, val, test) tuples for fill_qb_nans tests
-# ---------------------------------------------------------------------------
-
-def _build_splits(train_vals, val_vals, test_vals, col="feat1"):
-    train = pd.DataFrame({col: train_vals})
-    val = pd.DataFrame({col: val_vals})
-    test = pd.DataFrame({col: test_vals})
-    return train, val, test
+    def _make(n=10, seed=42):
+        return _make_tensors(QB_TARGETS, n=n, seed=seed)
+    return _make
 
 
 @pytest.fixture
 def make_splits():
-    return _build_splits
-
-
-# ---------------------------------------------------------------------------
-# make_df — position-encoded DataFrame for filter_to_qb tests
-# ---------------------------------------------------------------------------
-
-def _build_df(positions, has_pos_cols=True):
-    data = {"position": positions, "passing_yards": range(len(positions))}
-    if has_pos_cols:
-        data.update({
-            "pos_QB": [1 if p == "QB" else 0 for p in positions],
-            "pos_RB": [1 if p == "RB" else 0 for p in positions],
-            "pos_WR": [1 if p == "WR" else 0 for p in positions],
-            "pos_TE": [1 if p == "TE" else 0 for p in positions],
-        })
-    return pd.DataFrame(data)
+    return _make_splits
 
 
 @pytest.fixture
 def make_df():
-    return _build_df
+    def _make(positions, has_pos_cols=True):
+        return _make_position_df(positions, stat_col="passing_yards", has_pos_cols=has_pos_cols)
+    return _make

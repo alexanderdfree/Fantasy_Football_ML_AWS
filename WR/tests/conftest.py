@@ -1,126 +1,82 @@
-"""Test fixtures and marker registration for WR/ tests.
+"""Shared fixtures for WR tests — thin wrappers over shared.tests.position_fixtures.
 
-Fixtures here replace the per-file ``_make_*`` helpers that used to be
-duplicated across every WR test module. They all produce deterministic
-output (seed=42) at WR-appropriate scoring scales.
+Generic factories are imported from ``shared.tests.position_fixtures``;
+this conftest binds them to the WR scoring scale (~20) and targets, and
+keeps the WR-specific ``wr_player_games_factory`` feature-input builder.
 """
 
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import pytest
-import torch
 
 PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from shared.tests.position_fixtures import (  # noqa: E402
+    make_position_df as _make_position_df,
+    make_sim_df as _make_sim_df,
+    make_splits as _make_splits,
+    make_tensors as _make_tensors,
+    make_test_df as _make_test_df,
+    register_position_markers,
+)
+from WR.wr_config import WR_TARGETS  # noqa: E402
 
-# ---------------------------------------------------------------------------
-# Marker registration
-# ---------------------------------------------------------------------------
+# WR fantasy points typically land in the 0-20 PPR range.
+WR_SCORING_SCALE = 20
+
 
 def pytest_configure(config):
-    """Register WR test markers so pytest -m <marker> works without warnings."""
-    config.addinivalue_line("markers", "unit: fast isolated tests (< 1s each)")
-    config.addinivalue_line(
-        "markers", "integration: multi-component tests (< 10s each)"
-    )
-    config.addinivalue_line(
-        "markers", "e2e: full-pipeline smokes (< 60s each)"
-    )
-    config.addinivalue_line(
-        "markers", "regression: ML quality thresholds on held-out metrics"
-    )
-    config.addinivalue_line(
-        "markers", "slow: excluded from the default local run"
+    register_position_markers(
+        config,
+        extra=[("slow", "excluded from the default local run")],
     )
 
 
 # ---------------------------------------------------------------------------
-# Shared WR constants (imported from production config to avoid drift)
-# ---------------------------------------------------------------------------
-
-from WR.wr_config import WR_TARGETS, WR_LOSS_WEIGHTS  # noqa: E402
-
-
-# ---------------------------------------------------------------------------
-# Fixtures (factory-style so each test can override shape without mutating
-# session-cached state)
+# Generic WR fixtures (WR scale, WR prefix, default_rng for backwards-compat)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
 def wr_sim_df_factory():
-    """Factory producing a WR-scale simulation DataFrame for backtest tests.
-
-    WR PPR fantasy points ~= 0-25 range. Ridge noise std=2, NN noise std=3.
-    """
-    def _make(n_weeks: int = 4, n_players: int = 15, seed: int = 42) -> pd.DataFrame:
-        rng = np.random.default_rng(seed)
-        rows = []
-        for week in range(1, n_weeks + 1):
-            for pid in range(1, n_players + 1):
-                fp = rng.random() * 20  # WR scale: 0-20
-                rows.append({
-                    "week": week,
-                    "player_id": f"WR{pid}",
-                    "fantasy_points": fp,
-                    "pred_ridge": fp + rng.standard_normal() * 2,
-                    "pred_nn": fp + rng.standard_normal() * 3,
-                })
-        return pd.DataFrame(rows)
+    """Factory producing a WR-scale simulation DataFrame for backtest tests."""
+    def _make(n_weeks: int = 4, n_players: int = 15, seed: int = 42):
+        return _make_sim_df(
+            WR_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="WR", rng_kind="default",
+        )
     return _make
 
 
 @pytest.fixture
 def wr_sim_df(wr_sim_df_factory):
-    """Default WR simulation DataFrame (4 weeks × 15 players, seed=42)."""
+    """Default WR simulation DataFrame (4 weeks x 15 players, seed=42)."""
     return wr_sim_df_factory()
 
 
 @pytest.fixture(scope="session")
 def wr_test_df_factory():
-    """Factory producing WR ranking test DataFrames.
-
-    Used by evaluation tests (compute_ranking_metrics, etc.). WR scoring
-    scale: predictions and truth in [0, 20].
-    """
-    def _make(n_weeks: int = 3, n_players: int = 15, seed: int = 42) -> pd.DataFrame:
-        rng = np.random.default_rng(seed)
-        rows = []
-        for week in range(1, n_weeks + 1):
-            for pid in range(1, n_players + 1):
-                rows.append({
-                    "week": week,
-                    "player_id": f"WR{pid}",
-                    "pred_total": rng.random() * 20,
-                    "fantasy_points": rng.random() * 20,
-                })
-        return pd.DataFrame(rows)
+    """Factory producing WR ranking test DataFrames."""
+    def _make(n_weeks: int = 3, n_players: int = 15, seed: int = 42):
+        return _make_test_df(
+            WR_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="WR", rng_kind="default",
+        )
     return _make
 
 
 @pytest.fixture
 def wr_test_df(wr_test_df_factory):
-    """Default WR test DataFrame (3 weeks × 15 players, seed=42)."""
+    """Default WR test DataFrame (3 weeks x 15 players, seed=42)."""
     return wr_test_df_factory()
 
 
 @pytest.fixture(scope="session")
 def wr_nn_tensors_factory():
-    """Factory producing (preds, targets) tensor dicts for MultiTargetLoss tests.
-
-    WR has 3 targets plus ``total``; tensors are zero-mean Gaussian.
-    """
+    """Factory producing (preds, targets) tensor dicts for MultiTargetLoss tests."""
     def _make(n: int = 10, seed: int = 42):
-        g = torch.Generator().manual_seed(seed)
-        preds = {t: torch.randn(n, generator=g) for t in WR_TARGETS}
-        preds["total"] = torch.randn(n, generator=g)
-        targets = {t: torch.randn(n, generator=g) for t in WR_TARGETS}
-        targets["total"] = torch.randn(n, generator=g)
-        return preds, targets
+        return _make_tensors(WR_TARGETS, n=n, seed=seed)
     return _make
 
 
@@ -133,13 +89,20 @@ def wr_nn_tensors(wr_nn_tensors_factory):
 @pytest.fixture(scope="session")
 def wr_nan_splits_factory():
     """Factory producing (train, val, test) DataFrames for fill_wr_nans tests."""
-    def _make(train_vals, val_vals, test_vals, col: str = "feat1"):
-        train = pd.DataFrame({col: train_vals})
-        val = pd.DataFrame({col: val_vals})
-        test = pd.DataFrame({col: test_vals})
-        return train, val, test
+    return _make_splits
+
+
+@pytest.fixture(scope="session")
+def wr_position_df_factory():
+    """Factory for DataFrames used by filter_to_wr tests (position + pos_* cols)."""
+    def _make(positions, has_pos_cols: bool = True):
+        return _make_position_df(positions, stat_col="receiving_yards", has_pos_cols=has_pos_cols)
     return _make
 
+
+# ---------------------------------------------------------------------------
+# WR-specific fixtures (not generic across positions)
+# ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
 def wr_player_games_factory():
@@ -170,20 +133,4 @@ def wr_player_games_factory():
             "receiving_first_downs": [receiving_first_downs] * n_weeks,
             "recent_team": [recent_team] * n_weeks,
         })
-    return _make
-
-
-@pytest.fixture(scope="session")
-def wr_position_df_factory():
-    """Factory for DataFrames used by filter_to_wr tests (position + pos_* cols)."""
-    def _make(positions, has_pos_cols: bool = True) -> pd.DataFrame:
-        data = {"position": positions, "receiving_yards": range(len(positions))}
-        if has_pos_cols:
-            data.update({
-                "pos_QB": [1 if p == "QB" else 0 for p in positions],
-                "pos_RB": [1 if p == "RB" else 0 for p in positions],
-                "pos_WR": [1 if p == "WR" else 0 for p in positions],
-                "pos_TE": [1 if p == "TE" else 0 for p in positions],
-            })
-        return pd.DataFrame(data)
     return _make
