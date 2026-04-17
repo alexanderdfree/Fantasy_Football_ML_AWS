@@ -14,6 +14,7 @@ from shared.neural_net import MultiHeadNet
 DST_TARGETS = ["defensive_scoring", "td_points", "pts_allowed_bonus"]
 
 
+@pytest.mark.unit
 class TestMultiHeadNet:
     @pytest.fixture
     def model(self):
