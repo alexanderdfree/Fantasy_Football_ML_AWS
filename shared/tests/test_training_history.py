@@ -1,4 +1,6 @@
-"""Tests for shared.training — history-based components (dataset, collation, dataloaders, trainer)."""
+"""Tests for shared.training — history-based components (dataset, collation,
+dataloaders, trainer), plus loss-function and non-history dataloader coverage.
+"""
 
 import numpy as np
 import torch
@@ -6,8 +8,10 @@ import pytest
 
 from shared.training import (
     MultiTargetHistoryDataset,
+    MultiTargetDataset,
     collate_with_history,
     make_history_dataloaders,
+    make_dataloaders,
     MultiTargetLoss,
     MultiHeadHistoryTrainer,
 )
@@ -21,6 +25,7 @@ LOSS_WEIGHTS = {"rushing_floor": 1.0, "receiving_floor": 1.0, "td_points": 1.0}
 # MultiTargetHistoryDataset
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestMultiTargetHistoryDataset:
     def test_length(self):
         X_s = np.random.randn(10, 5).astype(np.float32)
@@ -60,32 +65,24 @@ class TestMultiTargetHistoryDataset:
 # collate_with_history
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestCollateWithHistory:
-    def _make_batch(self, seq_lens, static_dim=4, game_dim=3):
-        batch = []
-        for slen in seq_lens:
-            static = torch.randn(static_dim)
-            history = torch.randn(slen, game_dim)
-            targets = {"t1": torch.tensor(1.0)}
-            batch.append((static, history, targets))
-        return batch
-
-    def test_output_structure(self):
-        batch = self._make_batch([3, 5, 2])
+    def test_output_structure(self, history_batch_factory):
+        batch = history_batch_factory([3, 5, 2])
         statics, padded, masks, targets = collate_with_history(batch)
         assert isinstance(statics, torch.Tensor)
         assert isinstance(padded, torch.Tensor)
         assert isinstance(masks, torch.Tensor)
         assert isinstance(targets, dict)
 
-    def test_padding_to_max_length(self):
-        batch = self._make_batch([2, 5, 3])
+    def test_padding_to_max_length(self, history_batch_factory):
+        batch = history_batch_factory([2, 5, 3])
         statics, padded, masks, targets = collate_with_history(batch)
         assert padded.shape == (3, 5, 3)  # max_len=5
         assert masks.shape == (3, 5)
 
-    def test_mask_values(self):
-        batch = self._make_batch([2, 5, 3])
+    def test_mask_values(self, history_batch_factory):
+        batch = history_batch_factory([2, 5, 3])
         _, _, masks, _ = collate_with_history(batch)
         assert masks[0, :2].all()
         assert not masks[0, 2:].any()
@@ -93,14 +90,14 @@ class TestCollateWithHistory:
         assert masks[2, :3].all()
         assert not masks[2, 3:].any()
 
-    def test_padded_values_are_zero(self):
-        batch = self._make_batch([2, 5])
+    def test_padded_values_are_zero(self, history_batch_factory):
+        batch = history_batch_factory([2, 5])
         _, padded, _, _ = collate_with_history(batch)
         # Sample 0 has 2 real games; positions 2-4 should be zeros
         assert (padded[0, 2:] == 0).all()
 
-    def test_single_sample_batch(self):
-        batch = self._make_batch([4])
+    def test_single_sample_batch(self, history_batch_factory):
+        batch = history_batch_factory([4])
         statics, padded, masks, targets = collate_with_history(batch)
         assert statics.shape == (1, 4)
         assert padded.shape == (1, 4, 3)
@@ -112,26 +109,20 @@ class TestCollateWithHistory:
 # make_history_dataloaders
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestMakeHistoryDataloaders:
-    def _make_data(self, n, static_dim=5, game_dim=3):
-        X_s = np.random.randn(n, static_dim).astype(np.float32)
-        X_h = [np.random.randn(np.random.randint(1, 8), game_dim).astype(np.float32) for _ in range(n)]
-        y = {t: np.random.randn(n).astype(np.float32) for t in TARGETS}
-        y["total"] = sum(y[t] for t in TARGETS)
-        return X_s, X_h, y
-
-    def test_returns_two_loaders(self):
-        X_s, X_h, y = self._make_data(64)
-        X_vs, X_vh, yv = self._make_data(16)
+    def test_returns_two_loaders(self, history_data_factory):
+        X_s, X_h, y = history_data_factory(64)
+        X_vs, X_vh, yv = history_data_factory(16)
         train_loader, val_loader = make_history_dataloaders(
             X_s, X_h, y, X_vs, X_vh, yv, batch_size=32,
         )
         assert train_loader is not None
         assert val_loader is not None
 
-    def test_batch_unpacks_correctly(self):
-        X_s, X_h, y = self._make_data(64)
-        X_vs, X_vh, yv = self._make_data(16)
+    def test_batch_unpacks_correctly(self, history_data_factory):
+        X_s, X_h, y = history_data_factory(64)
+        X_vs, X_vh, yv = history_data_factory(16)
         train_loader, _ = make_history_dataloaders(
             X_s, X_h, y, X_vs, X_vh, yv, batch_size=32,
         )
@@ -141,9 +132,9 @@ class TestMakeHistoryDataloaders:
         assert masks.dim() == 2
         assert isinstance(targets, dict)
 
-    def test_mask_dtype_is_bool(self):
-        X_s, X_h, y = self._make_data(64)
-        X_vs, X_vh, yv = self._make_data(16)
+    def test_mask_dtype_is_bool(self, history_data_factory):
+        X_s, X_h, y = history_data_factory(64)
+        X_vs, X_vh, yv = history_data_factory(16)
         train_loader, _ = make_history_dataloaders(
             X_s, X_h, y, X_vs, X_vh, yv, batch_size=32,
         )
@@ -152,33 +143,231 @@ class TestMakeHistoryDataloaders:
 
 
 # ---------------------------------------------------------------------------
+# make_dataloaders — non-history variant, batching edge cases
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestMakeDataloaders:
+    def _make_flat_data(self, n, input_dim=4, targets=TARGETS):
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((n, input_dim)).astype(np.float32)
+        y = {t: rng.standard_normal(n).astype(np.float32) for t in targets}
+        y["total"] = sum(y[t] for t in targets)
+        return X, y
+
+    def test_batch_size_1(self):
+        X_tr, y_tr = self._make_flat_data(8)
+        X_val, y_val = self._make_flat_data(4)
+        train_loader, val_loader = make_dataloaders(X_tr, y_tr, X_val, y_val, batch_size=1)
+        X_batch, y_batch = next(iter(train_loader))
+        assert X_batch.shape == (1, 4)
+        # Train loader uses drop_last=True so a dataset of 8 yields 8 batches of size 1
+        assert sum(1 for _ in train_loader) == 8
+
+    def test_batch_size_larger_than_dataset_yields_one_partial_val_batch(self):
+        """Val loader uses drop_last=False so a single partial batch is returned."""
+        X_tr, y_tr = self._make_flat_data(16)
+        X_val, y_val = self._make_flat_data(4)
+        _, val_loader = make_dataloaders(X_tr, y_tr, X_val, y_val, batch_size=32)
+        batches = list(val_loader)
+        assert len(batches) == 1
+        X_batch, _ = batches[0]
+        assert X_batch.shape == (4, 4)  # 4 samples, 4 features
+
+    def test_batch_size_larger_than_train_dataset_drops_all(self):
+        """Train loader uses drop_last=True so an oversized batch drops the partial."""
+        X_tr, y_tr = self._make_flat_data(4)
+        X_val, y_val = self._make_flat_data(4)
+        train_loader, _ = make_dataloaders(X_tr, y_tr, X_val, y_val, batch_size=32)
+        assert sum(1 for _ in train_loader) == 0
+
+    def test_empty_dataset_raises_on_iteration(self):
+        """Empty training data should surface a clear error at construction or iteration."""
+        X_tr = np.zeros((0, 4), dtype=np.float32)
+        y_tr = {t: np.zeros(0, dtype=np.float32) for t in TARGETS}
+        y_tr["total"] = np.zeros(0, dtype=np.float32)
+        X_val, y_val = self._make_flat_data(4)
+        with pytest.raises((ValueError, RuntimeError)):
+            train_loader, _ = make_dataloaders(X_tr, y_tr, X_val, y_val, batch_size=4)
+            list(train_loader)
+
+    def test_shuffle_false_val_loader_is_reproducible(self):
+        """Val loader has shuffle=False; two iterations must yield identical order."""
+        X_tr, y_tr = self._make_flat_data(16)
+        X_val, y_val = self._make_flat_data(8)
+        _, val_loader = make_dataloaders(X_tr, y_tr, X_val, y_val, batch_size=4)
+        pass1 = torch.cat([x for x, _ in val_loader])
+        pass2 = torch.cat([x for x, _ in val_loader])
+        torch.testing.assert_close(pass1, pass2)
+
+
+# ---------------------------------------------------------------------------
+# MultiTargetLoss — weighting semantics and gradient flow
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestMultiTargetLoss:
+    def _make_preds_and_targets(self, batch=4):
+        torch.manual_seed(42)
+        preds = {t: torch.randn(batch) for t in TARGETS}
+        preds["total"] = sum(preds[t] for t in TARGETS)
+        targets = {t: torch.randn(batch) for t in TARGETS}
+        targets["total"] = sum(targets[t] for t in TARGETS)
+        return preds, targets
+
+    def test_equal_weights_sum_matches_components(self):
+        """With all weights=1 and w_total=0, combined loss equals sum of per-target losses."""
+        preds, targets = self._make_preds_and_targets()
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights={t: 1.0 for t in TARGETS},
+            w_total=0.0,
+        )
+        combined, components = loss_fn(preds, targets)
+        expected = sum(components[f"loss_{t}"] for t in TARGETS)
+        assert combined.item() == pytest.approx(expected, abs=1e-6)
+
+    def test_weighting_changes_loss(self):
+        """Doubling a target's weight must change the combined loss."""
+        preds, targets = self._make_preds_and_targets()
+        base = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights={t: 1.0 for t in TARGETS},
+            w_total=0.0,
+        )
+        weighted = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights={"rushing_floor": 2.0, "receiving_floor": 1.0, "td_points": 1.0},
+            w_total=0.0,
+        )
+        base_loss, base_comp = base(preds, targets)
+        weighted_loss, _ = weighted(preds, targets)
+        expected_delta = base_comp["loss_rushing_floor"]  # added one extra copy
+        assert weighted_loss.item() == pytest.approx(
+            base_loss.item() + expected_delta, abs=1e-6,
+        )
+
+    def test_zero_weight_ignores_target(self):
+        """weight=0 on a target removes its contribution entirely."""
+        preds, targets = self._make_preds_and_targets()
+        masked = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights={"rushing_floor": 1.0, "receiving_floor": 0.0, "td_points": 1.0},
+            w_total=0.0,
+        )
+        loss, comp = masked(preds, targets)
+        expected = comp["loss_rushing_floor"] + comp["loss_td_points"]
+        assert loss.item() == pytest.approx(expected, abs=1e-6)
+
+    def test_w_total_adds_total_auxiliary(self):
+        preds, targets = self._make_preds_and_targets()
+        weighted = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights={t: 1.0 for t in TARGETS},
+            w_total=0.5,
+        )
+        loss, comp = weighted(preds, targets)
+        expected = sum(comp[f"loss_{t}"] for t in TARGETS) + 0.5 * comp["loss_total_aux"]
+        assert loss.item() == pytest.approx(expected, abs=1e-6)
+
+    def test_gradient_flows_to_each_target_head(self):
+        """Gradients w.r.t. each target prediction must be non-zero and scale with weight."""
+        # Build two separate loss setups; gradients from the scaled loss should
+        # equal 2x the gradients from the base loss for the scaled target.
+        torch.manual_seed(42)
+        preds1 = {t: torch.randn(4, requires_grad=True) for t in TARGETS}
+        preds1["total"] = sum(preds1[t] for t in TARGETS)
+        targets = {t: torch.randn(4) for t in TARGETS}
+        targets["total"] = sum(targets[t] for t in TARGETS)
+
+        base = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights={t: 1.0 for t in TARGETS},
+            w_total=0.0,
+        )
+        loss1, _ = base(preds1, targets)
+        loss1.backward()
+        base_grads = {t: preds1[t].grad.clone() for t in TARGETS}
+
+        torch.manual_seed(42)
+        preds2 = {t: torch.randn(4, requires_grad=True) for t in TARGETS}
+        preds2["total"] = sum(preds2[t] for t in TARGETS)
+        scaled = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights={"rushing_floor": 2.0, "receiving_floor": 1.0, "td_points": 1.0},
+            w_total=0.0,
+        )
+        loss2, _ = scaled(preds2, targets)
+        loss2.backward()
+        scaled_grads = {t: preds2[t].grad.clone() for t in TARGETS}
+
+        # rushing_floor grad must be 2x base; other targets unchanged.
+        torch.testing.assert_close(scaled_grads["rushing_floor"], 2.0 * base_grads["rushing_floor"])
+        torch.testing.assert_close(scaled_grads["receiving_floor"], base_grads["receiving_floor"])
+        torch.testing.assert_close(scaled_grads["td_points"], base_grads["td_points"])
+
+    def test_zero_weight_zeros_gradient_for_that_target(self):
+        """weight=0 on target k must produce zero gradient on preds[k]."""
+        torch.manual_seed(42)
+        preds = {t: torch.randn(4, requires_grad=True) for t in TARGETS}
+        preds["total"] = sum(preds[t] for t in TARGETS)
+        targets = {t: torch.randn(4) for t in TARGETS}
+        targets["total"] = sum(targets[t] for t in TARGETS)
+
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights={"rushing_floor": 1.0, "receiving_floor": 0.0, "td_points": 1.0},
+            w_total=0.0,
+        )
+        loss, _ = loss_fn(preds, targets)
+        loss.backward()
+        # receiving_floor prediction has no downstream contribution; grad is zero.
+        assert torch.all(preds["receiving_floor"].grad == 0)
+        assert not torch.all(preds["rushing_floor"].grad == 0)
+        assert not torch.all(preds["td_points"].grad == 0)
+
+    def test_gated_td_adds_bce_component(self):
+        """When gate logits are present, BCE supervision is added."""
+        torch.manual_seed(0)
+        preds = {t: torch.randn(4) for t in TARGETS}
+        preds["total"] = sum(preds[t] for t in TARGETS)
+        preds["td_points_gate_logit"] = torch.randn(4)
+        targets = {t: torch.randn(4) for t in TARGETS}
+        targets["total"] = sum(targets[t] for t in TARGETS)
+        # Force a positive td_points target so BCE has both classes in the batch.
+        targets["td_points"] = torch.tensor([0.0, 6.0, 0.0, 12.0])
+
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights={t: 1.0 for t in TARGETS},
+            w_total=0.0,
+            td_gate_weight=1.0,
+        )
+        _, components = loss_fn(preds, targets)
+        assert "loss_td_gate" in components
+        assert components["loss_td_gate"] > 0
+
+
+# ---------------------------------------------------------------------------
 # MultiHeadHistoryTrainer (integration)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.integration
 class TestMultiHeadHistoryTrainer:
     @pytest.fixture
-    def setup_trainer(self):
+    def setup_trainer(self, history_data_factory):
         np.random.seed(42)
         torch.manual_seed(42)
-        n_train, n_val = 64, 16
-        static_dim, game_dim = 5, 3
 
-        X_ts = np.random.randn(n_train, static_dim).astype(np.float32)
-        X_th = [np.random.randn(np.random.randint(1, 8), game_dim).astype(np.float32) for _ in range(n_train)]
-        y_train = {t: np.random.randn(n_train).astype(np.float32) for t in TARGETS}
-        y_train["total"] = sum(y_train[t] for t in TARGETS)
-
-        X_vs = np.random.randn(n_val, static_dim).astype(np.float32)
-        X_vh = [np.random.randn(np.random.randint(1, 8), game_dim).astype(np.float32) for _ in range(n_val)]
-        y_val = {t: np.random.randn(n_val).astype(np.float32) for t in TARGETS}
-        y_val["total"] = sum(y_val[t] for t in TARGETS)
+        X_ts, X_th, y_train = history_data_factory(64)
+        X_vs, X_vh, y_val = history_data_factory(16)
 
         train_loader, val_loader = make_history_dataloaders(
             X_ts, X_th, y_train, X_vs, X_vh, y_val, batch_size=32,
         )
 
         model = MultiHeadNetWithHistory(
-            static_dim=static_dim, game_dim=game_dim, target_names=TARGETS,
+            static_dim=5, game_dim=3, target_names=TARGETS,
             backbone_layers=[16, 8], d_model=8, n_attn_heads=2,
             head_hidden=4, dropout=0.1,
         )
