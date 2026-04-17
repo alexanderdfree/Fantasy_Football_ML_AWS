@@ -26,4 +26,16 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run tests
-        run: python -m pytest tests/ QB/tests/ RB/tests/ WR/tests/ TE/tests/ K/tests/ DST/tests/ batch/tests/ shared/tests/ -v
+        run: >-
+          python -m pytest
+          tests/ QB/tests/ RB/tests/ WR/tests/ TE/tests/ K/tests/ DST/tests/ batch/tests/ shared/tests/
+          -v
+          --cov=src --cov=shared --cov=app
+          --cov=QB --cov=RB --cov=WR --cov=TE --cov=K --cov=DST
+          --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
