@@ -9,6 +9,7 @@ from shared.neural_net import MultiHeadNet
 QB_TARGETS = ["passing_floor", "rushing_floor", "td_points"]
 
 
+@pytest.mark.unit
 class TestMultiHeadNet:
     @pytest.fixture
     def model(self):

@@ -44,6 +44,7 @@ def _make_qb_row(**overrides):
 # compute_qb_targets
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeQBTargets:
     def test_passing_floor(self):
         df = _make_qb_row(passing_yards=300)
@@ -158,6 +159,7 @@ class TestComputeQBTargets:
 # compute_qb_adjustment
 # ---------------------------------------------------------------------------
 
+@pytest.mark.unit
 class TestComputeQBAdjustment:
     def _make_adj_df(self, ints, fumbles=None, receptions=None, recv_yds=None, season=2023):
         n = len(ints)
