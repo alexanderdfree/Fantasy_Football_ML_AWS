@@ -31,14 +31,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 def pytest_configure(config) -> None:
     """Register markers used across tests/ (pytest tolerates duplicate registration)."""
-    config.addinivalue_line(
-        "markers",
-        "unit: lightweight test that only inspects checked-in fixture data",
-    )
-    config.addinivalue_line(
-        "markers",
+    markers = [
+        "unit: fast isolated test (<=1s), no external I/O, no training loops",
         "integration: test that exercises real code paths (mocked; no network)",
-    )
+        "e2e: full-pipeline smoke test (<20s each)",
+        "regression: numerical-performance assertion (may need fixture data)",
+        "slow: excluded from default run",
+    ]
+    for m in markers:
+        config.addinivalue_line("markers", m)
 
 
 # ---------------------------------------------------------------------------
