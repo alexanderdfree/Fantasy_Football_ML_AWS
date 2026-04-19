@@ -50,3 +50,19 @@ build/
 
 # AWS bootstrap resource-ID outputs
 infra/aws/.env.out
+
+# Claude Code
+.claude/
+
+# Credentials (preventive)
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.crt
+*.cer
+credentials*
+secrets*
+.env.*
+!.env.example
