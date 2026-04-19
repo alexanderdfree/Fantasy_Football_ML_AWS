@@ -1,6 +1,6 @@
 """Single source of truth for per-position dispatch.
 
-Consumers: app.py (inference), batch/train.py (training), benchmark_nn.py
+Consumers: app.py (inference), batch/train.py (training), benchmark.py
 (local benchmark), tune_lgbm.py (LightGBM tuning), tests/_pipeline_e2e_utils.py.
 
 Everything is lazily imported so loading this module is cheap.

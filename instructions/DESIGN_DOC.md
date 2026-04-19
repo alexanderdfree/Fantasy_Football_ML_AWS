@@ -75,7 +75,7 @@ The rubric states each piece of work can claim at most one item (plus stackable 
 Final-Project/
 ├── app.py                         # Flask web application (main entry point + predictions dashboard)
 ├── requirements.txt               # Pinned dependencies
-├── benchmark_nn.py                # Neural network benchmarking script
+├── benchmark.py                   # Multi-model benchmarking script (Ridge, NN, Attn NN, LGBM)
 ├── .gitignore
 │
 ├── src/                           # General multi-position pipeline

@@ -400,7 +400,7 @@ Rationale: QB and TE have fewer samples, so use smaller hidden sizes and more re
 | `shared/pipeline.py` | **Modify** | Add LSTM training step, 3-way ensemble |
 | `{POS}/{pos}_config.py` | **Modify** | Add seq-model hyperparameters |
 | `shared/evaluation.py` | **Modify** | Report LSTM metrics alongside Ridge/NN |
-| `benchmark_nn.py` | **Modify** | Include LSTM in benchmark |
+| `benchmark.py` | **Modify** | Include LSTM in benchmark |
 
 ## Risks and Mitigations
 

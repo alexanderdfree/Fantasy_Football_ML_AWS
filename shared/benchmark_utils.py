@@ -1,4 +1,4 @@
-"""Shared helpers for local (benchmark_nn.py) and AWS Batch (batch/benchmark.py)
+"""Shared helpers for local (benchmark.py) and AWS Batch (batch/benchmark.py)
 benchmark scripts. Consolidates summary-row construction, comparison-table
 printing, git-hash capture, and history append.
 """
@@ -53,7 +53,7 @@ def _per_target(metrics: dict, exclude="total") -> dict:
 def summarize_pipeline_result(position: str, result: dict) -> dict:
     """Extract a flat summary row from a position pipeline result dict.
 
-    Used by both local (benchmark_nn.py with in-memory result) and AWS Batch
+    Used by both local (benchmark.py with in-memory result) and AWS Batch
     (batch/benchmark.py with parsed benchmark_metrics.json) — the nested shape
     is identical.
     """

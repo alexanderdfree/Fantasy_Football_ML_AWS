@@ -1,9 +1,9 @@
 """Benchmark script: runs RB, QB, WR pipelines and prints a comparison table.
 
 Usage:
-    python benchmark_nn.py                          # run all 3 positions
-    python benchmark_nn.py RB                       # run one position
-    python benchmark_nn.py --note "tuned WR dropout" # annotate the run
+    python benchmark.py                          # run all 3 positions
+    python benchmark.py RB                       # run one position
+    python benchmark.py --note "tuned WR dropout" # annotate the run
 """
 
 import sys, os, time, json, argparse, datetime

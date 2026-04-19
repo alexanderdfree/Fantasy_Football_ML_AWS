@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(aws batch describe-job-definitions *)",
+      "Bash(aws batch describe-job-queues *)",
+      "Bash(aws batch describe-compute-environments *)",
+      "Bash(aws sts get-caller-identity *)",
+      "Bash(aws iam get-role *)",
+      "Bash(aws ecr describe-images *)",
+      "Bash(pip show *)",
+      "mcp__Claude_Preview__preview_screenshot",
+      "mcp__Claude_Preview__preview_logs",
+      "mcp__Claude_Preview__preview_console_logs",
+      "mcp__ccd_session__mark_chapter"
+    ]
+  }
+}

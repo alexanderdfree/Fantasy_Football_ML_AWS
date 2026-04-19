@@ -354,7 +354,7 @@ RB/outputs/models/
 
 ## Benchmark Integration
 
-### Changes to `benchmark_nn.py`
+### Changes to `benchmark.py`
 
 Update `summarize()` to include XGBoost metrics:
 
@@ -420,7 +420,7 @@ XGBoost has no dependency conflicts with the existing stack (numpy, pandas, scik
 | `shared/pipeline.py` | **Modify** | Add `_train_xgboost()`, update ensemble, update comparison/ranking/saving |
 | `{POS}/{pos}_config.py` | **Modify** | Add 8 XGBoost hyperparameters per position (6 files) |
 | `app.py` | **Modify** | Load and run XGBoost at inference, add `xgb_pred` column |
-| `benchmark_nn.py` | **Modify** | Track XGBoost metrics in summary and print table |
+| `benchmark.py` | **Modify** | Track XGBoost metrics in summary and print table |
 | `requirements.txt` | **Modify** | Add `xgboost` dependency |
 
 ## Risks and Mitigations
@@ -440,5 +440,5 @@ XGBoost has no dependency conflicts with the existing stack (numpy, pandas, scik
 3. **Compare 2-way vs. 3-way ensemble**: Does adding XGBoost to the Ridge+NN ensemble reduce total MAE? Check both total and per-target.
 4. **Inspect feature importance**: XGBoost's gain-based importance should highlight different features than Ridge's coefficient magnitudes. If they're identical, the ensemble isn't gaining diversity.
 5. **Check per-target improvements**: XGBoost should especially help `td_points` (discrete, threshold-driven) and targets where feature interactions matter (e.g., carry share x matchup quality).
-6. **Run full benchmark** across all positions: `python benchmark_nn.py RB QB WR TE --note "added XGBoost"`. Compare against prior benchmark results in `benchmark_history.json`.
+6. **Run full benchmark** across all positions: `python benchmark.py RB QB WR TE --note "added XGBoost"`. Compare against prior benchmark results in `benchmark_history.json`.
 7. **Validate app inference**: Run `python app.py`, hit the API, confirm `xgb_pred` column appears with reasonable values.

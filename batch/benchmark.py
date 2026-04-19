@@ -1,6 +1,6 @@
 """Launch AWS Batch training for all positions and collect benchmark metrics.
 
-Runs the same pipelines as benchmark_nn.py but on AWS Batch GPU instances
+Runs the same pipelines as benchmark.py but on AWS Batch GPU instances
 (g4dn.xlarge Spot).  Downloads benchmark_metrics.json from each job's model
 artifacts and prints a unified comparison table.
 
