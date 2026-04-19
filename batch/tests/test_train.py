@@ -367,6 +367,7 @@ class TestMainIntegration:
 
             main()
 
+        mock_sync.assert_called_once_with("test-bucket")
         mock_download.assert_called_once()
         assert mock_parquet.call_count == 3
         assert "args" in runner_called
@@ -380,7 +381,10 @@ class TestMainIntegration:
     def test_main_special_position_no_download(
         self, mock_copytree, mock_upload, mock_sync, tmp_path
     ):
-        """main() for K/DST should NOT download data from S3, and skip REQUIRE_GPU."""
+        """main() for K/DST should skip download_data() (train/val/test splits) and
+        REQUIRE_GPU. sync_raw_data() still runs for all positions — K/DST's
+        self-contained loaders (and weather features) read from data/raw/.
+        """
         # main() rmtree's then copytree's into model_dir before writing metrics,
         # so the mock must recreate the destination dir.
         mock_copytree.side_effect = lambda src, dst, **kw: Path(dst).mkdir(
@@ -409,5 +413,6 @@ class TestMainIntegration:
             main()
 
         assert runner_called["seed"] == 42
+        mock_sync.assert_called_once_with("ff-predictor-training")
         mock_upload.assert_called_once()
         assert (model_dir / "benchmark_metrics.json").exists()
