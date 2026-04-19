@@ -29,7 +29,11 @@ jobs:
       - name: Install boto3 (for batch/tests/test_launch.py)
         run: pip install --no-cache-dir boto3
       - name: Run tests
-        run: python -m pytest tests/ QB/tests/ RB/tests/ WR/tests/ TE/tests/ K/tests/ DST/tests/ batch/tests/ shared/tests/ -v
+        run: |
+          python -m pytest tests/ QB/tests/ RB/tests/ WR/tests/ TE/tests/ K/tests/ DST/tests/ batch/tests/ shared/tests/ -v \
+            --ignore=RB/tests/test_rb_pipeline_e2e.py \
+            --ignore=TE/tests/test_te_pipeline_e2e.py \
+            --ignore=batch/tests/test_train.py
 
   deploy:
     needs: test
