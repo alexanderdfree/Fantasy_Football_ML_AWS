@@ -2,6 +2,7 @@
 benchmark scripts. Consolidates summary-row construction, comparison-table
 printing, git-hash capture, and history append.
 """
+import datetime
 import json
 import os
 import subprocess
@@ -18,15 +19,28 @@ def get_git_hash() -> str:
 
 
 def append_to_history(history_file: str, run_entry: dict) -> None:
+    history = []
     if os.path.exists(history_file):
-        with open(history_file) as f:
-            history = json.load(f)
-    else:
-        history = []
+        try:
+            with open(history_file) as f:
+                history = json.load(f)
+        except (json.JSONDecodeError, ValueError) as e:
+            ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            quarantine = f"{history_file}.corrupt-{ts}"
+            os.rename(history_file, quarantine)
+            print(f"WARNING: {history_file} is corrupt ({e}); moved to {quarantine}. Starting fresh.")
     history.append(run_entry)
-    with open(history_file, "w") as f:
-        json.dump(history, f, indent=2)
+    tmp = f"{history_file}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(history, f, indent=2, default=_json_default)
+    os.replace(tmp, history_file)
     print(f"Run appended to {history_file}")
+
+
+def _json_default(obj):
+    if isinstance(obj, (set, frozenset)):
+        return sorted(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 def _per_target(metrics: dict, exclude="total") -> dict:
@@ -219,3 +233,56 @@ def print_comparison_table(summaries: list, *, header: str, show_time: bool = Tr
                       f"{s['cv_nn_mae_mean']:>8.3f} +/- {s['cv_nn_mae_std']:<6.3f} "
                       f"{s['best_cv_alpha']:>10.2f}")
         print("=" * 72)
+
+
+def print_history_comparison(
+    history_file: str, summaries: list, *, last_n: int = 5,
+) -> None:
+    """Print per-position tables comparing the new run vs. the last N history runs.
+
+    Reads {history_file}, filters to entries that recorded each position, and
+    prints one table per position with timestamp, git hash, note, and the
+    same MAE/top-12 columns used by summarize_pipeline_result.
+    """
+    if not os.path.exists(history_file):
+        return
+    try:
+        with open(history_file) as f:
+            history = json.load(f)
+    except (json.JSONDecodeError, ValueError):
+        print(f"(could not read {history_file} for comparison)")
+        return
+
+    def _fmt(x):
+        return f"{x:.3f}" if isinstance(x, (int, float)) else "  \u2014  "
+
+    for new in summaries:
+        pos = new["position"]
+        rows = []
+        for entry in history[:-1]:   # exclude the just-appended new run
+            for s in entry.get("results", []):
+                if s.get("position") == pos:
+                    rows.append((entry.get("timestamp", "?")[:10],
+                                 entry.get("git_hash", "?"),
+                                 (entry.get("note") or "")[:38],
+                                 s))
+                    break
+        rows = rows[-last_n:]
+
+        hdr = (f"{'Date':<11} {'Hash':<9} {'Note':<40} "
+               f"{'Ridge':>7} {'NN':>7} {'Attn':>7} {'LGBM':>7} {'Top12':>7}")
+        print(f"\n{'=' * len(hdr)}")
+        print(f"{pos} history (last {len(rows)} runs + this run)")
+        print("=" * len(hdr))
+        print(hdr)
+        print("-" * len(hdr))
+        for date, h, note, s in rows:
+            print(f"{date:<11} {h:<9} {note:<40} "
+                  f"{_fmt(s.get('ridge_mae')):>7} {_fmt(s.get('nn_mae')):>7} "
+                  f"{_fmt(s.get('attn_nn_mae')):>7} {_fmt(s.get('lgbm_mae')):>7} "
+                  f"{_fmt(s.get('nn_top12')):>7}")
+        print(f"{'> NEW':<11} {'':<9} {'(this run)':<40} "
+              f"{_fmt(new.get('ridge_mae')):>7} {_fmt(new.get('nn_mae')):>7} "
+              f"{_fmt(new.get('attn_nn_mae')):>7} {_fmt(new.get('lgbm_mae')):>7} "
+              f"{_fmt(new.get('nn_top12')):>7}")
+        print("=" * len(hdr))

@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from shared.benchmark_utils import (
     append_to_history, get_git_hash, print_comparison_table,
-    summarize_pipeline_result,
+    print_history_comparison, summarize_pipeline_result,
 )
 
 RESULTS_FILE = "benchmark_results.json"
@@ -101,3 +101,5 @@ if __name__ == "__main__":
         },
         "results": summaries,
     })
+
+    print_history_comparison(HISTORY_FILE, summaries)
