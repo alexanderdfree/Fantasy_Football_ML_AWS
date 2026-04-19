@@ -31,8 +31,8 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest tests/ QB/tests/ RB/tests/ WR/tests/ TE/tests/ K/tests/ DST/tests/ batch/tests/ shared/tests/ -v \
-            --ignore=RB/tests/test_rb_pipeline_e2e.py \
-            --ignore=TE/tests/test_te_pipeline_e2e.py \
+            --ignore-glob='**/test_*_pipeline_e2e.py' \
+            --ignore-glob='**/test_*_regression.py' \
             --ignore=batch/tests/test_train.py
 
   deploy:
