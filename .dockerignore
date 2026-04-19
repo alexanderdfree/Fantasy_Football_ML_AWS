@@ -75,11 +75,11 @@ batch/
 # Infra (EC2 bootstrap, IAM, user-data) — never belongs in a container
 infra/
 
-# Training data (re-downloaded from S3 at runtime by batch/train.py)
-data/
+# Training data — exclude raw NFL parquet (huge), keep splits/ for inference
+data/raw/
 
-# Per-position outputs (model artifacts, cached CV, plots — regenerated each run)
-**/outputs/
+# Per-position outputs — exclude figures (large PNGs), keep models/ for inference
+**/outputs/figures/
 
 # Benchmark / tuning artifacts (local scratch, not needed at runtime)
 benchmark_*.json
