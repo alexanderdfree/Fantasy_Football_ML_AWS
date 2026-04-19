@@ -20,23 +20,33 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --region 
 IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/ff-training:latest"
 
 # --- 1. NVMe instance store at /opt/ff/scratch --------------------------
-NVME_DEV=$(lsblk -dpno NAME,MODEL | awk '/Amazon EC2 NVMe Instance Storage/ {print $1; exit}')
+# The DLAMI pre-provisions the instance store as LVM (vg.01/lv_ephemeral)
+# mounted at /opt/dlami/nvme. Trying to mkfs the raw device fails with
+# EBUSY, so bind-mount a subdirectory of that volume onto /opt/ff/scratch
+# instead. Preserves ephemeral-SSD speed without fighting DLAMI's layout.
 mkdir -p /opt/ff/scratch /opt/ff/logs /opt/ff/config
-if [ -n "${NVME_DEV:-}" ] && ! mountpoint -q /opt/ff/scratch; then
-  mkfs.xfs -f "$NVME_DEV"
-  # nofail: a fresh instance store after stop/start is unformatted — we
-  # reformat on every boot (below), so fstab nofail protects boot from
-  # racing the mount.
-  grep -q "/opt/ff/scratch" /etc/fstab || echo "$NVME_DEV /opt/ff/scratch xfs defaults,nofail 0 2" >> /etc/fstab
-  mount /opt/ff/scratch
+if mountpoint -q /opt/dlami/nvme && ! mountpoint -q /opt/ff/scratch; then
+  mkdir -p /opt/dlami/nvme/ff-scratch
+  grep -q " /opt/ff/scratch " /etc/fstab || \
+    echo "/opt/dlami/nvme/ff-scratch /opt/ff/scratch none bind,nofail 0 0" >> /etc/fstab
+  mount --bind /opt/dlami/nvme/ff-scratch /opt/ff/scratch
 fi
 chown -R ubuntu:ubuntu /opt/ff
 chmod 755 /opt/ff /opt/ff/scratch /opt/ff/logs /opt/ff/config
 
 # --- 2. Ensure Docker + SSM agent are enabled ---------------------------
-systemctl enable --now docker amazon-ssm-agent
+# SSM agent is guaranteed running — we're being invoked through it. DLAMI
+# installs via snap (snap.amazon-ssm-agent.amazon-ssm-agent.service), not
+# the classic amazon-ssm-agent.service, so the conventional enable would
+# fail. Just make sure Docker is up; SSM is already up.
+systemctl enable --now docker
 
 # --- 3. ECR credential helper (fixes 12h token expiry) ------------------
+# DLAMI doesn't ship amazon-ecr-credential-helper — install it explicitly
+# so `credsStore: ecr-login` resolves. Without it, docker pull fails after
+# the first 12h token expires even though a manual `docker login` works.
+DEBIAN_FRONTEND=noninteractive apt-get update -y
+DEBIAN_FRONTEND=noninteractive apt-get install -y amazon-ecr-credential-helper
 install -d -m 755 -o ubuntu -g ubuntu /home/ubuntu/.docker
 cat > /home/ubuntu/.docker/config.json <<'JSON'
 {"credsStore": "ecr-login"}
@@ -117,8 +127,9 @@ nvidia-smi --query-gpu=driver_version --format=csv,noheader | awk -F. '{
   else { print "Driver OK: " $0 }
 }'
 
-aws ecr get-login-password --region "$REGION" \
-  | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+# No `docker login` — credsStore: ecr-login handles auth on every pull.
+# The helper explicitly returns "not implemented" for login/store calls
+# because it fetches credentials lazily.
 docker pull "$IMAGE"
 
 # --- 8. Breadcrumb ------------------------------------------------------
