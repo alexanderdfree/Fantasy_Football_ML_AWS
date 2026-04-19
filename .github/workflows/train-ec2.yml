@@ -113,7 +113,7 @@ jobs:
           # ID to poll. Parallel runs would OOM the single T4.
           # Positions are letters only — safe to interpolate unquoted in the
           # remote shell. JSON-encode via jq so quoting can't bite us.
-          jq -n --arg cmd "set -euo pipefail; for POS in $POSITIONS; do /usr/local/bin/ff-train \$POS $SEED; done" \
+          jq -n --arg cmd "set -eu; for POS in $POSITIONS; do /usr/local/bin/ff-train \$POS $SEED; done" \
             '{commands: [$cmd]}' > /tmp/ssm-params.json
           CMD_ID=$(aws ssm send-command \
             --targets "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
