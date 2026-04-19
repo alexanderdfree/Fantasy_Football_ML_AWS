@@ -42,6 +42,29 @@ jobs:
       - name: Install nfl_data_py (no-deps, matches Dockerfile)
         run: pip install --no-cache-dir --no-deps nfl_data_py==0.3.3
 
+      # data/raw/ is gitignored (28 MB of player stats). The pipeline_e2e +
+      # regression tests load data/raw/schedules_2012_2025.parquet via
+      # shared.weather_features and src.features.engineer. Fetch it from
+      # nfl_data_py (same call as src/data/loader.load_raw_data) and cache
+      # across CI runs since completed-season schedules don't change.
+      - name: Cache schedule parquet across CI runs
+        id: sched-cache
+        uses: actions/cache@v4
+        with:
+          path: data/raw/schedules_2012_2025.parquet
+          key: schedules-2012-2025-v1
+
+      - name: Download schedule parquet via nfl_data_py (cache miss)
+        if: steps.sched-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p data/raw
+          python - <<'PY'
+          import nfl_data_py as nfl
+          sched = nfl.import_schedules(list(range(2012, 2026)))
+          sched.to_parquet('data/raw/schedules_2012_2025.parquet')
+          print(f'Wrote schedules: {len(sched)} rows')
+          PY
+
       - name: Run tests
         run: >-
           python -m pytest
