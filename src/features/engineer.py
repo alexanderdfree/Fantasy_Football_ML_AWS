@@ -20,21 +20,24 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
     # --- Rolling Features (93: 90 mean/std/max + 3 min) ---
+    rolling_cols: dict[str, pd.Series] = {}
     for stat in ROLL_STATS:
+        grouped = df.groupby(["player_id", "season"])[stat]
         for window in ROLLING_WINDOWS:
-            df[f"rolling_mean_{stat}_L{window}"] = df.groupby(["player_id", "season"])[
-                stat
-            ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).mean())
-            df[f"rolling_std_{stat}_L{window}"] = df.groupby(["player_id", "season"])[
-                stat
-            ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).std())
-            df[f"rolling_max_{stat}_L{window}"] = df.groupby(["player_id", "season"])[
-                stat
-            ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).max())
+            rolling_cols[f"rolling_mean_{stat}_L{window}"] = grouped.transform(
+                lambda x, w=window: x.shift(1).rolling(w, min_periods=1).mean()
+            )
+            rolling_cols[f"rolling_std_{stat}_L{window}"] = grouped.transform(
+                lambda x, w=window: x.shift(1).rolling(w, min_periods=1).std()
+            )
+            rolling_cols[f"rolling_max_{stat}_L{window}"] = grouped.transform(
+                lambda x, w=window: x.shift(1).rolling(w, min_periods=1).max()
+            )
             if stat == "fantasy_points":
-                df[f"rolling_min_{stat}_L{window}"] = df.groupby(["player_id", "season"])[
-                    stat
-                ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).min())
+                rolling_cols[f"rolling_min_{stat}_L{window}"] = grouped.transform(
+                    lambda x, w=window: x.shift(1).rolling(w, min_periods=1).min()
+                )
+    df = pd.concat([df, pd.DataFrame(rolling_cols, index=df.index)], axis=1)
 
     # --- Prior-Season Summary Features (24) ---
     prior_stats = [s for s in ROLL_STATS]
@@ -45,11 +48,14 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.merge(prior, on=["player_id", "season"], how="left")
 
     # --- EWMA Features (14) ---
+    ewma_cols: dict[str, pd.Series] = {}
     for stat in EWMA_STATS:
+        grouped = df.groupby(["player_id", "season"])[stat]
         for span in EWMA_SPANS:
-            df[f"ewma_{stat}_L{span}"] = df.groupby(["player_id", "season"])[stat].transform(
+            ewma_cols[f"ewma_{stat}_L{span}"] = grouped.transform(
                 lambda x, s=span: x.shift(1).ewm(span=s, min_periods=1).mean()
             )
+    df = pd.concat([df, pd.DataFrame(ewma_cols, index=df.index)], axis=1)
 
     # --- Trend / Momentum Features (4) ---
     for stat in TREND_STATS:
@@ -79,30 +85,29 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     ).fillna(False)
     df["stint_id"] = df.groupby(["player_id", "season"])["team_changed"].cumsum()
 
+    share_cols: dict[str, pd.Series] = {}
+    stint_g = df.groupby(["player_id", "season", "stint_id"])
     for window in SHARE_WINDOWS:
-        df[f"player_targets_roll_L{window}"] = df.groupby(["player_id", "season", "stint_id"])[
-            "targets"
-        ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum())
-        df[f"team_targets_roll_L{window}"] = df.groupby(["player_id", "season", "stint_id"])[
-            "team_targets"
-        ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum())
-        df[f"target_share_L{window}"] = (
-            (df[f"player_targets_roll_L{window}"] / df[f"team_targets_roll_L{window}"])
-            .replace([np.inf, -np.inf], 0)
-            .fillna(0)
+        player_tgt = stint_g["targets"].transform(
+            lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum()
+        )
+        team_tgt = stint_g["team_targets"].transform(
+            lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum()
+        )
+        share_cols[f"target_share_L{window}"] = (
+            (player_tgt / team_tgt).replace([np.inf, -np.inf], 0).fillna(0)
         )
 
-        df[f"player_carries_roll_L{window}"] = df.groupby(["player_id", "season", "stint_id"])[
-            "carries"
-        ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum())
-        df[f"team_carries_roll_L{window}"] = df.groupby(["player_id", "season", "stint_id"])[
-            "team_carries"
-        ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum())
-        df[f"carry_share_L{window}"] = (
-            (df[f"player_carries_roll_L{window}"] / df[f"team_carries_roll_L{window}"])
-            .replace([np.inf, -np.inf], 0)
-            .fillna(0)
+        player_car = stint_g["carries"].transform(
+            lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum()
         )
+        team_car = stint_g["team_carries"].transform(
+            lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum()
+        )
+        share_cols[f"carry_share_L{window}"] = (
+            (player_car / team_car).replace([np.inf, -np.inf], 0).fillna(0)
+        )
+    df = pd.concat([df, pd.DataFrame(share_cols, index=df.index)], axis=1)
 
     # air_yards_share (lagged to prevent data leakage)
     if "receiving_air_yards" in df.columns:
@@ -124,19 +129,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         df["snap_pct"] = df.groupby(["player_id", "season"])["snap_pct"].shift(1).fillna(0)
 
     # Clean up intermediate columns
-    drop_cols = [
-        c
-        for c in df.columns
-        if c.startswith(
-            (
-                "player_targets_roll",
-                "team_targets_roll",
-                "player_carries_roll",
-                "team_carries_roll",
-            )
-        )
-    ]
-    drop_cols += ["team_targets", "team_carries", "team_changed", "stint_id"]
+    drop_cols = ["team_targets", "team_carries", "team_changed", "stint_id"]
     df.drop(columns=[c for c in drop_cols if c in df.columns], inplace=True)
 
     # --- Matchup / Opponent Features (4) ---
@@ -149,8 +142,8 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = _build_contextual_features(df)
 
     # --- Position Encoding (4) ---
-    for pos in ["QB", "RB", "WR", "TE"]:
-        df[f"pos_{pos}"] = (df["position"] == pos).astype(int)
+    pos_cols = {f"pos_{p}": (df["position"] == p).astype(int) for p in ["QB", "RB", "WR", "TE"]}
+    df = pd.concat([df, pd.DataFrame(pos_cols, index=df.index)], axis=1)
 
     return df
 

@@ -42,6 +42,7 @@ class MultiHeadNet(nn.Module):
         Input (N features)
             -> Shared backbone [Linear -> BN -> ReLU -> Dropout] x len(backbone_layers)
             -> One head per target: Linear -> ReLU -> Linear -> squeeze
+            -> Softplus on non-negative targets (preserves gradient flow near zero)
 
     Total prediction = sum of all heads.
     """
@@ -98,7 +99,7 @@ class MultiHeadNet(nn.Module):
         for name, head in self.heads.items():
             val = head(shared).squeeze(-1)
             if name in self.non_negative_targets:
-                val = torch.clamp(val, min=0.0)
+                val = F.softplus(val)
             preds[name] = val
         preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
@@ -338,12 +339,12 @@ class MultiHeadNetWithHistory(nn.Module):
         for name, head in self.heads.items():
             if isinstance(head, GatedTDHead):
                 td_pred, gate_logit = head(shared)
-                preds[name] = torch.clamp(td_pred, min=0.0)
+                preds[name] = td_pred
                 preds[f"{name}_gate_logit"] = gate_logit
             else:
                 val = head(shared).squeeze(-1)
                 if name in self.non_negative_targets:
-                    val = torch.clamp(val, min=0.0)
+                    val = F.softplus(val)
                 preds[name] = val
         preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
