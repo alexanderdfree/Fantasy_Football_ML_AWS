@@ -46,8 +46,13 @@ class RidgeModel:
         os.makedirs(model_dir, exist_ok=True)
         joblib.dump(self.scaler, f"{model_dir}/scaler.pkl")
         joblib.dump(self.model, f"{model_dir}/ridge_model.pkl")
+        pca_path = f"{model_dir}/pca.pkl"
         if self.pca is not None:
-            joblib.dump(self.pca, f"{model_dir}/pca.pkl")
+            joblib.dump(self.pca, pca_path)
+        elif os.path.exists(pca_path):
+            # A prior run saved a PCA here; this run doesn't use one. Remove
+            # it so load() won't resurrect a stale PCA with mismatched shape.
+            os.remove(pca_path)
 
     def load(self, model_dir: str = "outputs/models") -> None:
         self.scaler = joblib.load(f"{model_dir}/scaler.pkl")

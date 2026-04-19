@@ -3,6 +3,7 @@
 | Status | Date | Author |
 |---|---|---|
 | Accepted | 2026-04-16 | Alex Free (CS 372) |
+| Updated | 2026-04-19 | D7/D9 and §2 diagram reconciled with the EC2 training switch; the Batch path is preserved as standby (see [docs/batch_design.md](batch_design.md)). |
 
 ## Table of Contents
 
@@ -15,9 +16,9 @@
    - [D4: Attention over game history (skill positions only)](#d4-attention-over-game-history-skill-positions-only)
    - [D5: Output-constraint stack for zero-inflated, non-negative targets](#d5-output-constraint-stack)
    - [D6: Explicit per-position feature allowlist](#d6-explicit-per-position-feature-allowlist)
-   - [D7: AWS Batch over SageMaker for parallel training](#d7-aws-batch-over-sagemaker)
-   - [D8: Two Docker images (slim Flask, heavy Batch)](#d8-two-docker-images)
-   - [D9: Batch cold-start stack](#d9-batch-cold-start-stack)
+   - [D7: EC2 warm instance over Batch/SageMaker for parallel training](#d7-ec2-warm-instance-over-batchsagemaker)
+   - [D8: Two Docker images (slim Flask, heavy training)](#d8-two-docker-images)
+   - [D9: Warm training host (replaces Batch cold-start stack)](#d9-warm-training-host)
    - [D10: Trunk-based CI/CD with test-gated deploys](#d10-trunk-based-cicd-with-test-gated-deploys)
 4. [Cross-Cutting Consequences](#4-cross-cutting-consequences)
 5. [Open Issues / Follow-Ups](#5-open-issues--follow-ups)
@@ -67,16 +68,19 @@
                        ensembled ──────▶ │
                                          ▼
          ┌─────────────────────┐   ┌────────────────────┐
-         │ AWS Batch (train)   │   │ Flask app (serve)  │
+         │ EC2 g4dn (train)    │   │ Flask app (serve)  │
          │ Dockerfile.train    │   │ Dockerfile (slim)  │
-         │ g4dn Spot, parallel │   │ ECS, CPU-only      │
+         │ warm, 6 parallel    │   │ ECS, CPU-only      │
+         │ positions via SSM   │   │                    │
          └─────────────────────┘   └────────────────────┘
                     │                          ▲
                     │   model artifacts → S3 → │
                     └──────────────────────────┘
 ```
 
-A training run is invoked locally (`python batch/launch.py`): the launcher uploads the split parquets to S3, submits six parallel Batch jobs (one per position), polls to completion, and downloads model tarballs. The Flask service is built separately and deployed to ECS on every push to `main`; it reads pre-baked models and serves projections through a dashboard.
+> **Standby:** the AWS Batch + Spot path ([docs/batch_design.md](batch_design.md)) is fully kept and is reactivated by flipping the `BATCH_ACTIVE` repo variable. D7 explains the trade-off; D9 covers the warm-host implementation.
+
+A training run is triggered by a push to `main`, which invokes [`.github/workflows/train-ec2.yml`](../.github/workflows/train-ec2.yml): the workflow starts the warm g4dn.xlarge (if auto-shutdown stopped it), runs SSM commands to launch six per-position training containers, streams CloudWatch logs to the Actions job, and verifies fresh `model.tar.gz` artifacts landed in S3 per position. The Flask service is built separately and deployed to ECS on every push to `main`; it reads pre-baked models from S3 and serves projections through a dashboard.
 
 ---
 
@@ -217,32 +221,36 @@ Each decision below follows the same structure: what was decided, the forces at 
 
 ---
 
-### D7: AWS Batch over SageMaker
+### D7: EC2 warm instance over Batch/SageMaker
 
-**Decision.** Train on AWS Batch with g4dn.xlarge Spot instances, six parallel jobs (one per position). Orchestration is a single `boto3`-based Python script.
+**Decision.** Train on a single warm EC2 g4dn.xlarge driven by CI. Six per-position training containers run in parallel on the instance via SSM commands, invoked by [.github/workflows/train-ec2.yml](../.github/workflows/train-ec2.yml). AWS Batch with Spot is kept as a standby path ([docs/batch_design.md](batch_design.md)), reactivated by setting `BATCH_ACTIVE=true`.
 
-**Context.** Per-position training takes ~2 minutes on a GPU. A 3–5 minute cold-start from a managed service more than doubles wall time, and we pay for it whether training succeeds or fails.
+**Context.** Per-position training takes ~2 minutes on a GPU. We went through three iterations: SageMaker first (commit `eedacfc`), then Batch + Spot (`57d52f9` → `ffb3119`), then the current warm-EC2 design ([docs/ec2_design.md](ec2_design.md), landed 2026-04-19). Each pivot was driven by the same realization: a 2-minute training job amplifies cold-start overhead, so eliminating it is worth more than the per-hour savings.
 
 **Options considered.**
 
-| Option | Cold-start | Cost (6 runs) | Operational overhead |
+| Option | Cold-start | Cost pattern | Operational overhead |
 |---|---|---|---|
-| Train locally | 0s | $0 | Blocks laptop ~12 min |
-| SageMaker Training Jobs | 3–5 min | $0.53/hr × 6 | Managed, but overkill |
-| AWS Batch + Spot (chosen) | 30–90s | $0.16/hr × 6 ≈ $0.03/run | Own the IAM/ECR/queue |
-| Kubernetes (GKE/EKS) | Low | Low | Too much for a solo project |
+| Train locally | 0 s | $0 | Blocks laptop ~12 min per full run; no audit trail |
+| SageMaker Training Jobs | 3–5 min | $0.53/hr × 6 | Managed, but full cold-start every run |
+| AWS Batch + Spot | 30–90 s (with pull-through + SOCI) | $0.16/hr × 6 ≈ $0.03/run | Scales to zero; own the IAM/ECR/queue |
+| **EC2 warm instance (chosen)** | ~0 s (already running) | ~$0.53/hr while active, $0 while stopped via idle auto-shutdown | Single host to babysit; SSM is the only control plane |
 
-**Chosen: AWS Batch + Spot.** ~70% cost savings vs on-demand, scales to zero when idle, no standing cluster to babysit. The orchestration overhead (IAM roles, ECR repo, job definition, job queue) is front-loaded but stable.
+**Chosen: EC2 warm instance.** The container is pre-pulled; the CUDA drivers are already loaded. `train-ec2.yml` just `aws ec2 start-instances` (no-op if already running) then fans six SSM commands out to the host. Per-run cost is effectively the 2 min of training plus the Actions runtime. An idle auto-shutdown timer ([infra/ec2/auto-shutdown.timer](../infra/ec2/auto-shutdown.timer)) stops the instance after 4 h quiet, bringing the idle cost to zero; the next push pays the start-up tax once and reuses the warm host for the rest of the day.
 
-**Rejected.** SageMaker was actually *tried* (commit `eedacfc`) and reverted (`57d52f9`) once it became clear the managed-service overhead wasn't buying anything for a 2-minute job. The reverse lesson: "managed" is the right answer when training dominates, not when startup does.
+The commit↔model relationship is now one-to-one: every merge to `main` produces a measured, logged training run. Under Batch, cold-starts dominated observability — the Actions log was mostly "waiting for compute environment."
 
-**References.** [batch/launch.py](../batch/launch.py), [batch/train.py](../batch/train.py), [docs/batch_design.md](batch_design.md), [docs/AWS_DEPLOYMENT_GUIDE.md](AWS_DEPLOYMENT_GUIDE.md). Commit arc: `eedacfc` (SageMaker) → `57d52f9` (pivot to Batch) → `ffb3119` (final batch).
+**Why Batch remains the standby path.** Batch is strictly better when training *dominates* wall time (long jobs) or when we genuinely want $0-idle with no manual stop semantics. For constant fine-tuning on a 2-minute job, the always-on-but-auto-stopped EC2 pattern dominates. We keep the Batch image pipeline live ([.github/workflows/batch-image.yml](../.github/workflows/batch-image.yml)) so switching back is one `BATCH_ACTIVE=true` away.
+
+**Rejected.** SageMaker (`eedacfc` → `57d52f9`): managed overhead without training-time dominance. Kubernetes (GKE/EKS): too much machinery for a single GPU job. Long-lived instance without auto-shutdown: leaves an expensive GPU running unused.
+
+**References.** Active path: [docs/ec2_design.md](ec2_design.md), [infra/ec2/README.md](../infra/ec2/README.md), [.github/workflows/train-ec2.yml](../.github/workflows/train-ec2.yml), [batch/train.py](../batch/train.py) (reused as the in-container entrypoint). Standby path: [docs/batch_design.md](batch_design.md), [batch/launch.py](../batch/launch.py). Commit arc: `eedacfc` (SageMaker) → `57d52f9` (pivot to Batch) → `ffb3119` (final Batch) → `4b96c41` / `deb3cc7` (EC2 wiring) → `ec5ab17` (SSM polling fix).
 
 ---
 
 ### D8: Two Docker images
 
-**Decision.** Build and deploy two separate Docker images: a slim `python:3.12-slim` image for the Flask inference service (~150 MB) and a `pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime` image for Batch training (~5–6 GB).
+**Decision.** Build and deploy two separate Docker images: a slim `python:3.12-slim` image for the Flask inference service (~150 MB) and a `pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime` image for GPU training (~5–6 GB). The heavy image is consumed by the EC2 warm host today (D7) and by AWS Batch on the standby path.
 
 **Context.** Inference runs CPU-only on ECS and does not need CUDA, `torch.cuda.*`, or the pytorch wheel's CUDA libs. Training needs all of them plus `nfl_data_py`, `lightgbm`, and the training scripts. A single image would either bloat inference (slow ECS deploys, higher cold-start) or strip training capability.
 
@@ -264,25 +272,30 @@ The training Dockerfile ([batch/Dockerfile.train](../batch/Dockerfile.train)) us
 
 ---
 
-### D9: Batch cold-start stack
+### D9: Warm training host
 
-**Decision.** Combine three cold-start optimizations: (a) ECR pull-through cache for the pytorch base image, (b) SOCI (Seekable OCI) lazy loading, (c) aggressive `.dockerignore` + explicit COPYs in the training Dockerfile.
+**Decision.** Keep a single g4dn.xlarge EC2 instance warm with the training image already pulled and CUDA drivers loaded. Trigger per-push training from CI via SSM `RunCommand`, stream CloudWatch logs back to Actions, and stop the instance after 4 h of inactivity via a systemd timer. The earlier Batch cold-start stack (ECR pull-through + SOCI + aggressive `.dockerignore`) is kept in-repo for the standby path.
 
-**Context.** After picking Batch over SageMaker (D7), the dominant bottleneck became the container pull: the pytorch base is ~7 GB, and Docker Hub throttles multi-region pulls. Left alone, a cold Batch instance spent ~120 s just pulling the image.
+**Context.** D7 picked the warm-host pattern; this decision is the implementation. The old Batch design had to fight cold-start (image pull, instance provisioning, Docker startup) because Batch intentionally scales to zero. For a 2-minute training job, every second spent warming up is overhead we pay on every run. Leaving a GPU idle at $0.53/hr is also unacceptable — so the design has to stop the instance when it's genuinely unused.
 
-**Chosen (all three, composed).**
+**Chosen (composed).**
 
-| Optimization | Before | After | Mechanism |
-|---|---|---|---|
-| ECR pull-through cache (2c) | 120 s pull | 20–40 s | First pull seeds ECR in-region; subsequent pulls stay inside AWS network |
-| SOCI lazy loading (2a) | wait for full pull | ~30–60 s earlier | Container starts before image fully pulled; essential files stream first |
-| `.dockerignore` + explicit COPY (2b) | ~8 GB image | ~5–6 GB | Drops Flask UI, tests, docs, benchmarks, scratch scripts from training image |
+| Component | Mechanism | Why it matters |
+|---|---|---|
+| Deep Learning AMI (Ubuntu 22.04, PyTorch) | NVIDIA drivers, Docker, SSM agent, ECR credsStore pre-installed | First boot is ~90 s; subsequent starts are ~25 s |
+| `ff-training:latest` pre-pulled, cached on root EBS | `docker pull` at user-data time, then again on every `systemctl start` | Container-start from the CI command is ~2 s (image is already present) |
+| SSM `RunCommand` as the only control plane | No SSH, no open ingress, IAM-scoped per command | Security: instance has egress-only SG; auditability: every run is a logged SSM invocation |
+| Per-position `ff-train` helper on PATH | `train-ec2.yml` fires 6 parallel SSM commands (one per position) | Re-uses the 6-parallel-position pattern from the Batch design unchanged |
+| [`auto-shutdown.timer`](../infra/ec2/auto-shutdown.timer) | systemd timer fires every 15 min, stops instance if idle > 4 h | Brings idle cost to zero; next push pays one start-up (~25 s), subsequent pushes are warm |
+| [`cloudwatch-agent.json`](../infra/ec2/cloudwatch-agent.json) | Ships `/var/log/ff-train/*.log` to `/ff/training` | Logs survive the instance stop/start cycle |
 
-Net effect: cold start goes from ~180 s to ~60–90 s, which is the difference between "this is slow" and "this is fine."
+Net effect on a typical push: if the instance is already warm, training starts within seconds; if it was idle and stopped, the first push eats ~25 s of start-up and every subsequent push that day is warm. The total wall-clock time from `git push` to six `model.tar.gz` in S3 is ~3–5 min, of which ~2 min is actual training.
 
-**Rejected.** Pre-warming a long-lived EC2 instance was considered and rejected — it defeats the "scale to zero when idle" property that made Batch + Spot attractive in the first place (D7).
+**Standby path — Batch cold-start stack.** The Batch design used three optimizations to minimize cold-start: ECR pull-through cache (~120 s → ~30 s pull), SOCI lazy loading (container starts before image fully pulled), and aggressive `.dockerignore` + explicit `COPY` in the training Dockerfile (~8 GB → ~5–6 GB image). Full tables in [docs/batch_design.md](batch_design.md). These stay in force on the Batch path and are independent of the EC2 choice — they also help the first EC2 image pull during user-data.
 
-**References.** [batch/build_and_push.sh](../batch/build_and_push.sh), [batch/Dockerfile.train](../batch/Dockerfile.train), [docs/batch_design.md](batch_design.md) (full cost & timing tables in §"Strategy 2"). Arc: `4145257` → `8a50eec` → `ffb3119`.
+**Rejected.** Dedicated-instance reserved-pricing: commits to 24/7 usage we don't need. Spot on EC2 with no auto-shutdown: interrupts mid-training. On-demand with no auto-shutdown: burns $0.53/hr through idle weekends. Lambda-backed GPU (not generally available at this size): no GPU, and would add a cold-start problem back.
+
+**References.** [docs/ec2_design.md](ec2_design.md), [infra/ec2/launch-instance.sh](../infra/ec2/launch-instance.sh), [infra/ec2/user-data.sh](../infra/ec2/user-data.sh), [infra/ec2/auto-shutdown.sh](../infra/ec2/auto-shutdown.sh), [.github/workflows/train-ec2.yml](../.github/workflows/train-ec2.yml). Standby assets: [batch/build_and_push.sh](../batch/build_and_push.sh), [batch/Dockerfile.train](../batch/Dockerfile.train). Arc: `4145257` → `8a50eec` → `ffb3119` (Batch cold-start stack) → `4b96c41` → `deb3cc7` (EC2 warm-host implementation) → `ec5ab17` (SSM polling fix).
 
 ---
 
@@ -346,14 +359,17 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 - **Training:** [shared/training.py](../shared/training.py) (MultiTargetLoss, trainer, schedulers), [shared/pipeline.py](../shared/pipeline.py) (pipeline orchestrator).
 - **Per-position configs:** `QB/qb_config.py`, `RB/rb_config.py`, `WR/wr_config.py`, `TE/te_config.py`, `K/k_config.py`, `DST/dst_config.py`.
 - **Serving:** [app.py](../app.py), [Dockerfile](../Dockerfile).
-- **Training infra:** [batch/launch.py](../batch/launch.py), [batch/train.py](../batch/train.py), [batch/Dockerfile.train](../batch/Dockerfile.train), [batch/build_and_push.sh](../batch/build_and_push.sh).
-- **CI:** [.github/workflows/tests.yml](../.github/workflows/tests.yml), [batch-image.yml](../.github/workflows/batch-image.yml), [deploy.yml](../.github/workflows/deploy.yml).
+- **Training infra (active, EC2):** [infra/ec2/](../infra/ec2/), [batch/train.py](../batch/train.py), [batch/Dockerfile.train](../batch/Dockerfile.train), [batch/build_and_push.sh](../batch/build_and_push.sh), [.github/workflows/train-ec2.yml](../.github/workflows/train-ec2.yml).
+- **Training infra (standby, Batch):** [batch/launch.py](../batch/launch.py), [.github/workflows/batch-image.yml](../.github/workflows/batch-image.yml).
+- **CI:** [.github/workflows/tests.yml](../.github/workflows/tests.yml), [train-ec2.yml](../.github/workflows/train-ec2.yml), [batch-image.yml](../.github/workflows/batch-image.yml), [deploy.yml](../.github/workflows/deploy.yml).
 
 ### Related design docs
 
 - [instructions/DESIGN_DOC.md](../instructions/DESIGN_DOC.md) — rubric mapping + full repo walkthrough (authoritative for rubric-claimed items).
-- [docs/batch_design.md](batch_design.md) — full Batch cold-start analysis, cost breakdown (authoritative for D7 & D9).
-- [docs/AWS_DEPLOYMENT_GUIDE.md](AWS_DEPLOYMENT_GUIDE.md) — deployment runbook (authoritative for D7/D8 ops).
+- [docs/ec2_design.md](ec2_design.md) — warm-host training design (authoritative for D7 active path + D9).
+- [docs/batch_design.md](batch_design.md) — Batch cold-start analysis, cost breakdown (authoritative for the D7 standby path).
+- [infra/aws/README.md](../infra/aws/README.md) — ECS + ALB + domain runbook (authoritative for D8 serving ops).
+- [infra/ec2/README.md](../infra/ec2/README.md) — EC2 warm-host runbook (authoritative for D9 ops).
 - [docs/design_weather_and_odds.md](design_weather_and_odds.md) — weather/Vegas feature rationale (folded into D6).
 - [docs/design_lstm_multihead.md](design_lstm_multihead.md) — LSTM exploration, kept as artifact of the rejection under D4.
 - [docs/design_xgboost_ensemble.md](design_xgboost_ensemble.md) — ensembling consideration, rejected under D3.

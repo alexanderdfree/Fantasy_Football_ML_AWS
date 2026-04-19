@@ -73,17 +73,25 @@ The rubric states each piece of work can claim at most one item (plus stackable 
 
 ```
 Final-Project/
-├── app.py                         # Flask web application (main entry point + predictions dashboard)
-├── requirements.txt               # Pinned dependencies
+├── README.md                      # Project overview, Quick Start, Evaluation (rubric-required)
+├── SETUP.md                       # Install + first-time-run instructions
+├── ATTRIBUTION.md                 # Data sources, libraries, AI tool usage
+├── TODO.md                        # Issue log (open) + Fixed archive with lessons
+├── app.py                         # Flask web application (dashboard + /api/predictions)
 ├── benchmark.py                   # Multi-model benchmarking script (Ridge, NN, Attn NN, LGBM)
+├── requirements.txt               # Serving dependencies (CPU-only)
+├── requirements-dev.txt           # pytest, ruff
+├── pyproject.toml                 # pytest markers, ruff config
+├── Dockerfile                     # Slim python:3.12-slim image for ECS serving
+├── .dockerignore
 ├── .gitignore
 │
 ├── src/                           # General multi-position pipeline
-│   ├── config.py                  # Central config: scoring, seasons, hyperparams
+│   ├── config.py                  # Central config: scoring, seasons, rolling windows
 │   ├── data/
-│   │   ├── loader.py              # nfl_data_py ingestion + caching
+│   │   ├── loader.py              # nfl_data_py ingestion + parquet cache
 │   │   ├── preprocessing.py       # Cleaning, missing values, filtering
-│   │   └── split.py               # Temporal train/val/test split
+│   │   └── split.py               # Temporal train/val/test split + expanding-window CV
 │   ├── features/
 │   │   └── engineer.py            # All feature engineering logic
 │   ├── models/
@@ -96,57 +104,96 @@ Final-Project/
 │       └── backtest.py            # Season-long fantasy simulation
 │
 ├── shared/                        # Generic multi-target infrastructure
-│   ├── neural_net.py              # MultiHeadNet, MultiHeadNetWithHistory (attention), GatedTDHead
-│   ├── models.py                  # RidgeMultiTarget, TwoStageRidge
-│   ├── training.py                # MultiHeadTrainer, MultiTargetLoss, dataloaders
-│   ├── pipeline.py                # Position pipeline template
+│   ├── neural_net.py              # MultiHeadNet, AttentionPool, GatedTDHead
+│   ├── models.py                  # RidgeMultiTarget, LightGBMMultiTarget, TwoStageRidge
+│   ├── training.py                # MultiHeadTrainer, MultiTargetLoss, dataloaders, schedulers
+│   ├── pipeline.py                # Position pipeline template (_train_nn, _train_attention_nn, _train_ridge, _train_lgbm)
+│   ├── registry.py                # Position runner dispatch
 │   ├── evaluation.py              # Evaluation utilities
+│   ├── error_analysis.py          # Residual + failure-case tooling
 │   ├── backtest.py                # Simulation/evaluation helpers
-│   └── weather_features.py        # Vegas odds + venue/weather feature engineering
+│   ├── benchmark_utils.py         # Shared benchmark I/O (history append, formatting)
+│   ├── model_sync.py              # Pull/push model artifacts from/to S3
+│   ├── utils.py                   # Small cross-cutting helpers
+│   ├── weather_features.py        # Vegas odds + venue/weather feature engineering
+│   └── tests/                     # Shared-infra unit/integration tests
 │
-├── QB/                            # QB-specific model (config, data, targets, features, pipeline)
-│   ├── qb_config.py
-│   ├── qb_data.py
-│   ├── qb_targets.py
-│   ├── qb_features.py
-│   ├── run_qb_pipeline.py
-│   └── outputs/                   # Trained models + figures
+├── QB/  RB/  WR/  TE/             # Skill-position pipelines (shared structure)
+│   ├── {pos}_config.py            # Hyperparams, feature allowlist, target decomposition
+│   ├── {pos}_data.py              # Position-specific data prep
+│   ├── {pos}_targets.py           # Target construction (decomposition formulas)
+│   ├── {pos}_features.py          # Position-specific engineered features
+│   ├── run_{pos}_pipeline.py      # Entry point (calls shared/pipeline.py)
+│   ├── outputs/models/            # Trained model artifacts
+│   └── tests/                     # Per-position test suite
 │
-├── RB/                            # RB-specific model
-│   ├── rb_config.py               # (same structure as QB/)
-│   ├── rb_data.py
-│   ├── rb_targets.py
-│   ├── rb_features.py
-│   ├── run_rb_pipeline.py
-│   ├── outputs/
+├── K/                             # Kicker model (custom feature pipeline, bypasses general features)
+│   ├── k_config.py, k_data.py, k_targets.py, k_features.py
+│   ├── run_k_pipeline.py, outputs/, tests/
+│
+├── DST/                           # D/ST model (custom feature pipeline, bypasses general features)
+│   ├── dst_config.py, dst_data.py, dst_targets.py, dst_features.py
+│   ├── run_dst_pipeline.py, outputs/, tests/
+│
+├── batch/                         # Training orchestration (active: EC2; standby: Batch)
+│   ├── launch.py                  # Local Batch launcher (standby path)
+│   ├── train.py                   # In-container entrypoint — S3 download, run position, S3 upload
+│   ├── Dockerfile.train           # CUDA/PyTorch training image
+│   ├── Dockerfile.train.dockerignore
+│   ├── build_and_push.sh          # Local build + ECR push for the training image
+│   ├── benchmark.py               # Batch-side benchmark runner
+│   ├── requirements.txt           # Training-only deps (adds torch, no flask)
 │   └── tests/
 │
-├── WR/                            # WR-specific model (same structure)
-├── TE/                            # TE-specific model (same structure)
-├── K/                             # Kicker model (custom feature pipeline, bypasses general features)
-├── DST/                           # D/ST model (custom feature pipeline, bypasses general features)
+├── infra/                         # Cloud infrastructure (operator runbooks + scripts)
+│   ├── ec2/                       # Active training host (warm g4dn.xlarge, SSM-driven)
+│   │   ├── README.md
+│   │   ├── launch-instance.sh     # One-shot bootstrap (IAM, SG, run-instances)
+│   │   ├── user-data.sh           # cloud-init (NVMe, credsStore, ff-train helper)
+│   │   ├── auto-shutdown.{sh,service,timer}   # Idle-stop after 4h
+│   │   ├── cloudwatch-agent.json
+│   │   ├── iam-trust-policy.json
+│   │   └── iam-instance-policy.json
+│   └── aws/                       # ECS + ALB + domain (serving stack)
+│       └── README.md
 │
 ├── templates/
 │   └── index.html                 # Main dashboard HTML
 ├── static/
 │   └── css/style.css              # CSS styling
 │
-├── tests/
-│   └── test_feature_leakage.py    # Verifies no future data leakage
+├── tests/                         # Root-level tests (cross-position, contract)
+│   ├── test_feature_leakage.py
+│   ├── test_loader_contract.py
+│   ├── _pipeline_e2e_utils.py
+│   └── fixtures/                  # Shared fixtures (README.md has regeneration instructions)
 │
 ├── data/                          # .gitignore — generated at runtime
 │   ├── raw/                       # Cached nfl_data_py pulls
 │   └── splits/                    # Train/val/test parquet files
 │
+├── .github/workflows/
+│   ├── tests.yml                  # Run pytest on push/PR
+│   ├── train-ec2.yml              # Active training path (SSM → EC2 warm host)
+│   ├── batch-image.yml            # Build/push training image to ECR (always live)
+│   └── deploy.yml                 # Build/push serving image + ECS update
+│
+├── benchmark_results.json         # Latest comparison table (one row per position)
+├── benchmark_history.json         # Appended history of benchmark runs
+│
 ├── instructions/                  # Project specification documents
 │   ├── DESIGN_DOC.md              # This file
 │   ├── METHOD_CONTRACTS.md        # Function signatures & data schemas
-│   └── final_project_handout.html # Original assignment handout
+│   └── final_project_handout.html # Original assignment handout (rubric)
 │
 └── docs/                          # Technical design documents
-    ├── expert_comparison.md       # Comparison against published benchmarks
-    ├── design_lstm_multihead.md   # LSTM + sequential modeling proposal
-    └── design_weather_and_odds.md # Vegas odds & venue features proposal
+    ├── ARCHITECTURE.md            # ADR-001 consolidated decision log
+    ├── ec2_design.md              # Active training-host design
+    ├── batch_design.md            # Standby training-path design
+    ├── expert_comparison.md       # Error analysis vs published benchmarks
+    ├── design_lstm_multihead.md   # Rejected: LSTM + sequential modeling
+    ├── design_xgboost_ensemble.md # Rejected: ensembling
+    └── design_weather_and_odds.md # Vegas odds & venue features rationale
 ```
 
 ---

@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 
 import joblib
 import lightgbm as lgb
@@ -320,7 +321,15 @@ class RidgeMultiTarget:
 
     def save(self, model_dir: str) -> None:
         for name, model in self._models.items():
-            model.save(f"{model_dir}/{name}")
+            target_dir = f"{model_dir}/{name}"
+            # Wipe any prior run's artifacts before saving. load() infers the
+            # model type from files on disk (td_classifier_meta.json → gated,
+            # pca.pkl → PCA-enabled), so a leftover sidecar from a previous
+            # run with a different model type or feature count survives the
+            # save and crashes at inference.
+            if os.path.isdir(target_dir):
+                shutil.rmtree(target_dir)
+            model.save(target_dir)
 
     def load(self, model_dir: str) -> None:
         for name in self.target_names:
