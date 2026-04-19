@@ -196,7 +196,7 @@ def _load_k_splits():
     available for 2025 in nflverse, and uses within-season temporal splits.
     """
     k_df = load_kicker_data()
-    k_df = compute_k_targets(k_df)
+    k_df = POSITION_REGISTRY["K"]["compute_targets_fn"](k_df)
     compute_k_features(k_df)
     return kicker_season_split(k_df)
 
@@ -208,7 +208,7 @@ def _load_dst_splits():
     scores and opponent offensive stats.
     """
     dst_df = build_dst_data()
-    dst_df = compute_dst_targets(dst_df)
+    dst_df = POSITION_REGISTRY["DST"]["compute_targets_fn"](dst_df)
     compute_dst_features(dst_df)
     train = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()
     val = dst_df[dst_df["season"].isin(VAL_SEASONS)].copy()

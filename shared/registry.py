@@ -141,7 +141,8 @@ def get_inference_spec(pos: str) -> dict:
         )
         from RB.rb_config import (
             RB_TARGETS, RB_SPECIFIC_FEATURES,
-            RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_DROPOUT,
+            RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_HEAD_HIDDEN_OVERRIDES,
+            RB_NN_DROPOUT,
         )
         return {
             "targets": RB_TARGETS,
@@ -158,6 +159,7 @@ def get_inference_spec(pos: str) -> dict:
                 backbone_layers=RB_NN_BACKBONE_LAYERS,
                 head_hidden=RB_NN_HEAD_HIDDEN,
                 dropout=RB_NN_DROPOUT,
+                head_hidden_overrides=RB_NN_HEAD_HIDDEN_OVERRIDES,
             ),
         }
     if pos == "WR":
