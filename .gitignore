@@ -19,6 +19,10 @@ data/splits/
 # Analysis output
 analysis_output/
 
+# Benchmark history backups & in-flight writes (see shared/benchmark_utils.append_to_history)
+benchmark_history.corrupt-*.json
+benchmark_history.json.tmp
+
 # Jupyter
 .ipynb_checkpoints/
 
