@@ -33,6 +33,7 @@ from shared.evaluation import (
 )
 from shared.backtest import run_weekly_simulation, plot_weekly_accuracy
 from shared.weather_features import merge_schedule_features
+from shared.utils import seed_everything
 from src.features.engineer import build_game_history_arrays, get_attn_static_columns
 
 
@@ -190,7 +191,6 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
     print(f"  {pos} splits: {sizes}")
 
     # Merge schedule-derived weather/Vegas features before target & feature computation
-    from shared.weather_features import merge_schedule_features
     for _df in dfs_for_features:
         merge_schedule_features(_df)
 
@@ -249,6 +249,16 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
             pos_train, pos_val, pos_test, feature_cols)
 
 
+def _prepare_train_val(position, cfg, train_df, val_df):
+    """Train+val variant — same prep as _prepare_position_data without test."""
+    (X_train, X_val, _,
+     y_train_dict, y_val_dict, _,
+     pos_train, pos_val, _, feature_cols) = _prepare_position_data(
+        position, cfg, train_df, val_df, test_df=None,
+    )
+    return X_train, X_val, y_train_dict, y_val_dict, pos_train, pos_val, feature_cols
+
+
 def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
               cfg, targets, seed):
     """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history).
@@ -256,8 +266,7 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
     Shared by the regular NN and Weather NN to guarantee identical training.
     The only thing that differs between them is the input feature matrix.
     """
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+    seed_everything(seed)
 
     nn_scaler = StandardScaler()
     X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
@@ -317,8 +326,7 @@ def _train_attention_nn(X_train, X_val, X_test,
 
     Like _train_nn but feeds both static features and game history sequences.
     """
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+    seed_everything(seed)
 
     # Filter out rolling/EWMA/trend/share features that duplicate game history —
     # the attention branch learns its own temporal representation from raw game stats.
@@ -470,8 +478,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             scheduler_type: str  ("onecycle" | "cosine_warm_restarts")
             + scheduler-specific keys (onecycle_max_lr, etc.)
     """
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+    seed_everything(seed)
 
     pos = position
     pos_lower = pos.lower()
@@ -741,8 +748,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         test_df: Holdout test DataFrame. If None, loads from disk.
         seed: Random seed
     """
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+    seed_everything(seed)
 
     pos = position
     pos_lower = pos.lower()
@@ -768,8 +774,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     print(f"\nTuning Ridge alphas on full training data...")
     alpha_train_df = full_df[full_df["season"].isin(TRAIN_SEASONS)].copy()
     alpha_val_df = full_df[full_df["season"].isin(VAL_SEASONS)].copy()
-    (X_alpha, _, _, y_alpha_dict, _, _, pos_alpha, _, _, _) = _prepare_position_data(
-        position, cfg, alpha_train_df, alpha_val_df
+    X_alpha, _, y_alpha_dict, _, pos_alpha, _, _ = _prepare_train_val(
+        position, cfg, alpha_train_df, alpha_val_df,
     )
     cv_col = cfg.get("cv_split_column", "season")
     cv_special = set(cfg.get("two_stage_targets", {})) | set(cfg.get("classification_targets", {}))
@@ -789,13 +795,10 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
 
     for fold_idx, fold_train_df, fold_val_df in folds:
         print(f"\n--- Fold {fold_idx + 1} ---")
-        np.random.seed(seed)
-        torch.manual_seed(seed)
+        seed_everything(seed)
 
-        (X_train, X_val, _,
-         y_train_dict, y_val_dict, _,
-         pos_train, pos_val, _, feature_cols) = _prepare_position_data(
-            position, cfg, fold_train_df, fold_val_df
+        X_train, X_val, y_train_dict, y_val_dict, pos_train, pos_val, feature_cols = _prepare_train_val(
+            position, cfg, fold_train_df, fold_val_df,
         )
 
         ridge_fold = RidgeMultiTarget(

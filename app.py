@@ -25,68 +25,29 @@ from src.evaluation.metrics import compute_metrics, compute_positional_metrics
 
 from shared.models import RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
-from shared.weather_features import merge_schedule_features
+from shared.weather_features import merge_schedule_features, WEATHER_FEATURES_ALL
+from shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
 
-# --- Position-specific imports (data, targets, features, config) ---
-from QB.qb_data import filter_to_qb
-from QB.qb_targets import compute_qb_targets, compute_qb_adjustment
-from QB.qb_features import add_qb_specific_features, get_qb_feature_columns, fill_qb_nans
-from QB.qb_config import (
-    QB_TARGETS, QB_SPECIFIC_FEATURES,
-    QB_NN_BACKBONE_LAYERS, QB_NN_HEAD_HIDDEN, QB_NN_DROPOUT,
-)
+# Per-position imports needed only for /api/model_architecture metadata and
+# for K/DST data loaders (these have their own data pipelines, not in registry).
+from K.k_data import load_kicker_data, kicker_season_split
+from K.k_features import compute_k_features
+from DST.dst_data import build_dst_data
+from DST.dst_features import compute_dst_features
 
-from RB.rb_data import filter_to_rb
-from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
-from RB.rb_features import add_rb_specific_features, get_rb_feature_columns, fill_rb_nans
-from RB.rb_config import (
-    RB_TARGETS, RB_SPECIFIC_FEATURES,
-    RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_DROPOUT,
-)
+from QB.qb_config import QB_TARGETS, QB_SPECIFIC_FEATURES
+from RB.rb_config import RB_TARGETS, RB_SPECIFIC_FEATURES
+from WR.wr_config import WR_TARGETS, WR_SPECIFIC_FEATURES
+from TE.te_config import TE_TARGETS, TE_SPECIFIC_FEATURES
+from K.k_config import K_TARGETS, K_SPECIFIC_FEATURES
+from DST.dst_config import DST_TARGETS, DST_SPECIFIC_FEATURES
 
-from WR.wr_data import filter_to_wr
-from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
-from WR.wr_features import add_wr_specific_features, get_wr_feature_columns, fill_wr_nans
-from WR.wr_config import (
-    WR_TARGETS, WR_SPECIFIC_FEATURES,
-    WR_NN_BACKBONE_LAYERS, WR_NN_HEAD_HIDDEN, WR_NN_DROPOUT,
-)
-
-from TE.te_data import filter_to_te
-from TE.te_targets import compute_te_targets, compute_te_fumble_adjustment
-from TE.te_features import add_te_specific_features, get_te_feature_columns, fill_te_nans
-from TE.te_config import (
-    TE_TARGETS, TE_SPECIFIC_FEATURES,
-    TE_NN_BACKBONE_LAYERS, TE_NN_HEAD_HIDDEN, TE_NN_HEAD_HIDDEN_OVERRIDES,
-    TE_NN_DROPOUT,
-)
-
-from K.k_data import filter_to_k, load_kicker_data, kicker_season_split
-from K.k_targets import compute_k_targets, compute_k_miss_adjustment
-from K.k_features import compute_k_features, add_k_specific_features, get_k_feature_columns, fill_k_nans
-from K.k_config import (
-    K_TARGETS, K_SPECIFIC_FEATURES,
-    K_NN_BACKBONE_LAYERS, K_NN_HEAD_HIDDEN, K_NN_DROPOUT,
-)
-
-from DST.dst_data import filter_to_dst, build_dst_data
-from DST.dst_targets import compute_dst_targets, compute_dst_adjustment
-from DST.dst_features import compute_dst_features, add_dst_specific_features, get_dst_feature_columns, fill_dst_nans
-from DST.dst_config import (
-    DST_TARGETS, DST_SPECIFIC_FEATURES,
-    DST_NN_BACKBONE_LAYERS, DST_NN_HEAD_HIDDEN, DST_NN_HEAD_HIDDEN_OVERRIDES,
-    DST_NN_DROPOUT, DST_NN_NON_NEGATIVE_TARGETS,
-)
-
-# Full config modules (used by /api/model_architecture to surface per-position
-# hyperparameters, feature lists, and training flags to the frontend).
 import QB.qb_config as qb_cfg
 import RB.rb_config as rb_cfg
 import WR.wr_config as wr_cfg
 import TE.te_config as te_cfg
 import K.k_config as k_cfg
 import DST.dst_config as dst_cfg
-from shared.weather_features import WEATHER_FEATURES_ALL
 
 app = Flask(__name__)
 
@@ -115,6 +76,30 @@ def _safe_str(v, default=""):
     return str(v)
 
 
+_PLAYER_ROW_COLS = [
+    "player_id", "player_display_name", "position", "recent_team",
+    "week", "fantasy_points", "ridge_pred", "nn_pred", "headshot_url",
+]
+
+
+def _records_to_player_rows(df):
+    cols = [c for c in _PLAYER_ROW_COLS if c in df.columns]
+    return [
+        {
+            "player_id": _safe_str(r.get("player_id")),
+            "name": _safe_str(r.get("player_display_name")),
+            "position": _safe_str(r.get("position")),
+            "team": _safe_str(r.get("recent_team")),
+            "week": int(r["week"]),
+            "actual": _safe_num(round(r["fantasy_points"], 2)),
+            "ridge_pred": _safe_num(r.get("ridge_pred")),
+            "nn_pred": _safe_num(r.get("nn_pred")),
+            "headshot": _safe_str(r.get("headshot_url", "")),
+        }
+        for r in df[cols].to_dict(orient="records")
+    ]
+
+
 @app.errorhandler(Exception)
 def handle_api_error(e):
     """Return JSON errors for /api/ routes, default HTML for others."""
@@ -124,96 +109,6 @@ def handle_api_error(e):
     raise e
 
 
-# ---------------------------------------------------------------------------
-# Position registry — replaces per-position if/elif chains
-# ---------------------------------------------------------------------------
-POSITION_REGISTRY = {
-    "QB": {
-        "targets": QB_TARGETS,
-        "specific_features": QB_SPECIFIC_FEATURES,
-        "filter_fn": filter_to_qb,
-        "compute_targets_fn": compute_qb_targets,
-        "add_features_fn": add_qb_specific_features,
-        "fill_nans_fn": fill_qb_nans,
-        "get_feature_columns_fn": get_qb_feature_columns,
-        "compute_adjustment_fn": compute_qb_adjustment,
-        "model_dir": "QB/outputs/models",
-        "nn_file": "qb_multihead_nn.pt",
-        "nn_kwargs": dict(backbone_layers=QB_NN_BACKBONE_LAYERS, head_hidden=QB_NN_HEAD_HIDDEN, dropout=QB_NN_DROPOUT),
-    },
-    "RB": {
-        "targets": RB_TARGETS,
-        "specific_features": RB_SPECIFIC_FEATURES,
-        "filter_fn": filter_to_rb,
-        "compute_targets_fn": compute_rb_targets,
-        "add_features_fn": add_rb_specific_features,
-        "fill_nans_fn": fill_rb_nans,
-        "get_feature_columns_fn": get_rb_feature_columns,
-        "compute_adjustment_fn": compute_fumble_adjustment,
-        "model_dir": "RB/outputs/models",
-        "nn_file": "rb_multihead_nn.pt",
-        "nn_kwargs": dict(backbone_layers=RB_NN_BACKBONE_LAYERS, head_hidden=RB_NN_HEAD_HIDDEN, dropout=RB_NN_DROPOUT),
-    },
-    "WR": {
-        "targets": WR_TARGETS,
-        "specific_features": WR_SPECIFIC_FEATURES,
-        "filter_fn": filter_to_wr,
-        "compute_targets_fn": compute_wr_targets,
-        "add_features_fn": add_wr_specific_features,
-        "fill_nans_fn": fill_wr_nans,
-        "get_feature_columns_fn": get_wr_feature_columns,
-        "compute_adjustment_fn": compute_wr_fumble_adjustment,
-        "model_dir": "WR/outputs/models",
-        "nn_file": "wr_multihead_nn.pt",
-        "nn_kwargs": dict(backbone_layers=WR_NN_BACKBONE_LAYERS, head_hidden=WR_NN_HEAD_HIDDEN, dropout=WR_NN_DROPOUT),
-    },
-    "TE": {
-        "targets": TE_TARGETS,
-        "specific_features": TE_SPECIFIC_FEATURES,
-        "filter_fn": filter_to_te,
-        "compute_targets_fn": compute_te_targets,
-        "add_features_fn": add_te_specific_features,
-        "fill_nans_fn": fill_te_nans,
-        "get_feature_columns_fn": get_te_feature_columns,
-        "compute_adjustment_fn": compute_te_fumble_adjustment,
-        "model_dir": "TE/outputs/models",
-        "nn_file": "te_multihead_nn.pt",
-        "nn_kwargs": dict(
-            backbone_layers=TE_NN_BACKBONE_LAYERS, head_hidden=TE_NN_HEAD_HIDDEN,
-            dropout=TE_NN_DROPOUT, head_hidden_overrides=TE_NN_HEAD_HIDDEN_OVERRIDES,
-        ),
-    },
-    "K": {
-        "targets": K_TARGETS,
-        "specific_features": K_SPECIFIC_FEATURES,
-        "filter_fn": filter_to_k,
-        "compute_targets_fn": compute_k_targets,
-        "add_features_fn": add_k_specific_features,
-        "fill_nans_fn": fill_k_nans,
-        "get_feature_columns_fn": get_k_feature_columns,
-        "compute_adjustment_fn": compute_k_miss_adjustment,
-        "model_dir": "K/outputs/models",
-        "nn_file": "k_multihead_nn.pt",
-        "nn_kwargs": dict(backbone_layers=K_NN_BACKBONE_LAYERS, head_hidden=K_NN_HEAD_HIDDEN, dropout=K_NN_DROPOUT),
-    },
-    "DST": {
-        "targets": DST_TARGETS,
-        "specific_features": DST_SPECIFIC_FEATURES,
-        "filter_fn": filter_to_dst,
-        "compute_targets_fn": compute_dst_targets,
-        "add_features_fn": add_dst_specific_features,
-        "fill_nans_fn": fill_dst_nans,
-        "get_feature_columns_fn": get_dst_feature_columns,
-        "compute_adjustment_fn": compute_dst_adjustment,
-        "model_dir": "DST/outputs/models",
-        "nn_file": "dst_multihead_nn.pt",
-        "nn_kwargs": dict(
-            backbone_layers=DST_NN_BACKBONE_LAYERS, head_hidden=DST_NN_HEAD_HIDDEN,
-            dropout=DST_NN_DROPOUT, head_hidden_overrides=DST_NN_HEAD_HIDDEN_OVERRIDES,
-            non_negative_targets=DST_NN_NON_NEGATIVE_TARGETS,
-        ),
-    },
-}
 
 # ---------------------------------------------------------------------------
 # Position model metadata (static, for the UI)
@@ -228,7 +123,7 @@ POSITION_INFO = {
         ],
         "adjustments": "Interception penalty + fumble rate + receiving component (historical L8 rolling avg)",
         "specific_features": QB_SPECIFIC_FEATURES,
-        "architecture": {"backbone": list(QB_NN_BACKBONE_LAYERS), "head_hidden": QB_NN_HEAD_HIDDEN},
+        "architecture": {"backbone": list(qb_cfg.QB_NN_BACKBONE_LAYERS), "head_hidden": qb_cfg.QB_NN_HEAD_HIDDEN},
     },
     "RB": {
         "label": "Running Back",
@@ -239,7 +134,7 @@ POSITION_INFO = {
         ],
         "adjustments": "Fumble rate (historical L8 rolling avg)",
         "specific_features": list(RB_SPECIFIC_FEATURES),
-        "architecture": {"backbone": list(RB_NN_BACKBONE_LAYERS), "head_hidden": RB_NN_HEAD_HIDDEN},
+        "architecture": {"backbone": list(rb_cfg.RB_NN_BACKBONE_LAYERS), "head_hidden": rb_cfg.RB_NN_HEAD_HIDDEN},
     },
     "WR": {
         "label": "Wide Receiver",
@@ -250,7 +145,7 @@ POSITION_INFO = {
         ],
         "adjustments": "Fumble rate (historical L8 rolling avg)",
         "specific_features": list(WR_SPECIFIC_FEATURES),
-        "architecture": {"backbone": list(WR_NN_BACKBONE_LAYERS), "head_hidden": WR_NN_HEAD_HIDDEN},
+        "architecture": {"backbone": list(wr_cfg.WR_NN_BACKBONE_LAYERS), "head_hidden": wr_cfg.WR_NN_HEAD_HIDDEN},
     },
     "TE": {
         "label": "Tight End",
@@ -261,7 +156,7 @@ POSITION_INFO = {
         ],
         "adjustments": "Fumble rate (historical L8 rolling avg)",
         "specific_features": list(TE_SPECIFIC_FEATURES),
-        "architecture": {"backbone": list(TE_NN_BACKBONE_LAYERS), "head_hidden": TE_NN_HEAD_HIDDEN},
+        "architecture": {"backbone": list(te_cfg.TE_NN_BACKBONE_LAYERS), "head_hidden": te_cfg.TE_NN_HEAD_HIDDEN},
     },
     "K": {
         "label": "Kicker",
@@ -271,7 +166,7 @@ POSITION_INFO = {
         ],
         "adjustments": "Miss penalty (rolling L8 FG/PAT miss rate)",
         "specific_features": list(K_SPECIFIC_FEATURES),
-        "architecture": {"backbone": list(K_NN_BACKBONE_LAYERS), "head_hidden": K_NN_HEAD_HIDDEN},
+        "architecture": {"backbone": list(k_cfg.K_NN_BACKBONE_LAYERS), "head_hidden": k_cfg.K_NN_HEAD_HIDDEN},
     },
     "DST": {
         "label": "Defense/Special Teams",
@@ -282,7 +177,7 @@ POSITION_INFO = {
         ],
         "adjustments": "Defensive TDs + safeties (nflreadr 2025-only; excluded from targets)",
         "specific_features": list(DST_SPECIFIC_FEATURES),
-        "architecture": {"backbone": list(DST_NN_BACKBONE_LAYERS), "head_hidden": DST_NN_HEAD_HIDDEN},
+        "architecture": {"backbone": list(dst_cfg.DST_NN_BACKBONE_LAYERS), "head_hidden": dst_cfg.DST_NN_HEAD_HIDDEN},
     },
 }
 
@@ -292,7 +187,6 @@ def _compute_scoring_formats(df):
         df["fantasy_points_standard"] = compute_fantasy_points(df, SCORING_STANDARD)
     if "fantasy_points_half_ppr" not in df.columns:
         df["fantasy_points_half_ppr"] = compute_fantasy_points(df, SCORING_HALF_PPR)
-    return df
 
 
 def _load_k_splits():
@@ -362,15 +256,15 @@ def _apply_position_models(train, val, test, pos, results):
 
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)
 
-    # Ridge predictions
+    # Ridge predictions — load failures propagate; global handler returns JSON 500.
     try:
         ridge = RidgeMultiTarget(target_names=targets)
         ridge.load(model_dir)
         ridge_preds = ridge.predict(X_test_pos)
         ridge_total = sum(ridge_preds[t] for t in targets) + adj.values
     except Exception as e:
-        print(f"  ERROR: Failed to load Ridge model for {pos}: {e}")
-        return
+        _cache.setdefault("position_load_errors", {})[f"{pos}_ridge"] = str(e)
+        raise
 
     # NN predictions
     try:
@@ -386,8 +280,8 @@ def _apply_position_models(train, val, test, pos, results):
         nn_preds = nn_model.predict_numpy(X_test_scaled, device)
         nn_total = sum(nn_preds[t] for t in targets) + adj.values
     except Exception as e:
-        print(f"  ERROR: Failed to load NN model for {pos}: {e}")
-        return
+        _cache.setdefault("position_load_errors", {})[f"{pos}_nn"] = str(e)
+        raise
 
     # Write into results
     pos_index = pos_test.index
@@ -417,10 +311,13 @@ def _apply_position_models(train, val, test, pos, results):
     }
 
 
-def _get_data():
-    """Load data and generate all position-specific predictions."""
-    if "results" in _cache:
-        return _cache["results"], _cache["metrics"]
+_ALL_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
+
+
+def _ensure_base_data():
+    """Load splits + build empty results frame. Idempotent. No model loads."""
+    if _cache.get("base_loaded") or "results" in _cache:
+        return
 
     print("Loading data...")
     train = pd.read_parquet("data/splits/train.parquet")
@@ -430,13 +327,11 @@ def _get_data():
     for df in [train, val, test]:
         _compute_scoring_formats(df)
 
-    # K and DST use their own data pipelines (not the general splits)
     print("Loading kicker data...")
     k_train, k_val, k_test = _load_k_splits()
     print("Loading D/ST data...")
     dst_train, dst_val, dst_test = _load_dst_splits()
 
-    # Build results frame from general test + K/DST test data
     keep_cols = [
         "player_id", "player_display_name", "position", "recent_team",
         "season", "week", "headshot_url",
@@ -446,7 +341,6 @@ def _get_data():
     keep_cols = [c for c in keep_cols if c in test.columns]
     results = test[keep_cols].copy()
 
-    # Append K/DST test rows with non-overlapping indices
     for pos_test_df in [k_test, dst_test]:
         offset = results.index.max() + 1
         pos_rows = pd.DataFrame(index=range(offset, offset + len(pos_test_df)))
@@ -454,37 +348,56 @@ def _get_data():
             if col in pos_test_df.columns:
                 pos_rows[col] = pos_test_df[col].values
             elif col in ("fantasy_points_half_ppr", "fantasy_points_standard"):
-                # K/DST scoring doesn't vary by format (no receptions)
                 pos_rows[col] = pos_test_df["fantasy_points"].values
             elif col == "headshot_url":
                 pos_rows[col] = ""
             else:
                 pos_rows[col] = np.nan
-        # Sync position test data index so _apply_position_models can
-        # map predictions back to the correct results rows
         pos_test_df.index = pos_rows.index
         results = pd.concat([results, pos_rows])
 
     results["ridge_pred"] = 0.0
     results["nn_pred"] = 0.0
 
-    # Apply position-specific models (general positions use general splits)
-    for pos in ["QB", "RB", "WR", "TE"]:
-        print(f"Applying {pos}-specific model...")
-        _apply_position_models(train, val, test, pos, results)
+    _cache["splits"] = {
+        "QB": (train, val, test),
+        "RB": (train, val, test),
+        "WR": (train, val, test),
+        "TE": (train, val, test),
+        "K": (k_train, k_val, k_test),
+        "DST": (dst_train, dst_val, dst_test),
+    }
+    _cache["results"] = results
+    _cache["positions_loaded"] = set()
+    _cache["base_loaded"] = True
 
-    # K and DST use their own pre-processed splits
-    print("Applying K-specific model...")
-    _apply_position_models(k_train, k_val, k_test, "K", results)
-    print("Applying DST-specific model...")
-    _apply_position_models(dst_train, dst_val, dst_test, "DST", results)
 
-    # Compute metrics from combined results (all positions)
+def _ensure_position_loaded(pos):
+    """Apply position-specific model. Idempotent."""
+    _ensure_base_data()
+    if "splits" not in _cache:
+        return
+    if pos in _cache["positions_loaded"]:
+        return
+    train, val, test = _cache["splits"][pos]
+    print(f"Applying {pos}-specific model...")
+    _apply_position_models(train, val, test, pos, _cache["results"])
+    _cache["positions_loaded"].add(pos)
+
+
+def _ensure_all_positions_loaded():
+    for pos in _ALL_POSITIONS:
+        _ensure_position_loaded(pos)
+
+
+def _ensure_metrics():
+    if "metrics" in _cache:
+        return
+    _ensure_all_positions_loaded()
+    results = _cache["results"]
     y_all = results["fantasy_points"].values
     metrics = {}
-    model_cols = [("Ridge Regression", "ridge_pred"), ("Neural Network", "nn_pred")]
-    for name, pred_col in model_cols:
-        mask = results[pred_col].notna()
+    for name, pred_col in [("Ridge Regression", "ridge_pred"), ("Neural Network", "nn_pred")]:
         preds_full = results[pred_col].fillna(0).values
         overall = compute_metrics(y_all, preds_full)
         pos_df = results[["position"]].copy()
@@ -495,11 +408,14 @@ def _get_data():
             "overall": {k: round(v, 4) for k, v in overall.items()},
             "by_position": pos_metrics.to_dict(orient="records"),
         }
-
-    _cache["results"] = results
     _cache["metrics"] = metrics
     print("Ready!")
-    return results, metrics
+
+
+def _get_data():
+    """Full load: all positions + metrics. Backward-compatible."""
+    _ensure_metrics()
+    return _cache["results"], _cache["metrics"]
 
 
 # ---------------------------------------------------------------------------
@@ -513,9 +429,6 @@ def index():
 
 @app.route("/api/predictions")
 def api_predictions():
-    results, _ = _get_data()
-    df = results.copy()
-
     position = request.args.get("position", "ALL")
     week = request.args.get("week", "ALL")
     search = request.args.get("search", "").strip().lower()
@@ -523,7 +436,12 @@ def api_predictions():
     order = request.args.get("order", "desc")
 
     if position != "ALL":
+        _ensure_position_loaded(position)
+        df = _cache["results"]
         df = df[df["position"] == position]
+    else:
+        results, _ = _get_data()
+        df = results
     if week != "ALL":
         try:
             df = df[df["week"] == int(week)]
@@ -532,20 +450,7 @@ def api_predictions():
     if search:
         df = df[df["player_display_name"].str.lower().str.contains(search, na=False, regex=False)]
 
-    rows = []
-    for _, r in df.iterrows():
-        row = {
-            "player_id": _safe_str(r["player_id"]),
-            "name": _safe_str(r["player_display_name"]),
-            "position": _safe_str(r["position"]),
-            "team": _safe_str(r["recent_team"]),
-            "week": int(r["week"]),
-            "actual": _safe_num(round(r["fantasy_points"], 2)),
-            "ridge_pred": _safe_num(r["ridge_pred"]),
-            "nn_pred": _safe_num(r["nn_pred"]),
-            "headshot": _safe_str(r.get("headshot_url", "")),
-        }
-        rows.append(row)
+    rows = _records_to_player_rows(df)
 
     reverse = order == "desc"
     if sort_by in ("actual", "ridge_pred", "nn_pred", "week"):
@@ -564,28 +469,33 @@ def api_metrics():
 
 @app.route("/api/weeks")
 def api_weeks():
-    results, _ = _get_data()
+    _ensure_base_data()
+    results = _cache["results"]
     weeks = sorted(results["week"].unique().tolist())
     return jsonify({"weeks": [int(w) for w in weeks]})
 
 
 @app.route("/api/player/<player_id>")
 def api_player(player_id):
-    results, _ = _get_data()
-    df = results[results["player_id"] == player_id].sort_values("week")
-    if df.empty:
+    _ensure_base_data()
+    results = _cache["results"]
+    match = results[results["player_id"] == player_id]
+    if match.empty:
         return jsonify({"error": "Player not found"}), 404
+    _ensure_position_loaded(match.iloc[0]["position"])
+    results = _cache["results"]
+    df = results[results["player_id"] == player_id].sort_values("week")
 
     info = df.iloc[0]
-    weekly = []
-    for _, r in df.iterrows():
-        entry = {
+    weekly = [
+        {
             "week": int(r["week"]),
             "actual": _safe_num(round(r["fantasy_points"], 2)),
             "ridge_pred": _safe_num(r["ridge_pred"]),
             "nn_pred": _safe_num(r["nn_pred"]),
         }
-        weekly.append(entry)
+        for r in df[["week", "fantasy_points", "ridge_pred", "nn_pred"]].to_dict(orient="records")
+    ]
 
     return jsonify({
         "player_id": player_id,
@@ -601,12 +511,15 @@ def api_player(player_id):
 
 @app.route("/api/top_players")
 def api_top_players():
-    results, _ = _get_data()
     position = request.args.get("position", "ALL")
 
-    df = results.copy()
     if position != "ALL":
+        _ensure_position_loaded(position)
+        df = _cache["results"]
         df = df[df["position"] == position]
+    else:
+        results, _ = _get_data()
+        df = results
 
     agg_dict = {
         "avg_actual": ("fantasy_points", "mean"),
@@ -620,9 +533,8 @@ def api_top_players():
     avg = avg[avg["games"] >= 6]
     avg = avg.sort_values("avg_actual", ascending=False).head(25)
 
-    rows = []
-    for _, r in avg.iterrows():
-        row = {
+    rows = [
+        {
             "player_id": _safe_str(r["player_id"]),
             "name": _safe_str(r["player_display_name"]),
             "position": _safe_str(r["position"]),
@@ -632,7 +544,8 @@ def api_top_players():
             "avg_nn": _safe_num(round(r["avg_nn"], 2)),
             "games": int(r["games"]),
         }
-        rows.append(row)
+        for r in avg.to_dict(orient="records")
+    ]
 
     return jsonify({"players": rows})
 
@@ -640,17 +553,22 @@ def api_top_players():
 @app.route("/api/weekly_accuracy")
 def api_weekly_accuracy():
     results, _ = _get_data()
-    weeks = sorted(results["week"].unique())
-    data = {"weeks": [], "ridge_mae": [], "nn_mae": []}
-
-    for w in weeks:
-        wdf = results[results["week"] == w]
-        actual = wdf["fantasy_points"].values
-        data["weeks"].append(int(w))
-        data["ridge_mae"].append(round(np.mean(np.abs(actual - wdf["ridge_pred"].values)), 3))
-        data["nn_mae"].append(round(np.mean(np.abs(actual - wdf["nn_pred"].values)), 3))
-
-    return jsonify(data)
+    actual = results["fantasy_points"].values
+    weekly = (
+        results.assign(
+            _ridge_err=np.abs(actual - results["ridge_pred"].values),
+            _nn_err=np.abs(actual - results["nn_pred"].values),
+        )
+        .groupby("week")
+        .agg(ridge_mae=("_ridge_err", "mean"), nn_mae=("_nn_err", "mean"))
+        .round(3)
+        .sort_index()
+    )
+    return jsonify({
+        "weeks": [int(w) for w in weekly.index],
+        "ridge_mae": weekly["ridge_mae"].tolist(),
+        "nn_mae": weekly["nn_mae"].tolist(),
+    })
 
 
 @app.route("/api/position_details")
@@ -823,6 +741,9 @@ def api_model_architecture():
 
 @app.route("/health")
 def health():
+    errors = _cache.get("position_load_errors")
+    if errors:
+        return jsonify({"status": "degraded", "position_load_errors": errors}), 503
     return jsonify({"status": "ok"})
 
 

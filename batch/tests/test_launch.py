@@ -405,14 +405,14 @@ class TestDownloadArtifacts:
 
 class TestCrossModuleConsistency:
     def test_train_and_launch_positions_match(self):
-        from batch.train import POSITIONS as TRAIN_POSITIONS
+        from shared.registry import ALL_POSITIONS as REG_POSITIONS
         from batch.launch import ALL_POSITIONS
-        assert set(TRAIN_POSITIONS.keys()) == set(ALL_POSITIONS)
+        assert set(ALL_POSITIONS) == set(REG_POSITIONS)
 
     def test_cpu_only_positions_match_across_modules(self):
+        from shared.registry import CPU_ONLY_POSITIONS as REG_CPU
         from batch.launch import CPU_ONLY_POSITIONS as LAUNCH_CPU
-        from batch.train import CPU_ONLY_POSITIONS as TRAIN_CPU
-        assert LAUNCH_CPU == TRAIN_CPU
+        assert LAUNCH_CPU == REG_CPU
 
     def test_train_and_launch_s3_bucket_match(self):
         from batch.launch import S3_BUCKET

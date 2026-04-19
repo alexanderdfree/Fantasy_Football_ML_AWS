@@ -13,7 +13,6 @@ import argparse
 import hashlib
 import json
 import os
-import random
 import shutil
 import sys
 import tarfile
@@ -27,11 +26,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-
-# Positions that don't use a neural net — Ridge/LGBM only. Running these on
-# a GPU instance wastes Spot-hours, so we skip the REQUIRE_GPU assertion for
-# them even when the job happens to land on a GPU queue.
-CPU_ONLY_POSITIONS = {"K", "DST"}
+from shared.utils import seed_everything
+from shared.registry import (
+    ALL_POSITIONS, accepts_dataframes, get_runner, is_cpu_only,
+)
 
 
 def _assert_gpu(position: str):
@@ -50,7 +48,7 @@ def _assert_gpu(position: str):
     if available:
         print(f"[gpu] device count              = {torch.cuda.device_count()}")
         print(f"[gpu] device 0 name             = {torch.cuda.get_device_name(0)}")
-    if position in CPU_ONLY_POSITIONS:
+    if is_cpu_only(position):
         print(f"[gpu] {position} is CPU-only; skipping REQUIRE_GPU assertion")
         return
     require_gpu = os.environ.get("REQUIRE_GPU", "1") == "1"
@@ -62,34 +60,22 @@ def _assert_gpu(position: str):
         )
 
 
-def _seed_everything(seed: int):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-# Position registry: (module_path, runner_function_name, accepts_dataframes)
-POSITIONS = {
-    "QB": ("QB.run_qb_pipeline", "run_qb_pipeline", True),
-    "RB": ("RB.run_rb_pipeline", "run_rb_pipeline", True),
-    "WR": ("WR.run_wr_pipeline", "run_wr_pipeline", True),
-    "TE": ("TE.run_te_pipeline", "run_te_pipeline", True),
-    "K":  ("K.run_k_pipeline",   "run_k_pipeline",  False),
-    "DST": ("DST.run_dst_pipeline", "run_dst_pipeline", False),
-}
-
-
 def download_data(s3_bucket, s3_prefix, local_dir):
     """Download training parquet files from S3 to the container."""
+    from concurrent.futures import ThreadPoolExecutor
     s3 = boto3.client("s3")
     os.makedirs(local_dir, exist_ok=True)
-    for name in ("train.parquet", "val.parquet", "test.parquet"):
+    names = ("train.parquet", "val.parquet", "test.parquet")
+
+    def _download_one(name):
         s3_key = f"{s3_prefix}/{name}"
         local_path = os.path.join(local_dir, name)
         print(f"Downloading s3://{s3_bucket}/{s3_key} -> {local_path}")
         s3.download_file(s3_bucket, s3_key, local_path)
+
+    with ThreadPoolExecutor(max_workers=len(names)) as pool:
+        for _ in pool.map(_download_one, names):
+            pass
     print("Data download complete.")
 
 
@@ -188,7 +174,7 @@ def _dry_run_artifacts(position: str, model_dir: str, seed: int) -> None:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--position", required=True, choices=list(POSITIONS.keys()))
+    parser.add_argument("--position", required=True, choices=ALL_POSITIONS)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--dry-run",
@@ -212,7 +198,7 @@ def main():
         print(f"[dry-run] skipping _assert_gpu for {pos}")
     else:
         _assert_gpu(pos)
-    _seed_everything(args.seed)
+    seed_everything(args.seed)
 
     s3_bucket = os.environ.get("S3_BUCKET", "ff-predictor-training")
     s3_prefix = os.environ.get("S3_DATA_PREFIX", "data")
@@ -235,11 +221,9 @@ def main():
         print(f"[dry-run] Completed for {pos}; skipping S3 upload.")
         return
 
-    mod_path, func_name, accepts_df = POSITIONS[pos]
-    mod = __import__(mod_path, fromlist=[func_name])
-    run_fn = getattr(mod, func_name)
+    run_fn = get_runner(pos)
 
-    if accepts_df:
+    if accepts_dataframes(pos):
         # Download data from S3 into the container
         download_data(s3_bucket, s3_prefix, data_dir)
         train_df = pd.read_parquet(os.path.join(data_dir, "train.parquet"))

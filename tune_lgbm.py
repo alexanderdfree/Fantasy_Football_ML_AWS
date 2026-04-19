@@ -36,21 +36,8 @@ from shared.evaluation import compute_target_metrics, compute_ranking_metrics
 
 def _get_position_config(pos):
     """Import and return the CONFIG dict for a position."""
-    pos = pos.upper()
-    if pos == "QB":
-        from QB.run_qb_pipeline import QB_CONFIG
-        return QB_CONFIG
-    elif pos == "RB":
-        from RB.run_rb_pipeline import RB_CONFIG
-        return RB_CONFIG
-    elif pos == "WR":
-        from WR.run_wr_pipeline import WR_CONFIG
-        return WR_CONFIG
-    elif pos == "TE":
-        from TE.run_te_pipeline import TE_CONFIG
-        return TE_CONFIG
-    else:
-        raise ValueError(f"No LightGBM config for position: {pos}")
+    from shared.registry import get_config
+    return get_config(pos.upper())
 
 
 # ---------------------------------------------------------------------------

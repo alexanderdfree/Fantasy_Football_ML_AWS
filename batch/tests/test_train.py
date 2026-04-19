@@ -19,61 +19,27 @@ if PROJECT_ROOT not in sys.path:
 # ---------------------------------------------------------------------------
 
 class TestPositionRegistry:
-    """Validate the POSITIONS dict in batch/train.py against actual code."""
-
-    def _get_positions(self):
-        from batch.train import POSITIONS
-        return POSITIONS
+    """Validate the shared position registry against actual code."""
 
     def test_all_six_positions_registered(self):
-        positions = self._get_positions()
-        assert set(positions.keys()) == {"QB", "RB", "WR", "TE", "K", "DST"}
-
-    @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])
-    def test_registry_entry_structure(self, pos):
-        positions = self._get_positions()
-        entry = positions[pos]
-        assert len(entry) == 3, f"{pos} entry should be (module_path, func_name, accepts_df)"
-        mod_path, func_name, accepts_df = entry
-        assert isinstance(mod_path, str)
-        assert isinstance(func_name, str)
-        assert isinstance(accepts_df, bool)
+        from shared.registry import ALL_POSITIONS
+        assert set(ALL_POSITIONS) == {"QB", "RB", "WR", "TE", "K", "DST"}
 
     @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE"])
     def test_standard_positions_accept_dataframes(self, pos):
-        positions = self._get_positions()
-        _, _, accepts_df = positions[pos]
-        assert accepts_df is True, f"{pos} should accept dataframes"
+        from shared.registry import accepts_dataframes
+        assert accepts_dataframes(pos) is True
 
     @pytest.mark.parametrize("pos", ["K", "DST"])
     def test_special_positions_no_dataframes(self, pos):
-        positions = self._get_positions()
-        _, _, accepts_df = positions[pos]
-        assert accepts_df is False, f"{pos} should NOT accept dataframes"
-
-    @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])
-    def test_module_path_matches_function_name(self, pos):
-        positions = self._get_positions()
-        mod_path, func_name, _ = positions[pos]
-        assert func_name in mod_path, (
-            f"{pos}: func '{func_name}' not found in module path '{mod_path}'"
-        )
-
-    @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])
-    def test_runner_module_exists(self, pos):
-        positions = self._get_positions()
-        mod_path, _, _ = positions[pos]
-        file_path = Path(PROJECT_ROOT) / mod_path.replace(".", "/")
-        py_file = file_path.with_suffix(".py")
-        assert py_file.exists(), f"Runner module not found: {py_file}"
+        from shared.registry import accepts_dataframes
+        assert accepts_dataframes(pos) is False
 
     @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])
     def test_runner_function_importable(self, pos):
-        positions = self._get_positions()
-        mod_path, func_name, _ = positions[pos]
-        mod = __import__(mod_path, fromlist=[func_name])
-        fn = getattr(mod, func_name)
-        assert callable(fn), f"{mod_path}.{func_name} is not callable"
+        from shared.registry import get_runner
+        fn = get_runner(pos)
+        assert callable(fn), f"{pos} runner is not callable"
 
 
 # ---------------------------------------------------------------------------
@@ -339,18 +305,10 @@ class TestMainIntegration:
                  "MODEL_OUTPUT_DIR": str(model_dir),
                  "REQUIRE_GPU": "0",
              }), \
-             mock.patch("batch.train.POSITIONS", {
-                 "RB": ("fake_runner_mod", "fake_runner", True),
-             }):
+             mock.patch("batch.train.get_runner", return_value=fake_runner), \
+             mock.patch("batch.train.accepts_dataframes", return_value=True):
             from batch.train import main
-            original_import = __import__
-            def patched_import(name, *args, **kwargs):
-                if name == "fake_runner_mod":
-                    return fake_mod
-                return original_import(name, *args, **kwargs)
-
-            with mock.patch("builtins.__import__", side_effect=patched_import):
-                main()
+            main()
 
         mock_download.assert_called_once()
         assert mock_parquet.call_count == 3
@@ -364,32 +322,21 @@ class TestMainIntegration:
     def test_main_special_position_no_download(self, mock_copytree, mock_upload, tmp_path):
         """main() for K/DST should NOT download data from S3, and skip REQUIRE_GPU."""
         runner_called = {}
-        fake_mod = mock.MagicMock()
 
         def fake_k_runner(seed=42):
             runner_called["seed"] = seed
             return {"ridge_metrics": {"total": {"mae": 1.0, "r2": 0.5}}}
 
-        fake_mod.fake_k_runner = fake_k_runner
-
-        original_import = __import__
-        def patched_import(name, *args, **kwargs):
-            if name == "fake_k_mod":
-                return fake_mod
-            return original_import(name, *args, **kwargs)
-
         model_dir = tmp_path / "model"
 
         with mock.patch("sys.argv", ["train.py", "--position", "K"]), \
              mock.patch.dict(os.environ, {"MODEL_OUTPUT_DIR": str(model_dir), "REQUIRE_GPU": "1"}), \
-             mock.patch("batch.train.POSITIONS", {
-                 "K": ("fake_k_mod", "fake_k_runner", False),
-             }), \
-             mock.patch("batch.train.torch.cuda.is_available", return_value=False), \
-             mock.patch("builtins.__import__", side_effect=patched_import):
+             mock.patch("batch.train.get_runner", return_value=fake_k_runner), \
+             mock.patch("batch.train.accepts_dataframes", return_value=False), \
+             mock.patch("batch.train.torch.cuda.is_available", return_value=False):
             from batch.train import main
-            # REQUIRE_GPU=1 with no CUDA would normally raise, but K is in
-            # CPU_ONLY_POSITIONS so _assert_gpu skips the check.
+            # REQUIRE_GPU=1 with no CUDA would normally raise, but K's CPU-only
+            # flag in the registry tells _assert_gpu to skip the check.
             main()
 
         assert runner_called["seed"] == 42

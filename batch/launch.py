@@ -39,9 +39,7 @@ JOB_DEFINITION = os.environ.get("FF_JOB_DEFINITION", "ff-training-job")
 # Set to an empty string to leave unset — we treat empty as "not configured".
 JOB_DEFINITION_CPU = os.environ.get("FF_JOB_DEFINITION_CPU", "") or None
 
-ALL_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
-# Positions that don't use a neural net — safe to send to a CPU queue.
-CPU_ONLY_POSITIONS = {"K", "DST"}
+from shared.registry import ALL_POSITIONS, CPU_ONLY_POSITIONS  # noqa: E402
 
 AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 BATCH_LOG_GROUP = "/aws/batch/job"

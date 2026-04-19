@@ -3,6 +3,7 @@
 import json
 import os
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge, LogisticRegression
@@ -29,8 +30,7 @@ class TwoStageRidge:
     def fit(self, X_train, y_train):
         self.scaler_clf = StandardScaler()
         X_s = self.scaler_clf.fit_transform(X_train)
-        self.clf = LogisticRegression(C=self.clf_C, l1_ratio=0,
-                                      max_iter=1000, solver="lbfgs")
+        self.clf = LogisticRegression(C=self.clf_C, max_iter=1000, solver="lbfgs")
         self.clf.fit(X_s, (y_train > 0).astype(int))
 
         pos_mask = y_train > 0
@@ -45,7 +45,6 @@ class TwoStageRidge:
         return np.where(p >= self.threshold, e, 0)
 
     def save(self, model_dir):
-        import os, joblib
         os.makedirs(model_dir, exist_ok=True)
         joblib.dump(self.scaler_clf, f"{model_dir}/scaler_clf.pkl")
         joblib.dump(self.clf, f"{model_dir}/classifier.pkl")
@@ -53,7 +52,6 @@ class TwoStageRidge:
         joblib.dump(self.reg, f"{model_dir}/ridge_model.pkl")
 
     def load(self, model_dir):
-        import joblib
         self.scaler_clf = joblib.load(f"{model_dir}/scaler_clf.pkl")
         self.clf = joblib.load(f"{model_dir}/classifier.pkl")
         self.scaler_reg = joblib.load(f"{model_dir}/scaler_reg.pkl")
@@ -153,7 +151,6 @@ class OrdinalTDClassifier:
         return proba @ self.class_point_values_
 
     def save(self, model_dir: str) -> None:
-        import joblib
         os.makedirs(model_dir, exist_ok=True)
         joblib.dump(self.scaler_, f"{model_dir}/td_scaler.pkl")
         joblib.dump(self.clf_, f"{model_dir}/td_classifier.pkl")
@@ -166,7 +163,6 @@ class OrdinalTDClassifier:
             json.dump(meta, f)
 
     def load(self, model_dir: str) -> None:
-        import joblib
         self.scaler_ = joblib.load(f"{model_dir}/td_scaler.pkl")
         self.clf_ = joblib.load(f"{model_dir}/td_classifier.pkl")
         with open(f"{model_dir}/td_classifier_meta.json") as f:
@@ -222,7 +218,6 @@ class GatedOrdinalTDClassifier:
         return np.where(p >= self.threshold, ev, 0)
 
     def save(self, model_dir: str) -> None:
-        import joblib
         os.makedirs(model_dir, exist_ok=True)
         joblib.dump(self.scaler_gate_, f"{model_dir}/scaler_clf.pkl")
         joblib.dump(self.gate_, f"{model_dir}/classifier.pkl")
@@ -237,7 +232,6 @@ class GatedOrdinalTDClassifier:
             json.dump(meta, f)
 
     def load(self, model_dir: str) -> None:
-        import joblib
         self.scaler_gate_ = joblib.load(f"{model_dir}/scaler_clf.pkl")
         self.gate_ = joblib.load(f"{model_dir}/classifier.pkl")
         self.ordinal_ = OrdinalTDClassifier()
@@ -391,7 +385,6 @@ class LightGBMMultiTarget:
         return result
 
     def save(self, model_dir):
-        import joblib
         lgb_dir = f"{model_dir}/lightgbm"
         os.makedirs(lgb_dir, exist_ok=True)
         for name, model in self._models.items():
@@ -403,7 +396,6 @@ class LightGBMMultiTarget:
             json.dump(meta, f)
 
     def load(self, model_dir):
-        import joblib
         lgb_dir = f"{model_dir}/lightgbm"
         with open(f"{lgb_dir}/meta.json") as f:
             meta = json.load(f)

@@ -101,41 +101,6 @@ class MultiHeadNet(nn.Module):
         preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
 
-    def load_state_dict(self, state_dict, strict=True, assign=False):
-        """Load state dict with backward compatibility for old per-position models.
-
-        Old models used attribute names like 'passing_head', 'rushing_head', 'td_head'.
-        New models use ModuleDict: 'heads.passing_floor', 'heads.rushing_floor', etc.
-        """
-        # Check if state_dict uses old naming convention
-        # Old models had attributes like 'passing_head', 'rushing_head', 'td_head'
-        # New models use ModuleDict: 'heads.passing_floor', 'heads.td_points', etc.
-        old_keys = [k for k in state_dict if "_head." in k and not k.startswith("heads.")]
-        if old_keys:
-            # Extract unique head prefixes (e.g. "rushing_head" from "rushing_head.0.weight")
-            old_prefixes = set(k.split(".")[0] for k in old_keys if k.endswith("_head") or "." in k)
-            old_prefixes = {p for p in old_prefixes if p.endswith("_head")}
-
-            prefix_to_target = {}
-            for prefix in old_prefixes:
-                head_word = prefix[: -len("_head")]  # "rushing_head" -> "rushing"
-                for target in self.target_names:
-                    if target.startswith(head_word):
-                        prefix_to_target[prefix] = target
-                        break
-
-            new_state_dict = {}
-            for key, value in state_dict.items():
-                parts = key.split(".", 1)
-                if len(parts) == 2 and parts[0] in prefix_to_target:
-                    new_key = f"heads.{prefix_to_target[parts[0]]}.{parts[1]}"
-                    new_state_dict[new_key] = value
-                else:
-                    new_state_dict[key] = value
-            state_dict = new_state_dict
-
-        return super().load_state_dict(state_dict, strict=strict, assign=assign)
-
     def predict_numpy(self, X: np.ndarray, device: torch.device) -> dict:
         self.eval()
         with torch.no_grad():
