@@ -62,6 +62,18 @@ logs/
 # Analysis / scratch (not needed in production containers)
 analysis_output/
 analysis_*.py
+benchmark.py
+benchmark_*.py
+tune_lgbm.py
+tune_rb_gate.py
+tune_*.py
+conftest.py
+
+# Training code — inference doesn't import it
+batch/
+
+# Infra (EC2 bootstrap, IAM, user-data) — never belongs in a container
+infra/
 
 # Training data (re-downloaded from S3 at runtime by batch/train.py)
 data/

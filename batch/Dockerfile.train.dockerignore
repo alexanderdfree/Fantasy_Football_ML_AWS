@@ -1,0 +1,18 @@
+# Override of root .dockerignore for training builds (batch/Dockerfile.train).
+# Root .dockerignore excludes batch/ and infra/ to shrink the inference image;
+# training needs batch/.
+**
+!batch/**
+!shared/**
+!src/**
+!QB/**
+!RB/**
+!WR/**
+!TE/**
+!K/**
+!DST/**
+!requirements.txt
+batch/tests/**
+batch/__pycache__/**
+**/__pycache__/**
+**/*.pyc

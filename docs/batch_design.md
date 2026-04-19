@@ -1,5 +1,8 @@
 # AWS Batch Training Design Doc
 
+> **Status: standby as of 2026-04-19.**
+> Active training path is [`docs/ec2_design.md`](ec2_design.md) / [`infra/ec2/`](../infra/ec2/). Image builds still track HEAD (`.github/workflows/batch-image.yml`) so reactivation is one repo-variable flip: set `BATCH_ACTIVE=true` and push.
+
 ## Problem
 
 Managed training services add 3-5 minutes of cold-start overhead (instance provisioning,

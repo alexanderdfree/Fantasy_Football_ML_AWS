@@ -83,6 +83,10 @@ jobs:
           echo "image_uri=$IMAGE_URI:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Register new job definition revision
+        # Gated behind BATCH_ACTIVE so Batch can ride on the image path while
+        # the active trainer is the 24/7 EC2 instance (docs/ec2_design.md).
+        # Flip the repo variable BATCH_ACTIVE=true to re-sync the job definition.
+        if: vars.BATCH_ACTIVE == 'true'
         env:
           IMAGE_URI: ${{ steps.build.outputs.image_uri }}
         run: |
