@@ -97,10 +97,13 @@ jobs:
             --arg IMG "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
             '.containerDefinitions[0].image = $IMG |
              del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)')
-          aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF"
+          NEW_REV=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" \
+            --query 'taskDefinition.revision' --output text)
+          echo "Registered task definition $TASK_FAMILY:$NEW_REV"
           aws ecs update-service \
             --cluster $ECS_CLUSTER \
             --service $ECS_SERVICE \
+            --task-definition $TASK_FAMILY:$NEW_REV \
             --force-new-deployment
 
       - name: Wait for ECS rollout
