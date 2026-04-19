@@ -106,7 +106,9 @@ def load_and_prepare():
 
     # Merge weather features — force re-merge by dropping implied_team_total
     # (build_features only sets implied_team_total; we need all 12)
-    for split_name, _df in zip(["train", "val", "test"], [rb_train, rb_val, rb_test]):
+    for split_name, _df in zip(
+        ["train", "val", "test"], [rb_train, rb_val, rb_test], strict=True
+    ):
         if "implied_team_total" in _df.columns:
             _df.drop(columns=["implied_team_total"], inplace=True)
         merge_schedule_features(_df, label=split_name)

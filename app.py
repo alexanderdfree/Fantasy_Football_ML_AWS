@@ -283,7 +283,9 @@ def _apply_position_models(train, val, test, pos, results):
     pos_val = reg["compute_targets_fn"](pos_val)
     pos_test = reg["compute_targets_fn"](pos_test)
 
-    for split_name, _df in zip(["train", "val", "test"], [pos_train, pos_val, pos_test]):
+    for split_name, _df in zip(
+        ["train", "val", "test"], [pos_train, pos_val, pos_test], strict=True
+    ):
         merge_schedule_features(_df, label=split_name)
 
     pos_train, pos_val, pos_test = reg["add_features_fn"](pos_train, pos_val, pos_test)
