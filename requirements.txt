@@ -11,3 +11,4 @@ lightgbm==4.6.0
 mord==0.7
 appdirs==1.4.4
 requests==2.32.3
+boto3==1.42.89

@@ -51,10 +51,11 @@ jobs:
       - name: Sync data splits + model artifacts from S3 (gitignored, needed in image)
         run: |
           set -e
-          mkdir -p data/splits
+          mkdir -p data/splits data/raw
           aws s3 cp s3://ff-predictor-training/data/test.parquet  data/splits/test.parquet
           aws s3 cp s3://ff-predictor-training/data/train.parquet data/splits/train.parquet
           aws s3 cp s3://ff-predictor-training/data/val.parquet   data/splits/val.parquet
+          aws s3 sync s3://ff-predictor-training/data/raw/ data/raw/ --exclude "*_2023_2023.parquet"
           for pos in QB RB WR TE K DST; do
             mkdir -p "$pos/outputs/models"
             aws s3 cp "s3://ff-predictor-training/models/$pos/model.tar.gz" "/tmp/$pos-model.tar.gz"

@@ -75,8 +75,9 @@ batch/
 # Infra (EC2 bootstrap, IAM, user-data) — never belongs in a container
 infra/
 
-# Training data — exclude raw NFL parquet (huge), keep splits/ for inference
-data/raw/
+# Training data — keep data/splits + data/raw (both needed for inference;
+# K pipeline reconstructs kicker stats from raw weekly parquets).
+# (no exclusions under data/)
 
 # Per-position outputs — exclude figures (large PNGs), keep models/ for inference
 **/outputs/figures/
