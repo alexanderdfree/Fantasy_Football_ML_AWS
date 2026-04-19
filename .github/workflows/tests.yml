@@ -39,6 +39,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Install nfl_data_py (no-deps, matches Dockerfile)
+        run: pip install --no-cache-dir --no-deps nfl_data_py==0.3.3
+
       - name: Run tests
         run: >-
           python -m pytest
