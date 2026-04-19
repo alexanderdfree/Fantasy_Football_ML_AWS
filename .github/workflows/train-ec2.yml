@@ -126,18 +126,29 @@ jobs:
           echo "Training command: $CMD_ID"
 
       - name: Wait for training to complete
-        env:
-          AWS_MAX_ATTEMPTS: "180"
-          AWS_RETRY_MODE: standard
         run: |
-          # Default ssm wait command-executed times out at 600s; --cli-read-timeout
-          # is the long-poll cap. 1800s == 30min, generous for 6-position run (~12min actual).
-          aws ssm wait command-executed \
-            --command-id "${{ steps.train.outputs.command_id }}" \
-            --instance-id "${{ steps.inst.outputs.id }}" \
-            --region "$AWS_REGION" \
-            --cli-read-timeout 1800 \
-            --cli-connect-timeout 60
+          # Manual poll loop. `aws ssm wait command-executed` has a hard-coded
+          # 20-attempt x 5s cap (~100s) that AWS_MAX_ATTEMPTS / --cli-read-timeout
+          # don't override, so long runs were being reported as failures even
+          # though the SSM command succeeded on the instance.
+          CMD_ID="${{ steps.train.outputs.command_id }}"
+          INST="${{ steps.inst.outputs.id }}"
+          deadline=$(( $(date +%s) + 1800 ))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$CMD_ID" \
+              --instance-id "$INST" \
+              --region "$AWS_REGION" \
+              --query Status --output text)
+            case "$STATUS" in
+              Success)                    echo "Training succeeded"; exit 0 ;;
+              Cancelled|TimedOut|Failed)  echo "Training terminal: $STATUS"; exit 1 ;;
+              Pending|InProgress|Delayed) echo "Status: $STATUS -- sleeping 15s"; sleep 15 ;;
+              *)                          echo "Unknown status: $STATUS"; exit 1 ;;
+            esac
+          done
+          echo "Timed out after 30 min"
+          exit 1
 
       - name: Stream training output to Actions log
         if: always()
