@@ -24,6 +24,10 @@ jobs:
         run: pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
+      - name: Install nfl_data_py (no-deps, matches Dockerfile)
+        run: pip install --no-cache-dir --no-deps nfl_data_py==0.3.3
+      - name: Install boto3 (for batch/tests/test_launch.py)
+        run: pip install --no-cache-dir boto3
       - name: Run tests
         run: python -m pytest tests/ QB/tests/ RB/tests/ WR/tests/ TE/tests/ K/tests/ DST/tests/ batch/tests/ shared/tests/ -v
 
