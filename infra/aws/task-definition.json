@@ -1,0 +1,43 @@
+{
+  "family": "fantasy-predictor",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "runtimePlatform": {
+    "cpuArchitecture": "ARM64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::__ACCOUNT_ID__:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::__ACCOUNT_ID__:role/fantasyTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "fantasy-predictor",
+      "image": "__ECR_URI__:__IMAGE_TAG__",
+      "essential": true,
+      "portMappings": [
+        {"containerPort": 8000, "protocol": "tcp"}
+      ],
+      "environment": [
+        {"name": "FF_MODEL_S3_BUCKET", "value": "__FF_MODEL_S3_BUCKET__"},
+        {"name": "FF_MODEL_S3_PREFIX", "value": "models"},
+        {"name": "AWS_REGION", "value": "us-east-1"}
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 90
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/fantasy-predictor",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

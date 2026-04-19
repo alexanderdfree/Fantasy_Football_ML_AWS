@@ -49,6 +49,9 @@ import TE.te_config as te_cfg
 import K.k_config as k_cfg
 import DST.dst_config as dst_cfg
 
+from shared.model_sync import sync_models_from_s3
+sync_models_from_s3()
+
 app = Flask(__name__)
 
 _cache = {}

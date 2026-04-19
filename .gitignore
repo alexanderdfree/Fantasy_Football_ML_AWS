@@ -47,3 +47,6 @@ venv/
 *.egg-info/
 dist/
 build/
+
+# AWS bootstrap resource-ID outputs
+infra/aws/.env.out
