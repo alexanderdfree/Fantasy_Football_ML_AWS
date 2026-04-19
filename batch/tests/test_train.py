@@ -317,17 +317,24 @@ class TestArtifactCopy:
 
 
 class TestMainIntegration:
+    @mock.patch("batch.train.sync_raw_data")
     @mock.patch("batch.train.upload_artifacts")
     @mock.patch("batch.train.shutil.copytree")
     @mock.patch("batch.train.download_data")
     @mock.patch("batch.train.pd.read_parquet")
     def test_main_standard_position(
-        self, mock_parquet, mock_download, mock_copytree, mock_upload, tmp_path
+        self, mock_parquet, mock_download, mock_copytree, mock_upload, mock_sync, tmp_path
     ):
         import pandas as pd
 
         mock_df = pd.DataFrame({"col": [1, 2, 3]})
         mock_parquet.return_value = mock_df
+
+        # main() rmtree's then copytree's into model_dir before writing metrics,
+        # so the mock must recreate the destination dir.
+        mock_copytree.side_effect = lambda src, dst, **kw: Path(dst).mkdir(
+            parents=True, exist_ok=True
+        )
 
         runner_called = {}
         fake_mod = mock.MagicMock()
@@ -367,10 +374,19 @@ class TestMainIntegration:
         # Metrics file must have been written before upload
         assert (model_dir / "benchmark_metrics.json").exists()
 
+    @mock.patch("batch.train.sync_raw_data")
     @mock.patch("batch.train.upload_artifacts")
     @mock.patch("batch.train.shutil.copytree")
-    def test_main_special_position_no_download(self, mock_copytree, mock_upload, tmp_path):
+    def test_main_special_position_no_download(
+        self, mock_copytree, mock_upload, mock_sync, tmp_path
+    ):
         """main() for K/DST should NOT download data from S3, and skip REQUIRE_GPU."""
+        # main() rmtree's then copytree's into model_dir before writing metrics,
+        # so the mock must recreate the destination dir.
+        mock_copytree.side_effect = lambda src, dst, **kw: Path(dst).mkdir(
+            parents=True, exist_ok=True
+        )
+
         runner_called = {}
 
         def fake_k_runner(seed=42):
