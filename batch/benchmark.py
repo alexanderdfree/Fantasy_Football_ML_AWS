@@ -87,6 +87,14 @@ def main():
         "--download-only", action="store_true",
         help="Skip launching jobs; download metrics from latest artifacts",
     )
+    parser.add_argument(
+        "--backend", choices=["batch", "ec2"], default="batch",
+        help="Backend label recorded in benchmark_history.json",
+    )
+    parser.add_argument(
+        "--instance-type", default="g4dn.xlarge (Spot)",
+        help="Instance-type label recorded in benchmark_history.json",
+    )
     args = parser.parse_args()
 
     project_root = os.path.join(os.path.dirname(__file__), "..")
@@ -151,9 +159,9 @@ def main():
         "run_id": f"{now}_{git_hash}",
         "timestamp": now,
         "git_hash": git_hash,
-        "note": args.note or "AWS Batch benchmark",
-        "backend": "batch",
-        "instance_type": "g4dn.xlarge (Spot)",
+        "note": args.note or f"AWS {args.backend} benchmark",
+        "backend": args.backend,
+        "instance_type": args.instance_type,
         "positions": [s["position"] for s in summaries],
         "results": summaries,
     })

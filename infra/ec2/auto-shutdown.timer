@@ -1,0 +1,10 @@
+[Unit]
+Description=ff-training auto-shutdown idle check (every 15 min)
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=15min
+Unit=ff-auto-shutdown.service
+
+[Install]
+WantedBy=timers.target

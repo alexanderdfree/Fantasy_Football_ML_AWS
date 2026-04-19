@@ -1,0 +1,205 @@
+name: Train on EC2
+
+# Active training path — fires after batch-image.yml pushes a fresh image to
+# ECR, then sends an SSM Run Command to the warm g4dn.xlarge. See
+# docs/ec2_design.md.
+
+on:
+  workflow_run:
+    workflows: ["Build & Push Batch Training Image"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      positions:
+        description: "Space-separated positions to train"
+        default: "QB RB WR TE K DST"
+      seed:
+        description: "Random seed"
+        default: "42"
+
+concurrency:
+  group: train-ec2
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: ff-predictor-training
+
+jobs:
+  train:
+    # For workflow_run, only fire on success of the upstream build.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install history-update deps
+        run: pip install boto3
+
+      - name: Resolve instance ID
+        id: inst
+        run: |
+          ID="${{ vars.EC2_TRAINER_INSTANCE_ID }}"
+          if [ -z "$ID" ]; then
+            echo "EC2_TRAINER_INSTANCE_ID repo variable is not set. Run infra/ec2/launch-instance.sh first."
+            exit 1
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Start instance (no-op if already running)
+        run: |
+          aws ec2 start-instances --instance-ids "${{ steps.inst.outputs.id }}" --region "$AWS_REGION" >/dev/null
+          aws ec2 wait instance-running --instance-ids "${{ steps.inst.outputs.id }}" --region "$AWS_REGION"
+
+      - name: Wait for SSM agent online
+        run: |
+          for i in $(seq 1 30); do
+            STATUS=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
+              --region "$AWS_REGION" \
+              --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || echo "None")
+            if [ "$STATUS" = "Online" ]; then
+              echo "SSM online"
+              exit 0
+            fi
+            echo "SSM status: $STATUS (attempt $i/30)"
+            sleep 10
+          done
+          echo "Timed out waiting for SSM"
+          exit 1
+
+      - name: Verify bootstrap breadcrumb
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --targets "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
+            --document-name AWS-RunShellScript \
+            --parameters 'commands=["test -f /opt/ff/config/bootstrap-complete && cat /opt/ff/config/bootstrap-complete"]' \
+            --region "$AWS_REGION" --query Command.CommandId --output text)
+          aws ssm wait command-executed \
+            --command-id "$CMD_ID" \
+            --instance-id "${{ steps.inst.outputs.id }}" \
+            --region "$AWS_REGION"
+          aws ssm get-command-invocation \
+            --command-id "$CMD_ID" \
+            --instance-id "${{ steps.inst.outputs.id }}" \
+            --region "$AWS_REGION" \
+            --query StandardOutputContent --output text
+
+      - name: Run training for all positions (sequential)
+        id: train
+        run: |
+          POSITIONS="${{ github.event.inputs.positions || 'QB RB WR TE K DST' }}"
+          SEED="${{ github.event.inputs.seed || '42' }}"
+          # Sequential loop inside a single SSM command so we get one command
+          # ID to poll. Parallel runs would OOM the single T4.
+          # Positions are letters only — safe to interpolate unquoted in the
+          # remote shell. JSON-encode via jq so quoting can't bite us.
+          jq -n --arg cmd "set -euo pipefail; for POS in $POSITIONS; do /usr/local/bin/ff-train \$POS $SEED; done" \
+            '{commands: [$cmd]}' > /tmp/ssm-params.json
+          CMD_ID=$(aws ssm send-command \
+            --targets "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
+            --document-name AWS-RunShellScript \
+            --comment "train-ec2 ${{ github.sha }}" \
+            --parameters file:///tmp/ssm-params.json \
+            --cloud-watch-output-config "CloudWatchLogGroupName=/ff/training,CloudWatchOutputEnabled=true" \
+            --region "$AWS_REGION" --query Command.CommandId --output text)
+          echo "command_id=$CMD_ID" >> "$GITHUB_OUTPUT"
+          echo "Training command: $CMD_ID"
+
+      - name: Wait for training to complete
+        env:
+          AWS_MAX_ATTEMPTS: "180"
+          AWS_RETRY_MODE: standard
+        run: |
+          # Default ssm wait command-executed times out at 600s; --cli-read-timeout
+          # is the long-poll cap. 1800s == 30min, generous for 6-position run (~12min actual).
+          aws ssm wait command-executed \
+            --command-id "${{ steps.train.outputs.command_id }}" \
+            --instance-id "${{ steps.inst.outputs.id }}" \
+            --region "$AWS_REGION" \
+            --cli-read-timeout 1800 \
+            --cli-connect-timeout 60
+
+      - name: Stream training output to Actions log
+        if: always()
+        run: |
+          aws ssm get-command-invocation \
+            --command-id "${{ steps.train.outputs.command_id }}" \
+            --instance-id "${{ steps.inst.outputs.id }}" \
+            --region "$AWS_REGION" \
+            --query '{Status:Status,StdOut:StandardOutputContent,StdErr:StandardErrorContent}' \
+            --output json
+
+      - name: Verify model artifact freshness
+        run: |
+          POSITIONS="${{ github.event.inputs.positions || 'QB RB WR TE K DST' }}"
+          now=$(date +%s)
+          echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
+          fail=0
+          for POS in $POSITIONS; do
+            META=$(aws s3api head-object \
+              --bucket "$S3_BUCKET" \
+              --key "models/$POS/model.tar.gz" \
+              --region "$AWS_REGION" 2>/dev/null || echo '{}')
+            LM=$(echo "$META" | jq -r '.LastModified // empty')
+            SZ=$(echo "$META" | jq -r '.ContentLength // 0')
+            if [ -z "$LM" ]; then
+              echo "| $POS | MISSING | — | — |" >> "$GITHUB_STEP_SUMMARY"
+              fail=1
+              continue
+            fi
+            lm_ts=$(date -d "$LM" +%s)
+            age=$(( now - lm_ts ))
+            status="OK"
+            if [ "$age" -gt 1200 ]; then status="STALE (${age}s old)"; fail=1; fi
+            mb=$(awk "BEGIN{printf \"%.1f\", $SZ/1048576}")
+            echo "| $POS | $status | $LM | $mb |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit $fail
+
+      - name: Append EC2 run to benchmark_history.json
+        run: |
+          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
+          POSITIONS="${{ github.event.inputs.positions || 'QB RB WR TE K DST' }}"
+          # Rebase before appending so a concurrent push doesn't reject us later.
+          git fetch origin "$BRANCH"
+          git pull --rebase origin "$BRANCH"
+          python batch/benchmark.py \
+            --download-only \
+            --backend ec2 \
+            --instance-type "g4dn.xlarge (On-Demand)" \
+            --positions $POSITIONS \
+            --note "EC2 auto-run (${GITHUB_SHA::7})"
+
+      - name: Commit and push benchmark_history.json
+        run: |
+          if git diff --quiet benchmark_history.json; then
+            echo "No history changes — skipping commit."
+            exit 0
+          fi
+          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add benchmark_history.json
+          git commit -m "chore(ci): append EC2 benchmark run ${GITHUB_SHA::7}"
+          git push origin HEAD:"refs/heads/$BRANCH"

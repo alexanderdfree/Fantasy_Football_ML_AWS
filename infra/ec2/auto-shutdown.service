@@ -1,0 +1,7 @@
+[Unit]
+Description=ff-training auto-shutdown idle check
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ff-auto-shutdown
