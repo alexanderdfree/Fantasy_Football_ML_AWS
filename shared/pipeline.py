@@ -258,18 +258,32 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
     X_val = pos_val[feature_cols].values.astype(np.float32)
     X_test = pos_test[feature_cols].values.astype(np.float32) if pos_test is not None else None
 
-    y_train_dict = {t: pos_train[t].values for t in targets}
-    y_val_dict = {t: pos_val[t].values for t in targets}
-    y_test_dict = {t: pos_test[t].values for t in targets} if pos_test is not None else None
+    # .astype(np.float32) gives a writable float32 copy — matches X above and
+    # avoids PyTorch's non-writable-tensor warning when these feed into
+    # MultiTargetDataset (torch.FloatTensor refuses to borrow read-only numpy
+    # buffers that pandas arithmetic produces on computed columns).
+    y_train_dict = {t: pos_train[t].values.astype(np.float32) for t in targets}
+    y_val_dict = {t: pos_val[t].values.astype(np.float32) for t in targets}
+    y_test_dict = (
+        {t: pos_test[t].values.astype(np.float32) for t in targets}
+        if pos_test is not None
+        else None
+    )
 
     # Total target = sum of decomposed targets (NOT fantasy_points, which
     # includes adjustments like INT/fumble penalties that are added post-hoc).
     # Using fantasy_points here causes the total aux loss to train heads to
     # absorb adjustments, which then get double-counted at inference.
-    y_train_dict["total"] = sum(pos_train[t].values for t in targets)
-    y_val_dict["total"] = sum(pos_val[t].values for t in targets)
+    y_train_dict["total"] = np.sum(
+        [pos_train[t].values for t in targets], axis=0
+    ).astype(np.float32)
+    y_val_dict["total"] = np.sum(
+        [pos_val[t].values for t in targets], axis=0
+    ).astype(np.float32)
     if y_test_dict is not None:
-        y_test_dict["total"] = sum(pos_test[t].values for t in targets)
+        y_test_dict["total"] = np.sum(
+            [pos_test[t].values for t in targets], axis=0
+        ).astype(np.float32)
 
     return (
         X_train,

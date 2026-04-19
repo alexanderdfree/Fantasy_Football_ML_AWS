@@ -192,7 +192,7 @@ def make_kicker_games():
 
 def _build_tiny_k_dataset(
     n_players: int = 50,
-    n_seasons: int = 2,
+    n_seasons: int = 10,
     n_weeks: int = 17,
     seed: int = 42,
 ) -> pd.DataFrame:
@@ -203,13 +203,18 @@ def _build_tiny_k_dataset(
     synthetic data does not need to match real NFL schedule rows.
     Cross-season history is preserved so rolling features fire.
 
-    Total rows = n_players * n_seasons * n_weeks (default 50*2*17 = 1700).
+    Covers seasons [base_season, base_season + n_seasons] inclusive — with
+    defaults that's 2015-2025 (11 seasons), matching the real K_SEASONS
+    range. Multi-season training data is required for the pipeline's
+    expanding-window Ridge CV tuning to build non-empty folds.
     """
     rng = np.random.default_rng(seed)
-    # Kickers span seasons in K_SEASONS starting 2015; use two adjacent
-    # seasons close to the real split so the pipeline's season filtering works
-    # out of the box (train: <=2023, val: 2024, test: 2025).
-    base_season = 2023
+    # Match the real kicker dataset: 2015-2025, split train<=2023 / val=2024 /
+    # test=2025. Multiple seasons in train are required for expanding-window
+    # CV (`shared/pipeline._build_expanding_cv_folds`) to produce non-empty
+    # folds; with a single train season, every fold is skipped and downstream
+    # `np.mean([])` warnings fire.
+    base_season = 2015
     seasons = list(range(base_season, base_season + n_seasons + 1))  # +1 for test
 
     teams = [
@@ -328,12 +333,13 @@ def _build_tiny_k_dataset(
 
 @pytest.fixture(scope="session")
 def tiny_k_dataset():
-    """Session-scoped tiny kicker dataset (50 players x 3 seasons x 17 weeks).
+    """Session-scoped tiny kicker dataset (50 players x 11 seasons x 17 weeks).
 
-    Returns a single DataFrame covering 2023-2025 so pipeline season splits
-    produce non-empty train/val/test partitions.
+    Returns a single DataFrame covering 2015-2025 so pipeline season splits
+    produce non-empty train/val/test partitions AND train has enough unique
+    seasons (9) for expanding-window Ridge CV to build non-empty folds.
     """
-    return _build_tiny_k_dataset(n_players=50, n_seasons=2, n_weeks=17, seed=42)
+    return _build_tiny_k_dataset(n_players=50, n_seasons=10, n_weeks=17, seed=42)
 
 
 @pytest.fixture(scope="session")

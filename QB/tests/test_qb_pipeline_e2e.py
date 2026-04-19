@@ -132,10 +132,22 @@ def _tiny_qb_config():
 
 @pytest.fixture(scope="module")
 def synthetic_splits():
-    """Deterministic synthetic QB splits (25 players x 17 weeks per season)."""
-    train = _generate_qb_season(2022, seed=100)
-    val = _generate_qb_season(2023, seed=101)
-    test = _generate_qb_season(2024, seed=102)
+    """Deterministic synthetic QB splits (25 players x 17 weeks per season).
+
+    Train spans 2012-2022 (11 seasons) to match the real QB data range
+    (data/raw/schedules_2012_2025.parquet) and to give the pipeline's
+    expanding-window Ridge CV tuning enough unique seasons to build
+    non-empty folds. val=2023 and test=2024 remain single-season.
+    """
+    train = pd.concat(
+        [
+            _generate_qb_season(season, seed=100 + (season - 2012))
+            for season in range(2012, 2023)
+        ],
+        ignore_index=True,
+    )
+    val = _generate_qb_season(2023, seed=200)
+    test = _generate_qb_season(2024, seed=201)
     return train, val, test
 
 
