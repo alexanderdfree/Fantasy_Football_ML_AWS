@@ -283,8 +283,8 @@ def _apply_position_models(train, val, test, pos, results):
     pos_val = reg["compute_targets_fn"](pos_val)
     pos_test = reg["compute_targets_fn"](pos_test)
 
-    for _df in [pos_train, pos_val, pos_test]:
-        merge_schedule_features(_df)
+    for split_name, _df in zip(["train", "val", "test"], [pos_train, pos_val, pos_test]):
+        merge_schedule_features(_df, label=split_name)
 
     pos_train, pos_val, pos_test = reg["add_features_fn"](pos_train, pos_val, pos_test)
     pos_train, pos_val, pos_test = reg["fill_nans_fn"](
@@ -370,9 +370,16 @@ def _ensure_base_data():
         return
 
     print("Loading data...")
-    train = pd.read_parquet("data/splits/train.parquet")
-    val = pd.read_parquet("data/splits/val.parquet")
-    test = pd.read_parquet("data/splits/test.parquet")
+
+    def _load_reg(path):
+        df = pd.read_parquet(path)
+        if "season_type" in df.columns:
+            df = df[df["season_type"] == "REG"].copy()
+        return df
+
+    train = _load_reg("data/splits/train.parquet")
+    val = _load_reg("data/splits/val.parquet")
+    test = _load_reg("data/splits/test.parquet")
 
     for df in [train, val, test]:
         _compute_scoring_formats(df)

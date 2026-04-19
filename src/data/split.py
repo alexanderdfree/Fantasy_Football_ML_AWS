@@ -17,6 +17,11 @@ def temporal_split(
     if test_seasons is None:
         test_seasons = TEST_SEASONS
 
+    # Drop playoff rows — fantasy leagues end with the regular season, and
+    # the schedule lookup used for Vegas/weather features only covers REG games.
+    if "season_type" in df.columns:
+        df = df[df["season_type"] == "REG"].copy()
+
     train_df = df[df["season"].isin(train_seasons)].copy()
     val_df = df[df["season"].isin(val_seasons)].copy()
     test_df = df[df["season"].isin(test_seasons)].copy()

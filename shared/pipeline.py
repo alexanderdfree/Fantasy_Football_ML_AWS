@@ -43,6 +43,18 @@ from src.models.baseline import SeasonAverageBaseline
 from src.models.linear import RidgeModel
 
 
+def _read_split(path: str) -> pd.DataFrame:
+    """Read a split parquet, dropping playoff rows.
+
+    Fantasy leagues end with the regular season, and the schedule lookup used
+    for Vegas/weather features only covers REG games.
+    """
+    df = pd.read_parquet(path)
+    if "season_type" in df.columns:
+        df = df[df["season_type"] == "REG"].copy()
+    return df
+
+
 def _resolve_nn_log_every(cfg):
     """Resolve nn_log_every: cfg wins, else LOG_EVERY env var, else 10.
 
@@ -205,8 +217,9 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
     print(f"  {pos} splits: {sizes}")
 
     # Merge schedule-derived weather/Vegas features before target & feature computation
-    for _df in dfs_for_features:
-        merge_schedule_features(_df)
+    split_labels = ["train", "val", "test"][: len(dfs_for_features)]
+    for split_name, _df in zip(split_labels, dfs_for_features, strict=False):
+        merge_schedule_features(_df, label=split_name)
 
     # Compute targets
     targets = cfg["targets"]
@@ -550,9 +563,9 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     # --- Load data ---
     if train_df is None:
         print("Loading general splits from disk...")
-        train_df = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
-        val_df = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
-        test_df = pd.read_parquet(f"{SPLITS_DIR}/test.parquet")
+        train_df = _read_split(f"{SPLITS_DIR}/train.parquet")
+        val_df = _read_split(f"{SPLITS_DIR}/val.parquet")
+        test_df = _read_split(f"{SPLITS_DIR}/test.parquet")
 
     # --- Prepare position data ---
     print(f"Preparing {pos} data...")
@@ -873,11 +886,11 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     # --- Load data ---
     if full_df is None:
         print("Loading splits from disk and combining for CV...")
-        train_df = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
-        val_df = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
+        train_df = _read_split(f"{SPLITS_DIR}/train.parquet")
+        val_df = _read_split(f"{SPLITS_DIR}/val.parquet")
         full_df = pd.concat([train_df, val_df], ignore_index=True)
     if test_df is None:
-        test_df = pd.read_parquet(f"{SPLITS_DIR}/test.parquet")
+        test_df = _read_split(f"{SPLITS_DIR}/test.parquet")
 
     # --- Generate CV folds ---
     print(f"\n{'=' * 60}")

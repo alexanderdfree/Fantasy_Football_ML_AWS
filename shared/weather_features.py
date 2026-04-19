@@ -39,6 +39,12 @@ WEATHER_DROPS_BY_POSITION = {
 # Module-level cache for schedule data
 _schedule_cache = None
 
+# Map franchise relocations back to their current abbreviations. Player data
+# uses the current team codes throughout, but the historical schedule still
+# carries the pre-relocation codes (OAK/SD/STL) for those seasons, so a
+# direct (season, week, team) join misses every pre-move row without this.
+_TEAM_CODE_NORMALIZATION = {"OAK": "LV", "SD": "LAC", "STL": "LA"}
+
 
 # ---------------------------------------------------------------------------
 # Schedule loading and merge
@@ -74,6 +80,8 @@ def _build_team_schedule_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
         "div_game",
     ]
     sched = schedules[cols + ["home_team", "away_team"]].copy()
+    sched["home_team"] = sched["home_team"].replace(_TEAM_CODE_NORMALIZATION)
+    sched["away_team"] = sched["away_team"].replace(_TEAM_CODE_NORMALIZATION)
 
     # Home team rows
     home = sched.copy()
@@ -112,13 +120,16 @@ def _build_team_schedule_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
     return lookup[keep].drop_duplicates(subset=["season", "week", "recent_team"])
 
 
-def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
+def merge_schedule_features(df: pd.DataFrame, label: str | None = None) -> pd.DataFrame:
     """Merge schedule data and compute 12 weather/venue/Vegas features in-place.
 
     Idempotent: skips if features are already present.
 
     Args:
         df: Player DataFrame with season, week, recent_team columns.
+        label: Optional tag (e.g. "train"/"val"/"test") included in the
+            unmatched-rows warning so callers that invoke the merge per-split
+            produce distinguishable log lines.
 
     Returns:
         The same DataFrame with 12 new columns added.
@@ -190,7 +201,8 @@ def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     # so downstream code can detect and handle them explicitly.
     n_missing = df["implied_team_total"].isna().sum()
     if n_missing > 0:
-        print(f"  WARNING: {n_missing} rows have no schedule match (Vegas features are NaN)")
+        tag = f" [{label}]" if label else ""
+        print(f"  WARNING:{tag} {n_missing} rows have no schedule match (Vegas features are NaN)")
 
     # Populate is_home from the schedule merge (before cleanup deletes is_home_sched)
     if "is_home_sched" in df.columns:
