@@ -137,9 +137,7 @@ class TestBacktestDeterminism:
                 # NaNs are equal under determinism but != each other.
                 if np.isnan(a) and np.isnan(b):
                     continue
-                assert a == b, (
-                    f"{model}/{metric} diverged: {a} vs {b}"
-                )
+                assert a == b, f"{model}/{metric} diverged: {a} vs {b}"
 
     def test_two_runs_identical_weekly_metrics(self, make_sim_df):
         df = make_sim_df(n_weeks=3, n_players=15, seed=42)

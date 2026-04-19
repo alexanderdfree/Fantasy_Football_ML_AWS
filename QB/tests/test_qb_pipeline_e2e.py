@@ -32,7 +32,6 @@ import pandas as pd
 import pytest
 import torch
 
-
 # Real NFL team codes (schedule parquet lookup requires these to match)
 TEAMS = ["BUF", "KC", "DAL", "PHI", "SF", "LA", "ATL", "CIN"]
 
@@ -45,46 +44,53 @@ def _generate_qb_season(season, seed, n_players=25, n_weeks=17):
         team = TEAMS[pid % len(TEAMS)]
         opp = TEAMS[(pid + 1) % len(TEAMS)]
         for wk in range(1, n_weeks + 1):
-            rows.append({
-                "player_id": f"QB{pid:02d}",
-                "position": "QB",
-                "position_group": "QB",
-                "season": season,
-                "week": wk,
-                "recent_team": team,
-                "opponent_team": opp,
-                "completions": int(rng.integers(10, 30)),
-                "attempts": int(rng.integers(20, 45)),
-                "passing_yards": float(rng.integers(150, 400)),
-                "passing_tds": int(rng.integers(0, 4)),
-                "interceptions": int(rng.integers(0, 3)),
-                "sacks": int(rng.integers(0, 5)),
-                "sack_yards": float(rng.integers(0, 30)),
-                "sack_fumbles_lost": 0,
-                "rushing_yards": float(rng.integers(0, 60)),
-                "rushing_tds": int(rng.integers(0, 2)),
-                "rushing_fumbles_lost": 0,
-                "rushing_first_downs": int(rng.integers(0, 3)),
-                "rushing_epa": float(rng.uniform(-3, 5)),
-                "receiving_yards": 0.0,
-                "receiving_tds": 0,
-                "receiving_fumbles_lost": 0,
-                "receptions": 0,
-                "carries": int(rng.integers(0, 8)),
-                "targets": 0,
-                "passing_air_yards": float(rng.integers(100, 350)),
-                "passing_yards_after_catch": float(rng.integers(50, 200)),
-                "passing_first_downs": int(rng.integers(5, 20)),
-                "passing_epa": float(rng.uniform(-10, 20)),
-                "snap_pct": 0.95,
-                "pos_QB": 1, "pos_RB": 0, "pos_WR": 0, "pos_TE": 0,
-            })
+            rows.append(
+                {
+                    "player_id": f"QB{pid:02d}",
+                    "position": "QB",
+                    "position_group": "QB",
+                    "season": season,
+                    "week": wk,
+                    "recent_team": team,
+                    "opponent_team": opp,
+                    "completions": int(rng.integers(10, 30)),
+                    "attempts": int(rng.integers(20, 45)),
+                    "passing_yards": float(rng.integers(150, 400)),
+                    "passing_tds": int(rng.integers(0, 4)),
+                    "interceptions": int(rng.integers(0, 3)),
+                    "sacks": int(rng.integers(0, 5)),
+                    "sack_yards": float(rng.integers(0, 30)),
+                    "sack_fumbles_lost": 0,
+                    "rushing_yards": float(rng.integers(0, 60)),
+                    "rushing_tds": int(rng.integers(0, 2)),
+                    "rushing_fumbles_lost": 0,
+                    "rushing_first_downs": int(rng.integers(0, 3)),
+                    "rushing_epa": float(rng.uniform(-3, 5)),
+                    "receiving_yards": 0.0,
+                    "receiving_tds": 0,
+                    "receiving_fumbles_lost": 0,
+                    "receptions": 0,
+                    "carries": int(rng.integers(0, 8)),
+                    "targets": 0,
+                    "passing_air_yards": float(rng.integers(100, 350)),
+                    "passing_yards_after_catch": float(rng.integers(50, 200)),
+                    "passing_first_downs": int(rng.integers(5, 20)),
+                    "passing_epa": float(rng.uniform(-10, 20)),
+                    "snap_pct": 0.95,
+                    "pos_QB": 1,
+                    "pos_RB": 0,
+                    "pos_WR": 0,
+                    "pos_TE": 0,
+                }
+            )
     df = pd.DataFrame(rows)
     # Fantasy points consistent with QB scoring so compute_qb_targets'
     # decomposition check passes without warnings.
     df["fantasy_points"] = (
-        df["passing_yards"] * 0.04 + df["rushing_yards"] * 0.1
-        + df["passing_tds"] * 4 + df["rushing_tds"] * 6
+        df["passing_yards"] * 0.04
+        + df["rushing_yards"] * 0.1
+        + df["passing_tds"] * 4
+        + df["rushing_tds"] * 6
         + df["interceptions"] * -2
     )
     df["fantasy_points_ppr"] = df["fantasy_points"]
@@ -102,22 +108,25 @@ def _tiny_qb_config():
       - Ridge CV reduced to 2 folds, 0 refine points
     """
     from QB.run_qb_pipeline import QB_CONFIG
+
     cfg = dict(QB_CONFIG)
-    cfg.update({
-        "nn_backbone_layers": [8],
-        "nn_head_hidden": 4,
-        "nn_dropout": 0.0,
-        "nn_epochs": 1,
-        "nn_batch_size": 16,
-        "nn_patience": 1,
-        "train_attention_nn": False,
-        "train_lightgbm": False,
-        "ridge_cv_folds": 2,
-        "ridge_refine_points": 0,
-        "cosine_t0": 1,
-        "cosine_t_mult": 1,
-        "cosine_eta_min": 1e-5,
-    })
+    cfg.update(
+        {
+            "nn_backbone_layers": [8],
+            "nn_head_hidden": 4,
+            "nn_dropout": 0.0,
+            "nn_epochs": 1,
+            "nn_batch_size": 16,
+            "nn_patience": 1,
+            "train_attention_nn": False,
+            "train_lightgbm": False,
+            "ridge_cv_folds": 2,
+            "ridge_refine_points": 0,
+            "cosine_t0": 1,
+            "cosine_t_mult": 1,
+            "cosine_eta_min": 1e-5,
+        }
+    )
     return cfg
 
 
@@ -138,6 +147,7 @@ def _run_once(splits, seed=42):
     torch.manual_seed(seed)
 
     from shared.pipeline import run_pipeline
+
     train, val, test = splits
     cfg = _tiny_qb_config()
     # Pass defensive copies so the pipeline can't mutate the fixture across runs.
@@ -169,8 +179,7 @@ class TestQBPipelineE2E:
         assert pipeline_run["_elapsed"] < 20.0, (
             f"E2E took {pipeline_run['_elapsed']:.1f}s (budget: 20s)"
         )
-        for key in ("ridge_metrics", "nn_metrics", "per_target_preds",
-                    "sim_results", "history"):
+        for key in ("ridge_metrics", "nn_metrics", "per_target_preds", "sim_results", "history"):
             assert key in pipeline_run, f"Missing result key: {key}"
 
     def test_predictions_finite(self, pipeline_run):
@@ -205,7 +214,8 @@ class TestQBPipelineE2E:
         ridge2 = pipeline_run_repeat["per_target_preds"]["ridge"]
         for target in ridge1:
             np.testing.assert_array_equal(
-                ridge1[target], ridge2[target],
+                ridge1[target],
+                ridge2[target],
                 err_msg=f"Ridge {target} not bit-identical",
             )
 
@@ -216,6 +226,7 @@ class TestQBPipelineE2E:
             torch.testing.assert_close(
                 torch.from_numpy(nn1[target]),
                 torch.from_numpy(nn2[target]),
-                atol=0, rtol=0,
+                atol=0,
+                rtol=0,
                 msg=f"NN {target} not bit-identical",
             )

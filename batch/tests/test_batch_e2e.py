@@ -11,6 +11,7 @@ Covers reviewer concern P2.4: "CLI entry point has no end-to-end smoke."
 
 Budget: < 5s per parametrized position on CPU.
 """
+
 import json
 import os
 import sys
@@ -46,14 +47,15 @@ def test_dry_run_exits_zero_and_writes_artifacts(position, tmp_path, monkeypatch
     env["PYTHONPATH"] = PROJECT_ROOT + os.pathsep + env.get("PYTHONPATH", "")
 
     result = subprocess.run(
-        [sys.executable, str(TRAIN_CLI),
-         "--position", position, "--seed", "42", "--dry-run"],
-        env=env, capture_output=True, text=True, timeout=60,
+        [sys.executable, str(TRAIN_CLI), "--position", position, "--seed", "42", "--dry-run"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
 
     assert result.returncode == 0, (
-        f"Dry-run exited {result.returncode}\nstdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}"
+        f"Dry-run exited {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     stub_path = model_dir / f"{position.lower()}_model.stub"
     assert stub_path.exists(), f"Stub artifact missing at {stub_path}"
@@ -78,12 +80,12 @@ def test_dry_run_never_calls_boto3(tmp_path, monkeypatch):
     from batch import train as train_mod
 
     def _boom(*args, **kwargs):
-        raise AssertionError(
-            "boto3.client was called during --dry-run — S3 isolation broken"
-        )
+        raise AssertionError("boto3.client was called during --dry-run — S3 isolation broken")
 
-    with mock.patch("sys.argv", ["train.py", "--position", "QB", "--dry-run"]), \
-         mock.patch.object(train_mod, "boto3") as mock_boto3:
+    with (
+        mock.patch("sys.argv", ["train.py", "--position", "QB", "--dry-run"]),
+        mock.patch.object(train_mod, "boto3") as mock_boto3,
+    ):
         mock_boto3.client.side_effect = _boom
         train_mod.main()
         mock_boto3.client.assert_not_called()
@@ -108,11 +110,10 @@ def test_dry_run_skips_position_pipeline_import(tmp_path, monkeypatch):
     before = {k for k in sys.modules if k.startswith("QB.run_qb_pipeline")}
 
     from batch import train as train_mod
+
     with mock.patch("sys.argv", ["train.py", "--position", "QB", "--dry-run"]):
         train_mod.main()
 
     after = {k for k in sys.modules if k.startswith("QB.run_qb_pipeline")}
     newly_imported = after - before
-    assert not newly_imported, (
-        f"--dry-run imported heavy pipeline modules: {newly_imported}"
-    )
+    assert not newly_imported, f"--dry-run imported heavy pipeline modules: {newly_imported}"

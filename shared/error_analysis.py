@@ -5,12 +5,12 @@ opponent quality, and scoring patterns. Position-agnostic — works for any
 position with the standard pipeline output.
 """
 
+import matplotlib
 import numpy as np
 import pandas as pd
-import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
 
 # ---------------------------------------------------------------------------
 # Stratification column definitions
@@ -39,10 +39,8 @@ def add_stratification_columns(df: pd.DataFrame, targets: list[str]) -> pd.DataF
     if "snap_pct" in df.columns and df["snap_pct"].notna().any():
         snap = df["snap_pct"].fillna(0)
         nonzero_median = snap[snap > 0].median() if (snap > 0).any() else 0
-        if nonzero_median <= 1.5:  # decimal format
-            bins = [b / 100 for b in SNAP_BINS]
-        else:
-            bins = SNAP_BINS
+        # decimal format when median is ≤1.5 (0-1 scale), else percent scale (0-100)
+        bins = [b / 100 for b in SNAP_BINS] if nonzero_median <= 1.5 else SNAP_BINS
         df["snap_bucket"] = pd.cut(snap, bins=bins, labels=SNAP_LABELS, include_lowest=True)
     else:
         df["snap_bucket"] = "unknown"
@@ -50,14 +48,20 @@ def add_stratification_columns(df: pd.DataFrame, targets: list[str]) -> pd.DataF
     # Opponent defense tier
     if "opp_def_rank_vs_pos" in df.columns:
         df["opp_tier"] = pd.cut(
-            df["opp_def_rank_vs_pos"].fillna(16), bins=OPP_BINS, labels=OPP_LABELS, include_lowest=True,
+            df["opp_def_rank_vs_pos"].fillna(16),
+            bins=OPP_BINS,
+            labels=OPP_LABELS,
+            include_lowest=True,
         )
     else:
         df["opp_tier"] = "unknown"
 
     # Season phase
     df["week_phase"] = pd.cut(
-        df["week"], bins=WEEK_BINS, labels=WEEK_LABELS, include_lowest=True,
+        df["week"],
+        bins=WEEK_BINS,
+        labels=WEEK_LABELS,
+        include_lowest=True,
     )
 
     # TD bucket (zero-inflated analysis)
@@ -75,7 +79,9 @@ def add_stratification_columns(df: pd.DataFrame, targets: list[str]) -> pd.DataF
     vol_col = "rolling_std_fantasy_points_L3"
     if vol_col in df.columns:
         df["volatility_q"] = pd.qcut(
-            df[vol_col].fillna(0), q=4, labels=["Q1_stable", "Q2", "Q3", "Q4_volatile"],
+            df[vol_col].fillna(0),
+            q=4,
+            labels=["Q1_stable", "Q2", "Q3", "Q4_volatile"],
             duplicates="drop",
         )
     else:
@@ -94,8 +100,12 @@ def add_stratification_columns(df: pd.DataFrame, targets: list[str]) -> pd.DataF
 # Metrics computation
 # ---------------------------------------------------------------------------
 
+
 def compute_stratum_metrics(
-    df: pd.DataFrame, y_true_col: str, y_pred_col: str, group_col: str,
+    df: pd.DataFrame,
+    y_true_col: str,
+    y_pred_col: str,
+    group_col: str,
 ) -> pd.DataFrame:
     """Compute MAE, RMSE, and signed bias per stratum.
 
@@ -115,12 +125,16 @@ def compute_stratum_metrics(
     tmp["_abs_error"] = tmp["_error"].abs()
     tmp["_sq_error"] = tmp["_error"] ** 2
 
-    grouped = tmp.groupby(group_col, observed=True).agg(
-        n=("_error", "size"),
-        mae=("_abs_error", "mean"),
-        rmse=("_sq_error", "mean"),
-        bias=("_error", "mean"),
-    ).reset_index()
+    grouped = (
+        tmp.groupby(group_col, observed=True)
+        .agg(
+            n=("_error", "size"),
+            mae=("_abs_error", "mean"),
+            rmse=("_sq_error", "mean"),
+            bias=("_error", "mean"),
+        )
+        .reset_index()
+    )
     grouped["rmse"] = np.sqrt(grouped["rmse"])
     return grouped
 
@@ -164,8 +178,11 @@ def run_stratified_analysis(
 # Printing
 # ---------------------------------------------------------------------------
 
+
 def print_stratified_table(
-    results: dict, model_name: str, target_name: str,
+    results: dict,
+    model_name: str,
+    target_name: str,
 ) -> None:
     """Print a stratified error table for one model and target across all strata."""
     print(f"\n{'=' * 80}")
@@ -181,13 +198,19 @@ def print_stratified_table(
             continue
         metrics_df = model_dict[model_name][target_name]
         for _, row in metrics_df.iterrows():
-            print(f"{stratum:<20} {str(row.iloc[0]):<16} {int(row['n']):>5} "
-                  f"{row['mae']:>7.3f} {row['rmse']:>7.3f} {row['bias']:>+8.3f}")
+            print(
+                f"{stratum:<20} {str(row.iloc[0]):<16} {int(row['n']):>5} "
+                f"{row['mae']:>7.3f} {row['rmse']:>7.3f} {row['bias']:>+8.3f}"
+            )
         print("-" * 80)
 
 
 def find_top_error_sources(
-    results: dict, model_name: str, metric: str = "mae", top_k: int = 10, min_n: int = 20,
+    results: dict,
+    model_name: str,
+    metric: str = "mae",
+    top_k: int = 10,
+    min_n: int = 20,
 ) -> list[dict]:
     """Find the strata with the highest error for a given model.
 
@@ -200,15 +223,17 @@ def find_top_error_sources(
         for target_name, metrics_df in model_dict[model_name].items():
             for _, row in metrics_df.iterrows():
                 if row["n"] >= min_n:
-                    rows.append({
-                        "stratum": stratum,
-                        "bucket": str(row.iloc[0]),
-                        "target": target_name,
-                        "n": int(row["n"]),
-                        "mae": row["mae"],
-                        "rmse": row["rmse"],
-                        "bias": row["bias"],
-                    })
+                    rows.append(
+                        {
+                            "stratum": stratum,
+                            "bucket": str(row.iloc[0]),
+                            "target": target_name,
+                            "n": int(row["n"]),
+                            "mae": row["mae"],
+                            "rmse": row["rmse"],
+                            "bias": row["bias"],
+                        }
+                    )
     rows.sort(key=lambda r: r[metric], reverse=True)
     return rows[:top_k]
 
@@ -218,18 +243,20 @@ def print_top_error_sources(sources: list[dict], model_name: str) -> None:
     print(f"\n{'=' * 90}")
     print(f"Top Error Sources: {model_name}")
     print(f"{'=' * 90}")
-    print(f"{'#':<4} {'Stratum':<16} {'Bucket':<16} {'Target':<18} "
-          f"{'N':>5} {'MAE':>7} {'Bias':>8}")
+    print(f"{'#':<4} {'Stratum':<16} {'Bucket':<16} {'Target':<18} {'N':>5} {'MAE':>7} {'Bias':>8}")
     print("-" * 90)
     for i, s in enumerate(sources, 1):
-        print(f"{i:<4} {s['stratum']:<16} {s['bucket']:<16} {s['target']:<18} "
-              f"{s['n']:>5} {s['mae']:>7.3f} {s['bias']:>+8.3f}")
+        print(
+            f"{i:<4} {s['stratum']:<16} {s['bucket']:<16} {s['target']:<18} "
+            f"{s['n']:>5} {s['mae']:>7.3f} {s['bias']:>+8.3f}"
+        )
     print("=" * 90)
 
 
 # ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
+
 
 def plot_error_by_stratum(
     results: dict,
@@ -286,7 +313,6 @@ def plot_bias_heatmap(
     Red = over-prediction, blue = under-prediction.
     """
     row_labels = []
-    bias_matrix = []
 
     for stratum in strata_cols:
         if stratum not in results or model_name not in results[stratum]:
@@ -331,7 +357,9 @@ def plot_bias_heatmap(
     ax.set_xticklabels([t.replace("_", " ").title() for t in target_names], rotation=30, ha="right")
     ax.set_yticks(range(len(row_labels)))
     ax.set_yticklabels(row_labels, fontsize=8)
-    ax.set_title(f"Prediction Bias by Stratum — {model_name}\n(Red=over-predict, Blue=under-predict)")
+    ax.set_title(
+        f"Prediction Bias by Stratum — {model_name}\n(Red=over-predict, Blue=under-predict)"
+    )
 
     # Annotate cells
     for i in range(len(row_labels)):

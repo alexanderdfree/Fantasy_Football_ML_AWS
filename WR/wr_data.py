@@ -11,7 +11,11 @@ def filter_to_wr(df: pd.DataFrame) -> pd.DataFrame:
 
 def compute_team_wr_totals(full_wr_df: pd.DataFrame) -> pd.DataFrame:
     """Compute team-level WR totals for share features."""
-    team_wr_totals = full_wr_df.groupby(["recent_team", "season", "week"]).agg(
-        team_wr_targets=("targets", "sum"),
-    ).reset_index()
+    team_wr_totals = (
+        full_wr_df.groupby(["recent_team", "season", "week"])
+        .agg(
+            team_wr_targets=("targets", "sum"),
+        )
+        .reset_index()
+    )
     return team_wr_totals

@@ -1,9 +1,9 @@
 """Generic multi-head neural network for fantasy point decomposition."""
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 
 
 class GatedTDHead(nn.Module):
@@ -68,12 +68,14 @@ class MultiHeadNet(nn.Module):
         backbone_blocks = []
         prev_dim = input_dim
         for hidden_dim in backbone_layers:
-            backbone_blocks.extend([
-                nn.Linear(prev_dim, hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(dropout),
-            ])
+            backbone_blocks.extend(
+                [
+                    nn.Linear(prev_dim, hidden_dim),
+                    nn.BatchNorm1d(hidden_dim),
+                    nn.ReLU(),
+                    nn.Dropout(dropout),
+                ]
+            )
             prev_dim = hidden_dim
         self.backbone = nn.Sequential(*backbone_blocks)
 
@@ -120,11 +122,12 @@ class AttentionPool(nn.Module):
     giving the attention more expressivity.
     """
 
-    def __init__(self, d_model: int, n_heads: int = 2,
-                 project_kv: bool = False, attn_dropout: float = 0.0):
+    def __init__(
+        self, d_model: int, n_heads: int = 2, project_kv: bool = False, attn_dropout: float = 0.0
+    ):
         super().__init__()
         self.queries = nn.Parameter(torch.randn(n_heads, d_model) * 0.02)
-        self.scale = d_model ** -0.5
+        self.scale = d_model**-0.5
         self.n_heads = n_heads
         self.d_model = d_model
         self.project_kv = project_kv
@@ -160,7 +163,7 @@ class AttentionPool(nn.Module):
 
         if mask is not None:
             # mask: [batch, seq_len] -> [batch, 1, seq_len]
-            attn = attn.masked_fill(~mask.unsqueeze(1), float('-inf'))
+            attn = attn.masked_fill(~mask.unsqueeze(1), float("-inf"))
 
         weights = F.softmax(attn, dim=-1)
         # Handle all-padding rows (softmax of all -inf = nan)
@@ -242,8 +245,10 @@ class MultiHeadNetWithHistory(nn.Module):
             self.pos_embedding = nn.Embedding(max_seq_len, d_model)
 
         self.attn_pool = AttentionPool(
-            d_model, n_heads=n_attn_heads,
-            project_kv=project_kv, attn_dropout=attn_dropout,
+            d_model,
+            n_heads=n_attn_heads,
+            project_kv=project_kv,
+            attn_dropout=attn_dropout,
         )
 
         attn_out_dim = n_attn_heads * d_model
@@ -263,12 +268,14 @@ class MultiHeadNetWithHistory(nn.Module):
         backbone_blocks = []
         prev_dim = combined_dim
         for hidden_dim in backbone_layers:
-            backbone_blocks.extend([
-                nn.Linear(prev_dim, hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(dropout),
-            ])
+            backbone_blocks.extend(
+                [
+                    nn.Linear(prev_dim, hidden_dim),
+                    nn.BatchNorm1d(hidden_dim),
+                    nn.ReLU(),
+                    nn.Dropout(dropout),
+                ]
+            )
             prev_dim = hidden_dim
         self.backbone = nn.Sequential(*backbone_blocks)
 
@@ -305,7 +312,7 @@ class MultiHeadNetWithHistory(nn.Module):
             history_mask: [batch, seq_len] — True for real games
         """
         # Encode game history
-        encoded = self.game_encoder(x_history)       # [batch, seq_len, d_model]
+        encoded = self.game_encoder(x_history)  # [batch, seq_len, d_model]
 
         # Add positional encoding so attention can weight by recency
         if self.use_positional_encoding:

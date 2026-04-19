@@ -2,29 +2,55 @@
 
 import os
 import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from shared.pipeline import run_pipeline
 from TE.te_config import (
-    TE_TARGETS, TE_RIDGE_ALPHA_GRIDS, TE_SPECIFIC_FEATURES,
-    TE_NN_BACKBONE_LAYERS, TE_NN_HEAD_HIDDEN, TE_NN_HEAD_HIDDEN_OVERRIDES,
-    TE_NN_DROPOUT, TE_NN_LR, TE_NN_WEIGHT_DECAY, TE_NN_EPOCHS, TE_NN_BATCH_SIZE,
-    TE_NN_PATIENCE,
-    TE_LOSS_WEIGHTS, TE_LOSS_W_TOTAL, TE_HUBER_DELTAS,
-    TE_SCHEDULER_TYPE, TE_ONECYCLE_MAX_LR, TE_ONECYCLE_PCT_START,
-    TE_TRAIN_ATTENTION_NN, TE_ATTN_D_MODEL, TE_ATTN_N_HEADS,
-    TE_ATTN_ENCODER_HIDDEN_DIM, TE_ATTN_MAX_SEQ_LEN,
-    TE_ATTN_POSITIONAL_ENCODING, TE_ATTN_DROPOUT,
+    TE_ATTN_D_MODEL,
+    TE_ATTN_DROPOUT,
+    TE_ATTN_ENCODER_HIDDEN_DIM,
+    TE_ATTN_GATED_TD,
     TE_ATTN_HISTORY_STATS,
-    TE_ATTN_GATED_TD, TE_ATTN_TD_GATE_HIDDEN, TE_ATTN_TD_GATE_WEIGHT,
-    TE_TRAIN_LIGHTGBM, TE_LGBM_N_ESTIMATORS, TE_LGBM_LEARNING_RATE,
-    TE_LGBM_NUM_LEAVES, TE_LGBM_SUBSAMPLE, TE_LGBM_COLSAMPLE_BYTREE,
-    TE_LGBM_REG_LAMBDA, TE_LGBM_REG_ALPHA, TE_LGBM_MIN_CHILD_SAMPLES,
-    TE_LGBM_MIN_SPLIT_GAIN, TE_LGBM_OBJECTIVE,
+    TE_ATTN_MAX_SEQ_LEN,
+    TE_ATTN_N_HEADS,
+    TE_ATTN_POSITIONAL_ENCODING,
+    TE_ATTN_TD_GATE_HIDDEN,
+    TE_ATTN_TD_GATE_WEIGHT,
+    TE_HUBER_DELTAS,
+    TE_LGBM_COLSAMPLE_BYTREE,
+    TE_LGBM_LEARNING_RATE,
+    TE_LGBM_MIN_CHILD_SAMPLES,
+    TE_LGBM_MIN_SPLIT_GAIN,
+    TE_LGBM_N_ESTIMATORS,
+    TE_LGBM_NUM_LEAVES,
+    TE_LGBM_OBJECTIVE,
+    TE_LGBM_REG_ALPHA,
+    TE_LGBM_REG_LAMBDA,
+    TE_LGBM_SUBSAMPLE,
+    TE_LOSS_W_TOTAL,
+    TE_LOSS_WEIGHTS,
+    TE_NN_BACKBONE_LAYERS,
+    TE_NN_BATCH_SIZE,
+    TE_NN_DROPOUT,
+    TE_NN_EPOCHS,
+    TE_NN_HEAD_HIDDEN,
+    TE_NN_HEAD_HIDDEN_OVERRIDES,
+    TE_NN_LR,
+    TE_NN_PATIENCE,
+    TE_NN_WEIGHT_DECAY,
+    TE_ONECYCLE_MAX_LR,
+    TE_ONECYCLE_PCT_START,
+    TE_RIDGE_ALPHA_GRIDS,
+    TE_SCHEDULER_TYPE,
+    TE_SPECIFIC_FEATURES,
+    TE_TARGETS,
+    TE_TRAIN_ATTENTION_NN,
+    TE_TRAIN_LIGHTGBM,
 )
 from TE.te_data import filter_to_te
-from TE.te_targets import compute_te_targets, compute_te_fumble_adjustment
-from TE.te_features import add_te_specific_features, get_te_feature_columns, fill_te_nans
-from shared.pipeline import run_pipeline
+from TE.te_features import add_te_specific_features, fill_te_nans, get_te_feature_columns
+from TE.te_targets import compute_te_fumble_adjustment, compute_te_targets
 
 TE_CONFIG = {
     "targets": TE_TARGETS,

@@ -1,16 +1,16 @@
 """Tests for shared.training — MultiTargetLoss, dataloaders, trainer (TE targets)."""
 
 import numpy as np
-import torch
 import pytest
+import torch
 
-from shared.training import (
-    MultiTargetLoss,
-    MultiTargetDataset,
-    make_dataloaders,
-    MultiHeadTrainer,
-)
 from shared.neural_net import MultiHeadNet
+from shared.training import (
+    MultiHeadTrainer,
+    MultiTargetDataset,
+    MultiTargetLoss,
+    make_dataloaders,
+)
 
 TE_TARGETS = ["receiving_floor", "rushing_floor", "td_points"]
 TE_LOSS_WEIGHTS = {"receiving_floor": 1.0, "rushing_floor": 1.0, "td_points": 1.0}
@@ -30,8 +30,11 @@ class TestMultiTargetLoss:
         preds, targets = te_tensors
         _, components = loss_fn(preds, targets)
         assert set(components.keys()) == {
-            "loss_receiving_floor", "loss_rushing_floor", "loss_td_points",
-            "loss_total_aux", "loss_combined",
+            "loss_receiving_floor",
+            "loss_rushing_floor",
+            "loss_td_points",
+            "loss_total_aux",
+            "loss_combined",
         }
 
     def test_components_are_scalars(self, te_tensors):
@@ -158,13 +161,14 @@ class TestMultiHeadTrainer:
         y_train["total"] = sum(y_train[t] for t in TE_TARGETS)
         y_val["total"] = sum(y_val[t] for t in TE_TARGETS)
 
-        train_loader, val_loader = make_dataloaders(
-            X_train, y_train, X_val, y_val, batch_size=32
-        )
+        train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
 
         model = MultiHeadNet(
-            input_dim=d, target_names=TE_TARGETS,
-            backbone_layers=[16, 8], head_hidden=4, dropout=0.1,
+            input_dim=d,
+            target_names=TE_TARGETS,
+            backbone_layers=[16, 8],
+            head_hidden=4,
+            dropout=0.1,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
@@ -172,8 +176,13 @@ class TestMultiHeadTrainer:
         device = torch.device("cpu")
 
         trainer = MultiHeadTrainer(
-            model, optimizer, scheduler, criterion, device,
-            target_names=TE_TARGETS, patience=5,
+            model,
+            optimizer,
+            scheduler,
+            criterion,
+            device,
+            target_names=TE_TARGETS,
+            patience=5,
         )
         return trainer, train_loader, val_loader
 
@@ -189,9 +198,15 @@ class TestMultiHeadTrainer:
         trainer, train_loader, val_loader = setup_trainer
         history = trainer.train(train_loader, val_loader, n_epochs=5)
         expected_keys = {
-            "train_loss", "val_loss",
-            "val_loss_receiving_floor", "val_loss_rushing_floor", "val_loss_td_points",
-            "val_mae_total", "val_mae_receiving_floor", "val_mae_rushing_floor", "val_mae_td_points",
+            "train_loss",
+            "val_loss",
+            "val_loss_receiving_floor",
+            "val_loss_rushing_floor",
+            "val_loss_td_points",
+            "val_mae_total",
+            "val_mae_receiving_floor",
+            "val_mae_rushing_floor",
+            "val_mae_td_points",
             "val_rmse_total",
         }
         assert expected_keys.issubset(set(history.keys()))
@@ -212,20 +227,26 @@ class TestMultiHeadTrainer:
         y_val = {t: np.random.randn(n_val).astype(np.float32) * 10 for t in TE_TARGETS}
         y_val["total"] = sum(y_val[t] for t in TE_TARGETS)
 
-        train_loader, val_loader = make_dataloaders(
-            X_train, y_train, X_val, y_val, batch_size=32
-        )
+        train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
         model = MultiHeadNet(
-            input_dim=d, target_names=TE_TARGETS,
-            backbone_layers=[256, 128], head_hidden=64, dropout=0.0,
+            input_dim=d,
+            target_names=TE_TARGETS,
+            backbone_layers=[256, 128],
+            head_hidden=64,
+            dropout=0.0,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, factor=0.5)
         criterion = MultiTargetLoss(target_names=TE_TARGETS, loss_weights=TE_LOSS_WEIGHTS)
 
         trainer = MultiHeadTrainer(
-            model, optimizer, scheduler, criterion,
-            torch.device("cpu"), target_names=TE_TARGETS, patience=3,
+            model,
+            optimizer,
+            scheduler,
+            criterion,
+            torch.device("cpu"),
+            target_names=TE_TARGETS,
+            patience=3,
         )
         history = trainer.train(train_loader, val_loader, n_epochs=500)
         assert len(history["train_loss"]) < 500

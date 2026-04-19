@@ -24,10 +24,20 @@ if PROJECT_ROOT not in sys.path:
 from RB.rb_config import RB_TARGETS  # noqa: E402
 from shared.tests.position_fixtures import (  # noqa: E402
     make_position_df as _make_position_df,
+)
+from shared.tests.position_fixtures import (
     make_sim_df as _make_sim_df,
+)
+from shared.tests.position_fixtures import (
     make_splits as _make_splits,
+)
+from shared.tests.position_fixtures import (
     make_tensors as _make_tensors,
+)
+from shared.tests.position_fixtures import (
     make_test_df as _make_ranking_df_shared,
+)
+from shared.tests.position_fixtures import (
     register_position_markers,
 )
 
@@ -43,10 +53,12 @@ def pytest_configure(config):
 # Generic simulation / ranking / tensor / split fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session")
 def make_sim_df():
     def _make(n_weeks: int, n_players: int, seed: int = 42):
         return _make_sim_df(RB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="P")
+
     return _make
 
 
@@ -60,6 +72,7 @@ def sim_df_default(make_sim_df):
 def make_ranking_df():
     def _make(n_weeks: int, n_players: int, seed: int = 42):
         return _make_ranking_df_shared(RB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="P")
+
     return _make
 
 
@@ -67,6 +80,7 @@ def make_ranking_df():
 def make_tensors():
     def _make(n: int = 10, seed: int = 42):
         return _make_tensors(RB_TARGETS, n=n, seed=seed)
+
     return _make
 
 
@@ -79,12 +93,14 @@ def make_splits():
 def make_position_df():
     def _make(positions, has_pos_cols: bool = True):
         return _make_position_df(positions, stat_col="rushing_yards", has_pos_cols=has_pos_cols)
+
     return _make
 
 
 # ---------------------------------------------------------------------------
 # RB-specific fixtures (not generalisable across positions)
 # ---------------------------------------------------------------------------
+
 
 def _build_player_games(
     player_id: str = "P1",
@@ -103,23 +119,25 @@ def _build_player_games(
     receiving_air_yards: int = 20,
     recent_team: str = "KC",
 ) -> pd.DataFrame:
-    return pd.DataFrame({
-        "player_id": [player_id] * n_weeks,
-        "season": [season] * n_weeks,
-        "week": list(range(1, n_weeks + 1)),
-        "carries": [carries] * n_weeks,
-        "targets": [targets] * n_weeks,
-        "receptions": [receptions] * n_weeks,
-        "rushing_yards": [rushing_yards] * n_weeks,
-        "receiving_yards": [receiving_yards] * n_weeks,
-        "rushing_epa": [rushing_epa] * n_weeks,
-        "rushing_first_downs": [rushing_first_downs] * n_weeks,
-        "receiving_first_downs": [receiving_first_downs] * n_weeks,
-        "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
-        "receiving_epa": [receiving_epa] * n_weeks,
-        "receiving_air_yards": [receiving_air_yards] * n_weeks,
-        "recent_team": [recent_team] * n_weeks,
-    })
+    return pd.DataFrame(
+        {
+            "player_id": [player_id] * n_weeks,
+            "season": [season] * n_weeks,
+            "week": list(range(1, n_weeks + 1)),
+            "carries": [carries] * n_weeks,
+            "targets": [targets] * n_weeks,
+            "receptions": [receptions] * n_weeks,
+            "rushing_yards": [rushing_yards] * n_weeks,
+            "receiving_yards": [receiving_yards] * n_weeks,
+            "rushing_epa": [rushing_epa] * n_weeks,
+            "rushing_first_downs": [rushing_first_downs] * n_weeks,
+            "receiving_first_downs": [receiving_first_downs] * n_weeks,
+            "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
+            "receiving_epa": [receiving_epa] * n_weeks,
+            "receiving_air_yards": [receiving_air_yards] * n_weeks,
+            "recent_team": [recent_team] * n_weeks,
+        }
+    )
 
 
 @pytest.fixture(scope="session")
@@ -153,8 +171,12 @@ def _build_rb_row(**overrides) -> pd.DataFrame:
             + defaults["receptions"] * 1.0
             + defaults["receiving_yards"] * 0.1
             + (defaults["rushing_tds"] + defaults["receiving_tds"]) * 6
-            + (defaults["sack_fumbles_lost"] + defaults["rushing_fumbles_lost"]
-               + defaults["receiving_fumbles_lost"]) * -2
+            + (
+                defaults["sack_fumbles_lost"]
+                + defaults["rushing_fumbles_lost"]
+                + defaults["receiving_fumbles_lost"]
+            )
+            * -2
             + defaults["passing_yards"] * 0.04
             + defaults["passing_tds"] * 4
             + defaults["interceptions"] * -2
@@ -171,14 +193,16 @@ def make_rb_row():
 
 def _build_fumble_df(player_fumbles, season: int = 2023) -> pd.DataFrame:
     n = len(player_fumbles)
-    return pd.DataFrame({
-        "player_id": ["P1"] * n,
-        "season": [season] * n,
-        "week": list(range(1, n + 1)),
-        "sack_fumbles_lost": player_fumbles,
-        "rushing_fumbles_lost": [0] * n,
-        "receiving_fumbles_lost": [0] * n,
-    })
+    return pd.DataFrame(
+        {
+            "player_id": ["P1"] * n,
+            "season": [season] * n,
+            "week": list(range(1, n + 1)),
+            "sack_fumbles_lost": player_fumbles,
+            "rushing_fumbles_lost": [0] * n,
+            "receiving_fumbles_lost": [0] * n,
+        }
+    )
 
 
 @pytest.fixture(scope="session")
@@ -256,60 +280,71 @@ def _build_synthetic_rb_dataset(
                     + (rushing_tds + receiving_tds) * 6
                 )
 
-                rows.append({
-                    "player_id": player_id,
-                    "player_name": player_id,
-                    "season": season,
-                    "week": week,
-                    "recent_team": home_team,
-                    "opponent_team": opp_team,
-                    "position": "RB",
-                    "carries": carries,
-                    "targets": targets,
-                    "receptions": receptions,
-                    "rushing_yards": rushing_yards,
-                    "receiving_yards": receiving_yards,
-                    "rushing_tds": rushing_tds,
-                    "receiving_tds": receiving_tds,
-                    "rushing_2pt_conversions": 0,
-                    "receiving_2pt_conversions": 0,
-                    "sack_fumbles_lost": 0,
-                    "rushing_fumbles_lost": int(rng.random() < 0.03),
-                    "receiving_fumbles_lost": 0,
-                    "passing_yards": 0,
-                    "passing_tds": 0,
-                    "interceptions": 0,
-                    "rushing_epa": rng.normal(0.0, 0.5) * carries,
-                    "rushing_first_downs": int(carries * 0.25),
-                    "receiving_first_downs": int(receptions * 0.4),
-                    "receiving_yards_after_catch": int(receiving_yards * 0.5),
-                    "receiving_epa": rng.normal(0.0, 0.3) * receptions,
-                    "receiving_air_yards": max(0, int(receiving_yards * 0.8)),
-                    "fantasy_points": fp,
-                    "fantasy_points_ppr": fp,
-                    "snap_pct": min(1.0, max(0.1, rng.normal(0.6 + 0.1 * skill, 0.1))),
-                    "pos_QB": 0, "pos_RB": 1, "pos_WR": 0, "pos_TE": 0,
-                    # Features the pipeline may reference; default to 0.
-                    "target_share_L3": 0.0, "target_share_L5": 0.0,
-                    "carry_share_L3": 0.0, "carry_share_L5": 0.0,
-                    "air_yards_share": 0.0,
-                    "is_home": week % 2,
-                    "is_returning_from_absence": 0,
-                    "days_rest": 7,
-                    "practice_status": 0,
-                    "game_status": 0,
-                    "depth_chart_rank": 1,
-                    "trend_fantasy_points": 0.0, "trend_targets": 0.0,
-                    "trend_carries": 0.0, "trend_snap_pct": 0.0,
-                    "opp_fantasy_pts_allowed_to_pos": 10.0,
-                    "opp_rush_pts_allowed_to_pos": 5.0,
-                    "opp_recv_pts_allowed_to_pos": 5.0,
-                    "opp_def_rank_vs_pos": 16,
-                    "opp_def_sacks_L5": 2.0, "opp_def_pass_yds_allowed_L5": 250.0,
-                    "opp_def_pass_td_allowed_L5": 1.5, "opp_def_ints_L5": 0.8,
-                    "opp_def_rush_yds_allowed_L5": 120.0,
-                    "opp_def_pts_allowed_L5": 22.0,
-                })
+                rows.append(
+                    {
+                        "player_id": player_id,
+                        "player_name": player_id,
+                        "season": season,
+                        "week": week,
+                        "recent_team": home_team,
+                        "opponent_team": opp_team,
+                        "position": "RB",
+                        "carries": carries,
+                        "targets": targets,
+                        "receptions": receptions,
+                        "rushing_yards": rushing_yards,
+                        "receiving_yards": receiving_yards,
+                        "rushing_tds": rushing_tds,
+                        "receiving_tds": receiving_tds,
+                        "rushing_2pt_conversions": 0,
+                        "receiving_2pt_conversions": 0,
+                        "sack_fumbles_lost": 0,
+                        "rushing_fumbles_lost": int(rng.random() < 0.03),
+                        "receiving_fumbles_lost": 0,
+                        "passing_yards": 0,
+                        "passing_tds": 0,
+                        "interceptions": 0,
+                        "rushing_epa": rng.normal(0.0, 0.5) * carries,
+                        "rushing_first_downs": int(carries * 0.25),
+                        "receiving_first_downs": int(receptions * 0.4),
+                        "receiving_yards_after_catch": int(receiving_yards * 0.5),
+                        "receiving_epa": rng.normal(0.0, 0.3) * receptions,
+                        "receiving_air_yards": max(0, int(receiving_yards * 0.8)),
+                        "fantasy_points": fp,
+                        "fantasy_points_ppr": fp,
+                        "snap_pct": min(1.0, max(0.1, rng.normal(0.6 + 0.1 * skill, 0.1))),
+                        "pos_QB": 0,
+                        "pos_RB": 1,
+                        "pos_WR": 0,
+                        "pos_TE": 0,
+                        # Features the pipeline may reference; default to 0.
+                        "target_share_L3": 0.0,
+                        "target_share_L5": 0.0,
+                        "carry_share_L3": 0.0,
+                        "carry_share_L5": 0.0,
+                        "air_yards_share": 0.0,
+                        "is_home": week % 2,
+                        "is_returning_from_absence": 0,
+                        "days_rest": 7,
+                        "practice_status": 0,
+                        "game_status": 0,
+                        "depth_chart_rank": 1,
+                        "trend_fantasy_points": 0.0,
+                        "trend_targets": 0.0,
+                        "trend_carries": 0.0,
+                        "trend_snap_pct": 0.0,
+                        "opp_fantasy_pts_allowed_to_pos": 10.0,
+                        "opp_rush_pts_allowed_to_pos": 5.0,
+                        "opp_recv_pts_allowed_to_pos": 5.0,
+                        "opp_def_rank_vs_pos": 16,
+                        "opp_def_sacks_L5": 2.0,
+                        "opp_def_pass_yds_allowed_L5": 250.0,
+                        "opp_def_pass_td_allowed_L5": 1.5,
+                        "opp_def_ints_L5": 0.8,
+                        "opp_def_rush_yds_allowed_L5": 120.0,
+                        "opp_def_pts_allowed_L5": 22.0,
+                    }
+                )
     return pd.DataFrame(rows)
 
 

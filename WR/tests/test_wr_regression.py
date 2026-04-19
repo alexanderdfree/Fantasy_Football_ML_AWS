@@ -19,10 +19,10 @@ import numpy as np
 import pytest
 import torch
 
-from WR.wr_config import WR_TARGETS, WR_LOSS_WEIGHTS
-from shared.models import RidgeMultiTarget, LightGBMMultiTarget
+from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
-from shared.training import MultiTargetLoss, MultiHeadTrainer, make_dataloaders
+from shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
+from WR.wr_config import WR_LOSS_WEIGHTS, WR_TARGETS
 
 
 def _synthetic_wr_dataset(n: int = 800, n_features: int = 10, seed: int = 42):
@@ -38,26 +38,38 @@ def _synthetic_wr_dataset(n: int = 800, n_features: int = 10, seed: int = 42):
 
     # Construct targets with known signal + small noise
     recv = np.clip(
-        6.0 + 3.0 * X[:, 0] + 2.0 * X[:, 1] + 0.5 * X[:, 0] * X[:, 2]
+        6.0
+        + 3.0 * X[:, 0]
+        + 2.0 * X[:, 1]
+        + 0.5 * X[:, 0] * X[:, 2]
         + rng.standard_normal(n) * 1.0,
-        0.0, 25.0,
+        0.0,
+        25.0,
     ).astype(np.float32)
     rush = np.clip(
-        0.8 + 0.5 * X[:, 3] + 0.3 * X[:, 4]
-        + rng.standard_normal(n) * 0.3,
-        0.0, 5.0,
+        0.8 + 0.5 * X[:, 3] + 0.3 * X[:, 4] + rng.standard_normal(n) * 0.3,
+        0.0,
+        5.0,
     ).astype(np.float32)
     tds = np.clip(
-        2.0 + 1.5 * X[:, 5] + 1.0 * X[:, 6]
-        + rng.standard_normal(n) * 0.8,
-        0.0, 12.0,
+        2.0 + 1.5 * X[:, 5] + 1.0 * X[:, 6] + rng.standard_normal(n) * 0.8,
+        0.0,
+        12.0,
     ).astype(np.float32)
 
     # Train/val split: 80/20
     n_train = int(0.8 * n)
     X_train, X_val = X[:n_train], X[n_train:]
-    y_train = {"receiving_floor": recv[:n_train], "rushing_floor": rush[:n_train], "td_points": tds[:n_train]}
-    y_val = {"receiving_floor": recv[n_train:], "rushing_floor": rush[n_train:], "td_points": tds[n_train:]}
+    y_train = {
+        "receiving_floor": recv[:n_train],
+        "rushing_floor": rush[:n_train],
+        "td_points": tds[:n_train],
+    }
+    y_val = {
+        "receiving_floor": recv[n_train:],
+        "rushing_floor": rush[n_train:],
+        "td_points": tds[n_train:],
+    }
     y_train["total"] = sum(y_train[t] for t in WR_TARGETS)
     y_val["total"] = sum(y_val[t] for t in WR_TARGETS)
     return X_train, X_val, y_train, y_val
@@ -93,9 +105,16 @@ def test_all_models_beat_season_average_baseline():
     # LightGBM (tiny: 50 estimators, small leaves — learnable signal is simple)
     lgbm = LightGBMMultiTarget(
         target_names=WR_TARGETS,
-        n_estimators=50, learning_rate=0.1, num_leaves=15,
-        min_child_samples=5, subsample=1.0, colsample_bytree=1.0,
-        reg_lambda=0.0, reg_alpha=0.0, objective="huber", seed=42,
+        n_estimators=50,
+        learning_rate=0.1,
+        num_leaves=15,
+        min_child_samples=5,
+        subsample=1.0,
+        colsample_bytree=1.0,
+        reg_lambda=0.0,
+        reg_alpha=0.0,
+        objective="huber",
+        seed=42,
     )
     lgbm.fit(X_train, y_train)
     lgbm_mae = _mae_total(lgbm.predict(X_val), y_val)
@@ -123,9 +142,16 @@ def test_lightgbm_within_tolerance_of_ridge():
 
     lgbm = LightGBMMultiTarget(
         target_names=WR_TARGETS,
-        n_estimators=100, learning_rate=0.1, num_leaves=15,
-        min_child_samples=5, subsample=1.0, colsample_bytree=1.0,
-        reg_lambda=0.0, reg_alpha=0.0, objective="huber", seed=42,
+        n_estimators=100,
+        learning_rate=0.1,
+        num_leaves=15,
+        min_child_samples=5,
+        subsample=1.0,
+        colsample_bytree=1.0,
+        reg_lambda=0.0,
+        reg_alpha=0.0,
+        objective="huber",
+        seed=42,
     )
     lgbm.fit(X_train, y_train)
     lgbm_mae = _mae_total(lgbm.predict(X_val), y_val)
@@ -148,9 +174,16 @@ def test_nn_mae_within_25pct_of_lightgbm():
 
     lgbm = LightGBMMultiTarget(
         target_names=WR_TARGETS,
-        n_estimators=100, learning_rate=0.1, num_leaves=15,
-        min_child_samples=5, subsample=1.0, colsample_bytree=1.0,
-        reg_lambda=0.0, reg_alpha=0.0, objective="huber", seed=42,
+        n_estimators=100,
+        learning_rate=0.1,
+        num_leaves=15,
+        min_child_samples=5,
+        subsample=1.0,
+        colsample_bytree=1.0,
+        reg_lambda=0.0,
+        reg_alpha=0.0,
+        objective="huber",
+        seed=42,
     )
     lgbm.fit(X_train, y_train)
     lgbm_mae = _mae_total(lgbm.predict(X_val), y_val)
@@ -159,8 +192,7 @@ def test_nn_mae_within_25pct_of_lightgbm():
 
     low, high = lgbm_mae * 0.75, lgbm_mae * 1.25
     assert low <= nn_mae <= high, (
-        f"NN {nn_mae:.3f} outside ±25% of LightGBM {lgbm_mae:.3f} "
-        f"(band: [{low:.3f}, {high:.3f}])"
+        f"NN {nn_mae:.3f} outside ±25% of LightGBM {lgbm_mae:.3f} (band: [{low:.3f}, {high:.3f}])"
     )
 
 
@@ -169,20 +201,26 @@ def _train_tiny_nn_mae(X_train, X_val, y_train, y_val) -> float:
     np.random.seed(42)
     torch.manual_seed(42)
 
-    train_loader, val_loader = make_dataloaders(
-        X_train, y_train, X_val, y_val, batch_size=64
-    )
+    train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=64)
     model = MultiHeadNet(
-        input_dim=X_train.shape[1], target_names=WR_TARGETS,
-        backbone_layers=[32, 16], head_hidden=8, dropout=0.0,
+        input_dim=X_train.shape[1],
+        target_names=WR_TARGETS,
+        backbone_layers=[32, 16],
+        head_hidden=8,
+        dropout=0.0,
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
     criterion = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
     device = torch.device("cpu")
     trainer = MultiHeadTrainer(
-        model, optimizer, scheduler, criterion, device,
-        target_names=WR_TARGETS, patience=10,
+        model,
+        optimizer,
+        scheduler,
+        criterion,
+        device,
+        target_names=WR_TARGETS,
+        patience=10,
     )
     trainer.train(train_loader, val_loader, n_epochs=80)
 

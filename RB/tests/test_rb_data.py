@@ -3,12 +3,12 @@
 import pandas as pd
 import pytest
 
-from RB.rb_data import filter_to_rb, compute_team_rb_totals
-
+from RB.rb_data import compute_team_rb_totals, filter_to_rb
 
 # ---------------------------------------------------------------------------
 # filter_to_rb
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFilterToRB:
@@ -58,64 +58,79 @@ class TestFilterToRB:
 # compute_team_rb_totals
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestComputeTeamRBTotals:
     def test_basic_aggregation(self):
-        df = pd.DataFrame({
-            "recent_team": ["KC", "KC", "KC", "BUF"],
-            "season": [2023, 2023, 2023, 2023],
-            "week": [1, 1, 1, 1],
-            "carries": [15, 8, 3, 20],
-            "targets": [4, 6, 1, 5],
-        })
+        df = pd.DataFrame(
+            {
+                "recent_team": ["KC", "KC", "KC", "BUF"],
+                "season": [2023, 2023, 2023, 2023],
+                "week": [1, 1, 1, 1],
+                "carries": [15, 8, 3, 20],
+                "targets": [4, 6, 1, 5],
+            }
+        )
         result = compute_team_rb_totals(df)
         kc_row = result[result["recent_team"] == "KC"]
         assert kc_row["team_rb_carries"].values[0] == 26
         assert kc_row["team_rb_targets"].values[0] == 11
 
     def test_multiple_weeks(self):
-        df = pd.DataFrame({
-            "recent_team": ["KC", "KC"],
-            "season": [2023, 2023],
-            "week": [1, 2],
-            "carries": [15, 20],
-            "targets": [4, 6],
-        })
+        df = pd.DataFrame(
+            {
+                "recent_team": ["KC", "KC"],
+                "season": [2023, 2023],
+                "week": [1, 2],
+                "carries": [15, 20],
+                "targets": [4, 6],
+            }
+        )
         result = compute_team_rb_totals(df)
         assert len(result) == 2  # one row per team-season-week
 
     def test_single_player_team(self):
-        df = pd.DataFrame({
-            "recent_team": ["NYG"],
-            "season": [2023],
-            "week": [5],
-            "carries": [22],
-            "targets": [7],
-        })
+        df = pd.DataFrame(
+            {
+                "recent_team": ["NYG"],
+                "season": [2023],
+                "week": [5],
+                "carries": [22],
+                "targets": [7],
+            }
+        )
         result = compute_team_rb_totals(df)
         assert result["team_rb_carries"].values[0] == 22
 
     def test_zero_carries_and_targets(self):
-        df = pd.DataFrame({
-            "recent_team": ["LAR", "LAR"],
-            "season": [2023, 2023],
-            "week": [1, 1],
-            "carries": [0, 0],
-            "targets": [0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "recent_team": ["LAR", "LAR"],
+                "season": [2023, 2023],
+                "week": [1, 1],
+                "carries": [0, 0],
+                "targets": [0, 0],
+            }
+        )
         result = compute_team_rb_totals(df)
         assert result["team_rb_carries"].values[0] == 0
         assert result["team_rb_targets"].values[0] == 0
 
     def test_output_columns(self):
-        df = pd.DataFrame({
-            "recent_team": ["SF"],
-            "season": [2023],
-            "week": [1],
-            "carries": [10],
-            "targets": [5],
-        })
+        df = pd.DataFrame(
+            {
+                "recent_team": ["SF"],
+                "season": [2023],
+                "week": [1],
+                "carries": [10],
+                "targets": [5],
+            }
+        )
         result = compute_team_rb_totals(df)
         assert set(result.columns) == {
-            "recent_team", "season", "week", "team_rb_carries", "team_rb_targets"
+            "recent_team",
+            "season",
+            "week",
+            "team_rb_carries",
+            "team_rb_targets",
         }

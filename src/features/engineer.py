@@ -1,9 +1,17 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
+
 from src.config import (
-    ROLLING_WINDOWS, ROLL_STATS, ROLL_AGGS, EWMA_STATS, EWMA_SPANS,
-    TREND_STATS, SHARE_WINDOWS, OPP_ROLLING_WINDOW,
-    CACHE_DIR, SEASONS,
+    CACHE_DIR,
+    EWMA_SPANS,
+    EWMA_STATS,
+    OPP_ROLLING_WINDOW,
+    ROLL_AGGS,
+    ROLL_STATS,
+    ROLLING_WINDOWS,
+    SEASONS,
+    SHARE_WINDOWS,
+    TREND_STATS,
 )
 
 
@@ -14,27 +22,19 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     # --- Rolling Features (93: 90 mean/std/max + 3 min) ---
     for stat in ROLL_STATS:
         for window in ROLLING_WINDOWS:
-            df[f"rolling_mean_{stat}_L{window}"] = df.groupby(
-                ["player_id", "season"]
-            )[stat].transform(
-                lambda x: x.shift(1).rolling(window, min_periods=1).mean()
-            )
-            df[f"rolling_std_{stat}_L{window}"] = df.groupby(
-                ["player_id", "season"]
-            )[stat].transform(
-                lambda x: x.shift(1).rolling(window, min_periods=1).std()
-            )
-            df[f"rolling_max_{stat}_L{window}"] = df.groupby(
-                ["player_id", "season"]
-            )[stat].transform(
-                lambda x: x.shift(1).rolling(window, min_periods=1).max()
-            )
+            df[f"rolling_mean_{stat}_L{window}"] = df.groupby(["player_id", "season"])[
+                stat
+            ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).mean())
+            df[f"rolling_std_{stat}_L{window}"] = df.groupby(["player_id", "season"])[
+                stat
+            ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).std())
+            df[f"rolling_max_{stat}_L{window}"] = df.groupby(["player_id", "season"])[
+                stat
+            ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).max())
             if stat == "fantasy_points":
-                df[f"rolling_min_{stat}_L{window}"] = df.groupby(
-                    ["player_id", "season"]
-                )[stat].transform(
-                    lambda x: x.shift(1).rolling(window, min_periods=1).min()
-                )
+                df[f"rolling_min_{stat}_L{window}"] = df.groupby(["player_id", "season"])[
+                    stat
+                ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).min())
 
     # --- Prior-Season Summary Features (24) ---
     prior_stats = [s for s in ROLL_STATS]
@@ -47,10 +47,8 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     # --- EWMA Features (14) ---
     for stat in EWMA_STATS:
         for span in EWMA_SPANS:
-            df[f"ewma_{stat}_L{span}"] = df.groupby(
-                ["player_id", "season"]
-            )[stat].transform(
-                lambda x: x.shift(1).ewm(span=span, min_periods=1).mean()
+            df[f"ewma_{stat}_L{span}"] = df.groupby(["player_id", "season"])[stat].transform(
+                lambda x, s=span: x.shift(1).ewm(span=s, min_periods=1).mean()
             )
 
     # --- Trend / Momentum Features (4) ---
@@ -64,10 +62,14 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"trend_{stat}"] = short - long
 
     # --- Share / Usage Features (6) ---
-    team_totals = df.groupby(["recent_team", "season", "week"]).agg(
-        team_targets=("targets", "sum"),
-        team_carries=("carries", "sum"),
-    ).reset_index()
+    team_totals = (
+        df.groupby(["recent_team", "season", "week"])
+        .agg(
+            team_targets=("targets", "sum"),
+            team_carries=("carries", "sum"),
+        )
+        .reset_index()
+    )
     df = df.merge(team_totals, on=["recent_team", "season", "week"], how="left")
 
     # Detect team changes for stint-aware grouping
@@ -78,45 +80,41 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df["stint_id"] = df.groupby(["player_id", "season"])["team_changed"].cumsum()
 
     for window in SHARE_WINDOWS:
-        df[f"player_targets_roll_L{window}"] = df.groupby(
-            ["player_id", "season", "stint_id"]
-        )["targets"].transform(
-            lambda x: x.shift(1).rolling(window, min_periods=1).sum()
-        )
-        df[f"team_targets_roll_L{window}"] = df.groupby(
-            ["player_id", "season", "stint_id"]
-        )["team_targets"].transform(
-            lambda x: x.shift(1).rolling(window, min_periods=1).sum()
-        )
+        df[f"player_targets_roll_L{window}"] = df.groupby(["player_id", "season", "stint_id"])[
+            "targets"
+        ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum())
+        df[f"team_targets_roll_L{window}"] = df.groupby(["player_id", "season", "stint_id"])[
+            "team_targets"
+        ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum())
         df[f"target_share_L{window}"] = (
-            df[f"player_targets_roll_L{window}"]
-            / df[f"team_targets_roll_L{window}"]
-        ).replace([np.inf, -np.inf], 0).fillna(0)
+            (df[f"player_targets_roll_L{window}"] / df[f"team_targets_roll_L{window}"])
+            .replace([np.inf, -np.inf], 0)
+            .fillna(0)
+        )
 
-        df[f"player_carries_roll_L{window}"] = df.groupby(
-            ["player_id", "season", "stint_id"]
-        )["carries"].transform(
-            lambda x: x.shift(1).rolling(window, min_periods=1).sum()
-        )
-        df[f"team_carries_roll_L{window}"] = df.groupby(
-            ["player_id", "season", "stint_id"]
-        )["team_carries"].transform(
-            lambda x: x.shift(1).rolling(window, min_periods=1).sum()
-        )
+        df[f"player_carries_roll_L{window}"] = df.groupby(["player_id", "season", "stint_id"])[
+            "carries"
+        ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum())
+        df[f"team_carries_roll_L{window}"] = df.groupby(["player_id", "season", "stint_id"])[
+            "team_carries"
+        ].transform(lambda x, w=window: x.shift(1).rolling(w, min_periods=1).sum())
         df[f"carry_share_L{window}"] = (
-            df[f"player_carries_roll_L{window}"]
-            / df[f"team_carries_roll_L{window}"]
-        ).replace([np.inf, -np.inf], 0).fillna(0)
+            (df[f"player_carries_roll_L{window}"] / df[f"team_carries_roll_L{window}"])
+            .replace([np.inf, -np.inf], 0)
+            .fillna(0)
+        )
 
     # air_yards_share (lagged to prevent data leakage)
     if "receiving_air_yards" in df.columns:
         team_air_yards = df.groupby(["recent_team", "season", "week"])[
             "receiving_air_yards"
         ].transform("sum")
-        df["_raw_air_yards_share"] = (df["receiving_air_yards"] / team_air_yards).replace([np.inf, -np.inf], 0).fillna(0)
-        df["air_yards_share"] = df.groupby(
-            ["player_id", "season"]
-        )["_raw_air_yards_share"].shift(1).fillna(0)
+        df["_raw_air_yards_share"] = (
+            (df["receiving_air_yards"] / team_air_yards).replace([np.inf, -np.inf], 0).fillna(0)
+        )
+        df["air_yards_share"] = (
+            df.groupby(["player_id", "season"])["_raw_air_yards_share"].shift(1).fillna(0)
+        )
         df.drop(columns=["_raw_air_yards_share"], inplace=True)
     else:
         df["air_yards_share"] = 0.0
@@ -126,10 +124,18 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         df["snap_pct"] = df.groupby(["player_id", "season"])["snap_pct"].shift(1).fillna(0)
 
     # Clean up intermediate columns
-    drop_cols = [c for c in df.columns if c.startswith((
-        "player_targets_roll", "team_targets_roll",
-        "player_carries_roll", "team_carries_roll",
-    ))]
+    drop_cols = [
+        c
+        for c in df.columns
+        if c.startswith(
+            (
+                "player_targets_roll",
+                "team_targets_roll",
+                "player_carries_roll",
+                "team_carries_roll",
+            )
+        )
+    ]
     drop_cols += ["team_targets", "team_carries", "team_changed", "stint_id"]
     df.drop(columns=[c for c in drop_cols if c in df.columns], inplace=True)
 
@@ -154,11 +160,20 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 # Default per-game stats to include in history vectors.
 # These are the raw stats that the rolling features are derived from.
 GAME_HISTORY_STATS = [
-    "fantasy_points", "fantasy_points_floor",
-    "passing_yards", "rushing_yards", "receiving_yards",
-    "passing_tds", "rushing_tds", "receiving_tds",
-    "attempts", "completions", "carries",
-    "targets", "receptions", "snap_pct",
+    "fantasy_points",
+    "fantasy_points_floor",
+    "passing_yards",
+    "rushing_yards",
+    "receiving_yards",
+    "passing_tds",
+    "rushing_tds",
+    "receiving_tds",
+    "attempts",
+    "completions",
+    "carries",
+    "targets",
+    "receptions",
+    "snap_pct",
     "interceptions",
 ]
 
@@ -205,7 +220,9 @@ def build_game_history_arrays(
 
     # Build index mapping: (player_id, season) -> list of row indices in sorted order
     group_indices = {}
-    for idx, (pid, season) in enumerate(zip(df_sorted["player_id"], df_sorted["season"])):
+    for idx, (pid, season) in enumerate(
+        zip(df_sorted["player_id"], df_sorted["season"], strict=False)
+    ):
         key = (pid, season)
         if key not in group_indices:
             group_indices[key] = []
@@ -216,7 +233,7 @@ def build_game_history_arrays(
     mask_sorted = np.zeros_like(history_mask)
 
     # For each row, look back at prior games in the same player-season
-    for key, indices in group_indices.items():
+    for _key, indices in group_indices.items():
         for pos_in_group, row_idx in enumerate(indices):
             # Games before this one (shift=1 equivalent)
             n_prior = pos_in_group  # games 0..pos_in_group-1
@@ -258,35 +275,45 @@ def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     if df["opponent"].notna().any():
-        def_pts = df.groupby(["opponent", "position", "season", "week"]).agg(
-            pts_allowed_to_pos=("fantasy_points", "sum"),
-            rush_pts_allowed_to_pos=("rush_fantasy", "sum"),
-            recv_pts_allowed_to_pos=("recv_fantasy", "sum"),
-        ).reset_index()
+        def_pts = (
+            df.groupby(["opponent", "position", "season", "week"])
+            .agg(
+                pts_allowed_to_pos=("fantasy_points", "sum"),
+                rush_pts_allowed_to_pos=("rush_fantasy", "sum"),
+                recv_pts_allowed_to_pos=("recv_fantasy", "sum"),
+            )
+            .reset_index()
+        )
 
         def_pts = def_pts.sort_values(["opponent", "position", "season", "week"])
         for col in ["pts_allowed_to_pos", "rush_pts_allowed_to_pos", "recv_pts_allowed_to_pos"]:
-            def_pts[f"opp_{col}"] = def_pts.groupby(
-                ["opponent", "position", "season"]
-            )[col].transform(
-                lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
-            )
+            def_pts[f"opp_{col}"] = def_pts.groupby(["opponent", "position", "season"])[
+                col
+            ].transform(lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean())
 
-        def_pts.rename(columns={
-            "opp_pts_allowed_to_pos": "opp_fantasy_pts_allowed_to_pos",
-            "opp_rush_pts_allowed_to_pos": "opp_rush_pts_allowed_to_pos",
-            "opp_recv_pts_allowed_to_pos": "opp_recv_pts_allowed_to_pos",
-        }, inplace=True)
+        def_pts.rename(
+            columns={
+                "opp_pts_allowed_to_pos": "opp_fantasy_pts_allowed_to_pos",
+                "opp_rush_pts_allowed_to_pos": "opp_rush_pts_allowed_to_pos",
+                "opp_recv_pts_allowed_to_pos": "opp_recv_pts_allowed_to_pos",
+            },
+            inplace=True,
+        )
 
         # Rank: 1 = most points allowed = best matchup
-        def_pts["opp_def_rank_vs_pos"] = def_pts.groupby(
-            ["position", "season", "week"]
-        )["opp_fantasy_pts_allowed_to_pos"].rank(ascending=False, method="min")
+        def_pts["opp_def_rank_vs_pos"] = def_pts.groupby(["position", "season", "week"])[
+            "opp_fantasy_pts_allowed_to_pos"
+        ].rank(ascending=False, method="min")
 
         merge_cols = [
-            "opponent", "position", "season", "week",
-            "opp_fantasy_pts_allowed_to_pos", "opp_rush_pts_allowed_to_pos",
-            "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos",
+            "opponent",
+            "position",
+            "season",
+            "week",
+            "opp_fantasy_pts_allowed_to_pos",
+            "opp_rush_pts_allowed_to_pos",
+            "opp_recv_pts_allowed_to_pos",
+            "opp_def_rank_vs_pos",
         ]
         def_pts_merge = def_pts[merge_cols].drop_duplicates()
         n_before = len(df)
@@ -294,8 +321,12 @@ def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
         if len(df) != n_before:
             df = df.drop_duplicates(subset=["player_id", "season", "week"], keep="first")
     else:
-        for col in ["opp_fantasy_pts_allowed_to_pos", "opp_rush_pts_allowed_to_pos",
-                     "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos"]:
+        for col in [
+            "opp_fantasy_pts_allowed_to_pos",
+            "opp_rush_pts_allowed_to_pos",
+            "opp_recv_pts_allowed_to_pos",
+            "opp_def_rank_vs_pos",
+        ]:
             df[col] = 0.0
 
     df.drop(columns=["rush_fantasy", "recv_fantasy", "opponent"], errors="ignore", inplace=True)
@@ -311,22 +342,29 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     # --- 1. Defense stats derived from opponent offensive data ---
     if "opponent_team" not in df.columns or df["opponent_team"].isna().all():
         for col in [
-            "opp_def_sacks_L5", "opp_def_pass_yds_allowed_L5",
-            "opp_def_pass_td_allowed_L5", "opp_def_ints_L5",
-            "opp_def_rush_yds_allowed_L5", "opp_def_pts_allowed_L5",
+            "opp_def_sacks_L5",
+            "opp_def_pass_yds_allowed_L5",
+            "opp_def_pass_td_allowed_L5",
+            "opp_def_ints_L5",
+            "opp_def_rush_yds_allowed_L5",
+            "opp_def_pts_allowed_L5",
             "implied_team_total",
         ]:
             df[col] = 0.0
         return df
 
     # Aggregate offensive stats allowed by each defense per game
-    def_stats = df.groupby(["opponent_team", "season", "week"]).agg(
-        _def_sacks=("sacks", "sum"),
-        _def_pass_yds=("passing_yards", "sum"),
-        _def_pass_tds=("passing_tds", "sum"),
-        _def_ints=("interceptions", "sum"),
-        _def_rush_yds=("rushing_yards", "sum"),
-    ).reset_index()
+    def_stats = (
+        df.groupby(["opponent_team", "season", "week"])
+        .agg(
+            _def_sacks=("sacks", "sum"),
+            _def_pass_yds=("passing_yards", "sum"),
+            _def_pass_tds=("passing_tds", "sum"),
+            _def_ints=("interceptions", "sum"),
+            _def_rush_yds=("rushing_yards", "sum"),
+        )
+        .reset_index()
+    )
 
     def_stats.sort_values(["opponent_team", "season", "week"], inplace=True)
 
@@ -339,9 +377,7 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
         "_def_rush_yds": "opp_def_rush_yds_allowed_L5",
     }
     for raw_col, out_col in stat_map.items():
-        def_stats[out_col] = def_stats.groupby(
-            ["opponent_team", "season"]
-        )[raw_col].transform(
+        def_stats[out_col] = def_stats.groupby(["opponent_team", "season"])[raw_col].transform(
             lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
         )
 
@@ -364,11 +400,9 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     pts_allowed = pd.concat([away_pts, home_pts], ignore_index=True)
     pts_allowed.sort_values(["team", "season", "week"], inplace=True)
 
-    pts_allowed["opp_def_pts_allowed_L5"] = pts_allowed.groupby(
-        ["team", "season"]
-    )["points_allowed"].transform(
-        lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
-    )
+    pts_allowed["opp_def_pts_allowed_L5"] = pts_allowed.groupby(["team", "season"])[
+        "points_allowed"
+    ].transform(lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean())
 
     pts_merge = pts_allowed[["team", "season", "week", "opp_def_pts_allowed_L5"]].drop_duplicates()
     n_before = len(df)
@@ -419,16 +453,12 @@ def _build_contextual_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # is_returning_from_absence
     df = df.sort_values(["player_id", "season", "week"])
-    df["weeks_since_last_game"] = df.groupby(
-        ["player_id", "season"]
-    )["week"].diff().fillna(1)
+    df["weeks_since_last_game"] = df.groupby(["player_id", "season"])["week"].diff().fillna(1)
     df["is_returning_from_absence"] = (df["weeks_since_last_game"] > 1).astype(int)
     df.drop(columns=["weeks_since_last_game"], inplace=True)
 
     # days_rest (approximate: 7 days per week gap)
-    df["days_rest"] = df.groupby(
-        ["player_id", "season"]
-    )["week"].diff().fillna(1) * 7
+    df["days_rest"] = df.groupby(["player_id", "season"])["week"].diff().fillna(1) * 7
     df["days_rest"] = df["days_rest"].clip(lower=4, upper=21)
 
     # Injury status (merged in loader; ensure defaults for missing data)
@@ -478,27 +508,46 @@ def get_feature_columns() -> list[str]:
 
     # Matchup
     cols += [
-        "opp_fantasy_pts_allowed_to_pos", "opp_rush_pts_allowed_to_pos",
-        "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos",
+        "opp_fantasy_pts_allowed_to_pos",
+        "opp_rush_pts_allowed_to_pos",
+        "opp_recv_pts_allowed_to_pos",
+        "opp_def_rank_vs_pos",
     ]
 
     # Defense matchup (detailed)
     cols += [
-        "opp_def_sacks_L5", "opp_def_pass_yds_allowed_L5",
-        "opp_def_pass_td_allowed_L5", "opp_def_ints_L5",
-        "opp_def_rush_yds_allowed_L5", "opp_def_pts_allowed_L5",
+        "opp_def_sacks_L5",
+        "opp_def_pass_yds_allowed_L5",
+        "opp_def_pass_td_allowed_L5",
+        "opp_def_ints_L5",
+        "opp_def_rush_yds_allowed_L5",
+        "opp_def_pts_allowed_L5",
     ]
 
     # Contextual
-    cols += ["is_home", "week", "is_returning_from_absence", "days_rest",
-             "practice_status", "game_status", "depth_chart_rank"]
+    cols += [
+        "is_home",
+        "week",
+        "is_returning_from_absence",
+        "days_rest",
+        "practice_status",
+        "game_status",
+        "depth_chart_rank",
+    ]
 
     # Weather, venue, and Vegas implied-odds features
     # (merged from schedule data in pipeline; per-position drops in *_config.py)
     cols += [
-        "implied_team_total", "implied_opp_total", "total_line",
-        "is_dome", "is_grass", "temp_adjusted", "wind_adjusted",
-        "is_divisional", "days_rest_improved", "rest_advantage",
+        "implied_team_total",
+        "implied_opp_total",
+        "total_line",
+        "is_dome",
+        "is_grass",
+        "temp_adjusted",
+        "wind_adjusted",
+        "is_divisional",
+        "days_rest_improved",
+        "rest_advantage",
         "implied_total_x_wind",
     ]
 
@@ -510,8 +559,16 @@ def get_feature_columns() -> list[str]:
 
 # ── Whitelist-based feature selection ────────────────────────────────────────
 INCLUDE_CATEGORY_ORDER = [
-    "rolling", "prior_season", "ewma", "trend", "share",
-    "matchup", "defense", "contextual", "weather_vegas", "specific",
+    "rolling",
+    "prior_season",
+    "ewma",
+    "trend",
+    "share",
+    "matchup",
+    "defense",
+    "contextual",
+    "weather_vegas",
+    "specific",
 ]
 
 
@@ -538,8 +595,9 @@ def get_attn_static_columns(all_feature_cols: list[str]) -> list[str]:
     exclude_exact = set()
     for w in SHARE_WINDOWS:
         exclude_exact.update([f"target_share_L{w}", f"carry_share_L{w}"])
-    return [c for c in all_feature_cols
-            if not c.startswith(exclude_prefixes) and c not in exclude_exact]
+    return [
+        c for c in all_feature_cols if not c.startswith(exclude_prefixes) and c not in exclude_exact
+    ]
 
 
 def fill_nans_safe(train_df, val_df, test_df, feature_cols) -> tuple:

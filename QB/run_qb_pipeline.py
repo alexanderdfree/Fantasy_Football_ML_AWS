@@ -2,30 +2,59 @@
 
 import os
 import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from QB.qb_config import (
-    QB_TARGETS, QB_RIDGE_ALPHA_GRIDS, QB_SPECIFIC_FEATURES,
-    QB_NN_BACKBONE_LAYERS, QB_NN_HEAD_HIDDEN, QB_NN_DROPOUT,
-    QB_NN_LR, QB_NN_WEIGHT_DECAY, QB_NN_EPOCHS, QB_NN_BATCH_SIZE,
-    QB_NN_PATIENCE,
-    QB_LOSS_WEIGHTS, QB_LOSS_W_TOTAL, QB_HUBER_DELTAS,
-    QB_SCHEDULER_TYPE, QB_COSINE_T0, QB_COSINE_T_MULT, QB_COSINE_ETA_MIN,
-    QB_TRAIN_ATTENTION_NN, QB_ATTN_D_MODEL, QB_ATTN_N_HEADS,
-    QB_ATTN_ENCODER_HIDDEN_DIM, QB_ATTN_MAX_SEQ_LEN,
-    QB_ATTN_POSITIONAL_ENCODING, QB_ATTN_DROPOUT, QB_ATTN_PATIENCE,
-    QB_ATTN_LR, QB_ATTN_WEIGHT_DECAY, QB_ATTN_BATCH_SIZE,
+    QB_ATTN_BATCH_SIZE,
+    QB_ATTN_D_MODEL,
+    QB_ATTN_DROPOUT,
+    QB_ATTN_ENCODER_HIDDEN_DIM,
+    QB_ATTN_GATED_TD,
     QB_ATTN_HISTORY_STATS,
-    QB_ATTN_GATED_TD, QB_ATTN_TD_GATE_HIDDEN, QB_ATTN_TD_GATE_WEIGHT,
-    QB_TRAIN_LIGHTGBM, QB_LGBM_N_ESTIMATORS, QB_LGBM_LEARNING_RATE,
-    QB_LGBM_NUM_LEAVES, QB_LGBM_SUBSAMPLE, QB_LGBM_COLSAMPLE_BYTREE,
-    QB_LGBM_REG_LAMBDA, QB_LGBM_REG_ALPHA, QB_LGBM_MIN_CHILD_SAMPLES,
-    QB_LGBM_MIN_SPLIT_GAIN, QB_LGBM_OBJECTIVE,
+    QB_ATTN_LR,
+    QB_ATTN_MAX_SEQ_LEN,
+    QB_ATTN_N_HEADS,
+    QB_ATTN_PATIENCE,
+    QB_ATTN_POSITIONAL_ENCODING,
+    QB_ATTN_TD_GATE_HIDDEN,
+    QB_ATTN_TD_GATE_WEIGHT,
+    QB_ATTN_WEIGHT_DECAY,
+    QB_COSINE_ETA_MIN,
+    QB_COSINE_T0,
+    QB_COSINE_T_MULT,
+    QB_HUBER_DELTAS,
+    QB_LGBM_COLSAMPLE_BYTREE,
+    QB_LGBM_LEARNING_RATE,
+    QB_LGBM_MIN_CHILD_SAMPLES,
+    QB_LGBM_MIN_SPLIT_GAIN,
+    QB_LGBM_N_ESTIMATORS,
+    QB_LGBM_NUM_LEAVES,
+    QB_LGBM_OBJECTIVE,
+    QB_LGBM_REG_ALPHA,
+    QB_LGBM_REG_LAMBDA,
+    QB_LGBM_SUBSAMPLE,
+    QB_LOSS_W_TOTAL,
+    QB_LOSS_WEIGHTS,
+    QB_NN_BACKBONE_LAYERS,
+    QB_NN_BATCH_SIZE,
+    QB_NN_DROPOUT,
+    QB_NN_EPOCHS,
+    QB_NN_HEAD_HIDDEN,
+    QB_NN_LR,
+    QB_NN_PATIENCE,
+    QB_NN_WEIGHT_DECAY,
+    QB_RIDGE_ALPHA_GRIDS,
+    QB_SCHEDULER_TYPE,
+    QB_SPECIFIC_FEATURES,
+    QB_TARGETS,
+    QB_TRAIN_ATTENTION_NN,
+    QB_TRAIN_LIGHTGBM,
 )
 from QB.qb_data import filter_to_qb
-from QB.qb_targets import compute_qb_targets, compute_qb_adjustment
-from QB.qb_features import add_qb_specific_features, get_qb_feature_columns, fill_qb_nans
-from shared.pipeline import run_pipeline, run_cv_pipeline
+from QB.qb_features import add_qb_specific_features, fill_qb_nans, get_qb_feature_columns
+from QB.qb_targets import compute_qb_adjustment, compute_qb_targets
+from shared.pipeline import run_cv_pipeline, run_pipeline
 
 QB_CONFIG = {
     "targets": QB_TARGETS,
@@ -92,6 +121,7 @@ def run_qb_cv_pipeline(full_df=None, test_df=None, seed=42):
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--cv", action="store_true", help="Use expanding-window CV")
     args = parser.parse_args()

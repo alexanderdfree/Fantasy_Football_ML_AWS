@@ -8,9 +8,9 @@ Usage:
     python RB/analyze_rb_errors.py --no-plots
 """
 
+import argparse
 import os
 import sys
-import argparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -18,18 +18,22 @@ from RB.rb_config import RB_TARGETS
 from RB.run_rb_pipeline import run_rb_pipeline
 from shared.error_analysis import (
     add_stratification_columns,
-    run_stratified_analysis,
-    print_stratified_table,
     find_top_error_sources,
-    print_top_error_sources,
-    plot_error_by_stratum,
     plot_bias_heatmap,
+    plot_error_by_stratum,
     plot_td_zero_vs_scored,
+    print_stratified_table,
+    print_top_error_sources,
+    run_stratified_analysis,
 )
 
 STRATA_COLS = [
-    "snap_bucket", "opp_tier", "td_bucket", "week_phase",
-    "volatility_q", "home_away",
+    "snap_bucket",
+    "opp_tier",
+    "td_bucket",
+    "week_phase",
+    "volatility_q",
+    "home_away",
 ]
 
 FIGURE_DIR = os.path.join(os.path.dirname(__file__), "outputs", "figures")
@@ -98,8 +102,7 @@ def main():
         print(f"\n{'=' * 80}")
         print("Model Comparison by Stratum (Total MAE)")
         print(f"{'=' * 80}")
-        print(f"{'Stratum':<20} {'Bucket':<16} {'N':>5} "
-              f"{'Ridge':>8} {'Attn NN':>8} {'Delta':>8}")
+        print(f"{'Stratum':<20} {'Bucket':<16} {'N':>5} {'Ridge':>8} {'Attn NN':>8} {'Delta':>8}")
         print("-" * 80)
         for stratum in STRATA_COLS:
             if stratum not in results:
@@ -108,11 +111,15 @@ def main():
             attn_data = results[stratum].get(primary_model, {}).get("total")
             if ridge_data is None or attn_data is None:
                 continue
-            merged = ridge_data.merge(attn_data, on=ridge_data.columns[0], suffixes=("_ridge", "_attn"))
+            merged = ridge_data.merge(
+                attn_data, on=ridge_data.columns[0], suffixes=("_ridge", "_attn")
+            )
             for _, row in merged.iterrows():
                 delta = row["mae_attn"] - row["mae_ridge"]
-                print(f"{stratum:<20} {str(row.iloc[0]):<16} {int(row['n_ridge']):>5} "
-                      f"{row['mae_ridge']:>8.3f} {row['mae_attn']:>8.3f} {delta:>+8.3f}")
+                print(
+                    f"{stratum:<20} {str(row.iloc[0]):<16} {int(row['n_ridge']):>5} "
+                    f"{row['mae_ridge']:>8.3f} {row['mae_attn']:>8.3f} {delta:>+8.3f}"
+                )
             print("-" * 80)
 
     # Generate figures
@@ -124,12 +131,18 @@ def main():
 
         for stratum in STRATA_COLS:
             plot_error_by_stratum(
-                results, primary_model, stratum, all_targets,
+                results,
+                primary_model,
+                stratum,
+                all_targets,
                 os.path.join(FIGURE_DIR, f"rb_error_mae_by_{stratum}.png"),
             )
 
         plot_bias_heatmap(
-            results, primary_model, STRATA_COLS, all_targets,
+            results,
+            primary_model,
+            STRATA_COLS,
+            all_targets,
             os.path.join(FIGURE_DIR, "rb_error_bias_heatmap.png"),
         )
 
@@ -139,7 +152,9 @@ def main():
             pred_col = model_pred_cols.get(primary_model, {}).get(td_target)
             if pred_col:
                 plot_td_zero_vs_scored(
-                    df, pred_col, td_target,
+                    df,
+                    pred_col,
+                    td_target,
                     os.path.join(FIGURE_DIR, "rb_error_td_zero_vs_scored.png"),
                     title=f"RB TD Prediction Errors — {primary_model}",
                 )

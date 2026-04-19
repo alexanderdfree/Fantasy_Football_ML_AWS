@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 
 from src.config import PPR_FORMATS
 
@@ -35,10 +34,7 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
         suffix = "" if fmt == "ppr" else f"_{fmt}"
         df[f"receiving_floor{suffix}"] = receptions * weight + rec_yards_pts
 
-    df["td_points"] = (
-        df["rushing_tds"].fillna(0) * 6
-        + df["receiving_tds"].fillna(0) * 6
-    )
+    df["td_points"] = df["rushing_tds"].fillna(0) * 6 + df["receiving_tds"].fillna(0) * 6
 
     df["fumble_penalty"] = (
         df["sack_fumbles_lost"].fillna(0)
@@ -48,8 +44,7 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     # Sanity check: sum should match fantasy_points minus passing component (full PPR)
     df["fantasy_points_check"] = (
-        df["rushing_floor"] + df["receiving_floor"]
-        + df["td_points"] + df["fumble_penalty"]
+        df["rushing_floor"] + df["receiving_floor"] + df["td_points"] + df["fumble_penalty"]
     )
 
     passing_component = (
@@ -67,7 +62,9 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
         nfl_discrepancy = (df["fantasy_points"] - df["fantasy_points_ppr"]).abs()
         n_nfl_mismatch = (nfl_discrepancy > 0.5).sum()
         if n_nfl_mismatch > 0:
-            print(f"INFO: {n_nfl_mismatch} rows differ from nflverse fantasy_points_ppr by > 0.5 pts")
+            print(
+                f"INFO: {n_nfl_mismatch} rows differ from nflverse fantasy_points_ppr by > 0.5 pts"
+            )
 
     return df
 
@@ -85,8 +82,8 @@ def compute_fumble_adjustment(df: pd.DataFrame) -> pd.Series:
     # Need a named column for groupby transform
     df = df.copy()
     df["_total_fumbles"] = total_fumbles
-    fumble_rate = df.groupby(["player_id", "season"])[
-        "_total_fumbles"
-    ].transform(lambda x: x.shift(1).rolling(8, min_periods=1).mean())
+    fumble_rate = df.groupby(["player_id", "season"])["_total_fumbles"].transform(
+        lambda x: x.shift(1).rolling(8, min_periods=1).mean()
+    )
 
     return (fumble_rate * -2).fillna(0)  # Convert to fantasy point penalty

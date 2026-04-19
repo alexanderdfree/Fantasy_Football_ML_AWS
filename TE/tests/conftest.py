@@ -20,10 +20,20 @@ if PROJECT_ROOT not in sys.path:
 
 from shared.tests.position_fixtures import (  # noqa: E402
     make_position_df as _make_position_df,
+)
+from shared.tests.position_fixtures import (
     make_sim_df as _make_sim_df,
+)
+from shared.tests.position_fixtures import (
     make_splits as _make_splits,
+)
+from shared.tests.position_fixtures import (
     make_tensors as _make_tensors,
+)
+from shared.tests.position_fixtures import (
     make_test_df as _make_test_df,
+)
+from shared.tests.position_fixtures import (
     register_position_markers,
 )
 from TE.te_config import TE_TARGETS  # noqa: E402
@@ -43,13 +53,21 @@ def pytest_configure(config):
 # Generic TE fixtures — bind shared factories to TE scale / prefix / targets
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session")
 def te_sim_df_factory():
     """Factory for synthetic weekly-simulation DataFrames with TE scoring."""
+
     def _factory(n_weeks: int = 4, n_players: int = 15, seed: int = 42):
         return _make_sim_df(
-            TE_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="TE", rng_kind="default",
+            TE_SCORING_SCALE,
+            n_weeks,
+            n_players,
+            seed,
+            id_prefix="TE",
+            rng_kind="default",
         )
+
     return _factory
 
 
@@ -62,10 +80,17 @@ def te_sim_df(te_sim_df_factory):
 @pytest.fixture(scope="session")
 def te_test_df_factory():
     """Factory for synthetic ranking-metrics DataFrames with TE scoring scale."""
+
     def _factory(n_weeks: int = 3, n_players: int = 15, seed: int = 42):
         return _make_test_df(
-            TE_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="TE", rng_kind="default",
+            TE_SCORING_SCALE,
+            n_weeks,
+            n_players,
+            seed,
+            id_prefix="TE",
+            rng_kind="default",
         )
+
     return _factory
 
 
@@ -78,8 +103,10 @@ def te_test_df(te_test_df_factory):
 @pytest.fixture(scope="session")
 def te_tensor_factory():
     """Factory for random TE (preds, targets) tensor dicts used by loss tests."""
+
     def _factory(n: int = 10, seed: int = 42):
         return _make_tensors(TE_TARGETS, n=n, seed=seed)
+
     return _factory
 
 
@@ -98,14 +125,17 @@ def te_splits_factory():
 @pytest.fixture(scope="session")
 def te_position_df_factory():
     """Factory for position-encoded DataFrames used by filter_to_te tests."""
+
     def _factory(positions, has_pos_cols: bool = True):
         return _make_position_df(positions, stat_col="receiving_yards", has_pos_cols=has_pos_cols)
+
     return _factory
 
 
 # ---------------------------------------------------------------------------
 # TE-specific: tiny synthetic dataset for E2E + regression tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session")
 def te_tiny_splits():
@@ -162,43 +192,45 @@ def _build_tiny_te_splits(seed: int = 42):
                     + rushing_yards * 0.1
                     - fumbles_lost_recv * 2
                 )
-                rows.append({
-                    "player_id": player_id,
-                    "season": season,
-                    "week": week,
-                    "position": "TE",
-                    "recent_team": team,
-                    "opponent_team": opp,
-                    "fantasy_points": fp,
-                    "fantasy_points_floor": fp * 0.8,
-                    "targets": base_targets,
-                    "receptions": base_rec,
-                    "carries": 0,
-                    "rushing_yards": rushing_yards,
-                    "rushing_tds": rushing_tds,
-                    "receiving_yards": receiving_yards,
-                    "receiving_tds": receiving_tds,
-                    "receiving_air_yards": receiving_air_yards,
-                    "receiving_yards_after_catch": rec_yac,
-                    "receiving_epa": receiving_epa,
-                    "receiving_first_downs": receiving_first_downs,
-                    "passing_yards": 0.0,
-                    "passing_tds": 0,
-                    "attempts": 0,
-                    "completions": 0,
-                    "interceptions": 0,
-                    "sacks": 0,
-                    "sack_fumbles_lost": 0,
-                    "rushing_fumbles_lost": 0,
-                    "receiving_fumbles_lost": fumbles_lost_recv,
-                    "fumbles_lost": fumbles_lost_recv,
-                    "snap_pct": snap_pct,
-                    "is_returning_from_absence": 0,
-                    "days_rest": 7,
-                    "practice_status": 0,
-                    "game_status": 0,
-                    "depth_chart_rank": 1,
-                })
+                rows.append(
+                    {
+                        "player_id": player_id,
+                        "season": season,
+                        "week": week,
+                        "position": "TE",
+                        "recent_team": team,
+                        "opponent_team": opp,
+                        "fantasy_points": fp,
+                        "fantasy_points_floor": fp * 0.8,
+                        "targets": base_targets,
+                        "receptions": base_rec,
+                        "carries": 0,
+                        "rushing_yards": rushing_yards,
+                        "rushing_tds": rushing_tds,
+                        "receiving_yards": receiving_yards,
+                        "receiving_tds": receiving_tds,
+                        "receiving_air_yards": receiving_air_yards,
+                        "receiving_yards_after_catch": rec_yac,
+                        "receiving_epa": receiving_epa,
+                        "receiving_first_downs": receiving_first_downs,
+                        "passing_yards": 0.0,
+                        "passing_tds": 0,
+                        "attempts": 0,
+                        "completions": 0,
+                        "interceptions": 0,
+                        "sacks": 0,
+                        "sack_fumbles_lost": 0,
+                        "rushing_fumbles_lost": 0,
+                        "receiving_fumbles_lost": fumbles_lost_recv,
+                        "fumbles_lost": fumbles_lost_recv,
+                        "snap_pct": snap_pct,
+                        "is_returning_from_absence": 0,
+                        "days_rest": 7,
+                        "practice_status": 0,
+                        "game_status": 0,
+                        "depth_chart_rank": 1,
+                    }
+                )
 
     df = pd.DataFrame(rows)
     df = build_features(df)

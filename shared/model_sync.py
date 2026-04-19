@@ -10,7 +10,9 @@ paths resolve to the freshly-synced files.
 Fail-loud: any S3 or tar error raises, so gunicorn --preload aborts before
 binding :8000 and ECS marks the task unhealthy, blocking a broken rollout.
 """
+
 from __future__ import annotations
+
 import concurrent.futures
 import io
 import os
@@ -61,6 +63,7 @@ def sync_models_from_s3() -> dict | None:
     prefix = os.environ.get(_ENV_PREFIX, "models").strip("/")
     root = _repo_root()
     import boto3
+
     s3 = boto3.client("s3")
 
     print(f"[model_sync] syncing s3://{bucket}/{prefix}/{{POS}}/model.tar.gz -> {root}")

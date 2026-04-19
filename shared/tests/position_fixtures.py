@@ -31,12 +31,11 @@ Tests that assert same-seed determinism keep passing either way.
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
 import torch
-
 
 # ---------------------------------------------------------------------------
 # Marker registration
@@ -67,6 +66,7 @@ def register_position_markers(config, extra: Iterable[tuple[str, str]] | None = 
 # ---------------------------------------------------------------------------
 # RNG helpers
 # ---------------------------------------------------------------------------
+
 
 def _seed_legacy(seed: int):
     """Seed numpy's legacy global RNG and return a shim exposing ``rand``/``randn``."""
@@ -112,6 +112,7 @@ def _make_rng(seed: int, rng_kind: str):
 # make_sim_df — weekly-simulation DataFrame for backtest tests
 # ---------------------------------------------------------------------------
 
+
 def make_sim_df(
     scoring_scale: float,
     n_weeks: int = 4,
@@ -137,19 +138,22 @@ def make_sim_df(
     for week in range(1, n_weeks + 1):
         for pid in range(1, n_players + 1):
             fp = float(rng.rand() * scoring_scale)
-            rows.append({
-                "week": week,
-                "player_id": f"{id_prefix}{pid}",
-                "fantasy_points": fp,
-                "pred_ridge": fp + float(rng.randn()) * 2,
-                "pred_nn": fp + float(rng.randn()) * 3,
-            })
+            rows.append(
+                {
+                    "week": week,
+                    "player_id": f"{id_prefix}{pid}",
+                    "fantasy_points": fp,
+                    "pred_ridge": fp + float(rng.randn()) * 2,
+                    "pred_nn": fp + float(rng.randn()) * 3,
+                }
+            )
     return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------
 # make_test_df — ranking DataFrame for evaluation tests
 # ---------------------------------------------------------------------------
+
 
 def make_test_df(
     scoring_scale: float,
@@ -171,18 +175,21 @@ def make_test_df(
     rows = []
     for week in range(1, n_weeks + 1):
         for pid in range(1, n_players + 1):
-            rows.append({
-                "week": week,
-                "player_id": f"{id_prefix}{pid}",
-                "pred_total": float(rng.rand() * scoring_scale),
-                "fantasy_points": float(rng.rand() * scoring_scale),
-            })
+            rows.append(
+                {
+                    "week": week,
+                    "player_id": f"{id_prefix}{pid}",
+                    "pred_total": float(rng.rand() * scoring_scale),
+                    "fantasy_points": float(rng.rand() * scoring_scale),
+                }
+            )
     return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------
 # make_tensors — (preds, targets) dict pair for MultiTargetLoss tests
 # ---------------------------------------------------------------------------
+
 
 def make_tensors(
     targets: Iterable[str],
@@ -213,6 +220,7 @@ def make_tensors(
 # make_splits — (train, val, test) single-column DataFrames for NaN-fill
 # ---------------------------------------------------------------------------
 
+
 def make_splits(train_vals, val_vals, test_vals, col: str = "feat1"):
     """Build three single-column DataFrames for NaN-fill tests.
 
@@ -229,6 +237,7 @@ def make_splits(train_vals, val_vals, test_vals, col: str = "feat1"):
 # ---------------------------------------------------------------------------
 # make_position_df — position-encoded DataFrame for filter_to_{pos} tests
 # ---------------------------------------------------------------------------
+
 
 def make_position_df(
     positions,
@@ -247,10 +256,12 @@ def make_position_df(
     """
     data = {"position": positions, stat_col: range(len(positions))}
     if has_pos_cols:
-        data.update({
-            "pos_QB": [1 if p == "QB" else 0 for p in positions],
-            "pos_RB": [1 if p == "RB" else 0 for p in positions],
-            "pos_WR": [1 if p == "WR" else 0 for p in positions],
-            "pos_TE": [1 if p == "TE" else 0 for p in positions],
-        })
+        data.update(
+            {
+                "pos_QB": [1 if p == "QB" else 0 for p in positions],
+                "pos_RB": [1 if p == "RB" else 0 for p in positions],
+                "pos_WR": [1 if p == "WR" else 0 for p in positions],
+                "pos_TE": [1 if p == "TE" else 0 for p in positions],
+            }
+        )
     return pd.DataFrame(data)

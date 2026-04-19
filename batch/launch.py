@@ -17,6 +17,7 @@ Config (environment variables, all optional):
         a cheap CPU Spot pool for the non-NN positions.
     FF_WAIT_TIMEOUT     (default: 10800, i.e. 3h)
 """
+
 import argparse
 import hashlib
 import os
@@ -25,10 +26,10 @@ import tempfile
 import time
 import urllib.parse
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3
 from botocore.exceptions import ClientError
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- Configuration (env-var overridable) ---------------------------------
 S3_BUCKET = os.environ.get("FF_S3_BUCKET", "ff-predictor-training")
@@ -111,7 +112,9 @@ def upload_data(s3_bucket, s3_client=None, force: bool = False):
             if remote_etag is not None:
                 local_md5 = _file_md5(local_path)
                 if remote_etag == local_md5:
-                    print(f"  [skip] s3://{s3_bucket}/{s3_key} already up to date ({local_md5[:8]}...)")
+                    print(
+                        f"  [skip] s3://{s3_bucket}/{s3_key} already up to date ({local_md5[:8]}...)"
+                    )
                     skipped += 1
                     continue
         print(f"  [upload] {local_path} -> s3://{s3_bucket}/{s3_key}")
@@ -186,10 +189,7 @@ def wait_for_jobs(job_ids, timeout_seconds=None, batch_client=None):
 
     while remaining:
         if time.monotonic() > deadline:
-            print(
-                f"\nTimeout after {timeout_seconds}s; "
-                f"giving up on {list(remaining.keys())}"
-            )
+            print(f"\nTimeout after {timeout_seconds}s; giving up on {list(remaining.keys())}")
             for pos in remaining:
                 results[pos] = ("TIMED_OUT", None)
             break
@@ -296,24 +296,32 @@ def _print_plan(positions, seed):
 def main():
     parser = argparse.ArgumentParser(description="Launch AWS Batch training jobs")
     parser.add_argument(
-        "--positions", nargs="+", default=ALL_POSITIONS,
-        choices=ALL_POSITIONS, help="Positions to train",
+        "--positions",
+        nargs="+",
+        default=ALL_POSITIONS,
+        choices=ALL_POSITIONS,
+        help="Positions to train",
     )
     parser.add_argument(
-        "--wait", default="true",
+        "--wait",
+        default="true",
         help="Wait for jobs to complete (true/false)",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print planned submissions and exit without touching AWS",
     )
     parser.add_argument(
-        "--wait-timeout", type=int, default=None,
+        "--wait-timeout",
+        type=int,
+        default=None,
         help=f"Override wait timeout in seconds (default: {WAIT_TIMEOUT_SECONDS})",
     )
     parser.add_argument(
-        "--force-upload", action="store_true",
+        "--force-upload",
+        action="store_true",
         help="Upload data splits even if S3 ETag matches the local file",
     )
     args = parser.parse_args()
@@ -337,8 +345,7 @@ def main():
     job_ids = {}  # position -> job_id
     with ThreadPoolExecutor(max_workers=len(args.positions)) as pool:
         futures = {
-            pool.submit(submit_job, pos, args.seed, batch_client): pos
-            for pos in args.positions
+            pool.submit(submit_job, pos, args.seed, batch_client): pos for pos in args.positions
         }
         for future in as_completed(futures):
             pos = futures[future]
@@ -353,7 +360,9 @@ def main():
         return
 
     # Wait for all jobs to complete
-    print(f"\nWaiting for {len(job_ids)} jobs to complete (polling every {POLL_INTERVAL_SECONDS}s, timeout {wait_timeout}s)...")
+    print(
+        f"\nWaiting for {len(job_ids)} jobs to complete (polling every {POLL_INTERVAL_SECONDS}s, timeout {wait_timeout}s)..."
+    )
     results = wait_for_jobs(job_ids, timeout_seconds=wait_timeout, batch_client=batch_client)
 
     succeeded = [pos for pos, (status, _) in results.items() if status == "SUCCEEDED"]

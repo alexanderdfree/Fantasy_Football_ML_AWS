@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-from K.k_config import K_ALL_FEATURES, K_SPECIFIC_FEATURES
+
+from K.k_config import K_ALL_FEATURES
 
 
 def get_k_feature_columns() -> list[str]:
@@ -18,9 +19,7 @@ def compute_k_features(df: pd.DataFrame) -> None:
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
     # Pre-compute raw kicker total points (for rolling features)
-    df["_k_total_pts"] = (
-        df["fg_points"] + df["pat_points"] + df["miss_penalty"]
-    )
+    df["_k_total_pts"] = df["fg_points"] + df["pat_points"] + df["miss_penalty"]
 
     # Cross-season grouping (no season reset): kickers have stable multi-year
     # careers and small sample sizes per season, so cross-season windows provide
@@ -28,9 +27,11 @@ def compute_k_features(df: pd.DataFrame) -> None:
     grp = ["player_id"]
 
     # --- Feature 1: fg_attempts_L3 ---
-    df["fg_attempts_L3"] = df.groupby(grp)["fg_att"].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    ).fillna(0)
+    df["fg_attempts_L3"] = (
+        df.groupby(grp)["fg_att"]
+        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+        .fillna(0)
+    )
 
     # --- Feature 2: fg_accuracy_L5 ---
     fg_made_roll = df.groupby(grp)["fg_made"].transform(
@@ -43,22 +44,27 @@ def compute_k_features(df: pd.DataFrame) -> None:
     df.loc[fg_att_roll == 0, "fg_accuracy_L5"] = 0
 
     # --- Feature 3: pat_volume_L3 ---
-    df["pat_volume_L3"] = df.groupby(grp)["pat_att"].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    ).fillna(0)
+    df["pat_volume_L3"] = (
+        df.groupby(grp)["pat_att"]
+        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+        .fillna(0)
+    )
 
     # --- Feature 4: total_k_pts_L3 ---
-    df["total_k_pts_L3"] = df.groupby(grp)[
-        "_k_total_pts"
-    ].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    ).fillna(0)
+    df["total_k_pts_L3"] = (
+        df.groupby(grp)["_k_total_pts"]
+        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+        .fillna(0)
+    )
 
     # --- Feature 6: long_fg_rate_L3 (40+ yard FG proportion) ---
     df["_long_fg_att"] = (
-        df["fg_made_40_49"].fillna(0) + df["fg_missed_40_49"].fillna(0)
-        + df["fg_made_50_59"].fillna(0) + df["fg_missed_50_59"].fillna(0)
-        + df["fg_made_60_"].fillna(0) + df["fg_missed_60_"].fillna(0)
+        df["fg_made_40_49"].fillna(0)
+        + df["fg_missed_40_49"].fillna(0)
+        + df["fg_made_50_59"].fillna(0)
+        + df["fg_missed_50_59"].fillna(0)
+        + df["fg_made_60_"].fillna(0)
+        + df["fg_missed_60_"].fillna(0)
     )
     long_roll = df.groupby(grp)["_long_fg_att"].transform(
         lambda x: x.shift(1).rolling(3, min_periods=1).sum()
@@ -79,51 +85,69 @@ def compute_k_features(df: pd.DataFrame) -> None:
     df["k_pts_trend"] = (short - long).fillna(0)
 
     # --- Feature 8: k_pts_std_L3 (consistency) ---
-    df["k_pts_std_L3"] = df.groupby(grp)["_k_total_pts"].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=2).std()
-    ).fillna(0)
+    df["k_pts_std_L3"] = (
+        df.groupby(grp)["_k_total_pts"]
+        .transform(lambda x: x.shift(1).rolling(3, min_periods=2).std())
+        .fillna(0)
+    )
 
     # ---------------------------------------------------------------
     # PBP-derived features (Tier 1 + Tier 2)
     # ---------------------------------------------------------------
 
     # --- Tier 1: avg_fg_distance_L3 ---
-    df["avg_fg_distance_L3"] = df.groupby(grp)["avg_fg_distance"].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    ).fillna(0)
+    df["avg_fg_distance_L3"] = (
+        df.groupby(grp)["avg_fg_distance"]
+        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+        .fillna(0)
+    )
 
     # --- Tier 1: avg_fg_prob_L3 ---
-    df["avg_fg_prob_L3"] = df.groupby(grp)["avg_fg_prob"].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    ).fillna(0)
+    df["avg_fg_prob_L3"] = (
+        df.groupby(grp)["avg_fg_prob"]
+        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+        .fillna(0)
+    )
 
     # --- Tier 2: fg_pct_40plus_L5 (make% on 40+ yard FGs) ---
-    long_made_roll = df.groupby(grp)["long_fg_made"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).sum()
-    ).fillna(0)
-    long_att_roll = df.groupby(grp)["long_fg_att"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).sum()
-    ).fillna(0)
+    long_made_roll = (
+        df.groupby(grp)["long_fg_made"]
+        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).sum())
+        .fillna(0)
+    )
+    long_att_roll = (
+        df.groupby(grp)["long_fg_att"]
+        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).sum())
+        .fillna(0)
+    )
     df["fg_pct_40plus_L5"] = (long_made_roll / long_att_roll).fillna(0)
     df.loc[long_att_roll == 0, "fg_pct_40plus_L5"] = 0
 
     # --- Tier 2: q4_fg_rate_L5 (make% in 4th quarter + OT) ---
-    q4_made_roll = df.groupby(grp)["q4_fg_made"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).sum()
-    ).fillna(0)
-    q4_att_roll = df.groupby(grp)["q4_fg_att"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).sum()
-    ).fillna(0)
+    q4_made_roll = (
+        df.groupby(grp)["q4_fg_made"]
+        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).sum())
+        .fillna(0)
+    )
+    q4_att_roll = (
+        df.groupby(grp)["q4_fg_att"]
+        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).sum())
+        .fillna(0)
+    )
     df["q4_fg_rate_L5"] = (q4_made_roll / q4_att_roll).fillna(0)
     df.loc[q4_att_roll == 0, "q4_fg_rate_L5"] = 0
 
     # --- Tier 2: xp_accuracy_L5 (PAT make%) ---
-    pat_made_roll = df.groupby(grp)["pat_made"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).sum()
-    ).fillna(0)
-    pat_att_roll = df.groupby(grp)["pat_att"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).sum()
-    ).fillna(0)
+    pat_made_roll = (
+        df.groupby(grp)["pat_made"]
+        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).sum())
+        .fillna(0)
+    )
+    pat_att_roll = (
+        df.groupby(grp)["pat_att"]
+        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).sum())
+        .fillna(0)
+    )
     df["xp_accuracy_L5"] = (pat_made_roll / pat_att_roll).fillna(0)
     df.loc[pat_att_roll == 0, "xp_accuracy_L5"] = 0
 
@@ -148,9 +172,7 @@ def fill_k_nans(
 ) -> tuple:
     """Fill NaNs in kicker feature columns using training set statistics."""
     for split_df in [train_df, val_df, test_df]:
-        split_df[k_feature_cols] = split_df[k_feature_cols].replace(
-            [np.inf, -np.inf], np.nan
-        )
+        split_df[k_feature_cols] = split_df[k_feature_cols].replace([np.inf, -np.inf], np.nan)
 
     train_means = train_df[k_feature_cols].mean()
 

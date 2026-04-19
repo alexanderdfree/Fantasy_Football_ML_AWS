@@ -1,6 +1,6 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset
 
 
@@ -18,7 +18,10 @@ class Trainer:
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
         history = {
-            "train_loss": [], "val_loss": [], "val_mae": [], "val_rmse": [],
+            "train_loss": [],
+            "val_loss": [],
+            "val_mae": [],
+            "val_rmse": [],
         }
 
         for epoch in range(n_epochs):
@@ -64,9 +67,7 @@ class Trainer:
             # Early stopping
             if avg_val_loss < self.best_val_loss:
                 self.best_val_loss = avg_val_loss
-                self.best_model_state = {
-                    k: v.clone() for k, v in self.model.state_dict().items()
-                }
+                self.best_model_state = {k: v.clone() for k, v in self.model.state_dict().items()}
                 self.epochs_without_improvement = 0
             else:
                 self.epochs_without_improvement += 1
@@ -77,7 +78,7 @@ class Trainer:
 
             if (epoch + 1) % 10 == 0:
                 print(
-                    f"Epoch {epoch+1:3d} | "
+                    f"Epoch {epoch + 1:3d} | "
                     f"Train: {history['train_loss'][-1]:.4f} | "
                     f"Val: {avg_val_loss:.4f} | "
                     f"MAE: {history['val_mae'][-1]:.3f}"
@@ -112,8 +113,10 @@ def make_dataloaders(X_train, y_train, X_val, y_val, batch_size=256):
     train_ds = TensorDataset(torch.FloatTensor(X_train), torch.FloatTensor(y_train))
     val_ds = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=0, pin_memory=False)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                            num_workers=0, pin_memory=False)
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=False
+    )
     return train_loader, val_loader

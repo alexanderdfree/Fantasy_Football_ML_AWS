@@ -4,12 +4,12 @@ import json
 import os
 
 import joblib
-import numpy as np
-import pandas as pd
-from sklearn.linear_model import Ridge, LogisticRegression
-from sklearn.preprocessing import StandardScaler
 import lightgbm as lgb
 import mord
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.preprocessing import StandardScaler
 
 from src.models.linear import RidgeModel
 
@@ -66,8 +66,9 @@ class OrdinalTDClassifier:
     class probabilities.  Enforces P(Y >= k) monotonically decreasing.
     """
 
-    def __init__(self, class_values: list[float] | str = "auto",
-                 n_classes: int = 4, alpha: float = 1.0):
+    def __init__(
+        self, class_values: list[float] | str = "auto", n_classes: int = 4, alpha: float = 1.0
+    ):
         self.alpha = alpha
         self._class_values_cfg = class_values  # [0,6,12,18] or "auto"
         self._n_classes = n_classes
@@ -87,16 +88,17 @@ class OrdinalTDClassifier:
             labels = np.clip(labels, 0, self._n_classes - 1)
         return labels
 
-    def _compute_class_point_values(self, y: np.ndarray,
-                                    labels: np.ndarray) -> np.ndarray:
+    def _compute_class_point_values(self, y: np.ndarray, labels: np.ndarray) -> np.ndarray:
         """Compute empirical mean td_points for each class."""
         values = np.zeros(self._n_classes)
         for k in range(self._n_classes):
             mask = labels == k
-            values[k] = y[mask].mean() if mask.any() else (
-                self._class_values_cfg[k]
-                if isinstance(self._class_values_cfg, list)
-                else k * 5
+            values[k] = (
+                y[mask].mean()
+                if mask.any()
+                else (
+                    self._class_values_cfg[k] if isinstance(self._class_values_cfg, list) else k * 5
+                )
             )
         return values
 
@@ -104,8 +106,7 @@ class OrdinalTDClassifier:
     def fit(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
         labels = self._points_to_labels(y_train)
         self._n_classes = max(self._n_classes, labels.max() + 1)
-        self.class_point_values_ = self._compute_class_point_values(
-            y_train, labels)
+        self.class_point_values_ = self._compute_class_point_values(y_train, labels)
 
         self.scaler_ = StandardScaler()
         X_s = self.scaler_.fit_transform(X_train)
@@ -130,10 +131,9 @@ class OrdinalTDClassifier:
         linear = X_scaled @ self.clf_.coef_
 
         # P(Y <= k) for k = 0, ..., K-2
-        cum_le = np.column_stack([
-            1.0 / (1.0 + np.exp(-(theta - linear)))
-            for theta in self.clf_.theta_
-        ])  # (n, K-1)
+        cum_le = np.column_stack(
+            [1.0 / (1.0 + np.exp(-(theta - linear))) for theta in self.clf_.theta_]
+        )  # (n, K-1)
 
         proba = np.zeros((n, n_classes))
         proba[:, 0] = cum_le[:, 0]
@@ -180,9 +180,14 @@ class GatedOrdinalTDClassifier:
     Prediction: 0 when P < threshold, else E[td_points | td_points > 0].
     """
 
-    def __init__(self, class_values: list[float] | str = "auto",
-                 n_classes: int = 4, alpha: float = 1.0,
-                 clf_C: float = 0.001, threshold: float = 0.5):
+    def __init__(
+        self,
+        class_values: list[float] | str = "auto",
+        n_classes: int = 4,
+        alpha: float = 1.0,
+        clf_C: float = 0.001,
+        threshold: float = 0.5,
+    ):
         self.clf_C = clf_C
         self.threshold = threshold
         # Ordinal stage operates on classes {1, 2, 3+} (no zero class)
@@ -194,8 +199,7 @@ class GatedOrdinalTDClassifier:
         # Stage 1: binary gate
         self.scaler_gate_ = StandardScaler()
         X_s = self.scaler_gate_.fit_transform(X_train)
-        self.gate_ = LogisticRegression(C=self.clf_C, max_iter=1000,
-                                        solver="lbfgs")
+        self.gate_ = LogisticRegression(C=self.clf_C, max_iter=1000, solver="lbfgs")
         self.gate_.fit(X_s, (y_train > 0).astype(int))
 
         # Stage 2: ordinal on positives only, over {1, 2, 3+} TDs
@@ -212,8 +216,7 @@ class GatedOrdinalTDClassifier:
         self.ordinal_.fit(X_train[pos_mask], y_train[pos_mask])
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        p = self.gate_.predict_proba(
-            self.scaler_gate_.transform(X))[:, 1]
+        p = self.gate_.predict_proba(self.scaler_gate_.transform(X))[:, 1]
         ev = np.maximum(self.ordinal_.predict(X), 0)
         return np.where(p >= self.threshold, ev, 0)
 
@@ -249,11 +252,15 @@ class RidgeMultiTarget:
     Accepts a single alpha (shared) or a dict mapping target names to alphas.
     """
 
-    def __init__(self, target_names: list[str], alpha: float | dict[str, float] = 1.0,
-                 two_stage_targets: dict | None = None,
-                 classification_targets: dict | None = None,
-                 pca_n_components: int | None = None,
-                 non_negative_targets: set | None = None):
+    def __init__(
+        self,
+        target_names: list[str],
+        alpha: float | dict[str, float] = 1.0,
+        two_stage_targets: dict | None = None,
+        classification_targets: dict | None = None,
+        pca_n_components: int | None = None,
+        non_negative_targets: set | None = None,
+    ):
         self.target_names = target_names
         # Which targets are clamped to >= 0. Default: all targets.
         # Override for targets that can be negative (e.g. DST pts_allowed_bonus).
@@ -282,8 +289,9 @@ class RidgeMultiTarget:
             elif name in self._two_stage_targets:
                 self._models[name] = TwoStageRidge(**self._two_stage_targets[name])
             else:
-                self._models[name] = RidgeModel(alpha=self._alphas[name],
-                                                 pca_n_components=pca_n_components)
+                self._models[name] = RidgeModel(
+                    alpha=self._alphas[name], pca_n_components=pca_n_components
+                )
 
     def fit(self, X_train: np.ndarray, y_train_dict: dict) -> None:
         for name, model in self._models.items():
@@ -335,44 +343,62 @@ class RidgeMultiTarget:
 class LightGBMMultiTarget:
     """Separate LightGBM regressors per target (mirrors RidgeMultiTarget interface)."""
 
-    def __init__(self, target_names, n_estimators=500, learning_rate=0.05,
-                 num_leaves=31, max_depth=-1, subsample=0.8,
-                 colsample_bytree=0.8, reg_lambda=1.0, reg_alpha=0.0,
-                 min_child_samples=20, min_split_gain=0.0,
-                 objective="huber", seed=42):
+    def __init__(
+        self,
+        target_names,
+        n_estimators=500,
+        learning_rate=0.05,
+        num_leaves=31,
+        max_depth=-1,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_lambda=1.0,
+        reg_alpha=0.0,
+        min_child_samples=20,
+        min_split_gain=0.0,
+        objective="huber",
+        seed=42,
+    ):
         self.target_names = target_names
         self._params = dict(
-            n_estimators=n_estimators, learning_rate=learning_rate,
-            num_leaves=num_leaves, max_depth=max_depth,
-            subsample=subsample, colsample_bytree=colsample_bytree,
-            reg_lambda=reg_lambda, reg_alpha=reg_alpha,
+            n_estimators=n_estimators,
+            learning_rate=learning_rate,
+            num_leaves=num_leaves,
+            max_depth=max_depth,
+            subsample=subsample,
+            colsample_bytree=colsample_bytree,
+            reg_lambda=reg_lambda,
+            reg_alpha=reg_alpha,
             min_child_samples=min_child_samples,
             min_split_gain=min_split_gain,
-            objective=objective, random_state=seed, n_jobs=1,
+            objective=objective,
+            random_state=seed,
+            n_jobs=1,
             verbosity=-1,
         )
-        self._models = {name: lgb.LGBMRegressor(**self._params)
-                        for name in target_names}
+        self._models = {name: lgb.LGBMRegressor(**self._params) for name in target_names}
         self._feature_names = None
 
-    def fit(self, X_train, y_train_dict, X_val=None, y_val_dict=None,
-            feature_names=None):
+    def fit(self, X_train, y_train_dict, X_val=None, y_val_dict=None, feature_names=None):
         self._feature_names = feature_names
         for name, model in self._models.items():
-            callbacks = [lgb.early_stopping(30, verbose=False),
-                         lgb.log_evaluation(0)]
+            callbacks = [lgb.early_stopping(30, verbose=False), lgb.log_evaluation(0)]
             if X_val is not None and y_val_dict is not None:
-                model.fit(X_train, y_train_dict[name],
-                          eval_set=[(X_val, y_val_dict[name])],
-                          callbacks=callbacks)
+                model.fit(
+                    X_train,
+                    y_train_dict[name],
+                    eval_set=[(X_val, y_val_dict[name])],
+                    callbacks=callbacks,
+                )
                 print(f"  {name}: best_iteration={model.best_iteration_}")
             else:
                 model.fit(X_train, y_train_dict[name])
 
     def predict(self, X):
-        X_in = pd.DataFrame(X, columns=self._feature_names) if self._feature_names is not None else X
-        preds = {name: np.maximum(model.predict(X_in), 0)
-                 for name, model in self._models.items()}
+        X_in = (
+            pd.DataFrame(X, columns=self._feature_names) if self._feature_names is not None else X
+        )
+        preds = {name: np.maximum(model.predict(X_in), 0) for name, model in self._models.items()}
         preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
 

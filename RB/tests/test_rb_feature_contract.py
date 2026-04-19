@@ -19,13 +19,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from RB.rb_config import RB_INCLUDE_FEATURES, RB_SPECIFIC_FEATURES
 from RB.rb_features import (
     add_rb_specific_features,
-    get_rb_feature_columns,
     fill_rb_nans,
+    get_rb_feature_columns,
 )
-from RB.rb_config import RB_SPECIFIC_FEATURES, RB_INCLUDE_FEATURES
-
 
 # ---------------------------------------------------------------------------
 # Contract spec
@@ -68,23 +67,25 @@ def _build_multi_player_frame(n_players: int = 6, n_weeks: int = 8) -> pd.DataFr
             receptions = min(targets, int(max(0, rng.normal(targets * 0.7, 1))))
             rushing_yards = int(max(0, carries * rng.normal(4.2, 1.0)))
             receiving_yards = int(max(0, receptions * rng.normal(7.5, 2.0)))
-            rows.append({
-                "player_id": f"P{pid:02d}",
-                "season": 2023,
-                "week": week,
-                "recent_team": team,
-                "carries": carries,
-                "targets": targets,
-                "receptions": receptions,
-                "rushing_yards": rushing_yards,
-                "receiving_yards": receiving_yards,
-                "rushing_epa": rng.normal(0, 0.5) * max(carries, 1),
-                "rushing_first_downs": int(carries * 0.25),
-                "receiving_first_downs": int(receptions * 0.4),
-                "receiving_yards_after_catch": int(receiving_yards * 0.5),
-                "receiving_epa": rng.normal(0, 0.3) * max(receptions, 1),
-                "receiving_air_yards": int(max(0, receiving_yards * 0.8)),
-            })
+            rows.append(
+                {
+                    "player_id": f"P{pid:02d}",
+                    "season": 2023,
+                    "week": week,
+                    "recent_team": team,
+                    "carries": carries,
+                    "targets": targets,
+                    "receptions": receptions,
+                    "rushing_yards": rushing_yards,
+                    "receiving_yards": receiving_yards,
+                    "rushing_epa": rng.normal(0, 0.5) * max(carries, 1),
+                    "rushing_first_downs": int(carries * 0.25),
+                    "receiving_first_downs": int(receptions * 0.4),
+                    "receiving_yards_after_catch": int(receiving_yards * 0.5),
+                    "receiving_epa": rng.normal(0, 0.3) * max(receptions, 1),
+                    "receiving_air_yards": int(max(0, receiving_yards * 0.8)),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -111,6 +112,7 @@ def rb_featured_frame():
 # ---------------------------------------------------------------------------
 # Column-list contract
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFeatureColumnContract:
@@ -145,6 +147,7 @@ class TestFeatureColumnContract:
 # ---------------------------------------------------------------------------
 # Dtype contract
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFeatureDtypeContract:
@@ -187,9 +190,9 @@ _MAX_NAN_RATE = {
 class TestFeatureNaNContract:
     def test_no_feature_is_fully_nan(self, rb_featured_frame):
         fully_nan = [
-            col for col in RB_SPECIFIC_FEATURES
-            if col in rb_featured_frame.columns
-            and rb_featured_frame[col].isna().all()
+            col
+            for col in RB_SPECIFIC_FEATURES
+            if col in rb_featured_frame.columns and rb_featured_frame[col].isna().all()
         ]
         assert not fully_nan, f"Features fully NaN: {fully_nan}"
 
@@ -214,9 +217,7 @@ class TestFeatureNaNContract:
             nan_rate = rb_featured_frame[col].isna().mean()
             if nan_rate > ceiling:
                 offenders[col] = nan_rate
-        assert not offenders, (
-            f"L3 features exceeded {ceiling:.2f} NaN ceiling: {offenders}"
-        )
+        assert not offenders, f"L3 features exceeded {ceiling:.2f} NaN ceiling: {offenders}"
 
     def test_career_carries_nan_rate(self, rb_featured_frame):
         """career_carries is cumsum().shift(1) — one NaN per player, filled to 0."""
@@ -235,6 +236,7 @@ class TestFeatureNaNContract:
 # End-to-end invariants: fill_rb_nans produces a ready-to-train frame
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestFillRBNansInvariants:
     def test_post_fill_no_nan_in_specific_features(self):
@@ -248,18 +250,20 @@ class TestFillRBNansInvariants:
         a, b, c = fill_rb_nans(a, b, c, RB_SPECIFIC_FEATURES)
 
         for split_name, split in [("train", a), ("val", b), ("test", c)]:
-            nan_cols = [col for col in RB_SPECIFIC_FEATURES
-                        if col in split.columns and split[col].isna().any()]
+            nan_cols = [
+                col
+                for col in RB_SPECIFIC_FEATURES
+                if col in split.columns and split[col].isna().any()
+            ]
             # Allowed: all-NaN training column → train mean is NaN → propagates.
             # In this synthetic frame we do not expect any such column.
-            assert not nan_cols, (
-                f"{split_name} has NaN in specific features: {nan_cols}"
-            )
+            assert not nan_cols, f"{split_name} has NaN in specific features: {nan_cols}"
 
-            inf_cols = [col for col in RB_SPECIFIC_FEATURES
-                        if col in split.columns
-                        and pd.api.types.is_numeric_dtype(split[col])
-                        and np.isinf(split[col]).any()]
-            assert not inf_cols, (
-                f"{split_name} has inf in specific features: {inf_cols}"
-            )
+            inf_cols = [
+                col
+                for col in RB_SPECIFIC_FEATURES
+                if col in split.columns
+                and pd.api.types.is_numeric_dtype(split[col])
+                and np.isinf(split[col]).any()
+            ]
+            assert not inf_cols, f"{split_name} has inf in specific features: {inf_cols}"

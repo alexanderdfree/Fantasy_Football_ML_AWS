@@ -16,6 +16,7 @@ the moment it lands.
 Marked as ``@pytest.mark.e2e`` and ``@pytest.mark.integration`` so CI can
 gate them behind the slower test lane.
 """
+
 from __future__ import annotations
 
 import os
@@ -33,7 +34,6 @@ from tests._pipeline_e2e_utils import (
     run_pipeline_in_tmp,
 )
 
-
 # Markers (unit / integration / e2e / regression) are registered in
 # ``tests/conftest.py`` so no local pytest_configure is needed here.
 
@@ -41,6 +41,7 @@ from tests._pipeline_e2e_utils import (
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def frozen_rng():
@@ -80,6 +81,7 @@ def tiny_splits(request):
 # Helper: collect a fingerprint of model outputs for cross-run comparison
 # ---------------------------------------------------------------------------
 
+
 def _nn_state_dict_from_outputs(pos_outputs: Path, position: str) -> dict:
     """Load the NN state_dict that ``run_pipeline`` just wrote to disk."""
     pos_lower = position.lower()
@@ -92,6 +94,7 @@ def _nn_state_dict_from_outputs(pos_outputs: Path, position: str) -> dict:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.e2e
 @pytest.mark.integration
@@ -142,7 +145,10 @@ def test_nn_predictions_bit_identical(tiny_splits, position, tmp_path, frozen_rn
         t1 = torch.as_tensor(np.asarray(p1[key]))
         t2 = torch.as_tensor(np.asarray(p2[key]))
         torch.testing.assert_close(
-            t1, t2, atol=0, rtol=0,
+            t1,
+            t2,
+            atol=0,
+            rtol=0,
             msg=(
                 f"{position} NN.{key} differs across identical-seed runs — "
                 "reproducibility regression"
@@ -170,13 +176,15 @@ def test_nn_state_dict_weights_identical(tiny_splits, position, tmp_path, frozen
     sd2 = _nn_state_dict_from_outputs(run2_dir / position / "outputs", position)
 
     assert set(sd1.keys()) == set(sd2.keys()), (
-        f"{position}: state_dict key sets diverged: "
-        f"{set(sd1) ^ set(sd2)}"
+        f"{position}: state_dict key sets diverged: {set(sd1) ^ set(sd2)}"
     )
     for key, tensor1 in sd1.items():
         tensor2 = sd2[key]
         # Use atol=0, rtol=0 — bit-identical is the contract we care about.
         torch.testing.assert_close(
-            tensor1, tensor2, atol=0, rtol=0,
+            tensor1,
+            tensor2,
+            atol=0,
+            rtol=0,
             msg=f"{position} state_dict[{key!r}] differs across identical-seed runs",
         )

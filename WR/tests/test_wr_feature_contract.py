@@ -19,13 +19,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from WR.wr_config import WR_SPECIFIC_FEATURES, WR_INCLUDE_FEATURES
+from WR.wr_config import WR_INCLUDE_FEATURES, WR_SPECIFIC_FEATURES
 from WR.wr_features import (
+    _compute_wr_features,
     add_wr_specific_features,
     get_wr_feature_columns,
-    _compute_wr_features,
 )
-
 
 # ---------------------------------------------------------------------------
 # Per-feature contract: rate-type features are bounded in [0, 1]; rest are
@@ -60,19 +59,21 @@ def _make_wr_df(n_players: int = 3, n_weeks: int = 5, seed: int = 42) -> pd.Data
         for week in range(1, n_weeks + 1):
             targets = int(rng.integers(4, 12))
             receptions = int(rng.integers(1, targets + 1))
-            rows.append({
-                "player_id": f"W{p_idx}",
-                "season": 2023,
-                "week": week,
-                "recent_team": "KC",
-                "targets": targets,
-                "receptions": receptions,
-                "receiving_yards": float(rng.uniform(20, 130)),
-                "receiving_air_yards": float(rng.uniform(30, 180)),
-                "receiving_yards_after_catch": float(rng.uniform(5, 80)),
-                "receiving_epa": float(rng.normal(1.0, 2.0)),
-                "receiving_first_downs": int(rng.integers(0, receptions + 1)),
-            })
+            rows.append(
+                {
+                    "player_id": f"W{p_idx}",
+                    "season": 2023,
+                    "week": week,
+                    "recent_team": "KC",
+                    "targets": targets,
+                    "receptions": receptions,
+                    "receiving_yards": float(rng.uniform(20, 130)),
+                    "receiving_air_yards": float(rng.uniform(30, 180)),
+                    "receiving_yards_after_catch": float(rng.uniform(5, 80)),
+                    "receiving_epa": float(rng.normal(1.0, 2.0)),
+                    "receiving_first_downs": int(rng.integers(0, receptions + 1)),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -96,8 +97,7 @@ class TestWRFeatureContract:
             f"{sorted(missing_from_contract)}"
         )
         assert not extra_in_contract, (
-            f"Features in contract but not in WR_SPECIFIC_FEATURES: "
-            f"{sorted(extra_in_contract)}"
+            f"Features in contract but not in WR_SPECIFIC_FEATURES: {sorted(extra_in_contract)}"
         )
 
     def test_add_wr_specific_features_adds_all_columns(self):
@@ -109,9 +109,7 @@ class TestWRFeatureContract:
         train, val, test = add_wr_specific_features(train, val, test)
         for df, split_name in [(train, "train"), (val, "val"), (test, "test")]:
             for feat in WR_SPECIFIC_FEATURES:
-                assert feat in df.columns, (
-                    f"Feature {feat} missing from {split_name} split"
-                )
+                assert feat in df.columns, f"Feature {feat} missing from {split_name} split"
 
     def test_feature_dtypes_numeric(self):
         """All WR-specific features must be numeric (float) dtype."""
@@ -119,17 +117,13 @@ class TestWRFeatureContract:
         _compute_wr_features(df)
         for feat in WR_SPECIFIC_FEATURES:
             dtype = df[feat].dtype
-            assert np.issubdtype(dtype, np.floating), (
-                f"{feat} has non-float dtype {dtype}"
-            )
+            assert np.issubdtype(dtype, np.floating), f"{feat} has non-float dtype {dtype}"
 
     @pytest.mark.parametrize(
         "feature,min_val,max_val,max_nan_frac",
         _WR_SPECIFIC_CONTRACT,
     )
-    def test_feature_value_range_and_nan_ceiling(
-        self, feature, min_val, max_val, max_nan_frac
-    ):
+    def test_feature_value_range_and_nan_ceiling(self, feature, min_val, max_val, max_nan_frac):
         """Each feature stays within its documented range, with NaN fraction
         under the per-feature ceiling (zero for WR-specific — all NaNs are
         handled by the ratio-guard code)."""
@@ -150,20 +144,26 @@ class TestWRFeatureContract:
         # Value range
         finite_vals = series[np.isfinite(series)]
         assert (finite_vals >= min_val).all(), (
-            f"{feature} values below {min_val}: "
-            f"min={finite_vals.min():.3f}"
+            f"{feature} values below {min_val}: min={finite_vals.min():.3f}"
         )
         assert (finite_vals <= max_val).all(), (
-            f"{feature} values above {max_val}: "
-            f"max={finite_vals.max():.3f}"
+            f"{feature} values above {max_val}: max={finite_vals.max():.3f}"
         )
 
     def test_whitelist_categories_match_config_keys(self):
         """Whitelist dict keys must match the WR_INCLUDE_FEATURES schema —
         guards against silently adding a new feature category."""
         expected = {
-            "rolling", "prior_season", "ewma", "trend", "share",
-            "matchup", "defense", "contextual", "weather_vegas", "specific",
+            "rolling",
+            "prior_season",
+            "ewma",
+            "trend",
+            "share",
+            "matchup",
+            "defense",
+            "contextual",
+            "weather_vegas",
+            "specific",
         }
         assert set(WR_INCLUDE_FEATURES.keys()) == expected
 

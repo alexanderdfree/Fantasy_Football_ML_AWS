@@ -22,6 +22,7 @@ Consolidates three pieces of glue that both test files need:
 
 Ensures project root is on ``sys.path`` so tests run from any cwd.
 """
+
 from __future__ import annotations
 
 import os
@@ -72,11 +73,13 @@ _TINY_OVERRIDES: dict[str, Any] = {
 
 def _qb_tiny() -> dict:
     from QB.run_qb_pipeline import QB_CONFIG
+
     return _shrink(QB_CONFIG)
 
 
 def _rb_tiny() -> dict:
     from RB.run_rb_pipeline import RB_CONFIG
+
     return _shrink(RB_CONFIG)
 
 
@@ -84,7 +87,9 @@ def _wr_tiny() -> dict:
     """WR config — prefer WR_CONFIG_TINY if present, else shrink WR_CONFIG."""
     from WR.wr_data import filter_to_wr
     from WR.wr_features import (
-        add_wr_specific_features, fill_wr_nans, get_wr_feature_columns,
+        add_wr_specific_features,
+        fill_wr_nans,
+        get_wr_feature_columns,
     )
     from WR.wr_targets import compute_wr_fumble_adjustment, compute_wr_targets
 
@@ -98,9 +103,11 @@ def _wr_tiny() -> dict:
     }
     try:
         from WR.wr_config import WR_CONFIG_TINY
+
         cfg = dict(WR_CONFIG_TINY)
     except ImportError:
         from WR.run_wr_pipeline import WR_CONFIG
+
         cfg = _shrink(WR_CONFIG)
     cfg.update(callables)
     return cfg
@@ -110,9 +117,11 @@ def _te_tiny() -> dict:
     """TE config — use TE_CONFIG_TINY if exposed, else shrink TE_CONFIG inline."""
     from TE.te_data import filter_to_te
     from TE.te_features import (
-        add_te_specific_features, fill_te_nans, get_te_feature_columns,
+        add_te_specific_features,
+        fill_te_nans,
+        get_te_feature_columns,
     )
-    from TE.te_targets import compute_te_targets, compute_te_fumble_adjustment
+    from TE.te_targets import compute_te_fumble_adjustment, compute_te_targets
 
     callables = {
         "filter_fn": filter_to_te,
@@ -124,9 +133,11 @@ def _te_tiny() -> dict:
     }
     try:
         from TE.te_config import TE_CONFIG_TINY
+
         cfg = dict(TE_CONFIG_TINY)
     except ImportError:
         from TE.run_te_pipeline import TE_CONFIG
+
         cfg = _shrink(TE_CONFIG)
     cfg.update(callables)
     return cfg
@@ -136,19 +147,27 @@ def _k_tiny() -> dict:
     """K config — use K_CONFIG_TINY if exposed, else build a shrunk cfg from k_config.py."""
     from K.k_data import filter_to_k
     from K.k_features import (
-        add_k_specific_features, fill_k_nans, get_k_feature_columns,
+        add_k_specific_features,
+        fill_k_nans,
+        get_k_feature_columns,
     )
     from K.k_targets import compute_k_miss_adjustment, compute_k_targets
 
     try:
         from K.k_config import K_CONFIG_TINY
+
         cfg = dict(K_CONFIG_TINY)
     except ImportError:
         # Build a fresh tiny config from the exported config module constants.
         from K.k_config import (
-            K_TARGETS, K_LOSS_WEIGHTS, K_LOSS_W_TOTAL, K_HUBER_DELTAS,
-            K_SPECIFIC_FEATURES, K_CV_SPLIT_COLUMN,
+            K_CV_SPLIT_COLUMN,
+            K_HUBER_DELTAS,
+            K_LOSS_W_TOTAL,
+            K_LOSS_WEIGHTS,
+            K_SPECIFIC_FEATURES,
+            K_TARGETS,
         )
+
         cfg = {
             "targets": K_TARGETS,
             "specific_features": K_SPECIFIC_FEATURES,
@@ -160,28 +179,35 @@ def _k_tiny() -> dict:
         }
         cfg.update(_TINY_OVERRIDES)
 
-    cfg.update({
-        "filter_fn": filter_to_k,
-        "compute_targets_fn": compute_k_targets,
-        "add_features_fn": add_k_specific_features,
-        "fill_nans_fn": fill_k_nans,
-        "get_feature_columns_fn": get_k_feature_columns,
-        "compute_adjustment_fn": compute_k_miss_adjustment,
-    })
+    cfg.update(
+        {
+            "filter_fn": filter_to_k,
+            "compute_targets_fn": compute_k_targets,
+            "add_features_fn": add_k_specific_features,
+            "fill_nans_fn": fill_k_nans,
+            "get_feature_columns_fn": get_k_feature_columns,
+            "compute_adjustment_fn": compute_k_miss_adjustment,
+        }
+    )
     return cfg
 
 
 def _dst_tiny() -> dict:
     """DST config — use DST_CONFIG_TINY if exposed, else build a shrunk cfg inline."""
+    from DST.dst_config import (
+        DST_HUBER_DELTAS,
+        DST_LOSS_W_TOTAL,
+        DST_LOSS_WEIGHTS,
+        DST_SPECIFIC_FEATURES,
+        DST_TARGETS,
+    )
     from DST.dst_data import filter_to_dst
     from DST.dst_features import (
-        add_dst_specific_features, fill_dst_nans, get_dst_feature_columns,
+        add_dst_specific_features,
+        fill_dst_nans,
+        get_dst_feature_columns,
     )
     from DST.dst_targets import compute_dst_adjustment, compute_dst_targets
-    from DST.dst_config import (
-        DST_HUBER_DELTAS, DST_LOSS_WEIGHTS, DST_LOSS_W_TOTAL,
-        DST_SPECIFIC_FEATURES, DST_TARGETS,
-    )
 
     cfg = {
         "targets": DST_TARGETS,
@@ -201,6 +227,7 @@ def _dst_tiny() -> dict:
 
     try:
         from DST.dst_config import DST_CONFIG_TINY
+
         cfg.update(DST_CONFIG_TINY)
     except ImportError:
         # DST_CONFIG_TINY not exposed; the generic tiny overrides above suffice.
@@ -253,9 +280,7 @@ _SPLITS_DIR = Path(_PROJECT_ROOT) / "data" / "splits"
 def _top_n_players(df: pd.DataFrame, n: int) -> pd.Index:
     """Return the ``n`` player_ids with the most rows in ``df`` (stable order)."""
     return (
-        df.groupby("player_id").size().sort_values(
-            ascending=False, kind="mergesort"
-        ).head(n).index
+        df.groupby("player_id").size().sort_values(ascending=False, kind="mergesort").head(n).index
     )
 
 
@@ -273,17 +298,14 @@ def _load_player_splits(
     # Train: take the most recent 2 seasons to bound runtime
     recent_seasons = sorted(pos_train_all["season"].unique())[-2:]
     pos_train = pos_train_all[
-        pos_train_all["season"].isin(recent_seasons)
-        & pos_train_all["player_id"].isin(top_players)
+        pos_train_all["season"].isin(recent_seasons) & pos_train_all["player_id"].isin(top_players)
     ].copy()
 
     pos_val = val_full[
-        (val_full["position"] == position)
-        & val_full["player_id"].isin(top_players)
+        (val_full["position"] == position) & val_full["player_id"].isin(top_players)
     ].copy()
     pos_test = test_full[
-        (test_full["position"] == position)
-        & test_full["player_id"].isin(top_players)
+        (test_full["position"] == position) & test_full["player_id"].isin(top_players)
     ].copy()
 
     # Fallback: if val or test are too small (test set has different players),
@@ -367,6 +389,7 @@ def load_tiny_splits(position: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
 # Pipeline invocation with isolated cwd
 # ---------------------------------------------------------------------------
 
+
 def run_pipeline_in_tmp(
     position: str,
     cfg: dict,
@@ -392,8 +415,11 @@ def run_pipeline_in_tmp(
         if not data_link.exists():
             data_link.symlink_to(Path(cwd) / "data", target_is_directory=True)
         return run_pipeline(
-            position, cfg,
-            train_df.copy(), val_df.copy(), test_df.copy(),
+            position,
+            cfg,
+            train_df.copy(),
+            val_df.copy(),
+            test_df.copy(),
             seed=seed,
         )
     finally:

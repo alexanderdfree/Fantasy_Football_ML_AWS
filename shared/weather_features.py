@@ -5,9 +5,9 @@ Used by the Weather NN — an exact copy of each position's NN except with
 these additional features appended to the input.
 """
 
-import os
 import numpy as np
 import pandas as pd
+
 from src.config import CACHE_DIR, SEASONS
 
 # ---------------------------------------------------------------------------
@@ -31,8 +31,7 @@ WEATHER_FEATURES_ALL = [
 # Per-position drops (from docs/design_weather_and_odds.md feature table)
 WEATHER_DROPS_BY_POSITION = {
     "QB": {"is_grass"},
-    "RB": {"is_dome", "temp_adjusted", "wind_adjusted",
-           "implied_total_x_wind"},
+    "RB": {"is_dome", "temp_adjusted", "wind_adjusted", "implied_total_x_wind"},
     "WR": {"is_grass"},
     "TE": {"is_grass", "temp_adjusted", "wind_adjusted", "implied_total_x_wind"},
 }
@@ -44,6 +43,7 @@ _schedule_cache = None
 # ---------------------------------------------------------------------------
 # Schedule loading and merge
 # ---------------------------------------------------------------------------
+
 
 def _load_schedules() -> pd.DataFrame:
     """Load and cache schedule data from the raw parquet."""
@@ -60,9 +60,19 @@ def _load_schedules() -> pd.DataFrame:
 
 def _build_team_schedule_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
     """Reshape game-level schedule to team-level rows (home + away)."""
-    cols = ["season", "week", "spread_line", "total_line",
-            "roof", "surface", "temp", "wind",
-            "home_rest", "away_rest", "div_game"]
+    cols = [
+        "season",
+        "week",
+        "spread_line",
+        "total_line",
+        "roof",
+        "surface",
+        "temp",
+        "wind",
+        "home_rest",
+        "away_rest",
+        "div_game",
+    ]
     sched = schedules[cols + ["home_team", "away_team"]].copy()
 
     # Home team rows
@@ -83,9 +93,22 @@ def _build_team_schedule_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
     away["implied_team_total"] = (away["total_line"] + away["spread_line"]) / 2
 
     lookup = pd.concat([home, away], ignore_index=True)
-    keep = ["season", "week", "recent_team", "is_home_sched",
-            "spread_line", "total_line", "roof", "surface", "temp", "wind",
-            "team_rest", "opp_rest", "div_game", "implied_team_total"]
+    keep = [
+        "season",
+        "week",
+        "recent_team",
+        "is_home_sched",
+        "spread_line",
+        "total_line",
+        "roof",
+        "surface",
+        "temp",
+        "wind",
+        "team_rest",
+        "opp_rest",
+        "div_game",
+        "implied_team_total",
+    ]
     return lookup[keep].drop_duplicates(subset=["season", "week", "recent_team"])
 
 
@@ -116,14 +139,22 @@ def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Guard against row duplication from merge
     if len(df_merged) != n_before:
-        df_merged = df_merged.drop_duplicates(
-            subset=["player_id", "season", "week"], keep="first"
-        )
+        df_merged = df_merged.drop_duplicates(subset=["player_id", "season", "week"], keep="first")
 
     # Copy merged columns back into original df (preserve index)
-    merge_cols = ["spread_line", "total_line", "roof", "surface", "temp", "wind",
-                  "team_rest", "opp_rest", "div_game", "is_home_sched",
-                  "implied_team_total"]
+    merge_cols = [
+        "spread_line",
+        "total_line",
+        "roof",
+        "surface",
+        "temp",
+        "wind",
+        "team_rest",
+        "opp_rest",
+        "div_game",
+        "is_home_sched",
+        "implied_team_total",
+    ]
     for col in merge_cols:
         if col in df_merged.columns:
             df[col] = df_merged[col].values
@@ -136,12 +167,10 @@ def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     df["is_dome"] = df["roof"].isin(["dome", "closed"]).astype(int) if "roof" in df.columns else 0
     df["is_grass"] = (df["surface"] == "grass").astype(int) if "surface" in df.columns else 0
     df["temp_adjusted"] = np.where(
-        df["is_dome"] == 1, 65.0,
-        df["temp"].fillna(65.0) if "temp" in df.columns else 65.0
+        df["is_dome"] == 1, 65.0, df["temp"].fillna(65.0) if "temp" in df.columns else 65.0
     )
     df["wind_adjusted"] = np.where(
-        df["is_dome"] == 1, 0.0,
-        df["wind"].fillna(0.0) if "wind" in df.columns else 0.0
+        df["is_dome"] == 1, 0.0, df["wind"].fillna(0.0) if "wind" in df.columns else 0.0
     )
     df["is_divisional"] = df["div_game"].fillna(0).astype(int) if "div_game" in df.columns else 0
 
@@ -149,7 +178,9 @@ def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
     team_rest = df["team_rest"].fillna(7) if "team_rest" in df.columns else 7
     opp_rest = df["opp_rest"].fillna(7) if "opp_rest" in df.columns else 7
     df["days_rest_improved"] = pd.to_numeric(team_rest, errors="coerce").fillna(7).clip(4, 21)
-    df["rest_advantage"] = df["days_rest_improved"] - pd.to_numeric(opp_rest, errors="coerce").fillna(7)
+    df["rest_advantage"] = df["days_rest_improved"] - pd.to_numeric(
+        opp_rest, errors="coerce"
+    ).fillna(7)
 
     # --- Interaction features ---
     wind_factor = (1 - df["wind_adjusted"] / 40).clip(0, 1)
@@ -166,8 +197,17 @@ def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
         df["is_home"] = df["is_home_sched"].fillna(0).astype(int)
 
     # Clean up intermediate merge columns
-    for col in ["spread_line", "roof", "surface", "temp", "wind",
-                "team_rest", "opp_rest", "div_game", "is_home_sched"]:
+    for col in [
+        "spread_line",
+        "roof",
+        "surface",
+        "temp",
+        "wind",
+        "team_rest",
+        "opp_rest",
+        "div_game",
+        "is_home_sched",
+    ]:
         if col in df.columns:
             df.drop(columns=[col], inplace=True, errors="ignore")
 
@@ -178,6 +218,7 @@ def merge_schedule_features(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Feature column selection
 # ---------------------------------------------------------------------------
+
 
 def get_weather_feature_columns(position: str, base_cols: list[str]) -> list[str]:
     """Return base feature columns plus position-appropriate weather features.

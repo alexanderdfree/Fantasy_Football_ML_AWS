@@ -31,5 +31,7 @@ def print_comparison_table(results: dict) -> None:
     print(f"{'Model':<25} {'MAE':>8} {'RMSE':>8} {'R2':>8}")
     print("-" * 52)
     for model_name, metrics in results.items():
-        print(f"{model_name:<25} {metrics['mae']:>8.3f} {metrics['rmse']:>8.3f} {metrics['r2']:>8.3f}")
+        print(
+            f"{model_name:<25} {metrics['mae']:>8.3f} {metrics['rmse']:>8.3f} {metrics['r2']:>8.3f}"
+        )
     print("=" * 60)

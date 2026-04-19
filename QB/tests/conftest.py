@@ -18,10 +18,20 @@ if PROJECT_ROOT not in sys.path:
 from QB.qb_config import QB_TARGETS  # noqa: E402
 from shared.tests.position_fixtures import (  # noqa: E402
     make_position_df as _make_position_df,
+)
+from shared.tests.position_fixtures import (
     make_sim_df as _make_sim_df,
+)
+from shared.tests.position_fixtures import (
     make_splits as _make_splits,
+)
+from shared.tests.position_fixtures import (
     make_tensors as _make_tensors,
+)
+from shared.tests.position_fixtures import (
     make_test_df as _make_test_df,
+)
+from shared.tests.position_fixtures import (
     register_position_markers,
 )
 
@@ -37,6 +47,7 @@ def pytest_configure(config):
 def make_sim_df():
     def _make(n_weeks=4, n_players=15, seed=42):
         return _make_sim_df(QB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="QB")
+
     return _make
 
 
@@ -44,6 +55,7 @@ def make_sim_df():
 def make_test_df():
     def _make(n_weeks=3, n_players=15, seed=42):
         return _make_test_df(QB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="QB")
+
     return _make
 
 
@@ -51,6 +63,7 @@ def make_test_df():
 def make_tensors():
     def _make(n=10, seed=42):
         return _make_tensors(QB_TARGETS, n=n, seed=seed)
+
     return _make
 
 
@@ -63,4 +76,5 @@ def make_splits():
 def make_df():
     def _make(positions, has_pos_cols=True):
         return _make_position_df(positions, stat_col="passing_yards", has_pos_cols=has_pos_cols)
+
     return _make

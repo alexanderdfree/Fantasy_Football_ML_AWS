@@ -37,21 +37,21 @@ import pandas as pd
 import pytest
 
 from DST.dst_config import (
-    DST_TARGETS,
+    DST_CONFIG_TINY,
+    DST_HUBER_DELTAS,
+    DST_LOSS_WEIGHTS,
     DST_RIDGE_ALPHA_GRIDS,
     DST_SPECIFIC_FEATURES,
-    DST_CONFIG_TINY,
-    DST_LOSS_WEIGHTS,
-    DST_HUBER_DELTAS,
+    DST_TARGETS,
 )
 from DST.dst_data import filter_to_dst
-from DST.dst_targets import compute_dst_targets, compute_dst_adjustment
 from DST.dst_features import (
-    compute_dst_features,
     add_dst_specific_features,
-    get_dst_feature_columns,
+    compute_dst_features,
     fill_dst_nans,
+    get_dst_feature_columns,
 )
+from DST.dst_targets import compute_dst_adjustment, compute_dst_targets
 from DST.tests.conftest import _build_tiny_dst_dataset
 from shared.pipeline import run_pipeline
 
@@ -69,19 +69,25 @@ def _build_synthetic_schedules(df: pd.DataFrame) -> pd.DataFrame:
     # One row per (season, week, home_team, away_team) combo in the tiny
     # dataset.  Derive home/away from the 'is_home' flag we stamped in.
     home = df[df["is_home"] == 1][
-        ["season", "week", "team", "opponent_team", "spread_line", "total_line",
-         "rest_days", "div_game", "is_dome"]
-    ].rename(columns={"team": "home_team", "opponent_team": "away_team",
-                      "rest_days": "home_rest"})
+        [
+            "season",
+            "week",
+            "team",
+            "opponent_team",
+            "spread_line",
+            "total_line",
+            "rest_days",
+            "div_game",
+            "is_dome",
+        ]
+    ].rename(columns={"team": "home_team", "opponent_team": "away_team", "rest_days": "home_rest"})
     away = df[df["is_home"] == 0][["season", "week", "team", "rest_days"]].rename(
         columns={"team": "away_team", "rest_days": "away_rest"}
     )
-    sched = home.merge(
-        away, on=["season", "week", "away_team"], how="left"
-    )
+    sched = home.merge(away, on=["season", "week", "away_team"], how="left")
     sched["away_rest"] = sched["away_rest"].fillna(7).astype(int)
     sched["game_type"] = "REG"
-    sched["roof"] = "outdoors"   # we leave is_dome flag inside the DST df
+    sched["roof"] = "outdoors"  # we leave is_dome flag inside the DST df
     sched["surface"] = "grass"
     sched["temp"] = 65.0
     sched["wind"] = 5.0
@@ -152,6 +158,7 @@ def tiny_cwd(tmp_path, monkeypatch, tiny_dst_dataset):
     # replace _load_schedules so the initial path-open never happens.
     synthetic_sched = _build_synthetic_schedules(tiny_dst_dataset)
     from shared import weather_features as _wf
+
     monkeypatch.setattr(_wf, "_schedule_cache", synthetic_sched)
     monkeypatch.setattr(_wf, "_load_schedules", lambda: synthetic_sched)
     return tmp_path
@@ -186,17 +193,12 @@ class TestDSTPipelineE2E:
             preds = result["per_target_preds"][model_key]
             assert "total" in preds
             assert preds["total"].shape == (n_test,), (
-                f"{model_key} total-pred shape {preds['total'].shape} != "
-                f"({n_test},)"
+                f"{model_key} total-pred shape {preds['total'].shape} != ({n_test},)"
             )
-            assert np.isfinite(preds["total"]).all(), (
-                f"{model_key} total contains NaN/inf"
-            )
+            assert np.isfinite(preds["total"]).all(), f"{model_key} total contains NaN/inf"
             for t in DST_TARGETS:
                 assert preds[t].shape == (n_test,)
-                assert np.isfinite(preds[t]).all(), (
-                    f"{model_key}.{t} contains NaN/inf"
-                )
+                assert np.isfinite(preds[t]).all(), f"{model_key}.{t} contains NaN/inf"
 
     def test_same_seed_bit_identical_predictions(self, tiny_cwd):
         """Two runs with seed=42 must produce bit-identical Ridge + NN totals.
@@ -217,7 +219,8 @@ class TestDSTPipelineE2E:
         np.testing.assert_allclose(
             r1["per_target_preds"]["ridge"]["total"],
             r2["per_target_preds"]["ridge"]["total"],
-            atol=0.0, rtol=0.0,
+            atol=0.0,
+            rtol=0.0,
             err_msg="Ridge predictions drifted across runs with same seed",
         )
         # NN reproducibility — should be bit-identical on CPU with the same
@@ -226,7 +229,8 @@ class TestDSTPipelineE2E:
         np.testing.assert_allclose(
             r1["per_target_preds"]["nn"]["total"],
             r2["per_target_preds"]["nn"]["total"],
-            atol=1e-6, rtol=0.0,
+            atol=1e-6,
+            rtol=0.0,
             err_msg="NN predictions drifted >1e-6 across runs with same seed",
         )
 

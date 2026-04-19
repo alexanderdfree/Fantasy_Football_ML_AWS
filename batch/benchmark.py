@@ -9,6 +9,7 @@ Usage:
     python batch/benchmark.py --positions RB WR QB     # subset
     python batch/benchmark.py --note "attention + LGBM on GPU"
 """
+
 import argparse
 import datetime
 import json
@@ -24,19 +25,17 @@ import boto3
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from batch.launch import (
-    S3_BUCKET,
-    JOB_QUEUE,
-    JOB_DEFINITION,
     ALL_POSITIONS,
     AWS_REGION,
-    POLL_INTERVAL_SECONDS,
-    TERMINAL_STATES,
-    upload_data,
+    S3_BUCKET,
     submit_job,
+    upload_data,
     wait_for_jobs,
 )
 from shared.benchmark_utils import (
-    append_to_history, get_git_hash, print_comparison_table,
+    append_to_history,
+    get_git_hash,
+    print_comparison_table,
     summarize_pipeline_result,
 )
 
@@ -78,21 +77,28 @@ def download_metrics(positions):
 def main():
     parser = argparse.ArgumentParser(description="AWS Batch benchmark")
     parser.add_argument(
-        "--positions", nargs="+", default=ALL_POSITIONS,
-        choices=ALL_POSITIONS, help="Positions to benchmark",
+        "--positions",
+        nargs="+",
+        default=ALL_POSITIONS,
+        choices=ALL_POSITIONS,
+        help="Positions to benchmark",
     )
     parser.add_argument("--note", default="", help="Describe what changed")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(
-        "--download-only", action="store_true",
+        "--download-only",
+        action="store_true",
         help="Skip launching jobs; download metrics from latest artifacts",
     )
     parser.add_argument(
-        "--backend", choices=["batch", "ec2"], default="batch",
+        "--backend",
+        choices=["batch", "ec2"],
+        default="batch",
         help="Backend label recorded in benchmark_history.json",
     )
     parser.add_argument(
-        "--instance-type", default="g4dn.xlarge (Spot)",
+        "--instance-type",
+        default="g4dn.xlarge (Spot)",
         help="Instance-type label recorded in benchmark_history.json",
     )
     args = parser.parse_args()
@@ -110,10 +116,7 @@ def main():
         print(f"Submitting {len(args.positions)} benchmark jobs: {args.positions}")
         job_ids = {}
         with ThreadPoolExecutor(max_workers=len(args.positions)) as pool:
-            futures = {
-                pool.submit(submit_job, pos, args.seed): pos
-                for pos in args.positions
-            }
+            futures = {pool.submit(submit_job, pos, args.seed): pos for pos in args.positions}
             for future in as_completed(futures):
                 pos = futures[future]
                 try:
@@ -146,7 +149,9 @@ def main():
             summaries.append(summarize_pipeline_result(pos, all_metrics[pos]))
 
     print_comparison_table(
-        summaries, header="AWS Batch Benchmark Results (MAE / R2)", show_time=False,
+        summaries,
+        header="AWS Batch Benchmark Results (MAE / R2)",
+        show_time=False,
     )
 
     with open(RESULTS_FILE, "w") as f:
@@ -155,16 +160,19 @@ def main():
 
     git_hash = get_git_hash()
     now = datetime.datetime.now().isoformat(timespec="seconds")
-    append_to_history(HISTORY_FILE, {
-        "run_id": f"{now}_{git_hash}",
-        "timestamp": now,
-        "git_hash": git_hash,
-        "note": args.note or f"AWS {args.backend} benchmark",
-        "backend": args.backend,
-        "instance_type": args.instance_type,
-        "positions": [s["position"] for s in summaries],
-        "results": summaries,
-    })
+    append_to_history(
+        HISTORY_FILE,
+        {
+            "run_id": f"{now}_{git_hash}",
+            "timestamp": now,
+            "git_hash": git_hash,
+            "note": args.note or f"AWS {args.backend} benchmark",
+            "backend": args.backend,
+            "instance_type": args.instance_type,
+            "positions": [s["position"] for s in summaries],
+            "results": summaries,
+        },
+    )
 
 
 if __name__ == "__main__":

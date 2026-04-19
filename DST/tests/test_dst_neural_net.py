@@ -6,8 +6,8 @@ clamp only applies to defensive_scoring and td_points per DST_NN_NON_NEGATIVE_TA
 """
 
 import numpy as np
-import torch
 import pytest
+import torch
 
 from shared.neural_net import MultiHeadNet
 
@@ -19,8 +19,11 @@ class TestMultiHeadNet:
     @pytest.fixture
     def model(self):
         return MultiHeadNet(
-            input_dim=10, target_names=DST_TARGETS,
-            backbone_layers=[32, 16], head_hidden=8, dropout=0.1,
+            input_dim=10,
+            target_names=DST_TARGETS,
+            backbone_layers=[32, 16],
+            head_hidden=8,
+            dropout=0.1,
         )
 
     def test_output_keys(self, model):
@@ -45,7 +48,8 @@ class TestMultiHeadNet:
 
     def test_custom_backbone(self):
         model = MultiHeadNet(
-            input_dim=5, target_names=DST_TARGETS,
+            input_dim=5,
+            target_names=DST_TARGETS,
             backbone_layers=[64, 32, 16],
         )
         x = torch.randn(2, 5)
@@ -54,7 +58,8 @@ class TestMultiHeadNet:
 
     def test_single_sample_eval_mode(self):
         model = MultiHeadNet(
-            input_dim=10, target_names=DST_TARGETS,
+            input_dim=10,
+            target_names=DST_TARGETS,
             backbone_layers=[16, 8],
         )
         model.eval()
@@ -65,7 +70,8 @@ class TestMultiHeadNet:
 
     def test_predict_numpy(self):
         model = MultiHeadNet(
-            input_dim=10, target_names=DST_TARGETS,
+            input_dim=10,
+            target_names=DST_TARGETS,
             backbone_layers=[16, 8],
         )
         X = np.random.randn(5, 10).astype(np.float32)
@@ -79,7 +85,8 @@ class TestMultiHeadNet:
 
     def test_predict_numpy_single_sample(self):
         model = MultiHeadNet(
-            input_dim=5, target_names=DST_TARGETS,
+            input_dim=5,
+            target_names=DST_TARGETS,
             backbone_layers=[8, 4],
         )
         X = np.random.randn(1, 5).astype(np.float32)
@@ -97,8 +104,11 @@ class TestMultiHeadNet:
 
     def test_gradient_near_zero(self):
         model = MultiHeadNet(
-            input_dim=5, target_names=DST_TARGETS,
-            backbone_layers=[16], head_hidden=4, dropout=0.0,
+            input_dim=5,
+            target_names=DST_TARGETS,
+            backbone_layers=[16],
+            head_hidden=4,
+            dropout=0.0,
         )
         model.train()
         torch.manual_seed(0)
@@ -114,8 +124,11 @@ class TestMultiHeadNet:
     def test_dst_config_backbone(self):
         """DST config uses [128, 64] backbone with per-target head overrides."""
         model = MultiHeadNet(
-            input_dim=10, target_names=DST_TARGETS,
-            backbone_layers=[128, 64], head_hidden=32, dropout=0.30,
+            input_dim=10,
+            target_names=DST_TARGETS,
+            backbone_layers=[128, 64],
+            head_hidden=32,
+            dropout=0.30,
             head_hidden_overrides={"td_points": 16, "pts_allowed_bonus": 48},
         )
         model.eval()
@@ -128,8 +141,10 @@ class TestMultiHeadNet:
 
     def test_dropout_effect(self):
         model = MultiHeadNet(
-            input_dim=10, target_names=DST_TARGETS,
-            backbone_layers=[32, 16], dropout=0.5,
+            input_dim=10,
+            target_names=DST_TARGETS,
+            backbone_layers=[32, 16],
+            dropout=0.5,
         )
         x = torch.randn(8, 10)
 
@@ -146,8 +161,11 @@ class TestMultiHeadNet:
     def test_selective_non_negative_targets(self):
         """Only selected targets should be clamped (pts_allowed_bonus can be negative)."""
         model = MultiHeadNet(
-            input_dim=10, target_names=DST_TARGETS,
-            backbone_layers=[32, 16], head_hidden=8, dropout=0.0,
+            input_dim=10,
+            target_names=DST_TARGETS,
+            backbone_layers=[32, 16],
+            head_hidden=8,
+            dropout=0.0,
             non_negative_targets={"defensive_scoring", "td_points"},  # not pts_allowed_bonus
         )
         model.eval()
@@ -163,8 +181,11 @@ class TestMultiHeadNet:
     def test_default_clamp_all(self):
         """Default (no non_negative_targets arg) — all targets clamped to >=0."""
         model = MultiHeadNet(
-            input_dim=10, target_names=DST_TARGETS,
-            backbone_layers=[32, 16], head_hidden=8, dropout=0.1,
+            input_dim=10,
+            target_names=DST_TARGETS,
+            backbone_layers=[32, 16],
+            head_hidden=8,
+            dropout=0.1,
         )
         model.eval()
         x = torch.randn(4, 10)
@@ -192,8 +213,10 @@ class TestMultiHeadNet:
     def test_head_hidden_overrides(self):
         """DST uses per-target head overrides — td_points smaller, pts_allowed_bonus wider."""
         model = MultiHeadNet(
-            input_dim=10, target_names=DST_TARGETS,
-            backbone_layers=[32, 16], head_hidden=16,
+            input_dim=10,
+            target_names=DST_TARGETS,
+            backbone_layers=[32, 16],
+            head_hidden=16,
             head_hidden_overrides={"td_points": 8, "pts_allowed_bonus": 48},
         )
         x = torch.randn(4, 10)

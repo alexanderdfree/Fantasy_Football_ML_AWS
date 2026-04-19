@@ -21,9 +21,17 @@ if PROJECT_ROOT not in sys.path:
 from K.k_config import K_TARGETS  # noqa: E402
 from shared.tests.position_fixtures import (  # noqa: E402
     make_sim_df as _make_sim_df,
+)
+from shared.tests.position_fixtures import (
     make_splits as _make_splits,
+)
+from shared.tests.position_fixtures import (
     make_tensors as _make_tensors,
+)
+from shared.tests.position_fixtures import (
     make_test_df as _make_test_df,
+)
+from shared.tests.position_fixtures import (
     register_position_markers,
 )
 
@@ -39,6 +47,7 @@ def pytest_configure(config):
 # Generic K fixtures — bound to K scale / prefix / targets
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session")
 def make_sim_df():
     """Factory fixture: build a simulated kicker DataFrame.
@@ -47,10 +56,17 @@ def make_sim_df():
         def test_foo(make_sim_df):
             df = make_sim_df(n_weeks=3, n_players=15)
     """
+
     def _make(n_weeks: int, n_players: int, seed: int = 42):
         return _make_sim_df(
-            K_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="K", rng_kind="default",
+            K_SCORING_SCALE,
+            n_weeks,
+            n_players,
+            seed,
+            id_prefix="K",
+            rng_kind="default",
         )
+
     return _make
 
 
@@ -63,10 +79,17 @@ def sim_df(make_sim_df):
 @pytest.fixture(scope="session")
 def make_test_df():
     """Factory fixture: build a ranking-test DataFrame."""
+
     def _make(n_weeks: int, n_players: int, seed: int = 42):
         return _make_test_df(
-            K_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="K", rng_kind="default",
+            K_SCORING_SCALE,
+            n_weeks,
+            n_players,
+            seed,
+            id_prefix="K",
+            rng_kind="default",
         )
+
     return _make
 
 
@@ -83,8 +106,10 @@ def make_tensors():
     Tensor fixtures are function-scoped because backward() accumulates grads —
     sharing would leak state across tests.
     """
+
     def _make(n: int = 10, seed: int = 42):
         return _make_tensors(K_TARGETS, n=n, seed=seed)
+
     return _make
 
 
@@ -97,6 +122,7 @@ def make_splits():
 # ---------------------------------------------------------------------------
 # K-specific fixtures (not generic)
 # ---------------------------------------------------------------------------
+
 
 def _build_kicker_games(
     player_id: str = "K1",
@@ -124,27 +150,29 @@ def _build_kicker_games(
     Includes pre-computed targets (fg_points, pat_points, miss_penalty) — the
     feature pipeline reads them to build rolling total-points statistics.
     """
-    df = pd.DataFrame({
-        "player_id": [player_id] * n_weeks,
-        "season": [season] * n_weeks,
-        "week": list(range(1, n_weeks + 1)),
-        "fg_att": [fg_att] * n_weeks,
-        "fg_made": [fg_made] * n_weeks,
-        "pat_att": [pat_att] * n_weeks,
-        "pat_made": [pat_made] * n_weeks,
-        "fg_made_40_49": [fg_made_40_49] * n_weeks,
-        "fg_made_50_59": [fg_made_50_59] * n_weeks,
-        "fg_made_60_": [fg_made_60_] * n_weeks,
-        "fg_missed_40_49": [fg_missed_40_49] * n_weeks,
-        "fg_missed_50_59": [fg_missed_50_59] * n_weeks,
-        "fg_missed_60_": [fg_missed_60_] * n_weeks,
-        "avg_fg_distance": [avg_fg_distance] * n_weeks,
-        "avg_fg_prob": [avg_fg_prob] * n_weeks,
-        "long_fg_att": [long_fg_att] * n_weeks,
-        "long_fg_made": [long_fg_made] * n_weeks,
-        "q4_fg_att": [q4_fg_att] * n_weeks,
-        "q4_fg_made": [q4_fg_made] * n_weeks,
-    })
+    df = pd.DataFrame(
+        {
+            "player_id": [player_id] * n_weeks,
+            "season": [season] * n_weeks,
+            "week": list(range(1, n_weeks + 1)),
+            "fg_att": [fg_att] * n_weeks,
+            "fg_made": [fg_made] * n_weeks,
+            "pat_att": [pat_att] * n_weeks,
+            "pat_made": [pat_made] * n_weeks,
+            "fg_made_40_49": [fg_made_40_49] * n_weeks,
+            "fg_made_50_59": [fg_made_50_59] * n_weeks,
+            "fg_made_60_": [fg_made_60_] * n_weeks,
+            "fg_missed_40_49": [fg_missed_40_49] * n_weeks,
+            "fg_missed_50_59": [fg_missed_50_59] * n_weeks,
+            "fg_missed_60_": [fg_missed_60_] * n_weeks,
+            "avg_fg_distance": [avg_fg_distance] * n_weeks,
+            "avg_fg_prob": [avg_fg_prob] * n_weeks,
+            "long_fg_att": [long_fg_att] * n_weeks,
+            "long_fg_made": [long_fg_made] * n_weeks,
+            "q4_fg_att": [q4_fg_att] * n_weeks,
+            "q4_fg_made": [q4_fg_made] * n_weeks,
+        }
+    )
     df["fg_points"] = 0
     df["pat_points"] = df["pat_made"]
     df["miss_penalty"] = 0
@@ -160,6 +188,7 @@ def make_kicker_games():
 # ---------------------------------------------------------------------------
 # Tiny synthetic pipeline dataset for E2E + regression tests
 # ---------------------------------------------------------------------------
+
 
 def _build_tiny_k_dataset(
     n_players: int = 50,
@@ -183,8 +212,24 @@ def _build_tiny_k_dataset(
     base_season = 2023
     seasons = list(range(base_season, base_season + n_seasons + 1))  # +1 for test
 
-    teams = ["KC", "SF", "BUF", "MIA", "DAL", "PHI", "BAL", "CIN",
-             "DET", "GB", "MIN", "CHI", "SEA", "LAR", "ARI", "NO"]
+    teams = [
+        "KC",
+        "SF",
+        "BUF",
+        "MIA",
+        "DAL",
+        "PHI",
+        "BAL",
+        "CIN",
+        "DET",
+        "GB",
+        "MIN",
+        "CHI",
+        "SEA",
+        "LAR",
+        "ARI",
+        "NO",
+    ]
 
     rows = []
     for pid in range(1, n_players + 1):
@@ -222,62 +267,62 @@ def _build_tiny_k_dataset(
                 # buckets by definition sum to at most fg_made. The attempted
                 # long FGs are the made-longs plus some fraction of misses.
                 long_fg_made_val = fg_made_mid + fg_made_long_50 + fg_made_60
-                long_fg_att_val = long_fg_made_val + max(
-                    0, int(round(fg_missed * 0.4))
-                )
+                long_fg_att_val = long_fg_made_val + max(0, int(round(fg_missed * 0.4)))
 
-                rows.append({
-                    "player_id": f"K{pid:03d}",
-                    "player_name": f"Kicker{pid}",
-                    "recent_team": team,
-                    "position": "K",
-                    "season_type": "REG",
-                    "season": season,
-                    "week": week,
-                    "fg_att": fg_att,
-                    "fg_made": fg_made,
-                    "fg_missed": fg_missed,
-                    "fg_made_0_19": 0,
-                    "fg_made_20_29": fg_made_short // 2,
-                    "fg_made_30_39": fg_made_short - fg_made_short // 2,
-                    "fg_made_40_49": fg_made_mid,
-                    "fg_made_50_59": fg_made_long_50,
-                    "fg_made_60_": fg_made_60,
-                    "fg_missed_40_49": max(0, (fg_missed * 2) // 5),
-                    "fg_missed_50_59": max(0, (fg_missed * 2) // 5),
-                    "fg_missed_60_": 0,
-                    "pat_att": pat_att,
-                    "pat_made": pat_made,
-                    "pat_missed": pat_missed,
-                    # PBP-derived columns (feature inputs)
-                    "avg_fg_distance": float(rng.normal(38, 4)) if fg_att else 0.0,
-                    "max_fg_distance": float(rng.normal(48, 5)) if fg_att else 0.0,
-                    "avg_fg_prob": float(np.clip(rng.normal(0.82, 0.05), 0, 1)),
-                    "clutch_fg_att": clutch_fg_att,
-                    "clutch_fg_made": clutch_fg_made,
-                    "q4_fg_att": q4_fg_att,
-                    "q4_fg_made": q4_fg_made,
-                    "long_fg_att": long_fg_att_val,
-                    "long_fg_made": long_fg_made_val,
-                    "game_wind": float(rng.normal(8, 5)),
-                    "game_temp": float(rng.normal(60, 15)),
-                    "roof": "outdoors",
-                    "surface": "grass",
-                    "is_dome": 0,
-                    # Schedule-merged features (pre-filled so merge is skipped)
-                    "is_home": int(rng.integers(0, 2)),
-                    "total_line": float(rng.normal(45, 5)),
-                    "implied_team_total": float(rng.normal(22, 4)),
-                    "implied_opp_total": float(rng.normal(22, 4)),
-                    "is_grass": 1,
-                    "temp_adjusted": 65.0,
-                    "wind_adjusted": 0.0,
-                    "is_divisional": 0,
-                    "days_rest_improved": 7,
-                    "rest_advantage": 0,
-                    "implied_total_x_wind": 22.0,
-                    "_schedule_merged": True,
-                })
+                rows.append(
+                    {
+                        "player_id": f"K{pid:03d}",
+                        "player_name": f"Kicker{pid}",
+                        "recent_team": team,
+                        "position": "K",
+                        "season_type": "REG",
+                        "season": season,
+                        "week": week,
+                        "fg_att": fg_att,
+                        "fg_made": fg_made,
+                        "fg_missed": fg_missed,
+                        "fg_made_0_19": 0,
+                        "fg_made_20_29": fg_made_short // 2,
+                        "fg_made_30_39": fg_made_short - fg_made_short // 2,
+                        "fg_made_40_49": fg_made_mid,
+                        "fg_made_50_59": fg_made_long_50,
+                        "fg_made_60_": fg_made_60,
+                        "fg_missed_40_49": max(0, (fg_missed * 2) // 5),
+                        "fg_missed_50_59": max(0, (fg_missed * 2) // 5),
+                        "fg_missed_60_": 0,
+                        "pat_att": pat_att,
+                        "pat_made": pat_made,
+                        "pat_missed": pat_missed,
+                        # PBP-derived columns (feature inputs)
+                        "avg_fg_distance": float(rng.normal(38, 4)) if fg_att else 0.0,
+                        "max_fg_distance": float(rng.normal(48, 5)) if fg_att else 0.0,
+                        "avg_fg_prob": float(np.clip(rng.normal(0.82, 0.05), 0, 1)),
+                        "clutch_fg_att": clutch_fg_att,
+                        "clutch_fg_made": clutch_fg_made,
+                        "q4_fg_att": q4_fg_att,
+                        "q4_fg_made": q4_fg_made,
+                        "long_fg_att": long_fg_att_val,
+                        "long_fg_made": long_fg_made_val,
+                        "game_wind": float(rng.normal(8, 5)),
+                        "game_temp": float(rng.normal(60, 15)),
+                        "roof": "outdoors",
+                        "surface": "grass",
+                        "is_dome": 0,
+                        # Schedule-merged features (pre-filled so merge is skipped)
+                        "is_home": int(rng.integers(0, 2)),
+                        "total_line": float(rng.normal(45, 5)),
+                        "implied_team_total": float(rng.normal(22, 4)),
+                        "implied_opp_total": float(rng.normal(22, 4)),
+                        "is_grass": 1,
+                        "temp_adjusted": 65.0,
+                        "wind_adjusted": 0.0,
+                        "is_divisional": 0,
+                        "days_rest_improved": 7,
+                        "rest_advantage": 0,
+                        "implied_total_x_wind": 22.0,
+                        "_schedule_merged": True,
+                    }
+                )
     return pd.DataFrame(rows)
 
 

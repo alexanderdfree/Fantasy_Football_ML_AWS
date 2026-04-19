@@ -1,4 +1,5 @@
 """Tests for shared.model_sync — S3 tarball sync at container boot."""
+
 from __future__ import annotations
 
 import io
@@ -65,7 +66,9 @@ def test_sync_extracts_all_positions(monkeypatch, tmp_path):
     monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
 
     objects = {
-        f"models/{pos}/model.tar.gz": _make_tarball({f"{pos.lower()}_marker.pkl": b"payload-" + pos.encode()})
+        f"models/{pos}/model.tar.gz": _make_tarball(
+            {f"{pos.lower()}_marker.pkl": b"payload-" + pos.encode()}
+        )
         for pos in model_sync.POSITIONS
     }
     fake_s3 = _FakeS3(objects)
@@ -114,10 +117,12 @@ def test_extract_rejects_path_traversal(tmp_path):
 
 
 def test_extract_allows_nested_subdirs(tmp_path):
-    data = _make_tarball({
-        "nn_scaler.pkl": b"a",
-        "lightgbm/receiving_floor.pkl": b"b",
-    })
+    data = _make_tarball(
+        {
+            "nn_scaler.pkl": b"a",
+            "lightgbm/receiving_floor.pkl": b"b",
+        }
+    )
     dest = tmp_path / "dest"
     model_sync._extract_tarball(data, dest)
     assert (dest / "nn_scaler.pkl").read_bytes() == b"a"

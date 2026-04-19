@@ -1,9 +1,11 @@
 """Generic position evaluation utilities."""
 
 import warnings
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+
 from src.evaluation.metrics import compute_metrics
 
 
@@ -51,14 +53,18 @@ def compute_ranking_metrics(
             corr, _ = spearmanr(week_df[pred_col], week_df[true_col])
 
         if np.isnan(corr):
-            print(f"  WARNING: Spearman correlation is NaN for week {week} "
-                  f"(pred_col={pred_col}, n={len(week_df)})")
+            print(
+                f"  WARNING: Spearman correlation is NaN for week {week} "
+                f"(pred_col={pred_col}, n={len(week_df)})"
+            )
 
-        weekly_results.append({
-            "week": week,
-            "top_k_hit_rate": hit_rate,
-            "spearman": corr,
-        })
+        weekly_results.append(
+            {
+                "week": week,
+                "top_k_hit_rate": hit_rate,
+                "spearman": corr,
+            }
+        )
 
     if weekly_results:
         avg_hit_rate = np.mean([r["top_k_hit_rate"] for r in weekly_results])
@@ -114,16 +120,12 @@ def plot_pred_vs_actual(
     ncols = min(n, 2)
     nrows = (n + ncols - 1) // ncols
     fig, axes = plt.subplots(nrows, ncols, figsize=(6 * ncols, 5 * nrows))
-    if n == 1:
-        axes = [axes]
-    else:
-        axes = list(np.asarray(axes).flat)
-    for ax, (target, title) in zip(axes, targets):
+    axes = [axes] if n == 1 else list(np.asarray(axes).flat)
+    for ax, (target, title) in zip(axes, targets, strict=False):
         y_true = y_true_dict[target]
         y_pred = y_pred_dict[target]
         ax.scatter(y_true, y_pred, alpha=0.3, s=10)
-        ax.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()],
-                "r--", linewidth=1)
+        ax.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], "r--", linewidth=1)
         ax.set_xlabel("Actual")
         ax.set_ylabel("Predicted")
         ax.set_title(f"{model_name}: {title}")

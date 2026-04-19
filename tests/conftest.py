@@ -12,6 +12,7 @@ parquet + trained model artifacts. These fixtures codify the *current* contract
 while keeping the `tiny_qb_model` scaffold ready for when `/predict_json`
 lands — new tests can consume it without touching conftest.
 """
+
 from __future__ import annotations
 
 import json
@@ -59,21 +60,23 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
         for i in range(n_per_position):
             for week in (1, 2, 3, 4, 5, 6, 7):
                 actual = float(rng.uniform(5, 30))
-                rows.append({
-                    "player_id": f"{pos}{i:03d}",
-                    "player_display_name": f"{pos} Player {i}",
-                    "position": pos,
-                    "recent_team": "KC",
-                    "season": 2025,
-                    "week": week,
-                    "headshot_url": "",
-                    "fantasy_points": actual,
-                    "fantasy_points_standard": actual * 0.9,
-                    "fantasy_points_half_ppr": actual * 0.95,
-                    "fantasy_points_floor": actual * 0.8,
-                    "ridge_pred": float(actual + rng.normal(0, 2)),
-                    "nn_pred": float(actual + rng.normal(0, 2)),
-                })
+                rows.append(
+                    {
+                        "player_id": f"{pos}{i:03d}",
+                        "player_display_name": f"{pos} Player {i}",
+                        "position": pos,
+                        "recent_team": "KC",
+                        "season": 2025,
+                        "week": week,
+                        "headshot_url": "",
+                        "fantasy_points": actual,
+                        "fantasy_points_standard": actual * 0.9,
+                        "fantasy_points_half_ppr": actual * 0.95,
+                        "fantasy_points_floor": actual * 0.8,
+                        "ridge_pred": float(actual + rng.normal(0, 2)),
+                        "nn_pred": float(actual + rng.normal(0, 2)),
+                    }
+                )
     return pd.DataFrame(rows)
 
 
@@ -180,8 +183,7 @@ def tiny_qb_model(tmp_path_factory):
     y_td = rng.uniform(0, 10, size=n)
 
     # Per-target ridge models (matches RidgeMultiTarget layout)
-    for target, y in [("passing_floor", y_pass), ("rushing_floor", y_rush),
-                      ("td_points", y_td)]:
+    for target, y in [("passing_floor", y_pass), ("rushing_floor", y_rush), ("td_points", y_td)]:
         target_dir = model_dir / target
         target_dir.mkdir(exist_ok=True)
         ridge = Ridge(alpha=1.0)

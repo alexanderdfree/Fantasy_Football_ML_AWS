@@ -5,29 +5,33 @@ import pytest
 
 from K.k_data import filter_to_k, kicker_season_split
 
-
 # ---------------------------------------------------------------------------
 # filter_to_k — identity filter
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFilterToK:
     """Kicker data is pre-filtered; filter_to_k is an identity (copy)."""
 
     def test_returns_copy_of_input(self):
-        df = pd.DataFrame({
-            "position": ["K", "K"],
-            "fg_att": [3, 2],
-            "player_id": ["K1", "K2"],
-        })
+        df = pd.DataFrame(
+            {
+                "position": ["K", "K"],
+                "fg_att": [3, 2],
+                "player_id": ["K1", "K2"],
+            }
+        )
         result = filter_to_k(df)
         pd.testing.assert_frame_equal(result, df)
 
     def test_does_not_mutate_original(self):
-        df = pd.DataFrame({
-            "position": ["K"],
-            "fg_att": [3],
-        })
+        df = pd.DataFrame(
+            {
+                "position": ["K"],
+                "fg_att": [3],
+            }
+        )
         original_cols = list(df.columns)
         original_len = len(df)
         _ = filter_to_k(df)
@@ -48,16 +52,18 @@ class TestFilterToK:
 
     def test_preserves_all_columns(self):
         """Identity filter must not drop columns."""
-        df = pd.DataFrame({
-            "player_id": ["K1"],
-            "season": [2023],
-            "week": [1],
-            "fg_att": [3],
-            "fg_made": [2],
-            "pat_att": [3],
-            "pat_made": [3],
-            "roof": ["dome"],
-        })
+        df = pd.DataFrame(
+            {
+                "player_id": ["K1"],
+                "season": [2023],
+                "week": [1],
+                "fg_att": [3],
+                "fg_made": [2],
+                "pat_att": [3],
+                "pat_made": [3],
+                "roof": ["dome"],
+            }
+        )
         result = filter_to_k(df)
         assert set(result.columns) == set(df.columns)
 
@@ -66,18 +72,21 @@ class TestFilterToK:
 # kicker_season_split
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def multi_season_df():
     """Multi-season kicker DataFrame spanning the train/val/test boundary."""
     rows = []
     for season in [2020, 2022, 2023, 2024, 2025]:
         for week in range(1, 4):
-            rows.append({
-                "player_id": "K1",
-                "season": season,
-                "week": week,
-                "fg_att": 2,
-            })
+            rows.append(
+                {
+                    "player_id": "K1",
+                    "season": season,
+                    "week": week,
+                    "fg_att": 2,
+                }
+            )
     return pd.DataFrame(rows)
 
 

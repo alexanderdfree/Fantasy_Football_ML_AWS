@@ -20,12 +20,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from shared.pipeline import run_pipeline
 from WR.wr_config import WR_CONFIG_TINY, WR_TARGETS
 from WR.wr_data import filter_to_wr
-from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
-from WR.wr_features import add_wr_specific_features, get_wr_feature_columns, fill_wr_nans
-from shared.pipeline import run_pipeline
-
+from WR.wr_features import add_wr_specific_features, fill_wr_nans, get_wr_feature_columns
+from WR.wr_targets import compute_wr_fumble_adjustment, compute_wr_targets
 
 SPLITS_DIR = Path(__file__).resolve().parents[2] / "data" / "splits"
 _ALL_TARGETS = (*WR_TARGETS, "total")
@@ -34,19 +33,22 @@ _ALL_TARGETS = (*WR_TARGETS, "total")
 def _build_tiny_cfg() -> dict:
     """Assemble the tiny config with position-specific callables attached."""
     cfg = dict(WR_CONFIG_TINY)
-    cfg.update({
-        "filter_fn": filter_to_wr,
-        "compute_targets_fn": compute_wr_targets,
-        "add_features_fn": add_wr_specific_features,
-        "fill_nans_fn": fill_wr_nans,
-        "get_feature_columns_fn": get_wr_feature_columns,
-        "compute_adjustment_fn": compute_wr_fumble_adjustment,
-    })
+    cfg.update(
+        {
+            "filter_fn": filter_to_wr,
+            "compute_targets_fn": compute_wr_targets,
+            "add_features_fn": add_wr_specific_features,
+            "fill_nans_fn": fill_wr_nans,
+            "get_feature_columns_fn": get_wr_feature_columns,
+            "compute_adjustment_fn": compute_wr_fumble_adjustment,
+        }
+    )
     return cfg
 
 
 def _load_tiny_splits(
-    n_players: int = 50, train_seasons=(2022, 2023),
+    n_players: int = 50,
+    train_seasons=(2022, 2023),
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Slice the real engineered parquets to a tiny deterministic subset.
 
@@ -60,12 +62,10 @@ def _load_tiny_splits(
     # Top-n_players by game count — stable because pandas sort is stable and
     # game counts have wide enough spread that ties don't matter at n=50.
     top_players = (
-        wr_train_all.groupby("player_id").size()
-        .sort_values(ascending=False).head(n_players).index
+        wr_train_all.groupby("player_id").size().sort_values(ascending=False).head(n_players).index
     )
     wr_train = wr_train_all[
-        wr_train_all["season"].isin(train_seasons)
-        & wr_train_all["player_id"].isin(top_players)
+        wr_train_all["season"].isin(train_seasons) & wr_train_all["player_id"].isin(top_players)
     ].copy()
 
     val_full = pd.read_parquet(SPLITS_DIR / "val.parquet")

@@ -16,6 +16,7 @@ retained for forward-compatibility: when `/predict_json` lands, new test cases
 can consume them without touching the fixtures. A placeholder test records the
 current 404 behavior so regressions on this front are visible.
 """
+
 from __future__ import annotations
 
 import math
@@ -29,6 +30,7 @@ pytestmark = pytest.mark.integration
 # ===========================================================================
 # GET /health — trivial contract
 # ===========================================================================
+
 
 class TestHealth:
     def test_health_returns_200_and_ok(self, client):
@@ -47,6 +49,7 @@ class TestHealth:
 # ===========================================================================
 # GET /api/model_architecture — config-driven, no model loading
 # ===========================================================================
+
 
 class TestModelArchitecture:
     def test_returns_200_and_schema(self, client):
@@ -68,10 +71,22 @@ class TestModelArchitecture:
         qb = body["positions"]["QB"]
         # Fields surfaced by _position_arch_payload()
         required = {
-            "targets", "backbone_layers", "head_hidden", "head_hidden_overrides",
-            "dropout", "lr", "weight_decay", "batch_size", "epochs", "patience",
-            "scheduler", "huber_delta_total", "attention_enabled",
-            "lightgbm_enabled", "feature_count", "features",
+            "targets",
+            "backbone_layers",
+            "head_hidden",
+            "head_hidden_overrides",
+            "dropout",
+            "lr",
+            "weight_decay",
+            "batch_size",
+            "epochs",
+            "patience",
+            "scheduler",
+            "huber_delta_total",
+            "attention_enabled",
+            "lightgbm_enabled",
+            "feature_count",
+            "features",
         }
         assert required.issubset(qb.keys())
         # feature_count should be a non-negative int
@@ -94,6 +109,7 @@ class TestModelArchitecture:
 # GET /api/predictions — happy path + error paths
 # ===========================================================================
 
+
 class TestPredictions:
     def test_happy_path_returns_players(self, client_with_data):
         r = client_with_data.get("/api/predictions")
@@ -104,8 +120,17 @@ class TestPredictions:
         assert body["total"] > 0
         # Row schema
         row = body["players"][0]
-        expected_keys = {"player_id", "name", "position", "team", "week",
-                         "actual", "ridge_pred", "nn_pred", "headshot"}
+        expected_keys = {
+            "player_id",
+            "name",
+            "position",
+            "team",
+            "week",
+            "actual",
+            "ridge_pred",
+            "nn_pred",
+            "headshot",
+        }
         assert expected_keys.issubset(row.keys())
 
     def test_predictions_are_finite_floats(self, client_with_data):
@@ -115,9 +140,9 @@ class TestPredictions:
             for pred_field in ("ridge_pred", "nn_pred", "actual"):
                 val = row[pred_field]
                 # _safe_num() maps NaN/inf to None — that's the contract
-                assert val is None or (
-                    isinstance(val, (int, float)) and math.isfinite(val)
-                ), f"{pred_field}={val!r} violates contract"
+                assert val is None or (isinstance(val, (int, float)) and math.isfinite(val)), (
+                    f"{pred_field}={val!r} violates contract"
+                )
 
     def test_position_filter(self, client_with_data):
         r = client_with_data.get("/api/predictions?position=QB")
@@ -146,6 +171,7 @@ class TestPredictions:
 # ===========================================================================
 # GET /api/weeks, /api/metrics, /api/position_details
 # ===========================================================================
+
 
 class TestAuxiliaryEndpoints:
     def test_weeks_returns_sorted_integers(self, client_with_data):
@@ -185,8 +211,16 @@ class TestAuxiliaryEndpoints:
         # Each row carries aggregated per-player stats
         if body["players"]:
             row = body["players"][0]
-            for key in ("player_id", "name", "position", "team", "avg_actual",
-                        "avg_ridge", "avg_nn", "games"):
+            for key in (
+                "player_id",
+                "name",
+                "position",
+                "team",
+                "avg_actual",
+                "avg_ridge",
+                "avg_nn",
+                "games",
+            ):
                 assert key in row
 
     def test_weekly_accuracy_parallel_arrays(self, client_with_data):
@@ -205,13 +239,21 @@ class TestAuxiliaryEndpoints:
 # GET /api/player/<id> — happy path + missing
 # ===========================================================================
 
+
 class TestPlayerEndpoint:
     def test_known_player_returns_weekly(self, client_with_data):
         r = client_with_data.get("/api/player/QB000")
         assert r.status_code == 200
         body = r.get_json()
-        for key in ("player_id", "name", "position", "team", "weekly",
-                    "season_avg", "season_total"):
+        for key in (
+            "player_id",
+            "name",
+            "position",
+            "team",
+            "weekly",
+            "season_avg",
+            "season_total",
+        ):
             assert key in body
         assert body["player_id"] == "QB000"
         assert body["position"] == "QB"
@@ -228,6 +270,7 @@ class TestPlayerEndpoint:
 # ===========================================================================
 # GET / — template rendering
 # ===========================================================================
+
 
 class TestIndexRoute:
     def test_index_returns_200(self, client):
@@ -274,6 +317,7 @@ class TestIndexRoute:
 # Graceful degradation — failing model load surfaces as 500 JSON error
 # ===========================================================================
 
+
 class TestGracefulDegradation:
     """Endpoints that depend on the lazy `_get_data()` cache must surface
     errors as structured JSON, not as raw HTML tracebacks.
@@ -286,8 +330,10 @@ class TestGracefulDegradation:
 
     def test_predictions_surfaces_load_failure_as_json(self, client, app_module, monkeypatch):
         """When `_get_data()` raises, /api/predictions returns a JSON error payload."""
+
         def _boom():
             raise RuntimeError("simulated model load failure")
+
         monkeypatch.setattr(app_module, "_get_data", _boom)
 
         r = client.get("/api/predictions")
@@ -306,6 +352,7 @@ class TestGracefulDegradation:
 
         def _joblib_boom(*args, **kwargs):
             raise OSError("simulated joblib failure")
+
         monkeypatch.setattr(joblib, "load", _joblib_boom)
 
         # _get_data will try to read parquet splits (may fail earlier). Either
@@ -320,6 +367,7 @@ class TestGracefulDegradation:
 # ===========================================================================
 # Scoring format sanity check — documents current contract
 # ===========================================================================
+
 
 class TestScoringFormats:
     """The strategy doc calls for POST /predict_json to differentiate between
@@ -342,20 +390,15 @@ class TestScoringFormats:
         # And within each row the three format values should differ
         # (our fixture builds them at different multipliers: 1.0, 0.95, 0.9)
         sample = df.iloc[0]
-        assert not np.isclose(
-            sample["fantasy_points"], sample["fantasy_points_standard"]
-        )
-        assert not np.isclose(
-            sample["fantasy_points"], sample["fantasy_points_half_ppr"]
-        )
-        assert not np.isclose(
-            sample["fantasy_points_standard"], sample["fantasy_points_half_ppr"]
-        )
+        assert not np.isclose(sample["fantasy_points"], sample["fantasy_points_standard"])
+        assert not np.isclose(sample["fantasy_points"], sample["fantasy_points_half_ppr"])
+        assert not np.isclose(sample["fantasy_points_standard"], sample["fantasy_points_half_ppr"])
 
 
 # ===========================================================================
 # tiny_qb_model fixture — sanity check the scaffold is usable
 # ===========================================================================
+
 
 class TestTinyQBModelFixture:
     """The tiny_qb_model fixture is currently scaffolding for the future

@@ -8,6 +8,7 @@ model artifacts land on disk. Budget: < 20s per position on CPU.
 Companion file: ``tests/test_reproducibility.py`` covers bit-identical
 predictions across seeded re-runs; this file focuses on completion + shape.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,7 +23,6 @@ from tests._pipeline_e2e_utils import (
     run_pipeline_in_tmp,
 )
 
-
 # Markers (unit / integration / e2e / regression) are registered in
 # ``tests/conftest.py`` so no local pytest_configure is needed here.
 
@@ -30,6 +30,7 @@ from tests._pipeline_e2e_utils import (
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def tiny_splits(request):
@@ -44,6 +45,7 @@ def tiny_splits(request):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.e2e
 @pytest.mark.parametrize(
@@ -85,9 +87,7 @@ def test_pipeline_predictions_finite_and_shaped(tiny_splits, position, tmp_path)
             assert arr.shape == (n_test,), (
                 f"{position} {model_name}.{key}: shape {arr.shape} != ({n_test},)"
             )
-            assert np.all(np.isfinite(arr)), (
-                f"{position} {model_name}.{key}: contains NaN/Inf"
-            )
+            assert np.all(np.isfinite(arr)), f"{position} {model_name}.{key}: contains NaN/Inf"
 
 
 @pytest.mark.e2e
@@ -122,9 +122,7 @@ def test_pipeline_writes_model_artifacts(tiny_splits, position, tmp_path):
     )
     for tdir in target_dirs:
         pkls = list(tdir.glob("*.pkl"))
-        assert pkls, (
-            f"{position}: no .pkl artifacts saved for target {tdir.name} at {tdir}"
-        )
+        assert pkls, f"{position}: no .pkl artifacts saved for target {tdir.name} at {tdir}"
 
 
 @pytest.mark.e2e
@@ -146,9 +144,6 @@ def test_pipeline_predictions_dataframe_size(tiny_splits, position, tmp_path):
     nn_preds = result["per_target_preds"]["nn"]
     preds_matrix = np.column_stack([nn_preds[t] for t in cfg["targets"]])
     assert preds_matrix.shape == (n_val_rows, n_targets), (
-        f"{position}: preds matrix shape {preds_matrix.shape} != "
-        f"({n_val_rows}, {n_targets})"
+        f"{position}: preds matrix shape {preds_matrix.shape} != ({n_val_rows}, {n_targets})"
     )
-    assert np.all(np.isfinite(preds_matrix)), (
-        f"{position}: preds matrix contains NaN/Inf"
-    )
+    assert np.all(np.isfinite(preds_matrix)), f"{position}: preds matrix contains NaN/Inf"

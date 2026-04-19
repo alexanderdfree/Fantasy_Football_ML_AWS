@@ -5,10 +5,10 @@ import pandas as pd
 import pytest
 
 from shared.models import (
-    TwoStageRidge,
-    OrdinalTDClassifier,
     GatedOrdinalTDClassifier,
     LightGBMMultiTarget,
+    OrdinalTDClassifier,
+    TwoStageRidge,
 )
 
 TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
@@ -17,6 +17,7 @@ TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def zero_inflated_data():
@@ -34,7 +35,9 @@ def td_class_data():
     np.random.seed(42)
     n, d = 60, 5
     X = np.random.randn(n, d).astype(np.float32)
-    y = np.random.choice([0.0, 6.0, 12.0, 18.0], size=n, p=[0.55, 0.25, 0.15, 0.05]).astype(np.float32)
+    y = np.random.choice([0.0, 6.0, 12.0, 18.0], size=n, p=[0.55, 0.25, 0.15, 0.05]).astype(
+        np.float32
+    )
     return X, y
 
 
@@ -55,6 +58,7 @@ def multi_target_data():
 # ---------------------------------------------------------------------------
 # TwoStageRidge
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestTwoStageRidge:
@@ -134,7 +138,9 @@ class TestTwoStageRidge:
         # must match the mean of the positive rows (not the full dataset).
         pos_mask = y > 0
         np.testing.assert_allclose(
-            model.scaler_reg.mean_, X[pos_mask].mean(axis=0), atol=1e-6,
+            model.scaler_reg.mean_,
+            X[pos_mask].mean(axis=0),
+            atol=1e-6,
         )
         # The two scalers are therefore distinct objects with distinct means.
         assert model.scaler_clf is not model.scaler_reg
@@ -143,6 +149,7 @@ class TestTwoStageRidge:
 # ---------------------------------------------------------------------------
 # OrdinalTDClassifier
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestOrdinalTDClassifier:
@@ -216,6 +223,7 @@ class TestOrdinalTDClassifier:
 # GatedOrdinalTDClassifier
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestGatedOrdinalTDClassifier:
     def test_fit_and_predict_shapes(self, td_class_data):
@@ -258,6 +266,7 @@ class TestGatedOrdinalTDClassifier:
 
     def test_save_writes_gated_flag(self, td_class_data, tmp_path):
         import json
+
         X, y = td_class_data
         model = GatedOrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
         model.fit(X, y)
@@ -278,6 +287,7 @@ class TestGatedOrdinalTDClassifier:
 # ---------------------------------------------------------------------------
 # LightGBMMultiTarget
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestLightGBMMultiTarget:
@@ -313,7 +323,7 @@ class TestLightGBMMultiTarget:
         model.fit(X, y_dict, feature_names=names)
         importance = model.get_feature_importance(names)
         assert set(importance.keys()) == set(TARGETS)
-        for target, series in importance.items():
+        for _target, series in importance.items():
             assert isinstance(series, pd.Series)
             assert len(series) == X.shape[1]
 
@@ -322,8 +332,7 @@ class TestLightGBMMultiTarget:
         model = LightGBMMultiTarget(target_names=TARGETS, n_estimators=50)
         X_val = X[:20]
         y_val = {k: v[:20] for k, v in y_dict.items()}
-        model.fit(X[20:], {k: v[20:] for k, v in y_dict.items()},
-                  X_val=X_val, y_val_dict=y_val)
+        model.fit(X[20:], {k: v[20:] for k, v in y_dict.items()}, X_val=X_val, y_val_dict=y_val)
         preds = model.predict(X)
         assert preds["total"].shape == (len(X),)
 

@@ -5,10 +5,10 @@ import pytest
 
 from QB.qb_data import filter_to_qb
 
-
 # ---------------------------------------------------------------------------
 # filter_to_qb
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFilterToQB:

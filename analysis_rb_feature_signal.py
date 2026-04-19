@@ -11,30 +11,38 @@ genuine signal vs noise for the RB model, using:
   6. Final keep/drop recommendations
 """
 
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(__file__))
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import stats
 from sklearn.feature_selection import mutual_info_regression
-from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error
-import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
 
-from src.data.loader import load_raw_data, compute_all_scoring_formats, compute_all_floor_formats
-from src.features.engineer import build_features, get_feature_columns, flatten_include_features
-from src.data.split import temporal_split, expanding_window_folds
-from src.models.linear import RidgeModel
-from src.config import TRAIN_SEASONS, VAL_SEASONS, TEST_SEASONS, CV_VAL_SEASONS, MIN_GAMES_PER_SEASON
-from shared.weather_features import merge_schedule_features, WEATHER_FEATURES_ALL
-from RB.rb_data import filter_to_rb
-from RB.rb_targets import compute_rb_targets
-from RB.rb_features import add_rb_specific_features, fill_rb_nans
 from RB.rb_config import (
-    RB_INCLUDE_FEATURES, RB_SPECIFIC_FEATURES, RB_TARGETS,
-    RB_RIDGE_ALPHA_GRIDS, RB_RIDGE_PCA_COMPONENTS,
+    RB_INCLUDE_FEATURES,
+    RB_RIDGE_ALPHA_GRIDS,
+    RB_RIDGE_PCA_COMPONENTS,
+    RB_SPECIFIC_FEATURES,
+    RB_TARGETS,
 )
+from RB.rb_data import filter_to_rb
+from RB.rb_features import add_rb_specific_features, fill_rb_nans
+from RB.rb_targets import compute_rb_targets
+from shared.weather_features import WEATHER_FEATURES_ALL, merge_schedule_features
+from src.config import (
+    CV_VAL_SEASONS,
+    MIN_GAMES_PER_SEASON,
+)
+from src.data.loader import compute_all_floor_formats, compute_all_scoring_formats, load_raw_data
+from src.data.split import expanding_window_folds, temporal_split
+from src.features.engineer import build_features, flatten_include_features
+from src.models.linear import RidgeModel
 
 os.makedirs("analysis_output", exist_ok=True)
 
@@ -45,12 +53,15 @@ ALL_SIGNAL_FEATURES = WEATHER_FEATURES_ALL + [DEPTH_FEATURE]
 TARGETS = RB_TARGETS  # ["rushing_floor", "receiving_floor", "td_points"]
 
 # Current production whitelist for weather_vegas
-PRODUCTION_WEATHER = RB_INCLUDE_FEATURES["weather_vegas"]  # ["implied_opp_total", "total_line", "rest_advantage"]
+PRODUCTION_WEATHER = RB_INCLUDE_FEATURES[
+    "weather_vegas"
+]  # ["implied_opp_total", "total_line", "rest_advantage"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Section 1: Data Loading
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _build_feature_cols_with_all_weather():
     """Build feature list with ALL 12 weather features included."""
@@ -134,6 +145,7 @@ def load_and_prepare():
 # Section 2: Per-Target Conditional Correlations
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def analyze_correlations(rb_train):
     print("\n" + "=" * 70)
     print("  SECTION 2: Per-Target Conditional Correlations")
@@ -155,11 +167,16 @@ def analyze_correlations(rb_train):
             else:
                 pearson_r, pearson_p = stats.pearsonr(x[mask], y[mask])
                 spearman_r, spearman_p = stats.spearmanr(x[mask], y[mask])
-            rows.append({
-                "feature": feat, "target": tgt,
-                "pearson_r": pearson_r, "pearson_p": pearson_p,
-                "spearman_r": spearman_r, "spearman_p": spearman_p,
-            })
+            rows.append(
+                {
+                    "feature": feat,
+                    "target": tgt,
+                    "pearson_r": pearson_r,
+                    "pearson_p": pearson_p,
+                    "spearman_r": spearman_r,
+                    "spearman_p": spearman_p,
+                }
+            )
     corr_df = pd.DataFrame(rows)
 
     # Pivot for display
@@ -180,7 +197,9 @@ def analyze_correlations(rb_train):
         print(f"  Pearson r = {r:.4f}  (p = {p:.4f})")
         grass_mean = outdoor[outdoor["is_grass"] == 1]["rushing_floor"].mean()
         turf_mean = outdoor[outdoor["is_grass"] == 0]["rushing_floor"].mean()
-        print(f"  Mean rushing_floor: grass={grass_mean:.3f}, turf={turf_mean:.3f}, diff={grass_mean - turf_mean:+.3f}")
+        print(
+            f"  Mean rushing_floor: grass={grass_mean:.3f}, turf={turf_mean:.3f}, diff={grass_mean - turf_mean:+.3f}"
+        )
     else:
         print(f"  Outdoor rows: {len(outdoor)} (is_grass has no variance — check merge)")
 
@@ -199,6 +218,7 @@ def analyze_correlations(rb_train):
 # ═══════════════════════════════════════════════════════════════════════════
 # Section 3: Mutual Information + Depth Chart Deep Dive
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def analyze_mi_and_depth_chart(rb_train):
     print("\n" + "=" * 70)
@@ -259,6 +279,7 @@ def analyze_mi_and_depth_chart(rb_train):
 # ═══════════════════════════════════════════════════════════════════════════
 # Section 4: Permutation Importance on Fitted Ridge
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def analyze_permutation_importance(rb_train, rb_test, feature_cols):
     """Manual permutation importance: shuffle one feature at a time, measure MAE increase."""
@@ -361,7 +382,7 @@ def run_ablation(rb_full, all_feature_cols):
     folds = expanding_window_folds(rb_full, val_seasons=CV_VAL_SEASONS)
 
     # Store per-fold MAEs for statistical tests
-    results = {}       # config -> {target -> (mean, std)}
+    results = {}  # config -> {target -> (mean, std)}
     fold_results = {}  # config -> {target -> [mae_per_fold]}
 
     for config_name, config in ABLATION_CONFIGS.items():
@@ -375,7 +396,7 @@ def run_ablation(rb_full, all_feature_cols):
 
         fold_maes = {t: [] for t in targets_plus_total}
 
-        for fold_idx, fold_train, fold_val in folds:
+        for _fold_idx, fold_train, fold_val in folds:
             X_tr = fold_train[config_cols].values.astype(np.float32)
             X_va = fold_val[config_cols].values.astype(np.float32)
             pca_n = min(RB_RIDGE_PCA_COMPONENTS, X_tr.shape[1] - 1)
@@ -409,8 +430,7 @@ def run_ablation(rb_full, all_feature_cols):
             fold_maes["total"].append(mean_absolute_error(total_actual, total_pred))
 
         results[config_name] = {
-            t: (np.mean(fold_maes[t]), np.std(fold_maes[t]))
-            for t in targets_plus_total
+            t: (np.mean(fold_maes[t]), np.std(fold_maes[t])) for t in targets_plus_total
         }
         fold_results[config_name] = fold_maes
 
@@ -446,7 +466,9 @@ def run_ablation(rb_full, all_feature_cols):
         if len(baseline_folds) == len(config_folds) and len(baseline_folds) >= 2:
             t_stat, p_val = stats.ttest_rel(config_folds, baseline_folds)
             delta_mean = np.mean(config_folds) - np.mean(baseline_folds)
-            print(f"    {config_name:<22s}: delta={delta_mean:+.4f}, t={t_stat:+.2f}, p={p_val:.3f}")
+            print(
+                f"    {config_name:<22s}: delta={delta_mean:+.4f}, t={t_stat:+.2f}, p={p_val:.3f}"
+            )
 
     _plot_ablation(results, targets_plus_total)
 
@@ -470,8 +492,9 @@ def _plot_ablation(results, targets):
         ax.bar(x + offset, means, width, yerr=stds, label=tgt, capsize=3)
 
     ax.set_xticks(x)
-    ax.set_xticklabels([ABLATION_CONFIGS[c]["desc"] for c in config_names],
-                       rotation=35, ha="right", fontsize=8)
+    ax.set_xticklabels(
+        [ABLATION_CONFIGS[c]["desc"] for c in config_names], rotation=35, ha="right", fontsize=8
+    )
     ax.set_ylabel("MAE (lower is better)")
     ax.set_title("RB Feature Ablation: MAE by Configuration (4-fold expanding CV)")
     ax.legend(fontsize=9)
@@ -484,6 +507,7 @@ def _plot_ablation(results, targets):
 # ═══════════════════════════════════════════════════════════════════════════
 # Section 6: implied_team_total Deep Dive
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def analyze_implied_team_total(rb_train):
     print("\n" + "=" * 70)
@@ -504,6 +528,7 @@ def analyze_implied_team_total(rb_train):
     # --- 6b: VIF ---
     print("\n--- Variance Inflation Factors ---")
     from numpy.linalg import lstsq
+
     X_v = rb_train[vegas].values
     X_v_scaled = StandardScaler().fit_transform(X_v)
     for i, feat in enumerate(vegas):
@@ -517,7 +542,9 @@ def analyze_implied_team_total(rb_train):
         print(f"  {feat}: VIF = {vif:.1f} (R2 = {r2:.4f})")
 
     # --- 6c: Partial correlations ---
-    print("\n--- Partial correlation of implied_team_total with targets, controlling for total_line ---")
+    print(
+        "\n--- Partial correlation of implied_team_total with targets, controlling for total_line ---"
+    )
     for tgt in targets_plus_total:
         x = rb_train["implied_team_total"].values
         y = rb_train[tgt].values
@@ -542,6 +569,7 @@ def analyze_implied_team_total(rb_train):
 # Section 7: Recommendations
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def print_recommendations(ablation_results):
     print("\n" + "=" * 70)
     print("  RECOMMENDATIONS")
@@ -551,28 +579,41 @@ def print_recommendations(ablation_results):
     print(f"\n  Baseline total MAE: {baseline_total:.4f}")
 
     comparisons = [
-        ("3 kept weather features",
-         "baseline", "no_weather",
-         "Removing implied_opp_total + total_line + rest_advantage"),
-        ("All 12 weather features",
-         "all_weather", "baseline",
-         "Adding back all 9 dropped weather features"),
-        ("implied_team_total",
-         "add_implied_team", "baseline",
-         "Adding implied_team_total to baseline"),
-        ("is_grass",
-         "add_grass", "baseline",
-         "Adding is_grass to baseline"),
-        ("depth_chart_rank",
-         "baseline", "no_depth_chart",
-         "Removing depth_chart_rank from baseline"),
-        ("Vegas-only (3 lines)",
-         "vegas_only", "no_weather",
-         "Adding 3 Vegas features vs no weather"),
+        (
+            "3 kept weather features",
+            "baseline",
+            "no_weather",
+            "Removing implied_opp_total + total_line + rest_advantage",
+        ),
+        (
+            "All 12 weather features",
+            "all_weather",
+            "baseline",
+            "Adding back all 9 dropped weather features",
+        ),
+        (
+            "implied_team_total",
+            "add_implied_team",
+            "baseline",
+            "Adding implied_team_total to baseline",
+        ),
+        ("is_grass", "add_grass", "baseline", "Adding is_grass to baseline"),
+        (
+            "depth_chart_rank",
+            "baseline",
+            "no_depth_chart",
+            "Removing depth_chart_rank from baseline",
+        ),
+        (
+            "Vegas-only (3 lines)",
+            "vegas_only",
+            "no_weather",
+            "Adding 3 Vegas features vs no weather",
+        ),
     ]
 
     print()
-    for desc, config_a, config_b, explanation in comparisons:
+    for _desc, config_a, config_b, explanation in comparisons:
         mae_a = ablation_results[config_a]["total"][0]
         mae_b = ablation_results[config_b]["total"][0]
         delta = mae_a - mae_b
@@ -591,16 +632,18 @@ def print_recommendations(ablation_results):
 
     print("  --- Feature-level verdicts (threshold = 0.005 MAE) ---\n")
 
-    print(f"  Currently KEPT:")
+    print("  Currently KEPT:")
     w_delta = baseline_total - no_weather_mae
     verdict = "KEEP" if w_delta < -THRESHOLD else ("DROP" if w_delta > THRESHOLD else "MARGINAL")
-    print(f"    implied_opp_total + total_line + rest_advantage: {verdict} (delta = {w_delta:+.4f})")
+    print(
+        f"    implied_opp_total + total_line + rest_advantage: {verdict} (delta = {w_delta:+.4f})"
+    )
 
     d_delta = baseline_total - no_depth_mae
     verdict = "KEEP" if d_delta < -THRESHOLD else ("DROP" if d_delta > THRESHOLD else "MARGINAL")
     print(f"    depth_chart_rank: {verdict} (delta = {d_delta:+.4f})")
 
-    print(f"\n  Currently DROPPED:")
+    print("\n  Currently DROPPED:")
     t_delta = add_team_mae - baseline_total
     verdict = "RESTORE" if t_delta < -THRESHOLD else "KEEP DROPPED"
     print(f"    implied_team_total: {verdict} (delta = {t_delta:+.4f})")
@@ -611,7 +654,9 @@ def print_recommendations(ablation_results):
 
     a_delta = all_weather_mae - baseline_total
     verdict = "RECONSIDER" if a_delta < -THRESHOLD else "KEEP DROPPED"
-    print(f"    Remaining 7 (dome, temp, wind, interactions, etc.): {verdict} (delta = {a_delta:+.4f})")
+    print(
+        f"    Remaining 7 (dome, temp, wind, interactions, etc.): {verdict} (delta = {a_delta:+.4f})"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════

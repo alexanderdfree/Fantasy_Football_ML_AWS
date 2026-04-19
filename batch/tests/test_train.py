@@ -1,4 +1,5 @@
 """Tests for batch/train.py — position registry, S3 staging, artifact handling."""
+
 import argparse
 import os
 import shutil
@@ -18,26 +19,31 @@ if PROJECT_ROOT not in sys.path:
 # Position registry tests
 # ---------------------------------------------------------------------------
 
+
 class TestPositionRegistry:
     """Validate the shared position registry against actual code."""
 
     def test_all_six_positions_registered(self):
         from shared.registry import ALL_POSITIONS
+
         assert set(ALL_POSITIONS) == {"QB", "RB", "WR", "TE", "K", "DST"}
 
     @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE"])
     def test_standard_positions_accept_dataframes(self, pos):
         from shared.registry import accepts_dataframes
+
         assert accepts_dataframes(pos) is True
 
     @pytest.mark.parametrize("pos", ["K", "DST"])
     def test_special_positions_no_dataframes(self, pos):
         from shared.registry import accepts_dataframes
+
         assert accepts_dataframes(pos) is False
 
     @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])
     def test_runner_function_importable(self, pos):
         from shared.registry import get_runner
+
         fn = get_runner(pos)
         assert callable(fn), f"{pos} runner is not callable"
 
@@ -46,16 +52,21 @@ class TestPositionRegistry:
 # Argument parsing tests
 # ---------------------------------------------------------------------------
 
+
 class TestArgumentParsing:
     def test_position_required(self):
         parser = argparse.ArgumentParser()
-        parser.add_argument("--position", required=True, choices=["QB", "RB", "WR", "TE", "K", "DST"])
+        parser.add_argument(
+            "--position", required=True, choices=["QB", "RB", "WR", "TE", "K", "DST"]
+        )
         with pytest.raises(SystemExit):
             parser.parse_args([])
 
     def test_valid_position_accepted(self):
         parser = argparse.ArgumentParser()
-        parser.add_argument("--position", required=True, choices=["QB", "RB", "WR", "TE", "K", "DST"])
+        parser.add_argument(
+            "--position", required=True, choices=["QB", "RB", "WR", "TE", "K", "DST"]
+        )
         parser.add_argument("--seed", type=int, default=42)
         args = parser.parse_args(["--position", "RB"])
         assert args.position == "RB"
@@ -63,13 +74,17 @@ class TestArgumentParsing:
 
     def test_invalid_position_rejected(self):
         parser = argparse.ArgumentParser()
-        parser.add_argument("--position", required=True, choices=["QB", "RB", "WR", "TE", "K", "DST"])
+        parser.add_argument(
+            "--position", required=True, choices=["QB", "RB", "WR", "TE", "K", "DST"]
+        )
         with pytest.raises(SystemExit):
             parser.parse_args(["--position", "INVALID"])
 
     def test_custom_seed(self):
         parser = argparse.ArgumentParser()
-        parser.add_argument("--position", required=True, choices=["QB", "RB", "WR", "TE", "K", "DST"])
+        parser.add_argument(
+            "--position", required=True, choices=["QB", "RB", "WR", "TE", "K", "DST"]
+        )
         parser.add_argument("--seed", type=int, default=42)
         args = parser.parse_args(["--position", "QB", "--seed", "123"])
         assert args.seed == 123
@@ -79,27 +94,37 @@ class TestArgumentParsing:
 # _assert_gpu: CPU-only bypass
 # ---------------------------------------------------------------------------
 
+
 class TestAssertGpu:
     def test_cpu_only_position_skips_require_gpu(self):
         """K/DST should never fail _assert_gpu even when REQUIRE_GPU=1."""
         from batch.train import _assert_gpu
-        with mock.patch.dict(os.environ, {"REQUIRE_GPU": "1"}), \
-             mock.patch("batch.train.torch.cuda.is_available", return_value=False):
+
+        with (
+            mock.patch.dict(os.environ, {"REQUIRE_GPU": "1"}),
+            mock.patch("batch.train.torch.cuda.is_available", return_value=False),
+        ):
             # Should NOT raise for K or DST
             _assert_gpu("K")
             _assert_gpu("DST")
 
     def test_gpu_position_raises_when_require_gpu_and_no_cuda(self):
         from batch.train import _assert_gpu
-        with mock.patch.dict(os.environ, {"REQUIRE_GPU": "1"}), \
-             mock.patch("batch.train.torch.cuda.is_available", return_value=False):
+
+        with (
+            mock.patch.dict(os.environ, {"REQUIRE_GPU": "1"}),
+            mock.patch("batch.train.torch.cuda.is_available", return_value=False),
+        ):
             with pytest.raises(RuntimeError, match="REQUIRE_GPU=1"):
                 _assert_gpu("RB")
 
     def test_gpu_position_passes_when_require_gpu_off(self):
         from batch.train import _assert_gpu
-        with mock.patch.dict(os.environ, {"REQUIRE_GPU": "0"}), \
-             mock.patch("batch.train.torch.cuda.is_available", return_value=False):
+
+        with (
+            mock.patch.dict(os.environ, {"REQUIRE_GPU": "0"}),
+            mock.patch("batch.train.torch.cuda.is_available", return_value=False),
+        ):
             _assert_gpu("RB")  # should not raise
 
 
@@ -107,32 +132,38 @@ class TestAssertGpu:
 # LOG_EVERY env-var plumbing (replaces old monkey-patch tests)
 # ---------------------------------------------------------------------------
 
+
 class TestResolveNnLogEvery:
     """shared.pipeline._resolve_nn_log_every is the new injection point."""
 
     def test_cfg_wins(self):
         from shared.pipeline import _resolve_nn_log_every
+
         with mock.patch.dict(os.environ, {"LOG_EVERY": "99"}):
             assert _resolve_nn_log_every({"nn_log_every": 3}) == 3
 
     def test_env_var_used_when_cfg_missing(self):
         from shared.pipeline import _resolve_nn_log_every
+
         with mock.patch.dict(os.environ, {"LOG_EVERY": "1"}):
             assert _resolve_nn_log_every({}) == 1
 
     def test_default_when_neither_set(self):
         from shared.pipeline import _resolve_nn_log_every
+
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("LOG_EVERY", None)
             assert _resolve_nn_log_every({}) == 10
 
     def test_non_int_env_var_falls_back_to_default(self):
         from shared.pipeline import _resolve_nn_log_every
+
         with mock.patch.dict(os.environ, {"LOG_EVERY": "not-a-number"}):
             assert _resolve_nn_log_every({}) == 10
 
     def test_null_cfg_value_treated_as_missing(self):
         from shared.pipeline import _resolve_nn_log_every
+
         with mock.patch.dict(os.environ, {"LOG_EVERY": "7"}):
             assert _resolve_nn_log_every({"nn_log_every": None}) == 7
 
@@ -140,6 +171,7 @@ class TestResolveNnLogEvery:
 # ---------------------------------------------------------------------------
 # S3 data download logic
 # ---------------------------------------------------------------------------
+
 
 class TestDownloadData:
     @mock.patch("batch.train.boto3.client")
@@ -173,6 +205,7 @@ class TestDownloadData:
 # S3 artifact upload logic — empty-dir and missing-metrics guards
 # ---------------------------------------------------------------------------
 
+
 class TestUploadArtifacts:
     @mock.patch("batch.train.boto3.client")
     def test_uploads_tar_to_correct_s3_key(self, mock_boto_client):
@@ -196,6 +229,7 @@ class TestUploadArtifacts:
 
     def test_raises_on_empty_model_dir(self, tmp_path):
         from batch.train import upload_artifacts
+
         empty = tmp_path / "empty"
         empty.mkdir()
         with pytest.raises(RuntimeError, match="empty"):
@@ -203,12 +237,14 @@ class TestUploadArtifacts:
 
     def test_raises_when_model_dir_missing(self, tmp_path):
         from batch.train import upload_artifacts
+
         missing = tmp_path / "not-there"
         with pytest.raises(RuntimeError, match="does not exist"):
             upload_artifacts("bucket", "RB", str(missing))
 
     def test_raises_when_metrics_missing(self, tmp_path):
         from batch.train import upload_artifacts
+
         d = tmp_path / "m"
         d.mkdir()
         (d / "ridge_model.pkl").write_text("x")
@@ -220,9 +256,11 @@ class TestUploadArtifacts:
 # Metric extraction
 # ---------------------------------------------------------------------------
 
+
 class TestMetricExtraction:
     def test_extracts_ridge_and_nn_metrics(self):
         from batch.train import _extract_metrics
+
         result = {
             "ridge_metrics": {
                 "total": {"mae": 4.5, "r2": 0.3},
@@ -242,6 +280,7 @@ class TestMetricExtraction:
 
     def test_handles_missing_model_types(self):
         from batch.train import _extract_metrics
+
         result = {
             "ridge_metrics": {"total": {"mae": 4.0, "r2": 0.3}},
         }
@@ -254,6 +293,7 @@ class TestMetricExtraction:
 # ---------------------------------------------------------------------------
 # Artifact copy logic
 # ---------------------------------------------------------------------------
+
 
 class TestArtifactCopy:
     def test_copytree_when_src_exists(self, tmp_path):
@@ -275,13 +315,17 @@ class TestArtifactCopy:
 # Full main() integration test (mocked)
 # ---------------------------------------------------------------------------
 
+
 class TestMainIntegration:
     @mock.patch("batch.train.upload_artifacts")
     @mock.patch("batch.train.shutil.copytree")
     @mock.patch("batch.train.download_data")
     @mock.patch("batch.train.pd.read_parquet")
-    def test_main_standard_position(self, mock_parquet, mock_download, mock_copytree, mock_upload, tmp_path):
+    def test_main_standard_position(
+        self, mock_parquet, mock_download, mock_copytree, mock_upload, tmp_path
+    ):
         import pandas as pd
+
         mock_df = pd.DataFrame({"col": [1, 2, 3]})
         mock_parquet.return_value = mock_df
 
@@ -298,16 +342,22 @@ class TestMainIntegration:
         model_dir = tmp_path / "model"
         data_dir = tmp_path / "data"
 
-        with mock.patch("sys.argv", ["train.py", "--position", "RB"]), \
-             mock.patch.dict(os.environ, {
-                 "S3_BUCKET": "test-bucket",
-                 "TRAINING_DATA_DIR": str(data_dir),
-                 "MODEL_OUTPUT_DIR": str(model_dir),
-                 "REQUIRE_GPU": "0",
-             }), \
-             mock.patch("batch.train.get_runner", return_value=fake_runner), \
-             mock.patch("batch.train.accepts_dataframes", return_value=True):
+        with (
+            mock.patch("sys.argv", ["train.py", "--position", "RB"]),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "S3_BUCKET": "test-bucket",
+                    "TRAINING_DATA_DIR": str(data_dir),
+                    "MODEL_OUTPUT_DIR": str(model_dir),
+                    "REQUIRE_GPU": "0",
+                },
+            ),
+            mock.patch("batch.train.get_runner", return_value=fake_runner),
+            mock.patch("batch.train.accepts_dataframes", return_value=True),
+        ):
             from batch.train import main
+
             main()
 
         mock_download.assert_called_once()
@@ -329,12 +379,15 @@ class TestMainIntegration:
 
         model_dir = tmp_path / "model"
 
-        with mock.patch("sys.argv", ["train.py", "--position", "K"]), \
-             mock.patch.dict(os.environ, {"MODEL_OUTPUT_DIR": str(model_dir), "REQUIRE_GPU": "1"}), \
-             mock.patch("batch.train.get_runner", return_value=fake_k_runner), \
-             mock.patch("batch.train.accepts_dataframes", return_value=False), \
-             mock.patch("batch.train.torch.cuda.is_available", return_value=False):
+        with (
+            mock.patch("sys.argv", ["train.py", "--position", "K"]),
+            mock.patch.dict(os.environ, {"MODEL_OUTPUT_DIR": str(model_dir), "REQUIRE_GPU": "1"}),
+            mock.patch("batch.train.get_runner", return_value=fake_k_runner),
+            mock.patch("batch.train.accepts_dataframes", return_value=False),
+            mock.patch("batch.train.torch.cuda.is_available", return_value=False),
+        ):
             from batch.train import main
+
             # REQUIRE_GPU=1 with no CUDA would normally raise, but K's CPU-only
             # flag in the registry tells _assert_gpu to skip the check.
             main()

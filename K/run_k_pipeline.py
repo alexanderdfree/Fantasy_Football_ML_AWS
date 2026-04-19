@@ -6,26 +6,48 @@ Cross-season splits: train 2015-2023, val 2024, test 2025.
 
 import os
 import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from K.k_config import (
-    K_TARGETS, K_RIDGE_ALPHA_GRIDS, K_SPECIFIC_FEATURES,
-    K_RIDGE_CV_FOLDS, K_CV_SPLIT_COLUMN, K_RIDGE_REFINE_POINTS,
-    K_NN_BACKBONE_LAYERS, K_NN_HEAD_HIDDEN, K_NN_DROPOUT,
-    K_NN_LR, K_NN_WEIGHT_DECAY, K_NN_EPOCHS, K_NN_BATCH_SIZE,
+    K_CV_SPLIT_COLUMN,
+    K_HUBER_DELTAS,
+    K_LGBM_COLSAMPLE_BYTREE,
+    K_LGBM_LEARNING_RATE,
+    K_LGBM_MIN_CHILD_SAMPLES,
+    K_LGBM_N_ESTIMATORS,
+    K_LGBM_NUM_LEAVES,
+    K_LGBM_REG_ALPHA,
+    K_LGBM_REG_LAMBDA,
+    K_LGBM_SUBSAMPLE,
+    K_LOSS_W_TOTAL,
+    K_LOSS_WEIGHTS,
+    K_NN_BACKBONE_LAYERS,
+    K_NN_BATCH_SIZE,
+    K_NN_DROPOUT,
+    K_NN_EPOCHS,
+    K_NN_HEAD_HIDDEN,
+    K_NN_LR,
     K_NN_PATIENCE,
-    K_LOSS_WEIGHTS, K_LOSS_W_TOTAL, K_HUBER_DELTAS,
-    K_SCHEDULER_TYPE, K_ONECYCLE_MAX_LR, K_ONECYCLE_PCT_START,
-    K_TRAIN_LIGHTGBM, K_LGBM_N_ESTIMATORS, K_LGBM_LEARNING_RATE,
-    K_LGBM_NUM_LEAVES, K_LGBM_SUBSAMPLE, K_LGBM_COLSAMPLE_BYTREE,
-    K_LGBM_REG_LAMBDA, K_LGBM_REG_ALPHA, K_LGBM_MIN_CHILD_SAMPLES,
+    K_NN_WEIGHT_DECAY,
+    K_ONECYCLE_MAX_LR,
+    K_ONECYCLE_PCT_START,
+    K_RIDGE_ALPHA_GRIDS,
+    K_RIDGE_CV_FOLDS,
+    K_RIDGE_REFINE_POINTS,
+    K_SCHEDULER_TYPE,
+    K_SPECIFIC_FEATURES,
+    K_TARGETS,
+    K_TRAIN_LIGHTGBM,
 )
-from K.k_data import load_kicker_data, filter_to_k, kicker_season_split
-from K.k_targets import compute_k_targets, compute_k_miss_adjustment
+from K.k_data import filter_to_k, kicker_season_split, load_kicker_data
 from K.k_features import (
-    compute_k_features, add_k_specific_features,
-    get_k_feature_columns, fill_k_nans,
+    add_k_specific_features,
+    compute_k_features,
+    fill_k_nans,
+    get_k_feature_columns,
 )
+from K.k_targets import compute_k_miss_adjustment, compute_k_targets
 from shared.pipeline import run_pipeline
 
 

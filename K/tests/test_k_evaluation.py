@@ -1,11 +1,12 @@
 """Tests for shared.evaluation — compute_target_metrics, compute_ranking_metrics (K targets)."""
 
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import patch
 
-from shared.evaluation import compute_target_metrics, compute_ranking_metrics
+from shared.evaluation import compute_ranking_metrics, compute_target_metrics
 
 K_TARGETS = ["fg_points", "pat_points"]
 
@@ -100,12 +101,14 @@ class TestComputeRankingMetrics:
     def test_constant_predictions_spearman(self):
         rows = []
         for pid in range(1, 16):
-            rows.append({
-                "week": 1,
-                "player_id": f"K{pid}",
-                "pred_total": 7.0,
-                "fantasy_points": float(pid),
-            })
+            rows.append(
+                {
+                    "week": 1,
+                    "player_id": f"K{pid}",
+                    "pred_total": 7.0,
+                    "fantasy_points": float(pid),
+                }
+            )
         df = pd.DataFrame(rows)
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=12)
         assert np.isnan(result["weekly"][0]["spearman"])

@@ -1,4 +1,5 @@
 import os
+
 import joblib
 import numpy as np
 import pandas as pd
@@ -17,6 +18,7 @@ class RidgeModel:
         X_scaled = self.scaler.fit_transform(X_train)
         if self.pca_n_components:
             from sklearn.decomposition import PCA
+
             self.pca = PCA(n_components=self.pca_n_components)
             X_scaled = self.pca.fit_transform(X_scaled)
         self.model.fit(X_scaled, y_train)
@@ -31,13 +33,13 @@ class RidgeModel:
         if self.pca is not None:
             # Map PCA coefficients back to original features via loadings
             original_coefs = self.pca.components_.T @ self.model.coef_
-            importance = pd.Series(
-                np.abs(original_coefs), index=feature_names
-            ).sort_values(ascending=False)
+            importance = pd.Series(np.abs(original_coefs), index=feature_names).sort_values(
+                ascending=False
+            )
         else:
-            importance = pd.Series(
-                np.abs(self.model.coef_), index=feature_names
-            ).sort_values(ascending=False)
+            importance = pd.Series(np.abs(self.model.coef_), index=feature_names).sort_values(
+                ascending=False
+            )
         return importance
 
     def save(self, model_dir: str = "outputs/models") -> None:

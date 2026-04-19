@@ -139,7 +139,7 @@ class TestDeterminism:
             rank_a = result_a["weekly_ranking"][model]
             rank_b = result_b["weekly_ranking"][model]
             assert len(rank_a) == len(rank_b)
-            for wa, wb in zip(rank_a, rank_b):
+            for wa, wb in zip(rank_a, rank_b, strict=False):
                 assert wa["week"] == wb["week"]
                 assert wa["top_k_hit_rate"] == wb["top_k_hit_rate"]
                 # spearman may involve NaN; check via numpy equality

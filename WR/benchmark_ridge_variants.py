@@ -7,46 +7,59 @@ Usage:
     python WR/benchmark_ridge_variants.py
 """
 
-import os, sys, time
+import os
+import sys
+import time
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from src.config import SPLITS_DIR, MIN_GAMES_PER_SEASON
-from src.evaluation.metrics import compute_metrics
 from shared.models import RidgeMultiTarget
 from shared.pipeline import _tune_ridge_alphas_cv
-
+from src.config import MIN_GAMES_PER_SEASON, SPLITS_DIR
+from src.evaluation.metrics import compute_metrics
+from WR.wr_config import WR_RIDGE_ALPHA_GRIDS, WR_SPECIFIC_FEATURES, WR_TARGETS
 from WR.wr_data import filter_to_wr
-from WR.wr_targets import compute_wr_targets
 from WR.wr_features import (
-    add_wr_specific_features, get_wr_feature_columns, fill_wr_nans,
+    add_wr_specific_features,
+    fill_wr_nans,
+    get_wr_feature_columns,
 )
-from WR.wr_config import WR_TARGETS, WR_RIDGE_ALPHA_GRIDS, WR_SPECIFIC_FEATURES
-
+from WR.wr_targets import compute_wr_targets
 
 # ── Aggressive feature drops (on top of WR_INCLUDE_FEATURES whitelist) ────────
 EXTRA_DROPS = {
     # Zero variance
     "is_home",
     # snap_pct L5 rolling — missed in L5 cleanup, r=0.993 with L8
-    "rolling_mean_snap_pct_L5", "rolling_std_snap_pct_L5", "rolling_max_snap_pct_L5",
+    "rolling_mean_snap_pct_L5",
+    "rolling_std_snap_pct_L5",
+    "rolling_max_snap_pct_L5",
     # Redundant matchup features
-    "opp_recv_pts_allowed_to_pos",   # r=0.993 with opp_fantasy_pts_allowed_to_pos
-    "opp_rush_pts_allowed_to_pos",   # irrelevant for WR receiving
+    "opp_recv_pts_allowed_to_pos",  # r=0.993 with opp_fantasy_pts_allowed_to_pos
+    "opp_rush_pts_allowed_to_pos",  # irrelevant for WR receiving
     # Prior-season receiving_yards — r>0.98 with fantasy_points_floor priors
-    "prior_season_mean_receiving_yards", "prior_season_std_receiving_yards",
+    "prior_season_mean_receiving_yards",
+    "prior_season_std_receiving_yards",
     "prior_season_max_receiving_yards",
     # Prior-season receptions — r>0.97 with targets/fantasy_points_floor priors
-    "prior_season_mean_receptions", "prior_season_std_receptions",
+    "prior_season_mean_receptions",
+    "prior_season_std_receptions",
     "prior_season_max_receptions",
     # Carry-related rolling — WRs rarely carry; carry_share is more informative
-    "rolling_mean_carries_L3", "rolling_std_carries_L3", "rolling_max_carries_L3",
-    "rolling_mean_carries_L8", "rolling_std_carries_L8", "rolling_max_carries_L8",
+    "rolling_mean_carries_L3",
+    "rolling_std_carries_L3",
+    "rolling_max_carries_L3",
+    "rolling_mean_carries_L8",
+    "rolling_std_carries_L8",
+    "rolling_max_carries_L8",
     # Prior-season carries
-    "prior_season_mean_carries", "prior_season_std_carries", "prior_season_max_carries",
+    "prior_season_mean_carries",
+    "prior_season_std_carries",
+    "prior_season_max_carries",
     # carry_share L5 — r=0.97 with carry_share_L3
     "carry_share_L5",
 }
@@ -60,31 +73,45 @@ def _condition_number(X):
     return s[0] / s[-1] if s[-1] > 1e-15 else float("inf")
 
 
-def _run_variant(name, feature_cols, X_train, X_val, X_test,
-                 y_train_dict, y_val_dict, y_test_dict,
-                 pos_train, pca_n=None):
+def _run_variant(
+    name,
+    feature_cols,
+    X_train,
+    X_val,
+    X_test,
+    y_train_dict,
+    y_val_dict,
+    y_test_dict,
+    pos_train,
+    pca_n=None,
+):
     """Train + evaluate a single Ridge variant. Returns metrics dict."""
     t0 = time.time()
 
     # Select features
     Xi_train = X_train[feature_cols].values.astype(np.float32)
-    Xi_val = X_val[feature_cols].values.astype(np.float32)
+    X_val[feature_cols].values.astype(np.float32)
     Xi_test = X_test[feature_cols].values.astype(np.float32)
 
     cond = _condition_number(Xi_train)
 
     # Tune alphas
     best_alphas = _tune_ridge_alphas_cv(
-        Xi_train, y_train_dict, pos_train["season"].values,
+        Xi_train,
+        y_train_dict,
+        pos_train["season"].values,
         targets=WR_TARGETS,
         alpha_grids=WR_RIDGE_ALPHA_GRIDS,
-        n_cv_folds=4, refine_points=5,
+        n_cv_folds=4,
+        refine_points=5,
         pca_n_components=pca_n,
     )
 
     # Fit final model
     model = RidgeMultiTarget(
-        target_names=WR_TARGETS, alpha=best_alphas, pca_n_components=pca_n,
+        target_names=WR_TARGETS,
+        alpha=best_alphas,
+        pca_n_components=pca_n,
     )
     model.fit(Xi_train, y_train_dict)
 
@@ -130,7 +157,10 @@ def main():
 
     pos_train, pos_val, pos_test = add_wr_specific_features(pos_train, pos_val, pos_test)
     pos_train, pos_val, pos_test = fill_wr_nans(
-        pos_train, pos_val, pos_test, WR_SPECIFIC_FEATURES,
+        pos_train,
+        pos_val,
+        pos_test,
+        WR_SPECIFIC_FEATURES,
     )
 
     # Base feature columns (current WR config)
@@ -158,12 +188,12 @@ def main():
 
     # ── Run variants ─────────────────────────────────────────────────────────
     variants = [
-        ("1. baseline",              base_cols,       None),
-        ("2. pcr_80",                base_cols,       80),
-        ("3. pcr_50",                base_cols,       50),
-        ("4. pcr_30",                base_cols,       30),
-        ("5. aggressive_drops",      aggressive_cols, None),
-        ("6. aggressive_drops+pcr",  aggressive_cols, None),  # PCA TBD after 2-4
+        ("1. baseline", base_cols, None),
+        ("2. pcr_80", base_cols, 80),
+        ("3. pcr_50", base_cols, 50),
+        ("4. pcr_30", base_cols, 30),
+        ("5. aggressive_drops", aggressive_cols, None),
+        ("6. aggressive_drops+pcr", aggressive_cols, None),  # PCA TBD after 2-4
     ]
 
     results = []
@@ -176,28 +206,38 @@ def main():
                 pca_n = best_pcr["pca_n"]
                 print(f"\n  [auto] Using PCA({pca_n}) from best PCR variant")
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  Variant: {name} (features={len(cols)}, PCA={pca_n})")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         r = _run_variant(
-            name, cols,
-            pos_train, pos_val, pos_test,
-            y_train_dict, y_val_dict, y_test_dict,
-            pos_train, pca_n=pca_n,
+            name,
+            cols,
+            pos_train,
+            pos_val,
+            pos_test,
+            y_train_dict,
+            y_val_dict,
+            y_test_dict,
+            pos_train,
+            pca_n=pca_n,
         )
         results.append(r)
         m = r["metrics"]["total"]
-        print(f"  -> MAE={m['mae']:.3f}  R2={m['r2']:.3f}  "
-              f"cond={r['cond_number']:.2e}  ({r['elapsed']:.1f}s)")
+        print(
+            f"  -> MAE={m['mae']:.3f}  R2={m['r2']:.3f}  "
+            f"cond={r['cond_number']:.2e}  ({r['elapsed']:.1f}s)"
+        )
 
     # ── Comparison table ─────────────────────────────────────────────────────
-    print(f"\n\n{'='*110}")
+    print(f"\n\n{'=' * 110}")
     print("  WR RIDGE VARIANT COMPARISON")
-    print(f"{'='*110}")
-    header = (f"{'Variant':<28} {'Feats':>5} {'PCA':>4} {'Cond#':>10} "
-              f"{'Total MAE':>10} {'Total R2':>9} "
-              f"{'recv_fl':>8} {'rush_fl':>8} {'td_pts':>8} {'Time':>6}")
+    print(f"{'=' * 110}")
+    header = (
+        f"{'Variant':<28} {'Feats':>5} {'PCA':>4} {'Cond#':>10} "
+        f"{'Total MAE':>10} {'Total R2':>9} "
+        f"{'recv_fl':>8} {'rush_fl':>8} {'td_pts':>8} {'Time':>6}"
+    )
     print(header)
     print("-" * 110)
 
@@ -208,33 +248,38 @@ def main():
         cond_str = f"{r['cond_number']:.1e}" if r["cond_number"] < 1e15 else "inf"
         delta = m["total"]["mae"] - baseline_mae
         delta_str = f"({delta:+.3f})" if r["name"] != "1. baseline" else ""
-        print(f"{r['name']:<28} {r['n_features']:>5} {pca_str:>4} {cond_str:>10} "
-              f"{m['total']['mae']:>10.3f}{delta_str:>8} {m['total']['r2']:>6.3f} "
-              f"{m['receiving_floor']['mae']:>8.3f} {m['rushing_floor']['mae']:>8.3f} "
-              f"{m['td_points']['mae']:>8.3f} {r['elapsed']:>5.1f}s")
+        print(
+            f"{r['name']:<28} {r['n_features']:>5} {pca_str:>4} {cond_str:>10} "
+            f"{m['total']['mae']:>10.3f}{delta_str:>8} {m['total']['r2']:>6.3f} "
+            f"{m['receiving_floor']['mae']:>8.3f} {m['rushing_floor']['mae']:>8.3f} "
+            f"{m['td_points']['mae']:>8.3f} {r['elapsed']:>5.1f}s"
+        )
 
-    print(f"{'='*110}")
+    print(f"{'=' * 110}")
 
     # Per-target R2 table
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("  PER-TARGET R\u00b2 BY VARIANT")
-    print(f"{'='*80}")
-    r2_hdr = (f"{'Variant':<28} {'Total':>8} {'recv_fl':>8} "
-              f"{'rush_fl':>8} {'td_pts':>8}")
+    print(f"{'=' * 80}")
+    r2_hdr = f"{'Variant':<28} {'Total':>8} {'recv_fl':>8} {'rush_fl':>8} {'td_pts':>8}"
     print(r2_hdr)
     print("-" * 80)
     for r in results:
         m = r["metrics"]
-        print(f"{r['name']:<28} {m['total']['r2']:>8.3f} "
-              f"{m['receiving_floor']['r2']:>8.3f} {m['rushing_floor']['r2']:>8.3f} "
-              f"{m['td_points']['r2']:>8.3f}")
-    print(f"{'='*80}")
+        print(
+            f"{r['name']:<28} {m['total']['r2']:>8.3f} "
+            f"{m['receiving_floor']['r2']:>8.3f} {m['rushing_floor']['r2']:>8.3f} "
+            f"{m['td_points']['r2']:>8.3f}"
+        )
+    print(f"{'=' * 80}")
 
     # Best variant
     best = min(results, key=lambda r: r["metrics"]["total"]["mae"])
-    print(f"\nBest variant: {best['name']} "
-          f"(MAE={best['metrics']['total']['mae']:.3f}, "
-          f"R2={best['metrics']['total']['r2']:.3f})")
+    print(
+        f"\nBest variant: {best['name']} "
+        f"(MAE={best['metrics']['total']['mae']:.3f}, "
+        f"R2={best['metrics']['total']['r2']:.3f})"
+    )
     print(f"  Best alphas: {best['best_alphas']}")
 
 

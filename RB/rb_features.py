@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
-from src.features.engineer import flatten_include_features
+
 from RB.rb_config import RB_INCLUDE_FEATURES
 from RB.rb_data import compute_team_rb_totals
+from src.features.engineer import flatten_include_features
 
 
 def get_rb_feature_columns() -> list[str]:
@@ -24,9 +25,11 @@ def add_rb_specific_features(
     # Must combine splits to capture cross-season history (e.g., 2024 val needs 2018-2023 carries).
     combined = pd.concat([train_df, val_df, test_df], ignore_index=True)
     combined = combined.sort_values(["player_id", "season", "week"])
-    combined["career_carries"] = combined.groupby("player_id")["carries"].transform(
-        lambda x: x.fillna(0).cumsum().shift(1)
-    ).fillna(0)
+    combined["career_carries"] = (
+        combined.groupby("player_id")["carries"]
+        .transform(lambda x: x.fillna(0).cumsum().shift(1))
+        .fillna(0)
+    )
     lookup = combined.groupby(["player_id", "season", "week"])["career_carries"].first()
     for df in [train_df, val_df, test_df]:
         keys = pd.MultiIndex.from_arrays([df["player_id"], df["season"], df["week"]])
@@ -65,16 +68,12 @@ def _compute_rb_features(df: pd.DataFrame) -> None:
     df["_raw_weighted_opps"] = df["carries"].fillna(0) + 2 * df["targets"].fillna(0)
     df["weighted_opportunities_L3"] = df.groupby(["player_id", "season"])[
         "_raw_weighted_opps"
-    ].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    )
+    ].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
     df.drop(columns=["_raw_weighted_opps"], inplace=True)
 
     # --- Features 4 & 5: team_rb_carry_share_L3 and team_rb_target_share_L3 ---
     team_rb_totals = compute_team_rb_totals(df)
-    df_merged = df.merge(
-        team_rb_totals, on=["recent_team", "season", "week"], how="left"
-    )
+    df_merged = df.merge(team_rb_totals, on=["recent_team", "season", "week"], how="left")
 
     # Carry share
     player_carries_roll = df_merged.groupby(["player_id", "season"])["carries"].transform(
@@ -110,26 +109,26 @@ def _compute_rb_features(df: pd.DataFrame) -> None:
     # --- Game-level HHI (team carry/target concentration) ---
     df["game_carry_hhi"] = df.groupby(["recent_team", "season", "week"])[
         "game_carry_share"
-    ].transform(lambda x: (x ** 2).sum())
+    ].transform(lambda x: (x**2).sum())
     df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
         "game_target_share"
-    ].transform(lambda x: (x ** 2).sum())
+    ].transform(lambda x: (x**2).sum())
 
     # --- Features 12 & 13: rolling HHI (L3) for Ridge ---
-    df["team_rb_carry_hhi_L3"] = df.groupby(["player_id", "season"])[
-        "game_carry_hhi"
-    ].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
-    df["team_rb_target_hhi_L3"] = df.groupby(["player_id", "season"])[
-        "game_target_hhi"
-    ].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+    df["team_rb_carry_hhi_L3"] = df.groupby(["player_id", "season"])["game_carry_hhi"].transform(
+        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
+    )
+    df["team_rb_target_hhi_L3"] = df.groupby(["player_id", "season"])["game_target_hhi"].transform(
+        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
+    )
 
     # --- Feature 14: opportunity_index_L3 (weighted opp share) ---
     _team_w_opps = _team_carries + 2 * _team_targets
     _player_w_opps = _carries + 2 * _targets
     df["_game_opp_idx"] = np.where(_team_w_opps > 0, _player_w_opps / _team_w_opps, 0.0)
-    df["opportunity_index_L3"] = df.groupby(["player_id", "season"])[
-        "_game_opp_idx"
-    ].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+    df["opportunity_index_L3"] = df.groupby(["player_id", "season"])["_game_opp_idx"].transform(
+        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
+    )
     df.drop(columns=["_game_opp_idx"], inplace=True)
 
     # --- Feature 6: rushing_epa_per_attempt_L3 ---
@@ -194,9 +193,7 @@ def fill_rb_nans(
     """
     # Replace inf with NaN
     for split_df in [train_df, val_df, test_df]:
-        split_df[rb_feature_cols] = split_df[rb_feature_cols].replace(
-            [np.inf, -np.inf], np.nan
-        )
+        split_df[rb_feature_cols] = split_df[rb_feature_cols].replace([np.inf, -np.inf], np.nan)
 
     # Compute training set means
     train_means = train_df[rb_feature_cols].mean()

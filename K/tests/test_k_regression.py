@@ -11,6 +11,7 @@ Thresholds are loose enough to not flake on the synthetic data; tight enough
 that a real regression (e.g., feature accidentally zeroed, label swap, scaler
 misuse) fails the suite.
 """
+
 import numpy as np
 import pytest
 import torch
@@ -23,10 +24,10 @@ from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
 from shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
 
-
 # ---------------------------------------------------------------------------
 # Shared training data + trained models (module-scoped: trained once)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def k_training_arrays(tiny_k_dataset):
@@ -90,8 +91,10 @@ def lightgbm_mae(k_training_arrays):
         seed=42,
     )
     model.fit(
-        d["X_train"], d["y_train_dict"],
-        d["X_val"], d["y_val_dict"],
+        d["X_train"],
+        d["y_train_dict"],
+        d["X_val"],
+        d["y_val_dict"],
         feature_names=d["feature_cols"],
     )
     return _total_mae(model.predict(d["X_val"]), d["y_val_dict"]["total"])
@@ -101,14 +104,13 @@ def lightgbm_mae(k_training_arrays):
 # Regression tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.regression
 @pytest.mark.integration
 def test_ridge_beats_baseline(k_training_arrays, ridge_mae):
     """Ridge total MAE < season-average baseline (catches `forgot to fit`)."""
     baseline = k_training_arrays["baseline_mae"]
-    assert ridge_mae < baseline, (
-        f"Ridge MAE {ridge_mae:.3f} did not beat baseline {baseline:.3f}"
-    )
+    assert ridge_mae < baseline, f"Ridge MAE {ridge_mae:.3f} did not beat baseline {baseline:.3f}"
 
 
 @pytest.mark.regression
@@ -154,17 +156,22 @@ def test_nn_within_25pct_of_lightgbm(k_training_arrays, lightgbm_mae):
         dropout=0.0,
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, patience=5, factor=0.5
-    )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
     criterion = MultiTargetLoss(
-        target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS,
-        huber_deltas=K_HUBER_DELTAS, w_total=1.0,
+        target_names=K_TARGETS,
+        loss_weights=K_LOSS_WEIGHTS,
+        huber_deltas=K_HUBER_DELTAS,
+        w_total=1.0,
     )
     trainer = MultiHeadTrainer(
-        model=model, optimizer=optimizer, scheduler=scheduler,
-        criterion=criterion, device=torch.device("cpu"),
-        target_names=K_TARGETS, patience=5, log_every=50,
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        criterion=criterion,
+        device=torch.device("cpu"),
+        target_names=K_TARGETS,
+        patience=5,
+        log_every=50,
     )
     trainer.train(train_loader, val_loader, n_epochs=20)
 

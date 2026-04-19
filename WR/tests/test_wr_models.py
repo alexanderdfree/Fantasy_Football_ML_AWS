@@ -72,7 +72,7 @@ class TestRidgeMultiTarget:
         names = [f"feat_{i}" for i in range(X.shape[1])]
         importance = model.get_feature_importance(names)
         assert set(importance.keys()) == {"receiving_floor", "rushing_floor", "td_points"}
-        for target, series in importance.items():
+        for _target, series in importance.items():
             assert isinstance(series, pd.Series)
             assert len(series) == X.shape[1]
 
@@ -114,9 +114,7 @@ class TestRidgeMultiTarget:
         m_uniform.fit(X, y_dict)
         p_per = m_per.predict(X)
         p_uniform = m_uniform.predict(X)
-        any_different = any(
-            not np.allclose(p_per[t], p_uniform[t]) for t in WR_TARGETS
-        )
+        any_different = any(not np.allclose(p_per[t], p_uniform[t]) for t in WR_TARGETS)
         assert any_different
 
     def test_per_target_alpha_save_load(self, simple_data, tmp_path):

@@ -6,7 +6,6 @@ import pytest
 
 from RB.rb_features import _compute_rb_features, fill_rb_nans
 
-
 RB_FEATURE_COLS = [
     "yards_per_carry_L3",
     "reception_rate_L3",
@@ -25,6 +24,7 @@ RB_FEATURE_COLS = [
 # ---------------------------------------------------------------------------
 # _compute_rb_features
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestComputeRBFeatures:
@@ -74,9 +74,7 @@ class TestComputeRBFeatures:
 
     def test_zero_receptions_yac(self, make_player_games):
         """Player with 0 receptions: yac_per_reception_L3 should be 0."""
-        df = make_player_games(
-            n_weeks=4, receptions=0, receiving_yards_after_catch=0
-        )
+        df = make_player_games(n_weeks=4, receptions=0, receiving_yards_after_catch=0)
         _compute_rb_features(df)
         assert not df["yac_per_reception_L3"].isin([np.inf, -np.inf]).any()
 
@@ -128,6 +126,7 @@ class TestComputeRBFeatures:
 # ---------------------------------------------------------------------------
 # fill_rb_nans
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFillRBNans:

@@ -14,9 +14,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from QB.qb_features import add_qb_specific_features, get_qb_feature_columns
 from QB.qb_config import QB_INCLUDE_FEATURES, QB_SPECIFIC_FEATURES
-
+from QB.qb_features import add_qb_specific_features, get_qb_feature_columns
 
 # Per-feature NaN ceilings — the QB pipeline uses .fillna(0) so output NaN
 # fraction must be 0. Anything else indicates a regression in fill logic.
@@ -29,26 +28,28 @@ def _make_qb_season(n_players=5, n_weeks=17, seed=42):
     rows = []
     for pid in range(1, n_players + 1):
         for wk in range(1, n_weeks + 1):
-            rows.append({
-                "player_id": f"QB{pid}",
-                "season": 2023,
-                "week": wk,
-                "completions": int(rng.integers(10, 30)),
-                "attempts": int(rng.integers(20, 45)),
-                "passing_yards": float(rng.integers(150, 400)),
-                "passing_tds": int(rng.integers(0, 4)),
-                "interceptions": int(rng.integers(0, 3)),
-                "sacks": int(rng.integers(0, 5)),
-                "rushing_yards": float(rng.integers(0, 60)),
-                "passing_epa": float(rng.uniform(-10, 20)),
-                "passing_air_yards": float(rng.integers(100, 350)),
-                "carries": int(rng.integers(0, 8)),
-                "passing_first_downs": int(rng.integers(5, 20)),
-                "rushing_first_downs": int(rng.integers(0, 3)),
-                "rushing_epa": float(rng.uniform(-3, 5)),
-                "passing_yards_after_catch": float(rng.integers(50, 200)),
-                "sack_yards": float(rng.integers(0, 30)),
-            })
+            rows.append(
+                {
+                    "player_id": f"QB{pid}",
+                    "season": 2023,
+                    "week": wk,
+                    "completions": int(rng.integers(10, 30)),
+                    "attempts": int(rng.integers(20, 45)),
+                    "passing_yards": float(rng.integers(150, 400)),
+                    "passing_tds": int(rng.integers(0, 4)),
+                    "interceptions": int(rng.integers(0, 3)),
+                    "sacks": int(rng.integers(0, 5)),
+                    "rushing_yards": float(rng.integers(0, 60)),
+                    "passing_epa": float(rng.uniform(-10, 20)),
+                    "passing_air_yards": float(rng.integers(100, 350)),
+                    "carries": int(rng.integers(0, 8)),
+                    "passing_first_downs": int(rng.integers(5, 20)),
+                    "rushing_first_downs": int(rng.integers(0, 3)),
+                    "rushing_epa": float(rng.uniform(-3, 5)),
+                    "passing_yards_after_catch": float(rng.integers(50, 200)),
+                    "sack_yards": float(rng.integers(0, 30)),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -76,9 +77,7 @@ class TestQBFeatureContract:
         """All specific features must be numeric (float)."""
         for col in QB_SPECIFIC_FEATURES:
             dtype = qb_feature_df[col].dtype
-            assert np.issubdtype(dtype, np.number), (
-                f"{col} has non-numeric dtype {dtype}"
-            )
+            assert np.issubdtype(dtype, np.number), f"{col} has non-numeric dtype {dtype}"
 
     def test_specific_features_nan_ceiling(self, qb_feature_df):
         """Pipeline fills NaN with 0; every specific feature must be fully dense."""
@@ -115,9 +114,15 @@ class TestQBFeatureContract:
     def test_rate_features_non_negative(self, qb_feature_df):
         """Rate features are non-negative — division by zero is guarded."""
         rate_cols = [
-            "completion_pct_L3", "td_rate_L3", "int_rate_L3", "sack_rate_L3",
-            "qb_rushing_share_L3", "deep_ball_rate_L3", "pass_first_down_rate_L3",
-            "rush_first_down_rate_L3", "yac_rate_L3",
+            "completion_pct_L3",
+            "td_rate_L3",
+            "int_rate_L3",
+            "sack_rate_L3",
+            "qb_rushing_share_L3",
+            "deep_ball_rate_L3",
+            "pass_first_down_rate_L3",
+            "rush_first_down_rate_L3",
+            "yac_rate_L3",
         ]
         for col in rate_cols:
             values = qb_feature_df[col]
@@ -125,8 +130,18 @@ class TestQBFeatureContract:
 
     def test_feature_categories_documented(self):
         """QB_INCLUDE_FEATURES dict contains every documented category."""
-        expected = {"rolling", "prior_season", "ewma", "trend", "share",
-                    "matchup", "defense", "contextual", "weather_vegas", "specific"}
+        expected = {
+            "rolling",
+            "prior_season",
+            "ewma",
+            "trend",
+            "share",
+            "matchup",
+            "defense",
+            "contextual",
+            "weather_vegas",
+            "specific",
+        }
         assert expected == set(QB_INCLUDE_FEATURES.keys()), (
             f"Category mismatch: {set(QB_INCLUDE_FEATURES.keys()) ^ expected}"
         )

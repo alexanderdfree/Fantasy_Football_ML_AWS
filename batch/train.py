@@ -9,6 +9,7 @@ Environment variables set via job definition / container overrides:
   S3_BUCKET          = ff-predictor-training
   S3_DATA_PREFIX     = data
 """
+
 import argparse
 import hashlib
 import json
@@ -22,14 +23,16 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import boto3
-import numpy as np
 import pandas as pd
 import torch
 
-from shared.utils import seed_everything
 from shared.registry import (
-    ALL_POSITIONS, accepts_dataframes, get_runner, is_cpu_only,
+    ALL_POSITIONS,
+    accepts_dataframes,
+    get_runner,
+    is_cpu_only,
 )
+from shared.utils import seed_everything
 
 
 def _assert_gpu(position: str):
@@ -63,6 +66,7 @@ def _assert_gpu(position: str):
 def download_data(s3_bucket, s3_prefix, local_dir):
     """Download training parquet files from S3 to the container."""
     from concurrent.futures import ThreadPoolExecutor
+
     s3 = boto3.client("s3")
     os.makedirs(local_dir, exist_ok=True)
     names = ("train.parquet", "val.parquet", "test.parquet")
@@ -110,8 +114,7 @@ def upload_artifacts(s3_bucket, position, model_dir):
     """
     if not os.path.isdir(model_dir):
         raise RuntimeError(
-            f"Model directory {model_dir} does not exist — pipeline did not "
-            "produce artifacts."
+            f"Model directory {model_dir} does not exist — pipeline did not produce artifacts."
         )
     items = os.listdir(model_dir)
     if not items:
@@ -121,8 +124,7 @@ def upload_artifacts(s3_bucket, position, model_dir):
         )
     if "benchmark_metrics.json" not in items:
         raise RuntimeError(
-            f"benchmark_metrics.json not found in {model_dir}. Contents: "
-            f"{sorted(items)}"
+            f"benchmark_metrics.json not found in {model_dir}. Contents: {sorted(items)}"
         )
 
     s3 = boto3.client("s3")
@@ -202,8 +204,8 @@ def main():
         "--dry-run",
         action="store_true",
         help="Skip S3 download/upload and the real pipeline. Writes stub "
-             "artifacts so main() can be smoke-tested end-to-end without "
-             "AWS credentials or training data.",
+        "artifacts so main() can be smoke-tested end-to-end without "
+        "AWS credentials or training data.",
     )
     args = parser.parse_args()
 

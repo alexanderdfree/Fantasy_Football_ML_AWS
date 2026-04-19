@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 
 from src.config import PPR_FORMATS
 
@@ -25,10 +24,7 @@ def compute_te_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     df["rushing_floor"] = df["rushing_yards"].fillna(0) * 0.1
 
-    df["td_points"] = (
-        df["receiving_tds"].fillna(0) * 6
-        + df["rushing_tds"].fillna(0) * 6
-    )
+    df["td_points"] = df["receiving_tds"].fillna(0) * 6 + df["rushing_tds"].fillna(0) * 6
 
     df["fumble_penalty"] = (
         df["sack_fumbles_lost"].fillna(0)
@@ -38,8 +34,7 @@ def compute_te_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     # Sanity check: sum should match fantasy_points minus passing component (full PPR)
     fantasy_points_check = (
-        df["receiving_floor"] + df["rushing_floor"]
-        + df["td_points"] + df["fumble_penalty"]
+        df["receiving_floor"] + df["rushing_floor"] + df["td_points"] + df["fumble_penalty"]
     )
     passing_component = (
         df["passing_yards"].fillna(0) * 0.04
@@ -63,7 +58,7 @@ def compute_te_fumble_adjustment(df: pd.DataFrame) -> pd.Series:
         + df["receiving_fumbles_lost"].fillna(0)
     )
     df["_total_fumbles"] = total_fumbles
-    fumble_rate = df.groupby(["player_id", "season"])[
-        "_total_fumbles"
-    ].transform(lambda x: x.shift(1).rolling(8, min_periods=1).mean())
+    fumble_rate = df.groupby(["player_id", "season"])["_total_fumbles"].transform(
+        lambda x: x.shift(1).rolling(8, min_periods=1).mean()
+    )
     return (fumble_rate * -2).fillna(0)

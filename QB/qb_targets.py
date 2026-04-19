@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 
 
 def compute_qb_targets(df: pd.DataFrame) -> pd.DataFrame:
@@ -40,8 +39,11 @@ def compute_qb_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     # Sanity check: targets + penalties + receiving should ≈ fantasy_points
     fantasy_points_check = (
-        df["passing_floor"] + df["rushing_floor"] + df["td_points"]
-        + df["interception_penalty"] + df["fumble_penalty"]
+        df["passing_floor"]
+        + df["rushing_floor"]
+        + df["td_points"]
+        + df["interception_penalty"]
+        + df["fumble_penalty"]
         + df["receiving_component"]
     )
     discrepancy = (df["fantasy_points"] - fantasy_points_check).abs()

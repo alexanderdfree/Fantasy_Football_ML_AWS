@@ -172,6 +172,7 @@ def _run_pipeline_in_tmp(train_df, val_df, test_df, seed: int, workdir: str) -> 
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.e2e
 def test_pipeline_runs_to_completion(synthetic_rb_splits):
     """Smoke test: the pipeline must finish with finite predictions."""
@@ -190,9 +191,7 @@ def test_pipeline_runs_to_completion(synthetic_rb_splits):
         for target in list(RB_TARGETS) + ["total"]:
             vec = preds[model_name][target]
             assert vec.ndim == 1
-            assert np.isfinite(vec).all(), (
-                f"{model_name}/{target} has non-finite predictions"
-            )
+            assert np.isfinite(vec).all(), f"{model_name}/{target} has non-finite predictions"
 
     # Expected shape: one row per test row (rows that survive filter_to_rb).
     n_test = preds["ridge"]["total"].shape[0]
@@ -219,7 +218,8 @@ def test_pipeline_bit_identical_same_seed(synthetic_rb_splits):
     # Ridge is closed-form → identical bytes expected.
     for target in list(RB_TARGETS) + ["total"]:
         np.testing.assert_array_equal(
-            preds_a["ridge"][target], preds_b["ridge"][target],
+            preds_a["ridge"][target],
+            preds_b["ridge"][target],
             err_msg=f"Ridge predictions drifted for {target}",
         )
 

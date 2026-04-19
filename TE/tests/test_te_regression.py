@@ -24,6 +24,8 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
+from shared.models import LightGBMMultiTarget, RidgeMultiTarget
+from shared.neural_net import MultiHeadNet
 from TE.te_config import (
     TE_CONFIG_TINY,
     TE_LGBM_MIN_CHILD_SAMPLES,
@@ -37,9 +39,6 @@ from TE.te_features import (
     get_te_feature_columns,
 )
 from TE.te_targets import compute_te_targets
-from shared.models import LightGBMMultiTarget, RidgeMultiTarget
-from shared.neural_net import MultiHeadNet
-
 
 pytestmark = [
     pytest.mark.regression,
@@ -63,9 +62,7 @@ def te_training_tensors(te_tiny_splits):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pos_train, pos_val, pos_test = add_te_specific_features(
-            pos_train, pos_val, pos_test
-        )
+        pos_train, pos_val, pos_test = add_te_specific_features(pos_train, pos_val, pos_test)
         pos_train, pos_val, pos_test = fill_te_nans(
             pos_train, pos_val, pos_test, TE_CONFIG_TINY["specific_features"]
         )
@@ -88,9 +85,14 @@ def te_training_tensors(te_tiny_splits):
         d["total"] = sum(d[t] for t in TE_TARGETS)
 
     return {
-        "X_train": X_train, "X_val": X_val, "X_test": X_test,
-        "y_train": y_train, "y_val": y_val, "y_test": y_test,
-        "pos_train": pos_train, "pos_test": pos_test,
+        "X_train": X_train,
+        "X_val": X_val,
+        "X_test": X_test,
+        "y_train": y_train,
+        "y_val": y_val,
+        "y_test": y_test,
+        "pos_train": pos_train,
+        "pos_test": pos_test,
         "feature_cols": feature_cols,
     }
 
@@ -115,8 +117,10 @@ def te_lgbm_mae(te_training_tensors):
             seed=42,
         )
         lgbm.fit(
-            t["X_train"], t["y_train"],
-            t["X_val"], t["y_val"],
+            t["X_train"],
+            t["y_train"],
+            t["X_val"],
+            t["y_val"],
             feature_names=t["feature_cols"],
         )
     preds = lgbm.predict(t["X_test"])
@@ -186,8 +190,7 @@ class TestTERegressionThresholds:
 
         X_train_t = torch.tensor(X_train_s, dtype=torch.float32)
         y_train_t = {
-            t_name: torch.tensor(t["y_train"][t_name], dtype=torch.float32)
-            for t_name in TE_TARGETS
+            t_name: torch.tensor(t["y_train"][t_name], dtype=torch.float32) for t_name in TE_TARGETS
         }
 
         model.train()

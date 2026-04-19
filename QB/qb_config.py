@@ -21,8 +21,13 @@ QB_SPECIFIC_FEATURES = [
 # === QB Feature Whitelist ===
 # Explicit include list — new columns must be opted in, preventing silent leakage.
 _QB_ROLLING_STATS = [
-    "fantasy_points", "fantasy_points_floor", "carries",
-    "rushing_yards", "passing_yards", "attempts", "snap_pct",
+    "fantasy_points",
+    "fantasy_points_floor",
+    "carries",
+    "rushing_yards",
+    "passing_yards",
+    "attempts",
+    "snap_pct",
 ]
 
 QB_INCLUDE_FEATURES = {
@@ -34,15 +39,16 @@ QB_INCLUDE_FEATURES = {
         for stat in _QB_ROLLING_STATS
         for w in [3, 5, 8]
         for col in (
-            ([f"rolling_{a}_{stat}_L{w}" for a in ["mean", "std", "max"]]
-             if w != 5 or stat == "snap_pct" else [])
+            (
+                [f"rolling_{a}_{stat}_L{w}" for a in ["mean", "std", "max"]]
+                if w != 5 or stat == "snap_pct"
+                else []
+            )
             + ([f"rolling_min_{stat}_L{w}"] if stat == "fantasy_points" else [])
         )
     ],
     "prior_season": [
-        f"prior_season_{a}_{stat}"
-        for stat in _QB_ROLLING_STATS
-        for a in ["mean", "std", "max"]
+        f"prior_season_{a}_{stat}" for stat in _QB_ROLLING_STATS for a in ["mean", "std", "max"]
     ],
     # Keep passing_yards EWMA only — other EWMA >0.98 corr with rolling means
     "ewma": ["ewma_passing_yards_L3", "ewma_passing_yards_L5"],
@@ -50,21 +56,34 @@ QB_INCLUDE_FEATURES = {
     # No target_share/air_yards_share — QBs have ~0 targets
     "share": ["carry_share_L3", "carry_share_L5", "snap_pct"],
     "matchup": [
-        "opp_fantasy_pts_allowed_to_pos", "opp_rush_pts_allowed_to_pos",
-        "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos",
+        "opp_fantasy_pts_allowed_to_pos",
+        "opp_rush_pts_allowed_to_pos",
+        "opp_recv_pts_allowed_to_pos",
+        "opp_def_rank_vs_pos",
     ],
     "defense": [
-        "opp_def_sacks_L5", "opp_def_pass_yds_allowed_L5",
-        "opp_def_pass_td_allowed_L5", "opp_def_ints_L5",
-        "opp_def_rush_yds_allowed_L5", "opp_def_pts_allowed_L5",
+        "opp_def_sacks_L5",
+        "opp_def_pass_yds_allowed_L5",
+        "opp_def_pass_td_allowed_L5",
+        "opp_def_ints_L5",
+        "opp_def_rush_yds_allowed_L5",
+        "opp_def_pts_allowed_L5",
     ],
     "contextual": [
-        "is_home", "week", "is_returning_from_absence", "days_rest",
-        "practice_status", "game_status", "depth_chart_rank",
+        "is_home",
+        "week",
+        "is_returning_from_absence",
+        "days_rest",
+        "practice_status",
+        "game_status",
+        "depth_chart_rank",
     ],
     "weather_vegas": [
-        "implied_team_total", "implied_opp_total",
-        "wind_adjusted", "is_dome", "is_divisional",
+        "implied_team_total",
+        "implied_opp_total",
+        "wind_adjusted",
+        "is_dome",
+        "is_divisional",
         "temp_adjusted",
     ],
     "specific": QB_SPECIFIC_FEATURES,
@@ -72,10 +91,11 @@ QB_INCLUDE_FEATURES = {
 
 # === Ridge ===
 import numpy as np
+
 QB_RIDGE_ALPHA_GRIDS = {
     "passing_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
     "rushing_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
-    "td_points":     [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "td_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
 # === Neural Net (2012+ dataset: wider backbone, relaxed regularization) ===
@@ -109,7 +129,7 @@ QB_HUBER_DELTAS = {
     "passing_floor": 2.0,
     "rushing_floor": 2.0,
     "td_points": 2.0,
-    "total": 4.0,       # explicit delta for total aux loss (QBs score highest)
+    "total": 4.0,  # explicit delta for total aux loss (QBs score highest)
 }
 
 # === LR Scheduler ===
@@ -120,7 +140,7 @@ QB_COSINE_ETA_MIN = 1e-5
 
 # === Attention NN (game history variant) ===
 QB_TRAIN_ATTENTION_NN = True
-QB_ATTN_D_MODEL = 32        # projection dim for each game vector
+QB_ATTN_D_MODEL = 32  # projection dim for each game vector
 QB_ATTN_N_HEADS = 2
 QB_ATTN_ENCODER_HIDDEN_DIM = 0
 QB_ATTN_MAX_SEQ_LEN = 17
@@ -131,12 +151,19 @@ QB_ATTN_LR = 1e-3
 QB_ATTN_WEIGHT_DECAY = 5e-5
 QB_ATTN_BATCH_SIZE = 256
 QB_ATTN_HISTORY_STATS = [
-    "fantasy_points", "fantasy_points_floor",
-    "passing_yards", "rushing_yards",
-    "passing_tds", "rushing_tds",
-    "attempts", "completions", "carries",
-    "interceptions", "snap_pct",
-    "sacks", "sack_yards",
+    "fantasy_points",
+    "fantasy_points_floor",
+    "passing_yards",
+    "rushing_yards",
+    "passing_tds",
+    "rushing_tds",
+    "attempts",
+    "completions",
+    "carries",
+    "interceptions",
+    "snap_pct",
+    "sacks",
+    "sack_yards",
 ]
 # Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
 QB_ATTN_GATED_TD = True

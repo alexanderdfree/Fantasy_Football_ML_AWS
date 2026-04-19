@@ -2,6 +2,7 @@
 
 We just ensure project root is importable.
 """
+
 import sys
 from pathlib import Path
 

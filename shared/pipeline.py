@@ -5,36 +5,42 @@ position-specific callables and hyperparameters.
 """
 
 import os
+
+import joblib
+import matplotlib
 import numpy as np
 import pandas as pd
 import torch
-import joblib
 from sklearn.preprocessing import StandardScaler
 
-import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from src.config import SPLITS_DIR, MIN_GAMES_PER_SEASON, TRAIN_SEASONS, VAL_SEASONS
-from src.evaluation.metrics import compute_metrics
-from src.models.baseline import SeasonAverageBaseline
-from src.models.linear import RidgeModel
-from src.data.split import expanding_window_folds
-
-from shared.models import RidgeMultiTarget, LightGBMMultiTarget
+from shared.backtest import plot_weekly_accuracy, run_weekly_simulation
+from shared.evaluation import (
+    compute_ranking_metrics,
+    compute_target_metrics,
+    plot_pred_vs_actual,
+    print_comparison_table,
+)
+from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory
 from shared.training import (
-    MultiTargetLoss, MultiHeadTrainer, MultiHeadHistoryTrainer,
-    make_dataloaders, make_history_dataloaders, plot_training_curves,
+    MultiHeadHistoryTrainer,
+    MultiHeadTrainer,
+    MultiTargetLoss,
+    make_dataloaders,
+    make_history_dataloaders,
+    plot_training_curves,
 )
-from shared.evaluation import (
-    compute_target_metrics, compute_ranking_metrics,
-    print_comparison_table, plot_pred_vs_actual,
-)
-from shared.backtest import run_weekly_simulation, plot_weekly_accuracy
-from shared.weather_features import merge_schedule_features
 from shared.utils import seed_everything
+from shared.weather_features import merge_schedule_features
+from src.config import MIN_GAMES_PER_SEASON, SPLITS_DIR, TRAIN_SEASONS, VAL_SEASONS
+from src.data.split import expanding_window_folds
+from src.evaluation.metrics import compute_metrics
 from src.features.engineer import build_game_history_arrays, get_attn_static_columns
+from src.models.baseline import SeasonAverageBaseline
+from src.models.linear import RidgeModel
 
 
 def _resolve_nn_log_every(cfg):
@@ -58,6 +64,7 @@ def _resolve_nn_log_every(cfg):
 # ---------------------------------------------------------------------------
 # Ridge hyperparameter tuning helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_expanding_cv_folds(split_values, n_folds):
     """Build expanding-window cross-validation fold indices.
@@ -93,9 +100,16 @@ def _eval_alpha_cv(X, y, folds, alpha, pca_n_components=None):
     return np.mean(maes)
 
 
-def _tune_ridge_alphas_cv(X_train, y_train_dict, split_values, targets,
-                          alpha_grids, n_cv_folds=4, refine_points=5,
-                          pca_n_components=None):
+def _tune_ridge_alphas_cv(
+    X_train,
+    y_train_dict,
+    split_values,
+    targets,
+    alpha_grids,
+    n_cv_folds=4,
+    refine_points=5,
+    pca_n_components=None,
+):
     """Per-target Ridge alpha tuning with expanding-window CV.
 
     Pass 1: coarse grid search across CV folds.
@@ -186,7 +200,7 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
     dfs_for_features = [pos_train, pos_val] + ([pos_test] if pos_test is not None else [])
     sizes = ", ".join(
         f"{name}={len(df)}"
-        for name, df in zip(["train", "val", "test"], dfs_for_features)
+        for name, df in zip(["train", "val", "test"], dfs_for_features, strict=False)
     )
     print(f"  {pos} splits: {sizes}")
 
@@ -244,23 +258,35 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
     if y_test_dict is not None:
         y_test_dict["total"] = sum(pos_test[t].values for t in targets)
 
-    return (X_train, X_val, X_test,
-            y_train_dict, y_val_dict, y_test_dict,
-            pos_train, pos_val, pos_test, feature_cols)
+    return (
+        X_train,
+        X_val,
+        X_test,
+        y_train_dict,
+        y_val_dict,
+        y_test_dict,
+        pos_train,
+        pos_val,
+        pos_test,
+        feature_cols,
+    )
 
 
 def _prepare_train_val(position, cfg, train_df, val_df):
     """Train+val variant — same prep as _prepare_position_data without test."""
-    (X_train, X_val, _,
-     y_train_dict, y_val_dict, _,
-     pos_train, pos_val, _, feature_cols) = _prepare_position_data(
-        position, cfg, train_df, val_df, test_df=None,
+    (X_train, X_val, _, y_train_dict, y_val_dict, _, pos_train, pos_val, _, feature_cols) = (
+        _prepare_position_data(
+            position,
+            cfg,
+            train_df,
+            val_df,
+            test_df=None,
+        )
     )
     return X_train, X_val, y_train_dict, y_val_dict, pos_train, pos_val, feature_cols
 
 
-def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
-              cfg, targets, seed):
+def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg, targets, seed):
     """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history).
 
     Shared by the regular NN and Weather NN to guarantee identical training.
@@ -274,7 +300,11 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
     X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
 
     train_loader, val_loader = make_dataloaders(
-        X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=cfg["nn_batch_size"],
+        X_train_s,
+        y_train_dict,
+        X_val_s,
+        y_val_dict,
+        batch_size=cfg["nn_batch_size"],
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -289,7 +319,9 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
     ).to(device)
 
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=cfg["nn_lr"], weight_decay=cfg["nn_weight_decay"],
+        model.parameters(),
+        lr=cfg["nn_lr"],
+        weight_decay=cfg["nn_weight_decay"],
     )
     scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
     criterion = MultiTargetLoss(
@@ -300,9 +332,14 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
     )
 
     trainer = MultiHeadTrainer(
-        model=model, optimizer=optimizer, scheduler=scheduler,
-        criterion=criterion, device=device, target_names=targets,
-        patience=cfg["nn_patience"], scheduler_per_batch=scheduler_per_batch,
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        criterion=criterion,
+        device=device,
+        target_names=targets,
+        patience=cfg["nn_patience"],
+        scheduler_per_batch=scheduler_per_batch,
         log_every=_resolve_nn_log_every(cfg),
     )
     history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
@@ -317,11 +354,24 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
     return model, nn_scaler, val_preds, test_preds, metrics, history
 
 
-def _train_attention_nn(X_train, X_val, X_test,
-                        hist_train, mask_train, hist_val, mask_val,
-                        hist_test, mask_test,
-                        y_train_dict, y_val_dict, y_test_dict,
-                        cfg, targets, seed, feature_cols=None):
+def _train_attention_nn(
+    X_train,
+    X_val,
+    X_test,
+    hist_train,
+    mask_train,
+    hist_val,
+    mask_val,
+    hist_test,
+    mask_test,
+    y_train_dict,
+    y_val_dict,
+    y_test_dict,
+    cfg,
+    targets,
+    seed,
+    feature_cols=None,
+):
     """Train a MultiHeadNetWithHistory and return (model, scaler, test_preds, metrics, history).
 
     Like _train_nn but feeds both static features and game history sequences.
@@ -354,8 +404,12 @@ def _train_attention_nn(X_train, X_val, X_test,
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
     train_loader, val_loader = make_history_dataloaders(
-        X_train_s, _to_history_list(hist_train, mask_train), y_train_dict,
-        X_val_s, _to_history_list(hist_val, mask_val), y_val_dict,
+        X_train_s,
+        _to_history_list(hist_train, mask_train),
+        y_train_dict,
+        X_val_s,
+        _to_history_list(hist_val, mask_val),
+        y_val_dict,
         batch_size=attn_batch_size,
     )
 
@@ -386,7 +440,9 @@ def _train_attention_nn(X_train, X_val, X_test,
     attn_lr = cfg.get("attn_lr", cfg["nn_lr"])
     attn_wd = cfg.get("attn_weight_decay", cfg["nn_weight_decay"])
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=attn_lr, weight_decay=attn_wd,
+        model.parameters(),
+        lr=attn_lr,
+        weight_decay=attn_wd,
     )
     scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
     criterion = MultiTargetLoss(
@@ -400,9 +456,14 @@ def _train_attention_nn(X_train, X_val, X_test,
 
     attn_patience = cfg.get("attn_patience", cfg["nn_patience"])
     trainer = MultiHeadHistoryTrainer(
-        model=model, optimizer=optimizer, scheduler=scheduler,
-        criterion=criterion, device=device, target_names=targets,
-        patience=attn_patience, scheduler_per_batch=scheduler_per_batch,
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        criterion=criterion,
+        device=device,
+        target_names=targets,
+        patience=attn_patience,
+        scheduler_per_batch=scheduler_per_batch,
         log_every=_resolve_nn_log_every(cfg),
     )
     history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
@@ -417,8 +478,9 @@ def _train_attention_nn(X_train, X_val, X_test,
     return model, nn_scaler, val_preds, test_preds, metrics, history
 
 
-def _train_lightgbm(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
-                    cfg, targets, feature_cols, seed):
+def _train_lightgbm(
+    X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg, targets, feature_cols, seed
+):
     """Train a LightGBM multi-target model. Returns (model, val_preds, test_preds, metrics)."""
     model = LightGBMMultiTarget(
         target_names=targets,
@@ -494,11 +556,18 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     # --- Prepare position data ---
     print(f"Preparing {pos} data...")
-    (X_train, X_val, X_test,
-     y_train_dict, y_val_dict, y_test_dict,
-     pos_train, pos_val, pos_test, feature_cols) = _prepare_position_data(
-        position, cfg, train_df, val_df, test_df
-    )
+    (
+        X_train,
+        X_val,
+        X_test,
+        y_train_dict,
+        y_val_dict,
+        y_test_dict,
+        pos_train,
+        pos_val,
+        pos_test,
+        feature_cols,
+    ) = _prepare_position_data(position, cfg, train_df, val_df, test_df)
 
     print(f"  Feature matrix shape: {X_train.shape}")
 
@@ -511,7 +580,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     # --- Ridge multi-target with per-target alpha tuning ---
     print(f"\n=== {pos} Ridge Multi-Target (Per-Target CV Tuning) ===")
-    adj_test = cfg["compute_adjustment_fn"](pos_test)
+    cfg["compute_adjustment_fn"](pos_test)
 
     cv_col = cfg.get("cv_split_column", "season")
     two_stage_targets = cfg.get("two_stage_targets", {})
@@ -520,14 +589,20 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     special_targets = set(two_stage_targets) | set(classification_targets)
     ridge_tune_targets = [t for t in targets if t not in special_targets]
     ridge_tune_grids = {t: cfg["ridge_alpha_grids"][t] for t in ridge_tune_targets}
-    best_alphas = _tune_ridge_alphas_cv(
-        X_train, y_train_dict, pos_train[cv_col].values,
-        targets=ridge_tune_targets,
-        alpha_grids=ridge_tune_grids,
-        n_cv_folds=cfg.get("ridge_cv_folds", 4),
-        refine_points=cfg.get("ridge_refine_points", 5),
-        pca_n_components=pca_n,
-    ) if ridge_tune_targets else {}
+    best_alphas = (
+        _tune_ridge_alphas_cv(
+            X_train,
+            y_train_dict,
+            pos_train[cv_col].values,
+            targets=ridge_tune_targets,
+            alpha_grids=ridge_tune_grids,
+            n_cv_folds=cfg.get("ridge_cv_folds", 4),
+            refine_points=cfg.get("ridge_refine_points", 5),
+            pca_n_components=pca_n,
+        )
+        if ridge_tune_targets
+        else {}
+    )
     if two_stage_targets:
         print(f"  Two-stage targets: {list(two_stage_targets.keys())}")
     if classification_targets:
@@ -535,11 +610,14 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     if pca_n:
         print(f"  PCR: {pca_n} components")
     ridge_non_neg = cfg.get("nn_non_negative_targets")
-    ridge_model = RidgeMultiTarget(target_names=targets, alpha=best_alphas,
-                                   two_stage_targets=two_stage_targets,
-                                   classification_targets=classification_targets,
-                                   pca_n_components=pca_n,
-                                   non_negative_targets=ridge_non_neg)
+    ridge_model = RidgeMultiTarget(
+        target_names=targets,
+        alpha=best_alphas,
+        two_stage_targets=two_stage_targets,
+        classification_targets=classification_targets,
+        pca_n_components=pca_n,
+        non_negative_targets=ridge_non_neg,
+    )
     ridge_model.fit(X_train, y_train_dict)
     ridge_test_preds = ridge_model.predict(X_test)
     # Evaluate total as sum(per-target preds) without adjustment — matches
@@ -551,8 +629,15 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     # --- Multi-head NN ---
     print(f"\n=== {pos} Multi-Head Neural Net ===")
     model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
-        X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
-        cfg, targets, seed,
+        X_train,
+        X_val,
+        X_test,
+        y_train_dict,
+        y_val_dict,
+        y_test_dict,
+        cfg,
+        targets,
+        seed,
     )
 
     # --- Attention NN (game history as variable-length sequences) ---
@@ -568,22 +653,40 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         max_seq_len = cfg.get("attn_max_seq_len", 17)
 
         hist_train, mask_train = build_game_history_arrays(
-            pos_train, history_stats=history_stats, max_seq_len=max_seq_len)
+            pos_train, history_stats=history_stats, max_seq_len=max_seq_len
+        )
         hist_val, mask_val = build_game_history_arrays(
-            pos_val, history_stats=history_stats, max_seq_len=max_seq_len)
+            pos_val, history_stats=history_stats, max_seq_len=max_seq_len
+        )
         hist_test, mask_test = build_game_history_arrays(
-            pos_test, history_stats=history_stats, max_seq_len=max_seq_len)
+            pos_test, history_stats=history_stats, max_seq_len=max_seq_len
+        )
         print(f"  History shape: {hist_train.shape} (game_dim={hist_train.shape[2]})")
 
-        attn_model, attn_nn_scaler, attn_nn_val_preds, attn_nn_test_preds, attn_nn_metrics, attn_history = (
-            _train_attention_nn(
-                X_train, X_val, X_test,
-                hist_train, mask_train, hist_val, mask_val,
-                hist_test, mask_test,
-                y_train_dict, y_val_dict, y_test_dict,
-                cfg, targets, seed,
-                feature_cols=feature_cols,
-            )
+        (
+            attn_model,
+            attn_nn_scaler,
+            attn_nn_val_preds,
+            attn_nn_test_preds,
+            attn_nn_metrics,
+            attn_history,
+        ) = _train_attention_nn(
+            X_train,
+            X_val,
+            X_test,
+            hist_train,
+            mask_train,
+            hist_val,
+            mask_val,
+            hist_test,
+            mask_test,
+            y_train_dict,
+            y_val_dict,
+            y_test_dict,
+            cfg,
+            targets,
+            seed,
+            feature_cols=feature_cols,
         )
 
     # --- LightGBM Multi-Target (conditional) ---
@@ -594,8 +697,16 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     if cfg.get("train_lightgbm", False):
         print(f"\n=== {pos} LightGBM Multi-Target ===")
         lgbm_model, lgbm_val_preds, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
-            X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
-            cfg, targets, feature_cols, seed,
+            X_train,
+            X_val,
+            X_test,
+            y_train_dict,
+            y_val_dict,
+            y_test_dict,
+            cfg,
+            targets,
+            feature_cols,
+            seed,
         )
 
     # --- Comparison ---
@@ -671,11 +782,15 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     plot_training_curves(history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png")
     if attn_history is not None:
-        plot_training_curves(attn_history, targets,
-                             f"{output_dir}/figures/{pos_lower}_attention_training_curves.png")
+        plot_training_curves(
+            attn_history, targets, f"{output_dir}/figures/{pos_lower}_attention_training_curves.png"
+        )
     plot_weekly_accuracy(sim_results, pos, f"{output_dir}/figures/{pos_lower}_weekly_mae.png")
     plot_pred_vs_actual(
-        y_test_dict, nn_test_preds, targets, f"{pos} Multi-Head NN",
+        y_test_dict,
+        nn_test_preds,
+        targets,
+        f"{pos} Multi-Head NN",
         f"{output_dir}/figures/{pos_lower}_pred_vs_actual_scatter.png",
     )
 
@@ -683,7 +798,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
     if len(targets) == 1:
         axes = [axes]
-    for ax, (target, importance) in zip(axes, feature_importance.items()):
+    for ax, (target, importance) in zip(axes, feature_importance.items(), strict=False):
         importance.head(15).plot(kind="barh", ax=ax)
         ax.set_title(f"Ridge: {target} Top-15 Features")
         ax.set_xlabel("Absolute Coefficient")
@@ -696,7 +811,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
         if len(targets) == 1:
             axes = [axes]
-        for ax, (target, importance) in zip(axes, lgbm_importance.items()):
+        for ax, (target, importance) in zip(axes, lgbm_importance.items(), strict=False):
             importance.head(15).plot(kind="barh", ax=ax)
             ax.set_title(f"LightGBM: {target} Top-15 Features")
             ax.set_xlabel("Gain")
@@ -771,19 +886,25 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     folds = expanding_window_folds(full_df)
 
     # --- Tune Ridge alphas once on full training data ---
-    print(f"\nTuning Ridge alphas on full training data...")
+    print("\nTuning Ridge alphas on full training data...")
     alpha_train_df = full_df[full_df["season"].isin(TRAIN_SEASONS)].copy()
     alpha_val_df = full_df[full_df["season"].isin(VAL_SEASONS)].copy()
     X_alpha, _, y_alpha_dict, _, pos_alpha, _, _ = _prepare_train_val(
-        position, cfg, alpha_train_df, alpha_val_df,
+        position,
+        cfg,
+        alpha_train_df,
+        alpha_val_df,
     )
     cv_col = cfg.get("cv_split_column", "season")
     cv_special = set(cfg.get("two_stage_targets", {})) | set(cfg.get("classification_targets", {}))
     cv_ridge_targets = [t for t in targets if t not in cv_special]
     cv_ridge_grids = {t: cfg["ridge_alpha_grids"][t] for t in cv_ridge_targets}
     best_alphas = _tune_ridge_alphas_cv(
-        X_alpha, y_alpha_dict, pos_alpha[cv_col].values,
-        targets=cv_ridge_targets, alpha_grids=cv_ridge_grids,
+        X_alpha,
+        y_alpha_dict,
+        pos_alpha[cv_col].values,
+        targets=cv_ridge_targets,
+        alpha_grids=cv_ridge_grids,
         n_cv_folds=cfg.get("ridge_cv_folds", 4),
         refine_points=cfg.get("ridge_refine_points", 5),
     )
@@ -797,12 +918,18 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         print(f"\n--- Fold {fold_idx + 1} ---")
         seed_everything(seed)
 
-        X_train, X_val, y_train_dict, y_val_dict, pos_train, pos_val, feature_cols = _prepare_train_val(
-            position, cfg, fold_train_df, fold_val_df,
+        X_train, X_val, y_train_dict, y_val_dict, pos_train, pos_val, feature_cols = (
+            _prepare_train_val(
+                position,
+                cfg,
+                fold_train_df,
+                fold_val_df,
+            )
         )
 
         ridge_fold = RidgeMultiTarget(
-            target_names=targets, alpha=best_alphas,
+            target_names=targets,
+            alpha=best_alphas,
             two_stage_targets=cfg.get("two_stage_targets", {}),
             classification_targets=cfg.get("classification_targets", {}),
             pca_n_components=cfg.get("ridge_pca_components"),
@@ -811,9 +938,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         ridge_fold.fit(X_train, y_train_dict)
         ridge_val_preds = ridge_fold.predict(X_val)
         ridge_val_preds["total"] = sum(ridge_val_preds[t] for t in targets)
-        fold_ridge_metrics.append(
-            compute_target_metrics(y_val_dict, ridge_val_preds, targets)
-        )
+        fold_ridge_metrics.append(compute_target_metrics(y_val_dict, ridge_val_preds, targets))
 
         # NN training for this fold
         nn_scaler = StandardScaler()
@@ -821,7 +946,10 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
 
         train_loader, val_loader = make_dataloaders(
-            X_train_s, y_train_dict, X_val_s, y_val_dict,
+            X_train_s,
+            y_train_dict,
+            X_val_s,
+            y_val_dict,
             batch_size=cfg["nn_batch_size"],
         )
 
@@ -837,7 +965,9 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         ).to(device)
 
         optimizer = torch.optim.AdamW(
-            model.parameters(), lr=cfg["nn_lr"], weight_decay=cfg["nn_weight_decay"],
+            model.parameters(),
+            lr=cfg["nn_lr"],
+            weight_decay=cfg["nn_weight_decay"],
         )
         scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
         criterion = MultiTargetLoss(
@@ -848,18 +978,21 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         )
 
         trainer = MultiHeadTrainer(
-            model=model, optimizer=optimizer, scheduler=scheduler,
-            criterion=criterion, device=device, target_names=targets,
-            patience=cfg["nn_patience"], scheduler_per_batch=scheduler_per_batch,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            criterion=criterion,
+            device=device,
+            target_names=targets,
+            patience=cfg["nn_patience"],
+            scheduler_per_batch=scheduler_per_batch,
             log_every=_resolve_nn_log_every(cfg),
         )
         trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
         nn_val_preds = model.predict_numpy(X_val_s, device)
         nn_val_preds["total"] = sum(nn_val_preds[t] for t in targets)
-        fold_nn_metrics.append(
-            compute_target_metrics(y_val_dict, nn_val_preds, targets)
-        )
+        fold_nn_metrics.append(compute_target_metrics(y_val_dict, nn_val_preds, targets))
 
         # LightGBM for this fold
         if cfg.get("train_lightgbm", False):
@@ -878,13 +1011,10 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
                 objective=cfg.get("lgbm_objective", "huber"),
                 seed=seed,
             )
-            lgbm_fold.fit(X_train, y_train_dict, X_val, y_val_dict,
-                          feature_names=feature_cols)
+            lgbm_fold.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
             lgbm_val_preds = lgbm_fold.predict(X_val)
             lgbm_val_preds["total"] = sum(lgbm_val_preds[t] for t in targets)
-            fold_lgbm_metrics.append(
-                compute_target_metrics(y_val_dict, lgbm_val_preds, targets)
-            )
+            fold_lgbm_metrics.append(compute_target_metrics(y_val_dict, lgbm_val_preds, targets))
 
     # --- Aggregate CV results ---
     print(f"\n{'=' * 60}")
@@ -892,7 +1022,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     print(f"{'=' * 60}")
 
     # Final per-target alphas: tune on full pre-test training data
-    print(f"\nFinal per-target Ridge alpha tuning (full training data)...")
+    print("\nFinal per-target Ridge alpha tuning (full training data)...")
 
     # Aggregate per-fold metrics
     cv_metrics = {"ridge": {}, "nn": {}}
@@ -918,8 +1048,10 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     print("-" * 58)
     for model_name in cv_model_names:
         m = cv_metrics[model_name]["total"]
-        print(f"{model_name.upper():<12} {m['mae_mean']:>8.3f} +/- {m['mae_std']:<8.3f} "
-              f"{m['r2_mean']:>8.3f} +/- {m['r2_std']:<8.3f}")
+        print(
+            f"{model_name.upper():<12} {m['mae_mean']:>8.3f} +/- {m['mae_std']:<8.3f} "
+            f"{m['r2_mean']:>8.3f} +/- {m['r2_std']:<8.3f}"
+        )
 
     # --- Final holdout evaluation ---
     print(f"\n{'=' * 60}")
@@ -932,11 +1064,18 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     final_train_df = full_df[full_df["season"].isin(final_train_seasons)].copy()
     final_val_df = full_df[full_df["season"].isin(final_val_seasons)].copy()
 
-    (X_train, X_val, X_test,
-     y_train_dict, y_val_dict, y_test_dict,
-     pos_train, pos_val, pos_test, feature_cols) = _prepare_position_data(
-        position, cfg, final_train_df, final_val_df, test_df
-    )
+    (
+        X_train,
+        X_val,
+        X_test,
+        y_train_dict,
+        y_val_dict,
+        y_test_dict,
+        pos_train,
+        pos_val,
+        pos_test,
+        feature_cols,
+    ) = _prepare_position_data(position, cfg, final_train_df, final_val_df, test_df)
 
     # Baseline
     baseline = SeasonAverageBaseline()
@@ -947,7 +1086,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     best_cv_alphas = best_alphas
 
     ridge_model = RidgeMultiTarget(
-        target_names=targets, alpha=best_cv_alphas,
+        target_names=targets,
+        alpha=best_cv_alphas,
         two_stage_targets=cfg.get("two_stage_targets", {}),
         classification_targets=cfg.get("classification_targets", {}),
         pca_n_components=cfg.get("ridge_pca_components"),
@@ -961,8 +1101,15 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     # NN
     print(f"\n=== {pos} Multi-Head NN (Final Holdout) ===")
     model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
-        X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
-        cfg, targets, seed,
+        X_train,
+        X_val,
+        X_test,
+        y_train_dict,
+        y_val_dict,
+        y_test_dict,
+        cfg,
+        targets,
+        seed,
     )
 
     # LightGBM
@@ -972,8 +1119,16 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     if cfg.get("train_lightgbm", False):
         print(f"\n=== {pos} LightGBM Multi-Target (Final Holdout) ===")
         lgbm_model, _, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
-            X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict,
-            cfg, targets, feature_cols, seed,
+            X_train,
+            X_val,
+            X_test,
+            y_train_dict,
+            y_val_dict,
+            y_test_dict,
+            cfg,
+            targets,
+            feature_cols,
+            seed,
         )
 
     # Comparison
@@ -1032,7 +1187,10 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     plot_training_curves(history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png")
     plot_weekly_accuracy(sim_results, pos, f"{output_dir}/figures/{pos_lower}_weekly_mae.png")
     plot_pred_vs_actual(
-        y_test_dict, nn_test_preds, targets, f"{pos} Multi-Head NN",
+        y_test_dict,
+        nn_test_preds,
+        targets,
+        f"{pos} Multi-Head NN",
         f"{output_dir}/figures/{pos_lower}_pred_vs_actual_scatter.png",
     )
 
@@ -1040,7 +1198,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
     if len(targets) == 1:
         axes = [axes]
-    for ax, (target, importance) in zip(axes, feature_importance.items()):
+    for ax, (target, importance) in zip(axes, feature_importance.items(), strict=False):
         importance.head(15).plot(kind="barh", ax=ax)
         ax.set_title(f"Ridge: {target} Top-15 Features")
         ax.set_xlabel("Absolute Coefficient")
@@ -1053,7 +1211,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
         if len(targets) == 1:
             axes = [axes]
-        for ax, (target, importance) in zip(axes, lgbm_importance.items()):
+        for ax, (target, importance) in zip(axes, lgbm_importance.items(), strict=False):
             importance.head(15).plot(kind="barh", ax=ax)
             ax.set_title(f"LightGBM: {target} Top-15 Features")
             ax.set_xlabel("Gain")

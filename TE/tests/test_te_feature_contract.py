@@ -54,20 +54,22 @@ def _make_minimal_split(
     rows = []
     for pid in player_ids:
         for wk in range(1, n_weeks + 1):
-            rows.append({
-                "player_id": pid,
-                "season": season,
-                "week": wk,
-                "recent_team": team,
-                "receptions": int(rng.poisson(4)),
-                "targets": int(rng.poisson(6)),
-                "receiving_yards": float(rng.normal(55, 15)),
-                "receiving_air_yards": float(rng.normal(70, 20)),
-                "receiving_yards_after_catch": float(rng.normal(20, 8)),
-                "receiving_epa": float(rng.normal(1.0, 1.5)),
-                "receiving_first_downs": int(rng.poisson(2)),
-                "receiving_tds": int(rng.binomial(1, 0.2)),
-            })
+            rows.append(
+                {
+                    "player_id": pid,
+                    "season": season,
+                    "week": wk,
+                    "recent_team": team,
+                    "receptions": int(rng.poisson(4)),
+                    "targets": int(rng.poisson(6)),
+                    "receiving_yards": float(rng.normal(55, 15)),
+                    "receiving_air_yards": float(rng.normal(70, 20)),
+                    "receiving_yards_after_catch": float(rng.normal(20, 8)),
+                    "receiving_epa": float(rng.normal(1.0, 1.5)),
+                    "receiving_first_downs": int(rng.poisson(2)),
+                    "receiving_tds": int(rng.binomial(1, 0.2)),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -106,9 +108,7 @@ class TestTESpecificFeatureContract:
         t, v, x = fill_te_nans(t, v, x, EXPECTED_TE_SPECIFIC)
         for col in EXPECTED_TE_SPECIFIC:
             for df in (t, v, x):
-                assert not df[col].isin([np.inf, -np.inf]).any(), (
-                    f"{col} has inf after fill"
-                )
+                assert not df[col].isin([np.inf, -np.inf]).any(), f"{col} has inf after fill"
                 assert not df[col].isna().any(), f"{col} has NaN after fill"
 
     def test_specific_columns_not_all_nan(self):

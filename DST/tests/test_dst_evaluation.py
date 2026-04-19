@@ -1,11 +1,12 @@
 """Tests for shared.evaluation — compute_target_metrics, compute_ranking_metrics (DST targets)."""
 
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import patch
 
-from shared.evaluation import compute_target_metrics, compute_ranking_metrics
+from shared.evaluation import compute_ranking_metrics, compute_target_metrics
 
 DST_TARGETS = ["defensive_scoring", "td_points", "pts_allowed_bonus"]
 
@@ -35,7 +36,12 @@ class TestComputeTargetMetrics:
         y_true, y_pred = _make_target_dicts()
         result = compute_target_metrics(y_true, y_pred, DST_TARGETS)
         assert mock_metrics.call_count == 4  # total + 3 targets
-        assert set(result.keys()) == {"total", "defensive_scoring", "td_points", "pts_allowed_bonus"}
+        assert set(result.keys()) == {
+            "total",
+            "defensive_scoring",
+            "td_points",
+            "pts_allowed_bonus",
+        }
 
     @patch("shared.evaluation.compute_metrics")
     def test_returns_correct_structure(self, mock_metrics):
@@ -106,12 +112,14 @@ class TestComputeRankingMetrics:
     def test_constant_predictions_spearman(self):
         rows = []
         for pid in range(1, 16):
-            rows.append({
-                "week": 1,
-                "player_id": f"TEAM{pid}",
-                "pred_total": 8.0,
-                "fantasy_points": float(pid),
-            })
+            rows.append(
+                {
+                    "week": 1,
+                    "player_id": f"TEAM{pid}",
+                    "pred_total": 8.0,
+                    "fantasy_points": float(pid),
+                }
+            )
         df = pd.DataFrame(rows)
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=12)
         assert np.isnan(result["weekly"][0]["spearman"])

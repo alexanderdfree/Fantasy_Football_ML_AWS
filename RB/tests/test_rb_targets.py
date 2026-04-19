@@ -4,12 +4,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
-
+from RB.rb_targets import compute_fumble_adjustment, compute_rb_targets
 
 # ---------------------------------------------------------------------------
 # compute_rb_targets
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestComputeRBTargets:
@@ -42,8 +42,14 @@ class TestComputeRBTargets:
         assert pytest.approx(result["fumble_penalty"].iloc[0]) == -4.0
 
     def test_fantasy_points_check_matches(self, make_rb_row):
-        df = make_rb_row(rushing_yards=80, receptions=4, receiving_yards=40,
-                         rushing_tds=1, receiving_tds=0, rushing_fumbles_lost=1)
+        df = make_rb_row(
+            rushing_yards=80,
+            receptions=4,
+            receiving_yards=40,
+            rushing_tds=1,
+            receiving_tds=0,
+            rushing_fumbles_lost=1,
+        )
         result = compute_rb_targets(df)
         expected = (
             result["rushing_floor"].iloc[0]
@@ -55,22 +61,26 @@ class TestComputeRBTargets:
 
     def test_all_nan_stats_treated_as_zero(self):
         """Player with all NaN stats should produce zero targets."""
-        df = pd.DataFrame([{
-            "rushing_yards": np.nan,
-            "receiving_yards": np.nan,
-            "receptions": np.nan,
-            "rushing_tds": np.nan,
-            "receiving_tds": np.nan,
-            "rushing_2pt_conversions": np.nan,
-            "receiving_2pt_conversions": np.nan,
-            "sack_fumbles_lost": np.nan,
-            "rushing_fumbles_lost": np.nan,
-            "receiving_fumbles_lost": np.nan,
-            "passing_yards": np.nan,
-            "passing_tds": np.nan,
-            "interceptions": np.nan,
-            "fantasy_points": 0.0,
-        }])
+        df = pd.DataFrame(
+            [
+                {
+                    "rushing_yards": np.nan,
+                    "receiving_yards": np.nan,
+                    "receptions": np.nan,
+                    "rushing_tds": np.nan,
+                    "receiving_tds": np.nan,
+                    "rushing_2pt_conversions": np.nan,
+                    "receiving_2pt_conversions": np.nan,
+                    "sack_fumbles_lost": np.nan,
+                    "rushing_fumbles_lost": np.nan,
+                    "receiving_fumbles_lost": np.nan,
+                    "passing_yards": np.nan,
+                    "passing_tds": np.nan,
+                    "interceptions": np.nan,
+                    "fantasy_points": 0.0,
+                }
+            ]
+        )
         result = compute_rb_targets(df)
         assert result["rushing_floor"].iloc[0] == 0.0
         assert result["receiving_floor"].iloc[0] == 0.0
@@ -86,8 +96,11 @@ class TestComputeRBTargets:
     def test_zero_yard_game(self, make_rb_row):
         """RB with 0 yards, 0 touches — everything should be 0."""
         df = make_rb_row(
-            rushing_yards=0, receiving_yards=0, receptions=0,
-            rushing_tds=0, receiving_tds=0,
+            rushing_yards=0,
+            receiving_yards=0,
+            receptions=0,
+            rushing_tds=0,
+            receiving_tds=0,
         )
         result = compute_rb_targets(df)
         assert result["rushing_floor"].iloc[0] == 0.0
@@ -96,8 +109,9 @@ class TestComputeRBTargets:
 
     def test_large_game(self, make_rb_row):
         """Extreme stat line — no overflow."""
-        df = make_rb_row(rushing_yards=300, receiving_yards=200, receptions=10,
-                         rushing_tds=4, receiving_tds=2)
+        df = make_rb_row(
+            rushing_yards=300, receiving_yards=200, receptions=10, rushing_tds=4, receiving_tds=2
+        )
         result = compute_rb_targets(df)
         assert result["rushing_floor"].iloc[0] == 30.0
         assert result["receiving_floor"].iloc[0] == 30.0  # 10 + 20
@@ -107,6 +121,7 @@ class TestComputeRBTargets:
 # ---------------------------------------------------------------------------
 # compute_fumble_adjustment
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestComputeFumbleAdjustment:
@@ -139,14 +154,16 @@ class TestComputeFumbleAdjustment:
 
     def test_multiple_players(self):
         """Each player's fumble history is independent."""
-        df = pd.DataFrame({
-            "player_id": ["P1", "P1", "P2", "P2"],
-            "season": [2023, 2023, 2023, 2023],
-            "week": [1, 2, 1, 2],
-            "sack_fumbles_lost": [1, 0, 0, 0],
-            "rushing_fumbles_lost": [0, 0, 0, 0],
-            "receiving_fumbles_lost": [0, 0, 0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "player_id": ["P1", "P1", "P2", "P2"],
+                "season": [2023, 2023, 2023, 2023],
+                "week": [1, 2, 1, 2],
+                "sack_fumbles_lost": [1, 0, 0, 0],
+                "rushing_fumbles_lost": [0, 0, 0, 0],
+                "receiving_fumbles_lost": [0, 0, 0, 0],
+            }
+        )
         result = compute_fumble_adjustment(df)
         # P1 game 2: sees [1] -> -2.0
         p1_game2 = result.iloc[1]
@@ -157,14 +174,16 @@ class TestComputeFumbleAdjustment:
 
     def test_multiple_seasons_reset(self):
         """Fumble history should reset across seasons (grouped by season)."""
-        df = pd.DataFrame({
-            "player_id": ["P1", "P1", "P1", "P1"],
-            "season": [2022, 2022, 2023, 2023],
-            "week": [1, 2, 1, 2],
-            "sack_fumbles_lost": [1, 1, 0, 0],
-            "rushing_fumbles_lost": [0, 0, 0, 0],
-            "receiving_fumbles_lost": [0, 0, 0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "player_id": ["P1", "P1", "P1", "P1"],
+                "season": [2022, 2022, 2023, 2023],
+                "week": [1, 2, 1, 2],
+                "sack_fumbles_lost": [1, 1, 0, 0],
+                "rushing_fumbles_lost": [0, 0, 0, 0],
+                "receiving_fumbles_lost": [0, 0, 0, 0],
+            }
+        )
         result = compute_fumble_adjustment(df)
         # 2023 game 1: first game of new season, shift produces NaN, filled to 0
         assert result.iloc[2] == 0.0

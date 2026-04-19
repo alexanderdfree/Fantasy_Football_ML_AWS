@@ -1,4 +1,5 @@
 """Tests for batch/launch.py — config validation, job submission, S3 parsing."""
+
 import argparse
 import datetime
 import importlib
@@ -19,36 +20,44 @@ if PROJECT_ROOT not in sys.path:
 # Configuration validation
 # ---------------------------------------------------------------------------
 
+
 class TestConfiguration:
     def test_s3_bucket_is_set(self):
         from batch.launch import S3_BUCKET
+
         assert S3_BUCKET and isinstance(S3_BUCKET, str)
         assert " " not in S3_BUCKET
 
     def test_job_queue_is_set(self):
         from batch.launch import JOB_QUEUE
+
         assert JOB_QUEUE and isinstance(JOB_QUEUE, str)
 
     def test_job_definition_is_set(self):
         from batch.launch import JOB_DEFINITION
+
         assert JOB_DEFINITION and isinstance(JOB_DEFINITION, str)
 
     def test_all_positions_complete(self):
         from batch.launch import ALL_POSITIONS
+
         assert set(ALL_POSITIONS) == {"QB", "RB", "WR", "TE", "K", "DST"}
 
     def test_all_positions_count(self):
         from batch.launch import ALL_POSITIONS
+
         assert len(ALL_POSITIONS) == 6
 
     def test_terminal_states(self):
         from batch.launch import TERMINAL_STATES
+
         assert "SUCCEEDED" in TERMINAL_STATES
         assert "FAILED" in TERMINAL_STATES
 
     def test_cpu_only_positions(self):
         from batch.launch import CPU_ONLY_POSITIONS
-        assert CPU_ONLY_POSITIONS == {"K", "DST"}
+
+        assert {"K", "DST"} == CPU_ONLY_POSITIONS
 
 
 class TestEnvVarOverrides:
@@ -56,6 +65,7 @@ class TestEnvVarOverrides:
 
     def _reload(self):
         import batch.launch as mod
+
         return importlib.reload(mod)
 
     def test_bucket_override(self):
@@ -99,9 +109,11 @@ class TestEnvVarOverrides:
 # Argument parsing
 # ---------------------------------------------------------------------------
 
+
 class TestLaunchArgParsing:
     def test_default_positions(self):
         from batch.launch import ALL_POSITIONS
+
         parser = argparse.ArgumentParser()
         parser.add_argument("--positions", nargs="+", default=ALL_POSITIONS, choices=ALL_POSITIONS)
         parser.add_argument("--wait", default="true")
@@ -113,6 +125,7 @@ class TestLaunchArgParsing:
 
     def test_subset_positions(self):
         from batch.launch import ALL_POSITIONS
+
         parser = argparse.ArgumentParser()
         parser.add_argument("--positions", nargs="+", default=ALL_POSITIONS, choices=ALL_POSITIONS)
         args = parser.parse_args(["--positions", "RB", "WR"])
@@ -134,6 +147,7 @@ class TestLaunchArgParsing:
 # ---------------------------------------------------------------------------
 # Data upload + ETag dedup
 # ---------------------------------------------------------------------------
+
 
 class TestUploadData:
     def test_uploads_when_missing(self, monkeypatch, tmp_path):
@@ -166,6 +180,7 @@ class TestUploadData:
         data_dir.mkdir(parents=True)
         content = b"fake-parquet"
         import hashlib
+
         local_md5 = hashlib.md5(content).hexdigest()
         for name in ("train.parquet", "val.parquet", "test.parquet"):
             (data_dir / name).write_bytes(content)
@@ -184,6 +199,7 @@ class TestUploadData:
         data_dir.mkdir(parents=True)
         content = b"fake-parquet"
         import hashlib
+
         local_md5 = hashlib.md5(content).hexdigest()
         for name in ("train.parquet", "val.parquet", "test.parquet"):
             (data_dir / name).write_bytes(content)
@@ -200,6 +216,7 @@ class TestUploadData:
 # Job submission
 # ---------------------------------------------------------------------------
 
+
 class TestSubmitJob:
     def test_submit_returns_job_id(self):
         from batch.launch import submit_job
@@ -212,7 +229,7 @@ class TestSubmitJob:
         assert job_id == "abc-123"
 
     def test_submit_passes_correct_overrides(self):
-        from batch.launch import submit_job, JOB_QUEUE, JOB_DEFINITION
+        from batch.launch import JOB_DEFINITION, JOB_QUEUE, submit_job
 
         mock_batch = mock.MagicMock()
         mock_batch.submit_job.return_value = {"jobId": "xyz"}
@@ -244,6 +261,7 @@ class TestSubmitJob:
     def test_k_routes_to_cpu_def_when_configured(self):
         """If FF_JOB_DEFINITION_CPU is set, K/DST should use it."""
         import batch.launch as mod
+
         mock_batch = mock.MagicMock()
         mock_batch.submit_job.return_value = {"jobId": "id"}
 
@@ -258,6 +276,7 @@ class TestSubmitJob:
     def test_k_falls_back_to_default_when_cpu_def_unset(self):
         """If no CPU def is configured, K/DST still run on the default queue."""
         import batch.launch as mod
+
         mock_batch = mock.MagicMock()
         mock_batch.submit_job.return_value = {"jobId": "id"}
 
@@ -270,6 +289,7 @@ class TestSubmitJob:
 # ---------------------------------------------------------------------------
 # Job waiting
 # ---------------------------------------------------------------------------
+
 
 class TestWaitForJobs:
     @mock.patch("batch.launch.time.sleep")
@@ -324,10 +344,11 @@ class TestWaitForJobs:
 # Artifact download + stale-artifact guard
 # ---------------------------------------------------------------------------
 
+
 class TestDownloadArtifacts:
     def test_download_extracts_to_correct_dir(self, tmp_path, monkeypatch, capsys):
         from batch import launch
-        from batch.launch import download_artifacts, S3_BUCKET
+        from batch.launch import S3_BUCKET, download_artifacts
 
         # Create a fake tar.gz
         staging = tmp_path / "staging"
@@ -341,11 +362,14 @@ class TestDownloadArtifacts:
         mock_s3 = mock.MagicMock()
         # Fresh artifact (LastModified after stoppedAt)
         mock_s3.head_object.return_value = {
-            "LastModified": datetime.datetime(2023, 11, 14, 22, 13, 30, tzinfo=datetime.timezone.utc),
+            "LastModified": datetime.datetime(2023, 11, 14, 22, 13, 30, tzinfo=datetime.UTC),
         }
+
         def fake_download(bucket, key, filename):
             import shutil
+
             shutil.copy(str(tar_path), filename)
+
         mock_s3.download_file.side_effect = fake_download
 
         monkeypatch.chdir(tmp_path)
@@ -369,16 +393,19 @@ class TestDownloadArtifacts:
 
         mock_s3 = mock.MagicMock()
         # Remote LastModified is a day before job stoppedAt
-        old_modified = datetime.datetime(2023, 1, 1, tzinfo=datetime.timezone.utc)
+        old_modified = datetime.datetime(2023, 1, 1, tzinfo=datetime.UTC)
         mock_s3.head_object.return_value = {"LastModified": old_modified}
+
         def fake_download(bucket, key, filename):
             import shutil
+
             shutil.copy(str(tar_path), filename)
+
         mock_s3.download_file.side_effect = fake_download
 
         monkeypatch.chdir(tmp_path)
         # stopped_at is much later than LastModified
-        stopped_at_ms = int(datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc).timestamp() * 1000)
+        stopped_at_ms = int(datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC).timestamp() * 1000)
         download_artifacts(["RB"], stopped_at_by_pos={"RB": stopped_at_ms}, s3_client=mock_s3)
 
         captured = capsys.readouterr()
@@ -389,9 +416,7 @@ class TestDownloadArtifacts:
         from batch.launch import download_artifacts
 
         mock_s3 = mock.MagicMock()
-        mock_s3.head_object.side_effect = ClientError(
-            {"Error": {"Code": "404"}}, "HeadObject"
-        )
+        mock_s3.head_object.side_effect = ClientError({"Error": {"Code": "404"}}, "HeadObject")
 
         monkeypatch.chdir(tmp_path)
         download_artifacts(["RB"], s3_client=mock_s3)
@@ -403,19 +428,23 @@ class TestDownloadArtifacts:
 # Cross-module consistency
 # ---------------------------------------------------------------------------
 
+
 class TestCrossModuleConsistency:
     def test_train_and_launch_positions_match(self):
-        from shared.registry import ALL_POSITIONS as REG_POSITIONS
         from batch.launch import ALL_POSITIONS
+        from shared.registry import ALL_POSITIONS as REG_POSITIONS
+
         assert set(ALL_POSITIONS) == set(REG_POSITIONS)
 
     def test_cpu_only_positions_match_across_modules(self):
-        from shared.registry import CPU_ONLY_POSITIONS as REG_CPU
         from batch.launch import CPU_ONLY_POSITIONS as LAUNCH_CPU
+        from shared.registry import CPU_ONLY_POSITIONS as REG_CPU
+
         assert LAUNCH_CPU == REG_CPU
 
     def test_train_and_launch_s3_bucket_match(self):
         from batch.launch import S3_BUCKET
+
         # train.py uses env var with default "ff-predictor-training"
         # launch.py uses S3_BUCKET constant — they should agree
         with mock.patch.dict(os.environ, {}, clear=False):

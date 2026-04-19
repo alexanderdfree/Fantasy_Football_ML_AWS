@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
+from WR.wr_targets import compute_wr_fumble_adjustment, compute_wr_targets
 
 
 def _make_wr_row(**overrides):
@@ -31,8 +31,12 @@ def _make_wr_row(**overrides):
             + defaults["receptions"] * 1.0  # PPR
             + defaults["rushing_yards"] * 0.1
             + (defaults["receiving_tds"] + defaults["rushing_tds"]) * 6
-            + (defaults["sack_fumbles_lost"] + defaults["rushing_fumbles_lost"]
-               + defaults["receiving_fumbles_lost"]) * -2
+            + (
+                defaults["sack_fumbles_lost"]
+                + defaults["rushing_fumbles_lost"]
+                + defaults["receiving_fumbles_lost"]
+            )
+            * -2
             + defaults["passing_yards"] * 0.04
             + defaults["passing_tds"] * 4
             + defaults["interceptions"] * -2
@@ -44,6 +48,7 @@ def _make_wr_row(**overrides):
 # ---------------------------------------------------------------------------
 # compute_wr_targets
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestComputeWRTargets:
@@ -84,21 +89,25 @@ class TestComputeWRTargets:
         assert "receiving_floor" in result.columns
 
     def test_all_nan_stats_treated_as_zero(self):
-        df = pd.DataFrame([{
-            "receiving_yards": np.nan,
-            "rushing_yards": np.nan,
-            "receptions": np.nan,
-            "targets": np.nan,
-            "receiving_tds": np.nan,
-            "rushing_tds": np.nan,
-            "sack_fumbles_lost": np.nan,
-            "rushing_fumbles_lost": np.nan,
-            "receiving_fumbles_lost": np.nan,
-            "passing_yards": np.nan,
-            "passing_tds": np.nan,
-            "interceptions": np.nan,
-            "fantasy_points": 0.0,
-        }])
+        df = pd.DataFrame(
+            [
+                {
+                    "receiving_yards": np.nan,
+                    "rushing_yards": np.nan,
+                    "receptions": np.nan,
+                    "targets": np.nan,
+                    "receiving_tds": np.nan,
+                    "rushing_tds": np.nan,
+                    "sack_fumbles_lost": np.nan,
+                    "rushing_fumbles_lost": np.nan,
+                    "receiving_fumbles_lost": np.nan,
+                    "passing_yards": np.nan,
+                    "passing_tds": np.nan,
+                    "interceptions": np.nan,
+                    "fantasy_points": 0.0,
+                }
+            ]
+        )
         result = compute_wr_targets(df)
         assert result["receiving_floor"].iloc[0] == 0.0
         assert result["rushing_floor"].iloc[0] == 0.0
@@ -113,8 +122,9 @@ class TestComputeWRTargets:
 
     def test_zero_catch_game(self):
         """WR with 0 catches should have 0 receiving_floor."""
-        df = _make_wr_row(receptions=0, receiving_yards=0, receiving_tds=0,
-                          rushing_tds=0, rushing_yards=0)
+        df = _make_wr_row(
+            receptions=0, receiving_yards=0, receiving_tds=0, rushing_tds=0, rushing_yards=0
+        )
         result = compute_wr_targets(df)
         assert result["receiving_floor"].iloc[0] == 0.0
         assert result["rushing_floor"].iloc[0] == 0.0
@@ -122,8 +132,9 @@ class TestComputeWRTargets:
 
     def test_big_wr_game(self):
         """Huge game should decompose correctly."""
-        df = _make_wr_row(receptions=10, receiving_yards=150, receiving_tds=2,
-                          rushing_yards=20, rushing_tds=0)
+        df = _make_wr_row(
+            receptions=10, receiving_yards=150, receiving_tds=2, rushing_yards=20, rushing_tds=0
+        )
         result = compute_wr_targets(df)
         # 10 * 1 + 150 * 0.1 = 25
         assert result["receiving_floor"].iloc[0] == 25.0
@@ -135,18 +146,21 @@ class TestComputeWRTargets:
 # compute_wr_fumble_adjustment
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestComputeWRFumbleAdjustment:
     def _make_fumble_df(self, receiving_fumbles, season=2023):
         n = len(receiving_fumbles)
-        return pd.DataFrame({
-            "player_id": ["W1"] * n,
-            "season": [season] * n,
-            "week": list(range(1, n + 1)),
-            "sack_fumbles_lost": [0] * n,
-            "rushing_fumbles_lost": [0] * n,
-            "receiving_fumbles_lost": receiving_fumbles,
-        })
+        return pd.DataFrame(
+            {
+                "player_id": ["W1"] * n,
+                "season": [season] * n,
+                "week": list(range(1, n + 1)),
+                "sack_fumbles_lost": [0] * n,
+                "rushing_fumbles_lost": [0] * n,
+                "receiving_fumbles_lost": receiving_fumbles,
+            }
+        )
 
     def test_first_game_is_zero(self):
         df = self._make_fumble_df([1, 0, 0])
@@ -171,27 +185,31 @@ class TestComputeWRFumbleAdjustment:
         assert pytest.approx(result.iloc[3]) == 0.0
 
     def test_multiple_players_independent(self):
-        df = pd.DataFrame({
-            "player_id": ["W1", "W1", "W2", "W2"],
-            "season": [2023, 2023, 2023, 2023],
-            "week": [1, 2, 1, 2],
-            "sack_fumbles_lost": [0, 0, 0, 0],
-            "rushing_fumbles_lost": [0, 0, 0, 0],
-            "receiving_fumbles_lost": [1, 0, 0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "player_id": ["W1", "W1", "W2", "W2"],
+                "season": [2023, 2023, 2023, 2023],
+                "week": [1, 2, 1, 2],
+                "sack_fumbles_lost": [0, 0, 0, 0],
+                "rushing_fumbles_lost": [0, 0, 0, 0],
+                "receiving_fumbles_lost": [1, 0, 0, 0],
+            }
+        )
         result = compute_wr_fumble_adjustment(df)
         assert pytest.approx(result.iloc[1]) == -2.0
         assert pytest.approx(result.iloc[3]) == 0.0
 
     def test_multiple_seasons_reset(self):
-        df = pd.DataFrame({
-            "player_id": ["W1", "W1", "W1", "W1"],
-            "season": [2022, 2022, 2023, 2023],
-            "week": [1, 2, 1, 2],
-            "sack_fumbles_lost": [0, 0, 0, 0],
-            "rushing_fumbles_lost": [0, 0, 0, 0],
-            "receiving_fumbles_lost": [1, 1, 0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "player_id": ["W1", "W1", "W1", "W1"],
+                "season": [2022, 2022, 2023, 2023],
+                "week": [1, 2, 1, 2],
+                "sack_fumbles_lost": [0, 0, 0, 0],
+                "rushing_fumbles_lost": [0, 0, 0, 0],
+                "receiving_fumbles_lost": [1, 1, 0, 0],
+            }
+        )
         result = compute_wr_fumble_adjustment(df)
         assert result.iloc[2] == 0.0
         assert pytest.approx(result.iloc[3]) == 0.0

@@ -142,7 +142,7 @@ class TestRunWeeklySimulationDeterminism:
         # Weekly rankings (top-K hit rate, Spearman) must line up week-by-week.
         for model in ("Ridge", "NN"):
             assert len(r1["weekly_ranking"][model]) == len(r2["weekly_ranking"][model])
-            for a, b in zip(r1["weekly_ranking"][model], r2["weekly_ranking"][model]):
+            for a, b in zip(r1["weekly_ranking"][model], r2["weekly_ranking"][model], strict=False):
                 assert a["week"] == b["week"]
                 assert a["top_k_hit_rate"] == b["top_k_hit_rate"]
                 # Spearman may be NaN; use np.allclose with equal_nan.

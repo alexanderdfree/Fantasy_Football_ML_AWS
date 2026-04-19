@@ -1,10 +1,10 @@
 """Tests for shared.neural_net — GatedTDHead, AttentionPool, MultiHeadNetWithHistory."""
 
 import numpy as np
-import torch
 import pytest
+import torch
 
-from shared.neural_net import GatedTDHead, AttentionPool, MultiHeadNetWithHistory
+from shared.neural_net import AttentionPool, GatedTDHead, MultiHeadNetWithHistory
 
 TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 
@@ -12,6 +12,7 @@ TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 # ---------------------------------------------------------------------------
 # GatedTDHead
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestGatedTDHead:
@@ -59,6 +60,7 @@ class TestGatedTDHead:
 # ---------------------------------------------------------------------------
 # AttentionPool
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestAttentionPool:
@@ -143,14 +145,20 @@ class TestAttentionPool:
 # MultiHeadNetWithHistory
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestMultiHeadNetWithHistory:
     @pytest.fixture
     def model(self):
         return MultiHeadNetWithHistory(
-            static_dim=5, game_dim=3, target_names=TARGETS,
-            backbone_layers=[16, 8], d_model=8, n_attn_heads=2,
-            head_hidden=4, dropout=0.1,
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[16, 8],
+            d_model=8,
+            n_attn_heads=2,
+            head_hidden=4,
+            dropout=0.1,
         )
 
     @pytest.fixture
@@ -187,9 +195,15 @@ class TestMultiHeadNetWithHistory:
 
     def test_gated_td_head(self):
         model = MultiHeadNetWithHistory(
-            static_dim=5, game_dim=3, target_names=TARGETS,
-            backbone_layers=[16, 8], d_model=8, n_attn_heads=2,
-            head_hidden=4, dropout=0.1, gated_td=True,
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[16, 8],
+            d_model=8,
+            n_attn_heads=2,
+            head_hidden=4,
+            dropout=0.1,
+            gated_td=True,
         )
         x_static = torch.randn(4, 5)
         x_history = torch.randn(4, 6, 3)
@@ -200,9 +214,15 @@ class TestMultiHeadNetWithHistory:
 
     def test_positional_encoding(self, inputs):
         model = MultiHeadNetWithHistory(
-            static_dim=5, game_dim=3, target_names=TARGETS,
-            backbone_layers=[16, 8], d_model=8, n_attn_heads=2,
-            head_hidden=4, dropout=0.0, use_positional_encoding=True,
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[16, 8],
+            d_model=8,
+            n_attn_heads=2,
+            head_hidden=4,
+            dropout=0.0,
+            use_positional_encoding=True,
         )
         model.eval()
         with torch.no_grad():
@@ -212,9 +232,15 @@ class TestMultiHeadNetWithHistory:
 
     def test_gated_fusion(self, inputs):
         model = MultiHeadNetWithHistory(
-            static_dim=5, game_dim=3, target_names=TARGETS,
-            backbone_layers=[16, 8], d_model=8, n_attn_heads=2,
-            head_hidden=4, dropout=0.0, use_gated_fusion=True,
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[16, 8],
+            d_model=8,
+            n_attn_heads=2,
+            head_hidden=4,
+            dropout=0.0,
+            use_gated_fusion=True,
         )
         model.eval()
         with torch.no_grad():

@@ -21,12 +21,11 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
+from RB.rb_config import RB_LOSS_WEIGHTS
+from RB.rb_targets import compute_rb_targets
 from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
 from shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
-
-from RB.rb_config import RB_LOSS_WEIGHTS
-from RB.rb_targets import compute_rb_targets
 
 RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 
@@ -34,6 +33,7 @@ RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 # ---------------------------------------------------------------------------
 # Data construction
 # ---------------------------------------------------------------------------
+
 
 def _build_regression_data(n_train: int = 800, n_test: int = 200, seed: int = 42):
     """Synthetic dataset with mixed linear + nonlinear structure.
@@ -53,9 +53,9 @@ def _build_regression_data(n_train: int = 800, n_test: int = 200, seed: int = 42
 
     # Per-target linear coefficients (mild).
     coefs = {
-        "rushing_floor":   rng.standard_normal(d).astype(np.float32) * 0.4 + 0.1,
+        "rushing_floor": rng.standard_normal(d).astype(np.float32) * 0.4 + 0.1,
         "receiving_floor": rng.standard_normal(d).astype(np.float32) * 0.25,
-        "td_points":       rng.standard_normal(d).astype(np.float32) * 0.2,
+        "td_points": rng.standard_normal(d).astype(np.float32) * 0.2,
     }
     bias = {"rushing_floor": 5.0, "receiving_floor": 3.0, "td_points": 1.5}
     noise_scale = {"rushing_floor": 1.0, "receiving_floor": 0.7, "td_points": 0.5}
@@ -68,9 +68,7 @@ def _build_regression_data(n_train: int = 800, n_test: int = 200, seed: int = 42
         step_up = 1.2 * (X[:, 2] > 0.5).astype(np.float32)
         step_down = -1.0 * (X[:, 3] < -0.5).astype(np.float32)
         noise = rng.standard_normal(X.shape[0]).astype(np.float32) * noise_scale[t]
-        return np.clip(
-            linear + interaction + step_up + step_down + noise, 0, None
-        )
+        return np.clip(linear + interaction + step_up + step_down + noise, 0, None)
 
     y_train = {t: _target(X_train, t) for t in RB_TARGETS}
     y_test = {t: _target(X_test, t) for t in RB_TARGETS}
@@ -94,6 +92,7 @@ def regression_data():
 # ---------------------------------------------------------------------------
 # Trained model fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def trained_ridge(regression_data):
@@ -132,8 +131,7 @@ def trained_lgbm(regression_data):
         objective="regression_l1",
         seed=42,
     )
-    model.fit(X_fit, y_fit, X_val, y_val,
-              feature_names=[f"f{i}" for i in range(X_train.shape[1])])
+    model.fit(X_fit, y_fit, X_val, y_val, feature_names=[f"f{i}" for i in range(X_train.shape[1])])
     preds = model.predict(X_test)
     return model, preds
 
@@ -162,7 +160,11 @@ def trained_nn(regression_data):
     np.random.seed(42)
 
     train_loader, val_loader = make_dataloaders(
-        X_train_s[fit_idx], y_fit, X_train_s[val_idx], y_val, batch_size=64,
+        X_train_s[fit_idx],
+        y_fit,
+        X_train_s[val_idx],
+        y_val,
+        batch_size=64,
     )
 
     model = MultiHeadNet(
@@ -174,13 +176,20 @@ def trained_nn(regression_data):
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, patience=3, factor=0.5,
+        optimizer,
+        patience=3,
+        factor=0.5,
     )
     criterion = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
 
     trainer = MultiHeadTrainer(
-        model, optimizer, scheduler, criterion,
-        torch.device("cpu"), target_names=RB_TARGETS, patience=10,
+        model,
+        optimizer,
+        scheduler,
+        criterion,
+        torch.device("cpu"),
+        target_names=RB_TARGETS,
+        patience=10,
     )
     trainer.train(train_loader, val_loader, n_epochs=30)
 
@@ -200,6 +209,7 @@ def baseline_mae(regression_data):
 # ---------------------------------------------------------------------------
 # Assertions
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.regression
 @pytest.mark.integration

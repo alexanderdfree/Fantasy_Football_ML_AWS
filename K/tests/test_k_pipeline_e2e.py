@@ -11,6 +11,7 @@ synthetic dataset with a shrunk neural-net config (2 layers x 8 units,
 
 Budget: < 20s on CPU.
 """
+
 import os
 
 import numpy as np
@@ -32,14 +33,16 @@ from shared.pipeline import run_pipeline
 def _build_e2e_config() -> dict:
     """Complete the K_CONFIG_TINY dict with the callables run_pipeline needs."""
     cfg = dict(K_CONFIG_TINY)
-    cfg.update({
-        "filter_fn": filter_to_k,
-        "compute_targets_fn": compute_k_targets,
-        "add_features_fn": add_k_specific_features,
-        "fill_nans_fn": fill_k_nans,
-        "get_feature_columns_fn": get_k_feature_columns,
-        "compute_adjustment_fn": compute_k_miss_adjustment,
-    })
+    cfg.update(
+        {
+            "filter_fn": filter_to_k,
+            "compute_targets_fn": compute_k_targets,
+            "add_features_fn": add_k_specific_features,
+            "fill_nans_fn": fill_k_nans,
+            "get_feature_columns_fn": get_k_feature_columns,
+            "compute_adjustment_fn": compute_k_miss_adjustment,
+        }
+    )
     return cfg
 
 
@@ -107,9 +110,7 @@ def test_k_pipeline_predictions_finite_and_shaped(prepared_splits, e2e_outputs_d
         preds = result["per_target_preds"][model_name]
         for key in ("fg_points", "pat_points", "total"):
             arr = preds[key]
-            assert arr.shape == (n_test,), (
-                f"{model_name} {key} shape {arr.shape} != ({n_test},)"
-            )
+            assert arr.shape == (n_test,), f"{model_name} {key} shape {arr.shape} != ({n_test},)"
             assert np.all(np.isfinite(arr)), f"{model_name} {key} has NaN/Inf"
 
 
@@ -132,6 +133,7 @@ def test_k_pipeline_bit_identical_across_seeded_runs(prepared_splits, e2e_output
         p2 = r2["per_target_preds"][model_name]
         for key in ("fg_points", "pat_points", "total"):
             np.testing.assert_array_equal(
-                p1[key], p2[key],
+                p1[key],
+                p2[key],
                 err_msg=f"{model_name} {key} differs across seeded runs",
             )

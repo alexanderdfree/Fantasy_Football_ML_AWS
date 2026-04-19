@@ -7,23 +7,28 @@ Produces per-position:
   3. PCA variance explained by weather/vegas component group
 """
 
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(__file__))
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.feature_selection import mutual_info_regression
 from sklearn.decomposition import PCA
+from sklearn.feature_selection import mutual_info_regression
 from sklearn.preprocessing import StandardScaler
 
-from src.data.loader import load_raw_data, compute_all_scoring_formats, compute_all_floor_formats
-from shared.weather_features import merge_schedule_features, WEATHER_FEATURES_ALL, WEATHER_DROPS_BY_POSITION
 from QB.qb_targets import compute_qb_targets
 from RB.rb_targets import compute_rb_targets
-from WR.wr_targets import compute_wr_targets
+from shared.weather_features import (
+    WEATHER_DROPS_BY_POSITION,
+    merge_schedule_features,
+)
+from src.data.loader import compute_all_floor_formats, compute_all_scoring_formats, load_raw_data
 from TE.te_targets import compute_te_targets
+from WR.wr_targets import compute_wr_targets
 
 # ── Config ──────────────────────────────────────────────────────────────────
 POSITIONS = {
@@ -62,9 +67,9 @@ os.makedirs("analysis_output", exist_ok=True)
 all_corrs = {}
 
 for pos, info in POSITIONS.items():
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {pos} Analysis")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     pos_df = df[df["position"] == pos].copy()
     pos_df = info["fn"](pos_df)
@@ -89,7 +94,7 @@ for pos, info in POSITIONS.items():
             corr_matrix.loc[f, t] = subset[f].corr(subset[t])
 
     all_corrs[pos] = corr_matrix
-    print(f"\n  Pearson correlations:")
+    print("\n  Pearson correlations:")
     print(corr_matrix.round(4).to_string())
 
     # ── 2. Mutual Information ───────────────────────────────────────────
@@ -100,7 +105,7 @@ for pos, info in POSITIONS.items():
         mi = mutual_info_regression(X, y, random_state=42, n_neighbors=5)
         mi_results[t] = mi
     mi_df = pd.DataFrame(mi_results, index=features)
-    print(f"\n  Mutual Information (bits):")
+    print("\n  Mutual Information (bits):")
     print(mi_df.round(4).to_string())
 
     # ── 3. PCA on weather/vegas features ────────────────────────────────
@@ -117,56 +122,78 @@ for pos, info in POSITIONS.items():
     # Project targets onto PCA space of weather features
     X_pca = pca.transform(X_scaled)
     from sklearn.linear_model import LinearRegression
+
     r2_scores = {}
     for t in targets:
         y = subset[t].values
         lr = LinearRegression().fit(X_pca, y)
         r2_scores[t] = lr.score(X_pca, y)
-    print(f"\n  R² (weather/vegas features alone → target):")
+    print("\n  R² (weather/vegas features alone → target):")
     for t, r2 in r2_scores.items():
         print(f"    {t}: {r2:.4f}")
 
     # ── Plot: Correlation heatmap ───────────────────────────────────────
-    fig, axes = plt.subplots(1, 2, figsize=(14, max(5, len(features) * 0.45)),
-                              gridspec_kw={"width_ratios": [1.2, 1]})
+    fig, axes = plt.subplots(
+        1, 2, figsize=(14, max(5, len(features) * 0.45)), gridspec_kw={"width_ratios": [1.2, 1]}
+    )
 
     # Left: Pearson correlation
     ax = axes[0]
-    sns.heatmap(corr_matrix.astype(float), annot=True, fmt=".3f", center=0,
-                cmap="RdBu_r", vmin=-0.25, vmax=0.25, ax=ax,
-                linewidths=0.5, cbar_kws={"shrink": 0.8})
+    sns.heatmap(
+        corr_matrix.astype(float),
+        annot=True,
+        fmt=".3f",
+        center=0,
+        cmap="RdBu_r",
+        vmin=-0.25,
+        vmax=0.25,
+        ax=ax,
+        linewidths=0.5,
+        cbar_kws={"shrink": 0.8},
+    )
     ax.set_title(f"{pos} — Pearson Correlation\n(Weather/Vegas → Targets)", fontsize=12)
     ax.set_xlabel("Target")
     ax.set_ylabel("Feature")
 
     # Right: Mutual Information
     ax = axes[1]
-    sns.heatmap(mi_df.astype(float), annot=True, fmt=".3f",
-                cmap="YlOrRd", vmin=0, ax=ax,
-                linewidths=0.5, cbar_kws={"shrink": 0.8})
+    sns.heatmap(
+        mi_df.astype(float),
+        annot=True,
+        fmt=".3f",
+        cmap="YlOrRd",
+        vmin=0,
+        ax=ax,
+        linewidths=0.5,
+        cbar_kws={"shrink": 0.8},
+    )
     ax.set_title(f"{pos} — Mutual Information\n(Weather/Vegas → Targets)", fontsize=12)
     ax.set_xlabel("Target")
     ax.set_ylabel("")
 
     plt.tight_layout()
-    fig.savefig(f"analysis_output/{pos}_weather_vegas_correlation.png", dpi=150, bbox_inches="tight")
+    fig.savefig(
+        f"analysis_output/{pos}_weather_vegas_correlation.png", dpi=150, bbox_inches="tight"
+    )
     plt.close(fig)
     print(f"  Saved: analysis_output/{pos}_weather_vegas_correlation.png")
 
 # ── Summary: Cross-position comparison ──────────────────────────────────────
-print(f"\n{'='*60}")
+print(f"\n{'=' * 60}")
 print("  CROSS-POSITION SUMMARY: Top correlations with 'total'")
-print(f"{'='*60}")
+print(f"{'=' * 60}")
 
 summary_rows = []
 for pos, corr_matrix in all_corrs.items():
     if "total" in corr_matrix.columns:
         for feat in corr_matrix.index:
-            summary_rows.append({
-                "position": pos,
-                "feature": feat,
-                "corr_total": corr_matrix.loc[feat, "total"],
-            })
+            summary_rows.append(
+                {
+                    "position": pos,
+                    "feature": feat,
+                    "corr_total": corr_matrix.loc[feat, "total"],
+                }
+            )
 
 summary = pd.DataFrame(summary_rows)
 # Pivot: features × positions
@@ -180,15 +207,27 @@ print(pivot.drop(columns="mean_abs").round(4).to_string())
 
 # Final heatmap: all positions × total
 fig, ax = plt.subplots(figsize=(8, max(4, len(pivot) * 0.45)))
-sns.heatmap(pivot.drop(columns="mean_abs").astype(float), annot=True, fmt=".3f",
-            center=0, cmap="RdBu_r", vmin=-0.25, vmax=0.25, ax=ax,
-            linewidths=0.5)
-ax.set_title("Weather/Vegas Features → Total Fantasy Points\n(Pearson Correlation by Position)", fontsize=13)
+sns.heatmap(
+    pivot.drop(columns="mean_abs").astype(float),
+    annot=True,
+    fmt=".3f",
+    center=0,
+    cmap="RdBu_r",
+    vmin=-0.25,
+    vmax=0.25,
+    ax=ax,
+    linewidths=0.5,
+)
+ax.set_title(
+    "Weather/Vegas Features → Total Fantasy Points\n(Pearson Correlation by Position)", fontsize=13
+)
 ax.set_xlabel("Position")
 ax.set_ylabel("Feature")
 plt.tight_layout()
-fig.savefig("analysis_output/cross_position_weather_vegas_summary.png", dpi=150, bbox_inches="tight")
+fig.savefig(
+    "analysis_output/cross_position_weather_vegas_summary.png", dpi=150, bbox_inches="tight"
+)
 plt.close(fig)
-print(f"\nSaved: analysis_output/cross_position_weather_vegas_summary.png")
+print("\nSaved: analysis_output/cross_position_weather_vegas_summary.png")
 
 print("\nDone.")

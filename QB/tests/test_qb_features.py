@@ -28,26 +28,28 @@ def _make_player_games(
     sack_yards=14,
 ):
     """Create a multi-week DataFrame for one QB."""
-    return pd.DataFrame({
-        "player_id": [player_id] * n_weeks,
-        "season": [season] * n_weeks,
-        "week": list(range(1, n_weeks + 1)),
-        "completions": [completions] * n_weeks,
-        "attempts": [attempts] * n_weeks,
-        "passing_yards": [passing_yards] * n_weeks,
-        "passing_tds": [passing_tds] * n_weeks,
-        "interceptions": [interceptions] * n_weeks,
-        "sacks": [sacks] * n_weeks,
-        "rushing_yards": [rushing_yards] * n_weeks,
-        "passing_epa": [passing_epa] * n_weeks,
-        "passing_air_yards": [passing_air_yards] * n_weeks,
-        "carries": [carries] * n_weeks,
-        "passing_first_downs": [passing_first_downs] * n_weeks,
-        "rushing_first_downs": [rushing_first_downs] * n_weeks,
-        "rushing_epa": [rushing_epa] * n_weeks,
-        "passing_yards_after_catch": [passing_yards_after_catch] * n_weeks,
-        "sack_yards": [sack_yards] * n_weeks,
-    })
+    return pd.DataFrame(
+        {
+            "player_id": [player_id] * n_weeks,
+            "season": [season] * n_weeks,
+            "week": list(range(1, n_weeks + 1)),
+            "completions": [completions] * n_weeks,
+            "attempts": [attempts] * n_weeks,
+            "passing_yards": [passing_yards] * n_weeks,
+            "passing_tds": [passing_tds] * n_weeks,
+            "interceptions": [interceptions] * n_weeks,
+            "sacks": [sacks] * n_weeks,
+            "rushing_yards": [rushing_yards] * n_weeks,
+            "passing_epa": [passing_epa] * n_weeks,
+            "passing_air_yards": [passing_air_yards] * n_weeks,
+            "carries": [carries] * n_weeks,
+            "passing_first_downs": [passing_first_downs] * n_weeks,
+            "rushing_first_downs": [rushing_first_downs] * n_weeks,
+            "rushing_epa": [rushing_epa] * n_weeks,
+            "passing_yards_after_catch": [passing_yards_after_catch] * n_weeks,
+            "sack_yards": [sack_yards] * n_weeks,
+        }
+    )
 
 
 QB_FEATURE_COLS = [
@@ -70,6 +72,7 @@ QB_FEATURE_COLS = [
 # ---------------------------------------------------------------------------
 # _compute_qb_features
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestComputeQBFeatures:
@@ -134,20 +137,37 @@ class TestComputeQBFeatures:
 
     def test_zero_attempts_no_division_error(self):
         """QB with 0 attempts should have 0 rates (not inf)."""
-        df = _make_player_games(n_weeks=4, completions=0, attempts=0, passing_yards=0,
-                                passing_tds=0, interceptions=0, sacks=0, passing_air_yards=0,
-                                passing_epa=0, passing_first_downs=0,
-                                passing_yards_after_catch=0, sack_yards=0)
+        df = _make_player_games(
+            n_weeks=4,
+            completions=0,
+            attempts=0,
+            passing_yards=0,
+            passing_tds=0,
+            interceptions=0,
+            sacks=0,
+            passing_air_yards=0,
+            passing_epa=0,
+            passing_first_downs=0,
+            passing_yards_after_catch=0,
+            sack_yards=0,
+        )
         _compute_qb_features(df)
-        for col in ["completion_pct_L3", "yards_per_attempt_L3", "td_rate_L3",
-                    "int_rate_L3", "deep_ball_rate_L3", "pass_first_down_rate_L3"]:
+        for col in [
+            "completion_pct_L3",
+            "yards_per_attempt_L3",
+            "td_rate_L3",
+            "int_rate_L3",
+            "deep_ball_rate_L3",
+            "pass_first_down_rate_L3",
+        ]:
             assert not df[col].isin([np.inf, -np.inf]).any(), f"{col} has inf"
             assert (df[col].fillna(0) == 0).all(), f"{col} should be 0"
 
     def test_zero_carries_no_division_error(self):
         """QB with 0 carries should have 0 rushing rates (not inf)."""
-        df = _make_player_games(n_weeks=4, carries=0, rushing_yards=0,
-                                rushing_first_downs=0, rushing_epa=0)
+        df = _make_player_games(
+            n_weeks=4, carries=0, rushing_yards=0, rushing_first_downs=0, rushing_epa=0
+        )
         _compute_qb_features(df)
         assert not df["rushing_epa_per_carry_L3"].isin([np.inf, -np.inf]).any()
         assert not df["rush_first_down_rate_L3"].isin([np.inf, -np.inf]).any()
@@ -172,6 +192,7 @@ class TestComputeQBFeatures:
 # ---------------------------------------------------------------------------
 # fill_qb_nans
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFillQBNans:

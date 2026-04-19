@@ -14,7 +14,6 @@ import pytest
 
 from DST.dst_features import compute_dst_features, fill_dst_nans
 
-
 DST_FEATURE_COLS = [
     "sacks_L3",
     "sacks_L5",
@@ -38,6 +37,7 @@ DST_FEATURE_COLS = [
 # ---------------------------------------------------------------------------
 # compute_dst_features
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestComputeDSTFeatures:
@@ -144,6 +144,7 @@ class TestComputeDSTFeatures:
 # ---------------------------------------------------------------------------
 # fill_dst_nans
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFillDSTNans:

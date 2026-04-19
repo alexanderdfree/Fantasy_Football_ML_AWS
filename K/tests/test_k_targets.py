@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from K.k_targets import compute_k_targets, compute_k_miss_adjustment
+from K.k_targets import compute_k_miss_adjustment, compute_k_targets
 
 
 def _make_k_row(**overrides):
@@ -28,36 +28,61 @@ def _make_k_row(**overrides):
 # compute_k_targets
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestComputeKTargets:
     def test_fg_points_short_range(self):
         """FGs under 40yds = 3 pts each."""
-        df = _make_k_row(fg_made_0_19=1, fg_made_20_29=1, fg_made_30_39=1,
-                         fg_made_40_49=0, fg_made_50_59=0, fg_made_60_=0)
+        df = _make_k_row(
+            fg_made_0_19=1,
+            fg_made_20_29=1,
+            fg_made_30_39=1,
+            fg_made_40_49=0,
+            fg_made_50_59=0,
+            fg_made_60_=0,
+        )
         result = compute_k_targets(df)
         # 3 FGs * 3 = 9
         assert pytest.approx(result["fg_points"].iloc[0]) == 9.0
 
     def test_fg_points_mid_range(self):
         """FGs 40-49yds = 4 pts each."""
-        df = _make_k_row(fg_made_0_19=0, fg_made_20_29=0, fg_made_30_39=0,
-                         fg_made_40_49=2, fg_made_50_59=0, fg_made_60_=0)
+        df = _make_k_row(
+            fg_made_0_19=0,
+            fg_made_20_29=0,
+            fg_made_30_39=0,
+            fg_made_40_49=2,
+            fg_made_50_59=0,
+            fg_made_60_=0,
+        )
         result = compute_k_targets(df)
         # 2 * 4 = 8
         assert pytest.approx(result["fg_points"].iloc[0]) == 8.0
 
     def test_fg_points_long_range(self):
         """FGs 50+yds = 5 pts each."""
-        df = _make_k_row(fg_made_0_19=0, fg_made_20_29=0, fg_made_30_39=0,
-                         fg_made_40_49=0, fg_made_50_59=1, fg_made_60_=1)
+        df = _make_k_row(
+            fg_made_0_19=0,
+            fg_made_20_29=0,
+            fg_made_30_39=0,
+            fg_made_40_49=0,
+            fg_made_50_59=1,
+            fg_made_60_=1,
+        )
         result = compute_k_targets(df)
         # (1 + 1) * 5 = 10
         assert pytest.approx(result["fg_points"].iloc[0]) == 10.0
 
     def test_fg_points_mixed(self):
         """Combined FG distribution."""
-        df = _make_k_row(fg_made_0_19=1, fg_made_20_29=1, fg_made_30_39=1,
-                         fg_made_40_49=1, fg_made_50_59=1, fg_made_60_=0)
+        df = _make_k_row(
+            fg_made_0_19=1,
+            fg_made_20_29=1,
+            fg_made_30_39=1,
+            fg_made_40_49=1,
+            fg_made_50_59=1,
+            fg_made_60_=0,
+        )
         result = compute_k_targets(df)
         # (1+1+1)*3 + 1*4 + 1*5 = 18
         assert pytest.approx(result["fg_points"].iloc[0]) == 18.0
@@ -76,26 +101,36 @@ class TestComputeKTargets:
     def test_fantasy_points_override(self):
         """compute_k_targets overrides fantasy_points with K-specific formula."""
         df = _make_k_row(
-            fg_made_0_19=0, fg_made_20_29=1, fg_made_30_39=0,
-            fg_made_40_49=0, fg_made_50_59=0, fg_made_60_=0,
-            pat_made=2, fg_missed=1, pat_missed=0,
+            fg_made_0_19=0,
+            fg_made_20_29=1,
+            fg_made_30_39=0,
+            fg_made_40_49=0,
+            fg_made_50_59=0,
+            fg_made_60_=0,
+            pat_made=2,
+            fg_missed=1,
+            pat_missed=0,
         )
         # expected: 1*3 (FG 20-29yd) + 2*1 (PAT) + (-1) (miss) = 4
         result = compute_k_targets(df)
         assert pytest.approx(result["fantasy_points"].iloc[0]) == 4.0
 
     def test_all_nan_treated_as_zero(self):
-        df = pd.DataFrame([{
-            "fg_made_0_19": np.nan,
-            "fg_made_20_29": np.nan,
-            "fg_made_30_39": np.nan,
-            "fg_made_40_49": np.nan,
-            "fg_made_50_59": np.nan,
-            "fg_made_60_": np.nan,
-            "fg_missed": np.nan,
-            "pat_made": np.nan,
-            "pat_missed": np.nan,
-        }])
+        df = pd.DataFrame(
+            [
+                {
+                    "fg_made_0_19": np.nan,
+                    "fg_made_20_29": np.nan,
+                    "fg_made_30_39": np.nan,
+                    "fg_made_40_49": np.nan,
+                    "fg_made_50_59": np.nan,
+                    "fg_made_60_": np.nan,
+                    "fg_missed": np.nan,
+                    "pat_made": np.nan,
+                    "pat_missed": np.nan,
+                }
+            ]
+        )
         result = compute_k_targets(df)
         assert result["fg_points"].iloc[0] == 0.0
         assert result["pat_points"].iloc[0] == 0.0
@@ -109,9 +144,17 @@ class TestComputeKTargets:
 
     def test_perfect_game(self):
         """Kicker's best possible ~7 FG / 5 PAT game."""
-        df = _make_k_row(fg_made_0_19=0, fg_made_20_29=2, fg_made_30_39=2,
-                         fg_made_40_49=2, fg_made_50_59=1, fg_made_60_=0,
-                         pat_made=5, fg_missed=0, pat_missed=0)
+        df = _make_k_row(
+            fg_made_0_19=0,
+            fg_made_20_29=2,
+            fg_made_30_39=2,
+            fg_made_40_49=2,
+            fg_made_50_59=1,
+            fg_made_60_=0,
+            pat_made=5,
+            fg_missed=0,
+            pat_missed=0,
+        )
         result = compute_k_targets(df)
         # (2+2)*3 + 2*4 + 1*5 = 25 fg_pts + 5 pat = 30 total
         assert pytest.approx(result["fg_points"].iloc[0]) == 25.0
@@ -120,9 +163,17 @@ class TestComputeKTargets:
 
     def test_missed_everything_game(self):
         """Rough game — missed FGs + PATs."""
-        df = _make_k_row(fg_made_0_19=0, fg_made_20_29=0, fg_made_30_39=0,
-                         fg_made_40_49=0, fg_made_50_59=0, fg_made_60_=0,
-                         pat_made=0, fg_missed=3, pat_missed=1)
+        df = _make_k_row(
+            fg_made_0_19=0,
+            fg_made_20_29=0,
+            fg_made_30_39=0,
+            fg_made_40_49=0,
+            fg_made_50_59=0,
+            fg_made_60_=0,
+            pat_made=0,
+            fg_missed=3,
+            pat_missed=1,
+        )
         result = compute_k_targets(df)
         assert pytest.approx(result["fg_points"].iloc[0]) == 0.0
         assert pytest.approx(result["pat_points"].iloc[0]) == 0.0
@@ -134,6 +185,7 @@ class TestComputeKTargets:
 # compute_k_miss_adjustment
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestComputeKMissAdjustment:
     def _make_miss_df(self, fg_missed, pat_missed=None, player_ids=None, seasons=None):
@@ -144,13 +196,15 @@ class TestComputeKMissAdjustment:
             player_ids = ["K1"] * n
         if seasons is None:
             seasons = [2023] * n
-        return pd.DataFrame({
-            "player_id": player_ids,
-            "season": seasons,
-            "week": list(range(1, n + 1)),
-            "fg_missed": fg_missed,
-            "pat_missed": pat_missed,
-        })
+        return pd.DataFrame(
+            {
+                "player_id": player_ids,
+                "season": seasons,
+                "week": list(range(1, n + 1)),
+                "fg_missed": fg_missed,
+                "pat_missed": pat_missed,
+            }
+        )
 
     def test_first_game_is_zero(self):
         """First game has no prior history — shift produces NaN, filled to 0."""

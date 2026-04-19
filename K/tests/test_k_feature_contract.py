@@ -8,13 +8,16 @@ NaN and range ceilings.
 Catches the "accidentally dropped a feature column" and "silently infinite"
 bugs that leakage tests can't detect.
 """
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from K.k_config import K_CONTEXTUAL_FEATURES, K_SPECIFIC_FEATURES
 from K.k_features import (
-    add_k_specific_features, compute_k_features, fill_k_nans,
+    add_k_specific_features,
+    compute_k_features,
+    fill_k_nans,
     get_k_feature_columns,
 )
 from K.k_targets import compute_k_targets
@@ -48,6 +51,7 @@ def k_feature_frame(tiny_k_dataset):
 # Column presence & source-of-truth
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_feature_columns_is_source_of_truth():
     """get_k_feature_columns() = specific + contextual, in order."""
@@ -77,27 +81,25 @@ def test_all_contextual_features_present_in_fixture(k_feature_frame):
 # Dtypes
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_specific_features_are_numeric(k_feature_frame):
     for col in K_SPECIFIC_FEATURES:
         dtype = k_feature_frame[col].dtype
-        assert np.issubdtype(dtype, np.number), (
-            f"{col} dtype {dtype} is not numeric"
-        )
+        assert np.issubdtype(dtype, np.number), f"{col} dtype {dtype} is not numeric"
 
 
 @pytest.mark.unit
 def test_contextual_features_are_numeric(k_feature_frame):
     for col in K_CONTEXTUAL_FEATURES:
         dtype = k_feature_frame[col].dtype
-        assert np.issubdtype(dtype, np.number), (
-            f"{col} dtype {dtype} is not numeric"
-        )
+        assert np.issubdtype(dtype, np.number), f"{col} dtype {dtype} is not numeric"
 
 
 # ---------------------------------------------------------------------------
 # NaN ceilings & finiteness
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 def test_no_inf_in_features(k_feature_frame):
@@ -125,28 +127,28 @@ def test_contextual_features_nan_ceiling(k_feature_frame):
     for col in K_CONTEXTUAL_FEATURES:
         if col in k_feature_frame.columns:
             nan_rate = float(k_feature_frame[col].isna().sum()) / n_rows
-            assert nan_rate <= ceiling, (
-                f"{col} NaN rate {nan_rate:.3f} exceeds ceiling {ceiling}"
-            )
+            assert nan_rate <= ceiling, f"{col} NaN rate {nan_rate:.3f} exceeds ceiling {ceiling}"
 
 
 # ---------------------------------------------------------------------------
 # Value ranges (loose sanity — anything out here is likely a scaling bug)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 def test_rate_features_in_unit_interval(k_feature_frame):
     """Rate/accuracy features must live in [0, 1]."""
     rate_cols = [
-        "fg_accuracy_L5", "long_fg_rate_L3",
-        "fg_pct_40plus_L5", "q4_fg_rate_L5", "xp_accuracy_L5",
+        "fg_accuracy_L5",
+        "long_fg_rate_L3",
+        "fg_pct_40plus_L5",
+        "q4_fg_rate_L5",
+        "xp_accuracy_L5",
     ]
     for col in rate_cols:
         series = k_feature_frame[col]
         assert series.min() >= 0.0, f"{col} has negative values (min={series.min()})"
-        assert series.max() <= 1.0 + 1e-6, (
-            f"{col} exceeds 1.0 (max={series.max()})"
-        )
+        assert series.max() <= 1.0 + 1e-6, f"{col} exceeds 1.0 (max={series.max()})"
 
 
 @pytest.mark.unit
@@ -154,9 +156,7 @@ def test_volume_features_non_negative(k_feature_frame):
     """Attempt/volume rolling features cannot be negative."""
     for col in ["fg_attempts_L3", "pat_volume_L3", "total_k_pts_L3"]:
         series = k_feature_frame[col]
-        assert series.min() >= 0.0, (
-            f"{col} has negative value (min={series.min()})"
-        )
+        assert series.min() >= 0.0, f"{col} has negative value (min={series.min()})"
 
 
 @pytest.mark.unit

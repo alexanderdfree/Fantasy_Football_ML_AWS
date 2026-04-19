@@ -3,53 +3,52 @@
 All predictions come from position-specific models (QB, RB, WR, TE, K, DST).
 No general cross-position model is used.
 """
-import sys
+
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import matplotlib
+
 matplotlib.use("Agg")
 
 import traceback
-from flask import Flask, render_template, jsonify, request
-import pandas as pd
-import numpy as np
-import torch
+
 import joblib
+import numpy as np
+import pandas as pd
+import torch
+from flask import Flask, jsonify, render_template, request
 
-from src.config import SCORING_STANDARD, SCORING_HALF_PPR, TRAIN_SEASONS, VAL_SEASONS, TEST_SEASONS
-from src.features.engineer import get_feature_columns, fill_nans_safe
-from src.data.loader import compute_fantasy_points
-from src.evaluation.metrics import compute_metrics, compute_positional_metrics
-
-from shared.models import RidgeMultiTarget
-from shared.neural_net import MultiHeadNet
-from shared.weather_features import merge_schedule_features, WEATHER_FEATURES_ALL
-from shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
+import DST.dst_config as dst_cfg
+import K.k_config as k_cfg
+import QB.qb_config as qb_cfg
+import RB.rb_config as rb_cfg
+import TE.te_config as te_cfg
+import WR.wr_config as wr_cfg
+from DST.dst_config import DST_SPECIFIC_FEATURES, DST_TARGETS
+from DST.dst_data import build_dst_data
+from DST.dst_features import compute_dst_features
+from K.k_config import K_SPECIFIC_FEATURES, K_TARGETS
 
 # Per-position imports needed only for /api/model_architecture metadata and
 # for K/DST data loaders (these have their own data pipelines, not in registry).
-from K.k_data import load_kicker_data, kicker_season_split
+from K.k_data import kicker_season_split, load_kicker_data
 from K.k_features import compute_k_features
-from DST.dst_data import build_dst_data
-from DST.dst_features import compute_dst_features
-
-from QB.qb_config import QB_TARGETS, QB_SPECIFIC_FEATURES
-from RB.rb_config import RB_TARGETS, RB_SPECIFIC_FEATURES
-from WR.wr_config import WR_TARGETS, WR_SPECIFIC_FEATURES
-from TE.te_config import TE_TARGETS, TE_SPECIFIC_FEATURES
-from K.k_config import K_TARGETS, K_SPECIFIC_FEATURES
-from DST.dst_config import DST_TARGETS, DST_SPECIFIC_FEATURES
-
-import QB.qb_config as qb_cfg
-import RB.rb_config as rb_cfg
-import WR.wr_config as wr_cfg
-import TE.te_config as te_cfg
-import K.k_config as k_cfg
-import DST.dst_config as dst_cfg
-
+from QB.qb_config import QB_SPECIFIC_FEATURES, QB_TARGETS
+from RB.rb_config import RB_SPECIFIC_FEATURES, RB_TARGETS
 from shared.model_sync import sync_models_from_s3
+from shared.models import RidgeMultiTarget
+from shared.neural_net import MultiHeadNet
+from shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
+from shared.weather_features import WEATHER_FEATURES_ALL, merge_schedule_features
+from src.config import SCORING_HALF_PPR, SCORING_STANDARD, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
+from src.data.loader import compute_fantasy_points
+from src.evaluation.metrics import compute_metrics, compute_positional_metrics
+from TE.te_config import TE_SPECIFIC_FEATURES, TE_TARGETS
+from WR.wr_config import WR_SPECIFIC_FEATURES, WR_TARGETS
+
 sync_models_from_s3()
 
 app = Flask(__name__)
@@ -80,8 +79,15 @@ def _safe_str(v, default=""):
 
 
 _PLAYER_ROW_COLS = [
-    "player_id", "player_display_name", "position", "recent_team",
-    "week", "fantasy_points", "ridge_pred", "nn_pred", "headshot_url",
+    "player_id",
+    "player_display_name",
+    "position",
+    "recent_team",
+    "week",
+    "fantasy_points",
+    "ridge_pred",
+    "nn_pred",
+    "headshot_url",
 ]
 
 
@@ -112,7 +118,6 @@ def handle_api_error(e):
     raise e
 
 
-
 # ---------------------------------------------------------------------------
 # Position model metadata (static, for the UI)
 # ---------------------------------------------------------------------------
@@ -126,61 +131,103 @@ POSITION_INFO = {
         ],
         "adjustments": "Interception penalty + fumble rate + receiving component (historical L8 rolling avg)",
         "specific_features": QB_SPECIFIC_FEATURES,
-        "architecture": {"backbone": list(qb_cfg.QB_NN_BACKBONE_LAYERS), "head_hidden": qb_cfg.QB_NN_HEAD_HIDDEN},
+        "architecture": {
+            "backbone": list(qb_cfg.QB_NN_BACKBONE_LAYERS),
+            "head_hidden": qb_cfg.QB_NN_HEAD_HIDDEN,
+        },
     },
     "RB": {
         "label": "Running Back",
         "targets": [
             {"key": "rushing_floor", "label": "Rushing Floor", "formula": "rushing_yards x 0.1"},
-            {"key": "receiving_floor", "label": "Receiving Floor", "formula": "receptions x PPR + recv_yards x 0.1"},
+            {
+                "key": "receiving_floor",
+                "label": "Receiving Floor",
+                "formula": "receptions x PPR + recv_yards x 0.1",
+            },
             {"key": "td_points", "label": "TD Points", "formula": "rush_TD x 6 + recv_TD x 6"},
         ],
         "adjustments": "Fumble rate (historical L8 rolling avg)",
         "specific_features": list(RB_SPECIFIC_FEATURES),
-        "architecture": {"backbone": list(rb_cfg.RB_NN_BACKBONE_LAYERS), "head_hidden": rb_cfg.RB_NN_HEAD_HIDDEN},
+        "architecture": {
+            "backbone": list(rb_cfg.RB_NN_BACKBONE_LAYERS),
+            "head_hidden": rb_cfg.RB_NN_HEAD_HIDDEN,
+        },
     },
     "WR": {
         "label": "Wide Receiver",
         "targets": [
-            {"key": "receiving_floor", "label": "Receiving Floor", "formula": "receptions x PPR + recv_yards x 0.1"},
+            {
+                "key": "receiving_floor",
+                "label": "Receiving Floor",
+                "formula": "receptions x PPR + recv_yards x 0.1",
+            },
             {"key": "rushing_floor", "label": "Rushing Floor", "formula": "rushing_yards x 0.1"},
             {"key": "td_points", "label": "TD Points", "formula": "recv_TD x 6 + rush_TD x 6"},
         ],
         "adjustments": "Fumble rate (historical L8 rolling avg)",
         "specific_features": list(WR_SPECIFIC_FEATURES),
-        "architecture": {"backbone": list(wr_cfg.WR_NN_BACKBONE_LAYERS), "head_hidden": wr_cfg.WR_NN_HEAD_HIDDEN},
+        "architecture": {
+            "backbone": list(wr_cfg.WR_NN_BACKBONE_LAYERS),
+            "head_hidden": wr_cfg.WR_NN_HEAD_HIDDEN,
+        },
     },
     "TE": {
         "label": "Tight End",
         "targets": [
-            {"key": "receiving_floor", "label": "Receiving Floor", "formula": "receptions x PPR + recv_yards x 0.1"},
+            {
+                "key": "receiving_floor",
+                "label": "Receiving Floor",
+                "formula": "receptions x PPR + recv_yards x 0.1",
+            },
             {"key": "rushing_floor", "label": "Rushing Floor", "formula": "rushing_yards x 0.1"},
             {"key": "td_points", "label": "TD Points", "formula": "recv_TD x 6 + rush_TD x 6"},
         ],
         "adjustments": "Fumble rate (historical L8 rolling avg)",
         "specific_features": list(TE_SPECIFIC_FEATURES),
-        "architecture": {"backbone": list(te_cfg.TE_NN_BACKBONE_LAYERS), "head_hidden": te_cfg.TE_NN_HEAD_HIDDEN},
+        "architecture": {
+            "backbone": list(te_cfg.TE_NN_BACKBONE_LAYERS),
+            "head_hidden": te_cfg.TE_NN_HEAD_HIDDEN,
+        },
     },
     "K": {
         "label": "Kicker",
         "targets": [
-            {"key": "fg_points", "label": "FG Points", "formula": "FG 0-39yd x 3 + FG 40-49yd x 4 + FG 50+yd x 5"},
+            {
+                "key": "fg_points",
+                "label": "FG Points",
+                "formula": "FG 0-39yd x 3 + FG 40-49yd x 4 + FG 50+yd x 5",
+            },
             {"key": "pat_points", "label": "PAT Points", "formula": "PAT_made x 1"},
         ],
         "adjustments": "Miss penalty (rolling L8 FG/PAT miss rate)",
         "specific_features": list(K_SPECIFIC_FEATURES),
-        "architecture": {"backbone": list(k_cfg.K_NN_BACKBONE_LAYERS), "head_hidden": k_cfg.K_NN_HEAD_HIDDEN},
+        "architecture": {
+            "backbone": list(k_cfg.K_NN_BACKBONE_LAYERS),
+            "head_hidden": k_cfg.K_NN_HEAD_HIDDEN,
+        },
     },
     "DST": {
         "label": "Defense/Special Teams",
         "targets": [
-            {"key": "defensive_scoring", "label": "Defensive Scoring", "formula": "sacks x 1 + INT x 2 + fum_rec x 2"},
+            {
+                "key": "defensive_scoring",
+                "label": "Defensive Scoring",
+                "formula": "sacks x 1 + INT x 2 + fum_rec x 2",
+            },
             {"key": "td_points", "label": "TD Points", "formula": "ST_TD x 6"},
-            {"key": "pts_allowed_bonus", "label": "Pts Allowed Bonus", "formula": "tiered: 0pts=+10 ... 35+=−4"},
+            {
+                "key": "pts_allowed_bonus",
+                "label": "Pts Allowed Bonus",
+                "formula": "tiered: 0pts=+10 ... 35+=−4",
+            },
         ],
         "adjustments": "Defensive TDs + safeties (nflreadr 2025-only; excluded from targets)",
         "specific_features": list(DST_SPECIFIC_FEATURES),
-        "architecture": {"backbone": list(dst_cfg.DST_NN_BACKBONE_LAYERS), "head_hidden": dst_cfg.DST_NN_HEAD_HIDDEN},
+        "architecture": {
+            "backbone": list(dst_cfg.DST_NN_BACKBONE_LAYERS),
+            "head_hidden": dst_cfg.DST_NN_HEAD_HIDDEN,
+        },
     },
 }
 
@@ -336,9 +383,16 @@ def _ensure_base_data():
     dst_train, dst_val, dst_test = _load_dst_splits()
 
     keep_cols = [
-        "player_id", "player_display_name", "position", "recent_team",
-        "season", "week", "headshot_url",
-        "fantasy_points", "fantasy_points_half_ppr", "fantasy_points_standard",
+        "player_id",
+        "player_display_name",
+        "position",
+        "recent_team",
+        "season",
+        "week",
+        "headshot_url",
+        "fantasy_points",
+        "fantasy_points_half_ppr",
+        "fantasy_points_standard",
         "fantasy_points_floor",
     ]
     keep_cols = [c for c in keep_cols if c in test.columns]
@@ -425,6 +479,7 @@ def _get_data():
 # Routes
 # ---------------------------------------------------------------------------
 
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -500,16 +555,18 @@ def api_player(player_id):
         for r in df[["week", "fantasy_points", "ridge_pred", "nn_pred"]].to_dict(orient="records")
     ]
 
-    return jsonify({
-        "player_id": player_id,
-        "name": _safe_str(info["player_display_name"]),
-        "position": _safe_str(info["position"]),
-        "team": _safe_str(info["recent_team"]),
-        "headshot": _safe_str(info.get("headshot_url", "")),
-        "weekly": weekly,
-        "season_avg": _safe_num(round(df["fantasy_points"].mean(), 2)),
-        "season_total": _safe_num(round(df["fantasy_points"].sum(), 2)),
-    })
+    return jsonify(
+        {
+            "player_id": player_id,
+            "name": _safe_str(info["player_display_name"]),
+            "position": _safe_str(info["position"]),
+            "team": _safe_str(info["recent_team"]),
+            "headshot": _safe_str(info.get("headshot_url", "")),
+            "weekly": weekly,
+            "season_avg": _safe_num(round(df["fantasy_points"].mean(), 2)),
+            "season_total": _safe_num(round(df["fantasy_points"].sum(), 2)),
+        }
+    )
 
 
 @app.route("/api/top_players")
@@ -530,9 +587,13 @@ def api_top_players():
         "avg_nn": ("nn_pred", "mean"),
         "games": ("week", "count"),
     }
-    avg = df.groupby(["player_id", "player_display_name", "position", "recent_team"]).agg(
-        **agg_dict,
-    ).reset_index()
+    avg = (
+        df.groupby(["player_id", "player_display_name", "position", "recent_team"])
+        .agg(
+            **agg_dict,
+        )
+        .reset_index()
+    )
     avg = avg[avg["games"] >= 6]
     avg = avg.sort_values("avg_actual", ascending=False).head(25)
 
@@ -567,11 +628,13 @@ def api_weekly_accuracy():
         .round(3)
         .sort_index()
     )
-    return jsonify({
-        "weeks": [int(w) for w in weekly.index],
-        "ridge_mae": weekly["ridge_mae"].tolist(),
-        "nn_mae": weekly["nn_mae"].tolist(),
-    })
+    return jsonify(
+        {
+            "weeks": [int(w) for w in weekly.index],
+            "ridge_mae": weekly["ridge_mae"].tolist(),
+            "nn_mae": weekly["nn_mae"].tolist(),
+        }
+    )
 
 
 @app.route("/api/position_details")
@@ -590,14 +653,28 @@ def _categorize_features(features):
     """Bucket feature names into human-readable categories by prefix."""
     weather_set = set(WEATHER_FEATURES_ALL) | {"game_wind", "game_temp"}
     categories = {
-        "rolling": [], "prior_season": [], "ewma": [], "trend": [],
-        "share": [], "matchup": [], "defense": [], "weather_vegas": [],
-        "contextual": [], "other": [],
+        "rolling": [],
+        "prior_season": [],
+        "ewma": [],
+        "trend": [],
+        "share": [],
+        "matchup": [],
+        "defense": [],
+        "weather_vegas": [],
+        "contextual": [],
+        "other": [],
     }
     contextual_set = {
-        "is_home", "week", "is_returning_from_absence", "days_rest",
-        "practice_status", "game_status", "depth_chart_rank", "rest_days",
-        "div_game", "spread_line",
+        "is_home",
+        "week",
+        "is_returning_from_absence",
+        "days_rest",
+        "practice_status",
+        "game_status",
+        "depth_chart_rank",
+        "rest_days",
+        "div_game",
+        "spread_line",
     }
     for f in features:
         if f in weather_set:
@@ -623,14 +700,16 @@ def _categorize_features(features):
     return {k: v for k, v in categories.items() if v}
 
 
-def _position_arch_payload(pos, cfg, specific, targets, include_features,
-                           attn_history=None):
+def _position_arch_payload(pos, cfg, specific, targets, include_features, attn_history=None):
     """Build the per-position JSON payload for /api/model_architecture.
 
     `include_features` may be a categorized dict (QB/RB/WR/TE) or a flat list
     (K/DST contextual); either shape is normalized to categorized groups.
     """
-    get = lambda name, default=None: getattr(cfg, name, default)
+
+    def get(name, default=None):
+        return getattr(cfg, name, default)
+
     prefix = pos.upper()
 
     # Scheduler summary string
@@ -690,53 +769,77 @@ def api_model_architecture():
     try:
         positions = {
             "QB": _position_arch_payload(
-                "QB", qb_cfg, QB_SPECIFIC_FEATURES, QB_TARGETS,
+                "QB",
+                qb_cfg,
+                QB_SPECIFIC_FEATURES,
+                QB_TARGETS,
                 getattr(qb_cfg, "QB_INCLUDE_FEATURES", []),
                 getattr(qb_cfg, "QB_ATTN_HISTORY_STATS", None),
             ),
             "RB": _position_arch_payload(
-                "RB", rb_cfg, RB_SPECIFIC_FEATURES, RB_TARGETS,
+                "RB",
+                rb_cfg,
+                RB_SPECIFIC_FEATURES,
+                RB_TARGETS,
                 getattr(rb_cfg, "RB_INCLUDE_FEATURES", []),
                 getattr(rb_cfg, "RB_ATTN_HISTORY_STATS", None),
             ),
             "WR": _position_arch_payload(
-                "WR", wr_cfg, WR_SPECIFIC_FEATURES, WR_TARGETS,
+                "WR",
+                wr_cfg,
+                WR_SPECIFIC_FEATURES,
+                WR_TARGETS,
                 getattr(wr_cfg, "WR_INCLUDE_FEATURES", []),
                 getattr(wr_cfg, "WR_ATTN_HISTORY_STATS", None),
             ),
             "TE": _position_arch_payload(
-                "TE", te_cfg, TE_SPECIFIC_FEATURES, TE_TARGETS,
+                "TE",
+                te_cfg,
+                TE_SPECIFIC_FEATURES,
+                TE_TARGETS,
                 getattr(te_cfg, "TE_INCLUDE_FEATURES", []),
                 getattr(te_cfg, "TE_ATTN_HISTORY_STATS", None),
             ),
             "K": _position_arch_payload(
-                "K", k_cfg, K_SPECIFIC_FEATURES, K_TARGETS,
+                "K",
+                k_cfg,
+                K_SPECIFIC_FEATURES,
+                K_TARGETS,
                 getattr(k_cfg, "K_CONTEXTUAL_FEATURES", []),
             ),
             "DST": _position_arch_payload(
-                "DST", dst_cfg, DST_SPECIFIC_FEATURES, DST_TARGETS,
+                "DST",
+                dst_cfg,
+                DST_SPECIFIC_FEATURES,
+                DST_TARGETS,
                 getattr(dst_cfg, "DST_CONTEXTUAL_FEATURES", []),
             ),
         }
-        return jsonify({
-            "overview": {
-                "framework": "PyTorch 2.11 + CUDA 12.6 (AWS Batch)",
-                "device": "CUDA if available, else CPU",
-                "data_splits": "Train 2012-2023, Val 2024, Test 2025 (K uses 2015+)",
-                "ensemble": ["Season-average baseline", "Ridge multi-target",
-                             "MultiHeadNet (dense)",
-                             "MultiHeadNetWithHistory (attention)", "LightGBM"],
-            },
-            "training_loop": {
-                "optimizer": "AdamW",
-                "loss": "MultiTargetLoss: sum of per-target Huber + w_total * Huber(total) + optional BCE on TD gate",
-                "gradient_clip": "clip_grad_norm_(max_norm=1.0)",
-                "feature_scaling": "StandardScaler, clipped to [-4, 4]",
-                "early_stopping": "Best val_mae_total restored on patience",
-                "checkpoint": "Best state_dict kept in memory, saved as .pt",
-            },
-            "positions": positions,
-        })
+        return jsonify(
+            {
+                "overview": {
+                    "framework": "PyTorch 2.11 + CUDA 12.6 (AWS Batch)",
+                    "device": "CUDA if available, else CPU",
+                    "data_splits": "Train 2012-2023, Val 2024, Test 2025 (K uses 2015+)",
+                    "ensemble": [
+                        "Season-average baseline",
+                        "Ridge multi-target",
+                        "MultiHeadNet (dense)",
+                        "MultiHeadNetWithHistory (attention)",
+                        "LightGBM",
+                    ],
+                },
+                "training_loop": {
+                    "optimizer": "AdamW",
+                    "loss": "MultiTargetLoss: sum of per-target Huber + w_total * Huber(total) + optional BCE on TD gate",
+                    "gradient_clip": "clip_grad_norm_(max_norm=1.0)",
+                    "feature_scaling": "StandardScaler, clipped to [-4, 4]",
+                    "early_stopping": "Best val_mae_total restored on patience",
+                    "checkpoint": "Best state_dict kept in memory, saved as .pt",
+                },
+                "positions": positions,
+            }
+        )
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500

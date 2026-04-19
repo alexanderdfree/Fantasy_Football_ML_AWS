@@ -20,3 +20,36 @@ testpaths = [
     "batch/tests",
     "shared/tests",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "data", "outputs", "analysis_output", "infra",
+    "docs", "static", "templates", "*.ipynb",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+]
+ignore = [
+    "E501",
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**"    = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
+"tests/**"       = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
+"**/*_config.py" = ["E402"]
+"benchmark.py"   = ["T201"]
+"tune_*.py"      = ["T201"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

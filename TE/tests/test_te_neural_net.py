@@ -1,8 +1,8 @@
 """Tests for shared.neural_net.MultiHeadNet (using TE targets)."""
 
 import numpy as np
-import torch
 import pytest
+import torch
 
 from shared.neural_net import MultiHeadNet
 
@@ -15,8 +15,11 @@ class TestMultiHeadNet:
     @pytest.fixture
     def model(self):
         return MultiHeadNet(
-            input_dim=10, target_names=TE_TARGETS,
-            backbone_layers=[32, 16], head_hidden=8, dropout=0.1,
+            input_dim=10,
+            target_names=TE_TARGETS,
+            backbone_layers=[32, 16],
+            head_hidden=8,
+            dropout=0.1,
         )
 
     def test_output_keys(self, model):
@@ -41,7 +44,8 @@ class TestMultiHeadNet:
 
     def test_custom_backbone(self):
         model = MultiHeadNet(
-            input_dim=5, target_names=TE_TARGETS,
+            input_dim=5,
+            target_names=TE_TARGETS,
             backbone_layers=[64, 32, 16],
         )
         x = torch.randn(2, 5)
@@ -50,7 +54,8 @@ class TestMultiHeadNet:
 
     def test_single_sample_eval_mode(self):
         model = MultiHeadNet(
-            input_dim=10, target_names=TE_TARGETS,
+            input_dim=10,
+            target_names=TE_TARGETS,
             backbone_layers=[16, 8],
         )
         model.eval()
@@ -61,7 +66,8 @@ class TestMultiHeadNet:
 
     def test_predict_numpy(self):
         model = MultiHeadNet(
-            input_dim=10, target_names=TE_TARGETS,
+            input_dim=10,
+            target_names=TE_TARGETS,
             backbone_layers=[16, 8],
         )
         X = np.random.randn(5, 10).astype(np.float32)
@@ -75,7 +81,8 @@ class TestMultiHeadNet:
 
     def test_predict_numpy_single_sample(self):
         model = MultiHeadNet(
-            input_dim=5, target_names=TE_TARGETS,
+            input_dim=5,
+            target_names=TE_TARGETS,
             backbone_layers=[8, 4],
         )
         X = np.random.randn(1, 5).astype(np.float32)
@@ -93,8 +100,11 @@ class TestMultiHeadNet:
 
     def test_gradient_near_zero(self):
         model = MultiHeadNet(
-            input_dim=5, target_names=TE_TARGETS,
-            backbone_layers=[16], head_hidden=4, dropout=0.0,
+            input_dim=5,
+            target_names=TE_TARGETS,
+            backbone_layers=[16],
+            head_hidden=4,
+            dropout=0.0,
         )
         model.train()
         torch.manual_seed(0)
@@ -109,8 +119,11 @@ class TestMultiHeadNet:
 
     def test_total_equals_sum_train_mode(self):
         model = MultiHeadNet(
-            input_dim=10, target_names=TE_TARGETS,
-            backbone_layers=[32, 16], head_hidden=8, dropout=0.0,
+            input_dim=10,
+            target_names=TE_TARGETS,
+            backbone_layers=[32, 16],
+            head_hidden=8,
+            dropout=0.0,
         )
         model.train()
         x = torch.randn(4, 10)
@@ -121,8 +134,11 @@ class TestMultiHeadNet:
     def test_single_backbone_layer(self):
         """Single-layer backbone should work correctly."""
         model = MultiHeadNet(
-            input_dim=10, target_names=TE_TARGETS,
-            backbone_layers=[96], head_hidden=32, dropout=0.2,
+            input_dim=10,
+            target_names=TE_TARGETS,
+            backbone_layers=[96],
+            head_hidden=32,
+            dropout=0.2,
         )
         model.eval()
         x = torch.randn(4, 10)
@@ -134,8 +150,10 @@ class TestMultiHeadNet:
 
     def test_dropout_effect(self):
         model = MultiHeadNet(
-            input_dim=10, target_names=TE_TARGETS,
-            backbone_layers=[32, 16], dropout=0.5,
+            input_dim=10,
+            target_names=TE_TARGETS,
+            backbone_layers=[32, 16],
+            dropout=0.5,
         )
         x = torch.randn(8, 10)
 
@@ -183,8 +201,10 @@ class TestMultiHeadNet:
     def test_head_hidden_overrides(self):
         """TE config uses head_hidden_overrides on td_points."""
         model = MultiHeadNet(
-            input_dim=10, target_names=TE_TARGETS,
-            backbone_layers=[32, 16], head_hidden=8,
+            input_dim=10,
+            target_names=TE_TARGETS,
+            backbone_layers=[32, 16],
+            head_hidden=8,
             head_hidden_overrides={"td_points": 32},
         )
         x = torch.randn(4, 10)

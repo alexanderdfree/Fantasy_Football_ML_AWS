@@ -18,6 +18,7 @@ import warnings
 import numpy as np
 import pytest
 
+from shared.pipeline import run_pipeline
 from TE.te_config import TE_CONFIG_TINY, TE_TARGETS
 from TE.te_data import filter_to_te
 from TE.te_features import (
@@ -26,10 +27,7 @@ from TE.te_features import (
     get_te_feature_columns,
 )
 from TE.te_targets import compute_te_fumble_adjustment, compute_te_targets
-from shared.pipeline import run_pipeline
-
 from TE.tests.conftest import _build_tiny_te_splits
-
 
 pytestmark = [
     pytest.mark.e2e,
@@ -80,9 +78,7 @@ class TestPipelineE2E:
         for pred_col in ("pred_ridge_total", "pred_nn_total", "pred_baseline"):
             assert pred_col in test_df.columns, f"missing {pred_col}"
             arr = test_df[pred_col].values
-            assert arr.shape == (len(test),), (
-                f"{pred_col} shape {arr.shape} != ({len(test)},)"
-            )
+            assert arr.shape == (len(test),), f"{pred_col} shape {arr.shape} != ({len(test)},)"
             assert np.isfinite(arr).all(), f"{pred_col} has NaN/Inf"
 
         # Per-target predictions also present and finite.
@@ -115,6 +111,7 @@ class TestPipelineE2E:
             a = test_a[col].values
             b = test_b[col].values
             np.testing.assert_array_equal(
-                a, b,
+                a,
+                b,
                 err_msg=f"{col} differs across seeded runs",
             )

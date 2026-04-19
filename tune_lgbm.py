@@ -7,42 +7,43 @@ Usage:
     python tune_lgbm.py RB --timeout 3600      # time limit in seconds
     python tune_lgbm.py RB --print-best        # print best params from saved study
 """
+
+import argparse
+import json
 import os
 import sys
-import json
-import copy
 import time
-import argparse
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import numpy as np
-import pandas as pd
 import optuna
+import pandas as pd
 from optuna.pruners import MedianPruner
 from optuna.samplers import TPESampler
 
-from src.config import SPLITS_DIR, TRAIN_SEASONS, VAL_SEASONS
-from src.data.split import expanding_window_folds
-from src.evaluation.metrics import compute_metrics
+from shared.evaluation import compute_ranking_metrics, compute_target_metrics
 from shared.models import LightGBMMultiTarget
 from shared.pipeline import _prepare_position_data
-from shared.evaluation import compute_target_metrics, compute_ranking_metrics
-
+from src.config import SPLITS_DIR
+from src.data.split import expanding_window_folds
 
 # ---------------------------------------------------------------------------
 # Position config loading
 # ---------------------------------------------------------------------------
 
+
 def _get_position_config(pos):
     """Import and return the CONFIG dict for a position."""
     from shared.registry import get_config
+
     return get_config(pos.upper())
 
 
 # ---------------------------------------------------------------------------
 # CV data preparation
 # ---------------------------------------------------------------------------
+
 
 def _prepare_cv_folds(pos, cfg):
     """Load data and build CV folds with prepared feature matrices.
@@ -60,22 +61,23 @@ def _prepare_cv_folds(pos, cfg):
     targets = cfg["targets"]
 
     folds_data = []
-    for fold_idx, fold_train_df, fold_val_df in folds:
-        (X_train, X_val, _,
-         y_train_dict, y_val_dict, _,
-         _, _, _, feature_cols) = _prepare_position_data(
-            pos, cfg, fold_train_df, fold_val_df
+    for _fold_idx, fold_train_df, fold_val_df in folds:
+        (X_train, X_val, _, y_train_dict, y_val_dict, _, _, _, _, feature_cols) = (
+            _prepare_position_data(pos, cfg, fold_train_df, fold_val_df)
         )
         folds_data.append((X_train, X_val, y_train_dict, y_val_dict, feature_cols))
 
-    print(f"  {len(folds_data)} folds prepared, {len(feature_cols)} features, "
-          f"{len(targets)} targets: {targets}")
+    print(
+        f"  {len(folds_data)} folds prepared, {len(feature_cols)} features, "
+        f"{len(targets)} targets: {targets}"
+    )
     return folds_data, targets
 
 
 # ---------------------------------------------------------------------------
 # Optuna objective
 # ---------------------------------------------------------------------------
+
 
 def _make_objective(folds_data, targets):
     """Return an Optuna objective function that evaluates LightGBM on CV folds."""
@@ -101,10 +103,11 @@ def _make_objective(folds_data, targets):
 
         # --- Evaluate across CV folds ---
         fold_maes = []
-        for fold_i, (X_train, X_val, y_train_dict, y_val_dict, feature_cols) in enumerate(folds_data):
+        for fold_i, (X_train, X_val, y_train_dict, y_val_dict, feature_cols) in enumerate(
+            folds_data
+        ):
             model = LightGBMMultiTarget(target_names=targets, seed=42, **params)
-            model.fit(X_train, y_train_dict, X_val, y_val_dict,
-                      feature_names=feature_cols)
+            model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
 
             preds = model.predict(X_val)
             total_mae = np.mean(np.abs(preds["total"] - y_val_dict["total"]))
@@ -124,6 +127,7 @@ def _make_objective(folds_data, targets):
 # Before/after comparison on holdout
 # ---------------------------------------------------------------------------
 
+
 def _run_comparison(pos, cfg, best_params):
     """Train with old and new params on final split, print comparison."""
     print(f"\n{'=' * 70}")
@@ -136,11 +140,18 @@ def _run_comparison(pos, cfg, best_params):
 
     targets = cfg["targets"]
 
-    (X_train, X_val, X_test,
-     y_train_dict, y_val_dict, y_test_dict,
-     pos_train, pos_val, pos_test, feature_cols) = _prepare_position_data(
-        pos, cfg, train_df, val_df, test_df
-    )
+    (
+        X_train,
+        X_val,
+        X_test,
+        y_train_dict,
+        y_val_dict,
+        y_test_dict,
+        pos_train,
+        pos_val,
+        pos_test,
+        feature_cols,
+    ) = _prepare_position_data(pos, cfg, train_df, val_df, test_df)
 
     # --- Old params (from config) ---
     old_params = {
@@ -191,7 +202,9 @@ def _run_comparison(pos, cfg, best_params):
     new_hit = new_ranking["season_avg_hit_rate"]
     delta_hit = new_hit - old_hit
     sign_hit = "+" if delta_hit > 0 else ""
-    print(f"  {'Top-12 Hit Rate':<23} {old_hit:>10.3f} {new_hit:>10.3f} {sign_hit}{delta_hit:>9.3f}")
+    print(
+        f"  {'Top-12 Hit Rate':<23} {old_hit:>10.3f} {new_hit:>10.3f} {sign_hit}{delta_hit:>9.3f}"
+    )
 
     old_sp = old_ranking["season_avg_spearman"]
     new_sp = new_ranking["season_avg_spearman"]
@@ -210,6 +223,7 @@ def _run_comparison(pos, cfg, best_params):
 # ---------------------------------------------------------------------------
 # Config file output
 # ---------------------------------------------------------------------------
+
 
 def _format_config_lines(pos, best_params):
     """Format tuned params as config file constants."""
@@ -235,9 +249,9 @@ def _format_config_lines(pos, best_params):
             if isinstance(val, str):
                 lines.append(f'{prefix}_LGBM_{const_suffix} = "{val}"')
             elif isinstance(val, float):
-                lines.append(f'{prefix}_LGBM_{const_suffix} = {val:.6g}')
+                lines.append(f"{prefix}_LGBM_{const_suffix} = {val:.6g}")
             else:
-                lines.append(f'{prefix}_LGBM_{const_suffix} = {val}')
+                lines.append(f"{prefix}_LGBM_{const_suffix} = {val}")
     return "\n".join(lines)
 
 
@@ -253,13 +267,17 @@ def _trial_to_params(trial):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(description="Tune LightGBM hyperparameters per position")
     parser.add_argument("positions", nargs="+", help="Positions to tune (QB, RB, WR, TE)")
     parser.add_argument("--n-trials", type=int, default=50, help="Number of Optuna trials")
     parser.add_argument("--timeout", type=int, default=None, help="Timeout in seconds per position")
-    parser.add_argument("--print-best", action="store_true",
-                        help="Print best params from saved study without running new trials")
+    parser.add_argument(
+        "--print-best",
+        action="store_true",
+        help="Print best params from saved study without running new trials",
+    )
     args = parser.parse_args()
 
     all_results = {}
@@ -277,8 +295,10 @@ def main():
                     storage=f"sqlite:///{db_path}",
                 )
                 best = _trial_to_params(study.best_trial)
-                print(f"\n{pos} best trial #{study.best_trial.number} "
-                      f"(CV MAE = {study.best_value:.4f}):")
+                print(
+                    f"\n{pos} best trial #{study.best_trial.number} "
+                    f"(CV MAE = {study.best_value:.4f}):"
+                )
                 print(_format_config_lines(pos, best))
             except Exception as e:
                 print(f"No saved study for {pos}: {e}")

@@ -93,8 +93,10 @@ def test_required_columns_present(weekly_fixture: pd.DataFrame) -> None:
     )
     extras = actual - REQUIRED_COLUMNS
     if extras:
-        print(f"[loader contract] {len(extras)} extra columns present (OK): "
-              f"{sorted(extras)[:10]}{'...' if len(extras) > 10 else ''}")
+        print(
+            f"[loader contract] {len(extras)} extra columns present (OK): "
+            f"{sorted(extras)[:10]}{'...' if len(extras) > 10 else ''}"
+        )
 
 
 @pytest.mark.unit
@@ -109,17 +111,15 @@ def test_key_dtypes(weekly_fixture: pd.DataFrame) -> None:
     df = weekly_fixture
 
     # player_id: string-like (pandas stores as object or pyarrow-backed str)
-    assert ptypes.is_object_dtype(df["player_id"]) or ptypes.is_string_dtype(
-        df["player_id"]
-    ), f"player_id should be str/object, got {df['player_id'].dtype}"
+    assert ptypes.is_object_dtype(df["player_id"]) or ptypes.is_string_dtype(df["player_id"]), (
+        f"player_id should be str/object, got {df['player_id'].dtype}"
+    )
 
     # season / week: any int width
     assert ptypes.is_integer_dtype(df["season"]), (
         f"season should be integer, got {df['season'].dtype}"
     )
-    assert ptypes.is_integer_dtype(df["week"]), (
-        f"week should be integer, got {df['week'].dtype}"
-    )
+    assert ptypes.is_integer_dtype(df["week"]), f"week should be integer, got {df['week'].dtype}"
 
     # fantasy_points: any float width
     assert ptypes.is_float_dtype(df["fantasy_points"]), (
@@ -127,9 +127,9 @@ def test_key_dtypes(weekly_fixture: pd.DataFrame) -> None:
     )
 
     # position: string-like
-    assert ptypes.is_object_dtype(df["position"]) or ptypes.is_string_dtype(
-        df["position"]
-    ), f"position should be str/object, got {df['position'].dtype}"
+    assert ptypes.is_object_dtype(df["position"]) or ptypes.is_string_dtype(df["position"]), (
+        f"position should be str/object, got {df['position'].dtype}"
+    )
 
 
 @pytest.mark.unit
@@ -149,14 +149,12 @@ def test_value_ranges(weekly_fixture: pd.DataFrame) -> None:
 
     seasons = df["season"]
     assert seasons.min() >= 2000 and seasons.max() <= 2100, (
-        f"season out of range: [{seasons.min()}, {seasons.max()}] not in "
-        "[2000, 2100]"
+        f"season out of range: [{seasons.min()}, {seasons.max()}] not in [2000, 2100]"
     )
 
     fp = df["fantasy_points"]
     assert fp.min() >= -10 and fp.max() <= 80, (
-        f"fantasy_points out of range: [{fp.min()}, {fp.max()}] not in "
-        "[-10, 80]"
+        f"fantasy_points out of range: [{fp.min()}, {fp.max()}] not in [-10, 80]"
     )
 
 
@@ -165,9 +163,7 @@ def test_primary_key_unique(weekly_fixture: pd.DataFrame) -> None:
     """(player_id, season, week) must be unique — it's the join key used
     everywhere downstream (rolling features, opponent merges, etc).
     """
-    dupes = weekly_fixture.duplicated(
-        subset=["player_id", "season", "week"], keep=False
-    )
+    dupes = weekly_fixture.duplicated(subset=["player_id", "season", "week"], keep=False)
     assert not dupes.any(), (
         f"Primary key (player_id, season, week) is not unique: "
         f"{dupes.sum()} duplicate rows. Offending keys:\n"
@@ -186,9 +182,7 @@ def test_no_null_primary_key_or_position(weekly_fixture: pd.DataFrame) -> None:
 
 
 @pytest.mark.unit
-def test_parquet_roundtrip(
-    weekly_fixture: pd.DataFrame, tmp_path: Path
-) -> None:
+def test_parquet_roundtrip(weekly_fixture: pd.DataFrame, tmp_path: Path) -> None:
     """Writing the fixture back out and re-reading must give an identical
     frame. This guards the cache code path in ``load_raw_data``, which
     reuses parquet between runs.
@@ -212,15 +206,12 @@ def test_parquet_roundtrip(
 
 # Columns the loader adds via its merge steps (not present in
 # ``nfl.import_weekly_data`` output).
-_LOADER_MERGE_ADDED = {"snap_pct", "practice_status", "game_status",
-                       "depth_chart_rank"}
+_LOADER_MERGE_ADDED = {"snap_pct", "practice_status", "game_status", "depth_chart_rank"}
 
 
 def _empty_frame(columns: dict[str, str]) -> pd.DataFrame:
     """Build an empty DataFrame with typed columns for cache seeding."""
-    return pd.DataFrame({
-        name: pd.Series([], dtype=dtype) for name, dtype in columns.items()
-    })
+    return pd.DataFrame({name: pd.Series([], dtype=dtype) for name, dtype in columns.items()})
 
 
 @pytest.mark.integration
@@ -246,9 +237,7 @@ def test_load_raw_data_uses_cache_and_returns_fixture_schema(
 
     # Pre-merge weekly cache: drop the columns the loader *adds* during its
     # own merge steps so we don't collide on re-merge.
-    weekly_pre = fixture.drop(
-        columns=[c for c in _LOADER_MERGE_ADDED if c in fixture.columns]
-    )
+    weekly_pre = fixture.drop(columns=[c for c in _LOADER_MERGE_ADDED if c in fixture.columns])
     weekly_pre.to_parquet(cache_dir / f"weekly_{suffix}.parquet")
 
     # Each supporting cache is empty — we only need the loader's merge
@@ -256,28 +245,42 @@ def test_load_raw_data_uses_cache_and_returns_fixture_schema(
     # matter: snap_counts.pfr_player_id must be object to avoid a merge
     # dtype mismatch against the id-bridge frame.
     cache_shapes: dict[str, dict[str, str]] = {
-        f"rosters_{suffix}": {"player_id": "object", "season": "int32",
-                              "position": "object"},
-        f"schedules_{suffix}": {"season": "int32", "week": "int32",
-                                "home_team": "object", "away_team": "object"},
-        f"snap_counts_{suffix}": {"pfr_player_id": "object",
-                                  "season": "int32", "week": "int32",
-                                  "offense_pct": "float64"},
-        f"injuries_{suffix}": {"gsis_id": "object", "season": "int32",
-                               "week": "int32",
-                               "practice_status": "object",
-                               "report_status": "object"},
-        f"depth_charts_{suffix}": {"gsis_id": "object", "season": "int32",
-                                   "week": "int32", "formation": "object",
-                                   "depth_team": "object"},
+        f"rosters_{suffix}": {"player_id": "object", "season": "int32", "position": "object"},
+        f"schedules_{suffix}": {
+            "season": "int32",
+            "week": "int32",
+            "home_team": "object",
+            "away_team": "object",
+        },
+        f"snap_counts_{suffix}": {
+            "pfr_player_id": "object",
+            "season": "int32",
+            "week": "int32",
+            "offense_pct": "float64",
+        },
+        f"injuries_{suffix}": {
+            "gsis_id": "object",
+            "season": "int32",
+            "week": "int32",
+            "practice_status": "object",
+            "report_status": "object",
+        },
+        f"depth_charts_{suffix}": {
+            "gsis_id": "object",
+            "season": "int32",
+            "week": "int32",
+            "formation": "object",
+            "depth_team": "object",
+        },
     }
     for stem, columns in cache_shapes.items():
         _empty_frame(columns).to_parquet(cache_dir / f"{stem}.parquet")
 
     # The one remaining nfl_data_py call when all caches exist.
     monkeypatch.setattr(
-        loader_module.nfl, "import_ids",
-        lambda: _empty_frame({"pfr_id": "object", "gsis_id": "object"})
+        loader_module.nfl,
+        "import_ids",
+        lambda: _empty_frame({"pfr_id": "object", "gsis_id": "object"}),
     )
 
     df = loader_module.load_raw_data(seasons=seasons, cache_dir=str(cache_dir))

@@ -23,8 +23,14 @@ RB_SPECIFIC_FEATURES = [
 # === RB Feature Whitelist ===
 # Explicit include list — new columns must be opted in, preventing silent leakage.
 _RB_ROLLING_STATS = [
-    "fantasy_points", "fantasy_points_floor", "targets", "receptions",
-    "carries", "rushing_yards", "receiving_yards", "snap_pct",
+    "fantasy_points",
+    "fantasy_points_floor",
+    "targets",
+    "receptions",
+    "carries",
+    "rushing_yards",
+    "receiving_yards",
+    "snap_pct",
 ]
 
 RB_INCLUDE_FEATURES = {
@@ -38,32 +44,44 @@ RB_INCLUDE_FEATURES = {
             [f"rolling_{a}_{stat}_L{w}" for a in ["mean", "std", "max"]]
             + ([f"rolling_min_{stat}_L{w}"] if stat == "fantasy_points" else [])
         )
-    ] + [f"rolling_min_fantasy_points_L5"],
+    ]
+    + ["rolling_min_fantasy_points_L5"],
     "prior_season": [
-        f"prior_season_{a}_{stat}"
-        for stat in _RB_ROLLING_STATS
-        for a in ["mean", "std", "max"]
+        f"prior_season_{a}_{stat}" for stat in _RB_ROLLING_STATS for a in ["mean", "std", "max"]
     ],
     # All EWMA dropped (>0.98 corr with rolling means)
     "ewma": [],
     "trend": ["trend_fantasy_points", "trend_targets", "trend_carries", "trend_snap_pct"],
     "share": [
-        "target_share_L3", "target_share_L5",
-        "carry_share_L3", "carry_share_L5",
-        "snap_pct", "air_yards_share",
+        "target_share_L3",
+        "target_share_L5",
+        "carry_share_L3",
+        "carry_share_L5",
+        "snap_pct",
+        "air_yards_share",
     ],
     "matchup": [
-        "opp_fantasy_pts_allowed_to_pos", "opp_rush_pts_allowed_to_pos",
-        "opp_recv_pts_allowed_to_pos", "opp_def_rank_vs_pos",
+        "opp_fantasy_pts_allowed_to_pos",
+        "opp_rush_pts_allowed_to_pos",
+        "opp_recv_pts_allowed_to_pos",
+        "opp_def_rank_vs_pos",
     ],
     "defense": [
-        "opp_def_sacks_L5", "opp_def_pass_yds_allowed_L5",
-        "opp_def_pass_td_allowed_L5", "opp_def_ints_L5",
-        "opp_def_rush_yds_allowed_L5", "opp_def_pts_allowed_L5",
+        "opp_def_sacks_L5",
+        "opp_def_pass_yds_allowed_L5",
+        "opp_def_pass_td_allowed_L5",
+        "opp_def_ints_L5",
+        "opp_def_rush_yds_allowed_L5",
+        "opp_def_pts_allowed_L5",
     ],
     "contextual": [
-        "is_home", "week", "is_returning_from_absence", "days_rest",
-        "practice_status", "game_status", "depth_chart_rank",
+        "is_home",
+        "week",
+        "is_returning_from_absence",
+        "days_rest",
+        "practice_status",
+        "game_status",
+        "depth_chart_rank",
     ],
     # implied_team + implied_opp encodes both game total and spread direction
     # without the perfect collinearity of keeping total_line alongside either.
@@ -74,10 +92,11 @@ RB_INCLUDE_FEATURES = {
 
 # === Ridge ===
 import numpy as np
+
 RB_RIDGE_ALPHA_GRIDS = {
-    "rushing_floor":   [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "rushing_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
     "receiving_floor": [round(x, 4) for x in np.logspace(-2, 2.5, 20)],
-    "td_points":       [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "td_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
 # Two-stage model for td_points: zero-inflated (73.5% zeros), discrete (0,6,12,...).
@@ -92,7 +111,7 @@ RB_ORDINAL_TARGETS = {
     "td_points": {
         "type": "ordinal",
         "class_values": [0, 6, 12, 18],  # 0/1/2/3+ TDs * 6 pts each
-        "alpha": 1.0,                      # mord LogisticAT regularization
+        "alpha": 1.0,  # mord LogisticAT regularization
     },
 }
 
@@ -149,7 +168,7 @@ RB_HUBER_DELTAS = {
     "rushing_floor": 2.0,
     "receiving_floor": 2.0,
     "td_points": 2.0,
-    "total": 3.0,       # explicit delta for total aux loss
+    "total": 3.0,  # explicit delta for total aux loss
 }
 
 # === LR Scheduler ===
@@ -180,14 +199,22 @@ RB_ATTN_WEIGHT_DECAY = 5e-5
 RB_ATTN_BATCH_SIZE = 256
 RB_ATTN_PATIENCE = 35
 RB_ATTN_HISTORY_STATS = [
-    "fantasy_points", "fantasy_points_floor",
-    "rushing_yards", "receiving_yards",
-    "rushing_tds", "receiving_tds",
-    "carries", "targets", "receptions",
+    "fantasy_points",
+    "fantasy_points_floor",
+    "rushing_yards",
+    "receiving_yards",
+    "rushing_tds",
+    "receiving_tds",
+    "carries",
+    "targets",
+    "receptions",
     "snap_pct",
-    "rushing_first_downs", "receiving_first_downs",
-    "game_carry_share", "game_target_share",
-    "game_carry_hhi", "game_target_hhi",
+    "rushing_first_downs",
+    "receiving_first_downs",
+    "game_carry_share",
+    "game_target_share",
+    "game_carry_hhi",
+    "game_target_hhi",
 ]
 # Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
 # Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]

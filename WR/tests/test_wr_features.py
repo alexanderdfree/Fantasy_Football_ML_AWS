@@ -7,10 +7,10 @@ import pytest
 from WR.wr_config import WR_SPECIFIC_FEATURES
 from WR.wr_features import _compute_wr_features, fill_wr_nans
 
-
 # ---------------------------------------------------------------------------
 # _compute_wr_features
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestComputeWRFeatures:
@@ -58,19 +58,31 @@ class TestComputeWRFeatures:
 
     def test_zero_targets_no_division_error(self, wr_player_games_factory):
         df = wr_player_games_factory(
-            n_weeks=4, targets=0, receptions=0, receiving_yards=0,
-            receiving_air_yards=0, receiving_yards_after_catch=0,
-            receiving_epa=0, receiving_first_downs=0,
+            n_weeks=4,
+            targets=0,
+            receptions=0,
+            receiving_yards=0,
+            receiving_air_yards=0,
+            receiving_yards_after_catch=0,
+            receiving_epa=0,
+            receiving_first_downs=0,
         )
         _compute_wr_features(df)
-        for col in ["yards_per_target_L3", "reception_rate_L3",
-                    "air_yards_per_target_L3", "receiving_epa_per_target_L3"]:
+        for col in [
+            "yards_per_target_L3",
+            "reception_rate_L3",
+            "air_yards_per_target_L3",
+            "receiving_epa_per_target_L3",
+        ]:
             assert not df[col].isin([np.inf, -np.inf]).any(), f"{col} has inf"
 
     def test_zero_receptions_yac(self, wr_player_games_factory):
         df = wr_player_games_factory(
-            n_weeks=4, receptions=0, receiving_yards_after_catch=0,
-            receiving_first_downs=0, receiving_yards=0,
+            n_weeks=4,
+            receptions=0,
+            receiving_yards_after_catch=0,
+            receiving_first_downs=0,
+            receiving_yards=0,
         )
         _compute_wr_features(df)
         assert not df["yac_per_reception_L3"].isin([np.inf, -np.inf]).any()
@@ -109,6 +121,7 @@ class TestComputeWRFeatures:
 # ---------------------------------------------------------------------------
 # fill_wr_nans
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFillWRNans:

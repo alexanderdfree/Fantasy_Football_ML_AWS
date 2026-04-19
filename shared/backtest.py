@@ -1,9 +1,10 @@
 """Generic weekly backtest simulation for any position."""
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
+
 from src.evaluation.metrics import compute_metrics
 
 
@@ -56,14 +57,17 @@ def run_weekly_simulation(
 
                 corr, _ = spearmanr(week_df[pred_col], week_df[true_col])
                 if np.isnan(corr):
-                    print(f"  WARNING: Spearman NaN for {model_name} week {week} "
-                          f"(n={len(week_df)})")
+                    print(
+                        f"  WARNING: Spearman NaN for {model_name} week {week} (n={len(week_df)})"
+                    )
 
-                weekly_ranking[model_name].append({
-                    "week": week,
-                    "top_k_hit_rate": hit_rate,
-                    "spearman": corr,
-                })
+                weekly_ranking[model_name].append(
+                    {
+                        "week": week,
+                        "top_k_hit_rate": hit_rate,
+                        "spearman": corr,
+                    }
+                )
 
     season_summary = {}
     for model_name in pred_columns:
@@ -72,7 +76,11 @@ def run_weekly_simulation(
                 np.array(season_true), np.array(season_preds[model_name])
             )
         else:
-            season_summary[model_name] = {"mae": float("nan"), "rmse": float("nan"), "r2": float("nan")}
+            season_summary[model_name] = {
+                "mae": float("nan"),
+                "rmse": float("nan"),
+                "r2": float("nan"),
+            }
 
     return {
         "weekly_metrics": weekly_metrics,

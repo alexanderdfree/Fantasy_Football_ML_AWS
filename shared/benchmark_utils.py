@@ -2,6 +2,7 @@
 benchmark scripts. Consolidates summary-row construction, comparison-table
 printing, git-hash capture, and history append.
 """
+
 import datetime
 import json
 import os
@@ -10,10 +11,14 @@ import subprocess
 
 def get_git_hash() -> str:
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
     except Exception:
         return "unknown"
 
@@ -28,7 +33,9 @@ def append_to_history(history_file: str, run_entry: dict) -> None:
             ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
             quarantine = f"{history_file}.corrupt-{ts}"
             os.rename(history_file, quarantine)
-            print(f"WARNING: {history_file} is corrupt ({e}); moved to {quarantine}. Starting fresh.")
+            print(
+                f"WARNING: {history_file} is corrupt ({e}); moved to {quarantine}. Starting fresh."
+            )
     history.append(run_entry)
     tmp = f"{history_file}.tmp"
     with open(tmp, "w") as f:
@@ -46,7 +53,8 @@ def _json_default(obj):
 def _per_target(metrics: dict, exclude="total") -> dict:
     return {
         t: {"mae": round(v["mae"], 3), "r2": round(v["r2"], 3)}
-        for t, v in metrics.items() if t != exclude
+        for t, v in metrics.items()
+        if t != exclude
     }
 
 
@@ -77,7 +85,8 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         summary["attn_nn_r2"] = round(attn["r2"], 3)
         summary["attn_nn_per_target"] = _per_target(result["attn_nn_metrics"])
         summary["attn_nn_top12"] = round(
-            result.get("attn_nn_ranking", {}).get("season_avg_hit_rate", 0), 3,
+            result.get("attn_nn_ranking", {}).get("season_avg_hit_rate", 0),
+            3,
         )
     if "lgbm_metrics" in result:
         lgbm = result["lgbm_metrics"]["total"]
@@ -85,7 +94,8 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         summary["lgbm_r2"] = round(lgbm["r2"], 3)
         summary["lgbm_per_target"] = _per_target(result["lgbm_metrics"])
         summary["lgbm_top12"] = round(
-            result.get("lgbm_ranking", {}).get("season_avg_hit_rate", 0), 3,
+            result.get("lgbm_ranking", {}).get("season_avg_hit_rate", 0),
+            3,
         )
     if "cv_metrics" in result:
         cv = result["cv_metrics"]
@@ -228,15 +238,20 @@ def print_comparison_table(summaries: list, *, header: str, show_time: bool = Tr
         print("-" * 60)
         for s in summaries:
             if "cv_ridge_mae_mean" in s:
-                print(f"{s['position']:<5} "
-                      f"{s['cv_ridge_mae_mean']:>8.3f} +/- {s['cv_ridge_mae_std']:<6.3f} "
-                      f"{s['cv_nn_mae_mean']:>8.3f} +/- {s['cv_nn_mae_std']:<6.3f} "
-                      f"{s['best_cv_alpha']:>10.2f}")
+                print(
+                    f"{s['position']:<5} "
+                    f"{s['cv_ridge_mae_mean']:>8.3f} +/- {s['cv_ridge_mae_std']:<6.3f} "
+                    f"{s['cv_nn_mae_mean']:>8.3f} +/- {s['cv_nn_mae_std']:<6.3f} "
+                    f"{s['best_cv_alpha']:>10.2f}"
+                )
         print("=" * 72)
 
 
 def print_history_comparison(
-    history_file: str, summaries: list, *, last_n: int = 5,
+    history_file: str,
+    summaries: list,
+    *,
+    last_n: int = 5,
 ) -> None:
     """Print per-position tables comparing the new run vs. the last N history runs.
 
@@ -259,30 +274,40 @@ def print_history_comparison(
     for new in summaries:
         pos = new["position"]
         rows = []
-        for entry in history[:-1]:   # exclude the just-appended new run
+        for entry in history[:-1]:  # exclude the just-appended new run
             for s in entry.get("results", []):
                 if s.get("position") == pos:
-                    rows.append((entry.get("timestamp", "?")[:10],
-                                 entry.get("git_hash", "?"),
-                                 (entry.get("note") or "")[:38],
-                                 s))
+                    rows.append(
+                        (
+                            entry.get("timestamp", "?")[:10],
+                            entry.get("git_hash", "?"),
+                            (entry.get("note") or "")[:38],
+                            s,
+                        )
+                    )
                     break
         rows = rows[-last_n:]
 
-        hdr = (f"{'Date':<11} {'Hash':<9} {'Note':<40} "
-               f"{'Ridge':>7} {'NN':>7} {'Attn':>7} {'LGBM':>7} {'Top12':>7}")
+        hdr = (
+            f"{'Date':<11} {'Hash':<9} {'Note':<40} "
+            f"{'Ridge':>7} {'NN':>7} {'Attn':>7} {'LGBM':>7} {'Top12':>7}"
+        )
         print(f"\n{'=' * len(hdr)}")
         print(f"{pos} history (last {len(rows)} runs + this run)")
         print("=" * len(hdr))
         print(hdr)
         print("-" * len(hdr))
         for date, h, note, s in rows:
-            print(f"{date:<11} {h:<9} {note:<40} "
-                  f"{_fmt(s.get('ridge_mae')):>7} {_fmt(s.get('nn_mae')):>7} "
-                  f"{_fmt(s.get('attn_nn_mae')):>7} {_fmt(s.get('lgbm_mae')):>7} "
-                  f"{_fmt(s.get('nn_top12')):>7}")
-        print(f"{'> NEW':<11} {'':<9} {'(this run)':<40} "
-              f"{_fmt(new.get('ridge_mae')):>7} {_fmt(new.get('nn_mae')):>7} "
-              f"{_fmt(new.get('attn_nn_mae')):>7} {_fmt(new.get('lgbm_mae')):>7} "
-              f"{_fmt(new.get('nn_top12')):>7}")
+            print(
+                f"{date:<11} {h:<9} {note:<40} "
+                f"{_fmt(s.get('ridge_mae')):>7} {_fmt(s.get('nn_mae')):>7} "
+                f"{_fmt(s.get('attn_nn_mae')):>7} {_fmt(s.get('lgbm_mae')):>7} "
+                f"{_fmt(s.get('nn_top12')):>7}"
+            )
+        print(
+            f"{'> NEW':<11} {'':<9} {'(this run)':<40} "
+            f"{_fmt(new.get('ridge_mae')):>7} {_fmt(new.get('nn_mae')):>7} "
+            f"{_fmt(new.get('attn_nn_mae')):>7} {_fmt(new.get('lgbm_mae')):>7} "
+            f"{_fmt(new.get('nn_top12')):>7}"
+        )
         print("=" * len(hdr))

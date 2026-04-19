@@ -34,20 +34,19 @@ import torch
 from sklearn.preprocessing import StandardScaler
 
 from DST.dst_config import (
-    DST_TARGETS,
-    DST_NN_NON_NEGATIVE_TARGETS,
     DST_ALL_FEATURES,
-    DST_LOSS_WEIGHTS,
     DST_HUBER_DELTAS,
+    DST_LOSS_WEIGHTS,
+    DST_NN_NON_NEGATIVE_TARGETS,
+    DST_TARGETS,
 )
 from DST.dst_features import compute_dst_features
 from DST.dst_targets import compute_dst_targets
 from shared.models import RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
-from shared.training import MultiTargetLoss, MultiHeadTrainer, make_dataloaders
+from shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
 from src.evaluation.metrics import compute_metrics
 from src.models.baseline import SeasonAverageBaseline
-
 
 SEED = 42
 
@@ -98,6 +97,7 @@ def _prepare_tiny(tiny_dst_dataset: pd.DataFrame):
 # Cached per-session result — training costs dominate, keep it to one pass
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def regression_results(tiny_dst_dataset):
     """Train Ridge + NN on the tiny dataset and return summary MAEs.
@@ -120,7 +120,7 @@ def regression_results(tiny_dst_dataset):
         target_names=DST_TARGETS,
         alpha=1.0,
         non_negative_targets=DST_NN_NON_NEGATIVE_TARGETS,
-        pca_n_components=None,   # PCA unused on tiny data
+        pca_n_components=None,  # PCA unused on tiny data
     )
     ridge.fit(X_train, y_train)
     ridge_preds = ridge.predict(X_test)
@@ -130,6 +130,7 @@ def regression_results(tiny_dst_dataset):
     # --- LightGBM multi-target (optional — skip cleanly if not installed) ---
     try:
         from shared.models import LightGBMMultiTarget
+
         lgbm = LightGBMMultiTarget(
             target_names=DST_TARGETS,
             n_estimators=50,
@@ -142,7 +143,7 @@ def regression_results(tiny_dst_dataset):
         lgbm_preds = lgbm.predict(X_test)
         lgbm_preds["total"] = sum(lgbm_preds[t] for t in DST_TARGETS)
         lgbm_mae = compute_metrics(y_test["total"], lgbm_preds["total"])["mae"]
-    except Exception as e:  # lightgbm not installed or fits failed on tiny data
+    except Exception:  # lightgbm not installed or fits failed on tiny data
         lgbm_mae = None
 
     # --- NN (shrunk) ---
@@ -153,7 +154,11 @@ def regression_results(tiny_dst_dataset):
     X_te_s = np.clip(scaler.transform(X_test), -4, 4).astype(np.float32)
 
     train_loader, val_loader = make_dataloaders(
-        X_tr_s, y_train, X_te_s, y_test, batch_size=64,
+        X_tr_s,
+        y_train,
+        X_te_s,
+        y_test,
+        batch_size=64,
     )
 
     model = MultiHeadNet(
@@ -173,8 +178,14 @@ def regression_results(tiny_dst_dataset):
         w_total=1.0,
     )
     trainer = MultiHeadTrainer(
-        model, optim, sched, criterion, torch.device("cpu"),
-        target_names=DST_TARGETS, patience=5, log_every=100,
+        model,
+        optim,
+        sched,
+        criterion,
+        torch.device("cpu"),
+        target_names=DST_TARGETS,
+        patience=5,
+        log_every=100,
     )
     trainer.train(train_loader, val_loader, n_epochs=20)
 
@@ -207,9 +218,7 @@ class TestDSTRegression:
     def test_nn_beats_season_average_baseline(self, regression_results):
         baseline = regression_results["baseline"]
         nn = regression_results["nn"]
-        assert nn < baseline, (
-            f"NN MAE {nn:.3f} did not beat baseline {baseline:.3f}"
-        )
+        assert nn < baseline, f"NN MAE {nn:.3f} did not beat baseline {baseline:.3f}"
 
     def test_lightgbm_not_much_worse_than_ridge(self, regression_results):
         """LightGBM should perform at least as well as Ridge (+/-10 %)."""

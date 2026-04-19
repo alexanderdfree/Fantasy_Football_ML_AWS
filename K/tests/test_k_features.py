@@ -14,7 +14,6 @@ import pytest
 
 from K.k_features import compute_k_features, fill_k_nans
 
-
 K_FEATURE_COLS = [
     "fg_attempts_L3",
     "fg_accuracy_L5",
@@ -34,6 +33,7 @@ K_FEATURE_COLS = [
 # ---------------------------------------------------------------------------
 # compute_k_features
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestComputeKFeatures:
@@ -82,13 +82,27 @@ class TestComputeKFeatures:
     def test_zero_attempts_no_division_error(self, make_kicker_games):
         """Kicker with 0 attempts: rate features should be 0, not inf."""
         df = make_kicker_games(
-            n_weeks=4, fg_att=0, fg_made=0, pat_att=0, pat_made=0,
-            fg_made_40_49=0, fg_made_50_59=0, fg_made_60_=0,
-            long_fg_att=0, long_fg_made=0, q4_fg_att=0, q4_fg_made=0,
+            n_weeks=4,
+            fg_att=0,
+            fg_made=0,
+            pat_att=0,
+            pat_made=0,
+            fg_made_40_49=0,
+            fg_made_50_59=0,
+            fg_made_60_=0,
+            long_fg_att=0,
+            long_fg_made=0,
+            q4_fg_att=0,
+            q4_fg_made=0,
         )
         compute_k_features(df)
-        for col in ["fg_accuracy_L5", "long_fg_rate_L3", "fg_pct_40plus_L5",
-                    "q4_fg_rate_L5", "xp_accuracy_L5"]:
+        for col in [
+            "fg_accuracy_L5",
+            "long_fg_rate_L3",
+            "fg_pct_40plus_L5",
+            "q4_fg_rate_L5",
+            "xp_accuracy_L5",
+        ]:
             assert not df[col].isin([np.inf, -np.inf]).any(), f"{col} has inf"
 
     def test_cross_season_rolling(self, make_kicker_games):
@@ -128,6 +142,7 @@ class TestComputeKFeatures:
 # ---------------------------------------------------------------------------
 # fill_k_nans
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFillKNans:

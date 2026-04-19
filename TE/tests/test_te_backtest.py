@@ -145,7 +145,7 @@ class TestRunWeeklySimulation:
             wm1 = result1["weekly_metrics"][model_name]
             wm2 = result2["weekly_metrics"][model_name]
             assert len(wm1) == len(wm2)
-            for w1, w2 in zip(wm1, wm2):
+            for w1, w2 in zip(wm1, wm2, strict=False):
                 assert w1["week"] == w2["week"]
                 for metric in ("mae", "rmse", "r2"):
                     assert w1[metric] == pytest.approx(w2[metric], abs=1e-12)

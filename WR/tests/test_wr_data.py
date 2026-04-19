@@ -3,12 +3,12 @@
 import pandas as pd
 import pytest
 
-from WR.wr_data import filter_to_wr, compute_team_wr_totals
-
+from WR.wr_data import compute_team_wr_totals, filter_to_wr
 
 # ---------------------------------------------------------------------------
 # filter_to_wr
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFilterToWR:
@@ -57,57 +57,66 @@ class TestFilterToWR:
 # compute_team_wr_totals
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestComputeTeamWRTotals:
     def test_basic_aggregation(self):
-        df = pd.DataFrame({
-            "recent_team": ["KC", "KC", "KC", "BUF"],
-            "season": [2023, 2023, 2023, 2023],
-            "week": [1, 1, 1, 1],
-            "targets": [8, 10, 3, 7],
-        })
+        df = pd.DataFrame(
+            {
+                "recent_team": ["KC", "KC", "KC", "BUF"],
+                "season": [2023, 2023, 2023, 2023],
+                "week": [1, 1, 1, 1],
+                "targets": [8, 10, 3, 7],
+            }
+        )
         result = compute_team_wr_totals(df)
         kc_row = result[result["recent_team"] == "KC"]
         assert kc_row["team_wr_targets"].values[0] == 21
 
     def test_multiple_weeks(self):
-        df = pd.DataFrame({
-            "recent_team": ["KC", "KC"],
-            "season": [2023, 2023],
-            "week": [1, 2],
-            "targets": [8, 10],
-        })
+        df = pd.DataFrame(
+            {
+                "recent_team": ["KC", "KC"],
+                "season": [2023, 2023],
+                "week": [1, 2],
+                "targets": [8, 10],
+            }
+        )
         result = compute_team_wr_totals(df)
         assert len(result) == 2
 
     def test_single_player_team(self):
-        df = pd.DataFrame({
-            "recent_team": ["NYG"],
-            "season": [2023],
-            "week": [5],
-            "targets": [12],
-        })
+        df = pd.DataFrame(
+            {
+                "recent_team": ["NYG"],
+                "season": [2023],
+                "week": [5],
+                "targets": [12],
+            }
+        )
         result = compute_team_wr_totals(df)
         assert result["team_wr_targets"].values[0] == 12
 
     def test_zero_targets(self):
-        df = pd.DataFrame({
-            "recent_team": ["LAR", "LAR"],
-            "season": [2023, 2023],
-            "week": [1, 1],
-            "targets": [0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "recent_team": ["LAR", "LAR"],
+                "season": [2023, 2023],
+                "week": [1, 1],
+                "targets": [0, 0],
+            }
+        )
         result = compute_team_wr_totals(df)
         assert result["team_wr_targets"].values[0] == 0
 
     def test_output_columns(self):
-        df = pd.DataFrame({
-            "recent_team": ["SF"],
-            "season": [2023],
-            "week": [1],
-            "targets": [8],
-        })
+        df = pd.DataFrame(
+            {
+                "recent_team": ["SF"],
+                "season": [2023],
+                "week": [1],
+                "targets": [8],
+            }
+        )
         result = compute_team_wr_totals(df)
-        assert set(result.columns) == {
-            "recent_team", "season", "week", "team_wr_targets"
-        }
+        assert set(result.columns) == {"recent_team", "season", "week", "team_wr_targets"}

@@ -21,20 +21,22 @@ def _make_player_games(
     receiving_tds=1,
     recent_team="KC",
 ):
-    return pd.DataFrame({
-        "player_id": [player_id] * n_weeks,
-        "season": [season] * n_weeks,
-        "week": list(range(1, n_weeks + 1)),
-        "receptions": [receptions] * n_weeks,
-        "targets": [targets] * n_weeks,
-        "receiving_yards": [receiving_yards] * n_weeks,
-        "receiving_air_yards": [receiving_air_yards] * n_weeks,
-        "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
-        "receiving_epa": [receiving_epa] * n_weeks,
-        "receiving_first_downs": [receiving_first_downs] * n_weeks,
-        "receiving_tds": [receiving_tds] * n_weeks,
-        "recent_team": [recent_team] * n_weeks,
-    })
+    return pd.DataFrame(
+        {
+            "player_id": [player_id] * n_weeks,
+            "season": [season] * n_weeks,
+            "week": list(range(1, n_weeks + 1)),
+            "receptions": [receptions] * n_weeks,
+            "targets": [targets] * n_weeks,
+            "receiving_yards": [receiving_yards] * n_weeks,
+            "receiving_air_yards": [receiving_air_yards] * n_weeks,
+            "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
+            "receiving_epa": [receiving_epa] * n_weeks,
+            "receiving_first_downs": [receiving_first_downs] * n_weeks,
+            "receiving_tds": [receiving_tds] * n_weeks,
+            "recent_team": [recent_team] * n_weeks,
+        }
+    )
 
 
 TE_FEATURE_COLS = [
@@ -52,6 +54,7 @@ TE_FEATURE_COLS = [
 # ---------------------------------------------------------------------------
 # _compute_te_features
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestComputeTEFeatures:
@@ -91,17 +94,29 @@ class TestComputeTEFeatures:
         assert pytest.approx(week3["td_rate_per_target_L3"].iloc[0], abs=0.01) == 1 / 6
 
     def test_zero_targets_no_division_error(self):
-        df = _make_player_games(n_weeks=4, targets=0, receptions=0, receiving_yards=0,
-                                receiving_air_yards=0, receiving_yards_after_catch=0,
-                                receiving_epa=0, receiving_first_downs=0,
-                                receiving_tds=0)
+        df = _make_player_games(
+            n_weeks=4,
+            targets=0,
+            receptions=0,
+            receiving_yards=0,
+            receiving_air_yards=0,
+            receiving_yards_after_catch=0,
+            receiving_epa=0,
+            receiving_first_downs=0,
+            receiving_tds=0,
+        )
         _compute_te_features(df)
         for col in TE_FEATURE_COLS:
             assert not df[col].isin([np.inf, -np.inf]).any(), f"{col} has inf"
 
     def test_zero_receptions_yac(self):
-        df = _make_player_games(n_weeks=4, receptions=0, receiving_yards_after_catch=0,
-                                receiving_first_downs=0, receiving_yards=0)
+        df = _make_player_games(
+            n_weeks=4,
+            receptions=0,
+            receiving_yards_after_catch=0,
+            receiving_first_downs=0,
+            receiving_yards=0,
+        )
         _compute_te_features(df)
         assert not df["yac_per_reception_L3"].isin([np.inf, -np.inf]).any()
         assert not df["receiving_first_down_rate_L3"].isin([np.inf, -np.inf]).any()
@@ -138,6 +153,7 @@ class TestComputeTEFeatures:
 # ---------------------------------------------------------------------------
 # fill_te_nans
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestFillTENans:

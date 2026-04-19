@@ -1,6 +1,4 @@
 import pandas as pd
-import numpy as np
-
 
 # Standard D/ST points-allowed tiers
 _PTS_ALLOWED_TIERS = [
@@ -55,15 +53,11 @@ def compute_dst_targets(df: pd.DataFrame) -> pd.DataFrame:
     df["pts_allowed_bonus"] = df["points_allowed"].fillna(21).apply(_pts_allowed_to_bonus)
 
     # Unpredictable component (for adjustment at inference)
-    df["_dst_adjustment"] = (
-        df["def_tds"].fillna(0) * 6
-        + df["def_safeties"].fillna(0) * 2
-    )
+    df["_dst_adjustment"] = df["def_tds"].fillna(0) * 6 + df["def_safeties"].fillna(0) * 2
 
     # Total D/ST fantasy points (full, including adjustment)
     df["fantasy_points"] = (
-        df["defensive_scoring"] + df["td_points"] + df["pts_allowed_bonus"]
-        + df["_dst_adjustment"]
+        df["defensive_scoring"] + df["td_points"] + df["pts_allowed_bonus"] + df["_dst_adjustment"]
     )
 
     return df
@@ -75,4 +69,6 @@ def compute_dst_adjustment(df: pd.DataFrame) -> pd.Series:
     These stats have no training history (nflreadr 2025-only), so they
     are excluded from model targets and captured here as irreducible noise.
     """
-    return df["_dst_adjustment"] if "_dst_adjustment" in df.columns else pd.Series(0.0, index=df.index)
+    return (
+        df["_dst_adjustment"] if "_dst_adjustment" in df.columns else pd.Series(0.0, index=df.index)
+    )

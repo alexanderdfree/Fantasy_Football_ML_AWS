@@ -1,11 +1,11 @@
 """Generic training infrastructure: loss, dataset, dataloaders, and trainer."""
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
-import matplotlib.pyplot as plt
 
 
 class MultiTargetLoss(nn.Module):
@@ -36,10 +36,9 @@ class MultiTargetLoss(nn.Module):
         self.td_gate_weight = td_gate_weight
         if huber_deltas is None:
             huber_deltas = {}
-        self.huber_fns = nn.ModuleDict({
-            name: nn.HuberLoss(delta=huber_deltas.get(name, 1.0))
-            for name in target_names
-        })
+        self.huber_fns = nn.ModuleDict(
+            {name: nn.HuberLoss(delta=huber_deltas.get(name, 1.0)) for name in target_names}
+        )
         self.huber_total = nn.HuberLoss(delta=huber_deltas.get("total", 1.0))
 
     def forward(self, preds: dict, targets: dict) -> tuple:
@@ -108,7 +107,7 @@ class MultiTargetHistoryDataset(Dataset):
 
 def collate_with_history(batch):
     """Custom collate that pads variable-length game histories within each batch."""
-    statics, histories, targets = zip(*batch)
+    statics, histories, targets = zip(*batch, strict=False)
     statics = torch.stack(statics)
 
     # Pad histories to the longest sequence in this batch
@@ -135,18 +134,35 @@ def collate_with_history(batch):
     return statics, padded, masks, target_dict
 
 
-def make_history_dataloaders(X_train_static, X_train_history, y_train_dict,
-                             X_val_static, X_val_history, y_val_dict,
-                             batch_size=256):
+def make_history_dataloaders(
+    X_train_static,
+    X_train_history,
+    y_train_dict,
+    X_val_static,
+    X_val_history,
+    y_val_dict,
+    batch_size=256,
+):
     """Create DataLoaders for attention model with game history."""
     train_ds = MultiTargetHistoryDataset(X_train_static, X_train_history, y_train_dict)
     val_ds = MultiTargetHistoryDataset(X_val_static, X_val_history, y_val_dict)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=0, pin_memory=False, drop_last=True,
-                              collate_fn=collate_with_history)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                            num_workers=0, pin_memory=False,
-                            collate_fn=collate_with_history)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=False,
+        drop_last=True,
+        collate_fn=collate_with_history,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=False,
+        collate_fn=collate_with_history,
+    )
     return train_loader, val_loader
 
 
@@ -154,10 +170,17 @@ def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
     """Create DataLoaders for multi-target training."""
     train_ds = MultiTargetDataset(X_train, y_train_dict)
     val_ds = MultiTargetDataset(X_val, y_val_dict)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=0, pin_memory=False, drop_last=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                            num_workers=0, pin_memory=False)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=False,
+        drop_last=True,
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=False
+    )
     return train_loader, val_loader
 
 
@@ -168,9 +191,18 @@ class MultiHeadTrainer:
     (e.g., attention models with game history).
     """
 
-    def __init__(self, model, optimizer, scheduler, criterion, device,
-                 target_names, patience=15, scheduler_per_batch=False,
-                 log_every=10):
+    def __init__(
+        self,
+        model,
+        optimizer,
+        scheduler,
+        criterion,
+        device,
+        target_names,
+        patience=15,
+        scheduler_per_batch=False,
+        log_every=10,
+    ):
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -198,12 +230,17 @@ class MultiHeadTrainer:
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
         all_keys = self.target_names + ["total"]
-        history = {k: [] for k in [
-            "train_loss", "val_loss",
-            *[f"val_loss_{t}" for t in self.target_names],
-            "val_mae_total", *[f"val_mae_{t}" for t in self.target_names],
-            "val_rmse_total",
-        ]}
+        history = {
+            k: []
+            for k in [
+                "train_loss",
+                "val_loss",
+                *[f"val_loss_{t}" for t in self.target_names],
+                "val_mae_total",
+                *[f"val_mae_{t}" for t in self.target_names],
+                "val_rmse_total",
+            ]
+        }
 
         for epoch in range(n_epochs):
             # --- Training pass ---
@@ -281,9 +318,7 @@ class MultiHeadTrainer:
             val_mae_total = history["val_mae_total"][-1]
             if val_mae_total < self.best_val_metric:
                 self.best_val_metric = val_mae_total
-                self.best_model_state = {
-                    k: v.clone() for k, v in self.model.state_dict().items()
-                }
+                self.best_model_state = {k: v.clone() for k, v in self.model.state_dict().items()}
                 self.epochs_without_improvement = 0
             else:
                 self.epochs_without_improvement += 1
@@ -298,11 +333,10 @@ class MultiHeadTrainer:
             # --- Logging ---
             if (epoch + 1) % self.log_every == 0:
                 target_maes = " | ".join(
-                    f"{t}: {history[f'val_mae_{t}'][-1]:.3f}"
-                    for t in self.target_names
+                    f"{t}: {history[f'val_mae_{t}'][-1]:.3f}" for t in self.target_names
                 )
                 print(
-                    f"Epoch {epoch+1:3d} | "
+                    f"Epoch {epoch + 1:3d} | "
                     f"Train: {avg_train_loss:.4f} | "
                     f"Val: {avg_val_loss:.4f} | "
                     f"MAE total: {history['val_mae_total'][-1]:.3f} | "

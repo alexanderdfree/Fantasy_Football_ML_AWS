@@ -7,11 +7,11 @@ import pytest
 from shared.error_analysis import (
     add_stratification_columns,
     compute_stratum_metrics,
-    run_stratified_analysis,
     find_top_error_sources,
-    plot_error_by_stratum,
     plot_bias_heatmap,
+    plot_error_by_stratum,
     plot_td_zero_vs_scored,
+    run_stratified_analysis,
 )
 
 TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
@@ -21,13 +21,20 @@ TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 # add_stratification_columns
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestAddStratificationColumns:
     def test_adds_all_bucket_columns(self, error_df_factory):
         df = error_df_factory()
         result = add_stratification_columns(df, TARGETS)
-        for col in ["snap_bucket", "opp_tier", "week_phase", "td_bucket",
-                     "volatility_q", "home_away"]:
+        for col in [
+            "snap_bucket",
+            "opp_tier",
+            "week_phase",
+            "td_bucket",
+            "volatility_q",
+            "home_away",
+        ]:
             assert col in result.columns
 
     def test_snap_bucket_percentage_format(self):
@@ -41,10 +48,12 @@ class TestAddStratificationColumns:
         assert result["snap_bucket"].iloc[0] == "starter"
 
     def test_td_bucket_values(self):
-        df = pd.DataFrame({
-            "td_points": [6.0, 0.0],
-            "week": [5, 5],
-        })
+        df = pd.DataFrame(
+            {
+                "td_points": [6.0, 0.0],
+                "week": [5, 5],
+            }
+        )
         result = add_stratification_columns(df, TARGETS)
         assert result["td_bucket"].iloc[0] == "has_td"
         assert result["td_bucket"].iloc[1] == "zero_td"
@@ -66,43 +75,52 @@ class TestAddStratificationColumns:
 # compute_stratum_metrics
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestComputeStratumMetrics:
     def test_output_columns(self):
-        df = pd.DataFrame({
-            "group": ["A", "A", "B", "B"],
-            "actual": [1.0, 2.0, 3.0, 4.0],
-            "pred": [1.5, 2.5, 3.5, 4.5],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "A", "B", "B"],
+                "actual": [1.0, 2.0, 3.0, 4.0],
+                "pred": [1.5, 2.5, 3.5, 4.5],
+            }
+        )
         result = compute_stratum_metrics(df, "actual", "pred", "group")
         assert set(result.columns) == {"group", "n", "mae", "rmse", "bias"}
 
     def test_perfect_predictions(self):
-        df = pd.DataFrame({
-            "group": ["A", "A", "B"],
-            "actual": [1.0, 2.0, 3.0],
-            "pred": [1.0, 2.0, 3.0],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "A", "B"],
+                "actual": [1.0, 2.0, 3.0],
+                "pred": [1.0, 2.0, 3.0],
+            }
+        )
         result = compute_stratum_metrics(df, "actual", "pred", "group")
         assert (result["mae"] == 0).all()
         assert (result["rmse"] == 0).all()
         assert (result["bias"] == 0).all()
 
     def test_positive_bias(self):
-        df = pd.DataFrame({
-            "group": ["A", "A"],
-            "actual": [1.0, 2.0],
-            "pred": [3.0, 4.0],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "A"],
+                "actual": [1.0, 2.0],
+                "pred": [3.0, 4.0],
+            }
+        )
         result = compute_stratum_metrics(df, "actual", "pred", "group")
         assert result["bias"].iloc[0] == pytest.approx(2.0)
 
     def test_handles_nan(self):
-        df = pd.DataFrame({
-            "group": ["A", "A", "A"],
-            "actual": [1.0, np.nan, 3.0],
-            "pred": [1.5, 2.5, np.nan],
-        })
+        df = pd.DataFrame(
+            {
+                "group": ["A", "A", "A"],
+                "actual": [1.0, np.nan, 3.0],
+                "pred": [1.5, 2.5, np.nan],
+            }
+        )
         result = compute_stratum_metrics(df, "actual", "pred", "group")
         # Only the first row should be counted (both actual and pred non-NaN)
         assert result["n"].iloc[0] == 1
@@ -111,6 +129,7 @@ class TestComputeStratumMetrics:
 # ---------------------------------------------------------------------------
 # run_stratified_analysis
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestRunStratifiedAnalysis:
@@ -146,6 +165,7 @@ class TestRunStratifiedAnalysis:
 # find_top_error_sources
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestFindTopErrorSources:
     @pytest.fixture
@@ -158,7 +178,9 @@ class TestFindTopErrorSources:
         return run_stratified_analysis(df, model_pred_cols, target_cols, strata)
 
     def test_returns_sorted_by_metric(self, stratified_results):
-        sources = find_top_error_sources(stratified_results, "Ridge", metric="mae", top_k=5, min_n=1)
+        sources = find_top_error_sources(
+            stratified_results, "Ridge", metric="mae", top_k=5, min_n=1
+        )
         if len(sources) >= 2:
             assert sources[0]["mae"] >= sources[1]["mae"]
 
@@ -170,6 +192,7 @@ class TestFindTopErrorSources:
 # ---------------------------------------------------------------------------
 # Plotting (non-crash tests)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestPlotting:

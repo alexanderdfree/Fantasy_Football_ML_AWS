@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
-from src.features.engineer import flatten_include_features
+
 from QB.qb_config import QB_INCLUDE_FEATURES
+from src.features.engineer import flatten_include_features
 
 
 def get_qb_feature_columns() -> list[str]:

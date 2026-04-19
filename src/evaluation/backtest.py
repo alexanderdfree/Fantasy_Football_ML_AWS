@@ -1,9 +1,10 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
-from src.evaluation.metrics import compute_metrics
+
 from src.config import TOP_K_RANKING
+from src.evaluation.metrics import compute_metrics
 
 
 def run_weekly_simulation(
@@ -45,10 +46,14 @@ def run_weekly_simulation(
 
                 corr, _ = spearmanr(pos_df[pred_col], pos_df[true_col])
 
-                weekly_ranking[model_name].append({
-                    "week": week, "position": pos,
-                    "top12_hit_rate": hit_rate, "spearman_corr": corr,
-                })
+                weekly_ranking[model_name].append(
+                    {
+                        "week": week,
+                        "position": pos,
+                        "top12_hit_rate": hit_rate,
+                        "spearman_corr": corr,
+                    }
+                )
 
     season_summary = {}
     for model_name in pred_columns:

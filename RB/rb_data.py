@@ -23,8 +23,12 @@ def compute_team_rb_totals(full_rb_df: pd.DataFrame) -> pd.DataFrame:
     Args:
         full_rb_df: All RB rows (before min-games filter), from the general pipeline.
     """
-    team_rb_totals = full_rb_df.groupby(["recent_team", "season", "week"]).agg(
-        team_rb_carries=("carries", "sum"),
-        team_rb_targets=("targets", "sum"),
-    ).reset_index()
+    team_rb_totals = (
+        full_rb_df.groupby(["recent_team", "season", "week"])
+        .agg(
+            team_rb_carries=("carries", "sum"),
+            team_rb_targets=("targets", "sum"),
+        )
+        .reset_index()
+    )
     return team_rb_totals

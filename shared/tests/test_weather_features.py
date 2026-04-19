@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from shared.weather_features import (
-    WEATHER_FEATURES_ALL,
     WEATHER_DROPS_BY_POSITION,
+    WEATHER_FEATURES_ALL,
     get_weather_feature_columns,
     merge_schedule_features,
 )
@@ -17,6 +17,7 @@ from shared.weather_features import (
 def _clear_schedule_cache():
     """Reset the module-level schedule cache between tests."""
     import shared.weather_features as wf
+
     wf._schedule_cache = None
     yield
     wf._schedule_cache = None
@@ -25,6 +26,7 @@ def _clear_schedule_cache():
 # ---------------------------------------------------------------------------
 # get_weather_feature_columns
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestGetWeatherFeatureColumns:
@@ -60,6 +62,7 @@ class TestGetWeatherFeatureColumns:
 # ---------------------------------------------------------------------------
 # merge_schedule_features
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestMergeScheduleFeatures:

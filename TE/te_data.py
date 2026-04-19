@@ -11,7 +11,11 @@ def filter_to_te(df: pd.DataFrame) -> pd.DataFrame:
 
 def compute_team_te_totals(full_te_df: pd.DataFrame) -> pd.DataFrame:
     """Compute team-level TE totals for share features."""
-    team_te_totals = full_te_df.groupby(["recent_team", "season", "week"]).agg(
-        team_te_targets=("targets", "sum"),
-    ).reset_index()
+    team_te_totals = (
+        full_te_df.groupby(["recent_team", "season", "week"])
+        .agg(
+            team_te_targets=("targets", "sum"),
+        )
+        .reset_index()
+    )
     return team_te_totals

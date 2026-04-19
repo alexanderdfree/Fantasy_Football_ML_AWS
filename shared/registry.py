@@ -5,9 +5,9 @@ Consumers: app.py (inference), batch/train.py (training), benchmark.py
 
 Everything is lazily imported so loading this module is cheap.
 """
-import importlib
-from functools import lru_cache
 
+import importlib
+from functools import cache
 
 _POSITION_META = {
     "QB": {
@@ -70,7 +70,7 @@ def _meta(pos: str) -> dict:
     return _POSITION_META[pos]
 
 
-@lru_cache(maxsize=None)
+@cache
 def _import_runner_module(pos: str):
     return importlib.import_module(_meta(pos)["runner_module"])
 
@@ -104,18 +104,25 @@ def is_cpu_only(pos: str) -> bool:
 # the position is first requested.
 # ---------------------------------------------------------------------------
 
-@lru_cache(maxsize=None)
+
+@cache
 def get_inference_spec(pos: str) -> dict:
     if pos == "QB":
-        from QB.qb_data import filter_to_qb
-        from QB.qb_targets import compute_qb_targets, compute_qb_adjustment
-        from QB.qb_features import (
-            add_qb_specific_features, get_qb_feature_columns, fill_qb_nans,
-        )
         from QB.qb_config import (
-            QB_TARGETS, QB_SPECIFIC_FEATURES,
-            QB_NN_BACKBONE_LAYERS, QB_NN_HEAD_HIDDEN, QB_NN_DROPOUT,
+            QB_NN_BACKBONE_LAYERS,
+            QB_NN_DROPOUT,
+            QB_NN_HEAD_HIDDEN,
+            QB_SPECIFIC_FEATURES,
+            QB_TARGETS,
         )
+        from QB.qb_data import filter_to_qb
+        from QB.qb_features import (
+            add_qb_specific_features,
+            fill_qb_nans,
+            get_qb_feature_columns,
+        )
+        from QB.qb_targets import compute_qb_adjustment, compute_qb_targets
+
         return {
             "targets": QB_TARGETS,
             "specific_features": QB_SPECIFIC_FEATURES,
@@ -134,16 +141,22 @@ def get_inference_spec(pos: str) -> dict:
             ),
         }
     if pos == "RB":
-        from RB.rb_data import filter_to_rb
-        from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
-        from RB.rb_features import (
-            add_rb_specific_features, get_rb_feature_columns, fill_rb_nans,
-        )
         from RB.rb_config import (
-            RB_TARGETS, RB_SPECIFIC_FEATURES,
-            RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_HEAD_HIDDEN_OVERRIDES,
+            RB_NN_BACKBONE_LAYERS,
             RB_NN_DROPOUT,
+            RB_NN_HEAD_HIDDEN,
+            RB_NN_HEAD_HIDDEN_OVERRIDES,
+            RB_SPECIFIC_FEATURES,
+            RB_TARGETS,
         )
+        from RB.rb_data import filter_to_rb
+        from RB.rb_features import (
+            add_rb_specific_features,
+            fill_rb_nans,
+            get_rb_feature_columns,
+        )
+        from RB.rb_targets import compute_fumble_adjustment, compute_rb_targets
+
         return {
             "targets": RB_TARGETS,
             "specific_features": RB_SPECIFIC_FEATURES,
@@ -163,15 +176,21 @@ def get_inference_spec(pos: str) -> dict:
             ),
         }
     if pos == "WR":
-        from WR.wr_data import filter_to_wr
-        from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
-        from WR.wr_features import (
-            add_wr_specific_features, get_wr_feature_columns, fill_wr_nans,
-        )
         from WR.wr_config import (
-            WR_TARGETS, WR_SPECIFIC_FEATURES,
-            WR_NN_BACKBONE_LAYERS, WR_NN_HEAD_HIDDEN, WR_NN_DROPOUT,
+            WR_NN_BACKBONE_LAYERS,
+            WR_NN_DROPOUT,
+            WR_NN_HEAD_HIDDEN,
+            WR_SPECIFIC_FEATURES,
+            WR_TARGETS,
         )
+        from WR.wr_data import filter_to_wr
+        from WR.wr_features import (
+            add_wr_specific_features,
+            fill_wr_nans,
+            get_wr_feature_columns,
+        )
+        from WR.wr_targets import compute_wr_fumble_adjustment, compute_wr_targets
+
         return {
             "targets": WR_TARGETS,
             "specific_features": WR_SPECIFIC_FEATURES,
@@ -190,16 +209,22 @@ def get_inference_spec(pos: str) -> dict:
             ),
         }
     if pos == "TE":
-        from TE.te_data import filter_to_te
-        from TE.te_targets import compute_te_targets, compute_te_fumble_adjustment
-        from TE.te_features import (
-            add_te_specific_features, get_te_feature_columns, fill_te_nans,
-        )
         from TE.te_config import (
-            TE_TARGETS, TE_SPECIFIC_FEATURES,
-            TE_NN_BACKBONE_LAYERS, TE_NN_HEAD_HIDDEN, TE_NN_HEAD_HIDDEN_OVERRIDES,
+            TE_NN_BACKBONE_LAYERS,
             TE_NN_DROPOUT,
+            TE_NN_HEAD_HIDDEN,
+            TE_NN_HEAD_HIDDEN_OVERRIDES,
+            TE_SPECIFIC_FEATURES,
+            TE_TARGETS,
         )
+        from TE.te_data import filter_to_te
+        from TE.te_features import (
+            add_te_specific_features,
+            fill_te_nans,
+            get_te_feature_columns,
+        )
+        from TE.te_targets import compute_te_fumble_adjustment, compute_te_targets
+
         return {
             "targets": TE_TARGETS,
             "specific_features": TE_SPECIFIC_FEATURES,
@@ -219,15 +244,21 @@ def get_inference_spec(pos: str) -> dict:
             ),
         }
     if pos == "K":
-        from K.k_data import filter_to_k
-        from K.k_targets import compute_k_targets, compute_k_miss_adjustment
-        from K.k_features import (
-            add_k_specific_features, get_k_feature_columns, fill_k_nans,
-        )
         from K.k_config import (
-            K_TARGETS, K_SPECIFIC_FEATURES,
-            K_NN_BACKBONE_LAYERS, K_NN_HEAD_HIDDEN, K_NN_DROPOUT,
+            K_NN_BACKBONE_LAYERS,
+            K_NN_DROPOUT,
+            K_NN_HEAD_HIDDEN,
+            K_SPECIFIC_FEATURES,
+            K_TARGETS,
         )
+        from K.k_data import filter_to_k
+        from K.k_features import (
+            add_k_specific_features,
+            fill_k_nans,
+            get_k_feature_columns,
+        )
+        from K.k_targets import compute_k_miss_adjustment, compute_k_targets
+
         return {
             "targets": K_TARGETS,
             "specific_features": K_SPECIFIC_FEATURES,
@@ -246,16 +277,23 @@ def get_inference_spec(pos: str) -> dict:
             ),
         }
     if pos == "DST":
-        from DST.dst_data import filter_to_dst
-        from DST.dst_targets import compute_dst_targets, compute_dst_adjustment
-        from DST.dst_features import (
-            add_dst_specific_features, get_dst_feature_columns, fill_dst_nans,
-        )
         from DST.dst_config import (
-            DST_TARGETS, DST_SPECIFIC_FEATURES,
-            DST_NN_BACKBONE_LAYERS, DST_NN_HEAD_HIDDEN, DST_NN_HEAD_HIDDEN_OVERRIDES,
-            DST_NN_DROPOUT, DST_NN_NON_NEGATIVE_TARGETS,
+            DST_NN_BACKBONE_LAYERS,
+            DST_NN_DROPOUT,
+            DST_NN_HEAD_HIDDEN,
+            DST_NN_HEAD_HIDDEN_OVERRIDES,
+            DST_NN_NON_NEGATIVE_TARGETS,
+            DST_SPECIFIC_FEATURES,
+            DST_TARGETS,
         )
+        from DST.dst_data import filter_to_dst
+        from DST.dst_features import (
+            add_dst_specific_features,
+            fill_dst_nans,
+            get_dst_feature_columns,
+        )
+        from DST.dst_targets import compute_dst_adjustment, compute_dst_targets
+
         return {
             "targets": DST_TARGETS,
             "specific_features": DST_SPECIFIC_FEATURES,

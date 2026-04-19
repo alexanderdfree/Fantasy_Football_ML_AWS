@@ -2,42 +2,78 @@
 
 import os
 import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from RB.rb_config import (
-    RB_TARGETS, RB_RIDGE_ALPHA_GRIDS, RB_TWO_STAGE_TARGETS,
-    RB_ORDINAL_TARGETS, RB_GATED_ORDINAL_TARGETS, RB_TD_MODEL_TYPE,
-    RB_RIDGE_PCA_COMPONENTS, RB_SPECIFIC_FEATURES,
-    RB_NN_BACKBONE_LAYERS, RB_NN_HEAD_HIDDEN, RB_NN_DROPOUT,
-    RB_NN_LR, RB_NN_WEIGHT_DECAY, RB_NN_EPOCHS, RB_NN_BATCH_SIZE,
-    RB_NN_PATIENCE, RB_NN_HEAD_HIDDEN_OVERRIDES,
-    RB_LOSS_WEIGHTS, RB_LOSS_W_TOTAL, RB_HUBER_DELTAS,
-    RB_SCHEDULER_TYPE, RB_COSINE_T0, RB_COSINE_T_MULT, RB_COSINE_ETA_MIN,
-    RB_TRAIN_ATTENTION_NN, RB_ATTN_D_MODEL, RB_ATTN_N_HEADS,
-    RB_ATTN_MAX_SEQ_LEN, RB_ATTN_HISTORY_STATS,
+    RB_ATTN_BATCH_SIZE,
+    RB_ATTN_D_MODEL,
+    RB_ATTN_DROPOUT,
     RB_ATTN_ENCODER_HIDDEN_DIM,
-    RB_ATTN_PROJECT_KV, RB_ATTN_POSITIONAL_ENCODING,
-    RB_ATTN_GATED_FUSION, RB_ATTN_DROPOUT,
-    RB_ATTN_LR, RB_ATTN_WEIGHT_DECAY, RB_ATTN_BATCH_SIZE, RB_ATTN_PATIENCE,
-    RB_ATTN_GATED_TD, RB_ATTN_TD_GATE_HIDDEN, RB_ATTN_TD_GATE_WEIGHT,
-    RB_TRAIN_LIGHTGBM, RB_LGBM_N_ESTIMATORS, RB_LGBM_LEARNING_RATE,
-    RB_LGBM_NUM_LEAVES, RB_LGBM_MAX_DEPTH, RB_LGBM_SUBSAMPLE,
+    RB_ATTN_GATED_FUSION,
+    RB_ATTN_GATED_TD,
+    RB_ATTN_HISTORY_STATS,
+    RB_ATTN_LR,
+    RB_ATTN_MAX_SEQ_LEN,
+    RB_ATTN_N_HEADS,
+    RB_ATTN_PATIENCE,
+    RB_ATTN_POSITIONAL_ENCODING,
+    RB_ATTN_PROJECT_KV,
+    RB_ATTN_TD_GATE_HIDDEN,
+    RB_ATTN_TD_GATE_WEIGHT,
+    RB_ATTN_WEIGHT_DECAY,
+    RB_COSINE_ETA_MIN,
+    RB_COSINE_T0,
+    RB_COSINE_T_MULT,
+    RB_GATED_ORDINAL_TARGETS,
+    RB_HUBER_DELTAS,
     RB_LGBM_COLSAMPLE_BYTREE,
-    RB_LGBM_REG_LAMBDA, RB_LGBM_REG_ALPHA, RB_LGBM_MIN_CHILD_SAMPLES,
-    RB_LGBM_MIN_SPLIT_GAIN, RB_LGBM_OBJECTIVE,
+    RB_LGBM_LEARNING_RATE,
+    RB_LGBM_MAX_DEPTH,
+    RB_LGBM_MIN_CHILD_SAMPLES,
+    RB_LGBM_MIN_SPLIT_GAIN,
+    RB_LGBM_N_ESTIMATORS,
+    RB_LGBM_NUM_LEAVES,
+    RB_LGBM_OBJECTIVE,
+    RB_LGBM_REG_ALPHA,
+    RB_LGBM_REG_LAMBDA,
+    RB_LGBM_SUBSAMPLE,
+    RB_LOSS_W_TOTAL,
+    RB_LOSS_WEIGHTS,
+    RB_NN_BACKBONE_LAYERS,
+    RB_NN_BATCH_SIZE,
+    RB_NN_DROPOUT,
+    RB_NN_EPOCHS,
+    RB_NN_HEAD_HIDDEN,
+    RB_NN_HEAD_HIDDEN_OVERRIDES,
+    RB_NN_LR,
+    RB_NN_PATIENCE,
+    RB_NN_WEIGHT_DECAY,
+    RB_ORDINAL_TARGETS,
+    RB_RIDGE_ALPHA_GRIDS,
+    RB_RIDGE_PCA_COMPONENTS,
+    RB_SCHEDULER_TYPE,
+    RB_SPECIFIC_FEATURES,
+    RB_TARGETS,
+    RB_TD_MODEL_TYPE,
+    RB_TRAIN_ATTENTION_NN,
+    RB_TRAIN_LIGHTGBM,
+    RB_TWO_STAGE_TARGETS,
 )
 from RB.rb_data import filter_to_rb
-from RB.rb_targets import compute_rb_targets, compute_fumble_adjustment
-from RB.rb_features import add_rb_specific_features, get_rb_feature_columns, fill_rb_nans
-from shared.pipeline import run_pipeline, run_cv_pipeline
+from RB.rb_features import add_rb_specific_features, fill_rb_nans, get_rb_feature_columns
+from RB.rb_targets import compute_fumble_adjustment, compute_rb_targets
+from shared.pipeline import run_cv_pipeline, run_pipeline
 
 RB_CONFIG = {
     "targets": RB_TARGETS,
     "ridge_alpha_grids": RB_RIDGE_ALPHA_GRIDS,
     "two_stage_targets": RB_TWO_STAGE_TARGETS if RB_TD_MODEL_TYPE == "two_stage" else {},
     "classification_targets": (
-        RB_ORDINAL_TARGETS if RB_TD_MODEL_TYPE == "ordinal"
-        else RB_GATED_ORDINAL_TARGETS if RB_TD_MODEL_TYPE == "gated_ordinal"
+        RB_ORDINAL_TARGETS
+        if RB_TD_MODEL_TYPE == "ordinal"
+        else RB_GATED_ORDINAL_TARGETS
+        if RB_TD_MODEL_TYPE == "gated_ordinal"
         else {}
     ),
     "ridge_pca_components": RB_RIDGE_PCA_COMPONENTS,
@@ -106,6 +142,7 @@ def run_rb_cv_pipeline(full_df=None, test_df=None, seed=42):
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--cv", action="store_true", help="Use expanding-window CV")
     args = parser.parse_args()

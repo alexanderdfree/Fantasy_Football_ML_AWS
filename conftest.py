@@ -10,6 +10,7 @@ Responsibilities:
    to ``pyproject.toml`` so ``--strict-markers`` never trips on a fresh
    checkout where ``pyproject.toml`` might be missing.
 """
+
 from __future__ import annotations
 
 import sys

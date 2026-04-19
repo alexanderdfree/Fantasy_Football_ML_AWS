@@ -1,8 +1,8 @@
 """Tests for shared.neural_net.MultiHeadNet (using RB targets)."""
 
 import numpy as np
-import torch
 import pytest
+import torch
 
 from shared.neural_net import MultiHeadNet
 
@@ -14,8 +14,11 @@ class TestMultiHeadNet:
     @pytest.fixture
     def model(self):
         return MultiHeadNet(
-            input_dim=10, target_names=RB_TARGETS,
-            backbone_layers=[32, 16], head_hidden=8, dropout=0.1,
+            input_dim=10,
+            target_names=RB_TARGETS,
+            backbone_layers=[32, 16],
+            head_hidden=8,
+            dropout=0.1,
         )
 
     def test_output_keys(self, model):
@@ -40,7 +43,8 @@ class TestMultiHeadNet:
 
     def test_custom_backbone(self):
         model = MultiHeadNet(
-            input_dim=5, target_names=RB_TARGETS,
+            input_dim=5,
+            target_names=RB_TARGETS,
             backbone_layers=[64, 32, 16],
         )
         x = torch.randn(2, 5)
@@ -50,7 +54,8 @@ class TestMultiHeadNet:
     def test_single_sample_eval_mode(self):
         """Batch norm can fail with batch_size=1 in train mode; eval mode should work."""
         model = MultiHeadNet(
-            input_dim=10, target_names=RB_TARGETS,
+            input_dim=10,
+            target_names=RB_TARGETS,
             backbone_layers=[16, 8],
         )
         model.eval()
@@ -61,7 +66,8 @@ class TestMultiHeadNet:
 
     def test_predict_numpy(self):
         model = MultiHeadNet(
-            input_dim=10, target_names=RB_TARGETS,
+            input_dim=10,
+            target_names=RB_TARGETS,
             backbone_layers=[16, 8],
         )
         X = np.random.randn(5, 10).astype(np.float32)
@@ -75,7 +81,8 @@ class TestMultiHeadNet:
 
     def test_predict_numpy_single_sample(self):
         model = MultiHeadNet(
-            input_dim=5, target_names=RB_TARGETS,
+            input_dim=5,
+            target_names=RB_TARGETS,
             backbone_layers=[8, 4],
         )
         X = np.random.randn(1, 5).astype(np.float32)
@@ -95,8 +102,11 @@ class TestMultiHeadNet:
     def test_gradient_near_zero(self):
         """Verify gradients flow near zero outputs (clamp has zero grad below 0, but inputs near 0 still propagate)."""
         model = MultiHeadNet(
-            input_dim=5, target_names=RB_TARGETS,
-            backbone_layers=[16], head_hidden=4, dropout=0.0,
+            input_dim=5,
+            target_names=RB_TARGETS,
+            backbone_layers=[16],
+            head_hidden=4,
+            dropout=0.0,
         )
         model.train()
         torch.manual_seed(0)
@@ -112,8 +122,11 @@ class TestMultiHeadNet:
     def test_total_equals_sum_train_mode(self):
         """Total = sum of heads should hold in train mode too (clamp applied uniformly)."""
         model = MultiHeadNet(
-            input_dim=10, target_names=RB_TARGETS,
-            backbone_layers=[32, 16], head_hidden=8, dropout=0.0,
+            input_dim=10,
+            target_names=RB_TARGETS,
+            backbone_layers=[32, 16],
+            head_hidden=8,
+            dropout=0.0,
         )
         model.train()
         x = torch.randn(4, 10)
@@ -124,8 +137,11 @@ class TestMultiHeadNet:
     def test_single_backbone_layer(self):
         """Single-layer backbone (current RB config) should work correctly."""
         model = MultiHeadNet(
-            input_dim=10, target_names=RB_TARGETS,
-            backbone_layers=[64], head_hidden=32, dropout=0.3,
+            input_dim=10,
+            target_names=RB_TARGETS,
+            backbone_layers=[64],
+            head_hidden=32,
+            dropout=0.3,
         )
         model.eval()
         x = torch.randn(4, 10)
@@ -138,8 +154,10 @@ class TestMultiHeadNet:
     def test_dropout_effect(self):
         """Train mode (dropout active) vs eval mode should give different outputs."""
         model = MultiHeadNet(
-            input_dim=10, target_names=RB_TARGETS,
-            backbone_layers=[32, 16], dropout=0.5,
+            input_dim=10,
+            target_names=RB_TARGETS,
+            backbone_layers=[32, 16],
+            dropout=0.5,
         )
         x = torch.randn(8, 10)
 
@@ -190,8 +208,10 @@ class TestMultiHeadNet:
     def test_head_hidden_overrides(self):
         """Per-head hidden size overrides should produce different architecture."""
         model = MultiHeadNet(
-            input_dim=10, target_names=RB_TARGETS,
-            backbone_layers=[32, 16], head_hidden=8,
+            input_dim=10,
+            target_names=RB_TARGETS,
+            backbone_layers=[32, 16],
+            head_hidden=8,
             head_hidden_overrides={"td_points": 32},
         )
         x = torch.randn(4, 10)

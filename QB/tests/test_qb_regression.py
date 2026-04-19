@@ -22,9 +22,9 @@ import torch
 from sklearn.preprocessing import StandardScaler
 
 from QB.qb_config import QB_TARGETS
-from shared.models import RidgeMultiTarget, LightGBMMultiTarget
+from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
-from shared.training import MultiTargetLoss, MultiHeadTrainer, make_dataloaders
+from shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
 
 QB_LOSS_WEIGHTS = {t: 1.0 for t in QB_TARGETS}
 
@@ -43,16 +43,23 @@ def synthetic_qb_data():
         X = rng.standard_normal((n, d)).astype(np.float32)
         # Non-trivial signal + noise so models have room to beat baseline
         y_pass = np.clip(
-            4.0 * X[:, 0] + 1.5 * X[:, 1] - 0.8 * X[:, 2] ** 2 + 10.0
-            + rng.standard_normal(n) * 1.5, 0, None,
+            4.0 * X[:, 0]
+            + 1.5 * X[:, 1]
+            - 0.8 * X[:, 2] ** 2
+            + 10.0
+            + rng.standard_normal(n) * 1.5,
+            0,
+            None,
         ).astype(np.float32)
         y_rush = np.clip(
-            1.5 * X[:, 3] + 0.5 * X[:, 4] + 2.0
-            + rng.standard_normal(n) * 0.8, 0, None,
+            1.5 * X[:, 3] + 0.5 * X[:, 4] + 2.0 + rng.standard_normal(n) * 0.8,
+            0,
+            None,
         ).astype(np.float32)
         y_td = np.clip(
-            3.0 * X[:, 5] + 2.0 * X[:, 6] + 4.0
-            + rng.standard_normal(n) * 1.0, 0, None,
+            3.0 * X[:, 5] + 2.0 * X[:, 6] + 4.0 + rng.standard_normal(n) * 1.0,
+            0,
+            None,
         ).astype(np.float32)
         return X, {"passing_floor": y_pass, "rushing_floor": y_rush, "td_points": y_td}
 
@@ -95,8 +102,11 @@ class TestQBRegression:
 
         lgbm = LightGBMMultiTarget(
             target_names=QB_TARGETS,
-            n_estimators=100, learning_rate=0.1, num_leaves=15,
-            min_child_samples=10, seed=42,
+            n_estimators=100,
+            learning_rate=0.1,
+            num_leaves=15,
+            min_child_samples=10,
+            seed=42,
         )
         lgbm.fit(X_train, y_train, X_test, y_test)
         lgbm_mae = _mae(y_test["total"], lgbm.predict(X_test)["total"])
@@ -119,8 +129,11 @@ class TestQBRegression:
         # LightGBM reference
         lgbm = LightGBMMultiTarget(
             target_names=QB_TARGETS,
-            n_estimators=100, learning_rate=0.1, num_leaves=15,
-            min_child_samples=10, seed=42,
+            n_estimators=100,
+            learning_rate=0.1,
+            num_leaves=15,
+            min_child_samples=10,
+            seed=42,
         )
         lgbm.fit(X_train, y_train, X_test, y_test)
         lgbm_mae = _mae(y_test["total"], lgbm.predict(X_test)["total"])
@@ -133,22 +146,37 @@ class TestQBRegression:
         X_test_s = scaler.transform(X_test).astype(np.float32)
 
         train_loader, val_loader = make_dataloaders(
-            X_train_s, y_train, X_test_s, y_test, batch_size=64,
+            X_train_s,
+            y_train,
+            X_test_s,
+            y_test,
+            batch_size=64,
         )
         model = MultiHeadNet(
-            input_dim=X_train_s.shape[1], target_names=QB_TARGETS,
-            backbone_layers=[32, 16], head_hidden=8, dropout=0.1,
+            input_dim=X_train_s.shape[1],
+            target_names=QB_TARGETS,
+            backbone_layers=[32, 16],
+            head_hidden=8,
+            dropout=0.1,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=3e-3)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, patience=5, factor=0.5,
+            optimizer,
+            patience=5,
+            factor=0.5,
         )
         criterion = MultiTargetLoss(
-            target_names=QB_TARGETS, loss_weights=QB_LOSS_WEIGHTS,
+            target_names=QB_TARGETS,
+            loss_weights=QB_LOSS_WEIGHTS,
         )
         trainer = MultiHeadTrainer(
-            model, optimizer, scheduler, criterion,
-            torch.device("cpu"), target_names=QB_TARGETS, patience=10,
+            model,
+            optimizer,
+            scheduler,
+            criterion,
+            torch.device("cpu"),
+            target_names=QB_TARGETS,
+            patience=10,
             log_every=100,
         )
         trainer.train(train_loader, val_loader, n_epochs=60)
@@ -161,8 +189,7 @@ class TestQBRegression:
         # NN MAE ~= baseline which is far outside 25%).
         ratio = nn_mae / lgbm_mae
         assert 0.75 <= ratio <= 1.25, (
-            f"NN MAE {nn_mae:.3f} not within +/-25% of LightGBM {lgbm_mae:.3f} "
-            f"(ratio={ratio:.2f})"
+            f"NN MAE {nn_mae:.3f} not within +/-25% of LightGBM {lgbm_mae:.3f} (ratio={ratio:.2f})"
         )
         # And better than baseline
         baseline_mae = _baseline_mae(y_train["total"], y_test["total"])

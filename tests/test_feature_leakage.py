@@ -8,10 +8,10 @@ import pytest
 
 from src.features.engineer import build_features, fill_nans_safe, get_feature_columns
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_games(
     player_id="P1",
@@ -38,32 +38,34 @@ def _make_games(
     sacks=1,
 ):
     """Create a synthetic multi-week DataFrame for one player."""
-    return pd.DataFrame({
-        "player_id": [player_id] * n_weeks,
-        "season": [season] * n_weeks,
-        "week": list(range(1, n_weeks + 1)),
-        "position": [position] * n_weeks,
-        "recent_team": [recent_team] * n_weeks,
-        "opponent_team": [opponent_team] * n_weeks,
-        "fantasy_points": [fantasy_points] * n_weeks,
-        "fantasy_points_floor": [fantasy_points * 0.8] * n_weeks,
-        "targets": [targets] * n_weeks,
-        "receptions": [receptions] * n_weeks,
-        "carries": [carries] * n_weeks,
-        "rushing_yards": [rushing_yards] * n_weeks,
-        "receiving_yards": [receiving_yards] * n_weeks,
-        "passing_yards": [passing_yards] * n_weeks,
-        "attempts": [attempts] * n_weeks,
-        "snap_pct": [snap_pct] * n_weeks,
-        "rushing_tds": [rushing_tds] * n_weeks,
-        "receiving_tds": [receiving_tds] * n_weeks,
-        "passing_tds": [passing_tds] * n_weeks,
-        "interceptions": [interceptions] * n_weeks,
-        "fumbles_lost": [fumbles_lost] * n_weeks,
-        "receiving_air_yards": [receiving_air_yards] * n_weeks,
-        "sacks": [sacks] * n_weeks,
-        "is_home": [1, 0] * (n_weeks // 2) + [1] * (n_weeks % 2),
-    })
+    return pd.DataFrame(
+        {
+            "player_id": [player_id] * n_weeks,
+            "season": [season] * n_weeks,
+            "week": list(range(1, n_weeks + 1)),
+            "position": [position] * n_weeks,
+            "recent_team": [recent_team] * n_weeks,
+            "opponent_team": [opponent_team] * n_weeks,
+            "fantasy_points": [fantasy_points] * n_weeks,
+            "fantasy_points_floor": [fantasy_points * 0.8] * n_weeks,
+            "targets": [targets] * n_weeks,
+            "receptions": [receptions] * n_weeks,
+            "carries": [carries] * n_weeks,
+            "rushing_yards": [rushing_yards] * n_weeks,
+            "receiving_yards": [receiving_yards] * n_weeks,
+            "passing_yards": [passing_yards] * n_weeks,
+            "attempts": [attempts] * n_weeks,
+            "snap_pct": [snap_pct] * n_weeks,
+            "rushing_tds": [rushing_tds] * n_weeks,
+            "receiving_tds": [receiving_tds] * n_weeks,
+            "passing_tds": [passing_tds] * n_weeks,
+            "interceptions": [interceptions] * n_weeks,
+            "fumbles_lost": [fumbles_lost] * n_weeks,
+            "receiving_air_yards": [receiving_air_yards] * n_weeks,
+            "sacks": [sacks] * n_weeks,
+            "is_home": [1, 0] * (n_weeks // 2) + [1] * (n_weeks % 2),
+        }
+    )
 
 
 def _fake_schedules():
@@ -71,17 +73,19 @@ def _fake_schedules():
     rows = []
     for season in [2022, 2023]:
         for week in range(1, 19):
-            rows.append({
-                "game_type": "REG",
-                "season": season,
-                "week": week,
-                "away_team": "SF",
-                "home_team": "KC",
-                "home_score": 24,
-                "away_score": 17,
-                "spread_line": -3.0,
-                "total_line": 47.0,
-            })
+            rows.append(
+                {
+                    "game_type": "REG",
+                    "season": season,
+                    "week": week,
+                    "away_team": "SF",
+                    "home_team": "KC",
+                    "home_score": 24,
+                    "away_score": 17,
+                    "spread_line": -3.0,
+                    "total_line": 47.0,
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -95,18 +99,39 @@ def _mock_schedule_parquet():
 
 def _two_player_df(n_weeks=8):
     """Two RBs on opposing teams so matchup features populate."""
-    p1 = _make_games("P1", season=2023, n_weeks=n_weeks, position="RB",
-                     recent_team="KC", opponent_team="SF", fantasy_points=15.0,
-                     targets=6, carries=14, rushing_yards=70, receiving_yards=40)
-    p2 = _make_games("P2", season=2023, n_weeks=n_weeks, position="RB",
-                     recent_team="SF", opponent_team="KC", fantasy_points=10.0,
-                     targets=4, carries=10, rushing_yards=50, receiving_yards=30)
+    p1 = _make_games(
+        "P1",
+        season=2023,
+        n_weeks=n_weeks,
+        position="RB",
+        recent_team="KC",
+        opponent_team="SF",
+        fantasy_points=15.0,
+        targets=6,
+        carries=14,
+        rushing_yards=70,
+        receiving_yards=40,
+    )
+    p2 = _make_games(
+        "P2",
+        season=2023,
+        n_weeks=n_weeks,
+        position="RB",
+        recent_team="SF",
+        opponent_team="KC",
+        fantasy_points=10.0,
+        targets=4,
+        carries=10,
+        rushing_yards=50,
+        receiving_yards=30,
+    )
     return pd.concat([p1, p2], ignore_index=True)
 
 
 # ---------------------------------------------------------------------------
 # Rolling features
 # ---------------------------------------------------------------------------
+
 
 class TestRollingLeakage:
     def test_week1_rolling_features_are_nan_or_zero(self):
@@ -133,13 +158,15 @@ class TestRollingLeakage:
         for week in range(1, 6):
             orig_row = df_original[df_original["week"] == week][rolling_cols].iloc[0]
             mut_row = df_mutated[df_mutated["week"] == week][rolling_cols].iloc[0]
-            pd.testing.assert_series_equal(orig_row, mut_row, check_names=False,
-                                           obj=f"week {week} rolling features")
+            pd.testing.assert_series_equal(
+                orig_row, mut_row, check_names=False, obj=f"week {week} rolling features"
+            )
 
 
 # ---------------------------------------------------------------------------
 # EWMA features
 # ---------------------------------------------------------------------------
+
 
 class TestEWMALeakage:
     def test_ewma_features_dont_see_future(self):
@@ -155,13 +182,15 @@ class TestEWMALeakage:
         for week in range(1, 6):
             orig_row = df_original[df_original["week"] == week][ewma_cols].iloc[0]
             mut_row = df_mutated[df_mutated["week"] == week][ewma_cols].iloc[0]
-            pd.testing.assert_series_equal(orig_row, mut_row, check_names=False,
-                                           obj=f"week {week} EWMA features")
+            pd.testing.assert_series_equal(
+                orig_row, mut_row, check_names=False, obj=f"week {week} EWMA features"
+            )
 
 
 # ---------------------------------------------------------------------------
 # Trend / momentum features
 # ---------------------------------------------------------------------------
+
 
 class TestTrendLeakage:
     def test_trend_features_dont_see_future(self):
@@ -177,13 +206,15 @@ class TestTrendLeakage:
         for week in range(1, 8):
             orig_row = df_original[df_original["week"] == week][trend_cols].iloc[0]
             mut_row = df_mutated[df_mutated["week"] == week][trend_cols].iloc[0]
-            pd.testing.assert_series_equal(orig_row, mut_row, check_names=False,
-                                           obj=f"week {week} trend features")
+            pd.testing.assert_series_equal(
+                orig_row, mut_row, check_names=False, obj=f"week {week} trend features"
+            )
 
 
 # ---------------------------------------------------------------------------
 # Share / usage features
 # ---------------------------------------------------------------------------
+
 
 class TestShareLeakage:
     def test_share_features_use_shift(self):
@@ -192,10 +223,24 @@ class TestShareLeakage:
         Two players on the SAME team: a spike in P1's week-5 targets should
         not affect P1's week-5 target share (only prior weeks feed the share).
         """
-        p1 = _make_games("P1", season=2023, n_weeks=6, position="RB",
-                         recent_team="KC", opponent_team="SF", targets=6)
-        p2 = _make_games("P2", season=2023, n_weeks=6, position="RB",
-                         recent_team="KC", opponent_team="SF", targets=4)
+        p1 = _make_games(
+            "P1",
+            season=2023,
+            n_weeks=6,
+            position="RB",
+            recent_team="KC",
+            opponent_team="SF",
+            targets=6,
+        )
+        p2 = _make_games(
+            "P2",
+            season=2023,
+            n_weeks=6,
+            position="RB",
+            recent_team="KC",
+            opponent_team="SF",
+            targets=4,
+        )
         df = pd.concat([p1, p2], ignore_index=True)
         # Spike P1 targets in week 5
         df.loc[(df["player_id"] == "P1") & (df["week"] == 5), "targets"] = 100
@@ -208,13 +253,15 @@ class TestShareLeakage:
         for col in share_cols:
             w5_val = p1_w5[col].iloc[0]
             w4_val = p1_w4[col].iloc[0]
-            assert w5_val == pytest.approx(w4_val, abs=0.01), \
+            assert w5_val == pytest.approx(w4_val, abs=0.01), (
                 f"{col}: week 5 = {w5_val}, week 4 = {w4_val} — spike leaked into current week"
+            )
 
 
 # ---------------------------------------------------------------------------
 # snap_pct lag
 # ---------------------------------------------------------------------------
+
 
 class TestSnapPctLeakage:
     def test_snap_pct_is_lagged(self):
@@ -226,18 +273,21 @@ class TestSnapPctLeakage:
 
         # Week 3 should still show ~0.5 (prior week's snap_pct), not 0.99
         w3_snap = result[result["week"] == 3]["snap_pct"].iloc[0]
-        assert w3_snap != pytest.approx(0.99, abs=0.01), \
+        assert w3_snap != pytest.approx(0.99, abs=0.01), (
             f"snap_pct at week 3 = {w3_snap}, current week value leaked"
+        )
 
         # Week 4 should reflect the 0.99 from week 3
         w4_snap = result[result["week"] == 4]["snap_pct"].iloc[0]
-        assert w4_snap == pytest.approx(0.99, abs=0.01), \
+        assert w4_snap == pytest.approx(0.99, abs=0.01), (
             f"snap_pct at week 4 = {w4_snap}, expected 0.99 (lagged from week 3)"
+        )
 
 
 # ---------------------------------------------------------------------------
 # Opponent / matchup features
 # ---------------------------------------------------------------------------
+
 
 class TestOpponentLeakage:
     def test_opponent_features_lagged(self):
@@ -260,13 +310,15 @@ class TestOpponentLeakage:
             if np.isnan(w6_val) and np.isnan(w7_val):
                 continue
             # The week-7 spike should not appear until week 8
-            assert abs(w7_val - w6_val) < 50, \
+            assert abs(w7_val - w6_val) < 50, (
                 f"{col}: week 7 = {w7_val}, week 6 = {w6_val} — possible current-week leakage"
+            )
 
 
 # ---------------------------------------------------------------------------
 # Cross-season isolation
 # ---------------------------------------------------------------------------
+
 
 class TestCrossSeasonLeakage:
     def test_seasons_dont_leak_across(self):
@@ -279,8 +331,9 @@ class TestCrossSeasonLeakage:
         rolling_cols = [c for c in df.columns if c.startswith("rolling_")]
         for col in rolling_cols:
             val = w1_s2[col].iloc[0]
-            assert val == 0.0 or np.isnan(val), \
+            assert val == 0.0 or np.isnan(val), (
                 f"{col} = {val} for season 2023 week 1 (season 2022 data leaked)"
+            )
 
     def test_prior_season_features_alignment(self):
         """prior_season_* features for season S should come from season S-1."""
@@ -310,28 +363,35 @@ class TestCrossSeasonLeakage:
 # NaN imputation leakage
 # ---------------------------------------------------------------------------
 
+
 class TestFillNansSafe:
     def test_uses_only_train_stats(self):
         """fill_nans_safe must impute using training set means, not val/test."""
         feature_cols = ["feat_a", "feat_b"]
-        train = pd.DataFrame({
-            "player_id": ["P1", "P1", "P2"],
-            "position": ["RB", "RB", "RB"],
-            "feat_a": [10.0, 20.0, 30.0],  # mean = 20.0
-            "feat_b": [2.0, 4.0, 6.0],     # mean = 4.0
-        })
-        val = pd.DataFrame({
-            "player_id": ["P3"],
-            "position": ["RB"],
-            "feat_a": [np.nan],
-            "feat_b": [np.nan],
-        })
-        test = pd.DataFrame({
-            "player_id": ["P4"],
-            "position": ["RB"],
-            "feat_a": [np.nan],
-            "feat_b": [np.nan],
-        })
+        train = pd.DataFrame(
+            {
+                "player_id": ["P1", "P1", "P2"],
+                "position": ["RB", "RB", "RB"],
+                "feat_a": [10.0, 20.0, 30.0],  # mean = 20.0
+                "feat_b": [2.0, 4.0, 6.0],  # mean = 4.0
+            }
+        )
+        val = pd.DataFrame(
+            {
+                "player_id": ["P3"],
+                "position": ["RB"],
+                "feat_a": [np.nan],
+                "feat_b": [np.nan],
+            }
+        )
+        test = pd.DataFrame(
+            {
+                "player_id": ["P4"],
+                "position": ["RB"],
+                "feat_a": [np.nan],
+                "feat_b": [np.nan],
+            }
+        )
         train_out, val_out, test_out = fill_nans_safe(train, val, test, feature_cols)
 
         # Val/test NaNs should be filled with position-level training means
@@ -343,21 +403,27 @@ class TestFillNansSafe:
     def test_val_test_stats_dont_influence_imputation(self):
         """Even if val/test have extreme values, imputation must come from train only."""
         feature_cols = ["feat"]
-        train = pd.DataFrame({
-            "player_id": ["P1", "P2"],
-            "position": ["RB", "RB"],
-            "feat": [10.0, 20.0],  # mean = 15.0
-        })
-        val = pd.DataFrame({
-            "player_id": ["P3"],
-            "position": ["RB"],
-            "feat": [np.nan],
-        })
-        test = pd.DataFrame({
-            "player_id": ["P4"],
-            "position": ["RB"],
-            "feat": [np.nan],
-        })
+        train = pd.DataFrame(
+            {
+                "player_id": ["P1", "P2"],
+                "position": ["RB", "RB"],
+                "feat": [10.0, 20.0],  # mean = 15.0
+            }
+        )
+        val = pd.DataFrame(
+            {
+                "player_id": ["P3"],
+                "position": ["RB"],
+                "feat": [np.nan],
+            }
+        )
+        test = pd.DataFrame(
+            {
+                "player_id": ["P4"],
+                "position": ["RB"],
+                "feat": [np.nan],
+            }
+        )
         _, val_out, test_out = fill_nans_safe(train, val, test, feature_cols)
 
         # Should be 15.0 (train mean), not influenced by val/test
@@ -377,12 +443,20 @@ class TestFillNansSafe:
 
 # Weather/Vegas columns are added by shared.weather_features.merge_schedule_features,
 # not by build_features. Excluded from build_features()-only assertions.
-_WEATHER_VEGAS_FEATURES = frozenset({
-    "implied_opp_total", "total_line",
-    "is_dome", "is_grass", "temp_adjusted", "wind_adjusted",
-    "is_divisional", "days_rest_improved", "rest_advantage",
-    "implied_total_x_wind",
-})
+_WEATHER_VEGAS_FEATURES = frozenset(
+    {
+        "implied_opp_total",
+        "total_line",
+        "is_dome",
+        "is_grass",
+        "temp_adjusted",
+        "wind_adjusted",
+        "is_divisional",
+        "days_rest_improved",
+        "rest_advantage",
+        "implied_total_x_wind",
+    }
+)
 
 
 def _build_features_owned_cols() -> list[str]:
@@ -398,24 +472,48 @@ def contract_features_df():
     are required so prior_season_* features have real values; two players
     on opposing teams ensure matchup features populate.
     """
-    def _two_seasons(player_id, team, opponent, pts, targets, carries, ry, recy):
-        return pd.concat([
-            _make_games(player_id, season=2022, n_weeks=8, position="RB",
-                        recent_team=team, opponent_team=opponent,
-                        fantasy_points=pts, targets=targets, carries=carries,
-                        rushing_yards=ry, receiving_yards=recy),
-            _make_games(player_id, season=2023, n_weeks=8, position="RB",
-                        recent_team=team, opponent_team=opponent,
-                        fantasy_points=pts, targets=targets, carries=carries,
-                        rushing_yards=ry, receiving_yards=recy),
-        ], ignore_index=True)
 
-    df = pd.concat([
-        _two_seasons("P1", "KC", "SF", 15.0, 6, 14, 70, 40),
-        _two_seasons("P2", "SF", "KC", 10.0, 4, 10, 50, 30),
-    ], ignore_index=True)
-    with patch("src.features.engineer.pd.read_parquet",
-               return_value=_fake_schedules()):
+    def _two_seasons(player_id, team, opponent, pts, targets, carries, ry, recy):
+        return pd.concat(
+            [
+                _make_games(
+                    player_id,
+                    season=2022,
+                    n_weeks=8,
+                    position="RB",
+                    recent_team=team,
+                    opponent_team=opponent,
+                    fantasy_points=pts,
+                    targets=targets,
+                    carries=carries,
+                    rushing_yards=ry,
+                    receiving_yards=recy,
+                ),
+                _make_games(
+                    player_id,
+                    season=2023,
+                    n_weeks=8,
+                    position="RB",
+                    recent_team=team,
+                    opponent_team=opponent,
+                    fantasy_points=pts,
+                    targets=targets,
+                    carries=carries,
+                    rushing_yards=ry,
+                    receiving_yards=recy,
+                ),
+            ],
+            ignore_index=True,
+        )
+
+    df = pd.concat(
+        [
+            _two_seasons("P1", "KC", "SF", 15.0, 6, 14, 70, 40),
+            _two_seasons("P2", "SF", "KC", 10.0, 4, 10, 50, 30),
+        ],
+        ignore_index=True,
+    )
+    with patch("src.features.engineer.pd.read_parquet", return_value=_fake_schedules()):
         return build_features(df)
 
 
@@ -447,20 +545,16 @@ class TestFeatureColumnContract:
         (shared.weather_features.merge_schedule_features) and are not part of
         the build_features contract.
         """
-        missing = [c for c in _build_features_owned_cols()
-                   if c not in contract_features_df.columns]
+        missing = [c for c in _build_features_owned_cols() if c not in contract_features_df.columns]
         assert not missing, (
-            f"build_features() dropped {len(missing)} documented columns: "
-            f"{missing[:10]}"
+            f"build_features() dropped {len(missing)} documented columns: {missing[:10]}"
         )
 
     def test_engineered_features_are_numeric(self, contract_features_df):
         """All build_features outputs must be numeric (float/int), not object."""
-        present = [c for c in _build_features_owned_cols()
-                   if c in contract_features_df.columns]
+        present = [c for c in _build_features_owned_cols() if c in contract_features_df.columns]
         non_numeric = [
-            c for c in present
-            if not pd.api.types.is_numeric_dtype(contract_features_df[c])
+            c for c in present if not pd.api.types.is_numeric_dtype(contract_features_df[c])
         ]
         assert not non_numeric, (
             f"Non-numeric feature columns (will break NN/Ridge training): "
@@ -479,13 +573,11 @@ class TestFeatureColumnContract:
         feature column (a whole-population dropout the NN can't recover from).
         """
         steady = contract_features_df[
-            (contract_features_df["season"] == 2023)
-            & (contract_features_df["week"] >= 5)
+            (contract_features_df["season"] == 2023) & (contract_features_df["week"] >= 5)
         ]
         assert len(steady) > 0, "Fixture change broke the steady-state sample"
 
-        present = [c for c in _build_features_owned_cols()
-                   if c in contract_features_df.columns]
+        present = [c for c in _build_features_owned_cols() if c in contract_features_df.columns]
         nan_rates = steady[present].isna().mean()
         # 15% ceiling per-feature is generous enough for sparse features
         # (e.g. QB receiving stats) but tight enough to catch columns that
@@ -500,13 +592,10 @@ class TestFeatureColumnContract:
     def test_no_inf_values_in_engineered_features(self, contract_features_df):
         """Inf/-Inf would silently poison the StandardScaler. Division-by-zero
         guards in build_features must catch every case — this pins that."""
-        present = [c for c in _build_features_owned_cols()
-                   if c in contract_features_df.columns]
+        present = [c for c in _build_features_owned_cols() if c in contract_features_df.columns]
         inf_cols = [
-            c for c in present
-            if np.isinf(contract_features_df[c].to_numpy(
-                dtype=float, na_value=0.0)).any()
+            c
+            for c in present
+            if np.isinf(contract_features_df[c].to_numpy(dtype=float, na_value=0.0)).any()
         ]
-        assert not inf_cols, (
-            f"Features contain +/-Inf (will break StandardScaler): {inf_cols}"
-        )
+        assert not inf_cols, f"Features contain +/-Inf (will break StandardScaler): {inf_cols}"

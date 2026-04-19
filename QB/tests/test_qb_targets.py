@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from QB.qb_targets import compute_qb_targets, compute_qb_adjustment
+from QB.qb_targets import compute_qb_adjustment, compute_qb_targets
 
 
 def _make_qb_row(**overrides):
@@ -33,8 +33,12 @@ def _make_qb_row(**overrides):
             + defaults["passing_tds"] * 4
             + (defaults["rushing_tds"] + defaults["receiving_tds"]) * 6
             + defaults["interceptions"] * -2
-            + (defaults["sack_fumbles_lost"] + defaults["rushing_fumbles_lost"]
-               + defaults["receiving_fumbles_lost"]) * -2
+            + (
+                defaults["sack_fumbles_lost"]
+                + defaults["rushing_fumbles_lost"]
+                + defaults["receiving_fumbles_lost"]
+            )
+            * -2
         )
         defaults["fantasy_points"] = fp
     return pd.DataFrame([defaults])
@@ -43,6 +47,7 @@ def _make_qb_row(**overrides):
 # ---------------------------------------------------------------------------
 # compute_qb_targets
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestComputeQBTargets:
@@ -92,8 +97,9 @@ class TestComputeQBTargets:
         assert pytest.approx(result["receiving_component"].iloc[0]) == 3.0
 
     def test_fantasy_points_decomposition_matches(self):
-        df = _make_qb_row(passing_yards=275, passing_tds=2, rushing_yards=30,
-                          rushing_tds=1, interceptions=1)
+        df = _make_qb_row(
+            passing_yards=275, passing_tds=2, rushing_yards=30, rushing_tds=1, interceptions=1
+        )
         result = compute_qb_targets(df)
         expected = (
             result["passing_floor"].iloc[0]
@@ -107,20 +113,24 @@ class TestComputeQBTargets:
 
     def test_all_nan_stats_treated_as_zero(self):
         """Player with all NaN stats should produce zero targets."""
-        df = pd.DataFrame([{
-            "passing_yards": np.nan,
-            "rushing_yards": np.nan,
-            "receiving_yards": np.nan,
-            "receptions": np.nan,
-            "passing_tds": np.nan,
-            "rushing_tds": np.nan,
-            "receiving_tds": np.nan,
-            "interceptions": np.nan,
-            "sack_fumbles_lost": np.nan,
-            "rushing_fumbles_lost": np.nan,
-            "receiving_fumbles_lost": np.nan,
-            "fantasy_points": 0.0,
-        }])
+        df = pd.DataFrame(
+            [
+                {
+                    "passing_yards": np.nan,
+                    "rushing_yards": np.nan,
+                    "receiving_yards": np.nan,
+                    "receptions": np.nan,
+                    "passing_tds": np.nan,
+                    "rushing_tds": np.nan,
+                    "receiving_tds": np.nan,
+                    "interceptions": np.nan,
+                    "sack_fumbles_lost": np.nan,
+                    "rushing_fumbles_lost": np.nan,
+                    "receiving_fumbles_lost": np.nan,
+                    "fantasy_points": 0.0,
+                }
+            ]
+        )
         result = compute_qb_targets(df)
         assert result["passing_floor"].iloc[0] == 0.0
         assert result["rushing_floor"].iloc[0] == 0.0
@@ -137,8 +147,11 @@ class TestComputeQBTargets:
     def test_zero_stat_game(self):
         """QB that didn't play (all zeros) should have zero targets."""
         df = _make_qb_row(
-            passing_yards=0, rushing_yards=0, passing_tds=0,
-            rushing_tds=0, interceptions=0,
+            passing_yards=0,
+            rushing_yards=0,
+            passing_tds=0,
+            rushing_tds=0,
+            interceptions=0,
         )
         result = compute_qb_targets(df)
         assert result["passing_floor"].iloc[0] == 0.0
@@ -147,8 +160,9 @@ class TestComputeQBTargets:
 
     def test_big_passing_game(self):
         """Huge passing game should decompose correctly."""
-        df = _make_qb_row(passing_yards=500, passing_tds=5, rushing_yards=10,
-                          rushing_tds=0, interceptions=0)
+        df = _make_qb_row(
+            passing_yards=500, passing_tds=5, rushing_yards=10, rushing_tds=0, interceptions=0
+        )
         result = compute_qb_targets(df)
         assert result["passing_floor"].iloc[0] == 20.0  # 500 * 0.04
         assert result["rushing_floor"].iloc[0] == 1.0
@@ -158,6 +172,7 @@ class TestComputeQBTargets:
 # ---------------------------------------------------------------------------
 # compute_qb_adjustment
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestComputeQBAdjustment:
@@ -169,17 +184,19 @@ class TestComputeQBAdjustment:
             receptions = [0] * n
         if recv_yds is None:
             recv_yds = [0] * n
-        return pd.DataFrame({
-            "player_id": ["QB1"] * n,
-            "season": [season] * n,
-            "week": list(range(1, n + 1)),
-            "interceptions": ints,
-            "sack_fumbles_lost": fumbles,
-            "rushing_fumbles_lost": [0] * n,
-            "receiving_fumbles_lost": [0] * n,
-            "receptions": receptions,
-            "receiving_yards": recv_yds,
-        })
+        return pd.DataFrame(
+            {
+                "player_id": ["QB1"] * n,
+                "season": [season] * n,
+                "week": list(range(1, n + 1)),
+                "interceptions": ints,
+                "sack_fumbles_lost": fumbles,
+                "rushing_fumbles_lost": [0] * n,
+                "receiving_fumbles_lost": [0] * n,
+                "receptions": receptions,
+                "receiving_yards": recv_yds,
+            }
+        )
 
     def test_first_game_is_zero(self):
         """First game has no prior history — shift produces NaN, filled to 0."""
@@ -223,17 +240,19 @@ class TestComputeQBAdjustment:
 
     def test_multiple_players_independent(self):
         """Each player's history is independent."""
-        df = pd.DataFrame({
-            "player_id": ["QB1", "QB1", "QB2", "QB2"],
-            "season": [2023, 2023, 2023, 2023],
-            "week": [1, 2, 1, 2],
-            "interceptions": [2, 0, 0, 0],
-            "sack_fumbles_lost": [0, 0, 0, 0],
-            "rushing_fumbles_lost": [0, 0, 0, 0],
-            "receiving_fumbles_lost": [0, 0, 0, 0],
-            "receptions": [0, 0, 0, 0],
-            "receiving_yards": [0, 0, 0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "player_id": ["QB1", "QB1", "QB2", "QB2"],
+                "season": [2023, 2023, 2023, 2023],
+                "week": [1, 2, 1, 2],
+                "interceptions": [2, 0, 0, 0],
+                "sack_fumbles_lost": [0, 0, 0, 0],
+                "rushing_fumbles_lost": [0, 0, 0, 0],
+                "receiving_fumbles_lost": [0, 0, 0, 0],
+                "receptions": [0, 0, 0, 0],
+                "receiving_yards": [0, 0, 0, 0],
+            }
+        )
         result = compute_qb_adjustment(df)
         # QB1 game 2: prior int=2 → -4 pts
         assert pytest.approx(result.iloc[1]) == -4.0
@@ -242,17 +261,19 @@ class TestComputeQBAdjustment:
 
     def test_multiple_seasons_reset(self):
         """History should reset across seasons (grouped by season)."""
-        df = pd.DataFrame({
-            "player_id": ["QB1", "QB1", "QB1", "QB1"],
-            "season": [2022, 2022, 2023, 2023],
-            "week": [1, 2, 1, 2],
-            "interceptions": [2, 2, 0, 0],
-            "sack_fumbles_lost": [0, 0, 0, 0],
-            "rushing_fumbles_lost": [0, 0, 0, 0],
-            "receiving_fumbles_lost": [0, 0, 0, 0],
-            "receptions": [0, 0, 0, 0],
-            "receiving_yards": [0, 0, 0, 0],
-        })
+        df = pd.DataFrame(
+            {
+                "player_id": ["QB1", "QB1", "QB1", "QB1"],
+                "season": [2022, 2022, 2023, 2023],
+                "week": [1, 2, 1, 2],
+                "interceptions": [2, 2, 0, 0],
+                "sack_fumbles_lost": [0, 0, 0, 0],
+                "rushing_fumbles_lost": [0, 0, 0, 0],
+                "receiving_fumbles_lost": [0, 0, 0, 0],
+                "receptions": [0, 0, 0, 0],
+                "receiving_yards": [0, 0, 0, 0],
+            }
+        )
         result = compute_qb_adjustment(df)
         # 2023 game 1: first game of new season → 0
         assert result.iloc[2] == 0.0

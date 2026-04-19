@@ -26,18 +26,17 @@ import pandas as pd
 import pytest
 
 from DST.dst_config import (
-    DST_SPECIFIC_FEATURES,
-    DST_CONTEXTUAL_FEATURES,
     DST_ALL_FEATURES,
+    DST_CONTEXTUAL_FEATURES,
+    DST_SPECIFIC_FEATURES,
 )
 from DST.dst_features import (
-    compute_dst_features,
     add_dst_specific_features,
-    get_dst_feature_columns,
+    compute_dst_features,
     fill_dst_nans,
+    get_dst_feature_columns,
 )
 from DST.dst_targets import compute_dst_targets
-
 
 # Prior-season features are NaN for the earliest season (no prior history).
 # The NaN-ceiling test raises the threshold for these columns to account
@@ -130,8 +129,7 @@ class TestDSTFeatureContract:
         for col in _PRIOR_SEASON_COLS:
             missing_frac = second_plus[col].isna().mean()
             assert missing_frac < 0.1, (
-                f"'{col}' NaN fraction {missing_frac:.3f} in seasons>=2 "
-                "— merge likely broken"
+                f"'{col}' NaN fraction {missing_frac:.3f} in seasons>=2 — merge likely broken"
             )
 
     def test_compute_drops_temp_columns(self, tiny_dst_dataset):

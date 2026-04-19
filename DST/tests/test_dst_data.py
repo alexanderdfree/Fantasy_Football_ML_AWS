@@ -15,21 +15,25 @@ class TestFilterToDST:
     """D/ST data is team-level and pre-built; filter_to_dst is identity (copy)."""
 
     def test_returns_copy_of_input(self):
-        df = pd.DataFrame({
-            "team": ["KC", "SF"],
-            "season": [2023, 2023],
-            "week": [1, 1],
-            "def_sacks": [3, 4],
-            "def_ints": [1, 2],
-        })
+        df = pd.DataFrame(
+            {
+                "team": ["KC", "SF"],
+                "season": [2023, 2023],
+                "week": [1, 1],
+                "def_sacks": [3, 4],
+                "def_ints": [1, 2],
+            }
+        )
         result = filter_to_dst(df)
         pd.testing.assert_frame_equal(result, df)
 
     def test_does_not_mutate_original(self):
-        df = pd.DataFrame({
-            "team": ["KC"],
-            "def_sacks": [3],
-        })
+        df = pd.DataFrame(
+            {
+                "team": ["KC"],
+                "def_sacks": [3],
+            }
+        )
         original_cols = list(df.columns)
         original_len = len(df)
         _ = filter_to_dst(df)
@@ -51,9 +55,15 @@ class TestFilterToDST:
     def test_preserves_all_columns(self, make_df):
         """Identity filter must not drop columns — DST has many team-level fields."""
         df = make_df(
-            season=2023, week=1, opponent_team="LV",
-            is_home=1, is_dome=0, div_game=1, rest_days=7,
-            opp_qb_epa_L5=0.1, team="KC",
+            season=2023,
+            week=1,
+            opponent_team="LV",
+            is_home=1,
+            is_dome=0,
+            div_game=1,
+            rest_days=7,
+            opp_qb_epa_L5=0.1,
+            team="KC",
         )
         result = filter_to_dst(df)
         assert set(result.columns) == set(df.columns)
@@ -61,10 +71,12 @@ class TestFilterToDST:
     def test_multiple_teams_preserved(self):
         """Should preserve all 32 teams without filtering."""
         teams = ["KC", "SF", "BUF", "DAL", "PHI", "BAL", "MIA", "CIN"]
-        df = pd.DataFrame({
-            "team": teams,
-            "def_sacks": range(len(teams)),
-        })
+        df = pd.DataFrame(
+            {
+                "team": teams,
+                "def_sacks": range(len(teams)),
+            }
+        )
         result = filter_to_dst(df)
         assert len(result) == len(teams)
         assert set(result["team"]) == set(teams)

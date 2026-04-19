@@ -2,29 +2,56 @@
 
 import os
 import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from shared.pipeline import run_cv_pipeline, run_pipeline
 from WR.wr_config import (
-    WR_TARGETS, WR_RIDGE_ALPHA_GRIDS, WR_RIDGE_PCA_COMPONENTS, WR_SPECIFIC_FEATURES,
-    WR_NN_BACKBONE_LAYERS, WR_NN_HEAD_HIDDEN, WR_NN_DROPOUT,
-    WR_NN_LR, WR_NN_WEIGHT_DECAY, WR_NN_EPOCHS, WR_NN_BATCH_SIZE,
-    WR_NN_PATIENCE,
-    WR_LOSS_WEIGHTS, WR_LOSS_W_TOTAL, WR_HUBER_DELTAS,
-    WR_SCHEDULER_TYPE, WR_COSINE_T0, WR_COSINE_T_MULT, WR_COSINE_ETA_MIN,
-    WR_TRAIN_ATTENTION_NN, WR_ATTN_D_MODEL, WR_ATTN_N_HEADS,
-    WR_ATTN_ENCODER_HIDDEN_DIM, WR_ATTN_MAX_SEQ_LEN,
-    WR_ATTN_POSITIONAL_ENCODING, WR_ATTN_DROPOUT,
+    WR_ATTN_D_MODEL,
+    WR_ATTN_DROPOUT,
+    WR_ATTN_ENCODER_HIDDEN_DIM,
+    WR_ATTN_GATED_TD,
     WR_ATTN_HISTORY_STATS,
-    WR_ATTN_GATED_TD, WR_ATTN_TD_GATE_HIDDEN, WR_ATTN_TD_GATE_WEIGHT,
-    WR_TRAIN_LIGHTGBM, WR_LGBM_N_ESTIMATORS, WR_LGBM_LEARNING_RATE,
-    WR_LGBM_NUM_LEAVES, WR_LGBM_SUBSAMPLE, WR_LGBM_COLSAMPLE_BYTREE,
-    WR_LGBM_REG_LAMBDA, WR_LGBM_REG_ALPHA, WR_LGBM_MIN_CHILD_SAMPLES,
-    WR_LGBM_MIN_SPLIT_GAIN, WR_LGBM_OBJECTIVE,
+    WR_ATTN_MAX_SEQ_LEN,
+    WR_ATTN_N_HEADS,
+    WR_ATTN_POSITIONAL_ENCODING,
+    WR_ATTN_TD_GATE_HIDDEN,
+    WR_ATTN_TD_GATE_WEIGHT,
+    WR_COSINE_ETA_MIN,
+    WR_COSINE_T0,
+    WR_COSINE_T_MULT,
+    WR_HUBER_DELTAS,
+    WR_LGBM_COLSAMPLE_BYTREE,
+    WR_LGBM_LEARNING_RATE,
+    WR_LGBM_MIN_CHILD_SAMPLES,
+    WR_LGBM_MIN_SPLIT_GAIN,
+    WR_LGBM_N_ESTIMATORS,
+    WR_LGBM_NUM_LEAVES,
+    WR_LGBM_OBJECTIVE,
+    WR_LGBM_REG_ALPHA,
+    WR_LGBM_REG_LAMBDA,
+    WR_LGBM_SUBSAMPLE,
+    WR_LOSS_W_TOTAL,
+    WR_LOSS_WEIGHTS,
+    WR_NN_BACKBONE_LAYERS,
+    WR_NN_BATCH_SIZE,
+    WR_NN_DROPOUT,
+    WR_NN_EPOCHS,
+    WR_NN_HEAD_HIDDEN,
+    WR_NN_LR,
+    WR_NN_PATIENCE,
+    WR_NN_WEIGHT_DECAY,
+    WR_RIDGE_ALPHA_GRIDS,
+    WR_RIDGE_PCA_COMPONENTS,
+    WR_SCHEDULER_TYPE,
+    WR_SPECIFIC_FEATURES,
+    WR_TARGETS,
+    WR_TRAIN_ATTENTION_NN,
+    WR_TRAIN_LIGHTGBM,
 )
 from WR.wr_data import filter_to_wr
-from WR.wr_targets import compute_wr_targets, compute_wr_fumble_adjustment
-from WR.wr_features import add_wr_specific_features, get_wr_feature_columns, fill_wr_nans
-from shared.pipeline import run_pipeline, run_cv_pipeline
+from WR.wr_features import add_wr_specific_features, fill_wr_nans, get_wr_feature_columns
+from WR.wr_targets import compute_wr_fumble_adjustment, compute_wr_targets
 
 WR_CONFIG = {
     "targets": WR_TARGETS,
@@ -88,6 +115,7 @@ def run_wr_cv_pipeline(full_df=None, test_df=None, seed=42):
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--cv", action="store_true", help="Use expanding-window CV")
     args = parser.parse_args()

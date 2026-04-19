@@ -3,19 +3,19 @@ dataloaders, trainer), plus loss-function and non-history dataloader coverage.
 """
 
 import numpy as np
-import torch
 import pytest
+import torch
 
-from shared.training import (
-    MultiTargetHistoryDataset,
-    MultiTargetDataset,
-    collate_with_history,
-    make_history_dataloaders,
-    make_dataloaders,
-    MultiTargetLoss,
-    MultiHeadHistoryTrainer,
-)
 from shared.neural_net import MultiHeadNetWithHistory
+from shared.training import (
+    MultiHeadHistoryTrainer,
+    MultiTargetDataset,
+    MultiTargetHistoryDataset,
+    MultiTargetLoss,
+    collate_with_history,
+    make_dataloaders,
+    make_history_dataloaders,
+)
 
 TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 LOSS_WEIGHTS = {"rushing_floor": 1.0, "receiving_floor": 1.0, "td_points": 1.0}
@@ -24,6 +24,7 @@ LOSS_WEIGHTS = {"rushing_floor": 1.0, "receiving_floor": 1.0, "td_points": 1.0}
 # ---------------------------------------------------------------------------
 # MultiTargetHistoryDataset
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestMultiTargetHistoryDataset:
@@ -64,6 +65,7 @@ class TestMultiTargetHistoryDataset:
 # ---------------------------------------------------------------------------
 # collate_with_history
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestCollateWithHistory:
@@ -109,13 +111,20 @@ class TestCollateWithHistory:
 # make_history_dataloaders
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestMakeHistoryDataloaders:
     def test_returns_two_loaders(self, history_data_factory):
         X_s, X_h, y = history_data_factory(64)
         X_vs, X_vh, yv = history_data_factory(16)
         train_loader, val_loader = make_history_dataloaders(
-            X_s, X_h, y, X_vs, X_vh, yv, batch_size=32,
+            X_s,
+            X_h,
+            y,
+            X_vs,
+            X_vh,
+            yv,
+            batch_size=32,
         )
         assert train_loader is not None
         assert val_loader is not None
@@ -124,7 +133,13 @@ class TestMakeHistoryDataloaders:
         X_s, X_h, y = history_data_factory(64)
         X_vs, X_vh, yv = history_data_factory(16)
         train_loader, _ = make_history_dataloaders(
-            X_s, X_h, y, X_vs, X_vh, yv, batch_size=32,
+            X_s,
+            X_h,
+            y,
+            X_vs,
+            X_vh,
+            yv,
+            batch_size=32,
         )
         statics, padded, masks, targets = next(iter(train_loader))
         assert statics.dim() == 2
@@ -136,7 +151,13 @@ class TestMakeHistoryDataloaders:
         X_s, X_h, y = history_data_factory(64)
         X_vs, X_vh, yv = history_data_factory(16)
         train_loader, _ = make_history_dataloaders(
-            X_s, X_h, y, X_vs, X_vh, yv, batch_size=32,
+            X_s,
+            X_h,
+            y,
+            X_vs,
+            X_vh,
+            yv,
+            batch_size=32,
         )
         _, _, masks, _ = next(iter(train_loader))
         assert masks.dtype == torch.bool
@@ -145,6 +166,7 @@ class TestMakeHistoryDataloaders:
 # ---------------------------------------------------------------------------
 # make_dataloaders — non-history variant, batching edge cases
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestMakeDataloaders:
@@ -205,6 +227,7 @@ class TestMakeDataloaders:
 # MultiTargetLoss — weighting semantics and gradient flow
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestMultiTargetLoss:
     def _make_preds_and_targets(self, batch=4):
@@ -244,7 +267,8 @@ class TestMultiTargetLoss:
         weighted_loss, _ = weighted(preds, targets)
         expected_delta = base_comp["loss_rushing_floor"]  # added one extra copy
         assert weighted_loss.item() == pytest.approx(
-            base_loss.item() + expected_delta, abs=1e-6,
+            base_loss.item() + expected_delta,
+            abs=1e-6,
         )
 
     def test_zero_weight_ignores_target(self):
@@ -352,6 +376,7 @@ class TestMultiTargetLoss:
 # MultiHeadHistoryTrainer (integration)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.integration
 class TestMultiHeadHistoryTrainer:
     @pytest.fixture
@@ -363,13 +388,24 @@ class TestMultiHeadHistoryTrainer:
         X_vs, X_vh, y_val = history_data_factory(16)
 
         train_loader, val_loader = make_history_dataloaders(
-            X_ts, X_th, y_train, X_vs, X_vh, y_val, batch_size=32,
+            X_ts,
+            X_th,
+            y_train,
+            X_vs,
+            X_vh,
+            y_val,
+            batch_size=32,
         )
 
         model = MultiHeadNetWithHistory(
-            static_dim=5, game_dim=3, target_names=TARGETS,
-            backbone_layers=[16, 8], d_model=8, n_attn_heads=2,
-            head_hidden=4, dropout=0.1,
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[16, 8],
+            d_model=8,
+            n_attn_heads=2,
+            head_hidden=4,
+            dropout=0.1,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
@@ -377,8 +413,13 @@ class TestMultiHeadHistoryTrainer:
         device = torch.device("cpu")
 
         trainer = MultiHeadHistoryTrainer(
-            model, optimizer, scheduler, criterion, device,
-            target_names=TARGETS, patience=5,
+            model,
+            optimizer,
+            scheduler,
+            criterion,
+            device,
+            target_names=TARGETS,
+            patience=5,
         )
         return trainer, train_loader, val_loader
 
@@ -394,9 +435,15 @@ class TestMultiHeadHistoryTrainer:
         trainer, train_loader, val_loader = setup_trainer
         history = trainer.train(train_loader, val_loader, n_epochs=5)
         expected_keys = {
-            "train_loss", "val_loss",
-            "val_loss_rushing_floor", "val_loss_receiving_floor", "val_loss_td_points",
-            "val_mae_total", "val_mae_rushing_floor", "val_mae_receiving_floor", "val_mae_td_points",
+            "train_loss",
+            "val_loss",
+            "val_loss_rushing_floor",
+            "val_loss_receiving_floor",
+            "val_loss_td_points",
+            "val_mae_total",
+            "val_mae_rushing_floor",
+            "val_mae_receiving_floor",
+            "val_mae_td_points",
             "val_rmse_total",
         }
         assert expected_keys.issubset(set(history.keys()))

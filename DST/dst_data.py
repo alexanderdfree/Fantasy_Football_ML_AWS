@@ -1,6 +1,7 @@
-import pandas as pd
-import numpy as np
 import nfl_data_py as nfl
+import numpy as np
+import pandas as pd
+
 from src.config import CACHE_DIR, SEASONS
 
 
@@ -29,22 +30,50 @@ def build_dst_data() -> pd.DataFrame:
 
     # --- 2. Home/away indicator + Vegas lines + schedule context ---
     home_info = schedules_reg[
-        ["season", "week", "home_team", "spread_line", "total_line",
-         "home_rest", "div_game", "roof"]
+        [
+            "season",
+            "week",
+            "home_team",
+            "spread_line",
+            "total_line",
+            "home_rest",
+            "div_game",
+            "roof",
+        ]
     ].copy()
     home_info.columns = [
-        "season", "week", "team", "spread_line", "total_line",
-        "rest_days", "div_game", "roof",
+        "season",
+        "week",
+        "team",
+        "spread_line",
+        "total_line",
+        "rest_days",
+        "div_game",
+        "roof",
     ]
     home_info["is_home"] = 1
 
     away_info = schedules_reg[
-        ["season", "week", "away_team", "spread_line", "total_line",
-         "away_rest", "div_game", "roof"]
+        [
+            "season",
+            "week",
+            "away_team",
+            "spread_line",
+            "total_line",
+            "away_rest",
+            "div_game",
+            "roof",
+        ]
     ].copy()
     away_info.columns = [
-        "season", "week", "team", "spread_line", "total_line",
-        "rest_days", "div_game", "roof",
+        "season",
+        "week",
+        "team",
+        "spread_line",
+        "total_line",
+        "rest_days",
+        "div_game",
+        "roof",
     ]
     away_info["is_home"] = 0
 
@@ -71,29 +100,53 @@ def build_dst_data() -> pd.DataFrame:
         + weekly_copy["receiving_fumbles_lost"].fillna(0)
     )
 
-    def_from_offense = weekly_copy.groupby(["opponent_team", "season", "week"]).agg(
-        def_sacks=("sacks", "sum"),
-        def_ints=("interceptions", "sum"),
-        def_fumble_rec=("_total_fumbles_lost", "sum"),
-    ).reset_index()
+    def_from_offense = (
+        weekly_copy.groupby(["opponent_team", "season", "week"])
+        .agg(
+            def_sacks=("sacks", "sum"),
+            def_ints=("interceptions", "sum"),
+            def_fumble_rec=("_total_fumbles_lost", "sum"),
+        )
+        .reset_index()
+    )
     def_from_offense.columns = ["team", "season", "week", "def_sacks", "def_ints", "def_fumble_rec"]
 
     # --- 5. Defensive TDs + safeties from individual defensive player stats ---
     def_positions = [
-        "LB", "CB", "DE", "SAF", "DT", "OLB", "FS", "MLB",
-        "NT", "ILB", "DB", "DL", "SS", "S",
+        "LB",
+        "CB",
+        "DE",
+        "SAF",
+        "DT",
+        "OLB",
+        "FS",
+        "MLB",
+        "NT",
+        "ILB",
+        "DB",
+        "DL",
+        "SS",
+        "S",
     ]
     def_players = weekly[weekly["position"].isin(def_positions)].copy()
-    def_td_safety = def_players.groupby(["recent_team", "season", "week"]).agg(
-        def_tds=("def_tds", "sum"),
-        def_safeties=("def_safeties", "sum"),
-    ).reset_index()
+    def_td_safety = (
+        def_players.groupby(["recent_team", "season", "week"])
+        .agg(
+            def_tds=("def_tds", "sum"),
+            def_safeties=("def_safeties", "sum"),
+        )
+        .reset_index()
+    )
     def_td_safety.columns = ["team", "season", "week", "def_tds", "def_safeties"]
 
     # --- 6. Special teams TDs from all players on the team ---
-    st_tds = weekly.groupby(["recent_team", "season", "week"]).agg(
-        special_teams_tds=("special_teams_tds", "sum"),
-    ).reset_index()
+    st_tds = (
+        weekly.groupby(["recent_team", "season", "week"])
+        .agg(
+            special_teams_tds=("special_teams_tds", "sum"),
+        )
+        .reset_index()
+    )
     st_tds.columns = ["team", "season", "week", "special_teams_tds"]
 
     # --- 7. Team offensive quality metrics (for opponent strength features) ---
@@ -105,36 +158,52 @@ def build_dst_data() -> pd.DataFrame:
     team_scoring = pd.concat([home_scoring, away_scoring], ignore_index=True)
 
     # 7b. Team turnovers committed (as offense) — how turnover-prone is this team?
-    weekly_copy["_total_turnovers"] = (
-        weekly_copy["_total_fumbles_lost"]
-        + weekly_copy["interceptions"].fillna(0)
+    weekly_copy["_total_turnovers"] = weekly_copy["_total_fumbles_lost"] + weekly_copy[
+        "interceptions"
+    ].fillna(0)
+    team_turnovers = (
+        weekly_copy.groupby(["recent_team", "season", "week"])
+        .agg(
+            team_turnovers=("_total_turnovers", "sum"),
+        )
+        .reset_index()
     )
-    team_turnovers = weekly_copy.groupby(["recent_team", "season", "week"]).agg(
-        team_turnovers=("_total_turnovers", "sum"),
-    ).reset_index()
     team_turnovers.columns = ["team", "season", "week", "team_turnovers"]
 
     # 7c. Team sacks allowed (as offense) — how vulnerable is this OL?
-    team_sacks_allowed = weekly_copy.groupby(["recent_team", "season", "week"]).agg(
-        team_sacks_allowed=("sacks", "sum"),
-    ).reset_index()
+    team_sacks_allowed = (
+        weekly_copy.groupby(["recent_team", "season", "week"])
+        .agg(
+            team_sacks_allowed=("sacks", "sum"),
+        )
+        .reset_index()
+    )
     team_sacks_allowed.columns = ["team", "season", "week", "team_sacks_allowed"]
 
     # 7d. Opposing QB quality — isolate quarterback-level signal from team noise.
     #     EPA captures efficiency, INT/sack rates predict D/ST scoring components
     #     directly, and rush yards flag mobile QBs who suppress sack production.
     qb_weekly = weekly_copy[weekly_copy["position"] == "QB"].copy()
-    qb_team = qb_weekly.groupby(["recent_team", "season", "week"]).agg(
-        qb_passing_epa=("passing_epa", "sum"),
-        qb_interceptions=("interceptions", "sum"),
-        qb_sacks=("sacks", "sum"),
-        qb_pass_attempts=("attempts", "sum"),
-        qb_rush_yards=("rushing_yards", "sum"),
-    ).reset_index()
+    qb_team = (
+        qb_weekly.groupby(["recent_team", "season", "week"])
+        .agg(
+            qb_passing_epa=("passing_epa", "sum"),
+            qb_interceptions=("interceptions", "sum"),
+            qb_sacks=("sacks", "sum"),
+            qb_pass_attempts=("attempts", "sum"),
+            qb_rush_yards=("rushing_yards", "sum"),
+        )
+        .reset_index()
+    )
     qb_team.columns = [
-        "team", "season", "week",
-        "qb_passing_epa", "qb_interceptions", "qb_sacks",
-        "qb_pass_attempts", "qb_rush_yards",
+        "team",
+        "season",
+        "week",
+        "qb_passing_epa",
+        "qb_interceptions",
+        "qb_sacks",
+        "qb_pass_attempts",
+        "qb_rush_yards",
     ]
     # Per-game rates before rolling — each game weighted equally
     qb_team["qb_int_rate"] = np.where(
@@ -156,19 +225,28 @@ def build_dst_data() -> pd.DataFrame:
         ("qb_sack_rate", "qb_sack_rate_L5"),
         ("qb_rush_yards", "qb_rush_yds_L5"),
     ]:
-        qb_team_sorted[out_col] = qb_team_sorted.groupby(
-            ["team", "season"]
-        )[raw_col].transform(
+        qb_team_sorted[out_col] = qb_team_sorted.groupby(["team", "season"])[raw_col].transform(
             lambda x: x.shift(1).rolling(5, min_periods=1).mean()
         )
     opp_qb = qb_team_sorted[
-        ["team", "season", "week", "qb_epa_L5", "qb_int_rate_L5",
-         "qb_sack_rate_L5", "qb_rush_yds_L5"]
+        [
+            "team",
+            "season",
+            "week",
+            "qb_epa_L5",
+            "qb_int_rate_L5",
+            "qb_sack_rate_L5",
+            "qb_rush_yds_L5",
+        ]
     ].copy()
     opp_qb.columns = [
-        "opponent_team", "season", "week",
-        "opp_qb_epa_L5", "opp_qb_int_rate_L5",
-        "opp_qb_sack_rate_L5", "opp_qb_rush_yds_L5",
+        "opponent_team",
+        "season",
+        "week",
+        "opp_qb_epa_L5",
+        "opp_qb_int_rate_L5",
+        "opp_qb_sack_rate_L5",
+        "opp_qb_rush_yds_L5",
     ]
 
     # --- Merge everything into a single team-week DataFrame ---
@@ -181,43 +259,37 @@ def build_dst_data() -> pd.DataFrame:
 
     # Merge opponent offensive quality histories (scoring, turnovers, sacks allowed)
     team_scoring_sorted = team_scoring.sort_values(["team", "season", "week"])
-    team_scoring_sorted["scoring_L5"] = team_scoring_sorted.groupby(
-        ["team", "season"]
-    )["team_score"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).mean()
-    )
+    team_scoring_sorted["scoring_L5"] = team_scoring_sorted.groupby(["team", "season"])[
+        "team_score"
+    ].transform(lambda x: x.shift(1).rolling(5, min_periods=1).mean())
     # Short-window opponent scoring (more responsive to recent form)
-    team_scoring_sorted["scoring_L3"] = team_scoring_sorted.groupby(
-        ["team", "season"]
-    )["team_score"].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    )
-    opp_scoring = team_scoring_sorted[
-        ["team", "season", "week", "scoring_L5", "scoring_L3"]
-    ].copy()
+    team_scoring_sorted["scoring_L3"] = team_scoring_sorted.groupby(["team", "season"])[
+        "team_score"
+    ].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+    opp_scoring = team_scoring_sorted[["team", "season", "week", "scoring_L5", "scoring_L3"]].copy()
     opp_scoring.columns = [
-        "opponent_team", "season", "week", "opp_scoring_L5", "opp_scoring_L3",
+        "opponent_team",
+        "season",
+        "week",
+        "opp_scoring_L5",
+        "opp_scoring_L3",
     ]
     dst_df = dst_df.merge(opp_scoring, on=["opponent_team", "season", "week"], how="left")
 
     # Opponent turnover tendency (how turnover-prone is this offense?)
     team_turnovers_sorted = team_turnovers.sort_values(["team", "season", "week"])
-    team_turnovers_sorted["turnovers_L5"] = team_turnovers_sorted.groupby(
-        ["team", "season"]
-    )["team_turnovers"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).mean()
-    )
+    team_turnovers_sorted["turnovers_L5"] = team_turnovers_sorted.groupby(["team", "season"])[
+        "team_turnovers"
+    ].transform(lambda x: x.shift(1).rolling(5, min_periods=1).mean())
     opp_to = team_turnovers_sorted[["team", "season", "week", "turnovers_L5"]].copy()
     opp_to.columns = ["opponent_team", "season", "week", "opp_turnovers_L5"]
     dst_df = dst_df.merge(opp_to, on=["opponent_team", "season", "week"], how="left")
 
     # Opponent sack vulnerability (how often does this OL give up sacks?)
     team_sa_sorted = team_sacks_allowed.sort_values(["team", "season", "week"])
-    team_sa_sorted["sacks_allowed_L5"] = team_sa_sorted.groupby(
-        ["team", "season"]
-    )["team_sacks_allowed"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).mean()
-    )
+    team_sa_sorted["sacks_allowed_L5"] = team_sa_sorted.groupby(["team", "season"])[
+        "team_sacks_allowed"
+    ].transform(lambda x: x.shift(1).rolling(5, min_periods=1).mean())
     opp_sa = team_sa_sorted[["team", "season", "week", "sacks_allowed_L5"]].copy()
     opp_sa.columns = ["opponent_team", "season", "week", "opp_sacks_allowed_L5"]
     dst_df = dst_df.merge(opp_sa, on=["opponent_team", "season", "week"], how="left")
@@ -226,8 +298,14 @@ def build_dst_data() -> pd.DataFrame:
     dst_df = dst_df.merge(opp_qb, on=["opponent_team", "season", "week"], how="left")
 
     # Fill missing values
-    for col in ["def_sacks", "def_ints", "def_fumble_rec", "def_tds",
-                 "def_safeties", "special_teams_tds"]:
+    for col in [
+        "def_sacks",
+        "def_ints",
+        "def_fumble_rec",
+        "def_tds",
+        "def_safeties",
+        "special_teams_tds",
+    ]:
         dst_df[col] = dst_df[col].fillna(0)
     for col in ["spread_line", "total_line"]:
         dst_df[col] = dst_df[col].fillna(dst_df[col].median())
@@ -235,12 +313,8 @@ def build_dst_data() -> pd.DataFrame:
     dst_df["rest_days"] = dst_df["rest_days"].fillna(7)
     dst_df["div_game"] = dst_df["div_game"].fillna(0)
     dst_df["is_dome"] = dst_df["is_dome"].fillna(0)
-    dst_df["opp_scoring_L5"] = dst_df["opp_scoring_L5"].fillna(
-        dst_df["points_allowed"].mean()
-    )
-    dst_df["opp_scoring_L3"] = dst_df["opp_scoring_L3"].fillna(
-        dst_df["points_allowed"].mean()
-    )
+    dst_df["opp_scoring_L5"] = dst_df["opp_scoring_L5"].fillna(dst_df["points_allowed"].mean())
+    dst_df["opp_scoring_L3"] = dst_df["opp_scoring_L3"].fillna(dst_df["points_allowed"].mean())
     dst_df["opp_turnovers_L5"] = dst_df["opp_turnovers_L5"].fillna(
         dst_df["opp_turnovers_L5"].median()
     )

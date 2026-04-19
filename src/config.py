@@ -8,9 +8,13 @@ SPLITS_DIR = "data/splits"
 # === Scoring ===
 # Base scoring (shared across all formats)
 _BASE_SCORING = {
-    "passing_yards": 0.04, "passing_tds": 4, "interceptions": -2,
-    "rushing_yards": 0.1, "rushing_tds": 6,
-    "receiving_yards": 0.1, "receiving_tds": 6,
+    "passing_yards": 0.04,
+    "passing_tds": 4,
+    "interceptions": -2,
+    "rushing_yards": 0.1,
+    "rushing_tds": 6,
+    "receiving_yards": 0.1,
+    "receiving_tds": 6,
     "fumbles_lost": -2,
 }
 
@@ -40,15 +44,29 @@ CV_VAL_SEASONS = [2021, 2022, 2023, 2024]
 # === Features: Rolling ===
 ROLLING_WINDOWS = [3, 5, 8]
 ROLL_STATS = [
-    "fantasy_points", "fantasy_points_floor", "targets", "receptions",
-    "carries", "rushing_yards", "receiving_yards", "passing_yards",
-    "attempts", "snap_pct",
+    "fantasy_points",
+    "fantasy_points_floor",
+    "targets",
+    "receptions",
+    "carries",
+    "rushing_yards",
+    "receiving_yards",
+    "passing_yards",
+    "attempts",
+    "snap_pct",
 ]
 ROLL_AGGS = ["mean", "std", "max"]
 
 # === Features: EWMA ===
-EWMA_STATS = ["fantasy_points", "targets", "carries", "receiving_yards",
-              "rushing_yards", "passing_yards", "snap_pct"]
+EWMA_STATS = [
+    "fantasy_points",
+    "targets",
+    "carries",
+    "receiving_yards",
+    "rushing_yards",
+    "passing_yards",
+    "snap_pct",
+]
 EWMA_SPANS = [3, 5]
 
 # === Features: Trend/Momentum ===
