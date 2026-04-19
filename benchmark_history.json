@@ -8439,5 +8439,464 @@
         "elapsed_sec": 16.6
       }
     ]
+  },
+  {
+    "run_id": "2026-04-19T04:50:47_85dd640",
+    "timestamp": "2026-04-19T04:50:47",
+    "git_hash": "85dd640",
+    "note": "EC2 smoke test (QB only)",
+    "backend": "ec2",
+    "instance_type": "g4dn.xlarge (On-Demand)",
+    "positions": [
+      "QB"
+    ],
+    "results": [
+      {
+        "position": "QB",
+        "ridge_mae": 6.471,
+        "ridge_r2": 0.25,
+        "nn_mae": 6.303,
+        "nn_r2": 0.267,
+        "nn_wins_mae": true,
+        "nn_per_target": {
+          "passing_floor": {
+            "mae": 2.692,
+            "r2": 0.349
+          },
+          "rushing_floor": {
+            "mae": 1.111,
+            "r2": 0.178
+          },
+          "td_points": {
+            "mae": 3.878,
+            "r2": 0.147
+          }
+        },
+        "ridge_per_target": {
+          "passing_floor": {
+            "mae": 2.796,
+            "r2": 0.304
+          },
+          "rushing_floor": {
+            "mae": 1.113,
+            "r2": 0.231
+          },
+          "td_points": {
+            "mae": 3.982,
+            "r2": 0.126
+          }
+        },
+        "ridge_top12": 0.526,
+        "nn_top12": 0.517,
+        "attn_nn_mae": 6.36,
+        "attn_nn_r2": 0.267,
+        "attn_nn_per_target": {
+          "passing_floor": {
+            "mae": 2.812,
+            "r2": 0.289
+          },
+          "rushing_floor": {
+            "mae": 1.152,
+            "r2": 0.233
+          },
+          "td_points": {
+            "mae": 3.872,
+            "r2": 0.156
+          }
+        },
+        "attn_nn_top12": 0.517,
+        "lgbm_mae": 6.209,
+        "lgbm_r2": 0.293,
+        "lgbm_per_target": {
+          "passing_floor": {
+            "mae": 2.622,
+            "r2": 0.362
+          },
+          "rushing_floor": {
+            "mae": 1.102,
+            "r2": 0.27
+          },
+          "td_points": {
+            "mae": 3.939,
+            "r2": 0.107
+          }
+        },
+        "lgbm_top12": 0.526
+      }
+    ]
+  },
+  {
+    "run_id": "2026-04-19T05:20:24_85dd640",
+    "timestamp": "2026-04-19T05:20:24",
+    "git_hash": "85dd640",
+    "note": "EC2 Phase B (all 6 positions)",
+    "backend": "ec2",
+    "instance_type": "g4dn.xlarge (On-Demand)",
+    "positions": [
+      "QB",
+      "RB",
+      "WR",
+      "TE",
+      "K",
+      "DST"
+    ],
+    "results": [
+      {
+        "position": "QB",
+        "ridge_mae": 6.471,
+        "ridge_r2": 0.25,
+        "nn_mae": 6.303,
+        "nn_r2": 0.267,
+        "nn_wins_mae": true,
+        "nn_per_target": {
+          "passing_floor": {
+            "mae": 2.692,
+            "r2": 0.349
+          },
+          "rushing_floor": {
+            "mae": 1.111,
+            "r2": 0.178
+          },
+          "td_points": {
+            "mae": 3.878,
+            "r2": 0.147
+          }
+        },
+        "ridge_per_target": {
+          "passing_floor": {
+            "mae": 2.796,
+            "r2": 0.304
+          },
+          "rushing_floor": {
+            "mae": 1.113,
+            "r2": 0.231
+          },
+          "td_points": {
+            "mae": 3.982,
+            "r2": 0.126
+          }
+        },
+        "ridge_top12": 0.526,
+        "nn_top12": 0.517,
+        "attn_nn_mae": 6.36,
+        "attn_nn_r2": 0.267,
+        "attn_nn_per_target": {
+          "passing_floor": {
+            "mae": 2.812,
+            "r2": 0.289
+          },
+          "rushing_floor": {
+            "mae": 1.152,
+            "r2": 0.233
+          },
+          "td_points": {
+            "mae": 3.872,
+            "r2": 0.156
+          }
+        },
+        "attn_nn_top12": 0.517,
+        "lgbm_mae": 6.209,
+        "lgbm_r2": 0.293,
+        "lgbm_per_target": {
+          "passing_floor": {
+            "mae": 2.622,
+            "r2": 0.362
+          },
+          "rushing_floor": {
+            "mae": 1.102,
+            "r2": 0.27
+          },
+          "td_points": {
+            "mae": 3.939,
+            "r2": 0.107
+          }
+        },
+        "lgbm_top12": 0.526
+      },
+      {
+        "position": "RB",
+        "ridge_mae": 4.358,
+        "ridge_r2": 0.368,
+        "nn_mae": 4.169,
+        "nn_r2": 0.418,
+        "nn_wins_mae": true,
+        "nn_per_target": {
+          "rushing_floor": {
+            "mae": 1.84,
+            "r2": 0.421
+          },
+          "receiving_floor": {
+            "mae": 1.836,
+            "r2": 0.355
+          },
+          "td_points": {
+            "mae": 1.966,
+            "r2": 0.081
+          }
+        },
+        "ridge_per_target": {
+          "rushing_floor": {
+            "mae": 1.895,
+            "r2": 0.436
+          },
+          "receiving_floor": {
+            "mae": 1.917,
+            "r2": 0.344
+          },
+          "td_points": {
+            "mae": 1.778,
+            "r2": -0.185
+          }
+        },
+        "ridge_top12": 0.488,
+        "nn_top12": 0.528,
+        "attn_nn_mae": 4.245,
+        "attn_nn_r2": 0.389,
+        "attn_nn_per_target": {
+          "rushing_floor": {
+            "mae": 1.847,
+            "r2": 0.413
+          },
+          "receiving_floor": {
+            "mae": 1.86,
+            "r2": 0.336
+          },
+          "td_points": {
+            "mae": 1.935,
+            "r2": 0.074
+          }
+        },
+        "attn_nn_top12": 0.476,
+        "lgbm_mae": 4.191,
+        "lgbm_r2": 0.417,
+        "lgbm_per_target": {
+          "rushing_floor": {
+            "mae": 1.843,
+            "r2": 0.424
+          },
+          "receiving_floor": {
+            "mae": 1.844,
+            "r2": 0.344
+          },
+          "td_points": {
+            "mae": 1.91,
+            "r2": 0.081
+          }
+        },
+        "lgbm_top12": 0.5
+      },
+      {
+        "position": "WR",
+        "ridge_mae": 4.439,
+        "ridge_r2": 0.345,
+        "nn_mae": 4.218,
+        "nn_r2": 0.355,
+        "nn_wins_mae": true,
+        "nn_per_target": {
+          "receiving_floor": {
+            "mae": 3.247,
+            "r2": 0.406
+          },
+          "rushing_floor": {
+            "mae": 0.18,
+            "r2": 0.005
+          },
+          "td_points": {
+            "mae": 1.461,
+            "r2": 0.028
+          }
+        },
+        "ridge_per_target": {
+          "receiving_floor": {
+            "mae": 3.35,
+            "r2": 0.384
+          },
+          "rushing_floor": {
+            "mae": 0.148,
+            "r2": 0.076
+          },
+          "td_points": {
+            "mae": 1.818,
+            "r2": 0.084
+          }
+        },
+        "ridge_top12": 0.381,
+        "nn_top12": 0.393,
+        "attn_nn_mae": 4.185,
+        "attn_nn_r2": 0.359,
+        "attn_nn_per_target": {
+          "receiving_floor": {
+            "mae": 3.229,
+            "r2": 0.409
+          },
+          "rushing_floor": {
+            "mae": 0.18,
+            "r2": 0.018
+          },
+          "td_points": {
+            "mae": 1.443,
+            "r2": 0.019
+          }
+        },
+        "attn_nn_top12": 0.377,
+        "lgbm_mae": 4.233,
+        "lgbm_r2": 0.344,
+        "lgbm_per_target": {
+          "receiving_floor": {
+            "mae": 3.275,
+            "r2": 0.405
+          },
+          "rushing_floor": {
+            "mae": 0.124,
+            "r2": 0.066
+          },
+          "td_points": {
+            "mae": 1.379,
+            "r2": -0.008
+          }
+        },
+        "lgbm_top12": 0.389
+      },
+      {
+        "position": "TE",
+        "ridge_mae": 3.592,
+        "ridge_r2": 0.318,
+        "nn_mae": 3.513,
+        "nn_r2": 0.293,
+        "nn_wins_mae": true,
+        "nn_per_target": {
+          "receiving_floor": {
+            "mae": 2.584,
+            "r2": 0.368
+          },
+          "rushing_floor": {
+            "mae": 0.021,
+            "r2": -0.011
+          },
+          "td_points": {
+            "mae": 1.347,
+            "r2": -0.025
+          }
+        },
+        "ridge_per_target": {
+          "receiving_floor": {
+            "mae": 2.609,
+            "r2": 0.376
+          },
+          "rushing_floor": {
+            "mae": 0.032,
+            "r2": 0.082
+          },
+          "td_points": {
+            "mae": 1.67,
+            "r2": 0.056
+          }
+        },
+        "ridge_top12": 0.471,
+        "nn_top12": 0.475,
+        "attn_nn_mae": 3.486,
+        "attn_nn_r2": 0.292,
+        "attn_nn_per_target": {
+          "receiving_floor": {
+            "mae": 2.557,
+            "r2": 0.371
+          },
+          "rushing_floor": {
+            "mae": 0.023,
+            "r2": -0.018
+          },
+          "td_points": {
+            "mae": 1.35,
+            "r2": -0.012
+          }
+        },
+        "attn_nn_top12": 0.483,
+        "lgbm_mae": 3.524,
+        "lgbm_r2": 0.297,
+        "lgbm_per_target": {
+          "receiving_floor": {
+            "mae": 2.629,
+            "r2": 0.372
+          },
+          "rushing_floor": {
+            "mae": 0.024,
+            "r2": 0.067
+          },
+          "td_points": {
+            "mae": 1.306,
+            "r2": -0.035
+          }
+        },
+        "lgbm_top12": 0.463
+      },
+      {
+        "position": "K",
+        "ridge_mae": 3.605,
+        "ridge_r2": 0.067,
+        "nn_mae": 3.707,
+        "nn_r2": -0.008,
+        "nn_wins_mae": false,
+        "nn_per_target": {
+          "fg_points": {
+            "mae": 3.759,
+            "r2": -0.024
+          },
+          "pat_points": {
+            "mae": 1.114,
+            "r2": 0.043
+          }
+        },
+        "ridge_per_target": {
+          "fg_points": {
+            "mae": 3.704,
+            "r2": 0.037
+          },
+          "pat_points": {
+            "mae": 1.107,
+            "r2": 0.096
+          }
+        },
+        "ridge_top12": 0.495,
+        "nn_top12": 0.435
+      },
+      {
+        "position": "DST",
+        "ridge_mae": 3.826,
+        "ridge_r2": 0.055,
+        "nn_mae": 3.875,
+        "nn_r2": -0.005,
+        "nn_wins_mae": false,
+        "nn_per_target": {
+          "defensive_scoring": {
+            "mae": 2.447,
+            "r2": -0.083
+          },
+          "td_points": {
+            "mae": 0.374,
+            "r2": -0.032
+          },
+          "pts_allowed_bonus": {
+            "mae": 1.815,
+            "r2": 0.048
+          }
+        },
+        "ridge_per_target": {
+          "defensive_scoring": {
+            "mae": 2.448,
+            "r2": 0.018
+          },
+          "td_points": {
+            "mae": 0.505,
+            "r2": -0.01
+          },
+          "pts_allowed_bonus": {
+            "mae": 1.794,
+            "r2": 0.087
+          }
+        },
+        "ridge_top12": 0.472,
+        "nn_top12": 0.449
+      }
+    ]
   }
 ]

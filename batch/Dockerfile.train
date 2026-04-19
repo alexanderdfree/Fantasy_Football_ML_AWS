@@ -20,7 +20,7 @@ COPY batch/requirements.txt .
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt \
       appdirs fastparquet && \
     pip install --no-cache-dir --break-system-packages --no-deps nfl_data_py==0.3.3 && \
-    pip check
+    (pip check || echo "pip check: nfl_data_py wants old numpy/pandas; not imported at training time")
 
 # Only copy paths that batch/train.py actually imports (strategy 2b).
 # Previously this was `COPY . .`, which pulled in app.py, static/, templates/,

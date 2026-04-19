@@ -79,6 +79,28 @@ def download_data(s3_bucket, s3_prefix, local_dir):
     print("Data download complete.")
 
 
+def sync_raw_data(s3_bucket):
+    """Sync s3://{bucket}/data/raw/*.parquet into the container's data/raw/.
+
+    Needed by shared/weather_features._load_schedules() (all positions during
+    feature engineering) and by K/DST's self-contained loaders (k_data,
+    dst_data). CACHE_DIR="data/raw" in src/config.py resolves relative to
+    the container WORKDIR=/opt/ml/code. .dockerignore excludes data/ so these
+    parquets aren't baked into the image.
+    """
+    s3 = boto3.client("s3")
+    os.makedirs("data/raw", exist_ok=True)
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=s3_bucket, Prefix="data/raw/"):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith(".parquet"):
+                continue
+            local_path = key
+            print(f"Downloading s3://{s3_bucket}/{key} -> {local_path}")
+            s3.download_file(s3_bucket, key, local_path)
+
+
 def upload_artifacts(s3_bucket, position, model_dir):
     """Tar model artifacts and upload to S3.
 
@@ -223,8 +245,12 @@ def main():
 
     run_fn = get_runner(pos)
 
+    # data/raw/*.parquet is needed for weather features (all positions) and
+    # for K/DST's self-contained data loaders. Sync before branching.
+    sync_raw_data(s3_bucket)
+
     if accepts_dataframes(pos):
-        # Download data from S3 into the container
+        # Download train/val/test splits from S3 into the container
         download_data(s3_bucket, s3_prefix, data_dir)
         train_df = pd.read_parquet(os.path.join(data_dir, "train.parquet"))
         val_df = pd.read_parquet(os.path.join(data_dir, "val.parquet"))
