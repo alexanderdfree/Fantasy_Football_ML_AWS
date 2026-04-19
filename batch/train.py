@@ -268,7 +268,13 @@ def main():
     src_model_dir = os.path.join(pos, "outputs", "models")
     if os.path.isdir(src_model_dir):
         print(f"Copying model artifacts from {src_model_dir} to {model_dir}")
-        shutil.copytree(src_model_dir, model_dir, dirs_exist_ok=True)
+        # model_dir is a persistent host scratch volume on EC2 (bind-mounted
+        # from /opt/ff/scratch/model). Without wiping first, sequential
+        # ff-train calls accumulate artifacts and each position's tar ends
+        # up containing every prior position's models — including PCAs that
+        # mismatch the runtime feature count and crash inference.
+        shutil.rmtree(model_dir, ignore_errors=True)
+        shutil.copytree(src_model_dir, model_dir)
     else:
         print(f"WARNING: No model directory found at {src_model_dir}")
 
