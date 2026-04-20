@@ -113,12 +113,12 @@ QB_CONFIG = {
 }
 
 
-def run_qb_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
-    return run_pipeline("QB", QB_CONFIG, train_df, val_df, test_df, seed)
+def run_qb_pipeline(train_df=None, val_df=None, test_df=None, seed=42, config=None):
+    return run_pipeline("QB", config or QB_CONFIG, train_df, val_df, test_df, seed)
 
 
-def run_qb_cv_pipeline(full_df=None, test_df=None, seed=42):
-    return run_cv_pipeline("QB", QB_CONFIG, full_df, test_df, seed)
+def run_qb_cv_pipeline(full_df=None, test_df=None, seed=42, config=None):
+    return run_cv_pipeline("QB", config or QB_CONFIG, full_df, test_df, seed)
 
 
 if __name__ == "__main__":
@@ -126,8 +126,19 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--cv", action="store_true", help="Use expanding-window CV")
+    parser.add_argument(
+        "--tiny",
+        action="store_true",
+        help="Use shrunk smoke-test config (from tests/_pipeline_e2e_utils)",
+    )
     args = parser.parse_args()
-    if args.cv:
-        run_qb_cv_pipeline()
+    if args.tiny:
+        from tests._pipeline_e2e_utils import build_tiny_config
+
+        config = build_tiny_config("QB")
     else:
-        run_qb_pipeline()
+        config = QB_CONFIG
+    if args.cv:
+        run_qb_cv_pipeline(config=config)
+    else:
+        run_qb_pipeline(config=config)
