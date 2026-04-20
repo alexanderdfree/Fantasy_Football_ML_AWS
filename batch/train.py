@@ -196,6 +196,27 @@ def _dry_run_artifacts(position: str, model_dir: str, seed: int) -> None:
     print(f"[dry-run] Wrote stub artifacts to {model_dir}")
 
 
+def _replace_model_dir_contents(src: str, dst: str) -> None:
+    """Replace dst's contents with src's.
+
+    On EC2, dst is /opt/ml/model — a bind-mount from /opt/ff/scratch/model
+    that persists across ff-train invocations. We cannot rmtree the mount
+    point (rmdir on a mount fails; rmtree with ignore_errors leaves an
+    empty dir that then trips copytree's "dst must not exist" check). So
+    clear the mount's contents in place, then copytree with
+    dirs_exist_ok=True. Without the clear step, sequential ff-train calls
+    would accumulate every prior position's artifacts into dst — including
+    PCAs fit for the wrong feature count that then crash inference.
+    """
+    for name in os.listdir(dst):
+        child = os.path.join(dst, name)
+        if os.path.isdir(child) and not os.path.islink(child):
+            shutil.rmtree(child)
+        else:
+            os.remove(child)
+    shutil.copytree(src, dst, dirs_exist_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--position", required=True, choices=ALL_POSITIONS)
@@ -268,13 +289,7 @@ def main():
     src_model_dir = os.path.join(pos, "outputs", "models")
     if os.path.isdir(src_model_dir):
         print(f"Copying model artifacts from {src_model_dir} to {model_dir}")
-        # model_dir is a persistent host scratch volume on EC2 (bind-mounted
-        # from /opt/ff/scratch/model). Without wiping first, sequential
-        # ff-train calls accumulate artifacts and each position's tar ends
-        # up containing every prior position's models — including PCAs that
-        # mismatch the runtime feature count and crash inference.
-        shutil.rmtree(model_dir, ignore_errors=True)
-        shutil.copytree(src_model_dir, model_dir)
+        _replace_model_dir_contents(src_model_dir, model_dir)
     else:
         print(f"WARNING: No model directory found at {src_model_dir}")
 

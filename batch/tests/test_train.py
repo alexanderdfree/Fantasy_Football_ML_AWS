@@ -310,6 +310,71 @@ class TestArtifactCopy:
         assert (dst / "ridge_model.pkl").exists()
         assert (dst / "nn_model.pt").exists()
 
+    def test_replace_model_dir_contents_clears_stale_and_copies_new(self, tmp_path):
+        """dst pre-populated with a prior position's artifacts ends up
+        containing only the new src contents (no accumulation).
+        """
+        from batch.train import _replace_model_dir_contents
+
+        src = tmp_path / "RB" / "outputs" / "models"
+        src.mkdir(parents=True)
+        (src / "rb_ridge.pkl").write_text("new rb model")
+        (src / "subdir").mkdir()
+        (src / "subdir" / "leaf.bin").write_text("leaf")
+
+        # Prior run left QB's artifacts behind in the mount dir.
+        dst = tmp_path / "mount"
+        dst.mkdir()
+        (dst / "qb_ridge.pkl").write_text("stale qb model")
+        stale_dir = dst / "stale_subdir"
+        stale_dir.mkdir()
+        (stale_dir / "stale_leaf.bin").write_text("stale")
+
+        _replace_model_dir_contents(str(src), str(dst))
+
+        assert dst.exists() and dst.is_dir()
+        assert not (dst / "qb_ridge.pkl").exists()
+        assert not stale_dir.exists()
+        assert (dst / "rb_ridge.pkl").read_text() == "new rb model"
+        assert (dst / "subdir" / "leaf.bin").read_text() == "leaf"
+
+    def test_replace_model_dir_contents_does_not_rmtree_the_root(self, tmp_path, monkeypatch):
+        """Regression test: on EC2 dst is a bind-mount that cannot be removed.
+        The implementation must clear contents without passing dst itself to
+        shutil.rmtree — otherwise the copytree fails with FileExistsError
+        (the mount-point failure mode observed in run 24651387974).
+        """
+        import batch.train
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "new.bin").write_text("new")
+
+        dst = tmp_path / "mount"
+        dst.mkdir()
+        (dst / "stale.bin").write_text("stale")
+        (dst / "stale_subdir").mkdir()
+
+        real_rmtree = shutil.rmtree
+        dst_str = str(dst)
+
+        def guarded_rmtree(path, *args, **kwargs):
+            assert str(path) != dst_str, (
+                f"rmtree was called on the mount root {path!r} — on EC2 this "
+                "silently leaves the dir in place and the next copytree raises "
+                "FileExistsError. Clear children individually instead."
+            )
+            return real_rmtree(path, *args, **kwargs)
+
+        monkeypatch.setattr(batch.train.shutil, "rmtree", guarded_rmtree)
+
+        batch.train._replace_model_dir_contents(str(src), str(dst))
+
+        assert dst.exists()
+        assert not (dst / "stale.bin").exists()
+        assert not (dst / "stale_subdir").exists()
+        assert (dst / "new.bin").read_text() == "new"
+
 
 # ---------------------------------------------------------------------------
 # Full main() integration test (mocked)
@@ -330,8 +395,8 @@ class TestMainIntegration:
         mock_df = pd.DataFrame({"col": [1, 2, 3]})
         mock_parquet.return_value = mock_df
 
-        # main() rmtree's then copytree's into model_dir before writing metrics,
-        # so the mock must recreate the destination dir.
+        # main() clears model_dir's contents then copytree's into it before
+        # writing metrics, so the mock must recreate the destination dir.
         mock_copytree.side_effect = lambda src, dst, **kw: Path(dst).mkdir(
             parents=True, exist_ok=True
         )
@@ -385,8 +450,8 @@ class TestMainIntegration:
         REQUIRE_GPU. sync_raw_data() still runs for all positions — K/DST's
         self-contained loaders (and weather features) read from data/raw/.
         """
-        # main() rmtree's then copytree's into model_dir before writing metrics,
-        # so the mock must recreate the destination dir.
+        # main() clears model_dir's contents then copytree's into it before
+        # writing metrics, so the mock must recreate the destination dir.
         mock_copytree.side_effect = lambda src, dst, **kw: Path(dst).mkdir(
             parents=True, exist_ok=True
         )
