@@ -68,7 +68,12 @@ def compute_ranking_metrics(
 
     if weekly_results:
         avg_hit_rate = np.mean([r["top_k_hit_rate"] for r in weekly_results])
-        avg_spearman = np.nanmean([r["spearman"] for r in weekly_results])
+        spearmans = [r["spearman"] for r in weekly_results]
+        # nanmean warns on all-NaN input (happens when every week has constant
+        # predictions, e.g. tiny e2e fixtures). Short-circuit to NaN instead.
+        avg_spearman = (
+            float("nan") if all(np.isnan(s) for s in spearmans) else np.nanmean(spearmans)
+        )
     else:
         avg_hit_rate = 0.0
         avg_spearman = 0.0

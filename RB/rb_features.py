@@ -103,8 +103,14 @@ def _compute_rb_features(df: pd.DataFrame) -> None:
     _team_carries = df_merged["team_rb_carries"].values
     _team_targets = df_merged["team_rb_targets"].values
 
-    df["game_carry_share"] = np.where(_team_carries > 0, _carries / _team_carries, 0.0)
-    df["game_target_share"] = np.where(_team_targets > 0, _targets / _team_targets, 0.0)
+    # np.where still evaluates a/b for every row, so divide-by-zero fires even
+    # when the result is discarded. Compute the quotient only where denom > 0.
+    df["game_carry_share"] = np.divide(
+        _carries, _team_carries, out=np.zeros_like(_carries, dtype=float), where=_team_carries > 0
+    )
+    df["game_target_share"] = np.divide(
+        _targets, _team_targets, out=np.zeros_like(_targets, dtype=float), where=_team_targets > 0
+    )
 
     # --- Game-level HHI (team carry/target concentration) ---
     df["game_carry_hhi"] = df.groupby(["recent_team", "season", "week"])[
