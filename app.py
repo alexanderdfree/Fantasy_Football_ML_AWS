@@ -30,6 +30,7 @@ import WR.wr_config as wr_cfg
 from DST.dst_config import DST_SPECIFIC_FEATURES, DST_TARGETS
 from DST.dst_data import build_dst_data
 from DST.dst_features import compute_dst_features
+from DST.dst_targets import _pts_allowed_to_bonus, _yds_allowed_to_bonus
 from K.k_config import K_SPECIFIC_FEATURES, K_TARGETS
 
 # Per-position imports needed only for /api/model_architecture metadata and
@@ -248,18 +249,42 @@ POSITION_INFO = {
         "label": "Defense/Special Teams",
         "targets": [
             {
-                "key": "defensive_scoring",
-                "label": "Defensive Scoring",
-                "formula": "sacks x 1 + INT x 2 + fum_rec x 2",
+                "key": "defensive_production",
+                "label": "Defensive Production",
+                "formula": "sacks x 1 + INT x 2 + fum_rec x 2 + forced_fum x 1 + safeties x 2",
             },
-            {"key": "td_points", "label": "TD Points", "formula": "ST_TD x 6"},
             {
-                "key": "pts_allowed_bonus",
-                "label": "Pts Allowed Bonus",
-                "formula": "tiered: 0pts=+10 ... 35+=−4",
+                "key": "def_td_points",
+                "label": "Defensive TD Points",
+                "formula": "def_TD x 6",
+            },
+            {
+                "key": "st_production",
+                "label": "Special Teams Production",
+                "formula": "ST_TD x 6 + blocked_kicks x 2",
+            },
+            {
+                "key": "points_allowed",
+                "label": "Points Allowed",
+                "formula": (
+                    "raw PA, tier-mapped at inference "
+                    "(0=+10, 1-6=+7, 7-13=+4, 14-20=+1, 21-27=0, 28-34=-1, 35+=-4)"
+                ),
+            },
+            {
+                "key": "yards_allowed",
+                "label": "Yards Allowed",
+                "formula": (
+                    "raw YA, tier-mapped at inference "
+                    "(<100=+5, 100-199=+3, 200-299=+2, 300-349=0, 350-399=-1, 400-449=-3, 450+=-5)"
+                ),
             },
         ],
-        "adjustments": "Defensive TDs + safeties (nflreadr 2025-only; excluded from targets)",
+        "adjustments": "None (PA/YA tier bonuses applied at inference to regressed raw values)",
+        "formula": (
+            "defensive_production + def_td_points + st_production "
+            "+ tier_pa(points_allowed) + tier_ya(yards_allowed)"
+        ),
         "specific_features": list(DST_SPECIFIC_FEATURES),
         "architecture": {
             "backbone": list(dst_cfg.DST_NN_BACKBONE_LAYERS),
@@ -356,6 +381,15 @@ def _apply_position_models(train, val, test, pos, results):
     def _combine_total(preds: dict) -> np.ndarray:
         if aggregate_fn is not None:
             return aggregate_fn(preds)
+        if pos == "DST":
+            # PA/YA are regressed on raw values; tier bonus applied at inference.
+            return (
+                preds["defensive_production"]
+                + preds["def_td_points"]
+                + preds["st_production"]
+                + np.vectorize(_pts_allowed_to_bonus)(preds["points_allowed"])
+                + np.vectorize(_yds_allowed_to_bonus)(preds["yards_allowed"])
+            )
         if target_signs is not None:
             # Per-target sign vector (e.g. K: [+1, +1, -1, -1]).
             total = sum(preds[t] * target_signs.get(t, 1.0) for t in targets)

@@ -3,22 +3,26 @@ import numpy as np
 import pandas as pd
 
 from src.config import CACHE_DIR, SEASONS
+from src.data.loader import load_team_week_stats
 
 
 def build_dst_data() -> pd.DataFrame:
-    """Build team-level D/ST data from schedule scores and player stats.
+    """Build team-level D/ST data from schedules, weekly stats, and team-week stats.
 
     Strategy:
       - Points allowed: from schedule game scores (complete for all teams/seasons)
       - Sacks forced: derived from opponent offensive sacks suffered (complete)
       - INTs forced: derived from opponent offensive INTs thrown (complete)
       - Fumble recoveries: derived from opponent fumbles lost (complete)
-      - Defensive TDs: from individual defensive player stats (partial; fill 0)
-      - Safeties: from individual defensive player stats (partial; fill 0)
+      - def_tds / def_safeties / def_fumbles_forced: from nflverse stats_team
+        (full history, much better fill than per-player aggregation)
+      - def_blocked_kicks: opponent's fg_blocked + pat_blocked from stats_team
+      - yards_allowed: opponent's passing_yards + rushing_yards from stats_team
       - Special teams TDs: from player stats per team (mostly complete)
     """
     weekly = pd.read_parquet(f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet")
     schedules = pd.read_parquet(f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
+    team_stats = load_team_week_stats(SEASONS)
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
 
     # --- 1. Points allowed from schedule scores ---
@@ -111,33 +115,35 @@ def build_dst_data() -> pd.DataFrame:
     )
     def_from_offense.columns = ["team", "season", "week", "def_sacks", "def_ints", "def_fumble_rec"]
 
-    # --- 5. Defensive TDs + safeties from individual defensive player stats ---
-    def_positions = [
-        "LB",
-        "CB",
-        "DE",
-        "SAF",
-        "DT",
-        "OLB",
-        "FS",
-        "MLB",
-        "NT",
-        "ILB",
-        "DB",
-        "DL",
-        "SS",
-        "S",
+    # --- 5. Defensive TDs, safeties, forced fumbles from team-week stats ---
+    # nflverse stats_team carries these directly for every team-week across
+    # the full history — avoids the fill gap that per-player aggregation hits
+    # pre-2025.
+    def_team_stats = team_stats[
+        ["team", "season", "week", "def_tds", "def_safeties", "def_fumbles_forced"]
+    ].copy()
+
+    # --- 5b. Opponent-derived columns from team_stats ---
+    # yards_allowed = opponent's passing_yards + rushing_yards
+    # def_blocked_kicks = opponent's fg_blocked + pat_blocked (we blocked them)
+    team_stats_aug = team_stats.copy()
+    team_stats_aug["_opp_yards"] = team_stats_aug["passing_yards"].fillna(0) + team_stats_aug[
+        "rushing_yards"
+    ].fillna(0)
+    team_stats_aug["_opp_blocked"] = team_stats_aug["fg_blocked"].fillna(0) + team_stats_aug[
+        "pat_blocked"
+    ].fillna(0)
+
+    # Merge opponent onto team_stats so we can derive current-team yards_allowed
+    # / def_blocked_kicks = what the opponent recorded in that game.
+    opp_side = team_stats_aug[["team", "season", "week", "_opp_yards", "_opp_blocked"]].copy()
+    opp_side.columns = [
+        "opponent_team",
+        "season",
+        "week",
+        "yards_allowed",
+        "def_blocked_kicks",
     ]
-    def_players = weekly[weekly["position"].isin(def_positions)].copy()
-    def_td_safety = (
-        def_players.groupby(["recent_team", "season", "week"])
-        .agg(
-            def_tds=("def_tds", "sum"),
-            def_safeties=("def_safeties", "sum"),
-        )
-        .reset_index()
-    )
-    def_td_safety.columns = ["team", "season", "week", "def_tds", "def_safeties"]
 
     # --- 6. Special teams TDs from all players on the team ---
     st_tds = (
@@ -254,7 +260,9 @@ def build_dst_data() -> pd.DataFrame:
     dst_df = dst_df.merge(context, on=["season", "week", "team"], how="left")
     dst_df = dst_df.merge(opp_map, on=["season", "week", "team"], how="left")
     dst_df = dst_df.merge(def_from_offense, on=["team", "season", "week"], how="left")
-    dst_df = dst_df.merge(def_td_safety, on=["team", "season", "week"], how="left")
+    dst_df = dst_df.merge(def_team_stats, on=["team", "season", "week"], how="left")
+    # yards_allowed + def_blocked_kicks are keyed on opponent_team
+    dst_df = dst_df.merge(opp_side, on=["opponent_team", "season", "week"], how="left")
     dst_df = dst_df.merge(st_tds, on=["team", "season", "week"], how="left")
 
     # Merge opponent offensive quality histories (scoring, turnovers, sacks allowed)
@@ -304,9 +312,14 @@ def build_dst_data() -> pd.DataFrame:
         "def_fumble_rec",
         "def_tds",
         "def_safeties",
+        "def_fumbles_forced",
+        "def_blocked_kicks",
         "special_teams_tds",
     ]:
         dst_df[col] = dst_df[col].fillna(0)
+    # yards_allowed defaults to 350 (roughly league-average) when missing so
+    # the tier mapping still lands in a reasonable band.
+    dst_df["yards_allowed"] = dst_df["yards_allowed"].fillna(350)
     for col in ["spread_line", "total_line"]:
         dst_df[col] = dst_df[col].fillna(dst_df[col].median())
     dst_df["is_home"] = dst_df["is_home"].fillna(0)

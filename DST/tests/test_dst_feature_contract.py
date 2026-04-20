@@ -135,8 +135,44 @@ class TestDSTFeatureContract:
     def test_compute_drops_temp_columns(self, tiny_dst_dataset):
         """``_dst_total_pts`` / ``_turnovers`` are scratch — must not leak."""
         df = _build_fixture(tiny_dst_dataset)
-        leaked = [c for c in df.columns if c.startswith("_") and c != "_dst_adjustment"]
+        leaked = [c for c in df.columns if c.startswith("_")]
         assert leaked == [], f"Temp columns leaked out of compute_dst_features: {leaked}"
+
+    @pytest.mark.parametrize(
+        "col",
+        [
+            "yards_allowed",
+            "def_fumbles_forced",
+            "def_blocked_kicks",
+            "def_tds",
+            "def_safeties",
+        ],
+    )
+    def test_raw_defensive_columns_nonnegative(self, tiny_dst_dataset, col):
+        """Upstream columns must be non-null and >= 0 across all seasons."""
+        df = _build_fixture(tiny_dst_dataset)
+        assert col in df.columns, f"expected {col} on the DST frame"
+        series = df[col]
+        assert series.isna().sum() == 0, f"{col} has nulls"
+        assert (series >= 0).all(), f"{col} has negative values"
+
+    @pytest.mark.parametrize(
+        "col",
+        [
+            "forced_fumbles_L3",
+            "blocked_kicks_L5",
+            "yards_allowed_L3",
+            "yards_allowed_L5",
+            "yards_allowed_ewma",
+        ],
+    )
+    def test_new_rolling_features_finite(self, tiny_dst_dataset, col):
+        """New rolling features (Unit 2) must be finite and non-null."""
+        df = _build_fixture(tiny_dst_dataset)
+        assert col in df.columns, f"{col} missing from DST frame"
+        series = df[col].astype(float)
+        assert series.isna().sum() == 0, f"{col} has nulls"
+        assert np.isfinite(series.to_numpy()).all(), f"{col} has non-finite values"
 
     def test_add_features_is_identity(self, tiny_dst_dataset):
         """``add_dst_specific_features`` is a no-op by design — assert invariant."""
@@ -177,7 +213,8 @@ class TestDSTFeatureContract:
     def test_feature_count_matches_documented_list(self):
         """Fencepost against accidental duplicates/omissions in config."""
         all_cols = get_dst_feature_columns()
-        # 16 specific + 17 contextual = 33 total
-        assert len(DST_SPECIFIC_FEATURES) == 16
+        # 21 specific + 17 contextual = 38 total after the Unit 2 refactor
+        # (added forced_fumbles_L3, blocked_kicks_L5, yards_allowed_L3/L5/ewma).
+        assert len(DST_SPECIFIC_FEATURES) == 21
         assert len(DST_CONTEXTUAL_FEATURES) == 17
-        assert len(all_cols) == 33
+        assert len(all_cols) == 38

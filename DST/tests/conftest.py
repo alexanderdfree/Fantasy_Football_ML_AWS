@@ -127,7 +127,10 @@ def make_df():
             "def_sacks": 3,
             "def_ints": 1,
             "def_fumble_rec": 1,
+            "def_fumbles_forced": 1,
+            "def_blocked_kicks": 0,
             "points_allowed": 17,
+            "yards_allowed": 330,
             "special_teams_tds": 0,
             "def_tds": 0,
             "def_safeties": 0,
@@ -149,7 +152,12 @@ def make_team_games():
         def_sacks: int = 3,
         def_ints: int = 1,
         def_fumble_rec: int = 1,
+        def_fumbles_forced: int = 1,
+        def_blocked_kicks: int = 0,
+        def_tds: int = 0,
+        def_safeties: int = 0,
         points_allowed: int = 17,
+        yards_allowed: int = 330,
         special_teams_tds: int = 0,
     ) -> pd.DataFrame:
         df = pd.DataFrame(
@@ -160,13 +168,29 @@ def make_team_games():
                 "def_sacks": [def_sacks] * n_weeks,
                 "def_ints": [def_ints] * n_weeks,
                 "def_fumble_rec": [def_fumble_rec] * n_weeks,
+                "def_fumbles_forced": [def_fumbles_forced] * n_weeks,
+                "def_blocked_kicks": [def_blocked_kicks] * n_weeks,
+                "def_tds": [def_tds] * n_weeks,
+                "def_safeties": [def_safeties] * n_weeks,
                 "points_allowed": [points_allowed] * n_weeks,
+                "yards_allowed": [yards_allowed] * n_weeks,
                 "special_teams_tds": [special_teams_tds] * n_weeks,
             }
         )
-        df["defensive_scoring"] = df["def_sacks"] + df["def_ints"] * 2 + df["def_fumble_rec"] * 2
-        df["td_points"] = df["special_teams_tds"] * 6
-        df["pts_allowed_bonus"] = 1  # placeholder (real tiering in compute_dst_targets)
+        df["defensive_production"] = (
+            df["def_sacks"]
+            + df["def_ints"] * 2
+            + df["def_fumble_rec"] * 2
+            + df["def_fumbles_forced"]
+            + df["def_safeties"] * 2
+        )
+        df["def_td_points"] = df["def_tds"] * 6
+        df["st_production"] = df["special_teams_tds"] * 6 + df["def_blocked_kicks"] * 2
+        # Placeholder fantasy_points — compute_dst_features reads this column
+        # for rolling aggregates. Real tier mapping lives in compute_dst_targets.
+        df["fantasy_points"] = (
+            df["defensive_production"] + df["def_td_points"] + df["st_production"]
+        )
         return df
 
     return _factory
@@ -250,11 +274,15 @@ def _build_tiny_dst_dataset(seed: int = 42) -> pd.DataFrame:
                         "def_sacks": int(rng.poisson(2.5)),
                         "def_ints": int(rng.poisson(0.8)),
                         "def_fumble_rec": int(rng.poisson(0.6)),
+                        "def_fumbles_forced": int(rng.poisson(1.0)),
+                        "def_blocked_kicks": int(rng.binomial(1, 0.1)),
                         "def_tds": int(rng.binomial(1, 0.05)),
                         "def_safeties": int(rng.binomial(1, 0.02)),
                         "special_teams_tds": int(rng.binomial(1, 0.04)),
                         # Points allowed — Poisson centered at 22
                         "points_allowed": int(max(0, rng.poisson(22))),
+                        # Yards allowed — Poisson centered at 350
+                        "yards_allowed": int(max(0, rng.poisson(350))),
                         # Context
                         "is_home": int(i % 2 == 0),
                         "is_dome": int(rng.binomial(1, 0.35)),
