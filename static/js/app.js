@@ -40,9 +40,13 @@ async function fetchJSON(url) {
 const COLORS = {
     ridge: "#3b82f6",
     nn: "#22c55e",
+    attn_nn: "#a855f7",
+    lgbm: "#f59e0b",
     actual: "#e8eaed",
     ridgeBg: "rgba(59, 130, 246, 0.2)",
     nnBg: "rgba(34, 197, 94, 0.2)",
+    attn_nnBg: "rgba(168, 85, 247, 0.2)",
+    lgbmBg: "rgba(245, 158, 11, 0.2)",
 };
 
 // ---------------------------------------------------------------------------
@@ -145,9 +149,11 @@ function setupSearch() {
 function setupModelToggle() {
     document.getElementById("model-display").addEventListener("change", e => {
         const val = e.target.value;
-        document.body.classList.remove("model-ridge", "model-nn");
+        document.body.classList.remove("model-ridge", "model-nn", "model-attn_nn", "model-lgbm");
         if (val === "ridge") document.body.classList.add("model-ridge");
         else if (val === "nn") document.body.classList.add("model-nn");
+        else if (val === "attn_nn") document.body.classList.add("model-attn_nn");
+        else if (val === "lgbm") document.body.classList.add("model-lgbm");
     });
 }
 
@@ -201,7 +207,7 @@ async function loadPredictions() {
         console.error("Failed to load predictions:", e);
         allPlayers = [];
         document.getElementById("predictions-body").innerHTML =
-            '<tr><td colspan="10" class="error-message">Failed to load predictions.</td></tr>';
+            '<tr><td colspan="14" class="error-message">Failed to load predictions.</td></tr>';
     } finally {
         container.classList.remove("loading");
     }
@@ -226,10 +232,14 @@ function renderTable() {
     const tbody = document.getElementById("predictions-body");
     tbody.innerHTML = page.map((p, i) => {
         const rank = start + i + 1;
-        const ridgeDelta = (p.ridge_pred != null && p.actual != null) ? (p.ridge_pred - p.actual).toFixed(1) : null;
-        const nnDelta = (p.nn_pred != null && p.actual != null) ? (p.nn_pred - p.actual).toFixed(1) : null;
-        const ridgeCls = ridgeDelta != null ? deltaClass(ridgeDelta) : "delta-neutral";
-        const nnCls = nnDelta != null ? deltaClass(nnDelta) : "delta-neutral";
+
+        const delta = (pred) => (pred != null && p.actual != null) ? (pred - p.actual).toFixed(1) : null;
+        const ridgeDelta = delta(p.ridge_pred);
+        const nnDelta = delta(p.nn_pred);
+        const attnDelta = delta(p.attn_nn_pred);
+        const lgbmDelta = delta(p.lgbm_pred);
+        const cls = (d) => d != null ? deltaClass(d) : "delta-neutral";
+
         const headshot = p.headshot
             ? `<img class="player-headshot" src="${escapeHtml(p.headshot)}" alt="" loading="lazy">`
             : `<div class="player-headshot"></div>`;
@@ -243,8 +253,12 @@ function renderTable() {
             <td class="col-actual"><strong>${fmt(p.actual)}</strong></td>
             <td class="col-pred ridge-col">${fmt(p.ridge_pred)}</td>
             <td class="col-pred nn-col">${fmt(p.nn_pred)}</td>
-            <td class="col-delta ridge-col ${ridgeCls}">${ridgeDelta != null ? fmtDelta(ridgeDelta) : "--"}</td>
-            <td class="col-delta nn-col ${nnCls}">${nnDelta != null ? fmtDelta(nnDelta) : "--"}</td>
+            <td class="col-pred attn-nn-col">${fmt(p.attn_nn_pred)}</td>
+            <td class="col-pred lgbm-col">${fmt(p.lgbm_pred)}</td>
+            <td class="col-delta ridge-col ${cls(ridgeDelta)}">${ridgeDelta != null ? fmtDelta(ridgeDelta) : "--"}</td>
+            <td class="col-delta nn-col ${cls(nnDelta)}">${nnDelta != null ? fmtDelta(nnDelta) : "--"}</td>
+            <td class="col-delta attn-nn-col ${cls(attnDelta)}">${attnDelta != null ? fmtDelta(attnDelta) : "--"}</td>
+            <td class="col-delta lgbm-col ${cls(lgbmDelta)}">${lgbmDelta != null ? fmtDelta(lgbmDelta) : "--"}</td>
         </tr>`;
     }).join("");
 
@@ -322,6 +336,8 @@ async function loadStandings() {
                 <td class="col-actual"><strong>${fmt(p.avg_actual)}</strong></td>
                 <td class="col-pred">${fmt(p.avg_ridge)}</td>
                 <td class="col-pred">${fmt(p.avg_nn)}</td>
+                <td class="col-pred">${fmt(p.avg_attn_nn)}</td>
+                <td class="col-pred">${fmt(p.avg_lgbm)}</td>
             </tr>
         `).join("");
 
@@ -331,7 +347,7 @@ async function loadStandings() {
     } catch (e) {
         console.error("Failed to load standings:", e);
         document.getElementById("standings-body").innerHTML =
-            '<tr><td colspan="8" class="error-message">Failed to load standings.</td></tr>';
+            '<tr><td colspan="10" class="error-message">Failed to load standings.</td></tr>';
     } finally {
         container.classList.remove("loading");
     }
@@ -349,22 +365,28 @@ async function loadMetrics() {
         ]);
         positionDetailsData = posDetails;
 
-        // Overall metrics cards
-        const ridge = metrics["Ridge Regression"];
-        const nn = metrics["Neural Network"];
-        document.getElementById("ridge-mae").textContent = ridge.overall.mae.toFixed(3);
-        document.getElementById("ridge-rmse").textContent = ridge.overall.rmse.toFixed(3);
-        document.getElementById("ridge-r2").textContent = ridge.overall.r2.toFixed(3);
-        document.getElementById("nn-mae").textContent = nn.overall.mae.toFixed(3);
-        document.getElementById("nn-rmse").textContent = nn.overall.rmse.toFixed(3);
-        document.getElementById("nn-r2").textContent = nn.overall.r2.toFixed(3);
+        // Overall metrics cards — populate each from its model entry, gracefully
+        // falling back to "--" when a model has no overall (e.g. only K/DST rows).
+        const cards = [
+            { key: "Ridge Regression", prefix: "ridge" },
+            { key: "Neural Network", prefix: "nn" },
+            { key: "Attention NN", prefix: "attn-nn" },
+            { key: "LightGBM", prefix: "lgbm" },
+        ];
+        for (const { key, prefix } of cards) {
+            const m = metrics[key];
+            const overall = m && m.overall;
+            document.getElementById(`${prefix}-mae`).textContent = overall ? overall.mae.toFixed(3) : "--";
+            document.getElementById(`${prefix}-rmse`).textContent = overall ? overall.rmse.toFixed(3) : "--";
+            document.getElementById(`${prefix}-r2`).textContent = overall ? overall.r2.toFixed(3) : "--";
+        }
 
         // Position model breakdown
         setupPerfPositionFilter();
         renderPositionModelDetail(getActivePosition("perf-position-filter"));
 
-        // Position charts
-        renderPositionCharts(ridge.by_position, nn.by_position);
+        // Position charts — pass the full metrics object so charts can render up to 4 series
+        renderPositionCharts(metrics);
 
         // Weekly MAE chart
         renderWeeklyChart(weekly);
@@ -393,23 +415,30 @@ function renderPositionModelDetail(pos) {
     const d = positionDetailsData[pos];
     const tm = d.target_metrics || {};
 
-    // Target decomposition rows
+    const maeCell = (v) => v != null ? v.toFixed(2) : '--';
+
+    // Target decomposition rows — 4 MAE columns, "--" where a model isn't available (K/DST)
     const targetRows = (d.targets || []).map(t => {
         const m = tm[t.key] || {};
         return `<tr>
             <td class="tm-name">${t.label}</td>
             <td class="tm-formula">${t.formula}</td>
-            <td class="tm-val">${m.ridge_mae != null ? m.ridge_mae.toFixed(2) : '--'}</td>
-            <td class="tm-val">${m.nn_mae != null ? m.nn_mae.toFixed(2) : '--'}</td>
+            <td class="tm-val">${maeCell(m.ridge_mae)}</td>
+            <td class="tm-val">${maeCell(m.nn_mae)}</td>
+            <td class="tm-val">${maeCell(m.attn_nn_mae)}</td>
+            <td class="tm-val">${maeCell(m.lgbm_mae)}</td>
         </tr>`;
     }).join("");
 
     const totalM = tm["total"] || {};
+    const totalCell = (v) => v != null ? `<strong>${v.toFixed(2)}</strong>` : '<strong>--</strong>';
     const totalRow = `<tr class="tm-total-row">
         <td class="tm-name"><strong>Total (with adjustments)</strong></td>
         <td class="tm-formula">${d.adjustments || ''}</td>
-        <td class="tm-val"><strong>${totalM.ridge_mae != null ? totalM.ridge_mae.toFixed(2) : '--'}</strong></td>
-        <td class="tm-val"><strong>${totalM.nn_mae != null ? totalM.nn_mae.toFixed(2) : '--'}</strong></td>
+        <td class="tm-val">${totalCell(totalM.ridge_mae)}</td>
+        <td class="tm-val">${totalCell(totalM.nn_mae)}</td>
+        <td class="tm-val">${totalCell(totalM.attn_nn_mae)}</td>
+        <td class="tm-val">${totalCell(totalM.lgbm_mae)}</td>
     </tr>`;
 
     // Feature badges
@@ -438,6 +467,8 @@ function renderPositionModelDetail(pos) {
                             <th>Formula</th>
                             <th>Ridge MAE</th>
                             <th>NN MAE</th>
+                            <th>Attn NN MAE</th>
+                            <th>LGBM MAE</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -456,21 +487,37 @@ function renderPositionModelDetail(pos) {
     `;
 }
 
-function renderPositionCharts(ridgePos, nnPos) {
-    const positions = ridgePos.map(p => p.position);
-    const ridgeMAE = ridgePos.map(p => p.mae);
-    const nnMAE = nnPos.map(p => p.mae);
-    const ridgeR2 = ridgePos.map(p => p.r2);
-    const nnR2 = nnPos.map(p => p.r2);
+function renderPositionCharts(metrics) {
+    // Collect every position that appears in any model's by_position — union so
+    // charts render the full set even if one model is missing a row.
+    const positionsSet = new Set();
+    const modelSeries = [
+        { key: "Ridge Regression", label: "Ridge", color: COLORS.ridge, bg: COLORS.ridgeBg },
+        { key: "Neural Network", label: "Neural Net", color: COLORS.nn, bg: COLORS.nnBg },
+        { key: "Attention NN", label: "Attention NN", color: COLORS.attn_nn, bg: COLORS.attn_nnBg },
+        { key: "LightGBM", label: "LightGBM", color: COLORS.lgbm, bg: COLORS.lgbmBg },
+    ];
+    for (const { key } of modelSeries) {
+        const m = metrics[key];
+        if (!m || !m.by_position) continue;
+        m.by_position.forEach(p => positionsSet.add(p.position));
+    }
+    const positions = ["QB", "RB", "WR", "TE", "K", "DST"].filter(p => positionsSet.has(p));
 
-    const maeDatasets = [
-        { label: "Ridge", data: ridgeMAE, backgroundColor: COLORS.ridgeBg, borderColor: COLORS.ridge, borderWidth: 1.5 },
-        { label: "Neural Net", data: nnMAE, backgroundColor: COLORS.nnBg, borderColor: COLORS.nn, borderWidth: 1.5 },
-    ];
-    const r2Datasets = [
-        { label: "Ridge", data: ridgeR2, backgroundColor: COLORS.ridgeBg, borderColor: COLORS.ridge, borderWidth: 1.5 },
-        { label: "Neural Net", data: nnR2, backgroundColor: COLORS.nnBg, borderColor: COLORS.nn, borderWidth: 1.5 },
-    ];
+    const buildDataset = (metricName) => modelSeries
+        .map(({ key, label, color, bg }) => {
+            const m = metrics[key];
+            if (!m || !m.by_position || m.by_position.length === 0) return null;
+            const byPos = Object.fromEntries(m.by_position.map(p => [p.position, p]));
+            // null entries let Chart.js leave gaps where this model has no
+            // prediction for that position (e.g. LightGBM for K/DST).
+            const data = positions.map(p => byPos[p] != null ? byPos[p][metricName] : null);
+            return { label, data, backgroundColor: bg, borderColor: color, borderWidth: 1.5 };
+        })
+        .filter(Boolean);
+
+    const maeDatasets = buildDataset("mae");
+    const r2Datasets = buildDataset("r2");
     if (positionMaeChart) positionMaeChart.destroy();
     positionMaeChart = new Chart(document.getElementById("position-mae-chart"), {
         type: "bar",
@@ -496,28 +543,25 @@ function renderPositionCharts(ridgePos, nnPos) {
 
 function renderWeeklyChart(weekly) {
     if (weeklyMaeChart) weeklyMaeChart.destroy();
-    const datasets = [
-        {
-            label: "Ridge MAE",
-            data: weekly.ridge_mae,
-            borderColor: COLORS.ridge,
-            backgroundColor: COLORS.ridgeBg,
-            fill: true,
-            tension: 0.3,
-            pointRadius: 4,
-            pointHoverRadius: 6,
-        },
-        {
-            label: "Neural Net MAE",
-            data: weekly.nn_mae,
-            borderColor: COLORS.nn,
-            backgroundColor: COLORS.nnBg,
-            fill: true,
-            tension: 0.3,
-            pointRadius: 4,
-            pointHoverRadius: 6,
-        },
+    const series = [
+        { label: "Ridge MAE", data: weekly.ridge_mae, color: COLORS.ridge, bg: COLORS.ridgeBg },
+        { label: "Neural Net MAE", data: weekly.nn_mae, color: COLORS.nn, bg: COLORS.nnBg },
+        { label: "Attention NN MAE", data: weekly.attn_nn_mae, color: COLORS.attn_nn, bg: COLORS.attn_nnBg },
+        { label: "LightGBM MAE", data: weekly.lgbm_mae, color: COLORS.lgbm, bg: COLORS.lgbmBg },
     ];
+    const datasets = series
+        .filter(s => Array.isArray(s.data) && s.data.some(v => v != null))
+        .map(s => ({
+            label: s.label,
+            data: s.data,
+            borderColor: s.color,
+            backgroundColor: s.bg,
+            fill: false,
+            tension: 0.3,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            spanGaps: true,
+        }));
     weeklyMaeChart = new Chart(document.getElementById("weekly-mae-chart"), {
         type: "line",
         data: { labels: weekly.weeks.map(w => `Wk ${w}`), datasets },
@@ -565,16 +609,33 @@ async function openPlayerModal(playerId) {
             img.style.display = "none";
         }
 
-        // Chart
+        // Chart — Actual plus up to 4 predictions (null entries where a model isn't available)
         const weeks = data.weekly.map(w => `Wk ${w.week}`);
         const actual = data.weekly.map(w => w.actual);
-        const ridge = data.weekly.map(w => w.ridge_pred);
-        const nn = data.weekly.map(w => w.nn_pred);
+        const predSeries = [
+            { label: "Ridge Pred", key: "ridge_pred", color: COLORS.ridge },
+            { label: "NN Pred", key: "nn_pred", color: COLORS.nn },
+            { label: "Attn NN Pred", key: "attn_nn_pred", color: COLORS.attn_nn },
+            { label: "LGBM Pred", key: "lgbm_pred", color: COLORS.lgbm },
+        ];
         const chartDatasets = [
             { label: "Actual", data: actual, borderColor: COLORS.actual, borderWidth: 2.5, tension: 0.3, pointRadius: 5, pointHoverRadius: 7 },
-            { label: "Ridge Pred", data: ridge, borderColor: COLORS.ridge, borderWidth: 2, borderDash: [6, 3], tension: 0.3, pointRadius: 4 },
-            { label: "NN Pred", data: nn, borderColor: COLORS.nn, borderWidth: 2, borderDash: [6, 3], tension: 0.3, pointRadius: 4 },
         ];
+        for (const { label, key, color } of predSeries) {
+            const series = data.weekly.map(w => w[key] != null ? w[key] : null);
+            if (series.some(v => v != null)) {
+                chartDatasets.push({
+                    label,
+                    data: series,
+                    borderColor: color,
+                    borderWidth: 2,
+                    borderDash: [6, 3],
+                    tension: 0.3,
+                    pointRadius: 4,
+                    spanGaps: true,
+                });
+            }
+        }
 
         if (playerChart) playerChart.destroy();
         playerChart = new Chart(document.getElementById("player-chart"), {

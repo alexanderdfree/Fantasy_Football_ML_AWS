@@ -38,14 +38,20 @@ from K.k_data import kicker_season_split, load_kicker_data
 from K.k_features import compute_k_features
 from QB.qb_config import QB_SPECIFIC_FEATURES, QB_TARGETS
 from RB.rb_config import RB_SPECIFIC_FEATURES, RB_TARGETS
+from shared.artifact_integrity import (
+    assert_scaler_matches,
+    read_scaler_meta,
+    unwrap_state_dict,
+)
 from shared.model_sync import sync_models_from_s3
-from shared.models import RidgeMultiTarget
-from shared.neural_net import MultiHeadNet
+from shared.models import LightGBMMultiTarget, RidgeMultiTarget
+from shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory
 from shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
 from shared.weather_features import WEATHER_FEATURES_ALL, merge_schedule_features
 from src.config import SCORING_HALF_PPR, SCORING_STANDARD, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 from src.data.loader import compute_fantasy_points
 from src.evaluation.metrics import compute_metrics, compute_positional_metrics
+from src.features.engineer import build_game_history_arrays, get_attn_static_columns
 from TE.te_config import TE_SPECIFIC_FEATURES, TE_TARGETS
 from WR.wr_config import WR_SPECIFIC_FEATURES, WR_TARGETS
 
@@ -87,6 +93,8 @@ _PLAYER_ROW_COLS = [
     "fantasy_points",
     "ridge_pred",
     "nn_pred",
+    "attn_nn_pred",
+    "lgbm_pred",
     "headshot_url",
 ]
 
@@ -103,6 +111,8 @@ def _records_to_player_rows(df):
             "actual": _safe_num(round(r["fantasy_points"], 2)),
             "ridge_pred": _safe_num(r.get("ridge_pred")),
             "nn_pred": _safe_num(r.get("nn_pred")),
+            "attn_nn_pred": _safe_num(r.get("attn_nn_pred")),
+            "lgbm_pred": _safe_num(r.get("lgbm_pred")),
             "headshot": _safe_str(r.get("headshot_url", "")),
         }
         for r in df[cols].to_dict(orient="records")
@@ -307,38 +317,110 @@ def _apply_position_models(train, val, test, pos, results):
         df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)
+    adj_values = adj.values
 
     # Ridge predictions — load failures propagate; global handler returns JSON 500.
     try:
         ridge = RidgeMultiTarget(target_names=targets)
         ridge.load(model_dir)
         ridge_preds = ridge.predict(X_test_pos)
-        ridge_total = sum(ridge_preds[t] for t in targets) + adj.values
+        ridge_total = sum(ridge_preds[t] for t in targets) + adj_values
     except Exception as e:
         _cache.setdefault("position_load_errors", {})[f"{pos}_ridge"] = str(e)
         raise
 
-    # NN predictions
+    # NN predictions — integrity-check scaler+weights before running inference.
     try:
         nn_scaler = joblib.load(f"{model_dir}/nn_scaler.pkl")
-        X_test_scaled = np.clip(nn_scaler.transform(X_test_pos), -4, 4)
+        nn_meta = read_scaler_meta(f"{model_dir}/nn_scaler_meta.json")
+        nn_checkpoint = torch.load(
+            f"{model_dir}/{reg['nn_file']}", map_location=device, weights_only=True
+        )
+        nn_state_dict, nn_hash = unwrap_state_dict(nn_checkpoint)
+        assert_scaler_matches(
+            pos, nn_scaler, nn_hash, nn_meta, feature_cols, targets,
+            scaler_label="nn_scaler",
+        )
 
+        X_test_scaled = np.clip(nn_scaler.transform(X_test_pos), -4, 4)
         nn_model = MultiHeadNet(
             input_dim=len(feature_cols), target_names=targets, **reg["nn_kwargs"]
         ).to(device)
-        nn_model.load_state_dict(
-            torch.load(f"{model_dir}/{reg['nn_file']}", map_location=device, weights_only=True)
-        )
+        nn_model.load_state_dict(nn_state_dict)
         nn_preds = nn_model.predict_numpy(X_test_scaled, device)
-        nn_total = sum(nn_preds[t] for t in targets) + adj.values
+        nn_total = sum(nn_preds[t] for t in targets) + adj_values
     except Exception as e:
         _cache.setdefault("position_load_errors", {})[f"{pos}_nn"] = str(e)
         raise
+
+    # Attention NN — only trained for QB/RB/WR/TE. For positions where it isn't
+    # available (K/DST), leave the column as NaN so the frontend renders "--".
+    attn_nn_preds = None
+    attn_nn_total = None
+    if reg.get("train_attention_nn", False) and reg.get("attn_nn_file"):
+        try:
+            attn_static_cols = get_attn_static_columns(feature_cols)
+            attn_col_idx = [i for i, c in enumerate(feature_cols) if c in set(attn_static_cols)]
+            X_test_attn = X_test_pos[:, attn_col_idx]
+
+            attn_scaler = joblib.load(f"{model_dir}/attention_nn_scaler.pkl")
+            attn_meta = read_scaler_meta(f"{model_dir}/attention_nn_scaler_meta.json")
+            attn_checkpoint = torch.load(
+                f"{model_dir}/{reg['attn_nn_file']}",
+                map_location=device,
+                weights_only=True,
+            )
+            attn_state_dict, attn_hash = unwrap_state_dict(attn_checkpoint)
+            assert_scaler_matches(
+                pos, attn_scaler, attn_hash, attn_meta, attn_static_cols, targets,
+                scaler_label="attention_nn_scaler",
+            )
+
+            X_test_attn_scaled = np.clip(attn_scaler.transform(X_test_attn), -4, 4)
+
+            hist_stats = [s for s in reg.get("attn_history_stats", []) if s in pos_test.columns]
+            max_seq_len = reg.get("attn_max_seq_len", 17)
+            hist_test, mask_test = build_game_history_arrays(
+                pos_test, history_stats=hist_stats, max_seq_len=max_seq_len
+            )
+
+            attn_model = MultiHeadNetWithHistory(
+                static_dim=len(attn_static_cols),
+                game_dim=hist_test.shape[2],
+                target_names=targets,
+                **reg["attn_nn_kwargs_static"],
+            ).to(device)
+            attn_model.load_state_dict(attn_state_dict)
+            attn_nn_preds = attn_model.predict_numpy(
+                X_test_attn_scaled, hist_test, mask_test, device
+            )
+            attn_nn_total = sum(attn_nn_preds[t] for t in targets) + adj_values
+        except Exception as e:
+            _cache.setdefault("position_load_errors", {})[f"{pos}_attn_nn"] = str(e)
+            raise
+
+    # LightGBM — only trained for QB/RB/WR/TE. Same no-column-emitted policy for
+    # K/DST as Attention NN.
+    lgbm_preds = None
+    lgbm_total = None
+    if reg.get("train_lightgbm", False):
+        try:
+            lgbm_model = LightGBMMultiTarget(target_names=targets)
+            lgbm_model.load(model_dir)
+            lgbm_preds = lgbm_model.predict(X_test_pos)
+            lgbm_total = sum(lgbm_preds[t] for t in targets) + adj_values
+        except Exception as e:
+            _cache.setdefault("position_load_errors", {})[f"{pos}_lgbm"] = str(e)
+            raise
 
     # Write into results
     pos_index = pos_test.index
     results.loc[pos_index, "ridge_pred"] = np.round(ridge_total, 2).astype(np.float32)
     results.loc[pos_index, "nn_pred"] = np.round(nn_total, 2).astype(np.float32)
+    if attn_nn_total is not None:
+        results.loc[pos_index, "attn_nn_pred"] = np.round(attn_nn_total, 2).astype(np.float32)
+    if lgbm_total is not None:
+        results.loc[pos_index, "lgbm_pred"] = np.round(lgbm_total, 2).astype(np.float32)
 
     # Cache per-target metrics for /api/position_details
     target_metrics = {}
@@ -349,12 +431,28 @@ def _apply_position_models(train, val, test, pos, results):
                 "ridge_mae": round(float(np.mean(np.abs(ridge_preds[t] - actual_t))), 3),
                 "nn_mae": round(float(np.mean(np.abs(nn_preds[t] - actual_t))), 3),
             }
+            if attn_nn_preds is not None and t in attn_nn_preds:
+                tm["attn_nn_mae"] = round(
+                    float(np.mean(np.abs(attn_nn_preds[t] - actual_t))), 3
+                )
+            if lgbm_preds is not None and t in lgbm_preds:
+                tm["lgbm_mae"] = round(
+                    float(np.mean(np.abs(lgbm_preds[t] - actual_t))), 3
+                )
             target_metrics[t] = tm
     total_actual = pos_test["fantasy_points"].values
     total_tm = {
         "ridge_mae": round(float(np.mean(np.abs(ridge_total - total_actual))), 3),
         "nn_mae": round(float(np.mean(np.abs(nn_total - total_actual))), 3),
     }
+    if attn_nn_total is not None:
+        total_tm["attn_nn_mae"] = round(
+            float(np.mean(np.abs(attn_nn_total - total_actual))), 3
+        )
+    if lgbm_total is not None:
+        total_tm["lgbm_mae"] = round(
+            float(np.mean(np.abs(lgbm_total - total_actual))), 3
+        )
     target_metrics["total"] = total_tm
     _cache.setdefault("position_details", {})[pos] = {
         "n_features": len(feature_cols),
@@ -424,6 +522,11 @@ def _ensure_base_data():
 
     results["ridge_pred"] = 0.0
     results["nn_pred"] = 0.0
+    # NaN for attn_nn/lgbm — not every position has them (K/DST), so leaving
+    # missing rows unset lets _ensure_metrics exclude them from per-model
+    # overall MAE instead of dragging it toward zero.
+    results["attn_nn_pred"] = np.nan
+    results["lgbm_pred"] = np.nan
 
     _cache["splits"] = {
         "QB": (train, val, test),
@@ -456,19 +559,33 @@ def _ensure_all_positions_loaded():
         _ensure_position_loaded(pos)
 
 
+_MODEL_PRED_COLUMNS = [
+    ("Ridge Regression", "ridge_pred"),
+    ("Neural Network", "nn_pred"),
+    ("Attention NN", "attn_nn_pred"),
+    ("LightGBM", "lgbm_pred"),
+]
+
+
 def _ensure_metrics():
     if "metrics" in _cache:
         return
     _ensure_all_positions_loaded()
     results = _cache["results"]
-    y_all = results["fantasy_points"].values
     metrics = {}
-    for name, pred_col in [("Ridge Regression", "ridge_pred"), ("Neural Network", "nn_pred")]:
-        preds_full = results[pred_col].fillna(0).values
-        overall = compute_metrics(y_all, preds_full)
-        pos_df = results[["position"]].copy()
-        pos_df["pred"] = preds_full
-        pos_df["actual"] = y_all
+    for name, pred_col in _MODEL_PRED_COLUMNS:
+        pred_series = results[pred_col]
+        # Skip rows where this model has no prediction (K/DST for attn/lgbm).
+        available_mask = pred_series.notna().values
+        if not available_mask.any():
+            metrics[name] = {"overall": None, "by_position": []}
+            continue
+        y_avail = results["fantasy_points"].values[available_mask]
+        preds_avail = pred_series.values[available_mask]
+        overall = compute_metrics(y_avail, preds_avail)
+        pos_df = results.loc[available_mask, ["position"]].copy()
+        pos_df["pred"] = preds_avail
+        pos_df["actual"] = y_avail
         pos_metrics = compute_positional_metrics(pos_df, "pred", "actual")
         metrics[name] = {
             "overall": {k: round(v, 4) for k, v in overall.items()},
@@ -520,7 +637,7 @@ def api_predictions():
     rows = _records_to_player_rows(df)
 
     reverse = order == "desc"
-    if sort_by in ("actual", "ridge_pred", "nn_pred", "week"):
+    if sort_by in ("actual", "ridge_pred", "nn_pred", "attn_nn_pred", "lgbm_pred", "week"):
         rows.sort(key=lambda x: x.get(sort_by) or 0, reverse=reverse)
     else:
         rows.sort(key=lambda x: x.get("actual") or 0, reverse=reverse)
@@ -554,14 +671,18 @@ def api_player(player_id):
     df = results[results["player_id"] == player_id].sort_values("week")
 
     info = df.iloc[0]
+    weekly_cols = ["week", "fantasy_points", "ridge_pred", "nn_pred", "attn_nn_pred", "lgbm_pred"]
+    weekly_cols = [c for c in weekly_cols if c in df.columns]
     weekly = [
         {
             "week": int(r["week"]),
             "actual": _safe_num(round(r["fantasy_points"], 2)),
-            "ridge_pred": _safe_num(r["ridge_pred"]),
-            "nn_pred": _safe_num(r["nn_pred"]),
+            "ridge_pred": _safe_num(r.get("ridge_pred")),
+            "nn_pred": _safe_num(r.get("nn_pred")),
+            "attn_nn_pred": _safe_num(r.get("attn_nn_pred")),
+            "lgbm_pred": _safe_num(r.get("lgbm_pred")),
         }
-        for r in df[["week", "fantasy_points", "ridge_pred", "nn_pred"]].to_dict(orient="records")
+        for r in df[weekly_cols].to_dict(orient="records")
     ]
 
     return jsonify(
@@ -594,6 +715,8 @@ def api_top_players():
         "avg_actual": ("fantasy_points", "mean"),
         "avg_ridge": ("ridge_pred", "mean"),
         "avg_nn": ("nn_pred", "mean"),
+        "avg_attn_nn": ("attn_nn_pred", "mean"),
+        "avg_lgbm": ("lgbm_pred", "mean"),
         "games": ("week", "count"),
     }
     avg = (
@@ -606,6 +729,9 @@ def api_top_players():
     avg = avg[avg["games"] >= 6]
     avg = avg.sort_values("avg_actual", ascending=False).head(25)
 
+    def _round_or_none(v):
+        return _safe_num(round(v, 2)) if v == v else None  # NaN-safe
+
     rows = [
         {
             "player_id": _safe_str(r["player_id"]),
@@ -615,6 +741,8 @@ def api_top_players():
             "avg_actual": _safe_num(round(r["avg_actual"], 2)),
             "avg_ridge": _safe_num(round(r["avg_ridge"], 2)),
             "avg_nn": _safe_num(round(r["avg_nn"], 2)),
+            "avg_attn_nn": _round_or_none(r["avg_attn_nn"]),
+            "avg_lgbm": _round_or_none(r["avg_lgbm"]),
             "games": int(r["games"]),
         }
         for r in avg.to_dict(orient="records")
@@ -627,21 +755,37 @@ def api_top_players():
 def api_weekly_accuracy():
     results, _ = _get_data()
     actual = results["fantasy_points"].values
+    # Per-row abs error; NaN where a model has no prediction (K/DST attn/lgbm)
+    # so groupby.mean() excludes those rows from that model's weekly MAE.
+    err_df = results.assign(
+        _ridge_err=np.abs(actual - results["ridge_pred"].values),
+        _nn_err=np.abs(actual - results["nn_pred"].values),
+        _attn_nn_err=np.abs(actual - results["attn_nn_pred"].values),
+        _lgbm_err=np.abs(actual - results["lgbm_pred"].values),
+    )
     weekly = (
-        results.assign(
-            _ridge_err=np.abs(actual - results["ridge_pred"].values),
-            _nn_err=np.abs(actual - results["nn_pred"].values),
+        err_df.groupby("week")
+        .agg(
+            ridge_mae=("_ridge_err", "mean"),
+            nn_mae=("_nn_err", "mean"),
+            attn_nn_mae=("_attn_nn_err", "mean"),
+            lgbm_mae=("_lgbm_err", "mean"),
         )
-        .groupby("week")
-        .agg(ridge_mae=("_ridge_err", "mean"), nn_mae=("_nn_err", "mean"))
         .round(3)
         .sort_index()
     )
+
+    def _series_to_list(s):
+        # Convert pandas Series with NaN -> list with None so jsonify works.
+        return [None if pd.isna(v) else float(v) for v in s]
+
     return jsonify(
         {
             "weeks": [int(w) for w in weekly.index],
-            "ridge_mae": weekly["ridge_mae"].tolist(),
-            "nn_mae": weekly["nn_mae"].tolist(),
+            "ridge_mae": _series_to_list(weekly["ridge_mae"]),
+            "nn_mae": _series_to_list(weekly["nn_mae"]),
+            "attn_nn_mae": _series_to_list(weekly["attn_nn_mae"]),
+            "lgbm_mae": _series_to_list(weekly["lgbm_mae"]),
         }
     )
 

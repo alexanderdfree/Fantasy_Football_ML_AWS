@@ -16,6 +16,10 @@ from sklearn.preprocessing import StandardScaler
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from shared.artifact_integrity import (
+    wrap_state_dict,
+    write_scaler_meta,
+)
 from shared.backtest import plot_weekly_accuracy, run_weekly_simulation
 from shared.evaluation import (
     compute_ranking_metrics,
@@ -797,12 +801,27 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     os.makedirs(f"{output_dir}/figures", exist_ok=True)
 
     ridge_model.save(f"{output_dir}/models")
-    torch.save(model.state_dict(), f"{output_dir}/models/{pos_lower}_multihead_nn.pt")
+    torch.save(
+        wrap_state_dict(model.state_dict(), feature_cols, targets),
+        f"{output_dir}/models/{pos_lower}_multihead_nn.pt",
+    )
     joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
+    write_scaler_meta(
+        f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets
+    )
 
     if attn_model is not None:
-        torch.save(attn_model.state_dict(), f"{output_dir}/models/{pos_lower}_attention_nn.pt")
+        attn_static_cols = get_attn_static_columns(feature_cols)
+        torch.save(
+            wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
+            f"{output_dir}/models/{pos_lower}_attention_nn.pt",
+        )
         joblib.dump(attn_nn_scaler, f"{output_dir}/models/attention_nn_scaler.pkl")
+        write_scaler_meta(
+            f"{output_dir}/models/attention_nn_scaler_meta.json",
+            attn_static_cols,
+            targets,
+        )
 
     if lgbm_model is not None:
         lgbm_model.save(f"{output_dir}/models")
@@ -1205,8 +1224,14 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     os.makedirs(f"{output_dir}/figures", exist_ok=True)
 
     ridge_model.save(f"{output_dir}/models")
-    torch.save(model.state_dict(), f"{output_dir}/models/{pos_lower}_multihead_nn.pt")
+    torch.save(
+        wrap_state_dict(model.state_dict(), feature_cols, targets),
+        f"{output_dir}/models/{pos_lower}_multihead_nn.pt",
+    )
     joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
+    write_scaler_meta(
+        f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets
+    )
 
     if lgbm_model is not None:
         lgbm_model.save(f"{output_dir}/models")

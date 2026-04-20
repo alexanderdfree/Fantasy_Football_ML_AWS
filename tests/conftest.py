@@ -60,6 +60,10 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
         for i in range(n_per_position):
             for week in (1, 2, 3, 4, 5, 6, 7):
                 actual = float(rng.uniform(5, 30))
+                # Attention NN and LightGBM aren't trained for K/DST, so those
+                # rows mirror production by leaving the cells NaN.
+                attn_pred = float(actual + rng.normal(0, 2)) if pos not in ("K", "DST") else np.nan
+                lgbm_pred = float(actual + rng.normal(0, 2)) if pos not in ("K", "DST") else np.nan
                 rows.append(
                     {
                         "player_id": f"{pos}{i:03d}",
@@ -75,6 +79,8 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                         "fantasy_points_floor": actual * 0.8,
                         "ridge_pred": float(actual + rng.normal(0, 2)),
                         "nn_pred": float(actual + rng.normal(0, 2)),
+                        "attn_nn_pred": attn_pred,
+                        "lgbm_pred": lgbm_pred,
                     }
                 )
     return pd.DataFrame(rows)
@@ -95,6 +101,20 @@ def _synthetic_metrics() -> dict:
             "by_position": [
                 {"position": "QB", "mae": 4.9, "rmse": 6.8, "n": 100},
                 {"position": "RB", "mae": 4.0, "rmse": 5.6, "n": 200},
+            ],
+        },
+        "Attention NN": {
+            "overall": {"mae": 3.95, "rmse": 5.75, "r2": 0.50},
+            "by_position": [
+                {"position": "QB", "mae": 4.8, "rmse": 6.7, "n": 100},
+                {"position": "RB", "mae": 3.9, "rmse": 5.5, "n": 200},
+            ],
+        },
+        "LightGBM": {
+            "overall": {"mae": 4.00, "rmse": 5.80, "r2": 0.49},
+            "by_position": [
+                {"position": "QB", "mae": 4.85, "rmse": 6.75, "n": 100},
+                {"position": "RB", "mae": 3.95, "rmse": 5.55, "n": 200},
             ],
         },
     }

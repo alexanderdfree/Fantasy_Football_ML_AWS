@@ -227,12 +227,13 @@ class TestAuxiliaryEndpoints:
         r = client_with_data.get("/api/weekly_accuracy")
         assert r.status_code == 200
         body = r.get_json()
-        assert set(body) == {"weeks", "ridge_mae", "nn_mae"}
+        assert set(body) == {"weeks", "ridge_mae", "nn_mae", "attn_nn_mae", "lgbm_mae"}
         n = len(body["weeks"])
-        assert len(body["ridge_mae"]) == n
-        assert len(body["nn_mae"]) == n
-        assert all(mae >= 0 for mae in body["ridge_mae"])
-        assert all(mae >= 0 for mae in body["nn_mae"])
+        for key in ("ridge_mae", "nn_mae", "attn_nn_mae", "lgbm_mae"):
+            assert len(body[key]) == n, f"{key} length {len(body[key])} != weeks length {n}"
+            # Attn NN / LightGBM can contain None for weeks where no rows had
+            # a prediction (e.g. all K/DST) — skip those when checking sign.
+            assert all(mae is None or mae >= 0 for mae in body[key])
 
 
 # ===========================================================================

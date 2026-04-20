@@ -74,6 +74,8 @@
                             <option value="all">All Models</option>
                             <option value="ridge">Ridge Regression</option>
                             <option value="nn">Neural Network</option>
+                            <option value="attn_nn">Attention NN</option>
+                            <option value="lgbm">LightGBM</option>
                         </select>
                     </div>
                     <div class="filter-meta">
@@ -107,8 +109,16 @@
                             <th class="col-pred sortable nn-col" data-sort="nn_pred">
                                 NN <span class="sort-arrow"></span>
                             </th>
+                            <th class="col-pred sortable attn-nn-col" data-sort="attn_nn_pred">
+                                Attn NN <span class="sort-arrow"></span>
+                            </th>
+                            <th class="col-pred sortable lgbm-col" data-sort="lgbm_pred">
+                                LGBM <span class="sort-arrow"></span>
+                            </th>
                             <th class="col-delta ridge-col">Ridge Err</th>
                             <th class="col-delta nn-col">NN Err</th>
+                            <th class="col-delta attn-nn-col">Attn Err</th>
+                            <th class="col-delta lgbm-col">LGBM Err</th>
                         </tr>
                     </thead>
                     <tbody id="predictions-body">
@@ -148,6 +158,8 @@
                             <th class="col-actual">Avg Actual</th>
                             <th class="col-pred">Avg Ridge</th>
                             <th class="col-pred">Avg NN</th>
+                            <th class="col-pred">Avg Attn NN</th>
+                            <th class="col-pred">Avg LGBM</th>
                         </tr>
                     </thead>
                     <tbody id="standings-body">
@@ -205,6 +217,40 @@
                         <div class="metric-row">
                             <span class="metric-label">R&sup2;</span>
                             <span class="metric-value" id="nn-r2">--</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-card-header">Attention NN</div>
+                    <div class="metric-card-body" id="attn-nn-metrics">
+                        <div class="metric-row">
+                            <span class="metric-label">MAE</span>
+                            <span class="metric-value" id="attn-nn-mae">--</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">RMSE</span>
+                            <span class="metric-value" id="attn-nn-rmse">--</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">R&sup2;</span>
+                            <span class="metric-value" id="attn-nn-r2">--</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-card-header">LightGBM</div>
+                    <div class="metric-card-body" id="lgbm-metrics">
+                        <div class="metric-row">
+                            <span class="metric-label">MAE</span>
+                            <span class="metric-value" id="lgbm-mae">--</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">RMSE</span>
+                            <span class="metric-value" id="lgbm-rmse">--</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="metric-label">R&sup2;</span>
+                            <span class="metric-value" id="lgbm-r2">--</span>
                         </div>
                     </div>
                 </div>

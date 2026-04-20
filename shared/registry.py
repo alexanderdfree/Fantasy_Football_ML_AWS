@@ -105,9 +105,47 @@ def is_cpu_only(pos: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _attn_kwargs_static(cfg, prefix: str) -> dict:
+    """Pull all MultiHeadNetWithHistory kwargs from a cfg module EXCEPT the
+    runtime-dependent ``static_dim`` / ``game_dim`` / ``target_names`` — those are
+    filled in by the caller at inference time once the feature list is known.
+
+    Missing config attributes fall back to the MultiHeadNetWithHistory defaults
+    so positions that don't set every knob still work.
+    """
+
+    def g(name, default=None):
+        return getattr(cfg, f"{prefix}_{name}", default)
+
+    kwargs = dict(
+        backbone_layers=list(g("NN_BACKBONE_LAYERS", [])),
+        d_model=g("ATTN_D_MODEL", 32),
+        n_attn_heads=g("ATTN_N_HEADS", 2),
+        head_hidden=g("NN_HEAD_HIDDEN", 32),
+        dropout=g("NN_DROPOUT", 0.3),
+        project_kv=g("ATTN_PROJECT_KV", False),
+        use_positional_encoding=g("ATTN_POSITIONAL_ENCODING", False),
+        max_seq_len=g("ATTN_MAX_SEQ_LEN", 17),
+        use_gated_fusion=g("ATTN_GATED_FUSION", False),
+        attn_dropout=g("ATTN_DROPOUT", 0.0),
+        encoder_hidden_dim=g("ATTN_ENCODER_HIDDEN_DIM", 0),
+        gated_td=g("ATTN_GATED_TD", False),
+        td_gate_hidden=g("ATTN_TD_GATE_HIDDEN", 16),
+        gated_td_target=g("GATED_TD_TARGET", "td_points"),
+    )
+    head_hidden_overrides = g("NN_HEAD_HIDDEN_OVERRIDES", None)
+    if head_hidden_overrides:
+        kwargs["head_hidden_overrides"] = dict(head_hidden_overrides)
+    non_negative = g("NN_NON_NEGATIVE_TARGETS", None)
+    if non_negative is not None:
+        kwargs["non_negative_targets"] = set(non_negative)
+    return kwargs
+
+
 @cache
 def get_inference_spec(pos: str) -> dict:
     if pos == "QB":
+        import QB.qb_config as qb_cfg
         from QB.qb_config import (
             QB_NN_BACKBONE_LAYERS,
             QB_NN_DROPOUT,
@@ -139,8 +177,15 @@ def get_inference_spec(pos: str) -> dict:
                 head_hidden=QB_NN_HEAD_HIDDEN,
                 dropout=QB_NN_DROPOUT,
             ),
+            "train_attention_nn": bool(getattr(qb_cfg, "QB_TRAIN_ATTENTION_NN", False)),
+            "attn_nn_file": "qb_attention_nn.pt",
+            "attn_history_stats": list(getattr(qb_cfg, "QB_ATTN_HISTORY_STATS", []) or []),
+            "attn_max_seq_len": getattr(qb_cfg, "QB_ATTN_MAX_SEQ_LEN", 17),
+            "attn_nn_kwargs_static": _attn_kwargs_static(qb_cfg, "QB"),
+            "train_lightgbm": bool(getattr(qb_cfg, "QB_TRAIN_LIGHTGBM", False)),
         }
     if pos == "RB":
+        import RB.rb_config as rb_cfg
         from RB.rb_config import (
             RB_NN_BACKBONE_LAYERS,
             RB_NN_DROPOUT,
@@ -174,8 +219,15 @@ def get_inference_spec(pos: str) -> dict:
                 dropout=RB_NN_DROPOUT,
                 head_hidden_overrides=RB_NN_HEAD_HIDDEN_OVERRIDES,
             ),
+            "train_attention_nn": bool(getattr(rb_cfg, "RB_TRAIN_ATTENTION_NN", False)),
+            "attn_nn_file": "rb_attention_nn.pt",
+            "attn_history_stats": list(getattr(rb_cfg, "RB_ATTN_HISTORY_STATS", []) or []),
+            "attn_max_seq_len": getattr(rb_cfg, "RB_ATTN_MAX_SEQ_LEN", 17),
+            "attn_nn_kwargs_static": _attn_kwargs_static(rb_cfg, "RB"),
+            "train_lightgbm": bool(getattr(rb_cfg, "RB_TRAIN_LIGHTGBM", False)),
         }
     if pos == "WR":
+        import WR.wr_config as wr_cfg
         from WR.wr_config import (
             WR_NN_BACKBONE_LAYERS,
             WR_NN_DROPOUT,
@@ -207,8 +259,15 @@ def get_inference_spec(pos: str) -> dict:
                 head_hidden=WR_NN_HEAD_HIDDEN,
                 dropout=WR_NN_DROPOUT,
             ),
+            "train_attention_nn": bool(getattr(wr_cfg, "WR_TRAIN_ATTENTION_NN", False)),
+            "attn_nn_file": "wr_attention_nn.pt",
+            "attn_history_stats": list(getattr(wr_cfg, "WR_ATTN_HISTORY_STATS", []) or []),
+            "attn_max_seq_len": getattr(wr_cfg, "WR_ATTN_MAX_SEQ_LEN", 17),
+            "attn_nn_kwargs_static": _attn_kwargs_static(wr_cfg, "WR"),
+            "train_lightgbm": bool(getattr(wr_cfg, "WR_TRAIN_LIGHTGBM", False)),
         }
     if pos == "TE":
+        import TE.te_config as te_cfg
         from TE.te_config import (
             TE_NN_BACKBONE_LAYERS,
             TE_NN_DROPOUT,
@@ -242,8 +301,15 @@ def get_inference_spec(pos: str) -> dict:
                 dropout=TE_NN_DROPOUT,
                 head_hidden_overrides=TE_NN_HEAD_HIDDEN_OVERRIDES,
             ),
+            "train_attention_nn": bool(getattr(te_cfg, "TE_TRAIN_ATTENTION_NN", False)),
+            "attn_nn_file": "te_attention_nn.pt",
+            "attn_history_stats": list(getattr(te_cfg, "TE_ATTN_HISTORY_STATS", []) or []),
+            "attn_max_seq_len": getattr(te_cfg, "TE_ATTN_MAX_SEQ_LEN", 17),
+            "attn_nn_kwargs_static": _attn_kwargs_static(te_cfg, "TE"),
+            "train_lightgbm": bool(getattr(te_cfg, "TE_TRAIN_LIGHTGBM", False)),
         }
     if pos == "K":
+        import K.k_config as k_cfg
         from K.k_config import (
             K_NN_BACKBONE_LAYERS,
             K_NN_DROPOUT,
@@ -275,8 +341,11 @@ def get_inference_spec(pos: str) -> dict:
                 head_hidden=K_NN_HEAD_HIDDEN,
                 dropout=K_NN_DROPOUT,
             ),
+            "train_attention_nn": bool(getattr(k_cfg, "K_TRAIN_ATTENTION_NN", False)),
+            "train_lightgbm": bool(getattr(k_cfg, "K_TRAIN_LIGHTGBM", False)),
         }
     if pos == "DST":
+        import DST.dst_config as dst_cfg
         from DST.dst_config import (
             DST_NN_BACKBONE_LAYERS,
             DST_NN_DROPOUT,
@@ -312,6 +381,8 @@ def get_inference_spec(pos: str) -> dict:
                 head_hidden_overrides=DST_NN_HEAD_HIDDEN_OVERRIDES,
                 non_negative_targets=DST_NN_NON_NEGATIVE_TARGETS,
             ),
+            "train_attention_nn": bool(getattr(dst_cfg, "DST_TRAIN_ATTENTION_NN", False)),
+            "train_lightgbm": bool(getattr(dst_cfg, "DST_TRAIN_LIGHTGBM", False)),
         }
     raise ValueError(f"Unknown position: {pos}")
 

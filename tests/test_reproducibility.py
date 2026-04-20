@@ -83,12 +83,21 @@ def tiny_splits(request):
 
 
 def _nn_state_dict_from_outputs(pos_outputs: Path, position: str) -> dict:
-    """Load the NN state_dict that ``run_pipeline`` just wrote to disk."""
+    """Load the NN state_dict that ``run_pipeline`` just wrote to disk.
+
+    Accepts both the legacy raw-state-dict format and the wrapped format
+    ``{"state_dict": ..., "feature_cols_hash": ..., ...}`` introduced alongside
+    the scaler/weights integrity guardrail.
+    """
+    from shared.artifact_integrity import unwrap_state_dict
+
     pos_lower = position.lower()
     nn_path = pos_outputs / "models" / f"{pos_lower}_multihead_nn.pt"
     assert nn_path.exists(), f"NN weights not written at {nn_path}"
     # map_location=cpu so tests pass on CUDA-less machines
-    return torch.load(nn_path, map_location="cpu", weights_only=True)
+    checkpoint = torch.load(nn_path, map_location="cpu", weights_only=True)
+    state_dict, _ = unwrap_state_dict(checkpoint)
+    return state_dict
 
 
 # ---------------------------------------------------------------------------

@@ -801,8 +801,21 @@ tbody tr:last-child td {
 }
 
 /* === Column visibility for model toggle === */
-body.model-ridge .nn-col { display: none; }
-body.model-nn .ridge-col { display: none; }
+body.model-ridge .nn-col,
+body.model-ridge .attn-nn-col,
+body.model-ridge .lgbm-col { display: none; }
+
+body.model-nn .ridge-col,
+body.model-nn .attn-nn-col,
+body.model-nn .lgbm-col { display: none; }
+
+body.model-attn_nn .ridge-col,
+body.model-attn_nn .nn-col,
+body.model-attn_nn .lgbm-col { display: none; }
+
+body.model-lgbm .ridge-col,
+body.model-lgbm .nn-col,
+body.model-lgbm .attn-nn-col { display: none; }
 
 /* === Loading state for table re-fetch === */
 .table-container.loading { opacity: 0.5; pointer-events: none; transition: opacity 0.15s; }
