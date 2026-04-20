@@ -283,9 +283,7 @@ class MultiHeadNetWithHistory(nn.Module):
         attn_out_dim = n_attn_heads * d_model
         # Per-target LayerNorms — each target's pooled stats live at different
         # scales (td_points ~3, rushing_floor ~8), so one norm per target.
-        self.history_norms = nn.ModuleList(
-            [nn.LayerNorm(attn_out_dim) for _ in target_names]
-        )
+        self.history_norms = nn.ModuleList([nn.LayerNorm(attn_out_dim) for _ in target_names])
 
         # Gated fusion: static features control how much to trust history.
         # Prevents noisy attention signal from degrading static feature quality.
