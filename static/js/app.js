@@ -49,6 +49,29 @@ const COLORS = {
     lgbmBg: "rgba(245, 158, 11, 0.2)",
 };
 
+// Per-target fantasy-point-equivalent multipliers (PPR). Mirror of
+// shared/aggregate_targets.py:POINT_EQUIVALENT_MULTIPLIER. Applied only to
+// count-style targets where the raw MAE would be dominated by the scoring
+// coefficient (e.g. 0.4 TDs = 2.4 points under PPR rushing/receiving scoring).
+const POINT_EQUIVALENT_MULTIPLIER = {
+    passing_tds: 4.0,
+    rushing_tds: 6.0,
+    receiving_tds: 6.0,
+    interceptions: 2.0,
+    fumbles_lost: 2.0,
+    receptions: 1.0,
+};
+
+// Format a per-target MAE with its raw unit, and — for targets with a known
+// point-equivalent multiplier — also show the implied fantasy-point delta.
+// The API serializes a `unit` field per target (from shared/aggregate_targets.py:TARGET_UNITS).
+function formatTargetMae(val, targetKey, unit) {
+    if (val == null) return "--";
+    const raw = unit ? `${fmt(val, 2)} ${unit}` : fmt(val, 2);
+    const mult = POINT_EQUIVALENT_MULTIPLIER[targetKey];
+    return mult != null ? `${raw} (${fmt(val * mult, 2)} pts)` : raw;
+}
+
 // ---------------------------------------------------------------------------
 // Initialization
 // ---------------------------------------------------------------------------
@@ -415,25 +438,27 @@ function renderPositionModelDetail(pos) {
     const d = positionDetailsData[pos];
     const tm = d.target_metrics || {};
 
-    const maeCell = (v) => v != null ? v.toFixed(2) : '--';
-
-    // Target decomposition rows — 4 MAE columns, "--" where a model isn't available (K/DST)
+    // Per-target rows render MAE in the target's native unit (yards / TDs / receptions).
+    // For TD/INT/fumble targets, the raw MAE is also shown in fantasy-point-equivalent terms
+    // via the PPR multiplier (so 0.40 TDs renders as "0.40 TDs (2.40 pts)").
     const targetRows = (d.targets || []).map(t => {
         const m = tm[t.key] || {};
+        const unit = m.unit;
         return `<tr>
             <td class="tm-name">${t.label}</td>
             <td class="tm-formula">${t.formula}</td>
-            <td class="tm-val">${maeCell(m.ridge_mae)}</td>
-            <td class="tm-val">${maeCell(m.nn_mae)}</td>
-            <td class="tm-val">${maeCell(m.attn_nn_mae)}</td>
-            <td class="tm-val">${maeCell(m.lgbm_mae)}</td>
+            <td class="tm-val">${formatTargetMae(m.ridge_mae, t.key, unit)}</td>
+            <td class="tm-val">${formatTargetMae(m.nn_mae, t.key, unit)}</td>
+            <td class="tm-val">${formatTargetMae(m.attn_nn_mae, t.key, unit)}</td>
+            <td class="tm-val">${formatTargetMae(m.lgbm_mae, t.key, unit)}</td>
         </tr>`;
     }).join("");
 
+    // Total row is always in fantasy points (aggregator output), so no unit formatting.
     const totalM = tm["total"] || {};
     const totalCell = (v) => v != null ? `<strong>${v.toFixed(2)}</strong>` : '<strong>--</strong>';
     const totalRow = `<tr class="tm-total-row">
-        <td class="tm-name"><strong>Total (with adjustments)</strong></td>
+        <td class="tm-name"><strong>Total (fantasy points)</strong></td>
         <td class="tm-formula">${d.adjustments || ''}</td>
         <td class="tm-val">${totalCell(totalM.ridge_mae)}</td>
         <td class="tm-val">${totalCell(totalM.nn_mae)}</td>
@@ -458,7 +483,7 @@ function renderPositionModelDetail(pos) {
                 <span class="pos-model-meta">${d.n_features || '?'} features &middot; ${d.n_samples_test || '?'} test samples</span>
             </div>
 
-            <div class="pos-model-section-label">Target Decomposition</div>
+            <div class="pos-model-section-label">Raw-Stat Targets</div>
             <div class="table-container pos-model-table-wrap">
                 <table class="pos-model-table">
                     <thead>

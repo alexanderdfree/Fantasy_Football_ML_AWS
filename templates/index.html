@@ -179,7 +179,7 @@
                 </div>
                 <div>
                     <div class="approach-title">Position-Specific Modeling</div>
-                    <div class="approach-desc">Each position has a dedicated multi-target model that decomposes fantasy points into position-relevant sub-components, with tailored features and architecture.</div>
+                    <div class="approach-desc">Each position has a dedicated multi-target model that predicts raw NFL stats (yards, TDs, receptions, etc.); a shared aggregator converts predictions to fantasy points. Features and architecture are tuned per position.</div>
                 </div>
             </div>
 
@@ -298,7 +298,7 @@
                 </div>
                 <div>
                     <div class="approach-title">Per-Position Multi-Head Neural Networks</div>
-                    <div class="approach-desc">Each position has a dedicated multi-target model that decomposes fantasy points into position-relevant sub-components (e.g. passing / rushing / TDs for QB). Ensembled with Ridge regression, an attention-based game-history variant, and LightGBM where applicable. Config and features below are loaded live from the Python config modules.</div>
+                    <div class="approach-desc">Each position has a dedicated multi-target model that predicts raw NFL stats (yards, TD counts, receptions, etc.), with a deterministic aggregator converting predictions to fantasy points under any scoring format. Compared against Ridge regression, an attention-based game-history variant, and LightGBM where applicable. Config and features below are loaded live from the Python config modules.</div>
                 </div>
             </div>
 
@@ -319,7 +319,7 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                                                  ▼
                     Concat [static_dim + n_heads * d_model]
                      └─ Shared backbone (BatchNorm + Dropout)
-                     └─ Per-target heads (GatedTDHead for td_points)</pre>
+                     └─ Per-target heads (GatedTDHead on TD-count targets)</pre>
 
             <div class="section-header">Training Loop</div>
             <ul class="arch-bullets">

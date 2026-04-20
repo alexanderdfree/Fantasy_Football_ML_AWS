@@ -12,7 +12,14 @@ The system ingests weekly NFL data from [nflverse](https://github.com/nflverse) 
 
 > Can a multi-head neural network with engineered temporal features and target decomposition meaningfully outperform Ridge regression at predicting weekly fantasy output, and what features matter most?
 
-The answer differs by position — see the Evaluation section below. Decomposing each position's target (e.g., RB → `rushing_floor` + `receiving_floor` + `td_points`) and sharing a backbone across heads is what makes the neural net competitive at small sample sizes. Design rationale is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The answer differs by position — see the Evaluation section below. Each position's model predicts a small set of raw NFL stats rather than pre-scored fantasy-point buckets, and a deterministic aggregator ([shared/aggregate_targets.py](shared/aggregate_targets.py)) converts those raw stats to fantasy points under any scoring format. The raw targets per position:
+
+- **QB** (6): `passing_yards`, `rushing_yards`, `passing_tds`, `rushing_tds`, `interceptions`, `fumbles_lost`
+- **RB** (6): `rushing_tds`, `receiving_tds`, `rushing_yards`, `receiving_yards`, `receptions`, `fumbles_lost`
+- **WR** (4): `receiving_tds`, `receiving_yards`, `receptions`, `fumbles_lost`
+- **TE** (4): `receiving_tds`, `receiving_yards`, `receptions`, `fumbles_lost`
+
+Sharing a backbone across per-target heads is what makes the neural net competitive at small sample sizes; reporting MAE in raw units (yards / TDs / receptions) keeps per-target accuracy interpretable and decouples model error from scoring-format choice. Design rationale is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Architecture at a glance
 
@@ -71,6 +78,8 @@ Full training on GPU runs on EC2 via CI; see [docs/ec2_design.md](docs/ec2_desig
 ## Evaluation
 
 Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination), top-12 hit rate (agreement with the actual weekly top 12 at the position, PPR scoring). Numbers from [benchmark_results.json](benchmark_results.json).
+
+> Benchmarks pending retrain on new raw-stat targets — the values below were produced against the prior `*_floor` / `td_points` decomposition and will be refreshed once the migration training run completes.
 
 | Position | Ridge MAE | NN MAE | Attn NN MAE | LGBM MAE | Best | R² (best) | Top-12 (best) |
 |---|---|---|---|---|---|---|---|
