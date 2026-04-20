@@ -114,23 +114,36 @@ Each decision below follows the same structure: what was decided, the forces at 
 
 ### D2: Multi-target decomposition with shared NN backbone
 
-**Decision.** Decompose each position's fantasy points into 2–3 *component* targets (e.g., RB: `rushing_floor`, `receiving_floor`, `td_points`). Train one neural network per position with a shared backbone and one head per target; the total is the sum of head outputs.
+**Decision.** Decompose each position's prediction into a small set of *raw NFL stat* targets (yards, TD counts, receptions, interceptions, fumbles_lost) rather than pre-scored fantasy-point buckets. Train one neural network per position with a shared backbone and one head per target. Convert per-target predictions to fantasy points *after* the model runs via a deterministic aggregator ([shared/aggregate_targets.py](../shared/aggregate_targets.py)) that multiplies each raw-stat prediction by the corresponding coefficient in `src/config.py:SCORING_PPR` (or `SCORING_HALF_PPR` / `SCORING_STANDARD`). The final totals (`preds["total"]`) and the `w_total · Huber(total)` auxiliary loss are produced through that aggregator rather than a naive `sum(heads)`.
 
-**Context.** Fantasy points collapse heterogeneous events (a receiving TD is structurally very different from a passing yard) into a single scalar. Decomposing lets each head specialize and lets us apply different loss deltas, regularization, and output constraints per component.
+Current target sets (6 for QB/RB, 4 for WR/TE):
+
+| Pos | Targets |
+|---|---|
+| QB | `passing_yards`, `rushing_yards`, `passing_tds`, `rushing_tds`, `interceptions`, `fumbles_lost` |
+| RB | `rushing_tds`, `receiving_tds`, `rushing_yards`, `receiving_yards`, `receptions`, `fumbles_lost` |
+| WR | `receiving_tds`, `receiving_yards`, `receptions`, `fumbles_lost` |
+| TE | `receiving_tds`, `receiving_yards`, `receptions`, `fumbles_lost` |
+
+**Context.** Fantasy points collapse heterogeneous events (a receiving TD is structurally very different from a passing yard) into a single scalar. Decomposing lets each head specialize, lets us apply different loss deltas per component, and — critically — keeps MAE reporting interpretable in native stat units ("the model is off by ±18 passing yards, ±0.4 passing TDs per game") rather than in ambiguous point buckets. An earlier iteration of this ADR had targets like `passing_floor = passing_yards × 0.04` and `td_points = pass_TD × 4 + rush_TD × 6` baked in; the migration to raw stats moved all scoring coefficients to one place and decoupled model error from scoring-format choice.
 
 **Options considered.**
 
-| Option | Complexity | Expected MAE | Interpretability |
+| Option | Complexity | MAE interpretability | Scoring-format flexibility |
 |---|---|---|---|
-| Single-target NN predicting total | Low | Medium | Low |
-| Separate NN per target | High | Low (best) but overfits | Medium |
-| Shared backbone + per-target heads (chosen) | Medium | Low | Medium |
+| Single-target NN predicting total fantasy points | Low | Low | None (retrain per format) |
+| Fantasy-point-component heads (`passing_floor`, `td_points`, …) | Medium | Medium (points, ambiguous) | None (formats baked in) |
+| Shared backbone + raw-stat heads + post-aggregation (chosen) | Medium | High (yards / TDs / receptions) | Full (aggregator takes `scoring_format` arg) |
 
-**Chosen: shared backbone + per-target heads.** The backbone learns position-general features ("is this player healthy? on the field? getting opportunity?"). Heads specialize. A small auxiliary loss on `sum(heads) ≈ total_target` keeps the decomposition honest. With only a few hundred training rows per position, parameter sharing is a meaningful regularizer.
+**Chosen: raw-stat heads with post-aggregation.** The backbone learns position-general features ("is this player healthy? on the field? getting opportunity?"). Heads specialize on individual countable events. The aggregator is the single source of truth for turning those events into fantasy points — swap `SCORING_PPR` for `SCORING_STANDARD` without retraining. Auxiliary total-loss (`w_total · Huber(total_pred, total_actual)`) routes through the same aggregator, so the sum the loss tracks is always actual fantasy points.
 
-**Rejected.** Single-target models under-fit the structure — every head implicitly has to learn "what is a TD" separately from "what is a rushing yard." Fully separate per-target models would triple parameter count with no offsetting sample-size gain.
+Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value head for conditional mean). RB has two gates (`rushing_tds`, `receiving_tds`); WR and TE each have one (`receiving_tds`). QB has none — QBs score too often for the zero-inflation argument to hold.
 
-**References.** [shared/neural_net.py:38-145](../shared/neural_net.py) (`MultiHeadNet`), [shared/training.py](../shared/training.py) (`MultiTargetLoss`), per-position `{POS}/{pos}_targets.py` (target decomposition formulas), `{POS}/{pos}_config.py` (loss weights). Consolidated in commit `99d7086`.
+**Rejected.** Single-target models under-fit the structure — every head would implicitly have to learn "what is a TD" separately from "what is a rushing yard." Fantasy-point-component heads (the previous iteration) made MAE hard to reason about — a `td_points` MAE of 4.25 could mean either "off by ~0.7 TDs/game" or "off by ~1 TD/game and a PAT." Raw-stat targets are unambiguous.
+
+**Consequence.** Aux total-loss and inference-time totals both flow through `shared/aggregate_targets.py:predictions_to_fantasy_points` — changing scoring coefficients is a single-file edit. The per-position adjustment functions (`compute_qb_adjustment`, `compute_fumble_adjustment`, etc.) are retired for QB/RB/WR/TE; their effects (interception penalty, fumble penalty) are now direct targets (`interceptions`, `fumbles_lost`) that the aggregator prices in. K and DST retain `compute_adjustment_fn` (out of scope for this migration).
+
+**References.** [shared/aggregate_targets.py](../shared/aggregate_targets.py) (aggregator + `TARGET_UNITS` + `POINT_EQUIVALENT_MULTIPLIER`), [src/config.py](../src/config.py) (`SCORING_PPR`, `SCORING_HALF_PPR`, `SCORING_STANDARD`), [shared/neural_net.py:38-145](../shared/neural_net.py) (`MultiHeadNet`, `aggregate_fn` plumbing), [shared/training.py](../shared/training.py) (`MultiTargetLoss`), per-position `compute_{pos}_targets` in `QB/qb_targets.py`, `RB/rb_targets.py`, `WR/wr_targets.py`, `TE/te_targets.py`, and `{POS}/{pos}_config.py` (target lists + loss weights + Huber deltas in raw-stat units). Consolidated in commit `99d7086`; raw-stat migration follows.
 
 ---
 
@@ -195,7 +208,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 
 **Chosen rationale.** Each constraint was added in response to a specific observed failure, not as a precaution. This ADR captures them together because they form a *coherent* stack — remove any one and a specific failure mode returns.
 
-**References.** [shared/neural_net.py:61-102](../shared/neural_net.py) (clamp + non-negative set), [shared/training.py](../shared/training.py) (`MultiTargetLoss` with Huber), [DST/dst_config.py:76](../DST/dst_config.py) (`DST_NN_NON_NEGATIVE_TARGETS = {"defensive_scoring", "td_points"}`), feature clipping in [shared/pipeline.py](../shared/pipeline.py). See also the "Fixed" section of [TODO.md](../TODO.md) for each bug history.
+**References.** [shared/neural_net.py:61-102](../shared/neural_net.py) (clamp + non-negative set), [shared/training.py](../shared/training.py) (`MultiTargetLoss` with Huber), [DST/dst_config.py:76](../DST/dst_config.py) (`DST_NN_NON_NEGATIVE_TARGETS = {"defensive_scoring", "td_points"}` — DST is out of scope for the raw-stat migration and keeps its prior target set), feature clipping in [shared/pipeline.py](../shared/pipeline.py). The `GatedTDHead` is now parameterized over a list of gated targets (`RB` has two: `rushing_tds` + `receiving_tds`; `WR`/`TE` have one: `receiving_tds`; `QB` has none — see D2). See also the "Fixed" section of [TODO.md](../TODO.md) for each bug history.
 
 ---
 
