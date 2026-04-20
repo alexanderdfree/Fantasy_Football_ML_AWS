@@ -156,11 +156,16 @@ def _extract_metrics(position, result):
             continue
         m = result[m_key]
         metrics[m_key] = {
-            "total": {k: round(v, 4) for k, v in m["total"].items()},
+            "total": {
+                k: (round(v, 4) if isinstance(v, (int, float)) else v)
+                for k, v in m["total"].items()
+            },
         }
         for t in m:
             if t != "total":
-                metrics[m_key][t] = {k: round(v, 4) for k, v in m[t].items()}
+                metrics[m_key][t] = {
+                    k: (round(v, 4) if isinstance(v, (int, float)) else v) for k, v in m[t].items()
+                }
         if r_key in result:
             ranking = result[r_key]
             metrics[r_key] = {
