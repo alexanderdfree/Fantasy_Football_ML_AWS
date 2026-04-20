@@ -131,9 +131,19 @@ QB_NN_HEAD_HIDDEN_OVERRIDES = {
 }
 
 # === Loss Weights ===
-# Equal per-target weights so the aggregator (fantasy-point conversion) sees
-# balanced gradients across all raw stats.
-QB_LOSS_WEIGHTS = {t: 1.0 for t in QB_TARGETS}
+# Per-target weights scaled inversely to Huber delta (~2.0/δ) so every head
+# contributes comparable gradient magnitude during joint training. Without
+# rebalancing, yards targets (δ=15-25) dominated count heads (δ=0.5) ~2500× per
+# sample and count heads collapsed to the mean (post-migration NN fantasy-point
+# MAE regressed from 6.33 → 6.63; fumbles_lost R²=−0.34).
+QB_LOSS_WEIGHTS = {
+    "passing_yards": 0.08,  # 2.0 / 25
+    "rushing_yards": 0.133,  # 2.0 / 15
+    "passing_tds": 4.0,  # 2.0 / 0.5
+    "rushing_tds": 4.0,
+    "interceptions": 4.0,
+    "fumbles_lost": 4.0,
+}
 QB_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (raw-stat units) ===
