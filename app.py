@@ -338,7 +338,12 @@ def _apply_position_models(train, val, test, pos, results):
         )
         nn_state_dict, nn_hash = unwrap_state_dict(nn_checkpoint)
         assert_scaler_matches(
-            pos, nn_scaler, nn_hash, nn_meta, feature_cols, targets,
+            pos,
+            nn_scaler,
+            nn_hash,
+            nn_meta,
+            feature_cols,
+            targets,
             scaler_label="nn_scaler",
         )
 
@@ -372,7 +377,12 @@ def _apply_position_models(train, val, test, pos, results):
             )
             attn_state_dict, attn_hash = unwrap_state_dict(attn_checkpoint)
             assert_scaler_matches(
-                pos, attn_scaler, attn_hash, attn_meta, attn_static_cols, targets,
+                pos,
+                attn_scaler,
+                attn_hash,
+                attn_meta,
+                attn_static_cols,
+                targets,
                 scaler_label="attention_nn_scaler",
             )
 
@@ -432,13 +442,9 @@ def _apply_position_models(train, val, test, pos, results):
                 "nn_mae": round(float(np.mean(np.abs(nn_preds[t] - actual_t))), 3),
             }
             if attn_nn_preds is not None and t in attn_nn_preds:
-                tm["attn_nn_mae"] = round(
-                    float(np.mean(np.abs(attn_nn_preds[t] - actual_t))), 3
-                )
+                tm["attn_nn_mae"] = round(float(np.mean(np.abs(attn_nn_preds[t] - actual_t))), 3)
             if lgbm_preds is not None and t in lgbm_preds:
-                tm["lgbm_mae"] = round(
-                    float(np.mean(np.abs(lgbm_preds[t] - actual_t))), 3
-                )
+                tm["lgbm_mae"] = round(float(np.mean(np.abs(lgbm_preds[t] - actual_t))), 3)
             target_metrics[t] = tm
     total_actual = pos_test["fantasy_points"].values
     total_tm = {
@@ -446,13 +452,9 @@ def _apply_position_models(train, val, test, pos, results):
         "nn_mae": round(float(np.mean(np.abs(nn_total - total_actual))), 3),
     }
     if attn_nn_total is not None:
-        total_tm["attn_nn_mae"] = round(
-            float(np.mean(np.abs(attn_nn_total - total_actual))), 3
-        )
+        total_tm["attn_nn_mae"] = round(float(np.mean(np.abs(attn_nn_total - total_actual))), 3)
     if lgbm_total is not None:
-        total_tm["lgbm_mae"] = round(
-            float(np.mean(np.abs(lgbm_total - total_actual))), 3
-        )
+        total_tm["lgbm_mae"] = round(float(np.mean(np.abs(lgbm_total - total_actual))), 3)
     target_metrics["total"] = total_tm
     _cache.setdefault("position_details", {})[pos] = {
         "n_features": len(feature_cols),

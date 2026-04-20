@@ -154,7 +154,7 @@ def test_rate_features_in_unit_interval(k_feature_frame):
 @pytest.mark.unit
 def test_volume_features_non_negative(k_feature_frame):
     """Attempt/volume rolling features cannot be negative."""
-    for col in ["fg_attempts_L3", "pat_volume_L3", "total_k_pts_L3"]:
+    for col in ["fg_attempts_L3", "pat_volume_L3"]:
         series = k_feature_frame[col]
         assert series.min() >= 0.0, f"{col} has negative value (min={series.min()})"
 

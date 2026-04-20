@@ -22,7 +22,6 @@ from shared.artifact_integrity import (
     write_scaler_meta,
 )
 
-
 FEATURES_A = ["feat_a", "feat_b", "feat_c"]
 FEATURES_B = ["feat_a", "feat_b", "feat_d"]  # one column differs
 TARGETS = ["passing_floor", "rushing_floor", "td_points"]
@@ -42,7 +41,9 @@ def test_feature_cols_hash_differs_on_column_change():
 
 
 def test_feature_cols_hash_is_order_sensitive():
-    assert compute_feature_cols_hash(FEATURES_A) != compute_feature_cols_hash(list(reversed(FEATURES_A)))
+    assert compute_feature_cols_hash(FEATURES_A) != compute_feature_cols_hash(
+        list(reversed(FEATURES_A))
+    )
 
 
 def test_wrap_unwrap_roundtrip():

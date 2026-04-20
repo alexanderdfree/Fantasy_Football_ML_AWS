@@ -12,8 +12,8 @@ First-time installation and local-run instructions. Once the environment is up, 
 ## Install
 
 ```bash
-git clone https://github.com/<owner>/Final-Project.git
-cd Final-Project
+git clone https://github.com/alexanderdfree/Fantasy_Football_ML_AWS.git
+cd Fantasy_Football_ML_AWS
 
 python3.12 -m venv .venv
 source .venv/bin/activate

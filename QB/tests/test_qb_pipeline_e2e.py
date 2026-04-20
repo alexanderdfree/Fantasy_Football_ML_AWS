@@ -140,10 +140,7 @@ def synthetic_splits():
     non-empty folds. val=2023 and test=2024 remain single-season.
     """
     train = pd.concat(
-        [
-            _generate_qb_season(season, seed=100 + (season - 2012))
-            for season in range(2012, 2023)
-        ],
+        [_generate_qb_season(season, seed=100 + (season - 2012)) for season in range(2012, 2023)],
         ignore_index=True,
     )
     val = _generate_qb_season(2023, seed=200)

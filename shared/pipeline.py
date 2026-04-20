@@ -278,16 +278,14 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
     # includes adjustments like INT/fumble penalties that are added post-hoc).
     # Using fantasy_points here causes the total aux loss to train heads to
     # absorb adjustments, which then get double-counted at inference.
-    y_train_dict["total"] = np.sum(
-        [pos_train[t].values for t in targets], axis=0
-    ).astype(np.float32)
-    y_val_dict["total"] = np.sum(
-        [pos_val[t].values for t in targets], axis=0
-    ).astype(np.float32)
+    y_train_dict["total"] = np.sum([pos_train[t].values for t in targets], axis=0).astype(
+        np.float32
+    )
+    y_val_dict["total"] = np.sum([pos_val[t].values for t in targets], axis=0).astype(np.float32)
     if y_test_dict is not None:
-        y_test_dict["total"] = np.sum(
-            [pos_test[t].values for t in targets], axis=0
-        ).astype(np.float32)
+        y_test_dict["total"] = np.sum([pos_test[t].values for t in targets], axis=0).astype(
+            np.float32
+        )
 
     return (
         X_train,
@@ -806,9 +804,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         f"{output_dir}/models/{pos_lower}_multihead_nn.pt",
     )
     joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
-    write_scaler_meta(
-        f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets
-    )
+    write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
 
     if attn_model is not None:
         attn_static_cols = get_attn_static_columns(feature_cols)
@@ -1229,9 +1225,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         f"{output_dir}/models/{pos_lower}_multihead_nn.pt",
     )
     joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
-    write_scaler_meta(
-        f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets
-    )
+    write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
 
     if lgbm_model is not None:
         lgbm_model.save(f"{output_dir}/models")
