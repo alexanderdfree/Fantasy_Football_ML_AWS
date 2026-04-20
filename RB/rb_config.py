@@ -172,10 +172,19 @@ RB_NN_PATIENCE = 30
 RB_NN_HEAD_HIDDEN_OVERRIDES = {"rushing_tds": 64, "receiving_tds": 64}
 
 # === Loss Weights ===
-# Equal per-target weights keep training objective aligned with the
-# aggregated fantasy-points total on evaluation — each raw-stat target gets
-# the same gradient pressure.
-RB_LOSS_WEIGHTS = {t: 1.0 for t in RB_TARGETS}
+# Per-target weights scaled inversely to Huber delta (~2.0/δ) so every head
+# contributes comparable gradient magnitude during joint training. Without
+# rebalancing, yards targets (δ=15) dominated count heads (δ=0.5) ~900× per
+# sample and count heads collapsed to the mean (post-migration NN fantasy-point
+# MAE regressed from 4.23 → 5.21; fumbles_lost R²=−1.43, receiving_tds R²=−0.58).
+RB_LOSS_WEIGHTS = {
+    "rushing_tds": 4.0,  # 2.0 / 0.5
+    "receiving_tds": 4.0,
+    "rushing_yards": 0.133,  # 2.0 / 15
+    "receiving_yards": 0.133,
+    "receptions": 1.0,  # 2.0 / 2.0 (anchor)
+    "fumbles_lost": 4.0,
+}
 RB_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target, raw-stat units) ===
