@@ -366,10 +366,13 @@ class TestMultiTargetLoss:
             loss_weights={t: 1.0 for t in TARGETS},
             w_total=0.0,
             td_gate_weight=1.0,
+            gated_td_target="td_points",
         )
         _, components = loss_fn(preds, targets)
-        assert "loss_td_gate" in components
-        assert components["loss_td_gate"] > 0
+        # The new multi-gate loss keys components by target name so multiple
+        # gated heads (e.g. RB's rushing_tds + receiving_tds) can coexist.
+        assert "loss_td_gate_td_points" in components
+        assert components["loss_td_gate_td_points"] > 0
 
 
 # ---------------------------------------------------------------------------

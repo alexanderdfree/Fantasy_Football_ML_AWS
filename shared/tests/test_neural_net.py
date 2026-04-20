@@ -194,6 +194,7 @@ class TestMultiHeadNetWithHistory:
             assert (out[key] >= 0).all()
 
     def test_gated_td_head(self):
+        # gated_td_target="td_points" was the default pre-migration; now explicit.
         model = MultiHeadNetWithHistory(
             static_dim=5,
             game_dim=3,
@@ -204,6 +205,7 @@ class TestMultiHeadNetWithHistory:
             head_hidden=4,
             dropout=0.1,
             gated_td=True,
+            gated_td_target="td_points",
         )
         x_static = torch.randn(4, 5)
         x_history = torch.randn(4, 6, 3)
@@ -211,6 +213,46 @@ class TestMultiHeadNetWithHistory:
         out = model(x_static, x_history, mask)
         assert "td_points_gate_logit" in out
         assert (out["td_points"] >= 0).all()
+
+    def test_gated_td_targets_list_accepts_multiple(self):
+        """New multi-gate API: multiple gated heads coexist via gated_td_targets list."""
+        targets = ["rushing_tds", "receiving_tds", "rushing_yards"]
+        model = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=targets,
+            backbone_layers=[16, 8],
+            d_model=8,
+            n_attn_heads=2,
+            head_hidden=4,
+            dropout=0.1,
+            gated_td=True,
+            gated_td_targets=["rushing_tds", "receiving_tds"],
+        )
+        x_static = torch.randn(4, 5)
+        x_history = torch.randn(4, 6, 3)
+        mask = torch.ones(4, 6, dtype=torch.bool)
+        out = model(x_static, x_history, mask)
+        assert "rushing_tds_gate_logit" in out
+        assert "receiving_tds_gate_logit" in out
+        # Non-gated target should have no gate logit emitted.
+        assert "rushing_yards_gate_logit" not in out
+
+    def test_gated_td_target_legacy_string_still_works(self):
+        """Legacy string form must normalize to a single-element list internally."""
+        model = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[16, 8],
+            d_model=8,
+            n_attn_heads=2,
+            head_hidden=4,
+            dropout=0.1,
+            gated_td=True,
+            gated_td_target="td_points",
+        )
+        assert model.gated_td_targets == ["td_points"]
 
     def test_positional_encoding(self, inputs):
         model = MultiHeadNetWithHistory(

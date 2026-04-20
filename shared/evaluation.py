@@ -6,19 +6,41 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from shared.aggregate_targets import TARGET_UNITS, predictions_to_fantasy_points
 from src.evaluation.metrics import compute_metrics
 
 
 def compute_target_metrics(y_true_dict: dict, y_pred_dict: dict, target_names: list[str]) -> dict:
     """Compute per-target and total metrics.
 
+    Each entry gains a ``"unit"`` field (``"yds"``, ``"TDs"``, ``"pts"``, etc.)
+    pulled from ``TARGET_UNITS`` so the frontend can render raw-stat MAE with the
+    right suffix. Unknown target names fall back to ``"pts"`` to preserve the
+    legacy decomposition (``passing_floor``, ``td_points``, …) displays.
+
     Returns:
-        {"total": {mae, rmse, r2}, "target_1": {mae, rmse, r2}, ...}
+        {"total": {mae, rmse, r2, unit}, "target_1": {mae, rmse, r2, unit}, ...}
     """
     results = {}
     for target in ["total"] + target_names:
-        results[target] = compute_metrics(y_true_dict[target], y_pred_dict[target])
+        metrics = compute_metrics(y_true_dict[target], y_pred_dict[target])
+        metrics["unit"] = TARGET_UNITS.get(target, "pts")
+        results[target] = metrics
     return results
+
+
+def compute_fantasy_points_mae(
+    pos: str,
+    y_true_dict: dict,
+    y_pred_dict: dict,
+    scoring_format: str = "ppr",
+) -> float:
+    """MAE in fantasy points after aggregating raw-stat predictions via the
+    per-position aggregator. Lets callers compare models across positions on the
+    same scale even when target sets differ."""
+    true_pts = predictions_to_fantasy_points(pos, y_true_dict, scoring_format)
+    pred_pts = predictions_to_fantasy_points(pos, y_pred_dict, scoring_format)
+    return float(np.mean(np.abs(pred_pts - true_pts)))
 
 
 def compute_ranking_metrics(
