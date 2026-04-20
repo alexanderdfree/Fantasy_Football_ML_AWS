@@ -13,10 +13,8 @@ class MultiTargetLoss(nn.Module):
 
     Loss = sum(weight[t] * Huber(pred[t], target[t]) for t in targets)
            + w_total * Huber(total_pred, total_actual)
-           + td_gate_weight * BCE(gate_logit, td > 0)   [when gated TD is active]
-
-    Uses Huber loss for robustness to outlier games.
-    Per-target deltas allow different MSE-to-MAE thresholds.
+           + sum(td_gate_weight * BCE(gate_logit_t, (target_t > 0))
+                 for t in gated_td_targets)
     """
 
     def __init__(
@@ -26,11 +24,20 @@ class MultiTargetLoss(nn.Module):
         huber_deltas: dict[str, float] = None,
         w_total: float = 0.5,
         td_gate_weight: float = 1.0,
-        gated_td_target: str = "td_points",
+        gated_td_target=None,  # legacy str; kept for backward compat
+        gated_td_targets: list[str] | None = None,
     ):
         super().__init__()
         self.target_names = target_names
-        self.gated_td_target = gated_td_target
+        # Accept either `gated_td_target` (str, legacy) or `gated_td_targets` (list, new).
+        if gated_td_targets is None:
+            if gated_td_target is None:
+                gated_td_targets = []
+            elif isinstance(gated_td_target, str):
+                gated_td_targets = [gated_td_target]
+            else:
+                gated_td_targets = list(gated_td_target)
+        self.gated_td_targets = list(gated_td_targets)
         self.loss_weights = {n: loss_weights.get(n, 1.0) for n in target_names}
         self.w_total = w_total
         self.td_gate_weight = td_gate_weight
@@ -55,14 +62,14 @@ class MultiTargetLoss(nn.Module):
         components = {f"loss_{name}": loss.item() for name, loss in per_target_losses.items()}
         components["loss_total_aux"] = loss_total.item()
 
-        # Gated TD: add BCE supervision on the gate logit
-        gate_key = f"{self.gated_td_target}_gate_logit"
-        if gate_key in preds:
-            gate_loss = F.binary_cross_entropy_with_logits(
-                preds[gate_key], (targets[self.gated_td_target] > 0).float()
-            )
-            combined = combined + self.td_gate_weight * gate_loss
-            components["loss_td_gate"] = gate_loss.item()
+        for td_name in self.gated_td_targets:
+            gate_key = f"{td_name}_gate_logit"
+            if gate_key in preds:
+                gate_loss = F.binary_cross_entropy_with_logits(
+                    preds[gate_key], (targets[td_name] > 0).float()
+                )
+                combined = combined + self.td_gate_weight * gate_loss
+                components[f"loss_td_gate_{td_name}"] = gate_loss.item()
 
         components["loss_combined"] = combined.item()
         return combined, components

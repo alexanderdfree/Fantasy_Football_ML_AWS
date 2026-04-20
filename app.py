@@ -304,7 +304,14 @@ def _apply_position_models(train, val, test, pos, results):
     )
 
     feature_cols = reg["get_feature_columns_fn"]()
-    adj = reg["compute_adjustment_fn"](pos_test)
+    # K/DST still apply a post-hoc adjustment (miss-rate / defense). QB/RB/WR/TE
+    # now aggregate raw-stat preds via reg["aggregate_fn"] instead of summing
+    # components + adjustment.
+    adj_values = None
+    if reg.get("compute_adjustment_fn") is not None:
+        adj = reg["compute_adjustment_fn"](pos_test)
+        adj_values = adj.values
+    aggregate_fn = reg.get("aggregate_fn")
 
     # Prepare features — fill missing columns with 0 (must match training dimension)
     missing_cols = [c for c in feature_cols if c not in pos_train.columns]
@@ -317,14 +324,21 @@ def _apply_position_models(train, val, test, pos, results):
         df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)
-    adj_values = adj.values
+
+    def _combine_total(preds: dict) -> np.ndarray:
+        if aggregate_fn is not None:
+            return aggregate_fn(preds)
+        total = sum(preds[t] for t in targets)
+        if adj_values is not None:
+            total = total + adj_values
+        return total
 
     # Ridge predictions — load failures propagate; global handler returns JSON 500.
     try:
         ridge = RidgeMultiTarget(target_names=targets)
         ridge.load(model_dir)
         ridge_preds = ridge.predict(X_test_pos)
-        ridge_total = sum(ridge_preds[t] for t in targets) + adj_values
+        ridge_total = _combine_total(ridge_preds)
     except Exception as e:
         _cache.setdefault("position_load_errors", {})[f"{pos}_ridge"] = str(e)
         raise
@@ -353,7 +367,7 @@ def _apply_position_models(train, val, test, pos, results):
         ).to(device)
         nn_model.load_state_dict(nn_state_dict)
         nn_preds = nn_model.predict_numpy(X_test_scaled, device)
-        nn_total = sum(nn_preds[t] for t in targets) + adj_values
+        nn_total = _combine_total(nn_preds)
     except Exception as e:
         _cache.setdefault("position_load_errors", {})[f"{pos}_nn"] = str(e)
         raise
@@ -404,7 +418,7 @@ def _apply_position_models(train, val, test, pos, results):
             attn_nn_preds = attn_model.predict_numpy(
                 X_test_attn_scaled, hist_test, mask_test, device
             )
-            attn_nn_total = sum(attn_nn_preds[t] for t in targets) + adj_values
+            attn_nn_total = _combine_total(attn_nn_preds)
         except Exception as e:
             _cache.setdefault("position_load_errors", {})[f"{pos}_attn_nn"] = str(e)
             raise
@@ -418,7 +432,7 @@ def _apply_position_models(train, val, test, pos, results):
             lgbm_model = LightGBMMultiTarget(target_names=targets)
             lgbm_model.load(model_dir)
             lgbm_preds = lgbm_model.predict(X_test_pos)
-            lgbm_total = sum(lgbm_preds[t] for t in targets) + adj_values
+            lgbm_total = _combine_total(lgbm_preds)
         except Exception as e:
             _cache.setdefault("position_load_errors", {})[f"{pos}_lgbm"] = str(e)
             raise

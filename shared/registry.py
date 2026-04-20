@@ -9,6 +9,8 @@ Everything is lazily imported so loading this module is cheap.
 import importlib
 from functools import cache
 
+from shared.aggregate_targets import aggregate_fn_for
+
 _POSITION_META = {
     "QB": {
         "runner_module": "QB.run_qb_pipeline",
@@ -117,6 +119,17 @@ def _attn_kwargs_static(cfg, prefix: str) -> dict:
     def g(name, default=None):
         return getattr(cfg, f"{prefix}_{name}", default)
 
+    # Gated TD target names. New configs set ``{POS}_GATED_TD_TARGETS`` (list,
+    # possibly multi-head for RB). Legacy configs set ``{POS}_GATED_TD_TARGET``
+    # (single string). Thread both through; MultiHeadNetWithHistory normalizes
+    # the legacy string into a one-element list.
+    gated_td_target = g("GATED_TD_TARGET", None)
+    gated_td_targets = g("GATED_TD_TARGETS", None)
+    # Default for legacy callers: keep "td_points" so pre-migration configs
+    # still build a gate on the old combined-TD head.
+    if gated_td_targets is None and gated_td_target is None:
+        gated_td_target = "td_points"
+
     kwargs = dict(
         backbone_layers=list(g("NN_BACKBONE_LAYERS", [])),
         d_model=g("ATTN_D_MODEL", 32),
@@ -131,7 +144,8 @@ def _attn_kwargs_static(cfg, prefix: str) -> dict:
         encoder_hidden_dim=g("ATTN_ENCODER_HIDDEN_DIM", 0),
         gated_td=g("ATTN_GATED_TD", False),
         td_gate_hidden=g("ATTN_TD_GATE_HIDDEN", 16),
-        gated_td_target=g("GATED_TD_TARGET", "td_points"),
+        gated_td_target=gated_td_target,
+        gated_td_targets=list(gated_td_targets) if gated_td_targets is not None else None,
     )
     head_hidden_overrides = g("NN_HEAD_HIDDEN_OVERRIDES", None)
     if head_hidden_overrides:
@@ -159,7 +173,7 @@ def get_inference_spec(pos: str) -> dict:
             fill_qb_nans,
             get_qb_feature_columns,
         )
-        from QB.qb_targets import compute_qb_adjustment, compute_qb_targets
+        from QB.qb_targets import compute_qb_targets
 
         return {
             "targets": QB_TARGETS,
@@ -169,7 +183,7 @@ def get_inference_spec(pos: str) -> dict:
             "add_features_fn": add_qb_specific_features,
             "fill_nans_fn": fill_qb_nans,
             "get_feature_columns_fn": get_qb_feature_columns,
-            "compute_adjustment_fn": compute_qb_adjustment,
+            "aggregate_fn": aggregate_fn_for("QB"),
             "model_dir": "QB/outputs/models",
             "nn_file": "qb_multihead_nn.pt",
             "nn_kwargs": dict(
@@ -200,7 +214,7 @@ def get_inference_spec(pos: str) -> dict:
             fill_rb_nans,
             get_rb_feature_columns,
         )
-        from RB.rb_targets import compute_fumble_adjustment, compute_rb_targets
+        from RB.rb_targets import compute_rb_targets
 
         return {
             "targets": RB_TARGETS,
@@ -210,7 +224,7 @@ def get_inference_spec(pos: str) -> dict:
             "add_features_fn": add_rb_specific_features,
             "fill_nans_fn": fill_rb_nans,
             "get_feature_columns_fn": get_rb_feature_columns,
-            "compute_adjustment_fn": compute_fumble_adjustment,
+            "aggregate_fn": aggregate_fn_for("RB"),
             "model_dir": "RB/outputs/models",
             "nn_file": "rb_multihead_nn.pt",
             "nn_kwargs": dict(
@@ -241,7 +255,7 @@ def get_inference_spec(pos: str) -> dict:
             fill_wr_nans,
             get_wr_feature_columns,
         )
-        from WR.wr_targets import compute_wr_fumble_adjustment, compute_wr_targets
+        from WR.wr_targets import compute_wr_targets
 
         return {
             "targets": WR_TARGETS,
@@ -251,7 +265,7 @@ def get_inference_spec(pos: str) -> dict:
             "add_features_fn": add_wr_specific_features,
             "fill_nans_fn": fill_wr_nans,
             "get_feature_columns_fn": get_wr_feature_columns,
-            "compute_adjustment_fn": compute_wr_fumble_adjustment,
+            "aggregate_fn": aggregate_fn_for("WR"),
             "model_dir": "WR/outputs/models",
             "nn_file": "wr_multihead_nn.pt",
             "nn_kwargs": dict(
@@ -282,7 +296,7 @@ def get_inference_spec(pos: str) -> dict:
             fill_te_nans,
             get_te_feature_columns,
         )
-        from TE.te_targets import compute_te_fumble_adjustment, compute_te_targets
+        from TE.te_targets import compute_te_targets
 
         return {
             "targets": TE_TARGETS,
@@ -292,7 +306,7 @@ def get_inference_spec(pos: str) -> dict:
             "add_features_fn": add_te_specific_features,
             "fill_nans_fn": fill_te_nans,
             "get_feature_columns_fn": get_te_feature_columns,
-            "compute_adjustment_fn": compute_te_fumble_adjustment,
+            "aggregate_fn": aggregate_fn_for("TE"),
             "model_dir": "TE/outputs/models",
             "nn_file": "te_multihead_nn.pt",
             "nn_kwargs": dict(
