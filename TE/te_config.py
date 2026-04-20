@@ -1,5 +1,8 @@
 # === TE Target Decomposition ===
-TE_TARGETS = ["receiving_floor", "rushing_floor", "td_points"]
+# Raw-stat targets; fantasy points are aggregated post-prediction via
+# shared.aggregate_targets.predictions_to_fantasy_points("TE", ...).
+# Rushing targets dropped — TE rushing stats are near-zero (noise > signal).
+TE_TARGETS = ["receiving_tds", "receiving_yards", "receptions", "fumbles_lost"]
 
 # === TE-Specific Features ===
 TE_SPECIFIC_FEATURES = [
@@ -90,16 +93,20 @@ TE_INCLUDE_FEATURES = {
 # === Ridge ===
 import numpy as np
 
+# Per-target alpha grids — count targets (TDs, fumbles_lost) tolerate smaller
+# alphas given their tighter spread; yards/receptions span the classic range.
 TE_RIDGE_ALPHA_GRIDS = {
-    "receiving_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
-    "rushing_floor": [round(x, 4) for x in np.logspace(-1, 4, 15)],
-    "td_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "receiving_tds": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "receiving_yards": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "receptions": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "fumbles_lost": [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
 # === Neural Net (2012+ dataset: relaxed regularization) ===
 TE_NN_BACKBONE_LAYERS = [96, 48]
 TE_NN_HEAD_HIDDEN = 24
-TE_NN_HEAD_HIDDEN_OVERRIDES = {"td_points": 32}  # larger TD head for boom/bust TEs
+# Tighter override for receiving_tds (TE convention: smaller cap than RB/WR).
+TE_NN_HEAD_HIDDEN_OVERRIDES = {"receiving_tds": 32}
 TE_NN_DROPOUT = 0.30
 TE_NN_LR = 5e-4
 TE_NN_WEIGHT_DECAY = 3e-4
@@ -108,26 +115,19 @@ TE_NN_BATCH_SIZE = 128
 TE_NN_PATIENCE = 25
 
 # === Loss Weights ===
-# Equal per-target weights: training objective now aligned with evaluation
-# metric (total MAE), where all targets contribute equally to the total.
-# Previous scheme (1.2/0.2/3.0) heavily over-weighted td_points (3x)
-# and almost ignored rushing_floor (0.2x). w_total raised to 1.0.
-TE_LOSS_WEIGHTS = {
-    "receiving_floor": 1.0,
-    "rushing_floor": 1.0,
-    "td_points": 1.0,
-}
+# Equal per-target weights keep the training objective aligned with the
+# aggregated fantasy-points evaluation metric.
+TE_LOSS_WEIGHTS = {t: 1.0 for t in TE_TARGETS}
 TE_LOSS_W_TOTAL = 1.0
 
-# === Huber Deltas (per-target) ===
-# Harmonized to 2.0 across targets. Previous scheme (1.5/0.5/3.0) was
-# the most skewed — rushing_floor errors went linear at 0.5 while
-# td_points errors stayed quadratic up to 3.0.
+# === Huber Deltas (raw-stat units) ===
+# yards δ≈15 (receiving), counts δ≈0.5, receptions δ≈2.0, total δ≈3.0 (TE scale).
 TE_HUBER_DELTAS = {
-    "receiving_floor": 2.0,
-    "rushing_floor": 2.0,
-    "td_points": 2.0,
-    "total": 2.5,  # explicit delta for total aux loss (TEs score lower)
+    "receiving_tds": 0.5,
+    "receiving_yards": 15.0,
+    "receptions": 2.0,
+    "fumbles_lost": 0.5,
+    "total": 3.0,
 }
 
 # === LR Scheduler ===
@@ -156,7 +156,9 @@ TE_ATTN_HISTORY_STATS = [
     "snap_pct",
 ]
 # Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
+# Gated on receiving_tds — sole TD source after rushing drop.
 TE_ATTN_GATED_TD = True
+TE_GATED_TD_TARGETS = ["receiving_tds"]
 TE_ATTN_TD_GATE_HIDDEN = 16
 TE_ATTN_TD_GATE_WEIGHT = 1.0
 

@@ -7,19 +7,19 @@ import pandas as pd
 import pytest
 
 from shared.evaluation import compute_ranking_metrics, compute_target_metrics
+from TE.te_config import TE_TARGETS
 
 pytestmark = pytest.mark.unit
-
-TE_TARGETS = ["receiving_floor", "rushing_floor", "td_points"]
 
 
 class TestComputeTargetMetrics:
     def _make_dicts(self, n=50):
         np.random.seed(42)
         y_true = {
-            "receiving_floor": np.random.rand(n) * 10,
-            "rushing_floor": np.random.rand(n) * 1,
-            "td_points": np.random.rand(n) * 6,
+            "receiving_tds": np.random.randint(0, 3, n).astype(np.float32),
+            "receiving_yards": np.random.rand(n) * 80,
+            "receptions": np.random.rand(n) * 8,
+            "fumbles_lost": np.random.binomial(1, 0.03, n).astype(np.float32),
             "total": np.random.rand(n) * 15,
         }
         y_pred = {k: v + np.random.randn(n) * 0.5 for k, v in y_true.items()}
@@ -30,8 +30,8 @@ class TestComputeTargetMetrics:
         mock_metrics.return_value = {"mae": 1.0, "rmse": 1.5, "r2": 0.8}
         y_true, y_pred = self._make_dicts()
         result = compute_target_metrics(y_true, y_pred, TE_TARGETS)
-        assert mock_metrics.call_count == 4
-        assert set(result.keys()) == {"total", "receiving_floor", "rushing_floor", "td_points"}
+        assert mock_metrics.call_count == len(TE_TARGETS) + 1
+        assert set(result.keys()) == set(TE_TARGETS) | {"total"}
 
     @patch("shared.evaluation.compute_metrics")
     def test_returns_correct_structure(self, mock_metrics):
@@ -42,15 +42,17 @@ class TestComputeTargetMetrics:
             assert "mae" in result[target]
             assert "rmse" in result[target]
             assert "r2" in result[target]
+            assert "unit" in result[target]
 
     @patch("shared.evaluation.compute_metrics")
     def test_perfect_predictions(self, mock_metrics):
         mock_metrics.return_value = {"mae": 0.0, "rmse": 0.0, "r2": 1.0}
         y = {
-            "receiving_floor": np.array([8.0, 10.0]),
-            "rushing_floor": np.array([0.0, 0.5]),
-            "td_points": np.array([6.0, 0.0]),
-            "total": np.array([14.0, 10.5]),
+            "receiving_tds": np.array([1.0, 0.0]),
+            "receiving_yards": np.array([80.0, 40.0]),
+            "receptions": np.array([5.0, 3.0]),
+            "fumbles_lost": np.array([0.0, 0.0]),
+            "total": np.array([19.0, 7.0]),
         }
         result = compute_target_metrics(y, y, TE_TARGETS)
         assert result["total"]["mae"] == 0.0

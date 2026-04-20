@@ -17,6 +17,7 @@ from TE.te_config import (
     TE_ATTN_POSITIONAL_ENCODING,
     TE_ATTN_TD_GATE_HIDDEN,
     TE_ATTN_TD_GATE_WEIGHT,
+    TE_GATED_TD_TARGETS,
     TE_HUBER_DELTAS,
     TE_LGBM_COLSAMPLE_BYTREE,
     TE_LGBM_LEARNING_RATE,
@@ -50,7 +51,7 @@ from TE.te_config import (
 )
 from TE.te_data import filter_to_te
 from TE.te_features import add_te_specific_features, fill_te_nans, get_te_feature_columns
-from TE.te_targets import compute_te_fumble_adjustment, compute_te_targets
+from TE.te_targets import compute_te_targets
 
 TE_CONFIG = {
     "targets": TE_TARGETS,
@@ -61,7 +62,6 @@ TE_CONFIG = {
     "add_features_fn": add_te_specific_features,
     "fill_nans_fn": fill_te_nans,
     "get_feature_columns_fn": get_te_feature_columns,
-    "compute_adjustment_fn": compute_te_fumble_adjustment,
     "nn_backbone_layers": TE_NN_BACKBONE_LAYERS,
     "nn_head_hidden": TE_NN_HEAD_HIDDEN,
     "nn_dropout": TE_NN_DROPOUT,
@@ -88,6 +88,7 @@ TE_CONFIG = {
     "attn_gated_td": TE_ATTN_GATED_TD,
     "attn_td_gate_hidden": TE_ATTN_TD_GATE_HIDDEN,
     "attn_td_gate_weight": TE_ATTN_TD_GATE_WEIGHT,
+    "gated_td_targets": TE_GATED_TD_TARGETS,
     "train_lightgbm": TE_TRAIN_LIGHTGBM,
     "lgbm_n_estimators": TE_LGBM_N_ESTIMATORS,
     "lgbm_learning_rate": TE_LGBM_LEARNING_RATE,

@@ -1,10 +1,12 @@
-"""Tests for TE.te_targets — compute_te_targets and compute_te_fumble_adjustment."""
+"""Tests for TE.te_targets — compute_te_targets emits 4 raw-stat columns."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from TE.te_targets import compute_te_fumble_adjustment, compute_te_targets
+from src.config import SCORING_PPR
+from src.data.loader import compute_fantasy_points
+from TE.te_targets import compute_te_targets
 
 pytestmark = pytest.mark.unit
 
@@ -28,22 +30,9 @@ def _make_te_row(**overrides):
     }
     defaults.update(overrides)
     if "fantasy_points" not in overrides:
-        fp = (
-            defaults["receiving_yards"] * 0.1
-            + defaults["receptions"] * 1.0  # PPR
-            + defaults["rushing_yards"] * 0.1
-            + (defaults["receiving_tds"] + defaults["rushing_tds"]) * 6
-            + (
-                defaults["sack_fumbles_lost"]
-                + defaults["rushing_fumbles_lost"]
-                + defaults["receiving_fumbles_lost"]
-            )
-            * -2
-            + defaults["passing_yards"] * 0.04
-            + defaults["passing_tds"] * 4
-            + defaults["interceptions"] * -2
+        defaults["fantasy_points"] = float(
+            compute_fantasy_points(pd.DataFrame([defaults]), SCORING_PPR).iloc[0]
         )
-        defaults["fantasy_points"] = fp
     return pd.DataFrame([defaults])
 
 
@@ -53,33 +42,26 @@ def _make_te_row(**overrides):
 
 
 class TestComputeTETargets:
-    def test_receiving_floor(self):
-        df = _make_te_row(receptions=5, receiving_yards=50)
+    def test_receiving_tds_passthrough(self):
+        df = _make_te_row(receiving_tds=2)
         result = compute_te_targets(df)
-        # 5 * 1.0 + 50 * 0.1 = 10.0
-        assert pytest.approx(result["receiving_floor"].iloc[0]) == 10.0
+        assert result["receiving_tds"].iloc[0] == 2
 
-    def test_rushing_floor(self):
-        """TEs occasionally rush — should still be computed."""
-        df = _make_te_row(rushing_yards=15)
+    def test_receiving_yards_passthrough(self):
+        df = _make_te_row(receiving_yards=87)
         result = compute_te_targets(df)
-        assert pytest.approx(result["rushing_floor"].iloc[0]) == 1.5
+        assert pytest.approx(result["receiving_yards"].iloc[0]) == 87
 
-    def test_td_points_receiving(self):
-        df = _make_te_row(receiving_tds=2, rushing_tds=0)
+    def test_receptions_passthrough(self):
+        df = _make_te_row(receptions=6)
         result = compute_te_targets(df)
-        assert pytest.approx(result["td_points"].iloc[0]) == 12.0
+        assert result["receptions"].iloc[0] == 6
 
-    def test_td_points_rushing(self):
-        """TE tackle-eligible TD (rare but happens)."""
-        df = _make_te_row(receiving_tds=0, rushing_tds=1)
+    def test_fumbles_lost_sums_rushing_and_receiving(self):
+        df = _make_te_row(rushing_fumbles_lost=1, receiving_fumbles_lost=1, sack_fumbles_lost=1)
         result = compute_te_targets(df)
-        assert pytest.approx(result["td_points"].iloc[0]) == 6.0
-
-    def test_fumble_penalty(self):
-        df = _make_te_row(receiving_fumbles_lost=1, sack_fumbles_lost=1)
-        result = compute_te_targets(df)
-        assert pytest.approx(result["fumble_penalty"].iloc[0]) == -4.0
+        # sack_fumbles_lost is NOT part of TE fumbles_lost (skill-position convention).
+        assert result["fumbles_lost"].iloc[0] == 2
 
     def test_all_nan_stats_treated_as_zero(self):
         df = pd.DataFrame(
@@ -102,10 +84,10 @@ class TestComputeTETargets:
             ]
         )
         result = compute_te_targets(df)
-        assert result["receiving_floor"].iloc[0] == 0.0
-        assert result["rushing_floor"].iloc[0] == 0.0
-        assert result["td_points"].iloc[0] == 0.0
-        assert result["fumble_penalty"].iloc[0] == 0.0
+        assert result["receiving_tds"].iloc[0] == 0.0
+        assert result["receiving_yards"].iloc[0] == 0.0
+        assert result["receptions"].iloc[0] == 0.0
+        assert result["fumbles_lost"].iloc[0] == 0.0
 
     def test_does_not_mutate_original(self):
         df = _make_te_row()
@@ -119,83 +101,28 @@ class TestComputeTETargets:
             receptions=0, receiving_yards=0, receiving_tds=0, rushing_tds=0, rushing_yards=0
         )
         result = compute_te_targets(df)
-        assert result["receiving_floor"].iloc[0] == 0.0
-        assert result["td_points"].iloc[0] == 0.0
+        assert result["receiving_tds"].iloc[0] == 0
+        assert result["receiving_yards"].iloc[0] == 0
+        assert result["receptions"].iloc[0] == 0
 
     def test_big_te_game(self):
         df = _make_te_row(receptions=8, receiving_yards=120, receiving_tds=2)
         result = compute_te_targets(df)
-        # 8 + 12 = 20
-        assert result["receiving_floor"].iloc[0] == 20.0
-        assert result["td_points"].iloc[0] == 12.0
+        assert result["receptions"].iloc[0] == 8
+        assert result["receiving_yards"].iloc[0] == 120
+        assert result["receiving_tds"].iloc[0] == 2
 
+    def test_aggregator_reproduces_te_fantasy_points(self):
+        """Aggregating the 4 raw targets to fantasy points should match the
+        TE-only slice of fantasy_points (no passing/rushing contributions)."""
+        from shared.aggregate_targets import predictions_to_fantasy_points
 
-# ---------------------------------------------------------------------------
-# compute_te_fumble_adjustment
-# ---------------------------------------------------------------------------
-
-
-class TestComputeTEFumbleAdjustment:
-    def _make_fumble_df(self, fumbles, season=2023):
-        n = len(fumbles)
-        return pd.DataFrame(
-            {
-                "player_id": ["T1"] * n,
-                "season": [season] * n,
-                "week": list(range(1, n + 1)),
-                "sack_fumbles_lost": [0] * n,
-                "rushing_fumbles_lost": [0] * n,
-                "receiving_fumbles_lost": fumbles,
-            }
-        )
-
-    def test_first_game_is_zero(self):
-        df = self._make_fumble_df([1, 0, 0])
-        result = compute_te_fumble_adjustment(df)
-        assert result.iloc[0] == 0.0
-
-    def test_second_game_uses_first(self):
-        df = self._make_fumble_df([1, 0, 0, 0])
-        result = compute_te_fumble_adjustment(df)
-        assert pytest.approx(result.iloc[1]) == -2.0
-
-    def test_rolling_window(self):
-        df = self._make_fumble_df([1, 1, 0, 0, 0, 0, 0, 0, 0])
-        result = compute_te_fumble_adjustment(df)
-        assert pytest.approx(result.iloc[8]) == -0.5
-
-    def test_player_with_no_fumbles(self):
-        df = self._make_fumble_df([0, 0, 0, 0])
-        result = compute_te_fumble_adjustment(df)
-        assert pytest.approx(result.iloc[1]) == 0.0
-        assert pytest.approx(result.iloc[3]) == 0.0
-
-    def test_multiple_players_independent(self):
-        df = pd.DataFrame(
-            {
-                "player_id": ["T1", "T1", "T2", "T2"],
-                "season": [2023, 2023, 2023, 2023],
-                "week": [1, 2, 1, 2],
-                "sack_fumbles_lost": [0, 0, 0, 0],
-                "rushing_fumbles_lost": [0, 0, 0, 0],
-                "receiving_fumbles_lost": [1, 0, 0, 0],
-            }
-        )
-        result = compute_te_fumble_adjustment(df)
-        assert pytest.approx(result.iloc[1]) == -2.0
-        assert pytest.approx(result.iloc[3]) == 0.0
-
-    def test_multiple_seasons_reset(self):
-        df = pd.DataFrame(
-            {
-                "player_id": ["T1", "T1", "T1", "T1"],
-                "season": [2022, 2022, 2023, 2023],
-                "week": [1, 2, 1, 2],
-                "sack_fumbles_lost": [0, 0, 0, 0],
-                "rushing_fumbles_lost": [0, 0, 0, 0],
-                "receiving_fumbles_lost": [1, 1, 0, 0],
-            }
-        )
-        result = compute_te_fumble_adjustment(df)
-        assert result.iloc[2] == 0.0
-        assert pytest.approx(result.iloc[3]) == 0.0
+        df = _make_te_row(receptions=6, receiving_yards=60, receiving_tds=1)
+        result = compute_te_targets(df)
+        preds = {
+            t: result[t].values
+            for t in ("receiving_tds", "receiving_yards", "receptions", "fumbles_lost")
+        }
+        total = predictions_to_fantasy_points("TE", preds, "ppr")
+        # 6 rec × 1 + 60 yds × 0.1 + 1 TD × 6 = 18
+        assert pytest.approx(total[0]) == 18.0

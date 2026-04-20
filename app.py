@@ -204,15 +204,12 @@ POSITION_INFO = {
     "TE": {
         "label": "Tight End",
         "targets": [
-            {
-                "key": "receiving_floor",
-                "label": "Receiving Floor",
-                "formula": "receptions x PPR + recv_yards x 0.1",
-            },
-            {"key": "rushing_floor", "label": "Rushing Floor", "formula": "rushing_yards x 0.1"},
-            {"key": "td_points", "label": "TD Points", "formula": "recv_TD x 6 + rush_TD x 6"},
+            {"key": "receiving_tds", "label": "Receiving TDs", "formula": "raw count"},
+            {"key": "receiving_yards", "label": "Receiving Yards", "formula": "raw count"},
+            {"key": "receptions", "label": "Receptions", "formula": "raw count"},
+            {"key": "fumbles_lost", "label": "Fumbles Lost", "formula": "raw count"},
         ],
-        "adjustments": "Fumble rate (historical L8 rolling avg)",
+        "adjustments": "None - fumbles_lost is now a direct target.",
         "specific_features": list(TE_SPECIFIC_FEATURES),
         "architecture": {
             "backbone": list(te_cfg.TE_NN_BACKBONE_LAYERS),
