@@ -27,9 +27,92 @@ env:
   S3_BUCKET: ff-predictor-training
 
 jobs:
+  detect:
+    # Decide which positions to train so we don't burn GPU time on positions
+    # whose code didn't change. workflow_dispatch honors the explicit input
+    # (break-glass); workflow_run scopes via git diff on the merge commit.
+    # Keep the global-trigger list in sync with batch-image.yml's path filter.
+    runs-on: ubuntu-latest
+    outputs:
+      positions: ${{ steps.scope.outputs.positions }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # workflow_run: the merged SHA on main. workflow_dispatch: the
+          # ref we were dispatched on. fetch-depth: 2 is the minimum to
+          # resolve HEAD^ for git diff.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_POSITIONS: ${{ github.event.inputs.positions }}
+        run: |
+          set -eu
+          ALL="QB RB WR TE K DST"
+
+          # Dispatch with explicit input → use verbatim (break-glass).
+          # Dispatch with empty input → retrain all (legacy semantics,
+          # e.g. "retrain after data refresh").
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ -n "$INPUT_POSITIONS" ]; then
+              echo "Dispatch override: $INPUT_POSITIONS"
+              echo "positions=$INPUT_POSITIONS" >> "$GITHUB_OUTPUT"
+            else
+              echo "Dispatch with empty input → all positions."
+              echo "positions=$ALL" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          # workflow_run: diff the merged commit against its first parent.
+          # Defensive: on a degenerate repo with no parent, default to all.
+          if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            echo "No parent commit — defaulting to all positions."
+            echo "positions=$ALL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          files=$(git diff --name-only HEAD^ HEAD)
+          echo "Changed files:"
+          printf '  %s\n' $files
+
+          # Global triggers → retrain everything. Must match batch-image.yml's
+          # path filter; if you add a new top-level shared dir there, add it
+          # here too.
+          if printf '%s\n' "$files" | grep -qE '^(shared|src|batch)/|^requirements\.txt$'; then
+            echo "Global code changed → retraining all positions."
+            echo "positions=$ALL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Per-position: any change under {POS}/ retrains that position.
+          # Over-train on tests/docs is cheap (~2 min/pos); under-training
+          # from a too-clever regex is the expensive failure mode.
+          positions=""
+          for p in $ALL; do
+            if printf '%s\n' "$files" | grep -qE "^${p}/"; then
+              positions="${positions:+$positions }$p"
+            fi
+          done
+
+          if [ -z "$positions" ]; then
+            echo "No model-relevant paths changed — skipping training."
+          else
+            echo "Scoped retrain: $positions"
+          fi
+          echo "positions=$positions" >> "$GITHUB_OUTPUT"
+
   train:
-    # For workflow_run, only fire on success of the upstream build.
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    needs: detect
+    # Gate: (a) detect found something to train, AND (b) the event is a
+    # manual dispatch or a successful upstream image build. Dispatches
+    # always satisfy (a) via the legacy fallback in detect.
+    if: >
+      needs.detect.outputs.positions != '' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -107,7 +190,7 @@ jobs:
       - name: Run training for all positions (sequential)
         id: train
         run: |
-          POSITIONS="${{ github.event.inputs.positions || 'QB RB WR TE K DST' }}"
+          POSITIONS="${{ needs.detect.outputs.positions }}"
           SEED="${{ github.event.inputs.seed || '42' }}"
           # Sequential loop inside a single SSM command so we get one command
           # ID to poll. Parallel runs would OOM the single T4.
@@ -162,7 +245,7 @@ jobs:
 
       - name: Verify model artifact freshness
         run: |
-          POSITIONS="${{ github.event.inputs.positions || 'QB RB WR TE K DST' }}"
+          POSITIONS="${{ needs.detect.outputs.positions }}"
           now=$(date +%s)
           echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
           echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
@@ -191,7 +274,7 @@ jobs:
       - name: Append EC2 run to benchmark_history.json
         run: |
           BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
-          POSITIONS="${{ github.event.inputs.positions || 'QB RB WR TE K DST' }}"
+          POSITIONS="${{ needs.detect.outputs.positions }}"
           # Rebase before appending so a concurrent push doesn't reject us later.
           git fetch origin "$BRANCH"
           git pull --rebase origin "$BRANCH"
