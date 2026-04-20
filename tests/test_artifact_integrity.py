@@ -24,7 +24,14 @@ from shared.artifact_integrity import (
 
 FEATURES_A = ["feat_a", "feat_b", "feat_c"]
 FEATURES_B = ["feat_a", "feat_b", "feat_d"]  # one column differs
-TARGETS = ["passing_floor", "rushing_floor", "td_points"]
+TARGETS = [
+    "passing_yards",
+    "rushing_yards",
+    "passing_tds",
+    "rushing_tds",
+    "interceptions",
+    "fumbles_lost",
+]
 
 
 def _fake_scaler(n_features: int):

@@ -1,12 +1,11 @@
-"""Tests for shared.neural_net.MultiHeadNet (using QB targets)."""
+"""Tests for shared.neural_net.MultiHeadNet (using QB raw-stat targets)."""
 
 import numpy as np
 import pytest
 import torch
 
+from QB.qb_config import QB_TARGETS
 from shared.neural_net import MultiHeadNet
-
-QB_TARGETS = ["passing_floor", "rushing_floor", "td_points"]
 
 
 @pytest.mark.unit
@@ -24,7 +23,7 @@ class TestMultiHeadNet:
     def test_output_keys(self, model):
         x = torch.randn(4, 10)
         out = model(x)
-        assert set(out.keys()) == {"passing_floor", "rushing_floor", "td_points", "total"}
+        assert set(out.keys()) == set(QB_TARGETS) | {"total"}
 
     def test_output_shapes(self, model):
         batch_size = 8
@@ -38,7 +37,7 @@ class TestMultiHeadNet:
         x = torch.randn(4, 10)
         with torch.no_grad():
             out = model(x)
-        expected = out["passing_floor"] + out["rushing_floor"] + out["td_points"]
+        expected = sum(out[t] for t in QB_TARGETS)
         torch.testing.assert_close(out["total"], expected)
 
     def test_custom_backbone(self):
@@ -74,7 +73,7 @@ class TestMultiHeadNet:
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
 
-        assert set(preds.keys()) == {"passing_floor", "rushing_floor", "td_points", "total"}
+        assert set(preds.keys()) == set(QB_TARGETS) | {"total"}
         for key in preds:
             assert isinstance(preds[key], np.ndarray)
             assert preds[key].shape == (5,)
@@ -131,7 +130,7 @@ class TestMultiHeadNet:
         model.train()
         x = torch.randn(4, 10)
         out = model(x)
-        expected = out["passing_floor"] + out["rushing_floor"] + out["td_points"]
+        expected = sum(out[t] for t in QB_TARGETS)
         torch.testing.assert_close(out["total"], expected)
 
     def test_single_backbone_layer(self):
@@ -212,10 +211,10 @@ class TestMultiHeadNet:
             target_names=QB_TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
-            head_hidden_overrides={"td_points": 32},
+            head_hidden_overrides={"passing_tds": 32},
         )
         x = torch.randn(4, 10)
         out = model(x)
         assert out["total"].shape == (4,)
-        td_head = model.heads["td_points"]
-        assert td_head[0].out_features == 32
+        passing_tds_head = model.heads["passing_tds"]
+        assert passing_tds_head[0].out_features == 32

@@ -1,5 +1,14 @@
-# === QB Target Decomposition ===
-QB_TARGETS = ["passing_floor", "rushing_floor", "td_points"]
+# === QB Raw-Stat Targets ===
+# Predictions are raw NFL stats; fantasy points are aggregated post-prediction
+# via shared.aggregate_targets.predictions_to_fantasy_points("QB", preds).
+QB_TARGETS = [
+    "passing_yards",
+    "rushing_yards",
+    "passing_tds",
+    "rushing_tds",
+    "interceptions",
+    "fumbles_lost",
+]
 
 # === QB-Specific Features ===
 QB_SPECIFIC_FEATURES = [
@@ -90,12 +99,18 @@ QB_INCLUDE_FEATURES = {
 }
 
 # === Ridge ===
+# Yards targets stay on the (-2, 3) alpha grid; count targets (TDs, INTs,
+# fumbles_lost) use the (-1, 4) grid because the smaller target scale lets
+# stronger regularization dominate.
 import numpy as np
 
 QB_RIDGE_ALPHA_GRIDS = {
-    "passing_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
-    "rushing_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
-    "td_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "passing_yards": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "rushing_yards": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "passing_tds": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "rushing_tds": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "interceptions": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "fumbles_lost": [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
 # === Neural Net (2012+ dataset: wider backbone, relaxed regularization) ===
@@ -108,28 +123,30 @@ QB_NN_EPOCHS = 300
 QB_NN_BATCH_SIZE = 128
 QB_NN_PATIENCE = 25
 
-# === Loss Weights ===
-# Equal per-target weights: training objective now aligned with evaluation
-# metric (total MAE), where all targets contribute equally to the total.
-# Previous scheme (1.5/0.8/3.0) over-optimized td_points at the expense
-# of floor predictions. w_total raised to 1.0 so total prediction quality
-# gets equal gradient signal alongside per-target losses.
-QB_LOSS_WEIGHTS = {
-    "passing_floor": 1.0,
-    "rushing_floor": 1.0,
-    "td_points": 1.0,
+# Wider heads for zero-inflated count targets (passing_tds, rushing_tds).
+# Default 32-unit head is too narrow once the loss landscape has a mass at 0.
+QB_NN_HEAD_HIDDEN_OVERRIDES = {
+    "passing_tds": 64,
+    "rushing_tds": 64,
 }
+
+# === Loss Weights ===
+# Equal per-target weights so the aggregator (fantasy-point conversion) sees
+# balanced gradients across all raw stats.
+QB_LOSS_WEIGHTS = {t: 1.0 for t in QB_TARGETS}
 QB_LOSS_W_TOTAL = 1.0
 
-# === Huber Deltas (per-target) ===
-# Harmonized to 2.0 across targets so equal-magnitude errors get equal
-# treatment regardless of which target they come from. Previous scheme
-# (1.5/1.0/3.0) created uneven gradient landscapes.
+# === Huber Deltas (raw-stat units) ===
+# Yards δ is in yards; count-target δ is in counts (TDs, INTs, fumbles).
+# ``total`` δ is in aggregated fantasy points (QBs score ~25 pts, δ≈4).
 QB_HUBER_DELTAS = {
-    "passing_floor": 2.0,
-    "rushing_floor": 2.0,
-    "td_points": 2.0,
-    "total": 4.0,  # explicit delta for total aux loss (QBs score highest)
+    "passing_yards": 25.0,
+    "rushing_yards": 15.0,
+    "passing_tds": 0.5,
+    "rushing_tds": 0.5,
+    "interceptions": 0.5,
+    "fumbles_lost": 0.5,
+    "total": 4.0,
 }
 
 # === LR Scheduler ===
@@ -165,8 +182,10 @@ QB_ATTN_HISTORY_STATS = [
     "sacks",
     "sack_yards",
 ]
-# Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
-QB_ATTN_GATED_TD = True
+# Gated-TD heads are DISABLED for QB. QBs throw so many TDs that the zero-
+# inflation assumption behind the hurdle model does not hold (median TD count
+# per start is ~2); a plain regression head outperforms the two-stage gate.
+QB_ATTN_GATED_TD = False
 QB_ATTN_TD_GATE_HIDDEN = 16
 QB_ATTN_TD_GATE_WEIGHT = 1.0
 
@@ -182,3 +201,4 @@ QB_LGBM_REG_ALPHA = 0.00309259
 QB_LGBM_MIN_CHILD_SAMPLES = 59
 QB_LGBM_MIN_SPLIT_GAIN = 0.0632242
 QB_LGBM_OBJECTIVE = "fair"
+# CI retrigger
