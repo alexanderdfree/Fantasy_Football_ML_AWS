@@ -1,12 +1,11 @@
-"""Tests for shared.neural_net.MultiHeadNet (using RB targets)."""
+"""Tests for shared.neural_net.MultiHeadNet (using RB raw-stat targets)."""
 
 import numpy as np
 import pytest
 import torch
 
+from RB.rb_config import RB_TARGETS
 from shared.neural_net import MultiHeadNet
-
-RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 
 
 @pytest.mark.unit
@@ -24,7 +23,7 @@ class TestMultiHeadNet:
     def test_output_keys(self, model):
         x = torch.randn(4, 10)
         out = model(x)
-        assert set(out.keys()) == {"rushing_floor", "receiving_floor", "td_points", "total"}
+        assert set(out.keys()) == set(RB_TARGETS) | {"total"}
 
     def test_output_shapes(self, model):
         batch_size = 8
@@ -38,7 +37,7 @@ class TestMultiHeadNet:
         x = torch.randn(4, 10)
         with torch.no_grad():
             out = model(x)
-        expected = out["rushing_floor"] + out["receiving_floor"] + out["td_points"]
+        expected = sum(out[t] for t in RB_TARGETS)
         torch.testing.assert_close(out["total"], expected)
 
     def test_custom_backbone(self):
@@ -74,7 +73,7 @@ class TestMultiHeadNet:
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
 
-        assert set(preds.keys()) == {"rushing_floor", "receiving_floor", "td_points", "total"}
+        assert set(preds.keys()) == set(RB_TARGETS) | {"total"}
         for key in preds:
             assert isinstance(preds[key], np.ndarray)
             assert preds[key].shape == (5,)
@@ -110,7 +109,7 @@ class TestMultiHeadNet:
         )
         model.train()
         torch.manual_seed(0)
-        x = torch.randn(4, 5) * 0.01  # small but varied (avoids BatchNorm degenerate case)
+        x = torch.randn(4, 5) * 0.01
         x.requires_grad_(True)
         out = model(x)
         loss = out["total"].sum()
@@ -131,7 +130,7 @@ class TestMultiHeadNet:
         model.train()
         x = torch.randn(4, 10)
         out = model(x)
-        expected = out["rushing_floor"] + out["receiving_floor"] + out["td_points"]
+        expected = sum(out[t] for t in RB_TARGETS)
         torch.testing.assert_close(out["total"], expected)
 
     def test_single_backbone_layer(self):
@@ -212,11 +211,11 @@ class TestMultiHeadNet:
             target_names=RB_TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
-            head_hidden_overrides={"td_points": 32},
+            head_hidden_overrides={"rushing_tds": 32, "receiving_tds": 32},
         )
         x = torch.randn(4, 10)
         out = model(x)
         assert out["total"].shape == (4,)
-        # td_points head first linear should be 16->32 (not 16->8)
-        td_head = model.heads["td_points"]
-        assert td_head[0].out_features == 32
+        # Both TD heads get larger hidden — first linear should be 16->32.
+        assert model.heads["rushing_tds"][0].out_features == 32
+        assert model.heads["receiving_tds"][0].out_features == 32

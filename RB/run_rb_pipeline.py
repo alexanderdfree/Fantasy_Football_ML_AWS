@@ -26,6 +26,7 @@ from RB.rb_config import (
     RB_COSINE_T0,
     RB_COSINE_T_MULT,
     RB_GATED_ORDINAL_TARGETS,
+    RB_GATED_TD_TARGETS,
     RB_HUBER_DELTAS,
     RB_LGBM_COLSAMPLE_BYTREE,
     RB_LGBM_LEARNING_RATE,
@@ -62,7 +63,7 @@ from RB.rb_config import (
 )
 from RB.rb_data import filter_to_rb
 from RB.rb_features import add_rb_specific_features, fill_rb_nans, get_rb_feature_columns
-from RB.rb_targets import compute_fumble_adjustment, compute_rb_targets
+from RB.rb_targets import compute_rb_targets
 from shared.pipeline import run_cv_pipeline, run_pipeline
 
 RB_CONFIG = {
@@ -83,7 +84,6 @@ RB_CONFIG = {
     "add_features_fn": add_rb_specific_features,
     "fill_nans_fn": fill_rb_nans,
     "get_feature_columns_fn": get_rb_feature_columns,
-    "compute_adjustment_fn": compute_fumble_adjustment,
     "nn_backbone_layers": RB_NN_BACKBONE_LAYERS,
     "nn_head_hidden": RB_NN_HEAD_HIDDEN,
     "nn_dropout": RB_NN_DROPOUT,
@@ -117,6 +117,7 @@ RB_CONFIG = {
     "attn_gated_td": RB_ATTN_GATED_TD,
     "attn_td_gate_hidden": RB_ATTN_TD_GATE_HIDDEN,
     "attn_td_gate_weight": RB_ATTN_TD_GATE_WEIGHT,
+    "gated_td_targets": RB_GATED_TD_TARGETS,
     "train_lightgbm": RB_TRAIN_LIGHTGBM,
     "lgbm_n_estimators": RB_LGBM_N_ESTIMATORS,
     "lgbm_learning_rate": RB_LGBM_LEARNING_RATE,

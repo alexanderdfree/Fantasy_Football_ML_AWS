@@ -76,11 +76,21 @@ class OrdinalTDClassifier:
 
     # -- internal helpers --------------------------------------------------
     def _points_to_labels(self, y: np.ndarray) -> np.ndarray:
-        """Map raw td_points to integer class labels."""
+        """Map raw target values (points or counts) to integer class labels.
+
+        For ``class_values=[a, a+s, a+2s, ...]`` with a uniform step ``s``,
+        label = round((y - a) / s). Backward-compatible with the pre-migration
+        RB config ``class_values=[0, 6, 12, 18]`` (step=6, post-points labels)
+        and the post-migration raw-count config ``class_values=[0, 1, 2, 3]``
+        (step=1, raw TD counts).
+        """
         if isinstance(self._class_values_cfg, list):
-            # Fixed mapping: class k = points / 6, capped at n_classes-1
-            pts_per_td = self._class_values_cfg[1] if len(self._class_values_cfg) > 1 else 6
-            labels = np.round(y / pts_per_td).astype(int)
+            cv = self._class_values_cfg
+            base = cv[0] if len(cv) > 0 else 0
+            step = (cv[1] - cv[0]) if len(cv) > 1 else 1
+            if step == 0:
+                step = 1
+            labels = np.round((y - base) / step).astype(int)
             labels = np.clip(labels, 0, self._n_classes - 1)
         else:
             # "auto" — bin by total TD count (for QB with mixed 4/6 pt TDs)
@@ -120,30 +130,46 @@ class OrdinalTDClassifier:
 
         mord.LogisticAT stores:
           - coef_  : (n_features,) shared coefficient vector
-          - theta_  : (n_classes-1,) ordered thresholds
+          - theta_  : (n_trained_classes-1,) ordered thresholds
 
         Cumulative probs: P(Y <= k) = sigmoid(theta_k - X @ coef_)
         Class probs:      P(Y = 0) = P(Y <= 0)
                           P(Y = k) = P(Y <= k) - P(Y <= k-1)
                           P(Y = K-1) = 1 - P(Y <= K-2)
+
+        ``self.class_point_values_`` may advertise more classes than mord
+        actually trained on (happens when training labels never hit the
+        upper classes — e.g. rare 3-TD games). Any unseen upper class gets
+        zero probability mass.
         """
         n = X_scaled.shape[0]
-        n_classes = len(self.class_point_values_)
+        n_advertised = len(self.class_point_values_)
         linear = X_scaled @ self.clf_.coef_
 
-        # P(Y <= k) for k = 0, ..., K-2
-        cum_le = np.column_stack(
-            [1.0 / (1.0 + np.exp(-(theta - linear))) for theta in self.clf_.theta_]
-        )  # (n, K-1)
+        # P(Y <= k) for k = 0, ..., n_trained-2
+        thetas = self.clf_.theta_
+        n_trained = len(thetas) + 1
 
-        proba = np.zeros((n, n_classes))
+        proba = np.zeros((n, n_advertised))
+        if n_trained == 1:
+            # Degenerate: mord saw only one class in training. Assign all
+            # mass to that class (index 0 == class_point_values_[0]).
+            proba[:, 0] = 1.0
+            return proba
+
+        cum_le = np.column_stack(
+            [1.0 / (1.0 + np.exp(-(theta - linear))) for theta in thetas]
+        )  # (n, n_trained-1)
         proba[:, 0] = cum_le[:, 0]
-        for k in range(1, n_classes - 1):
+        for k in range(1, n_trained - 1):
             proba[:, k] = cum_le[:, k] - cum_le[:, k - 1]
-        proba[:, -1] = 1.0 - cum_le[:, -1]
+        # Terminal trained class gets the residual from the last cum_le.
+        proba[:, n_trained - 1] = 1.0 - cum_le[:, -1]
 
         proba = np.clip(proba, 0, 1)
-        proba /= proba.sum(axis=1, keepdims=True)
+        row_sums = proba.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1.0  # defensive — all-zero rows stay zero
+        proba /= row_sums
         return proba
 
     def predict(self, X: np.ndarray) -> np.ndarray:

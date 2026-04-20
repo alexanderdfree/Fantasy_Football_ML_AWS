@@ -6,10 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from RB.rb_config import RB_TARGETS
 from shared.evaluation import compute_ranking_metrics, compute_target_metrics
-
-RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
-
 
 # ---------------------------------------------------------------------------
 # compute_target_metrics
@@ -20,12 +18,8 @@ RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 class TestComputeTargetMetrics:
     def _make_dicts(self, n=50):
         np.random.seed(42)
-        y_true = {
-            "rushing_floor": np.random.rand(n) * 10,
-            "receiving_floor": np.random.rand(n) * 8,
-            "td_points": np.random.rand(n) * 6,
-            "total": np.random.rand(n) * 20,
-        }
+        y_true = {t: np.random.rand(n) * 10 for t in RB_TARGETS}
+        y_true["total"] = np.random.rand(n) * 20
         y_pred = {k: v + np.random.randn(n) * 0.5 for k, v in y_true.items()}
         return y_true, y_pred
 
@@ -34,8 +28,9 @@ class TestComputeTargetMetrics:
         mock_metrics.return_value = {"mae": 1.0, "rmse": 1.5, "r2": 0.8}
         y_true, y_pred = self._make_dicts()
         result = compute_target_metrics(y_true, y_pred, RB_TARGETS)
-        assert mock_metrics.call_count == 4  # total + 3 targets
-        assert set(result.keys()) == {"total", "rushing_floor", "receiving_floor", "td_points"}
+        # total + 6 RB targets.
+        assert mock_metrics.call_count == 1 + len(RB_TARGETS)
+        assert set(result.keys()) == {"total"} | set(RB_TARGETS)
 
     @patch("shared.evaluation.compute_metrics")
     def test_returns_correct_structure(self, mock_metrics):
@@ -46,16 +41,13 @@ class TestComputeTargetMetrics:
             assert "mae" in result[target]
             assert "rmse" in result[target]
             assert "r2" in result[target]
+            assert "unit" in result[target]
 
     @patch("shared.evaluation.compute_metrics")
     def test_perfect_predictions(self, mock_metrics):
         mock_metrics.return_value = {"mae": 0.0, "rmse": 0.0, "r2": 1.0}
-        y = {
-            "rushing_floor": np.array([1.0, 2.0]),
-            "receiving_floor": np.array([3.0, 4.0]),
-            "td_points": np.array([5.0, 6.0]),
-            "total": np.array([9.0, 12.0]),
-        }
+        y = {t: np.array([1.0, 2.0]) for t in RB_TARGETS}
+        y["total"] = np.array([len(RB_TARGETS) * 1.0, len(RB_TARGETS) * 2.0])
         result = compute_target_metrics(y, y, RB_TARGETS)
         assert result["total"]["mae"] == 0.0
 

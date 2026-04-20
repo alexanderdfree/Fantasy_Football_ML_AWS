@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 import torch
-import torch.nn as nn
 
+from RB.rb_config import RB_LOSS_WEIGHTS, RB_TARGETS
 from shared.neural_net import MultiHeadNet
 from shared.training import (
     MultiHeadTrainer,
@@ -12,10 +12,6 @@ from shared.training import (
     MultiTargetLoss,
     make_dataloaders,
 )
-
-RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
-RB_LOSS_WEIGHTS = {"rushing_floor": 1.0, "receiving_floor": 1.0, "td_points": 1.0}
-
 
 # ---------------------------------------------------------------------------
 # MultiTargetLoss
@@ -35,13 +31,8 @@ class TestMultiTargetLoss:
         loss_fn = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
         preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
-        assert set(components.keys()) == {
-            "loss_rushing_floor",
-            "loss_receiving_floor",
-            "loss_td_points",
-            "loss_total_aux",
-            "loss_combined",
-        }
+        expected = {f"loss_{t}" for t in RB_TARGETS} | {"loss_total_aux", "loss_combined"}
+        assert set(components.keys()) == expected
 
     def test_components_are_scalars(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
@@ -52,29 +43,20 @@ class TestMultiTargetLoss:
 
     def test_zero_loss_on_perfect_prediction(self):
         loss_fn = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
-        targets = {
-            "rushing_floor": torch.tensor([1.0, 2.0]),
-            "receiving_floor": torch.tensor([3.0, 4.0]),
-            "td_points": torch.tensor([5.0, 6.0]),
-            "total": torch.tensor([9.0, 12.0]),
-        }
-        combined, components = loss_fn(targets, targets)
+        targets = {t: torch.tensor([1.0, 2.0]) for t in RB_TARGETS}
+        targets["total"] = sum(targets[t] for t in RB_TARGETS)
+        combined, _ = loss_fn(targets, targets)
         assert pytest.approx(combined.item(), abs=1e-6) == 0.0
 
     def test_weights_affect_loss(self, make_tensors):
         preds, targets = make_tensors()
-        loss_equal = MultiTargetLoss(
-            target_names=RB_TARGETS,
-            loss_weights={"rushing_floor": 1.0, "receiving_floor": 1.0, "td_points": 1.0},
-            w_total=1.0,
-        )
-        loss_rush_heavy = MultiTargetLoss(
-            target_names=RB_TARGETS,
-            loss_weights={"rushing_floor": 10.0, "receiving_floor": 1.0, "td_points": 1.0},
-            w_total=1.0,
-        )
+        equal = {t: 1.0 for t in RB_TARGETS}
+        heavy = {t: 1.0 for t in RB_TARGETS}
+        heavy["rushing_yards"] = 10.0
+        loss_equal = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=equal, w_total=1.0)
+        loss_heavy = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=heavy, w_total=1.0)
         c1, _ = loss_equal(preds, targets)
-        c2, _ = loss_rush_heavy(preds, targets)
+        c2, _ = loss_heavy(preds, targets)
         assert c1.item() != c2.item()
 
     def test_combined_loss_is_positive(self, make_tensors):
@@ -85,15 +67,27 @@ class TestMultiTargetLoss:
 
     def test_backward_pass(self):
         loss_fn = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
-        preds = {
-            k: torch.randn(5, requires_grad=True)
-            for k in ["rushing_floor", "receiving_floor", "td_points", "total"]
-        }
+        preds = {t: torch.randn(5, requires_grad=True) for t in RB_TARGETS + ["total"]}
         targets = {k: torch.randn(5) for k in preds}
         combined, _ = loss_fn(preds, targets)
         combined.backward()
         for k in preds:
             assert preds[k].grad is not None
+
+    def test_dual_gate_td_losses_emitted(self):
+        """RB's two gated TD targets each emit a loss component."""
+        loss_fn = MultiTargetLoss(
+            target_names=RB_TARGETS,
+            loss_weights=RB_LOSS_WEIGHTS,
+            gated_td_targets=["rushing_tds", "receiving_tds"],
+        )
+        preds = {t: torch.randn(5, requires_grad=True) for t in RB_TARGETS + ["total"]}
+        preds["rushing_tds_gate_logit"] = torch.randn(5, requires_grad=True)
+        preds["receiving_tds_gate_logit"] = torch.randn(5, requires_grad=True)
+        targets = {k: torch.randn(5).clamp_min(0) for k in RB_TARGETS + ["total"]}
+        _, components = loss_fn(preds, targets)
+        assert "loss_td_gate_rushing_tds" in components
+        assert "loss_td_gate_receiving_tds" in components
 
 
 # ---------------------------------------------------------------------------
@@ -105,15 +99,15 @@ class TestMultiTargetLoss:
 class TestMultiTargetDataset:
     def test_length(self):
         X = np.random.randn(20, 5).astype(np.float32)
-        y = {"rushing_floor": np.random.randn(20).astype(np.float32)}
+        y = {"rushing_yards": np.random.randn(20).astype(np.float32)}
         ds = MultiTargetDataset(X, y)
         assert len(ds) == 20
 
     def test_getitem_types(self):
         X = np.random.randn(10, 3).astype(np.float32)
         y = {
-            "rushing_floor": np.random.randn(10).astype(np.float32),
-            "receiving_floor": np.random.randn(10).astype(np.float32),
+            "rushing_yards": np.random.randn(10).astype(np.float32),
+            "receiving_yards": np.random.randn(10).astype(np.float32),
         }
         ds = MultiTargetDataset(X, y)
         x_item, y_item = ds[0]
@@ -123,11 +117,11 @@ class TestMultiTargetDataset:
 
     def test_single_element(self):
         X = np.array([[1.0, 2.0]], dtype=np.float32)
-        y = {"td_points": np.array([6.0], dtype=np.float32)}
+        y = {"rushing_tds": np.array([1.0], dtype=np.float32)}
         ds = MultiTargetDataset(X, y)
         x_item, y_item = ds[0]
         assert pytest.approx(x_item[0].item()) == 1.0
-        assert pytest.approx(y_item["td_points"].item()) == 6.0
+        assert pytest.approx(y_item["rushing_tds"].item()) == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -140,17 +134,17 @@ class TestMakeDataloaders:
     def test_returns_two_loaders(self):
         X_train = np.random.randn(50, 5).astype(np.float32)
         X_val = np.random.randn(20, 5).astype(np.float32)
-        y_train = {"rushing_floor": np.random.randn(50).astype(np.float32)}
-        y_val = {"rushing_floor": np.random.randn(20).astype(np.float32)}
+        y_train = {"rushing_yards": np.random.randn(50).astype(np.float32)}
+        y_val = {"rushing_yards": np.random.randn(20).astype(np.float32)}
         train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=16)
         assert train_loader is not None
         assert val_loader is not None
 
     def test_batch_size(self):
         X_train = np.random.randn(64, 5).astype(np.float32)
-        y_train = {"rushing_floor": np.random.randn(64).astype(np.float32)}
+        y_train = {"rushing_yards": np.random.randn(64).astype(np.float32)}
         X_val = np.random.randn(16, 5).astype(np.float32)
-        y_val = {"rushing_floor": np.random.randn(16).astype(np.float32)}
+        y_val = {"rushing_yards": np.random.randn(16).astype(np.float32)}
         train_loader, _ = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
         batch_x, batch_y = next(iter(train_loader))
         assert batch_x.shape[0] == 32
@@ -158,7 +152,7 @@ class TestMakeDataloaders:
     def test_iterate_all_batches(self):
         n = 128
         X = np.random.randn(n, 3).astype(np.float32)
-        y = {"rushing_floor": np.random.randn(n).astype(np.float32)}
+        y = {"rushing_yards": np.random.randn(n).astype(np.float32)}
         loader, _ = make_dataloaders(X, y, X[:10], y, batch_size=32)
         total = sum(x.shape[0] for x, _ in loader)
         assert total == n
@@ -221,18 +215,9 @@ class TestMultiHeadTrainer:
     def test_history_has_all_keys(self, setup_trainer):
         trainer, train_loader, val_loader = setup_trainer
         history = trainer.train(train_loader, val_loader, n_epochs=5)
-        expected_keys = {
-            "train_loss",
-            "val_loss",
-            "val_loss_rushing_floor",
-            "val_loss_receiving_floor",
-            "val_loss_td_points",
-            "val_mae_total",
-            "val_mae_rushing_floor",
-            "val_mae_receiving_floor",
-            "val_mae_td_points",
-            "val_rmse_total",
-        }
+        expected_keys = {"train_loss", "val_loss", "val_mae_total", "val_rmse_total"}
+        expected_keys |= {f"val_loss_{t}" for t in RB_TARGETS}
+        expected_keys |= {f"val_mae_{t}" for t in RB_TARGETS}
         assert expected_keys.issubset(set(history.keys()))
 
     def test_losses_decrease(self, setup_trainer):
