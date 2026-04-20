@@ -6,23 +6,49 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from shared.aggregate_targets import TARGET_UNITS, predictions_to_fantasy_points
+from shared.aggregate_targets import (
+    POSITION_TARGET_MAP,
+    TARGET_UNITS,
+    predictions_to_fantasy_points,
+)
 from src.evaluation.metrics import compute_metrics
+
+
+def _infer_position(target_names: list[str]) -> str | None:
+    """Return the first position whose target map fully matches ``target_names``."""
+    name_set = set(target_names)
+    for pos, tmap in POSITION_TARGET_MAP.items():
+        if set(tmap.keys()) == name_set:
+            return pos
+    return None
 
 
 def compute_target_metrics(y_true_dict: dict, y_pred_dict: dict, target_names: list[str]) -> dict:
     """Compute per-target and total metrics.
 
     Each entry gains a ``"unit"`` field (``"yds"``, ``"TDs"``, ``"pts"``, etc.)
-    pulled from ``TARGET_UNITS`` so the frontend can render raw-stat MAE with the
-    right suffix. Unknown target names fall back to ``"pts"`` to preserve the
-    legacy decomposition (``passing_floor``, ``td_points``, …) displays.
+    pulled from ``TARGET_UNITS``. For QB/RB/WR/TE (raw-stat targets), the
+    ``"total"`` entry is computed on fantasy-points aggregation via the
+    aggregator — NOT the raw sum of per-target values, which would be
+    dominated by yardage magnitudes. For K/DST (still decomposed-points
+    targets), ``"total"`` remains the sum of targets for backward compat.
 
     Returns:
         {"total": {mae, rmse, r2, unit}, "target_1": {mae, rmse, r2, unit}, ...}
     """
     results = {}
-    for target in ["total"] + target_names:
+
+    position = _infer_position(target_names)
+    if position is not None:
+        true_pts = predictions_to_fantasy_points(position, y_true_dict, "ppr")
+        pred_pts = predictions_to_fantasy_points(position, y_pred_dict, "ppr")
+        results["total"] = compute_metrics(true_pts, pred_pts)
+        results["total"]["unit"] = "pts"
+    else:
+        results["total"] = compute_metrics(y_true_dict["total"], y_pred_dict["total"])
+        results["total"]["unit"] = TARGET_UNITS.get("total", "pts")
+
+    for target in target_names:
         metrics = compute_metrics(y_true_dict[target], y_pred_dict[target])
         metrics["unit"] = TARGET_UNITS.get(target, "pts")
         results[target] = metrics
