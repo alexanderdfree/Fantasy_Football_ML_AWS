@@ -471,6 +471,7 @@ def _train_attention_nn(
         encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
         gated_td=cfg.get("attn_gated_td", False),
         td_gate_hidden=cfg.get("attn_td_gate_hidden", 16),
+        gated_td_targets=cfg.get("gated_td_targets"),
         gated_td_target=cfg.get("gated_td_target", "td_points"),
     ).to(device)
 
@@ -488,6 +489,7 @@ def _train_attention_nn(
         huber_deltas=cfg["huber_deltas"],
         w_total=cfg["loss_w_total"],
         td_gate_weight=cfg.get("attn_td_gate_weight", 1.0),
+        gated_td_targets=cfg.get("gated_td_targets"),
         gated_td_target=cfg.get("gated_td_target", "td_points"),
     )
 
@@ -617,7 +619,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     # --- Ridge multi-target with per-target alpha tuning ---
     print(f"\n=== {pos} Ridge Multi-Target (Per-Target CV Tuning) ===")
-    cfg["compute_adjustment_fn"](pos_test)
+    if cfg.get("compute_adjustment_fn") is not None:
+        cfg["compute_adjustment_fn"](pos_test)
 
     cv_col = cfg.get("cv_split_column", "season")
     two_stage_targets = cfg.get("two_stage_targets", {})

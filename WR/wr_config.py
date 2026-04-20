@@ -1,5 +1,8 @@
 # === WR Target Decomposition ===
-WR_TARGETS = ["receiving_floor", "rushing_floor", "td_points"]
+# Raw-stat targets (see shared/aggregate_targets.py). Fantasy points are
+# aggregated from these predictions via predictions_to_fantasy_points.
+# Rushing targets dropped - WR rushing stats are too sparse for reliable signal.
+WR_TARGETS = ["receiving_tds", "receiving_yards", "receptions", "fumbles_lost"]
 
 # === WR-Specific Features ===
 WR_SPECIFIC_FEATURES = [
@@ -96,10 +99,13 @@ import numpy as np
 # PCR: 30 components. Benchmark showed -0.094 MAE vs no-PCA baseline (4.507 → 4.413).
 # PCA removes collinear directions the alpha grid can't fully address.
 WR_RIDGE_PCA_COMPONENTS = 30
+# Alpha grids sized to each target's dynamic range: yards use a wider high-alpha
+# tail; count-style targets (TDs, receptions, fumbles) stay in the standard band.
 WR_RIDGE_ALPHA_GRIDS = {
-    "receiving_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
-    "rushing_floor": [round(x, 4) for x in np.logspace(-1, 4, 15)],
-    "td_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "receiving_tds": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "receiving_yards": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "receptions": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "fumbles_lost": [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
 # === Neural Net ===
@@ -107,6 +113,8 @@ WR_RIDGE_ALPHA_GRIDS = {
 # Largest position dataset can support more capacity with less overfitting risk.
 WR_NN_BACKBONE_LAYERS = [128]
 WR_NN_HEAD_HIDDEN = 32
+# Larger head for zero-inflated receiving_tds target.
+WR_NN_HEAD_HIDDEN_OVERRIDES = {"receiving_tds": 64}
 WR_NN_DROPOUT = 0.20
 WR_NN_LR = 1e-3
 WR_NN_WEIGHT_DECAY = 1e-4
@@ -117,23 +125,16 @@ WR_NN_PATIENCE = 25
 # === Loss Weights ===
 # Equal per-target weights: training objective now aligned with evaluation
 # metric (total MAE), where all targets contribute equally to the total.
-# Previous scheme (1.5/0.3/2.0) severely under-weighted rushing_floor.
-# w_total raised to 1.0 for total prediction quality.
-WR_LOSS_WEIGHTS = {
-    "receiving_floor": 1.0,
-    "rushing_floor": 1.0,
-    "td_points": 1.0,
-}
+WR_LOSS_WEIGHTS = {t: 1.0 for t in WR_TARGETS}
 WR_LOSS_W_TOTAL = 1.0
 
-# === Huber Deltas (per-target) ===
-# Harmonized to 2.0 across targets. Previous scheme (1.5/0.5/2.0)
-# gave rushing_floor errors much tighter MAE-like treatment than others.
+# === Huber Deltas (per-target, raw-stat units) ===
 WR_HUBER_DELTAS = {
-    "receiving_floor": 2.0,
-    "rushing_floor": 2.0,
-    "td_points": 2.0,
-    "total": 3.0,  # explicit delta for total aux loss
+    "receiving_tds": 0.5,
+    "receiving_yards": 15.0,
+    "receptions": 2.0,
+    "fumbles_lost": 0.5,
+    "total": 3.0,  # explicit delta for total aux loss (aggregated fantasy points)
 }
 
 # === LR Scheduler ===
@@ -163,7 +164,9 @@ WR_ATTN_HISTORY_STATS = [
     "snap_pct",
 ]
 # Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
+# Single gate on receiving_tds — the only WR TD target after rushing drop.
 WR_ATTN_GATED_TD = True
+WR_GATED_TD_TARGETS = ["receiving_tds"]
 WR_ATTN_TD_GATE_HIDDEN = 16
 WR_ATTN_TD_GATE_WEIGHT = 1.0
 
@@ -188,7 +191,7 @@ WR_LGBM_OBJECTIVE = "fair"
 WR_CONFIG_TINY = {
     "targets": WR_TARGETS,
     "specific_features": WR_SPECIFIC_FEATURES,
-    "ridge_alpha_grids": {t: [1.0, 10.0] for t in WR_TARGETS},
+    "ridge_alpha_grids": {t: [1.0] for t in WR_TARGETS},
     "ridge_pca_components": None,
     "ridge_cv_folds": 2,
     "ridge_refine_points": 0,

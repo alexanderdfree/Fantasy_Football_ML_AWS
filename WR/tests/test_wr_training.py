@@ -11,9 +11,7 @@ from shared.training import (
     MultiTargetLoss,
     make_dataloaders,
 )
-
-WR_TARGETS = ["receiving_floor", "rushing_floor", "td_points"]
-WR_LOSS_WEIGHTS = {"receiving_floor": 1.0, "rushing_floor": 1.0, "td_points": 1.0}
+from WR.wr_config import WR_LOSS_WEIGHTS, WR_TARGETS
 
 
 @pytest.mark.unit
@@ -29,13 +27,8 @@ class TestMultiTargetLoss:
         loss_fn = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
         preds, targets = wr_nn_tensors
         _, components = loss_fn(preds, targets)
-        assert set(components.keys()) == {
-            "loss_receiving_floor",
-            "loss_rushing_floor",
-            "loss_td_points",
-            "loss_total_aux",
-            "loss_combined",
-        }
+        expected = {f"loss_{t}" for t in WR_TARGETS} | {"loss_total_aux", "loss_combined"}
+        assert set(components.keys()) == expected
 
     def test_components_are_scalars(self, wr_nn_tensors):
         loss_fn = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
@@ -47,10 +40,11 @@ class TestMultiTargetLoss:
     def test_zero_loss_on_perfect_prediction(self):
         loss_fn = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
         targets = {
-            "receiving_floor": torch.tensor([10.0, 12.0]),
-            "rushing_floor": torch.tensor([0.5, 1.0]),
-            "td_points": torch.tensor([6.0, 0.0]),
-            "total": torch.tensor([16.5, 13.0]),
+            "receiving_tds": torch.tensor([1.0, 0.0]),
+            "receiving_yards": torch.tensor([80.0, 40.0]),
+            "receptions": torch.tensor([6.0, 3.0]),
+            "fumbles_lost": torch.tensor([0.0, 0.0]),
+            "total": torch.tensor([20.0, 7.0]),
         }
         combined, _ = loss_fn(targets, targets)
         assert pytest.approx(combined.item(), abs=1e-6) == 0.0
@@ -59,16 +53,18 @@ class TestMultiTargetLoss:
         preds, targets = wr_nn_tensors
         loss_equal = MultiTargetLoss(
             target_names=WR_TARGETS,
-            loss_weights={"receiving_floor": 1.0, "rushing_floor": 1.0, "td_points": 1.0},
+            loss_weights={t: 1.0 for t in WR_TARGETS},
             w_total=1.0,
         )
-        loss_recv_heavy = MultiTargetLoss(
+        heavy_weights = {t: 1.0 for t in WR_TARGETS}
+        heavy_weights["receiving_yards"] = 10.0
+        loss_heavy = MultiTargetLoss(
             target_names=WR_TARGETS,
-            loss_weights={"receiving_floor": 10.0, "rushing_floor": 1.0, "td_points": 1.0},
+            loss_weights=heavy_weights,
             w_total=1.0,
         )
         c1, _ = loss_equal(preds, targets)
-        c2, _ = loss_recv_heavy(preds, targets)
+        c2, _ = loss_heavy(preds, targets)
         assert c1.item() != c2.item()
 
     def test_combined_loss_is_positive(self, wr_nn_tensors):
@@ -91,15 +87,15 @@ class TestMultiTargetLoss:
 class TestMultiTargetDataset:
     def test_length(self):
         X = np.random.randn(20, 5).astype(np.float32)
-        y = {"receiving_floor": np.random.randn(20).astype(np.float32)}
+        y = {"receiving_yards": np.random.randn(20).astype(np.float32)}
         ds = MultiTargetDataset(X, y)
         assert len(ds) == 20
 
     def test_getitem_types(self):
         X = np.random.randn(10, 3).astype(np.float32)
         y = {
-            "receiving_floor": np.random.randn(10).astype(np.float32),
-            "rushing_floor": np.random.randn(10).astype(np.float32),
+            "receiving_yards": np.random.randn(10).astype(np.float32),
+            "receptions": np.random.randn(10).astype(np.float32),
         }
         ds = MultiTargetDataset(X, y)
         x_item, y_item = ds[0]
@@ -109,11 +105,11 @@ class TestMultiTargetDataset:
 
     def test_single_element(self):
         X = np.array([[1.0, 2.0]], dtype=np.float32)
-        y = {"td_points": np.array([6.0], dtype=np.float32)}
+        y = {"receiving_tds": np.array([1.0], dtype=np.float32)}
         ds = MultiTargetDataset(X, y)
         x_item, y_item = ds[0]
         assert pytest.approx(x_item[0].item()) == 1.0
-        assert pytest.approx(y_item["td_points"].item()) == 6.0
+        assert pytest.approx(y_item["receiving_tds"].item()) == 1.0
 
 
 @pytest.mark.unit
@@ -121,17 +117,17 @@ class TestMakeDataloaders:
     def test_returns_two_loaders(self):
         X_train = np.random.randn(50, 5).astype(np.float32)
         X_val = np.random.randn(20, 5).astype(np.float32)
-        y_train = {"receiving_floor": np.random.randn(50).astype(np.float32)}
-        y_val = {"receiving_floor": np.random.randn(20).astype(np.float32)}
+        y_train = {"receiving_yards": np.random.randn(50).astype(np.float32)}
+        y_val = {"receiving_yards": np.random.randn(20).astype(np.float32)}
         train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=16)
         assert train_loader is not None
         assert val_loader is not None
 
     def test_batch_size(self):
         X_train = np.random.randn(64, 5).astype(np.float32)
-        y_train = {"receiving_floor": np.random.randn(64).astype(np.float32)}
+        y_train = {"receiving_yards": np.random.randn(64).astype(np.float32)}
         X_val = np.random.randn(16, 5).astype(np.float32)
-        y_val = {"receiving_floor": np.random.randn(16).astype(np.float32)}
+        y_val = {"receiving_yards": np.random.randn(16).astype(np.float32)}
         train_loader, _ = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
         batch_x, batch_y = next(iter(train_loader))
         assert batch_x.shape[0] == 32
@@ -139,7 +135,7 @@ class TestMakeDataloaders:
     def test_iterate_all_batches(self):
         n = 128
         X = np.random.randn(n, 3).astype(np.float32)
-        y = {"receiving_floor": np.random.randn(n).astype(np.float32)}
+        y = {"receiving_yards": np.random.randn(n).astype(np.float32)}
         loader, _ = make_dataloaders(X, y, X[:10], y, batch_size=32)
         total = sum(x.shape[0] for x, _ in loader)
         assert total == n
@@ -197,18 +193,9 @@ class TestMultiHeadTrainer:
     def test_history_has_all_keys(self, setup_trainer):
         trainer, train_loader, val_loader = setup_trainer
         history = trainer.train(train_loader, val_loader, n_epochs=5)
-        expected_keys = {
-            "train_loss",
-            "val_loss",
-            "val_loss_receiving_floor",
-            "val_loss_rushing_floor",
-            "val_loss_td_points",
-            "val_mae_total",
-            "val_mae_receiving_floor",
-            "val_mae_rushing_floor",
-            "val_mae_td_points",
-            "val_rmse_total",
-        }
+        expected_keys = {"train_loss", "val_loss", "val_mae_total", "val_rmse_total"}
+        expected_keys |= {f"val_loss_{t}" for t in WR_TARGETS}
+        expected_keys |= {f"val_mae_{t}" for t in WR_TARGETS}
         assert expected_keys.issubset(set(history.keys()))
 
     def test_losses_decrease(self, setup_trainer):

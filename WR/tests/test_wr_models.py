@@ -5,8 +5,7 @@ import pandas as pd
 import pytest
 
 from shared.models import RidgeMultiTarget
-
-WR_TARGETS = ["receiving_floor", "rushing_floor", "td_points"]
+from WR.wr_config import WR_TARGETS
 
 
 @pytest.fixture
@@ -15,9 +14,10 @@ def simple_data():
     n, d = 20, 5
     X = np.random.randn(n, d).astype(np.float32)
     y_dict = {
-        "receiving_floor": np.random.rand(n).astype(np.float32) * 12,
-        "rushing_floor": np.random.rand(n).astype(np.float32) * 2,
-        "td_points": np.random.rand(n).astype(np.float32) * 6,
+        "receiving_tds": np.random.rand(n).astype(np.float32) * 2,
+        "receiving_yards": np.random.rand(n).astype(np.float32) * 120,
+        "receptions": np.random.rand(n).astype(np.float32) * 10,
+        "fumbles_lost": np.random.rand(n).astype(np.float32) * 0.2,
     }
     return X, y_dict
 
@@ -30,7 +30,7 @@ class TestRidgeMultiTarget:
         model.fit(X, y_dict)
         preds = model.predict(X)
 
-        assert set(preds.keys()) == {"receiving_floor", "rushing_floor", "td_points", "total"}
+        assert set(preds.keys()) == set(WR_TARGETS) | {"total"}
         for key in preds:
             assert preds[key].shape == (len(X),)
 
@@ -39,7 +39,7 @@ class TestRidgeMultiTarget:
         model = RidgeMultiTarget(target_names=WR_TARGETS, alpha=1.0)
         model.fit(X, y_dict)
         preds = model.predict(X)
-        expected = preds["receiving_floor"] + preds["rushing_floor"] + preds["td_points"]
+        expected = sum(preds[t] for t in WR_TARGETS)
         np.testing.assert_allclose(preds["total"], expected, atol=1e-6)
 
     def test_predict_total_matches(self, simple_data):
@@ -71,7 +71,7 @@ class TestRidgeMultiTarget:
         model.fit(X, y_dict)
         names = [f"feat_{i}" for i in range(X.shape[1])]
         importance = model.get_feature_importance(names)
-        assert set(importance.keys()) == {"receiving_floor", "rushing_floor", "td_points"}
+        assert set(importance.keys()) == set(WR_TARGETS)
         for _target, series in importance.items():
             assert isinstance(series, pd.Series)
             assert len(series) == X.shape[1]
@@ -96,18 +96,24 @@ class TestRidgeMultiTarget:
         np.random.seed(0)
         X = np.random.randn(10, 3).astype(np.float32)
         y_dict = {
-            "receiving_floor": np.full(10, 8.0),
-            "rushing_floor": np.full(10, 0.5),
-            "td_points": np.full(10, 0.0),
+            "receiving_tds": np.full(10, 0.0),
+            "receiving_yards": np.full(10, 80.0),
+            "receptions": np.full(10, 6.0),
+            "fumbles_lost": np.full(10, 0.0),
         }
         model = RidgeMultiTarget(target_names=WR_TARGETS, alpha=1.0)
         model.fit(X, y_dict)
         preds = model.predict(X)
-        assert np.allclose(preds["td_points"], 0.0, atol=1.0)
+        assert np.allclose(preds["receiving_tds"], 0.0, atol=1.0)
 
     def test_per_target_alpha_construction(self, simple_data):
         X, y_dict = simple_data
-        alpha_dict = {"receiving_floor": 0.01, "rushing_floor": 1.0, "td_points": 100.0}
+        alpha_dict = {
+            "receiving_tds": 0.01,
+            "receiving_yards": 1.0,
+            "receptions": 100.0,
+            "fumbles_lost": 10.0,
+        }
         m_per = RidgeMultiTarget(target_names=WR_TARGETS, alpha=alpha_dict)
         m_uniform = RidgeMultiTarget(target_names=WR_TARGETS, alpha=1.0)
         m_per.fit(X, y_dict)
@@ -119,7 +125,12 @@ class TestRidgeMultiTarget:
 
     def test_per_target_alpha_save_load(self, simple_data, tmp_path):
         X, y_dict = simple_data
-        alpha_dict = {"receiving_floor": 0.1, "rushing_floor": 10.0, "td_points": 500.0}
+        alpha_dict = {
+            "receiving_tds": 0.1,
+            "receiving_yards": 10.0,
+            "receptions": 500.0,
+            "fumbles_lost": 1.0,
+        }
         model = RidgeMultiTarget(target_names=WR_TARGETS, alpha=alpha_dict)
         model.fit(X, y_dict)
         preds_before = model.predict(X)
@@ -138,5 +149,5 @@ class TestRidgeMultiTarget:
         with pytest.raises(ValueError, match="missing keys"):
             RidgeMultiTarget(
                 target_names=WR_TARGETS,
-                alpha={"receiving_floor": 1.0, "rushing_floor": 1.0},
+                alpha={"receiving_tds": 1.0, "receiving_yards": 1.0},
             )

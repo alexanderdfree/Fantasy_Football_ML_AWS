@@ -1,10 +1,10 @@
-"""Tests for WR.wr_targets — compute_wr_targets and compute_wr_fumble_adjustment."""
+"""Tests for WR.wr_targets - compute_wr_targets (raw-stat targets)."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from WR.wr_targets import compute_wr_fumble_adjustment, compute_wr_targets
+from WR.wr_targets import compute_wr_targets
 
 
 def _make_wr_row(**overrides):
@@ -45,48 +45,33 @@ def _make_wr_row(**overrides):
     return pd.DataFrame([defaults])
 
 
-# ---------------------------------------------------------------------------
-# compute_wr_targets
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.unit
 class TestComputeWRTargets:
-    def test_receiving_floor(self):
-        """receiving_floor = receptions * PPR_weight + receiving_yards * 0.1."""
-        df = _make_wr_row(receptions=5, receiving_yards=50)
+    def test_receiving_tds_identity(self):
+        df = _make_wr_row(receiving_tds=2)
         result = compute_wr_targets(df)
-        # 5 * 1.0 + 50 * 0.1 = 10.0
-        assert pytest.approx(result["receiving_floor"].iloc[0]) == 10.0
+        assert pytest.approx(result["receiving_tds"].iloc[0]) == 2.0
 
-    def test_rushing_floor(self):
-        df = _make_wr_row(rushing_yards=30)
+    def test_receiving_yards_identity(self):
+        df = _make_wr_row(receiving_yards=95)
         result = compute_wr_targets(df)
-        assert pytest.approx(result["rushing_floor"].iloc[0]) == 3.0
+        assert pytest.approx(result["receiving_yards"].iloc[0]) == 95.0
 
-    def test_td_points_receiving_only(self):
-        df = _make_wr_row(receiving_tds=2, rushing_tds=0)
+    def test_receptions_identity(self):
+        df = _make_wr_row(receptions=7)
         result = compute_wr_targets(df)
-        assert pytest.approx(result["td_points"].iloc[0]) == 12.0
+        assert pytest.approx(result["receptions"].iloc[0]) == 7.0
 
-    def test_td_points_combined(self):
-        """WR with receiving + rushing TDs (end-around play)."""
-        df = _make_wr_row(receiving_tds=1, rushing_tds=1)
-        result = compute_wr_targets(df)
-        # 1*6 + 1*6 = 12
-        assert pytest.approx(result["td_points"].iloc[0]) == 12.0
-
-    def test_fumble_penalty(self):
+    def test_fumbles_lost_is_rushing_plus_receiving(self):
         df = _make_wr_row(receiving_fumbles_lost=1, rushing_fumbles_lost=1)
         result = compute_wr_targets(df)
-        assert pytest.approx(result["fumble_penalty"].iloc[0]) == -4.0
+        assert pytest.approx(result["fumbles_lost"].iloc[0]) == 2.0
 
-    def test_half_ppr_variant_exists(self):
-        """Multiple PPR formats should produce separate receiving_floor columns."""
-        df = _make_wr_row(receptions=4, receiving_yards=40)
+    def test_fumbles_lost_excludes_sack_fumbles(self):
+        """Sack fumbles are a QB concept; WR fumbles_lost never includes them."""
+        df = _make_wr_row(sack_fumbles_lost=1, rushing_fumbles_lost=0, receiving_fumbles_lost=0)
         result = compute_wr_targets(df)
-        # At least the primary receiving_floor should exist
-        assert "receiving_floor" in result.columns
+        assert pytest.approx(result["fumbles_lost"].iloc[0]) == 0.0
 
     def test_all_nan_stats_treated_as_zero(self):
         df = pd.DataFrame(
@@ -109,10 +94,10 @@ class TestComputeWRTargets:
             ]
         )
         result = compute_wr_targets(df)
-        assert result["receiving_floor"].iloc[0] == 0.0
-        assert result["rushing_floor"].iloc[0] == 0.0
-        assert result["td_points"].iloc[0] == 0.0
-        assert result["fumble_penalty"].iloc[0] == 0.0
+        assert result["receiving_tds"].iloc[0] == 0.0
+        assert result["receiving_yards"].iloc[0] == 0.0
+        assert result["receptions"].iloc[0] == 0.0
+        assert result["fumbles_lost"].iloc[0] == 0.0
 
     def test_does_not_mutate_original(self):
         df = _make_wr_row()
@@ -120,96 +105,30 @@ class TestComputeWRTargets:
         _ = compute_wr_targets(df)
         assert set(df.columns) == original_cols
 
-    def test_zero_catch_game(self):
-        """WR with 0 catches should have 0 receiving_floor."""
+    def test_zero_game(self):
         df = _make_wr_row(
-            receptions=0, receiving_yards=0, receiving_tds=0, rushing_tds=0, rushing_yards=0
+            receptions=0,
+            receiving_yards=0,
+            receiving_tds=0,
+            rushing_tds=0,
+            rushing_yards=0,
         )
         result = compute_wr_targets(df)
-        assert result["receiving_floor"].iloc[0] == 0.0
-        assert result["rushing_floor"].iloc[0] == 0.0
-        assert result["td_points"].iloc[0] == 0.0
+        assert result["receiving_tds"].iloc[0] == 0.0
+        assert result["receiving_yards"].iloc[0] == 0.0
+        assert result["receptions"].iloc[0] == 0.0
+        assert result["fumbles_lost"].iloc[0] == 0.0
 
-    def test_big_wr_game(self):
-        """Huge game should decompose correctly."""
+    def test_big_game(self):
         df = _make_wr_row(
-            receptions=10, receiving_yards=150, receiving_tds=2, rushing_yards=20, rushing_tds=0
+            receptions=10,
+            receiving_yards=150,
+            receiving_tds=2,
+            rushing_yards=0,
+            rushing_tds=0,
         )
         result = compute_wr_targets(df)
-        # 10 * 1 + 150 * 0.1 = 25
-        assert result["receiving_floor"].iloc[0] == 25.0
-        assert result["rushing_floor"].iloc[0] == 2.0
-        assert result["td_points"].iloc[0] == 12.0
-
-
-# ---------------------------------------------------------------------------
-# compute_wr_fumble_adjustment
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestComputeWRFumbleAdjustment:
-    def _make_fumble_df(self, receiving_fumbles, season=2023):
-        n = len(receiving_fumbles)
-        return pd.DataFrame(
-            {
-                "player_id": ["W1"] * n,
-                "season": [season] * n,
-                "week": list(range(1, n + 1)),
-                "sack_fumbles_lost": [0] * n,
-                "rushing_fumbles_lost": [0] * n,
-                "receiving_fumbles_lost": receiving_fumbles,
-            }
-        )
-
-    def test_first_game_is_zero(self):
-        df = self._make_fumble_df([1, 0, 0])
-        result = compute_wr_fumble_adjustment(df)
-        assert result.iloc[0] == 0.0
-
-    def test_second_game_uses_first(self):
-        df = self._make_fumble_df([1, 0, 0, 0])
-        result = compute_wr_fumble_adjustment(df)
-        assert pytest.approx(result.iloc[1]) == -2.0
-
-    def test_rolling_window(self):
-        df = self._make_fumble_df([1, 1, 0, 0, 0, 0, 0, 0, 0])
-        result = compute_wr_fumble_adjustment(df)
-        # Game 9: rolling(8) of [1,1,0,0,0,0,0,0] * -2 mean = -0.5
-        assert pytest.approx(result.iloc[8]) == -0.5
-
-    def test_player_with_no_fumbles(self):
-        df = self._make_fumble_df([0, 0, 0, 0])
-        result = compute_wr_fumble_adjustment(df)
-        assert pytest.approx(result.iloc[1]) == 0.0
-        assert pytest.approx(result.iloc[3]) == 0.0
-
-    def test_multiple_players_independent(self):
-        df = pd.DataFrame(
-            {
-                "player_id": ["W1", "W1", "W2", "W2"],
-                "season": [2023, 2023, 2023, 2023],
-                "week": [1, 2, 1, 2],
-                "sack_fumbles_lost": [0, 0, 0, 0],
-                "rushing_fumbles_lost": [0, 0, 0, 0],
-                "receiving_fumbles_lost": [1, 0, 0, 0],
-            }
-        )
-        result = compute_wr_fumble_adjustment(df)
-        assert pytest.approx(result.iloc[1]) == -2.0
-        assert pytest.approx(result.iloc[3]) == 0.0
-
-    def test_multiple_seasons_reset(self):
-        df = pd.DataFrame(
-            {
-                "player_id": ["W1", "W1", "W1", "W1"],
-                "season": [2022, 2022, 2023, 2023],
-                "week": [1, 2, 1, 2],
-                "sack_fumbles_lost": [0, 0, 0, 0],
-                "rushing_fumbles_lost": [0, 0, 0, 0],
-                "receiving_fumbles_lost": [1, 1, 0, 0],
-            }
-        )
-        result = compute_wr_fumble_adjustment(df)
-        assert result.iloc[2] == 0.0
-        assert pytest.approx(result.iloc[3]) == 0.0
+        assert result["receiving_tds"].iloc[0] == 2.0
+        assert result["receiving_yards"].iloc[0] == 150.0
+        assert result["receptions"].iloc[0] == 10.0
+        assert result["fumbles_lost"].iloc[0] == 0.0
