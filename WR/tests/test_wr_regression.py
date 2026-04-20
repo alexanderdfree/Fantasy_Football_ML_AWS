@@ -29,46 +29,51 @@ def _synthetic_wr_dataset(n: int = 800, n_features: int = 10, seed: int = 42):
     """Generate a deterministic synthetic WR dataset with a learnable signal.
 
     Targets are simple linear-plus-interaction functions of the features,
-    scaled to match WR ranges (receiving_floor 0-20, rushing_floor 0-4,
-    td_points 0-12). Returns train/val splits and the baseline predictor
-    output (per-target training-mean) for the baseline threshold check.
+    scaled to match raw WR ranges (receiving_yards 0-200, receptions 0-12,
+    receiving_tds 0-3, fumbles_lost 0-1). Returns train/val splits.
     """
     rng = np.random.default_rng(seed)
     X = rng.standard_normal((n, n_features)).astype(np.float32)
 
-    # Construct targets with known signal + small noise
-    recv = np.clip(
-        6.0
-        + 3.0 * X[:, 0]
-        + 2.0 * X[:, 1]
-        + 0.5 * X[:, 0] * X[:, 2]
-        + rng.standard_normal(n) * 1.0,
+    recv_yards = np.clip(
+        70.0
+        + 30.0 * X[:, 0]
+        + 15.0 * X[:, 1]
+        + 5.0 * X[:, 0] * X[:, 2]
+        + rng.standard_normal(n) * 5.0,
         0.0,
-        25.0,
+        250.0,
     ).astype(np.float32)
-    rush = np.clip(
-        0.8 + 0.5 * X[:, 3] + 0.3 * X[:, 4] + rng.standard_normal(n) * 0.3,
+    receptions = np.clip(
+        5.0 + 1.5 * X[:, 3] + 1.0 * X[:, 4] + rng.standard_normal(n) * 0.5,
         0.0,
-        5.0,
+        15.0,
     ).astype(np.float32)
-    tds = np.clip(
-        2.0 + 1.5 * X[:, 5] + 1.0 * X[:, 6] + rng.standard_normal(n) * 0.8,
+    recv_tds = np.clip(
+        0.6 + 0.4 * X[:, 5] + 0.3 * X[:, 6] + rng.standard_normal(n) * 0.15,
         0.0,
-        12.0,
+        4.0,
+    ).astype(np.float32)
+    fumbles = np.clip(
+        0.05 + 0.02 * X[:, 7] + rng.standard_normal(n) * 0.01,
+        0.0,
+        1.0,
     ).astype(np.float32)
 
     # Train/val split: 80/20
     n_train = int(0.8 * n)
     X_train, X_val = X[:n_train], X[n_train:]
     y_train = {
-        "receiving_floor": recv[:n_train],
-        "rushing_floor": rush[:n_train],
-        "td_points": tds[:n_train],
+        "receiving_tds": recv_tds[:n_train],
+        "receiving_yards": recv_yards[:n_train],
+        "receptions": receptions[:n_train],
+        "fumbles_lost": fumbles[:n_train],
     }
     y_val = {
-        "receiving_floor": recv[n_train:],
-        "rushing_floor": rush[n_train:],
-        "td_points": tds[n_train:],
+        "receiving_tds": recv_tds[n_train:],
+        "receiving_yards": recv_yards[n_train:],
+        "receptions": receptions[n_train:],
+        "fumbles_lost": fumbles[n_train:],
     }
     y_train["total"] = sum(y_train[t] for t in WR_TARGETS)
     y_val["total"] = sum(y_val[t] for t in WR_TARGETS)
@@ -142,7 +147,7 @@ def test_lightgbm_within_tolerance_of_ridge():
 
     lgbm = LightGBMMultiTarget(
         target_names=WR_TARGETS,
-        n_estimators=100,
+        n_estimators=500,
         learning_rate=0.1,
         num_leaves=15,
         min_child_samples=5,
@@ -150,7 +155,7 @@ def test_lightgbm_within_tolerance_of_ridge():
         colsample_bytree=1.0,
         reg_lambda=0.0,
         reg_alpha=0.0,
-        objective="huber",
+        objective="regression",
         seed=42,
     )
     lgbm.fit(X_train, y_train)
@@ -174,7 +179,7 @@ def test_nn_mae_within_25pct_of_lightgbm():
 
     lgbm = LightGBMMultiTarget(
         target_names=WR_TARGETS,
-        n_estimators=100,
+        n_estimators=500,
         learning_rate=0.1,
         num_leaves=15,
         min_child_samples=5,
@@ -182,7 +187,7 @@ def test_nn_mae_within_25pct_of_lightgbm():
         colsample_bytree=1.0,
         reg_lambda=0.0,
         reg_alpha=0.0,
-        objective="huber",
+        objective="regression",
         seed=42,
     )
     lgbm.fit(X_train, y_train)

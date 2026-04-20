@@ -20,11 +20,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from shared.aggregate_targets import aggregate_fn_for
 from shared.pipeline import run_pipeline
 from WR.wr_config import WR_CONFIG_TINY, WR_TARGETS
 from WR.wr_data import filter_to_wr
 from WR.wr_features import add_wr_specific_features, fill_wr_nans, get_wr_feature_columns
-from WR.wr_targets import compute_wr_fumble_adjustment, compute_wr_targets
+from WR.wr_targets import compute_wr_targets
 
 SPLITS_DIR = Path(__file__).resolve().parents[2] / "data" / "splits"
 _ALL_TARGETS = (*WR_TARGETS, "total")
@@ -40,7 +41,7 @@ def _build_tiny_cfg() -> dict:
             "add_features_fn": add_wr_specific_features,
             "fill_nans_fn": fill_wr_nans,
             "get_feature_columns_fn": get_wr_feature_columns,
-            "compute_adjustment_fn": compute_wr_fumble_adjustment,
+            "aggregate_fn": aggregate_fn_for("WR"),
         }
     )
     return cfg

@@ -5,6 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from shared.aggregate_targets import aggregate_fn_for
 from shared.pipeline import run_cv_pipeline, run_pipeline
 from WR.wr_config import (
     WR_ATTN_D_MODEL,
@@ -20,6 +21,7 @@ from WR.wr_config import (
     WR_COSINE_ETA_MIN,
     WR_COSINE_T0,
     WR_COSINE_T_MULT,
+    WR_GATED_TD_TARGETS,
     WR_HUBER_DELTAS,
     WR_LGBM_COLSAMPLE_BYTREE,
     WR_LGBM_LEARNING_RATE,
@@ -38,6 +40,7 @@ from WR.wr_config import (
     WR_NN_DROPOUT,
     WR_NN_EPOCHS,
     WR_NN_HEAD_HIDDEN,
+    WR_NN_HEAD_HIDDEN_OVERRIDES,
     WR_NN_LR,
     WR_NN_PATIENCE,
     WR_NN_WEIGHT_DECAY,
@@ -51,7 +54,7 @@ from WR.wr_config import (
 )
 from WR.wr_data import filter_to_wr
 from WR.wr_features import add_wr_specific_features, fill_wr_nans, get_wr_feature_columns
-from WR.wr_targets import compute_wr_fumble_adjustment, compute_wr_targets
+from WR.wr_targets import compute_wr_targets
 
 WR_CONFIG = {
     "targets": WR_TARGETS,
@@ -63,11 +66,11 @@ WR_CONFIG = {
     "add_features_fn": add_wr_specific_features,
     "fill_nans_fn": fill_wr_nans,
     "get_feature_columns_fn": get_wr_feature_columns,
-    "compute_adjustment_fn": compute_wr_fumble_adjustment,
+    "aggregate_fn": aggregate_fn_for("WR"),
     "nn_backbone_layers": WR_NN_BACKBONE_LAYERS,
     "nn_head_hidden": WR_NN_HEAD_HIDDEN,
     "nn_dropout": WR_NN_DROPOUT,
-    "nn_head_hidden_overrides": None,
+    "nn_head_hidden_overrides": WR_NN_HEAD_HIDDEN_OVERRIDES,
     "nn_lr": WR_NN_LR,
     "nn_weight_decay": WR_NN_WEIGHT_DECAY,
     "nn_epochs": WR_NN_EPOCHS,
@@ -91,6 +94,7 @@ WR_CONFIG = {
     "attn_gated_td": WR_ATTN_GATED_TD,
     "attn_td_gate_hidden": WR_ATTN_TD_GATE_HIDDEN,
     "attn_td_gate_weight": WR_ATTN_TD_GATE_WEIGHT,
+    "gated_td_targets": WR_GATED_TD_TARGETS,
     "train_lightgbm": WR_TRAIN_LIGHTGBM,
     "lgbm_n_estimators": WR_LGBM_N_ESTIMATORS,
     "lgbm_learning_rate": WR_LGBM_LEARNING_RATE,

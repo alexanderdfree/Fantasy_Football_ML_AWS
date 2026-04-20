@@ -5,8 +5,7 @@ import pytest
 import torch
 
 from shared.neural_net import MultiHeadNet
-
-WR_TARGETS = ["receiving_floor", "rushing_floor", "td_points"]
+from WR.wr_config import WR_TARGETS
 
 
 @pytest.mark.unit
@@ -24,7 +23,7 @@ class TestMultiHeadNet:
     def test_output_keys(self, model):
         x = torch.randn(4, 10)
         out = model(x)
-        assert set(out.keys()) == {"receiving_floor", "rushing_floor", "td_points", "total"}
+        assert set(out.keys()) == set(WR_TARGETS) | {"total"}
 
     def test_output_shapes(self, model):
         batch_size = 8
@@ -38,7 +37,7 @@ class TestMultiHeadNet:
         x = torch.randn(4, 10)
         with torch.no_grad():
             out = model(x)
-        expected = out["receiving_floor"] + out["rushing_floor"] + out["td_points"]
+        expected = sum(out[t] for t in WR_TARGETS)
         torch.testing.assert_close(out["total"], expected)
 
     def test_custom_backbone(self):
@@ -73,7 +72,7 @@ class TestMultiHeadNet:
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
 
-        assert set(preds.keys()) == {"receiving_floor", "rushing_floor", "td_points", "total"}
+        assert set(preds.keys()) == set(WR_TARGETS) | {"total"}
         for key in preds:
             assert isinstance(preds[key], np.ndarray)
             assert preds[key].shape == (5,)
@@ -127,7 +126,7 @@ class TestMultiHeadNet:
         model.train()
         x = torch.randn(4, 10)
         out = model(x)
-        expected = out["receiving_floor"] + out["rushing_floor"] + out["td_points"]
+        expected = sum(out[t] for t in WR_TARGETS)
         torch.testing.assert_close(out["total"], expected)
 
     def test_single_backbone_layer(self):
@@ -203,10 +202,10 @@ class TestMultiHeadNet:
             target_names=WR_TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
-            head_hidden_overrides={"td_points": 32},
+            head_hidden_overrides={"receiving_tds": 32},
         )
         x = torch.randn(4, 10)
         out = model(x)
         assert out["total"].shape == (4,)
-        td_head = model.heads["td_points"]
+        td_head = model.heads["receiving_tds"]
         assert td_head[0].out_features == 32

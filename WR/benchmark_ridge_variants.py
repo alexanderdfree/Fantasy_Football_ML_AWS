@@ -251,8 +251,8 @@ def main():
         print(
             f"{r['name']:<28} {r['n_features']:>5} {pca_str:>4} {cond_str:>10} "
             f"{m['total']['mae']:>10.3f}{delta_str:>8} {m['total']['r2']:>6.3f} "
-            f"{m['receiving_floor']['mae']:>8.3f} {m['rushing_floor']['mae']:>8.3f} "
-            f"{m['td_points']['mae']:>8.3f} {r['elapsed']:>5.1f}s"
+            f"{m['receiving_tds']['mae']:>8.3f} {m['receiving_yards']['mae']:>8.3f} "
+            f"{m['receptions']['mae']:>8.3f} {r['elapsed']:>5.1f}s"
         )
 
     print(f"{'=' * 110}")
@@ -261,15 +261,15 @@ def main():
     print(f"\n{'=' * 80}")
     print("  PER-TARGET R\u00b2 BY VARIANT")
     print(f"{'=' * 80}")
-    r2_hdr = f"{'Variant':<28} {'Total':>8} {'recv_fl':>8} {'rush_fl':>8} {'td_pts':>8}"
+    r2_hdr = f"{'Variant':<28} {'Total':>8} {'recv_td':>8} {'recv_yd':>8} {'recs':>8}"
     print(r2_hdr)
     print("-" * 80)
     for r in results:
         m = r["metrics"]
         print(
             f"{r['name']:<28} {m['total']['r2']:>8.3f} "
-            f"{m['receiving_floor']['r2']:>8.3f} {m['rushing_floor']['r2']:>8.3f} "
-            f"{m['td_points']['r2']:>8.3f}"
+            f"{m['receiving_tds']['r2']:>8.3f} {m['receiving_yards']['r2']:>8.3f} "
+            f"{m['receptions']['r2']:>8.3f}"
         )
     print(f"{'=' * 80}")
 
