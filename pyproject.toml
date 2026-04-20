@@ -9,6 +9,12 @@ markers = [
 timeout = 60
 timeout_method = "thread"
 addopts = "--strict-markers"
+filterwarnings = [
+    # mord 0.7 calls scipy's L-BFGS-B with disp/iprint kwargs that scipy 1.17
+    # marked for removal in 1.18. Upstream fix pending; silence to keep test
+    # output clean.
+    "ignore:.*L-BFGS-B solver are deprecated:DeprecationWarning",
+]
 testpaths = [
     "tests",
     "QB/tests",

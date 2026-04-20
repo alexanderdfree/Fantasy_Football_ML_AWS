@@ -1,5 +1,7 @@
 """Generic weekly backtest simulation for any position."""
 
+import warnings
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -55,7 +57,9 @@ def run_weekly_simulation(
                 pred_top_k = set(week_df.nlargest(top_k, pred_col)["player_id"])
                 hit_rate = len(actual_top_k & pred_top_k) / top_k
 
-                corr, _ = spearmanr(week_df[pred_col], week_df[true_col])
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    corr, _ = spearmanr(week_df[pred_col], week_df[true_col])
                 if np.isnan(corr):
                     print(
                         f"  WARNING: Spearman NaN for {model_name} week {week} (n={len(week_df)})"

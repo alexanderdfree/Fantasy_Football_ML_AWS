@@ -251,9 +251,17 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
     missing_cols = [c for c in feature_cols if c not in pos_train.columns]
     if missing_cols:
         print(f"  WARNING: {len(missing_cols)} feature columns missing, filling with 0")
-        for col in missing_cols:
-            for df in all_dfs:
-                df[col] = 0.0
+        # Concat all missing cols as one block per df to avoid
+        # PerformanceWarning: DataFrame is highly fragmented.
+        filled = [
+            pd.concat([df, pd.DataFrame(0.0, index=df.index, columns=missing_cols)], axis=1)
+            for df in all_dfs
+        ]
+        pos_train = filled[0]
+        pos_val = filled[1]
+        if pos_test is not None:
+            pos_test = filled[2]
+        all_dfs = filled
 
     for df in all_dfs:
         df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)

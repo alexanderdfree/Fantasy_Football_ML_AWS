@@ -390,6 +390,13 @@ class LightGBMMultiTarget:
 
     def fit(self, X_train, y_train_dict, X_val=None, y_val_dict=None, feature_names=None):
         self._feature_names = feature_names
+        # Wrap inputs in a named DataFrame so fit sees the same feature names
+        # predict() will pass later — otherwise sklearn warns about feature-name
+        # mismatch between training and inference.
+        if feature_names is not None:
+            X_train = pd.DataFrame(X_train, columns=feature_names)
+            if X_val is not None:
+                X_val = pd.DataFrame(X_val, columns=feature_names)
         for name, model in self._models.items():
             callbacks = [lgb.early_stopping(30, verbose=False), lgb.log_evaluation(0)]
             if X_val is not None and y_val_dict is not None:
@@ -404,9 +411,16 @@ class LightGBMMultiTarget:
                 model.fit(X_train, y_train_dict[name])
 
     def predict(self, X):
-        X_in = (
-            pd.DataFrame(X, columns=self._feature_names) if self._feature_names is not None else X
-        )
+        # Always wrap X in a DataFrame with whatever names fit saw so sklearn
+        # doesn't warn. lightgbm auto-assigns "Column_i" names during a numpy
+        # fit, so pull those when the user didn't supply feature_names.
+        if isinstance(X, pd.DataFrame):
+            X_in = X
+        elif self._feature_names is not None:
+            X_in = pd.DataFrame(X, columns=self._feature_names)
+        else:
+            first = next(iter(self._models.values()))
+            X_in = pd.DataFrame(X, columns=getattr(first, "feature_names_in_", None))
         preds = {name: np.maximum(model.predict(X_in), 0) for name, model in self._models.items()}
         preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
