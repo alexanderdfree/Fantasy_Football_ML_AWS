@@ -123,9 +123,16 @@ WR_NN_BATCH_SIZE = 512
 WR_NN_PATIENCE = 25
 
 # === Loss Weights ===
-# Equal per-target weights: training objective now aligned with evaluation
-# metric (total MAE), where all targets contribute equally to the total.
-WR_LOSS_WEIGHTS = {t: 1.0 for t in WR_TARGETS}
+# Per-target weights scaled inversely to Huber delta (~2.0/δ) so every head
+# contributes comparable gradient magnitude during joint training. Without
+# rebalancing, receiving_yards (δ=15) dominated count heads (δ=0.5) ~900× per
+# sample. Receptions anchors the scale at weight 1.0.
+WR_LOSS_WEIGHTS = {
+    "receiving_tds": 4.0,  # 2.0 / 0.5
+    "receiving_yards": 0.133,  # 2.0 / 15
+    "receptions": 1.0,  # 2.0 / 2.0 (anchor)
+    "fumbles_lost": 4.0,
+}
 WR_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target, raw-stat units) ===
