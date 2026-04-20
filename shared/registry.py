@@ -147,6 +147,9 @@ def _attn_kwargs_static(cfg, prefix: str) -> dict:
         gated_td_target=gated_td_target,
         gated_td_targets=list(gated_td_targets) if gated_td_targets is not None else None,
     )
+    gated_td_targets = g("GATED_TD_TARGETS", None)
+    if gated_td_targets is not None:
+        kwargs["gated_td_targets"] = list(gated_td_targets)
     head_hidden_overrides = g("NN_HEAD_HIDDEN_OVERRIDES", None)
     if head_hidden_overrides:
         kwargs["head_hidden_overrides"] = dict(head_hidden_overrides)

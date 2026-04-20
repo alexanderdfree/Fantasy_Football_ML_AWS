@@ -121,7 +121,7 @@ def _te_tiny() -> dict:
         fill_te_nans,
         get_te_feature_columns,
     )
-    from TE.te_targets import compute_te_fumble_adjustment, compute_te_targets
+    from TE.te_targets import compute_te_targets
 
     callables = {
         "filter_fn": filter_to_te,
@@ -129,7 +129,6 @@ def _te_tiny() -> dict:
         "add_features_fn": add_te_specific_features,
         "fill_nans_fn": fill_te_nans,
         "get_feature_columns_fn": get_te_feature_columns,
-        "compute_adjustment_fn": compute_te_fumble_adjustment,
     }
     try:
         from TE.te_config import TE_CONFIG_TINY
