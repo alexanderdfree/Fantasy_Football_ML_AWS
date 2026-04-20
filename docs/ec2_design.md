@@ -88,8 +88,12 @@ Inline `ff-training-workload`:
 ## CI: .github/workflows/train-ec2.yml
 
 Triggers:
-- `push` to `main` with the same path filter as `batch-image.yml` (`batch/**`, `shared/**`, position dirs, `src/**`, `requirements.txt`).
-- `workflow_dispatch` with inputs `positions`, `seed`, `wait` — break-glass for re-runs.
+- `workflow_run` after `batch-image.yml` succeeds on `main` — the image-build path filter (`batch/**`, `shared/**`, position dirs, `src/**`, `requirements.txt`) gates whether this fires at all, so non-model commits never train.
+- `workflow_dispatch` with inputs `positions`, `seed` — break-glass for re-runs.
+
+A `detect` job runs first and scopes which positions to train:
+- On `workflow_run`, `git diff --name-only HEAD^ HEAD` on the merged commit. Changes under `shared/`, `src/`, `batch/`, or `requirements.txt` retrain all six positions; otherwise only the position dirs with changes get retrained. No model-relevant changes → `train` job skipped.
+- On `workflow_dispatch`, the explicit `positions` input is honored verbatim. Empty input falls back to all six (legacy semantics for "retrain after data refresh").
 
 Depends on `batch-image.yml` via `workflow_run` — training only fires after the new image has been pushed for the same commit.
 
