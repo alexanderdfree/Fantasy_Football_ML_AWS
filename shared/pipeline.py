@@ -46,6 +46,16 @@ from src.features.engineer import build_game_history_arrays, get_attn_static_col
 from src.models.baseline import SeasonAverageBaseline
 from src.models.linear import RidgeModel
 
+# Positions whose trained heads carry the full scoring semantics (sign-flipped
+# miss points, tier-mapped PA/YA bonuses) and so benefit from supervising the
+# aux-loss ``total`` on ``fantasy_points`` directly. Gated additionally on
+# ``compute_adjustment_fn is None`` so the switch only activates *after* the
+# position's adjustment logic has been folded into trainable heads.
+# QB/RB/WR/TE are deliberately excluded: their post-migration targets are raw
+# NFL stats (yards/TDs/receptions) whose ``sum(heads)`` lives on a different
+# scale than ``fantasy_points``, and the NN emits ``sum(heads)`` as its total.
+_FANTASY_POINTS_AUX_POSITIONS = frozenset({"K", "DST"})
+
 
 def _read_split(path: str) -> pd.DataFrame:
     """Read a split parquet, dropping playoff rows.
@@ -282,18 +292,33 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
         else None
     )
 
-    # Total target = sum of decomposed targets (NOT fantasy_points, which
-    # includes adjustments like INT/fumble penalties that are added post-hoc).
-    # Using fantasy_points here causes the total aux loss to train heads to
-    # absorb adjustments, which then get double-counted at inference.
-    y_train_dict["total"] = np.sum([pos_train[t].values for t in targets], axis=0).astype(
-        np.float32
+    # Total aux-loss target: use ``fantasy_points`` for positions whose heads
+    # already carry the full scoring semantics (K/DST after the adjustment
+    # logic is folded into trainable heads — gated on ``compute_adjustment_fn
+    # is None``). Otherwise fall back to sum-of-targets so we don't
+    # double-count a post-hoc adjustment or mismatch the NN's ``sum(heads)``
+    # output for raw-stat positions. See ``_FANTASY_POINTS_AUX_POSITIONS``.
+    use_fantasy_points = (
+        position in _FANTASY_POINTS_AUX_POSITIONS
+        and cfg.get("compute_adjustment_fn") is None
+        and "fantasy_points" in pos_train.columns
     )
-    y_val_dict["total"] = np.sum([pos_val[t].values for t in targets], axis=0).astype(np.float32)
-    if y_test_dict is not None:
-        y_test_dict["total"] = np.sum([pos_test[t].values for t in targets], axis=0).astype(
+    if use_fantasy_points:
+        y_train_dict["total"] = pos_train["fantasy_points"].values.astype(np.float32)
+        y_val_dict["total"] = pos_val["fantasy_points"].values.astype(np.float32)
+        if y_test_dict is not None:
+            y_test_dict["total"] = pos_test["fantasy_points"].values.astype(np.float32)
+    else:
+        y_train_dict["total"] = np.sum([pos_train[t].values for t in targets], axis=0).astype(
             np.float32
         )
+        y_val_dict["total"] = np.sum([pos_val[t].values for t in targets], axis=0).astype(
+            np.float32
+        )
+        if y_test_dict is not None:
+            y_test_dict["total"] = np.sum([pos_test[t].values for t in targets], axis=0).astype(
+                np.float32
+            )
 
     return (
         X_train,
