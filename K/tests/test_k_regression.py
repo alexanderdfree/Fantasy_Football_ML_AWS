@@ -65,7 +65,7 @@ def k_training_arrays(tiny_k_dataset):
 
 
 def _total_mae(preds: dict, y_true_total: np.ndarray) -> float:
-    total = preds["fg_points"] + preds["pat_points"]
+    total = sum(preds[t] for t in K_TARGETS)
     return float(np.mean(np.abs(total - y_true_total)))
 
 

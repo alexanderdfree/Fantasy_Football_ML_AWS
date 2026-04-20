@@ -4,8 +4,8 @@ Kicker features are computed on the full dataset before splitting, and use
 CROSS-SEASON rolling windows (all other positions reset per-season) because
 kickers have stable multi-year careers and small sample sizes per season.
 
-compute_k_features requires pre-computed fg_points, pat_points, miss_penalty
-columns (typically added by compute_k_targets).
+compute_k_features requires a pre-computed `fantasy_points` column (added by
+compute_k_targets via the signed 4-head aggregation).
 """
 
 import numpy as np

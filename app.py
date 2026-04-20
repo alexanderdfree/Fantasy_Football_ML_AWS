@@ -220,13 +220,24 @@ POSITION_INFO = {
         "label": "Kicker",
         "targets": [
             {
-                "key": "fg_points",
-                "label": "FG Points",
-                "formula": "FG 0-39yd x 3 + FG 40-49yd x 4 + FG 50+yd x 5",
+                "key": "fg_yard_points",
+                "label": "FG Yard Points",
+                "formula": "FG yards made × 0.1",
             },
-            {"key": "pat_points", "label": "PAT Points", "formula": "PAT_made x 1"},
+            {"key": "pat_points", "label": "PAT Points", "formula": "PAT made × 1"},
+            {
+                "key": "fg_misses",
+                "label": "FG Misses",
+                "formula": "FG missed (−1 each in total)",
+            },
+            {
+                "key": "xp_misses",
+                "label": "XP Misses",
+                "formula": "PAT missed (−1 each in total)",
+            },
         ],
-        "adjustments": "Miss penalty (rolling L8 FG/PAT miss rate)",
+        "adjustments": "None",
+        "formula": "fg_yard_points + pat_points − fg_misses − xp_misses",
         "specific_features": list(K_SPECIFIC_FEATURES),
         "architecture": {
             "backbone": list(k_cfg.K_NN_BACKBONE_LAYERS),
@@ -320,14 +331,15 @@ def _apply_position_models(train, val, test, pos, results):
     )
 
     feature_cols = reg["get_feature_columns_fn"]()
-    # K/DST still apply a post-hoc adjustment (miss-rate / defense). QB/RB/WR/TE
-    # now aggregate raw-stat preds via reg["aggregate_fn"] instead of summing
-    # components + adjustment.
+    # DST still applies a post-hoc adjustment (defensive TDs + safeties); K now
+    # encodes its miss penalties as signed raw-value heads (see target_signs).
+    # QB/RB/WR/TE aggregate raw-stat preds via reg["aggregate_fn"].
     adj_values = None
     if reg.get("compute_adjustment_fn") is not None:
         adj = reg["compute_adjustment_fn"](pos_test)
         adj_values = adj.values
     aggregate_fn = reg.get("aggregate_fn")
+    target_signs = reg.get("target_signs")
 
     # Prepare features — fill missing columns with 0 (must match training dimension)
     missing_cols = [c for c in feature_cols if c not in pos_train.columns]
@@ -344,7 +356,11 @@ def _apply_position_models(train, val, test, pos, results):
     def _combine_total(preds: dict) -> np.ndarray:
         if aggregate_fn is not None:
             return aggregate_fn(preds)
-        total = sum(preds[t] for t in targets)
+        if target_signs is not None:
+            # Per-target sign vector (e.g. K: [+1, +1, -1, -1]).
+            total = sum(preds[t] * target_signs.get(t, 1.0) for t in targets)
+        else:
+            total = sum(preds[t] for t in targets)
         if adj_values is not None:
             total = total + adj_values
         return total

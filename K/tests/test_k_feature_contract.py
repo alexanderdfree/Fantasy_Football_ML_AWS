@@ -60,6 +60,17 @@ def test_feature_columns_is_source_of_truth():
 
 
 @pytest.mark.unit
+def test_fg_yards_made_column_present(k_feature_frame):
+    """`fg_yards_made` (the raw sum-of-kick-distances source of fg_yard_points)
+    must be present after the feature pipeline runs: it feeds compute_k_targets
+    and must be non-null, non-negative across the frame."""
+    assert "fg_yards_made" in k_feature_frame.columns, "fg_yards_made missing after pipeline"
+    series = k_feature_frame["fg_yards_made"]
+    assert series.notna().all(), "fg_yards_made has NaNs after pipeline"
+    assert (series >= 0).all(), "fg_yards_made has negative values"
+
+
+@pytest.mark.unit
 def test_all_specific_features_present_after_compute(k_feature_frame):
     """Every K-specific feature column is produced by compute_k_features."""
     for col in K_SPECIFIC_FEATURES:

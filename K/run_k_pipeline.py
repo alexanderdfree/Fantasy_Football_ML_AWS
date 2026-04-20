@@ -28,6 +28,7 @@ from K.k_config import (
     K_NN_EPOCHS,
     K_NN_HEAD_HIDDEN,
     K_NN_LR,
+    K_NN_NON_NEGATIVE_TARGETS,
     K_NN_PATIENCE,
     K_NN_WEIGHT_DECAY,
     K_ONECYCLE_MAX_LR,
@@ -47,7 +48,7 @@ from K.k_features import (
     fill_k_nans,
     get_k_feature_columns,
 )
-from K.k_targets import compute_k_miss_adjustment, compute_k_targets
+from K.k_targets import compute_k_targets
 from shared.pipeline import run_pipeline
 
 
@@ -81,11 +82,12 @@ def run_k_pipeline(seed=42):
         "add_features_fn": add_k_specific_features,
         "fill_nans_fn": fill_k_nans,
         "get_feature_columns_fn": get_k_feature_columns,
-        "compute_adjustment_fn": compute_k_miss_adjustment,
+        "compute_adjustment_fn": None,
         "nn_backbone_layers": K_NN_BACKBONE_LAYERS,
         "nn_head_hidden": K_NN_HEAD_HIDDEN,
         "nn_dropout": K_NN_DROPOUT,
         "nn_head_hidden_overrides": None,
+        "nn_non_negative_targets": K_NN_NON_NEGATIVE_TARGETS,
         "nn_lr": K_NN_LR,
         "nn_weight_decay": K_NN_WEIGHT_DECAY,
         "nn_epochs": K_NN_EPOCHS,

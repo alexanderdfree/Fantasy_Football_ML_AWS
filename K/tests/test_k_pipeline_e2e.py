@@ -26,7 +26,7 @@ from K.k_features import (
     fill_k_nans,
     get_k_feature_columns,
 )
-from K.k_targets import compute_k_miss_adjustment, compute_k_targets
+from K.k_targets import compute_k_targets
 from shared.pipeline import run_pipeline
 
 
@@ -40,7 +40,7 @@ def _build_e2e_config() -> dict:
             "add_features_fn": add_k_specific_features,
             "fill_nans_fn": fill_k_nans,
             "get_feature_columns_fn": get_k_feature_columns,
-            "compute_adjustment_fn": compute_k_miss_adjustment,
+            "compute_adjustment_fn": None,
         }
     )
     return cfg
@@ -108,7 +108,7 @@ def test_k_pipeline_predictions_finite_and_shaped(prepared_splits, e2e_outputs_d
 
     for model_name in ("ridge", "nn"):
         preds = result["per_target_preds"][model_name]
-        for key in ("fg_points", "pat_points", "total"):
+        for key in ("fg_yard_points", "pat_points", "fg_misses", "xp_misses", "total"):
             arr = preds[key]
             assert arr.shape == (n_test,), f"{model_name} {key} shape {arr.shape} != ({n_test},)"
             assert np.all(np.isfinite(arr)), f"{model_name} {key} has NaN/Inf"
@@ -131,7 +131,7 @@ def test_k_pipeline_bit_identical_across_seeded_runs(prepared_splits, e2e_output
     for model_name in ("ridge", "nn"):
         p1 = r1["per_target_preds"][model_name]
         p2 = r2["per_target_preds"][model_name]
-        for key in ("fg_points", "pat_points", "total"):
+        for key in ("fg_yard_points", "pat_points", "fg_misses", "xp_misses", "total"):
             np.testing.assert_array_equal(
                 p1[key],
                 p2[key],

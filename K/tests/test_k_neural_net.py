@@ -1,6 +1,8 @@
 """Tests for shared.neural_net.MultiHeadNet (using Kicker targets).
 
-Kickers use only 2 targets (fg_points, pat_points), unlike other positions (3).
+Kickers use 4 non-negative raw-value targets: fg_yard_points, pat_points,
+fg_misses, xp_misses. Signs are applied in the fantasy-total aggregation,
+not on the heads themselves, so every head is clamped to >= 0.
 """
 
 import numpy as np
@@ -9,7 +11,8 @@ import torch
 
 from shared.neural_net import MultiHeadNet
 
-K_TARGETS = ["fg_points", "pat_points"]
+K_TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
+K_TARGETS_SET = set(K_TARGETS)
 
 
 @pytest.mark.unit
@@ -25,10 +28,10 @@ class TestMultiHeadNet:
         )
 
     def test_output_keys(self, model):
-        """Kicker model should expose fg_points, pat_points, and total."""
+        """Kicker model exposes the 4 K heads plus the unsigned total."""
         x = torch.randn(4, 10)
         out = model(x)
-        assert set(out.keys()) == {"fg_points", "pat_points", "total"}
+        assert set(out.keys()) == K_TARGETS_SET | {"total"}
 
     def test_output_shapes(self, model):
         batch_size = 8
@@ -38,12 +41,12 @@ class TestMultiHeadNet:
             assert out[key].shape == (batch_size,)
 
     def test_total_equals_sum(self, model):
-        """Total = fg_points + pat_points (no td_points head for K)."""
+        """Total = unsigned sum of the 4 K heads (training label target)."""
         model.eval()
         x = torch.randn(4, 10)
         with torch.no_grad():
             out = model(x)
-        expected = out["fg_points"] + out["pat_points"]
+        expected = sum(out[t] for t in K_TARGETS)
         torch.testing.assert_close(out["total"], expected)
 
     def test_custom_backbone(self):
@@ -78,7 +81,7 @@ class TestMultiHeadNet:
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
 
-        assert set(preds.keys()) == {"fg_points", "pat_points", "total"}
+        assert set(preds.keys()) == K_TARGETS_SET | {"total"}
         for key in preds:
             assert isinstance(preds[key], np.ndarray)
             assert preds[key].shape == (5,)
@@ -132,7 +135,7 @@ class TestMultiHeadNet:
         model.train()
         x = torch.randn(4, 10)
         out = model(x)
-        expected = out["fg_points"] + out["pat_points"]
+        expected = sum(out[t] for t in K_TARGETS)
         torch.testing.assert_close(out["total"], expected)
 
     def test_k_config_backbone(self):
@@ -209,10 +212,10 @@ class TestMultiHeadNet:
             target_names=K_TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
-            head_hidden_overrides={"fg_points": 24},
+            head_hidden_overrides={"fg_yard_points": 24},
         )
         x = torch.randn(4, 10)
         out = model(x)
         assert out["total"].shape == (4,)
-        fg_head = model.heads["fg_points"]
+        fg_head = model.heads["fg_yard_points"]
         assert fg_head[0].out_features == 24

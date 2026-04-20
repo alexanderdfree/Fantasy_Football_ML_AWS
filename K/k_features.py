@@ -18,8 +18,8 @@ def compute_k_features(df: pd.DataFrame) -> None:
     """
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
-    # Pre-compute raw kicker total points (for rolling features)
-    df["_k_total_pts"] = df["fg_points"] + df["pat_points"] + df["miss_penalty"]
+    # Rolling-feature input: signed fantasy total written by compute_k_targets.
+    df["_k_total_pts"] = df["fantasy_points"]
 
     # Cross-season grouping (no season reset): kickers have stable multi-year
     # careers and small sample sizes per season, so cross-season windows provide
