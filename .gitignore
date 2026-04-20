@@ -52,7 +52,9 @@ build/
 infra/aws/.env.out
 
 # Claude Code
-.claude/
+.claude/*
+!.claude/hooks/
+!.claude/settings.json
 
 # Credentials (preventive)
 *.pem
