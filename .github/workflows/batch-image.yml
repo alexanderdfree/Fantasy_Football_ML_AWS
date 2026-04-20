@@ -41,6 +41,27 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Install nfl_data_py (no-deps, matches Dockerfile)
         run: pip install --no-cache-dir --no-deps nfl_data_py==0.3.3
+
+      # pipeline_e2e + TE-regression tests load data/raw/schedules_2012_2025.parquet
+      # via shared.weather_features; see tests.yml for the same pair of steps.
+      - name: Cache schedule parquet across CI runs
+        id: sched-cache
+        uses: actions/cache@v5
+        with:
+          path: data/raw/schedules_2012_2025.parquet
+          key: schedules-2012-2025-v1
+
+      - name: Download schedule parquet via nfl_data_py (cache miss)
+        if: steps.sched-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p data/raw
+          python - <<'PY'
+          import nfl_data_py as nfl
+          sched = nfl.import_schedules(list(range(2012, 2026)))
+          sched.to_parquet('data/raw/schedules_2012_2025.parquet')
+          print(f'Wrote schedules: {len(sched)} rows')
+          PY
+
       - name: Run tests
         run: python -m pytest tests/ QB/tests/ RB/tests/ WR/tests/ TE/tests/ K/tests/ DST/tests/ batch/tests/ shared/tests/ -v
 
