@@ -1,12 +1,11 @@
-"""Tests for shared.models.RidgeMultiTarget (using QB targets)."""
+"""Tests for shared.models.RidgeMultiTarget (using QB raw-stat targets)."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from QB.qb_config import QB_TARGETS
 from shared.models import RidgeMultiTarget
-
-QB_TARGETS = ["passing_floor", "rushing_floor", "td_points"]
 
 
 @pytest.fixture
@@ -15,11 +14,16 @@ def simple_data():
     np.random.seed(42)
     n, d = 20, 5
     X = np.random.randn(n, d).astype(np.float32)
-    y_dict = {
-        "passing_floor": np.random.rand(n).astype(np.float32) * 15,
-        "rushing_floor": np.random.rand(n).astype(np.float32) * 3,
-        "td_points": np.random.rand(n).astype(np.float32) * 8,
+    # Scale each target to plausible per-game ranges.
+    scales = {
+        "passing_yards": 350.0,
+        "rushing_yards": 40.0,
+        "passing_tds": 3.0,
+        "rushing_tds": 1.0,
+        "interceptions": 2.0,
+        "fumbles_lost": 1.0,
     }
+    y_dict = {t: np.random.rand(n).astype(np.float32) * scales[t] for t in QB_TARGETS}
     return X, y_dict
 
 
@@ -31,7 +35,7 @@ class TestRidgeMultiTarget:
         model.fit(X, y_dict)
         preds = model.predict(X)
 
-        assert set(preds.keys()) == {"passing_floor", "rushing_floor", "td_points", "total"}
+        assert set(preds.keys()) == set(QB_TARGETS) | {"total"}
         for key in preds:
             assert preds[key].shape == (len(X),)
 
@@ -41,7 +45,7 @@ class TestRidgeMultiTarget:
         model.fit(X, y_dict)
         preds = model.predict(X)
 
-        expected_total = preds["passing_floor"] + preds["rushing_floor"] + preds["td_points"]
+        expected_total = sum(preds[t] for t in QB_TARGETS)
         np.testing.assert_allclose(preds["total"], expected_total, atol=1e-6)
 
     def test_predict_total_matches(self, simple_data):
@@ -77,7 +81,7 @@ class TestRidgeMultiTarget:
         model.fit(X, y_dict)
         names = [f"feat_{i}" for i in range(X.shape[1])]
         importance = model.get_feature_importance(names)
-        assert set(importance.keys()) == {"passing_floor", "rushing_floor", "td_points"}
+        assert set(importance.keys()) == set(QB_TARGETS)
         for _target, series in importance.items():
             assert isinstance(series, pd.Series)
             assert len(series) == X.shape[1]
@@ -103,19 +107,29 @@ class TestRidgeMultiTarget:
         np.random.seed(0)
         X = np.random.randn(10, 3).astype(np.float32)
         y_dict = {
-            "passing_floor": np.full(10, 10.0),
-            "rushing_floor": np.full(10, 1.0),
-            "td_points": np.full(10, 0.0),
+            "passing_yards": np.full(10, 250.0),
+            "rushing_yards": np.full(10, 20.0),
+            "passing_tds": np.full(10, 2.0),
+            "rushing_tds": np.full(10, 0.0),
+            "interceptions": np.full(10, 1.0),
+            "fumbles_lost": np.full(10, 0.0),
         }
         model = RidgeMultiTarget(target_names=QB_TARGETS, alpha=1.0)
         model.fit(X, y_dict)
         preds = model.predict(X)
-        assert np.allclose(preds["td_points"], 0.0, atol=1.0)
+        assert np.allclose(preds["rushing_tds"], 0.0, atol=1.0)
 
     def test_per_target_alpha_construction(self, simple_data):
         """Per-target alphas produce different results than uniform alpha."""
         X, y_dict = simple_data
-        alpha_dict = {"passing_floor": 0.01, "rushing_floor": 1.0, "td_points": 100.0}
+        alpha_dict = {
+            "passing_yards": 0.01,
+            "rushing_yards": 1.0,
+            "passing_tds": 100.0,
+            "rushing_tds": 10.0,
+            "interceptions": 50.0,
+            "fumbles_lost": 5.0,
+        }
         m_per = RidgeMultiTarget(target_names=QB_TARGETS, alpha=alpha_dict)
         m_uniform = RidgeMultiTarget(target_names=QB_TARGETS, alpha=1.0)
         m_per.fit(X, y_dict)
@@ -128,7 +142,14 @@ class TestRidgeMultiTarget:
     def test_per_target_alpha_save_load(self, simple_data, tmp_path):
         """Save/load round-trips correctly with per-target alphas."""
         X, y_dict = simple_data
-        alpha_dict = {"passing_floor": 0.1, "rushing_floor": 10.0, "td_points": 500.0}
+        alpha_dict = {
+            "passing_yards": 0.1,
+            "rushing_yards": 10.0,
+            "passing_tds": 500.0,
+            "rushing_tds": 50.0,
+            "interceptions": 200.0,
+            "fumbles_lost": 20.0,
+        }
         model = RidgeMultiTarget(target_names=QB_TARGETS, alpha=alpha_dict)
         model.fit(X, y_dict)
         preds_before = model.predict(X)
@@ -148,5 +169,5 @@ class TestRidgeMultiTarget:
         with pytest.raises(ValueError, match="missing keys"):
             RidgeMultiTarget(
                 target_names=QB_TARGETS,
-                alpha={"passing_floor": 1.0, "rushing_floor": 1.0},
+                alpha={"passing_yards": 1.0, "rushing_yards": 1.0},
             )

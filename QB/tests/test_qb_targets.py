@@ -1,10 +1,19 @@
-"""Tests for QB.qb_targets — compute_qb_targets and compute_qb_adjustment."""
+"""Tests for QB.qb_targets — compute_qb_targets (raw-stat migration)."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from QB.qb_targets import compute_qb_adjustment, compute_qb_targets
+from QB.qb_targets import compute_qb_targets
+
+QB_TARGET_COLS = (
+    "passing_yards",
+    "rushing_yards",
+    "passing_tds",
+    "rushing_tds",
+    "interceptions",
+    "fumbles_lost",
+)
 
 
 def _make_qb_row(**overrides):
@@ -45,74 +54,64 @@ def _make_qb_row(**overrides):
 
 
 # ---------------------------------------------------------------------------
-# compute_qb_targets
+# compute_qb_targets — 6 raw-stat columns
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 class TestComputeQBTargets:
-    def test_passing_floor(self):
-        df = _make_qb_row(passing_yards=300)
+    def test_all_six_columns_emitted(self):
+        df = _make_qb_row()
         result = compute_qb_targets(df)
-        # 300 * 0.04 = 12.0
-        assert pytest.approx(result["passing_floor"].iloc[0]) == 12.0
+        for col in QB_TARGET_COLS:
+            assert col in result.columns, f"missing QB target column: {col}"
 
-    def test_rushing_floor(self):
-        df = _make_qb_row(rushing_yards=50)
+    def test_passing_yards_identity(self):
+        df = _make_qb_row(passing_yards=317)
         result = compute_qb_targets(df)
-        assert pytest.approx(result["rushing_floor"].iloc[0]) == 5.0
+        assert result["passing_yards"].iloc[0] == 317
 
-    def test_td_points_passing(self):
-        df = _make_qb_row(passing_tds=3, rushing_tds=0)
+    def test_rushing_yards_identity(self):
+        df = _make_qb_row(rushing_yards=42)
         result = compute_qb_targets(df)
-        # 3 * 4 = 12
-        assert pytest.approx(result["td_points"].iloc[0]) == 12.0
+        assert result["rushing_yards"].iloc[0] == 42
 
-    def test_td_points_rushing(self):
-        df = _make_qb_row(passing_tds=0, rushing_tds=2, receiving_tds=0)
+    def test_passing_tds_identity(self):
+        df = _make_qb_row(passing_tds=3)
         result = compute_qb_targets(df)
-        assert pytest.approx(result["td_points"].iloc[0]) == 12.0
+        assert result["passing_tds"].iloc[0] == 3
 
-    def test_td_points_combined(self):
-        df = _make_qb_row(passing_tds=2, rushing_tds=1, receiving_tds=1)
+    def test_rushing_tds_identity(self):
+        df = _make_qb_row(rushing_tds=2)
         result = compute_qb_targets(df)
-        # 2*4 + 1*6 + 1*6 = 20
-        assert pytest.approx(result["td_points"].iloc[0]) == 20.0
+        assert result["rushing_tds"].iloc[0] == 2
 
-    def test_interception_penalty(self):
+    def test_interceptions_identity(self):
         df = _make_qb_row(interceptions=2)
         result = compute_qb_targets(df)
-        assert pytest.approx(result["interception_penalty"].iloc[0]) == -4.0
+        assert result["interceptions"].iloc[0] == 2
 
-    def test_fumble_penalty(self):
-        df = _make_qb_row(sack_fumbles_lost=1, rushing_fumbles_lost=1)
-        result = compute_qb_targets(df)
-        assert pytest.approx(result["fumble_penalty"].iloc[0]) == -4.0
-
-    def test_receiving_component(self):
-        """QBs can occasionally catch passes (trick plays)."""
-        df = _make_qb_row(receptions=1, receiving_yards=20)
-        result = compute_qb_targets(df)
-        # 1 * 1 + 20 * 0.1 = 3.0
-        assert pytest.approx(result["receiving_component"].iloc[0]) == 3.0
-
-    def test_fantasy_points_decomposition_matches(self):
+    def test_fumbles_lost_sums_sack_and_rushing(self):
+        """QB fumbles_lost = sack_fumbles_lost + rushing_fumbles_lost (no receiving)."""
         df = _make_qb_row(
-            passing_yards=275, passing_tds=2, rushing_yards=30, rushing_tds=1, interceptions=1
+            sack_fumbles_lost=1,
+            rushing_fumbles_lost=1,
+            receiving_fumbles_lost=1,  # must NOT be counted for QB scope
         )
         result = compute_qb_targets(df)
-        expected = (
-            result["passing_floor"].iloc[0]
-            + result["rushing_floor"].iloc[0]
-            + result["td_points"].iloc[0]
-            + result["interception_penalty"].iloc[0]
-            + result["fumble_penalty"].iloc[0]
-            + result["receiving_component"].iloc[0]
-        )
-        assert pytest.approx(df["fantasy_points"].iloc[0], abs=0.01) == expected
+        assert result["fumbles_lost"].iloc[0] == 2
 
-    def test_all_nan_stats_treated_as_zero(self):
-        """Player with all NaN stats should produce zero targets."""
+    def test_fumbles_lost_sack_only(self):
+        df = _make_qb_row(sack_fumbles_lost=2, rushing_fumbles_lost=0)
+        result = compute_qb_targets(df)
+        assert result["fumbles_lost"].iloc[0] == 2
+
+    def test_fumbles_lost_rushing_only(self):
+        df = _make_qb_row(sack_fumbles_lost=0, rushing_fumbles_lost=1)
+        result = compute_qb_targets(df)
+        assert result["fumbles_lost"].iloc[0] == 1
+
+    def test_nan_fills_to_zero(self):
         df = pd.DataFrame(
             [
                 {
@@ -132,11 +131,8 @@ class TestComputeQBTargets:
             ]
         )
         result = compute_qb_targets(df)
-        assert result["passing_floor"].iloc[0] == 0.0
-        assert result["rushing_floor"].iloc[0] == 0.0
-        assert result["td_points"].iloc[0] == 0.0
-        assert result["interception_penalty"].iloc[0] == 0.0
-        assert result["fumble_penalty"].iloc[0] == 0.0
+        for col in QB_TARGET_COLS:
+            assert result[col].iloc[0] == 0.0, f"{col} did not fill NaN to 0"
 
     def test_does_not_mutate_original(self):
         df = _make_qb_row()
@@ -145,7 +141,6 @@ class TestComputeQBTargets:
         assert set(df.columns) == original_cols
 
     def test_zero_stat_game(self):
-        """QB that didn't play (all zeros) should have zero targets."""
         df = _make_qb_row(
             passing_yards=0,
             rushing_yards=0,
@@ -154,128 +149,27 @@ class TestComputeQBTargets:
             interceptions=0,
         )
         result = compute_qb_targets(df)
-        assert result["passing_floor"].iloc[0] == 0.0
-        assert result["rushing_floor"].iloc[0] == 0.0
-        assert result["td_points"].iloc[0] == 0.0
+        for col in QB_TARGET_COLS:
+            assert result[col].iloc[0] == 0.0
 
     def test_big_passing_game(self):
-        """Huge passing game should decompose correctly."""
         df = _make_qb_row(
             passing_yards=500, passing_tds=5, rushing_yards=10, rushing_tds=0, interceptions=0
         )
         result = compute_qb_targets(df)
-        assert result["passing_floor"].iloc[0] == 20.0  # 500 * 0.04
-        assert result["rushing_floor"].iloc[0] == 1.0
-        assert result["td_points"].iloc[0] == 20.0  # 5*4
+        assert result["passing_yards"].iloc[0] == 500
+        assert result["rushing_yards"].iloc[0] == 10
+        assert result["passing_tds"].iloc[0] == 5
 
-
-# ---------------------------------------------------------------------------
-# compute_qb_adjustment
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestComputeQBAdjustment:
-    def _make_adj_df(self, ints, fumbles=None, receptions=None, recv_yds=None, season=2023):
-        n = len(ints)
-        if fumbles is None:
-            fumbles = [0] * n
-        if receptions is None:
-            receptions = [0] * n
-        if recv_yds is None:
-            recv_yds = [0] * n
-        return pd.DataFrame(
-            {
-                "player_id": ["QB1"] * n,
-                "season": [season] * n,
-                "week": list(range(1, n + 1)),
-                "interceptions": ints,
-                "sack_fumbles_lost": fumbles,
-                "rushing_fumbles_lost": [0] * n,
-                "receiving_fumbles_lost": [0] * n,
-                "receptions": receptions,
-                "receiving_yards": recv_yds,
-            }
+    def test_sanity_check_no_warning_on_clean_input(self, capsys):
+        """Aggregator on true targets should reproduce fantasy_points (ex-receiving)."""
+        df = _make_qb_row(
+            passing_yards=275,
+            passing_tds=2,
+            rushing_yards=30,
+            rushing_tds=1,
+            interceptions=1,
         )
-
-    def test_first_game_is_zero(self):
-        """First game has no prior history — shift produces NaN, filled to 0."""
-        df = self._make_adj_df([1, 0, 0])
-        result = compute_qb_adjustment(df)
-        assert result.iloc[0] == 0.0
-
-    def test_second_game_uses_first(self):
-        """Second game sees the first game's stats via rolling L8."""
-        df = self._make_adj_df([1, 0, 0, 0])
-        result = compute_qb_adjustment(df)
-        # Game 2: prior INT rate = 1 → -2 pts (from interceptions only)
-        assert pytest.approx(result.iloc[1]) == -2.0
-
-    def test_rolling_window_ints(self):
-        """Rolling mean averages correctly."""
-        df = self._make_adj_df([1, 1, 0, 0, 0, 0, 0, 0, 0])
-        result = compute_qb_adjustment(df)
-        # Game 9 (index 8): rolling(8) of [1,1,0,0,0,0,0,0] * -2 mean = -2*0.25 = -0.5
-        assert pytest.approx(result.iloc[8]) == -0.5
-
-    def test_fumbles_included(self):
-        """Fumble adjustment should be included."""
-        df = self._make_adj_df([0, 0], fumbles=[1, 0])
-        result = compute_qb_adjustment(df)
-        # Game 2: fumble rate = 1 → -2 pts
-        assert pytest.approx(result.iloc[1]) == -2.0
-
-    def test_receiving_component_included(self):
-        """Receiving component (historical) should be added to adjustment."""
-        df = self._make_adj_df([0, 0], receptions=[2, 0], recv_yds=[30, 0])
-        result = compute_qb_adjustment(df)
-        # Game 2: prior rec = 2*1 + 30*0.1 = 5 pts
-        assert pytest.approx(result.iloc[1]) == 5.0
-
-    def test_player_with_clean_record(self):
-        df = self._make_adj_df([0, 0, 0, 0])
-        result = compute_qb_adjustment(df)
-        for i in range(len(df)):
-            assert result.iloc[i] == 0.0
-
-    def test_multiple_players_independent(self):
-        """Each player's history is independent."""
-        df = pd.DataFrame(
-            {
-                "player_id": ["QB1", "QB1", "QB2", "QB2"],
-                "season": [2023, 2023, 2023, 2023],
-                "week": [1, 2, 1, 2],
-                "interceptions": [2, 0, 0, 0],
-                "sack_fumbles_lost": [0, 0, 0, 0],
-                "rushing_fumbles_lost": [0, 0, 0, 0],
-                "receiving_fumbles_lost": [0, 0, 0, 0],
-                "receptions": [0, 0, 0, 0],
-                "receiving_yards": [0, 0, 0, 0],
-            }
-        )
-        result = compute_qb_adjustment(df)
-        # QB1 game 2: prior int=2 → -4 pts
-        assert pytest.approx(result.iloc[1]) == -4.0
-        # QB2 game 2: no INTs → 0
-        assert pytest.approx(result.iloc[3]) == 0.0
-
-    def test_multiple_seasons_reset(self):
-        """History should reset across seasons (grouped by season)."""
-        df = pd.DataFrame(
-            {
-                "player_id": ["QB1", "QB1", "QB1", "QB1"],
-                "season": [2022, 2022, 2023, 2023],
-                "week": [1, 2, 1, 2],
-                "interceptions": [2, 2, 0, 0],
-                "sack_fumbles_lost": [0, 0, 0, 0],
-                "rushing_fumbles_lost": [0, 0, 0, 0],
-                "receiving_fumbles_lost": [0, 0, 0, 0],
-                "receptions": [0, 0, 0, 0],
-                "receiving_yards": [0, 0, 0, 0],
-            }
-        )
-        result = compute_qb_adjustment(df)
-        # 2023 game 1: first game of new season → 0
-        assert result.iloc[2] == 0.0
-        # 2023 game 2: only sees 2023 week 1 (0 INTs) → 0
-        assert pytest.approx(result.iloc[3]) == 0.0
+        _ = compute_qb_targets(df)
+        captured = capsys.readouterr()
+        assert "discrepancy" not in captured.out

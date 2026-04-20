@@ -6,10 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from QB.qb_config import QB_TARGETS
 from shared.evaluation import compute_ranking_metrics, compute_target_metrics
-
-QB_TARGETS = ["passing_floor", "rushing_floor", "td_points"]
-
 
 # ---------------------------------------------------------------------------
 # compute_target_metrics
@@ -21,9 +19,12 @@ class TestComputeTargetMetrics:
     def _make_dicts(self, n=50):
         np.random.seed(42)
         y_true = {
-            "passing_floor": np.random.rand(n) * 15,
-            "rushing_floor": np.random.rand(n) * 3,
-            "td_points": np.random.rand(n) * 8,
+            "passing_yards": np.random.rand(n) * 350,
+            "rushing_yards": np.random.rand(n) * 40,
+            "passing_tds": np.random.rand(n) * 3,
+            "rushing_tds": np.random.rand(n) * 1,
+            "interceptions": np.random.rand(n) * 2,
+            "fumbles_lost": np.random.rand(n) * 1,
             "total": np.random.rand(n) * 25,
         }
         y_pred = {k: v + np.random.randn(n) * 0.5 for k, v in y_true.items()}
@@ -34,8 +35,8 @@ class TestComputeTargetMetrics:
         mock_metrics.return_value = {"mae": 1.0, "rmse": 1.5, "r2": 0.8}
         y_true, y_pred = self._make_dicts()
         result = compute_target_metrics(y_true, y_pred, QB_TARGETS)
-        assert mock_metrics.call_count == 4
-        assert set(result.keys()) == {"total", "passing_floor", "rushing_floor", "td_points"}
+        assert mock_metrics.call_count == len(QB_TARGETS) + 1  # + total
+        assert set(result.keys()) == set(QB_TARGETS) | {"total"}
 
     @patch("shared.evaluation.compute_metrics")
     def test_returns_correct_structure(self, mock_metrics):
@@ -46,15 +47,19 @@ class TestComputeTargetMetrics:
             assert "mae" in result[target]
             assert "rmse" in result[target]
             assert "r2" in result[target]
+            assert "unit" in result[target]
 
     @patch("shared.evaluation.compute_metrics")
     def test_perfect_predictions(self, mock_metrics):
         mock_metrics.return_value = {"mae": 0.0, "rmse": 0.0, "r2": 1.0}
         y = {
-            "passing_floor": np.array([10.0, 12.0]),
-            "rushing_floor": np.array([2.0, 3.0]),
-            "td_points": np.array([8.0, 6.0]),
-            "total": np.array([20.0, 21.0]),
+            "passing_yards": np.array([275.0, 310.0]),
+            "rushing_yards": np.array([20.0, 5.0]),
+            "passing_tds": np.array([2.0, 3.0]),
+            "rushing_tds": np.array([0.0, 1.0]),
+            "interceptions": np.array([1.0, 0.0]),
+            "fumbles_lost": np.array([0.0, 1.0]),
+            "total": np.array([25.0, 30.0]),
         }
         result = compute_target_metrics(y, y, QB_TARGETS)
         assert result["total"]["mae"] == 0.0

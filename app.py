@@ -135,11 +135,18 @@ POSITION_INFO = {
     "QB": {
         "label": "Quarterback",
         "targets": [
-            {"key": "passing_floor", "label": "Passing Floor", "formula": "passing_yards x 0.04"},
-            {"key": "rushing_floor", "label": "Rushing Floor", "formula": "rushing_yards x 0.1"},
-            {"key": "td_points", "label": "TD Points", "formula": "pass_TD x 4 + rush_TD x 6"},
+            {"key": "passing_yards", "label": "Passing Yards", "formula": "raw passing yards"},
+            {"key": "rushing_yards", "label": "Rushing Yards", "formula": "raw rushing yards"},
+            {"key": "passing_tds", "label": "Passing TDs", "formula": "raw passing TD count"},
+            {"key": "rushing_tds", "label": "Rushing TDs", "formula": "raw rushing TD count"},
+            {"key": "interceptions", "label": "Interceptions", "formula": "raw interception count"},
+            {
+                "key": "fumbles_lost",
+                "label": "Fumbles Lost",
+                "formula": "sack_fumbles_lost + rushing_fumbles_lost",
+            },
         ],
-        "adjustments": "Interception penalty + fumble rate + receiving component (historical L8 rolling avg)",
+        "adjustments": "None - penalties are now direct targets (interceptions, fumbles_lost).",
         "specific_features": QB_SPECIFIC_FEATURES,
         "architecture": {
             "backbone": list(qb_cfg.QB_NN_BACKBONE_LAYERS),

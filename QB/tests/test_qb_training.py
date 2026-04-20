@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import torch
 
+from QB.qb_config import QB_LOSS_WEIGHTS, QB_TARGETS
 from shared.neural_net import MultiHeadNet
 from shared.training import (
     MultiHeadTrainer,
@@ -11,10 +12,6 @@ from shared.training import (
     MultiTargetLoss,
     make_dataloaders,
 )
-
-QB_TARGETS = ["passing_floor", "rushing_floor", "td_points"]
-QB_LOSS_WEIGHTS = {"passing_floor": 1.0, "rushing_floor": 1.0, "td_points": 1.0}
-
 
 # ---------------------------------------------------------------------------
 # MultiTargetLoss
@@ -34,13 +31,8 @@ class TestMultiTargetLoss:
         loss_fn = MultiTargetLoss(target_names=QB_TARGETS, loss_weights=QB_LOSS_WEIGHTS)
         preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
-        assert set(components.keys()) == {
-            "loss_passing_floor",
-            "loss_rushing_floor",
-            "loss_td_points",
-            "loss_total_aux",
-            "loss_combined",
-        }
+        expected_keys = {f"loss_{t}" for t in QB_TARGETS} | {"loss_total_aux", "loss_combined"}
+        assert set(components.keys()) == expected_keys
 
     def test_components_are_scalars(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=QB_TARGETS, loss_weights=QB_LOSS_WEIGHTS)
@@ -52,24 +44,29 @@ class TestMultiTargetLoss:
     def test_zero_loss_on_perfect_prediction(self):
         loss_fn = MultiTargetLoss(target_names=QB_TARGETS, loss_weights=QB_LOSS_WEIGHTS)
         targets = {
-            "passing_floor": torch.tensor([10.0, 12.0]),
-            "rushing_floor": torch.tensor([2.0, 3.0]),
-            "td_points": torch.tensor([8.0, 6.0]),
-            "total": torch.tensor([20.0, 21.0]),
+            "passing_yards": torch.tensor([275.0, 310.0]),
+            "rushing_yards": torch.tensor([20.0, 5.0]),
+            "passing_tds": torch.tensor([2.0, 3.0]),
+            "rushing_tds": torch.tensor([0.0, 1.0]),
+            "interceptions": torch.tensor([1.0, 0.0]),
+            "fumbles_lost": torch.tensor([0.0, 1.0]),
+            "total": torch.tensor([25.0, 30.0]),
         }
-        combined, components = loss_fn(targets, targets)
+        combined, _ = loss_fn(targets, targets)
         assert pytest.approx(combined.item(), abs=1e-6) == 0.0
 
     def test_weights_affect_loss(self, make_tensors):
         preds, targets = make_tensors()
         loss_equal = MultiTargetLoss(
             target_names=QB_TARGETS,
-            loss_weights={"passing_floor": 1.0, "rushing_floor": 1.0, "td_points": 1.0},
+            loss_weights={t: 1.0 for t in QB_TARGETS},
             w_total=1.0,
         )
+        heavy_weights = {t: 1.0 for t in QB_TARGETS}
+        heavy_weights["passing_yards"] = 10.0
         loss_passing_heavy = MultiTargetLoss(
             target_names=QB_TARGETS,
-            loss_weights={"passing_floor": 10.0, "rushing_floor": 1.0, "td_points": 1.0},
+            loss_weights=heavy_weights,
             w_total=1.0,
         )
         c1, _ = loss_equal(preds, targets)
@@ -91,6 +88,16 @@ class TestMultiTargetLoss:
         for k in preds:
             assert preds[k].grad is not None
 
+    def test_qb_has_no_gated_td(self, make_tensors):
+        """QB config disables gated-TD; loss must not emit gate components."""
+        loss_fn = MultiTargetLoss(target_names=QB_TARGETS, loss_weights=QB_LOSS_WEIGHTS)
+        preds, targets = make_tensors()
+        # Even if a stray *_gate_logit key were in preds, QB's empty
+        # gated_td_targets list means no BCE component gets added.
+        preds["passing_tds_gate_logit"] = torch.randn(next(iter(preds.values())).shape[0])
+        _, components = loss_fn(preds, targets)
+        assert not any(k.startswith("loss_td_gate") for k in components)
+
 
 # ---------------------------------------------------------------------------
 # MultiTargetDataset
@@ -101,15 +108,15 @@ class TestMultiTargetLoss:
 class TestMultiTargetDataset:
     def test_length(self):
         X = np.random.randn(20, 5).astype(np.float32)
-        y = {"passing_floor": np.random.randn(20).astype(np.float32)}
+        y = {"passing_yards": np.random.randn(20).astype(np.float32)}
         ds = MultiTargetDataset(X, y)
         assert len(ds) == 20
 
     def test_getitem_types(self):
         X = np.random.randn(10, 3).astype(np.float32)
         y = {
-            "passing_floor": np.random.randn(10).astype(np.float32),
-            "rushing_floor": np.random.randn(10).astype(np.float32),
+            "passing_yards": np.random.randn(10).astype(np.float32),
+            "rushing_yards": np.random.randn(10).astype(np.float32),
         }
         ds = MultiTargetDataset(X, y)
         x_item, y_item = ds[0]
@@ -119,11 +126,11 @@ class TestMultiTargetDataset:
 
     def test_single_element(self):
         X = np.array([[1.0, 2.0]], dtype=np.float32)
-        y = {"td_points": np.array([6.0], dtype=np.float32)}
+        y = {"passing_tds": np.array([6.0], dtype=np.float32)}
         ds = MultiTargetDataset(X, y)
         x_item, y_item = ds[0]
         assert pytest.approx(x_item[0].item()) == 1.0
-        assert pytest.approx(y_item["td_points"].item()) == 6.0
+        assert pytest.approx(y_item["passing_tds"].item()) == 6.0
 
 
 # ---------------------------------------------------------------------------
@@ -136,17 +143,17 @@ class TestMakeDataloaders:
     def test_returns_two_loaders(self):
         X_train = np.random.randn(50, 5).astype(np.float32)
         X_val = np.random.randn(20, 5).astype(np.float32)
-        y_train = {"passing_floor": np.random.randn(50).astype(np.float32)}
-        y_val = {"passing_floor": np.random.randn(20).astype(np.float32)}
+        y_train = {"passing_yards": np.random.randn(50).astype(np.float32)}
+        y_val = {"passing_yards": np.random.randn(20).astype(np.float32)}
         train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=16)
         assert train_loader is not None
         assert val_loader is not None
 
     def test_batch_size(self):
         X_train = np.random.randn(64, 5).astype(np.float32)
-        y_train = {"passing_floor": np.random.randn(64).astype(np.float32)}
+        y_train = {"passing_yards": np.random.randn(64).astype(np.float32)}
         X_val = np.random.randn(16, 5).astype(np.float32)
-        y_val = {"passing_floor": np.random.randn(16).astype(np.float32)}
+        y_val = {"passing_yards": np.random.randn(16).astype(np.float32)}
         train_loader, _ = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
         batch_x, batch_y = next(iter(train_loader))
         assert batch_x.shape[0] == 32
@@ -154,7 +161,7 @@ class TestMakeDataloaders:
     def test_iterate_all_batches(self):
         n = 128
         X = np.random.randn(n, 3).astype(np.float32)
-        y = {"passing_floor": np.random.randn(n).astype(np.float32)}
+        y = {"passing_yards": np.random.randn(n).astype(np.float32)}
         loader, _ = make_dataloaders(X, y, X[:10], y, batch_size=32)
         total = sum(x.shape[0] for x, _ in loader)
         assert total == n
@@ -217,18 +224,11 @@ class TestMultiHeadTrainer:
     def test_history_has_all_keys(self, setup_trainer):
         trainer, train_loader, val_loader = setup_trainer
         history = trainer.train(train_loader, val_loader, n_epochs=5)
-        expected_keys = {
-            "train_loss",
-            "val_loss",
-            "val_loss_passing_floor",
-            "val_loss_rushing_floor",
-            "val_loss_td_points",
-            "val_mae_total",
-            "val_mae_passing_floor",
-            "val_mae_rushing_floor",
-            "val_mae_td_points",
-            "val_rmse_total",
-        }
+        expected_keys = (
+            {"train_loss", "val_loss", "val_mae_total", "val_rmse_total"}
+            | {f"val_loss_{t}" for t in QB_TARGETS}
+            | {f"val_mae_{t}" for t in QB_TARGETS}
+        )
         assert expected_keys.issubset(set(history.keys()))
 
     def test_losses_decrease(self, setup_trainer):

@@ -41,6 +41,7 @@ from QB.qb_config import (
     QB_NN_DROPOUT,
     QB_NN_EPOCHS,
     QB_NN_HEAD_HIDDEN,
+    QB_NN_HEAD_HIDDEN_OVERRIDES,
     QB_NN_LR,
     QB_NN_PATIENCE,
     QB_NN_WEIGHT_DECAY,
@@ -53,7 +54,8 @@ from QB.qb_config import (
 )
 from QB.qb_data import filter_to_qb
 from QB.qb_features import add_qb_specific_features, fill_qb_nans, get_qb_feature_columns
-from QB.qb_targets import compute_qb_adjustment, compute_qb_targets
+from QB.qb_targets import compute_qb_targets
+from shared.aggregate_targets import aggregate_fn_for
 from shared.pipeline import run_cv_pipeline, run_pipeline
 
 QB_CONFIG = {
@@ -65,11 +67,11 @@ QB_CONFIG = {
     "add_features_fn": add_qb_specific_features,
     "fill_nans_fn": fill_qb_nans,
     "get_feature_columns_fn": get_qb_feature_columns,
-    "compute_adjustment_fn": compute_qb_adjustment,
+    "aggregate_fn": aggregate_fn_for("QB"),
     "nn_backbone_layers": QB_NN_BACKBONE_LAYERS,
     "nn_head_hidden": QB_NN_HEAD_HIDDEN,
     "nn_dropout": QB_NN_DROPOUT,
-    "nn_head_hidden_overrides": None,
+    "nn_head_hidden_overrides": QB_NN_HEAD_HIDDEN_OVERRIDES,
     "nn_lr": QB_NN_LR,
     "nn_weight_decay": QB_NN_WEIGHT_DECAY,
     "nn_epochs": QB_NN_EPOCHS,

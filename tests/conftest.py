@@ -198,12 +198,17 @@ def tiny_qb_model(tmp_path_factory):
     # Synthetic 50-row QB training data (features arbitrary — purpose is shape)
     n, n_features = 50, 8
     X = rng.normal(size=(n, n_features)).astype(np.float32)
-    y_pass = rng.uniform(10, 20, size=n)
-    y_rush = rng.uniform(0, 5, size=n)
-    y_td = rng.uniform(0, 10, size=n)
+    targets = {
+        "passing_yards": rng.uniform(150, 400, size=n),
+        "rushing_yards": rng.uniform(0, 60, size=n),
+        "passing_tds": rng.uniform(0, 4, size=n),
+        "rushing_tds": rng.uniform(0, 2, size=n),
+        "interceptions": rng.uniform(0, 3, size=n),
+        "fumbles_lost": rng.uniform(0, 2, size=n),
+    }
 
     # Per-target ridge models (matches RidgeMultiTarget layout)
-    for target, y in [("passing_floor", y_pass), ("rushing_floor", y_rush), ("td_points", y_td)]:
+    for target, y in targets.items():
         target_dir = model_dir / target
         target_dir.mkdir(exist_ok=True)
         ridge = Ridge(alpha=1.0)

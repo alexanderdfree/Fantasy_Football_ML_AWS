@@ -410,7 +410,14 @@ class TestTinyQBModelFixture:
     def test_tiny_model_artifacts_exist(self, tiny_qb_model):
         assert (tiny_qb_model / "nn_scaler.pkl").exists()
         assert (tiny_qb_model / "feature_columns.json").exists()
-        for target in ("passing_floor", "rushing_floor", "td_points"):
+        for target in (
+            "passing_yards",
+            "rushing_yards",
+            "passing_tds",
+            "rushing_tds",
+            "interceptions",
+            "fumbles_lost",
+        ):
             assert (tiny_qb_model / target / "ridge_model.pkl").exists()
             assert (tiny_qb_model / target / "scaler.pkl").exists()
 
@@ -418,8 +425,8 @@ class TestTinyQBModelFixture:
         """Round-trip: load the saved Ridge + scaler and ensure predictions are finite."""
         import joblib
 
-        scaler = joblib.load(str(tiny_qb_model / "passing_floor" / "scaler.pkl"))
-        ridge = joblib.load(str(tiny_qb_model / "passing_floor" / "ridge_model.pkl"))
+        scaler = joblib.load(str(tiny_qb_model / "passing_yards" / "scaler.pkl"))
+        ridge = joblib.load(str(tiny_qb_model / "passing_yards" / "ridge_model.pkl"))
 
         rng = np.random.default_rng(0)
         X = rng.normal(size=(3, 8)).astype(np.float32)
