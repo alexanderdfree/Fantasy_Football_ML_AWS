@@ -182,7 +182,11 @@ RB_TRAIN_ATTENTION_NN = True
 # Keep d_model=32 (proven baseline) and n_heads=2 (larger values overfit on 15K samples).
 RB_ATTN_D_MODEL = 32
 RB_ATTN_N_HEADS = 2
-RB_ATTN_ENCODER_HIDDEN_DIM = 0
+# 2-layer nonlinear game encoder (Linear→ReLU→LayerNorm→Linear→ReLU) so each
+# game is represented as a richer event embedding before attention, instead of
+# a near-linear projection of raw stats. Third layer deferred — with ~15K RB
+# samples it's likely to overfit; validate per-target-query gains first.
+RB_ATTN_ENCODER_HIDDEN_DIM = 32
 RB_ATTN_MAX_SEQ_LEN = 17
 # K/V projections disabled — at d_model=32 the 2K extra params hurt optimization
 # more than they help (tested: 4.330 MAE with vs 4.228 without).

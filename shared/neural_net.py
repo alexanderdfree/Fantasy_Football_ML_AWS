@@ -115,21 +115,34 @@ class MultiHeadNet(nn.Module):
 class AttentionPool(nn.Module):
     """Learned-query attention pooling over a variable-length sequence.
 
-    Uses n_heads learned query vectors to attend over a padded sequence,
-    producing a fixed-size output regardless of sequence length.
-    Masking ensures padded positions are ignored.
+    Uses ``n_targets × n_heads`` learned query vectors to attend over a padded
+    sequence, producing one fixed-size vector per target regardless of sequence
+    length. Masking ensures padded positions are ignored.
 
-    Optional K/V projections separate "what to attend to" from "what to extract",
-    giving the attention more expressivity.
+    Per-target queries let each downstream target pull the exact slice of
+    history it cares about (e.g. td_points queries focus on goal-line usage
+    while rushing_floor queries focus on carry volume), instead of being
+    forced through a shared summary bottleneck.
+
+    When ``n_targets == 1`` the output is squeezed to preserve the legacy
+    [batch, n_heads * d_model] shape.
+
+    Optional K/V projections separate "what to attend to" from "what to extract".
     """
 
     def __init__(
-        self, d_model: int, n_heads: int = 2, project_kv: bool = False, attn_dropout: float = 0.0
+        self,
+        d_model: int,
+        n_heads: int = 2,
+        n_targets: int = 1,
+        project_kv: bool = False,
+        attn_dropout: float = 0.0,
     ):
         super().__init__()
-        self.queries = nn.Parameter(torch.randn(n_heads, d_model) * 0.02)
+        self.queries = nn.Parameter(torch.randn(n_targets, n_heads, d_model) * 0.02)
         self.scale = d_model**-0.5
         self.n_heads = n_heads
+        self.n_targets = n_targets
         self.d_model = d_model
         self.project_kv = project_kv
 
@@ -146,7 +159,8 @@ class AttentionPool(nn.Module):
             mask: [batch, seq_len] — True where real game, False where padding
 
         Returns:
-            [batch, n_heads * d_model] — pooled history representation
+            [batch, n_targets, n_heads * d_model] when n_targets > 1,
+            [batch, n_heads * d_model] when n_targets == 1.
         """
         batch_size = keys.size(0)
 
@@ -157,10 +171,10 @@ class AttentionPool(nn.Module):
             k = keys
             v = keys
 
-        # queries: [n_heads, d_model] -> [batch, n_heads, d_model]
-        q = self.queries.unsqueeze(0).expand(batch_size, -1, -1)
-        # attn scores: [batch, n_heads, seq_len]
-        attn = torch.bmm(q, k.transpose(1, 2)) * self.scale
+        # Flatten queries to [n_targets * n_heads, d_model] for a single matmul.
+        q_flat = self.queries.reshape(self.n_targets * self.n_heads, self.d_model)
+        # attn scores: [batch, n_targets * n_heads, seq_len]
+        attn = torch.einsum("qd,bsd->bqs", q_flat, k) * self.scale
 
         if mask is not None:
             # mask: [batch, seq_len] -> [batch, 1, seq_len]
@@ -170,9 +184,12 @@ class AttentionPool(nn.Module):
         # Handle all-padding rows (softmax of all -inf = nan)
         weights = weights.nan_to_num(0.0)
         weights = self.attn_drop(weights)
-        # pooled: [batch, n_heads, d_model]
+        # pooled: [batch, n_targets * n_heads, d_model]
         pooled = torch.bmm(weights, v)
-        return pooled.reshape(batch_size, -1)  # [batch, n_heads * d_model]
+        pooled = pooled.reshape(batch_size, self.n_targets, self.n_heads * self.d_model)
+        if self.n_targets == 1:
+            return pooled.squeeze(1)
+        return pooled
 
 
 class MultiHeadNetWithHistory(nn.Module):
@@ -180,17 +197,24 @@ class MultiHeadNetWithHistory(nn.Module):
 
     Architecture:
         Static features [batch, static_dim]
-            -> (passed through directly)
+            -> Shared backbone [Linear -> BN -> ReLU -> Dropout] x N
+            -> shared_static_rep [batch, backbone_out_dim]
 
         Game history [batch, seq_len, game_dim]
             -> GameEncoder: Linear(game_dim, d_model) -> ReLU
             -> (optional) Learned positional encoding
-            -> AttentionPool(d_model, n_heads) -> [batch, n_heads * d_model]
-            -> (optional) Gated fusion with static features
+            -> AttentionPool with per-target queries
+               -> [batch, n_targets, n_heads * d_model]
 
-        Concatenated [batch, static_dim + n_heads * d_model]
-            -> Shared backbone [Linear -> BN -> ReLU -> Dropout] x N
-            -> Output heads (one per target)
+        For each target t:
+            history_vec_t = LayerNorm_t(pool[:, t, :])
+            head_input_t  = concat(shared_static_rep, history_vec_t)
+            pred_t        = head_t(head_input_t)
+
+    Per-target queries let each target pull its own slice of history instead
+    of sharing a single pooled summary through the backbone. The shared
+    backbone still produces a common static representation that every head
+    consumes alongside its target-specific history.
     """
 
     def __init__(
@@ -223,6 +247,7 @@ class MultiHeadNetWithHistory(nn.Module):
         self.gated_td = gated_td
         self.gated_td_target = gated_td_target
         self.d_model = d_model
+        self.n_targets = len(target_names)
 
         # === Game History Branch ===
         if encoder_hidden_dim > 0:
@@ -245,29 +270,43 @@ class MultiHeadNetWithHistory(nn.Module):
         if use_positional_encoding:
             self.pos_embedding = nn.Embedding(max_seq_len, d_model)
 
+        # Per-target queries: each target pulls its own slice of history
+        # instead of routing through a single shared summary.
         self.attn_pool = AttentionPool(
             d_model,
             n_heads=n_attn_heads,
+            n_targets=self.n_targets,
             project_kv=project_kv,
             attn_dropout=attn_dropout,
         )
 
         attn_out_dim = n_attn_heads * d_model
-        self.history_norm = nn.LayerNorm(attn_out_dim)
+        # Per-target LayerNorms — each target's pooled stats live at different
+        # scales (td_points ~3, rushing_floor ~8), so one norm per target.
+        self.history_norms = nn.ModuleList(
+            [nn.LayerNorm(attn_out_dim) for _ in target_names]
+        )
 
         # Gated fusion: static features control how much to trust history.
         # Prevents noisy attention signal from degrading static feature quality.
+        # Per-target gates since each head gets its own history vec.
         self.use_gated_fusion = use_gated_fusion
         if use_gated_fusion:
-            self.fusion_gate = nn.Sequential(
-                nn.Linear(static_dim + attn_out_dim, attn_out_dim),
-                nn.Sigmoid(),
+            self.fusion_gates = nn.ModuleList(
+                [
+                    nn.Sequential(
+                        nn.Linear(static_dim + attn_out_dim, attn_out_dim),
+                        nn.Sigmoid(),
+                    )
+                    for _ in target_names
+                ]
             )
 
-        # === Shared Backbone (static + history concatenated) ===
-        combined_dim = static_dim + attn_out_dim
+        # === Shared Backbone (static features only) ===
+        # History is routed per-target directly into the heads, so the
+        # backbone no longer needs to see the attention output.
         backbone_blocks = []
-        prev_dim = combined_dim
+        prev_dim = static_dim
         for hidden_dim in backbone_layers:
             backbone_blocks.extend(
                 [
@@ -283,19 +322,20 @@ class MultiHeadNetWithHistory(nn.Module):
         backbone_out_dim = backbone_layers[-1]
         overrides = head_hidden_overrides or {}
 
-        # === Output Heads ===
+        # === Output Heads (consume shared_static ⊕ per-target history) ===
+        head_in_dim = backbone_out_dim + attn_out_dim
         self.heads = nn.ModuleDict()
         for name in target_names:
             h = overrides.get(name, head_hidden)
             if gated_td and name == gated_td_target:
                 self.heads[name] = GatedTDHead(
-                    in_dim=backbone_out_dim,
+                    in_dim=head_in_dim,
                     gate_hidden=td_gate_hidden,
                     value_hidden=h,
                 )
             else:
                 self.heads[name] = nn.Sequential(
-                    nn.Linear(backbone_out_dim, h),
+                    nn.Linear(head_in_dim, h),
                     nn.ReLU(),
                     nn.Linear(h, 1),
                 )
@@ -321,28 +361,30 @@ class MultiHeadNetWithHistory(nn.Module):
             positions = torch.arange(seq_len, device=encoded.device)
             encoded = encoded + self.pos_embedding(positions)
 
-        # Pool via attention
-        history_vec = self.attn_pool(encoded, history_mask)  # [batch, n_heads * d_model]
-        history_vec = self.history_norm(history_vec)
+        # Per-target attention pool: [batch, n_targets, n_heads * d_model]
+        history_per_target = self.attn_pool(encoded, history_mask)
+        if history_per_target.dim() == 2:
+            # Back-compat guard: single-target AttentionPool squeezes. Add axis.
+            history_per_target = history_per_target.unsqueeze(1)
 
-        # Gated fusion: let static features modulate history contribution
-        if self.use_gated_fusion:
-            gate = self.fusion_gate(torch.cat([x_static, history_vec], dim=-1))
-            history_vec = gate * history_vec
+        # Shared backbone processes static features only.
+        shared_static = self.backbone(x_static)
 
-        # Concatenate with static features
-        combined = torch.cat([x_static, history_vec], dim=-1)
-
-        # Backbone + heads
-        shared = self.backbone(combined)
         preds = {}
-        for name, head in self.heads.items():
+        for i, name in enumerate(self.target_names):
+            history_vec = self.history_norms[i](history_per_target[:, i, :])
+            if self.use_gated_fusion:
+                gate = self.fusion_gates[i](torch.cat([x_static, history_vec], dim=-1))
+                history_vec = gate * history_vec
+
+            head_input = torch.cat([shared_static, history_vec], dim=-1)
+            head = self.heads[name]
             if isinstance(head, GatedTDHead):
-                td_pred, gate_logit = head(shared)
+                td_pred, gate_logit = head(head_input)
                 preds[name] = td_pred
                 preds[f"{name}_gate_logit"] = gate_logit
             else:
-                val = head(shared).squeeze(-1)
+                val = head(head_input).squeeze(-1)
                 if name in self.non_negative_targets:
                     val = F.softplus(val)
                 preds[name] = val
