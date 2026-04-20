@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 
 def compute_feature_cols_hash(feature_cols: Iterable[str]) -> str:
@@ -40,7 +40,7 @@ def write_scaler_meta(
         "n_features": len(feature_cols),
         "feature_cols_hash": compute_feature_cols_hash(feature_cols),
         "target_names": target_names,
-        "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "saved_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     Path(meta_path).write_text(json.dumps(meta, indent=2))
     return meta

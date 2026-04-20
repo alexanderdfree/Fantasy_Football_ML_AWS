@@ -10,7 +10,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
@@ -49,7 +49,7 @@ jobs:
       # across CI runs since completed-season schedules don't change.
       - name: Cache schedule parquet across CI runs
         id: sched-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: data/raw/schedules_2012_2025.parquet
           key: schedules-2012-2025-v1
@@ -75,7 +75,7 @@ jobs:
           --cov-report=xml
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
