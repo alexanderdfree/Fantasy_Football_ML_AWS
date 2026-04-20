@@ -103,9 +103,24 @@ TE_CONFIG = {
 }
 
 
-def run_te_pipeline(train_df=None, val_df=None, test_df=None, seed=42):
-    return run_pipeline("TE", TE_CONFIG, train_df, val_df, test_df, seed)
+def run_te_pipeline(train_df=None, val_df=None, test_df=None, seed=42, config=None):
+    return run_pipeline("TE", config or TE_CONFIG, train_df, val_df, test_df, seed)
 
 
 if __name__ == "__main__":
-    run_te_pipeline()
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--tiny",
+        action="store_true",
+        help="Use shrunk smoke-test config (from tests/_pipeline_e2e_utils)",
+    )
+    args = parser.parse_args()
+    if args.tiny:
+        from tests._pipeline_e2e_utils import build_tiny_config
+
+        config = build_tiny_config("TE")
+    else:
+        config = TE_CONFIG
+    run_te_pipeline(config=config)
