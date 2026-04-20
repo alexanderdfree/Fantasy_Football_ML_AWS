@@ -299,9 +299,7 @@ def _pick_row(pos_test: pd.DataFrame, ridge_totals: np.ndarray, target: Target):
 
     positions = np.flatnonzero(mask)
     if positions.size == 0:
-        return None, None, (
-            f"no row for {target.name} week={target.week} season={target.season}"
-        )
+        return None, None, (f"no row for {target.name} week={target.week} season={target.season}")
 
     if target.week is not None:
         # Prefer the most recent season when multiple matched
@@ -500,9 +498,7 @@ def main():
     contam = _receiving_contamination(pos_train)
     json_out["contamination"] = contam
     md.append("## Receiving contamination in QB training rows\n")
-    md.append(
-        "| Column | Nonzero rows | Total rows | % |\n| --- | ---: | ---: | ---: |\n"
-    )
+    md.append("| Column | Nonzero rows | Total rows | % |\n| --- | ---: | ---: | ---: |\n")
     for s in contam["column_summary"]:
         pct = 100 * s["nonzero_rows"] / max(s["total"], 1)
         md.append(f"| `{s['column']}` | {s['nonzero_rows']} | {s['total']} | {pct:.2f}% |\n")
@@ -561,9 +557,7 @@ def main():
 
         md.append("### NN integrated gradients\n")
         for t in targets:
-            attr = nn_integrated_gradients(
-                nn_model, nn_scaler, feature_cols, x_raw, t, device
-            )
+            attr = nn_integrated_gradients(nn_model, nn_scaler, feature_cols, x_raw, t, device)
             md.append(_fmt_nn_table(attr))
             row_json["nn_by_target"][t] = attr
 
