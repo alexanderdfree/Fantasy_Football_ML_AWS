@@ -191,36 +191,23 @@ def make_rb_row():
     return _build_rb_row
 
 
-def _build_fumble_df(player_fumbles, season: int = 2023) -> pd.DataFrame:
-    n = len(player_fumbles)
-    return pd.DataFrame(
-        {
-            "player_id": ["P1"] * n,
-            "season": [season] * n,
-            "week": list(range(1, n + 1)),
-            "sack_fumbles_lost": player_fumbles,
-            "rushing_fumbles_lost": [0] * n,
-            "receiving_fumbles_lost": [0] * n,
-        }
-    )
-
-
-@pytest.fixture(scope="session")
-def make_fumble_df():
-    """Factory for the compute_fumble_adjustment input DataFrame."""
-    return _build_fumble_df
-
-
 @pytest.fixture(scope="session")
 def simple_ridge_data():
-    """20 samples x 5 features with RB-scale targets. Used by RidgeMultiTarget tests."""
+    """20 samples x 5 features with RB-scale raw-stat targets.
+
+    Used by RidgeMultiTarget tests. Scales match realistic RB raw stats so
+    per-target alpha grids exercise numerics near the post-migration units.
+    """
     np.random.seed(42)
     n, d = 20, 5
     X = np.random.randn(n, d).astype(np.float32)
     y_dict = {
-        "rushing_floor": (np.random.rand(n) * 10).astype(np.float32),
-        "receiving_floor": (np.random.rand(n) * 8).astype(np.float32),
-        "td_points": (np.random.rand(n) * 6).astype(np.float32),
+        "rushing_tds": (np.random.rand(n) * 2).astype(np.float32),
+        "receiving_tds": (np.random.rand(n) * 1).astype(np.float32),
+        "rushing_yards": (np.random.rand(n) * 100).astype(np.float32),
+        "receiving_yards": (np.random.rand(n) * 60).astype(np.float32),
+        "receptions": (np.random.rand(n) * 6).astype(np.float32),
+        "fumbles_lost": (np.random.rand(n) * 1).astype(np.float32),
     }
     return X, y_dict
 

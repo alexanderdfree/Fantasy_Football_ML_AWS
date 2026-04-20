@@ -1,5 +1,14 @@
-# === RB Target Decomposition ===
-RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
+import numpy as np
+
+# === RB Raw-Stat Targets ===
+RB_TARGETS = [
+    "rushing_tds",
+    "receiving_tds",
+    "rushing_yards",
+    "receiving_yards",
+    "receptions",
+    "fumbles_lost",
+]
 
 # === RB-Specific Features ===
 RB_SPECIFIC_FEATURES = [
@@ -91,46 +100,61 @@ RB_INCLUDE_FEATURES = {
 }
 
 # === Ridge ===
-import numpy as np
-
+# Raw-stat grids — yards need broader high end (large variance vs counts).
 RB_RIDGE_ALPHA_GRIDS = {
-    "rushing_floor": [round(x, 4) for x in np.logspace(-2, 3, 15)],
-    "receiving_floor": [round(x, 4) for x in np.logspace(-2, 2.5, 20)],
-    "td_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "rushing_tds": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "receiving_tds": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "rushing_yards": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "receiving_yards": [round(x, 4) for x in np.logspace(-2, 3, 15)],
+    "receptions": [round(x, 4) for x in np.logspace(-2, 2.5, 20)],
+    "fumbles_lost": [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
-# Two-stage model for td_points: zero-inflated (73.5% zeros), discrete (0,6,12,...).
-# Hard-threshold classify-then-regress drops td_points MAE from 2.259 to 1.851.
+# Two-stage zero-inflated models: both rushing_tds and receiving_tds.
+# Threshold + hyperparams preserved from the pre-migration td_points config;
+# rebuilding per-TD afterwards gives two parallel classify-then-regress stacks.
 RB_TWO_STAGE_TARGETS = {
-    "td_points": {"clf_C": 0.001, "ridge_alpha": 0.01, "threshold": 0.5},
+    "rushing_tds": {"clf_C": 0.001, "ridge_alpha": 0.01, "threshold": 0.5},
+    "receiving_tds": {"clf_C": 0.001, "ridge_alpha": 0.01, "threshold": 0.5},
 }
 
-# Ordinal classification for td_points: classes = {0,1,2,3+} TDs, predicts
-# E[td_points] via class probabilities.  Monotonic cumulative probs.
+# Ordinal classification over raw TD counts {0,1,2,3+} per TD target.
 RB_ORDINAL_TARGETS = {
-    "td_points": {
+    "rushing_tds": {
         "type": "ordinal",
-        "class_values": [0, 6, 12, 18],  # 0/1/2/3+ TDs * 6 pts each
-        "alpha": 1.0,  # mord LogisticAT regularization
+        "class_values": [0, 1, 2, 3],
+        "alpha": 1.0,
+    },
+    "receiving_tds": {
+        "type": "ordinal",
+        "class_values": [0, 1, 2, 3],
+        "alpha": 1.0,
     },
 }
 
-# Gated ordinal: binary gate (like two-stage) + ordinal on positives.
+# Gated ordinal: binary gate + ordinal on positives, per TD target.
 RB_GATED_ORDINAL_TARGETS = {
-    "td_points": {
+    "rushing_tds": {
         "type": "gated_ordinal",
-        "class_values": [0, 6, 12, 18],
+        "class_values": [0, 1, 2, 3],
+        "alpha": 1.0,
+        "clf_C": 0.001,
+        "threshold": 0.5,
+    },
+    "receiving_tds": {
+        "type": "gated_ordinal",
+        "class_values": [0, 1, 2, 3],
         "alpha": 1.0,
         "clf_C": 0.001,
         "threshold": 0.5,
     },
 }
 
-# Which td_points model to use: "ridge" | "two_stage" | "ordinal" | "gated_ordinal"
+# Which TD model variant to use: "ridge" | "two_stage" | "ordinal" | "gated_ordinal"
 RB_TD_MODEL_TYPE = "gated_ordinal"
 
 # PCR: 80 components retains 99.8% variance, drops condition number from 1.8e8
-# (after is_home removal) to 49.8.  Both floor targets improve by ~0.002 MAE.
+# (after is_home removal) to 49.8.  Both yard targets improve by ~0.002 MAE.
 RB_RIDGE_PCA_COMPONENTS = 80
 
 # === Neural Net ===
@@ -144,31 +168,25 @@ RB_NN_WEIGHT_DECAY = 5e-5
 RB_NN_EPOCHS = 300
 RB_NN_BATCH_SIZE = 256
 RB_NN_PATIENCE = 30
-# TD head gets a larger hidden layer — td_points has the highest MAE (zero-inflated,
-# discrete) and benefits from more capacity to model the sparse signal.
-RB_NN_HEAD_HIDDEN_OVERRIDES = {"td_points": 64}
+# Larger heads for zero-inflated count targets (both TD columns).
+RB_NN_HEAD_HIDDEN_OVERRIDES = {"rushing_tds": 64, "receiving_tds": 64}
 
 # === Loss Weights ===
-# Equal per-target weights: training objective now aligned with evaluation
-# metric (total MAE), where all targets contribute equally to the total.
-# Previous scheme (1.2/1.0/2.0) over-weighted td_points. w_total raised
-# to 1.0 so total prediction quality gets equal gradient signal.
-RB_LOSS_WEIGHTS = {
-    "rushing_floor": 1.0,
-    "receiving_floor": 1.0,
-    "td_points": 1.0,
-}
+# Equal per-target weights keep training objective aligned with the
+# aggregated fantasy-points total on evaluation — each raw-stat target gets
+# the same gradient pressure.
+RB_LOSS_WEIGHTS = {t: 1.0 for t in RB_TARGETS}
 RB_LOSS_W_TOTAL = 1.0
 
-# === Huber Deltas (per-target) ===
-# Harmonized to 2.0 across targets so equal-magnitude errors get equal
-# treatment. Previous scheme (2.0/2.5/2.0) was already close; total
-# delta kept at 3.0 since total variance is larger.
+# === Huber Deltas (per-target, raw-stat units) ===
 RB_HUBER_DELTAS = {
-    "rushing_floor": 2.0,
-    "receiving_floor": 2.0,
-    "td_points": 2.0,
-    "total": 3.0,  # explicit delta for total aux loss
+    "rushing_tds": 0.5,
+    "receiving_tds": 0.5,
+    "rushing_yards": 15.0,
+    "receiving_yards": 15.0,
+    "receptions": 2.0,
+    "fumbles_lost": 0.5,
+    "total": 3.0,  # aggregated fantasy-points total (RB scale)
 }
 
 # === LR Scheduler ===
@@ -184,8 +202,7 @@ RB_ATTN_D_MODEL = 32
 RB_ATTN_N_HEADS = 2
 # 2-layer nonlinear game encoder (Linear→ReLU→LayerNorm→Linear→ReLU) so each
 # game is represented as a richer event embedding before attention, instead of
-# a near-linear projection of raw stats. Third layer deferred — with ~15K RB
-# samples it's likely to overfit; validate per-target-query gains first.
+# a near-linear projection of raw stats.
 RB_ATTN_ENCODER_HIDDEN_DIM = 32
 RB_ATTN_MAX_SEQ_LEN = 17
 # K/V projections disabled — at d_model=32 the 2K extra params hurt optimization
@@ -220,9 +237,9 @@ RB_ATTN_HISTORY_STATS = [
     "game_carry_hhi",
     "game_target_hhi",
 ]
-# Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
-# Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
+# Two-gate TD head: one sigmoid gate per TD target (rushing + receiving).
 RB_ATTN_GATED_TD = True
+RB_GATED_TD_TARGETS = ["rushing_tds", "receiving_tds"]
 RB_ATTN_TD_GATE_HIDDEN = 16
 RB_ATTN_TD_GATE_WEIGHT = 1.0
 
@@ -250,3 +267,17 @@ RB_NN_HEAD_HIDDEN_TINY = 4
 RB_NN_EPOCHS_TINY = 1
 RB_NN_BATCH_SIZE_TINY = 64
 RB_NN_PATIENCE_TINY = 1
+
+# Tiny configs for test fixtures: single-alpha grids and a flattened loss
+# weight map keyed to the new targets.
+RB_CONFIG_TINY = {
+    "targets": RB_TARGETS,
+    "ridge_alpha_grids": {t: [1.0] for t in RB_TARGETS},
+    "loss_weights": {t: 1.0 for t in RB_TARGETS},
+    "huber_deltas": RB_HUBER_DELTAS,
+    "nn_backbone_layers": RB_NN_BACKBONE_LAYERS_TINY,
+    "nn_head_hidden": RB_NN_HEAD_HIDDEN_TINY,
+    "nn_epochs": RB_NN_EPOCHS_TINY,
+    "nn_batch_size": RB_NN_BATCH_SIZE_TINY,
+    "nn_patience": RB_NN_PATIENCE_TINY,
+}

@@ -15,7 +15,6 @@ Budget: < 20s on CPU.
 from __future__ import annotations
 
 import os
-import shutil
 import tempfile
 
 import numpy as np
@@ -38,6 +37,7 @@ from RB.rb_config import (
     RB_COSINE_T0,
     RB_COSINE_T_MULT,
     RB_GATED_ORDINAL_TARGETS,
+    RB_GATED_TD_TARGETS,
     RB_HUBER_DELTAS,
     RB_LOSS_W_TOTAL,
     RB_LOSS_WEIGHTS,
@@ -57,16 +57,11 @@ from RB.rb_config import (
 )
 from RB.rb_data import filter_to_rb
 from RB.rb_features import add_rb_specific_features, fill_rb_nans, get_rb_feature_columns
-from RB.rb_targets import compute_fumble_adjustment, compute_rb_targets
+from RB.rb_targets import compute_rb_targets
 
 
 def _build_tiny_config() -> dict:
-    """Shrunk RB_CONFIG for the E2E smoke: 1 epoch, 2-layer x 8-unit NN.
-
-    Disables the attention NN and LightGBM to keep the budget under 20s.
-    Uses ``cv_split_column="week"`` so Ridge alpha tuning has enough
-    distinct folds even with a single training season.
-    """
+    """Shrunk RB_CONFIG for the E2E smoke."""
     return {
         "targets": RB_TARGETS,
         "ridge_alpha_grids": RB_RIDGE_ALPHA_GRIDS,
@@ -82,7 +77,6 @@ def _build_tiny_config() -> dict:
         "add_features_fn": add_rb_specific_features,
         "fill_nans_fn": fill_rb_nans,
         "get_feature_columns_fn": get_rb_feature_columns,
-        "compute_adjustment_fn": compute_fumble_adjustment,
         "nn_backbone_layers": RB_NN_BACKBONE_LAYERS_TINY,
         "nn_head_hidden": RB_NN_HEAD_HIDDEN_TINY,
         "nn_dropout": RB_NN_DROPOUT,
@@ -112,20 +106,13 @@ def _build_tiny_config() -> dict:
         "attn_gated_td": RB_ATTN_GATED_TD,
         "attn_td_gate_hidden": RB_ATTN_TD_GATE_HIDDEN,
         "attn_td_gate_weight": RB_ATTN_TD_GATE_WEIGHT,
+        "gated_td_targets": RB_GATED_TD_TARGETS,
         "train_lightgbm": False,
     }
 
 
 def _find_data_raw_dir() -> str:
-    """Locate the real data/raw/ directory.
-
-    The test may run from a git worktree (under .claude/worktrees/agent-XXX/)
-    which does NOT contain the parquet files. Walk up from the test file until
-    we find a sibling `data/raw/schedules_*.parquet` — that's the main repo.
-    """
     here = os.path.dirname(os.path.abspath(__file__))
-    # Walk up a few levels — the worktree layout puts tests four levels below
-    # the superproject root.
     for _ in range(8):
         candidate = os.path.join(here, "data", "raw")
         if os.path.isdir(candidate):
@@ -135,12 +122,6 @@ def _find_data_raw_dir() -> str:
 
 
 def _run_pipeline_in_tmp(train_df, val_df, test_df, seed: int, workdir: str) -> dict:
-    """Run `shared.pipeline.run_pipeline` from `workdir` so the artefact writes
-    (RB/outputs/models, ...) land in the tmp directory and get cleaned up.
-
-    The pipeline writes plots to disk. We chdir into a tmp dir for the duration
-    of the run to isolate side effects.
-    """
     from shared.pipeline import run_pipeline
 
     cfg = _build_tiny_config()
@@ -150,8 +131,6 @@ def _run_pipeline_in_tmp(train_df, val_df, test_df, seed: int, workdir: str) -> 
         os.chdir(workdir)
         os.makedirs("RB/outputs/models", exist_ok=True)
         os.makedirs("RB/outputs/figures", exist_ok=True)
-        # The pipeline's weather merge expects data/raw/schedules_*.parquet
-        # relative to cwd. Symlink the real one from the main repo.
         dst = os.path.join(workdir, "data", "raw")
         if not os.path.exists(dst):
             os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -193,17 +172,18 @@ def test_pipeline_runs_to_completion(synthetic_rb_splits):
             assert vec.ndim == 1
             assert np.isfinite(vec).all(), f"{model_name}/{target} has non-finite predictions"
 
-    # Expected shape: one row per test row (rows that survive filter_to_rb).
     n_test = preds["ridge"]["total"].shape[0]
     assert n_test > 0
 
 
 @pytest.mark.e2e
+@pytest.mark.timeout(180)
 def test_pipeline_bit_identical_same_seed(synthetic_rb_splits):
     """Two runs with seed=42 must produce bit-identical Ridge + NN outputs.
 
-    This is the reproducibility guarantee flagged by the code review — any
-    drift (e.g. a new source of non-determinism in training) will fail here.
+    Timeout bumped to 180s: runs the full pipeline twice end-to-end (Ridge +
+    NN training + plot save ×2), and raw-stat target scale means NN training
+    uses more epochs than the legacy fantasy-point scale.
     """
     train_df, val_df, test_df = synthetic_rb_splits
 
@@ -215,7 +195,6 @@ def test_pipeline_bit_identical_same_seed(synthetic_rb_splits):
     preds_a = result_a["per_target_preds"]
     preds_b = result_b["per_target_preds"]
 
-    # Ridge is closed-form → identical bytes expected.
     for target in list(RB_TARGETS) + ["total"]:
         np.testing.assert_array_equal(
             preds_a["ridge"][target],
@@ -223,9 +202,6 @@ def test_pipeline_bit_identical_same_seed(synthetic_rb_splits):
             err_msg=f"Ridge predictions drifted for {target}",
         )
 
-    # NN is CPU-only with matched seeds and single-threaded training, so
-    # outputs should match within torch's default tolerance. Use atol=0 to
-    # flag the tiniest drift.
     for target in list(RB_TARGETS) + ["total"]:
         a = torch.from_numpy(preds_a["nn"][target])
         b = torch.from_numpy(preds_b["nn"][target])

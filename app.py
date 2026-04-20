@@ -149,15 +149,22 @@ POSITION_INFO = {
     "RB": {
         "label": "Running Back",
         "targets": [
-            {"key": "rushing_floor", "label": "Rushing Floor", "formula": "rushing_yards x 0.1"},
+            {"key": "rushing_tds", "label": "Rushing TDs", "formula": "raw rushing TD count"},
+            {"key": "receiving_tds", "label": "Receiving TDs", "formula": "raw receiving TD count"},
+            {"key": "rushing_yards", "label": "Rushing Yards", "formula": "raw rushing yards"},
             {
-                "key": "receiving_floor",
-                "label": "Receiving Floor",
-                "formula": "receptions x PPR + recv_yards x 0.1",
+                "key": "receiving_yards",
+                "label": "Receiving Yards",
+                "formula": "raw receiving yards",
             },
-            {"key": "td_points", "label": "TD Points", "formula": "rush_TD x 6 + recv_TD x 6"},
+            {"key": "receptions", "label": "Receptions", "formula": "raw reception count"},
+            {
+                "key": "fumbles_lost",
+                "label": "Fumbles Lost",
+                "formula": "rushing_fumbles_lost + receiving_fumbles_lost",
+            },
         ],
-        "adjustments": "Fumble rate (historical L8 rolling avg)",
+        "adjustments": "None - fumbles_lost is now a direct target.",
         "specific_features": list(RB_SPECIFIC_FEATURES),
         "architecture": {
             "backbone": list(rb_cfg.RB_NN_BACKBONE_LAYERS),

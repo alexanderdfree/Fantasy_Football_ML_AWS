@@ -1,89 +1,70 @@
+"""Raw-stat RB prediction targets.
+
+After the target migration, RB models predict raw NFL stats and
+``shared.aggregate_targets.predictions_to_fantasy_points`` converts them to
+fantasy points post-prediction. No rolling adjustments — fumbles_lost is now
+a direct target.
+"""
+
 import pandas as pd
 
-from src.config import PPR_FORMATS
+from RB.rb_config import RB_TARGETS
+from shared.aggregate_targets import predictions_to_fantasy_points
 
 
 def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute the 3 prediction targets + fumble penalty for RB rows.
+    """Emit the 6 raw-stat RB prediction targets.
 
-    Computes targets for all scoring formats (standard, half_ppr, ppr).
-    The receiving_floor varies by format; rushing_floor and td_points are the same.
+    Columns:
+      - rushing_tds
+      - receiving_tds
+      - rushing_yards
+      - receiving_yards
+      - receptions
+      - fumbles_lost = rushing_fumbles_lost + receiving_fumbles_lost
 
-    Note: td_points intentionally excludes 2pt conversions to align with
-    SCORING_PPR used by compute_fantasy_points().
+    Also adds ``fantasy_points_check`` (aggregator-computed PPR points) for
+    the sanity-check warning below.
 
     Args:
         df: DataFrame filtered to RB rows only, with raw stat columns available.
-
-    Returns:
-        df with added columns per format:
-          - rushing_floor (same across formats)
-          - receiving_floor_standard, receiving_floor_half_ppr, receiving_floor
-          - td_points (same across formats)
-          - fumble_penalty (same across formats)
-          - fantasy_points_check
     """
     df = df.copy()
 
-    df["rushing_floor"] = df["rushing_yards"].fillna(0) * 0.1
-
-    # Receiving floor varies by PPR format (reception weight differs)
-    rec_yards_pts = df["receiving_yards"].fillna(0) * 0.1
-    receptions = df["receptions"].fillna(0)
-    for fmt, weight in PPR_FORMATS.items():
-        suffix = "" if fmt == "ppr" else f"_{fmt}"
-        df[f"receiving_floor{suffix}"] = receptions * weight + rec_yards_pts
-
-    df["td_points"] = df["rushing_tds"].fillna(0) * 6 + df["receiving_tds"].fillna(0) * 6
-
-    df["fumble_penalty"] = (
-        df["sack_fumbles_lost"].fillna(0)
-        + df["rushing_fumbles_lost"].fillna(0)
-        + df["receiving_fumbles_lost"].fillna(0)
-    ) * -2
-
-    # Sanity check: sum should match fantasy_points minus passing component (full PPR)
-    df["fantasy_points_check"] = (
-        df["rushing_floor"] + df["receiving_floor"] + df["td_points"] + df["fumble_penalty"]
+    for col in ("rushing_tds", "receiving_tds", "rushing_yards", "receiving_yards", "receptions"):
+        df[col] = df[col].fillna(0)
+    df["fumbles_lost"] = df["rushing_fumbles_lost"].fillna(0) + df["receiving_fumbles_lost"].fillna(
+        0
     )
+
+    # Sanity check: aggregator reproduces the RB slice of fantasy_points (PPR).
+    # The full fantasy_points column carries passing + sack-fumble terms that
+    # RBs don't predict, so we back those out before comparing.
+    preds = {t: df[t].to_numpy() for t in RB_TARGETS}
+    df["fantasy_points_check"] = predictions_to_fantasy_points("RB", preds, "ppr")
 
     passing_component = (
         df["passing_yards"].fillna(0) * 0.04
         + df["passing_tds"].fillna(0) * 4
         + df["interceptions"].fillna(0) * -2
     )
-    discrepancy = (df["fantasy_points"] - df["fantasy_points_check"] - passing_component).abs()
+    sack_fumble_component = df["sack_fumbles_lost"].fillna(0) * -2
+    discrepancy = (
+        df["fantasy_points"]
+        - df["fantasy_points_check"]
+        - passing_component
+        - sack_fumble_component
+    ).abs()
     if (discrepancy > 0.01).any():
-        n_bad = (discrepancy > 0.01).sum()
+        n_bad = int((discrepancy > 0.01).sum())
         print(f"WARNING: {n_bad} rows have target decomposition discrepancy > 0.01 pts")
 
-    # Cross-validate against nflverse pre-computed PPR points
     if "fantasy_points_ppr" in df.columns:
         nfl_discrepancy = (df["fantasy_points"] - df["fantasy_points_ppr"]).abs()
-        n_nfl_mismatch = (nfl_discrepancy > 0.5).sum()
+        n_nfl_mismatch = int((nfl_discrepancy > 0.5).sum())
         if n_nfl_mismatch > 0:
             print(
                 f"INFO: {n_nfl_mismatch} rows differ from nflverse fantasy_points_ppr by > 0.5 pts"
             )
 
     return df
-
-
-def compute_fumble_adjustment(df: pd.DataFrame) -> pd.Series:
-    """Compute per-player historical fumble rate for post-prediction adjustment.
-
-    Uses the rolling mean of total fumbles over L8 window (shifted, no leakage).
-    """
-    total_fumbles = (
-        df["sack_fumbles_lost"].fillna(0)
-        + df["rushing_fumbles_lost"].fillna(0)
-        + df["receiving_fumbles_lost"].fillna(0)
-    )
-    # Need a named column for groupby transform
-    df = df.copy()
-    df["_total_fumbles"] = total_fumbles
-    fumble_rate = df.groupby(["player_id", "season"])["_total_fumbles"].transform(
-        lambda x: x.shift(1).rolling(8, min_periods=1).mean()
-    )
-
-    return (fumble_rate * -2).fillna(0)  # Convert to fantasy point penalty
