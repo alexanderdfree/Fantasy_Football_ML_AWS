@@ -7,6 +7,47 @@ from src.config import (
 )
 
 
+def load_team_week_stats(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.DataFrame:
+    """Load NFL team-week stats from nflverse release parquets.
+
+    Returns one row per (team, season, week) with full historical defensive
+    and offensive columns (def_tds, def_safeties, def_fumbles_forced,
+    fg_blocked, pat_blocked, passing_yards, rushing_yards, ...).
+
+    Cache pattern mirrors ``load_raw_data``: persist the concatenated frame
+    to ``{cache_dir}/team_stats_{min}_{max}.parquet`` and short-circuit on
+    subsequent calls.
+    """
+    if seasons is None:
+        seasons = SEASONS
+
+    os.makedirs(cache_dir, exist_ok=True)
+    path = f"{cache_dir}/team_stats_{seasons[0]}_{seasons[-1]}.parquet"
+
+    if os.path.exists(path):
+        return pd.read_parquet(path)
+
+    parts = []
+    for s in seasons:
+        url = (
+            "https://github.com/nflverse/nflverse-data/releases/download/"
+            f"stats_team/stats_team_week_{s}.parquet"
+        )
+        try:
+            parts.append(pd.read_parquet(url))
+        except Exception as e:
+            # nflverse release for the current season can 404 mid-season;
+            # skip so cache build succeeds on older seasons.
+            print(f"WARNING: team_stats fetch failed for {s} ({e}); skipping")
+
+    if not parts:
+        # Don't poison the cache with an empty frame — let the next call retry.
+        return pd.DataFrame()
+    df = pd.concat(parts, ignore_index=True)
+    df.to_parquet(path)
+    return df
+
+
 def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.DataFrame:
     """Load and merge NFL weekly data, rosters, snap counts, and schedules."""
     if seasons is None:

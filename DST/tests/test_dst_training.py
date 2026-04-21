@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import torch
 
+from DST.dst_config import DST_LOSS_WEIGHTS, DST_TARGETS
 from shared.neural_net import MultiHeadNet
 from shared.training import (
     MultiHeadTrainer,
@@ -12,8 +13,9 @@ from shared.training import (
     make_dataloaders,
 )
 
-DST_TARGETS = ["defensive_scoring", "td_points", "pts_allowed_bonus"]
-DST_LOSS_WEIGHTS = {"defensive_scoring": 1.0, "td_points": 1.0, "pts_allowed_bonus": 1.0}
+# Representative target name for dataset / dataloader tests that don't
+# care which specific head they bind to.
+_SAMPLE_TARGET = DST_TARGETS[0]
 
 
 @pytest.mark.unit
@@ -29,13 +31,8 @@ class TestMultiTargetLoss:
         loss_fn = MultiTargetLoss(target_names=DST_TARGETS, loss_weights=DST_LOSS_WEIGHTS)
         preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
-        assert set(components.keys()) == {
-            "loss_defensive_scoring",
-            "loss_td_points",
-            "loss_pts_allowed_bonus",
-            "loss_total_aux",
-            "loss_combined",
-        }
+        expected = {f"loss_{t}" for t in DST_TARGETS} | {"loss_total_aux", "loss_combined"}
+        assert set(components.keys()) == expected
 
     def test_components_are_scalars(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=DST_TARGETS, loss_weights=DST_LOSS_WEIGHTS)
@@ -46,29 +43,30 @@ class TestMultiTargetLoss:
 
     def test_zero_loss_on_perfect_prediction(self):
         loss_fn = MultiTargetLoss(target_names=DST_TARGETS, loss_weights=DST_LOSS_WEIGHTS)
-        targets = {
-            "defensive_scoring": torch.tensor([5.0, 7.0]),
-            "td_points": torch.tensor([0.0, 6.0]),
-            "pts_allowed_bonus": torch.tensor([4.0, -1.0]),  # negative possible
-            "total": torch.tensor([9.0, 12.0]),
-        }
+        # Build a two-row per-target tensor with arbitrary (float) values; the
+        # loss against itself must be zero regardless of which targets exist.
+        targets = {t: torch.tensor([5.0, 7.0]) for t in DST_TARGETS}
+        targets["total"] = torch.stack(list(targets.values())).sum(dim=0)
         combined, _ = loss_fn(targets, targets)
         assert pytest.approx(combined.item(), abs=1e-6) == 0.0
 
     def test_weights_affect_loss(self, make_tensors):
         preds, targets = make_tensors()
+        equal = {t: 1.0 for t in DST_TARGETS}
+        heavy = dict(equal)
+        heavy[DST_TARGETS[-1]] = 10.0
         loss_equal = MultiTargetLoss(
             target_names=DST_TARGETS,
-            loss_weights={"defensive_scoring": 1.0, "td_points": 1.0, "pts_allowed_bonus": 1.0},
+            loss_weights=equal,
             w_total=1.0,
         )
-        loss_bonus_heavy = MultiTargetLoss(
+        loss_heavy = MultiTargetLoss(
             target_names=DST_TARGETS,
-            loss_weights={"defensive_scoring": 1.0, "td_points": 1.0, "pts_allowed_bonus": 10.0},
+            loss_weights=heavy,
             w_total=1.0,
         )
         c1, _ = loss_equal(preds, targets)
-        c2, _ = loss_bonus_heavy(preds, targets)
+        c2, _ = loss_heavy(preds, targets)
         assert c1.item() != c2.item()
 
     def test_combined_loss_is_positive(self, make_tensors):
@@ -91,15 +89,15 @@ class TestMultiTargetLoss:
 class TestMultiTargetDataset:
     def test_length(self):
         X = np.random.randn(20, 5).astype(np.float32)
-        y = {"defensive_scoring": np.random.randn(20).astype(np.float32)}
+        y = {_SAMPLE_TARGET: np.random.randn(20).astype(np.float32)}
         ds = MultiTargetDataset(X, y)
         assert len(ds) == 20
 
     def test_getitem_types(self):
         X = np.random.randn(10, 3).astype(np.float32)
         y = {
-            "defensive_scoring": np.random.randn(10).astype(np.float32),
-            "pts_allowed_bonus": np.random.randn(10).astype(np.float32),
+            DST_TARGETS[0]: np.random.randn(10).astype(np.float32),
+            DST_TARGETS[1]: np.random.randn(10).astype(np.float32),
         }
         ds = MultiTargetDataset(X, y)
         x_item, y_item = ds[0]
@@ -109,11 +107,11 @@ class TestMultiTargetDataset:
 
     def test_single_element(self):
         X = np.array([[1.0, 2.0]], dtype=np.float32)
-        y = {"td_points": np.array([6.0], dtype=np.float32)}
+        y = {_SAMPLE_TARGET: np.array([6.0], dtype=np.float32)}
         ds = MultiTargetDataset(X, y)
         x_item, y_item = ds[0]
         assert pytest.approx(x_item[0].item()) == 1.0
-        assert pytest.approx(y_item["td_points"].item()) == 6.0
+        assert pytest.approx(y_item[_SAMPLE_TARGET].item()) == 6.0
 
 
 @pytest.mark.unit
@@ -121,17 +119,17 @@ class TestMakeDataloaders:
     def test_returns_two_loaders(self):
         X_train = np.random.randn(50, 5).astype(np.float32)
         X_val = np.random.randn(20, 5).astype(np.float32)
-        y_train = {"defensive_scoring": np.random.randn(50).astype(np.float32)}
-        y_val = {"defensive_scoring": np.random.randn(20).astype(np.float32)}
+        y_train = {_SAMPLE_TARGET: np.random.randn(50).astype(np.float32)}
+        y_val = {_SAMPLE_TARGET: np.random.randn(20).astype(np.float32)}
         train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=16)
         assert train_loader is not None
         assert val_loader is not None
 
     def test_batch_size(self):
         X_train = np.random.randn(64, 5).astype(np.float32)
-        y_train = {"defensive_scoring": np.random.randn(64).astype(np.float32)}
+        y_train = {_SAMPLE_TARGET: np.random.randn(64).astype(np.float32)}
         X_val = np.random.randn(16, 5).astype(np.float32)
-        y_val = {"defensive_scoring": np.random.randn(16).astype(np.float32)}
+        y_val = {_SAMPLE_TARGET: np.random.randn(16).astype(np.float32)}
         train_loader, _ = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
         batch_x, batch_y = next(iter(train_loader))
         assert batch_x.shape[0] == 32
@@ -139,7 +137,7 @@ class TestMakeDataloaders:
     def test_iterate_all_batches(self):
         n = 128
         X = np.random.randn(n, 3).astype(np.float32)
-        y = {"defensive_scoring": np.random.randn(n).astype(np.float32)}
+        y = {_SAMPLE_TARGET: np.random.randn(n).astype(np.float32)}
         loader, _ = make_dataloaders(X, y, X[:10], y, batch_size=32)
         total = sum(x.shape[0] for x, _ in loader)
         assert total == n
@@ -197,18 +195,9 @@ class TestMultiHeadTrainer:
     def test_history_has_all_keys(self, setup_trainer):
         trainer, train_loader, val_loader = setup_trainer
         history = trainer.train(train_loader, val_loader, n_epochs=5)
-        expected_keys = {
-            "train_loss",
-            "val_loss",
-            "val_loss_defensive_scoring",
-            "val_loss_td_points",
-            "val_loss_pts_allowed_bonus",
-            "val_mae_total",
-            "val_mae_defensive_scoring",
-            "val_mae_td_points",
-            "val_mae_pts_allowed_bonus",
-            "val_rmse_total",
-        }
+        expected_keys = {"train_loss", "val_loss", "val_mae_total", "val_rmse_total"}
+        expected_keys.update(f"val_loss_{t}" for t in DST_TARGETS)
+        expected_keys.update(f"val_mae_{t}" for t in DST_TARGETS)
         assert expected_keys.issubset(set(history.keys()))
 
     def test_losses_decrease(self, setup_trainer):

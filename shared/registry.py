@@ -388,7 +388,7 @@ def get_inference_spec(pos: str) -> dict:
             fill_dst_nans,
             get_dst_feature_columns,
         )
-        from DST.dst_targets import compute_dst_adjustment, compute_dst_targets
+        from DST.dst_targets import compute_dst_targets
 
         return {
             "targets": DST_TARGETS,
@@ -398,7 +398,7 @@ def get_inference_spec(pos: str) -> dict:
             "add_features_fn": add_dst_specific_features,
             "fill_nans_fn": fill_dst_nans,
             "get_feature_columns_fn": get_dst_feature_columns,
-            "compute_adjustment_fn": compute_dst_adjustment,
+            "compute_adjustment_fn": None,
             "model_dir": "DST/outputs/models",
             "nn_file": "dst_multihead_nn.pt",
             "nn_kwargs": dict(

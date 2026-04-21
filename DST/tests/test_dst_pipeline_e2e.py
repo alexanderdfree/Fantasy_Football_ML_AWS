@@ -51,7 +51,7 @@ from DST.dst_features import (
     fill_dst_nans,
     get_dst_feature_columns,
 )
-from DST.dst_targets import compute_dst_adjustment, compute_dst_targets
+from DST.dst_targets import compute_dst_targets
 from DST.tests.conftest import _build_tiny_dst_dataset
 from shared.pipeline import run_pipeline
 
@@ -112,7 +112,7 @@ def _make_dst_tiny_cfg() -> dict:
         "add_features_fn": add_dst_specific_features,
         "fill_nans_fn": fill_dst_nans,
         "get_feature_columns_fn": get_dst_feature_columns,
-        "compute_adjustment_fn": compute_dst_adjustment,
+        "compute_adjustment_fn": None,
         "loss_weights": DST_LOSS_WEIGHTS,
         "huber_deltas": DST_HUBER_DELTAS,
     }

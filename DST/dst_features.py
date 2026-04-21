@@ -17,10 +17,12 @@ def compute_dst_features(df: pd.DataFrame) -> None:
     """
     df.sort_values(["team", "season", "week"], inplace=True)
 
-    # Pre-compute D/ST fantasy points for rolling features
-    df["_dst_total_pts"] = df["defensive_scoring"] + df["td_points"] + df["pts_allowed_bonus"]
+    # Pre-compute D/ST fantasy points for rolling features.  We use the
+    # tier-mapped ``fantasy_points`` column produced by compute_dst_targets
+    # so the rolling window matches what the model is actually predicting.
+    df["_dst_total_pts"] = df["fantasy_points"]
 
-    # Pre-compute turnovers forced
+    # Pre-compute turnovers forced (INTs + fumble recoveries)
     df["_turnovers"] = df["def_ints"].fillna(0) + df["def_fumble_rec"].fillna(0)
 
     grp = df.groupby(["team", "season"])
@@ -103,9 +105,9 @@ def compute_dst_features(df: pd.DataFrame) -> None:
         .fillna(0)
     )
 
-    # --- Feature 14: dst_scoring_std_L3 (base scoring consistency) ---
+    # --- Feature 14: dst_scoring_std_L3 (base production consistency) ---
     df["dst_scoring_std_L3"] = (
-        grp["defensive_scoring"]
+        grp["defensive_production"]
         .transform(lambda x: x.shift(1).rolling(3, min_periods=2).std())
         .fillna(0)
     )
@@ -125,6 +127,41 @@ def compute_dst_features(df: pd.DataFrame) -> None:
     # --- Feature 17: dst_pts_ewma (total D/ST scoring, exponential) ---
     df["dst_pts_ewma"] = (
         grp["_dst_total_pts"]
+        .transform(lambda x: x.shift(1).ewm(span=3, min_periods=1).mean())
+        .fillna(0)
+    )
+
+    # --- Feature 18: forced_fumbles_L3 (pressure proxy) ---
+    df["forced_fumbles_L3"] = (
+        grp["def_fumbles_forced"]
+        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+        .fillna(0)
+    )
+
+    # --- Feature 19: blocked_kicks_L5 (rare, longer window) ---
+    df["blocked_kicks_L5"] = (
+        grp["def_blocked_kicks"]
+        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).mean())
+        .fillna(0)
+    )
+
+    # --- Feature 20: yards_allowed_L3 ---
+    df["yards_allowed_L3"] = (
+        grp["yards_allowed"]
+        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
+        .fillna(0)
+    )
+
+    # --- Feature 21: yards_allowed_L5 ---
+    df["yards_allowed_L5"] = (
+        grp["yards_allowed"]
+        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).mean())
+        .fillna(0)
+    )
+
+    # --- Feature 22: yards_allowed_ewma ---
+    df["yards_allowed_ewma"] = (
+        grp["yards_allowed"]
         .transform(lambda x: x.shift(1).ewm(span=3, min_periods=1).mean())
         .fillna(0)
     )

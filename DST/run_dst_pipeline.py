@@ -49,7 +49,7 @@ from DST.dst_features import (
     fill_dst_nans,
     get_dst_feature_columns,
 )
-from DST.dst_targets import compute_dst_adjustment, compute_dst_targets
+from DST.dst_targets import compute_dst_targets
 from shared.pipeline import run_pipeline
 from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 
@@ -85,7 +85,7 @@ def run_dst_pipeline(seed=42):
         "add_features_fn": add_dst_specific_features,
         "fill_nans_fn": fill_dst_nans,
         "get_feature_columns_fn": get_dst_feature_columns,
-        "compute_adjustment_fn": compute_dst_adjustment,
+        "compute_adjustment_fn": None,
         "nn_backbone_layers": DST_NN_BACKBONE_LAYERS,
         "nn_head_hidden": DST_NN_HEAD_HIDDEN,
         "nn_dropout": DST_NN_DROPOUT,
