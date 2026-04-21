@@ -65,7 +65,8 @@ TARGET_UNITS = {
 }
 
 # Targets whose MAE should be rendered in both raw units and fantasy-point-equivalent
-# (MAE × 6) for readability. Applied by the frontend/evaluation report layer.
+# (MAE × |scoring weight|) for readability. Applied by the frontend/evaluation
+# report layer.
 POINT_EQUIVALENT_MULTIPLIER = {
     "passing_tds": 4.0,
     "rushing_tds": 6.0,
