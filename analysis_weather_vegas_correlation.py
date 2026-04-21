@@ -52,6 +52,7 @@ FEATURE_GROUPS = {
     "Interactions": INTERACTION_FEATURES,
 }
 
+
 def main():
     # ── Load data once ──────────────────────────────────────────────────────
     print("Loading data...")
