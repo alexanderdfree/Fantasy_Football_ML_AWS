@@ -499,7 +499,7 @@ def _train_attention_nn(
     # Filter out rolling/EWMA/trend/share features that duplicate game history —
     # the attention branch learns its own temporal representation from raw game stats.
     if feature_cols is not None:
-        static_cols = get_attn_static_columns(feature_cols)
+        static_cols = get_attn_static_columns(feature_cols, position=position)
         col_idx = [i for i, c in enumerate(feature_cols) if c in set(static_cols)]
         X_train = X_train[:, col_idx]
         X_val = X_val[:, col_idx]

@@ -1,8 +1,10 @@
-"""Tests for shared.neural_net.MultiHeadNet (using DST targets).
+"""Tests for shared.neural_net.MultiHeadNet (using a DST target subset).
 
-DST has 3 targets: defensive_scoring, td_points, pts_allowed_bonus.
-Note: pts_allowed_bonus can be NEGATIVE (range [-4, +10]), so the non-negative
-clamp only applies to defensive_scoring and td_points per DST_NN_NON_NEGATIVE_TARGETS.
+Uses 3 of the 10 DST raw-stat targets (def_sacks, def_tds, points_allowed)
+as representative test data — exercises multi-head NN shapes, dropout,
+non-negative clamping, and head-hidden overrides. All 10 real DST targets
+are non-negative, so the "selectively clamped" test uses a subset to cover
+the non_negative_targets kwarg path.
 """
 
 import numpy as np
@@ -11,7 +13,7 @@ import torch
 
 from shared.neural_net import MultiHeadNet
 
-DST_TARGETS = ["defensive_scoring", "td_points", "pts_allowed_bonus"]
+DST_TARGETS = ["def_sacks", "def_tds", "points_allowed"]
 
 
 @pytest.mark.unit
@@ -29,7 +31,7 @@ class TestMultiHeadNet:
     def test_output_keys(self, model):
         x = torch.randn(4, 10)
         out = model(x)
-        assert set(out.keys()) == {"defensive_scoring", "td_points", "pts_allowed_bonus", "total"}
+        assert set(out.keys()) == {"def_sacks", "def_tds", "points_allowed", "total"}
 
     def test_output_shapes(self, model):
         batch_size = 8
@@ -43,7 +45,7 @@ class TestMultiHeadNet:
         x = torch.randn(4, 10)
         with torch.no_grad():
             out = model(x)
-        expected = out["defensive_scoring"] + out["td_points"] + out["pts_allowed_bonus"]
+        expected = out["def_sacks"] + out["def_tds"] + out["points_allowed"]
         torch.testing.assert_close(out["total"], expected)
 
     def test_custom_backbone(self):
@@ -78,7 +80,7 @@ class TestMultiHeadNet:
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
 
-        assert set(preds.keys()) == {"defensive_scoring", "td_points", "pts_allowed_bonus", "total"}
+        assert set(preds.keys()) == {"def_sacks", "def_tds", "points_allowed", "total"}
         for key in preds:
             assert isinstance(preds[key], np.ndarray)
             assert preds[key].shape == (5,)
@@ -129,15 +131,15 @@ class TestMultiHeadNet:
             backbone_layers=[128, 64],
             head_hidden=32,
             dropout=0.30,
-            head_hidden_overrides={"td_points": 16, "pts_allowed_bonus": 48},
+            head_hidden_overrides={"def_tds": 16, "points_allowed": 48},
         )
         model.eval()
         x = torch.randn(4, 10)
         with torch.no_grad():
             out = model(x)
         assert out["total"].shape == (4,)
-        assert model.heads["td_points"][0].out_features == 16
-        assert model.heads["pts_allowed_bonus"][0].out_features == 48
+        assert model.heads["def_tds"][0].out_features == 16
+        assert model.heads["points_allowed"][0].out_features == 48
 
     def test_dropout_effect(self):
         model = MultiHeadNet(
@@ -159,24 +161,23 @@ class TestMultiHeadNet:
         assert not torch.allclose(out_train["total"].detach(), out_eval["total"])
 
     def test_selective_non_negative_targets(self):
-        """Only selected targets should be clamped (pts_allowed_bonus can be negative)."""
+        """Only selected targets should be clamped to >= 0."""
         model = MultiHeadNet(
             input_dim=10,
             target_names=DST_TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
             dropout=0.0,
-            non_negative_targets={"defensive_scoring", "td_points"},  # not pts_allowed_bonus
+            non_negative_targets={"def_sacks", "def_tds"},  # not points_allowed
         )
         model.eval()
         torch.manual_seed(0)
         x = torch.randn(16, 10)
         with torch.no_grad():
             out = model(x)
-        # defensive_scoring & td_points should be >= 0
-        assert (out["defensive_scoring"] >= 0).all()
-        assert (out["td_points"] >= 0).all()
-        # pts_allowed_bonus may be negative (no assertion on sign)
+        assert (out["def_sacks"] >= 0).all()
+        assert (out["def_tds"] >= 0).all()
+        # points_allowed is excluded from the clamp set — may be negative
 
     def test_default_clamp_all(self):
         """Default (no non_negative_targets arg) — all targets clamped to >=0."""
@@ -211,16 +212,16 @@ class TestMultiHeadNet:
             assert not torch.isnan(out[key]).any()
 
     def test_head_hidden_overrides(self):
-        """DST uses per-target head overrides — td_points smaller, pts_allowed_bonus wider."""
+        """DST uses per-target head overrides — sparse heads smaller, PA wider."""
         model = MultiHeadNet(
             input_dim=10,
             target_names=DST_TARGETS,
             backbone_layers=[32, 16],
             head_hidden=16,
-            head_hidden_overrides={"td_points": 8, "pts_allowed_bonus": 48},
+            head_hidden_overrides={"def_tds": 8, "points_allowed": 48},
         )
         x = torch.randn(4, 10)
         out = model(x)
         assert out["total"].shape == (4,)
-        assert model.heads["td_points"][0].out_features == 8
-        assert model.heads["pts_allowed_bonus"][0].out_features == 48
+        assert model.heads["def_tds"][0].out_features == 8
+        assert model.heads["points_allowed"][0].out_features == 48

@@ -31,7 +31,6 @@ import WR.wr_config as wr_cfg
 from DST.dst_config import DST_SPECIFIC_FEATURES, DST_TARGETS
 from DST.dst_data import build_dst_data
 from DST.dst_features import compute_dst_features
-from DST.dst_targets import _pts_allowed_to_bonus, _yds_allowed_to_bonus
 from K.k_config import K_SPECIFIC_FEATURES, K_TARGETS
 
 # Per-position imports needed only for /api/model_architecture metadata and
@@ -255,21 +254,14 @@ POSITION_INFO = {
     "DST": {
         "label": "Defense/Special Teams",
         "targets": [
-            {
-                "key": "defensive_production",
-                "label": "Defensive Production",
-                "formula": "sacks x 1 + INT x 2 + fum_rec x 2 + forced_fum x 1 + safeties x 2",
-            },
-            {
-                "key": "def_td_points",
-                "label": "Defensive TD Points",
-                "formula": "def_TD x 6",
-            },
-            {
-                "key": "st_production",
-                "label": "Special Teams Production",
-                "formula": "ST_TD x 6 + blocked_kicks x 2",
-            },
+            {"key": "def_sacks", "label": "Sacks", "formula": "sacks x 1"},
+            {"key": "def_ints", "label": "Interceptions", "formula": "INT x 2"},
+            {"key": "def_fumble_rec", "label": "Fumble Recoveries", "formula": "fum_rec x 2"},
+            {"key": "def_fumbles_forced", "label": "Forced Fumbles", "formula": "forced_fum x 1"},
+            {"key": "def_safeties", "label": "Safeties", "formula": "safeties x 2"},
+            {"key": "def_tds", "label": "Defensive TDs", "formula": "def_TD x 6"},
+            {"key": "def_blocked_kicks", "label": "Blocked Kicks", "formula": "blocked x 2"},
+            {"key": "special_teams_tds", "label": "Special Teams TDs", "formula": "ST_TD x 6"},
             {
                 "key": "points_allowed",
                 "label": "Points Allowed",
@@ -289,7 +281,8 @@ POSITION_INFO = {
         ],
         "adjustments": "None (PA/YA tier bonuses applied at inference to regressed raw values)",
         "formula": (
-            "defensive_production + def_td_points + st_production "
+            "def_sacks*1 + def_ints*2 + def_fumble_rec*2 + def_fumbles_forced*1 "
+            "+ def_safeties*2 + def_tds*6 + def_blocked_kicks*2 + special_teams_tds*6 "
             "+ tier_pa(points_allowed) + tier_ya(yards_allowed)"
         ),
         "specific_features": list(DST_SPECIFIC_FEATURES),
@@ -388,15 +381,6 @@ def _apply_position_models(train, val, test, pos, results):
     def _combine_total(preds: dict) -> np.ndarray:
         if aggregate_fn is not None:
             return aggregate_fn(preds)
-        if pos == "DST":
-            # PA/YA are regressed on raw values; tier bonus applied at inference.
-            return (
-                preds["defensive_production"]
-                + preds["def_td_points"]
-                + preds["st_production"]
-                + np.vectorize(_pts_allowed_to_bonus)(preds["points_allowed"])
-                + np.vectorize(_yds_allowed_to_bonus)(preds["yards_allowed"])
-            )
         if target_signs is not None:
             # Per-target sign vector (e.g. K: [+1, +1, -1, -1]).
             total = sum(preds[t] * target_signs.get(t, 1.0) for t in targets)
@@ -451,7 +435,7 @@ def _apply_position_models(train, val, test, pos, results):
     attn_nn_total = None
     if reg.get("train_attention_nn", False) and reg.get("attn_nn_file"):
         try:
-            attn_static_cols = get_attn_static_columns(feature_cols)
+            attn_static_cols = get_attn_static_columns(feature_cols, position=pos)
             attn_col_idx = [i for i, c in enumerate(feature_cols) if c in set(attn_static_cols)]
             X_test_attn = X_test_pos[:, attn_col_idx]
 

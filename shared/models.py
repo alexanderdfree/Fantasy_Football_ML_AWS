@@ -290,7 +290,7 @@ class RidgeMultiTarget:
     ):
         self.target_names = target_names
         # Which targets are clamped to >= 0. Default: all targets.
-        # Override for targets that can be negative (e.g. DST pts_allowed_bonus).
+        # Override for targets that can be negative.
         self.non_negative_targets = (
             set(target_names) if non_negative_targets is None else non_negative_targets
         )

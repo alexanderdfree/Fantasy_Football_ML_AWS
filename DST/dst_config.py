@@ -1,8 +1,20 @@
-# === DST Target Decomposition ===
+import numpy as np
+
+# === DST Raw-Stat Targets ===
+# Predict the 10 raw NFL stats that make up a D/ST's fantasy-point score.
+# Fantasy points are computed post-prediction via
+# ``shared.aggregate_targets.predictions_to_fantasy_points("DST", preds)``,
+# which applies the linear coefficients (sacks×1, INT×2, ...) and the PA/YA
+# tier bonuses in a single place.
 DST_TARGETS = [
-    "defensive_production",
-    "def_td_points",
-    "st_production",
+    "def_sacks",
+    "def_ints",
+    "def_fumble_rec",
+    "def_fumbles_forced",
+    "def_safeties",
+    "def_tds",
+    "def_blocked_kicks",
+    "special_teams_tds",
     "points_allowed",
     "yards_allowed",
 ]
@@ -66,45 +78,47 @@ DST_ALL_FEATURES = DST_SPECIFIC_FEATURES + DST_CONTEXTUAL_FEATURES
 DST_DROP_FEATURES = set()
 
 # === Ridge ===
-import numpy as np
 
 DST_RIDGE_PCA_COMPONENTS = 20  # features → 20 components; removes collinear dimensions
 
-# Raw PA/YA targets have much larger magnitudes (0–55 and 0–600) than the
-# production heads, so their alpha grid tops out higher to cover stronger L2.
+# Alpha grids tuned per-target magnitude:
+#   Sparse counts (TDs, safeties, blocked kicks, ST TDs) need a higher-floor grid
+#   because their means are <0.1 — weak L2 produces unstable fits.
+#   Regular counts (sacks, ints, fum_rec, FF) use a standard grid.
+#   Raw PA/YA span 0-55 / 0-600 and tolerate stronger L2.
+_DST_ALPHA_SPARSE = [round(x, 4) for x in np.logspace(0, 4, 15)]
 _DST_ALPHA_STANDARD = [round(x, 4) for x in np.logspace(-1, 3.5, 20)]
 _DST_ALPHA_RAW_SCALE = [round(x, 4) for x in np.logspace(-1, 5, 20)]
 
 DST_RIDGE_ALPHA_GRIDS = {
-    "defensive_production": _DST_ALPHA_STANDARD,
-    "def_td_points": [
-        round(x, 4) for x in np.logspace(0, 4, 15)
-    ],  # Higher floor — sparse target needs strong reg
-    "st_production": [
-        round(x, 4) for x in np.logspace(0, 4, 15)
-    ],  # Sparse (mostly 0); needs strong reg
-    "points_allowed": _DST_ALPHA_RAW_SCALE,  # Raw 0–55 scale
-    "yards_allowed": _DST_ALPHA_RAW_SCALE,  # Raw 0–600 scale
+    "def_sacks": _DST_ALPHA_STANDARD,
+    "def_ints": _DST_ALPHA_STANDARD,
+    "def_fumble_rec": _DST_ALPHA_STANDARD,
+    "def_fumbles_forced": _DST_ALPHA_STANDARD,
+    "def_safeties": _DST_ALPHA_SPARSE,
+    "def_tds": _DST_ALPHA_SPARSE,
+    "def_blocked_kicks": _DST_ALPHA_SPARSE,
+    "special_teams_tds": _DST_ALPHA_SPARSE,
+    "points_allowed": _DST_ALPHA_RAW_SCALE,
+    "yards_allowed": _DST_ALPHA_RAW_SCALE,
 }
 
 # === Neural Net ===
 DST_NN_BACKBONE_LAYERS = [128, 64]  # Wider backbone for many features
 DST_NN_HEAD_HIDDEN = 32
 DST_NN_HEAD_HIDDEN_OVERRIDES = {
-    "def_td_points": 16,  # Sparse target; smaller head
-    "st_production": 16,  # Sparse target; smaller head
-    "points_allowed": 48,  # Raw 0–55 scale needs capacity
-    "yards_allowed": 48,  # Raw 0–600 scale needs capacity
+    # Sparse targets — smaller heads regularize, rare events don't need capacity
+    "def_safeties": 16,
+    "def_tds": 16,
+    "def_blocked_kicks": 16,
+    "special_teams_tds": 16,
+    # Raw-scale targets — wider head to learn the 0-55 / 0-600 magnitude
+    "points_allowed": 48,
+    "yards_allowed": 48,
 }
 DST_NN_DROPOUT = 0.30  # Slightly higher — slows convergence, better generalization
-# All 5 heads are non-negative counts/magnitudes.
-DST_NN_NON_NEGATIVE_TARGETS = {
-    "defensive_production",
-    "def_td_points",
-    "st_production",
-    "points_allowed",
-    "yards_allowed",
-}
+# All 10 raw-count heads are non-negative.
+DST_NN_NON_NEGATIVE_TARGETS = set(DST_TARGETS)
 DST_NN_LR = 3e-4  # Lower — more exploration before convergence
 DST_NN_WEIGHT_DECAY = 3e-4
 DST_NN_EPOCHS = 300
@@ -112,29 +126,38 @@ DST_NN_BATCH_SIZE = 128
 DST_NN_PATIENCE = 35
 
 # === Loss Weights ===
-# Equal-weight 1.0 default across all 5 heads. Raw PA/YA have much larger
-# magnitudes than the production heads, so callers may wish to down-weight
-# them (e.g. 0.1) if the aux loss is dominated by those heads; ship 1.0
-# and let the training run tune.
+# Scaled inversely to each target's Huber delta per the CLAUDE.md rule
+# (≈ 2.0/δ) so every head contributes comparable gradient magnitude. Without
+# this, PA (δ=5) and YA (δ=30) would dominate the sparse count heads (δ=0.25)
+# by 20-120× per sample, collapsing the count heads to the mean.
 DST_LOSS_WEIGHTS = {
-    "defensive_production": 1.0,
-    "def_td_points": 1.0,
-    "st_production": 1.0,
-    "points_allowed": 1.0,
-    "yards_allowed": 1.0,
+    "def_sacks": 2.0,  # 2.0 / 1.0
+    "def_ints": 4.0,  # 2.0 / 0.5
+    "def_fumble_rec": 4.0,
+    "def_fumbles_forced": 4.0,
+    "def_safeties": 8.0,  # 2.0 / 0.25
+    "def_tds": 8.0,
+    "def_blocked_kicks": 8.0,
+    "special_teams_tds": 8.0,
+    "points_allowed": 0.4,  # 2.0 / 5.0
+    "yards_allowed": 0.067,  # 2.0 / 30.0
 }
 DST_LOSS_W_TOTAL = 1.0
 
-# === Huber Deltas (per-target) ===
-# Production heads ~0-20 pts: delta=2.0; raw PA ~0-55: delta=5.0;
-# raw YA ~0-600: delta=30.0.
+# === Huber Deltas (per-target, raw-stat units) ===
+# Deltas roughly match each target's typical variance so outliers are robust.
 DST_HUBER_DELTAS = {
-    "defensive_production": 2.0,
-    "def_td_points": 2.0,
-    "st_production": 2.0,
+    "def_sacks": 1.0,
+    "def_ints": 0.5,
+    "def_fumble_rec": 0.5,
+    "def_fumbles_forced": 0.5,
+    "def_safeties": 0.25,
+    "def_tds": 0.25,
+    "def_blocked_kicks": 0.25,
+    "special_teams_tds": 0.25,
     "points_allowed": 5.0,
     "yards_allowed": 30.0,
-    "total": 3.0,  # explicit delta for total aux loss
+    "total": 3.0,  # explicit delta for total aux loss (fantasy-point scale)
 }
 
 # === LR Scheduler ===
@@ -142,6 +165,50 @@ DST_SCHEDULER_TYPE = "cosine_warm_restarts"
 DST_COSINE_T0 = 30  # Longer first cycle for wider backbone
 DST_COSINE_T_MULT = 2
 DST_COSINE_ETA_MIN = 1e-5
+
+# === Attention NN (game history variant) ===
+# Copies RB's attention hyperparameter shape (the most advanced position model);
+# no gating per design (no GATED_FUSION, no GATED_TD). The attention branch
+# learns its own temporal representation from per-game defensive + opponent
+# history, so rolling/EWMA/trend features are stripped from its static input.
+DST_TRAIN_ATTENTION_NN = True
+DST_ATTN_D_MODEL = 32
+DST_ATTN_N_HEADS = 2
+DST_ATTN_ENCODER_HIDDEN_DIM = 32  # 2-layer game encoder before attention
+DST_ATTN_MAX_SEQ_LEN = 17  # Full NFL regular season
+DST_ATTN_PROJECT_KV = False
+DST_ATTN_POSITIONAL_ENCODING = True
+DST_ATTN_GATED_FUSION = False
+DST_ATTN_GATED_TD = False
+DST_ATTN_DROPOUT = 0.05
+DST_ATTN_LR = DST_NN_LR
+DST_ATTN_WEIGHT_DECAY = DST_NN_WEIGHT_DECAY
+DST_ATTN_BATCH_SIZE = DST_NN_BATCH_SIZE
+DST_ATTN_PATIENCE = 35
+# Per-game stats fed into the attention sequence. The 10 raw target stats
+# plus 4 opponent-side per-game values (not rolling) so attention can weigh
+# recent games against recent opponent strength.
+# Derived combos (defensive_production, st_production, fantasy_points) are
+# intentionally excluded — they're linear functions of the raw stats already
+# in the sequence and would add collinear columns.
+DST_ATTN_HISTORY_STATS = [
+    # Own raw defensive + ST stats (mirror the 10 targets)
+    "def_sacks",
+    "def_ints",
+    "def_fumble_rec",
+    "def_fumbles_forced",
+    "def_safeties",
+    "def_tds",
+    "def_blocked_kicks",
+    "special_teams_tds",
+    "points_allowed",
+    "yards_allowed",
+    # Per-game opponent context (not pre-rolled)
+    "opp_scoring",
+    "opp_fumbles",
+    "opp_interceptions",
+    "opp_qb_epa",
+]
 
 # === LightGBM ===
 DST_TRAIN_LIGHTGBM = False
@@ -159,9 +226,10 @@ DST_LGBM_MIN_CHILD_SAMPLES = 25
 # DST_CONFIG_TINY — shrunk config for E2E smoke tests.
 # Used by DST/tests/test_dst_pipeline_e2e.py to exercise the full pipeline
 # end-to-end in < 20s on tiny synthetic data: 2 backbone layers x 8 units,
-# 1 epoch, no LightGBM, no attention.  Only the NN-training hyperparameters
-# are shrunk; the rest of the config matches production to keep coverage
-# representative.
+# 1 epoch, no LightGBM, attention off by default.  Only the NN-training
+# hyperparameters are shrunk; the rest of the config matches production to
+# keep coverage representative.  Tests that need to exercise the attention
+# path override ``train_attention_nn`` to True.
 # ===========================================================================
 DST_CONFIG_TINY = {
     "nn_backbone_layers": [8, 8],

@@ -569,18 +569,46 @@ def flatten_include_features(include_dict: dict[str, list[str]]) -> list[str]:
     return cols
 
 
-def get_attn_static_columns(all_feature_cols: list[str]) -> list[str]:
+def get_attn_static_columns(all_feature_cols: list[str], position: str | None = None) -> list[str]:
     """Return feature columns for the attention NN, excluding temporal aggregations.
 
     The attention mechanism learns its own temporal representation from raw game
     history, so rolling/EWMA/trend/share features are redundant (and collinear).
     Prior-season features are kept — they cover a different season than the
     attention's within-season lookback.
+
+    QB/RB/WR/TE use prefix-based naming (``rolling_``, ``ewma_``, ``trend_``).
+    DST uses suffix-based naming (``_L3``, ``_L5``, ``_L8``, ``_ewma``,
+    ``_trend``, ``_std_L3``), so a position-specific branch strips those too.
     """
     exclude_prefixes = ("rolling_", "ewma_", "trend_")
     exclude_exact = set()
     for w in SHARE_WINDOWS:
         exclude_exact.update([f"target_share_L{w}", f"carry_share_L{w}"])
+
+    if position == "DST":
+        # DST rolling / EWMA / trend / std features use suffix naming.
+        # ``sack_trend``, ``turnover_trend``, ``pts_allowed_trend`` are DST trend
+        # features without a leading ``trend_`` prefix, so match them explicitly.
+        dst_exclude_suffixes = (
+            "_L3",
+            "_L5",
+            "_L8",
+            "_ewma",
+            "_trend",
+            "_std_L3",
+            "_std_L5",
+        )
+        dst_exact_exclude = {"sack_trend", "turnover_trend", "pts_allowed_trend"}
+        return [
+            c
+            for c in all_feature_cols
+            if not c.startswith(exclude_prefixes)
+            and not c.endswith(dst_exclude_suffixes)
+            and c not in exclude_exact
+            and c not in dst_exact_exclude
+        ]
+
     return [
         c for c in all_feature_cols if not c.startswith(exclude_prefixes) and c not in exclude_exact
     ]

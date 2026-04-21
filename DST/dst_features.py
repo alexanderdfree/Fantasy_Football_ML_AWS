@@ -106,11 +106,22 @@ def compute_dst_features(df: pd.DataFrame) -> None:
     )
 
     # --- Feature 14: dst_scoring_std_L3 (base production consistency) ---
+    # Derived from raw stats (post raw-target migration) — same linear combo
+    # that ``defensive_production`` used to represent, computed inline so we
+    # don't need the aggregate column on the frame.
+    df["_dst_defensive_production_tmp"] = (
+        df["def_sacks"].fillna(0)
+        + df["def_ints"].fillna(0) * 2
+        + df["def_fumble_rec"].fillna(0) * 2
+        + df["def_fumbles_forced"].fillna(0)
+        + df["def_safeties"].fillna(0) * 2
+    )
     df["dst_scoring_std_L3"] = (
-        grp["defensive_production"]
+        df.groupby(["team", "season"])["_dst_defensive_production_tmp"]
         .transform(lambda x: x.shift(1).rolling(3, min_periods=2).std())
         .fillna(0)
     )
+    df.drop(columns=["_dst_defensive_production_tmp"], inplace=True)
 
     # --- Feature 15: sacks_L5 (longer sack window for stability) ---
     df["sacks_L5"] = (

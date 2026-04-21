@@ -218,7 +218,7 @@ def test_k_with_aggregate_fn_uses_fantasy_points(min_splits_factory):
 @pytest.mark.unit
 def test_dst_with_aggregate_fn_uses_fantasy_points(min_splits_factory):
     """DST with ``aggregate_fn`` set must supervise on ``fantasy_points``."""
-    targets = ["defensive_scoring", "td_points", "pts_allowed_bonus"]
+    targets = ["def_sacks", "def_tds", "points_allowed"]
     train, val, test = min_splits_factory(targets)
 
     cfg = _build_min_cfg(targets, aggregate_fn=_noop_aggregate)

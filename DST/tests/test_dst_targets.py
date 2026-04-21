@@ -1,7 +1,8 @@
 """Tests for DST.dst_targets — compute_dst_targets and tier-bonus helpers.
 
-D/ST targets use team-level aggregated data.  The five heads are trained on
-raw magnitudes; tier mapping for PA/YA is applied at inference.
+D/ST targets are 10 raw NFL stat counts. Fantasy points are computed after
+prediction by summing the linear scoring coefficients (sacks*1, INT*2, ...)
+and applying the PA/YA tier bonuses.
 
 Uses the session-scoped ``make_df`` fixture from conftest.py to avoid
 duplicating single-row DST frame construction across every test.
@@ -24,34 +25,30 @@ from DST.dst_targets import (
 
 @pytest.mark.unit
 class TestComputeDSTTargets:
-    def test_defensive_production_formula(self, make_df):
-        """defensive_production = sacks*1 + ints*2 + fumble_rec*2 + forced_fum*1 + safeties*2."""
+    def test_raw_counts_passed_through(self, make_df):
+        """The 10 raw-stat columns pass through unchanged for non-NaN inputs."""
         df = make_df(
             def_sacks=4,
             def_ints=2,
             def_fumble_rec=1,
             def_fumbles_forced=3,
             def_safeties=1,
+            def_tds=2,
+            def_blocked_kicks=1,
+            special_teams_tds=1,
         )
         result = compute_dst_targets(df)
-        # 4*1 + 2*2 + 1*2 + 3*1 + 1*2 = 4+4+2+3+2 = 15
-        assert pytest.approx(result["defensive_production"].iloc[0]) == 15.0
-
-    def test_def_td_points(self, make_df):
-        """def_td_points = def_tds * 6."""
-        df = make_df(def_tds=2)
-        result = compute_dst_targets(df)
-        assert pytest.approx(result["def_td_points"].iloc[0]) == 12.0
-
-    def test_st_production_formula(self, make_df):
-        """st_production = special_teams_tds*6 + def_blocked_kicks*2."""
-        df = make_df(special_teams_tds=1, def_blocked_kicks=2)
-        result = compute_dst_targets(df)
-        # 1*6 + 2*2 = 10
-        assert pytest.approx(result["st_production"].iloc[0]) == 10.0
+        assert result["def_sacks"].iloc[0] == 4
+        assert result["def_ints"].iloc[0] == 2
+        assert result["def_fumble_rec"].iloc[0] == 1
+        assert result["def_fumbles_forced"].iloc[0] == 3
+        assert result["def_safeties"].iloc[0] == 1
+        assert result["def_tds"].iloc[0] == 2
+        assert result["def_blocked_kicks"].iloc[0] == 1
+        assert result["special_teams_tds"].iloc[0] == 1
 
     def test_points_allowed_copied_raw(self, make_df):
-        """points_allowed is the raw value — tier mapping is inference-side."""
+        """points_allowed is the raw value — tier mapping only affects fantasy_points."""
         df = make_df(points_allowed=24)
         result = compute_dst_targets(df)
         assert pytest.approx(result["points_allowed"].iloc[0]) == 24.0
@@ -63,7 +60,7 @@ class TestComputeDSTTargets:
         assert pytest.approx(result["yards_allowed"].iloc[0]) == 412.0
 
     def test_fantasy_points_full_sum(self, make_df):
-        """fantasy_points sums 3 production heads + tier-mapped PA + tier-mapped YA."""
+        """fantasy_points = linear raw-stat combo + tier-mapped PA + tier-mapped YA."""
         df = make_df(
             def_sacks=3,
             def_ints=1,
@@ -77,12 +74,10 @@ class TestComputeDSTTargets:
             yards_allowed=220,
         )
         result = compute_dst_targets(df)
-        # defensive_production = 3 + 2 + 2 + 2 + 0 = 9
-        # def_td_points = 6
-        # st_production = 6 + 0 = 6
+        # linear = 3*1 + 1*2 + 1*2 + 2*1 + 0*2 + 1*6 + 1*6 + 0*2 = 21
         # PA tier (10 → 7-13) = +4
         # YA tier (220 → 200-299) = +2
-        # total = 9 + 6 + 6 + 4 + 2 = 27
+        # total = 21 + 4 + 2 = 27
         assert pytest.approx(result["fantasy_points"].iloc[0]) == 27.0
 
     def test_dominant_defense_game(self, make_df):
@@ -100,14 +95,9 @@ class TestComputeDSTTargets:
             yards_allowed=80,
         )
         result = compute_dst_targets(df)
-        # defensive_production = 6 + 6 + 4 + 4 + 2 = 22
-        assert result["defensive_production"].iloc[0] == 22.0
-        # def_td_points = 12
-        assert result["def_td_points"].iloc[0] == 12.0
-        # st_production = 6 + 2 = 8
-        assert result["st_production"].iloc[0] == 8.0
+        # linear = 6 + 6 + 4 + 4 + 2 + 12 + 6 + 2 = 42
         # PA tier (0 → +10), YA tier (<100 → +5)
-        # total = 22 + 12 + 8 + 10 + 5 = 57
+        # total = 42 + 10 + 5 = 57
         assert pytest.approx(result["fantasy_points"].iloc[0]) == 57.0
 
     def test_all_nan_stats_fall_back_to_defaults(self):
@@ -129,12 +119,20 @@ class TestComputeDSTTargets:
             ]
         )
         result = compute_dst_targets(df)
-        assert result["defensive_production"].iloc[0] == 0.0
-        assert result["def_td_points"].iloc[0] == 0.0
-        assert result["st_production"].iloc[0] == 0.0
+        for col in [
+            "def_sacks",
+            "def_ints",
+            "def_fumble_rec",
+            "def_fumbles_forced",
+            "def_safeties",
+            "def_tds",
+            "def_blocked_kicks",
+            "special_teams_tds",
+        ]:
+            assert result[col].iloc[0] == 0.0
         assert result["points_allowed"].iloc[0] == 21.0
         assert result["yards_allowed"].iloc[0] == 350.0
-        # fantasy_points: 0 + 0 + 0 + tier(21)=0 + tier(350)=-1 = -1
+        # fantasy_points: linear=0, PA(21)=0, YA(350)=-1 = -1
         assert pytest.approx(result["fantasy_points"].iloc[0]) == -1.0
 
     def test_does_not_mutate_original(self, make_df):

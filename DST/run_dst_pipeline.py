@@ -11,6 +11,20 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from DST.dst_config import (
+    DST_ATTN_BATCH_SIZE,
+    DST_ATTN_D_MODEL,
+    DST_ATTN_DROPOUT,
+    DST_ATTN_ENCODER_HIDDEN_DIM,
+    DST_ATTN_GATED_FUSION,
+    DST_ATTN_GATED_TD,
+    DST_ATTN_HISTORY_STATS,
+    DST_ATTN_LR,
+    DST_ATTN_MAX_SEQ_LEN,
+    DST_ATTN_N_HEADS,
+    DST_ATTN_PATIENCE,
+    DST_ATTN_POSITIONAL_ENCODING,
+    DST_ATTN_PROJECT_KV,
+    DST_ATTN_WEIGHT_DECAY,
     DST_COSINE_ETA_MIN,
     DST_COSINE_T0,
     DST_COSINE_T_MULT,
@@ -40,6 +54,7 @@ from DST.dst_config import (
     DST_SCHEDULER_TYPE,
     DST_SPECIFIC_FEATURES,
     DST_TARGETS,
+    DST_TRAIN_ATTENTION_NN,
     DST_TRAIN_LIGHTGBM,
 )
 from DST.dst_data import build_dst_data, filter_to_dst
@@ -50,6 +65,7 @@ from DST.dst_features import (
     get_dst_feature_columns,
 )
 from DST.dst_targets import compute_dst_targets
+from shared.aggregate_targets import aggregate_fn_for
 from shared.pipeline import run_pipeline
 from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 
@@ -86,6 +102,10 @@ def run_dst_pipeline(seed=42):
         "fill_nans_fn": fill_dst_nans,
         "get_feature_columns_fn": get_dst_feature_columns,
         "compute_adjustment_fn": None,
+        # DST is in _FANTASY_POINTS_AUX_POSITIONS — wiring aggregate_fn here
+        # lets the NN supervise ``total`` on ``fantasy_points`` directly
+        # instead of the raw-sum (~380/game, dominated by yards_allowed).
+        "aggregate_fn": aggregate_fn_for("DST"),
         "nn_backbone_layers": DST_NN_BACKBONE_LAYERS,
         "nn_head_hidden": DST_NN_HEAD_HIDDEN,
         "nn_dropout": DST_NN_DROPOUT,
@@ -103,6 +123,23 @@ def run_dst_pipeline(seed=42):
         "cosine_t0": DST_COSINE_T0,
         "cosine_t_mult": DST_COSINE_T_MULT,
         "cosine_eta_min": DST_COSINE_ETA_MIN,
+        # Attention NN
+        "train_attention_nn": DST_TRAIN_ATTENTION_NN,
+        "attn_d_model": DST_ATTN_D_MODEL,
+        "attn_n_heads": DST_ATTN_N_HEADS,
+        "attn_max_seq_len": DST_ATTN_MAX_SEQ_LEN,
+        "attn_history_stats": DST_ATTN_HISTORY_STATS,
+        "attn_encoder_hidden_dim": DST_ATTN_ENCODER_HIDDEN_DIM,
+        "attn_project_kv": DST_ATTN_PROJECT_KV,
+        "attn_positional_encoding": DST_ATTN_POSITIONAL_ENCODING,
+        "attn_gated_fusion": DST_ATTN_GATED_FUSION,
+        "attn_dropout": DST_ATTN_DROPOUT,
+        "attn_lr": DST_ATTN_LR,
+        "attn_weight_decay": DST_ATTN_WEIGHT_DECAY,
+        "attn_batch_size": DST_ATTN_BATCH_SIZE,
+        "attn_patience": DST_ATTN_PATIENCE,
+        "attn_gated_td": DST_ATTN_GATED_TD,
+        # LightGBM
         "train_lightgbm": DST_TRAIN_LIGHTGBM,
         "lgbm_n_estimators": DST_LGBM_N_ESTIMATORS,
         "lgbm_learning_rate": DST_LGBM_LEARNING_RATE,

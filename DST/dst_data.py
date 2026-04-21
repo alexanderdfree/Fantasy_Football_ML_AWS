@@ -171,10 +171,19 @@ def build_dst_data() -> pd.DataFrame:
         weekly_copy.groupby(["recent_team", "season", "week"])
         .agg(
             team_turnovers=("_total_turnovers", "sum"),
+            team_fumbles=("_total_fumbles_lost", "sum"),
+            team_interceptions=("interceptions", "sum"),
         )
         .reset_index()
     )
-    team_turnovers.columns = ["team", "season", "week", "team_turnovers"]
+    team_turnovers.columns = [
+        "team",
+        "season",
+        "week",
+        "team_turnovers",
+        "team_fumbles",
+        "team_interceptions",
+    ]
 
     # 7c. Team sacks allowed (as offense) — how vulnerable is this OL?
     team_sacks_allowed = (
@@ -305,6 +314,30 @@ def build_dst_data() -> pd.DataFrame:
     # Opposing QB quality features
     dst_df = dst_df.merge(opp_qb, on=["opponent_team", "season", "week"], how="left")
 
+    # --- Per-game opponent stats (for attention history sequence) ---
+    # These are raw per-game values (NOT rolling means) used by the DST
+    # attention branch to learn its own temporal weighting over games. The
+    # L3/L5 rolling opp features above stay for Ridge / base NN.
+    opp_game_scoring = team_scoring[["team", "season", "week", "team_score"]].copy()
+    opp_game_scoring.columns = ["opponent_team", "season", "week", "opp_scoring"]
+    dst_df = dst_df.merge(opp_game_scoring, on=["opponent_team", "season", "week"], how="left")
+
+    opp_game_turnovers = team_turnovers[
+        ["team", "season", "week", "team_fumbles", "team_interceptions"]
+    ].copy()
+    opp_game_turnovers.columns = [
+        "opponent_team",
+        "season",
+        "week",
+        "opp_fumbles",
+        "opp_interceptions",
+    ]
+    dst_df = dst_df.merge(opp_game_turnovers, on=["opponent_team", "season", "week"], how="left")
+
+    opp_game_qb = qb_team[["team", "season", "week", "qb_passing_epa"]].copy()
+    opp_game_qb.columns = ["opponent_team", "season", "week", "opp_qb_epa"]
+    dst_df = dst_df.merge(opp_game_qb, on=["opponent_team", "season", "week"], how="left")
+
     # Fill missing values
     for col in [
         "def_sacks",
@@ -338,6 +371,13 @@ def build_dst_data() -> pd.DataFrame:
     dst_df["opp_qb_epa_L5"] = dst_df["opp_qb_epa_L5"].fillna(0)
     for col in ["opp_qb_int_rate_L5", "opp_qb_sack_rate_L5", "opp_qb_rush_yds_L5"]:
         dst_df[col] = dst_df[col].fillna(dst_df[col].median())
+
+    # Per-game opp columns (attention history) — fill with league medians so
+    # the first-week-of-season attention sequence isn't degenerate.
+    dst_df["opp_scoring"] = dst_df["opp_scoring"].fillna(dst_df["points_allowed"].mean())
+    dst_df["opp_fumbles"] = dst_df["opp_fumbles"].fillna(0)
+    dst_df["opp_interceptions"] = dst_df["opp_interceptions"].fillna(0)
+    dst_df["opp_qb_epa"] = dst_df["opp_qb_epa"].fillna(0)
 
     # Add pipeline-compatible columns
     dst_df["player_id"] = dst_df["team"]
