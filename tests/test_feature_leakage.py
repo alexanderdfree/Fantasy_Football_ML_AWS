@@ -6,7 +6,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.features.engineer import build_features, fill_nans_safe, get_feature_columns
+from src.features.engineer import (
+    build_features,
+    build_game_history_arrays,
+    fill_nans_safe,
+    get_feature_columns,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -429,6 +434,67 @@ class TestFillNansSafe:
         # Should be 15.0 (train mean), not influenced by val/test
         assert val_out["feat"].iloc[0] == pytest.approx(15.0)
         assert test_out["feat"].iloc[0] == pytest.approx(15.0)
+
+
+# ---------------------------------------------------------------------------
+# Game history arrays (attention model input)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildGameHistoryArrays:
+    """`build_game_history_arrays` must be robust to unusual caller indices.
+
+    Callers in shared/pipeline.py pass DataFrames that have been filtered and
+    copied but not always reset_index. Label-based index bookkeeping can
+    silently corrupt (or crash) the output if labels repeat. Pin positional
+    correctness regardless of index shape.
+    """
+
+    def _simple_df(self, index=None):
+        df = pd.DataFrame(
+            {
+                "player_id": ["A"] * 4 + ["B"] * 4,
+                "season": [2023] * 8,
+                "week": [1, 2, 3, 4, 1, 2, 3, 4],
+                "fantasy_points": [10.0, 20.0, 30.0, 40.0, 5.0, 15.0, 25.0, 35.0],
+            }
+        )
+        if index is not None:
+            df.index = index
+        return df
+
+    def test_duplicate_indices_do_not_corrupt_output(self):
+        """Duplicate index labels must not crash or cause silent misalignment."""
+        # Two players with overlapping caller index labels (e.g., concat without
+        # ignore_index) — each player uses labels 0..3.
+        df = self._simple_df(index=[0, 1, 2, 3, 0, 1, 2, 3])
+        X, mask = build_game_history_arrays(df, history_stats=["fantasy_points"], max_seq_len=5)
+        # Row 0 is player A week 1 -> no history
+        assert mask[0].sum() == 0
+        # Row 3 is player A week 4 -> 3 prior games (10, 20, 30)
+        assert mask[3].sum() == 3
+        np.testing.assert_array_equal(X[3, :3, 0], [10.0, 20.0, 30.0])
+        # Row 7 is player B week 4 -> 3 prior games (5, 15, 25)
+        assert mask[7].sum() == 3
+        np.testing.assert_array_equal(X[7, :3, 0], [5.0, 15.0, 25.0])
+
+    def test_unsorted_caller_order_preserved(self):
+        """Output must align with caller row order, not sort order."""
+        df = pd.DataFrame(
+            {
+                "player_id": ["B", "A", "A", "B", "A", "B"],
+                "season": [2023] * 6,
+                "week": [2, 1, 2, 1, 3, 3],
+                "fantasy_points": [15.0, 10.0, 20.0, 5.0, 30.0, 25.0],
+            }
+        )
+        X, mask = build_game_history_arrays(df, history_stats=["fantasy_points"], max_seq_len=5)
+        # Row 0: B week 2 -> 1 prior (B week 1 = 5)
+        assert mask[0].sum() == 1 and X[0, 0, 0] == 5.0
+        # Row 1: A week 1 -> 0 prior
+        assert mask[1].sum() == 0
+        # Row 4: A week 3 -> 2 prior (A week 1 = 10, A week 2 = 20)
+        np.testing.assert_array_equal(X[4, :2, 0], [10.0, 20.0])
 
 
 # ---------------------------------------------------------------------------

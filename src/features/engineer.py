@@ -39,8 +39,8 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
                 )
     df = pd.concat([df, pd.DataFrame(rolling_cols, index=df.index)], axis=1)
 
-    # --- Prior-Season Summary Features (24) ---
-    prior_stats = [s for s in ROLL_STATS]
+    # --- Prior-Season Summary Features (30 = 10 stats x 3 aggs) ---
+    prior_stats = list(ROLL_STATS)
     prior = df.groupby(["player_id", "season"])[prior_stats].agg(["mean", "std", "max"])
     prior.columns = [f"prior_season_{agg}_{stat}" for stat, agg in prior.columns]
     prior = prior.reset_index()
@@ -201,51 +201,47 @@ def build_game_history_arrays(
     X_history = np.zeros((n, max_seq_len, game_dim), dtype=np.float32)
     history_mask = np.zeros((n, max_seq_len), dtype=bool)
 
-    # Sort for groupby lookback, but track original row positions so the
-    # output arrays align with the caller's DataFrame order (not the sorted order).
-    sort_order = df.sort_values(["player_id", "season", "week"]).index
-    # Map from sorted position -> caller's positional index
-    original_pos = {orig_idx: caller_pos for caller_pos, orig_idx in enumerate(df.index)}
-    sorted_to_caller = [original_pos[idx] for idx in sort_order]
+    if n == 0:
+        return X_history, history_mask
 
-    df_sorted = df.loc[sort_order].reset_index(drop=True)
-    stat_values = df_sorted[history_stats].values.astype(np.float32)
+    # Work with positional indices throughout. reset_index(drop=True) makes
+    # sort_values(...).index yield caller row *positions* (0..n-1) rather than
+    # caller-supplied labels, which fancy-indexes safely even if caller indices
+    # are duplicated or non-contiguous.
+    df_pos = df.reset_index(drop=True)
+    sorted_idx = (
+        df_pos.sort_values(["player_id", "season", "week"], kind="stable")
+        .index.to_numpy()
+    )
+    stat_values = df_pos.loc[sorted_idx, history_stats].to_numpy(dtype=np.float32)
+    player_ids = df_pos["player_id"].to_numpy()[sorted_idx]
+    seasons = df_pos["season"].to_numpy()[sorted_idx]
 
-    # Build index mapping: (player_id, season) -> list of row indices in sorted order
-    group_indices = {}
-    for idx, (pid, season) in enumerate(
-        zip(df_sorted["player_id"], df_sorted["season"], strict=False)
-    ):
-        key = (pid, season)
-        if key not in group_indices:
-            group_indices[key] = []
-        group_indices[key].append(idx)
+    # (player_id, season) -> list of sorted-row positions
+    group_indices: dict[tuple, list[int]] = {}
+    for sorted_pos in range(n):
+        key = (player_ids[sorted_pos], seasons[sorted_pos])
+        group_indices.setdefault(key, []).append(sorted_pos)
 
-    # Temporary arrays aligned with sorted order
     hist_sorted = np.zeros_like(X_history)
     mask_sorted = np.zeros_like(history_mask)
 
-    # For each row, look back at prior games in the same player-season
-    for _key, indices in group_indices.items():
+    for indices in group_indices.values():
         for pos_in_group, row_idx in enumerate(indices):
-            # Games before this one (shift=1 equivalent)
-            n_prior = pos_in_group  # games 0..pos_in_group-1
-            if n_prior == 0:
+            if pos_in_group == 0:
                 continue  # no history for first game of season
 
-            # Take most recent games, up to max_seq_len
-            start = max(0, n_prior - max_seq_len)
+            start = max(0, pos_in_group - max_seq_len)
             prior_indices = indices[start:pos_in_group]
             seq_len = len(prior_indices)
 
-            # Fill from the end so most recent game is last
+            # Fill from the start so oldest game is first, most recent is last
             hist_sorted[row_idx, :seq_len] = stat_values[prior_indices]
             mask_sorted[row_idx, :seq_len] = True
 
-    # Map back to caller's row ordering
-    for sorted_pos, caller_pos in enumerate(sorted_to_caller):
-        X_history[caller_pos] = hist_sorted[sorted_pos]
-        history_mask[caller_pos] = mask_sorted[sorted_pos]
+    # Scatter sorted results back to caller row order.
+    X_history[sorted_idx] = hist_sorted
+    history_mask[sorted_idx] = mask_sorted
 
     # Replace NaN with 0 in history
     np.nan_to_num(X_history, copy=False, nan=0.0)
