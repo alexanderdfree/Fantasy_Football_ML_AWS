@@ -365,3 +365,83 @@ def tiny_k_splits(tiny_k_dataset):
     val = df[df["season"] == 2024].copy()
     test = df[df["season"] == 2025].copy()
     return train, val, test
+
+
+def _build_tiny_k_kicks(weekly_df: pd.DataFrame, seed: int = 123) -> pd.DataFrame:
+    """Expand each weekly row into per-kick records.
+
+    Produces `fg_att` FG rows and `pat_att` XP rows per weekly row, with random
+    distances/probabilities consistent with the aggregate stats. Kept simple —
+    exact bucket alignment isn't required for unit tests, just enough structural
+    fidelity that the attention pipeline can consume it.
+    """
+    rng = np.random.default_rng(seed)
+    kicks: list[dict] = []
+    for _, row in weekly_df.iterrows():
+        pid = row["player_id"]
+        season = row["season"]
+        week = row["week"]
+        game_wind = float(row.get("game_wind", 0) or 0)
+        is_home = int(row.get("is_home", 0) or 0)
+
+        fg_att = int(row.get("fg_att", 0) or 0)
+        fg_made = int(row.get("fg_made", 0) or 0)
+        made_flags = np.concatenate(
+            [np.ones(fg_made, dtype=int), np.zeros(fg_att - fg_made, dtype=int)]
+        )
+        rng.shuffle(made_flags)
+        for made in made_flags:
+            distance = float(np.clip(rng.normal(38, 6), 17, 66))
+            kicks.append(
+                {
+                    "player_id": pid,
+                    "season": season,
+                    "week": week,
+                    "is_fg": 1,
+                    "is_xp": 0,
+                    "kick_distance": distance,
+                    "kick_made": int(made),
+                    "fg_prob": float(np.clip(rng.normal(0.82, 0.06), 0.1, 0.99)),
+                    "is_q4": int(rng.integers(0, 2)),
+                    "score_diff": float(rng.normal(0, 8)),
+                    "game_wind": game_wind,
+                    "is_home": is_home,
+                }
+            )
+
+        pat_att = int(row.get("pat_att", 0) or 0)
+        pat_made = int(row.get("pat_made", 0) or 0)
+        xp_flags = np.concatenate(
+            [np.ones(pat_made, dtype=int), np.zeros(pat_att - pat_made, dtype=int)]
+        )
+        rng.shuffle(xp_flags)
+        for made in xp_flags:
+            kicks.append(
+                {
+                    "player_id": pid,
+                    "season": season,
+                    "week": week,
+                    "is_fg": 0,
+                    "is_xp": 1,
+                    "kick_distance": 0.0,
+                    "kick_made": int(made),
+                    "fg_prob": 0.0,
+                    "is_q4": int(rng.integers(0, 2)),
+                    "score_diff": 0.0,
+                    "game_wind": game_wind,
+                    "is_home": is_home,
+                }
+            )
+    return pd.DataFrame(kicks)
+
+
+@pytest.fixture(scope="session")
+def make_tiny_k_kicks():
+    """Factory: expand a weekly kicker DataFrame into per-kick rows."""
+    return _build_tiny_k_kicks
+
+
+@pytest.fixture(scope="session")
+def tiny_k_kicks(tiny_k_dataset):
+    """Session-scoped per-kick records matching tiny_k_dataset."""
+    return _build_tiny_k_kicks(tiny_k_dataset, seed=123)

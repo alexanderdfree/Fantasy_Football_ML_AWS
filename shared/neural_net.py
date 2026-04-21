@@ -426,3 +426,187 @@ class MultiHeadNetWithHistory(nn.Module):
             m = torch.BoolTensor(history_mask).to(device)
             preds = self.forward(s, h, m)
             return {k: v.cpu().numpy() for k, v in preds.items()}
+
+
+class MultiHeadNetWithNestedHistory(nn.Module):
+    """Multi-head network with a two-level attention branch.
+
+    Inner level: a single-query AttentionPool collapses each game's
+    variable-length kick sequence into a fixed d_kick vector. Outer level:
+    per-target AttentionPool weighs games across the season, mirroring
+    MultiHeadNetWithHistory. Static branch and head wiring match the flat
+    version; no gating (K has no zero-inflated count targets).
+
+    Shapes (see the forward docstring for details):
+        x_static:   [B, static_dim]
+        x_kicks:    [B, G, K, kick_dim]
+        outer_mask: [B, G]
+        inner_mask: [B, G, K]
+    """
+
+    def __init__(
+        self,
+        static_dim: int,
+        kick_dim: int,
+        target_names: list[str],
+        backbone_layers: list[int],
+        d_kick: int = 16,
+        d_model: int = 32,
+        n_attn_heads: int = 2,
+        head_hidden: int = 32,
+        dropout: float = 0.3,
+        head_hidden_overrides: dict = None,
+        non_negative_targets: set = None,
+        project_kv: bool = False,
+        use_positional_encoding: bool = False,
+        max_games: int = 17,
+        attn_dropout: float = 0.0,
+        encoder_hidden_dim: int = 0,
+        aggregate_fn=None,
+    ):
+        super().__init__()
+        self.target_names = target_names
+        self.non_negative_targets = (
+            set(target_names) if non_negative_targets is None else non_negative_targets
+        )
+        self.aggregate_fn = aggregate_fn
+        self.d_model = d_model
+        self.d_kick = d_kick
+        self.n_targets = len(target_names)
+
+        # === Inner: per-kick encoder + single-query pool ===
+        self.kick_encoder = nn.Sequential(
+            nn.Linear(kick_dim, d_kick),
+            nn.ReLU(),
+        )
+        # Single-query, single-head pool collapses [K, d_kick] → [d_kick].
+        self.inner_pool = AttentionPool(
+            d_kick,
+            n_heads=1,
+            n_targets=1,
+            project_kv=False,
+            attn_dropout=attn_dropout,
+        )
+
+        # === Outer: game encoder + per-target attention pool ===
+        if encoder_hidden_dim > 0:
+            self.game_encoder = nn.Sequential(
+                nn.Linear(d_kick, encoder_hidden_dim),
+                nn.ReLU(),
+                nn.LayerNorm(encoder_hidden_dim),
+                nn.Linear(encoder_hidden_dim, d_model),
+                nn.ReLU(),
+            )
+        else:
+            self.game_encoder = nn.Sequential(
+                nn.Linear(d_kick, d_model),
+                nn.ReLU(),
+            )
+
+        self.use_positional_encoding = use_positional_encoding
+        if use_positional_encoding:
+            self.pos_embedding = nn.Embedding(max_games, d_model)
+
+        self.attn_pool = AttentionPool(
+            d_model,
+            n_heads=n_attn_heads,
+            n_targets=self.n_targets,
+            project_kv=project_kv,
+            attn_dropout=attn_dropout,
+        )
+
+        attn_out_dim = n_attn_heads * d_model
+        self.history_norms = nn.ModuleList([nn.LayerNorm(attn_out_dim) for _ in target_names])
+
+        # === Shared backbone (static only) ===
+        backbone_blocks = []
+        prev_dim = static_dim
+        for hidden_dim in backbone_layers:
+            backbone_blocks.extend(
+                [
+                    nn.Linear(prev_dim, hidden_dim),
+                    nn.BatchNorm1d(hidden_dim),
+                    nn.ReLU(),
+                    nn.Dropout(dropout),
+                ]
+            )
+            prev_dim = hidden_dim
+        self.backbone = nn.Sequential(*backbone_blocks)
+
+        backbone_out_dim = backbone_layers[-1]
+        overrides = head_hidden_overrides or {}
+        head_in_dim = backbone_out_dim + attn_out_dim
+        self.heads = nn.ModuleDict()
+        for name in target_names:
+            h = overrides.get(name, head_hidden)
+            self.heads[name] = nn.Sequential(
+                nn.Linear(head_in_dim, h),
+                nn.ReLU(),
+                nn.Linear(h, 1),
+            )
+
+    def forward(
+        self,
+        x_static: torch.Tensor,
+        x_kicks: torch.Tensor,
+        outer_mask: torch.Tensor,
+        inner_mask: torch.Tensor,
+    ) -> dict:
+        """
+        Args:
+            x_static:   [B, static_dim]
+            x_kicks:    [B, G, K, kick_dim] — zero-padded kick features
+            outer_mask: [B, G]              — True where real game
+            inner_mask: [B, G, K]           — True where real kick
+        """
+        B, G, K, _ = x_kicks.shape
+
+        # Inner encode + pool: [B, G, d_kick]
+        kick_enc = self.kick_encoder(x_kicks)  # [B, G, K, d_kick]
+        flat = kick_enc.reshape(B * G, K, self.d_kick)
+        flat_mask = inner_mask.reshape(B * G, K)
+        per_game = self.inner_pool(flat, flat_mask)  # [B*G, d_kick] (single-target squeeze)
+        per_game = per_game.reshape(B, G, self.d_kick)
+
+        # Outer encode + attend
+        encoded = self.game_encoder(per_game)  # [B, G, d_model]
+        if self.use_positional_encoding:
+            positions = torch.arange(G, device=encoded.device)
+            encoded = encoded + self.pos_embedding(positions)
+
+        history_per_target = self.attn_pool(encoded, outer_mask)  # [B, n_targets, attn_out]
+        if history_per_target.dim() == 2:
+            history_per_target = history_per_target.unsqueeze(1)
+
+        shared_static = self.backbone(x_static)
+
+        preds = {}
+        for i, name in enumerate(self.target_names):
+            history_vec = self.history_norms[i](history_per_target[:, i, :])
+            head_input = torch.cat([shared_static, history_vec], dim=-1)
+            val = self.heads[name](head_input).squeeze(-1)
+            if name in self.non_negative_targets:
+                val = F.softplus(val)
+            preds[name] = val
+        if self.aggregate_fn is not None:
+            preds["total"] = self.aggregate_fn(preds)
+        else:
+            preds["total"] = sum(preds[t] for t in self.target_names)
+        return preds
+
+    def predict_numpy(
+        self,
+        X_static: np.ndarray,
+        X_kicks: np.ndarray,
+        outer_mask: np.ndarray,
+        inner_mask: np.ndarray,
+        device: torch.device,
+    ) -> dict:
+        self.eval()
+        with torch.no_grad():
+            s = torch.FloatTensor(X_static).to(device)
+            k = torch.FloatTensor(X_kicks).to(device)
+            om = torch.BoolTensor(outer_mask).to(device)
+            im = torch.BoolTensor(inner_mask).to(device)
+            preds = self.forward(s, k, om, im)
+            return {key: v.cpu().numpy() for key, v in preds.items()}

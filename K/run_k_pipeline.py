@@ -4,12 +4,29 @@ Uses PBP-reconstructed kicker data from 2015-2025 (post-PAT rule change).
 Cross-season splits: train 2015-2023, val 2024, test 2025.
 """
 
+import functools
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from K.k_config import (
+    K_ATTN_BATCH_SIZE,
+    K_ATTN_D_MODEL,
+    K_ATTN_DROPOUT,
+    K_ATTN_ENCODER_HIDDEN_DIM,
+    K_ATTN_GATED_FUSION,
+    K_ATTN_KICK_DIM,
+    K_ATTN_KICK_STATS,
+    K_ATTN_LR,
+    K_ATTN_MAX_GAMES,
+    K_ATTN_MAX_KICKS_PER_GAME,
+    K_ATTN_N_HEADS,
+    K_ATTN_PATIENCE,
+    K_ATTN_POSITIONAL_ENCODING,
+    K_ATTN_PROJECT_KV,
+    K_ATTN_STATIC_FEATURES,
+    K_ATTN_WEIGHT_DECAY,
     K_CV_SPLIT_COLUMN,
     K_HUBER_DELTAS,
     K_LGBM_COLSAMPLE_BYTREE,
@@ -39,11 +56,13 @@ from K.k_config import (
     K_SCHEDULER_TYPE,
     K_SPECIFIC_FEATURES,
     K_TARGETS,
+    K_TRAIN_ATTENTION_NN,
     K_TRAIN_LIGHTGBM,
 )
-from K.k_data import filter_to_k, kicker_season_split, load_kicker_data
+from K.k_data import filter_to_k, kicker_season_split, load_kicker_data, load_kicker_kicks
 from K.k_features import (
     add_k_specific_features,
+    build_nested_kick_history,
     compute_k_features,
     fill_k_nans,
     get_k_feature_columns,
@@ -66,8 +85,23 @@ def run_k_pipeline(seed=42):
     print("Computing kicker features on full dataset...")
     compute_k_features(k_df)
 
+    # Per-kick records for the attention NN's inner pool.
+    print("Loading per-kick records...")
+    kicks_df = load_kicker_kicks(k_df)
+    print(f"  Loaded {len(kicks_df)} kick records")
+
     # --- Cross-season split ---
     train_df, val_df, test_df = kicker_season_split(k_df)
+
+    # Closure over kicks_df so the shared pipeline can build nested history
+    # arrays for each split without knowing kicker specifics.
+    kick_history_builder = functools.partial(
+        build_nested_kick_history,
+        kicks_df=kicks_df,
+        kick_stats=K_ATTN_KICK_STATS,
+        max_games=K_ATTN_MAX_GAMES,
+        max_kicks_per_game=K_ATTN_MAX_KICKS_PER_GAME,
+    )
 
     # --- Run shared pipeline ---
     K_CONFIG = {
@@ -99,6 +133,24 @@ def run_k_pipeline(seed=42):
         "scheduler_type": K_SCHEDULER_TYPE,
         "onecycle_max_lr": K_ONECYCLE_MAX_LR,
         "onecycle_pct_start": K_ONECYCLE_PCT_START,
+        # Attention NN (nested: inner pool per game, outer per-target attention).
+        "train_attention_nn": K_TRAIN_ATTENTION_NN,
+        "attn_history_structure": "nested",
+        "attn_static_from_df": True,
+        "attn_static_features": K_ATTN_STATIC_FEATURES,
+        "attn_history_builder_fn": kick_history_builder,
+        "attn_d_model": K_ATTN_D_MODEL,
+        "attn_n_heads": K_ATTN_N_HEADS,
+        "attn_kick_dim": K_ATTN_KICK_DIM,
+        "attn_encoder_hidden_dim": K_ATTN_ENCODER_HIDDEN_DIM,
+        "attn_project_kv": K_ATTN_PROJECT_KV,
+        "attn_positional_encoding": K_ATTN_POSITIONAL_ENCODING,
+        "attn_gated_fusion": K_ATTN_GATED_FUSION,
+        "attn_dropout": K_ATTN_DROPOUT,
+        "attn_lr": K_ATTN_LR,
+        "attn_weight_decay": K_ATTN_WEIGHT_DECAY,
+        "attn_batch_size": K_ATTN_BATCH_SIZE,
+        "attn_patience": K_ATTN_PATIENCE,
         "train_lightgbm": K_TRAIN_LIGHTGBM,
         "lgbm_n_estimators": K_LGBM_N_ESTIMATORS,
         "lgbm_learning_rate": K_LGBM_LEARNING_RATE,

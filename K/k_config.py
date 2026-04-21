@@ -99,6 +99,58 @@ K_ONECYCLE_PCT_START = 0.3
 # === Cross-season split (now matching other positions) ===
 K_MIN_GAMES = 4
 
+# === Attention NN (nested: per-kick inner pool, per-game outer attention) ===
+K_TRAIN_ATTENTION_NN = True
+# Outer attention over prior games — mirrors RB's proven d_model=32 / n_heads=2.
+K_ATTN_D_MODEL = 32
+K_ATTN_N_HEADS = 2
+K_ATTN_ENCODER_HIDDEN_DIM = 32
+K_ATTN_MAX_GAMES = 17
+K_ATTN_PROJECT_KV = False
+K_ATTN_POSITIONAL_ENCODING = True
+K_ATTN_GATED_FUSION = False
+K_ATTN_DROPOUT = 0.05
+K_ATTN_LR = 1e-3
+K_ATTN_WEIGHT_DECAY = 5e-5
+K_ATTN_BATCH_SIZE = 256
+K_ATTN_PATIENCE = 35
+
+# Inner pool over kicks within a game.
+K_ATTN_KICK_DIM = 16
+K_ATTN_MAX_KICKS_PER_GAME = 10
+# Per-kick features consumed by the inner pool. Game-level context (wind,
+# is_home) is replicated across kicks in the same game so the inner pool
+# can condition on conditions without requiring a parallel static channel.
+K_ATTN_KICK_STATS = [
+    "is_fg",
+    "is_xp",
+    "kick_distance",
+    "kick_made",
+    "fg_prob",
+    "is_q4",
+    "score_diff",
+    "game_wind",
+    "is_home",
+]
+
+# L1 (shift-1) rolling features. Engineered into the DataFrame by
+# compute_k_features but intentionally excluded from K_ALL_FEATURES — the
+# attention NN's static branch reads them directly via K_ATTN_STATIC_FEATURES
+# so Ridge and the base NN continue to train only on K_SPECIFIC_FEATURES.
+K_ATTN_L1_FEATURES = [
+    "fg_attempts_L1",
+    "fg_accuracy_L1",
+    "pat_volume_L1",
+    "total_k_pts_L1",
+    "long_fg_rate_L1",
+    "avg_fg_distance_L1",
+    "avg_fg_prob_L1",
+    "fg_pct_40plus_L1",
+    "q4_fg_rate_L1",
+    "xp_accuracy_L1",
+]
+K_ATTN_STATIC_FEATURES = K_ATTN_L1_FEATURES + K_CONTEXTUAL_FEATURES
+
 # === LightGBM ===
 K_TRAIN_LIGHTGBM = False
 K_LGBM_N_ESTIMATORS = 300
@@ -138,4 +190,26 @@ K_CONFIG_TINY = {
     "onecycle_max_lr": 1e-3,
     "onecycle_pct_start": 0.3,
     "train_lightgbm": False,
+}
+
+# Attention tiny config — reuses K_CONFIG_TINY base plus a shrunk attention
+# branch. Used by the E2E attention test. `attn_history_builder_fn` must be
+# supplied by the caller (it captures a kicks_df in its closure).
+K_CONFIG_TINY_ATTN = {
+    **K_CONFIG_TINY,
+    "train_attention_nn": True,
+    "attn_history_structure": "nested",
+    "attn_static_from_df": True,
+    "attn_static_features": K_ATTN_STATIC_FEATURES,
+    "attn_d_model": 8,
+    "attn_n_heads": 1,
+    "attn_kick_dim": 4,
+    "attn_encoder_hidden_dim": 0,
+    "attn_project_kv": False,
+    "attn_positional_encoding": True,
+    "attn_dropout": 0.0,
+    "attn_lr": 1e-3,
+    "attn_weight_decay": 0.0,
+    "attn_batch_size": 32,
+    "attn_patience": 1,
 }

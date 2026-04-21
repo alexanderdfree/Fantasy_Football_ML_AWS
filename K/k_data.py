@@ -337,6 +337,115 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
         print(f"  WARNING: 2025 PBP backfill failed ({e}), PBP features will be NaN for 2025")
 
 
+def reconstruct_kicker_kicks_from_pbp(
+    seasons: list[int],
+    cache_dir: str = CACHE_DIR,
+) -> pd.DataFrame:
+    """Extract individual FG + XP records from play-by-play data.
+
+    Returns one row per kick attempt (FG or XP). Feeds the attention NN's
+    inner pool as a variable-length sequence per game — complements the
+    weekly-aggregated rows produced by `reconstruct_kicker_weekly_from_pbp`.
+
+    XP rows have `kick_distance=0` and `fg_prob=0`; the `is_xp` flag
+    disambiguates (don't conflate with a 0%-probability FG).
+    """
+    cache_path = f"{cache_dir}/kicker_kicks_pbp_{seasons[0]}_{seasons[-1]}.parquet"
+    if os.path.exists(cache_path):
+        return pd.read_parquet(cache_path)
+
+    all_kicks = []
+    for yr in seasons:
+        print(f"  Loading per-kick PBP for {yr}...")
+        try:
+            pbp = nfl.import_pbp_data([yr], downcast=True)
+        except Exception as e:
+            print(f"  WARNING: per-kick PBP load failed for {yr} ({e}); skipping")
+            continue
+        pbp = pbp[pbp["season_type"] == "REG"]
+
+        fg_rows = pbp[pbp["field_goal_attempt"] == 1]
+        fg_kicks = pd.DataFrame(
+            {
+                "player_id": fg_rows["kicker_player_id"],
+                "season": fg_rows["season"],
+                "week": fg_rows["week"],
+                "is_fg": 1,
+                "is_xp": 0,
+                "kick_distance": fg_rows["kick_distance"].fillna(0).astype(float),
+                "kick_made": (fg_rows["field_goal_result"] == "made").astype(int),
+                "fg_prob": fg_rows["fg_prob"].fillna(0).astype(float),
+                "is_q4": (fg_rows["qtr"] >= 4).astype(int),
+                "score_diff": fg_rows["score_differential"].fillna(0).astype(float),
+                "game_wind": fg_rows["wind"].fillna(0).astype(float),
+            }
+        )
+
+        xp_rows = pbp[pbp["extra_point_attempt"] == 1]
+        xp_kicks = pd.DataFrame(
+            {
+                "player_id": xp_rows["kicker_player_id"],
+                "season": xp_rows["season"],
+                "week": xp_rows["week"],
+                "is_fg": 0,
+                "is_xp": 1,
+                "kick_distance": 0.0,
+                "kick_made": (xp_rows["extra_point_result"] == "good").astype(int),
+                "fg_prob": 0.0,
+                "is_q4": (xp_rows["qtr"] >= 4).astype(int),
+                "score_diff": xp_rows["score_differential"].fillna(0).astype(float),
+                "game_wind": xp_rows["wind"].fillna(0).astype(float),
+            }
+        )
+
+        all_kicks.append(pd.concat([fg_kicks, xp_kicks], ignore_index=True))
+
+    if not all_kicks:
+        return pd.DataFrame(
+            columns=[
+                "player_id",
+                "season",
+                "week",
+                "is_fg",
+                "is_xp",
+                "kick_distance",
+                "kick_made",
+                "fg_prob",
+                "is_q4",
+                "score_diff",
+                "game_wind",
+            ]
+        )
+
+    result = pd.concat(all_kicks, ignore_index=True)
+    result = result.dropna(subset=["player_id"]).reset_index(drop=True)
+
+    os.makedirs(cache_dir, exist_ok=True)
+    result.to_parquet(cache_path)
+    print(f"  Cached per-kick data: {len(result)} kicks -> {cache_path}")
+    return result
+
+
+def load_kicker_kicks(k_df: pd.DataFrame) -> pd.DataFrame:
+    """Load per-kick records aligned with the weekly kicker DataFrame.
+
+    Called separately from `load_kicker_data` so the serving path (app.py)
+    doesn't pay the PBP re-parse cost. Returns a DataFrame restricted to the
+    (player_id, season) pairs that survive the K_MIN_GAMES filter, with
+    `is_home` merged from the schedule-joined weekly DataFrame.
+    """
+    kicks_df = reconstruct_kicker_kicks_from_pbp(K_SEASONS)
+
+    valid_keys = k_df[["player_id", "season"]].drop_duplicates()
+    kicks_df = kicks_df.merge(valid_keys, on=["player_id", "season"], how="inner")
+
+    home_lookup = k_df[["player_id", "season", "week", "is_home"]].drop_duplicates()
+    kicks_df = kicks_df.merge(home_lookup, on=["player_id", "season", "week"], how="left")
+    kicks_df["is_home"] = kicks_df["is_home"].fillna(0).astype(int)
+
+    return kicks_df
+
+
 def filter_to_k(df: pd.DataFrame) -> pd.DataFrame:
     """Identity filter — kicker data is pre-filtered."""
     return df.copy()
