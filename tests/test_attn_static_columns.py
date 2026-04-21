@@ -22,6 +22,12 @@ import pytest
 
 from DST.dst_config import DST_ATTN_STATIC_FEATURES
 from DST.dst_features import get_dst_feature_columns
+from K.k_config import (
+    K_ALL_FEATURES,
+    K_ATTN_L1_FEATURES,
+    K_ATTN_STATIC_FEATURES,
+    K_CONTEXTUAL_FEATURES,
+)
 from QB.qb_config import QB_ATTN_STATIC_CATEGORIES, QB_ATTN_STATIC_FEATURES
 from QB.qb_features import get_qb_feature_columns
 from RB.rb_config import RB_ATTN_STATIC_CATEGORIES, RB_ATTN_STATIC_FEATURES
@@ -238,3 +244,64 @@ class TestGetAttnStaticColumnsFunction:
 
     def test_empty_whitelist_returns_empty(self):
         assert get_attn_static_columns(["a", "b", "c"], []) == []
+
+
+# ---------------------------------------------------------------------------
+# K — different contract. K's attention static list is the complete source of
+# truth (attn_static_from_df=True), so the filter is a no-op at runtime. The
+# invariants are (a) no temporal features in the static list, (b) the new L1
+# engineered columns stay OUT of K_ALL_FEATURES so Ridge and the base NN
+# never see them.
+# ---------------------------------------------------------------------------
+
+_K_FORBIDDEN_STATIC_COLS = {
+    # L3/L5/L8 rolling features engineered by compute_k_features
+    "fg_attempts_L3",
+    "fg_accuracy_L5",
+    "pat_volume_L3",
+    "total_k_pts_L3",
+    "long_fg_rate_L3",
+    "k_pts_trend",
+    "k_pts_std_L3",
+    "avg_fg_distance_L3",
+    "avg_fg_prob_L3",
+    "fg_pct_40plus_L5",
+    "q4_fg_rate_L5",
+    "xp_accuracy_L5",
+}
+
+
+@pytest.mark.unit
+class TestKAttentionStaticFeatures:
+    def test_no_l3_l5_features_in_static_set(self):
+        leaks = set(K_ATTN_STATIC_FEATURES) & _K_FORBIDDEN_STATIC_COLS
+        assert not leaks, f"K_ATTN_STATIC_FEATURES contains L3/L5 rolling features: {sorted(leaks)}"
+
+    def test_no_rolling_or_share_prefixes(self):
+        leaks = [
+            c
+            for c in K_ATTN_STATIC_FEATURES
+            if c.startswith("rolling_") or c.startswith("ewma_") or c.startswith("trend_")
+        ]
+        assert not leaks, f"K_ATTN_STATIC_FEATURES has temporal prefixes: {leaks}"
+
+    def test_l1_features_excluded_from_k_all_features(self):
+        """Critical: the engineered L1 columns must NOT live in K_ALL_FEATURES,
+        or Ridge and the base NN would train on them — the exact leakage the
+        attn_static_from_df path was designed to prevent."""
+        all_features = set(K_ALL_FEATURES)
+        leaks = set(K_ATTN_L1_FEATURES) & all_features
+        assert not leaks, f"L1 attention features leaked into K_ALL_FEATURES: {sorted(leaks)}"
+
+    def test_column_count_matches_config(self):
+        """Drift guard: unexpected count shift => feature added/removed silently."""
+        expected = len(K_ATTN_L1_FEATURES) + len(K_CONTEXTUAL_FEATURES)
+        assert len(K_ATTN_STATIC_FEATURES) == expected
+
+    def test_no_duplicates(self):
+        assert len(K_ATTN_STATIC_FEATURES) == len(set(K_ATTN_STATIC_FEATURES))
+
+    def test_contextual_features_present(self):
+        got = set(K_ATTN_STATIC_FEATURES)
+        for col in ("is_home", "implied_team_total", "total_line", "game_wind"):
+            assert col in got, f"K_ATTN_STATIC_FEATURES missing {col}"

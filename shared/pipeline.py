@@ -29,13 +29,19 @@ from shared.evaluation import (
     print_comparison_table,
 )
 from shared.models import LightGBMMultiTarget, RidgeMultiTarget
-from shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory
+from shared.neural_net import (
+    MultiHeadNet,
+    MultiHeadNetWithHistory,
+    MultiHeadNetWithNestedHistory,
+)
 from shared.training import (
     MultiHeadHistoryTrainer,
+    MultiHeadNestedHistoryTrainer,
     MultiHeadTrainer,
     MultiTargetLoss,
     make_dataloaders,
     make_history_dataloaders,
+    make_nested_kick_dataloaders,
     plot_training_curves,
 )
 from shared.utils import seed_everything, timed
@@ -609,6 +615,120 @@ def _train_attention_nn(
     return model, nn_scaler, val_preds, test_preds, metrics, history
 
 
+def _train_nested_attention_nn(
+    position,
+    X_train,
+    X_val,
+    X_test,
+    hist_train,
+    outer_train,
+    inner_train,
+    hist_val,
+    outer_val,
+    inner_val,
+    hist_test,
+    outer_test,
+    inner_test,
+    y_train_dict,
+    y_val_dict,
+    y_test_dict,
+    cfg,
+    targets,
+    seed,
+):
+    """Train a MultiHeadNetWithNestedHistory on pre-padded nested history.
+
+    Parallel to _train_attention_nn but consumes a 4-D kick tensor plus outer
+    and inner masks. No whitelist filter here: when attn_static_from_df=True
+    the caller has already rebuilt X from the DataFrame using
+    cfg['attn_static_features'].
+    """
+    seed_everything(seed)
+
+    nn_scaler = StandardScaler()
+    X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
+    X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
+    X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
+
+    attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
+    train_loader, val_loader = make_nested_kick_dataloaders(
+        X_train_s,
+        hist_train,
+        outer_train,
+        inner_train,
+        y_train_dict,
+        X_val_s,
+        hist_val,
+        outer_val,
+        inner_val,
+        y_val_dict,
+        batch_size=attn_batch_size,
+    )
+
+    kick_dim = hist_train.shape[-1]
+    max_games = hist_train.shape[1]
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    aggregate_fn = _nn_aggregate_fn(position, cfg)
+    model = MultiHeadNetWithNestedHistory(
+        static_dim=X_train_s.shape[1],
+        kick_dim=kick_dim,
+        target_names=targets,
+        backbone_layers=cfg["nn_backbone_layers"],
+        d_kick=cfg.get("attn_kick_dim", 16),
+        d_model=cfg.get("attn_d_model", 32),
+        n_attn_heads=cfg.get("attn_n_heads", 2),
+        head_hidden=cfg["nn_head_hidden"],
+        dropout=cfg["nn_dropout"],
+        head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
+        non_negative_targets=cfg.get("nn_non_negative_targets"),
+        project_kv=cfg.get("attn_project_kv", False),
+        use_positional_encoding=cfg.get("attn_positional_encoding", False),
+        max_games=max_games,
+        attn_dropout=cfg.get("attn_dropout", 0.0),
+        encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
+        aggregate_fn=aggregate_fn,
+    ).to(device)
+
+    attn_lr = cfg.get("attn_lr", cfg["nn_lr"])
+    attn_wd = cfg.get("attn_weight_decay", cfg["nn_weight_decay"])
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=attn_lr,
+        weight_decay=attn_wd,
+    )
+    scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
+    criterion = MultiTargetLoss(
+        target_names=targets,
+        loss_weights=cfg["loss_weights"],
+        huber_deltas=cfg["huber_deltas"],
+        w_total=cfg["loss_w_total"],
+    )
+
+    attn_patience = cfg.get("attn_patience", cfg["nn_patience"])
+    trainer = MultiHeadNestedHistoryTrainer(
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        criterion=criterion,
+        device=device,
+        target_names=targets,
+        patience=attn_patience,
+        scheduler_per_batch=scheduler_per_batch,
+        log_every=_resolve_nn_log_every(cfg),
+    )
+    history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
+
+    val_preds = model.predict_numpy(X_val_s, hist_val, outer_val, inner_val, device)
+    if aggregate_fn is None:
+        val_preds["total"] = sum(val_preds[t] for t in targets)
+    test_preds = model.predict_numpy(X_test_s, hist_test, outer_test, inner_test, device)
+    if aggregate_fn is None:
+        test_preds["total"] = sum(test_preds[t] for t in targets)
+    metrics = compute_target_metrics(y_test_dict, test_preds, targets)
+
+    return model, nn_scaler, val_preds, test_preds, metrics, history
+
+
 def _train_lightgbm(
     X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg, targets, feature_cols, seed
 ):
@@ -784,46 +904,100 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     if cfg.get("train_attention_nn", False):
         print(f"\n=== {pos} Attention Multi-Head Neural Net ===")
         with timed("attn_nn_train"):
-            history_stats = cfg.get("attn_history_stats", None)
-            max_seq_len = cfg.get("attn_max_seq_len", 17)
+            # Static features: either filter the base matrix (RB-style whitelist)
+            # or rebuild directly from the DataFrame (K-style — its L1 attention
+            # features live outside K_ALL_FEATURES to stay out of Ridge/base NN).
+            if cfg.get("attn_static_from_df", False):
+                attn_static_cols = cfg["attn_static_features"]
+                X_attn_train = pos_train[attn_static_cols].to_numpy(dtype=np.float32)
+                X_attn_val = pos_val[attn_static_cols].to_numpy(dtype=np.float32)
+                X_attn_test = pos_test[attn_static_cols].to_numpy(dtype=np.float32)
+                attn_feature_cols = list(attn_static_cols)
+            else:
+                X_attn_train, X_attn_val, X_attn_test = X_train, X_val, X_test
+                attn_feature_cols = feature_cols
 
-            hist_train, mask_train = build_game_history_arrays(
-                pos_train, history_stats=history_stats, max_seq_len=max_seq_len
-            )
-            hist_val, mask_val = build_game_history_arrays(
-                pos_val, history_stats=history_stats, max_seq_len=max_seq_len
-            )
-            hist_test, mask_test = build_game_history_arrays(
-                pos_test, history_stats=history_stats, max_seq_len=max_seq_len
-            )
-            print(f"  History shape: {hist_train.shape} (game_dim={hist_train.shape[2]})")
+            structure = cfg.get("attn_history_structure", "flat")
+            if structure == "nested":
+                builder_fn = cfg["attn_history_builder_fn"]
+                hist_train, outer_train, inner_train = builder_fn(pos_train)
+                hist_val, outer_val, inner_val = builder_fn(pos_val)
+                hist_test, outer_test, inner_test = builder_fn(pos_test)
+                print(
+                    f"  Nested history shape: {hist_train.shape} "
+                    f"(max_games={hist_train.shape[1]}, "
+                    f"max_kicks={hist_train.shape[2]}, "
+                    f"kick_dim={hist_train.shape[3]})"
+                )
+                (
+                    attn_model,
+                    attn_nn_scaler,
+                    attn_nn_val_preds,
+                    attn_nn_test_preds,
+                    attn_nn_metrics,
+                    attn_history,
+                ) = _train_nested_attention_nn(
+                    position,
+                    X_attn_train,
+                    X_attn_val,
+                    X_attn_test,
+                    hist_train,
+                    outer_train,
+                    inner_train,
+                    hist_val,
+                    outer_val,
+                    inner_val,
+                    hist_test,
+                    outer_test,
+                    inner_test,
+                    y_train_dict,
+                    y_val_dict,
+                    y_test_dict,
+                    cfg,
+                    targets,
+                    seed,
+                )
+            else:
+                history_stats = cfg.get("attn_history_stats", None)
+                max_seq_len = cfg.get("attn_max_seq_len", 17)
 
-            (
-                attn_model,
-                attn_nn_scaler,
-                attn_nn_val_preds,
-                attn_nn_test_preds,
-                attn_nn_metrics,
-                attn_history,
-            ) = _train_attention_nn(
-                position,
-                X_train,
-                X_val,
-                X_test,
-                hist_train,
-                mask_train,
-                hist_val,
-                mask_val,
-                hist_test,
-                mask_test,
-                y_train_dict,
-                y_val_dict,
-                y_test_dict,
-                cfg,
-                targets,
-                seed,
-                feature_cols=feature_cols,
-            )
+                hist_train, mask_train = build_game_history_arrays(
+                    pos_train, history_stats=history_stats, max_seq_len=max_seq_len
+                )
+                hist_val, mask_val = build_game_history_arrays(
+                    pos_val, history_stats=history_stats, max_seq_len=max_seq_len
+                )
+                hist_test, mask_test = build_game_history_arrays(
+                    pos_test, history_stats=history_stats, max_seq_len=max_seq_len
+                )
+                print(f"  History shape: {hist_train.shape} (game_dim={hist_train.shape[2]})")
+
+                (
+                    attn_model,
+                    attn_nn_scaler,
+                    attn_nn_val_preds,
+                    attn_nn_test_preds,
+                    attn_nn_metrics,
+                    attn_history,
+                ) = _train_attention_nn(
+                    position,
+                    X_attn_train,
+                    X_attn_val,
+                    X_attn_test,
+                    hist_train,
+                    mask_train,
+                    hist_val,
+                    mask_val,
+                    hist_test,
+                    mask_test,
+                    y_train_dict,
+                    y_val_dict,
+                    y_test_dict,
+                    cfg,
+                    targets,
+                    seed,
+                    feature_cols=attn_feature_cols,
+                )
 
     # --- LightGBM Multi-Target (conditional) ---
     lgbm_val_preds = None

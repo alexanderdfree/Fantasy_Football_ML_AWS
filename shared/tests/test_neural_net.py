@@ -1,10 +1,16 @@
-"""Tests for shared.neural_net — GatedTDHead, AttentionPool, MultiHeadNetWithHistory."""
+"""Tests for shared.neural_net — GatedTDHead, AttentionPool, and the
+MultiHeadNetWithHistory / MultiHeadNetWithNestedHistory variants."""
 
 import numpy as np
 import pytest
 import torch
 
-from shared.neural_net import AttentionPool, GatedTDHead, MultiHeadNetWithHistory
+from shared.neural_net import (
+    AttentionPool,
+    GatedTDHead,
+    MultiHeadNetWithHistory,
+    MultiHeadNetWithNestedHistory,
+)
 
 TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 
@@ -319,3 +325,132 @@ class TestMultiHeadNetWithHistory:
             out = model(x_static, x_history, mask)
         for key in out:
             assert torch.isfinite(out[key]).all(), f"NaN/Inf in {key}"
+
+
+# ---------------------------------------------------------------------------
+# MultiHeadNetWithNestedHistory
+# ---------------------------------------------------------------------------
+
+K_TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
+
+
+@pytest.mark.unit
+class TestMultiHeadNetWithNestedHistory:
+    """Nested attention: inner pool over kicks + outer attention over games."""
+
+    @pytest.fixture
+    def model(self):
+        return MultiHeadNetWithNestedHistory(
+            static_dim=7,
+            kick_dim=9,
+            target_names=K_TARGETS,
+            backbone_layers=[16, 8],
+            d_kick=8,
+            d_model=16,
+            n_attn_heads=2,
+            head_hidden=8,
+            dropout=0.0,
+            use_positional_encoding=True,
+            max_games=5,
+        )
+
+    @pytest.fixture
+    def batch(self):
+        B, G, K = 4, 5, 3
+        x_static = torch.randn(B, 7)
+        x_kicks = torch.randn(B, G, K, 9)
+        outer_mask = torch.ones(B, G, dtype=torch.bool)
+        inner_mask = torch.ones(B, G, K, dtype=torch.bool)
+        return x_static, x_kicks, outer_mask, inner_mask
+
+    def test_output_keys(self, model, batch):
+        preds = model(*batch)
+        assert set(preds.keys()) == set(K_TARGETS + ["total"])
+
+    def test_output_shapes(self, model, batch):
+        preds = model(*batch)
+        for key in K_TARGETS + ["total"]:
+            assert preds[key].shape == (4,), f"{key}: {preds[key].shape}"
+
+    def test_total_equals_sum(self, model, batch):
+        model.eval()
+        with torch.no_grad():
+            preds = model(*batch)
+        total_check = sum(preds[t] for t in K_TARGETS)
+        assert torch.allclose(preds["total"], total_check)
+
+    def test_non_negative_outputs(self, model, batch):
+        """Default: all K heads are non-negative (softplus)."""
+        model.eval()
+        with torch.no_grad():
+            preds = model(*batch)
+        for t in K_TARGETS:
+            assert (preds[t] >= 0).all(), f"{t} has negative outputs"
+
+    def test_all_outer_padding(self, model):
+        """Row with no prior games — all-False outer_mask must not produce NaN."""
+        model.eval()
+        B, G, K = 2, 5, 3
+        x_static = torch.randn(B, 7)
+        x_kicks = torch.zeros(B, G, K, 9)
+        outer_mask = torch.zeros(B, G, dtype=torch.bool)
+        inner_mask = torch.zeros(B, G, K, dtype=torch.bool)
+        with torch.no_grad():
+            preds = model(x_static, x_kicks, outer_mask, inner_mask)
+        for key in preds:
+            assert torch.isfinite(preds[key]).all(), f"NaN/Inf in {key}"
+
+    def test_all_inner_padding_for_real_game(self, model):
+        """A real game with 0 kicks (all-False inner row) must not produce NaN."""
+        model.eval()
+        B, G, K = 2, 5, 3
+        x_static = torch.randn(B, 7)
+        x_kicks = torch.zeros(B, G, K, 9)
+        outer_mask = torch.zeros(B, G, dtype=torch.bool)
+        outer_mask[0, 0] = True  # One real game
+        inner_mask = torch.zeros(B, G, K, dtype=torch.bool)
+        # Note: inner_mask all False for that real game — no kicks recorded
+        with torch.no_grad():
+            preds = model(x_static, x_kicks, outer_mask, inner_mask)
+        for key in preds:
+            assert torch.isfinite(preds[key]).all(), f"NaN/Inf in {key}"
+
+    def test_gradient_flow_both_branches(self, model):
+        """Gradients must flow to both static and kicks tensors."""
+        B, G, K = 4, 5, 3
+        x_static = torch.randn(B, 7, requires_grad=True)
+        x_kicks = torch.randn(B, G, K, 9, requires_grad=True)
+        outer_mask = torch.ones(B, G, dtype=torch.bool)
+        inner_mask = torch.ones(B, G, K, dtype=torch.bool)
+        preds = model(x_static, x_kicks, outer_mask, inner_mask)
+        preds["total"].sum().backward()
+        assert x_static.grad is not None
+        assert x_kicks.grad is not None
+        assert (x_static.grad != 0).any()
+        assert (x_kicks.grad != 0).any()
+
+    def test_positional_encoding_creates_embedding(self):
+        m = MultiHeadNetWithNestedHistory(
+            static_dim=4,
+            kick_dim=6,
+            target_names=K_TARGETS,
+            backbone_layers=[8],
+            d_kick=4,
+            d_model=8,
+            max_games=7,
+            use_positional_encoding=True,
+        )
+        assert hasattr(m, "pos_embedding")
+        assert m.pos_embedding.num_embeddings == 7
+
+    def test_predict_numpy(self, model):
+        model.eval()
+        B, G, K = 4, 5, 3
+        X_static = np.random.randn(B, 7).astype(np.float32)
+        X_kicks = np.random.randn(B, G, K, 9).astype(np.float32)
+        outer = np.ones((B, G), dtype=bool)
+        inner = np.ones((B, G, K), dtype=bool)
+        preds = model.predict_numpy(X_static, X_kicks, outer, inner, torch.device("cpu"))
+        for key in K_TARGETS + ["total"]:
+            assert isinstance(preds[key], np.ndarray)
+            assert preds[key].shape == (B,)

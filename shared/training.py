@@ -386,6 +386,96 @@ class MultiHeadHistoryTrainer(MultiHeadTrainer):
         return preds, y_batch
 
 
+class MultiTargetNestedKickDataset(Dataset):
+    """Dataset returning static features + nested per-game kick history + targets.
+
+    Unlike MultiTargetHistoryDataset the nested arrays are pre-padded to fixed
+    shape `[G, K, kick_dim]` so the default collate works — no custom collation.
+    """
+
+    def __init__(
+        self,
+        X_static: np.ndarray,
+        X_kicks: np.ndarray,
+        outer_mask: np.ndarray,
+        inner_mask: np.ndarray,
+        y_dict: dict,
+    ):
+        self.X_static = torch.FloatTensor(X_static)
+        self.X_kicks = torch.FloatTensor(X_kicks)
+        self.outer_mask = torch.from_numpy(np.asarray(outer_mask, dtype=bool))
+        self.inner_mask = torch.from_numpy(np.asarray(inner_mask, dtype=bool))
+        self.targets = {k: torch.FloatTensor(v) for k, v in y_dict.items()}
+
+    def __len__(self):
+        return len(self.X_static)
+
+    def __getitem__(self, idx):
+        return (
+            self.X_static[idx],
+            self.X_kicks[idx],
+            self.outer_mask[idx],
+            self.inner_mask[idx],
+            {k: v[idx] for k, v in self.targets.items()},
+        )
+
+
+def make_nested_kick_dataloaders(
+    X_train_static,
+    X_train_kicks,
+    train_outer_mask,
+    train_inner_mask,
+    y_train_dict,
+    X_val_static,
+    X_val_kicks,
+    val_outer_mask,
+    val_inner_mask,
+    y_val_dict,
+    batch_size=256,
+):
+    """Build train/val DataLoaders for the nested-history attention model."""
+    train_ds = MultiTargetNestedKickDataset(
+        X_train_static, X_train_kicks, train_outer_mask, train_inner_mask, y_train_dict
+    )
+    val_ds = MultiTargetNestedKickDataset(
+        X_val_static, X_val_kicks, val_outer_mask, val_inner_mask, y_val_dict
+    )
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=True,
+        drop_last=True,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+    )
+    return train_loader, val_loader
+
+
+class MultiHeadNestedHistoryTrainer(MultiHeadTrainer):
+    """Training loop for the nested-attention model.
+
+    Overrides _forward_batch to handle the 5-tuple (static, kicks, outer_mask,
+    inner_mask, targets) batch format.
+    """
+
+    def _forward_batch(self, batch) -> tuple[dict, dict]:
+        X_static, X_kicks, outer_mask, inner_mask, y_batch = batch
+        X_static = X_static.to(self.device, non_blocking=True)
+        X_kicks = X_kicks.to(self.device, non_blocking=True)
+        outer_mask = outer_mask.to(self.device, non_blocking=True)
+        inner_mask = inner_mask.to(self.device, non_blocking=True)
+        y_batch = {k: v.to(self.device, non_blocking=True) for k, v in y_batch.items()}
+        preds = self.model(X_static, X_kicks, outer_mask, inner_mask)
+        return preds, y_batch
+
+
 def plot_training_curves(history: dict, target_names: list[str], save_path: str) -> None:
     """Multi-panel figure for multi-head training."""
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
