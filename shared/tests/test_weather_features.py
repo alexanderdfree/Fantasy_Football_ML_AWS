@@ -111,3 +111,7 @@ class TestMergeScheduleFeatures:
         # Unmatched games should have NaN Vegas features so the error surfaces
         assert result["implied_team_total"].isna().all()
         assert result["total_line"].isna().all()
+        # Interaction feature must also propagate NaN — silently filling with 0
+        # hides the unmatched-game failure from downstream consumers.
+        assert result["implied_opp_total"].isna().all()
+        assert result["implied_total_x_wind"].isna().all()
