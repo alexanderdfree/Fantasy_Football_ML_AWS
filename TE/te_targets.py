@@ -35,12 +35,16 @@ def compute_te_targets(df: pd.DataFrame) -> pd.DataFrame:
         preds = {t: df[t].values for t in _TE_RAW_TARGETS}
         te_points = predictions_to_fantasy_points("TE", preds, "ppr")
         residual = df["fantasy_points"] - te_points
+        # sack_fumbles_lost is excluded from TE fumbles_lost (skill-position
+        # convention) but is included in the pre-computed fantasy_points, so
+        # compensate for it here to avoid spurious warnings.
         for col, weight in (
             ("passing_yards", 0.04),
             ("passing_tds", 4),
             ("interceptions", -2),
             ("rushing_yards", 0.1),
             ("rushing_tds", 6),
+            ("sack_fumbles_lost", -2),
         ):
             if col in df.columns:
                 residual = residual - df[col].fillna(0) * weight

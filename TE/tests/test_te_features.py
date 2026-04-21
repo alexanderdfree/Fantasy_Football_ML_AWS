@@ -68,7 +68,7 @@ class TestComputeTEFeatures:
         df = _make_player_games(n_weeks=4)
         _compute_te_features(df)
         week1 = df[df["week"] == 1]
-        for col in ["yards_per_reception_L3", "reception_rate_L3"]:
+        for col in TE_FEATURE_COLS:
             val = week1[col].iloc[0]
             assert val == 0.0 or np.isnan(val), f"{col} = {val} for week 1"
 
@@ -126,8 +126,8 @@ class TestComputeTEFeatures:
         _compute_te_features(df)
         later = df[df["week"] >= 3]
         shares = later["team_te_target_share_L3"].dropna()
-        if len(shares) > 0:
-            assert (shares <= 1.01).all()
+        assert len(shares) > 0, "no non-NaN shares produced"
+        assert (shares <= 1.01).all()
 
     def test_team_target_share_two_players(self):
         """Two TEs on team split target share."""
@@ -137,8 +137,8 @@ class TestComputeTEFeatures:
         _compute_te_features(df)
         later = df[(df["week"] >= 3) & (df["player_id"] == "T1")]
         shares = later["team_te_target_share_L3"].dropna()
-        if len(shares) > 0:
-            assert all(0.4 <= s <= 0.6 for s in shares)
+        assert len(shares) > 0, "no non-NaN shares produced"
+        assert all(0.4 <= s <= 0.6 for s in shares)
 
     def test_multiple_seasons_independent(self):
         s1 = _make_player_games(season=2022, n_weeks=3, targets=10, receiving_yards=100)

@@ -115,8 +115,6 @@ TE_NN_BATCH_SIZE = 128
 TE_NN_PATIENCE = 25
 
 # === Loss Weights ===
-# Equal per-target weights keep the training objective aligned with the
-# aggregated fantasy-points evaluation metric.
 # Per-target weights scaled inversely to Huber delta (~2.0/δ) so every head
 # contributes comparable gradient magnitude during joint training. Without
 # rebalancing, receiving_yards (δ=15) dominated count heads (δ=0.5) ~900× per
