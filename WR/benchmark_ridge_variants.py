@@ -77,10 +77,8 @@ def _run_variant(
     name,
     feature_cols,
     X_train,
-    X_val,
     X_test,
     y_train_dict,
-    y_val_dict,
     y_test_dict,
     pos_train,
     pca_n=None,
@@ -90,7 +88,6 @@ def _run_variant(
 
     # Select features
     Xi_train = X_train[feature_cols].values.astype(np.float32)
-    X_val[feature_cols].values.astype(np.float32)
     Xi_test = X_test[feature_cols].values.astype(np.float32)
 
     cond = _condition_number(Xi_train)
@@ -214,10 +211,8 @@ def main():
             name,
             cols,
             pos_train,
-            pos_val,
             pos_test,
             y_train_dict,
-            y_val_dict,
             y_test_dict,
             pos_train,
             pca_n=pca_n,
