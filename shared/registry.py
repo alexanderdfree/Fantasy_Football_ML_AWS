@@ -48,7 +48,8 @@ _POSITION_META = {
         "runner_module": "K.run_k_pipeline",
         "runner_fn": "run_k_pipeline",
         "cv_runner_fn": None,
-        "config_var": "K_CONFIG",
+        # K_CONFIG is built inside run_k_pipeline() (local var), not exported.
+        "config_var": None,
         "accepts_dataframes": False,
         "cpu_only": True,
     },
@@ -56,7 +57,8 @@ _POSITION_META = {
         "runner_module": "DST.run_dst_pipeline",
         "runner_fn": "run_dst_pipeline",
         "cv_runner_fn": None,
-        "config_var": "DST_CONFIG",
+        # DST_CONFIG is built inside run_dst_pipeline() (local var), not exported.
+        "config_var": None,
         "accepts_dataframes": False,
         "cpu_only": True,
     },
@@ -89,7 +91,10 @@ def get_cv_runner(pos: str):
 
 
 def get_config(pos: str) -> dict:
-    return getattr(_import_runner_module(pos), _meta(pos)["config_var"])
+    var_name = _meta(pos)["config_var"]
+    if var_name is None:
+        raise ValueError(f"Module-level config dict not exported for position: {pos}")
+    return getattr(_import_runner_module(pos), var_name)
 
 
 def accepts_dataframes(pos: str) -> bool:
@@ -147,9 +152,6 @@ def _attn_kwargs_static(cfg, prefix: str) -> dict:
         gated_td_target=gated_td_target,
         gated_td_targets=list(gated_td_targets) if gated_td_targets is not None else None,
     )
-    gated_td_targets = g("GATED_TD_TARGETS", None)
-    if gated_td_targets is not None:
-        kwargs["gated_td_targets"] = list(gated_td_targets)
     head_hidden_overrides = g("NN_HEAD_HIDDEN_OVERRIDES", None)
     if head_hidden_overrides:
         kwargs["head_hidden_overrides"] = dict(head_hidden_overrides)
