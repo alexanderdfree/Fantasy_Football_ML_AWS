@@ -349,6 +349,12 @@ class MultiHeadTrainer:
                     f"MAE total: {history['val_mae_total'][-1]:.3f} | "
                     f"{target_maes}"
                 )
+        else:
+            # Loop completed all n_epochs without early stopping. Without this,
+            # the caller would get the last-epoch weights instead of the best
+            # checkpoint, silently degrading model quality.
+            if self.best_model_state is not None:
+                self.model.load_state_dict(self.best_model_state)
 
         return history
 

@@ -455,3 +455,19 @@ class TestMultiHeadHistoryTrainer:
         trainer, train_loader, val_loader = setup_trainer
         history = trainer.train(train_loader, val_loader, n_epochs=20)
         assert history["train_loss"][0] > history["train_loss"][-1]
+
+    def test_best_checkpoint_loaded_on_normal_completion(self, setup_trainer):
+        """Training without early-stopping still restores the best checkpoint.
+
+        Before the fix, `best_model_state` was only loaded inside the early-stop
+        branch. A run that completed all ``n_epochs`` kept the last epoch's
+        weights even when an earlier epoch was better.
+        """
+        trainer, train_loader, val_loader = setup_trainer
+        # Set patience >> n_epochs so early stopping cannot trigger.
+        trainer.patience = 10_000
+        trainer.train(train_loader, val_loader, n_epochs=3)
+        assert trainer.best_model_state is not None
+        loaded = trainer.model.state_dict()
+        for k, v in trainer.best_model_state.items():
+            torch.testing.assert_close(loaded[k], v)
