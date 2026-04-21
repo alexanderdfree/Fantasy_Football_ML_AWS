@@ -84,6 +84,12 @@ class Trainer:
                     f"MAE: {history['val_mae'][-1]:.3f}"
                 )
 
+        # Restore best weights. Early-stopping does this already and breaks,
+        # so we only need to handle the "ran to completion" path where the
+        # final epoch's weights may be worse than best_val_loss.
+        if self.best_model_state is not None:
+            self.model.load_state_dict(self.best_model_state)
+
         return history
 
     def plot_training_curves(self, history: dict, save_path: str) -> None:

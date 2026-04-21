@@ -21,6 +21,10 @@ class RidgeModel:
 
             self.pca = PCA(n_components=self.pca_n_components)
             X_scaled = self.pca.fit_transform(X_scaled)
+        else:
+            # Re-fit with no PCA: drop any stale PCA from a prior load/fit so
+            # predict() doesn't apply a transform trained on different data.
+            self.pca = None
         self.model.fit(X_scaled, y_train)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -60,3 +64,8 @@ class RidgeModel:
         pca_path = f"{model_dir}/pca.pkl"
         if os.path.exists(pca_path):
             self.pca = joblib.load(pca_path)
+        else:
+            # No PCA on disk for this run; clear any stale PCA left on self
+            # from a previous load, otherwise predict() would apply the old
+            # transform to freshly-loaded scaler output.
+            self.pca = None
