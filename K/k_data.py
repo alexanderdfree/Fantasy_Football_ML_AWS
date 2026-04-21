@@ -325,10 +325,14 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
         for str_col in ("roof", "surface"):
             if k_df[str_col].dtype != object:
                 k_df[str_col] = k_df[str_col].astype(object)
-        # DataFrame.update aligns on index and overwrites non-NaN values from the source
+        # DataFrame.update aligns on index and overwrites non-NaN values from the source.
+        # Wrap in try/finally so a failure inside update() can't leave k_df stuck
+        # with the composite index (which would break downstream groupby calls).
         k_df.set_index(key, inplace=True)
-        k_df.update(pbp_all.set_index(key)[backfill_cols])
-        k_df.reset_index(inplace=True)
+        try:
+            k_df.update(pbp_all.set_index(key)[backfill_cols])
+        finally:
+            k_df.reset_index(inplace=True)
     except Exception as e:
         print(f"  WARNING: 2025 PBP backfill failed ({e}), PBP features will be NaN for 2025")
 
