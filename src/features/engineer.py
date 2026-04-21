@@ -209,10 +209,7 @@ def build_game_history_arrays(
     # caller-supplied labels, which fancy-indexes safely even if caller indices
     # are duplicated or non-contiguous.
     df_pos = df.reset_index(drop=True)
-    sorted_idx = (
-        df_pos.sort_values(["player_id", "season", "week"], kind="stable")
-        .index.to_numpy()
-    )
+    sorted_idx = df_pos.sort_values(["player_id", "season", "week"], kind="stable").index.to_numpy()
     stat_values = df_pos.loc[sorted_idx, history_stats].to_numpy(dtype=np.float32)
     player_ids = df_pos["player_id"].to_numpy()[sorted_idx]
     seasons = df_pos["season"].to_numpy()[sorted_idx]
