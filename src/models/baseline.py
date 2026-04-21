@@ -28,9 +28,11 @@ class SeasonAverageBaseline:
 
     def predict(self, df: pd.DataFrame) -> np.ndarray:
         work = _build_workframe(df)
-        preds = work.groupby(["player_id", "season"])["fantasy_points"].transform(
-            lambda x: x.shift(1).expanding().mean()
-        ).fillna(0)
+        preds = (
+            work.groupby(["player_id", "season"])["fantasy_points"]
+            .transform(lambda x: x.shift(1).expanding().mean())
+            .fillna(0)
+        )
         return _scatter_back(preds, work["_pos"].to_numpy())
 
 
