@@ -6,6 +6,7 @@ No general cross-position model is used.
 
 import os
 import sys
+import threading
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -61,6 +62,12 @@ sync_models_from_s3()
 app = Flask(__name__)
 
 _cache = {}
+# Serializes lazy model/data loads — Flask dispatches requests on multiple
+# threads, so two concurrent first-hit requests would otherwise both see
+# _cache as empty and race on duplicate I/O plus .loc-writes into the shared
+# results DataFrame. Reentrant because _ensure_metrics nests into
+# _ensure_position_loaded.
+_cache_lock = threading.RLock()
 
 
 def _safe_num(v):
@@ -548,9 +555,17 @@ _ALL_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 
 def _ensure_base_data():
     """Load splits + build empty results frame. Idempotent. No model loads."""
-    if _cache.get("base_loaded") or "results" in _cache:
+    if _cache.get("base_loaded"):
         return
+    with _cache_lock:
+        # Re-check under lock: another thread may have populated between our
+        # fast-path check and lock acquisition.
+        if _cache.get("base_loaded") or "results" in _cache:
+            return
+        _load_base_data_locked()
 
+
+def _load_base_data_locked():
     print("Loading data...")
 
     def _load_reg(path):
@@ -624,16 +639,19 @@ def _ensure_base_data():
 
 
 def _ensure_position_loaded(pos):
-    """Apply position-specific model. Idempotent."""
+    """Apply position-specific model. Idempotent, thread-safe."""
     _ensure_base_data()
-    if "splits" not in _cache:
+    if pos in _cache.get("positions_loaded", ()):
         return
-    if pos in _cache["positions_loaded"]:
-        return
-    train, val, test = _cache["splits"][pos]
-    print(f"Applying {pos}-specific model...")
-    _apply_position_models(train, val, test, pos, _cache["results"])
-    _cache["positions_loaded"].add(pos)
+    with _cache_lock:
+        if "splits" not in _cache:
+            return
+        if pos in _cache["positions_loaded"]:
+            return
+        train, val, test = _cache["splits"][pos]
+        print(f"Applying {pos}-specific model...")
+        _apply_position_models(train, val, test, pos, _cache["results"])
+        _cache["positions_loaded"].add(pos)
 
 
 def _ensure_all_positions_loaded():
@@ -652,7 +670,14 @@ _MODEL_PRED_COLUMNS = [
 def _ensure_metrics():
     if "metrics" in _cache:
         return
-    _ensure_all_positions_loaded()
+    with _cache_lock:
+        if "metrics" in _cache:
+            return
+        _ensure_all_positions_loaded()
+        _compute_metrics_locked()
+
+
+def _compute_metrics_locked():
     results = _cache["results"]
     metrics = {}
     for name, pred_col in _MODEL_PRED_COLUMNS:
