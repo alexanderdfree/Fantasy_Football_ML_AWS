@@ -84,14 +84,19 @@ def _rb_tiny() -> dict:
 
 
 def _wr_tiny() -> dict:
-    """WR config — prefer WR_CONFIG_TINY if present, else shrink WR_CONFIG."""
+    """WR config — prefer WR_CONFIG_TINY if present, else shrink WR_CONFIG.
+
+    WR (like QB/RB/TE) no longer uses a ``compute_adjustment_fn`` — the fumble
+    penalty is now a direct target priced by ``shared/aggregate_targets.py``
+    per docs/ARCHITECTURE.md. Only K and DST still wire an adjustment function.
+    """
     from WR.wr_data import filter_to_wr
     from WR.wr_features import (
         add_wr_specific_features,
         fill_wr_nans,
         get_wr_feature_columns,
     )
-    from WR.wr_targets import compute_wr_fumble_adjustment, compute_wr_targets
+    from WR.wr_targets import compute_wr_targets
 
     callables = {
         "filter_fn": filter_to_wr,
@@ -99,7 +104,6 @@ def _wr_tiny() -> dict:
         "add_features_fn": add_wr_specific_features,
         "fill_nans_fn": fill_wr_nans,
         "get_feature_columns_fn": get_wr_feature_columns,
-        "compute_adjustment_fn": compute_wr_fumble_adjustment,
     }
     try:
         from WR.wr_config import WR_CONFIG_TINY
@@ -325,9 +329,7 @@ def _load_player_splits(
     return pos_train, pos_val, pos_test
 
 
-def _build_k_splits(
-    n_players: int = 30, seed: int = 42
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def _build_k_splits(n_players: int = 30) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build tiny K splits using the K loader (cached PBP parquet).
 
     Mirrors the logic in ``K/run_k_pipeline.py``: loads the reconstructed
