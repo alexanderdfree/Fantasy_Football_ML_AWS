@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from shared.pipeline import _prepare_position_data
+from shared.pipeline import _nn_aggregate_fn, _prepare_position_data
 
 # Feature columns the pipeline feeds into the NN. Kept small so the fixture
 # DataFrames stay tiny and fast.
@@ -234,6 +234,48 @@ def test_dst_with_aggregate_fn_uses_fantasy_points(min_splits_factory):
 # Safety: QB/RB/WR/TE NEVER switch, even when adjustment_fn=None and
 # aggregate_fn is wired. They're not in the scoring-aware whitelist.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Helper: _nn_aggregate_fn must return None for QB/RB/WR/TE even when cfg has
+# an ``aggregate_fn`` (they set it for *inference*, not for NN training — the
+# NN aux target for them is ``sum(raw targets)``, not ``fantasy_points``).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE"])
+def test_nn_aggregate_fn_returns_none_for_raw_stat_positions(position):
+    """QB/RB/WR/TE: inference-time ``aggregate_fn`` in cfg must NOT be wired
+    into the NN training graph. Regression against the scale mismatch where
+    ``aggregate_fn(preds)`` (fantasy-points scale) would be compared to
+    ``sum(targets)`` (raw-stat scale) in the aux loss.
+    """
+    cfg = {"aggregate_fn": _noop_aggregate, "compute_adjustment_fn": None}
+    assert _nn_aggregate_fn(position, cfg) is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("position", ["K", "DST"])
+def test_nn_aggregate_fn_forwards_for_whitelisted_positions(position):
+    """K/DST with ``compute_adjustment_fn is None`` and an ``aggregate_fn``
+    set must get that callable wired into the NN so ``preds["total"]`` lives
+    in fantasy-points space."""
+    cfg = {"aggregate_fn": _noop_aggregate, "compute_adjustment_fn": None}
+    assert _nn_aggregate_fn(position, cfg) is _noop_aggregate
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("position", ["K", "DST"])
+def test_nn_aggregate_fn_blocked_when_adjustment_fn_set(position):
+    """K/DST with a non-None ``compute_adjustment_fn`` must NOT wire
+    aggregate_fn — the adjustment would be applied twice (once inside
+    aggregate_fn, once post-hoc)."""
+    cfg = {
+        "aggregate_fn": _noop_aggregate,
+        "compute_adjustment_fn": lambda df: df,
+    }
+    assert _nn_aggregate_fn(position, cfg) is None
 
 
 @pytest.mark.unit

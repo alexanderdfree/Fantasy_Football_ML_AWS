@@ -59,8 +59,26 @@ from src.models.linear import RidgeModel
 #      producing an unminimizable aux loss that corrupts head training.
 # QB/RB/WR/TE are excluded: their post-migration targets are raw NFL stats
 # (yards/TDs/receptions) whose ``sum(heads)`` lives on a different scale than
-# ``fantasy_points``.
+# ``fantasy_points``. They do set ``cfg["aggregate_fn"]`` — but for *inference*
+# (scoring-weighted aggregation of raw-stat preds); it must NOT be wired into
+# NN training, since the aux target for them stays as ``sum(raw targets)``.
 _FANTASY_POINTS_AUX_POSITIONS = frozenset({"K", "DST"})
+
+
+def _nn_aggregate_fn(position, cfg):
+    """Return the NN's training-time ``aggregate_fn`` for ``preds["total"]``.
+
+    Returns ``cfg["aggregate_fn"]`` only when the position has opted in to
+    ``fantasy_points`` aux supervision (same gate as in
+    ``_prepare_position_data``). Returns ``None`` for every other position so
+    the NN keeps its default ``sum(heads)`` total — crucially for QB/RB/WR/TE,
+    which *do* set ``cfg["aggregate_fn"]`` for inference but whose training
+    aux target is ``sum(raw targets)``, on a different scale than
+    ``fantasy_points``.
+    """
+    if position in _FANTASY_POINTS_AUX_POSITIONS and cfg.get("compute_adjustment_fn") is None:
+        return cfg.get("aggregate_fn")
+    return None
 
 
 def _read_split(path: str) -> pd.DataFrame:
@@ -355,7 +373,18 @@ def _prepare_train_val(position, cfg, train_df, val_df):
     return X_train, X_val, y_train_dict, y_val_dict, pos_train, pos_val, feature_cols
 
 
-def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg, targets, seed):
+def _train_nn(
+    position,
+    X_train,
+    X_val,
+    X_test,
+    y_train_dict,
+    y_val_dict,
+    y_test_dict,
+    cfg,
+    targets,
+    seed,
+):
     """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history).
 
     Shared by the regular NN and Weather NN to guarantee identical training.
@@ -377,7 +406,7 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    aggregate_fn = cfg.get("aggregate_fn")
+    aggregate_fn = _nn_aggregate_fn(position, cfg)
     model = MultiHeadNet(
         input_dim=X_train_s.shape[1],
         target_names=targets,
@@ -431,6 +460,7 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg
 
 
 def _train_attention_nn(
+    position,
     X_train,
     X_val,
     X_test,
@@ -491,7 +521,7 @@ def _train_attention_nn(
 
     game_dim = hist_train.shape[2]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    aggregate_fn = cfg.get("aggregate_fn")
+    aggregate_fn = _nn_aggregate_fn(position, cfg)
     model = MultiHeadNetWithHistory(
         static_dim=X_train_s.shape[1],
         game_dim=game_dim,
@@ -712,6 +742,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     # --- Multi-head NN ---
     print(f"\n=== {pos} Multi-Head Neural Net ===")
     model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
+        position,
         X_train,
         X_val,
         X_test,
@@ -754,6 +785,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             attn_nn_metrics,
             attn_history,
         ) = _train_attention_nn(
+            position,
             X_train,
             X_val,
             X_test,
@@ -1050,7 +1082,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        aggregate_fn = cfg.get("aggregate_fn")
+        aggregate_fn = _nn_aggregate_fn(position, cfg)
         model = MultiHeadNet(
             input_dim=X_train_s.shape[1],
             target_names=targets,
@@ -1200,6 +1232,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     # NN
     print(f"\n=== {pos} Multi-Head NN (Final Holdout) ===")
     model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
+        position,
         X_train,
         X_val,
         X_test,
