@@ -134,9 +134,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install history-update deps
-        run: pip install boto3
+        run: pip install -r requirements.txt
 
       - name: Resolve instance ID
         id: inst
