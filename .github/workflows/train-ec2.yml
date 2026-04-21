@@ -140,7 +140,10 @@ jobs:
           cache: "pip"
 
       - name: Install history-update deps
-        run: pip install -r requirements.txt
+        # requirements-dev.txt, not requirements.txt: batch/benchmark.py's
+        # import chain (batch.launch → shared.registry → shared.aggregate_targets)
+        # pulls torch since cc0c627 added the attention NN. Mirrors tests.yml.
+        run: pip install -r requirements-dev.txt
 
       - name: Resolve instance ID
         id: inst
