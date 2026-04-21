@@ -129,9 +129,16 @@ def _compute_rb_features(df: pd.DataFrame) -> None:
     )
 
     # --- Feature 14: opportunity_index_L3 (weighted opp share) ---
+    # Same np.divide/where pattern as game_carry_share above to avoid
+    # divide-by-zero warnings on rows with zero/NaN team weighted opps.
     _team_w_opps = _team_carries + 2 * _team_targets
     _player_w_opps = _carries + 2 * _targets
-    df["_game_opp_idx"] = np.where(_team_w_opps > 0, _player_w_opps / _team_w_opps, 0.0)
+    df["_game_opp_idx"] = np.divide(
+        _player_w_opps,
+        _team_w_opps,
+        out=np.zeros_like(_player_w_opps, dtype=float),
+        where=_team_w_opps > 0,
+    )
     df["opportunity_index_L3"] = df.groupby(["player_id", "season"])["_game_opp_idx"].transform(
         lambda x: x.shift(1).rolling(3, min_periods=1).mean()
     )
