@@ -11,6 +11,7 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import torch
+from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
 
 matplotlib.use("Agg")
@@ -37,7 +38,7 @@ from shared.training import (
     make_history_dataloaders,
     plot_training_curves,
 )
-from shared.utils import seed_everything
+from shared.utils import seed_everything, timed
 from shared.weather_features import merge_schedule_features
 from src.config import MIN_GAMES_PER_SEASON, SPLITS_DIR, TRAIN_SEASONS, VAL_SEASONS
 from src.data.split import expanding_window_folds
@@ -165,6 +166,14 @@ def _tune_ridge_alphas_cv(
     Pass 1: coarse grid search across CV folds.
     Pass 2: fine refinement around the best coarse alpha.
 
+    Each pass fans its alpha grid out over ``joblib.Parallel(n_jobs=-1,
+    prefer="threads")``. Threads (not processes) because sklearn's Ridge
+    delegates the normal-equation solve to BLAS, which releases the GIL —
+    actual parallelism without process-spawn / pickle / nested-pool costs that
+    bite on macOS. Each ``_eval_alpha_cv`` call is pure and the final
+    best-alpha selection uses ``argmin``, so execution order is immaterial and
+    output is numerically identical to the serial version.
+
     Returns dict mapping each target name to its optimal alpha.
     """
     folds = _build_expanding_cv_folds(split_values, n_cv_folds)
@@ -172,26 +181,29 @@ def _tune_ridge_alphas_cv(
 
     for target in targets:
         y = y_train_dict[target]
-        grid = alpha_grids[target]
+        grid = list(alpha_grids[target])
 
         # --- Pass 1: coarse search ---
-        best_mae, best_alpha = float("inf"), grid[0]
-        for alpha in grid:
-            mae = _eval_alpha_cv(X_train, y, folds, alpha, pca_n_components)
-            if mae < best_mae:
-                best_mae = mae
-                best_alpha = alpha
+        coarse_maes = Parallel(n_jobs=-1, prefer="threads")(
+            delayed(_eval_alpha_cv)(X_train, y, folds, alpha, pca_n_components) for alpha in grid
+        )
+        best_idx = int(np.argmin(coarse_maes))
+        best_mae = float(coarse_maes[best_idx])
+        best_alpha = grid[best_idx]
 
         # --- Pass 2: fine refinement ---
         if refine_points > 0 and len(grid) >= 2:
             log_step = np.log10(grid[1]) - np.log10(grid[0])
             center = np.log10(best_alpha)
-            fine_grid = np.logspace(center - log_step, center + log_step, refine_points)
-            for alpha in fine_grid:
-                mae = _eval_alpha_cv(X_train, y, folds, alpha, pca_n_components)
-                if mae < best_mae:
-                    best_mae = mae
-                    best_alpha = alpha
+            fine_grid = list(np.logspace(center - log_step, center + log_step, refine_points))
+            fine_maes = Parallel(n_jobs=-1, prefer="threads")(
+                delayed(_eval_alpha_cv)(X_train, y, folds, alpha, pca_n_components)
+                for alpha in fine_grid
+            )
+            fine_best = int(np.argmin(fine_maes))
+            if fine_maes[fine_best] < best_mae:
+                best_mae = float(fine_maes[fine_best])
+                best_alpha = fine_grid[fine_best]
 
         best_alphas[target] = round(best_alpha, 6)
         print(f"  {target}: best alpha={best_alphas[target]:.4f} (CV MAE={best_mae:.3f})")
@@ -670,18 +682,19 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     # --- Prepare position data ---
     print(f"Preparing {pos} data...")
-    (
-        X_train,
-        X_val,
-        X_test,
-        y_train_dict,
-        y_val_dict,
-        y_test_dict,
-        pos_train,
-        pos_val,
-        pos_test,
-        feature_cols,
-    ) = _prepare_position_data(position, cfg, train_df, val_df, test_df)
+    with timed("prepare_data"):
+        (
+            X_train,
+            X_val,
+            X_test,
+            y_train_dict,
+            y_val_dict,
+            y_test_dict,
+            pos_train,
+            pos_val,
+            pos_test,
+            feature_cols,
+        ) = _prepare_position_data(position, cfg, train_df, val_df, test_df)
 
     print(f"  Feature matrix shape: {X_train.shape}")
 
@@ -702,20 +715,21 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     special_targets = set(two_stage_targets) | set(classification_targets)
     ridge_tune_targets = [t for t in targets if t not in special_targets]
     ridge_tune_grids = {t: cfg["ridge_alpha_grids"][t] for t in ridge_tune_targets}
-    best_alphas = (
-        _tune_ridge_alphas_cv(
-            X_train,
-            y_train_dict,
-            pos_train[cv_col].values,
-            targets=ridge_tune_targets,
-            alpha_grids=ridge_tune_grids,
-            n_cv_folds=cfg.get("ridge_cv_folds", 4),
-            refine_points=cfg.get("ridge_refine_points", 5),
-            pca_n_components=pca_n,
+    with timed("ridge_tune"):
+        best_alphas = (
+            _tune_ridge_alphas_cv(
+                X_train,
+                y_train_dict,
+                pos_train[cv_col].values,
+                targets=ridge_tune_targets,
+                alpha_grids=ridge_tune_grids,
+                n_cv_folds=cfg.get("ridge_cv_folds", 4),
+                refine_points=cfg.get("ridge_refine_points", 5),
+                pca_n_components=pca_n,
+            )
+            if ridge_tune_targets
+            else {}
         )
-        if ridge_tune_targets
-        else {}
-    )
     if two_stage_targets:
         print(f"  Two-stage targets: {list(two_stage_targets.keys())}")
     if classification_targets:
@@ -723,36 +737,38 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     if pca_n:
         print(f"  PCR: {pca_n} components")
     ridge_non_neg = cfg.get("nn_non_negative_targets")
-    ridge_model = RidgeMultiTarget(
-        target_names=targets,
-        alpha=best_alphas,
-        two_stage_targets=two_stage_targets,
-        classification_targets=classification_targets,
-        pca_n_components=pca_n,
-        non_negative_targets=ridge_non_neg,
-    )
-    ridge_model.fit(X_train, y_train_dict)
-    ridge_test_preds = ridge_model.predict(X_test)
-    # Evaluate total as sum(per-target preds) without adjustment — matches
-    # the training total target (sum of clean targets, no penalties).
-    # Adjustment is only applied at inference (app.py).
-    ridge_test_preds["total"] = sum(ridge_test_preds[t] for t in targets)
-    ridge_metrics = compute_target_metrics(y_test_dict, ridge_test_preds, targets)
+    with timed("ridge_fit"):
+        ridge_model = RidgeMultiTarget(
+            target_names=targets,
+            alpha=best_alphas,
+            two_stage_targets=two_stage_targets,
+            classification_targets=classification_targets,
+            pca_n_components=pca_n,
+            non_negative_targets=ridge_non_neg,
+        )
+        ridge_model.fit(X_train, y_train_dict)
+        ridge_test_preds = ridge_model.predict(X_test)
+        # Evaluate total as sum(per-target preds) without adjustment — matches
+        # the training total target (sum of clean targets, no penalties).
+        # Adjustment is only applied at inference (app.py).
+        ridge_test_preds["total"] = sum(ridge_test_preds[t] for t in targets)
+        ridge_metrics = compute_target_metrics(y_test_dict, ridge_test_preds, targets)
 
     # --- Multi-head NN ---
     print(f"\n=== {pos} Multi-Head Neural Net ===")
-    model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
-        position,
-        X_train,
-        X_val,
-        X_test,
-        y_train_dict,
-        y_val_dict,
-        y_test_dict,
-        cfg,
-        targets,
-        seed,
-    )
+    with timed("nn_train"):
+        model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
+            position,
+            X_train,
+            X_val,
+            X_test,
+            y_train_dict,
+            y_val_dict,
+            y_test_dict,
+            cfg,
+            targets,
+            seed,
+        )
 
     # --- Attention NN (game history as variable-length sequences) ---
     attn_nn_val_preds = None
@@ -763,46 +779,47 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     attn_history = None
     if cfg.get("train_attention_nn", False):
         print(f"\n=== {pos} Attention Multi-Head Neural Net ===")
-        history_stats = cfg.get("attn_history_stats", None)
-        max_seq_len = cfg.get("attn_max_seq_len", 17)
+        with timed("attn_nn_train"):
+            history_stats = cfg.get("attn_history_stats", None)
+            max_seq_len = cfg.get("attn_max_seq_len", 17)
 
-        hist_train, mask_train = build_game_history_arrays(
-            pos_train, history_stats=history_stats, max_seq_len=max_seq_len
-        )
-        hist_val, mask_val = build_game_history_arrays(
-            pos_val, history_stats=history_stats, max_seq_len=max_seq_len
-        )
-        hist_test, mask_test = build_game_history_arrays(
-            pos_test, history_stats=history_stats, max_seq_len=max_seq_len
-        )
-        print(f"  History shape: {hist_train.shape} (game_dim={hist_train.shape[2]})")
+            hist_train, mask_train = build_game_history_arrays(
+                pos_train, history_stats=history_stats, max_seq_len=max_seq_len
+            )
+            hist_val, mask_val = build_game_history_arrays(
+                pos_val, history_stats=history_stats, max_seq_len=max_seq_len
+            )
+            hist_test, mask_test = build_game_history_arrays(
+                pos_test, history_stats=history_stats, max_seq_len=max_seq_len
+            )
+            print(f"  History shape: {hist_train.shape} (game_dim={hist_train.shape[2]})")
 
-        (
-            attn_model,
-            attn_nn_scaler,
-            attn_nn_val_preds,
-            attn_nn_test_preds,
-            attn_nn_metrics,
-            attn_history,
-        ) = _train_attention_nn(
-            position,
-            X_train,
-            X_val,
-            X_test,
-            hist_train,
-            mask_train,
-            hist_val,
-            mask_val,
-            hist_test,
-            mask_test,
-            y_train_dict,
-            y_val_dict,
-            y_test_dict,
-            cfg,
-            targets,
-            seed,
-            feature_cols=feature_cols,
-        )
+            (
+                attn_model,
+                attn_nn_scaler,
+                attn_nn_val_preds,
+                attn_nn_test_preds,
+                attn_nn_metrics,
+                attn_history,
+            ) = _train_attention_nn(
+                position,
+                X_train,
+                X_val,
+                X_test,
+                hist_train,
+                mask_train,
+                hist_val,
+                mask_val,
+                hist_test,
+                mask_test,
+                y_train_dict,
+                y_val_dict,
+                y_test_dict,
+                cfg,
+                targets,
+                seed,
+                feature_cols=feature_cols,
+            )
 
     # --- LightGBM Multi-Target (conditional) ---
     lgbm_val_preds = None
@@ -811,18 +828,19 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     lgbm_model = None
     if cfg.get("train_lightgbm", False):
         print(f"\n=== {pos} LightGBM Multi-Target ===")
-        lgbm_model, lgbm_val_preds, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
-            X_train,
-            X_val,
-            X_test,
-            y_train_dict,
-            y_val_dict,
-            y_test_dict,
-            cfg,
-            targets,
-            feature_cols,
-            seed,
-        )
+        with timed("lgbm_train"):
+            lgbm_model, lgbm_val_preds, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
+                X_train,
+                X_val,
+                X_test,
+                y_train_dict,
+                y_val_dict,
+                y_test_dict,
+                cfg,
+                targets,
+                feature_cols,
+                seed,
+            )
 
     # --- Comparison ---
     comparison = {
@@ -876,76 +894,83 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     # --- Weekly backtest ---
     print("\n=== Weekly Backtest ===")
-    sim_results = run_weekly_simulation(pos_test, pred_columns=backtest_pred_columns)
-    for model_name, summary in sim_results["season_summary"].items():
-        print(f"  {model_name}: MAE={summary['mae']:.3f}, R2={summary['r2']:.3f}")
+    with timed("backtest"):
+        sim_results = run_weekly_simulation(pos_test, pred_columns=backtest_pred_columns)
+        for model_name, summary in sim_results["season_summary"].items():
+            print(f"  {model_name}: MAE={summary['mae']:.3f}, R2={summary['r2']:.3f}")
 
     # --- Save outputs ---
-    os.makedirs(f"{output_dir}/models", exist_ok=True)
-    os.makedirs(f"{output_dir}/figures", exist_ok=True)
+    with timed("save_artifacts"):
+        os.makedirs(f"{output_dir}/models", exist_ok=True)
+        os.makedirs(f"{output_dir}/figures", exist_ok=True)
 
-    ridge_model.save(f"{output_dir}/models")
-    torch.save(
-        wrap_state_dict(model.state_dict(), feature_cols, targets),
-        f"{output_dir}/models/{pos_lower}_multihead_nn.pt",
-    )
-    joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
-    write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
-
-    if attn_model is not None:
-        attn_static_cols = get_attn_static_columns(feature_cols)
+        ridge_model.save(f"{output_dir}/models")
         torch.save(
-            wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
-            f"{output_dir}/models/{pos_lower}_attention_nn.pt",
+            wrap_state_dict(model.state_dict(), feature_cols, targets),
+            f"{output_dir}/models/{pos_lower}_multihead_nn.pt",
         )
-        joblib.dump(attn_nn_scaler, f"{output_dir}/models/attention_nn_scaler.pkl")
-        write_scaler_meta(
-            f"{output_dir}/models/attention_nn_scaler_meta.json",
-            attn_static_cols,
-            targets,
-        )
+        joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
+        write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
 
-    if lgbm_model is not None:
-        lgbm_model.save(f"{output_dir}/models")
+        if attn_model is not None:
+            attn_static_cols = get_attn_static_columns(feature_cols)
+            torch.save(
+                wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
+                f"{output_dir}/models/{pos_lower}_attention_nn.pt",
+            )
+            joblib.dump(attn_nn_scaler, f"{output_dir}/models/attention_nn_scaler.pkl")
+            write_scaler_meta(
+                f"{output_dir}/models/attention_nn_scaler_meta.json",
+                attn_static_cols,
+                targets,
+            )
 
-    plot_training_curves(history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png")
-    if attn_history is not None:
+        if lgbm_model is not None:
+            lgbm_model.save(f"{output_dir}/models")
+
+    with timed("figures"):
         plot_training_curves(
-            attn_history, targets, f"{output_dir}/figures/{pos_lower}_attention_training_curves.png"
+            history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png"
         )
-    plot_weekly_accuracy(sim_results, pos, f"{output_dir}/figures/{pos_lower}_weekly_mae.png")
-    plot_pred_vs_actual(
-        y_test_dict,
-        nn_test_preds,
-        targets,
-        f"{pos} Multi-Head NN",
-        f"{output_dir}/figures/{pos_lower}_pred_vs_actual_scatter.png",
-    )
+        if attn_history is not None:
+            plot_training_curves(
+                attn_history,
+                targets,
+                f"{output_dir}/figures/{pos_lower}_attention_training_curves.png",
+            )
+        plot_weekly_accuracy(sim_results, pos, f"{output_dir}/figures/{pos_lower}_weekly_mae.png")
+        plot_pred_vs_actual(
+            y_test_dict,
+            nn_test_preds,
+            targets,
+            f"{pos} Multi-Head NN",
+            f"{output_dir}/figures/{pos_lower}_pred_vs_actual_scatter.png",
+        )
 
-    feature_importance = ridge_model.get_feature_importance(feature_cols)
-    fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
-    if len(targets) == 1:
-        axes = [axes]
-    for ax, (target, importance) in zip(axes, feature_importance.items(), strict=False):
-        importance.head(15).plot(kind="barh", ax=ax)
-        ax.set_title(f"Ridge: {target} Top-15 Features")
-        ax.set_xlabel("Absolute Coefficient")
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/figures/{pos_lower}_ridge_feature_importance.png", dpi=150)
-    plt.close()
-
-    if lgbm_model is not None:
-        lgbm_importance = lgbm_model.get_feature_importance(feature_cols)
+        feature_importance = ridge_model.get_feature_importance(feature_cols)
         fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
         if len(targets) == 1:
             axes = [axes]
-        for ax, (target, importance) in zip(axes, lgbm_importance.items(), strict=False):
+        for ax, (target, importance) in zip(axes, feature_importance.items(), strict=False):
             importance.head(15).plot(kind="barh", ax=ax)
-            ax.set_title(f"LightGBM: {target} Top-15 Features")
-            ax.set_xlabel("Gain")
+            ax.set_title(f"Ridge: {target} Top-15 Features")
+            ax.set_xlabel("Absolute Coefficient")
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/figures/{pos_lower}_lgbm_feature_importance.png", dpi=150)
+        plt.savefig(f"{output_dir}/figures/{pos_lower}_ridge_feature_importance.png", dpi=150)
         plt.close()
+
+        if lgbm_model is not None:
+            lgbm_importance = lgbm_model.get_feature_importance(feature_cols)
+            fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
+            if len(targets) == 1:
+                axes = [axes]
+            for ax, (target, importance) in zip(axes, lgbm_importance.items(), strict=False):
+                importance.head(15).plot(kind="barh", ax=ax)
+                ax.set_title(f"LightGBM: {target} Top-15 Features")
+                ax.set_xlabel("Gain")
+            plt.tight_layout()
+            plt.savefig(f"{output_dir}/figures/{pos_lower}_lgbm_feature_importance.png", dpi=150)
+            plt.close()
 
     print(f"\n{pos} pipeline complete. Outputs saved to {output_dir}/")
     per_target_preds = {
