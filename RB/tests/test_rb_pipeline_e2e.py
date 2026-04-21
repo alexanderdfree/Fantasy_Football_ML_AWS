@@ -148,17 +148,43 @@ def _run_pipeline_in_tmp(train_df, val_df, test_df, seed: int, workdir: str) -> 
 
 
 # ---------------------------------------------------------------------------
+# Module-scoped pipeline runs — share one (or two) full run(s) across tests
+# so we don't retrain from scratch per assertion.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def pipeline_run(synthetic_rb_splits):
+    """Single pipeline invocation shared across tests.
+
+    Held open in a TemporaryDirectory for the life of the module so the
+    pipeline's per-run artifacts stay intact if a test later reads them.
+    """
+    train_df, val_df, test_df = synthetic_rb_splits
+    with tempfile.TemporaryDirectory() as tmp:
+        yield _run_pipeline_in_tmp(train_df, val_df, test_df, seed=42, workdir=tmp)
+
+
+@pytest.fixture(scope="module")
+def pipeline_run_repeat(synthetic_rb_splits, pipeline_run):
+    """Second pipeline invocation with the same seed for bit-identity checks.
+
+    Depends on pipeline_run so module-scoped ordering is deterministic.
+    """
+    train_df, val_df, test_df = synthetic_rb_splits
+    with tempfile.TemporaryDirectory() as tmp:
+        yield _run_pipeline_in_tmp(train_df, val_df, test_df, seed=42, workdir=tmp)
+
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
-def test_pipeline_runs_to_completion(synthetic_rb_splits):
+def test_pipeline_runs_to_completion(pipeline_run):
     """Smoke test: the pipeline must finish with finite predictions."""
-    train_df, val_df, test_df = synthetic_rb_splits
-
-    with tempfile.TemporaryDirectory() as tmp:
-        result = _run_pipeline_in_tmp(train_df, val_df, test_df, seed=42, workdir=tmp)
+    result = pipeline_run
 
     assert "ridge_metrics" in result
     assert "nn_metrics" in result
@@ -178,22 +204,15 @@ def test_pipeline_runs_to_completion(synthetic_rb_splits):
 
 @pytest.mark.e2e
 @pytest.mark.timeout(180)
-def test_pipeline_bit_identical_same_seed(synthetic_rb_splits):
+def test_pipeline_bit_identical_same_seed(pipeline_run, pipeline_run_repeat):
     """Two runs with seed=42 must produce bit-identical Ridge + NN outputs.
 
     Timeout bumped to 180s: runs the full pipeline twice end-to-end (Ridge +
     NN training + plot save ×2), and raw-stat target scale means NN training
     uses more epochs than the legacy fantasy-point scale.
     """
-    train_df, val_df, test_df = synthetic_rb_splits
-
-    with tempfile.TemporaryDirectory() as tmp_a:
-        result_a = _run_pipeline_in_tmp(train_df, val_df, test_df, seed=42, workdir=tmp_a)
-    with tempfile.TemporaryDirectory() as tmp_b:
-        result_b = _run_pipeline_in_tmp(train_df, val_df, test_df, seed=42, workdir=tmp_b)
-
-    preds_a = result_a["per_target_preds"]
-    preds_b = result_b["per_target_preds"]
+    preds_a = pipeline_run["per_target_preds"]
+    preds_b = pipeline_run_repeat["per_target_preds"]
 
     for target in list(RB_TARGETS) + ["total"]:
         np.testing.assert_array_equal(

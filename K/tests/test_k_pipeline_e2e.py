@@ -82,14 +82,32 @@ def e2e_outputs_dir(tmp_path_factory):
         os.chdir(cwd)
 
 
-@pytest.mark.e2e
-def test_k_pipeline_e2e_runs_without_exception(prepared_splits, e2e_outputs_dir):
-    """Smoke: pipeline completes end-to-end with tiny config + synthetic data."""
+# ---------------------------------------------------------------------------
+# Module-scoped pipeline runs — one shared run for smoke/shape assertions,
+# a second cached run for the cross-run bit-identity check.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def pipeline_run(prepared_splits, e2e_outputs_dir):
+    """Single pipeline invocation shared across tests (saves ~6s per test)."""
     train, val, test = prepared_splits
     cfg = _build_e2e_config()
+    return run_pipeline("K", cfg, train.copy(), val.copy(), test.copy(), seed=42)
 
-    result = run_pipeline("K", cfg, train.copy(), val.copy(), test.copy(), seed=42)
 
+@pytest.fixture(scope="module")
+def pipeline_run_repeat(prepared_splits, e2e_outputs_dir, pipeline_run):
+    """Second pipeline invocation with the same seed for bit-identity checks."""
+    train, val, test = prepared_splits
+    cfg = _build_e2e_config()
+    return run_pipeline("K", cfg, train.copy(), val.copy(), test.copy(), seed=42)
+
+
+@pytest.mark.e2e
+def test_k_pipeline_e2e_runs_without_exception(pipeline_run):
+    """Smoke: pipeline completes end-to-end with tiny config + synthetic data."""
+    result = pipeline_run
     assert "ridge_metrics" in result
     assert "nn_metrics" in result
     assert "test_df" in result
@@ -97,11 +115,9 @@ def test_k_pipeline_e2e_runs_without_exception(prepared_splits, e2e_outputs_dir)
 
 
 @pytest.mark.e2e
-def test_k_pipeline_predictions_finite_and_shaped(prepared_splits, e2e_outputs_dir):
+def test_k_pipeline_predictions_finite_and_shaped(pipeline_run):
     """Predictions must be finite and shaped like the test set."""
-    train, val, test = prepared_splits
-    cfg = _build_e2e_config()
-    result = run_pipeline("K", cfg, train.copy(), val.copy(), test.copy(), seed=42)
+    result = pipeline_run
 
     n_test = len(result["test_df"])
     assert n_test > 0, "Test split empty — dataset builder is broken"
@@ -115,22 +131,16 @@ def test_k_pipeline_predictions_finite_and_shaped(prepared_splits, e2e_outputs_d
 
 
 @pytest.mark.e2e
-def test_k_pipeline_bit_identical_across_seeded_runs(prepared_splits, e2e_outputs_dir):
+def test_k_pipeline_bit_identical_across_seeded_runs(pipeline_run, pipeline_run_repeat):
     """Reproducibility: two runs with seed=42 produce bit-identical predictions.
 
     Covers the reviewer concern that "training is reproducible" is unverified.
     atol=0, rtol=0 — any non-determinism in Ridge, NN weights, or data
     pipeline would show up here.
     """
-    train, val, test = prepared_splits
-    cfg = _build_e2e_config()
-
-    r1 = run_pipeline("K", cfg, train.copy(), val.copy(), test.copy(), seed=42)
-    r2 = run_pipeline("K", cfg, train.copy(), val.copy(), test.copy(), seed=42)
-
     for model_name in ("ridge", "nn"):
-        p1 = r1["per_target_preds"][model_name]
-        p2 = r2["per_target_preds"][model_name]
+        p1 = pipeline_run["per_target_preds"][model_name]
+        p2 = pipeline_run_repeat["per_target_preds"][model_name]
         for key in ("fg_yard_points", "pat_points", "fg_misses", "xp_misses", "total"):
             np.testing.assert_array_equal(
                 p1[key],

@@ -7,6 +7,10 @@ model artifacts land on disk. Budget: < 20s per position on CPU.
 
 Companion file: ``tests/test_reproducibility.py`` covers bit-identical
 predictions across seeded re-runs; this file focuses on completion + shape.
+
+All four test functions share a single module-scoped pipeline invocation
+per position (indirect parametrization), so a position trains once per
+module — not four times — saving ~3x wall clock vs. the previous setup.
 """
 
 from __future__ import annotations
@@ -28,18 +32,32 @@ from tests._pipeline_e2e_utils import (
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Fixtures — one module-scoped pipeline run per position, shared across tests.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def tiny_splits(request):
-    """(train, val, test) tuple sized for the given position — module-scoped."""
+def pipeline_run(request, tmp_path_factory):
+    """Run the pipeline once per position; all tests in this module reuse it.
+
+    Indirect parametrization supplies the position via ``request.param``.
+    Returns a dict with:
+      - ``result``: the ``run_pipeline`` output
+      - ``workdir``: the tmp dir the pipeline wrote artifacts into (used by
+        the artifact-check test that inspects ``{POS}/outputs/models``)
+      - ``cfg``: the tiny config used, so per-test assertions can iterate
+        over its target list without rebuilding it.
+    """
     position = request.param
     splits_root = Path(__file__).resolve().parents[1] / "data" / "splits"
     if not (splits_root / "train.parquet").exists():
         pytest.skip(f"Real splits not present at {splits_root}; skipping E2E")
-    return load_tiny_splits(position)
+
+    splits = load_tiny_splits(position)
+    cfg = build_tiny_config(position)
+    workdir = tmp_path_factory.mktemp(f"e2e_{position}")
+    result = run_pipeline_in_tmp(position, cfg, splits, workdir, seed=42)
+    return {"result": result, "workdir": workdir, "cfg": cfg}
 
 
 # ---------------------------------------------------------------------------
@@ -49,15 +67,13 @@ def tiny_splits(request):
 
 @pytest.mark.e2e
 @pytest.mark.parametrize(
-    "tiny_splits,position",
+    "pipeline_run,position",
     [(pos, pos) for pos in ALL_POSITIONS],
-    indirect=["tiny_splits"],
+    indirect=["pipeline_run"],
 )
-def test_pipeline_runs_without_exception(tiny_splits, position, tmp_path):
+def test_pipeline_runs_without_exception(pipeline_run, position):
     """run_pipeline completes end-to-end; result dict contains expected keys."""
-    cfg = build_tiny_config(position)
-    result = run_pipeline_in_tmp(position, cfg, tiny_splits, tmp_path, seed=42)
-
+    result = pipeline_run["result"]
     assert "ridge_metrics" in result
     assert "nn_metrics" in result
     assert "test_df" in result
@@ -66,14 +82,14 @@ def test_pipeline_runs_without_exception(tiny_splits, position, tmp_path):
 
 @pytest.mark.e2e
 @pytest.mark.parametrize(
-    "tiny_splits,position",
+    "pipeline_run,position",
     [(pos, pos) for pos in ALL_POSITIONS],
-    indirect=["tiny_splits"],
+    indirect=["pipeline_run"],
 )
-def test_pipeline_predictions_finite_and_shaped(tiny_splits, position, tmp_path):
+def test_pipeline_predictions_finite_and_shaped(pipeline_run, position):
     """Ridge and NN predictions are finite and match the test-set row count."""
-    cfg = build_tiny_config(position)
-    result = run_pipeline_in_tmp(position, cfg, tiny_splits, tmp_path, seed=42)
+    result = pipeline_run["result"]
+    cfg = pipeline_run["cfg"]
 
     n_test = len(result["test_df"])
     assert n_test > 0, f"{position}: test split is empty — tiny dataset is broken"
@@ -92,17 +108,17 @@ def test_pipeline_predictions_finite_and_shaped(tiny_splits, position, tmp_path)
 
 @pytest.mark.e2e
 @pytest.mark.parametrize(
-    "tiny_splits,position",
+    "pipeline_run,position",
     [(pos, pos) for pos in ALL_POSITIONS],
-    indirect=["tiny_splits"],
+    indirect=["pipeline_run"],
 )
-def test_pipeline_writes_model_artifacts(tiny_splits, position, tmp_path):
+def test_pipeline_writes_model_artifacts(pipeline_run, position):
     """Pipeline saves Ridge model + NN state_dict + scaler to the outputs dir."""
-    cfg = build_tiny_config(position)
-    run_pipeline_in_tmp(position, cfg, tiny_splits, tmp_path, seed=42)
+    workdir = pipeline_run["workdir"]
+    cfg = pipeline_run["cfg"]
 
     pos_lower = position.lower()
-    models_dir = tmp_path / position / "outputs" / "models"
+    models_dir = workdir / position / "outputs" / "models"
     assert models_dir.is_dir(), f"{position}: models dir not created"
 
     nn_path = models_dir / f"{pos_lower}_multihead_nn.pt"
@@ -129,14 +145,14 @@ def test_pipeline_writes_model_artifacts(tiny_splits, position, tmp_path):
 
 @pytest.mark.e2e
 @pytest.mark.parametrize(
-    "tiny_splits,position",
+    "pipeline_run,position",
     [(pos, pos) for pos in ALL_POSITIONS],
-    indirect=["tiny_splits"],
+    indirect=["pipeline_run"],
 )
-def test_pipeline_predictions_dataframe_size(tiny_splits, position, tmp_path):
+def test_pipeline_predictions_dataframe_size(pipeline_run, position):
     """The per_target_preds dict carries predictions whose row count matches test_df."""
-    cfg = build_tiny_config(position)
-    result = run_pipeline_in_tmp(position, cfg, tiny_splits, tmp_path, seed=42)
+    result = pipeline_run["result"]
+    cfg = pipeline_run["cfg"]
 
     n_test_rows = len(result["test_df"])
     n_targets = len(cfg["targets"])

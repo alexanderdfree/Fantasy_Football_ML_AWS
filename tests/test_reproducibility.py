@@ -15,6 +15,10 @@ the moment it lands.
 
 Marked as ``@pytest.mark.e2e`` and ``@pytest.mark.integration`` so CI can
 gate them behind the slower test lane.
+
+All three test functions share a single module-scoped pair of pipeline
+invocations per position (indirect parametrization), so each position
+trains twice per module — not six times — saving ~3x wall clock.
 """
 
 from __future__ import annotations
@@ -38,14 +42,8 @@ from tests._pipeline_e2e_utils import (
 # ``tests/conftest.py`` so no local pytest_configure is needed here.
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def frozen_rng():
-    """Seed every RNG used by the pipeline before a test runs.
+def _freeze_rngs() -> None:
+    """Seed every RNG used by the pipeline.
 
     Covers ``random``, ``numpy``, and ``torch`` — the three sources of
     stochasticity in ``run_pipeline``. ``PYTHONHASHSEED`` is set defensively:
@@ -64,17 +62,47 @@ def frozen_rng():
         # Older torch builds or CUDA-only paths may not accept this; the
         # run_pipeline seeding is what actually drives the tests.
         pass
-    yield
+
+
+# ---------------------------------------------------------------------------
+# Fixtures — one pair of module-scoped pipeline runs per position.
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def tiny_splits(request):
-    """(train, val, test) tuple sized for the given position — module-scoped."""
+def pipeline_runs(request, tmp_path_factory):
+    """Run the pipeline twice with the same seed; cache the pair per position.
+
+    Indirect parametrization supplies the position via ``request.param``.
+    Returns a dict with:
+      - ``r1`` / ``r2``: the two ``run_pipeline`` result dicts
+      - ``run1_dir`` / ``run2_dir``: the tmp workdirs the two runs wrote
+        artifacts into (state_dict comparisons read them back from disk)
+      - ``cfg``: the tiny config used, so tests can iterate over its target list
+    """
     position = request.param
     splits_root = Path(__file__).resolve().parents[1] / "data" / "splits"
     if not (splits_root / "train.parquet").exists():
         pytest.skip(f"Real splits not present at {splits_root}; skipping E2E")
-    return load_tiny_splits(position)
+
+    splits = load_tiny_splits(position)
+    cfg = build_tiny_config(position)
+
+    _freeze_rngs()
+    run1_dir = tmp_path_factory.mktemp(f"repro_{position}_run1")
+    r1 = run_pipeline_in_tmp(position, cfg, splits, run1_dir, seed=42)
+
+    _freeze_rngs()
+    run2_dir = tmp_path_factory.mktemp(f"repro_{position}_run2")
+    r2 = run_pipeline_in_tmp(position, cfg, splits, run2_dir, seed=42)
+
+    return {
+        "r1": r1,
+        "r2": r2,
+        "run1_dir": run1_dir,
+        "run2_dir": run2_dir,
+        "cfg": cfg,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -108,20 +136,17 @@ def _nn_state_dict_from_outputs(pos_outputs: Path, position: str) -> dict:
 @pytest.mark.e2e
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "tiny_splits,position",
+    "pipeline_runs,position",
     [(pos, pos) for pos in ALL_POSITIONS],
-    indirect=["tiny_splits"],
+    indirect=["pipeline_runs"],
 )
-def test_ridge_predictions_bit_identical(tiny_splits, position, tmp_path, frozen_rng):
+def test_ridge_predictions_bit_identical(pipeline_runs, position):
     """Ridge: two seeded runs on identical data produce identical predictions."""
-    cfg = build_tiny_config(position)
+    cfg = pipeline_runs["cfg"]
     targets = list(cfg["targets"])
 
-    r1 = run_pipeline_in_tmp(position, cfg, tiny_splits, tmp_path / "run1", seed=42)
-    r2 = run_pipeline_in_tmp(position, cfg, tiny_splits, tmp_path / "run2", seed=42)
-
-    p1 = r1["per_target_preds"]["ridge"]
-    p2 = r2["per_target_preds"]["ridge"]
+    p1 = pipeline_runs["r1"]["per_target_preds"]["ridge"]
+    p2 = pipeline_runs["r2"]["per_target_preds"]["ridge"]
     for key in targets + ["total"]:
         np.testing.assert_array_equal(
             np.asarray(p1[key]),
@@ -136,20 +161,17 @@ def test_ridge_predictions_bit_identical(tiny_splits, position, tmp_path, frozen
 @pytest.mark.e2e
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "tiny_splits,position",
+    "pipeline_runs,position",
     [(pos, pos) for pos in ALL_POSITIONS],
-    indirect=["tiny_splits"],
+    indirect=["pipeline_runs"],
 )
-def test_nn_predictions_bit_identical(tiny_splits, position, tmp_path, frozen_rng):
+def test_nn_predictions_bit_identical(pipeline_runs, position):
     """NN: atol=0, rtol=0 — any drift surfaces as a test failure."""
-    cfg = build_tiny_config(position)
+    cfg = pipeline_runs["cfg"]
     targets = list(cfg["targets"])
 
-    r1 = run_pipeline_in_tmp(position, cfg, tiny_splits, tmp_path / "run1", seed=42)
-    r2 = run_pipeline_in_tmp(position, cfg, tiny_splits, tmp_path / "run2", seed=42)
-
-    p1 = r1["per_target_preds"]["nn"]
-    p2 = r2["per_target_preds"]["nn"]
+    p1 = pipeline_runs["r1"]["per_target_preds"]["nn"]
+    p2 = pipeline_runs["r2"]["per_target_preds"]["nn"]
     for key in targets + ["total"]:
         t1 = torch.as_tensor(np.asarray(p1[key]))
         t2 = torch.as_tensor(np.asarray(p2[key]))
@@ -168,21 +190,14 @@ def test_nn_predictions_bit_identical(tiny_splits, position, tmp_path, frozen_rn
 @pytest.mark.e2e
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "tiny_splits,position",
+    "pipeline_runs,position",
     [(pos, pos) for pos in ALL_POSITIONS],
-    indirect=["tiny_splits"],
+    indirect=["pipeline_runs"],
 )
-def test_nn_state_dict_weights_identical(tiny_splits, position, tmp_path, frozen_rng):
+def test_nn_state_dict_weights_identical(pipeline_runs, position):
     """The persisted NN state_dict tensors are bit-identical across runs."""
-    cfg = build_tiny_config(position)
-    run1_dir = tmp_path / "run1"
-    run2_dir = tmp_path / "run2"
-
-    run_pipeline_in_tmp(position, cfg, tiny_splits, run1_dir, seed=42)
-    run_pipeline_in_tmp(position, cfg, tiny_splits, run2_dir, seed=42)
-
-    sd1 = _nn_state_dict_from_outputs(run1_dir / position / "outputs", position)
-    sd2 = _nn_state_dict_from_outputs(run2_dir / position / "outputs", position)
+    sd1 = _nn_state_dict_from_outputs(pipeline_runs["run1_dir"] / position / "outputs", position)
+    sd2 = _nn_state_dict_from_outputs(pipeline_runs["run2_dir"] / position / "outputs", position)
 
     assert set(sd1.keys()) == set(sd2.keys()), (
         f"{position}: state_dict key sets diverged: {set(sd1) ^ set(sd2)}"
