@@ -436,7 +436,9 @@ def _apply_position_models(train, val, test, pos, results):
     attn_nn_total = None
     if reg.get("train_attention_nn", False) and reg.get("attn_nn_file"):
         try:
-            attn_static_cols = get_attn_static_columns(feature_cols, position=pos)
+            attn_static_cols = get_attn_static_columns(
+                feature_cols, reg.get("attn_static_features", [])
+            )
             attn_col_idx = [i for i, c in enumerate(feature_cols) if c in set(attn_static_cols)]
             X_test_attn = X_test_pos[:, attn_col_idx]
 

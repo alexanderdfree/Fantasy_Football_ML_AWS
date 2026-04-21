@@ -14,8 +14,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from QB.qb_config import QB_INCLUDE_FEATURES, QB_SPECIFIC_FEATURES
+from QB.qb_config import QB_ATTN_STATIC_FEATURES, QB_INCLUDE_FEATURES, QB_SPECIFIC_FEATURES
 from QB.qb_features import add_qb_specific_features, get_qb_feature_columns
+from src.features.engineer import get_attn_static_columns
 
 # Per-feature NaN ceilings — the QB pipeline uses .fillna(0) so output NaN
 # fraction must be 0. Anything else indicates a regression in fill logic.
@@ -127,6 +128,14 @@ class TestQBFeatureContract:
         for col in rate_cols:
             values = qb_feature_df[col]
             assert values.min() >= 0.0, f"{col} has negative values (min={values.min()})"
+
+    def test_specific_features_excluded_from_attn_static(self):
+        """QB_SPECIFIC_FEATURES are per-game signals consumed by the attention
+        branch via QB_ATTN_HISTORY_STATS — they must not leak into the
+        attention NN's static-feature branch (the old blacklist missed them)."""
+        static_cols = get_attn_static_columns(get_qb_feature_columns(), QB_ATTN_STATIC_FEATURES)
+        leaks = set(QB_SPECIFIC_FEATURES) & set(static_cols)
+        assert not leaks, f"QB specific features leaked into attention static: {sorted(leaks)}"
 
     def test_feature_categories_documented(self):
         """QB_INCLUDE_FEATURES dict contains every documented category."""

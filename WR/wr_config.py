@@ -170,6 +170,18 @@ WR_ATTN_HISTORY_STATS = [
     "carries",
     "snap_pct",
 ]
+# Categories of WR_INCLUDE_FEATURES that flow into the attention NN's static
+# branch. The attention branch learns its own temporal representation from
+# WR_ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
+# categories are intentionally excluded to avoid duplicating that signal.
+WR_ATTN_STATIC_CATEGORIES = [
+    "prior_season",
+    "matchup",
+    "defense",
+    "contextual",
+    "weather_vegas",
+]
+WR_ATTN_STATIC_FEATURES = [c for cat in WR_ATTN_STATIC_CATEGORIES for c in WR_INCLUDE_FEATURES[cat]]
 # Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
 # Single gate on receiving_tds — the only WR TD target after rushing drop.
 WR_ATTN_GATED_TD = True
