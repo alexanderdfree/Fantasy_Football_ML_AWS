@@ -2,45 +2,41 @@
 
 Tracking known issues and uncertainties in the project. Resolved issues are kept as an archive at the bottom — each entry includes the lesson learned, which has repeatedly been useful context for reviewers and future work.
 
-**Last reviewed: 2026-04-19.**
+**Last reviewed: 2026-04-21.**
 
 ---
 
 ## Open
 
 ### [ACKNOWLEDGED] K features use cross-season rolling windows
-- **File:** `K/k_features.py:25`
+- **File:** `K/k_features.py:27`
 - **What:** Kicker features group by `["player_id"]` only (no season reset), so rolling windows span across seasons. A kicker's late-season 2024 stats influence early-2025 predictions.
-- **Rationale:** Kickers have stable multi-year careers and small per-season sample sizes (~17 games), so cross-season windows provide more signal. Comment expanded with this rationale.
+- **Rationale:** Kickers have stable multi-year careers and small per-season sample sizes (~17 games), so cross-season windows provide more signal. Comment above the `grp` assignment records this rationale.
 - **Risk:** If a kicker changes teams or role between seasons, stale cross-season features could mislead the model. Likely small impact.
 
 ### [LOW] `_cache` dict grows without eviction
-- **File:** `app.py:359`
-- **What:** `_get_data()` caches results in a module-level dict. The cache is never cleared. Not a real problem for a class project (server restarts frequently), but worth noting.
+- **File:** `app.py:63`
+- **What:** `_get_data()` caches results in a module-level dict (serialized by `_cache_lock` since #31). The cache is never cleared. Not a real problem for a class project (server restarts frequently), but worth noting.
 
 ### [LOW] `drop_last=True` silently discards training samples
-- **File:** `shared/training.py:77`
-- **What:** Last incomplete batch is dropped. With batch_size=512 (WR) and 32,521 training rows, 121 rows (~0.4%) are never seen. Standard practice, but combined with early stopping means those rows never contribute.
+- **File:** `shared/training.py:167, 196, 449`
+- **What:** Last incomplete batch is dropped in all three DataLoaders (attention, multi-target, history-multi-target). With batch_size=512 (WR) and 32,521 training rows, 121 rows (~0.4%) are never seen. Standard practice, but combined with early stopping means those rows never contribute.
 
 ### [LOW] K targets overwrite `fantasy_points` column
-- **File:** `K/k_targets.py:37`
-- **What:** `df["fantasy_points"] = df["fg_points"] + df["pat_points"] + df["miss_penalty"]` overwrites the original column. Safe if called once, but calling twice would use the already-computed value. Not a current bug, just fragile.
+- **File:** `K/k_targets.py:31`
+- **What:** `df["fantasy_points"] = df["fg_yard_points"] + df["pat_points"] - df["fg_misses"] - df["xp_misses"]` overwrites the original column. Safe if called once, but calling twice would use the already-computed value. Not a current bug, just fragile.
 
 ### [LOW] Redundant NaN handling in feature engineering
 - **Files:** All `*_features.py` files
 - **What:** Pattern like `(a / b).fillna(0)` followed by `df.loc[b == 0, col] = 0` is redundant — fillna already handled the division-by-zero case. Not wrong, just noisy.
 
 ### [UNCERTAIN] K/DST index collision in `_get_data()`
-- **File:** `app.py:386-403`
+- **File:** `app.py:593-606`
 - **What:** K/DST test rows are appended to `results` with `offset = results.index.max() + 1`. Assumes the general test data has a well-behaved index. If the general test parquet has gaps, K/DST indices could collide. Probably safe in practice since parquet preserves sequential indices.
 
-### [UNCERTAIN] Huber delta asymmetry across targets
-- **Files:** Position config files (`*_config.py`)
-- **What:** DST `pts_allowed_bonus` has Huber delta 3.0 with target range [-4, 10] (delta covers 21% of range). QB `td_points` also has delta 3.0 but range [0, 72+] (delta covers 4% of range). This means the loss is much more robust to outliers for `pts_allowed_bonus` than for `td_points`. May be intentional tuning, or may be an oversight.
-
 ### [UNCERTAIN] Team share features computed per-split
-- **Files:** `RB/rb_features.py:69`, `WR/wr_features.py:61`, `TE/te_features.py:54`
-- **What:** Team carry/target shares are computed within each split independently. A player's share could differ between train and test if their teammates are distributed differently across splits. By design (prevents leakage), but the share values won't be globally consistent.
+- **Files:** `RB/rb_features.py:74`, `WR/wr_features.py:58`, `TE/te_features.py:51`
+- **What:** Team carry/target shares are computed within each split independently (`compute_team_*_totals` runs on each split's own data). A player's share could differ between train and test if their teammates are distributed differently across splits. By design (prevents leakage), but the share values won't be globally consistent.
 
 ---
 
@@ -132,3 +128,9 @@ Kept for the lessons-learned value — each entry captures a debug-to-root-cause
 - **Files:** `app.py:85-90`
 - **What:** All API routes lacked try/except. If `_get_data()` or model loading failed, the user saw a generic 500 with no useful message.
 - **Fix:** Added Flask `@app.errorhandler(Exception)` that returns JSON `{"error": ...}` for `/api/` routes. Logs full traceback to console.
+
+### [FIXED] Huber delta asymmetry across targets starved count heads
+- **Files:** Position config files (`*_config.py`)
+- **What:** Pre-rebalance loss weights were roughly equal across heads, so yards targets (δ ≈ 15–30) dominated count-head gradients (δ ≈ 0.25–0.5) by ~20–2500× per sample, collapsing the count heads toward their mean. The DST `pts_allowed_bonus` head also had a too-forgiving delta relative to its range, and the old QB `td_points` delta was too small relative to its point scale.
+- **Fix:** (1) Rebalanced NN loss weights to ≈ `2.0 / huber_delta` per head across RB (`d229830`), QB (`4ac478f`), WR (`35e611b`), and TE (`a03f795`). (2) DST targets were migrated to 10 raw stats (`cc0c627`), retiring `pts_allowed_bonus` entirely; QB's `td_points` was likewise replaced by split `passing_tds`/`rushing_tds` heads with δ = 0.5 and matching w = 4.0.
+- **Lesson:** Huber δ and loss weight are coupled — changing one without the other either starves or drowns a head. Encode the pairing in the config (`2.0/δ`) and re-derive the weight whenever δ moves. See CLAUDE.md "Loss weights are tuned inverse-to-Huber-delta".
