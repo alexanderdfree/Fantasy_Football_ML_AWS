@@ -1,13 +1,22 @@
 """Regression tests for the aux-loss ``total`` target in ``_prepare_position_data``.
 
-Three regimes:
+The target is chosen via a triple gate: the position must be in the
+scoring-aware whitelist (K/DST), ``cfg["compute_adjustment_fn"]`` must be
+``None`` (post-hoc adjustment folded into heads), and ``cfg["aggregate_fn"]``
+must be set (NN is wired to emit ``preds["total"] = aggregate_fn(preds)``,
+so ``sum(heads) == fantasy_points`` by construction).
 
-* K/DST with a non-None ``compute_adjustment_fn`` (today's main-branch state) —
-  fall back to ``sum(targets)`` so the adjustment isn't double-counted.
-* K/DST with ``compute_adjustment_fn is None`` (post Unit 1/2 refactors) —
-  supervise on ``fantasy_points`` so heads learn the full scoring semantics.
-* QB/RB/WR/TE — always ``sum(targets)``, regardless of adjustment fn, because
-  their post-migration raw-stat heads don't sum to ``fantasy_points``.
+Regimes exercised:
+
+* K/DST with ``compute_adjustment_fn`` still set — fall back to ``sum(targets)``.
+* K/DST with ``compute_adjustment_fn is None`` but no ``aggregate_fn`` — fall
+  back to ``sum(targets)`` so ``sum(raw_heads)`` and ``targets["total"]`` stay
+  consistent (the NN still emits ``sum(heads)``).
+* K/DST with both ``compute_adjustment_fn is None`` and an ``aggregate_fn`` —
+  supervise on ``fantasy_points`` since the NN aggregates heads into fantasy
+  points.
+* QB/RB/WR/TE — always ``sum(targets)``, regardless of the other flags,
+  because they aren't in the whitelist.
 """
 
 from __future__ import annotations
@@ -40,6 +49,11 @@ def _get_feature_cols():
     return list(_FEATURE_COLS)
 
 
+def _noop_aggregate(preds):
+    """Placeholder aggregate_fn — identity is fine; the gate only checks presence."""
+    return sum(preds.values())
+
+
 def _build_min_df(n: int, targets: list[str], fp_scale: float, seed: int) -> pd.DataFrame:
     """Return a minimal per-position frame with feature cols, targets, and fantasy_points.
 
@@ -62,7 +76,11 @@ def _build_min_df(n: int, targets: list[str], fp_scale: float, seed: int) -> pd.
     return pd.DataFrame(cols)
 
 
-def _build_min_cfg(targets: list[str], compute_adjustment_fn=None) -> dict:
+def _build_min_cfg(
+    targets: list[str],
+    compute_adjustment_fn=None,
+    aggregate_fn=None,
+) -> dict:
     cfg = {
         "targets": targets,
         "specific_features": list(_FEATURE_COLS),
@@ -74,6 +92,8 @@ def _build_min_cfg(targets: list[str], compute_adjustment_fn=None) -> dict:
     }
     if compute_adjustment_fn is not None:
         cfg["compute_adjustment_fn"] = compute_adjustment_fn
+    if aggregate_fn is not None:
+        cfg["aggregate_fn"] = aggregate_fn
     return cfg
 
 
@@ -103,118 +123,141 @@ def min_splits_factory():
     return _make
 
 
+def _assert_total_equals_sum(y_dict, pos_df, targets):
+    expected = np.sum([pos_df[t].values for t in targets], axis=0).astype(np.float32)
+    np.testing.assert_array_equal(y_dict["total"], expected)
+    # Sanity: fantasy_points must not match — otherwise the test is vacuous.
+    assert not np.allclose(y_dict["total"], pos_df["fantasy_points"].values.astype(np.float32))
+
+
+def _assert_total_equals_fantasy_points(y_dict, pos_df):
+    np.testing.assert_array_equal(
+        y_dict["total"], pos_df["fantasy_points"].values.astype(np.float32)
+    )
+
+
 # ---------------------------------------------------------------------------
-# Gate: compute_adjustment_fn set → fall back to sum(targets)
+# Gate: compute_adjustment_fn set → fall back to sum(targets) even if
+# aggregate_fn would otherwise be present.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 def test_k_with_adjustment_fn_uses_sum_of_targets(min_splits_factory):
-    """K with a non-None ``compute_adjustment_fn`` must use ``sum(targets)``.
-
-    This is today's main-branch state — the gate must be a no-op.
-    """
+    """K with ``compute_adjustment_fn`` set must use ``sum(targets)``."""
     targets = ["fg_points", "pat_points"]
     train, val, test = min_splits_factory(targets)
 
     def adjustment_fn(df):
         return pd.Series(np.zeros(len(df)), index=df.index)
 
-    cfg = _build_min_cfg(targets, compute_adjustment_fn=adjustment_fn)
+    # aggregate_fn present but adjustment still active → must fall back.
+    cfg = _build_min_cfg(
+        targets,
+        compute_adjustment_fn=adjustment_fn,
+        aggregate_fn=_noop_aggregate,
+    )
 
     _, _, _, y_train, y_val, y_test, pos_train, pos_val, pos_test, _ = _prepare_position_data(
         "K", cfg, train, val, test
     )
 
-    expected_train = np.sum([pos_train[t].values for t in targets], axis=0).astype(np.float32)
-    expected_val = np.sum([pos_val[t].values for t in targets], axis=0).astype(np.float32)
-    expected_test = np.sum([pos_test[t].values for t in targets], axis=0).astype(np.float32)
-
-    np.testing.assert_array_equal(y_train["total"], expected_train)
-    np.testing.assert_array_equal(y_val["total"], expected_val)
-    np.testing.assert_array_equal(y_test["total"], expected_test)
-    # Sanity: fantasy_points must not match — otherwise the test is vacuous.
-    assert not np.allclose(y_train["total"], pos_train["fantasy_points"].values.astype(np.float32))
+    _assert_total_equals_sum(y_train, pos_train, targets)
+    _assert_total_equals_sum(y_val, pos_val, targets)
+    _assert_total_equals_sum(y_test, pos_test, targets)
 
 
 # ---------------------------------------------------------------------------
-# Gate: K with adjustment_fn=None AND fantasy_points column → use fantasy_points
+# Gate: adjustment_fn is None but aggregate_fn is missing → fall back.
+# Without aggregate_fn the NN emits ``sum(raw_heads)`` so ``fantasy_points``
+# supervision would be systematically unreachable.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-def test_k_without_adjustment_fn_uses_fantasy_points(min_splits_factory):
-    """Post-Unit-1 K (no ``compute_adjustment_fn``) must supervise on ``fantasy_points``."""
+@pytest.mark.parametrize("position", ["K", "DST"])
+def test_without_aggregate_fn_uses_sum_of_targets(position, min_splits_factory):
+    """K/DST without ``aggregate_fn`` keep ``sum(targets)`` supervision."""
+    targets = ["scoring_a", "scoring_b", "scoring_c"]
+    train, val, test = min_splits_factory(targets)
+
+    cfg = _build_min_cfg(targets)  # neither compute_adjustment_fn nor aggregate_fn
+
+    _, _, _, y_train, y_val, y_test, pos_train, pos_val, pos_test, _ = _prepare_position_data(
+        position, cfg, train, val, test
+    )
+
+    _assert_total_equals_sum(y_train, pos_train, targets)
+    _assert_total_equals_sum(y_val, pos_val, targets)
+    _assert_total_equals_sum(y_test, pos_test, targets)
+
+
+# ---------------------------------------------------------------------------
+# Gate: K/DST with adjustment_fn=None, aggregate_fn wired, fantasy_points
+# present → supervise on fantasy_points.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_k_with_aggregate_fn_uses_fantasy_points(min_splits_factory):
+    """K with ``aggregate_fn`` set must supervise on ``fantasy_points``."""
     targets = ["fg_points", "pat_points"]
     train, val, test = min_splits_factory(targets)
 
-    cfg = _build_min_cfg(targets)  # no compute_adjustment_fn
+    cfg = _build_min_cfg(targets, aggregate_fn=_noop_aggregate)
 
     _, _, _, y_train, y_val, y_test, pos_train, pos_val, pos_test, _ = _prepare_position_data(
         "K", cfg, train, val, test
     )
 
-    np.testing.assert_array_equal(
-        y_train["total"], pos_train["fantasy_points"].values.astype(np.float32)
-    )
-    np.testing.assert_array_equal(
-        y_val["total"], pos_val["fantasy_points"].values.astype(np.float32)
-    )
-    np.testing.assert_array_equal(
-        y_test["total"], pos_test["fantasy_points"].values.astype(np.float32)
-    )
+    _assert_total_equals_fantasy_points(y_train, pos_train)
+    _assert_total_equals_fantasy_points(y_val, pos_val)
+    _assert_total_equals_fantasy_points(y_test, pos_test)
 
 
 @pytest.mark.unit
-def test_dst_without_adjustment_fn_uses_fantasy_points(min_splits_factory):
-    """Post-Unit-2 DST (no ``compute_adjustment_fn``) must supervise on ``fantasy_points``."""
+def test_dst_with_aggregate_fn_uses_fantasy_points(min_splits_factory):
+    """DST with ``aggregate_fn`` set must supervise on ``fantasy_points``."""
     targets = ["defensive_scoring", "td_points", "pts_allowed_bonus"]
     train, val, test = min_splits_factory(targets)
 
-    cfg = _build_min_cfg(targets)
+    cfg = _build_min_cfg(targets, aggregate_fn=_noop_aggregate)
 
     _, _, _, y_train, _, _, pos_train, _, _, _ = _prepare_position_data(
         "DST", cfg, train, val, test
     )
 
-    np.testing.assert_array_equal(
-        y_train["total"], pos_train["fantasy_points"].values.astype(np.float32)
-    )
+    _assert_total_equals_fantasy_points(y_train, pos_train)
 
 
 # ---------------------------------------------------------------------------
-# Safety: QB/RB/WR/TE NEVER switch, even with adjustment_fn=None
+# Safety: QB/RB/WR/TE NEVER switch, even when adjustment_fn=None and
+# aggregate_fn is wired. They're not in the scoring-aware whitelist.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE"])
 def test_player_positions_always_use_sum_of_targets(position, min_splits_factory):
-    """QB/RB/WR/TE keep ``sum(targets)`` regardless of ``compute_adjustment_fn``.
+    """QB/RB/WR/TE keep ``sum(targets)`` regardless of the other gate inputs.
 
     Post-target-migration, these positions emit RAW stats (yards, TDs,
     receptions) whose ``sum(heads)`` lives on a different scale than
-    ``fantasy_points``. Switching supervision to ``fantasy_points`` while the
-    NN still emits ``sum(heads)`` as ``preds["total"]`` would create a
-    systematic mismatch the model cannot minimize. The explicit position gate
-    in ``_prepare_position_data`` prevents this.
+    ``fantasy_points``, and the aux loss compares ``sum(heads) ≈ sum(targets)``
+    by construction. The whitelist gate prevents an accidental ``fantasy_points``
+    supervision for them even if a misconfigured cfg sets ``aggregate_fn``.
     """
     targets = ["t_yards", "t_tds", "t_receptions"]
     train, val, test = min_splits_factory(targets, fp_scale=500.0)
 
-    cfg = _build_min_cfg(targets)  # no compute_adjustment_fn
+    # Both adjustment-free AND aggregate_fn present — whitelist still blocks.
+    cfg = _build_min_cfg(targets, aggregate_fn=_noop_aggregate)
 
     _, _, _, y_train, y_val, y_test, pos_train, pos_val, pos_test, _ = _prepare_position_data(
         position, cfg, train, val, test
     )
 
-    expected_train = np.sum([pos_train[t].values for t in targets], axis=0).astype(np.float32)
-    expected_val = np.sum([pos_val[t].values for t in targets], axis=0).astype(np.float32)
-    expected_test = np.sum([pos_test[t].values for t in targets], axis=0).astype(np.float32)
-
-    np.testing.assert_array_equal(y_train["total"], expected_train)
-    np.testing.assert_array_equal(y_val["total"], expected_val)
-    np.testing.assert_array_equal(y_test["total"], expected_test)
-    # Sanity: fantasy_points *is* present but we're ignoring it for these positions.
+    _assert_total_equals_sum(y_train, pos_train, targets)
+    _assert_total_equals_sum(y_val, pos_val, targets)
+    _assert_total_equals_sum(y_test, pos_test, targets)
     assert "fantasy_points" in pos_train.columns
-    assert not np.allclose(y_train["total"], pos_train["fantasy_points"].values.astype(np.float32))
