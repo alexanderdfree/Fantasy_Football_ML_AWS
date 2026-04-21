@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Stop the instance when it has been idle past the threshold.
-# "Idle" = /opt/ff/logs/last-activity is missing or older than IDLE_HOURS.
+# "Idle" = /opt/ff/logs/last-activity is missing or older than IDLE_HOURS
+# AND no ff-train invocation is currently holding the training lock.
 # The timer also does a best-effort prune of stale Docker images so the
 # 100 GB root volume doesn't fill up.
 #
@@ -11,9 +12,18 @@ set -euo pipefail
 
 IDLE_HOURS="${IDLE_HOURS:-4}"
 ACTIVITY_FILE="/opt/ff/logs/last-activity"
+LOCK_FILE="/var/lock/ff-train.lock"
 
 # Stale image prune — keep only images referenced in the last 7 days.
 docker image prune -af --filter "until=168h" >/dev/null 2>&1 || true
+
+# If a training run is currently holding the ff-train lock, never shut down.
+# `flock -n` returns non-zero when another process holds the lock; treat that
+# as "busy" even across multi-hour GPU runs that outlast IDLE_HOURS.
+if [ -e "$LOCK_FILE" ] && ! flock -n "$LOCK_FILE" true 2>/dev/null; then
+  logger -t ff-auto-shutdown "ff-train lock held, skipping shutdown check"
+  exit 0
+fi
 
 now=$(date +%s)
 
