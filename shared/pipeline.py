@@ -560,7 +560,6 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             add_features_fn: callable(train, val, test) -> (train, val, test)
             fill_nans_fn: callable(train, val, test, features) -> (train, val, test)
             get_feature_columns_fn: callable() -> list[str]
-            compute_adjustment_fn: callable(df) -> pd.Series
             # Neural net architecture
             nn_backbone_layers: list[int]
             nn_head_hidden: int
@@ -619,8 +618,6 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     # --- Ridge multi-target with per-target alpha tuning ---
     print(f"\n=== {pos} Ridge Multi-Target (Per-Target CV Tuning) ===")
-    if cfg.get("compute_adjustment_fn") is not None:
-        cfg["compute_adjustment_fn"](pos_test)
 
     cv_col = cfg.get("cv_split_column", "season")
     two_stage_targets = cfg.get("two_stage_targets", {})
