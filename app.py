@@ -439,7 +439,8 @@ def _apply_position_models(train, val, test, pos, results):
             attn_static_cols = get_attn_static_columns(
                 feature_cols, reg.get("attn_static_features", [])
             )
-            attn_col_idx = [i for i, c in enumerate(feature_cols) if c in set(attn_static_cols)]
+            attn_static_col_set = set(attn_static_cols)
+            attn_col_idx = [i for i, c in enumerate(feature_cols) if c in attn_static_col_set]
             X_test_attn = X_test_pos[:, attn_col_idx]
 
             attn_scaler = joblib.load(f"{model_dir}/attention_nn_scaler.pkl")
