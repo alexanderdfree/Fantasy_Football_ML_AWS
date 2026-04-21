@@ -9272,5 +9272,138 @@
         "nn_top12": 0.458
       }
     ]
+  },
+  {
+    "run_id": "2026-04-21T12:49:46_ac7d0bd",
+    "timestamp": "2026-04-21T12:49:46",
+    "git_hash": "ac7d0bd",
+    "note": "EC2 auto-run (ac7d0bd)",
+    "backend": "ec2",
+    "instance_type": "g4dn.xlarge (On-Demand)",
+    "positions": [
+      "QB"
+    ],
+    "results": [
+      {
+        "position": "QB",
+        "ridge_mae": 6.483,
+        "ridge_r2": 0.234,
+        "nn_mae": 6.699,
+        "nn_r2": 0.224,
+        "nn_wins_mae": false,
+        "nn_per_target": {
+          "passing_yards": {
+            "mae": 67.658,
+            "r2": 0.3
+          },
+          "rushing_yards": {
+            "mae": 13.137,
+            "r2": 0.061
+          },
+          "passing_tds": {
+            "mae": 0.988,
+            "r2": -0.026
+          },
+          "rushing_tds": {
+            "mae": 0.544,
+            "r2": -1.56
+          },
+          "interceptions": {
+            "mae": 0.751,
+            "r2": -0.302
+          },
+          "fumbles_lost": {
+            "mae": 0.636,
+            "r2": -1.739
+          }
+        },
+        "ridge_per_target": {
+          "passing_yards": {
+            "mae": 69.719,
+            "r2": 0.307
+          },
+          "rushing_yards": {
+            "mae": 11.134,
+            "r2": 0.231
+          },
+          "passing_tds": {
+            "mae": 0.858,
+            "r2": 0.108
+          },
+          "rushing_tds": {
+            "mae": 0.242,
+            "r2": 0.054
+          },
+          "interceptions": {
+            "mae": 0.608,
+            "r2": -0.055
+          },
+          "fumbles_lost": {
+            "mae": 0.294,
+            "r2": -0.002
+          }
+        },
+        "ridge_top12": 0.491,
+        "nn_top12": 0.5,
+        "attn_nn_mae": 6.547,
+        "attn_nn_r2": 0.207,
+        "attn_nn_per_target": {
+          "passing_yards": {
+            "mae": 67.582,
+            "r2": 0.338
+          },
+          "rushing_yards": {
+            "mae": 11.461,
+            "r2": 0.166
+          },
+          "passing_tds": {
+            "mae": 0.879,
+            "r2": 0.125
+          },
+          "rushing_tds": {
+            "mae": 0.196,
+            "r2": -0.065
+          },
+          "interceptions": {
+            "mae": 0.624,
+            "r2": 0.015
+          },
+          "fumbles_lost": {
+            "mae": 0.246,
+            "r2": -0.048
+          }
+        },
+        "attn_nn_top12": 0.461,
+        "lgbm_mae": 6.269,
+        "lgbm_r2": 0.275,
+        "lgbm_per_target": {
+          "passing_yards": {
+            "mae": 66.0,
+            "r2": 0.359
+          },
+          "rushing_yards": {
+            "mae": 10.882,
+            "r2": 0.257
+          },
+          "passing_tds": {
+            "mae": 0.844,
+            "r2": 0.169
+          },
+          "rushing_tds": {
+            "mae": 0.226,
+            "r2": 0.055
+          },
+          "interceptions": {
+            "mae": 0.618,
+            "r2": 0.043
+          },
+          "fumbles_lost": {
+            "mae": 0.253,
+            "r2": -0.02
+          }
+        },
+        "lgbm_top12": 0.535
+      }
+    ]
   }
 ]
