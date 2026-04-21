@@ -11,14 +11,14 @@ def get_qb_feature_columns() -> list[str]:
 
 
 def add_qb_specific_features(train_df, val_df, test_df):
-    """Add 8 QB-specific engineered features to each split."""
+    """Add QB-specific engineered features (see QB_SPECIFIC_FEATURES) to each split."""
     for df in [train_df, val_df, test_df]:
         _compute_qb_features(df)
     return train_df, val_df, test_df
 
 
 def _compute_qb_features(df: pd.DataFrame) -> None:
-    """Compute all 8 QB-specific features in-place."""
+    """Compute all QB-specific features (see QB_SPECIFIC_FEATURES) in-place."""
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
     # Helper: shifted rolling L3
