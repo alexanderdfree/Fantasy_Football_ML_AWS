@@ -57,8 +57,13 @@ def print_table(all_results):
 
 
 def save_results(all_results, path="tune_rb_gate_results.json"):
-    with open(path, "w") as f:
+    """Atomic write: dump to .tmp then rename so a crash can't leave the
+    file half-written (which would crash the next step's json.load).
+    """
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
         json.dump(all_results, f, indent=2)
+    os.replace(tmp, path)
 
 
 if __name__ == "__main__":
@@ -69,11 +74,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     results_file = "tune_rb_gate_results.json"
+    all_results = []
     if os.path.exists(results_file):
-        with open(results_file) as f:
-            all_results = json.load(f)
-    else:
-        all_results = []
+        try:
+            with open(results_file) as f:
+                all_results = json.load(f)
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"WARNING: {results_file} is corrupt ({e}); starting fresh.")
 
     if args.step == 0:
         row = run_variant("baseline (w=1.0, h=16, d=3.0)", {})
