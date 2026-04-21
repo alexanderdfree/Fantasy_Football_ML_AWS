@@ -88,25 +88,48 @@ set -euo pipefail
 POS="\$1"
 SEED="\${2:-42}"
 IMAGE="${IMAGE}"
+_t_total=\$SECONDS
 
 exec 200>/var/lock/ff-train.lock
 flock -n 200 || { echo "ff-train: another run is in progress"; exit 2; }
 
-mkdir -p /opt/ff/scratch/input /opt/ff/scratch/model /opt/ff/logs
+mkdir -p /opt/ff/scratch/input /opt/ff/scratch/model /opt/ff/scratch/raw /opt/ff/logs
 # Mark activity at start so auto-shutdown sees "busy" even if this run
 # outlasts IDLE_HOURS before docker completes.
 date -Iseconds > /opt/ff/logs/last-activity
-docker pull "\$IMAGE"
+
+# Skip docker pull if the locally-cached image digest matches ECR's :latest.
+# Falls through to unconditional pull on any error (ECR auth, parse failure).
+_t_pull=\$SECONDS
+REMOTE_DIGEST=\$(aws ecr describe-images \\
+  --repository-name ff-training \\
+  --image-ids imageTag=latest \\
+  --region ${REGION} \\
+  --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
+LOCAL_DIGEST=\$(docker image inspect --format='{{index .RepoDigests 0}}' "\$IMAGE" 2>/dev/null | awk -F@ '{print \$2}' || echo "")
+if [ -z "\$REMOTE_DIGEST" ] || [ "\$REMOTE_DIGEST" != "\$LOCAL_DIGEST" ]; then
+  echo "[image] digest mismatch (local=\$LOCAL_DIGEST remote=\$REMOTE_DIGEST) — pulling"
+  docker pull "\$IMAGE"
+else
+  echo "[image] digest cached (\$LOCAL_DIGEST) — skipping pull"
+fi
+echo "[timing] phase=docker_pull seconds=\$((SECONDS - _t_pull))"
+
+_t_run=\$SECONDS
 docker run --rm --gpus all \\
   -e S3_BUCKET=${BUCKET} \\
   -e S3_DATA_PREFIX=data \\
   -e LOG_EVERY=1 \\
   -e REQUIRE_GPU=1 \\
   -e AWS_DEFAULT_REGION=${REGION} \\
+  -e FF_FORCE_REFRESH="\${FF_FORCE_REFRESH:-0}" \\
   -v /opt/ff/scratch/input:/opt/ml/input/data/training \\
   -v /opt/ff/scratch/model:/opt/ml/model \\
+  -v /opt/ff/scratch/raw:/opt/ml/code/data/raw \\
   "\$IMAGE" --position "\$POS" --seed "\$SEED" 2>&1 \\
   | tee -a "/var/log/ff-train/\${POS}.log"
+echo "[timing] phase=docker_run seconds=\$((SECONDS - _t_run))"
+echo "[timing] total=\$((SECONDS - _t_total))"
 
 date -Iseconds > /opt/ff/logs/last-activity
 EOF

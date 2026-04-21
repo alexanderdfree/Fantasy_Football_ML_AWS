@@ -18,6 +18,8 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import time
+from contextlib import contextmanager
 
 # Ensure project root is on path (baked into /opt/ml/code/ in the container)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -33,6 +35,48 @@ from shared.registry import (
     is_cpu_only,
 )
 from shared.utils import seed_everything
+
+
+def _download_if_stale(s3, bucket, key, local_path):
+    """Download s3://bucket/key to local_path, skipping if ETag matches cache.
+
+    Writes a sidecar `{local_path}.etag` file with the remote ETag. On the
+    next call, compare the remote ETag to the sidecar; if equal, skip the
+    download. Set env var FF_FORCE_REFRESH=1 to force a fresh download.
+    Falls through to unconditional download on any head_object failure.
+    """
+    sidecar = local_path + ".etag"
+    try:
+        remote_etag = s3.head_object(Bucket=bucket, Key=key)["ETag"]
+    except Exception as e:
+        print(f"[cache] head_object failed for s3://{bucket}/{key}: {e} — falling back to download")
+        os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
+        s3.download_file(bucket, key, local_path)
+        return
+    if (
+        os.environ.get("FF_FORCE_REFRESH") != "1"
+        and os.path.exists(local_path)
+        and os.path.exists(sidecar)
+    ):
+        with open(sidecar) as f:
+            if f.read().strip() == remote_etag:
+                print(f"[cache] hit: s3://{bucket}/{key}")
+                return
+    print(f"[cache] miss: s3://{bucket}/{key} -> {local_path}")
+    os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
+    s3.download_file(bucket, key, local_path)
+    with open(sidecar, "w") as f:
+        f.write(remote_etag)
+
+
+@contextmanager
+def _timed(phase):
+    """Emit a [timing] log line with wall-clock seconds spent in a phase."""
+    t0 = time.monotonic()
+    try:
+        yield
+    finally:
+        print(f"[timing] phase={phase} seconds={time.monotonic() - t0:.1f}", flush=True)
 
 
 def _assert_gpu(position: str):
@@ -74,8 +118,7 @@ def download_data(s3_bucket, s3_prefix, local_dir):
     def _download_one(name):
         s3_key = f"{s3_prefix}/{name}"
         local_path = os.path.join(local_dir, name)
-        print(f"Downloading s3://{s3_bucket}/{s3_key} -> {local_path}")
-        s3.download_file(s3_bucket, s3_key, local_path)
+        _download_if_stale(s3, s3_bucket, s3_key, local_path)
 
     with ThreadPoolExecutor(max_workers=len(names)) as pool:
         for _ in pool.map(_download_one, names):
@@ -101,8 +144,7 @@ def sync_raw_data(s3_bucket):
             if not key.endswith(".parquet"):
                 continue
             local_path = key
-            print(f"Downloading s3://{s3_bucket}/{key} -> {local_path}")
-            s3.download_file(s3_bucket, key, local_path)
+            _download_if_stale(s3, s3_bucket, key, local_path)
 
 
 def upload_artifacts(s3_bucket, position, model_dir):
@@ -243,11 +285,13 @@ def main():
         _hash = hashlib.sha256(_f.read()).hexdigest()[:12]
     print(f"[batch/train.py] build fingerprint: {_hash}")
 
+    _t_total = time.monotonic()
     # Skip the GPU assertion in dry-run — local/CI smoke tests rarely have CUDA.
     if args.dry_run:
         print(f"[dry-run] skipping _assert_gpu for {pos}")
     else:
-        _assert_gpu(pos)
+        with _timed("assert_gpu"):
+            _assert_gpu(pos)
     seed_everything(args.seed)
 
     s3_bucket = os.environ.get("S3_BUCKET", "ff-predictor-training")
@@ -275,26 +319,32 @@ def main():
 
     # data/raw/*.parquet is needed for weather features (all positions) and
     # for K/DST's self-contained data loaders. Sync before branching.
-    sync_raw_data(s3_bucket)
+    with _timed("sync_raw_data"):
+        sync_raw_data(s3_bucket)
 
     if accepts_dataframes(pos):
         # Download train/val/test splits from S3 into the container
-        download_data(s3_bucket, s3_prefix, data_dir)
-        train_df = pd.read_parquet(os.path.join(data_dir, "train.parquet"))
-        val_df = pd.read_parquet(os.path.join(data_dir, "val.parquet"))
-        test_df = pd.read_parquet(os.path.join(data_dir, "test.parquet"))
-        print(f"Loaded data: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
-        result = run_fn(train_df, val_df, test_df, seed=args.seed)
+        with _timed("download_data"):
+            download_data(s3_bucket, s3_prefix, data_dir)
+        with _timed("read_parquets"):
+            train_df = pd.read_parquet(os.path.join(data_dir, "train.parquet"))
+            val_df = pd.read_parquet(os.path.join(data_dir, "val.parquet"))
+            test_df = pd.read_parquet(os.path.join(data_dir, "test.parquet"))
+            print(f"Loaded data: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
+        with _timed("run_pipeline"):
+            result = run_fn(train_df, val_df, test_df, seed=args.seed)
     else:
         # K/DST: self-contained data loading
-        result = run_fn(seed=args.seed)
+        with _timed("run_pipeline"):
+            result = run_fn(seed=args.seed)
 
     # Copy model artifacts to output dir FIRST so a later metrics write cannot
     # be clobbered by a same-named file under src_model_dir.
     src_model_dir = os.path.join(pos, "outputs", "models")
     if os.path.isdir(src_model_dir):
         print(f"Copying model artifacts from {src_model_dir} to {model_dir}")
-        _replace_model_dir_contents(src_model_dir, model_dir)
+        with _timed("copy_artifacts"):
+            _replace_model_dir_contents(src_model_dir, model_dir)
     else:
         print(f"WARNING: No model directory found at {src_model_dir}")
 
@@ -313,7 +363,10 @@ def main():
     print(f"Saved benchmark metrics to {metrics_path}")
 
     # Upload artifacts to S3 (raises if model_dir is empty or metrics missing)
-    upload_artifacts(s3_bucket, pos, model_dir)
+    with _timed("upload_artifacts"):
+        upload_artifacts(s3_bucket, pos, model_dir)
+
+    print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
 
 
 if __name__ == "__main__":
