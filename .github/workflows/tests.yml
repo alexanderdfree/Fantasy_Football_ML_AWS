@@ -10,6 +10,10 @@ concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # pytorch CPU index hosts older numpy/etc; fall through to PyPI like pip does.
+  UV_INDEX_STRATEGY: unsafe-best-match
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -18,8 +22,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: "pip"
-      - run: pip install ruff==0.15.0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements*.txt"
+      - run: uv pip install --system ruff==0.15.0
       - name: ruff check
         run: ruff check .
       - name: ruff format --check
@@ -39,16 +46,18 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: "pip"
 
-      - name: Install torch (CPU wheels)
-        run: pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements*.txt"
 
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: uv pip install --system -r requirements-dev.txt
 
       - name: Install nfl_data_py (no-deps, matches Dockerfile)
-        run: pip install --no-cache-dir --no-deps nfl_data_py==0.3.3
+        run: uv pip install --system --no-deps nfl_data_py==0.3.3
 
       # data/raw/ is gitignored (28 MB of player stats). The pipeline_e2e +
       # regression tests load data/raw/schedules_2012_2025.parquet via
