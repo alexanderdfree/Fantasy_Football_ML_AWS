@@ -6,7 +6,7 @@ that each model actually learns something useful:
   - MAE beats season-average baseline
   - LightGBM MAE <= Ridge MAE * 1.30 (LGBM at least competitive with Ridge
     on mostly-linear tiny data)
-  - NN MAE within +/-25% of LightGBM
+  - NN MAE within ~0.6x-1.7x of LightGBM
 
 After the raw-stat migration, ``y["total"]`` is aggregated via the scoring
 dict (not a simple sum) so the MAE here is in fantasy-point units, not a
