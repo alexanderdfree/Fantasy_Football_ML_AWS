@@ -3,7 +3,7 @@ import pandas as pd
 import nfl_data_py as nfl
 from src.config import (
     SCORING, SCORING_STANDARD, SCORING_HALF_PPR, SCORING_PPR,
-    PPR_FORMATS, CACHE_DIR, SEASONS,
+    CACHE_DIR, SEASONS,
 )
 
 
