@@ -569,48 +569,23 @@ def flatten_include_features(include_dict: dict[str, list[str]]) -> list[str]:
     return cols
 
 
-def get_attn_static_columns(all_feature_cols: list[str], position: str | None = None) -> list[str]:
-    """Return feature columns for the attention NN, excluding temporal aggregations.
+def get_attn_static_columns(
+    all_feature_cols: list[str],
+    static_whitelist: list[str],
+) -> list[str]:
+    """Return the subset of ``all_feature_cols`` whitelisted for the attention
+    NN's static branch, preserving the input column order.
 
-    The attention mechanism learns its own temporal representation from raw game
-    history, so rolling/EWMA/trend/share features are redundant (and collinear).
-    Prior-season features are kept — they cover a different season than the
-    attention's within-season lookback.
-
-    QB/RB/WR/TE use prefix-based naming (``rolling_``, ``ewma_``, ``trend_``).
-    DST uses suffix-based naming (``_L3``, ``_L5``, ``_L8``, ``_ewma``,
-    ``_trend``, ``_std_L3``), so a position-specific branch strips those too.
+    Each position's config (``{POS}_ATTN_STATIC_FEATURES`` for QB/RB/WR/TE/DST)
+    owns the whitelist. The attention branch learns its own temporal
+    representation from ``{POS}_ATTN_HISTORY_STATS``, so rolling / EWMA / trend
+    / share / specific categories are intentionally excluded upstream at the
+    config level — making new-feature inclusion opt-in and eliminating the
+    silent leak the previous prefix/suffix blacklist had for ``_L3``/``_L5``
+    specific columns.
     """
-    exclude_prefixes = ("rolling_", "ewma_", "trend_")
-    exclude_exact = set()
-    for w in SHARE_WINDOWS:
-        exclude_exact.update([f"target_share_L{w}", f"carry_share_L{w}"])
-
-    if position == "DST":
-        # DST rolling / EWMA / trend / std features use suffix naming
-        # (e.g. sacks_L3, pts_allowed_ewma, sack_trend, dst_scoring_std_L3).
-        # The ``_trend`` suffix also covers DST's bare-name trend columns
-        # (``sack_trend``, ``turnover_trend``, ``pts_allowed_trend``).
-        dst_exclude_suffixes = (
-            "_L3",
-            "_L5",
-            "_L8",
-            "_ewma",
-            "_trend",
-            "_std_L3",
-            "_std_L5",
-        )
-        return [
-            c
-            for c in all_feature_cols
-            if not c.startswith(exclude_prefixes)
-            and not c.endswith(dst_exclude_suffixes)
-            and c not in exclude_exact
-        ]
-
-    return [
-        c for c in all_feature_cols if not c.startswith(exclude_prefixes) and c not in exclude_exact
-    ]
+    whitelist = set(static_whitelist)
+    return [c for c in all_feature_cols if c in whitelist]
 
 
 def fill_nans_safe(train_df, val_df, test_df, feature_cols) -> tuple:

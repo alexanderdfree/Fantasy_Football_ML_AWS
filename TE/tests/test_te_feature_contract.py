@@ -18,7 +18,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from TE.te_config import TE_SPECIFIC_FEATURES
+from src.features.engineer import get_attn_static_columns
+from TE.te_config import TE_ATTN_STATIC_FEATURES, TE_SPECIFIC_FEATURES
 from TE.te_features import (
     add_te_specific_features,
     fill_te_nans,
@@ -140,3 +141,11 @@ class TestTEFeatureColumnsSourceOfTruth:
     def test_get_te_feature_columns_is_deterministic(self):
         """Calling twice yields the exact same ordered list."""
         assert get_te_feature_columns() == get_te_feature_columns()
+
+    def test_specific_features_excluded_from_attn_static(self):
+        """TE_SPECIFIC_FEATURES are per-game signals consumed by the attention
+        branch via TE_ATTN_HISTORY_STATS — they must not leak into the
+        attention NN's static-feature branch."""
+        static_cols = get_attn_static_columns(get_te_feature_columns(), TE_ATTN_STATIC_FEATURES)
+        leaks = set(TE_SPECIFIC_FEATURES) & set(static_cols)
+        assert not leaks, f"TE specific features leaked into attention static: {sorted(leaks)}"

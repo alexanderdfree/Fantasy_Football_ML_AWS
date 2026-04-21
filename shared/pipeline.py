@@ -496,11 +496,15 @@ def _train_attention_nn(
     """
     seed_everything(seed)
 
-    # Filter out rolling/EWMA/trend/share features that duplicate game history —
-    # the attention branch learns its own temporal representation from raw game stats.
+    # Filter to the per-position whitelist of static-branch features — the
+    # attention branch learns its own temporal representation from raw game
+    # stats, so rolling / EWMA / trend / share / specific categories are
+    # excluded by config (``{POS}_ATTN_STATIC_FEATURES``).
     if feature_cols is not None:
-        static_cols = get_attn_static_columns(feature_cols, position=position)
-        col_idx = [i for i, c in enumerate(feature_cols) if c in set(static_cols)]
+        static_whitelist = cfg["attn_static_features"]
+        static_cols = get_attn_static_columns(feature_cols, static_whitelist)
+        static_set = set(static_cols)
+        col_idx = [i for i, c in enumerate(feature_cols) if c in static_set]
         X_train = X_train[:, col_idx]
         X_val = X_val[:, col_idx]
         X_test = X_test[:, col_idx]
@@ -913,11 +917,10 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
 
         if attn_model is not None:
-            # Must pass position so DST's suffix-stripping matches what was used
-            # during training in _train_attention_nn — otherwise the saved scaler
-            # meta would diverge from the columns the model was fit on and
-            # ``assert_scaler_matches`` would fail at inference.
-            attn_static_cols = get_attn_static_columns(feature_cols, position=position)
+            # Use the same per-position whitelist as ``_train_attention_nn``;
+            # the saved scaler meta must match the columns the model was fit on
+            # or ``assert_scaler_matches`` will fail at inference.
+            attn_static_cols = get_attn_static_columns(feature_cols, cfg["attn_static_features"])
             torch.save(
                 wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
                 f"{output_dir}/models/{pos_lower}_attention_nn.pt",

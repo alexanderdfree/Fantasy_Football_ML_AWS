@@ -192,6 +192,18 @@ QB_ATTN_HISTORY_STATS = [
     "sacks",
     "sack_yards",
 ]
+# Categories of QB_INCLUDE_FEATURES that flow into the attention NN's static
+# branch. The attention branch learns its own temporal representation from
+# QB_ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
+# categories are intentionally excluded to avoid duplicating that signal.
+QB_ATTN_STATIC_CATEGORIES = [
+    "prior_season",
+    "matchup",
+    "defense",
+    "contextual",
+    "weather_vegas",
+]
+QB_ATTN_STATIC_FEATURES = [c for cat in QB_ATTN_STATIC_CATEGORIES for c in QB_INCLUDE_FEATURES[cat]]
 # Gated-TD heads are DISABLED for QB. QBs throw so many TDs that the zero-
 # inflation assumption behind the hurdle model does not hold (median TD count
 # per start is ~2); a plain regression head outperforms the two-stage gate.

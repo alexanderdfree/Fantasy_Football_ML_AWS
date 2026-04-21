@@ -19,12 +19,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from RB.rb_config import RB_INCLUDE_FEATURES, RB_SPECIFIC_FEATURES
+from RB.rb_config import RB_ATTN_STATIC_FEATURES, RB_INCLUDE_FEATURES, RB_SPECIFIC_FEATURES
 from RB.rb_features import (
     add_rb_specific_features,
     fill_rb_nans,
     get_rb_feature_columns,
 )
+from src.features.engineer import get_attn_static_columns
 
 # ---------------------------------------------------------------------------
 # Contract spec
@@ -142,6 +143,16 @@ class TestFeatureColumnContract:
             assert col in rb_featured_frame.columns, (
                 f"add_rb_specific_features did not create {col}"
             )
+
+    def test_specific_features_excluded_from_attn_static(self):
+        """RB_SPECIFIC_FEATURES are per-game signals consumed by the attention
+        branch via RB_ATTN_HISTORY_STATS — they must not leak into the
+        attention NN's static-feature branch (the old blacklist missed
+        ``yards_per_carry_L3``, ``team_rb_carry_share_L3``,
+        ``opportunity_index_L3``, ``career_carries`` …)."""
+        static_cols = get_attn_static_columns(get_rb_feature_columns(), RB_ATTN_STATIC_FEATURES)
+        leaks = set(RB_SPECIFIC_FEATURES) & set(static_cols)
+        assert not leaks, f"RB specific features leaked into attention static: {sorted(leaks)}"
 
 
 # ---------------------------------------------------------------------------

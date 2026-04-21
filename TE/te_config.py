@@ -162,6 +162,18 @@ TE_ATTN_HISTORY_STATS = [
     "carries",
     "snap_pct",
 ]
+# Categories of TE_INCLUDE_FEATURES that flow into the attention NN's static
+# branch. The attention branch learns its own temporal representation from
+# TE_ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
+# categories are intentionally excluded to avoid duplicating that signal.
+TE_ATTN_STATIC_CATEGORIES = [
+    "prior_season",
+    "matchup",
+    "defense",
+    "contextual",
+    "weather_vegas",
+]
+TE_ATTN_STATIC_FEATURES = [c for cat in TE_ATTN_STATIC_CATEGORIES for c in TE_INCLUDE_FEATURES[cat]]
 # Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
 # Gated on receiving_tds — sole TD source after rushing drop.
 TE_ATTN_GATED_TD = True

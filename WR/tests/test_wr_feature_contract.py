@@ -19,7 +19,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from WR.wr_config import WR_INCLUDE_FEATURES, WR_SPECIFIC_FEATURES
+from src.features.engineer import get_attn_static_columns
+from WR.wr_config import WR_ATTN_STATIC_FEATURES, WR_INCLUDE_FEATURES, WR_SPECIFIC_FEATURES
 from WR.wr_features import (
     _compute_wr_features,
     add_wr_specific_features,
@@ -179,3 +180,12 @@ class TestWRFeatureContract:
         """WR_SPECIFIC_FEATURES must contain exactly 8 WR-specific features."""
         assert len(WR_SPECIFIC_FEATURES) == 8
         assert len(set(WR_SPECIFIC_FEATURES)) == 8
+
+    def test_specific_features_excluded_from_attn_static(self):
+        """WR_SPECIFIC_FEATURES are per-game signals consumed by the attention
+        branch via WR_ATTN_HISTORY_STATS — they must not leak into the
+        attention NN's static-feature branch (the old blacklist missed
+        ``yards_per_reception_L3``, ``team_wr_target_share_L3`` …)."""
+        static_cols = get_attn_static_columns(get_wr_feature_columns(), WR_ATTN_STATIC_FEATURES)
+        leaks = set(WR_SPECIFIC_FEATURES) & set(static_cols)
+        assert not leaks, f"WR specific features leaked into attention static: {sorted(leaks)}"

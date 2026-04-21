@@ -246,6 +246,18 @@ RB_ATTN_HISTORY_STATS = [
     "game_carry_hhi",
     "game_target_hhi",
 ]
+# Categories of RB_INCLUDE_FEATURES that flow into the attention NN's static
+# branch. The attention branch learns its own temporal representation from
+# RB_ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
+# categories are intentionally excluded to avoid duplicating that signal.
+RB_ATTN_STATIC_CATEGORIES = [
+    "prior_season",
+    "matchup",
+    "defense",
+    "contextual",
+    "weather_vegas",
+]
+RB_ATTN_STATIC_FEATURES = [c for cat in RB_ATTN_STATIC_CATEGORIES for c in RB_INCLUDE_FEATURES[cat]]
 # Two-gate TD head: one sigmoid gate per TD target (rushing + receiving).
 RB_ATTN_GATED_TD = True
 RB_GATED_TD_TARGETS = ["rushing_tds", "receiving_tds"]

@@ -38,6 +38,7 @@ import pytest
 
 from DST.dst_config import (
     DST_ATTN_HISTORY_STATS,
+    DST_ATTN_STATIC_FEATURES,
     DST_CONFIG_TINY,
     DST_HUBER_DELTAS,
     DST_LOSS_WEIGHTS,
@@ -253,8 +254,8 @@ class TestDSTPipelineE2E:
         """Smoke test for the attention path — enables train_attention_nn on
         the tiny config and asserts the attention model produces finite
         per-target + total predictions. Protects against broken wiring in
-        ``get_attn_static_columns`` (DST suffix branch), the per-game opp
-        columns on the tiny dataset, and the aggregate_fn hook."""
+        ``get_attn_static_columns`` (per-position whitelist), the per-game
+        opp columns on the tiny dataset, and the aggregate_fn hook."""
         train, val, test = _build_tiny_splits(seed=42)
         cfg = _make_dst_tiny_cfg()
         # Flip attention on + provide required attn_* keys (plus aggregate_fn
@@ -262,6 +263,7 @@ class TestDSTPipelineE2E:
         # aggregator, matching run_dst_pipeline.py).
         cfg["train_attention_nn"] = True
         cfg["attn_history_stats"] = DST_ATTN_HISTORY_STATS
+        cfg["attn_static_features"] = DST_ATTN_STATIC_FEATURES
         cfg["attn_max_seq_len"] = 17
         cfg["attn_d_model"] = 8
         cfg["attn_n_heads"] = 2

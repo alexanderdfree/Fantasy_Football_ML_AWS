@@ -209,6 +209,23 @@ DST_ATTN_HISTORY_STATS = [
     "opp_interceptions",
     "opp_qb_epa",
 ]
+# Explicit whitelist of static-branch features for the attention NN. DST
+# doesn't use the category-dict shape that QB/RB/WR/TE do, so we enumerate
+# the allowed columns directly. All DST_SPECIFIC_FEATURES (rolling/ewma/
+# trend/std) and the opp_*_L{3,5} columns are excluded — the attention
+# branch already sees that signal via DST_ATTN_HISTORY_STATS. Prior-season
+# means stay (different season than the lookback window).
+DST_ATTN_STATIC_FEATURES = [
+    "is_home",
+    "week",
+    "spread_line",
+    "total_line",
+    "rest_days",
+    "div_game",
+    "is_dome",
+    "prior_season_dst_pts_avg",
+    "prior_season_pts_allowed_avg",
+]
 
 # === LightGBM ===
 DST_TRAIN_LIGHTGBM = False
