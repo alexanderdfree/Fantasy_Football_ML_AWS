@@ -19,7 +19,6 @@ import sys
 import tarfile
 import tempfile
 import time
-from contextlib import contextmanager
 
 # Ensure project root is on path (baked into /opt/ml/code/ in the container)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -35,6 +34,7 @@ from shared.registry import (
     is_cpu_only,
 )
 from shared.utils import seed_everything
+from shared.utils import timed as _timed
 
 
 def _download_if_stale(s3, bucket, key, local_path):
@@ -67,16 +67,6 @@ def _download_if_stale(s3, bucket, key, local_path):
     s3.download_file(bucket, key, local_path)
     with open(sidecar, "w") as f:
         f.write(remote_etag)
-
-
-@contextmanager
-def _timed(phase):
-    """Emit a [timing] log line with wall-clock seconds spent in a phase."""
-    t0 = time.monotonic()
-    try:
-        yield
-    finally:
-        print(f"[timing] phase={phase} seconds={time.monotonic() - t0:.1f}", flush=True)
 
 
 def _assert_gpu(position: str):
