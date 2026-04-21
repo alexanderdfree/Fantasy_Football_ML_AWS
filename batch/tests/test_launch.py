@@ -291,6 +291,26 @@ class TestSubmitJob:
 # ---------------------------------------------------------------------------
 
 
+class TestCloudWatchUrl:
+    """Regression: path separators must be encoded as $252F, not $2F.
+
+    The CloudWatch console expects the fragment path components to be
+    double-URL-encoded: `/` -> `%2F` -> `$252F`. Single-encoding yields
+    `$2F` and the console renders an empty log stream page.
+    """
+
+    def test_group_and_stream_use_double_encoded_slashes(self):
+        from batch.launch import _cloudwatch_url
+
+        url = _cloudwatch_url("my-stream/part/subpart")
+        # Default BATCH_LOG_GROUP is "/aws/batch/job"
+        assert "$252Faws$252Fbatch$252Fjob" in url
+        assert "my-stream$252Fpart$252Fsubpart" in url
+        # And never the single-encoded form that misses the `25`
+        assert "$2Faws" not in url
+        assert "my-stream$2Fpart" not in url
+
+
 class TestWaitForJobs:
     @mock.patch("batch.launch.time.sleep")
     def test_wait_returns_tuples_on_success(self, mock_sleep):

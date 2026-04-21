@@ -63,11 +63,18 @@ RETRY_STRATEGY = {
 }
 
 
+def _console_encode(s: str) -> str:
+    # AWS console fragment path components are double-URL-encoded: `/` ->
+    # `%2F` -> `$252F` (the `$` is how the console escapes `%`). Percent-
+    # encode once, then replace each literal `%` with `$25`; replacing with
+    # a bare `$` yields `$2F`, which the console fails to parse.
+    return urllib.parse.quote(s, safe="").replace("%", "$25")
+
+
 def _cloudwatch_url(log_stream_name: str) -> str:
     """Build a console URL that opens the CloudWatch stream for a failed job."""
-    # AWS console uses double-URL-encoded slashes: $252F = %2F = /
-    group = urllib.parse.quote(BATCH_LOG_GROUP, safe="").replace("%", "$")
-    stream = urllib.parse.quote(log_stream_name, safe="").replace("%", "$")
+    group = _console_encode(BATCH_LOG_GROUP)
+    stream = _console_encode(log_stream_name)
     return (
         f"https://{AWS_REGION}.console.aws.amazon.com/cloudwatch/home"
         f"?region={AWS_REGION}#logsV2:log-groups/log-group/{group}/log-events/{stream}"
