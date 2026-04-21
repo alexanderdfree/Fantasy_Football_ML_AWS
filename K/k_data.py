@@ -58,6 +58,9 @@ def reconstruct_kicker_weekly_from_pbp(
         fg["q4_made"] = (fg["is_q4"] & fg["fg_made_flag"]).astype(int)
         fg["is_long"] = (d >= 40).astype(int)
         fg["long_made"] = (fg["is_long"] & fg["fg_made_flag"]).astype(int)
+        # Sum of kick_distance restricted to made FGs — per-attempt contribution
+        # to the `fg_yards_made` season-week aggregate consumed by k_targets.
+        fg["_fg_yards_made_flag"] = fg["fg_made_flag"] * fg["kick_distance"]
 
         weekly_fg = (
             fg.groupby(["kicker_player_id", "kicker_player_name", "posteam", "season", "week"])
@@ -74,6 +77,7 @@ def reconstruct_kicker_weekly_from_pbp(
                 fg_missed_40_49=("fg_missed_40_49", "sum"),
                 fg_missed_50_59=("fg_missed_50_59", "sum"),
                 fg_missed_60_=("fg_missed_60_", "sum"),
+                fg_yards_made=("_fg_yards_made_flag", "sum"),
                 # PBP-derived aggregates
                 avg_fg_distance=("kick_distance", "mean"),
                 max_fg_distance=("kick_distance", "max"),
@@ -196,6 +200,7 @@ def load_kicker_data() -> pd.DataFrame:
             "roof",
             "surface",
             "is_dome",
+            "fg_yards_made",
         ]:
             if col not in k_weekly.columns:
                 k_weekly[col] = float("nan")
@@ -266,6 +271,7 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
         "roof",
         "surface",
         "is_dome",
+        "fg_yards_made",
     ]
 
     try:
@@ -283,6 +289,10 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
             fg["q4_made"] = (fg["is_q4"] & fg["fg_made_flag"]).astype(int)
             fg["is_long"] = (d >= 40).astype(int)
             fg["long_made"] = (fg["is_long"] & fg["fg_made_flag"]).astype(int)
+            # Sum of kick_distance restricted to made FGs — mirrors the
+            # historical reconstruction so `fg_yard_points` target is
+            # available for 2025 rows as well.
+            fg["_fg_yards_made_flag"] = fg["fg_made_flag"] * fg["kick_distance"]
 
             weekly_pbp = (
                 fg.groupby(["kicker_player_id", "season", "week"])
@@ -300,6 +310,7 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
                     game_temp=("temp", "first"),
                     roof=("roof", "first"),
                     surface=("surface", "first"),
+                    fg_yards_made=("_fg_yards_made_flag", "sum"),
                 )
                 .reset_index()
             )

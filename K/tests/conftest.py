@@ -147,8 +147,9 @@ def _build_kicker_games(
 ) -> pd.DataFrame:
     """Build multi-week kicker data for feature tests.
 
-    Includes pre-computed targets (fg_points, pat_points, miss_penalty) — the
-    feature pipeline reads them to build rolling total-points statistics.
+    Includes a pre-computed `fantasy_points` column — compute_k_features reads
+    it to build the rolling total-points statistics. After the 4-head target
+    refactor, the signed fantasy total is the canonical rolling input.
     """
     df = pd.DataFrame(
         {
@@ -173,9 +174,7 @@ def _build_kicker_games(
             "q4_fg_made": [q4_fg_made] * n_weeks,
         }
     )
-    df["fg_points"] = 0
-    df["pat_points"] = df["pat_made"]
-    df["miss_penalty"] = 0
+    df["fantasy_points"] = df["pat_made"].astype(float)
     return df
 
 
@@ -274,6 +273,18 @@ def _build_tiny_k_dataset(
                 long_fg_made_val = fg_made_mid + fg_made_long_50 + fg_made_60
                 long_fg_att_val = long_fg_made_val + max(0, int(round(fg_missed * 0.4)))
 
+                # fg_yards_made: bucket-midpoint approximation of the sum of
+                # made-FG kick distances. Drives fg_yard_points target = sum * 0.1.
+                # Using midpoints (25 / 35 / 45 / 55 / 62) keeps the target in
+                # a realistic 0-20pt-per-game range for the E2E synthetic fixture.
+                fg_yards_made_val = (
+                    (fg_made_short // 2) * 25  # 20-29 bucket midpoint
+                    + (fg_made_short - fg_made_short // 2) * 35  # 30-39 bucket midpoint
+                    + fg_made_mid * 45  # 40-49 bucket midpoint
+                    + fg_made_long_50 * 55  # 50-59 bucket midpoint
+                    + fg_made_60 * 62  # 60+ bucket representative
+                )
+
                 rows.append(
                     {
                         "player_id": f"K{pid:03d}",
@@ -295,6 +306,7 @@ def _build_tiny_k_dataset(
                         "fg_missed_40_49": max(0, (fg_missed * 2) // 5),
                         "fg_missed_50_59": max(0, (fg_missed * 2) // 5),
                         "fg_missed_60_": 0,
+                        "fg_yards_made": fg_yards_made_val,
                         "pat_att": pat_att,
                         "pat_made": pat_made,
                         "pat_missed": pat_missed,

@@ -150,7 +150,7 @@ def _k_tiny() -> dict:
         fill_k_nans,
         get_k_feature_columns,
     )
-    from K.k_targets import compute_k_miss_adjustment, compute_k_targets
+    from K.k_targets import compute_k_targets
 
     try:
         from K.k_config import K_CONFIG_TINY
@@ -185,7 +185,7 @@ def _k_tiny() -> dict:
             "add_features_fn": add_k_specific_features,
             "fill_nans_fn": fill_k_nans,
             "get_feature_columns_fn": get_k_feature_columns,
-            "compute_adjustment_fn": compute_k_miss_adjustment,
+            "compute_adjustment_fn": None,
         }
     )
     return cfg

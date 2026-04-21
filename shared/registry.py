@@ -331,6 +331,7 @@ def get_inference_spec(pos: str) -> dict:
             K_NN_BACKBONE_LAYERS,
             K_NN_DROPOUT,
             K_NN_HEAD_HIDDEN,
+            K_NN_NON_NEGATIVE_TARGETS,
             K_SPECIFIC_FEATURES,
             K_TARGETS,
         )
@@ -340,7 +341,7 @@ def get_inference_spec(pos: str) -> dict:
             fill_k_nans,
             get_k_feature_columns,
         )
-        from K.k_targets import compute_k_miss_adjustment, compute_k_targets
+        from K.k_targets import compute_k_targets
 
         return {
             "targets": K_TARGETS,
@@ -350,13 +351,22 @@ def get_inference_spec(pos: str) -> dict:
             "add_features_fn": add_k_specific_features,
             "fill_nans_fn": fill_k_nans,
             "get_feature_columns_fn": get_k_feature_columns,
-            "compute_adjustment_fn": compute_k_miss_adjustment,
+            "compute_adjustment_fn": None,
+            # Sign vector for the 4 K heads when aggregating to fantasy points:
+            # fg_yard_points and pat_points add, fg_misses and xp_misses subtract.
+            "target_signs": {
+                "fg_yard_points": 1.0,
+                "pat_points": 1.0,
+                "fg_misses": -1.0,
+                "xp_misses": -1.0,
+            },
             "model_dir": "K/outputs/models",
             "nn_file": "k_multihead_nn.pt",
             "nn_kwargs": dict(
                 backbone_layers=K_NN_BACKBONE_LAYERS,
                 head_hidden=K_NN_HEAD_HIDDEN,
                 dropout=K_NN_DROPOUT,
+                non_negative_targets=K_NN_NON_NEGATIVE_TARGETS,
             ),
             "train_attention_nn": bool(getattr(k_cfg, "K_TRAIN_ATTENTION_NN", False)),
             "train_lightgbm": bool(getattr(k_cfg, "K_TRAIN_LIGHTGBM", False)),

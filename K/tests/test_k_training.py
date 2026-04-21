@@ -12,8 +12,13 @@ from shared.training import (
     make_dataloaders,
 )
 
-K_TARGETS = ["fg_points", "pat_points"]
-K_LOSS_WEIGHTS = {"fg_points": 1.0, "pat_points": 1.0}
+K_TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
+K_LOSS_WEIGHTS = {
+    "fg_yard_points": 1.0,
+    "pat_points": 1.0,
+    "fg_misses": 1.0,
+    "xp_misses": 1.0,
+}
 
 
 @pytest.mark.unit
@@ -26,13 +31,15 @@ class TestMultiTargetLoss:
         assert isinstance(components, dict)
 
     def test_component_keys(self, make_tensors):
-        """Kicker loss has only 2 target components (no td_points)."""
+        """Kicker loss has 4 per-target components (plus total/combined)."""
         loss_fn = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
         preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
         assert set(components.keys()) == {
-            "loss_fg_points",
+            "loss_fg_yard_points",
             "loss_pat_points",
+            "loss_fg_misses",
+            "loss_xp_misses",
             "loss_total_aux",
             "loss_combined",
         }
@@ -47,9 +54,11 @@ class TestMultiTargetLoss:
     def test_zero_loss_on_perfect_prediction(self):
         loss_fn = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
         targets = {
-            "fg_points": torch.tensor([9.0, 12.0]),
+            "fg_yard_points": torch.tensor([9.0, 12.0]),
             "pat_points": torch.tensor([3.0, 2.0]),
-            "total": torch.tensor([12.0, 14.0]),
+            "fg_misses": torch.tensor([0.0, 1.0]),
+            "xp_misses": torch.tensor([0.0, 0.0]),
+            "total": torch.tensor([12.0, 13.0]),
         }
         combined, _ = loss_fn(targets, targets)
         assert pytest.approx(combined.item(), abs=1e-6) == 0.0
@@ -58,12 +67,17 @@ class TestMultiTargetLoss:
         preds, targets = make_tensors()
         loss_equal = MultiTargetLoss(
             target_names=K_TARGETS,
-            loss_weights={"fg_points": 1.0, "pat_points": 1.0},
+            loss_weights={t: 1.0 for t in K_TARGETS},
             w_total=1.0,
         )
         loss_fg_heavy = MultiTargetLoss(
             target_names=K_TARGETS,
-            loss_weights={"fg_points": 10.0, "pat_points": 1.0},
+            loss_weights={
+                "fg_yard_points": 10.0,
+                "pat_points": 1.0,
+                "fg_misses": 1.0,
+                "xp_misses": 1.0,
+            },
             w_total=1.0,
         )
         c1, _ = loss_equal(preds, targets)
@@ -90,14 +104,14 @@ class TestMultiTargetLoss:
 class TestMultiTargetDataset:
     def test_length(self):
         X = np.random.randn(20, 5).astype(np.float32)
-        y = {"fg_points": np.random.randn(20).astype(np.float32)}
+        y = {"fg_yard_points": np.random.randn(20).astype(np.float32)}
         ds = MultiTargetDataset(X, y)
         assert len(ds) == 20
 
     def test_getitem_types(self):
         X = np.random.randn(10, 3).astype(np.float32)
         y = {
-            "fg_points": np.random.randn(10).astype(np.float32),
+            "fg_yard_points": np.random.randn(10).astype(np.float32),
             "pat_points": np.random.randn(10).astype(np.float32),
         }
         ds = MultiTargetDataset(X, y)
@@ -120,17 +134,17 @@ class TestMakeDataloaders:
     def test_returns_two_loaders(self):
         X_train = np.random.randn(50, 5).astype(np.float32)
         X_val = np.random.randn(20, 5).astype(np.float32)
-        y_train = {"fg_points": np.random.randn(50).astype(np.float32)}
-        y_val = {"fg_points": np.random.randn(20).astype(np.float32)}
+        y_train = {"fg_yard_points": np.random.randn(50).astype(np.float32)}
+        y_val = {"fg_yard_points": np.random.randn(20).astype(np.float32)}
         train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=16)
         assert train_loader is not None
         assert val_loader is not None
 
     def test_batch_size(self):
         X_train = np.random.randn(64, 5).astype(np.float32)
-        y_train = {"fg_points": np.random.randn(64).astype(np.float32)}
+        y_train = {"fg_yard_points": np.random.randn(64).astype(np.float32)}
         X_val = np.random.randn(16, 5).astype(np.float32)
-        y_val = {"fg_points": np.random.randn(16).astype(np.float32)}
+        y_val = {"fg_yard_points": np.random.randn(16).astype(np.float32)}
         train_loader, _ = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
         batch_x, batch_y = next(iter(train_loader))
         assert batch_x.shape[0] == 32
@@ -138,7 +152,7 @@ class TestMakeDataloaders:
     def test_iterate_all_batches(self):
         n = 128
         X = np.random.randn(n, 3).astype(np.float32)
-        y = {"fg_points": np.random.randn(n).astype(np.float32)}
+        y = {"fg_yard_points": np.random.randn(n).astype(np.float32)}
         loader, _ = make_dataloaders(X, y, X[:10], y, batch_size=32)
         total = sum(x.shape[0] for x, _ in loader)
         assert total == n
@@ -194,17 +208,21 @@ class TestMultiHeadTrainer:
         assert len(history["train_loss"]) <= 10
 
     def test_history_has_all_keys(self, setup_trainer):
-        """Kicker history has only 2 per-target metrics (no td_points)."""
+        """Kicker history has 4 per-target metrics (fg_yard_points / pat_points / fg_misses / xp_misses)."""
         trainer, train_loader, val_loader = setup_trainer
         history = trainer.train(train_loader, val_loader, n_epochs=5)
         expected_keys = {
             "train_loss",
             "val_loss",
-            "val_loss_fg_points",
+            "val_loss_fg_yard_points",
             "val_loss_pat_points",
+            "val_loss_fg_misses",
+            "val_loss_xp_misses",
             "val_mae_total",
-            "val_mae_fg_points",
+            "val_mae_fg_yard_points",
             "val_mae_pat_points",
+            "val_mae_fg_misses",
+            "val_mae_xp_misses",
             "val_rmse_total",
         }
         assert expected_keys.issubset(set(history.keys()))

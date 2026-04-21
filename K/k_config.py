@@ -2,7 +2,9 @@
 K_SEASONS = list(range(2015, 2026))  # 2015-2025
 
 # === K Target Decomposition ===
-K_TARGETS = ["fg_points", "pat_points"]
+# 4 non-negative raw-value heads. Total fantasy points = sum with signs
+# [+1, +1, -1, -1] applied at inference (see shared/registry.py K entry).
+K_TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
 
 # === K-Specific Features ===
 K_SPECIFIC_FEATURES = [
@@ -44,8 +46,10 @@ K_DROP_FEATURES = set()  # Not used; kickers bypass the general feature pipeline
 import numpy as np
 
 K_RIDGE_ALPHA_GRIDS = {
-    "fg_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "fg_yard_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
     "pat_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "fg_misses": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "xp_misses": [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 K_RIDGE_CV_FOLDS = 3
 K_CV_SPLIT_COLUMN = "season"
@@ -65,18 +69,27 @@ K_NN_PATIENCE = 30
 # Equal per-target weights: training objective now aligned with evaluation
 # metric (total MAE). w_total raised to 1.0.
 K_LOSS_WEIGHTS = {
-    "fg_points": 1.0,
+    "fg_yard_points": 1.0,
     "pat_points": 1.0,
+    "fg_misses": 1.0,
+    "xp_misses": 1.0,
 }
 K_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target) ===
 # Harmonized to 2.0 across targets.
 K_HUBER_DELTAS = {
-    "fg_points": 2.0,
+    "fg_yard_points": 2.0,
     "pat_points": 2.0,
+    "fg_misses": 2.0,
+    "xp_misses": 2.0,
     "total": 2.0,  # explicit delta for total aux loss (kickers have narrow range)
 }
+
+# === Non-negative NN targets ===
+# All 4 K heads are non-negative raw counts/points; signs are applied only in
+# the final fantasy total aggregation, not in the per-head outputs.
+K_NN_NON_NEGATIVE_TARGETS = set(K_TARGETS)
 
 # === LR Scheduler ===
 K_SCHEDULER_TYPE = "onecycle"
