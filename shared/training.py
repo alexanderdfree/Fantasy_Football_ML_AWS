@@ -150,7 +150,12 @@ def make_history_dataloaders(
     y_val_dict,
     batch_size=256,
 ):
-    """Create DataLoaders for attention model with game history."""
+    """Create DataLoaders for attention model with game history.
+
+    ``pin_memory=True`` is a no-op under CPU-only runs; on CUDA it allocates
+    page-locked host tensors so the subsequent ``.to(device, non_blocking=True)``
+    in the trainer can overlap the H2D copy with compute.
+    """
     train_ds = MultiTargetHistoryDataset(X_train_static, X_train_history, y_train_dict)
     val_ds = MultiTargetHistoryDataset(X_val_static, X_val_history, y_val_dict)
     train_loader = DataLoader(
@@ -158,7 +163,7 @@ def make_history_dataloaders(
         batch_size=batch_size,
         shuffle=True,
         num_workers=0,
-        pin_memory=False,
+        pin_memory=True,
         drop_last=True,
         collate_fn=collate_with_history,
     )
@@ -167,14 +172,19 @@ def make_history_dataloaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=0,
-        pin_memory=False,
+        pin_memory=True,
         collate_fn=collate_with_history,
     )
     return train_loader, val_loader
 
 
 def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
-    """Create DataLoaders for multi-target training."""
+    """Create DataLoaders for multi-target training.
+
+    ``pin_memory=True`` is a no-op under CPU-only runs; on CUDA it allocates
+    page-locked host tensors so the subsequent ``.to(device, non_blocking=True)``
+    in the trainer can overlap the H2D copy with compute.
+    """
     train_ds = MultiTargetDataset(X_train, y_train_dict)
     val_ds = MultiTargetDataset(X_val, y_val_dict)
     train_loader = DataLoader(
@@ -182,11 +192,11 @@ def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
         batch_size=batch_size,
         shuffle=True,
         num_workers=0,
-        pin_memory=False,
+        pin_memory=True,
         drop_last=True,
     )
     val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=False
+        val_ds, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True
     )
     return train_loader, val_loader
 
@@ -230,8 +240,8 @@ class MultiHeadTrainer:
             (preds_dict, targets_dict) — both on device.
         """
         X_batch, y_batch = batch
-        X_batch = X_batch.to(self.device)
-        y_batch = {k: v.to(self.device) for k, v in y_batch.items()}
+        X_batch = X_batch.to(self.device, non_blocking=True)
+        y_batch = {k: v.to(self.device, non_blocking=True) for k, v in y_batch.items()}
         preds = self.model(X_batch)
         return preds, y_batch
 
@@ -368,10 +378,10 @@ class MultiHeadHistoryTrainer(MultiHeadTrainer):
 
     def _forward_batch(self, batch) -> tuple[dict, dict]:
         X_static, X_hist, hist_mask, y_batch = batch
-        X_static = X_static.to(self.device)
-        X_hist = X_hist.to(self.device)
-        hist_mask = hist_mask.to(self.device)
-        y_batch = {k: v.to(self.device) for k, v in y_batch.items()}
+        X_static = X_static.to(self.device, non_blocking=True)
+        X_hist = X_hist.to(self.device, non_blocking=True)
+        hist_mask = hist_mask.to(self.device, non_blocking=True)
+        y_batch = {k: v.to(self.device, non_blocking=True) for k, v in y_batch.items()}
         preds = self.model(X_static, X_hist, hist_mask)
         return preds, y_batch
 
