@@ -129,6 +129,9 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           fetch-depth: 0
+          # Admin PAT so the later benchmark-history push bypasses main's
+          # required status checks (enforce_admins=false on classic protection).
+          token: ${{ secrets.PROTECTED_PUSH_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -296,5 +299,20 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add benchmark_history.json
+          staged=$(git diff --cached --name-only)
+          if [ "$staged" != "benchmark_history.json" ]; then
+            echo "ERROR: unexpected staged paths (expected benchmark_history.json only):"
+            echo "$staged"
+            exit 1
+          fi
           git commit -m "chore(ci): append EC2 benchmark run ${GITHUB_SHA::7}"
-          git push origin HEAD:"refs/heads/$BRANCH"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:"refs/heads/$BRANCH"; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push attempt $attempt failed — rebasing and retrying"
+            git pull --rebase origin "$BRANCH"
+          done
+          echo "Push failed after 3 attempts"
+          exit 1
