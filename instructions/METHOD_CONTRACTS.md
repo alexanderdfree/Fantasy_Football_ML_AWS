@@ -613,8 +613,9 @@ class SeasonAverageBaseline:
 
     def predict(self, df: pd.DataFrame) -> np.ndarray:
         # For each row, compute the mean of fantasy_points for that player
-        # in that season, using only PRIOR weeks (shift + expanding mean)
-        # df MUST be sorted by (player_id, season, week)
+        # in that season, using only PRIOR weeks (shift + expanding mean).
+        # Sort is handled internally; predictions are returned in the caller's
+        # row order.
         # Returns: array of predictions, same length as df
         pass
 ```
@@ -626,8 +627,10 @@ class LastWeekBaseline:
     """Predict each player scored the same as last week."""
 
     def predict(self, df: pd.DataFrame) -> np.ndarray:
-        # For each row, return the player's fantasy_points from the previous week
-        # Handle week 1 / first appearance: use season average or 0
+        # For each row, return the player's fantasy_points from the previous week.
+        # Handle week 1 / first appearance: use season average or 0.
+        # Sort is handled internally; predictions are returned in the caller's
+        # row order.
         # Returns: array of predictions, same length as df
         pass
 ```
