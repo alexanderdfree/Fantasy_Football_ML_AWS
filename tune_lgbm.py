@@ -352,11 +352,14 @@ def main():
             "comparison": comparison,
         }
 
-    # Save results
+    # Save results (atomic: tmp file then rename so a crash mid-write can't
+    # leave tune_lgbm_results.json partially written).
     if all_results:
         results_path = "tune_lgbm_results.json"
-        with open(results_path, "w") as f:
+        tmp = f"{results_path}.tmp"
+        with open(tmp, "w") as f:
             json.dump(all_results, f, indent=2, default=str)
+        os.replace(tmp, results_path)
         print(f"\nResults saved to {results_path}")
 
 
