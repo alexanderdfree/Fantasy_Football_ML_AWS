@@ -913,7 +913,11 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
 
         if attn_model is not None:
-            attn_static_cols = get_attn_static_columns(feature_cols)
+            # Must pass position so DST's suffix-stripping matches what was used
+            # during training in _train_attention_nn — otherwise the saved scaler
+            # meta would diverge from the columns the model was fit on and
+            # ``assert_scaler_matches`` would fail at inference.
+            attn_static_cols = get_attn_static_columns(feature_cols, position=position)
             torch.save(
                 wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
                 f"{output_dir}/models/{pos_lower}_attention_nn.pt",

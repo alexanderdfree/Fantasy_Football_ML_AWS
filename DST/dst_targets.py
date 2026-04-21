@@ -42,9 +42,12 @@ def _yds_allowed_to_bonus(ya: float) -> float:
 
 
 def compute_dst_targets(df: pd.DataFrame) -> pd.DataFrame:
-    """Ensure the 10 raw D/ST target columns are present and fill ``fantasy_points``.
+    """NaN-fill the raw D/ST target columns and compute ``fantasy_points``.
 
-    Raw targets (predicted directly by every model):
+    Required input columns (all 10 raw targets must be on ``df``; upstream
+    ``build_dst_data`` guarantees this — missing columns raise KeyError, which
+    is the desired behavior because it surfaces data-pipeline bugs instead of
+    silently imputing zeros):
       def_sacks, def_ints, def_fumble_rec, def_fumbles_forced, def_safeties,
       def_tds, def_blocked_kicks, special_teams_tds,
       points_allowed, yards_allowed

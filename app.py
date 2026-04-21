@@ -429,8 +429,9 @@ def _apply_position_models(train, val, test, pos, results):
         _cache.setdefault("position_load_errors", {})[f"{pos}_nn"] = str(e)
         raise
 
-    # Attention NN — only trained for QB/RB/WR/TE. For positions where it isn't
-    # available (K/DST), leave the column as NaN so the frontend renders "--".
+    # Attention NN — enabled per-position via ``reg["train_attention_nn"]``
+    # (QB/RB/WR/TE/DST today; K still runs static-only). Positions without an
+    # attention model leave the column as NaN so the frontend renders "--".
     attn_nn_preds = None
     attn_nn_total = None
     if reg.get("train_attention_nn", False) and reg.get("attn_nn_file"):

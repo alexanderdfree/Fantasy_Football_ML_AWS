@@ -587,9 +587,10 @@ def get_attn_static_columns(all_feature_cols: list[str], position: str | None = 
         exclude_exact.update([f"target_share_L{w}", f"carry_share_L{w}"])
 
     if position == "DST":
-        # DST rolling / EWMA / trend / std features use suffix naming.
-        # ``sack_trend``, ``turnover_trend``, ``pts_allowed_trend`` are DST trend
-        # features without a leading ``trend_`` prefix, so match them explicitly.
+        # DST rolling / EWMA / trend / std features use suffix naming
+        # (e.g. sacks_L3, pts_allowed_ewma, sack_trend, dst_scoring_std_L3).
+        # The ``_trend`` suffix also covers DST's bare-name trend columns
+        # (``sack_trend``, ``turnover_trend``, ``pts_allowed_trend``).
         dst_exclude_suffixes = (
             "_L3",
             "_L5",
@@ -599,14 +600,12 @@ def get_attn_static_columns(all_feature_cols: list[str], position: str | None = 
             "_std_L3",
             "_std_L5",
         )
-        dst_exact_exclude = {"sack_trend", "turnover_trend", "pts_allowed_trend"}
         return [
             c
             for c in all_feature_cols
             if not c.startswith(exclude_prefixes)
             and not c.endswith(dst_exclude_suffixes)
             and c not in exclude_exact
-            and c not in dst_exact_exclude
         ]
 
     return [

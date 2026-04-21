@@ -4,9 +4,10 @@ D/ST features are computed on the FULL team-week dataset before splitting
 (like Kicker features). Groups by team+season (resets per-season, unlike K).
 
 compute_dst_features requires pre-computed raw-stat columns (def_sacks,
-def_ints, def_fumble_rec, def_fumbles_forced, def_blocked_kicks,
-special_teams_tds, points_allowed, yards_allowed) plus ``fantasy_points``.
-The ``make_team_games`` fixture (conftest.py) emits all of them.
+def_ints, def_fumble_rec, def_fumbles_forced, def_safeties, def_tds,
+def_blocked_kicks, special_teams_tds, points_allowed, yards_allowed)
+plus ``fantasy_points``. The ``make_team_games`` fixture (conftest.py)
+emits all of them.
 """
 
 import numpy as np

@@ -372,8 +372,9 @@ def build_dst_data() -> pd.DataFrame:
     for col in ["opp_qb_int_rate_L5", "opp_qb_sack_rate_L5", "opp_qb_rush_yds_L5"]:
         dst_df[col] = dst_df[col].fillna(dst_df[col].median())
 
-    # Per-game opp columns (attention history) — fill with league medians so
-    # the first-week-of-season attention sequence isn't degenerate.
+    # Per-game opp columns (attention history) — fill scoring with the
+    # league-average points-allowed, and turnover / QB-EPA columns with 0,
+    # so the first-week-of-season attention sequence isn't degenerate.
     dst_df["opp_scoring"] = dst_df["opp_scoring"].fillna(dst_df["points_allowed"].mean())
     dst_df["opp_fumbles"] = dst_df["opp_fumbles"].fillna(0)
     dst_df["opp_interceptions"] = dst_df["opp_interceptions"].fillna(0)
