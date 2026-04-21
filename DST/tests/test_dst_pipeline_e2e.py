@@ -141,15 +141,21 @@ def _build_tiny_splits(seed: int = 42):
     return train, val, test
 
 
-@pytest.fixture
-def tiny_cwd(tmp_path, monkeypatch, tiny_dst_dataset):
+@pytest.fixture(scope="module")
+def tiny_cwd(tmp_path_factory, tiny_dst_dataset):
     """Redirect CWD so run_pipeline's ``DST/outputs`` writes land in tmp_path.
 
     Also stubs out the schedule-parquet loader so it returns a synthetic
     frame keyed to the tiny dataset — the real parquet is resolved by a
     relative path (``data/raw/...``) that breaks after chdir.
+
+    Module-scoped so the two cached pipeline runs share one workspace —
+    ``pytest.MonkeyPatch()`` is used directly because the built-in
+    ``monkeypatch`` fixture is function-scoped.
     """
-    monkeypatch.chdir(tmp_path)
+    mp = pytest.MonkeyPatch()
+    tmp_path = tmp_path_factory.mktemp("dst_e2e")
+    mp.chdir(tmp_path)
     # Pre-create the directory the pipeline expects so any early file
     # operations don't fail before its os.makedirs call runs.
     os.makedirs(tmp_path / "DST" / "outputs" / "models", exist_ok=True)
@@ -162,9 +168,38 @@ def tiny_cwd(tmp_path, monkeypatch, tiny_dst_dataset):
     synthetic_sched = _build_synthetic_schedules(tiny_dst_dataset)
     from shared import weather_features as _wf
 
-    monkeypatch.setattr(_wf, "_schedule_cache", synthetic_sched)
-    monkeypatch.setattr(_wf, "_load_schedules", lambda: synthetic_sched)
-    return tmp_path
+    mp.setattr(_wf, "_schedule_cache", synthetic_sched)
+    mp.setattr(_wf, "_load_schedules", lambda: synthetic_sched)
+    try:
+        yield tmp_path
+    finally:
+        mp.undo()
+
+
+# ---------------------------------------------------------------------------
+# Module-scoped pipeline runs — one shared run for smoke/shape/metrics
+# assertions, a second cached run for the cross-run bit-identity check.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def pipeline_run(tiny_cwd):
+    """Single pipeline invocation shared across tests (saves ~6s per test)."""
+    train, val, test = _build_tiny_splits(seed=42)
+    cfg = _make_dst_tiny_cfg()
+    return run_pipeline("DST", cfg, train, val, test, seed=42)
+
+
+@pytest.fixture(scope="module")
+def pipeline_run_repeat(tiny_cwd, pipeline_run):
+    """Second pipeline invocation with the same seed for bit-identity checks.
+
+    Fresh splits are rebuilt to mirror the reproducibility contract:
+    deterministic re-builds with the same seed must agree bitwise.
+    """
+    train, val, test = _build_tiny_splits(seed=42)
+    cfg = _make_dst_tiny_cfg()
+    return run_pipeline("DST", cfg, train, val, test, seed=42)
 
 
 @pytest.mark.e2e
@@ -172,24 +207,17 @@ def tiny_cwd(tmp_path, monkeypatch, tiny_dst_dataset):
 class TestDSTPipelineE2E:
     """Full-pipeline smoke + reproducibility tests."""
 
-    def test_pipeline_runs_without_exception(self, tiny_cwd):
+    def test_pipeline_runs_without_exception(self, pipeline_run):
         """run_pipeline(DST_CONFIG_TINY) must complete cleanly."""
-        train, val, test = _build_tiny_splits(seed=42)
-        cfg = _make_dst_tiny_cfg()
-
-        result = run_pipeline("DST", cfg, train, val, test, seed=42)
-
+        result = pipeline_run
         assert result is not None
         assert "ridge_metrics" in result
         assert "nn_metrics" in result
         assert "test_df" in result
 
-    def test_predictions_shape_and_finite(self, tiny_cwd):
+    def test_predictions_shape_and_finite(self, pipeline_run):
         """Predicted totals must match test-row count and contain only finite values."""
-        train, val, test = _build_tiny_splits(seed=42)
-        cfg = _make_dst_tiny_cfg()
-
-        result = run_pipeline("DST", cfg, train, val, test, seed=42)
+        result = pipeline_run
 
         n_test = len(result["test_df"])
         for model_key in ("ridge", "nn"):
@@ -203,25 +231,16 @@ class TestDSTPipelineE2E:
                 assert preds[t].shape == (n_test,)
                 assert np.isfinite(preds[t]).all(), f"{model_key}.{t} contains NaN/inf"
 
-    def test_same_seed_bit_identical_predictions(self, tiny_cwd):
+    def test_same_seed_bit_identical_predictions(self, pipeline_run, pipeline_run_repeat):
         """Two runs with seed=42 must produce bit-identical Ridge + NN totals.
 
         Strongest check for hidden non-determinism in the shared kernel
         (dataloader shuffle, dropout masks, dict-iteration order, ...).
         """
-        cfg = _make_dst_tiny_cfg()
-
-        # Fresh splits per run — the dataset builder is deterministic too
-        train1, val1, test1 = _build_tiny_splits(seed=42)
-        r1 = run_pipeline("DST", cfg, train1, val1, test1, seed=42)
-
-        train2, val2, test2 = _build_tiny_splits(seed=42)
-        r2 = run_pipeline("DST", cfg, train2, val2, test2, seed=42)
-
         # Ridge is deterministic — exact equality expected.
         np.testing.assert_allclose(
-            r1["per_target_preds"]["ridge"]["total"],
-            r2["per_target_preds"]["ridge"]["total"],
+            pipeline_run["per_target_preds"]["ridge"]["total"],
+            pipeline_run_repeat["per_target_preds"]["ridge"]["total"],
             atol=0.0,
             rtol=0.0,
             err_msg="Ridge predictions drifted across runs with same seed",
@@ -230,20 +249,16 @@ class TestDSTPipelineE2E:
         # seed, but we allow atol=1e-6 in case BLAS thread scheduling
         # introduces last-bit noise on some platforms.
         np.testing.assert_allclose(
-            r1["per_target_preds"]["nn"]["total"],
-            r2["per_target_preds"]["nn"]["total"],
+            pipeline_run["per_target_preds"]["nn"]["total"],
+            pipeline_run_repeat["per_target_preds"]["nn"]["total"],
             atol=1e-6,
             rtol=0.0,
             err_msg="NN predictions drifted >1e-6 across runs with same seed",
         )
 
-    def test_ridge_metrics_structure(self, tiny_cwd):
+    def test_ridge_metrics_structure(self, pipeline_run):
         """Ridge metrics must include MAE/R2 for every target + total."""
-        train, val, test = _build_tiny_splits(seed=42)
-        cfg = _make_dst_tiny_cfg()
-        result = run_pipeline("DST", cfg, train, val, test, seed=42)
-
-        ridge_metrics = result["ridge_metrics"]
+        ridge_metrics = pipeline_run["ridge_metrics"]
         for key in list(DST_TARGETS) + ["total"]:
             assert key in ridge_metrics, f"Ridge metrics missing '{key}'"
             for metric in ("mae", "rmse", "r2"):

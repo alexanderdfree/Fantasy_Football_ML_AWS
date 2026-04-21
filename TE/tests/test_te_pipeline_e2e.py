@@ -59,13 +59,33 @@ def _run_tiny_pipeline(seed: int = 42):
         return run_pipeline("TE", _build_tiny_cfg(), train, val, test, seed=seed)
 
 
+# ---------------------------------------------------------------------------
+# Module-scoped pipeline runs — one shared run for shape/finite assertions,
+# a second cached run for the cross-run bit-identity check.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def pipeline_run():
+    """Single pipeline invocation shared across tests (saves ~6s per test)."""
+    return _run_tiny_pipeline(seed=42)
+
+
+@pytest.fixture(scope="module")
+def pipeline_run_repeat(pipeline_run):
+    """Second pipeline invocation with the same seed for bit-identity checks.
+
+    Fresh tiny splits are rebuilt inside _run_tiny_pipeline — the reproducibility
+    contract is that two independent builds with the same seed must agree.
+    """
+    return _run_tiny_pipeline(seed=42)
+
+
 class TestPipelineE2E:
-    def test_pipeline_completes_and_produces_finite_predictions(self, te_tiny_splits):
+    def test_pipeline_completes_and_produces_finite_predictions(self, te_tiny_splits, pipeline_run):
         """Smoke: pipeline runs cleanly, predictions finite and correctly shaped."""
-        train, val, test = te_tiny_splits
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            result = run_pipeline("TE", _build_tiny_cfg(), train, val, test, seed=42)
+        _, _, test = te_tiny_splits
+        result = pipeline_run
 
         # Structural assertions.
         assert "test_df" in result
@@ -87,18 +107,15 @@ class TestPipelineE2E:
                 assert col in test_df.columns
                 assert np.isfinite(test_df[col].values).all()
 
-    def test_pipeline_is_bit_identical_across_runs(self):
+    def test_pipeline_is_bit_identical_across_runs(self, pipeline_run, pipeline_run_repeat):
         """Two runs with seed=42 yield bit-identical predictions.
 
         Guards end-to-end reproducibility: a single nondeterministic op
         anywhere in the pipeline (Ridge, NN init, data loader shuffle)
         would break this.
         """
-        result_a = _run_tiny_pipeline(seed=42)
-        result_b = _run_tiny_pipeline(seed=42)
-
-        test_a = result_a["test_df"]
-        test_b = result_b["test_df"]
+        test_a = pipeline_run["test_df"]
+        test_b = pipeline_run_repeat["test_df"]
 
         # Row count and order must match.
         assert len(test_a) == len(test_b)

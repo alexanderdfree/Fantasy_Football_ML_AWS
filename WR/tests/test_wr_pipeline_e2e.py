@@ -115,10 +115,30 @@ def _run(tiny_splits, tmp_outputs_dir, seed: int = 42):
     return result
 
 
+# ---------------------------------------------------------------------------
+# Module-scoped pipeline runs — one run shared by finite/shape checks,
+# a second run cached for the cross-run bit-identity check.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def pipeline_run(tiny_splits, tmp_path_factory):
+    """Single pipeline invocation shared across tests (saves ~6s per test)."""
+    workdir = tmp_path_factory.mktemp("wr_e2e_run1")
+    return _run(tiny_splits, workdir, seed=42)
+
+
+@pytest.fixture(scope="module")
+def pipeline_run_repeat(tiny_splits, pipeline_run, tmp_path_factory):
+    """Second pipeline invocation with the same seed for bit-identity checks."""
+    workdir = tmp_path_factory.mktemp("wr_e2e_run2")
+    return _run(tiny_splits, workdir, seed=42)
+
+
 @pytest.mark.e2e
-def test_pipeline_completes_and_predictions_finite(tiny_splits, tmp_path):
+def test_pipeline_completes_and_predictions_finite(pipeline_run):
     """run_pipeline executes end-to-end with finite, correctly-shaped outputs."""
-    result = _run(tiny_splits, tmp_path)
+    result = pipeline_run
 
     assert "per_target_preds" in result
     ridge = result["per_target_preds"]["ridge"]
@@ -133,14 +153,11 @@ def test_pipeline_completes_and_predictions_finite(tiny_splits, tmp_path):
 
 
 @pytest.mark.e2e
-def test_pipeline_deterministic_across_runs(tiny_splits, tmp_path):
+def test_pipeline_deterministic_across_runs(pipeline_run, pipeline_run_repeat):
     """Two runs with the same seed produce bit-identical predictions."""
-    r1 = _run(tiny_splits, tmp_path / "run1", seed=42)
-    r2 = _run(tiny_splits, tmp_path / "run2", seed=42)
-
     for backbone in ("ridge", "nn"):
-        p1 = r1["per_target_preds"][backbone]
-        p2 = r2["per_target_preds"][backbone]
+        p1 = pipeline_run["per_target_preds"][backbone]
+        p2 = pipeline_run_repeat["per_target_preds"][backbone]
         for key in _ALL_TARGETS:
             np.testing.assert_array_equal(
                 np.asarray(p1[key]),
