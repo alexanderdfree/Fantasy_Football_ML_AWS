@@ -8,20 +8,18 @@ import pytest
 
 from shared.evaluation import compute_ranking_metrics, compute_target_metrics
 
-DST_TARGETS = ["defensive_scoring", "td_points", "pts_allowed_bonus"]
+# Small subset of the 10 DST raw-stat targets — enough to exercise
+# compute_target_metrics / compute_ranking_metrics without needing the full list.
+DST_TARGETS = ["def_sacks", "def_tds", "points_allowed"]
 
 
 def _make_target_dicts(n=50):
-    """Build y_true / y_pred dicts for compute_target_metrics tests.
-
-    pts_allowed_bonus is allowed negative to mirror the real DST scoring
-    range [-4, +10].
-    """
+    """Build y_true / y_pred dicts for compute_target_metrics tests."""
     rng = np.random.default_rng(42)
     y_true = {
-        "defensive_scoring": rng.random(n) * 10,
-        "td_points": rng.random(n) * 6,
-        "pts_allowed_bonus": (rng.random(n) * 14) - 4,
+        "def_sacks": rng.random(n) * 5,
+        "def_tds": rng.random(n) * 1,
+        "points_allowed": rng.random(n) * 40,
         "total": rng.random(n) * 20,
     }
     y_pred = {k: v + rng.standard_normal(n) * 0.5 for k, v in y_true.items()}
@@ -38,9 +36,9 @@ class TestComputeTargetMetrics:
         assert mock_metrics.call_count == 4  # total + 3 targets
         assert set(result.keys()) == {
             "total",
-            "defensive_scoring",
-            "td_points",
-            "pts_allowed_bonus",
+            "def_sacks",
+            "def_tds",
+            "points_allowed",
         }
 
     @patch("shared.evaluation.compute_metrics")
@@ -57,9 +55,9 @@ class TestComputeTargetMetrics:
     def test_perfect_predictions(self, mock_metrics):
         mock_metrics.return_value = {"mae": 0.0, "rmse": 0.0, "r2": 1.0}
         y = {
-            "defensive_scoring": np.array([7.0, 10.0]),
-            "td_points": np.array([0.0, 6.0]),
-            "pts_allowed_bonus": np.array([4.0, -1.0]),
+            "def_sacks": np.array([3.0, 4.0]),
+            "def_tds": np.array([0.0, 1.0]),
+            "points_allowed": np.array([17.0, 21.0]),
             "total": np.array([11.0, 15.0]),
         }
         result = compute_target_metrics(y, y, DST_TARGETS)

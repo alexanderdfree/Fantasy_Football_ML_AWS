@@ -401,6 +401,7 @@ def get_inference_spec(pos: str) -> dict:
             "fill_nans_fn": fill_dst_nans,
             "get_feature_columns_fn": get_dst_feature_columns,
             "compute_adjustment_fn": None,
+            "aggregate_fn": aggregate_fn_for("DST"),
             "model_dir": "DST/outputs/models",
             "nn_file": "dst_multihead_nn.pt",
             "nn_kwargs": dict(
@@ -411,6 +412,10 @@ def get_inference_spec(pos: str) -> dict:
                 non_negative_targets=DST_NN_NON_NEGATIVE_TARGETS,
             ),
             "train_attention_nn": bool(getattr(dst_cfg, "DST_TRAIN_ATTENTION_NN", False)),
+            "attn_nn_file": "dst_attention_nn.pt",
+            "attn_history_stats": list(getattr(dst_cfg, "DST_ATTN_HISTORY_STATS", []) or []),
+            "attn_max_seq_len": getattr(dst_cfg, "DST_ATTN_MAX_SEQ_LEN", 17),
+            "attn_nn_kwargs_static": _attn_kwargs_static(dst_cfg, "DST"),
             "train_lightgbm": bool(getattr(dst_cfg, "DST_TRAIN_LIGHTGBM", False)),
         }
     raise ValueError(f"Unknown position: {pos}")

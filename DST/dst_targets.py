@@ -42,47 +42,62 @@ def _yds_allowed_to_bonus(ya: float) -> float:
 
 
 def compute_dst_targets(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute the 5 prediction targets for D/ST.
+    """NaN-fill the raw D/ST target columns and compute ``fantasy_points``.
 
-    Decomposition:
-      defensive_production = sacks*1 + INT*2 + fum_rec*2 + forced_fum*1 + safeties*2
-      def_td_points        = def_tds * 6
-      st_production        = special_teams_tds*6 + blocked_kicks*2
-      points_allowed       = raw PA (0-55+), tier-mapped at inference
-      yards_allowed        = raw YA (0-600+), tier-mapped at inference
+    Required input columns (all 10 raw targets must be on ``df``; upstream
+    ``build_dst_data`` guarantees this — missing columns raise KeyError, which
+    is the desired behavior because it surfaces data-pipeline bugs instead of
+    silently imputing zeros):
+      def_sacks, def_ints, def_fumble_rec, def_fumbles_forced, def_safeties,
+      def_tds, def_blocked_kicks, special_teams_tds,
+      points_allowed, yards_allowed
 
-    fantasy_points = defensive_production + def_td_points + st_production
+    ``fantasy_points`` is the scored total, used for baseline / eval / total
+    aux-loss supervision. It's recomputed here (not predicted directly) so the
+    column is always in sync with the raw stats.
+
+    fantasy_points = def_sacks*1 + def_ints*2 + def_fumble_rec*2
+                   + def_fumbles_forced*1 + def_safeties*2
+                   + def_tds*6
+                   + special_teams_tds*6 + def_blocked_kicks*2
                    + _pts_allowed_to_bonus(points_allowed)
                    + _yds_allowed_to_bonus(yards_allowed)
     """
     df = df.copy()
 
-    # 1. Defensive production (sacks + turnovers + forced fumbles + safeties)
-    df["defensive_production"] = (
-        df["def_sacks"].fillna(0) * 1
-        + df["def_ints"].fillna(0) * 2
-        + df["def_fumble_rec"].fillna(0) * 2
-        + df["def_fumbles_forced"].fillna(0) * 1
-        + df["def_safeties"].fillna(0) * 2
-    )
+    # Zero-fill raw counts (missing rows typically mean 0 occurrences, not NaN)
+    _count_cols = [
+        "def_sacks",
+        "def_ints",
+        "def_fumble_rec",
+        "def_fumbles_forced",
+        "def_safeties",
+        "def_tds",
+        "def_blocked_kicks",
+        "special_teams_tds",
+    ]
+    for col in _count_cols:
+        if col in df.columns:
+            df[col] = df[col].fillna(0)
 
-    # 2. Defensive touchdown points
-    df["def_td_points"] = df["def_tds"].fillna(0) * 6
-
-    # 3. Special teams production (ST TDs + blocked kicks)
-    df["st_production"] = (
-        df["special_teams_tds"].fillna(0) * 6 + df["def_blocked_kicks"].fillna(0) * 2
-    )
-
-    # 4/5. Raw PA/YA — regressed directly, tier mapping applied at inference.
+    # PA/YA — league-average defaults when missing
     df["points_allowed"] = df["points_allowed"].fillna(21)
     df["yards_allowed"] = df["yards_allowed"].fillna(350)
 
-    # Full fantasy points (tier-mapped) — used for eval and the total aux loss.
+    # Fantasy points: linear portion + tier bonuses. Must match
+    # ``shared.aggregate_targets.predictions_to_fantasy_points("DST", …)``.
+    linear = (
+        df["def_sacks"] * 1
+        + df["def_ints"] * 2
+        + df["def_fumble_rec"] * 2
+        + df["def_fumbles_forced"] * 1
+        + df["def_safeties"] * 2
+        + df["def_tds"] * 6
+        + df["special_teams_tds"] * 6
+        + df["def_blocked_kicks"] * 2
+    )
     df["fantasy_points"] = (
-        df["defensive_production"]
-        + df["def_td_points"]
-        + df["st_production"]
+        linear
         + df["points_allowed"].apply(_pts_allowed_to_bonus)
         + df["yards_allowed"].apply(_yds_allowed_to_bonus)
     )

@@ -3,7 +3,9 @@
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
+from DST.dst_targets import compute_dst_targets
 from shared.aggregate_targets import predictions_to_fantasy_points
 from src.config import SCORING_PPR
 from src.data.loader import compute_fantasy_points
@@ -98,3 +100,80 @@ def test_aggregator_ignores_total_key():
 def test_aggregator_unknown_position():
     with pytest.raises(ValueError):
         predictions_to_fantasy_points("ZZ", {"x": np.zeros(1)}, "ppr")
+
+
+# ---------------------------------------------------------------------------
+# DST branch: linear raw-stat coefficients + tier-mapped PA/YA bonuses.
+# ---------------------------------------------------------------------------
+
+
+def _dst_sample_preds_numpy():
+    """Sample DST raw-stat preds as numpy arrays — 3 team-weeks."""
+    return {
+        "def_sacks": np.array([3.0, 0.0, 5.0]),
+        "def_ints": np.array([1.0, 0.0, 2.0]),
+        "def_fumble_rec": np.array([1.0, 0.0, 1.0]),
+        "def_fumbles_forced": np.array([2.0, 1.0, 3.0]),
+        "def_safeties": np.array([0.0, 0.0, 1.0]),
+        "def_tds": np.array([1.0, 0.0, 2.0]),
+        "def_blocked_kicks": np.array([0.0, 0.0, 1.0]),
+        "special_teams_tds": np.array([1.0, 0.0, 0.0]),
+        "points_allowed": np.array([10.0, 35.0, 0.0]),
+        "yards_allowed": np.array([220.0, 420.0, 80.0]),
+    }
+
+
+def test_dst_aggregator_matches_compute_dst_targets_numpy():
+    """predictions_to_fantasy_points('DST', ...) on true stats must match compute_dst_targets fantasy_points."""
+    preds = _dst_sample_preds_numpy()
+    df = pd.DataFrame(preds)
+    expected = compute_dst_targets(df)["fantasy_points"].values
+    actual = predictions_to_fantasy_points("DST", preds, "ppr")
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-9)
+
+
+def test_dst_aggregator_scalar_values():
+    """Hand-computed: all 3 rows."""
+    preds = _dst_sample_preds_numpy()
+    actual = predictions_to_fantasy_points("DST", preds, "ppr")
+    # Row 0: 3 + 2 + 2 + 2 + 0 + 6 + 0 + 6 = 21; PA(10)=+4, YA(220)=+2 => 27
+    # Row 1: 0 + 0 + 0 + 1 + 0 + 0 + 0 + 0 = 1; PA(35)=-4, YA(420)=-3 => -6
+    # Row 2: 5 + 4 + 2 + 3 + 2 + 12 + 2 + 0 = 30; PA(0)=+10, YA(80)=+5 => 45
+    np.testing.assert_allclose(actual, [27.0, -6.0, 45.0], atol=1e-9)
+
+
+def test_dst_aggregator_works_on_torch_tensors():
+    """The NN forward pass calls aggregate_fn on torch tensors — must not break."""
+    preds_np = _dst_sample_preds_numpy()
+    preds_torch = {k: torch.tensor(v, dtype=torch.float32) for k, v in preds_np.items()}
+    out = predictions_to_fantasy_points("DST", preds_torch, "ppr")
+    assert isinstance(out, torch.Tensor)
+    np.testing.assert_allclose(
+        out.detach().numpy(),
+        predictions_to_fantasy_points("DST", preds_np, "ppr"),
+        rtol=0,
+        atol=1e-5,
+    )
+
+
+def test_dst_aggregator_tier_boundaries_vectorized():
+    """Sweep PA/YA across every tier edge — must match the scalar helpers."""
+    from DST.dst_targets import _pts_allowed_to_bonus, _yds_allowed_to_bonus
+
+    pa_values = np.array([0, 1, 6, 7, 13, 14, 20, 21, 27, 28, 34, 35, 40, 55], dtype=np.float64)
+    ya_values = np.array(
+        [0, 99, 100, 199, 200, 299, 300, 349, 350, 399, 400, 449, 450, 600], dtype=np.float64
+    )
+    # Same length; pair up for a sweep.
+    n = min(len(pa_values), len(ya_values))
+    preds = {k: np.zeros(n, dtype=np.float64) for k in _dst_sample_preds_numpy()}
+    preds["points_allowed"] = pa_values[:n]
+    preds["yards_allowed"] = ya_values[:n]
+    actual = predictions_to_fantasy_points("DST", preds, "ppr")
+    expected = np.array(
+        [
+            _pts_allowed_to_bonus(p) + _yds_allowed_to_bonus(y)
+            for p, y in zip(pa_values, ya_values, strict=True)
+        ]
+    )
+    np.testing.assert_allclose(actual, expected, atol=1e-9)

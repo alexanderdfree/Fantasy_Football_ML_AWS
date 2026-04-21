@@ -37,6 +37,7 @@ import pandas as pd
 import pytest
 
 from DST.dst_config import (
+    DST_ATTN_HISTORY_STATS,
     DST_CONFIG_TINY,
     DST_HUBER_DELTAS,
     DST_LOSS_WEIGHTS,
@@ -53,6 +54,7 @@ from DST.dst_features import (
 )
 from DST.dst_targets import compute_dst_targets
 from DST.tests.conftest import _build_tiny_dst_dataset
+from shared.aggregate_targets import aggregate_fn_for
 from shared.pipeline import run_pipeline
 
 
@@ -246,3 +248,38 @@ class TestDSTPipelineE2E:
             for metric in ("mae", "rmse", "r2"):
                 assert metric in ridge_metrics[key]
                 assert np.isfinite(ridge_metrics[key][metric])
+
+    def test_attention_nn_trains_and_predicts(self, tiny_cwd):
+        """Smoke test for the attention path — enables train_attention_nn on
+        the tiny config and asserts the attention model produces finite
+        per-target + total predictions. Protects against broken wiring in
+        ``get_attn_static_columns`` (DST suffix branch), the per-game opp
+        columns on the tiny dataset, and the aggregate_fn hook."""
+        train, val, test = _build_tiny_splits(seed=42)
+        cfg = _make_dst_tiny_cfg()
+        # Flip attention on + provide required attn_* keys (plus aggregate_fn
+        # so training supervises on fantasy_points via the tier-aware DST
+        # aggregator, matching run_dst_pipeline.py).
+        cfg["train_attention_nn"] = True
+        cfg["attn_history_stats"] = DST_ATTN_HISTORY_STATS
+        cfg["attn_max_seq_len"] = 17
+        cfg["attn_d_model"] = 8
+        cfg["attn_n_heads"] = 2
+        cfg["attn_encoder_hidden_dim"] = 8
+        cfg["attn_positional_encoding"] = True
+        cfg["attn_gated_fusion"] = False
+        cfg["attn_gated_td"] = False
+        cfg["attn_dropout"] = 0.0
+        cfg["aggregate_fn"] = aggregate_fn_for("DST")
+
+        result = run_pipeline("DST", cfg, train, val, test, seed=42)
+
+        assert "attn_nn_metrics" in result
+        attn_preds = result["per_target_preds"]["attn_nn"]
+        n_test = len(result["test_df"])
+        assert "total" in attn_preds
+        assert attn_preds["total"].shape == (n_test,)
+        assert np.isfinite(attn_preds["total"]).all(), "Attention NN total contains NaN/inf"
+        for t in DST_TARGETS:
+            assert attn_preds[t].shape == (n_test,)
+            assert np.isfinite(attn_preds[t]).all(), f"Attention NN.{t} contains NaN/inf"

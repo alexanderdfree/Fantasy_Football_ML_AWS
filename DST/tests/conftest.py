@@ -143,7 +143,13 @@ def make_df():
 
 @pytest.fixture(scope="session")
 def make_team_games():
-    """Factory: multi-week DST DataFrame for one team, with targets pre-computed."""
+    """Factory: multi-week DST DataFrame for one team.
+
+    ``compute_dst_features`` reads the raw-stat columns + ``fantasy_points``
+    for rolling aggregates. ``fantasy_points`` is populated with a placeholder
+    linear sum (no PA/YA tier bonus) since the tests that use this fixture
+    care about rolling windows, not exact tier scoring.
+    """
 
     def _factory(
         team: str = "KC",
@@ -177,19 +183,17 @@ def make_team_games():
                 "special_teams_tds": [special_teams_tds] * n_weeks,
             }
         )
-        df["defensive_production"] = (
+        # Placeholder fantasy_points (linear-only) — real tier scoring happens
+        # in compute_dst_targets. This column feeds rolling-feature windows.
+        df["fantasy_points"] = (
             df["def_sacks"]
             + df["def_ints"] * 2
             + df["def_fumble_rec"] * 2
             + df["def_fumbles_forced"]
             + df["def_safeties"] * 2
-        )
-        df["def_td_points"] = df["def_tds"] * 6
-        df["st_production"] = df["special_teams_tds"] * 6 + df["def_blocked_kicks"] * 2
-        # Placeholder fantasy_points — compute_dst_features reads this column
-        # for rolling aggregates. Real tier mapping lives in compute_dst_targets.
-        df["fantasy_points"] = (
-            df["defensive_production"] + df["def_td_points"] + df["st_production"]
+            + df["def_tds"] * 6
+            + df["special_teams_tds"] * 6
+            + df["def_blocked_kicks"] * 2
         )
         return df
 
@@ -299,6 +303,11 @@ def _build_tiny_dst_dataset(seed: int = 42) -> pd.DataFrame:
                         "opp_qb_int_rate_L5": float(rng.normal(0.025, 0.015)),
                         "opp_qb_sack_rate_L5": float(rng.normal(0.07, 0.02)),
                         "opp_qb_rush_yds_L5": float(rng.normal(15, 10)),
+                        # Per-game opp stats (attention history sequence)
+                        "opp_scoring": float(max(0, rng.normal(22, 10))),
+                        "opp_fumbles": float(max(0, rng.poisson(0.7))),
+                        "opp_interceptions": float(max(0, rng.poisson(0.8))),
+                        "opp_qb_epa": float(rng.normal(0, 5)),
                     }
                 )
 

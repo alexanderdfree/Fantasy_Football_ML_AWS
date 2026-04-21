@@ -13,8 +13,8 @@ Design
 
 Thresholds are chosen from the null hypothesis that the targets are
 correlated with the features in the synthetic data.  With Poisson-ish
-``def_sacks`` / ``def_ints`` feeding ``defensive_scoring``, a model that
-uses the rolling mean should trivially outperform "mean of all weeks".
+``def_sacks`` / ``def_ints`` directly predicted as raw targets, a model
+that uses the rolling mean should trivially outperform "mean of all weeks".
 
 * ``MAE_baseline > MAE_ridge``               (Ridge beats naive mean)
 * ``MAE_lgbm <= MAE_ridge * 1.10``           (LightGBM at least on par)
@@ -42,6 +42,7 @@ from DST.dst_config import (
 )
 from DST.dst_features import compute_dst_features
 from DST.dst_targets import compute_dst_targets
+from shared.aggregate_targets import aggregate_fn_for
 from shared.models import RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
 from shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
@@ -72,10 +73,9 @@ def _prepare_tiny(tiny_dst_dataset: pd.DataFrame):
         if col not in df.columns:
             df[col] = 0.0
         df[col] = df[col].replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    # Add total target used by NN / ranking
-    df["total"] = sum(df[t] for t in DST_TARGETS)
-    # Add fantasy_points alias (baseline reads this column)
-    df["fantasy_points"] = df["total"]
+    # ``fantasy_points`` is already written by compute_dst_targets (linear
+    # raw-stat combo + PA/YA tier bonuses). Don't overwrite it — we want
+    # the real scoring, which is what baseline / NN total supervision uses.
 
     # Temporal split: earliest 3 seasons train, last season test
     seasons = sorted(df["season"].unique())
@@ -87,9 +87,9 @@ def _prepare_tiny(tiny_dst_dataset: pd.DataFrame):
     X_train = train[_TINY_FEATURE_COLS].values.astype(np.float32)
     X_test = test[_TINY_FEATURE_COLS].values.astype(np.float32)
     y_train = {t: train[t].values.astype(np.float32) for t in DST_TARGETS}
-    y_train["total"] = np.sum([y_train[t] for t in DST_TARGETS], axis=0)
+    y_train["total"] = train["fantasy_points"].values.astype(np.float32)
     y_test = {t: test[t].values.astype(np.float32) for t in DST_TARGETS}
-    y_test["total"] = np.sum([y_test[t] for t in DST_TARGETS], axis=0)
+    y_test["total"] = test["fantasy_points"].values.astype(np.float32)
     return X_train, X_test, y_train, y_test, train, test
 
 
@@ -124,7 +124,10 @@ def regression_results(tiny_dst_dataset):
     )
     ridge.fit(X_train, y_train)
     ridge_preds = ridge.predict(X_test)
-    ridge_preds["total"] = sum(ridge_preds[t] for t in DST_TARGETS)
+    # DST total is fantasy_points (tier-mapped PA/YA + linear raw stats),
+    # NOT the naive sum of raw targets (which is dominated by yards_allowed).
+    dst_agg = aggregate_fn_for("DST")
+    ridge_preds["total"] = dst_agg(ridge_preds)
     ridge_mae = compute_metrics(y_test["total"], ridge_preds["total"])["mae"]
 
     # --- LightGBM multi-target (optional — skip cleanly if not installed) ---
@@ -141,7 +144,7 @@ def regression_results(tiny_dst_dataset):
         )
         lgbm.fit(X_train, y_train, feature_names=_TINY_FEATURE_COLS)
         lgbm_preds = lgbm.predict(X_test)
-        lgbm_preds["total"] = sum(lgbm_preds[t] for t in DST_TARGETS)
+        lgbm_preds["total"] = dst_agg(lgbm_preds)
         lgbm_mae = compute_metrics(y_test["total"], lgbm_preds["total"])["mae"]
     except Exception:  # lightgbm not installed or fits failed on tiny data
         lgbm_mae = None
@@ -168,6 +171,11 @@ def regression_results(tiny_dst_dataset):
         head_hidden=8,
         dropout=0.0,
         non_negative_targets=DST_NN_NON_NEGATIVE_TARGETS,
+        # DST is in _FANTASY_POINTS_AUX_POSITIONS — ``preds["total"]`` must
+        # live on the fantasy-point scale (matches ``y["total"] =
+        # fantasy_points``). Without this, ``sum(raw heads) ≈ 380`` would
+        # supervise on fantasy_points ≈ 5 and the heads would collapse.
+        aggregate_fn=dst_agg,
     )
     optim = torch.optim.Adam(model.parameters(), lr=3e-3)
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(optim, patience=3, factor=0.5)
@@ -190,7 +198,7 @@ def regression_results(tiny_dst_dataset):
     trainer.train(train_loader, val_loader, n_epochs=20)
 
     nn_preds = model.predict_numpy(X_te_s, torch.device("cpu"))
-    nn_preds["total"] = sum(nn_preds[t] for t in DST_TARGETS)
+    nn_preds["total"] = dst_agg(nn_preds)
     nn_mae = compute_metrics(y_test["total"], nn_preds["total"])["mae"]
 
     return {
