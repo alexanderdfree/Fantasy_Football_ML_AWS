@@ -46,6 +46,40 @@ from src.features.engineer import build_game_history_arrays, get_attn_static_col
 from src.models.baseline import SeasonAverageBaseline
 from src.models.linear import RidgeModel
 
+# Positions allowed to supervise the aux-loss ``total`` head on
+# ``fantasy_points`` instead of ``sum(targets)``. Opt-in is triple-gated:
+#   1. Position is in this whitelist (K/DST are the scoring-aware positions).
+#   2. ``cfg["compute_adjustment_fn"] is None`` — post-hoc adjustment has been
+#      folded into trainable heads.
+#   3. ``cfg["aggregate_fn"]`` is set — the NN is wired to emit
+#      ``preds["total"] = aggregate_fn(preds)`` so ``sum(heads)`` matches
+#      ``fantasy_points`` by construction. Without this, the NN's
+#      ``preds["total"] = sum(raw_heads)`` would systematically disagree with
+#      ``fantasy_points`` (sign flips for K, tier-mapped PA/YA for DST),
+#      producing an unminimizable aux loss that corrupts head training.
+# QB/RB/WR/TE are excluded: their post-migration targets are raw NFL stats
+# (yards/TDs/receptions) whose ``sum(heads)`` lives on a different scale than
+# ``fantasy_points``. They do set ``cfg["aggregate_fn"]`` — but for *inference*
+# (scoring-weighted aggregation of raw-stat preds); it must NOT be wired into
+# NN training, since the aux target for them stays as ``sum(raw targets)``.
+_FANTASY_POINTS_AUX_POSITIONS = frozenset({"K", "DST"})
+
+
+def _nn_aggregate_fn(position, cfg):
+    """Return the NN's training-time ``aggregate_fn`` for ``preds["total"]``.
+
+    Returns ``cfg["aggregate_fn"]`` only when the position has opted in to
+    ``fantasy_points`` aux supervision (same gate as in
+    ``_prepare_position_data``). Returns ``None`` for every other position so
+    the NN keeps its default ``sum(heads)`` total — crucially for QB/RB/WR/TE,
+    which *do* set ``cfg["aggregate_fn"]`` for inference but whose training
+    aux target is ``sum(raw targets)``, on a different scale than
+    ``fantasy_points``.
+    """
+    if position in _FANTASY_POINTS_AUX_POSITIONS and cfg.get("compute_adjustment_fn") is None:
+        return cfg.get("aggregate_fn")
+    return None
+
 
 def _read_split(path: str) -> pd.DataFrame:
     """Read a split parquet, dropping playoff rows.
@@ -282,18 +316,34 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
         else None
     )
 
-    # Total target = sum of decomposed targets (NOT fantasy_points, which
-    # includes adjustments like INT/fumble penalties that are added post-hoc).
-    # Using fantasy_points here causes the total aux loss to train heads to
-    # absorb adjustments, which then get double-counted at inference.
-    y_train_dict["total"] = np.sum([pos_train[t].values for t in targets], axis=0).astype(
-        np.float32
+    # Total aux-loss target: use ``fantasy_points`` only when the NN is wired
+    # to emit it (via ``cfg["aggregate_fn"]``) and the position is in the
+    # scoring-aware whitelist with no post-hoc adjustment left. Otherwise fall
+    # back to sum-of-targets so we don't double-count an adjustment or create a
+    # systematic mismatch between ``sum(raw_heads)`` and ``fantasy_points``.
+    # See ``_FANTASY_POINTS_AUX_POSITIONS`` for the full rationale.
+    use_fantasy_points = (
+        position in _FANTASY_POINTS_AUX_POSITIONS
+        and cfg.get("compute_adjustment_fn") is None
+        and cfg.get("aggregate_fn") is not None
+        and "fantasy_points" in pos_train.columns
     )
-    y_val_dict["total"] = np.sum([pos_val[t].values for t in targets], axis=0).astype(np.float32)
-    if y_test_dict is not None:
-        y_test_dict["total"] = np.sum([pos_test[t].values for t in targets], axis=0).astype(
+    if use_fantasy_points:
+        y_train_dict["total"] = pos_train["fantasy_points"].values.astype(np.float32)
+        y_val_dict["total"] = pos_val["fantasy_points"].values.astype(np.float32)
+        if y_test_dict is not None:
+            y_test_dict["total"] = pos_test["fantasy_points"].values.astype(np.float32)
+    else:
+        y_train_dict["total"] = np.sum([pos_train[t].values for t in targets], axis=0).astype(
             np.float32
         )
+        y_val_dict["total"] = np.sum([pos_val[t].values for t in targets], axis=0).astype(
+            np.float32
+        )
+        if y_test_dict is not None:
+            y_test_dict["total"] = np.sum([pos_test[t].values for t in targets], axis=0).astype(
+                np.float32
+            )
 
     return (
         X_train,
@@ -323,7 +373,18 @@ def _prepare_train_val(position, cfg, train_df, val_df):
     return X_train, X_val, y_train_dict, y_val_dict, pos_train, pos_val, feature_cols
 
 
-def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg, targets, seed):
+def _train_nn(
+    position,
+    X_train,
+    X_val,
+    X_test,
+    y_train_dict,
+    y_val_dict,
+    y_test_dict,
+    cfg,
+    targets,
+    seed,
+):
     """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history).
 
     Shared by the regular NN and Weather NN to guarantee identical training.
@@ -345,6 +406,7 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    aggregate_fn = _nn_aggregate_fn(position, cfg)
     model = MultiHeadNet(
         input_dim=X_train_s.shape[1],
         target_names=targets,
@@ -353,6 +415,7 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg
         dropout=cfg["nn_dropout"],
         head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
         non_negative_targets=cfg.get("nn_non_negative_targets"),
+        aggregate_fn=aggregate_fn,
     ).to(device)
 
     optimizer = torch.optim.AdamW(
@@ -381,17 +444,23 @@ def _train_nn(X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg
     )
     history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
+    # NN.forward already populates ``preds["total"]`` (via ``aggregate_fn`` when
+    # configured, else ``sum(heads)``). Only override with an explicit sum when
+    # no aggregate_fn is wired, to preserve the signed/weighted aggregation.
     val_preds = model.predict_numpy(X_val_s, device)
-    val_preds["total"] = sum(val_preds[t] for t in targets)
+    if aggregate_fn is None:
+        val_preds["total"] = sum(val_preds[t] for t in targets)
 
     test_preds = model.predict_numpy(X_test_s, device)
-    test_preds["total"] = sum(test_preds[t] for t in targets)
+    if aggregate_fn is None:
+        test_preds["total"] = sum(test_preds[t] for t in targets)
     metrics = compute_target_metrics(y_test_dict, test_preds, targets)
 
     return model, nn_scaler, val_preds, test_preds, metrics, history
 
 
 def _train_attention_nn(
+    position,
     X_train,
     X_val,
     X_test,
@@ -452,6 +521,7 @@ def _train_attention_nn(
 
     game_dim = hist_train.shape[2]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    aggregate_fn = _nn_aggregate_fn(position, cfg)
     model = MultiHeadNetWithHistory(
         static_dim=X_train_s.shape[1],
         game_dim=game_dim,
@@ -473,6 +543,7 @@ def _train_attention_nn(
         td_gate_hidden=cfg.get("attn_td_gate_hidden", 16),
         gated_td_targets=cfg.get("gated_td_targets"),
         gated_td_target=cfg.get("gated_td_target", "td_points"),
+        aggregate_fn=aggregate_fn,
     ).to(device)
 
     attn_lr = cfg.get("attn_lr", cfg["nn_lr"])
@@ -507,11 +578,16 @@ def _train_attention_nn(
     )
     history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
+    # NN.forward already populates ``preds["total"]`` (via ``aggregate_fn`` when
+    # configured, else ``sum(heads)``). Only override with an explicit sum when
+    # no aggregate_fn is wired, to preserve the signed/weighted aggregation.
     val_preds = model.predict_numpy(X_val_s, hist_val, mask_val, device)
-    val_preds["total"] = sum(val_preds[t] for t in targets)
+    if aggregate_fn is None:
+        val_preds["total"] = sum(val_preds[t] for t in targets)
 
     test_preds = model.predict_numpy(X_test_s, hist_test, mask_test, device)
-    test_preds["total"] = sum(test_preds[t] for t in targets)
+    if aggregate_fn is None:
+        test_preds["total"] = sum(test_preds[t] for t in targets)
     metrics = compute_target_metrics(y_test_dict, test_preds, targets)
 
     return model, nn_scaler, val_preds, test_preds, metrics, history
@@ -666,6 +742,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     # --- Multi-head NN ---
     print(f"\n=== {pos} Multi-Head Neural Net ===")
     model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
+        position,
         X_train,
         X_val,
         X_test,
@@ -708,6 +785,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             attn_nn_metrics,
             attn_history,
         ) = _train_attention_nn(
+            position,
             X_train,
             X_val,
             X_test,
@@ -1004,6 +1082,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        aggregate_fn = _nn_aggregate_fn(position, cfg)
         model = MultiHeadNet(
             input_dim=X_train_s.shape[1],
             target_names=targets,
@@ -1012,6 +1091,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             dropout=cfg["nn_dropout"],
             head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
             non_negative_targets=cfg.get("nn_non_negative_targets"),
+            aggregate_fn=aggregate_fn,
         ).to(device)
 
         optimizer = torch.optim.AdamW(
@@ -1041,7 +1121,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
         nn_val_preds = model.predict_numpy(X_val_s, device)
-        nn_val_preds["total"] = sum(nn_val_preds[t] for t in targets)
+        if aggregate_fn is None:
+            nn_val_preds["total"] = sum(nn_val_preds[t] for t in targets)
         fold_nn_metrics.append(compute_target_metrics(y_val_dict, nn_val_preds, targets))
 
         # LightGBM for this fold
@@ -1151,6 +1232,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     # NN
     print(f"\n=== {pos} Multi-Head NN (Final Holdout) ===")
     model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
+        position,
         X_train,
         X_val,
         X_test,
