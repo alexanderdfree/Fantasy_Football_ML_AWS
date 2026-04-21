@@ -114,6 +114,8 @@ src/                                Data + general features
   config.py                         Seasons, scoring, rolling windows
   data/                             loader, split, preprocessing
   features/engineer.py              Feature engineering
+  models/                           SeasonAverageBaseline, LastWeekBaseline, RidgeModel (imported by shared/pipeline)
+  training/trainer.py               Single-head Trainer (pre-MultiHeadNet; unused by current pipelines)
   evaluation/                       metrics, backtest
 infra/ec2/                          Active training host (warm g4dn.xlarge)
 infra/aws/                          ECS/ALB serving stack
