@@ -181,8 +181,11 @@ class TestFindTopErrorSources:
         sources = find_top_error_sources(
             stratified_results, "Ridge", metric="mae", top_k=5, min_n=1
         )
-        if len(sources) >= 2:
-            assert sources[0]["mae"] >= sources[1]["mae"]
+        # Pre-condition: the 200-row fixture with 3 strata must yield at least
+        # 2 buckets, otherwise the sort assertion below is silently skipped.
+        assert len(sources) >= 2, "fixture produced too few strata to test sorting"
+        maes = [s["mae"] for s in sources]
+        assert maes == sorted(maes, reverse=True)
 
     def test_min_n_filter(self, stratified_results):
         sources = find_top_error_sources(stratified_results, "Ridge", min_n=9999)
