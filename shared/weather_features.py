@@ -194,8 +194,11 @@ def merge_schedule_features(df: pd.DataFrame, label: str | None = None) -> pd.Da
     ).fillna(7)
 
     # --- Interaction features ---
+    # Preserve NaN from implied_team_total so unmatched games stay NaN rather
+    # than silently becoming 0 (matches the docstring above and the NaN-kept
+    # guarantee for implied_opp_total).
     wind_factor = (1 - df["wind_adjusted"] / 40).clip(0, 1)
-    df["implied_total_x_wind"] = df["implied_team_total"].fillna(0) * wind_factor
+    df["implied_total_x_wind"] = df["implied_team_total"] * wind_factor
 
     # NaN Vegas features indicate unmatched games — leave them as NaN
     # so downstream code can detect and handle them explicitly.
