@@ -111,18 +111,20 @@ def test_pipeline_writes_model_artifacts(tiny_splits, position, tmp_path):
     scaler_path = models_dir / "nn_scaler.pkl"
     assert scaler_path.exists(), f"{position}: NN scaler not saved at {scaler_path}"
 
-    # Ridge models are saved as per-target subdirectories. Each target's dir
-    # must contain at least one .pkl artefact — the specific files differ
-    # between the plain Ridge, two-stage classifier, and ordinal variants.
+    # Ridge models are saved as per-target subdirectories. Every target must
+    # have its own dir containing at least one .pkl artefact — the specific
+    # files differ between the plain Ridge, two-stage classifier, and ordinal
+    # variants, but RidgeMultiTarget.save() iterates over all targets, so a
+    # missing dir means something failed to persist.
     targets = list(cfg["targets"])
-    target_dirs = [models_dir / t for t in targets if (models_dir / t).is_dir()]
-    assert target_dirs, (
-        f"{position}: no per-target ridge dirs found in {models_dir}; "
-        f"present entries: {[p.name for p in models_dir.iterdir()]}"
-    )
-    for tdir in target_dirs:
+    for t in targets:
+        tdir = models_dir / t
+        assert tdir.is_dir(), (
+            f"{position}: per-target ridge dir for {t!r} missing at {tdir}; "
+            f"present entries: {[p.name for p in models_dir.iterdir()]}"
+        )
         pkls = list(tdir.glob("*.pkl"))
-        assert pkls, f"{position}: no .pkl artifacts saved for target {tdir.name} at {tdir}"
+        assert pkls, f"{position}: no .pkl artifacts saved for target {t} at {tdir}"
 
 
 @pytest.mark.e2e
@@ -136,14 +138,14 @@ def test_pipeline_predictions_dataframe_size(tiny_splits, position, tmp_path):
     cfg = build_tiny_config(position)
     result = run_pipeline_in_tmp(position, cfg, tiny_splits, tmp_path, seed=42)
 
-    n_val_rows = len(result["test_df"])
+    n_test_rows = len(result["test_df"])
     n_targets = len(cfg["targets"])
 
-    # Assemble a (n_val_rows x n_targets) predictions matrix from the NN output
+    # Assemble a (n_test_rows x n_targets) predictions matrix from the NN output
     # to validate the shape contract described in the unit spec.
     nn_preds = result["per_target_preds"]["nn"]
     preds_matrix = np.column_stack([nn_preds[t] for t in cfg["targets"]])
-    assert preds_matrix.shape == (n_val_rows, n_targets), (
-        f"{position}: preds matrix shape {preds_matrix.shape} != ({n_val_rows}, {n_targets})"
+    assert preds_matrix.shape == (n_test_rows, n_targets), (
+        f"{position}: preds matrix shape {preds_matrix.shape} != ({n_test_rows}, {n_targets})"
     )
     assert np.all(np.isfinite(preds_matrix)), f"{position}: preds matrix contains NaN/Inf"
