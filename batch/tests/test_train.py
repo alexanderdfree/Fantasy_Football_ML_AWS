@@ -179,6 +179,7 @@ class TestDownloadData:
         from batch.train import download_data
 
         mock_s3 = mock.MagicMock()
+        mock_s3.head_object.return_value = {"ETag": '"abc123"'}
         mock_boto_client.return_value = mock_s3
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -193,12 +194,61 @@ class TestDownloadData:
     def test_creates_local_dir(self, mock_boto_client):
         from batch.train import download_data
 
-        mock_boto_client.return_value = mock.MagicMock()
+        mock_s3 = mock.MagicMock()
+        mock_s3.head_object.return_value = {"ETag": '"abc123"'}
+        mock_boto_client.return_value = mock_s3
 
         with tempfile.TemporaryDirectory() as tmpdir:
             nested = os.path.join(tmpdir, "nested", "dir")
             download_data("bucket", "prefix", nested)
             assert os.path.isdir(nested)
+
+
+class TestDownloadIfStale:
+    def test_skips_download_on_etag_match(self, tmp_path):
+        from batch.train import _download_if_stale
+
+        mock_s3 = mock.MagicMock()
+        mock_s3.head_object.return_value = {"ETag": '"abc123"'}
+
+        local = tmp_path / "train.parquet"
+        local.write_text("cached")
+        (tmp_path / "train.parquet.etag").write_text('"abc123"')
+
+        _download_if_stale(mock_s3, "bucket", "prefix/train.parquet", str(local))
+
+        mock_s3.download_file.assert_not_called()
+        assert local.read_text() == "cached"
+
+    def test_downloads_on_etag_mismatch(self, tmp_path):
+        from batch.train import _download_if_stale
+
+        mock_s3 = mock.MagicMock()
+        mock_s3.head_object.return_value = {"ETag": '"newver"'}
+
+        local = tmp_path / "train.parquet"
+        local.write_text("stale")
+        (tmp_path / "train.parquet.etag").write_text('"oldver"')
+
+        _download_if_stale(mock_s3, "bucket", "prefix/train.parquet", str(local))
+
+        mock_s3.download_file.assert_called_once_with("bucket", "prefix/train.parquet", str(local))
+        assert (tmp_path / "train.parquet.etag").read_text() == '"newver"'
+
+    def test_force_refresh_bypasses_cache(self, tmp_path, monkeypatch):
+        from batch.train import _download_if_stale
+
+        mock_s3 = mock.MagicMock()
+        mock_s3.head_object.return_value = {"ETag": '"abc123"'}
+
+        local = tmp_path / "train.parquet"
+        local.write_text("cached")
+        (tmp_path / "train.parquet.etag").write_text('"abc123"')
+
+        monkeypatch.setenv("FF_FORCE_REFRESH", "1")
+        _download_if_stale(mock_s3, "bucket", "prefix/train.parquet", str(local))
+
+        mock_s3.download_file.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

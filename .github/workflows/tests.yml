@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -23,6 +27,10 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [QB, RB, WR, TE, K, DST, shared]
 
     steps:
       - uses: actions/checkout@v6
@@ -65,17 +73,28 @@ jobs:
           print(f'Wrote schedules: {len(sched)} rows')
           PY
 
+      - name: Resolve shard test paths and coverage flags
+        id: shard
+        run: |
+          if [ "${{ matrix.shard }}" = "shared" ]; then
+            echo "paths=tests/ batch/tests/ shared/tests/" >> "$GITHUB_OUTPUT"
+            echo "cov=--cov=src --cov=shared --cov=app --cov=batch" >> "$GITHUB_OUTPUT"
+          else
+            echo "paths=${{ matrix.shard }}/tests/" >> "$GITHUB_OUTPUT"
+            echo "cov=--cov=src --cov=${{ matrix.shard }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run tests
         run: >-
           python -m pytest
-          tests/ QB/tests/ RB/tests/ WR/tests/ TE/tests/ K/tests/ DST/tests/ batch/tests/ shared/tests/
+          ${{ steps.shard.outputs.paths }}
           -v
-          --cov=src --cov=shared --cov=app
-          --cov=QB --cov=RB --cov=WR --cov=TE --cov=K --cov=DST
-          --cov-report=xml
+          ${{ steps.shard.outputs.cov }}
+          --cov-report=xml:coverage-${{ matrix.shard }}.xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6
         with:
-          files: ./coverage.xml
+          files: ./coverage-${{ matrix.shard }}.xml
+          flags: ${{ matrix.shard }}
           fail_ci_if_error: false
