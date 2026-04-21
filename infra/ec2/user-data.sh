@@ -93,6 +93,9 @@ exec 200>/var/lock/ff-train.lock
 flock -n 200 || { echo "ff-train: another run is in progress"; exit 2; }
 
 mkdir -p /opt/ff/scratch/input /opt/ff/scratch/model /opt/ff/logs
+# Mark activity at start so auto-shutdown sees "busy" even if this run
+# outlasts IDLE_HOURS before docker completes.
+date -Iseconds > /opt/ff/logs/last-activity
 docker pull "\$IMAGE"
 docker run --rm --gpus all \\
   -e S3_BUCKET=${BUCKET} \\

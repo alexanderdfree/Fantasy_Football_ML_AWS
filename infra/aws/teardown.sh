@@ -57,9 +57,16 @@ if [ "$TG_ARN" != "None" ] && [ -n "$TG_ARN" ]; then
 fi
 
 # Step 4: Security groups (ecs-sg first — alb-sg is referenced by it).
+# Scope by default VPC so a same-named SG in another VPC isn't touched.
+VPC_ID=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" \
+  --query 'Vpcs[0].VpcId' --output text --region "$REGION" 2>/dev/null || echo None)
 for SG_NAME in "$ECS_SG_NAME" "$ALB_SG_NAME"; do
+  if [ "$VPC_ID" = "None" ] || [ -z "$VPC_ID" ]; then
+    log "No default VPC — skipping SG $SG_NAME cleanup."
+    continue
+  fi
   SG_ID=$(aws ec2 describe-security-groups --region "$REGION" \
-    --filters "Name=group-name,Values=$SG_NAME" \
+    --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values=$VPC_ID" \
     --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo None)
   if [ "$SG_ID" != "None" ] && [ -n "$SG_ID" ]; then
     log "Deleting SG $SG_NAME ($SG_ID)..."
