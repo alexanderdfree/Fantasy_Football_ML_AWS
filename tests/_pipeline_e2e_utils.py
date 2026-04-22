@@ -165,7 +165,6 @@ def _k_tiny() -> dict:
         from K.k_config import (
             K_CV_SPLIT_COLUMN,
             K_HUBER_DELTAS,
-            K_LOSS_W_TOTAL,
             K_LOSS_WEIGHTS,
             K_SPECIFIC_FEATURES,
             K_TARGETS,
@@ -175,7 +174,6 @@ def _k_tiny() -> dict:
             "targets": K_TARGETS,
             "specific_features": K_SPECIFIC_FEATURES,
             "loss_weights": K_LOSS_WEIGHTS,
-            "loss_w_total": K_LOSS_W_TOTAL,
             "huber_deltas": K_HUBER_DELTAS,
             "cv_split_column": K_CV_SPLIT_COLUMN,
             "ridge_alpha_grids": {t: [1.0, 10.0] for t in K_TARGETS},
@@ -199,7 +197,6 @@ def _dst_tiny() -> dict:
     """DST config — use DST_CONFIG_TINY if exposed, else build a shrunk cfg inline."""
     from DST.dst_config import (
         DST_HUBER_DELTAS,
-        DST_LOSS_W_TOTAL,
         DST_LOSS_WEIGHTS,
         DST_SPECIFIC_FEATURES,
         DST_TARGETS,
@@ -217,7 +214,6 @@ def _dst_tiny() -> dict:
         "ridge_alpha_grids": {t: [1.0, 10.0] for t in DST_TARGETS},
         "specific_features": DST_SPECIFIC_FEATURES,
         "loss_weights": DST_LOSS_WEIGHTS,
-        "loss_w_total": DST_LOSS_W_TOTAL,
         "huber_deltas": DST_HUBER_DELTAS,
         "filter_fn": filter_to_dst,
         "compute_targets_fn": compute_dst_targets,

@@ -66,15 +66,13 @@ K_NN_BATCH_SIZE = 128
 K_NN_PATIENCE = 30
 
 # === Loss Weights ===
-# Equal per-target weights: training objective now aligned with evaluation
-# metric (total MAE). w_total raised to 1.0.
+# Equal per-target weights.
 K_LOSS_WEIGHTS = {
     "fg_yard_points": 1.0,
     "pat_points": 1.0,
     "fg_misses": 1.0,
     "xp_misses": 1.0,
 }
-K_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target) ===
 # Harmonized to 2.0 across targets.
@@ -83,7 +81,6 @@ K_HUBER_DELTAS = {
     "pat_points": 2.0,
     "fg_misses": 2.0,
     "xp_misses": 2.0,
-    "total": 2.0,  # explicit delta for total aux loss (kickers have narrow range)
 }
 
 # === Non-negative NN targets ===
@@ -184,7 +181,6 @@ K_CONFIG_TINY = {
     "nn_patience": 1,
     "nn_log_every": 1,
     "loss_weights": K_LOSS_WEIGHTS,
-    "loss_w_total": K_LOSS_W_TOTAL,
     "huber_deltas": K_HUBER_DELTAS,
     "scheduler_type": "onecycle",
     "onecycle_max_lr": 1e-3,

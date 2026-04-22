@@ -31,7 +31,7 @@ class TestMultiTargetLoss:
         loss_fn = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
         preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
-        expected = {f"loss_{t}" for t in RB_TARGETS} | {"loss_total_aux", "loss_combined"}
+        expected = {f"loss_{t}" for t in RB_TARGETS} | {"loss_combined"}
         assert set(components.keys()) == expected
 
     def test_components_are_scalars(self, make_tensors):
@@ -44,7 +44,6 @@ class TestMultiTargetLoss:
     def test_zero_loss_on_perfect_prediction(self):
         loss_fn = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
         targets = {t: torch.tensor([1.0, 2.0]) for t in RB_TARGETS}
-        targets["total"] = sum(targets[t] for t in RB_TARGETS)
         combined, _ = loss_fn(targets, targets)
         assert pytest.approx(combined.item(), abs=1e-6) == 0.0
 
@@ -53,8 +52,8 @@ class TestMultiTargetLoss:
         equal = {t: 1.0 for t in RB_TARGETS}
         heavy = {t: 1.0 for t in RB_TARGETS}
         heavy["rushing_yards"] = 10.0
-        loss_equal = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=equal, w_total=1.0)
-        loss_heavy = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=heavy, w_total=1.0)
+        loss_equal = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=equal)
+        loss_heavy = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=heavy)
         c1, _ = loss_equal(preds, targets)
         c2, _ = loss_heavy(preds, targets)
         assert c1.item() != c2.item()
@@ -67,7 +66,7 @@ class TestMultiTargetLoss:
 
     def test_backward_pass(self):
         loss_fn = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
-        preds = {t: torch.randn(5, requires_grad=True) for t in RB_TARGETS + ["total"]}
+        preds = {t: torch.randn(5, requires_grad=True) for t in RB_TARGETS}
         targets = {k: torch.randn(5) for k in preds}
         combined, _ = loss_fn(preds, targets)
         combined.backward()
@@ -81,10 +80,10 @@ class TestMultiTargetLoss:
             loss_weights=RB_LOSS_WEIGHTS,
             gated_td_targets=["rushing_tds", "receiving_tds"],
         )
-        preds = {t: torch.randn(5, requires_grad=True) for t in RB_TARGETS + ["total"]}
+        preds = {t: torch.randn(5, requires_grad=True) for t in RB_TARGETS}
         preds["rushing_tds_gate_logit"] = torch.randn(5, requires_grad=True)
         preds["receiving_tds_gate_logit"] = torch.randn(5, requires_grad=True)
-        targets = {k: torch.randn(5).clamp_min(0) for k in RB_TARGETS + ["total"]}
+        targets = {k: torch.randn(5).clamp_min(0) for k in RB_TARGETS}
         _, components = loss_fn(preds, targets)
         assert "loss_td_gate_rushing_tds" in components
         assert "loss_td_gate_receiving_tds" in components
@@ -215,7 +214,7 @@ class TestMultiHeadTrainer:
     def test_history_has_all_keys(self, setup_trainer):
         trainer, train_loader, val_loader = setup_trainer
         history = trainer.train(train_loader, val_loader, n_epochs=5)
-        expected_keys = {"train_loss", "val_loss", "val_mae_total", "val_rmse_total"}
+        expected_keys = {"train_loss", "val_loss"}
         expected_keys |= {f"val_loss_{t}" for t in RB_TARGETS}
         expected_keys |= {f"val_mae_{t}" for t in RB_TARGETS}
         assert expected_keys.issubset(set(history.keys()))

@@ -12,7 +12,6 @@ class MultiTargetLoss(nn.Module):
     """Combined Huber loss for a multi-head network.
 
     Loss = sum(weight[t] * Huber(pred[t], target[t]) for t in targets)
-           + w_total * Huber(total_pred, total_actual)
            + sum(td_gate_weight * BCE(gate_logit_t, (target_t > 0))
                  for t in gated_td_targets)
     """
@@ -22,7 +21,6 @@ class MultiTargetLoss(nn.Module):
         target_names: list[str],
         loss_weights: dict[str, float],
         huber_deltas: dict[str, float] = None,
-        w_total: float = 0.5,
         td_gate_weight: float = 1.0,
         gated_td_target=None,  # legacy str; kept for backward compat
         gated_td_targets: list[str] | None = None,
@@ -39,14 +37,12 @@ class MultiTargetLoss(nn.Module):
                 gated_td_targets = list(gated_td_target)
         self.gated_td_targets = list(gated_td_targets)
         self.loss_weights = {n: loss_weights.get(n, 1.0) for n in target_names}
-        self.w_total = w_total
         self.td_gate_weight = td_gate_weight
         if huber_deltas is None:
             huber_deltas = {}
         self.huber_fns = nn.ModuleDict(
             {name: nn.HuberLoss(delta=huber_deltas.get(name, 1.0)) for name in target_names}
         )
-        self.huber_total = nn.HuberLoss(delta=huber_deltas.get("total", 1.0))
 
     def forward(self, preds: dict, targets: dict) -> tuple:
         per_target_losses = {}
@@ -56,11 +52,7 @@ class MultiTargetLoss(nn.Module):
             per_target_losses[name] = loss
             combined = combined + self.loss_weights[name] * loss
 
-        loss_total = self.huber_total(preds["total"], targets["total"])
-        combined = combined + self.w_total * loss_total
-
         components = {f"loss_{name}": loss.item() for name, loss in per_target_losses.items()}
-        components["loss_total_aux"] = loss_total.item()
 
         for td_name in self.gated_td_targets:
             gate_key = f"{td_name}_gate_logit"
@@ -246,18 +238,20 @@ class MultiHeadTrainer:
         return preds, y_batch
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
-        all_keys = self.target_names + ["total"]
         history = {
             k: []
             for k in [
                 "train_loss",
                 "val_loss",
                 *[f"val_loss_{t}" for t in self.target_names],
-                "val_mae_total",
                 *[f"val_mae_{t}" for t in self.target_names],
-                "val_rmse_total",
             ]
         }
+        # Weighted MAE used for early stopping mirrors the training loss's
+        # per-target weighting so high-scale targets (yards) don't dominate
+        # the selection criterion.
+        loss_weights = getattr(self.criterion, "loss_weights", None) or {}
+        weight_sum = sum(loss_weights.get(t, 1.0) for t in self.target_names) or 1.0
 
         for epoch in range(n_epochs):
             # --- Training pass ---
@@ -284,8 +278,8 @@ class MultiHeadTrainer:
 
             # --- Validation pass ---
             self.model.eval()
-            all_preds = {k: [] for k in all_keys}
-            all_targets = {k: [] for k in all_keys}
+            all_preds = {k: [] for k in self.target_names}
+            all_targets = {k: [] for k in self.target_names}
             epoch_val_loss = 0.0
             val_components_accum = {}
             n_val_batches = 0
@@ -300,7 +294,7 @@ class MultiHeadTrainer:
                         val_components_accum[k] = val_components_accum.get(k, 0) + components[k]
                     n_val_batches += 1
 
-                    for k in all_keys:
+                    for k in self.target_names:
                         all_preds[k].append(preds[k].cpu().numpy())
                         all_targets[k].append(y_batch[k].cpu().numpy())
 
@@ -313,16 +307,11 @@ class MultiHeadTrainer:
                     val_components_accum.get(f"loss_{t}", 0) / n_val_batches
                 )
 
-            # Compute MAE per target
-            for k in all_keys:
+            # Per-target MAE
+            for k in self.target_names:
                 y_pred_all = np.concatenate(all_preds[k])
                 y_true_all = np.concatenate(all_targets[k])
-                mae = np.mean(np.abs(y_pred_all - y_true_all))
-                history[f"val_mae_{k}"].append(mae)
-                if k == "total":
-                    history["val_rmse_total"].append(
-                        np.sqrt(np.mean((y_pred_all - y_true_all) ** 2))
-                    )
+                history[f"val_mae_{k}"].append(np.mean(np.abs(y_pred_all - y_true_all)))
 
             # --- LR Scheduler ---
             if not self.scheduler_per_batch:
@@ -331,10 +320,16 @@ class MultiHeadTrainer:
                 else:
                     self.scheduler.step()
 
-            # --- Early Stopping (on total MAE, not combined loss) ---
-            val_mae_total = history["val_mae_total"][-1]
-            if val_mae_total < self.best_val_metric:
-                self.best_val_metric = val_mae_total
+            # --- Early Stopping (loss-weighted MAE) ---
+            val_mae_weighted = (
+                sum(
+                    loss_weights.get(t, 1.0) * history[f"val_mae_{t}"][-1]
+                    for t in self.target_names
+                )
+                / weight_sum
+            )
+            if val_mae_weighted < self.best_val_metric:
+                self.best_val_metric = val_mae_weighted
                 self.best_model_state = {k: v.clone() for k, v in self.model.state_dict().items()}
                 self.epochs_without_improvement = 0
             else:
@@ -356,7 +351,7 @@ class MultiHeadTrainer:
                     f"Epoch {epoch + 1:3d} | "
                     f"Train: {avg_train_loss:.4f} | "
                     f"Val: {avg_val_loss:.4f} | "
-                    f"MAE total: {history['val_mae_total'][-1]:.3f} | "
+                    f"MAE wtd: {val_mae_weighted:.3f} | "
                     f"{target_maes}"
                 )
         else:
@@ -478,43 +473,35 @@ class MultiHeadNestedHistoryTrainer(MultiHeadTrainer):
 
 def plot_training_curves(history: dict, target_names: list[str], save_path: str) -> None:
     """Multi-panel figure for multi-head training."""
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
     # Panel 1: Overall loss
-    axes[0, 0].plot(history["train_loss"], label="Train Loss")
-    axes[0, 0].plot(history["val_loss"], label="Val Loss")
-    axes[0, 0].set_xlabel("Epoch")
-    axes[0, 0].set_ylabel("Combined Loss")
-    axes[0, 0].set_title("Training & Validation Loss")
-    axes[0, 0].legend()
+    axes[0].plot(history["train_loss"], label="Train Loss")
+    axes[0].plot(history["val_loss"], label="Val Loss")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("Combined Loss")
+    axes[0].set_title("Training & Validation Loss")
+    axes[0].legend()
 
     # Panel 2: Per-target val losses
     for t in target_names:
         key = f"val_loss_{t}"
         if key in history:
-            axes[0, 1].plot(history[key], label=t.replace("_", " ").title())
-    axes[0, 1].set_xlabel("Epoch")
-    axes[0, 1].set_ylabel("Huber Loss")
-    axes[0, 1].set_title("Per-Target Validation Loss")
-    axes[0, 1].legend()
+            axes[1].plot(history[key], label=t.replace("_", " ").title())
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("Huber Loss")
+    axes[1].set_title("Per-Target Validation Loss")
+    axes[1].legend()
 
     # Panel 3: Per-target MAE
     for t in target_names:
         key = f"val_mae_{t}"
         if key in history:
-            axes[1, 0].plot(history[key], label=t.replace("_", " ").title())
-    axes[1, 0].set_xlabel("Epoch")
-    axes[1, 0].set_ylabel("MAE")
-    axes[1, 0].set_title("Per-Target Validation MAE")
-    axes[1, 0].legend()
-
-    # Panel 4: Total MAE and RMSE
-    axes[1, 1].plot(history["val_mae_total"], label="Total MAE")
-    axes[1, 1].plot(history["val_rmse_total"], label="Total RMSE")
-    axes[1, 1].set_xlabel("Epoch")
-    axes[1, 1].set_ylabel("Error")
-    axes[1, 1].set_title("Total Fantasy Points Metrics")
-    axes[1, 1].legend()
+            axes[2].plot(history[key], label=t.replace("_", " ").title())
+    axes[2].set_xlabel("Epoch")
+    axes[2].set_ylabel("MAE")
+    axes[2].set_title("Per-Target Validation MAE")
+    axes[2].legend()
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)

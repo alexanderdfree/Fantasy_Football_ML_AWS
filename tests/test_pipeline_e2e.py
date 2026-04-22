@@ -98,7 +98,7 @@ def test_pipeline_predictions_finite_and_shaped(pipeline_run, position):
     for model_name in ("ridge", "nn"):
         preds = result["per_target_preds"][model_name]
         # Predictions shape: per-target arrays of shape (n_test,)
-        for key in targets + ["total"]:
+        for key in targets:
             arr = np.asarray(preds[key])
             assert arr.shape == (n_test,), (
                 f"{position} {model_name}.{key}: shape {arr.shape} != ({n_test},)"

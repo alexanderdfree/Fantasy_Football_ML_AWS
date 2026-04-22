@@ -74,10 +74,11 @@ def _build_regression_data(n_train: int = 800, n_test: int = 200, seed: int = 42
     y_train = {t: _target(X_train, t) for t in RB_TARGETS}
     y_test = {t: _target(X_test, t) for t in RB_TARGETS}
 
-    y_train["total"] = sum(y_train[t] for t in RB_TARGETS)
-    y_test["total"] = sum(y_test[t] for t in RB_TARGETS)
-
     return X_train, X_test, y_train, y_test
+
+
+def _total(preds: dict) -> np.ndarray:
+    return sum(preds[t] for t in RB_TARGETS)
 
 
 def _mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -148,8 +149,6 @@ def trained_nn(regression_data):
 
     y_fit = {t: y_train[t][fit_idx] for t in RB_TARGETS}
     y_val = {t: y_train[t][val_idx] for t in RB_TARGETS}
-    y_fit["total"] = sum(y_fit[t] for t in RB_TARGETS)
-    y_val["total"] = sum(y_val[t] for t in RB_TARGETS)
 
     torch.manual_seed(42)
     np.random.seed(42)
@@ -192,7 +191,6 @@ def trained_nn(regression_data):
     trainer.train(train_loader, val_loader, n_epochs=80)
 
     preds = model.predict_numpy(X_test_s, torch.device("cpu"))
-    preds["total"] = sum(preds[t] for t in RB_TARGETS)
     return model, preds
 
 
@@ -200,8 +198,10 @@ def trained_nn(regression_data):
 def baseline_mae(regression_data):
     """Season-average baseline: predict the training-mean total for every row."""
     _, _, y_train, y_test = regression_data
-    mean_total = float(np.mean(y_train["total"]))
-    return _mae(y_test["total"], np.full_like(y_test["total"], mean_total))
+    train_total = _total(y_train)
+    test_total = _total(y_test)
+    mean_total = float(np.mean(train_total))
+    return _mae(test_total, np.full_like(test_total, mean_total))
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +215,7 @@ class TestRBRegressionThresholds:
     def test_ridge_beats_baseline(self, regression_data, trained_ridge, baseline_mae):
         _, _, _, y_test = regression_data
         _, preds = trained_ridge
-        ridge_mae = _mae(y_test["total"], preds["total"])
+        ridge_mae = _mae(_total(y_test), _total(preds))
         assert ridge_mae < baseline_mae, (
             f"Ridge MAE {ridge_mae:.3f} did not beat baseline MAE {baseline_mae:.3f}"
         )
@@ -223,7 +223,7 @@ class TestRBRegressionThresholds:
     def test_lgbm_beats_baseline(self, regression_data, trained_lgbm, baseline_mae):
         _, _, _, y_test = regression_data
         _, preds = trained_lgbm
-        lgbm_mae = _mae(y_test["total"], preds["total"])
+        lgbm_mae = _mae(_total(y_test), _total(preds))
         assert lgbm_mae < baseline_mae, (
             f"LGBM MAE {lgbm_mae:.3f} did not beat baseline MAE {baseline_mae:.3f}"
         )
@@ -231,7 +231,7 @@ class TestRBRegressionThresholds:
     def test_nn_beats_baseline(self, regression_data, trained_nn, baseline_mae):
         _, _, _, y_test = regression_data
         _, preds = trained_nn
-        nn_mae = _mae(y_test["total"], preds["total"])
+        nn_mae = _mae(_total(y_test), _total(preds))
         assert nn_mae < baseline_mae, (
             f"NN MAE {nn_mae:.3f} did not beat baseline MAE {baseline_mae:.3f}"
         )
@@ -249,8 +249,9 @@ class TestRBRegressionThresholds:
         _, ridge_preds = trained_ridge
         _, lgbm_preds = trained_lgbm
 
-        ridge_mae = _mae(y_test["total"], ridge_preds["total"])
-        lgbm_mae = _mae(y_test["total"], lgbm_preds["total"])
+        truth = _total(y_test)
+        ridge_mae = _mae(truth, _total(ridge_preds))
+        lgbm_mae = _mae(truth, _total(lgbm_preds))
 
         bound = ridge_mae * 1.50
         assert lgbm_mae <= bound, (
@@ -264,18 +265,12 @@ class TestRBRegressionThresholds:
         _, nn_preds = trained_nn
         _, lgbm_preds = trained_lgbm
 
-        nn_mae = _mae(y_test["total"], nn_preds["total"])
-        lgbm_mae = _mae(y_test["total"], lgbm_preds["total"])
+        truth = _total(y_test)
+        nn_mae = _mae(truth, _total(nn_preds))
+        lgbm_mae = _mae(truth, _total(lgbm_preds))
 
         low, high = lgbm_mae * 0.75, lgbm_mae * 1.25
         assert low <= nn_mae <= high, (
             f"NN MAE {nn_mae:.3f} outside +/-25% of LGBM MAE {lgbm_mae:.3f} "
             f"(allowed [{low:.3f}, {high:.3f}])"
         )
-
-    def test_targets_sum_to_total(self, regression_data, trained_ridge):
-        """Sanity: predicted per-target components must sum to predicted total."""
-        _, _, _, _ = regression_data
-        _, preds = trained_ridge
-        recomputed = sum(preds[t] for t in RB_TARGETS)
-        np.testing.assert_allclose(preds["total"], recomputed, atol=1e-6)

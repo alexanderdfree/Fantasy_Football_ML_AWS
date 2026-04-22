@@ -142,7 +142,6 @@ DST_LOSS_WEIGHTS = {
     "points_allowed": 0.4,  # 2.0 / 5.0
     "yards_allowed": 0.067,  # 2.0 / 30.0
 }
-DST_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target, raw-stat units) ===
 # Deltas roughly match each target's typical variance so outliers are robust.
@@ -157,7 +156,6 @@ DST_HUBER_DELTAS = {
     "special_teams_tds": 0.25,
     "points_allowed": 5.0,
     "yards_allowed": 30.0,
-    "total": 3.0,  # explicit delta for total aux loss (fantasy-point scale)
 }
 
 # === LR Scheduler ===
@@ -268,6 +266,5 @@ DST_CONFIG_TINY = {
     "ridge_pca_components": None,  # tiny synthetic data has few features
     "ridge_cv_folds": 2,
     "ridge_refine_points": 0,
-    "loss_w_total": 1.0,
     "nn_log_every": 100,  # suppress per-epoch prints during tests
 }

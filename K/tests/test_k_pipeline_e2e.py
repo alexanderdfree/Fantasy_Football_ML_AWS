@@ -124,7 +124,7 @@ def test_k_pipeline_predictions_finite_and_shaped(pipeline_run):
 
     for model_name in ("ridge", "nn"):
         preds = result["per_target_preds"][model_name]
-        for key in ("fg_yard_points", "pat_points", "fg_misses", "xp_misses", "total"):
+        for key in ("fg_yard_points", "pat_points", "fg_misses", "xp_misses"):
             arr = preds[key]
             assert arr.shape == (n_test,), f"{model_name} {key} shape {arr.shape} != ({n_test},)"
             assert np.all(np.isfinite(arr)), f"{model_name} {key} has NaN/Inf"
@@ -141,7 +141,7 @@ def test_k_pipeline_bit_identical_across_seeded_runs(pipeline_run, pipeline_run_
     for model_name in ("ridge", "nn"):
         p1 = pipeline_run["per_target_preds"][model_name]
         p2 = pipeline_run_repeat["per_target_preds"][model_name]
-        for key in ("fg_yard_points", "pat_points", "fg_misses", "xp_misses", "total"):
+        for key in ("fg_yard_points", "pat_points", "fg_misses", "xp_misses"):
             np.testing.assert_array_equal(
                 p1[key],
                 p2[key],

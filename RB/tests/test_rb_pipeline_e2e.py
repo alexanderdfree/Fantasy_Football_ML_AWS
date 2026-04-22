@@ -39,7 +39,6 @@ from RB.rb_config import (
     RB_GATED_ORDINAL_TARGETS,
     RB_GATED_TD_TARGETS,
     RB_HUBER_DELTAS,
-    RB_LOSS_W_TOTAL,
     RB_LOSS_WEIGHTS,
     RB_NN_BACKBONE_LAYERS_TINY,
     RB_NN_BATCH_SIZE_TINY,
@@ -88,7 +87,6 @@ def _build_tiny_config() -> dict:
         "nn_patience": RB_NN_PATIENCE_TINY,
         "nn_log_every": 1,
         "loss_weights": RB_LOSS_WEIGHTS,
-        "loss_w_total": RB_LOSS_W_TOTAL,
         "huber_deltas": RB_HUBER_DELTAS,
         "scheduler_type": RB_SCHEDULER_TYPE,
         "cosine_t0": RB_COSINE_T0,
@@ -193,12 +191,12 @@ def test_pipeline_runs_to_completion(pipeline_run):
     preds = result["per_target_preds"]
     for model_name in ("ridge", "nn"):
         assert model_name in preds, f"{model_name} missing from per_target_preds"
-        for target in list(RB_TARGETS) + ["total"]:
+        for target in RB_TARGETS:
             vec = preds[model_name][target]
             assert vec.ndim == 1
             assert np.isfinite(vec).all(), f"{model_name}/{target} has non-finite predictions"
 
-    n_test = preds["ridge"]["total"].shape[0]
+    n_test = preds["ridge"][RB_TARGETS[0]].shape[0]
     assert n_test > 0
 
 
@@ -214,14 +212,14 @@ def test_pipeline_bit_identical_same_seed(pipeline_run, pipeline_run_repeat):
     preds_a = pipeline_run["per_target_preds"]
     preds_b = pipeline_run_repeat["per_target_preds"]
 
-    for target in list(RB_TARGETS) + ["total"]:
+    for target in RB_TARGETS:
         np.testing.assert_array_equal(
             preds_a["ridge"][target],
             preds_b["ridge"][target],
             err_msg=f"Ridge predictions drifted for {target}",
         )
 
-    for target in list(RB_TARGETS) + ["total"]:
+    for target in RB_TARGETS:
         a = torch.from_numpy(preds_a["nn"][target])
         b = torch.from_numpy(preds_b["nn"][target])
         torch.testing.assert_close(a, b, atol=0.0, rtol=0.0)
