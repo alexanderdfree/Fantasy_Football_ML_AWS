@@ -83,6 +83,10 @@ K_HUBER_DELTAS = {
     "xp_misses": 2.0,
 }
 
+# Per-head loss family. Default "huber"; PR 2 introduces "poisson_nll" and
+# "hurdle_negbin" options. All heads on "huber" here = no behavior change.
+K_HEAD_LOSSES = {t: "huber" for t in K_TARGETS}
+
 # === Non-negative NN targets ===
 # All 4 K heads are non-negative raw counts/points; signs are applied only in
 # the final fantasy total aggregation, not in the per-head outputs.

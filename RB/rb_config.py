@@ -254,11 +254,23 @@ RB_ATTN_STATIC_CATEGORIES = [
     "weather_vegas",
 ]
 RB_ATTN_STATIC_FEATURES = [c for cat in RB_ATTN_STATIC_CATEGORIES for c in RB_INCLUDE_FEATURES[cat]]
-# Two-gate TD head: one sigmoid gate per TD target (rushing + receiving).
-RB_ATTN_GATED_TD = True
-RB_GATED_TD_TARGETS = ["rushing_tds", "receiving_tds"]
-RB_ATTN_TD_GATE_HIDDEN = 16
-RB_ATTN_TD_GATE_WEIGHT = 1.0
+# Two-gate hurdle head: one sigmoid gate per gated target.
+RB_ATTN_GATED = True
+RB_GATED_TARGETS = ["rushing_tds", "receiving_tds"]
+RB_ATTN_GATE_HIDDEN = 16
+RB_ATTN_GATE_WEIGHT = 1.0
+
+# Per-head loss family. Default "huber"; PR 2 introduces "poisson_nll" and
+# "hurdle_negbin" options. Keep every head at "huber" here so PR 1 is a
+# no-behavior-change refactor relative to the prior commit.
+RB_HEAD_LOSSES = {
+    "rushing_tds": "huber",
+    "receiving_tds": "huber",
+    "rushing_yards": "huber",
+    "receiving_yards": "huber",
+    "receptions": "huber",
+    "fumbles_lost": "huber",
+}
 
 # === LightGBM (Optuna-tuned, 50 trials, CV MAE 4.5149) ===
 RB_TRAIN_LIGHTGBM = True

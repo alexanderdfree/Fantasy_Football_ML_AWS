@@ -7,21 +7,34 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
+SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll")
+
 
 class MultiTargetLoss(nn.Module):
-    """Combined per-target loss for a multi-head network.
+    """Per-head dispatchable loss for a multi-head network.
 
-    Per target, loss is Huber by default; targets listed in ``poisson_targets``
-    switch to Poisson NLL (``log_input=False``, so the head output is treated
-    as the rate lambda directly — requires a non-negative head output, which
-    the ``MultiHeadNet`` clamp already guarantees for targets in
-    ``non_negative_targets``).
+    Each target is assigned a loss family via ``head_losses[name]``; supported
+    values are in ``SUPPORTED_HEAD_LOSSES``. PR 1 wires ``"huber"`` and
+    ``"poisson_nll"``; additional families (zero-truncated NegBin / Poisson
+    hurdle) land in PR 2.
 
-    Total =
-        sum(weight[t] * Huber(pred[t], target[t]) for t in huber targets)
-      + sum(weight[t] * PoissonNLL(pred[t], target[t]) for t in poisson targets)
-      + sum(td_gate_weight * BCE(gate_logit_t, (target_t > 0))
-            for t in gated_td_targets)
+    Poisson NLL uses ``log_input=False``, so the head output is treated as the
+    rate lambda directly — requires a non-negative head output, which the
+    ``MultiHeadNet`` clamp already guarantees for targets in
+    ``non_negative_targets``. The default ``eps=1e-8`` keeps ``-y*log(lambda)``
+    finite when the clamped output hits exactly zero.
+
+    ``poisson_targets`` is a back-compat shorthand accepted alongside
+    ``head_losses``: each listed target is treated as if it had
+    ``head_losses[t] = "poisson_nll"``. Prefer ``head_losses`` for new code.
+
+    Gated heads additionally receive a BCE(gate_logit, y>0) component, scaled
+    by ``gate_weight``. ``gated_targets`` is the list of target names whose
+    heads emit a ``{name}_gate_logit`` key in the prediction dict.
+
+    Loss:
+        sum(weight[t] * loss_fn[t](pred[t], target[t]) for t in targets)
+        + sum(gate_weight * BCE(gate_logit_t, (target_t > 0)) for t in gated_targets)
     """
 
     def __init__(
@@ -29,29 +42,38 @@ class MultiTargetLoss(nn.Module):
         target_names: list[str],
         loss_weights: dict[str, float],
         huber_deltas: dict[str, float] = None,
-        td_gate_weight: float = 1.0,
-        gated_td_targets: list[str] | None = None,
+        head_losses: dict[str, str] | None = None,
+        gate_weight: float = 1.0,
+        gated_targets: list[str] | None = None,
         poisson_targets: list[str] | None = None,
     ):
         super().__init__()
         self.target_names = target_names
-        self.gated_td_targets = list(gated_td_targets) if gated_td_targets else []
+        self.gated_targets = list(gated_targets) if gated_targets else []
         self.loss_weights = {n: loss_weights.get(n, 1.0) for n in target_names}
-        self.td_gate_weight = td_gate_weight
-        self.poisson_targets = set(poisson_targets) if poisson_targets else set()
+        self.gate_weight = gate_weight
         if huber_deltas is None:
             huber_deltas = {}
-        # PoissonNLLLoss with log_input=False treats the input as the Poisson
-        # rate lambda. The default eps=1e-8 keeps -y*log(lambda) finite when a
-        # non-negative-clamped head output hits exactly zero.
+        if head_losses is None:
+            head_losses = {}
+        if poisson_targets:
+            head_losses = {**head_losses, **{t: "poisson_nll" for t in poisson_targets}}
+        self.head_losses = {n: head_losses.get(n, "huber") for n in target_names}
+
+        unknown = {n: lt for n, lt in self.head_losses.items() if lt not in SUPPORTED_HEAD_LOSSES}
+        if unknown:
+            raise ValueError(
+                f"Unsupported head_losses (supported: {SUPPORTED_HEAD_LOSSES}): {unknown}"
+            )
+
         self.loss_fns = nn.ModuleDict(
             {
                 name: (
                     nn.PoissonNLLLoss(log_input=False, full=False)
-                    if name in self.poisson_targets
+                    if lt == "poisson_nll"
                     else nn.HuberLoss(delta=huber_deltas.get(name, 1.0))
                 )
-                for name in target_names
+                for name, lt in self.head_losses.items()
             }
         )
 
@@ -65,14 +87,14 @@ class MultiTargetLoss(nn.Module):
 
         components = {f"loss_{name}": loss.item() for name, loss in per_target_losses.items()}
 
-        for td_name in self.gated_td_targets:
-            gate_key = f"{td_name}_gate_logit"
+        for gated_name in self.gated_targets:
+            gate_key = f"{gated_name}_gate_logit"
             if gate_key in preds:
                 gate_loss = F.binary_cross_entropy_with_logits(
-                    preds[gate_key], (targets[td_name] > 0).float()
+                    preds[gate_key], (targets[gated_name] > 0).float()
                 )
-                combined = combined + self.td_gate_weight * gate_loss
-                components[f"loss_td_gate_{td_name}"] = gate_loss.item()
+                combined = combined + self.gate_weight * gate_loss
+                components[f"loss_gate_{gated_name}"] = gate_loss.item()
 
         components["loss_combined"] = combined.item()
         return combined, components

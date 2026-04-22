@@ -323,7 +323,7 @@ class TestMultiTargetLoss:
         assert not torch.all(preds["rushing_yards"].grad == 0)
         assert not torch.all(preds["rushing_tds"].grad == 0)
 
-    def test_gated_td_adds_bce_component(self):
+    def test_gated_adds_bce_component(self):
         """When gate logits are present, BCE supervision is added."""
         torch.manual_seed(0)
         preds = {t: torch.randn(4) for t in TARGETS}
@@ -335,14 +335,14 @@ class TestMultiTargetLoss:
         loss_fn = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights={t: 1.0 for t in TARGETS},
-            td_gate_weight=1.0,
-            gated_td_targets=["rushing_tds"],
+            gate_weight=1.0,
+            gated_targets=["rushing_tds"],
         )
         _, components = loss_fn(preds, targets)
-        # The new multi-gate loss keys components by target name so multiple
+        # The multi-gate loss keys components by target name so multiple
         # gated heads (e.g. RB's rushing_tds + receiving_tds) can coexist.
-        assert "loss_td_gate_rushing_tds" in components
-        assert components["loss_td_gate_rushing_tds"] > 0
+        assert "loss_gate_rushing_tds" in components
+        assert components["loss_gate_rushing_tds"] > 0
 
 
 # ---------------------------------------------------------------------------

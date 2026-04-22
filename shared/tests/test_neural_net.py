@@ -1,4 +1,4 @@
-"""Tests for shared.neural_net — GatedTDHead, AttentionPool, and the
+"""Tests for shared.neural_net — GatedHead, AttentionPool, and the
 MultiHeadNetWithHistory / MultiHeadNetWithNestedHistory variants."""
 
 import numpy as np
@@ -7,7 +7,7 @@ import torch
 
 from shared.neural_net import (
     AttentionPool,
-    GatedTDHead,
+    GatedHead,
     MultiHeadNet,
     MultiHeadNetWithHistory,
     MultiHeadNetWithNestedHistory,
@@ -21,50 +21,50 @@ TARGETS = ["rushing_yards", "receiving_yards", "rushing_tds"]
 
 
 # ---------------------------------------------------------------------------
-# GatedTDHead
+# GatedHead
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-class TestGatedTDHead:
+class TestGatedHead:
     def test_output_shapes(self):
-        head = GatedTDHead(in_dim=16)
+        head = GatedHead(in_dim=16)
         x = torch.randn(4, 16)
-        td_pred, gate_logit = head(x)
-        assert td_pred.shape == (4,)
+        pred, gate_logit = head(x)
+        assert pred.shape == (4,)
         assert gate_logit.shape == (4,)
 
-    def test_td_pred_non_negative(self):
-        head = GatedTDHead(in_dim=16)
+    def test_pred_non_negative(self):
+        head = GatedHead(in_dim=16)
         x = torch.randn(8, 16)
-        td_pred, _ = head(x)
-        assert (td_pred >= 0).all()
+        pred, _ = head(x)
+        assert (pred >= 0).all()
 
     def test_gate_logit_finite(self):
-        head = GatedTDHead(in_dim=16)
+        head = GatedHead(in_dim=16)
         x = torch.randn(4, 16)
         _, gate_logit = head(x)
         assert torch.isfinite(gate_logit).all()
 
     def test_gradient_flow(self):
-        head = GatedTDHead(in_dim=16)
+        head = GatedHead(in_dim=16)
         x = torch.randn(4, 16, requires_grad=True)
-        td_pred, _ = head(x)
-        td_pred.sum().backward()
+        pred, _ = head(x)
+        pred.sum().backward()
         assert x.grad is not None
         assert (x.grad != 0).any()
 
     def test_hidden_size_config(self):
-        head = GatedTDHead(in_dim=16, gate_hidden=4, value_hidden=8)
+        head = GatedHead(in_dim=16, gate_hidden=4, value_hidden=8)
         assert head.gate[0].out_features == 4
         assert head.value[0].out_features == 8
 
     def test_single_sample(self):
-        head = GatedTDHead(in_dim=16)
+        head = GatedHead(in_dim=16)
         head.eval()
         with torch.no_grad():
-            td_pred, gate_logit = head(torch.randn(1, 16))
-        assert td_pred.shape == (1,)
+            pred, gate_logit = head(torch.randn(1, 16))
+        assert pred.shape == (1,)
         assert gate_logit.shape == (1,)
 
 
@@ -197,7 +197,7 @@ class TestMultiHeadNetWithHistory:
         for key in TARGETS:
             assert (out[key] >= 0).all()
 
-    def test_gated_td_head(self):
+    def test_gated_head(self):
         model = MultiHeadNetWithHistory(
             static_dim=5,
             game_dim=3,
@@ -207,8 +207,8 @@ class TestMultiHeadNetWithHistory:
             n_attn_heads=2,
             head_hidden=4,
             dropout=0.1,
-            gated_td=True,
-            gated_td_targets=["rushing_tds"],
+            gated=True,
+            gated_targets=["rushing_tds"],
         )
         x_static = torch.randn(4, 5)
         x_history = torch.randn(4, 6, 3)
@@ -217,8 +217,8 @@ class TestMultiHeadNetWithHistory:
         assert "rushing_tds_gate_logit" in out
         assert (out["rushing_tds"] >= 0).all()
 
-    def test_gated_td_targets_list_accepts_multiple(self):
-        """New multi-gate API: multiple gated heads coexist via gated_td_targets list."""
+    def test_gated_targets_list_accepts_multiple(self):
+        """Multi-gate API: multiple gated heads coexist via gated_targets list."""
         targets = ["rushing_tds", "receiving_tds", "rushing_yards"]
         model = MultiHeadNetWithHistory(
             static_dim=5,
@@ -229,8 +229,8 @@ class TestMultiHeadNetWithHistory:
             n_attn_heads=2,
             head_hidden=4,
             dropout=0.1,
-            gated_td=True,
-            gated_td_targets=["rushing_tds", "receiving_tds"],
+            gated=True,
+            gated_targets=["rushing_tds", "receiving_tds"],
         )
         x_static = torch.randn(4, 5)
         x_history = torch.randn(4, 6, 3)
@@ -511,7 +511,7 @@ class TestNonNegativeFloor:
         _zero_head_biases(model)
         model.eval()
         B, T = 3, 5
-        # gated_td defaults to False — all heads are plain Sequentials and
+        # gated defaults to False — all heads are plain Sequentials and
         # subject to the non-neg clamp we're testing.
         with torch.no_grad():
             preds = model(

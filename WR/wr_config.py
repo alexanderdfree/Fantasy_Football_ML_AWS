@@ -178,12 +178,18 @@ WR_ATTN_STATIC_CATEGORIES = [
     "weather_vegas",
 ]
 WR_ATTN_STATIC_FEATURES = [c for cat in WR_ATTN_STATIC_CATEGORIES for c in WR_INCLUDE_FEATURES[cat]]
-# Two-stage gated TD head: sigmoid gate P(TD>0) × Softplus value E[TD|TD>0]
+# Two-stage gated hurdle head: sigmoid gate P(Y>0) × Softplus value E[Y|Y>0].
 # Single gate on receiving_tds — the only WR TD target after rushing drop.
-WR_ATTN_GATED_TD = True
-WR_GATED_TD_TARGETS = ["receiving_tds"]
-WR_ATTN_TD_GATE_HIDDEN = 16
-WR_ATTN_TD_GATE_WEIGHT = 1.0
+WR_ATTN_GATED = True
+WR_GATED_TARGETS = ["receiving_tds"]
+WR_ATTN_GATE_HIDDEN = 16
+WR_ATTN_GATE_WEIGHT = 1.0
+
+# Per-head loss family. Default "huber"; PR 2 introduces "poisson_nll" and
+# "hurdle_negbin" options. All heads on "huber" here = no behavior change.
+WR_HEAD_LOSSES = {
+    t: "huber" for t in ["receiving_tds", "receiving_yards", "receptions", "fumbles_lost"]
+}
 
 # === LightGBM (Optuna-tuned, 50 trials, CV MAE 4.7319) ===
 WR_TRAIN_LIGHTGBM = True

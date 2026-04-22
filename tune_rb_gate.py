@@ -91,7 +91,7 @@ if __name__ == "__main__":
 
     elif args.step == 1:
         for w in [1.5, 2.0, 3.0]:
-            row = run_variant(f"gate_weight={w}", {"attn_td_gate_weight": w})
+            row = run_variant(f"gate_weight={w}", {"attn_gate_weight": w})
             all_results.append(row)
 
     elif args.step == 2:
@@ -100,13 +100,13 @@ if __name__ == "__main__":
         candidates = step1 + baseline
         best = min(candidates, key=lambda r: r["attn_td_mae"] or 99)
         best_w = (
-            float(best["overrides"].get("attn_td_gate_weight", "1.0")) if best["overrides"] else 1.0
+            float(best["overrides"].get("attn_gate_weight", "1.0")) if best["overrides"] else 1.0
         )
         print(f"Best gate weight so far: {best_w} (TD MAE={best['attn_td_mae']})")
         for h in [24, 32]:
             row = run_variant(
                 f"gate_hidden={h} (w={best_w})",
-                {"attn_td_gate_weight": best_w, "attn_td_gate_hidden": h},
+                {"attn_gate_weight": best_w, "attn_gate_hidden": h},
             )
             all_results.append(row)
 
@@ -114,11 +114,11 @@ if __name__ == "__main__":
         all_candidates = [r for r in all_results]
         best = min(all_candidates, key=lambda r: r["attn_td_mae"] or 99)
         best_w = (
-            float(best["overrides"].get("attn_td_gate_weight", "1.0")) if best["overrides"] else 1.0
+            float(best["overrides"].get("attn_gate_weight", "1.0")) if best["overrides"] else 1.0
         )
         best_h = (
-            int(best["overrides"].get("attn_td_gate_hidden", "16"))
-            if "attn_td_gate_hidden" in best.get("overrides", {})
+            int(best["overrides"].get("attn_gate_hidden", "16"))
+            if "attn_gate_hidden" in best.get("overrides", {})
             else 16
         )
         print(f"Best so far: w={best_w}, h={best_h} (TD MAE={best['attn_td_mae']})")
@@ -127,8 +127,8 @@ if __name__ == "__main__":
             row = run_variant(
                 f"huber_delta={d} (w={best_w}, h={best_h})",
                 {
-                    "attn_td_gate_weight": best_w,
-                    "attn_td_gate_hidden": best_h,
+                    "attn_gate_weight": best_w,
+                    "attn_gate_hidden": best_h,
                     "huber_deltas": deltas,
                 },
             )
@@ -138,11 +138,11 @@ if __name__ == "__main__":
         all_candidates = [r for r in all_results]
         best = min(all_candidates, key=lambda r: r["attn_td_mae"] or 99)
         best_w = (
-            float(best["overrides"].get("attn_td_gate_weight", "1.0")) if best["overrides"] else 1.0
+            float(best["overrides"].get("attn_gate_weight", "1.0")) if best["overrides"] else 1.0
         )
         best_h = (
-            int(best["overrides"].get("attn_td_gate_hidden", "16"))
-            if "attn_td_gate_hidden" in best.get("overrides", {})
+            int(best["overrides"].get("attn_gate_hidden", "16"))
+            if "attn_gate_hidden" in best.get("overrides", {})
             else 16
         )
         ovr_deltas = best["overrides"].get("huber_deltas", "")
@@ -158,8 +158,8 @@ if __name__ == "__main__":
             row = run_variant(
                 f"td_loss_w={td_lw} (gw={best_w}, h={best_h}, d={best_d})",
                 {
-                    "attn_td_gate_weight": best_w,
-                    "attn_td_gate_hidden": best_h,
+                    "attn_gate_weight": best_w,
+                    "attn_gate_hidden": best_h,
                     "huber_deltas": deltas,
                     "loss_weights": lw,
                 },

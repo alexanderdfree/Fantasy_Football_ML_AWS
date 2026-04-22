@@ -501,8 +501,9 @@ def _train_attention_nn(
         weight_decay=cfg.get("attn_weight_decay", cfg["nn_weight_decay"]),
         patience=cfg.get("attn_patience", cfg["nn_patience"]),
         loss_kwargs={
-            "td_gate_weight": cfg.get("attn_td_gate_weight", 1.0),
-            "gated_td_targets": cfg.get("gated_td_targets"),
+            "gate_weight": cfg.get("attn_gate_weight", 1.0),
+            "gated_targets": cfg.get("gated_targets"),
+            "head_losses": cfg.get("head_losses"),
         },
     )
 

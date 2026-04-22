@@ -186,7 +186,7 @@ DST_COSINE_ETA_MIN = 1e-5
 
 # === Attention NN (game history variant) ===
 # Copies RB's attention hyperparameter shape (the most advanced position model);
-# no gating per design (no GATED_FUSION, no GATED_TD). The attention branch
+# no gating per design (no GATED_FUSION, no hurdle gate). The attention branch
 # learns its own temporal representation from per-game defensive + opponent
 # history, so rolling/EWMA/trend features are stripped from its static input.
 DST_TRAIN_ATTENTION_NN = True
@@ -197,7 +197,15 @@ DST_ATTN_MAX_SEQ_LEN = 17  # Full NFL regular season
 DST_ATTN_PROJECT_KV = False
 DST_ATTN_POSITIONAL_ENCODING = True
 DST_ATTN_GATED_FUSION = False
-DST_ATTN_GATED_TD = False
+DST_ATTN_GATED = False
+DST_ATTN_GATE_HIDDEN = 16
+DST_ATTN_GATE_WEIGHT = 1.0
+
+# Per-head loss family. Default "huber"; the four very-rare count targets
+# use Poisson NLL (see DST_POISSON_TARGETS above — preserved as a back-compat
+# alias for any external callers; MultiTargetLoss accepts either form).
+DST_HEAD_LOSSES = {t: ("poisson_nll" if t in DST_POISSON_TARGETS else "huber") for t in DST_TARGETS}
+
 DST_ATTN_DROPOUT = 0.05
 DST_ATTN_LR = DST_NN_LR
 DST_ATTN_WEIGHT_DECAY = DST_NN_WEIGHT_DECAY
