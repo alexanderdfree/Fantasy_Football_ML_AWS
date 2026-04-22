@@ -685,27 +685,41 @@ class MultiHeadNet(nn.Module):
         pass
 ```
 
-**Architecture diagram (example: RB with backbone=[128, 64]):**
+**Architecture diagram (example: RB with backbone=[128, 64] and raw-stat targets):**
 ```
 Input (N features) → Linear(N, 128) → BatchNorm(128) → ReLU → Dropout(0.15)
                    → Linear(128, 64) → BatchNorm(64) → ReLU → Dropout(0.15)
-                   ├→ rushing_floor head:   Linear(64, 48) → ReLU → Linear(48, 1) → clamp(min=0)
-                   ├→ receiving_floor head: Linear(64, 48) → ReLU → Linear(48, 1) → clamp(min=0)
-                   └→ td_points head:      Linear(64, 64) → ReLU → Linear(64, 1) → clamp(min=0)
-                   Total = sum of all heads
+                   ├→ rushing_tds head:     GatedTDHead(64, gate_hidden=16, value_hidden=64)
+                   ├→ receiving_tds head:   GatedTDHead(64, gate_hidden=16, value_hidden=64)
+                   ├→ rushing_yards head:   Linear(64, 48) → ReLU → Linear(48, 1) → clamp(min=0)
+                   ├→ receiving_yards head: Linear(64, 48) → ReLU → Linear(48, 1) → clamp(min=0)
+                   ├→ receptions head:      Linear(64, 48) → ReLU → Linear(48, 1) → clamp(min=0)
+                   └→ fumbles_lost head:    Linear(64, 48) → ReLU → Linear(48, 1) → clamp(min=0)
+                   Total = fantasy points aggregated post-hoc via shared.aggregate_targets
 ```
 
-**Note:** `non_negative_targets` controls which heads are clamped. By default all targets
-are clamped to >= 0. DST overrides this to leave `pts_allowed_bonus` unconstrained (range: -4 to +10).
+**Note:** `non_negative_targets` controls which heads are clamped (per-head, not global).
+By default all targets are clamped to >= 0. DST overrides this to leave `pts_allowed_bonus`
+unconstrained (range: -4 to +10).
 
-**Optimizer and loss:**
+**Note:** RB's TD heads (`rushing_tds`, `receiving_tds`) are wrapped by `GatedTDHead`,
+a zero-inflated hurdle head: a sigmoid gate predicts `P(TD > 0)` and a Softplus branch
+predicts `E[TD | TD > 0]`; the product is the expected TD count. WR/TE use one gated head
+(`receiving_tds`); QB/K/DST do not use gated TD heads.
+
+**Optimizer and loss (RB raw-stat example, from `RB/rb_config.py`):**
 ```python
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-5)
 criterion = MultiTargetLoss(
-    target_names=["rushing_floor", "receiving_floor", "td_points"],
-    loss_weights={"rushing_floor": 1.2, "receiving_floor": 1.0, "td_points": 2.0},
-    huber_deltas={"rushing_floor": 2.0, "receiving_floor": 2.5, "td_points": 2.0},
-    w_total=0.25,
+    # Representative subset — full target list is RB_TARGETS
+    target_names=["rushing_yards", "receiving_yards", "receptions", "rushing_tds"],
+    # RB_LOSS_WEIGHTS entries (~2.0 / huber_delta)
+    loss_weights={"rushing_yards": 0.133, "receiving_yards": 0.133,
+                  "receptions": 1.0, "rushing_tds": 4.0},
+    # RB_HUBER_DELTAS entries (raw-stat units)
+    huber_deltas={"rushing_yards": 15.0, "receiving_yards": 15.0,
+                  "receptions": 2.0, "rushing_tds": 0.5},
+    w_total=1.0,  # RB_LOSS_W_TOTAL
 )
 # Scheduler varies by position: OneCycleLR (TE, K) or CosineWarmRestarts (QB, RB, WR, DST)
 ```
