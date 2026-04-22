@@ -16,7 +16,7 @@ from src.models.linear import RidgeModel
 
 
 class TwoStageRidge:
-    """Two-stage model for zero-inflated targets (e.g., td_points).
+    """Two-stage model for zero-inflated targets (e.g., rushing_tds).
 
     Stage 1: Logistic regression classifies P(target > 0).
     Stage 2: Ridge regresses E[target | target > 0] on positive-only subset.
@@ -60,29 +60,28 @@ class TwoStageRidge:
 
 
 class OrdinalTDClassifier:
-    """Ordinal logistic regression for discrete TD point predictions.
+    """Ordinal logistic regression for discrete TD count predictions.
 
-    Converts td_points to TD count classes, fits mord.LogisticAT (cumulative
-    logit model with all-thresholds variant), and predicts E[td_points] via
-    class probabilities.  Enforces P(Y >= k) monotonically decreasing.
+    Converts raw TD counts to integer class labels, fits mord.LogisticAT
+    (cumulative logit model with all-thresholds variant), and predicts
+    E[TDs] via class probabilities. Enforces P(Y >= k) monotonically
+    decreasing.
     """
 
     def __init__(
         self, class_values: list[float] | str = "auto", n_classes: int = 4, alpha: float = 1.0
     ):
         self.alpha = alpha
-        self._class_values_cfg = class_values  # [0,6,12,18] or "auto"
+        self._class_values_cfg = class_values  # e.g. [0, 1, 2, 3] raw counts
         self._n_classes = n_classes
 
     # -- internal helpers --------------------------------------------------
     def _points_to_labels(self, y: np.ndarray) -> np.ndarray:
-        """Map raw target values (points or counts) to integer class labels.
+        """Map raw target values to integer class labels.
 
         For ``class_values=[a, a+s, a+2s, ...]`` with a uniform step ``s``,
-        label = round((y - a) / s). Backward-compatible with the pre-migration
-        RB config ``class_values=[0, 6, 12, 18]`` (step=6, post-points labels)
-        and the post-migration raw-count config ``class_values=[0, 1, 2, 3]``
-        (step=1, raw TD counts).
+        label = round((y - a) / s). Current configs use
+        ``class_values=[0, 1, 2, 3]`` (step=1, raw TD counts).
         """
         if isinstance(self._class_values_cfg, list):
             cv = self._class_values_cfg
@@ -93,14 +92,13 @@ class OrdinalTDClassifier:
             labels = np.round((y - base) / step).astype(int)
             labels = np.clip(labels, 0, self._n_classes - 1)
         else:
-            # "auto" — bin by total TD count (for QB with mixed 4/6 pt TDs)
-            # Heuristic: each TD is worth ~4-6 pts, so td_count ≈ round(y/5)
-            labels = np.round(y / 5).astype(int)
+            # "auto" — assume raw TD counts
+            labels = np.round(y).astype(int)
             labels = np.clip(labels, 0, self._n_classes - 1)
         return labels
 
     def _compute_class_point_values(self, y: np.ndarray, labels: np.ndarray) -> np.ndarray:
-        """Compute empirical mean td_points for each class."""
+        """Compute empirical mean target value for each class."""
         values = np.zeros(self._n_classes)
         for k in range(self._n_classes):
             mask = labels == k
@@ -173,7 +171,7 @@ class OrdinalTDClassifier:
         return proba
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        """Return E[td_points] = sum(P(class_k) * points_k)."""
+        """Return E[target] = sum(P(class_k) * class_values_k)."""
         proba = self._predict_proba(self.scaler_.transform(X))
         return proba @ self.class_point_values_
 
@@ -204,7 +202,7 @@ class GatedOrdinalTDClassifier:
 
     Stage 1: LogisticRegression classifies P(target > 0) with hard threshold.
     Stage 2: OrdinalTDClassifier over {1, 2, 3+} TDs on the positive subset.
-    Prediction: 0 when P < threshold, else E[td_points | td_points > 0].
+    Prediction: 0 when P < threshold, else E[target | target > 0].
     """
 
     def __init__(

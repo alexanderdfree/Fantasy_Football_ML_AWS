@@ -21,7 +21,8 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
       - rushing_yards
       - receiving_yards
       - receptions
-      - fumbles_lost = rushing_fumbles_lost + receiving_fumbles_lost
+      - fumbles_lost = sack_fumbles_lost + rushing_fumbles_lost +
+        receiving_fumbles_lost
 
     Also adds ``fantasy_points_check`` (aggregator-computed PPR points) for
     the sanity-check warning below.
@@ -33,13 +34,15 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     for col in ("rushing_tds", "receiving_tds", "rushing_yards", "receiving_yards", "receptions"):
         df[col] = df[col].fillna(0)
-    df["fumbles_lost"] = df["rushing_fumbles_lost"].fillna(0) + df["receiving_fumbles_lost"].fillna(
-        0
+    df["fumbles_lost"] = (
+        df["sack_fumbles_lost"].fillna(0)
+        + df["rushing_fumbles_lost"].fillna(0)
+        + df["receiving_fumbles_lost"].fillna(0)
     )
 
     # Sanity check: aggregator reproduces the RB slice of fantasy_points (PPR).
-    # The full fantasy_points column carries passing + sack-fumble terms that
-    # RBs don't predict, so we back those out before comparing.
+    # The full fantasy_points column carries passing terms that RBs don't
+    # predict, so we back those out before comparing.
     preds = {t: df[t].to_numpy() for t in RB_TARGETS}
     df["fantasy_points_check"] = predictions_to_fantasy_points("RB", preds, "ppr")
 
@@ -48,13 +51,7 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
         + df["passing_tds"].fillna(0) * 4
         + df["interceptions"].fillna(0) * -2
     )
-    sack_fumble_component = df["sack_fumbles_lost"].fillna(0) * -2
-    discrepancy = (
-        df["fantasy_points"]
-        - df["fantasy_points_check"]
-        - passing_component
-        - sack_fumble_component
-    ).abs()
+    discrepancy = (df["fantasy_points"] - df["fantasy_points_check"] - passing_component).abs()
     if (discrepancy > 0.01).any():
         n_bad = int((discrepancy > 0.01).sum())
         print(f"WARNING: {n_bad} rows have target decomposition discrepancy > 0.01 pts")

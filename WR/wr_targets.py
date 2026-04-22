@@ -12,7 +12,8 @@ def compute_wr_targets(df: pd.DataFrame) -> pd.DataFrame:
       - receiving_tds: raw receiving TD count
       - receiving_yards: raw receiving yards
       - receptions: raw reception count
-      - fumbles_lost: rushing_fumbles_lost + receiving_fumbles_lost
+      - fumbles_lost: sack_fumbles_lost + rushing_fumbles_lost +
+        receiving_fumbles_lost
 
     Rushing targets are intentionally dropped — WR rushing stats are too
     sparse to carry reliable signal; noise outweighs gain.
@@ -22,8 +23,10 @@ def compute_wr_targets(df: pd.DataFrame) -> pd.DataFrame:
     df["receiving_tds"] = df["receiving_tds"].fillna(0)
     df["receiving_yards"] = df["receiving_yards"].fillna(0)
     df["receptions"] = df["receptions"].fillna(0)
-    df["fumbles_lost"] = df["rushing_fumbles_lost"].fillna(0) + df["receiving_fumbles_lost"].fillna(
-        0
+    df["fumbles_lost"] = (
+        df["sack_fumbles_lost"].fillna(0)
+        + df["rushing_fumbles_lost"].fillna(0)
+        + df["receiving_fumbles_lost"].fillna(0)
     )
 
     # Sanity check: aggregator-driven fantasy points plus the omitted

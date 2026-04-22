@@ -33,7 +33,6 @@ RB_SPECIFIC_FEATURES = [
 # Explicit include list — new columns must be opted in, preventing silent leakage.
 _RB_ROLLING_STATS = [
     "fantasy_points",
-    "fantasy_points_floor",
     "targets",
     "receptions",
     "carries",
@@ -228,7 +227,6 @@ RB_ATTN_BATCH_SIZE = 256
 RB_ATTN_PATIENCE = 35
 RB_ATTN_HISTORY_STATS = [
     "fantasy_points",
-    "fantasy_points_floor",
     "rushing_yards",
     "receiving_yards",
     "rushing_tds",

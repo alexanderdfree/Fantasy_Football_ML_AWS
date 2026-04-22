@@ -2,8 +2,12 @@ import os
 import pandas as pd
 import nfl_data_py as nfl
 from src.config import (
-    SCORING, SCORING_STANDARD, SCORING_HALF_PPR, SCORING_PPR,
-    CACHE_DIR, SEASONS,
+    SCORING,
+    SCORING_STANDARD,
+    SCORING_HALF_PPR,
+    SCORING_PPR,
+    CACHE_DIR,
+    SEASONS,
 )
 
 
@@ -73,12 +77,14 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
             url = f"https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{s}.parquet"
             df_new = pd.read_parquet(url)
             # Harmonise column names to match old format
-            df_new = df_new.rename(columns={
-                "team": "recent_team",
-                "passing_interceptions": "interceptions",
-                "sacks_suffered": "sacks",
-                "sack_yards_lost": "sack_yards",
-            })
+            df_new = df_new.rename(
+                columns={
+                    "team": "recent_team",
+                    "passing_interceptions": "interceptions",
+                    "sacks_suffered": "sacks",
+                    "sack_yards_lost": "sack_yards",
+                }
+            )
             parts.append(df_new)
         weekly = pd.concat(parts, ignore_index=True)
         weekly.to_parquet(weekly_path)
@@ -164,10 +170,14 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
     injuries["game_status_num"] = injuries["report_status"].map(status_map).fillna(1.0)
 
     # Worst practice/game status per player-week (multiple injuries possible)
-    inj_agg = injuries.groupby(["gsis_id", "season", "week"]).agg(
-        practice_status=("practice_status_num", "min"),
-        game_status=("game_status_num", "min"),
-    ).reset_index()
+    inj_agg = (
+        injuries.groupby(["gsis_id", "season", "week"])
+        .agg(
+            practice_status=("practice_status_num", "min"),
+            game_status=("game_status_num", "min"),
+        )
+        .reset_index()
+    )
 
     weekly = weekly.merge(
         inj_agg,
@@ -191,9 +201,13 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
     depth_off["depth_team"] = pd.to_numeric(depth_off["depth_team"], errors="coerce")
     # One row per player-week: take the most recent (last) entry per week
     depth_off = depth_off.sort_values(["gsis_id", "season", "week"])
-    depth_agg = depth_off.groupby(["gsis_id", "season", "week"]).agg(
-        depth_chart_rank=("depth_team", "last"),
-    ).reset_index()
+    depth_agg = (
+        depth_off.groupby(["gsis_id", "season", "week"])
+        .agg(
+            depth_chart_rank=("depth_team", "last"),
+        )
+        .reset_index()
+    )
 
     weekly = weekly.merge(
         depth_agg,
@@ -229,9 +243,11 @@ def compute_fantasy_points(df: pd.DataFrame, scoring: dict = None) -> pd.Series:
     fantasy_points = pd.Series(0.0, index=df.index)
     for key, weight in scoring.items():
         if key == "fumbles_lost":
-            val = (df["sack_fumbles_lost"].fillna(0)
-                   + df["rushing_fumbles_lost"].fillna(0)
-                   + df["receiving_fumbles_lost"].fillna(0))
+            val = (
+                df["sack_fumbles_lost"].fillna(0)
+                + df["rushing_fumbles_lost"].fillna(0)
+                + df["receiving_fumbles_lost"].fillna(0)
+            )
         else:
             val = df[col_map[key]].fillna(0)
         fantasy_points += val * weight
@@ -246,26 +262,4 @@ def compute_all_scoring_formats(df: pd.DataFrame) -> pd.DataFrame:
     df["fantasy_points_standard"] = compute_fantasy_points(df, SCORING_STANDARD)
     df["fantasy_points_half_ppr"] = compute_fantasy_points(df, SCORING_HALF_PPR)
     df["fantasy_points"] = compute_fantasy_points(df, SCORING_PPR)
-    return df
-
-
-def compute_fantasy_points_floor(df: pd.DataFrame, ppr_weight: float = 1.0) -> pd.Series:
-    """Yardage + receptions only (no TDs, no turnovers)."""
-    return (
-        df["passing_yards"].fillna(0) * 0.04
-        + df["rushing_yards"].fillna(0) * 0.1
-        + df["receiving_yards"].fillna(0) * 0.1
-        + df["receptions"].fillna(0) * ppr_weight
-    )
-
-
-def compute_all_floor_formats(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute fantasy points floor for all three scoring formats.
-
-    Adds columns: fantasy_points_floor_standard, fantasy_points_floor_half_ppr,
-    fantasy_points_floor
-    """
-    df["fantasy_points_floor_standard"] = compute_fantasy_points_floor(df, ppr_weight=0.0)
-    df["fantasy_points_floor_half_ppr"] = compute_fantasy_points_floor(df, ppr_weight=0.5)
-    df["fantasy_points_floor"] = compute_fantasy_points_floor(df, ppr_weight=1.0)
     return df

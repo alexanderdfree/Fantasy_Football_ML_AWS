@@ -91,15 +91,15 @@ class TestComputeQBTargets:
         result = compute_qb_targets(df)
         assert result["interceptions"].iloc[0] == 2
 
-    def test_fumbles_lost_sums_sack_and_rushing(self):
-        """QB fumbles_lost = sack_fumbles_lost + rushing_fumbles_lost (no receiving)."""
+    def test_fumbles_lost_sums_all_three_categories(self):
+        """QB fumbles_lost = sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost."""
         df = _make_qb_row(
             sack_fumbles_lost=1,
             rushing_fumbles_lost=1,
-            receiving_fumbles_lost=1,  # must NOT be counted for QB scope
+            receiving_fumbles_lost=1,
         )
         result = compute_qb_targets(df)
-        assert result["fumbles_lost"].iloc[0] == 2
+        assert result["fumbles_lost"].iloc[0] == 3
 
     def test_fumbles_lost_sack_only(self):
         df = _make_qb_row(sack_fumbles_lost=2, rushing_fumbles_lost=0)

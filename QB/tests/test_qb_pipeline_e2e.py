@@ -94,7 +94,6 @@ def _generate_qb_season(season, seed, n_players=25, n_weeks=17):
         + df["interceptions"] * -2
     )
     df["fantasy_points_ppr"] = df["fantasy_points"]
-    df["fantasy_points_floor"] = df["passing_yards"] * 0.04 + df["rushing_yards"] * 0.1
     return df
 
 

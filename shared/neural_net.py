@@ -117,8 +117,8 @@ class AttentionPool(nn.Module):
     length. Masking ensures padded positions are ignored.
 
     Per-target queries let each downstream target pull the exact slice of
-    history it cares about (e.g. td_points queries focus on goal-line usage
-    while rushing_floor queries focus on carry volume), instead of being
+    history it cares about (e.g. rushing_tds queries focus on goal-line usage
+    while rushing_yards queries focus on carry volume), instead of being
     forced through a shared summary bottleneck.
 
     When ``n_targets == 1`` the output is squeezed to preserve the legacy
@@ -234,7 +234,6 @@ class MultiHeadNetWithHistory(nn.Module):
         encoder_hidden_dim: int = 0,
         gated_td: bool = False,
         td_gate_hidden: int = 16,
-        gated_td_target=None,  # legacy str; kept for backward compat
         gated_td_targets: list[str] | None = None,
     ):
         super().__init__()
@@ -243,15 +242,7 @@ class MultiHeadNetWithHistory(nn.Module):
             set(target_names) if non_negative_targets is None else non_negative_targets
         )
         self.gated_td = gated_td
-        # Normalize gated_td target(s): accept either legacy str or list.
-        if gated_td_targets is None:
-            if gated_td_target is None:
-                gated_td_targets = []
-            elif isinstance(gated_td_target, str):
-                gated_td_targets = [gated_td_target]
-            else:
-                gated_td_targets = list(gated_td_target)
-        self.gated_td_targets = list(gated_td_targets)
+        self.gated_td_targets = list(gated_td_targets) if gated_td_targets else []
         self.d_model = d_model
         self.n_targets = len(target_names)
 
@@ -288,7 +279,7 @@ class MultiHeadNetWithHistory(nn.Module):
 
         attn_out_dim = n_attn_heads * d_model
         # Per-target LayerNorms — each target's pooled stats live at different
-        # scales (td_points ~3, rushing_floor ~8), so one norm per target.
+        # scales (rushing_tds ~1, rushing_yards ~80), so one norm per target.
         self.history_norms = nn.ModuleList([nn.LayerNorm(attn_out_dim) for _ in target_names])
 
         # Gated fusion: static features control how much to trust history.

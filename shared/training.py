@@ -22,20 +22,11 @@ class MultiTargetLoss(nn.Module):
         loss_weights: dict[str, float],
         huber_deltas: dict[str, float] = None,
         td_gate_weight: float = 1.0,
-        gated_td_target=None,  # legacy str; kept for backward compat
         gated_td_targets: list[str] | None = None,
     ):
         super().__init__()
         self.target_names = target_names
-        # Accept either `gated_td_target` (str, legacy) or `gated_td_targets` (list, new).
-        if gated_td_targets is None:
-            if gated_td_target is None:
-                gated_td_targets = []
-            elif isinstance(gated_td_target, str):
-                gated_td_targets = [gated_td_target]
-            else:
-                gated_td_targets = list(gated_td_target)
-        self.gated_td_targets = list(gated_td_targets)
+        self.gated_td_targets = list(gated_td_targets) if gated_td_targets else []
         self.loss_weights = {n: loss_weights.get(n, 1.0) for n in target_names}
         self.td_gate_weight = td_gate_weight
         if huber_deltas is None:

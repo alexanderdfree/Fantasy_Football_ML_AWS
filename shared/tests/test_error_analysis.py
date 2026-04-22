@@ -14,7 +14,7 @@ from shared.error_analysis import (
     run_stratified_analysis,
 )
 
-TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
+TARGETS = ["rushing_yards", "receiving_yards", "rushing_tds"]
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ class TestAddStratificationColumns:
     def test_td_bucket_values(self):
         df = pd.DataFrame(
             {
-                "td_points": [6.0, 0.0],
+                "rushing_tds": [1.0, 0.0],
                 "week": [5, 5],
             }
         )
@@ -224,5 +224,5 @@ class TestPlotting:
     def test_plot_td_zero_vs_scored(self, results_and_df, tmp_path):
         _, df = results_and_df
         save_path = str(tmp_path / "td.png")
-        plot_td_zero_vs_scored(df, "pred_total", "td_points", save_path)
+        plot_td_zero_vs_scored(df, "pred_total", "rushing_tds", save_path)
         assert (tmp_path / "td.png").exists()

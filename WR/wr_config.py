@@ -20,7 +20,6 @@ WR_SPECIFIC_FEATURES = [
 # Explicit include list — new columns must be opted in, preventing silent leakage.
 _WR_ROLLING_STATS = [
     "fantasy_points",
-    "fantasy_points_floor",
     "targets",
     "receptions",
     "carries",
@@ -158,7 +157,6 @@ WR_ATTN_POSITIONAL_ENCODING = True
 WR_ATTN_DROPOUT = 0.0
 WR_ATTN_HISTORY_STATS = [
     "fantasy_points",
-    "fantasy_points_floor",
     "receiving_yards",
     "rushing_yards",
     "receiving_tds",
