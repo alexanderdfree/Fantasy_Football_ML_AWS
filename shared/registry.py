@@ -122,7 +122,7 @@ def _attn_kwargs_static(cfg, prefix: str) -> dict:
     def g(name, default=None):
         return getattr(cfg, f"{prefix}_{name}", default)
 
-    gated_td_targets = g("GATED_TD_TARGETS", None)
+    gated_targets = g("GATED_TARGETS", None)
 
     kwargs = dict(
         backbone_layers=list(g("NN_BACKBONE_LAYERS", [])),
@@ -136,9 +136,9 @@ def _attn_kwargs_static(cfg, prefix: str) -> dict:
         use_gated_fusion=g("ATTN_GATED_FUSION", False),
         attn_dropout=g("ATTN_DROPOUT", 0.0),
         encoder_hidden_dim=g("ATTN_ENCODER_HIDDEN_DIM", 0),
-        gated_td=g("ATTN_GATED_TD", False),
-        td_gate_hidden=g("ATTN_TD_GATE_HIDDEN", 16),
-        gated_td_targets=list(gated_td_targets) if gated_td_targets is not None else None,
+        gated=g("ATTN_GATED", False),
+        gate_hidden=g("ATTN_GATE_HIDDEN", 16),
+        gated_targets=list(gated_targets) if gated_targets is not None else None,
     )
     head_hidden_overrides = g("NN_HEAD_HIDDEN_OVERRIDES", None)
     if head_hidden_overrides:

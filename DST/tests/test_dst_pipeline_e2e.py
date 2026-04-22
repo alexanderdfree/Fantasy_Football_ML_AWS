@@ -281,7 +281,7 @@ class TestDSTPipelineE2E:
         cfg["attn_encoder_hidden_dim"] = 8
         cfg["attn_positional_encoding"] = True
         cfg["attn_gated_fusion"] = False
-        cfg["attn_gated_td"] = False
+        cfg["attn_gated"] = False
         cfg["attn_dropout"] = 0.0
         cfg["aggregate_fn"] = aggregate_fn_for("DST")
 

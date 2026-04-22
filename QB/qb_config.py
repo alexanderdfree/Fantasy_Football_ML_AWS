@@ -199,12 +199,16 @@ QB_ATTN_STATIC_CATEGORIES = [
     "weather_vegas",
 ]
 QB_ATTN_STATIC_FEATURES = [c for cat in QB_ATTN_STATIC_CATEGORIES for c in QB_INCLUDE_FEATURES[cat]]
-# Gated-TD heads are DISABLED for QB. QBs throw so many TDs that the zero-
+# Gated hurdle heads are DISABLED for QB. QBs throw so many TDs that the zero-
 # inflation assumption behind the hurdle model does not hold (median TD count
 # per start is ~2); a plain regression head outperforms the two-stage gate.
-QB_ATTN_GATED_TD = False
-QB_ATTN_TD_GATE_HIDDEN = 16
-QB_ATTN_TD_GATE_WEIGHT = 1.0
+QB_ATTN_GATED = False
+QB_ATTN_GATE_HIDDEN = 16
+QB_ATTN_GATE_WEIGHT = 1.0
+
+# Per-head loss family. Default "huber"; PR 2 introduces "poisson_nll" and
+# "hurdle_negbin" options. All heads on "huber" here = no behavior change.
+QB_HEAD_LOSSES = {t: "huber" for t in QB_TARGETS}
 
 # === LightGBM (Optuna-tuned, 50 trials, CV MAE 5.7415) ===
 QB_TRAIN_LIGHTGBM = True

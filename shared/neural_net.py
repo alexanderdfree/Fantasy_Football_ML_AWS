@@ -45,12 +45,12 @@ def _build_backbone(
     return nn.Sequential(*blocks)
 
 
-class GatedTDHead(nn.Module):
-    """Two-stage hurdle head for zero-inflated TD prediction.
+class GatedHead(nn.Module):
+    """Two-stage hurdle head for zero-inflated count prediction.
 
-    Stage 1 (gate): P(TD > 0) via sigmoid
-    Stage 2 (value): E[TD | TD > 0] via Softplus (always positive)
-    Output: gate_prob * cond_value = E[TD]
+    Stage 1 (gate): P(Y > 0) via sigmoid
+    Stage 2 (value): E[Y | Y > 0] via Softplus (always positive)
+    Output: gate_prob * cond_value = E[Y]
     """
 
     def __init__(self, in_dim: int, gate_hidden: int = 16, value_hidden: int = 48):
@@ -70,8 +70,13 @@ class GatedTDHead(nn.Module):
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         gate_logit = self.gate(x).squeeze(-1)
         cond_value = self.value(x).squeeze(-1)
-        td_pred = torch.sigmoid(gate_logit) * cond_value
-        return td_pred, gate_logit
+        pred = torch.sigmoid(gate_logit) * cond_value
+        return pred, gate_logit
+
+
+# Back-compat alias — older callers still import this name. Removed when all
+# callers have migrated off the TD-specific name.
+GatedTDHead = GatedHead
 
 
 class MultiHeadNet(nn.Module):
@@ -257,17 +262,17 @@ class MultiHeadNetWithHistory(nn.Module):
         use_gated_fusion: bool = False,
         attn_dropout: float = 0.0,
         encoder_hidden_dim: int = 0,
-        gated_td: bool = False,
-        td_gate_hidden: int = 16,
-        gated_td_targets: list[str] | None = None,
+        gated: bool = False,
+        gate_hidden: int = 16,
+        gated_targets: list[str] | None = None,
     ):
         super().__init__()
         self.target_names = target_names
         self.non_negative_targets = (
             set(target_names) if non_negative_targets is None else non_negative_targets
         )
-        self.gated_td = gated_td
-        self.gated_td_targets = list(gated_td_targets) if gated_td_targets else []
+        self.gated = gated
+        self.gated_targets = list(gated_targets) if gated_targets else []
         self.d_model = d_model
         self.n_targets = len(target_names)
 
@@ -333,13 +338,13 @@ class MultiHeadNetWithHistory(nn.Module):
         # === Output Heads (consume shared_static ⊕ per-target history) ===
         head_in_dim = backbone_out_dim + attn_out_dim
         self.heads = nn.ModuleDict()
-        gated_set = set(self.gated_td_targets)
+        gated_set = set(self.gated_targets)
         for name in target_names:
             h = overrides.get(name, head_hidden)
-            if gated_td and name in gated_set:
-                self.heads[name] = GatedTDHead(
+            if gated and name in gated_set:
+                self.heads[name] = GatedHead(
                     in_dim=head_in_dim,
-                    gate_hidden=td_gate_hidden,
+                    gate_hidden=gate_hidden,
                     value_hidden=h,
                 )
             else:
@@ -388,9 +393,9 @@ class MultiHeadNetWithHistory(nn.Module):
 
             head_input = torch.cat([shared_static, history_vec], dim=-1)
             head = self.heads[name]
-            if isinstance(head, GatedTDHead):
-                td_pred, gate_logit = head(head_input)
-                preds[name] = td_pred
+            if isinstance(head, GatedHead):
+                pred, gate_logit = head(head_input)
+                preds[name] = pred
                 preds[f"{name}_gate_logit"] = gate_logit
             else:
                 val = head(head_input).squeeze(-1)
@@ -634,9 +639,9 @@ def build_multihead_net_with_history(
         use_gated_fusion=cfg.get("attn_gated_fusion", False),
         attn_dropout=cfg.get("attn_dropout", 0.0),
         encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
-        gated_td=cfg.get("attn_gated_td", False),
-        td_gate_hidden=cfg.get("attn_td_gate_hidden", 16),
-        gated_td_targets=cfg.get("gated_td_targets"),
+        gated=cfg.get("attn_gated", False),
+        gate_hidden=cfg.get("attn_gate_hidden", 16),
+        gated_targets=cfg.get("gated_targets"),
     )
 
 

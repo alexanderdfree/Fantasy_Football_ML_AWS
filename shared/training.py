@@ -7,13 +7,23 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
+SUPPORTED_HEAD_LOSSES = ("huber",)
+
 
 class MultiTargetLoss(nn.Module):
-    """Combined Huber loss for a multi-head network.
+    """Per-head dispatchable loss for a multi-head network.
 
-    Loss = sum(weight[t] * Huber(pred[t], target[t]) for t in targets)
-           + sum(td_gate_weight * BCE(gate_logit_t, (target_t > 0))
-                 for t in gated_td_targets)
+    Each target is assigned a loss family via ``head_losses[name]``. Currently
+    only ``"huber"`` is implemented; additional families (Poisson NLL,
+    zero-truncated NegBin / Poisson hurdle) land in PR 2.
+
+    Gated heads additionally receive a BCE(gate_logit, y>0) component, scaled
+    by ``gate_weight``. ``gated_targets`` is the list of target names whose
+    heads emit a ``{name}_gate_logit`` key in the prediction dict.
+
+    Loss:
+        sum(weight[t] * loss_fn[t](pred[t], target[t]) for t in targets)
+        + sum(gate_weight * BCE(gate_logit_t, (target_t > 0)) for t in gated_targets)
     """
 
     def __init__(
@@ -21,38 +31,57 @@ class MultiTargetLoss(nn.Module):
         target_names: list[str],
         loss_weights: dict[str, float],
         huber_deltas: dict[str, float] = None,
-        td_gate_weight: float = 1.0,
-        gated_td_targets: list[str] | None = None,
+        head_losses: dict[str, str] | None = None,
+        gate_weight: float = 1.0,
+        gated_targets: list[str] | None = None,
     ):
         super().__init__()
         self.target_names = target_names
-        self.gated_td_targets = list(gated_td_targets) if gated_td_targets else []
+        self.gated_targets = list(gated_targets) if gated_targets else []
         self.loss_weights = {n: loss_weights.get(n, 1.0) for n in target_names}
-        self.td_gate_weight = td_gate_weight
+        self.gate_weight = gate_weight
         if huber_deltas is None:
             huber_deltas = {}
+        if head_losses is None:
+            head_losses = {}
+        self.head_losses = {n: head_losses.get(n, "huber") for n in target_names}
+
+        unknown = {n: lt for n, lt in self.head_losses.items() if lt not in SUPPORTED_HEAD_LOSSES}
+        if unknown:
+            raise ValueError(
+                f"Unsupported head_losses (PR 1 implements only {SUPPORTED_HEAD_LOSSES}): {unknown}"
+            )
+
         self.huber_fns = nn.ModuleDict(
-            {name: nn.HuberLoss(delta=huber_deltas.get(name, 1.0)) for name in target_names}
+            {
+                name: nn.HuberLoss(delta=huber_deltas.get(name, 1.0))
+                for name, lt in self.head_losses.items()
+                if lt == "huber"
+            }
         )
 
     def forward(self, preds: dict, targets: dict) -> tuple:
         per_target_losses = {}
         combined = torch.tensor(0.0, device=next(iter(preds.values())).device)
         for name in self.target_names:
-            loss = self.huber_fns[name](preds[name], targets[name])
+            lt = self.head_losses[name]
+            if lt == "huber":
+                loss = self.huber_fns[name](preds[name], targets[name])
+            else:
+                raise AssertionError(f"unreachable: unsupported loss {lt}")
             per_target_losses[name] = loss
             combined = combined + self.loss_weights[name] * loss
 
         components = {f"loss_{name}": loss.item() for name, loss in per_target_losses.items()}
 
-        for td_name in self.gated_td_targets:
-            gate_key = f"{td_name}_gate_logit"
+        for gated_name in self.gated_targets:
+            gate_key = f"{gated_name}_gate_logit"
             if gate_key in preds:
                 gate_loss = F.binary_cross_entropy_with_logits(
-                    preds[gate_key], (targets[td_name] > 0).float()
+                    preds[gate_key], (targets[gated_name] > 0).float()
                 )
-                combined = combined + self.td_gate_weight * gate_loss
-                components[f"loss_td_gate_{td_name}"] = gate_loss.item()
+                combined = combined + self.gate_weight * gate_loss
+                components[f"loss_gate_{gated_name}"] = gate_loss.item()
 
         components["loss_combined"] = combined.item()
         return combined, components

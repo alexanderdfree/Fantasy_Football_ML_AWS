@@ -85,15 +85,15 @@ class TestMultiTargetLoss:
         for k in preds:
             assert preds[k].grad is not None
 
-    def test_qb_has_no_gated_td(self, make_tensors):
-        """QB config disables gated-TD; loss must not emit gate components."""
+    def test_qb_has_no_gated_heads(self, make_tensors):
+        """QB config disables gated hurdle heads; loss must not emit gate components."""
         loss_fn = MultiTargetLoss(target_names=QB_TARGETS, loss_weights=QB_LOSS_WEIGHTS)
         preds, targets = make_tensors()
         # Even if a stray *_gate_logit key were in preds, QB's empty
-        # gated_td_targets list means no BCE component gets added.
+        # gated_targets list means no BCE component gets added.
         preds["passing_tds_gate_logit"] = torch.randn(next(iter(preds.values())).shape[0])
         _, components = loss_fn(preds, targets)
-        assert not any(k.startswith("loss_td_gate") for k in components)
+        assert not any(k.startswith("loss_gate") for k in components)
 
 
 # ---------------------------------------------------------------------------

@@ -73,20 +73,20 @@ class TestMultiTargetLoss:
         for k in preds:
             assert preds[k].grad is not None
 
-    def test_dual_gate_td_losses_emitted(self):
+    def test_dual_gate_losses_emitted(self):
         """RB's two gated TD targets each emit a loss component."""
         loss_fn = MultiTargetLoss(
             target_names=RB_TARGETS,
             loss_weights=RB_LOSS_WEIGHTS,
-            gated_td_targets=["rushing_tds", "receiving_tds"],
+            gated_targets=["rushing_tds", "receiving_tds"],
         )
         preds = {t: torch.randn(5, requires_grad=True) for t in RB_TARGETS}
         preds["rushing_tds_gate_logit"] = torch.randn(5, requires_grad=True)
         preds["receiving_tds_gate_logit"] = torch.randn(5, requires_grad=True)
         targets = {k: torch.randn(5).clamp_min(0) for k in RB_TARGETS}
         _, components = loss_fn(preds, targets)
-        assert "loss_td_gate_rushing_tds" in components
-        assert "loss_td_gate_receiving_tds" in components
+        assert "loss_gate_rushing_tds" in components
+        assert "loss_gate_receiving_tds" in components
 
 
 # ---------------------------------------------------------------------------
