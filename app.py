@@ -35,8 +35,8 @@ from K.k_config import K_SPECIFIC_FEATURES, K_TARGETS
 
 # Per-position imports needed only for /api/model_architecture metadata and
 # for K/DST data loaders (these have their own data pipelines, not in registry).
-from K.k_data import kicker_season_split, load_kicker_data
-from K.k_features import compute_k_features
+from K.k_data import kicker_season_split, load_kicker_data, load_kicker_kicks
+from K.k_features import build_nested_kick_history, compute_k_features
 from QB.qb_config import QB_SPECIFIC_FEATURES, QB_TARGETS
 from RB.rb_config import RB_SPECIFIC_FEATURES, RB_TARGETS
 from shared.artifact_integrity import (
@@ -46,7 +46,7 @@ from shared.artifact_integrity import (
 )
 from shared.model_sync import sync_models_from_s3
 from shared.models import LightGBMMultiTarget, RidgeMultiTarget
-from shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory
+from shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory, MultiHeadNetWithNestedHistory
 from shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
 from shared.weather_features import WEATHER_FEATURES_ALL, merge_schedule_features
 from src.config import SCORING_HALF_PPR, SCORING_STANDARD, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
@@ -306,11 +306,15 @@ def _load_k_splits():
 
     K uses its own data pipeline because kicking stats (FG/PAT) are only
     available for 2025 in nflverse, and uses within-season temporal splits.
+    Also returns the per-kick records dataframe needed by the attention NN's
+    nested kick-history builder at inference time.
     """
     k_df = load_kicker_data()
     k_df = POSITION_REGISTRY["K"]["compute_targets_fn"](k_df)
     compute_k_features(k_df)
-    return kicker_season_split(k_df)
+    kicks_df = load_kicker_kicks(k_df)
+    train, val, test = kicker_season_split(k_df)
+    return train, val, test, kicks_df
 
 
 def _load_dst_splits():
@@ -429,19 +433,28 @@ def _apply_position_models(train, val, test, pos, results):
         _cache.setdefault("position_load_errors", {})[f"{pos}_nn"] = str(e)
         raise
 
-    # Attention NN — enabled per-position via ``reg["train_attention_nn"]``
-    # (QB/RB/WR/TE/DST today; K still runs static-only). Positions without an
-    # attention model leave the column as NaN so the frontend renders "--".
+    # Attention NN — enabled per-position via ``reg["train_attention_nn"]``.
+    # Flat-history variant for QB/RB/WR/TE/DST; nested per-kick variant for K.
+    # Positions without an attention model leave the column as NaN so the
+    # frontend renders "--".
     attn_nn_preds = None
     attn_nn_total = None
     if reg.get("train_attention_nn", False) and reg.get("attn_nn_file"):
         try:
-            attn_static_cols = get_attn_static_columns(
-                feature_cols, reg.get("attn_static_features", [])
-            )
-            attn_static_col_set = set(attn_static_cols)
-            attn_col_idx = [i for i, c in enumerate(feature_cols) if c in attn_static_col_set]
-            X_test_attn = X_test_pos[:, attn_col_idx]
+            # K resolves its attention static columns directly from the
+            # DataFrame (they live outside the Ridge/base-NN feature list, per
+            # shared/pipeline.py::attn_static_from_df). Others use the filtered
+            # whitelist over the base feature matrix.
+            if reg.get("attn_static_from_df", False):
+                attn_static_cols = list(reg.get("attn_static_features", []))
+                X_test_attn = pos_test[attn_static_cols].to_numpy(dtype=np.float32)
+            else:
+                attn_static_cols = get_attn_static_columns(
+                    feature_cols, reg.get("attn_static_features", [])
+                )
+                attn_static_col_set = set(attn_static_cols)
+                attn_col_idx = [i for i, c in enumerate(feature_cols) if c in attn_static_col_set]
+                X_test_attn = X_test_pos[:, attn_col_idx]
 
             attn_scaler = joblib.load(f"{model_dir}/attention_nn_scaler.pkl")
             attn_meta = read_scaler_meta(f"{model_dir}/attention_nn_scaler_meta.json")
@@ -463,22 +476,47 @@ def _apply_position_models(train, val, test, pos, results):
 
             X_test_attn_scaled = np.clip(attn_scaler.transform(X_test_attn), -4, 4)
 
-            hist_stats = [s for s in reg.get("attn_history_stats", []) if s in pos_test.columns]
-            max_seq_len = reg.get("attn_max_seq_len", 17)
-            hist_test, mask_test = build_game_history_arrays(
-                pos_test, history_stats=hist_stats, max_seq_len=max_seq_len
-            )
-
-            attn_model = MultiHeadNetWithHistory(
-                static_dim=len(attn_static_cols),
-                game_dim=hist_test.shape[2],
-                target_names=targets,
-                **reg["attn_nn_kwargs_static"],
-            ).to(device)
-            attn_model.load_state_dict(attn_state_dict)
-            attn_nn_preds = attn_model.predict_numpy(
-                X_test_attn_scaled, hist_test, mask_test, device
-            )
+            structure = reg.get("attn_history_structure", "flat")
+            if structure == "nested":
+                # K: build 4-D [N, G, K, kick_dim] history from per-kick records.
+                kicks_df = _cache.get("k_kicks_df")
+                if kicks_df is None:
+                    raise RuntimeError(
+                        "K nested attention requires kicks_df cached by _load_k_splits"
+                    )
+                hist_test, outer_test, inner_test = build_nested_kick_history(
+                    pos_test,
+                    kicks_df=kicks_df,
+                    kick_stats=reg["attn_kick_stats"],
+                    max_games=reg["attn_max_games"],
+                    max_kicks_per_game=reg["attn_max_kicks_per_game"],
+                )
+                attn_model = MultiHeadNetWithNestedHistory(
+                    static_dim=len(attn_static_cols),
+                    kick_dim=hist_test.shape[-1],
+                    target_names=targets,
+                    **reg["attn_nn_kwargs_static"],
+                ).to(device)
+                attn_model.load_state_dict(attn_state_dict)
+                attn_nn_preds = attn_model.predict_numpy(
+                    X_test_attn_scaled, hist_test, outer_test, inner_test, device
+                )
+            else:
+                hist_stats = [s for s in reg.get("attn_history_stats", []) if s in pos_test.columns]
+                max_seq_len = reg.get("attn_max_seq_len", 17)
+                hist_test, mask_test = build_game_history_arrays(
+                    pos_test, history_stats=hist_stats, max_seq_len=max_seq_len
+                )
+                attn_model = MultiHeadNetWithHistory(
+                    static_dim=len(attn_static_cols),
+                    game_dim=hist_test.shape[2],
+                    target_names=targets,
+                    **reg["attn_nn_kwargs_static"],
+                ).to(device)
+                attn_model.load_state_dict(attn_state_dict)
+                attn_nn_preds = attn_model.predict_numpy(
+                    X_test_attn_scaled, hist_test, mask_test, device
+                )
             attn_nn_total = _combine_total(attn_nn_preds)
         except Exception as e:
             _cache.setdefault("position_load_errors", {})[f"{pos}_attn_nn"] = str(e)
@@ -570,7 +608,7 @@ def _load_base_data_locked():
         _compute_scoring_formats(df)
 
     print("Loading kicker data...")
-    k_train, k_val, k_test = _load_k_splits()
+    k_train, k_val, k_test, k_kicks_df = _load_k_splits()
     print("Loading D/ST data...")
     dst_train, dst_val, dst_test = _load_dst_splits()
 
@@ -621,6 +659,9 @@ def _load_base_data_locked():
         "K": (k_train, k_val, k_test),
         "DST": (dst_train, dst_val, dst_test),
     }
+    # K's attention NN needs the raw per-kick records to build nested history
+    # at inference — stash here so _apply_position_models can reach it.
+    _cache["k_kicks_df"] = k_kicks_df
     _cache["results"] = results
     _cache["positions_loaded"] = set()
     _cache["base_loaded"] = True

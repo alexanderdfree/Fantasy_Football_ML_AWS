@@ -103,7 +103,7 @@ class MultiHeadNet(nn.Module):
         for name, head in self.heads.items():
             val = head(shared).squeeze(-1)
             if name in self.non_negative_targets:
-                val = F.softplus(val)
+                val = torch.clamp(val, min=0.0)
             preds[name] = val
         if self.aggregate_fn is not None:
             preds["total"] = self.aggregate_fn(preds)
@@ -404,7 +404,7 @@ class MultiHeadNetWithHistory(nn.Module):
             else:
                 val = head(head_input).squeeze(-1)
                 if name in self.non_negative_targets:
-                    val = F.softplus(val)
+                    val = torch.clamp(val, min=0.0)
                 preds[name] = val
         if self.aggregate_fn is not None:
             preds["total"] = self.aggregate_fn(preds)
@@ -586,7 +586,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             head_input = torch.cat([shared_static, history_vec], dim=-1)
             val = self.heads[name](head_input).squeeze(-1)
             if name in self.non_negative_targets:
-                val = F.softplus(val)
+                val = torch.clamp(val, min=0.0)
             preds[name] = val
         if self.aggregate_fn is not None:
             preds["total"] = self.aggregate_fn(preds)

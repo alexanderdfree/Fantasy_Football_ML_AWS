@@ -349,6 +349,25 @@ def get_inference_spec(pos: str) -> dict:
         )
         from K.k_targets import compute_k_targets
 
+        # K attention NN uses nested kick history (inner: per-game kicks,
+        # outer: per-target across prior games). Kwargs mirror those passed
+        # into MultiHeadNetWithNestedHistory by K/run_k_pipeline.py.
+        k_max_games = getattr(k_cfg, "K_ATTN_MAX_GAMES", 17)
+        k_attn_nn_kwargs_static = dict(
+            backbone_layers=list(K_NN_BACKBONE_LAYERS),
+            d_kick=getattr(k_cfg, "K_ATTN_KICK_DIM", 16),
+            d_model=getattr(k_cfg, "K_ATTN_D_MODEL", 32),
+            n_attn_heads=getattr(k_cfg, "K_ATTN_N_HEADS", 2),
+            head_hidden=K_NN_HEAD_HIDDEN,
+            dropout=K_NN_DROPOUT,
+            non_negative_targets=set(K_NN_NON_NEGATIVE_TARGETS),
+            project_kv=getattr(k_cfg, "K_ATTN_PROJECT_KV", False),
+            use_positional_encoding=getattr(k_cfg, "K_ATTN_POSITIONAL_ENCODING", False),
+            max_games=k_max_games,
+            attn_dropout=getattr(k_cfg, "K_ATTN_DROPOUT", 0.0),
+            encoder_hidden_dim=getattr(k_cfg, "K_ATTN_ENCODER_HIDDEN_DIM", 0),
+        )
+
         return {
             "targets": K_TARGETS,
             "specific_features": K_SPECIFIC_FEATURES,
@@ -375,6 +394,14 @@ def get_inference_spec(pos: str) -> dict:
                 non_negative_targets=K_NN_NON_NEGATIVE_TARGETS,
             ),
             "train_attention_nn": bool(getattr(k_cfg, "K_TRAIN_ATTENTION_NN", False)),
+            "attn_nn_file": "k_attention_nn.pt",
+            "attn_history_structure": "nested",
+            "attn_static_from_df": True,
+            "attn_static_features": list(getattr(k_cfg, "K_ATTN_STATIC_FEATURES", []) or []),
+            "attn_kick_stats": list(getattr(k_cfg, "K_ATTN_KICK_STATS", []) or []),
+            "attn_max_games": k_max_games,
+            "attn_max_kicks_per_game": getattr(k_cfg, "K_ATTN_MAX_KICKS_PER_GAME", 10),
+            "attn_nn_kwargs_static": k_attn_nn_kwargs_static,
             "train_lightgbm": bool(getattr(k_cfg, "K_TRAIN_LIGHTGBM", False)),
         }
     if pos == "DST":
