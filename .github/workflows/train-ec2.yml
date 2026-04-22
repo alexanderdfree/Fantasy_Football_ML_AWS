@@ -249,6 +249,20 @@ jobs:
           echo "Timed out after 30 min"
           exit 1
 
+      - name: Cancel SSM training command on cancel/failure
+        if: (cancelled() || failure()) && steps.train.outputs.command_id != ''
+        run: |
+          # On GH cancel or local poll timeout, the SSM command keeps running
+          # on the instance and its bash process keeps the /var/lock/ff-train.lock
+          # flock held, blocking the next train run. Cancelling the SSM command
+          # lets SSM terminate that bash process, which closes FD 200 and
+          # releases the flock. `|| true` so an already-terminal command (cancel
+          # returns non-zero) is a no-op.
+          aws ssm cancel-command \
+            --command-id "${{ steps.train.outputs.command_id }}" \
+            --instance-ids "${{ steps.inst.outputs.id }}" \
+            --region "$AWS_REGION" || true
+
       - name: Stream training output to Actions log
         if: always()
         run: |
