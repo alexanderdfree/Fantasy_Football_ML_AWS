@@ -104,8 +104,9 @@ TE_RIDGE_ALPHA_GRIDS = {
 # === Neural Net (2012+ dataset: relaxed regularization) ===
 TE_NN_BACKBONE_LAYERS = [96, 48]
 TE_NN_HEAD_HIDDEN = 24
-# Tighter override for receiving_tds (TE convention: smaller cap than RB/WR).
-TE_NN_HEAD_HIDDEN_OVERRIDES = {"receiving_tds": 32}
+# Tighter override on the hurdle-NegBin reception head (TE convention: smaller
+# cap than RB/WR). receiving_tds moved to plain Poisson NLL.
+TE_NN_HEAD_HIDDEN_OVERRIDES = {"receptions": 32}
 TE_NN_DROPOUT = 0.30
 TE_NN_LR = 5e-4
 TE_NN_WEIGHT_DECAY = 3e-4
@@ -114,24 +115,19 @@ TE_NN_BATCH_SIZE = 128
 TE_NN_PATIENCE = 25
 
 # === Loss Weights ===
-# Per-target weights scaled inversely to Huber delta (~2.0/δ) so every head
-# contributes comparable gradient magnitude during joint training. Without
-# rebalancing, receiving_yards (δ=15) dominated count heads (δ=0.5) ~900× per
-# sample. Receptions anchors the scale at weight 1.0.
+# Yards head keeps the 2.0/delta rebalance; Poisson and hurdle-NegBin heads
+# use weight 1.0 (loss already near ~1.0 at typical rates).
 TE_LOSS_WEIGHTS = {
-    "receiving_tds": 4.0,  # 2.0 / 0.5
-    "receiving_yards": 0.133,  # 2.0 / 15
-    "receptions": 1.0,  # 2.0 / 2.0 (anchor)
-    "fumbles_lost": 4.0,
+    "receiving_tds": 1.0,  # Poisson NLL
+    "receiving_yards": 0.133,  # 2.0 / 15  (Huber)
+    "receptions": 1.0,  # hurdle_negbin, fraction-scaled internally
+    "fumbles_lost": 1.0,  # Poisson NLL
 }
 
 # === Huber Deltas (raw-stat units) ===
-# yards δ≈15 (receiving), counts δ≈0.5, receptions δ≈2.0.
+# Only Huber heads need a delta.
 TE_HUBER_DELTAS = {
-    "receiving_tds": 0.5,
     "receiving_yards": 15.0,
-    "receptions": 2.0,
-    "fumbles_lost": 0.5,
 }
 
 # === LR Scheduler ===
@@ -170,17 +166,20 @@ TE_ATTN_STATIC_CATEGORIES = [
     "weather_vegas",
 ]
 TE_ATTN_STATIC_FEATURES = [c for cat in TE_ATTN_STATIC_CATEGORIES for c in TE_INCLUDE_FEATURES[cat]]
-# Two-stage gated hurdle head: sigmoid gate P(Y>0) × Softplus value E[Y|Y>0].
-# Gated on receiving_tds — sole TD source after rushing drop.
+# Single hurdle gate on receptions. receiving_tds moved off the gated list
+# to plain Poisson NLL (dispersion near 1, no zero-excess).
 TE_ATTN_GATED = True
-TE_GATED_TARGETS = ["receiving_tds"]
+TE_GATED_TARGETS = ["receptions"]
 TE_ATTN_GATE_HIDDEN = 16
 TE_ATTN_GATE_WEIGHT = 1.0
 
-# Per-head loss family. Default "huber"; PR 2 introduces "poisson_nll" and
-# "hurdle_negbin" options. All heads on "huber" here = no behavior change.
+# Per-head loss family. TDs + fumbles on Poisson NLL; receptions on
+# zero-truncated NegBin-2 hurdle.
 TE_HEAD_LOSSES = {
-    t: "huber" for t in ["receiving_tds", "receiving_yards", "receptions", "fumbles_lost"]
+    "receiving_tds": "poisson_nll",
+    "receiving_yards": "huber",
+    "receptions": "hurdle_negbin",
+    "fumbles_lost": "poisson_nll",
 }
 
 # === LightGBM (Optuna-tuned, 50 trials, CV MAE 3.6091) ===

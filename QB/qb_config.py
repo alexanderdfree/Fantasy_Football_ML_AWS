@@ -122,37 +122,45 @@ QB_NN_EPOCHS = 300
 QB_NN_BATCH_SIZE = 128
 QB_NN_PATIENCE = 25
 
-# Wider heads for zero-inflated count targets (passing_tds, rushing_tds).
-# Default 32-unit head is too narrow once the loss landscape has a mass at 0.
-QB_NN_HEAD_HIDDEN_OVERRIDES = {
-    "passing_tds": 64,
-    "rushing_tds": 64,
+# Count heads (passing/rushing TDs) moved from Huber to Poisson NLL — dispersion
+# 1.03-1.17 with negligible zero-excess, so plain Poisson fits; the extra
+# 64-unit capacity the Huber setup needed to fight the zero-mass is unnecessary.
+QB_NN_HEAD_HIDDEN_OVERRIDES = {}
+
+# === Per-Head Loss Families ===
+# TDs + INTs + fumbles: Poisson NLL. QB TD distributions are not zero-inflated
+# (median ~2 TDs/start), so a plain Poisson rate model is the right fit and the
+# Huber-count-head-collapse failure mode (count heads regressing to the mean
+# under yards-dominated gradients) is avoided without needing wider heads.
+# No gated targets on QB (see QB_ATTN_GATED below).
+QB_HEAD_LOSSES = {
+    "passing_yards": "huber",
+    "rushing_yards": "huber",
+    "passing_tds": "poisson_nll",
+    "rushing_tds": "poisson_nll",
+    "interceptions": "poisson_nll",
+    "fumbles_lost": "poisson_nll",
 }
 
 # === Loss Weights ===
-# Per-target weights scaled inversely to Huber delta (~2.0/δ) so every head
-# contributes comparable gradient magnitude during joint training. Without
-# rebalancing, yards targets (δ=15-25) dominated count heads (δ=0.5) ~2500× per
-# sample and count heads collapsed to the mean (post-migration NN fantasy-point
-# MAE regressed from 6.33 → 6.63; fumbles_lost R²=−0.34).
+# Yards heads keep 2.0/delta rebalance so count-head gradients aren't drowned
+# out (pre-rebalance: fantasy-point MAE regressed 6.33 -> 6.63; fumbles_lost
+# R2 = -0.34). Poisson NLL heads use weight 1.0 — at QB-scale rates (~1.5 TDs,
+# ~0.7 INTs, ~0.4 fumbles) the Poisson NLL is O(1), matching weighted yards.
 QB_LOSS_WEIGHTS = {
-    "passing_yards": 0.08,  # 2.0 / 25
-    "rushing_yards": 0.133,  # 2.0 / 15
-    "passing_tds": 4.0,  # 2.0 / 0.5
-    "rushing_tds": 4.0,
-    "interceptions": 4.0,
-    "fumbles_lost": 4.0,
+    "passing_yards": 0.08,  # 2.0 / 25  (Huber)
+    "rushing_yards": 0.133,  # 2.0 / 15  (Huber)
+    "passing_tds": 1.0,  # Poisson NLL
+    "rushing_tds": 1.0,  # Poisson NLL
+    "interceptions": 1.0,  # Poisson NLL
+    "fumbles_lost": 1.0,  # Poisson NLL
 }
 
 # === Huber Deltas (raw-stat units) ===
-# Yards δ is in yards; count-target δ is in counts (TDs, INTs, fumbles).
+# Only Huber heads need a delta — count heads moved to Poisson NLL.
 QB_HUBER_DELTAS = {
     "passing_yards": 25.0,
     "rushing_yards": 15.0,
-    "passing_tds": 0.5,
-    "rushing_tds": 0.5,
-    "interceptions": 0.5,
-    "fumbles_lost": 0.5,
 }
 
 # === LR Scheduler ===
@@ -205,10 +213,6 @@ QB_ATTN_STATIC_FEATURES = [c for cat in QB_ATTN_STATIC_CATEGORIES for c in QB_IN
 QB_ATTN_GATED = False
 QB_ATTN_GATE_HIDDEN = 16
 QB_ATTN_GATE_WEIGHT = 1.0
-
-# Per-head loss family. Default "huber"; PR 2 introduces "poisson_nll" and
-# "hurdle_negbin" options. All heads on "huber" here = no behavior change.
-QB_HEAD_LOSSES = {t: "huber" for t in QB_TARGETS}
 
 # === LightGBM (Optuna-tuned, 50 trials, CV MAE 5.7415) ===
 QB_TRAIN_LIGHTGBM = True

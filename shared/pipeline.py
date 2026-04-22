@@ -23,6 +23,7 @@ from shared.artifact_integrity import (
 )
 from shared.backtest import plot_weekly_accuracy, run_weekly_simulation
 from shared.evaluation import (
+    build_gate_info,
     compute_ranking_metrics,
     compute_target_metrics,
     plot_pred_vs_actual,
@@ -139,11 +140,24 @@ def _run_nn_training(
     """
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
+    # If the model has no GatedHead, hurdle_negbin is not supported (no value_mu
+    # / value_log_alpha emissions). Transparently downgrade those entries to
+    # huber so base NN / nested-attention paths run cleanly without requiring
+    # callers to maintain a parallel head_losses config.
+    from shared.neural_net import GatedHead  # local import avoids circular deps
+
+    head_losses = cfg.get("head_losses")
+    if head_losses and not any(isinstance(m, GatedHead) for m in model.modules()):
+        head_losses = {
+            n: ("huber" if lt == "hurdle_negbin" else lt) for n, lt in head_losses.items()
+        }
+
     criterion = MultiTargetLoss(
         target_names=targets,
         loss_weights=cfg["loss_weights"],
         huber_deltas=cfg["huber_deltas"],
         poisson_targets=cfg.get("poisson_targets"),
+        head_losses=head_losses,
         **(loss_kwargs or {}),
     )
     trainer = trainer_cls(
@@ -503,13 +517,13 @@ def _train_attention_nn(
         loss_kwargs={
             "gate_weight": cfg.get("attn_gate_weight", 1.0),
             "gated_targets": cfg.get("gated_targets"),
-            "head_losses": cfg.get("head_losses"),
         },
     )
 
     val_preds = model.predict_numpy(X_val_s, hist_val, mask_val, device)
     test_preds = model.predict_numpy(X_test_s, hist_test, mask_test, device)
-    metrics = compute_target_metrics(y_test_dict, test_preds, targets)
+    gate_info = build_gate_info(test_preds, cfg.get("gated_targets") or [])
+    metrics = compute_target_metrics(y_test_dict, test_preds, targets, gate_info=gate_info)
 
     return model, nn_scaler, val_preds, test_preds, metrics, history
 
