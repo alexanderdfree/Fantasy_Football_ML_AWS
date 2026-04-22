@@ -56,8 +56,7 @@ _POSITION_META = {
         "runner_module": "DST.run_dst_pipeline",
         "runner_fn": "run_dst_pipeline",
         "cv_runner_fn": None,
-        # DST_CONFIG is built inside run_dst_pipeline() (local var), not exported.
-        "config_var": None,
+        "config_var": "DST_CONFIG",
         "accepts_dataframes": False,
         "cpu_only": True,
     },

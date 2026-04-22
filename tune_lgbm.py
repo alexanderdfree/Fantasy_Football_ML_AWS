@@ -2,7 +2,7 @@
 
 Usage:
     python tune_lgbm.py QB                     # tune one position
-    python tune_lgbm.py QB RB WR TE K          # tune all LGBM-enabled positions
+    python tune_lgbm.py QB RB WR TE K DST      # tune all LGBM-enabled positions
     python tune_lgbm.py RB --n-trials 100      # more trials
     python tune_lgbm.py RB --timeout 3600      # time limit in seconds
     python tune_lgbm.py RB --print-best        # print best params from saved study
@@ -65,6 +65,20 @@ def _prepare_cv_folds(pos, cfg):
         train_df, val_df, _ = kicker_season_split(k_df)
         full_df = pd.concat([train_df, val_df], ignore_index=True)
         folds = expanding_window_folds(full_df, min_train_season=2015)
+    elif pos == "DST":
+        # DST builds team-level data internally, not from the general splits.
+        from DST.dst_data import build_dst_data
+        from DST.dst_features import compute_dst_features
+        from DST.dst_targets import compute_dst_targets
+        from src.config import TRAIN_SEASONS, VAL_SEASONS
+
+        dst_df = build_dst_data()
+        dst_df = compute_dst_targets(dst_df)
+        compute_dst_features(dst_df)
+        train_df = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()
+        val_df = dst_df[dst_df["season"].isin(VAL_SEASONS)].copy()
+        full_df = pd.concat([train_df, val_df], ignore_index=True)
+        folds = expanding_window_folds(full_df, min_train_season=min(TRAIN_SEASONS))
     else:
         train_df = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
         val_df = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
@@ -156,6 +170,18 @@ def _run_comparison(pos, cfg, best_params):
         k_df = compute_k_targets(k_df)
         compute_k_features(k_df)
         train_df, val_df, test_df = kicker_season_split(k_df)
+    elif pos == "DST":
+        from DST.dst_data import build_dst_data
+        from DST.dst_features import compute_dst_features
+        from DST.dst_targets import compute_dst_targets
+        from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
+
+        dst_df = build_dst_data()
+        dst_df = compute_dst_targets(dst_df)
+        compute_dst_features(dst_df)
+        train_df = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()
+        val_df = dst_df[dst_df["season"].isin(VAL_SEASONS)].copy()
+        test_df = dst_df[dst_df["season"].isin(TEST_SEASONS)].copy()
     else:
         train_df = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
         val_df = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
@@ -298,7 +324,7 @@ def _trial_to_params(trial):
 
 def main():
     parser = argparse.ArgumentParser(description="Tune LightGBM hyperparameters per position")
-    parser.add_argument("positions", nargs="+", help="Positions to tune (QB, RB, WR, TE)")
+    parser.add_argument("positions", nargs="+", help="Positions to tune (QB, RB, WR, TE, K, DST)")
     parser.add_argument("--n-trials", type=int, default=50, help="Number of Optuna trials")
     parser.add_argument("--timeout", type=int, default=None, help="Timeout in seconds per position")
     parser.add_argument(
