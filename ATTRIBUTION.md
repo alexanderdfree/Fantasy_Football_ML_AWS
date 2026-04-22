@@ -1,5 +1,7 @@
 # Attribution
 
+_Last verified: 2026-04-21._
+
 Sources, libraries, and AI-tool usage for this project.
 
 ## Data
