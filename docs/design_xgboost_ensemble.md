@@ -1,6 +1,6 @@
 # Design Document 3: XGBoost as a 4th Ensemble Model
 
-> **Historical artifact.** Target names in this document (`rushing_floor`, `receiving_floor`, `td_points`) reflect the pre-migration fantasy-point-component decomposition. The system now predicts raw NFL stats (yards, TDs, receptions) with a post-hoc aggregator — see [ARCHITECTURE.md](ARCHITECTURE.md) Decision D2. The XGBoost approach described here was considered against that earlier target set.
+> **Status: historical artifact (2026-04-21).** Rationale was folded into [ADR-001 §D3](ARCHITECTURE.md#d3-three-way-model-comparison-no-ensemble). Kept for provenance, not updated after the three-way independent comparison was chosen instead.
 
 ## Motivation
 
