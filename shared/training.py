@@ -7,30 +7,81 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll")
+SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin")
+
+
+def negbin2_log_prob(y: torch.Tensor, mu: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+    """Log-pmf of the NB-2 parameterization: mean ``mu``, ``var = mu + alpha*mu^2``.
+
+    Equivalent to ``NegBin(r=1/alpha, p=r/(r+mu))``. Supports ``y=0``.
+    """
+    alpha = torch.clamp(alpha, min=1e-6)
+    mu = torch.clamp(mu, min=1e-10)
+    r = 1.0 / alpha
+    log_coeff = torch.lgamma(y + r) - torch.lgamma(y + 1.0) - torch.lgamma(r)
+    log_r_ratio = torch.log(r) - torch.log(r + mu)
+    log_mu_ratio = torch.log(mu) - torch.log(r + mu)
+    return log_coeff + r * log_r_ratio + y * log_mu_ratio
+
+
+def ztnb2_log_prob(y: torch.Tensor, mu: torch.Tensor, log_alpha: torch.Tensor) -> torch.Tensor:
+    """Zero-truncated NB-2 log-pmf. Only valid for ``y >= 1``.
+
+    ``log P(Y=k | Y>0, mu, alpha) = log P_NB(k) - log(1 - P_NB(0))``.
+    """
+    alpha = torch.exp(log_alpha)
+    log_p = negbin2_log_prob(y, mu, alpha)
+    log_p_zero = negbin2_log_prob(torch.zeros_like(y), mu, alpha)
+    # log(1 - p_zero) via log1p for numerical stability when p_zero is small.
+    log_survival = torch.log1p(-torch.exp(log_p_zero).clamp(max=1.0 - 1e-7))
+    return log_p - log_survival
+
+
+def hurdle_negbin_value_loss(preds: dict, targets: dict, name: str) -> torch.Tensor:
+    """Zero-truncated NB-2 NLL on positive samples, scaled by fraction positive.
+
+    The gate component (BCE on ``y > 0``) is emitted separately by
+    ``MultiTargetLoss`` via its ``gated_targets`` loop, so this function only
+    returns the conditional-value contribution. Scaling by ``frac_pos`` makes
+    the magnitude directly comparable to the full-batch Huber/Poisson losses
+    on neighbouring heads (same per-sample basis over the batch of N).
+
+    Requires ``preds[f"{name}_value_mu"]`` and ``preds[f"{name}_value_log_alpha"]``.
+    """
+    y = targets[name]
+    mu = preds[f"{name}_value_mu"]
+    log_alpha = preds[f"{name}_value_log_alpha"]
+    pos_mask = y > 0
+    if pos_mask.any():
+        ztnb_nll = -ztnb2_log_prob(y[pos_mask], mu[pos_mask], log_alpha[pos_mask]).mean()
+        frac_pos = pos_mask.float().mean()
+        return frac_pos * ztnb_nll
+    return torch.zeros((), device=y.device, dtype=y.dtype)
 
 
 class MultiTargetLoss(nn.Module):
     """Per-head dispatchable loss for a multi-head network.
 
     Each target is assigned a loss family via ``head_losses[name]``; supported
-    values are in ``SUPPORTED_HEAD_LOSSES``. PR 1 wires ``"huber"`` and
-    ``"poisson_nll"``; additional families (zero-truncated NegBin / Poisson
-    hurdle) land in PR 2.
-
-    Poisson NLL uses ``log_input=False``, so the head output is treated as the
-    rate lambda directly — requires a non-negative head output, which the
-    ``MultiHeadNet`` clamp already guarantees for targets in
-    ``non_negative_targets``. The default ``eps=1e-8`` keeps ``-y*log(lambda)``
-    finite when the clamped output hits exactly zero.
+    values are in ``SUPPORTED_HEAD_LOSSES``:
+      - ``"huber"`` — standard Huber loss with per-target delta.
+      - ``"poisson_nll"`` — ``PoissonNLLLoss(log_input=False)``. Treats the head
+        output as the rate lambda directly; requires a non-negative clamp on
+        that head (``MultiHeadNet`` provides this via ``non_negative_targets``).
+      - ``"hurdle_negbin"`` — zero-truncated NB-2 NLL on positives only (value
+        component). The gate component (BCE on ``y>0``) is added through the
+        ``gated_targets`` mechanism. Requires the target's head to emit
+        ``{name}_gate_logit``, ``{name}_value_mu``, and ``{name}_value_log_alpha``
+        in the prediction dict — ``GatedHead`` does this.
 
     ``poisson_targets`` is a back-compat shorthand accepted alongside
     ``head_losses``: each listed target is treated as if it had
     ``head_losses[t] = "poisson_nll"``. Prefer ``head_losses`` for new code.
 
-    Gated heads additionally receive a BCE(gate_logit, y>0) component, scaled
-    by ``gate_weight``. ``gated_targets`` is the list of target names whose
-    heads emit a ``{name}_gate_logit`` key in the prediction dict.
+    ``gated_targets`` is the list of target names whose heads emit a
+    ``{name}_gate_logit`` key; they receive an additional
+    ``gate_weight * BCE(gate_logit, (target > 0))`` component. Must be a
+    superset of the ``"hurdle_negbin"`` targets so the hurdle gate is trained.
 
     Loss:
         sum(weight[t] * loss_fn[t](pred[t], target[t]) for t in targets)
@@ -66,6 +117,22 @@ class MultiTargetLoss(nn.Module):
                 f"Unsupported head_losses (supported: {SUPPORTED_HEAD_LOSSES}): {unknown}"
             )
 
+        # hurdle_negbin needs the gate pathway: preds must carry value_mu and
+        # value_log_alpha, which only GatedHead emits (enabled for targets in
+        # gated_targets). Catch the misconfiguration at construction time rather
+        # than crashing with a KeyError on the first batch.
+        hurdle_set = {n for n, lt in self.head_losses.items() if lt == "hurdle_negbin"}
+        gated_set = set(self.gated_targets)
+        missing_gates = hurdle_set - gated_set
+        if missing_gates:
+            raise ValueError(
+                f"head_losses='hurdle_negbin' requires the target to also be in "
+                f"gated_targets (so GatedHead emits value_mu / value_log_alpha). "
+                f"Missing from gated_targets: {sorted(missing_gates)}"
+            )
+
+        # ``hurdle_negbin`` needs the full preds dict (value_mu, value_log_alpha),
+        # so it's dispatched inline in ``forward`` rather than through loss_fns.
         self.loss_fns = nn.ModuleDict(
             {
                 name: (
@@ -74,6 +141,7 @@ class MultiTargetLoss(nn.Module):
                     else nn.HuberLoss(delta=huber_deltas.get(name, 1.0))
                 )
                 for name, lt in self.head_losses.items()
+                if lt in ("huber", "poisson_nll")
             }
         )
 
@@ -81,7 +149,11 @@ class MultiTargetLoss(nn.Module):
         per_target_losses = {}
         combined = torch.tensor(0.0, device=next(iter(preds.values())).device)
         for name in self.target_names:
-            loss = self.loss_fns[name](preds[name], targets[name])
+            lt = self.head_losses[name]
+            if lt == "hurdle_negbin":
+                loss = hurdle_negbin_value_loss(preds, targets, name)
+            else:
+                loss = self.loss_fns[name](preds[name], targets[name])
             per_target_losses[name] = loss
             combined = combined + self.loss_weights[name] * loss
 

@@ -344,6 +344,58 @@ class TestMultiTargetLoss:
         assert "loss_gate_rushing_tds" in components
         assert components["loss_gate_rushing_tds"] > 0
 
+    def test_hurdle_negbin_loss_emits_components_and_backward(self):
+        """End-to-end hurdle path: ZTNB value + BCE gate, both flow gradients.
+
+        Leaf tensors are created with ``empty(..).uniform_(..)`` /
+        ``empty(..).normal_()`` so ``.requires_grad_(True)`` keeps them leaves
+        — see the PR #94 regression on Linux CI where non-leaf gradients were
+        silently dropped.
+        """
+        torch.manual_seed(0)
+        preds = {
+            "rushing_yards": torch.empty(8).normal_().requires_grad_(True),
+            "receiving_yards": torch.empty(8).normal_().requires_grad_(True),
+            "rushing_tds": torch.empty(8).uniform_(0.1, 2.0).requires_grad_(True),
+        }
+        preds["rushing_tds_gate_logit"] = torch.empty(8).normal_().requires_grad_(True)
+        preds["rushing_tds_value_mu"] = torch.empty(8).uniform_(0.1, 2.0).requires_grad_(True)
+        preds["rushing_tds_value_log_alpha"] = torch.zeros(8).requires_grad_(True)
+        targets = {
+            "rushing_yards": torch.randn(8),
+            "receiving_yards": torch.randn(8),
+            "rushing_tds": torch.tensor([0.0, 1.0, 0.0, 2.0, 0.0, 1.0, 3.0, 0.0]),
+        }
+
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights={t: 1.0 for t in TARGETS},
+            head_losses={"rushing_tds": "hurdle_negbin"},
+            gate_weight=1.0,
+            gated_targets=["rushing_tds"],
+        )
+        total, components = loss_fn(preds, targets)
+        # Gate BCE + ZTNB value both reported.
+        assert "loss_gate_rushing_tds" in components
+        assert "loss_rushing_tds" in components
+        # Backward through ZTNB and BCE paths should populate gradients.
+        total.backward()
+        assert preds["rushing_tds_gate_logit"].grad is not None
+        assert preds["rushing_tds_value_mu"].grad is not None
+        assert preds["rushing_tds_value_log_alpha"].grad is not None
+        # log_alpha should see some gradient (dispersion affects ZTNB likelihood).
+        assert (preds["rushing_tds_value_log_alpha"].grad != 0).any()
+
+    def test_hurdle_negbin_requires_gated_target(self):
+        """Misconfiguration: hurdle_negbin without gate membership raises."""
+        with pytest.raises(ValueError, match="hurdle_negbin"):
+            MultiTargetLoss(
+                target_names=TARGETS,
+                loss_weights={t: 1.0 for t in TARGETS},
+                head_losses={"rushing_tds": "hurdle_negbin"},
+                gated_targets=[],  # rushing_tds not gated — should error
+            )
+
 
 # ---------------------------------------------------------------------------
 # MultiHeadHistoryTrainer (integration)

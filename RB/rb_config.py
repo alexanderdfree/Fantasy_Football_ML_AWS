@@ -167,32 +167,52 @@ RB_NN_WEIGHT_DECAY = 5e-5
 RB_NN_EPOCHS = 300
 RB_NN_BATCH_SIZE = 256
 RB_NN_PATIENCE = 30
-# Larger heads for zero-inflated count targets (both TD columns).
-RB_NN_HEAD_HIDDEN_OVERRIDES = {"rushing_tds": 64, "receiving_tds": 64}
+# Larger head for the hurdle-NegBin reception head (two value outputs: mu +
+# log_alpha). TD heads moved to plain Poisson NLL (dispersion ~1.03-1.17, no
+# zero-excess) and no longer need the extra capacity the Huber+gate setup did.
+RB_NN_HEAD_HIDDEN_OVERRIDES = {"receptions": 64}
+
+# === Per-Head Loss Families ===
+# TDs + fumbles: plain Poisson NLL. Empirical dispersion 1.03-1.17 with
+# negligible zero-excess — plain Poisson fits; the old BCE gate on (TD>0) was
+# unmotivated and comes off here.
+# Receptions: zero-truncated NegBin-2 hurdle. Variance/mean ~2.0 (overdispersed)
+# with zero-excess up to +0.13 — textbook hurdle fit. Gate BCE is added via
+# RB_GATED_TARGETS below; the ZTNB NLL trains on positive samples only, scaled
+# by fraction-positive inside the batch.
+RB_HEAD_LOSSES = {
+    "rushing_tds": "poisson_nll",
+    "receiving_tds": "poisson_nll",
+    "rushing_yards": "huber",
+    "receiving_yards": "huber",
+    "receptions": "hurdle_negbin",
+    "fumbles_lost": "poisson_nll",
+}
 
 # === Loss Weights ===
-# Per-target weights scaled inversely to Huber delta (~2.0/δ) so every head
-# contributes comparable gradient magnitude during joint training. Without
-# rebalancing, yards targets (δ=15) dominated count heads (δ=0.5) ~900× per
-# sample and count heads collapsed to the mean (post-migration NN fantasy-point
-# MAE regressed from 4.23 → 5.21; fumbles_lost R²=−1.43, receiving_tds R²=−0.58).
+# Yards heads: keep the 2.0/delta rebalance that stops yards gradients from
+# dominating (without this, fantasy-point MAE regressed 4.23 -> 5.21; see the
+# pre-PR-1 archive entry).
+# Poisson NLL heads: picked so the expected weighted per-sample loss sits near
+# the Huber contributions. At mean-TD-rate ~0.3, Poisson NLL ~ O(0.5); weight
+# 1.0 keeps the contribution in the same 0.5-1.0 band as weighted yards Huber.
+# hurdle_negbin reception head: weight 1.0. Value loss is already scaled by
+# fraction-positive inside hurdle_negbin_value_loss, so no further rescaling.
 RB_LOSS_WEIGHTS = {
-    "rushing_tds": 4.0,  # 2.0 / 0.5
-    "receiving_tds": 4.0,
-    "rushing_yards": 0.133,  # 2.0 / 15
+    "rushing_tds": 1.0,  # Poisson NLL
+    "receiving_tds": 1.0,  # Poisson NLL
+    "rushing_yards": 0.133,  # 2.0 / 15  (Huber)
     "receiving_yards": 0.133,
-    "receptions": 1.0,  # 2.0 / 2.0 (anchor)
-    "fumbles_lost": 4.0,
+    "receptions": 1.0,  # hurdle_negbin, fraction-scaled internally
+    "fumbles_lost": 1.0,  # Poisson NLL
 }
 
 # === Huber Deltas (per-target, raw-stat units) ===
+# Only Huber heads need a delta. TD / fumble / reception heads use Poisson /
+# hurdle-NegBin, which don't consume a delta.
 RB_HUBER_DELTAS = {
-    "rushing_tds": 0.5,
-    "receiving_tds": 0.5,
     "rushing_yards": 15.0,
     "receiving_yards": 15.0,
-    "receptions": 2.0,
-    "fumbles_lost": 0.5,
 }
 
 # === LR Scheduler ===
@@ -254,23 +274,14 @@ RB_ATTN_STATIC_CATEGORIES = [
     "weather_vegas",
 ]
 RB_ATTN_STATIC_FEATURES = [c for cat in RB_ATTN_STATIC_CATEGORIES for c in RB_INCLUDE_FEATURES[cat]]
-# Two-gate hurdle head: one sigmoid gate per gated target.
+# Single hurdle gate on receptions (variance/mean ~2.0, zero-excess ~+0.13).
+# TD heads dropped from the gated list: dispersion ~1.0 and ~0 zero-excess make
+# the gate unmotivated on counts (kept behind an ablation script —
+# scripts/ablate_rb_gate.py — so the call is verifiable).
 RB_ATTN_GATED = True
-RB_GATED_TARGETS = ["rushing_tds", "receiving_tds"]
+RB_GATED_TARGETS = ["receptions"]
 RB_ATTN_GATE_HIDDEN = 16
 RB_ATTN_GATE_WEIGHT = 1.0
-
-# Per-head loss family. Default "huber"; PR 2 introduces "poisson_nll" and
-# "hurdle_negbin" options. Keep every head at "huber" here so PR 1 is a
-# no-behavior-change refactor relative to the prior commit.
-RB_HEAD_LOSSES = {
-    "rushing_tds": "huber",
-    "receiving_tds": "huber",
-    "rushing_yards": "huber",
-    "receiving_yards": "huber",
-    "receptions": "huber",
-    "fumbles_lost": "huber",
-}
 
 # === LightGBM (Optuna-tuned, 50 trials, CV MAE 4.5149) ===
 RB_TRAIN_LIGHTGBM = True

@@ -30,42 +30,59 @@ class TestGatedHead:
     def test_output_shapes(self):
         head = GatedHead(in_dim=16)
         x = torch.randn(4, 16)
-        pred, gate_logit = head(x)
+        pred, gate_logit, mu, log_alpha = head(x)
         assert pred.shape == (4,)
         assert gate_logit.shape == (4,)
+        assert mu.shape == (4,)
+        assert log_alpha.shape == (4,)
 
     def test_pred_non_negative(self):
         head = GatedHead(in_dim=16)
         x = torch.randn(8, 16)
-        pred, _ = head(x)
+        pred, _, mu, _ = head(x)
         assert (pred >= 0).all()
+        assert (mu > 0).all()  # strictly positive thanks to softplus + 1e-6 floor
 
-    def test_gate_logit_finite(self):
+    def test_gate_logit_and_log_alpha_finite(self):
         head = GatedHead(in_dim=16)
         x = torch.randn(4, 16)
-        _, gate_logit = head(x)
+        _, gate_logit, _, log_alpha = head(x)
         assert torch.isfinite(gate_logit).all()
+        assert torch.isfinite(log_alpha).all()
 
     def test_gradient_flow(self):
         head = GatedHead(in_dim=16)
         x = torch.randn(4, 16, requires_grad=True)
-        pred, _ = head(x)
+        pred, _, _, _ = head(x)
         pred.sum().backward()
+        assert x.grad is not None
+        assert (x.grad != 0).any()
+
+    def test_log_alpha_gradient_flows(self):
+        """log_alpha has its own linear layer; need grad path from its output to input."""
+        head = GatedHead(in_dim=16)
+        x = torch.randn(4, 16, requires_grad=True)
+        _, _, _, log_alpha = head(x)
+        log_alpha.sum().backward()
         assert x.grad is not None
         assert (x.grad != 0).any()
 
     def test_hidden_size_config(self):
         head = GatedHead(in_dim=16, gate_hidden=4, value_hidden=8)
         assert head.gate[0].out_features == 4
-        assert head.value[0].out_features == 8
+        assert head.value_trunk[0].out_features == 8
+        assert head.value_mu[0].in_features == 8
+        assert head.value_log_alpha.in_features == 8
 
     def test_single_sample(self):
         head = GatedHead(in_dim=16)
         head.eval()
         with torch.no_grad():
-            pred, gate_logit = head(torch.randn(1, 16))
+            pred, gate_logit, mu, log_alpha = head(torch.randn(1, 16))
         assert pred.shape == (1,)
         assert gate_logit.shape == (1,)
+        assert mu.shape == (1,)
+        assert log_alpha.shape == (1,)
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +232,12 @@ class TestMultiHeadNetWithHistory:
         mask = torch.ones(4, 6, dtype=torch.bool)
         out = model(x_static, x_history, mask)
         assert "rushing_tds_gate_logit" in out
+        # GatedHead emits value_mu + value_log_alpha for hurdle_negbin loss access.
+        assert "rushing_tds_value_mu" in out
+        assert "rushing_tds_value_log_alpha" in out
         assert (out["rushing_tds"] >= 0).all()
+        assert (out["rushing_tds_value_mu"] > 0).all()  # strictly positive rate
+        assert torch.isfinite(out["rushing_tds_value_log_alpha"]).all()
 
     def test_gated_targets_list_accepts_multiple(self):
         """Multi-gate API: multiple gated heads coexist via gated_targets list."""

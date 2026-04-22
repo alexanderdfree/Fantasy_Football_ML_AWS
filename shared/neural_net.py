@@ -48,9 +48,22 @@ def _build_backbone(
 class GatedHead(nn.Module):
     """Two-stage hurdle head for zero-inflated count prediction.
 
-    Stage 1 (gate): P(Y > 0) via sigmoid
-    Stage 2 (value): E[Y | Y > 0] via Softplus (always positive)
-    Output: gate_prob * cond_value = E[Y]
+    Stage 1 (gate): P(Y > 0) via sigmoid over ``gate_logit``.
+    Stage 2 (value): the rate ``mu = E[Y | Y > 0]`` via Softplus on one trunk
+    output, plus a per-sample ``log_alpha`` on the other. ``log_alpha`` is the
+    NegBin-2 dispersion (``var = mu + exp(log_alpha) * mu^2``); it's unused by
+    Poisson-hurdle losses but exposed on every GatedHead so the loss layer can
+    choose its family without widening the module API.
+
+    Forward returns ``(expected, gate_logit, mu, log_alpha)``:
+        expected    = sigmoid(gate_logit) * mu   — E[Y] for reporting/metrics
+        gate_logit  = pre-sigmoid logit          — BCE target
+        mu          = E[Y | Y > 0], softplus + 1e-6 floor so log(mu) is finite
+        log_alpha   = per-sample NegBin-2 log-dispersion, real-valued
+
+    Value and dispersion share a single trunk so the extra capacity for
+    dispersion is small (~49 params at value_hidden=48). At inference the 4-tuple
+    is stored in the prediction dict; Poisson-family losses ignore log_alpha.
     """
 
     def __init__(self, in_dim: int, gate_hidden: int = 16, value_hidden: int = 48):
@@ -60,22 +73,28 @@ class GatedHead(nn.Module):
             nn.ReLU(),
             nn.Linear(gate_hidden, 1),
         )
-        self.value = nn.Sequential(
+        self.value_trunk = nn.Sequential(
             nn.Linear(in_dim, value_hidden),
             nn.ReLU(),
+        )
+        self.value_mu = nn.Sequential(
             nn.Linear(value_hidden, 1),
             nn.Softplus(),
         )
+        self.value_log_alpha = nn.Linear(value_hidden, 1)
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         gate_logit = self.gate(x).squeeze(-1)
-        cond_value = self.value(x).squeeze(-1)
-        pred = torch.sigmoid(gate_logit) * cond_value
-        return pred, gate_logit
+        trunk = self.value_trunk(x)
+        mu = self.value_mu(trunk).squeeze(-1) + 1e-6
+        log_alpha = self.value_log_alpha(trunk).squeeze(-1)
+        expected = torch.sigmoid(gate_logit) * mu
+        return expected, gate_logit, mu, log_alpha
 
 
-# Back-compat alias — older callers still import this name. Removed when all
-# callers have migrated off the TD-specific name.
+# Back-compat alias — older callers still import this name.
 GatedTDHead = GatedHead
 
 
@@ -394,9 +413,11 @@ class MultiHeadNetWithHistory(nn.Module):
             head_input = torch.cat([shared_static, history_vec], dim=-1)
             head = self.heads[name]
             if isinstance(head, GatedHead):
-                pred, gate_logit = head(head_input)
+                pred, gate_logit, mu, log_alpha = head(head_input)
                 preds[name] = pred
                 preds[f"{name}_gate_logit"] = gate_logit
+                preds[f"{name}_value_mu"] = mu
+                preds[f"{name}_value_log_alpha"] = log_alpha
             else:
                 val = head(head_input).squeeze(-1)
                 preds[name] = apply_non_negative(val, name, self.non_negative_targets)

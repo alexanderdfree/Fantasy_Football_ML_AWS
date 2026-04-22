@@ -112,8 +112,9 @@ WR_RIDGE_ALPHA_GRIDS = {
 # Largest position dataset can support more capacity with less overfitting risk.
 WR_NN_BACKBONE_LAYERS = [128]
 WR_NN_HEAD_HIDDEN = 32
-# Larger head for zero-inflated receiving_tds target.
-WR_NN_HEAD_HIDDEN_OVERRIDES = {"receiving_tds": 64}
+# Larger head for the hurdle-NegBin reception head (two value outputs).
+# receiving_tds moved to plain Poisson NLL so it no longer needs extra capacity.
+WR_NN_HEAD_HIDDEN_OVERRIDES = {"receptions": 64}
 WR_NN_DROPOUT = 0.20
 WR_NN_LR = 1e-3
 WR_NN_WEIGHT_DECAY = 1e-4
@@ -122,23 +123,20 @@ WR_NN_BATCH_SIZE = 512
 WR_NN_PATIENCE = 25
 
 # === Loss Weights ===
-# Per-target weights scaled inversely to Huber delta (~2.0/δ) so every head
-# contributes comparable gradient magnitude during joint training. Without
-# rebalancing, receiving_yards (δ=15) dominated count heads (δ=0.5) ~900× per
-# sample. Receptions anchors the scale at weight 1.0.
+# Yards head keeps the 2.0/delta rebalance (without it, yards gradients
+# dominate the count heads). Poisson NLL and hurdle-NegBin heads use weight 1.0
+# (their losses already sit near ~1.0 at typical rates).
 WR_LOSS_WEIGHTS = {
-    "receiving_tds": 4.0,  # 2.0 / 0.5
-    "receiving_yards": 0.133,  # 2.0 / 15
-    "receptions": 1.0,  # 2.0 / 2.0 (anchor)
-    "fumbles_lost": 4.0,
+    "receiving_tds": 1.0,  # Poisson NLL
+    "receiving_yards": 0.133,  # 2.0 / 15  (Huber)
+    "receptions": 1.0,  # hurdle_negbin, fraction-scaled internally
+    "fumbles_lost": 1.0,  # Poisson NLL
 }
 
 # === Huber Deltas (per-target, raw-stat units) ===
+# Only Huber heads need a delta.
 WR_HUBER_DELTAS = {
-    "receiving_tds": 0.5,
     "receiving_yards": 15.0,
-    "receptions": 2.0,
-    "fumbles_lost": 0.5,
 }
 
 # === LR Scheduler ===
@@ -178,17 +176,21 @@ WR_ATTN_STATIC_CATEGORIES = [
     "weather_vegas",
 ]
 WR_ATTN_STATIC_FEATURES = [c for cat in WR_ATTN_STATIC_CATEGORIES for c in WR_INCLUDE_FEATURES[cat]]
-# Two-stage gated hurdle head: sigmoid gate P(Y>0) × Softplus value E[Y|Y>0].
-# Single gate on receiving_tds — the only WR TD target after rushing drop.
+# Single hurdle gate on receptions (variance/mean ~2.0, zero-excess fits).
+# receiving_tds moved off the gated list to plain Poisson NLL — dispersion
+# ~1.0 on WR TDs, so the hurdle shape was unmotivated there.
 WR_ATTN_GATED = True
-WR_GATED_TARGETS = ["receiving_tds"]
+WR_GATED_TARGETS = ["receptions"]
 WR_ATTN_GATE_HIDDEN = 16
 WR_ATTN_GATE_WEIGHT = 1.0
 
-# Per-head loss family. Default "huber"; PR 2 introduces "poisson_nll" and
-# "hurdle_negbin" options. All heads on "huber" here = no behavior change.
+# Per-head loss family. TDs + fumbles on Poisson NLL; receptions on
+# zero-truncated NegBin-2 hurdle (see GatedHead + hurdle_negbin_value_loss).
 WR_HEAD_LOSSES = {
-    t: "huber" for t in ["receiving_tds", "receiving_yards", "receptions", "fumbles_lost"]
+    "receiving_tds": "poisson_nll",
+    "receiving_yards": "huber",
+    "receptions": "hurdle_negbin",
+    "fumbles_lost": "poisson_nll",
 }
 
 # === LightGBM (Optuna-tuned, 50 trials, CV MAE 4.7319) ===
