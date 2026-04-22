@@ -623,7 +623,6 @@ def _load_base_data_locked():
         "fantasy_points",
         "fantasy_points_half_ppr",
         "fantasy_points_standard",
-        "fantasy_points_floor",
     ]
     keep_cols = [c for c in keep_cols if c in test.columns]
     results = test[keep_cols].copy()

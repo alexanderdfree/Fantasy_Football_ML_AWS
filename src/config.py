@@ -45,7 +45,6 @@ CV_VAL_SEASONS = [2021, 2022, 2023, 2024]
 ROLLING_WINDOWS = [3, 5, 8]
 ROLL_STATS = [
     "fantasy_points",
-    "fantasy_points_floor",
     "targets",
     "receptions",
     "carries",

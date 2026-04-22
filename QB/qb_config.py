@@ -31,7 +31,6 @@ QB_SPECIFIC_FEATURES = [
 # Explicit include list — new columns must be opted in, preventing silent leakage.
 _QB_ROLLING_STATS = [
     "fantasy_points",
-    "fantasy_points_floor",
     "carries",
     "rushing_yards",
     "passing_yards",
@@ -176,7 +175,6 @@ QB_ATTN_WEIGHT_DECAY = 5e-5
 QB_ATTN_BATCH_SIZE = 256
 QB_ATTN_HISTORY_STATS = [
     "fantasy_points",
-    "fantasy_points_floor",
     "passing_yards",
     "rushing_yards",
     "passing_tds",

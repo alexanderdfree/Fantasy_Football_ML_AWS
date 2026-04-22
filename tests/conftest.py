@@ -76,7 +76,6 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                         "fantasy_points": actual,
                         "fantasy_points_standard": actual * 0.9,
                         "fantasy_points_half_ppr": actual * 0.95,
-                        "fantasy_points_floor": actual * 0.8,
                         "ridge_pred": float(actual + rng.normal(0, 2)),
                         "nn_pred": float(actual + rng.normal(0, 2)),
                         "attn_nn_pred": attn_pred,

@@ -1,4 +1,5 @@
-"""
+"""DEPRECATED: references pre-migration targets (rushing_floor/receiving_floor/td_points); do not run against current data.
+
 Component analysis: Weather & Vegas implied-odds features vs multi-targets.
 
 Produces per-position:

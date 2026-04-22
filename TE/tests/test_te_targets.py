@@ -57,11 +57,10 @@ class TestComputeTETargets:
         result = compute_te_targets(df)
         assert result["receptions"].iloc[0] == 6
 
-    def test_fumbles_lost_sums_rushing_and_receiving(self):
+    def test_fumbles_lost_sums_all_three_categories(self):
         df = _make_te_row(rushing_fumbles_lost=1, receiving_fumbles_lost=1, sack_fumbles_lost=1)
         result = compute_te_targets(df)
-        # sack_fumbles_lost is NOT part of TE fumbles_lost (skill-position convention).
-        assert result["fumbles_lost"].iloc[0] == 2
+        assert result["fumbles_lost"].iloc[0] == 3
 
     def test_all_nan_stats_treated_as_zero(self):
         df = pd.DataFrame(

@@ -1,4 +1,7 @@
-"""Sweep gated TD hyperparameters for RB attention model."""
+"""DEPRECATED: references pre-migration targets (rushing_floor/receiving_floor/td_points); do not run against current data.
+
+Sweep gated TD hyperparameters for RB attention model.
+"""
 
 import copy
 import json

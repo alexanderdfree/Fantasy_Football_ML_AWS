@@ -122,16 +122,7 @@ def _attn_kwargs_static(cfg, prefix: str) -> dict:
     def g(name, default=None):
         return getattr(cfg, f"{prefix}_{name}", default)
 
-    # Gated TD target names. New configs set ``{POS}_GATED_TD_TARGETS`` (list,
-    # possibly multi-head for RB). Legacy configs set ``{POS}_GATED_TD_TARGET``
-    # (single string). Thread both through; MultiHeadNetWithHistory normalizes
-    # the legacy string into a one-element list.
-    gated_td_target = g("GATED_TD_TARGET", None)
     gated_td_targets = g("GATED_TD_TARGETS", None)
-    # Default for legacy callers: keep "td_points" so pre-migration configs
-    # still build a gate on the old combined-TD head.
-    if gated_td_targets is None and gated_td_target is None:
-        gated_td_target = "td_points"
 
     kwargs = dict(
         backbone_layers=list(g("NN_BACKBONE_LAYERS", [])),
@@ -147,7 +138,6 @@ def _attn_kwargs_static(cfg, prefix: str) -> dict:
         encoder_hidden_dim=g("ATTN_ENCODER_HIDDEN_DIM", 0),
         gated_td=g("ATTN_GATED_TD", False),
         td_gate_hidden=g("ATTN_TD_GATE_HIDDEN", 16),
-        gated_td_target=gated_td_target,
         gated_td_targets=list(gated_td_targets) if gated_td_targets is not None else None,
     )
     head_hidden_overrides = g("NN_HEAD_HIDDEN_OVERRIDES", None)

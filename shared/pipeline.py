@@ -489,7 +489,6 @@ def _train_attention_nn(
         gated_td=cfg.get("attn_gated_td", False),
         td_gate_hidden=cfg.get("attn_td_gate_hidden", 16),
         gated_td_targets=cfg.get("gated_td_targets"),
-        gated_td_target=cfg.get("gated_td_target", "td_points"),
     ).to(device)
 
     attn_lr = cfg.get("attn_lr", cfg["nn_lr"])
@@ -506,7 +505,6 @@ def _train_attention_nn(
         huber_deltas=cfg["huber_deltas"],
         td_gate_weight=cfg.get("attn_td_gate_weight", 1.0),
         gated_td_targets=cfg.get("gated_td_targets"),
-        gated_td_target=cfg.get("gated_td_target", "td_points"),
     )
 
     attn_patience = cfg.get("attn_patience", cfg["nn_patience"])

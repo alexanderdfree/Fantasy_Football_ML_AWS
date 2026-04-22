@@ -368,7 +368,6 @@ RAW_STAT_COLS = [
 ROLLING_INSPECT_COLS = [
     "rolling_mean_fantasy_points_L3",
     "rolling_max_fantasy_points_L3",
-    "rolling_mean_fantasy_points_floor_L3",
     "rolling_mean_carries_L3",
     "rolling_mean_rushing_yards_L3",
     "rolling_mean_passing_yards_L3",

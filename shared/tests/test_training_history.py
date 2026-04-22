@@ -17,8 +17,8 @@ from shared.training import (
     make_history_dataloaders,
 )
 
-TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
-LOSS_WEIGHTS = {"rushing_floor": 1.0, "receiving_floor": 1.0, "td_points": 1.0}
+TARGETS = ["rushing_yards", "receiving_yards", "rushing_tds"]
+LOSS_WEIGHTS = {"rushing_yards": 1.0, "receiving_yards": 1.0, "rushing_tds": 1.0}
 
 
 # ---------------------------------------------------------------------------
@@ -254,11 +254,11 @@ class TestMultiTargetLoss:
         )
         weighted = MultiTargetLoss(
             target_names=TARGETS,
-            loss_weights={"rushing_floor": 2.0, "receiving_floor": 1.0, "td_points": 1.0},
+            loss_weights={"rushing_yards": 2.0, "receiving_yards": 1.0, "rushing_tds": 1.0},
         )
         base_loss, base_comp = base(preds, targets)
         weighted_loss, _ = weighted(preds, targets)
-        expected_delta = base_comp["loss_rushing_floor"]  # added one extra copy
+        expected_delta = base_comp["loss_rushing_yards"]  # added one extra copy
         assert weighted_loss.item() == pytest.approx(
             base_loss.item() + expected_delta,
             abs=1e-6,
@@ -269,10 +269,10 @@ class TestMultiTargetLoss:
         preds, targets = self._make_preds_and_targets()
         masked = MultiTargetLoss(
             target_names=TARGETS,
-            loss_weights={"rushing_floor": 1.0, "receiving_floor": 0.0, "td_points": 1.0},
+            loss_weights={"rushing_yards": 1.0, "receiving_yards": 0.0, "rushing_tds": 1.0},
         )
         loss, comp = masked(preds, targets)
-        expected = comp["loss_rushing_floor"] + comp["loss_td_points"]
+        expected = comp["loss_rushing_yards"] + comp["loss_rushing_tds"]
         assert loss.item() == pytest.approx(expected, abs=1e-6)
 
     def test_gradient_flows_to_each_target_head(self):
@@ -295,16 +295,16 @@ class TestMultiTargetLoss:
         preds2 = {t: torch.randn(4, requires_grad=True) for t in TARGETS}
         scaled = MultiTargetLoss(
             target_names=TARGETS,
-            loss_weights={"rushing_floor": 2.0, "receiving_floor": 1.0, "td_points": 1.0},
+            loss_weights={"rushing_yards": 2.0, "receiving_yards": 1.0, "rushing_tds": 1.0},
         )
         loss2, _ = scaled(preds2, targets)
         loss2.backward()
         scaled_grads = {t: preds2[t].grad.clone() for t in TARGETS}
 
-        # rushing_floor grad must be 2x base; other targets unchanged.
-        torch.testing.assert_close(scaled_grads["rushing_floor"], 2.0 * base_grads["rushing_floor"])
-        torch.testing.assert_close(scaled_grads["receiving_floor"], base_grads["receiving_floor"])
-        torch.testing.assert_close(scaled_grads["td_points"], base_grads["td_points"])
+        # rushing_yards grad must be 2x base; other targets unchanged.
+        torch.testing.assert_close(scaled_grads["rushing_yards"], 2.0 * base_grads["rushing_yards"])
+        torch.testing.assert_close(scaled_grads["receiving_yards"], base_grads["receiving_yards"])
+        torch.testing.assert_close(scaled_grads["rushing_tds"], base_grads["rushing_tds"])
 
     def test_zero_weight_zeros_gradient_for_that_target(self):
         """weight=0 on target k must produce zero gradient on preds[k]."""
@@ -314,35 +314,35 @@ class TestMultiTargetLoss:
 
         loss_fn = MultiTargetLoss(
             target_names=TARGETS,
-            loss_weights={"rushing_floor": 1.0, "receiving_floor": 0.0, "td_points": 1.0},
+            loss_weights={"rushing_yards": 1.0, "receiving_yards": 0.0, "rushing_tds": 1.0},
         )
         loss, _ = loss_fn(preds, targets)
         loss.backward()
-        # receiving_floor prediction has no downstream contribution; grad is zero.
-        assert torch.all(preds["receiving_floor"].grad == 0)
-        assert not torch.all(preds["rushing_floor"].grad == 0)
-        assert not torch.all(preds["td_points"].grad == 0)
+        # receiving_yards prediction has no downstream contribution; grad is zero.
+        assert torch.all(preds["receiving_yards"].grad == 0)
+        assert not torch.all(preds["rushing_yards"].grad == 0)
+        assert not torch.all(preds["rushing_tds"].grad == 0)
 
     def test_gated_td_adds_bce_component(self):
         """When gate logits are present, BCE supervision is added."""
         torch.manual_seed(0)
         preds = {t: torch.randn(4) for t in TARGETS}
-        preds["td_points_gate_logit"] = torch.randn(4)
+        preds["rushing_tds_gate_logit"] = torch.randn(4)
         targets = {t: torch.randn(4) for t in TARGETS}
-        # Force a positive td_points target so BCE has both classes in the batch.
-        targets["td_points"] = torch.tensor([0.0, 6.0, 0.0, 12.0])
+        # Force a positive rushing_tds target so BCE has both classes in the batch.
+        targets["rushing_tds"] = torch.tensor([0.0, 1.0, 0.0, 2.0])
 
         loss_fn = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights={t: 1.0 for t in TARGETS},
             td_gate_weight=1.0,
-            gated_td_target="td_points",
+            gated_td_targets=["rushing_tds"],
         )
         _, components = loss_fn(preds, targets)
         # The new multi-gate loss keys components by target name so multiple
         # gated heads (e.g. RB's rushing_tds + receiving_tds) can coexist.
-        assert "loss_td_gate_td_points" in components
-        assert components["loss_td_gate_td_points"] > 0
+        assert "loss_td_gate_rushing_tds" in components
+        assert components["loss_td_gate_rushing_tds"] > 0
 
 
 # ---------------------------------------------------------------------------
@@ -410,12 +410,12 @@ class TestMultiHeadHistoryTrainer:
         expected_keys = {
             "train_loss",
             "val_loss",
-            "val_loss_rushing_floor",
-            "val_loss_receiving_floor",
-            "val_loss_td_points",
-            "val_mae_rushing_floor",
-            "val_mae_receiving_floor",
-            "val_mae_td_points",
+            "val_loss_rushing_yards",
+            "val_loss_receiving_yards",
+            "val_loss_rushing_tds",
+            "val_mae_rushing_yards",
+            "val_mae_receiving_yards",
+            "val_mae_rushing_tds",
         }
         assert expected_keys.issubset(set(history.keys()))
 

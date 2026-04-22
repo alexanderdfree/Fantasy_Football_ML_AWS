@@ -52,7 +52,6 @@ def _make_games(
             "recent_team": [recent_team] * n_weeks,
             "opponent_team": [opponent_team] * n_weeks,
             "fantasy_points": [fantasy_points] * n_weeks,
-            "fantasy_points_floor": [fantasy_points * 0.8] * n_weeks,
             "targets": [targets] * n_weeks,
             "receptions": [receptions] * n_weeks,
             "carries": [carries] * n_weeks,
@@ -587,7 +586,7 @@ def contract_features_df():
 class TestFeatureColumnContract:
     """Pin the build_features() output schema — catches silent regressions."""
 
-    EXPECTED_FEATURE_COUNT = 179
+    EXPECTED_FEATURE_COUNT = 167
 
     def test_get_feature_columns_count_is_stable(self):
         """If this fails, update EXPECTED_FEATURE_COUNT intentionally."""
