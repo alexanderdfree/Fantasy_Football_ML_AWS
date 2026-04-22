@@ -104,6 +104,14 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         summary["cv_nn_mae_mean"] = round(cv["nn"]["total"]["mae_mean"], 3)
         summary["cv_nn_mae_std"] = round(cv["nn"]["total"]["mae_std"], 3)
         summary["best_cv_alpha"] = result["best_cv_alpha"]
+    # EC2 path: batch/train.py writes these into benchmark_metrics.json so the
+    # row appended by batch/benchmark.py --download-only carries timing. Local
+    # benchmark.py sets elapsed_sec on the summary directly so these no-op for
+    # it (result is the in-memory pipeline dict, not the parsed JSON file).
+    if "elapsed_sec" in result:
+        summary["elapsed_sec"] = result["elapsed_sec"]
+    if "phase_seconds" in result:
+        summary["phase_seconds"] = result["phase_seconds"]
     return summary
 
 

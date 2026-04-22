@@ -78,21 +78,30 @@ jobs:
           echo "Changed files:"
           printf '  %s\n' $files
 
+          # Strip tests/ subtrees before scoping. A PR that only edits
+          # {POS}/tests/, shared/tests/, or batch/tests/ does not affect
+          # model artifacts, so the global + per-position checks below
+          # operate on a tests-free view of the diff. `|| true` keeps the
+          # step alive when grep -v has nothing left to print.
+          model_files=$(printf '%s\n' "$files" | grep -vE '^(QB|RB|WR|TE|K|DST|shared|batch)/tests/' || true)
+          echo "Model-relevant changed files:"
+          printf '  %s\n' $model_files
+
           # Global triggers → retrain everything. Must match batch-image.yml's
           # path filter; if you add a new top-level shared dir there, add it
           # here too.
-          if printf '%s\n' "$files" | grep -qE '^(shared|src|batch)/|^requirements\.txt$'; then
+          if printf '%s\n' "$model_files" | grep -qE '^(shared|src|batch)/|^requirements\.txt$'; then
             echo "Global code changed → retraining all positions."
             echo "positions=$ALL" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Per-position: any change under {POS}/ retrains that position.
-          # Over-train on tests/docs is cheap (~2 min/pos); under-training
-          # from a too-clever regex is the expensive failure mode.
+          # Per-position: any non-test change under {POS}/ retrains that
+          # position. Docs and markdown still trigger retraining (cheap);
+          # the narrower filter above is scoped to tests/ only.
           positions=""
           for p in $ALL; do
-            if printf '%s\n' "$files" | grep -qE "^${p}/"; then
+            if printf '%s\n' "$model_files" | grep -qE "^${p}/"; then
               positions="${positions:+$positions }$p"
             fi
           done
