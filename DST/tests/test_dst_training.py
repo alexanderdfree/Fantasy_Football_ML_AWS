@@ -134,8 +134,10 @@ class TestMultiTargetLossPoisson:
             loss_weights=DST_LOSS_WEIGHTS,
             poisson_targets=DST_POISSON_TARGETS,
         )
-        # Rates must be non-negative; clamp simulates MultiHeadNet's apply_non_negative.
-        preds = {k: torch.rand(8, requires_grad=True).clamp(min=0.0) + 0.01 for k in DST_TARGETS}
+        # Rates must be non-negative; the tensor must also be a leaf so .grad
+        # populates. ``uniform_(a, b)`` fills an empty tensor in-place, keeping
+        # it a leaf, and ``requires_grad_(True)`` enables autograd tracking.
+        preds = {k: torch.empty(8).uniform_(0.01, 1.0).requires_grad_(True) for k in DST_TARGETS}
         targets = {k: torch.randint(0, 3, (8,)).float() for k in DST_TARGETS}
         combined, _ = loss_fn(preds, targets)
         combined.backward()
