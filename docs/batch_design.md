@@ -1,7 +1,8 @@
 # AWS Batch Training Design Doc
 
-> **Status: standby as of 2026-04-19.**
-> Active training path is [`docs/ec2_design.md`](ec2_design.md) / [`infra/ec2/`](../infra/ec2/). Image builds still track HEAD (`.github/workflows/batch-image.yml`) so reactivation is one repo-variable flip: set `BATCH_ACTIVE=true` and push.
+> **Status (2026-04-21): Standby path.** The active training path is EC2 warm-host ([docs/ec2_design.md](ec2_design.md)). Reactivate Batch by setting repo variable `BATCH_ACTIVE=true`.
+>
+> Image builds still track HEAD ([`.github/workflows/batch-image.yml`](../.github/workflows/batch-image.yml)) so reactivation is one repo-variable flip and a push — Batch resources ([`batch/launch.py`](../batch/launch.py), [`batch/train.py`](../batch/train.py), [`batch/Dockerfile.train`](../batch/Dockerfile.train)) remain in place.
 
 ## Problem
 

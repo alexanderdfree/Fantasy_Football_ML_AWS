@@ -1,5 +1,7 @@
 # EC2 24/7 Training Design Doc
 
+_Last verified: 2026-04-21._
+
 ## Problem
 
 AWS Batch scale-to-zero costs 3-5 minutes of cold-start per run (compute-env provisioning, image pull, container start) for training that only takes ~2 minutes on GPU. That overhead dominates during "constant fine-tuning" where a push should produce a new model in minutes, not minutes-plus-cold-start.
@@ -20,24 +22,36 @@ GITHUB ACTIONS (push to main)                AWS
 .github/workflows/
   batch-image.yml ─── builds image ─> ECR: ff-training:latest
 
-  train-ec2.yml (after image built)
+  train-ec2.yml (workflow_run after image built)
+    detect job
+    └─ git diff HEAD^ HEAD → scope positions
+         (shared|src|batch|requirements.txt → all 6;
+          otherwise only the {POS}/ dirs that changed)
+
+    train job  (skipped if detect.positions is empty)
     ├─ aws ec2 start-instances ────> EC2 g4dn.xlarge
     │                                  (stopped if idle > 4h,
     │                                   else already running)
     │
-    ├─ aws ssm send-command ───────> /usr/local/bin/ff-train QB
-    │   for POS in QB RB WR TE K DST      │
-    │                                     ├─ docker pull (credsStore auth)
-    │                                     ├─ docker run --gpus all
-    │                                     │    python batch/train.py
-    │                                     │      --position $POS
-    │                                     │      (reads s3://ff-predictor-training/data/)
-    │                                     │      (writes s3://…/models/$POS/model.tar.gz)
-    │                                     └─ date > /opt/ff/logs/last-activity
+    ├─ wait SSM PingStatus=Online
+    ├─ verify /opt/ff/config/bootstrap-complete
     │
-    ├─ aws ssm wait command-executed
-    ├─ aws ssm get-command-invocation (stream logs to Actions)
-    └─ aws s3 head-object (freshness check per position)
+    ├─ aws ssm send-command ───────> /usr/local/bin/ff-train QB
+    │   single cmd wrapping             │
+    │   for POS in $POSITIONS           ├─ docker pull (credsStore auth)
+    │     (sequential — T4)             ├─ docker run --gpus all
+    │                                   │    python batch/train.py
+    │                                   │      --position $POS
+    │                                   │      (reads s3://ff-predictor-training/data/)
+    │                                   │      (writes s3://…/models/$POS/model.tar.gz)
+    │                                   └─ date > /opt/ff/logs/last-activity
+    │
+    ├─ manual poll get-command-invocation (30-min deadline)
+    ├─ stream stdout/stderr into Actions log
+    ├─ aws s3api head-object (freshness check + summary table)
+    └─ python batch/benchmark.py --download-only --backend ec2 …
+         ├─ append to benchmark_history.json
+         └─ commit + push (retry-rebase up to 3×)
 ```
 
 ## Directory structure (new)
@@ -97,16 +111,18 @@ A `detect` job runs first and scopes which positions to train:
 
 Depends on `batch-image.yml` via `workflow_run` — training only fires after the new image has been pushed for the same commit.
 
-Steps:
+Steps (train job, after `detect` scopes positions):
 1. Configure AWS credentials (existing secrets).
-2. `aws ec2 start-instances` + `aws ec2 wait instance-running`.
-3. `aws ssm wait instance-online`.
-4. Verify `/opt/ff/config/bootstrap-complete` exists.
-5. `aws ssm send-command` with sequential loop across 6 positions (T4 can't fit concurrent NN runs).
-6. `aws ssm wait command-executed --cli-read-timeout 1800`.
-7. `aws ssm get-command-invocation` → stream stdout/stderr into Actions log.
-8. `aws s3 head-object` per position → assert `LastModified` within last 20 min.
-9. Summary table to `$GITHUB_STEP_SUMMARY`.
+2. Checkout repo with admin PAT (so the later benchmark-history push bypasses branch protection) and install `requirements-dev.txt` — torch is needed by `batch/benchmark.py`'s import chain.
+3. Resolve instance ID from repo variable `EC2_TRAINER_INSTANCE_ID`.
+4. `aws ec2 start-instances` + `aws ec2 wait instance-running` (no-op if already running).
+5. Poll `aws ssm describe-instance-information` until `PingStatus=Online` (30 × 10s).
+6. Verify `/opt/ff/config/bootstrap-complete` exists via an SSM `test -f` probe.
+7. `aws ssm send-command` with a single command wrapping a sequential `for POS in …; do /usr/local/bin/ff-train $POS $SEED; done` (T4 can't fit concurrent NN runs; one command ID keeps polling simple).
+8. Manual poll of `get-command-invocation` (30-min deadline — `aws ssm wait command-executed` caps at ~100 s and doesn't honor `AWS_MAX_ATTEMPTS`, so long runs would otherwise be mis-reported as failures).
+9. Stream stdout/stderr into the Actions log via `get-command-invocation --query` (`if: always()`).
+10. `aws s3api head-object` per position → summary table to `$GITHUB_STEP_SUMMARY`; fail if any artifact is missing or older than 20 min.
+11. Append the run to `benchmark_history.json` via `python batch/benchmark.py --download-only --backend ec2 --instance-type "g4dn.xlarge (On-Demand)" --positions $POSITIONS --note "EC2 auto-run (${sha::7})"`, then commit + push (retry-rebase up to 3×).
 
 Concurrency: `group: train-ec2, cancel-in-progress: true` — rapid-iteration pushes supersede in-flight runs.
 
