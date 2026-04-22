@@ -53,7 +53,7 @@ First run takes several minutes (downloads ~14 seasons of weekly stats, rosters,
 
 ```bash
 python app.py
-# → http://localhost:5000
+# → http://localhost:5050
 ```
 
 The dashboard loads pre-trained model artifacts from each position's `outputs/models/` directory. If a position's models are missing, run the benchmark for that position first (see below) to populate them.
@@ -66,7 +66,7 @@ python benchmark.py RB           # one position
 python benchmark.py QB RB WR     # several positions
 ```
 
-Each run writes a comparison row to [benchmark_history.json](benchmark_history.json) and refreshes the model artifacts under `{POS}/outputs/models/`. Headline results are summarized in the Evaluation section of [README.md](README.md).
+Each run appends a row to [benchmark_history.json](benchmark_history.json) with the git SHA, timestamp, and per-position config snapshot (used by CI to track benchmark drift) and refreshes the model artifacts under `{POS}/outputs/models/`. Headline results are summarized in the Evaluation section of [README.md](README.md).
 
 ## Run tests
 
