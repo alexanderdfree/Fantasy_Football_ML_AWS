@@ -44,7 +44,7 @@ from shared.artifact_integrity import (
     read_scaler_meta,
     unwrap_state_dict,
 )
-from shared.model_sync import sync_models_from_s3
+from shared.model_sync import sync_data_from_s3, sync_models_from_s3
 from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory, MultiHeadNetWithNestedHistory
 from shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
@@ -56,6 +56,7 @@ from src.features.engineer import build_game_history_arrays, get_attn_static_col
 from TE.te_config import TE_SPECIFIC_FEATURES, TE_TARGETS
 from WR.wr_config import WR_SPECIFIC_FEATURES, WR_TARGETS
 
+sync_data_from_s3()
 sync_models_from_s3()
 
 app = Flask(__name__)

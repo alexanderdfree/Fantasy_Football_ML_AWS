@@ -16,7 +16,10 @@ jobs:
   # main requires those checks to pass before a PR can merge, so we trust
   # the merged SHA here and go straight to the ECS rollout.
   deploy:
-    runs-on: ubuntu-latest
+    # Native arm64 runner — the serving image targets linux/arm64, so running
+    # on Ampere/Cobalt avoids QEMU emulation (was ~3-5x slower for Python C
+    # extension installs).
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
 
@@ -27,24 +30,25 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Sync data splits from S3 (gitignored, needed in image)
-        run: |
-          set -e
-          mkdir -p data/splits data/raw
-          aws s3 cp s3://ff-predictor-training/data/test.parquet  data/splits/test.parquet
-          aws s3 cp s3://ff-predictor-training/data/train.parquet data/splits/train.parquet
-          aws s3 cp s3://ff-predictor-training/data/val.parquet   data/splits/val.parquet
-          aws s3 sync s3://ff-predictor-training/data/raw/ data/raw/ --exclude "*_2023_2023.parquet"
-
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Set up QEMU (arm64 emulation)
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      # Local cache backend persists BuildKit `--mount=type=cache` directories
+      # (uv's wheel cache in the Dockerfile) across CI runs. The gha backend
+      # persists layer cache reliably but not cache mounts
+      # (moby/buildkit#1512), so we run both in parallel — same pattern as
+      # batch-image.yml.
+      - name: Cache BuildKit state
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ runner.os }}-${{ hashFiles('requirements.txt', 'Dockerfile') }}
+          restore-keys: |
+            buildx-${{ runner.os }}-
 
       - name: Build, tag, push image
         env:
@@ -55,10 +59,19 @@ jobs:
             --platform linux/arm64 \
             --provenance=false \
             --cache-from type=gha \
+            --cache-from type=local,src=/tmp/.buildx-cache \
             --cache-to type=gha,mode=max \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             --push .
+
+      # Swap caches so actions/cache stores the freshly-written one on
+      # post-job save, rather than the (now stale) input cache.
+      - name: Move BuildKit cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       - name: Deploy to ECS
         env:
