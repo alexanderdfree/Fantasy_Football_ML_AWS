@@ -18,6 +18,33 @@ def apply_non_negative(val: torch.Tensor, name: str, non_negative: set) -> torch
     return val
 
 
+def _build_backbone(
+    input_dim: int,
+    hidden_dims: list[int],
+    dropout: float,
+) -> nn.Sequential:
+    """Shared ``Linear → BN → ReLU → Dropout`` backbone used by every
+    ``MultiHeadNet*`` variant.
+
+    Kept as an ``nn.Sequential`` (not a custom module) so the state-dict
+    keys produced by each caller remain ``self.backbone.0.weight`` etc. —
+    existing checkpoints continue to load without migration.
+    """
+    blocks: list[nn.Module] = []
+    prev_dim = input_dim
+    for hidden_dim in hidden_dims:
+        blocks.extend(
+            [
+                nn.Linear(prev_dim, hidden_dim),
+                nn.BatchNorm1d(hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+            ]
+        )
+        prev_dim = hidden_dim
+    return nn.Sequential(*blocks)
+
+
 class GatedTDHead(nn.Module):
     """Two-stage hurdle head for zero-inflated TD prediction.
 
@@ -76,19 +103,7 @@ class MultiHeadNet(nn.Module):
         )
 
         # === Shared Backbone ===
-        backbone_blocks = []
-        prev_dim = input_dim
-        for hidden_dim in backbone_layers:
-            backbone_blocks.extend(
-                [
-                    nn.Linear(prev_dim, hidden_dim),
-                    nn.BatchNorm1d(hidden_dim),
-                    nn.ReLU(),
-                    nn.Dropout(dropout),
-                ]
-            )
-            prev_dim = hidden_dim
-        self.backbone = nn.Sequential(*backbone_blocks)
+        self.backbone = _build_backbone(input_dim, backbone_layers, dropout)
 
         backbone_out_dim = backbone_layers[-1]
         overrides = head_hidden_overrides or {}
@@ -310,19 +325,7 @@ class MultiHeadNetWithHistory(nn.Module):
         # === Shared Backbone (static features only) ===
         # History is routed per-target directly into the heads, so the
         # backbone no longer needs to see the attention output.
-        backbone_blocks = []
-        prev_dim = static_dim
-        for hidden_dim in backbone_layers:
-            backbone_blocks.extend(
-                [
-                    nn.Linear(prev_dim, hidden_dim),
-                    nn.BatchNorm1d(hidden_dim),
-                    nn.ReLU(),
-                    nn.Dropout(dropout),
-                ]
-            )
-            prev_dim = hidden_dim
-        self.backbone = nn.Sequential(*backbone_blocks)
+        self.backbone = _build_backbone(static_dim, backbone_layers, dropout)
 
         backbone_out_dim = backbone_layers[-1]
         overrides = head_hidden_overrides or {}
@@ -499,19 +502,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         self.history_norms = nn.ModuleList([nn.LayerNorm(attn_out_dim) for _ in target_names])
 
         # === Shared backbone (static only) ===
-        backbone_blocks = []
-        prev_dim = static_dim
-        for hidden_dim in backbone_layers:
-            backbone_blocks.extend(
-                [
-                    nn.Linear(prev_dim, hidden_dim),
-                    nn.BatchNorm1d(hidden_dim),
-                    nn.ReLU(),
-                    nn.Dropout(dropout),
-                ]
-            )
-            prev_dim = hidden_dim
-        self.backbone = nn.Sequential(*backbone_blocks)
+        self.backbone = _build_backbone(static_dim, backbone_layers, dropout)
 
         backbone_out_dim = backbone_layers[-1]
         overrides = head_hidden_overrides or {}

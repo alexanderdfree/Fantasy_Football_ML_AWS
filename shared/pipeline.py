@@ -85,6 +85,81 @@ def _resolve_nn_log_every(cfg):
 
 
 # ---------------------------------------------------------------------------
+# Shared NN training scaffolding
+#
+# Every neural-net training path in this module (the flat ``_train_nn``, the
+# two attention variants, and the per-fold training inside
+# ``run_cv_pipeline``) repeats the same structure: fit a StandardScaler,
+# clip, build an optimizer + scheduler + loss + Trainer, run
+# ``trainer.train``. Centralising that scaffolding prevents the class of
+# drift documented in TODO.md archive "``run_cv_pipeline`` missing
+# ``non_negative_targets`` on MultiHeadNet" — adding a new training-loop
+# concern (scheduler warmup, loss kwarg, etc.) requires one edit instead
+# of four.
+# ---------------------------------------------------------------------------
+
+
+def _nn_device() -> torch.device:
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _scale_xs(*X_arrays: np.ndarray) -> tuple[StandardScaler, list[np.ndarray]]:
+    """Fit a StandardScaler on the first array, transform + clip all arrays.
+
+    Returns ``(scaler, [X_train_s, X_val_s, ...])``. Callers unpack the list
+    with as many positional targets as they passed in. See
+    ``shared/feature_build.py::scale_and_clip`` for the clip rationale.
+    """
+    scaler = StandardScaler()
+    scaled = [scale_and_clip(scaler, X_arrays[0], fit=True)]
+    scaled.extend(scale_and_clip(scaler, X) for X in X_arrays[1:])
+    return scaler, scaled
+
+
+def _run_nn_training(
+    *,
+    model: torch.nn.Module,
+    train_loader,
+    val_loader,
+    cfg: dict,
+    targets: list[str],
+    trainer_cls,
+    lr: float,
+    weight_decay: float,
+    patience: int,
+    loss_kwargs: dict | None = None,
+) -> dict:
+    """Build optimizer / scheduler / loss / trainer, run ``trainer.train``.
+
+    Centralises the three bodies that previously rebuilt this stack inline
+    (``_train_nn``, ``_train_attention_nn``, ``_train_nested_attention_nn``,
+    and ``run_cv_pipeline``'s per-fold loop). Callers construct the model,
+    loaders, and trainer *class* — everything between that and the trained
+    weights lives here.
+    """
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
+    criterion = MultiTargetLoss(
+        target_names=targets,
+        loss_weights=cfg["loss_weights"],
+        huber_deltas=cfg["huber_deltas"],
+        **(loss_kwargs or {}),
+    )
+    trainer = trainer_cls(
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        criterion=criterion,
+        device=next(model.parameters()).device,
+        target_names=targets,
+        patience=patience,
+        scheduler_per_batch=scheduler_per_batch,
+        log_every=_resolve_nn_log_every(cfg),
+    )
+    return trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
+
+
+# ---------------------------------------------------------------------------
 # Ridge hyperparameter tuning helpers
 # ---------------------------------------------------------------------------
 
@@ -313,11 +388,7 @@ def _train_nn(
     The only thing that differs between them is the input feature matrix.
     """
     seed_everything(seed)
-
-    nn_scaler = StandardScaler()
-    X_train_s = scale_and_clip(nn_scaler, X_train, fit=True)
-    X_val_s = scale_and_clip(nn_scaler, X_val)
-    X_test_s = scale_and_clip(nn_scaler, X_test)
+    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
 
     train_loader, val_loader = make_dataloaders(
         X_train_s,
@@ -327,33 +398,20 @@ def _train_nn(
         batch_size=cfg["nn_batch_size"],
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = _nn_device()
     model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
+    history = _run_nn_training(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        cfg=cfg,
+        targets=targets,
+        trainer_cls=MultiHeadTrainer,
         lr=cfg["nn_lr"],
         weight_decay=cfg["nn_weight_decay"],
-    )
-    scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
-    criterion = MultiTargetLoss(
-        target_names=targets,
-        loss_weights=cfg["loss_weights"],
-        huber_deltas=cfg["huber_deltas"],
-    )
-
-    trainer = MultiHeadTrainer(
-        model=model,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        criterion=criterion,
-        device=device,
-        target_names=targets,
         patience=cfg["nn_patience"],
-        scheduler_per_batch=scheduler_per_batch,
-        log_every=_resolve_nn_log_every(cfg),
     )
-    history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
     val_preds = model.predict_numpy(X_val_s, device)
     test_preds = model.predict_numpy(X_test_s, device)
@@ -401,10 +459,7 @@ def _train_attention_nn(
         X_test = X_test[:, col_idx]
         print(f"  Attention static features: {len(col_idx)}/{len(feature_cols)} (filtered)")
 
-    nn_scaler = StandardScaler()
-    X_train_s = scale_and_clip(nn_scaler, X_train, fit=True)
-    X_val_s = scale_and_clip(nn_scaler, X_val)
-    X_test_s = scale_and_clip(nn_scaler, X_test)
+    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
 
     # Convert history arrays to lists-of-arrays for the variable-length dataset
     def _to_history_list(hist_arr, mask_arr):
@@ -426,44 +481,29 @@ def _train_attention_nn(
         batch_size=attn_batch_size,
     )
 
-    game_dim = hist_train.shape[2]
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = _nn_device()
     model = build_multihead_net_with_history(
         cfg,
         static_dim=X_train_s.shape[1],
-        game_dim=game_dim,
+        game_dim=hist_train.shape[2],
         targets=targets,
     ).to(device)
 
-    attn_lr = cfg.get("attn_lr", cfg["nn_lr"])
-    attn_wd = cfg.get("attn_weight_decay", cfg["nn_weight_decay"])
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=attn_lr,
-        weight_decay=attn_wd,
-    )
-    scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
-    criterion = MultiTargetLoss(
-        target_names=targets,
-        loss_weights=cfg["loss_weights"],
-        huber_deltas=cfg["huber_deltas"],
-        td_gate_weight=cfg.get("attn_td_gate_weight", 1.0),
-        gated_td_targets=cfg.get("gated_td_targets"),
-    )
-
-    attn_patience = cfg.get("attn_patience", cfg["nn_patience"])
-    trainer = MultiHeadHistoryTrainer(
+    history = _run_nn_training(
         model=model,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        criterion=criterion,
-        device=device,
-        target_names=targets,
-        patience=attn_patience,
-        scheduler_per_batch=scheduler_per_batch,
-        log_every=_resolve_nn_log_every(cfg),
+        train_loader=train_loader,
+        val_loader=val_loader,
+        cfg=cfg,
+        targets=targets,
+        trainer_cls=MultiHeadHistoryTrainer,
+        lr=cfg.get("attn_lr", cfg["nn_lr"]),
+        weight_decay=cfg.get("attn_weight_decay", cfg["nn_weight_decay"]),
+        patience=cfg.get("attn_patience", cfg["nn_patience"]),
+        loss_kwargs={
+            "td_gate_weight": cfg.get("attn_td_gate_weight", 1.0),
+            "gated_td_targets": cfg.get("gated_td_targets"),
+        },
     )
-    history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
     val_preds = model.predict_numpy(X_val_s, hist_val, mask_val, device)
     test_preds = model.predict_numpy(X_test_s, hist_test, mask_test, device)
@@ -501,11 +541,7 @@ def _train_nested_attention_nn(
     cfg['attn_static_features'].
     """
     seed_everything(seed)
-
-    nn_scaler = StandardScaler()
-    X_train_s = scale_and_clip(nn_scaler, X_train, fit=True)
-    X_val_s = scale_and_clip(nn_scaler, X_val)
-    X_test_s = scale_and_clip(nn_scaler, X_test)
+    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
     train_loader, val_loader = make_nested_kick_dataloaders(
@@ -522,44 +558,26 @@ def _train_nested_attention_nn(
         batch_size=attn_batch_size,
     )
 
-    kick_dim = hist_train.shape[-1]
-    max_games = hist_train.shape[1]
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = _nn_device()
     model = build_multihead_net_with_nested_history(
         cfg,
         static_dim=X_train_s.shape[1],
-        kick_dim=kick_dim,
-        max_games=max_games,
+        kick_dim=hist_train.shape[-1],
+        max_games=hist_train.shape[1],
         targets=targets,
     ).to(device)
 
-    attn_lr = cfg.get("attn_lr", cfg["nn_lr"])
-    attn_wd = cfg.get("attn_weight_decay", cfg["nn_weight_decay"])
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=attn_lr,
-        weight_decay=attn_wd,
-    )
-    scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
-    criterion = MultiTargetLoss(
-        target_names=targets,
-        loss_weights=cfg["loss_weights"],
-        huber_deltas=cfg["huber_deltas"],
-    )
-
-    attn_patience = cfg.get("attn_patience", cfg["nn_patience"])
-    trainer = MultiHeadNestedHistoryTrainer(
+    history = _run_nn_training(
         model=model,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        criterion=criterion,
-        device=device,
-        target_names=targets,
-        patience=attn_patience,
-        scheduler_per_batch=scheduler_per_batch,
-        log_every=_resolve_nn_log_every(cfg),
+        train_loader=train_loader,
+        val_loader=val_loader,
+        cfg=cfg,
+        targets=targets,
+        trainer_cls=MultiHeadNestedHistoryTrainer,
+        lr=cfg.get("attn_lr", cfg["nn_lr"]),
+        weight_decay=cfg.get("attn_weight_decay", cfg["nn_weight_decay"]),
+        patience=cfg.get("attn_patience", cfg["nn_patience"]),
     )
-    history = trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
     val_preds = model.predict_numpy(X_val_s, hist_val, outer_val, inner_val, device)
     test_preds = model.predict_numpy(X_test_s, hist_test, outer_test, inner_test, device)
@@ -1117,9 +1135,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         fold_ridge_metrics.append(compute_target_metrics(y_val_dict, ridge_val_preds, targets))
 
         # NN training for this fold
-        nn_scaler = StandardScaler()
-        X_train_s = scale_and_clip(nn_scaler, X_train, fit=True)
-        X_val_s = scale_and_clip(nn_scaler, X_val)
+        _, (X_train_s, X_val_s) = _scale_xs(X_train, X_val)
 
         train_loader, val_loader = make_dataloaders(
             X_train_s,
@@ -1129,33 +1145,20 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             batch_size=cfg["nn_batch_size"],
         )
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = _nn_device()
         model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
 
-        optimizer = torch.optim.AdamW(
-            model.parameters(),
+        _run_nn_training(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            cfg=cfg,
+            targets=targets,
+            trainer_cls=MultiHeadTrainer,
             lr=cfg["nn_lr"],
             weight_decay=cfg["nn_weight_decay"],
-        )
-        scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
-        criterion = MultiTargetLoss(
-            target_names=targets,
-            loss_weights=cfg["loss_weights"],
-            huber_deltas=cfg["huber_deltas"],
-        )
-
-        trainer = MultiHeadTrainer(
-            model=model,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            criterion=criterion,
-            device=device,
-            target_names=targets,
             patience=cfg["nn_patience"],
-            scheduler_per_batch=scheduler_per_batch,
-            log_every=_resolve_nn_log_every(cfg),
         )
-        trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
         nn_val_preds = model.predict_numpy(X_val_s, device)
         fold_nn_metrics.append(compute_target_metrics(y_val_dict, nn_val_preds, targets))

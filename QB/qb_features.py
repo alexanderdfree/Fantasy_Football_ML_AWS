@@ -1,7 +1,11 @@
-import numpy as np
 import pandas as pd
 
 from QB.qb_config import QB_INCLUDE_FEATURES
+from shared.feature_build import (
+    fill_nans_with_train_means,
+    rolling_agg,
+    safe_divide,
+)
 from src.features.engineer import flatten_include_features
 
 
@@ -21,90 +25,48 @@ def _compute_qb_features(df: pd.DataFrame) -> None:
     """Compute all QB-specific features (see QB_SPECIFIC_FEATURES) in-place."""
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
-    # Helper: shifted rolling L3
-    def _roll_sum(col):
-        return df.groupby(["player_id", "season"])[col].transform(
-            lambda x: x.shift(1).rolling(3, min_periods=1).sum()
-        )
+    grp = ["player_id", "season"]
 
-    completions_roll = _roll_sum("completions")
-    attempts_roll = _roll_sum("attempts")
-    pass_yds_roll = _roll_sum("passing_yards")
-    pass_tds_roll = _roll_sum("passing_tds")
-    ints_roll = _roll_sum("interceptions")
-    sacks_roll = _roll_sum("sacks")
-    rush_yds_roll = _roll_sum("rushing_yards")
-    pass_epa_roll = _roll_sum("passing_epa")
-    air_yds_roll = _roll_sum("passing_air_yards")
-    carries_roll = _roll_sum("carries")
-    pass_first_downs_roll = _roll_sum("passing_first_downs")
-    rush_first_downs_roll = _roll_sum("rushing_first_downs")
-    rush_epa_roll = _roll_sum("rushing_epa")
-    pass_yac_roll = _roll_sum("passing_yards_after_catch")
-    sack_yds_roll = _roll_sum("sack_yards")
+    def _sum(col):
+        return rolling_agg(df, col, grp, window=3)
+
+    completions_roll = _sum("completions")
+    attempts_roll = _sum("attempts")
+    pass_yds_roll = _sum("passing_yards")
+    pass_tds_roll = _sum("passing_tds")
+    ints_roll = _sum("interceptions")
+    sacks_roll = _sum("sacks")
+    rush_yds_roll = _sum("rushing_yards")
+    pass_epa_roll = _sum("passing_epa")
+    air_yds_roll = _sum("passing_air_yards")
+    carries_roll = _sum("carries")
+    pass_first_downs_roll = _sum("passing_first_downs")
+    rush_first_downs_roll = _sum("rushing_first_downs")
+    rush_epa_roll = _sum("rushing_epa")
+    pass_yac_roll = _sum("passing_yards_after_catch")
+    sack_yds_roll = _sum("sack_yards")
 
     dropbacks = attempts_roll + sacks_roll
 
-    # 1. completion_pct_L3
-    df["completion_pct_L3"] = (completions_roll / attempts_roll).fillna(0)
-    df.loc[attempts_roll == 0, "completion_pct_L3"] = 0
+    df["completion_pct_L3"] = safe_divide(completions_roll, attempts_roll)
+    df["yards_per_attempt_L3"] = safe_divide(pass_yds_roll, attempts_roll)
+    df["td_rate_L3"] = safe_divide(pass_tds_roll, attempts_roll)
+    df["int_rate_L3"] = safe_divide(ints_roll, attempts_roll)
+    df["sack_rate_L3"] = safe_divide(sacks_roll, dropbacks)
 
-    # 2. yards_per_attempt_L3
-    df["yards_per_attempt_L3"] = (pass_yds_roll / attempts_roll).fillna(0)
-    df.loc[attempts_roll == 0, "yards_per_attempt_L3"] = 0
-
-    # 3. td_rate_L3
-    df["td_rate_L3"] = (pass_tds_roll / attempts_roll).fillna(0)
-    df.loc[attempts_roll == 0, "td_rate_L3"] = 0
-
-    # 4. int_rate_L3
-    df["int_rate_L3"] = (ints_roll / attempts_roll).fillna(0)
-    df.loc[attempts_roll == 0, "int_rate_L3"] = 0
-
-    # 5. sack_rate_L3
-    df["sack_rate_L3"] = (sacks_roll / dropbacks).fillna(0)
-    df.loc[dropbacks == 0, "sack_rate_L3"] = 0
-
-    # 6. qb_rushing_share_L3 (dual-threat indicator)
+    # Dual-threat indicator — share of total yards that come from rushing.
     total_yds = pass_yds_roll + rush_yds_roll
-    df["qb_rushing_share_L3"] = (rush_yds_roll / total_yds).fillna(0)
-    df.loc[total_yds == 0, "qb_rushing_share_L3"] = 0
+    df["qb_rushing_share_L3"] = safe_divide(rush_yds_roll, total_yds)
 
-    # 7. passing_epa_per_dropback_L3
-    df["passing_epa_per_dropback_L3"] = (pass_epa_roll / dropbacks).fillna(0)
-    df.loc[dropbacks == 0, "passing_epa_per_dropback_L3"] = 0
-
-    # 8. deep_ball_rate_L3 (air yards per attempt)
-    df["deep_ball_rate_L3"] = (air_yds_roll / attempts_roll).fillna(0)
-    df.loc[attempts_roll == 0, "deep_ball_rate_L3"] = 0
-
-    # 9. pass_first_down_rate_L3 (first downs per attempt — drive-sustaining ability)
-    df["pass_first_down_rate_L3"] = (pass_first_downs_roll / attempts_roll).fillna(0)
-    df.loc[attempts_roll == 0, "pass_first_down_rate_L3"] = 0
-
-    # 10. rushing_epa_per_carry_L3 (rushing quality beyond raw yards)
-    df["rushing_epa_per_carry_L3"] = (rush_epa_roll / carries_roll).fillna(0)
-    df.loc[carries_roll == 0, "rushing_epa_per_carry_L3"] = 0
-
-    # 11. rush_first_down_rate_L3 (rushing first downs per carry)
-    df["rush_first_down_rate_L3"] = (rush_first_downs_roll / carries_roll).fillna(0)
-    df.loc[carries_roll == 0, "rush_first_down_rate_L3"] = 0
-
-    # 12. yac_rate_L3 (YAC / passing yards — scheme & receiver quality)
-    df["yac_rate_L3"] = (pass_yac_roll / pass_yds_roll).fillna(0)
-    df.loc[pass_yds_roll == 0, "yac_rate_L3"] = 0
-
-    # 13. sack_damage_per_dropback_L3 (sack yards lost per dropback — OL quality)
-    df["sack_damage_per_dropback_L3"] = (sack_yds_roll / dropbacks).fillna(0)
-    df.loc[dropbacks == 0, "sack_damage_per_dropback_L3"] = 0
+    df["passing_epa_per_dropback_L3"] = safe_divide(pass_epa_roll, dropbacks)
+    df["deep_ball_rate_L3"] = safe_divide(air_yds_roll, attempts_roll)
+    df["pass_first_down_rate_L3"] = safe_divide(pass_first_downs_roll, attempts_roll)
+    df["rushing_epa_per_carry_L3"] = safe_divide(rush_epa_roll, carries_roll)
+    df["rush_first_down_rate_L3"] = safe_divide(rush_first_downs_roll, carries_roll)
+    df["yac_rate_L3"] = safe_divide(pass_yac_roll, pass_yds_roll)
+    df["sack_damage_per_dropback_L3"] = safe_divide(sack_yds_roll, dropbacks)
 
 
 def fill_qb_nans(train_df, val_df, test_df, qb_feature_cols):
     """Fill NaNs in QB-specific feature columns using training set statistics."""
-    for split_df in [train_df, val_df, test_df]:
-        split_df[qb_feature_cols] = split_df[qb_feature_cols].replace([np.inf, -np.inf], np.nan)
-    train_means = train_df[qb_feature_cols].mean()
-    for split_df in [train_df, val_df, test_df]:
-        for col in qb_feature_cols:
-            split_df[col] = split_df[col].fillna(train_means[col])
-    return train_df, val_df, test_df
+    return fill_nans_with_train_means(train_df, val_df, test_df, qb_feature_cols)

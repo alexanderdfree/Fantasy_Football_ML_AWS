@@ -1,6 +1,10 @@
-import numpy as np
 import pandas as pd
 
+from shared.feature_build import (
+    fill_nans_with_train_means,
+    rolling_agg,
+    safe_divide,
+)
 from src.features.engineer import flatten_include_features
 from TE.te_config import TE_INCLUDE_FEATURES
 from TE.te_data import compute_team_te_totals
@@ -22,68 +26,36 @@ def _compute_te_features(df: pd.DataFrame) -> None:
     """Compute all 8 TE-specific features in-place."""
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
-    def _roll_sum(col):
-        return df.groupby(["player_id", "season"])[col].transform(
-            lambda x: x.shift(1).rolling(3, min_periods=1).sum()
-        )
+    grp = ["player_id", "season"]
 
-    recv_yds_roll = _roll_sum("receiving_yards")
-    rec_roll = _roll_sum("receptions")
-    tgt_roll = _roll_sum("targets")
-    yac_roll = _roll_sum("receiving_yards_after_catch")
-    recv_epa_roll = _roll_sum("receiving_epa")
-    recv_fd_roll = _roll_sum("receiving_first_downs")
-    air_yds_roll = _roll_sum("receiving_air_yards")
-    recv_tds_roll = _roll_sum("receiving_tds")
+    def _sum(col):
+        return rolling_agg(df, col, grp, window=3)
 
-    # 1. yards_per_reception_L3
-    df["yards_per_reception_L3"] = (recv_yds_roll / rec_roll).fillna(0)
-    df.loc[rec_roll == 0, "yards_per_reception_L3"] = 0
+    recv_yds_roll = _sum("receiving_yards")
+    rec_roll = _sum("receptions")
+    tgt_roll = _sum("targets")
+    yac_roll = _sum("receiving_yards_after_catch")
+    recv_epa_roll = _sum("receiving_epa")
+    recv_fd_roll = _sum("receiving_first_downs")
+    air_yds_roll = _sum("receiving_air_yards")
+    recv_tds_roll = _sum("receiving_tds")
 
-    # 2. reception_rate_L3
-    df["reception_rate_L3"] = (rec_roll / tgt_roll).fillna(0)
-    df.loc[tgt_roll == 0, "reception_rate_L3"] = 0
+    df["yards_per_reception_L3"] = safe_divide(recv_yds_roll, rec_roll)
+    df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
+    df["yac_per_reception_L3"] = safe_divide(yac_roll, rec_roll)
 
-    # 3. yac_per_reception_L3
-    df["yac_per_reception_L3"] = (yac_roll / rec_roll).fillna(0)
-    df.loc[rec_roll == 0, "yac_per_reception_L3"] = 0
-
-    # 4. team_te_target_share_L3
     team_te_totals = compute_team_te_totals(df)
     df_merged = df.merge(team_te_totals, on=["recent_team", "season", "week"], how="left")
-    player_tgt_roll = df_merged.groupby(["player_id", "season"])["targets"].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).sum()
-    )
-    team_te_tgt_roll = df_merged.groupby(["player_id", "season"])["team_te_targets"].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).sum()
-    )
-    share = (player_tgt_roll / team_te_tgt_roll).fillna(0)
-    share[team_te_tgt_roll.values == 0] = 0
-    df["team_te_target_share_L3"] = share.values
+    player_tgt_roll = rolling_agg(df_merged, "targets", grp, window=3)
+    team_te_tgt_roll = rolling_agg(df_merged, "team_te_targets", grp, window=3)
+    df["team_te_target_share_L3"] = safe_divide(player_tgt_roll, team_te_tgt_roll).values
 
-    # 5. receiving_epa_per_target_L3
-    df["receiving_epa_per_target_L3"] = (recv_epa_roll / tgt_roll).fillna(0)
-    df.loc[tgt_roll == 0, "receiving_epa_per_target_L3"] = 0
-
-    # 6. receiving_first_down_rate_L3
-    df["receiving_first_down_rate_L3"] = (recv_fd_roll / rec_roll).fillna(0)
-    df.loc[rec_roll == 0, "receiving_first_down_rate_L3"] = 0
-
-    # 7. air_yards_per_target_L3
-    df["air_yards_per_target_L3"] = (air_yds_roll / tgt_roll).fillna(0)
-    df.loc[tgt_roll == 0, "air_yards_per_target_L3"] = 0
-
-    # 8. td_rate_per_target_L3 (TE TD dependency)
-    df["td_rate_per_target_L3"] = (recv_tds_roll / tgt_roll).fillna(0)
-    df.loc[tgt_roll == 0, "td_rate_per_target_L3"] = 0
+    df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
+    df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
+    df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
+    df["td_rate_per_target_L3"] = safe_divide(recv_tds_roll, tgt_roll)
 
 
 def fill_te_nans(train_df, val_df, test_df, te_feature_cols):
     """Fill NaNs in TE-specific feature columns using training set statistics."""
-    for split_df in [train_df, val_df, test_df]:
-        split_df[te_feature_cols] = split_df[te_feature_cols].replace([np.inf, -np.inf], np.nan)
-    train_means = train_df[te_feature_cols].mean()
-    for split_df in [train_df, val_df, test_df]:
-        for col in te_feature_cols:
-            split_df[col] = split_df[col].fillna(train_means[col])
-    return train_df, val_df, test_df
+    return fill_nans_with_train_means(train_df, val_df, test_df, te_feature_cols)
