@@ -108,13 +108,17 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage-${{ matrix.shard }}.xml
           flags: ${{ matrix.shard }}
+          report_type: coverage
+          disable_search: true
           fail_ci_if_error: false
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/test-results-action@v1
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./junit-${{ matrix.shard }}.xml
           flags: ${{ matrix.shard }}
+          report_type: test_results
+          disable_search: true
           fail_ci_if_error: false
