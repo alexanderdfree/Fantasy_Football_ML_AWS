@@ -25,6 +25,7 @@ import torch
 from sklearn.preprocessing import StandardScaler
 
 from shared.aggregate_targets import predictions_to_fantasy_points
+from shared.feature_build import scale_and_clip
 from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
 from TE.te_config import (
@@ -200,8 +201,8 @@ class TestTERegressionThresholds:
         np.random.seed(42)
         torch.manual_seed(42)
         scaler = StandardScaler()
-        X_train_s = np.clip(scaler.fit_transform(t["X_train"]), -4, 4).astype(np.float32)
-        X_test_s = np.clip(scaler.transform(t["X_test"]), -4, 4).astype(np.float32)
+        X_train_s = scale_and_clip(scaler, t["X_train"], fit=True).astype(np.float32)
+        X_test_s = scale_and_clip(scaler, t["X_test"]).astype(np.float32)
 
         model = MultiHeadNet(
             input_dim=X_train_s.shape[1],

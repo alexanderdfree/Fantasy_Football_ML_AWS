@@ -30,6 +30,7 @@ import torch
 from sklearn.preprocessing import StandardScaler
 
 from QB.run_qb_pipeline import QB_CONFIG
+from shared.feature_build import scale_and_clip
 from shared.models import RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
 from shared.pipeline import (
@@ -115,9 +116,9 @@ def _train_models(seed=42):
 
     # --- NN ---
     nn_scaler = StandardScaler()
-    X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
-    X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
-    X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
+    X_train_s = scale_and_clip(nn_scaler, X_train, fit=True)
+    X_val_s = scale_and_clip(nn_scaler, X_val)
+    X_test_s = scale_and_clip(nn_scaler, X_test)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     nn_model = MultiHeadNet(
@@ -225,7 +226,7 @@ def nn_integrated_gradients(nn_model, nn_scaler, feature_cols, x_raw, target_nam
     Baseline is an all-zero scaled vector (= feature means after StandardScaler).
     Sum of attributions + f(baseline) reconciles to f(x).
     """
-    x_scaled = np.clip(nn_scaler.transform(x_raw.reshape(1, -1)), -4, 4)[0]
+    x_scaled = scale_and_clip(nn_scaler, x_raw.reshape(1, -1))[0]
     baseline = np.zeros_like(x_scaled)
     alphas = np.linspace(0.0, 1.0, IG_STEPS + 1)
 

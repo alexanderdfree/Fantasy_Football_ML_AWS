@@ -43,6 +43,7 @@ from DST.dst_config import (
 from DST.dst_features import compute_dst_features
 from DST.dst_targets import compute_dst_targets
 from shared.aggregate_targets import aggregate_fn_for
+from shared.feature_build import scale_and_clip
 from shared.models import RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
 from shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
@@ -150,8 +151,8 @@ def regression_results(tiny_dst_dataset):
     np.random.seed(SEED)
     torch.manual_seed(SEED)
     scaler = StandardScaler()
-    X_tr_s = np.clip(scaler.fit_transform(X_train), -4, 4).astype(np.float32)
-    X_te_s = np.clip(scaler.transform(X_test), -4, 4).astype(np.float32)
+    X_tr_s = scale_and_clip(scaler, X_train, fit=True).astype(np.float32)
+    X_te_s = scale_and_clip(scaler, X_test).astype(np.float32)
 
     train_loader, val_loader = make_dataloaders(
         X_tr_s,
