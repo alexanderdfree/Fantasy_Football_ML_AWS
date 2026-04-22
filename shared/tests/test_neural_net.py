@@ -12,6 +12,9 @@ from shared.neural_net import (
     MultiHeadNetWithHistory,
     MultiHeadNetWithNestedHistory,
     apply_non_negative,
+    build_multihead_net,
+    build_multihead_net_with_history,
+    build_multihead_net_with_nested_history,
 )
 
 TARGETS = ["rushing_yards", "receiving_yards", "rushing_tds"]
@@ -543,3 +546,115 @@ class TestNonNegativeFloor:
             )
         for t in K_TARGETS:
             assert torch.all(preds[t] == 0.0), f"{t}: expected exact zeros, got {preds[t].tolist()}"
+
+
+# ---------------------------------------------------------------------------
+# Factory helpers
+#
+# The factories are the single place that maps a training cfg dict to the
+# MultiHeadNet* constructor kwargs. Tests here pin the contract so a future
+# kwarg that a caller forgets to thread through cannot silently regress.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestBuildMultiHeadNet:
+    def _base_cfg(self):
+        return {
+            "nn_backbone_layers": [8, 4],
+            "nn_head_hidden": 4,
+            "nn_dropout": 0.0,
+        }
+
+    def test_builds_correct_type(self):
+        model = build_multihead_net(self._base_cfg(), input_dim=6, targets=TARGETS)
+        assert isinstance(model, MultiHeadNet)
+
+    def test_forwards_non_negative_targets_from_cfg(self):
+        cfg = self._base_cfg() | {"nn_non_negative_targets": {"rushing_yards"}}
+        model = build_multihead_net(cfg, input_dim=6, targets=TARGETS)
+        assert model.non_negative_targets == {"rushing_yards"}
+
+    def test_missing_non_negative_targets_defaults_to_all_clamped(self):
+        model = build_multihead_net(self._base_cfg(), input_dim=6, targets=TARGETS)
+        assert model.non_negative_targets == set(TARGETS)
+
+    def test_forwards_head_hidden_overrides_from_cfg(self):
+        cfg = self._base_cfg() | {"nn_head_hidden_overrides": {"rushing_tds": 8}}
+        model = build_multihead_net(cfg, input_dim=6, targets=TARGETS)
+        # Override goes through: rushing_tds head's first Linear has out_features=8
+        tds_head = model.heads["rushing_tds"]
+        assert tds_head[0].out_features == 8
+        # Others still use the default
+        assert model.heads["rushing_yards"][0].out_features == 4
+
+
+@pytest.mark.unit
+class TestBuildMultiHeadNetWithHistory:
+    def _base_cfg(self):
+        return {
+            "nn_backbone_layers": [8, 4],
+            "nn_head_hidden": 4,
+            "nn_dropout": 0.0,
+        }
+
+    def test_builds_correct_type(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert isinstance(model, MultiHeadNetWithHistory)
+
+    def test_forwards_attn_kwargs_from_cfg(self):
+        cfg = self._base_cfg() | {
+            "attn_d_model": 16,
+            "attn_n_heads": 4,
+            "attn_gated_fusion": True,
+            "attn_positional_encoding": True,
+            "attn_max_seq_len": 12,
+        }
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.d_model == 16
+        assert model.use_gated_fusion is True
+        assert model.use_positional_encoding is True
+        assert model.pos_embedding.num_embeddings == 12
+
+    def test_forwards_non_negative_targets_from_cfg(self):
+        cfg = self._base_cfg() | {"nn_non_negative_targets": set()}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.non_negative_targets == set()
+
+
+@pytest.mark.unit
+class TestBuildMultiHeadNetWithNestedHistory:
+    def _base_cfg(self):
+        return {
+            "nn_backbone_layers": [8, 4],
+            "nn_head_hidden": 4,
+            "nn_dropout": 0.0,
+        }
+
+    def test_builds_correct_type(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert isinstance(model, MultiHeadNetWithNestedHistory)
+
+    def test_forwards_nested_kwargs_from_cfg(self):
+        cfg = self._base_cfg() | {
+            "attn_kick_dim": 8,
+            "attn_d_model": 16,
+            "attn_positional_encoding": True,
+        }
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=10, targets=K_TARGETS
+        )
+        assert model.d_kick == 8
+        assert model.d_model == 16
+        assert model.pos_embedding.num_embeddings == 10
+
+    def test_forwards_non_negative_targets_from_cfg(self):
+        cfg = self._base_cfg() | {"nn_non_negative_targets": {"fg_yard_points"}}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.non_negative_targets == {"fg_yard_points"}

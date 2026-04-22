@@ -31,7 +31,7 @@ from sklearn.preprocessing import StandardScaler
 
 from QB.run_qb_pipeline import QB_CONFIG
 from shared.models import RidgeMultiTarget
-from shared.neural_net import MultiHeadNet
+from shared.neural_net import build_multihead_net
 from shared.pipeline import (
     _build_scheduler,
     _prepare_position_data,
@@ -120,13 +120,7 @@ def _train_models(seed=42):
     X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    nn_model = MultiHeadNet(
-        input_dim=X_train_s.shape[1],
-        target_names=targets,
-        backbone_layers=cfg["nn_backbone_layers"],
-        head_hidden=cfg["nn_head_hidden"],
-        dropout=cfg["nn_dropout"],
-    ).to(device)
+    nn_model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
     optimizer = torch.optim.AdamW(
         nn_model.parameters(), lr=cfg["nn_lr"], weight_decay=cfg["nn_weight_decay"]
     )
