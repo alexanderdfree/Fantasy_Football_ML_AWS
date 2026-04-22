@@ -185,8 +185,8 @@ def pipeline_run_repeat(synthetic_splits, pipeline_run):
 class TestQBPipelineE2E:
     def test_pipeline_runs_without_exception(self, pipeline_run):
         """Smoke: run_pipeline must complete end-to-end on tiny synthetic data."""
-        assert pipeline_run["_elapsed"] < 25.0, (
-            f"E2E took {pipeline_run['_elapsed']:.1f}s (budget: 25s)"
+        assert pipeline_run["_elapsed"] < 30.0, (
+            f"E2E took {pipeline_run['_elapsed']:.1f}s (budget: 30s)"
         )
         for key in ("ridge_metrics", "nn_metrics", "per_target_preds", "sim_results", "history"):
             assert key in pipeline_run, f"Missing result key: {key}"

@@ -2,7 +2,7 @@
 
 Usage:
     python tune_lgbm.py QB                     # tune one position
-    python tune_lgbm.py QB RB WR TE            # tune all LGBM-enabled positions
+    python tune_lgbm.py QB RB WR TE K          # tune all LGBM-enabled positions
     python tune_lgbm.py RB --n-trials 100      # more trials
     python tune_lgbm.py RB --timeout 3600      # time limit in seconds
     python tune_lgbm.py RB --print-best        # print best params from saved study
@@ -53,11 +53,23 @@ def _prepare_cv_folds(pos, cfg):
         (X_train, X_val, y_train_dict, y_val_dict, feature_cols) tuples.
     """
     print(f"\nPreparing CV folds for {pos}...")
-    train_df = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
-    val_df = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
-    full_df = pd.concat([train_df, val_df], ignore_index=True)
+    if pos == "K":
+        # Kickers use a PBP-reconstructed dataset (2015+), not the general splits.
+        from K.k_data import kicker_season_split, load_kicker_data
+        from K.k_features import compute_k_features
+        from K.k_targets import compute_k_targets
 
-    folds = expanding_window_folds(full_df)
+        k_df = load_kicker_data()
+        k_df = compute_k_targets(k_df)
+        compute_k_features(k_df)
+        train_df, val_df, _ = kicker_season_split(k_df)
+        full_df = pd.concat([train_df, val_df], ignore_index=True)
+        folds = expanding_window_folds(full_df, min_train_season=2015)
+    else:
+        train_df = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
+        val_df = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
+        full_df = pd.concat([train_df, val_df], ignore_index=True)
+        folds = expanding_window_folds(full_df)
     targets = cfg["targets"]
 
     folds_data = []
@@ -110,9 +122,8 @@ def _make_objective(folds_data, targets):
             model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
 
             preds = model.predict(X_val)
-            pred_total = sum(preds[t] for t in targets)
-            true_total = sum(y_val_dict[t] for t in targets)
-            total_mae = np.mean(np.abs(pred_total - true_total))
+            metrics = compute_target_metrics(y_val_dict, preds, targets)
+            total_mae = metrics["total"]["mae"]
             fold_maes.append(total_mae)
 
             # Report intermediate value for pruning
@@ -136,9 +147,19 @@ def _run_comparison(pos, cfg, best_params):
     print(f"  {pos} Before/After Comparison on Holdout Test (2025)")
     print(f"{'=' * 70}")
 
-    train_df = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
-    val_df = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
-    test_df = pd.read_parquet(f"{SPLITS_DIR}/test.parquet")
+    if pos == "K":
+        from K.k_data import kicker_season_split, load_kicker_data
+        from K.k_features import compute_k_features
+        from K.k_targets import compute_k_targets
+
+        k_df = load_kicker_data()
+        k_df = compute_k_targets(k_df)
+        compute_k_features(k_df)
+        train_df, val_df, test_df = kicker_season_split(k_df)
+    else:
+        train_df = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
+        val_df = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
+        test_df = pd.read_parquet(f"{SPLITS_DIR}/test.parquet")
 
     targets = cfg["targets"]
 

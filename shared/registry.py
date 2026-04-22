@@ -48,8 +48,7 @@ _POSITION_META = {
         "runner_module": "K.run_k_pipeline",
         "runner_fn": "run_k_pipeline",
         "cv_runner_fn": None,
-        # K_CONFIG is built inside run_k_pipeline() (local var), not exported.
-        "config_var": None,
+        "config_var": "K_CONFIG",
         "accepts_dataframes": False,
         "cpu_only": True,
     },
