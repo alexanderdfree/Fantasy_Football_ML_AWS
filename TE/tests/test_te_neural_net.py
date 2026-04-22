@@ -93,6 +93,9 @@ class TestMultiHeadNet:
         assert x.grad.shape == (4, 10)
 
     def test_gradient_near_zero(self):
+        # Seed BEFORE constructing the model so layer init (which consumes
+        # torch's RNG state) is deterministic across test-suite orderings.
+        torch.manual_seed(0)
         model = MultiHeadNet(
             input_dim=5,
             target_names=TE_TARGETS,
@@ -101,7 +104,6 @@ class TestMultiHeadNet:
             dropout=0.0,
         )
         model.train()
-        torch.manual_seed(0)
         x = torch.randn(4, 5) * 0.01
         x.requires_grad_(True)
         out = model(x)
