@@ -8,6 +8,12 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
+# uv defaults to hardlinking wheels from its cache into site-packages. The
+# BuildKit cache mount below lives on a different overlay than the image
+# root, so hardlinking always fails and falls back to copy — explicit copy
+# mode skips the failed probe and silences the warning in CI.
+ENV UV_LINK_MODE=copy
+
 # Single uv-install layer. Any change to requirements.txt invalidates exactly
 # one cached layer. The /root/.cache/uv mount persists wheel downloads across
 # builds (CI mirrors this via actions/cache in deploy.yml). Torch uses the
