@@ -100,11 +100,21 @@ jobs:
           -n auto --dist=loadfile
           ${{ steps.shard.outputs.cov }}
           --cov-report=xml:coverage-${{ matrix.shard }}.xml
+          --junitxml=junit-${{ matrix.shard }}.xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage-${{ matrix.shard }}.xml
+          flags: ${{ matrix.shard }}
+          fail_ci_if_error: false
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./junit-${{ matrix.shard }}.xml
           flags: ${{ matrix.shard }}
           fail_ci_if_error: false

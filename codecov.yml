@@ -1,0 +1,99 @@
+# https://docs.codecov.com/docs/codecov-yaml
+
+codecov:
+  require_ci_to_pass: true
+  notify:
+    wait_for_ci: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "60...90"
+
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        informational: true
+    patch:
+      default:
+        target: 80%
+        informational: true
+
+ignore:
+  - "**/tests/**"
+  - "**/conftest.py"
+  - "tests/"
+  - "benchmark.py"
+  - "**/*.ipynb"
+  - "scripts/"
+  - "docs/"
+
+comment:
+  layout: "reach, diff, flags, components, files"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+flag_management:
+  default_rules:
+    carryforward: true
+    statuses:
+      - type: project
+        target: auto
+        informational: true
+  individual_flags:
+    - name: QB
+      paths: [QB/]
+    - name: RB
+      paths: [RB/]
+    - name: WR
+      paths: [WR/]
+    - name: TE
+      paths: [TE/]
+    - name: K
+      paths: [K/]
+    - name: DST
+      paths: [DST/]
+    - name: shared
+      paths: [shared/, src/, app.py, batch/]
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        informational: true
+  individual_components:
+    - component_id: qb
+      name: QB
+      paths: ["QB/**"]
+    - component_id: rb
+      name: RB
+      paths: ["RB/**"]
+    - component_id: wr
+      name: WR
+      paths: ["WR/**"]
+    - component_id: te
+      name: TE
+      paths: ["TE/**"]
+    - component_id: k
+      name: K
+      paths: ["K/**"]
+    - component_id: dst
+      name: DST
+      paths: ["DST/**"]
+    - component_id: shared
+      name: Shared
+      paths: ["shared/**"]
+    - component_id: src
+      name: Src
+      paths: ["src/**"]
+    - component_id: batch
+      name: Batch
+      paths: ["batch/**"]
+    - component_id: app
+      name: App
+      paths: ["app.py"]
