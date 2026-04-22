@@ -315,7 +315,8 @@ else
     --desired-count 1 --launch-type FARGATE \
     --network-configuration "awsvpcConfiguration={subnets=[$(echo "$SUBNET_IDS" | tr ',' ' ' | sed 's/ /,/g')],securityGroups=[$ECS_SG_ID],assignPublicIp=ENABLED}" \
     --load-balancers "targetGroupArn=$TG_ARN,containerName=fantasy-predictor,containerPort=8000" \
-    --health-check-grace-period-seconds 120 >/dev/null
+    --health-check-grace-period-seconds 120 \
+    --availability-zone-rebalancing DISABLED >/dev/null
 fi
 
 log "Waiting for service to stabilize (can take 3-5 min)..."
