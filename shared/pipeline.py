@@ -30,9 +30,9 @@ from shared.evaluation import (
 )
 from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import (
-    MultiHeadNet,
-    MultiHeadNetWithHistory,
-    MultiHeadNetWithNestedHistory,
+    build_multihead_net,
+    build_multihead_net_with_history,
+    build_multihead_net_with_nested_history,
 )
 from shared.training import (
     MultiHeadHistoryTrainer,
@@ -361,15 +361,7 @@ def _train_nn(
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MultiHeadNet(
-        input_dim=X_train_s.shape[1],
-        target_names=targets,
-        backbone_layers=cfg["nn_backbone_layers"],
-        head_hidden=cfg["nn_head_hidden"],
-        dropout=cfg["nn_dropout"],
-        head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
-        non_negative_targets=cfg.get("nn_non_negative_targets"),
-    ).to(device)
+    model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -469,26 +461,11 @@ def _train_attention_nn(
 
     game_dim = hist_train.shape[2]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MultiHeadNetWithHistory(
+    model = build_multihead_net_with_history(
+        cfg,
         static_dim=X_train_s.shape[1],
         game_dim=game_dim,
-        target_names=targets,
-        backbone_layers=cfg["nn_backbone_layers"],
-        d_model=cfg.get("attn_d_model", 32),
-        n_attn_heads=cfg.get("attn_n_heads", 2),
-        head_hidden=cfg["nn_head_hidden"],
-        dropout=cfg["nn_dropout"],
-        head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
-        non_negative_targets=cfg.get("nn_non_negative_targets"),
-        project_kv=cfg.get("attn_project_kv", False),
-        use_positional_encoding=cfg.get("attn_positional_encoding", False),
-        max_seq_len=cfg.get("attn_max_seq_len", 17),
-        use_gated_fusion=cfg.get("attn_gated_fusion", False),
-        attn_dropout=cfg.get("attn_dropout", 0.0),
-        encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
-        gated_td=cfg.get("attn_gated_td", False),
-        td_gate_hidden=cfg.get("attn_td_gate_hidden", 16),
-        gated_td_targets=cfg.get("gated_td_targets"),
+        targets=targets,
     ).to(device)
 
     attn_lr = cfg.get("attn_lr", cfg["nn_lr"])
@@ -581,23 +558,12 @@ def _train_nested_attention_nn(
     kick_dim = hist_train.shape[-1]
     max_games = hist_train.shape[1]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MultiHeadNetWithNestedHistory(
+    model = build_multihead_net_with_nested_history(
+        cfg,
         static_dim=X_train_s.shape[1],
         kick_dim=kick_dim,
-        target_names=targets,
-        backbone_layers=cfg["nn_backbone_layers"],
-        d_kick=cfg.get("attn_kick_dim", 16),
-        d_model=cfg.get("attn_d_model", 32),
-        n_attn_heads=cfg.get("attn_n_heads", 2),
-        head_hidden=cfg["nn_head_hidden"],
-        dropout=cfg["nn_dropout"],
-        head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
-        non_negative_targets=cfg.get("nn_non_negative_targets"),
-        project_kv=cfg.get("attn_project_kv", False),
-        use_positional_encoding=cfg.get("attn_positional_encoding", False),
         max_games=max_games,
-        attn_dropout=cfg.get("attn_dropout", 0.0),
-        encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
+        targets=targets,
     ).to(device)
 
     attn_lr = cfg.get("attn_lr", cfg["nn_lr"])
@@ -1197,15 +1163,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = MultiHeadNet(
-            input_dim=X_train_s.shape[1],
-            target_names=targets,
-            backbone_layers=cfg["nn_backbone_layers"],
-            head_hidden=cfg["nn_head_hidden"],
-            dropout=cfg["nn_dropout"],
-            head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
-            non_negative_targets=cfg.get("nn_non_negative_targets"),
-        ).to(device)
+        model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
 
         optimizer = torch.optim.AdamW(
             model.parameters(),
