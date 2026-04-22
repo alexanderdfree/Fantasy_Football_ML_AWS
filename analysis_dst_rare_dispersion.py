@@ -23,7 +23,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 import math
 
 import numpy as np
-import pandas as pd
 
 from DST.dst_data import build_dst_data
 from src.config import TRAIN_SEASONS
@@ -103,8 +102,10 @@ def main() -> None:
     train = df[df["season"].isin(TRAIN_SEASONS)].copy()
     print(f"  n_team_games (train) = {len(train):,}\n")
 
-    print(f"{'target':<20} {'n':>6} {'mean':>8} {'var':>8} {'disp':>6} "
-          f"{'P(0)obs':>8} {'P(0)poi':>8} {'zExc':>7} {'P>=1':>7} {'P>=2':>7} {'P>=3':>7} {'max':>5}")
+    print(
+        f"{'target':<20} {'n':>6} {'mean':>8} {'var':>8} {'disp':>6} "
+        f"{'P(0)obs':>8} {'P(0)poi':>8} {'zExc':>7} {'P>=1':>7} {'P>=2':>7} {'P>=3':>7} {'max':>5}"
+    )
     print("-" * 110)
     rows = []
     for t in RARE_TARGETS:

@@ -324,7 +324,7 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
             <div class="section-header">Training Loop</div>
             <ul class="arch-bullets">
                 <li><strong>Optimizer:</strong> <code>AdamW</code> with per-position LR and weight decay.</li>
-                <li><strong>Loss:</strong> <code>MultiTargetLoss</code> — sum of per-target Huber + <code>w_total · Huber(total)</code> + optional BCE on the TD gate logit.</li>
+                <li><strong>Loss:</strong> <code>MultiTargetLoss</code> — per-target Huber or Poisson NLL (DST's four rare counts) + optional BCE on the TD gate logit.</li>
                 <li><strong>Scaling:</strong> <code>StandardScaler</code> fit on train, applied and clipped to <code>[-4, 4]</code>.</li>
                 <li><strong>Gradient clipping:</strong> <code>clip_grad_norm_(max_norm=1.0)</code> each step.</li>
                 <li><strong>Schedulers:</strong> <code>CosineAnnealingWarmRestarts</code>, <code>OneCycleLR</code>, or <code>ReduceLROnPlateau</code> (per-position).</li>
