@@ -516,29 +516,18 @@ df.loc[carries_roll == 0, "rushing_epa_per_attempt_L3"] = 0
 
 ---
 
-#### Feature 7: `first_down_rate_L3` *(NEW)*
+#### Feature 7: `rushing_first_down_rate_L3` / `receiving_first_down_rate_L3`
 
 **Rationale**: First down rate = chain-moving ability = staying on the field. An RB who converts first downs sustains drives, which leads to more snaps, more touches, and more scoring opportunities in the same game. `rushing_first_downs` and `receiving_first_downs` are directly available in `import_weekly_data()`. This captures drive-sustaining value that yardage alone misses — a back who grinds 4-yard runs on 3rd-and-3 is more valuable to sustained drives (and therefore to continued usage) than one who rips 8-yard runs on 1st-and-10 but can't convert.
 
-**Formula**: `rolling_sum(rushing_first_downs + receiving_first_downs, L3) / rolling_sum(carries + receptions, L3)` (both shifted)
+**Current implementation**: the original single composite `first_down_rate_L3`
+was split into two per-surface rates (rushing and receiving) so the rushing and
+receiving heads see a cleanly attributable signal. See
+`RB/rb_config.py:RB_SPECIFIC_FEATURES` for the authoritative list.
 
-```python
-df["_total_first_downs"] = (
-    df["rushing_first_downs"].fillna(0) + df["receiving_first_downs"].fillna(0)
-)
-df["_total_touches"] = df["carries"].fillna(0) + df["receptions"].fillna(0)
-
-first_downs_roll = df.groupby(["player_id", "season"])["_total_first_downs"].transform(
-    lambda x: x.shift(1).rolling(3, min_periods=1).sum()
-)
-touches_roll = df.groupby(["player_id", "season"])["_total_touches"].transform(
-    lambda x: x.shift(1).rolling(3, min_periods=1).sum()
-)
-df["first_down_rate_L3"] = (first_downs_roll / touches_roll).fillna(0)
-df.loc[touches_roll == 0, "first_down_rate_L3"] = 0
-
-df.drop(columns=["_total_first_downs", "_total_touches"], inplace=True)
-```
+**Formulas**:
+- `rushing_first_down_rate_L3 = rolling_sum(rushing_first_downs, L3) / rolling_sum(carries, L3)` (shifted)
+- `receiving_first_down_rate_L3 = rolling_sum(receiving_first_downs, L3) / rolling_sum(targets, L3)` (shifted)
 
 ---
 
@@ -573,7 +562,8 @@ df.loc[rec_roll == 0, "yac_per_reception_L3"] = 0
 | `team_rb_carry_share_L3` | `carry_share_L3` (general) | RB-only denominator vs all-position team denominator |
 | `team_rb_target_share_L3` | `target_share_L3` (general) | RB-only denominator vs all-position team denominator |
 | `rushing_epa_per_attempt_L3` | `yards_per_carry_L3` (~0.6 corr) | Context-adjusted: captures down/distance/field-position value |
-| `first_down_rate_L3` | `rolling_mean_rushing_yards` (~0.4 corr) | Conversion-specific signal; yards don't distinguish 1st-down vs not |
+| `rushing_first_down_rate_L3` | `rolling_mean_rushing_yards` (~0.4 corr) | Conversion-specific signal; yards don't distinguish 1st-down vs not |
+| `receiving_first_down_rate_L3` | `rolling_mean_receiving_yards` (~0.3 corr) | Drive-sustaining pass-catching, not just yardage |
 | `yac_per_reception_L3` | `rolling_mean_receiving_yards` (~0.5 corr) | Post-catch creation; total rec yards includes air yards component |
 
 ---
@@ -667,7 +657,8 @@ def fill_rb_nans(train_df, val_df, test_df, rb_feature_cols):
 | `team_rb_carry_share_L3` | 0 team RB carries (bye-adjacent) | Train mean (~0.45) |
 | `team_rb_target_share_L3` | 0 team RB targets | Train mean (~0.35) |
 | `rushing_epa_per_attempt_L3` | 0 carries in L3 window | Train mean (~0.0) |
-| `first_down_rate_L3` | 0 touches in L3 window | Train mean (~0.22) |
+| `rushing_first_down_rate_L3` | 0 carries in L3 window | Train mean (~0.22) |
+| `receiving_first_down_rate_L3` | 0 targets in L3 window | Train mean (~0.33) |
 | `yac_per_reception_L3` | 0 receptions in L3 window | Train mean (~5.5) |
 
 ---
@@ -1158,14 +1149,24 @@ class RBMultiHeadTrainer:
 ```python
 # In RB/rb_config.py
 
-# === RB Model Config ===
-RB_TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
+# === RB Raw-Stat Targets ===
+RB_TARGETS = [
+    "rushing_tds",
+    "receiving_tds",
+    "rushing_yards",
+    "receiving_yards",
+    "receptions",
+    "fumbles_lost",
+]
 
 # Ridge (per-target alpha grids, tuned via logspace search)
 RB_RIDGE_ALPHA_GRIDS = {
-    "rushing_floor":   np.logspace(-2, 3, 15),
-    "receiving_floor": np.logspace(-2, 2.5, 20),
-    "td_points":       np.logspace(-1, 4, 15),
+    "rushing_tds":     np.logspace(-1, 4, 15),
+    "receiving_tds":   np.logspace(-1, 4, 15),
+    "rushing_yards":   np.logspace(-2, 3, 15),
+    "receiving_yards": np.logspace(-2, 3, 15),
+    "receptions":      np.logspace(-2, 2.5, 20),
+    "fumbles_lost":    np.logspace(-1, 4, 15),
 }
 RB_RIDGE_PCA_COMPONENTS = 80  # PCR: retains 99.8% variance, drops condition number
 
@@ -1175,7 +1176,8 @@ RB_TD_MODEL_TYPE = "gated_ordinal"
 # Neural Net
 RB_NN_BACKBONE_LAYERS = [128, 64]
 RB_NN_HEAD_HIDDEN = 48
-RB_NN_HEAD_HIDDEN_OVERRIDES = {"td_points": 64}  # Larger head for sparse TD signal
+# Larger heads for zero-inflated count targets (both TD columns).
+RB_NN_HEAD_HIDDEN_OVERRIDES = {"rushing_tds": 64, "receiving_tds": 64}
 RB_NN_DROPOUT = 0.15
 RB_NN_LR = 1e-3
 RB_NN_WEIGHT_DECAY = 5e-5
@@ -1183,12 +1185,28 @@ RB_NN_EPOCHS = 300
 RB_NN_BATCH_SIZE = 256
 RB_NN_PATIENCE = 30
 
-# Loss weights
-RB_LOSS_WEIGHTS = {"rushing_floor": 1.2, "receiving_floor": 1.0, "td_points": 2.0}
-RB_LOSS_W_TOTAL = 0.25
+# Per-target weights ≈ 2.0/δ so every head contributes comparable gradient
+# magnitude during joint training.
+RB_LOSS_WEIGHTS = {
+    "rushing_tds": 4.0,
+    "receiving_tds": 4.0,
+    "rushing_yards": 0.133,
+    "receiving_yards": 0.133,
+    "receptions": 1.0,
+    "fumbles_lost": 4.0,
+}
+RB_LOSS_W_TOTAL = 1.0
 
-# Huber deltas (per-target MSE-to-MAE transition thresholds)
-RB_HUBER_DELTAS = {"rushing_floor": 2.0, "receiving_floor": 2.5, "td_points": 2.0}
+# Huber deltas (per-target, raw-stat units)
+RB_HUBER_DELTAS = {
+    "rushing_tds": 0.5,
+    "receiving_tds": 0.5,
+    "rushing_yards": 15.0,
+    "receiving_yards": 15.0,
+    "receptions": 2.0,
+    "fumbles_lost": 0.5,
+    "total": 3.0,  # aggregated fantasy-points total (RB scale)
+}
 
 # LR Scheduler (CosineWarmRestarts)
 RB_SCHEDULER_TYPE = "cosine_warm_restarts"
@@ -1196,14 +1214,37 @@ RB_COSINE_T0 = 40
 RB_COSINE_T_MULT = 2
 RB_COSINE_ETA_MIN = 1e-5
 
-# Attention NN (game history variant)
+# === Attention NN (game history variant) ===
 RB_TRAIN_ATTENTION_NN = True
-RB_ATTN_D_MODEL = 32
+RB_ATTN_D_MODEL = 32             # proven baseline; larger overfits on ~15K samples
 RB_ATTN_N_HEADS = 2
-RB_ATTN_GATED_TD = True  # Sigmoid gate P(TD>0) × Softplus E[TD|TD>0]
+RB_ATTN_ENCODER_HIDDEN_DIM = 32  # 2-layer nonlinear game encoder
+RB_ATTN_MAX_SEQ_LEN = 17
+RB_ATTN_PROJECT_KV = False       # K/V projections disabled at d_model=32
+RB_ATTN_POSITIONAL_ENCODING = True
+RB_ATTN_GATED_FUSION = False
+RB_ATTN_DROPOUT = 0.05
+RB_ATTN_LR = 1e-3
+RB_ATTN_WEIGHT_DECAY = 5e-5
+RB_ATTN_BATCH_SIZE = 256
+RB_ATTN_PATIENCE = 35
+# Static-feature allowlist: only categories not already represented by the
+# per-game history tensor flow into the attention NN's static branch.
+RB_ATTN_STATIC_CATEGORIES = [
+    "prior_season", "matchup", "defense", "contextual", "weather_vegas",
+]
+RB_ATTN_STATIC_FEATURES = [
+    c for cat in RB_ATTN_STATIC_CATEGORIES for c in RB_INCLUDE_FEATURES[cat]
+]
+# Dual gate: one sigmoid gate per TD target (rushing + receiving).
+RB_ATTN_GATED_TD = True
+RB_GATED_TD_TARGETS = ["rushing_tds", "receiving_tds"]
+RB_ATTN_TD_GATE_HIDDEN = 16
+RB_ATTN_TD_GATE_WEIGHT = 1.0
 
-# LightGBM (Optuna-tuned, 50 trials, CV MAE 4.51)
+# LightGBM (Optuna-tuned, 50 trials)
 RB_TRAIN_LIGHTGBM = True
+# TODO - alex fill in: refresh CV MAE headline after retrain.
 ```
 
 ### 6.5 Training Script Initialization
