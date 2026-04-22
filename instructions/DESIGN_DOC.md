@@ -96,7 +96,8 @@ Final-Project/
 │   │   └── engineer.py            # All feature engineering logic
 │   ├── models/
 │   │   ├── baseline.py            # Constant-prediction baseline
-│   │   └── linear.py              # Scikit-learn Ridge Regression
+│   │   ├── linear.py              # Scikit-learn Ridge Regression
+│   │   └── neural_net.py          # Legacy NN module (see shared/neural_net.py)
 │   ├── training/
 │   │   └── trainer.py             # Legacy trainer (see shared/training.py)
 │   └── evaluation/
@@ -104,16 +105,18 @@ Final-Project/
 │       └── backtest.py            # Season-long fantasy simulation
 │
 ├── shared/                        # Generic multi-target infrastructure
-│   ├── neural_net.py              # MultiHeadNet, AttentionPool, GatedTDHead
+│   ├── neural_net.py              # MultiHeadNet, AttentionPool, GatedTDHead, MultiHeadNetWithHistory
 │   ├── models.py                  # RidgeMultiTarget, LightGBMMultiTarget, TwoStageRidge
 │   ├── training.py                # MultiHeadTrainer, MultiTargetLoss, dataloaders, schedulers
 │   ├── pipeline.py                # Position pipeline template (_train_nn, _train_attention_nn, _train_ridge, _train_lgbm)
 │   ├── registry.py                # Position runner dispatch
+│   ├── aggregate_targets.py       # Raw-stat predictions -> fantasy points (per position)
 │   ├── evaluation.py              # Evaluation utilities
 │   ├── error_analysis.py          # Residual + failure-case tooling
 │   ├── backtest.py                # Simulation/evaluation helpers
 │   ├── benchmark_utils.py         # Shared benchmark I/O (history append, formatting)
 │   ├── model_sync.py              # Pull/push model artifacts from/to S3
+│   ├── artifact_integrity.py      # Artifact-hash + schema validation
 │   ├── utils.py                   # Small cross-cutting helpers
 │   ├── weather_features.py        # Vegas odds + venue/weather feature engineering
 │   └── tests/                     # Shared-infra unit/integration tests
@@ -163,8 +166,16 @@ Final-Project/
 │   └── css/style.css              # CSS styling
 │
 ├── tests/                         # Root-level tests (cross-position, contract)
+│   ├── conftest.py
 │   ├── test_feature_leakage.py
 │   ├── test_loader_contract.py
+│   ├── test_aggregate_targets.py  # Raw-stat to fantasy-point aggregation
+│   ├── test_app.py                # Flask dashboard + API smoke tests
+│   ├── test_artifact_integrity.py # Model artifact hash/schema checks
+│   ├── test_attn_static_columns.py # Per-position ATTN_STATIC_FEATURES allowlist
+│   ├── test_baseline_alignment.py
+│   ├── test_pipeline_e2e.py       # Full-pipeline integration
+│   ├── test_reproducibility.py
 │   ├── _pipeline_e2e_utils.py
 │   └── fixtures/                  # Shared fixtures (README.md has regeneration instructions)
 │
@@ -562,18 +573,29 @@ This is the most critical module. The model is only as good as its features.
 #     def forward(self, x) -> dict:
 #         # Returns dict with per-target predictions + "total"
 #
-# Example target decompositions:
-#   QB: ["passing_floor", "rushing_floor", "td_points"]
-#   RB: ["rushing_floor", "receiving_floor", "td_points"]
-#   WR: ["receiving_floor", "rushing_floor", "td_points"]
-#   TE: ["receiving_floor", "rushing_floor", "td_points"]
-#   K:  ["fg_points", "pat_points"]
-#   DST: ["defensive_scoring", "td_points", "pts_allowed_bonus"]
+# Example target decompositions (raw NFL stats — fantasy points are
+# computed post-prediction via shared.aggregate_targets):
+#   QB: ["passing_yards", "rushing_yards", "passing_tds", "rushing_tds",
+#        "interceptions", "fumbles_lost"]
+#   RB: ["rushing_tds", "receiving_tds", "rushing_yards", "receiving_yards",
+#        "receptions", "fumbles_lost"]
+#        (rushing_tds and receiving_tds each wrapped by GatedTDHead)
+#   WR: ["receiving_tds", "receiving_yards", "receptions", "fumbles_lost"]
+#        (receiving_tds wrapped by GatedTDHead)
+#   TE: ["receiving_tds", "receiving_yards", "receptions", "fumbles_lost"]
+#        (receiving_tds wrapped by GatedTDHead)
+#   K:  ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
+#   DST: ["def_sacks", "def_ints", "def_fumble_rec", "def_fumbles_forced",
+#         "def_safeties", "def_tds", "def_blocked_kicks",
+#         "special_teams_tds", "points_allowed", "yards_allowed"]
 #
 # clamp(min=0) ensures non-negativity with exact zeros (replaced
 # Softplus, which created a ~0.69/head floor — see TODO.md [FIXED]).
-# The non_negative_targets parameter controls which heads are clamped,
-# allowing targets like DST pts_allowed_bonus to go negative.
+# The non_negative_targets parameter controls which heads are clamped.
+# Previously DST's pts_allowed_bonus head could go negative (range
+# -4 to +10); after the DST raw-stat migration (commit cc0c627),
+# DST predicts 10 raw non-negative stats and non_negative_targets for
+# DST is correspondingly the full target set.
 #
 # Backward compatibility: load_state_dict() handles old naming convention
 # (e.g., "rushing_head" -> "heads.rushing_floor").
@@ -767,7 +789,7 @@ These are decisions you should explain in the technical walkthrough video and RE
 
 4. **Huber loss vs MSE:** Huber loss is robust to outlier games (e.g., a RB scoring 40+ in a blowout). Per-target deltas allow different thresholds — higher delta for TD points (more volatile) makes the loss more MAE-like for that target.
 
-5. **Clamp for non-negativity (replaced Softplus):** Fantasy point components are non-negative. Softplus was initially chosen for differentiability, but `softplus(0) ≈ 0.693` per head created a ~2 point floor across 3 heads (no player could be predicted below ~2 pts). Replaced with `torch.clamp(min=0)` which allows exact zeros. A `non_negative_targets` parameter controls which heads are clamped, so DST's `pts_allowed_bonus` (range: -4 to +10) can go negative.
+5. **Clamp for non-negativity (replaced Softplus):** Fantasy point components are non-negative. Softplus was initially chosen for differentiability, but `softplus(0) ≈ 0.693` per head created a ~2 point floor across 3 heads (no player could be predicted below ~2 pts). Replaced with `torch.clamp(min=0)` which allows exact zeros. A `non_negative_targets` parameter preserves per-head control over clamping — historically DST's `pts_allowed_bonus` head (range: -4 to +10) was excluded from the clamp. After the DST raw-stat migration (commit `cc0c627`), DST now predicts 10 non-negative raw stats and every current head is clamped, but the per-head kwarg remains in place so any future head with a legitimate negative range can bypass the clamp without changing the architecture.
 
 6. **Multi-format scoring:** The system computes fantasy points for Standard (0 PPR), Half-PPR (0.5), and Full PPR (1.0) formats. The only difference is the reception weight. All three columns are computed during preprocessing, enabling format-specific modeling and comparison. Full PPR remains the default.
 
