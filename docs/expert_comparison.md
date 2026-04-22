@@ -12,7 +12,7 @@ This document compares our model's weekly fantasy point predictions against publ
 - **Primary metric:** MAE (Mean Absolute Error) on total weekly fantasy points
 - **Player pool:** All rostered players at each position with recorded game stats
 - **Prediction style:** Pure pre-game projections using only data available before kickoff
-- **Architecture:** Multi-head neural network (shared backbone + per-target heads) and Ridge regression (separate model per target), trained per position (QB, RB, WR, TE)
+- **Architecture:** Multi-head neural network (shared backbone + per-target heads) and Ridge regression (separate model per target), trained per position (QB, RB, WR, TE, K, DST). K and DST results are not yet in the expert-comparison table below — see the K/DST note under "Our Model Performance".
 
 **Important caveats on comparability:**
 - Expert sites and our model were not evaluated on identical player pools or seasons. Expert accuracy rankings (e.g., from Fantasy Football Analytics) cover 2019-2023 and use curated pools (top 20 QBs, top 50 RBs/WRs, top 20 TEs), while our test set covers all 2025 rostered players.
@@ -32,7 +32,9 @@ From `benchmark_results.json`, evaluated on the 2025 test season:
 | **Ridge Regression** | 6.826 | 0.099 | 3.784 | 0.551 | 4.938 | 0.295 |
 | **Best per position** | 6.803 (NN) | — | 3.784 (Ridge) | — | 4.233 (NN) | — |
 
-> Benchmarks pending retrain on new raw-stat targets — total-point MAEs above were produced against the prior `*_floor` / `td_points` decomposition. Aggregator-computed fantasy-point totals should land close to these values on the first retrain; per-target MAE will be reported in native stat units going forward (yards, TDs, receptions). The historical per-component numbers below are kept for reference, not as live targets.
+*Historical decomposition — QB/RB/WR rows above were produced under the prior `*_floor` / `td_points` target decomposition (see ADR-001 D2). Under the current raw-stat target decomposition, per-target MAE is reported in native stat units (yards, TDs, receptions, etc.) rather than fantasy-point components; aggregator-computed fantasy-point totals should land close to these values on the first full retrain.*
+
+**K and DST**: Results not yet in the expert-comparison table. Both positions received attention-NN variants in commits `801b61a` (K, nested per-kick history) and `cc0c627` (DST, attention + 10 raw-stat targets) — TODO - alex fill in: K/DST MAE + R² comparisons against academic/expert baselines after next full EC2 retrain.
 
 Per-target MAE breakdown (Neural Net, historical decomposition):
 
@@ -96,11 +98,13 @@ Fantasy Projection Lab and Fantasy Football Analytics provide general benchmarks
 
 ## Position-by-Position Analysis
 
+> Per-target numbers in the QB/RB/WR subsections below reference the historical `*_floor` / `td_points` decomposition. Under the current raw-stat targets, the TD signal for each position lives in `passing_tds` / `rushing_tds` / `receiving_tds` (as applicable), and yardage/receptions are reported in native stat units.
+
 ### Quarterbacks
 
 **Our best MAE: 6.803 (NN)** --- falls within the 5.0-7.0 "established systems" range.
 
-QBs are generally considered the most predictable position due to consistent volume (30+ pass attempts per game), yet our R² is low (0.059-0.099). The per-target breakdown reveals why: `td_points` MAE of 4.249 (historical decomposition — under the new raw-stat targets the TD signal is split into `passing_tds` and `rushing_tds`) dominates total error. Touchdown scoring is inherently high-variance (a QB throwing 1 vs. 3 TDs swings the score by 8 fantasy points), and this volatility limits any model's predictive power on a weekly basis.
+QBs are generally considered the most predictable position due to consistent volume (30+ pass attempts per game), yet our R² is low (0.059-0.099). The per-target breakdown reveals why: `td_points` MAE of 4.249 dominates total error. Touchdown scoring is inherently high-variance (a QB throwing 1 vs. 3 TDs swings the score by 8 fantasy points), and this volatility limits any model's predictive power on a weekly basis.
 
 The deep learning NLP study (arXiv:2111.02874) reported a comparable RMSE of 6.78 using ESPN text features, suggesting our MAE of 6.80 is in line with neural network approaches in the literature. The low R² likely reflects our broader player pool (all rostered QBs vs. starters-only in most studies).
 
@@ -111,7 +115,7 @@ The deep learning NLP study (arXiv:2111.02874) reported a comparable RMSE of 6.7
 This is our strongest position model. RBs are the most volatile fantasy position due to game-script dependence and TD variance, making an MAE below 4.0 a strong result. For context:
 - The k-NN academic benchmark reported RB RMSE of 4.19, and our MAE of 3.78 is below that (MAE <= RMSE by definition).
 - Our R² of 0.551 (Ridge) falls within the 0.53-0.61 range reported by Kapania's multi-season Stanford study.
-- The balanced per-target error on the historical decomposition (rushing floor: 1.69, receiving floor: 1.71, TDs: 2.01) indicates the model captures both rushing and receiving production effectively. Under the new raw-stat targets (`rushing_yards`, `receiving_yards`, `receptions`, `rushing_tds`, `receiving_tds`, `fumbles_lost`), the same signal is present but reported in native stat units.
+- The balanced per-target error on the historical decomposition (rushing floor: 1.69, receiving floor: 1.71, TDs: 2.01) indicates the model captures both rushing and receiving production effectively. Under the new raw-stat targets (`rushing_yards`, `receiving_yards`, `receptions`, `rushing_tds`, `receiving_tds`, `fumbles_lost`), the same signal lives in the per-stat heads.
 
 ### Wide Receivers
 
@@ -130,9 +134,11 @@ The NN outperforms Ridge by 0.705 MAE points (4.233 vs. 4.938), the largest arch
 
 2. **WR model is competitive and validates the neural network architecture:** MAE of 4.23 clears the competitive threshold, and the NN's 0.7-point advantage over Ridge is the clearest evidence that non-linear modeling adds value for this position.
 
-3. **QB model is in range but has structural limitations:** MAE of 6.80 matches the deep learning NLP study (RMSE 6.78) but the near-zero R² indicates the model struggles to differentiate between QBs week-to-week. The fundamental bottleneck is TD variance (4.25 MAE on the historical `td_points` target — under the new raw-stat targets that signal lives in `passing_tds` + `rushing_tds`).
+3. **QB model is in range but has structural limitations:** MAE of 6.80 matches the deep learning NLP study (RMSE 6.78) but the near-zero R² indicates the model struggles to differentiate between QBs week-to-week. The fundamental bottleneck is TD variance (4.25 MAE on the historical `td_points` target).
 
 4. **No public expert site publishes raw MAE for direct comparison:** Industry accuracy tracking (FantasyPros, FFA) uses relative rankings, not absolute error metrics. This makes exact head-to-head comparison impossible, but our results fall within the ranges where professional projection systems operate.
+
+5. **K and DST attention-NN results pending:** Both positions received attention-based architectures in commits `801b61a` (K) and `cc0c627` (DST), but benchmark numbers in this document pre-date that work — TODO - alex fill in: K/DST MAE + R² against academic/expert baselines after next full EC2 retrain.
 
 ---
 
