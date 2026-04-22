@@ -22,6 +22,7 @@ import torch
 from sklearn.preprocessing import StandardScaler
 
 from RB.rb_config import RB_LOSS_WEIGHTS, RB_TARGETS
+from shared.feature_build import scale_and_clip
 from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
 from shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
@@ -139,8 +140,8 @@ def trained_nn(regression_data):
     X_train, X_test, y_train, y_test = regression_data
 
     scaler = StandardScaler()
-    X_train_s = np.clip(scaler.fit_transform(X_train), -4, 4).astype(np.float32)
-    X_test_s = np.clip(scaler.transform(X_test), -4, 4).astype(np.float32)
+    X_train_s = scale_and_clip(scaler, X_train, fit=True).astype(np.float32)
+    X_test_s = scale_and_clip(scaler, X_test).astype(np.float32)
 
     rng = np.random.default_rng(1)
     idx = rng.permutation(X_train_s.shape[0])

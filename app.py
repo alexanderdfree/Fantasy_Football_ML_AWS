@@ -44,11 +44,12 @@ from shared.artifact_integrity import (
     read_scaler_meta,
     unwrap_state_dict,
 )
+from shared.feature_build import build_position_features, scale_and_clip
 from shared.model_sync import sync_data_from_s3, sync_models_from_s3
 from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory, MultiHeadNetWithNestedHistory
 from shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
-from shared.weather_features import WEATHER_FEATURES_ALL, merge_schedule_features
+from shared.weather_features import WEATHER_FEATURES_ALL
 from src.config import SCORING_HALF_PPR, SCORING_STANDARD, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 from src.data.loader import compute_fantasy_points
 from src.evaluation.metrics import compute_metrics, compute_positional_metrics
@@ -350,17 +351,11 @@ def _apply_position_models(train, val, test, pos, results):
     pos_val = reg["compute_targets_fn"](pos_val)
     pos_test = reg["compute_targets_fn"](pos_test)
 
-    for split_name, _df in zip(
-        ["train", "val", "test"], [pos_train, pos_val, pos_test], strict=True
-    ):
-        merge_schedule_features(_df, label=split_name)
-
-    pos_train, pos_val, pos_test = reg["add_features_fn"](pos_train, pos_val, pos_test)
-    pos_train, pos_val, pos_test = reg["fill_nans_fn"](
-        pos_train, pos_val, pos_test, reg["specific_features"]
+    feature_cols = reg["get_feature_columns_fn"]()
+    pos_train, pos_val, pos_test = build_position_features(
+        pos_train, pos_val, pos_test, reg, feature_cols
     )
 
-    feature_cols = reg["get_feature_columns_fn"]()
     # DST still applies a post-hoc adjustment (defensive TDs + safeties); K now
     # encodes its miss penalties as signed raw-value heads (see target_signs).
     # QB/RB/WR/TE aggregate raw-stat preds via reg["aggregate_fn"].
@@ -370,16 +365,6 @@ def _apply_position_models(train, val, test, pos, results):
         adj_values = adj.values
     aggregate_fn = reg.get("aggregate_fn")
     target_signs = reg.get("target_signs")
-
-    # Prepare features — fill missing columns with 0 (must match training dimension)
-    missing_cols = [c for c in feature_cols if c not in pos_train.columns]
-    if missing_cols:
-        print(f"  WARNING: {pos} filling {len(missing_cols)} missing feature cols with 0")
-        for col in missing_cols:
-            for df in [pos_train, pos_val, pos_test]:
-                df[col] = 0.0
-    for df in [pos_train, pos_val, pos_test]:
-        df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)
 
@@ -423,7 +408,7 @@ def _apply_position_models(train, val, test, pos, results):
             scaler_label="nn_scaler",
         )
 
-        X_test_scaled = np.clip(nn_scaler.transform(X_test_pos), -4, 4)
+        X_test_scaled = scale_and_clip(nn_scaler, X_test_pos)
         nn_model = MultiHeadNet(
             input_dim=len(feature_cols), target_names=targets, **reg["nn_kwargs"]
         ).to(device)
@@ -475,7 +460,7 @@ def _apply_position_models(train, val, test, pos, results):
                 scaler_label="attention_nn_scaler",
             )
 
-            X_test_attn_scaled = np.clip(attn_scaler.transform(X_test_attn), -4, 4)
+            X_test_attn_scaled = scale_and_clip(attn_scaler, X_test_attn)
 
             structure = reg.get("attn_history_structure", "flat")
             if structure == "nested":

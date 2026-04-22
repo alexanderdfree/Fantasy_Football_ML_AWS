@@ -28,6 +28,7 @@ from shared.evaluation import (
     plot_pred_vs_actual,
     print_comparison_table,
 )
+from shared.feature_build import build_position_features, scale_and_clip
 from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import (
     build_multihead_net,
@@ -45,7 +46,6 @@ from shared.training import (
     plot_training_curves,
 )
 from shared.utils import seed_everything, timed
-from shared.weather_features import merge_schedule_features
 from src.config import MIN_GAMES_PER_SEASON, SPLITS_DIR, TRAIN_SEASONS, VAL_SEASONS
 from src.data.split import expanding_window_folds
 from src.evaluation.metrics import compute_metrics
@@ -238,51 +238,18 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
     )
     print(f"  {pos} splits: {sizes}")
 
-    # Merge schedule-derived weather/Vegas features before target & feature computation
-    split_labels = ["train", "val", "test"][: len(dfs_for_features)]
-    for split_name, _df in zip(split_labels, dfs_for_features, strict=False):
-        merge_schedule_features(_df, label=split_name)
-
-    # Compute targets
+    # Compute targets — raw-stat only, does not depend on schedule features,
+    # so we do it before the schedule merge inside build_position_features.
     targets = cfg["targets"]
     pos_train = cfg["compute_targets_fn"](pos_train)
     pos_val = cfg["compute_targets_fn"](pos_val)
     if pos_test is not None:
         pos_test = cfg["compute_targets_fn"](pos_test)
 
-    # Add position-specific features
-    if pos_test is not None:
-        pos_train, pos_val, pos_test = cfg["add_features_fn"](pos_train, pos_val, pos_test)
-        pos_train, pos_val, pos_test = cfg["fill_nans_fn"](
-            pos_train, pos_val, pos_test, cfg["specific_features"]
-        )
-    else:
-        empty = pos_val.iloc[:0].copy()
-        pos_train, pos_val, _dummy = cfg["add_features_fn"](pos_train, pos_val, empty)
-        pos_train, pos_val, _dummy = cfg["fill_nans_fn"](
-            pos_train, pos_val, empty, cfg["specific_features"]
-        )
-
-    # Build feature arrays
     feature_cols = cfg["get_feature_columns_fn"]()
-    all_dfs = [pos_train, pos_val] + ([pos_test] if pos_test is not None else [])
-    missing_cols = [c for c in feature_cols if c not in pos_train.columns]
-    if missing_cols:
-        print(f"  WARNING: {len(missing_cols)} feature columns missing, filling with 0")
-        # Concat all missing cols as one block per df to avoid
-        # PerformanceWarning: DataFrame is highly fragmented.
-        filled = [
-            pd.concat([df, pd.DataFrame(0.0, index=df.index, columns=missing_cols)], axis=1)
-            for df in all_dfs
-        ]
-        pos_train = filled[0]
-        pos_val = filled[1]
-        if pos_test is not None:
-            pos_test = filled[2]
-        all_dfs = filled
-
-    for df in all_dfs:
-        df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
+    pos_train, pos_val, pos_test = build_position_features(
+        pos_train, pos_val, pos_test, cfg, feature_cols
+    )
 
     X_train = pos_train[feature_cols].values.astype(np.float32)
     X_val = pos_val[feature_cols].values.astype(np.float32)
@@ -348,9 +315,9 @@ def _train_nn(
     seed_everything(seed)
 
     nn_scaler = StandardScaler()
-    X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
-    X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
-    X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
+    X_train_s = scale_and_clip(nn_scaler, X_train, fit=True)
+    X_val_s = scale_and_clip(nn_scaler, X_val)
+    X_test_s = scale_and_clip(nn_scaler, X_test)
 
     train_loader, val_loader = make_dataloaders(
         X_train_s,
@@ -435,9 +402,9 @@ def _train_attention_nn(
         print(f"  Attention static features: {len(col_idx)}/{len(feature_cols)} (filtered)")
 
     nn_scaler = StandardScaler()
-    X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
-    X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
-    X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
+    X_train_s = scale_and_clip(nn_scaler, X_train, fit=True)
+    X_val_s = scale_and_clip(nn_scaler, X_val)
+    X_test_s = scale_and_clip(nn_scaler, X_test)
 
     # Convert history arrays to lists-of-arrays for the variable-length dataset
     def _to_history_list(hist_arr, mask_arr):
@@ -536,9 +503,9 @@ def _train_nested_attention_nn(
     seed_everything(seed)
 
     nn_scaler = StandardScaler()
-    X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
-    X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
-    X_test_s = np.clip(nn_scaler.transform(X_test), -4, 4)
+    X_train_s = scale_and_clip(nn_scaler, X_train, fit=True)
+    X_val_s = scale_and_clip(nn_scaler, X_val)
+    X_test_s = scale_and_clip(nn_scaler, X_test)
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
     train_loader, val_loader = make_nested_kick_dataloaders(
@@ -1151,8 +1118,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
 
         # NN training for this fold
         nn_scaler = StandardScaler()
-        X_train_s = np.clip(nn_scaler.fit_transform(X_train), -4, 4)
-        X_val_s = np.clip(nn_scaler.transform(X_val), -4, 4)
+        X_train_s = scale_and_clip(nn_scaler, X_train, fit=True)
+        X_val_s = scale_and_clip(nn_scaler, X_val)
 
         train_loader, val_loader = make_dataloaders(
             X_train_s,

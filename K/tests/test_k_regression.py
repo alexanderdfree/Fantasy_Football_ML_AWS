@@ -20,6 +20,7 @@ from sklearn.preprocessing import StandardScaler
 from K.k_config import K_HUBER_DELTAS, K_LOSS_WEIGHTS, K_TARGETS
 from K.k_features import compute_k_features, get_k_feature_columns
 from K.k_targets import compute_k_targets
+from shared.feature_build import scale_and_clip
 from shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import MultiHeadNet
 from shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
@@ -142,8 +143,8 @@ def test_nn_within_25pct_of_lightgbm(k_training_arrays, lightgbm_mae):
     np.random.seed(42)
     torch.manual_seed(42)
     scaler = StandardScaler()
-    X_train_s = np.clip(scaler.fit_transform(d["X_train"]), -4, 4).astype(np.float32)
-    X_val_s = np.clip(scaler.transform(d["X_val"]), -4, 4).astype(np.float32)
+    X_train_s = scale_and_clip(scaler, d["X_train"], fit=True).astype(np.float32)
+    X_val_s = scale_and_clip(scaler, d["X_val"]).astype(np.float32)
 
     train_loader, val_loader = make_dataloaders(
         X_train_s, d["y_train_dict"], X_val_s, d["y_val_dict"], batch_size=64
