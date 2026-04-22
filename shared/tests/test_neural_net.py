@@ -8,6 +8,7 @@ import torch
 from shared.neural_net import (
     AttentionPool,
     GatedTDHead,
+    MultiHeadNet,
     MultiHeadNetWithHistory,
     MultiHeadNetWithNestedHistory,
 )
@@ -380,7 +381,7 @@ class TestMultiHeadNetWithNestedHistory:
         assert torch.allclose(preds["total"], total_check)
 
     def test_non_negative_outputs(self, model, batch):
-        """Default: all K heads are non-negative (softplus)."""
+        """Default: all K heads are non-negative (clamp min=0)."""
         model.eval()
         with torch.no_grad():
             preds = model(*batch)
@@ -454,3 +455,102 @@ class TestMultiHeadNetWithNestedHistory:
         for key in K_TARGETS + ["total"]:
             assert isinstance(preds[key], np.ndarray)
             assert preds[key].shape == (B,)
+
+
+# ---------------------------------------------------------------------------
+# Non-negative head floor regression (TODO.md archive:
+# "Softplus floor inflated low-scoring predictions")
+#
+# softplus(0) ~ 0.693, so a softplus-based non-neg clamp produces a floor of
+# ~0.693 per head — compounding to ~2 pts (3 heads) or ~2.8 pts (K's 4 heads).
+# The non-neg clamp must be torch.clamp(min=0.0) so a head whose pre-activation
+# is <= 0 emits *exactly* 0, not ~0.693.
+# ---------------------------------------------------------------------------
+
+
+def _zero_head_biases(model):
+    """Force each per-target head's final Linear bias to a large negative
+    value so ReLU-style clamping yields exact zeros regardless of input."""
+    for head in model.heads.values():
+        # Walk nested Sequentials; final Linear is the output layer.
+        linears = [m for m in head.modules() if isinstance(m, torch.nn.Linear)]
+        last = linears[-1]
+        with torch.no_grad():
+            last.weight.zero_()
+            last.bias.fill_(-5.0)  # Pushed well below 0 for robust clamp test.
+
+
+@pytest.mark.unit
+class TestNonNegativeFloor:
+    """Confirm non-negative heads emit exact zeros (clamp, not softplus)."""
+
+    def test_multi_head_net_exact_zero(self):
+        model = MultiHeadNet(
+            input_dim=6,
+            target_names=TARGETS,
+            backbone_layers=[8, 4],
+            head_hidden=4,
+            dropout=0.0,
+        )
+        _zero_head_biases(model)
+        model.eval()
+        with torch.no_grad():
+            preds = model(torch.randn(5, 6))
+        for t in TARGETS:
+            assert preds[t].shape == (5,)
+            assert torch.all(preds[t] == 0.0), f"{t}: expected exact zeros, got {preds[t].tolist()}"
+
+    def test_multi_head_net_with_history_exact_zero(self):
+        model = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8, 4],
+            d_model=8,
+            n_attn_heads=1,
+            head_hidden=4,
+            dropout=0.0,
+        )
+        _zero_head_biases(model)
+        model.eval()
+        B, T = 3, 5
+        # gated_td defaults to False — all heads are plain Sequentials and
+        # subject to the non-neg clamp we're testing.
+        with torch.no_grad():
+            preds = model(
+                torch.randn(B, 5),
+                torch.randn(B, T, 3),
+                torch.ones(B, T, dtype=torch.bool),
+            )
+        for t in TARGETS:
+            assert torch.all(preds[t] == 0.0), f"{t}: expected exact zeros, got {preds[t].tolist()}"
+
+    def test_multi_head_net_with_nested_history_exact_zero(self):
+        model = MultiHeadNetWithNestedHistory(
+            static_dim=7,
+            kick_dim=9,
+            target_names=K_TARGETS,
+            backbone_layers=[16, 8],
+            d_kick=8,
+            d_model=16,
+            n_attn_heads=2,
+            head_hidden=8,
+            dropout=0.0,
+        )
+        _zero_head_biases(model)
+        model.eval()
+        B, G, K = 4, 5, 3
+        with torch.no_grad():
+            preds = model(
+                torch.randn(B, 7),
+                torch.randn(B, G, K, 9),
+                torch.ones(B, G, dtype=torch.bool),
+                torch.ones(B, G, K, dtype=torch.bool),
+            )
+        for t in K_TARGETS:
+            assert torch.all(preds[t] == 0.0), f"{t}: expected exact zeros, got {preds[t].tolist()}"
+        # The K 4-head total must also be reachable at exact zero — this is the
+        # scenario K's ~2.77 pt floor previously made impossible.
+        assert torch.all(preds["total"] == 0.0), (
+            f"total should be exact 0 when all heads are 0, got {preds['total'].tolist()}"
+        )
