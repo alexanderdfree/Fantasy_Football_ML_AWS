@@ -9,11 +9,19 @@ from torch.utils.data import DataLoader, Dataset
 
 
 class MultiTargetLoss(nn.Module):
-    """Combined Huber loss for a multi-head network.
+    """Combined per-target loss for a multi-head network.
 
-    Loss = sum(weight[t] * Huber(pred[t], target[t]) for t in targets)
-           + sum(td_gate_weight * BCE(gate_logit_t, (target_t > 0))
-                 for t in gated_td_targets)
+    Per target, loss is Huber by default; targets listed in ``poisson_targets``
+    switch to Poisson NLL (``log_input=False``, so the head output is treated
+    as the rate lambda directly — requires a non-negative head output, which
+    the ``MultiHeadNet`` clamp already guarantees for targets in
+    ``non_negative_targets``).
+
+    Total =
+        sum(weight[t] * Huber(pred[t], target[t]) for t in huber targets)
+      + sum(weight[t] * PoissonNLL(pred[t], target[t]) for t in poisson targets)
+      + sum(td_gate_weight * BCE(gate_logit_t, (target_t > 0))
+            for t in gated_td_targets)
     """
 
     def __init__(
@@ -23,23 +31,35 @@ class MultiTargetLoss(nn.Module):
         huber_deltas: dict[str, float] = None,
         td_gate_weight: float = 1.0,
         gated_td_targets: list[str] | None = None,
+        poisson_targets: list[str] | None = None,
     ):
         super().__init__()
         self.target_names = target_names
         self.gated_td_targets = list(gated_td_targets) if gated_td_targets else []
         self.loss_weights = {n: loss_weights.get(n, 1.0) for n in target_names}
         self.td_gate_weight = td_gate_weight
+        self.poisson_targets = set(poisson_targets) if poisson_targets else set()
         if huber_deltas is None:
             huber_deltas = {}
-        self.huber_fns = nn.ModuleDict(
-            {name: nn.HuberLoss(delta=huber_deltas.get(name, 1.0)) for name in target_names}
+        # PoissonNLLLoss with log_input=False treats the input as the Poisson
+        # rate lambda. The default eps=1e-8 keeps -y*log(lambda) finite when a
+        # non-negative-clamped head output hits exactly zero.
+        self.loss_fns = nn.ModuleDict(
+            {
+                name: (
+                    nn.PoissonNLLLoss(log_input=False, full=False)
+                    if name in self.poisson_targets
+                    else nn.HuberLoss(delta=huber_deltas.get(name, 1.0))
+                )
+                for name in target_names
+            }
         )
 
     def forward(self, preds: dict, targets: dict) -> tuple:
         per_target_losses = {}
         combined = torch.tensor(0.0, device=next(iter(preds.values())).device)
         for name in self.target_names:
-            loss = self.huber_fns[name](preds[name], targets[name])
+            loss = self.loss_fns[name](preds[name], targets[name])
             per_target_losses[name] = loss
             combined = combined + self.loss_weights[name] * loss
 
@@ -480,7 +500,7 @@ def plot_training_curves(history: dict, target_names: list[str], save_path: str)
         if key in history:
             axes[1].plot(history[key], label=t.replace("_", " ").title())
     axes[1].set_xlabel("Epoch")
-    axes[1].set_ylabel("Huber Loss")
+    axes[1].set_ylabel("Per-Target Loss")
     axes[1].set_title("Per-Target Validation Loss")
     axes[1].legend()
 

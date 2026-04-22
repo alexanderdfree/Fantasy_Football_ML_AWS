@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from DST.dst_config import DST_LOSS_WEIGHTS, DST_TARGETS
+from DST.dst_config import DST_LOSS_WEIGHTS, DST_POISSON_TARGETS, DST_TARGETS
 from shared.neural_net import MultiHeadNet
 from shared.training import (
     MultiHeadTrainer,
@@ -80,6 +80,70 @@ class TestMultiTargetLoss:
         combined.backward()
         for k in preds:
             assert preds[k].grad is not None
+
+
+@pytest.mark.unit
+class TestMultiTargetLossPoisson:
+    """Poisson-NLL path for the four very-rare DST targets."""
+
+    def test_poisson_targets_use_poisson_nll(self):
+        loss_fn = MultiTargetLoss(
+            target_names=DST_TARGETS,
+            loss_weights=DST_LOSS_WEIGHTS,
+            poisson_targets=DST_POISSON_TARGETS,
+        )
+        for t in DST_POISSON_TARGETS:
+            assert isinstance(loss_fn.loss_fns[t], torch.nn.PoissonNLLLoss)
+        for t in set(DST_TARGETS) - set(DST_POISSON_TARGETS):
+            assert isinstance(loss_fn.loss_fns[t], torch.nn.HuberLoss)
+
+    def test_poisson_component_matches_reference(self):
+        loss_fn = MultiTargetLoss(
+            target_names=DST_TARGETS,
+            loss_weights={t: 1.0 for t in DST_TARGETS},
+            poisson_targets=DST_POISSON_TARGETS,
+        )
+        # Non-negative rate inputs (what the clamped head output looks like).
+        preds = {t: torch.tensor([0.05, 0.12, 0.0, 0.2]) for t in DST_TARGETS}
+        targets = {t: torch.tensor([0.0, 1.0, 0.0, 2.0]) for t in DST_TARGETS}
+        _, components = loss_fn(preds, targets)
+        ref = torch.nn.PoissonNLLLoss(log_input=False, full=False)
+        expected = ref(preds["def_tds"], targets["def_tds"]).item()
+        assert components["loss_def_tds"] == pytest.approx(expected, rel=1e-6)
+
+    def test_poisson_nll_different_from_huber_on_same_inputs(self):
+        """Same preds/targets, different loss family -> different combined loss."""
+        preds = {t: torch.tensor([0.05, 0.12, 0.0, 0.2]) for t in DST_TARGETS}
+        targets = {t: torch.tensor([0.0, 1.0, 0.0, 2.0]) for t in DST_TARGETS}
+        huber_only = MultiTargetLoss(
+            target_names=DST_TARGETS,
+            loss_weights=DST_LOSS_WEIGHTS,
+        )
+        mixed = MultiTargetLoss(
+            target_names=DST_TARGETS,
+            loss_weights=DST_LOSS_WEIGHTS,
+            poisson_targets=DST_POISSON_TARGETS,
+        )
+        c_huber, _ = huber_only(preds, targets)
+        c_mixed, _ = mixed(preds, targets)
+        assert c_huber.item() != c_mixed.item()
+
+    def test_poisson_head_backward_pass(self):
+        loss_fn = MultiTargetLoss(
+            target_names=DST_TARGETS,
+            loss_weights=DST_LOSS_WEIGHTS,
+            poisson_targets=DST_POISSON_TARGETS,
+        )
+        # Rates must be non-negative; the tensor must also be a leaf so .grad
+        # populates. ``uniform_(a, b)`` fills an empty tensor in-place, keeping
+        # it a leaf, and ``requires_grad_(True)`` enables autograd tracking.
+        preds = {k: torch.empty(8).uniform_(0.01, 1.0).requires_grad_(True) for k in DST_TARGETS}
+        targets = {k: torch.randint(0, 3, (8,)).float() for k in DST_TARGETS}
+        combined, _ = loss_fn(preds, targets)
+        combined.backward()
+        for t in DST_POISSON_TARGETS:
+            assert preds[t].grad is not None
+            assert torch.isfinite(preds[t].grad).all()
 
 
 @pytest.mark.unit

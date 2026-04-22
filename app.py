@@ -1104,7 +1104,7 @@ def api_model_architecture():
                 },
                 "training_loop": {
                     "optimizer": "AdamW",
-                    "loss": "MultiTargetLoss: sum of per-target Huber + optional BCE on TD gate",
+                    "loss": "MultiTargetLoss: per-target Huber or Poisson NLL + optional BCE on TD gate",
                     "gradient_clip": "clip_grad_norm_(max_norm=1.0)",
                     "feature_scaling": "StandardScaler, clipped to [-4, 4]",
                     "early_stopping": "Best loss-weighted val MAE restored on patience",
