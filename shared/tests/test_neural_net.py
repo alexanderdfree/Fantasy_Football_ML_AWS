@@ -11,6 +11,7 @@ from shared.neural_net import (
     MultiHeadNet,
     MultiHeadNetWithHistory,
     MultiHeadNetWithNestedHistory,
+    apply_non_negative,
     build_multihead_net,
     build_multihead_net_with_history,
     build_multihead_net_with_nested_history,
@@ -440,6 +441,28 @@ class TestMultiHeadNetWithNestedHistory:
 # The non-neg clamp must be torch.clamp(min=0.0) so a head whose pre-activation
 # is <= 0 emits *exactly* 0, not ~0.693.
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestApplyNonNegative:
+    """Direct regression test for the shared clamp helper — a softplus
+    replacement here would make all three variants wrong at once, so this
+    test guards the single point of change."""
+
+    def test_clamps_negative_to_exact_zero(self):
+        val = torch.tensor([-3.0, -0.1, 0.0, 0.5, 2.0])
+        out = apply_non_negative(val, "yards", {"yards"})
+        assert torch.equal(out, torch.tensor([0.0, 0.0, 0.0, 0.5, 2.0]))
+
+    def test_passes_through_when_name_not_in_set(self):
+        val = torch.tensor([-3.0, 0.0, 2.0])
+        out = apply_non_negative(val, "bonus", {"yards"})
+        assert torch.equal(out, val)
+
+    def test_zero_stays_exact_zero_not_softplus_floor(self):
+        val = torch.zeros(4)
+        out = apply_non_negative(val, "t", {"t"})
+        assert torch.all(out == 0.0), f"expected exact zeros, got {out.tolist()}"
 
 
 def _zero_head_biases(model):

@@ -6,6 +6,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def apply_non_negative(val: torch.Tensor, name: str, non_negative: set) -> torch.Tensor:
+    """Clamp ``val`` to ``>= 0`` when ``name`` is in ``non_negative``.
+
+    Must use ``torch.clamp(min=0.0)``: softplus introduces a ~0.693 floor per
+    head that compounds across targets. See TODO.md archive entry
+    "Softplus floor inflated low-scoring predictions".
+    """
+    if name in non_negative:
+        return torch.clamp(val, min=0.0)
+    return val
+
+
 class GatedTDHead(nn.Module):
     """Two-stage hurdle head for zero-inflated TD prediction.
 
@@ -96,9 +108,7 @@ class MultiHeadNet(nn.Module):
         preds = {}
         for name, head in self.heads.items():
             val = head(shared).squeeze(-1)
-            if name in self.non_negative_targets:
-                val = torch.clamp(val, min=0.0)
-            preds[name] = val
+            preds[name] = apply_non_negative(val, name, self.non_negative_targets)
         return preds
 
     def predict_numpy(self, X: np.ndarray, device: torch.device) -> dict:
@@ -381,9 +391,7 @@ class MultiHeadNetWithHistory(nn.Module):
                 preds[f"{name}_gate_logit"] = gate_logit
             else:
                 val = head(head_input).squeeze(-1)
-                if name in self.non_negative_targets:
-                    val = torch.clamp(val, min=0.0)
-                preds[name] = val
+                preds[name] = apply_non_negative(val, name, self.non_negative_targets)
         return preds
 
     def predict_numpy(
@@ -557,9 +565,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             history_vec = self.history_norms[i](history_per_target[:, i, :])
             head_input = torch.cat([shared_static, history_vec], dim=-1)
             val = self.heads[name](head_input).squeeze(-1)
-            if name in self.non_negative_targets:
-                val = torch.clamp(val, min=0.0)
-            preds[name] = val
+            preds[name] = apply_non_negative(val, name, self.non_negative_targets)
         return preds
 
     def predict_numpy(
