@@ -154,7 +154,6 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 # These are the raw stats that the rolling features are derived from.
 GAME_HISTORY_STATS = [
     "fantasy_points",
-    "fantasy_points_floor",
     "passing_yards",
     "rushing_yards",
     "receiving_yards",

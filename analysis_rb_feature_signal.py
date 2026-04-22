@@ -1,4 +1,5 @@
-"""
+"""DEPRECATED: references pre-migration targets (rushing_floor/receiving_floor/td_points); do not run against current data.
+
 RB Feature Signal Analysis: Weather, Vegas implied-odds, and depth chart columns.
 
 Determines which of the 12 weather/Vegas features and depth_chart_rank are

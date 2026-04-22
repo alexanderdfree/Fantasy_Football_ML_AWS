@@ -11,7 +11,7 @@ from shared.models import (
     TwoStageRidge,
 )
 
-TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
+TARGETS = ["rushing_yards", "receiving_yards", "rushing_tds"]
 
 
 # ---------------------------------------------------------------------------
@@ -21,21 +21,21 @@ TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
 
 @pytest.fixture
 def zero_inflated_data():
-    """Data where ~50% of y values are 0 (mimics TD points)."""
+    """Data where ~50% of y values are 0 (mimics TD counts)."""
     np.random.seed(42)
     n, d = 40, 5
     X = np.random.randn(n, d).astype(np.float32)
-    y = np.where(np.random.rand(n) > 0.5, np.random.rand(n) * 12, 0).astype(np.float32)
+    y = np.where(np.random.rand(n) > 0.5, np.random.rand(n) * 3, 0).astype(np.float32)
     return X, y
 
 
 @pytest.fixture
 def td_class_data():
-    """Data with discrete TD-point-like values."""
+    """Data with discrete raw TD counts."""
     np.random.seed(42)
     n, d = 60, 5
     X = np.random.randn(n, d).astype(np.float32)
-    y = np.random.choice([0.0, 6.0, 12.0, 18.0], size=n, p=[0.55, 0.25, 0.15, 0.05]).astype(
+    y = np.random.choice([0.0, 1.0, 2.0, 3.0], size=n, p=[0.55, 0.25, 0.15, 0.05]).astype(
         np.float32
     )
     return X, y
@@ -48,9 +48,9 @@ def multi_target_data():
     n, d = 80, 5
     X = np.random.randn(n, d).astype(np.float32)
     y_dict = {
-        "rushing_floor": np.random.rand(n).astype(np.float32) * 10,
-        "receiving_floor": np.random.rand(n).astype(np.float32) * 8,
-        "td_points": np.random.rand(n).astype(np.float32) * 6,
+        "rushing_yards": np.random.rand(n).astype(np.float32) * 10,
+        "receiving_yards": np.random.rand(n).astype(np.float32) * 8,
+        "rushing_tds": np.random.rand(n).astype(np.float32) * 6,
     }
     return X, y_dict
 
@@ -155,29 +155,29 @@ class TestTwoStageRidge:
 class TestOrdinalTDClassifier:
     def test_fit_and_predict_shapes(self, td_class_data):
         X, y = td_class_data
-        model = OrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
+        model = OrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4)
         model.fit(X, y)
         preds = model.predict(X)
         assert preds.shape == (len(X),)
 
     def test_predictions_non_negative(self, td_class_data):
         X, y = td_class_data
-        model = OrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
+        model = OrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4)
         model.fit(X, y)
         preds = model.predict(X)
         assert (preds >= 0).all()
 
     def test_class_point_values_computed(self, td_class_data):
         X, y = td_class_data
-        model = OrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
+        model = OrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4)
         model.fit(X, y)
         assert hasattr(model, "class_point_values_")
         assert len(model.class_point_values_) == model._n_classes
 
     def test_points_to_labels_fixed(self):
-        model = OrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
-        labels = model._points_to_labels(np.array([0, 6, 12, 18, 24]))
-        np.testing.assert_array_equal(labels, [0, 1, 2, 3, 3])  # 24 -> capped at 3
+        model = OrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4)
+        labels = model._points_to_labels(np.array([0, 1, 2, 3, 4]))
+        np.testing.assert_array_equal(labels, [0, 1, 2, 3, 3])  # 4 -> capped at 3
 
     def test_auto_class_values(self, td_class_data):
         X, y = td_class_data
@@ -188,7 +188,7 @@ class TestOrdinalTDClassifier:
 
     def test_predict_proba_sums_to_one(self, td_class_data):
         X, y = td_class_data
-        model = OrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
+        model = OrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4)
         model.fit(X, y)
         proba = model._predict_proba(model.scaler_.transform(X))
         row_sums = proba.sum(axis=1)
@@ -196,7 +196,7 @@ class TestOrdinalTDClassifier:
 
     def test_save_and_load_roundtrip(self, td_class_data, tmp_path):
         X, y = td_class_data
-        model = OrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
+        model = OrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4)
         model.fit(X, y)
         preds_before = model.predict(X)
 
@@ -210,8 +210,8 @@ class TestOrdinalTDClassifier:
 
     def test_alpha_affects_predictions(self, td_class_data):
         X, y = td_class_data
-        m1 = OrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4, alpha=0.01)
-        m2 = OrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4, alpha=100.0)
+        m1 = OrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4, alpha=0.01)
+        m2 = OrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4, alpha=100.0)
         m1.fit(X, y)
         m2.fit(X, y)
         p1 = m1.predict(X)
@@ -228,22 +228,22 @@ class TestOrdinalTDClassifier:
 class TestGatedOrdinalTDClassifier:
     def test_fit_and_predict_shapes(self, td_class_data):
         X, y = td_class_data
-        model = GatedOrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
+        model = GatedOrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4)
         model.fit(X, y)
         preds = model.predict(X)
         assert preds.shape == (len(X),)
 
     def test_predictions_non_negative(self, td_class_data):
         X, y = td_class_data
-        model = GatedOrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
+        model = GatedOrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4)
         model.fit(X, y)
         preds = model.predict(X)
         assert (preds >= 0).all()
 
     def test_threshold_affects_predictions(self, td_class_data):
         X, y = td_class_data
-        m_low = GatedOrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4, threshold=0.1)
-        m_high = GatedOrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4, threshold=0.9)
+        m_low = GatedOrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4, threshold=0.1)
+        m_high = GatedOrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4, threshold=0.9)
         m_low.fit(X, y)
         m_high.fit(X, y)
         p_low = m_low.predict(X)
@@ -252,7 +252,7 @@ class TestGatedOrdinalTDClassifier:
 
     def test_save_and_load_roundtrip(self, td_class_data, tmp_path):
         X, y = td_class_data
-        model = GatedOrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
+        model = GatedOrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4)
         model.fit(X, y)
         preds_before = model.predict(X)
 
@@ -268,7 +268,7 @@ class TestGatedOrdinalTDClassifier:
         import json
 
         X, y = td_class_data
-        model = GatedOrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
+        model = GatedOrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4)
         model.fit(X, y)
         model_dir = str(tmp_path / "gated_meta")
         model.save(model_dir)
@@ -278,7 +278,7 @@ class TestGatedOrdinalTDClassifier:
 
     def test_single_sample_prediction(self, td_class_data):
         X, y = td_class_data
-        model = GatedOrdinalTDClassifier(class_values=[0, 6, 12, 18], n_classes=4)
+        model = GatedOrdinalTDClassifier(class_values=[0, 1, 2, 3], n_classes=4)
         model.fit(X, y)
         preds = model.predict(X[:1])
         assert preds.shape == (1,)
@@ -296,7 +296,7 @@ class TestLightGBMMultiTarget:
         model = LightGBMMultiTarget(target_names=TARGETS, n_estimators=10)
         model.fit(X, y_dict)
         preds = model.predict(X)
-        assert set(preds.keys()) == {"rushing_floor", "receiving_floor", "td_points"}
+        assert set(preds.keys()) == {"rushing_yards", "receiving_yards", "rushing_tds"}
         for key in preds:
             assert preds[key].shape == (len(X),)
 

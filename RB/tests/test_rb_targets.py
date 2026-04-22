@@ -42,17 +42,17 @@ class TestComputeRBTargets:
         result = compute_rb_targets(df)
         assert pytest.approx(result["receiving_tds"].iloc[0]) == 3
 
-    def test_fumbles_lost_sums_skill_components(self, make_rb_row):
-        """fumbles_lost = rushing_fumbles_lost + receiving_fumbles_lost (no sack)."""
-        df = make_rb_row(rushing_fumbles_lost=1, receiving_fumbles_lost=1)
+    def test_fumbles_lost_sums_all_three_categories(self, make_rb_row):
+        """fumbles_lost = sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost."""
+        df = make_rb_row(sack_fumbles_lost=1, rushing_fumbles_lost=1, receiving_fumbles_lost=1)
+        result = compute_rb_targets(df)
+        assert pytest.approx(result["fumbles_lost"].iloc[0]) == 3
+
+    def test_fumbles_lost_sack_only(self, make_rb_row):
+        """Rare trick-play sack fumble on an RB still counts toward fumbles_lost."""
+        df = make_rb_row(sack_fumbles_lost=2, rushing_fumbles_lost=0, receiving_fumbles_lost=0)
         result = compute_rb_targets(df)
         assert pytest.approx(result["fumbles_lost"].iloc[0]) == 2
-
-    def test_fumbles_lost_excludes_sack(self, make_rb_row):
-        """Sack fumbles are a QB stat; RB fumbles_lost ignores them."""
-        df = make_rb_row(sack_fumbles_lost=5, rushing_fumbles_lost=0, receiving_fumbles_lost=0)
-        result = compute_rb_targets(df)
-        assert pytest.approx(result["fumbles_lost"].iloc[0]) == 0
 
     def test_aggregator_matches_fantasy_points_check(self, make_rb_row):
         """fantasy_points_check (via aggregator) matches manual raw-stat scoring (PPR)."""

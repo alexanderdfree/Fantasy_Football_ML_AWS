@@ -20,7 +20,6 @@ TE_SPECIFIC_FEATURES = [
 # Explicit include list — new columns must be opted in, preventing silent leakage.
 _TE_ROLLING_STATS = [
     "fantasy_points",
-    "fantasy_points_floor",
     "targets",
     "receptions",
     "carries",
@@ -150,7 +149,6 @@ TE_ATTN_POSITIONAL_ENCODING = True
 TE_ATTN_DROPOUT = 0.0
 TE_ATTN_HISTORY_STATS = [
     "fantasy_points",
-    "fantasy_points_floor",
     "receiving_yards",
     "rushing_yards",
     "receiving_tds",

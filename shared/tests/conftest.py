@@ -66,7 +66,6 @@ _SYNTHETIC_COLUMNS = [
     "season",
     "week",
     "fantasy_points",
-    "fantasy_points_floor",
     "attempts",
     "completions",
     "passing_yards",
@@ -123,7 +122,6 @@ def _build_tiny_synthetic_games(seed: int = 42) -> pd.DataFrame:
                     "season": int(season),
                     "week": int(week),
                     "fantasy_points": fp,
-                    "fantasy_points_floor": fp * 0.8,
                     "attempts": 32 if position == "QB" else 0,
                     "completions": 21 if position == "QB" else 0,
                     "passing_yards": 240.0 if position == "QB" else 0.0,
@@ -238,7 +236,7 @@ def error_df_factory():
                 "snap_pct": rng.random(n) * 100,
                 "opp_def_rank_vs_pos": rng.integers(1, 33, size=n),
                 "is_home": rng.choice([0, 1], size=n),
-                "td_points": rng.choice([0.0, 6.0, 12.0], size=n, p=[0.6, 0.3, 0.1]),
+                "rushing_tds": rng.choice([0.0, 1.0, 2.0], size=n, p=[0.6, 0.3, 0.1]),
                 "rolling_std_fantasy_points_L3": rng.random(n) * 5,
                 "fantasy_points": rng.random(n) * 20,
                 "pred_total": rng.random(n) * 20,
@@ -331,7 +329,7 @@ def player_df_factory():
 # exercise MultiTargetLoss / MultiHeadNetWithHistory against the pre-migration
 # fantasy-point-component target schema. New shared tests should prefer
 # ``TARGETS_RB_RAW`` and the ``tiny_synthetic_rb_raw`` fixture below.
-TARGETS_DEFAULT = ["rushing_floor", "receiving_floor", "td_points"]
+TARGETS_DEFAULT = ["rushing_yards", "receiving_yards", "rushing_tds"]
 
 # Raw-stat RB target list (matches ``RB_TARGETS`` in ``RB/rb_config.py`` after
 # the target migration). Use this for new shared tests that want to mirror the

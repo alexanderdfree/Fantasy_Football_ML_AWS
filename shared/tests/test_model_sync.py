@@ -133,13 +133,13 @@ def test_extract_allows_nested_subdirs(tmp_path):
     data = _make_tarball(
         {
             "nn_scaler.pkl": b"a",
-            "lightgbm/receiving_floor.pkl": b"b",
+            "lightgbm/receiving_yards.pkl": b"b",
         }
     )
     dest = tmp_path / "dest"
     model_sync._extract_tarball(data, dest)
     assert (dest / "nn_scaler.pkl").read_bytes() == b"a"
-    assert (dest / "lightgbm" / "receiving_floor.pkl").read_bytes() == b"b"
+    assert (dest / "lightgbm" / "receiving_yards.pkl").read_bytes() == b"b"
 
 
 def test_data_sync_noop_when_bucket_unset(monkeypatch, capsys):

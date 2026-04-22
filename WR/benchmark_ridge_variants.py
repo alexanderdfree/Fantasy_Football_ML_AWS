@@ -41,11 +41,11 @@ EXTRA_DROPS = {
     # Redundant matchup features
     "opp_recv_pts_allowed_to_pos",  # r=0.993 with opp_fantasy_pts_allowed_to_pos
     "opp_rush_pts_allowed_to_pos",  # irrelevant for WR receiving
-    # Prior-season receiving_yards — r>0.98 with fantasy_points_floor priors
+    # Prior-season receiving_yards — r>0.98 with fantasy_points priors
     "prior_season_mean_receiving_yards",
     "prior_season_std_receiving_yards",
     "prior_season_max_receiving_yards",
-    # Prior-season receptions — r>0.97 with targets/fantasy_points_floor priors
+    # Prior-season receptions — r>0.97 with targets/fantasy_points priors
     "prior_season_mean_receptions",
     "prior_season_std_receptions",
     "prior_season_max_receptions",

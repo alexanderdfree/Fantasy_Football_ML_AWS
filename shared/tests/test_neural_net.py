@@ -13,7 +13,7 @@ from shared.neural_net import (
     MultiHeadNetWithNestedHistory,
 )
 
-TARGETS = ["rushing_floor", "receiving_floor", "td_points"]
+TARGETS = ["rushing_yards", "receiving_yards", "rushing_tds"]
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ class TestMultiHeadNetWithHistory:
 
     def test_output_keys(self, model, inputs):
         out = model(*inputs)
-        assert set(out.keys()) == {"rushing_floor", "receiving_floor", "td_points"}
+        assert set(out.keys()) == {"rushing_yards", "receiving_yards", "rushing_tds"}
 
     def test_output_shapes(self, model, inputs):
         out = model(*inputs)
@@ -194,7 +194,6 @@ class TestMultiHeadNetWithHistory:
             assert (out[key] >= 0).all()
 
     def test_gated_td_head(self):
-        # gated_td_target="td_points" was the default pre-migration; now explicit.
         model = MultiHeadNetWithHistory(
             static_dim=5,
             game_dim=3,
@@ -205,14 +204,14 @@ class TestMultiHeadNetWithHistory:
             head_hidden=4,
             dropout=0.1,
             gated_td=True,
-            gated_td_target="td_points",
+            gated_td_targets=["rushing_tds"],
         )
         x_static = torch.randn(4, 5)
         x_history = torch.randn(4, 6, 3)
         mask = torch.ones(4, 6, dtype=torch.bool)
         out = model(x_static, x_history, mask)
-        assert "td_points_gate_logit" in out
-        assert (out["td_points"] >= 0).all()
+        assert "rushing_tds_gate_logit" in out
+        assert (out["rushing_tds"] >= 0).all()
 
     def test_gated_td_targets_list_accepts_multiple(self):
         """New multi-gate API: multiple gated heads coexist via gated_td_targets list."""
@@ -237,22 +236,6 @@ class TestMultiHeadNetWithHistory:
         assert "receiving_tds_gate_logit" in out
         # Non-gated target should have no gate logit emitted.
         assert "rushing_yards_gate_logit" not in out
-
-    def test_gated_td_target_legacy_string_still_works(self):
-        """Legacy string form must normalize to a single-element list internally."""
-        model = MultiHeadNetWithHistory(
-            static_dim=5,
-            game_dim=3,
-            target_names=TARGETS,
-            backbone_layers=[16, 8],
-            d_model=8,
-            n_attn_heads=2,
-            head_hidden=4,
-            dropout=0.1,
-            gated_td=True,
-            gated_td_target="td_points",
-        )
-        assert model.gated_td_targets == ["td_points"]
 
     def test_positional_encoding(self, inputs):
         model = MultiHeadNetWithHistory(
@@ -297,7 +280,7 @@ class TestMultiHeadNetWithHistory:
         mask = np.ones((4, 6), dtype=bool)
         device = torch.device("cpu")
         preds = model.predict_numpy(X_s, X_h, mask, device)
-        assert set(preds.keys()) == {"rushing_floor", "receiving_floor", "td_points"}
+        assert set(preds.keys()) == {"rushing_yards", "receiving_yards", "rushing_tds"}
         for key in preds:
             assert isinstance(preds[key], np.ndarray)
             assert preds[key].shape == (4,)

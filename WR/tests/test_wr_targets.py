@@ -62,16 +62,16 @@ class TestComputeWRTargets:
         result = compute_wr_targets(df)
         assert pytest.approx(result["receptions"].iloc[0]) == 7.0
 
-    def test_fumbles_lost_is_rushing_plus_receiving(self):
-        df = _make_wr_row(receiving_fumbles_lost=1, rushing_fumbles_lost=1)
+    def test_fumbles_lost_sums_all_three_categories(self):
+        df = _make_wr_row(sack_fumbles_lost=1, receiving_fumbles_lost=1, rushing_fumbles_lost=1)
         result = compute_wr_targets(df)
-        assert pytest.approx(result["fumbles_lost"].iloc[0]) == 2.0
+        assert pytest.approx(result["fumbles_lost"].iloc[0]) == 3.0
 
-    def test_fumbles_lost_excludes_sack_fumbles(self):
-        """Sack fumbles are a QB concept; WR fumbles_lost never includes them."""
+    def test_fumbles_lost_sack_only(self):
+        """Rare trick-play sack fumble on a WR still counts toward fumbles_lost."""
         df = _make_wr_row(sack_fumbles_lost=1, rushing_fumbles_lost=0, receiving_fumbles_lost=0)
         result = compute_wr_targets(df)
-        assert pytest.approx(result["fumbles_lost"].iloc[0]) == 0.0
+        assert pytest.approx(result["fumbles_lost"].iloc[0]) == 1.0
 
     def test_all_nan_stats_treated_as_zero(self):
         df = pd.DataFrame(

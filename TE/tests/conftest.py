@@ -201,7 +201,6 @@ def _build_tiny_te_splits(seed: int = 42):
                         "recent_team": team,
                         "opponent_team": opp,
                         "fantasy_points": fp,
-                        "fantasy_points_floor": fp * 0.8,
                         "targets": base_targets,
                         "receptions": base_rec,
                         "carries": 0,
