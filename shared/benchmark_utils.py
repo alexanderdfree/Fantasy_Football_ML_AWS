@@ -19,7 +19,7 @@ def get_git_hash() -> str:
             .decode()
             .strip()
         )
-    except Exception:
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return "unknown"
 
 

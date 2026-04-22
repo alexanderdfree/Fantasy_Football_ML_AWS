@@ -93,3 +93,72 @@ def scale_and_clip(
     """Scale X with ``scaler`` (fit first if ``fit=True``) and clip to ``FEATURE_CLIP``."""
     X = scaler.fit_transform(X) if fit else scaler.transform(X)
     return np.clip(X, *FEATURE_CLIP)
+
+
+def safe_divide(num: pd.Series, denom: pd.Series) -> pd.Series:
+    """Return ``num / denom`` with all ill-defined results replaced by 0.
+
+    Handles the three pathological cases inline so callers don't need the
+    ``(a/b).fillna(0); df.loc[b == 0, col] = 0`` pair:
+
+    - ``0 / 0``  → NaN   → 0
+    - ``x / 0``  → ±inf  → 0  (``fillna`` alone wouldn't catch this)
+    - ``x / NaN`` or ``NaN / x`` → NaN → 0
+    """
+    return (num / denom).replace([np.inf, -np.inf], 0).fillna(0)
+
+
+def rolling_agg(
+    df: pd.DataFrame,
+    col: str,
+    groupby: str | list[str],
+    window: int,
+    *,
+    agg: str = "sum",
+    shift: int = 1,
+    min_periods: int = 1,
+    fill: float | None = None,
+) -> pd.Series:
+    """Grouped, shifted rolling aggregation.
+
+    ``shift`` defaults to 1 to prevent current-week leakage into rolling
+    features — the same convention every position's feature code follows.
+    ``groupby`` is explicit because K deliberately uses ``["player_id"]``
+    only (cross-season windows) while skill positions use
+    ``["player_id", "season"]``. See TODO.md "K features use cross-season
+    rolling windows".
+
+    ``fill`` optionally replaces the leading NaN produced by ``shift`` (and
+    any NaN the input itself carries). K and DST pass ``fill=0`` because
+    their features are used directly — skill positions usually leave
+    ``fill=None`` because their rolling outputs feed into ``safe_divide``,
+    which already maps NaN to 0.
+    """
+    result = df.groupby(groupby)[col].transform(
+        lambda x: getattr(x.shift(shift).rolling(window, min_periods=min_periods), agg)()
+    )
+    if fill is not None:
+        result = result.fillna(fill)
+    return result
+
+
+def fill_nans_with_train_means(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    cols: list[str],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Replace inf → NaN in ``cols`` across all splits, then backfill NaNs
+    with the training-set column means.
+
+    Using train-set statistics for every split is the leakage-safe contract
+    every position's ``fill_*_nans`` already follows; lifting the loop here
+    keeps the ``cfg["fill_nans_fn"]`` signature intact.
+    """
+    for split_df in (train_df, val_df, test_df):
+        split_df[cols] = split_df[cols].replace([np.inf, -np.inf], np.nan)
+    train_means = train_df[cols].mean()
+    for split_df in (train_df, val_df, test_df):
+        for col in cols:
+            split_df[col] = split_df[col].fillna(train_means[col])
+    return train_df, val_df, test_df

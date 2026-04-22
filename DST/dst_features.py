@@ -1,7 +1,7 @@
-import numpy as np
 import pandas as pd
 
 from DST.dst_config import DST_ALL_FEATURES
+from shared.feature_build import fill_nans_with_train_means, rolling_agg
 
 
 def get_dst_feature_columns() -> list[str]:
@@ -25,90 +25,35 @@ def compute_dst_features(df: pd.DataFrame) -> None:
     # Pre-compute turnovers forced (INTs + fumble recoveries)
     df["_turnovers"] = df["def_ints"].fillna(0) + df["def_fumble_rec"].fillna(0)
 
-    grp = df.groupby(["team", "season"])
+    grp = ["team", "season"]
 
-    # --- Feature 1: sacks_L3 ---
-    df["sacks_L3"] = (
-        grp["def_sacks"].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean()).fillna(0)
-    )
+    def _mean(col, window):
+        return rolling_agg(df, col, grp, window=window, agg="mean", fill=0)
 
-    # turnovers_L3 removed — exactly ints_L3 + fumble_rec_L3 (perfect linear dependency)
+    df["sacks_L3"] = _mean("def_sacks", 3)
+    df["ints_L3"] = _mean("def_ints", 3)
+    df["fumble_rec_L3"] = _mean("def_fumble_rec", 3)
+    df["pts_allowed_L3"] = _mean("points_allowed", 3)
+    df["pts_allowed_L5"] = _mean("points_allowed", 5)
+    df["dst_pts_L3"] = _mean("_dst_total_pts", 3)
+    df["dst_pts_L5"] = _mean("_dst_total_pts", 5)
+    df["dst_pts_L8"] = _mean("_dst_total_pts", 8)
 
-    # --- Feature 2: ints_L3 (INTs separated — secondary quality signal) ---
-    df["ints_L3"] = (
-        grp["def_ints"].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean()).fillna(0)
-    )
+    df["sack_trend"] = (_mean("def_sacks", 3) - _mean("def_sacks", 8)).fillna(0)
+    df["turnover_trend"] = (_mean("_turnovers", 3) - _mean("_turnovers", 8)).fillna(0)
+    df["pts_allowed_trend"] = (_mean("points_allowed", 3) - _mean("points_allowed", 8)).fillna(0)
 
-    # --- Feature 4: fumble_rec_L3 (fumble recoveries — more stochastic) ---
-    df["fumble_rec_L3"] = (
-        grp["def_fumble_rec"]
-        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
-        .fillna(0)
-    )
-
-    # --- Feature 5: pts_allowed_L3 ---
-    df["pts_allowed_L3"] = (
-        grp["points_allowed"]
-        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
-        .fillna(0)
-    )
-
-    # --- Feature 6: pts_allowed_L5 ---
-    df["pts_allowed_L5"] = (
-        grp["points_allowed"]
-        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).mean())
-        .fillna(0)
-    )
-
-    # --- Feature 7: dst_pts_L3 ---
-    df["dst_pts_L3"] = (
-        grp["_dst_total_pts"]
-        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
-        .fillna(0)
-    )
-
-    # --- Feature 8: dst_pts_L5 ---
-    df["dst_pts_L5"] = (
-        grp["_dst_total_pts"]
-        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).mean())
-        .fillna(0)
-    )
-
-    # --- Feature 9: dst_pts_L8 (longer stability window) ---
-    df["dst_pts_L8"] = (
-        grp["_dst_total_pts"]
-        .transform(lambda x: x.shift(1).rolling(8, min_periods=1).mean())
-        .fillna(0)
-    )
-
-    # --- Feature 10: sack_trend (L3 - L8) ---
-    sack_short = grp["def_sacks"].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
-    sack_long = grp["def_sacks"].transform(lambda x: x.shift(1).rolling(8, min_periods=1).mean())
-    df["sack_trend"] = (sack_short - sack_long).fillna(0)
-
-    # --- Feature 11: turnover_trend (L3 - L8) ---
-    to_short = grp["_turnovers"].transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
-    to_long = grp["_turnovers"].transform(lambda x: x.shift(1).rolling(8, min_periods=1).mean())
-    df["turnover_trend"] = (to_short - to_long).fillna(0)
-
-    # --- Feature 12: pts_allowed_trend (L3 - L8, negative = improving defense) ---
-    pa_short = grp["points_allowed"].transform(
-        lambda x: x.shift(1).rolling(3, min_periods=1).mean()
-    )
-    pa_long = grp["points_allowed"].transform(lambda x: x.shift(1).rolling(8, min_periods=1).mean())
-    df["pts_allowed_trend"] = (pa_short - pa_long).fillna(0)
-
-    # --- Feature 13: pts_allowed_std_L3 (defensive consistency) ---
+    # Rolling std for consistency — keeps the inline transform: the helper's
+    # ``min_periods=1`` default would produce NaN for single-sample std,
+    # while these features require ``min_periods=2``.
     df["pts_allowed_std_L3"] = (
-        grp["points_allowed"]
+        df.groupby(grp)["points_allowed"]
         .transform(lambda x: x.shift(1).rolling(3, min_periods=2).std())
         .fillna(0)
     )
 
-    # --- Feature 14: dst_scoring_std_L3 (base production consistency) ---
-    # Derived from raw stats (post raw-target migration) — same linear combo
-    # that ``defensive_production`` used to represent, computed inline so we
-    # don't need the aggregate column on the frame.
+    # dst_scoring_std_L3 — derived from raw stats (post raw-target migration),
+    # same linear combo ``defensive_production`` used to represent.
     df["_dst_defensive_production_tmp"] = (
         df["def_sacks"].fillna(0)
         + df["def_ints"].fillna(0) * 2
@@ -117,70 +62,40 @@ def compute_dst_features(df: pd.DataFrame) -> None:
         + df["def_safeties"].fillna(0) * 2
     )
     df["dst_scoring_std_L3"] = (
-        df.groupby(["team", "season"])["_dst_defensive_production_tmp"]
+        df.groupby(grp)["_dst_defensive_production_tmp"]
         .transform(lambda x: x.shift(1).rolling(3, min_periods=2).std())
         .fillna(0)
     )
     df.drop(columns=["_dst_defensive_production_tmp"], inplace=True)
 
-    # --- Feature 15: sacks_L5 (longer sack window for stability) ---
-    df["sacks_L5"] = (
-        grp["def_sacks"].transform(lambda x: x.shift(1).rolling(5, min_periods=1).mean()).fillna(0)
-    )
+    df["sacks_L5"] = _mean("def_sacks", 5)
 
-    # --- Feature 16: pts_allowed_ewma (exponential weighting, faster adaptation) ---
+    # EWMA features — helper only covers rolling, not exponential smoothing,
+    # so these stay as inline transforms.
     df["pts_allowed_ewma"] = (
-        grp["points_allowed"]
+        df.groupby(grp)["points_allowed"]
         .transform(lambda x: x.shift(1).ewm(span=3, min_periods=1).mean())
         .fillna(0)
     )
-
-    # --- Feature 17: dst_pts_ewma (total D/ST scoring, exponential) ---
     df["dst_pts_ewma"] = (
-        grp["_dst_total_pts"]
+        df.groupby(grp)["_dst_total_pts"]
         .transform(lambda x: x.shift(1).ewm(span=3, min_periods=1).mean())
         .fillna(0)
     )
 
-    # --- Feature 18: forced_fumbles_L3 (pressure proxy) ---
-    df["forced_fumbles_L3"] = (
-        grp["def_fumbles_forced"]
-        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
-        .fillna(0)
-    )
+    df["forced_fumbles_L3"] = _mean("def_fumbles_forced", 3)
+    df["blocked_kicks_L5"] = _mean("def_blocked_kicks", 5)
+    df["yards_allowed_L3"] = _mean("yards_allowed", 3)
+    df["yards_allowed_L5"] = _mean("yards_allowed", 5)
 
-    # --- Feature 19: blocked_kicks_L5 (rare, longer window) ---
-    df["blocked_kicks_L5"] = (
-        grp["def_blocked_kicks"]
-        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).mean())
-        .fillna(0)
-    )
-
-    # --- Feature 20: yards_allowed_L3 ---
-    df["yards_allowed_L3"] = (
-        grp["yards_allowed"]
-        .transform(lambda x: x.shift(1).rolling(3, min_periods=1).mean())
-        .fillna(0)
-    )
-
-    # --- Feature 21: yards_allowed_L5 ---
-    df["yards_allowed_L5"] = (
-        grp["yards_allowed"]
-        .transform(lambda x: x.shift(1).rolling(5, min_periods=1).mean())
-        .fillna(0)
-    )
-
-    # --- Feature 22: yards_allowed_ewma ---
     df["yards_allowed_ewma"] = (
-        grp["yards_allowed"]
+        df.groupby(grp)["yards_allowed"]
         .transform(lambda x: x.shift(1).ewm(span=3, min_periods=1).mean())
         .fillna(0)
     )
 
-    # --- Feature 18: opp_scoring_L3 (short-window opponent quality) ---
-    # NOTE: opp_scoring_L3 is computed in dst_data.py via opponent merge
-    # to ensure correct opponent alignment. Placeholder column created here
-    # if not already present.
+    # opp_scoring_L3 is computed in dst_data.py via opponent merge to ensure
+    # correct opponent alignment; just make sure it survives this pass.
 
     # --- Prior-season features (index-safe merge) ---
     prior = (
@@ -224,13 +139,4 @@ def fill_dst_nans(
     dst_feature_cols: list[str],
 ) -> tuple:
     """Fill NaNs in D/ST feature columns using training set statistics."""
-    for split_df in [train_df, val_df, test_df]:
-        split_df[dst_feature_cols] = split_df[dst_feature_cols].replace([np.inf, -np.inf], np.nan)
-
-    train_means = train_df[dst_feature_cols].mean()
-
-    for split_df in [train_df, val_df, test_df]:
-        for col in dst_feature_cols:
-            split_df[col] = split_df[col].fillna(train_means[col])
-
-    return train_df, val_df, test_df
+    return fill_nans_with_train_means(train_df, val_df, test_df, dst_feature_cols)
