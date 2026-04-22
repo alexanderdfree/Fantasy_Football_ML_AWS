@@ -1,8 +1,6 @@
 # Design Document 1: Weather & Implied-Odds Features for the Existing Neural Network
 
-> **Status: IMPLEMENTED.** Weather and Vegas features are now computed in `shared/weather_features.py`
-> and used by all position pipelines. Position-specific subsets are configured in each `{pos}_config.py`
-> under the `weather_vegas` key in the include-features dict.
+> **Status: folded into ADR-001 (2026-04-21).** Feature rationale is referenced from [ADR-001 §D6](ARCHITECTURE.md#d6-explicit-per-position-feature-allowlist). Weather/Vegas features are opted in per-position through the feature allowlist.
 
 ## Motivation
 

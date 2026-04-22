@@ -1,15 +1,6 @@
 # Design Document 2: LSTM + Multi-Head Architecture for Sequential Understanding
 
-> **Status: SUPERSEDED by Attention-based model.** Instead of an LSTM, a `MultiHeadNetWithHistory`
-> architecture was implemented in `shared/neural_net.py` using learned-query `AttentionPool` over
-> padded game history sequences (up to 17 games). This achieves the same goal of learning from
-> raw game-by-game sequences while being simpler to train. The attention model is trained for
-> QB, RB, WR, and TE (configurable via `{POS}_TRAIN_ATTENTION_NN` in position configs).
-> A `GatedTDHead` (sigmoid gate × Softplus value) handles zero-inflated TD prediction.
->
-> Target names below (`rushing_floor`, `receiving_floor`, `td_points`) reflect the
-> pre-migration fantasy-point-component decomposition. The current system predicts raw
-> NFL stats (yards, TD counts, receptions) — see [ARCHITECTURE.md](ARCHITECTURE.md) Decision D2.
+> **Status: historical artifact (2026-04-21).** Rationale was folded into [ADR-001 §D4](ARCHITECTURE.md#d4-attention-over-game-history-all-positions). Kept for provenance, not updated after the learned-query attention pool was chosen instead.
 
 ## Motivation
 
