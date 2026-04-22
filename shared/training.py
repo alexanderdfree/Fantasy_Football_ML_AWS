@@ -7,15 +7,26 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-SUPPORTED_HEAD_LOSSES = ("huber",)
+SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll")
 
 
 class MultiTargetLoss(nn.Module):
     """Per-head dispatchable loss for a multi-head network.
 
-    Each target is assigned a loss family via ``head_losses[name]``. Currently
-    only ``"huber"`` is implemented; additional families (Poisson NLL,
-    zero-truncated NegBin / Poisson hurdle) land in PR 2.
+    Each target is assigned a loss family via ``head_losses[name]``; supported
+    values are in ``SUPPORTED_HEAD_LOSSES``. PR 1 wires ``"huber"`` and
+    ``"poisson_nll"``; additional families (zero-truncated NegBin / Poisson
+    hurdle) land in PR 2.
+
+    Poisson NLL uses ``log_input=False``, so the head output is treated as the
+    rate lambda directly — requires a non-negative head output, which the
+    ``MultiHeadNet`` clamp already guarantees for targets in
+    ``non_negative_targets``. The default ``eps=1e-8`` keeps ``-y*log(lambda)``
+    finite when the clamped output hits exactly zero.
+
+    ``poisson_targets`` is a back-compat shorthand accepted alongside
+    ``head_losses``: each listed target is treated as if it had
+    ``head_losses[t] = "poisson_nll"``. Prefer ``head_losses`` for new code.
 
     Gated heads additionally receive a BCE(gate_logit, y>0) component, scaled
     by ``gate_weight``. ``gated_targets`` is the list of target names whose
@@ -34,6 +45,7 @@ class MultiTargetLoss(nn.Module):
         head_losses: dict[str, str] | None = None,
         gate_weight: float = 1.0,
         gated_targets: list[str] | None = None,
+        poisson_targets: list[str] | None = None,
     ):
         super().__init__()
         self.target_names = target_names
@@ -44,19 +56,24 @@ class MultiTargetLoss(nn.Module):
             huber_deltas = {}
         if head_losses is None:
             head_losses = {}
+        if poisson_targets:
+            head_losses = {**head_losses, **{t: "poisson_nll" for t in poisson_targets}}
         self.head_losses = {n: head_losses.get(n, "huber") for n in target_names}
 
         unknown = {n: lt for n, lt in self.head_losses.items() if lt not in SUPPORTED_HEAD_LOSSES}
         if unknown:
             raise ValueError(
-                f"Unsupported head_losses (PR 1 implements only {SUPPORTED_HEAD_LOSSES}): {unknown}"
+                f"Unsupported head_losses (supported: {SUPPORTED_HEAD_LOSSES}): {unknown}"
             )
 
-        self.huber_fns = nn.ModuleDict(
+        self.loss_fns = nn.ModuleDict(
             {
-                name: nn.HuberLoss(delta=huber_deltas.get(name, 1.0))
+                name: (
+                    nn.PoissonNLLLoss(log_input=False, full=False)
+                    if lt == "poisson_nll"
+                    else nn.HuberLoss(delta=huber_deltas.get(name, 1.0))
+                )
                 for name, lt in self.head_losses.items()
-                if lt == "huber"
             }
         )
 
@@ -64,11 +81,7 @@ class MultiTargetLoss(nn.Module):
         per_target_losses = {}
         combined = torch.tensor(0.0, device=next(iter(preds.values())).device)
         for name in self.target_names:
-            lt = self.head_losses[name]
-            if lt == "huber":
-                loss = self.huber_fns[name](preds[name], targets[name])
-            else:
-                raise AssertionError(f"unreachable: unsupported loss {lt}")
+            loss = self.loss_fns[name](preds[name], targets[name])
             per_target_losses[name] = loss
             combined = combined + self.loss_weights[name] * loss
 
@@ -509,7 +522,7 @@ def plot_training_curves(history: dict, target_names: list[str], save_path: str)
         if key in history:
             axes[1].plot(history[key], label=t.replace("_", " ").title())
     axes[1].set_xlabel("Epoch")
-    axes[1].set_ylabel("Huber Loss")
+    axes[1].set_ylabel("Per-Target Loss")
     axes[1].set_title("Per-Target Validation Loss")
     axes[1].legend()
 

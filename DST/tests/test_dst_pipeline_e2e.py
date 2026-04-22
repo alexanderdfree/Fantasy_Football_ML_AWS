@@ -42,6 +42,7 @@ from DST.dst_config import (
     DST_CONFIG_TINY,
     DST_HUBER_DELTAS,
     DST_LOSS_WEIGHTS,
+    DST_POISSON_TARGETS,
     DST_RIDGE_ALPHA_GRIDS,
     DST_SPECIFIC_FEATURES,
     DST_TARGETS,
@@ -118,6 +119,7 @@ def _make_dst_tiny_cfg() -> dict:
         "compute_adjustment_fn": None,
         "loss_weights": DST_LOSS_WEIGHTS,
         "huber_deltas": DST_HUBER_DELTAS,
+        "poisson_targets": DST_POISSON_TARGETS,
     }
     cfg.update(DST_CONFIG_TINY)
     return cfg

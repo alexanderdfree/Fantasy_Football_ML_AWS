@@ -143,6 +143,7 @@ def _run_nn_training(
         target_names=targets,
         loss_weights=cfg["loss_weights"],
         huber_deltas=cfg["huber_deltas"],
+        poisson_targets=cfg.get("poisson_targets"),
         **(loss_kwargs or {}),
     )
     trainer = trainer_cls(

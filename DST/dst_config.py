@@ -125,35 +125,55 @@ DST_NN_EPOCHS = 300
 DST_NN_BATCH_SIZE = 128
 DST_NN_PATIENCE = 35
 
+# === Poisson NLL targets ===
+# These four targets are very-rare counts (mean 0.03-0.08, max 2 over 6K+
+# team-weeks). The empirical dispersion (analysis_dst_rare_dispersion.py)
+# lands at 0.98-1.07 with zero-excess ~0, so Poisson fits cleanly. Huber at
+# delta=0.25 was effectively MSE in this range (scale-unaware, count-blind);
+# Poisson NLL with log_input=False is unbiased for E[y] and gives scale-aware
+# gradients. BCE on (y>0) was considered and rejected: it systematically
+# underestimates E[y] by lambda^2/2 (~0.03 FP/game against def_tds * 6pts)
+# and discards the rare y=2 rows. See analysis script + PR #94.
+DST_POISSON_TARGETS = [
+    "def_safeties",
+    "def_tds",
+    "def_blocked_kicks",
+    "special_teams_tds",
+]
+
 # === Loss Weights ===
-# Scaled inversely to each target's Huber delta per the CLAUDE.md rule
-# (≈ 2.0/δ) so every head contributes comparable gradient magnitude. Without
-# this, PA (δ=5) and YA (δ=30) would dominate the sparse count heads (δ=0.25)
-# by 20-120× per sample, collapsing the count heads to the mean.
+# Huber heads: scaled inversely to each target's Huber delta per the CLAUDE.md
+# rule (~= 2.0/delta) so every head contributes comparable gradient magnitude.
+# Without this, PA (delta=5) and YA (delta=30) would dominate the count heads
+# by 10-60x per sample and collapse them to the mean.
+# Poisson heads: picked so the *expected weighted per-sample loss* sits in the
+# same ~1.0 band as the Huber heads. At small lambda, E[PoissonNLL] is
+# dominated by the rare y>=1 samples and evaluates to
+# lambda + P(y>=1) * |log(lambda)| ~ 0.14-0.28 for these four targets, so
+# w ~= 5.0 lands the weighted contribution near 1.0.
 DST_LOSS_WEIGHTS = {
     "def_sacks": 2.0,  # 2.0 / 1.0
     "def_ints": 4.0,  # 2.0 / 0.5
     "def_fumble_rec": 4.0,
     "def_fumbles_forced": 4.0,
-    "def_safeties": 8.0,  # 2.0 / 0.25
-    "def_tds": 8.0,
-    "def_blocked_kicks": 8.0,
-    "special_teams_tds": 8.0,
+    "def_safeties": 5.0,  # Poisson NLL; lambda=0.030
+    "def_tds": 5.0,  # Poisson NLL; lambda=0.084
+    "def_blocked_kicks": 5.0,  # Poisson NLL; lambda=0.052
+    "special_teams_tds": 5.0,  # Poisson NLL; lambda=0.044
     "points_allowed": 0.4,  # 2.0 / 5.0
     "yards_allowed": 0.067,  # 2.0 / 30.0
 }
 
 # === Huber Deltas (per-target, raw-stat units) ===
 # Deltas roughly match each target's typical variance so outliers are robust.
+# The four very-rare targets moved to Poisson NLL (see DST_POISSON_TARGETS)
+# and are absent here — MultiTargetLoss picks the per-target loss by lookup,
+# so listing them would only add dead config.
 DST_HUBER_DELTAS = {
     "def_sacks": 1.0,
     "def_ints": 0.5,
     "def_fumble_rec": 0.5,
     "def_fumbles_forced": 0.5,
-    "def_safeties": 0.25,
-    "def_tds": 0.25,
-    "def_blocked_kicks": 0.25,
-    "special_teams_tds": 0.25,
     "points_allowed": 5.0,
     "yards_allowed": 30.0,
 }
@@ -181,9 +201,10 @@ DST_ATTN_GATED = False
 DST_ATTN_GATE_HIDDEN = 16
 DST_ATTN_GATE_WEIGHT = 1.0
 
-# Per-head loss family. Default "huber"; PR 2 introduces "poisson_nll" and
-# "hurdle_negbin" options. All heads on "huber" here = no behavior change.
-DST_HEAD_LOSSES = {t: "huber" for t in DST_TARGETS}
+# Per-head loss family. Default "huber"; the four very-rare count targets
+# use Poisson NLL (see DST_POISSON_TARGETS above — preserved as a back-compat
+# alias for any external callers; MultiTargetLoss accepts either form).
+DST_HEAD_LOSSES = {t: ("poisson_nll" if t in DST_POISSON_TARGETS else "huber") for t in DST_TARGETS}
 
 DST_ATTN_DROPOUT = 0.05
 DST_ATTN_LR = DST_NN_LR
