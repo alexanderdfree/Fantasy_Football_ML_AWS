@@ -1,6 +1,7 @@
 """Tests for batch/train.py — position registry, S3 staging, artifact handling."""
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -488,7 +489,14 @@ class TestMainIntegration:
         assert "args" in runner_called
         mock_upload.assert_called_once()
         # Metrics file must have been written before upload
-        assert (model_dir / "benchmark_metrics.json").exists()
+        metrics_path = model_dir / "benchmark_metrics.json"
+        assert metrics_path.exists()
+        # Timing must be threaded into the metrics so the EC2 history row
+        # picks it up via summarize_pipeline_result().
+        saved = json.loads(metrics_path.read_text())
+        assert isinstance(saved["elapsed_sec"], (int, float))
+        assert isinstance(saved["phase_seconds"], dict)
+        assert "run_pipeline" in saved["phase_seconds"]
 
     @mock.patch("batch.train.sync_raw_data")
     @mock.patch("batch.train.upload_artifacts")
@@ -530,4 +538,8 @@ class TestMainIntegration:
         assert runner_called["seed"] == 42
         mock_sync.assert_called_once_with("ff-predictor-training")
         mock_upload.assert_called_once()
-        assert (model_dir / "benchmark_metrics.json").exists()
+        metrics_path = model_dir / "benchmark_metrics.json"
+        assert metrics_path.exists()
+        saved = json.loads(metrics_path.read_text())
+        assert isinstance(saved["elapsed_sec"], (int, float))
+        assert saved["phase_seconds"].keys() >= {"run_pipeline"}

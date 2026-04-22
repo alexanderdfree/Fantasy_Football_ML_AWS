@@ -209,7 +209,13 @@ def _extract_metrics(position, result):
     return metrics
 
 
-def _dry_run_artifacts(position: str, model_dir: str, seed: int) -> None:
+def _dry_run_artifacts(
+    position: str,
+    model_dir: str,
+    seed: int,
+    t_total: float,
+    phase_seconds: dict[str, float],
+) -> None:
     """Write minimal stub artifacts for --dry-run mode.
 
     Exercises the post-training side of main() (artifact layout, metric
@@ -227,6 +233,8 @@ def _dry_run_artifacts(position: str, model_dir: str, seed: int) -> None:
         "dry_run": True,
         "seed": seed,
         "ridge_metrics": {"total": {"mae": 0.0, "r2": 0.0}},
+        "elapsed_sec": round(time.monotonic() - t_total, 1),
+        "phase_seconds": phase_seconds,
     }
     with open(os.path.join(model_dir, "benchmark_metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
@@ -276,11 +284,12 @@ def main():
     print(f"[batch/train.py] build fingerprint: {_hash}")
 
     _t_total = time.monotonic()
+    phase_seconds: dict[str, float] = {}
     # Skip the GPU assertion in dry-run — local/CI smoke tests rarely have CUDA.
     if args.dry_run:
         print(f"[dry-run] skipping _assert_gpu for {pos}")
     else:
-        with _timed("assert_gpu"):
+        with _timed("assert_gpu", store=phase_seconds):
             _assert_gpu(pos)
     seed_everything(args.seed)
 
@@ -301,7 +310,7 @@ def main():
         # Stub out S3 and the pipeline — we still exercise arg parsing,
         # seed setup, model-dir setup, metrics serialization, and the
         # skip-S3 code path.
-        _dry_run_artifacts(pos, model_dir, args.seed)
+        _dry_run_artifacts(pos, model_dir, args.seed, _t_total, phase_seconds)
         print(f"[dry-run] Completed for {pos}; skipping S3 upload.")
         return
 
@@ -309,23 +318,23 @@ def main():
 
     # data/raw/*.parquet is needed for weather features (all positions) and
     # for K/DST's self-contained data loaders. Sync before branching.
-    with _timed("sync_raw_data"):
+    with _timed("sync_raw_data", store=phase_seconds):
         sync_raw_data(s3_bucket)
 
     if accepts_dataframes(pos):
         # Download train/val/test splits from S3 into the container
-        with _timed("download_data"):
+        with _timed("download_data", store=phase_seconds):
             download_data(s3_bucket, s3_prefix, data_dir)
-        with _timed("read_parquets"):
+        with _timed("read_parquets", store=phase_seconds):
             train_df = pd.read_parquet(os.path.join(data_dir, "train.parquet"))
             val_df = pd.read_parquet(os.path.join(data_dir, "val.parquet"))
             test_df = pd.read_parquet(os.path.join(data_dir, "test.parquet"))
             print(f"Loaded data: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
-        with _timed("run_pipeline"):
+        with _timed("run_pipeline", store=phase_seconds):
             result = run_fn(train_df, val_df, test_df, seed=args.seed)
     else:
         # K/DST: self-contained data loading
-        with _timed("run_pipeline"):
+        with _timed("run_pipeline", store=phase_seconds):
             result = run_fn(seed=args.seed)
 
     # Copy model artifacts to output dir FIRST so a later metrics write cannot
@@ -333,7 +342,7 @@ def main():
     src_model_dir = os.path.join(pos, "outputs", "models")
     if os.path.isdir(src_model_dir):
         print(f"Copying model artifacts from {src_model_dir} to {model_dir}")
-        with _timed("copy_artifacts"):
+        with _timed("copy_artifacts", store=phase_seconds):
             _replace_model_dir_contents(src_model_dir, model_dir)
     else:
         print(f"WARNING: No model directory found at {src_model_dir}")
@@ -347,15 +356,24 @@ def main():
             "Refusing to upload incomplete artifacts."
         )
     metrics = _extract_metrics(pos, result)
+    # Record end-to-end elapsed and the per-phase breakdown so the row
+    # appended to benchmark_history.json by batch/benchmark.py --download-only
+    # carries timing. elapsed_sec captures everything from seeding through
+    # the S3 upload, matching local benchmark.py's wrap around run_one().
+    metrics["elapsed_sec"] = round(time.monotonic() - _t_total, 1)
+    metrics["phase_seconds"] = phase_seconds
     metrics_path = os.path.join(model_dir, "benchmark_metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"Saved benchmark metrics to {metrics_path}")
 
     # Upload artifacts to S3 (raises if model_dir is empty or metrics missing)
-    with _timed("upload_artifacts"):
+    with _timed("upload_artifacts", store=phase_seconds):
         upload_artifacts(s3_bucket, pos, model_dir)
 
+    # upload_artifacts ran after the metrics write, so its duration lives in
+    # phase_seconds but is not reflected in metrics["phase_seconds"] for this
+    # run. That's fine — the metrics file is already in the tarball.
     print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
 
 
