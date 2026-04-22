@@ -82,7 +82,6 @@ class TestModelArchitecture:
             "epochs",
             "patience",
             "scheduler",
-            "huber_delta_total",
             "attention_enabled",
             "lightgbm_enabled",
             "feature_count",

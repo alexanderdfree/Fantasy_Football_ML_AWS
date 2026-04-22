@@ -296,17 +296,9 @@ class TestLightGBMMultiTarget:
         model = LightGBMMultiTarget(target_names=TARGETS, n_estimators=10)
         model.fit(X, y_dict)
         preds = model.predict(X)
-        assert set(preds.keys()) == {"rushing_floor", "receiving_floor", "td_points", "total"}
+        assert set(preds.keys()) == {"rushing_floor", "receiving_floor", "td_points"}
         for key in preds:
             assert preds[key].shape == (len(X),)
-
-    def test_total_is_sum_of_components(self, multi_target_data):
-        X, y_dict = multi_target_data
-        model = LightGBMMultiTarget(target_names=TARGETS, n_estimators=10)
-        model.fit(X, y_dict)
-        preds = model.predict(X)
-        expected = preds["rushing_floor"] + preds["receiving_floor"] + preds["td_points"]
-        np.testing.assert_allclose(preds["total"], expected, atol=1e-6)
 
     def test_predictions_non_negative(self, multi_target_data):
         X, y_dict = multi_target_data
@@ -334,14 +326,16 @@ class TestLightGBMMultiTarget:
         y_val = {k: v[:20] for k, v in y_dict.items()}
         model.fit(X[20:], {k: v[20:] for k, v in y_dict.items()}, X_val=X_val, y_val_dict=y_val)
         preds = model.predict(X)
-        assert preds["total"].shape == (len(X),)
+        for t in TARGETS:
+            assert preds[t].shape == (len(X),)
 
     def test_without_validation_set(self, multi_target_data):
         X, y_dict = multi_target_data
         model = LightGBMMultiTarget(target_names=TARGETS, n_estimators=10)
         model.fit(X, y_dict)
         preds = model.predict(X)
-        assert preds["total"].shape == (len(X),)
+        for t in TARGETS:
+            assert preds[t].shape == (len(X),)
 
     def test_save_and_load_roundtrip(self, multi_target_data, tmp_path):
         X, y_dict = multi_target_data

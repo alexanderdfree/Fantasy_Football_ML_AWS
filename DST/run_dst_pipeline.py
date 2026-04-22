@@ -38,7 +38,6 @@ from DST.dst_config import (
     DST_LGBM_REG_ALPHA,
     DST_LGBM_REG_LAMBDA,
     DST_LGBM_SUBSAMPLE,
-    DST_LOSS_W_TOTAL,
     DST_LOSS_WEIGHTS,
     DST_NN_BACKBONE_LAYERS,
     DST_NN_BATCH_SIZE,
@@ -103,9 +102,7 @@ def run_dst_pipeline(seed=42):
         "fill_nans_fn": fill_dst_nans,
         "get_feature_columns_fn": get_dst_feature_columns,
         "compute_adjustment_fn": None,
-        # DST is in _FANTASY_POINTS_AUX_POSITIONS — wiring aggregate_fn here
-        # lets the NN supervise ``total`` on ``fantasy_points`` directly
-        # instead of the raw-sum (~380/game, dominated by yards_allowed).
+        # Serving/reporting aggregator; training is on raw-stat heads only.
         "aggregate_fn": aggregate_fn_for("DST"),
         "nn_backbone_layers": DST_NN_BACKBONE_LAYERS,
         "nn_head_hidden": DST_NN_HEAD_HIDDEN,
@@ -118,7 +115,6 @@ def run_dst_pipeline(seed=42):
         "nn_batch_size": DST_NN_BATCH_SIZE,
         "nn_patience": DST_NN_PATIENCE,
         "loss_weights": DST_LOSS_WEIGHTS,
-        "loss_w_total": DST_LOSS_W_TOTAL,
         "huber_deltas": DST_HUBER_DELTAS,
         "scheduler_type": DST_SCHEDULER_TYPE,
         "cosine_t0": DST_COSINE_T0,

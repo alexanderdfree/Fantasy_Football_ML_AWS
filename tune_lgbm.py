@@ -110,7 +110,9 @@ def _make_objective(folds_data, targets):
             model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
 
             preds = model.predict(X_val)
-            total_mae = np.mean(np.abs(preds["total"] - y_val_dict["total"]))
+            pred_total = sum(preds[t] for t in targets)
+            true_total = sum(y_val_dict[t] for t in targets)
+            total_mae = np.mean(np.abs(pred_total - true_total))
             fold_maes.append(total_mae)
 
             # Report intermediate value for pruning
@@ -166,8 +168,13 @@ def _run_comparison(pos, cfg, best_params):
     old_preds = old_model.predict(X_test)
     old_metrics = compute_target_metrics(y_test_dict, old_preds, targets)
 
+    agg = cfg.get("aggregate_fn")
+
+    def _total(preds):
+        return agg(preds) if agg is not None else sum(preds[t] for t in targets)
+
     pos_test_old = pos_test.copy()
-    pos_test_old["pred_lgbm_total"] = old_preds["total"]
+    pos_test_old["pred_lgbm_total"] = _total(old_preds)
     old_ranking = compute_ranking_metrics(pos_test_old, pred_col="pred_lgbm_total")
 
     # --- New (tuned) params ---
@@ -177,7 +184,7 @@ def _run_comparison(pos, cfg, best_params):
     new_metrics = compute_target_metrics(y_test_dict, new_preds, targets)
 
     pos_test_new = pos_test.copy()
-    pos_test_new["pred_lgbm_total"] = new_preds["total"]
+    pos_test_new["pred_lgbm_total"] = _total(new_preds)
     new_ranking = compute_ranking_metrics(pos_test_new, pred_col="pred_lgbm_total")
 
     # --- Print comparison ---

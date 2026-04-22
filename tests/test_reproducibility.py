@@ -147,7 +147,7 @@ def test_ridge_predictions_bit_identical(pipeline_runs, position):
 
     p1 = pipeline_runs["r1"]["per_target_preds"]["ridge"]
     p2 = pipeline_runs["r2"]["per_target_preds"]["ridge"]
-    for key in targets + ["total"]:
+    for key in targets:
         np.testing.assert_array_equal(
             np.asarray(p1[key]),
             np.asarray(p2[key]),
@@ -172,7 +172,7 @@ def test_nn_predictions_bit_identical(pipeline_runs, position):
 
     p1 = pipeline_runs["r1"]["per_target_preds"]["nn"]
     p2 = pipeline_runs["r2"]["per_target_preds"]["nn"]
-    for key in targets + ["total"]:
+    for key in targets:
         t1 = torch.as_tensor(np.asarray(p1[key]))
         t2 = torch.as_tensor(np.asarray(p2[key]))
         torch.testing.assert_close(

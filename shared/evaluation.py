@@ -27,11 +27,10 @@ def compute_target_metrics(y_true_dict: dict, y_pred_dict: dict, target_names: l
     """Compute per-target and total metrics.
 
     Each entry gains a ``"unit"`` field (``"yds"``, ``"TDs"``, ``"pts"``, etc.)
-    pulled from ``TARGET_UNITS``. For QB/RB/WR/TE (raw-stat targets), the
-    ``"total"`` entry is computed on fantasy-points aggregation via the
-    aggregator — NOT the raw sum of per-target values, which would be
-    dominated by yardage magnitudes. For K/DST (still decomposed-points
-    targets), ``"total"`` remains the sum of targets for backward compat.
+    pulled from ``TARGET_UNITS``. The ``"total"`` entry is computed on
+    fantasy-points aggregation via the per-position aggregator when the
+    position is recognized; otherwise it falls back to the plain sum of
+    per-target values.
 
     Returns:
         {"total": {mae, rmse, r2, unit}, "target_1": {mae, rmse, r2, unit}, ...}
@@ -42,11 +41,11 @@ def compute_target_metrics(y_true_dict: dict, y_pred_dict: dict, target_names: l
     if position is not None:
         true_pts = predictions_to_fantasy_points(position, y_true_dict, "ppr")
         pred_pts = predictions_to_fantasy_points(position, y_pred_dict, "ppr")
-        results["total"] = compute_metrics(true_pts, pred_pts)
-        results["total"]["unit"] = "pts"
     else:
-        results["total"] = compute_metrics(y_true_dict["total"], y_pred_dict["total"])
-        results["total"]["unit"] = TARGET_UNITS.get("total", "pts")
+        true_pts = np.sum([y_true_dict[t] for t in target_names], axis=0)
+        pred_pts = np.sum([y_pred_dict[t] for t in target_names], axis=0)
+    results["total"] = compute_metrics(true_pts, pred_pts)
+    results["total"]["unit"] = "pts"
 
     for target in target_names:
         metrics = compute_metrics(y_true_dict[target], y_pred_dict[target])
@@ -165,9 +164,8 @@ def plot_pred_vs_actual(
     model_name: str,
     save_path: str,
 ) -> None:
-    """Scatter plots of predicted vs actual for each target + total."""
-    targets = [("total", "Total Fantasy Points")]
-    targets += [(t, t.replace("_", " ").title()) for t in target_names]
+    """Scatter plots of predicted vs actual for each target."""
+    targets = [(t, t.replace("_", " ").title()) for t in target_names]
 
     n = len(targets)
     ncols = min(n, 2)

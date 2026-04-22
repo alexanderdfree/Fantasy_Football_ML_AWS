@@ -125,16 +125,14 @@ TE_LOSS_WEIGHTS = {
     "receptions": 1.0,  # 2.0 / 2.0 (anchor)
     "fumbles_lost": 4.0,
 }
-TE_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (raw-stat units) ===
-# yards δ≈15 (receiving), counts δ≈0.5, receptions δ≈2.0, total δ≈3.0 (TE scale).
+# yards δ≈15 (receiving), counts δ≈0.5, receptions δ≈2.0.
 TE_HUBER_DELTAS = {
     "receiving_tds": 0.5,
     "receiving_yards": 15.0,
     "receptions": 2.0,
     "fumbles_lost": 0.5,
-    "total": 3.0,
 }
 
 # === LR Scheduler ===
@@ -214,7 +212,6 @@ TE_CONFIG_TINY = {
     "nn_batch_size": 32,
     "nn_patience": 10,
     "loss_weights": TE_LOSS_WEIGHTS,
-    "loss_w_total": TE_LOSS_W_TOTAL,
     "huber_deltas": TE_HUBER_DELTAS,
     "scheduler_type": "onecycle",
     "onecycle_max_lr": 1e-3,

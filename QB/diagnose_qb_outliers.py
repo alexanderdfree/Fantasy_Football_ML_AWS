@@ -134,7 +134,6 @@ def _train_models(seed=42):
         target_names=targets,
         loss_weights=cfg["loss_weights"],
         huber_deltas=cfg["huber_deltas"],
-        w_total=cfg["loss_w_total"],
     )
     train_loader, val_loader = make_dataloaders(
         X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=cfg["nn_batch_size"]
@@ -488,7 +487,7 @@ def main():
     nn_scaler = bundle["nn_scaler"]
     device = bundle["device"]
 
-    ridge_total = ridge_preds["total"]
+    ridge_total = sum(ridge_preds[t] for t in targets)
     nn_total = sum(nn_preds[t] for t in targets)
 
     md = ["# QB Outlier Diagnostic\n"]

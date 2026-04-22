@@ -195,24 +195,18 @@ def make_tensors(
     targets: Iterable[str],
     n: int = 10,
     seed: int | None = 42,
-    include_total: bool = True,
 ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
     """Build ``(preds, targets)`` dicts of ``torch.randn`` tensors.
 
-    Each dict maps each target name in ``targets`` (plus ``"total"`` if
-    ``include_total``) to an independent ``torch.randn(n)`` draw.  Used
-    by the position MultiTargetLoss tests.  Pass ``seed=None`` to
-    avoid touching torch's global RNG state (DST's original behavior).
+    Each dict maps each target name in ``targets`` to an independent
+    ``torch.randn(n)`` draw. Used by the position MultiTargetLoss tests.
+    Pass ``seed=None`` to avoid touching torch's global RNG state.
     """
     if seed is not None:
         torch.manual_seed(seed)
     targets = list(targets)
     preds = {t: torch.randn(n) for t in targets}
-    if include_total:
-        preds["total"] = torch.randn(n)
     truth = {t: torch.randn(n) for t in targets}
-    if include_total:
-        truth["total"] = torch.randn(n)
     return preds, truth
 
 

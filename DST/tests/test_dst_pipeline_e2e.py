@@ -216,45 +216,41 @@ class TestDSTPipelineE2E:
         assert "test_df" in result
 
     def test_predictions_shape_and_finite(self, pipeline_run):
-        """Predicted totals must match test-row count and contain only finite values."""
+        """Per-target predictions must match test-row count and be finite."""
         result = pipeline_run
 
         n_test = len(result["test_df"])
         for model_key in ("ridge", "nn"):
             preds = result["per_target_preds"][model_key]
-            assert "total" in preds
-            assert preds["total"].shape == (n_test,), (
-                f"{model_key} total-pred shape {preds['total'].shape} != ({n_test},)"
-            )
-            assert np.isfinite(preds["total"]).all(), f"{model_key} total contains NaN/inf"
             for t in DST_TARGETS:
                 assert preds[t].shape == (n_test,)
                 assert np.isfinite(preds[t]).all(), f"{model_key}.{t} contains NaN/inf"
 
     def test_same_seed_bit_identical_predictions(self, pipeline_run, pipeline_run_repeat):
-        """Two runs with seed=42 must produce bit-identical Ridge + NN totals.
+        """Two runs with seed=42 must produce bit-identical Ridge + NN preds.
 
         Strongest check for hidden non-determinism in the shared kernel
         (dataloader shuffle, dropout masks, dict-iteration order, ...).
         """
-        # Ridge is deterministic — exact equality expected.
-        np.testing.assert_allclose(
-            pipeline_run["per_target_preds"]["ridge"]["total"],
-            pipeline_run_repeat["per_target_preds"]["ridge"]["total"],
-            atol=0.0,
-            rtol=0.0,
-            err_msg="Ridge predictions drifted across runs with same seed",
-        )
-        # NN reproducibility — should be bit-identical on CPU with the same
-        # seed, but we allow atol=1e-6 in case BLAS thread scheduling
-        # introduces last-bit noise on some platforms.
-        np.testing.assert_allclose(
-            pipeline_run["per_target_preds"]["nn"]["total"],
-            pipeline_run_repeat["per_target_preds"]["nn"]["total"],
-            atol=1e-6,
-            rtol=0.0,
-            err_msg="NN predictions drifted >1e-6 across runs with same seed",
-        )
+        for t in DST_TARGETS:
+            # Ridge is deterministic — exact equality expected.
+            np.testing.assert_allclose(
+                pipeline_run["per_target_preds"]["ridge"][t],
+                pipeline_run_repeat["per_target_preds"]["ridge"][t],
+                atol=0.0,
+                rtol=0.0,
+                err_msg=f"Ridge {t} drifted across runs with same seed",
+            )
+            # NN reproducibility — should be bit-identical on CPU with the same
+            # seed, but we allow atol=1e-6 in case BLAS thread scheduling
+            # introduces last-bit noise on some platforms.
+            np.testing.assert_allclose(
+                pipeline_run["per_target_preds"]["nn"][t],
+                pipeline_run_repeat["per_target_preds"]["nn"][t],
+                atol=1e-6,
+                rtol=0.0,
+                err_msg=f"NN {t} drifted >1e-6 across runs with same seed",
+            )
 
     def test_ridge_metrics_structure(self, pipeline_run):
         """Ridge metrics must include MAE/R2 for every target + total."""
@@ -268,14 +264,14 @@ class TestDSTPipelineE2E:
     def test_attention_nn_trains_and_predicts(self, tiny_cwd):
         """Smoke test for the attention path — enables train_attention_nn on
         the tiny config and asserts the attention model produces finite
-        per-target + total predictions. Protects against broken wiring in
-        ``get_attn_static_columns`` (per-position whitelist), the per-game
-        opp columns on the tiny dataset, and the aggregate_fn hook."""
+        per-target predictions. Protects against broken wiring in
+        ``get_attn_static_columns`` (per-position whitelist) and the
+        per-game opp columns on the tiny dataset."""
         train, val, test = _build_tiny_splits(seed=42)
         cfg = _make_dst_tiny_cfg()
-        # Flip attention on + provide required attn_* keys (plus aggregate_fn
-        # so training supervises on fantasy_points via the tier-aware DST
-        # aggregator, matching run_dst_pipeline.py).
+        # Flip attention on + provide required attn_* keys. aggregate_fn is
+        # still set for serving + ranking metric reporting, but the NN itself
+        # trains on raw-stat heads only.
         cfg["train_attention_nn"] = True
         cfg["attn_history_stats"] = DST_ATTN_HISTORY_STATS
         cfg["attn_static_features"] = DST_ATTN_STATIC_FEATURES
@@ -294,9 +290,6 @@ class TestDSTPipelineE2E:
         assert "attn_nn_metrics" in result
         attn_preds = result["per_target_preds"]["attn_nn"]
         n_test = len(result["test_df"])
-        assert "total" in attn_preds
-        assert attn_preds["total"].shape == (n_test,)
-        assert np.isfinite(attn_preds["total"]).all(), "Attention NN total contains NaN/inf"
         for t in DST_TARGETS:
             assert attn_preds[t].shape == (n_test,)
             assert np.isfinite(attn_preds[t]).all(), f"Attention NN.{t} contains NaN/inf"

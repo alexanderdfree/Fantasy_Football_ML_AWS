@@ -148,12 +148,12 @@ def _dst_predictions_to_fantasy_points(preds_dict: dict):
     """Aggregate the 10 DST raw-stat predictions into fantasy points.
 
     Must match ``DST.dst_targets.compute_dst_targets``'s ``fantasy_points``
-    column exactly — training supervises ``total`` on ``fantasy_points`` when
-    ``aggregate_fn`` is wired, so any divergence produces an unminimizable aux
-    loss (see ``shared/pipeline.py:_FANTASY_POINTS_AUX_POSITIONS``).
+    column exactly. Used at serving time (``app.py:_combine_total``) and for
+    benchmark reporting; training itself supervises only the raw-stat heads.
 
-    Works on torch Tensors (NN forward pass during training) and numpy arrays
-    (inference in ``app.py``). The return type mirrors the input type.
+    Works on numpy arrays (inference in ``app.py``) and torch Tensors (in
+    case a caller wants gradients through the aggregator). The return type
+    mirrors the input type.
     """
     linear = (
         preds_dict["def_sacks"] * 1

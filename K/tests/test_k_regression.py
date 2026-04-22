@@ -47,18 +47,18 @@ def k_training_arrays(tiny_k_dataset):
 
     y_train_dict = {t: train_df[t].values.astype(np.float32) for t in K_TARGETS}
     y_val_dict = {t: val_df[t].values.astype(np.float32) for t in K_TARGETS}
-    y_train_dict["total"] = sum(y_train_dict[t] for t in K_TARGETS)
-    y_val_dict["total"] = sum(y_val_dict[t] for t in K_TARGETS)
+    val_total = sum(y_val_dict[t] for t in K_TARGETS)
+    train_total = sum(y_train_dict[t] for t in K_TARGETS)
 
-    train_mean = float(y_train_dict["total"].mean())
-    baseline_preds = np.full(len(X_val), train_mean, dtype=np.float32)
-    baseline_mae = float(np.mean(np.abs(baseline_preds - y_val_dict["total"])))
+    baseline_preds = np.full(len(X_val), float(train_total.mean()), dtype=np.float32)
+    baseline_mae = float(np.mean(np.abs(baseline_preds - val_total)))
 
     return {
         "X_train": X_train,
         "X_val": X_val,
         "y_train_dict": y_train_dict,
         "y_val_dict": y_val_dict,
+        "val_total": val_total,
         "baseline_mae": baseline_mae,
         "feature_cols": feature_cols,
     }
@@ -75,7 +75,7 @@ def ridge_mae(k_training_arrays):
     d = k_training_arrays
     model = RidgeMultiTarget(target_names=K_TARGETS, alpha=1.0)
     model.fit(d["X_train"], d["y_train_dict"])
-    return _total_mae(model.predict(d["X_val"]), d["y_val_dict"]["total"])
+    return _total_mae(model.predict(d["X_val"]), d["val_total"])
 
 
 @pytest.fixture(scope="module")
@@ -97,7 +97,7 @@ def lightgbm_mae(k_training_arrays):
         d["y_val_dict"],
         feature_names=d["feature_cols"],
     )
-    return _total_mae(model.predict(d["X_val"]), d["y_val_dict"]["total"])
+    return _total_mae(model.predict(d["X_val"]), d["val_total"])
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +161,6 @@ def test_nn_within_25pct_of_lightgbm(k_training_arrays, lightgbm_mae):
         target_names=K_TARGETS,
         loss_weights=K_LOSS_WEIGHTS,
         huber_deltas=K_HUBER_DELTAS,
-        w_total=1.0,
     )
     trainer = MultiHeadTrainer(
         model=model,
@@ -177,7 +176,7 @@ def test_nn_within_25pct_of_lightgbm(k_training_arrays, lightgbm_mae):
 
     nn_mae = _total_mae(
         model.predict_numpy(X_val_s, torch.device("cpu")),
-        d["y_val_dict"]["total"],
+        d["val_total"],
     )
 
     assert lightgbm_mae * 0.75 <= nn_mae <= lightgbm_mae * 1.25, (

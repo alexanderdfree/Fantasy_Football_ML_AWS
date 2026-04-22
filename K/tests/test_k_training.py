@@ -31,7 +31,7 @@ class TestMultiTargetLoss:
         assert isinstance(components, dict)
 
     def test_component_keys(self, make_tensors):
-        """Kicker loss has 4 per-target components (plus total/combined)."""
+        """Kicker loss has 4 per-target components plus combined."""
         loss_fn = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
         preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
@@ -40,7 +40,6 @@ class TestMultiTargetLoss:
             "loss_pat_points",
             "loss_fg_misses",
             "loss_xp_misses",
-            "loss_total_aux",
             "loss_combined",
         }
 
@@ -58,7 +57,6 @@ class TestMultiTargetLoss:
             "pat_points": torch.tensor([3.0, 2.0]),
             "fg_misses": torch.tensor([0.0, 1.0]),
             "xp_misses": torch.tensor([0.0, 0.0]),
-            "total": torch.tensor([12.0, 13.0]),
         }
         combined, _ = loss_fn(targets, targets)
         assert pytest.approx(combined.item(), abs=1e-6) == 0.0
@@ -68,7 +66,6 @@ class TestMultiTargetLoss:
         loss_equal = MultiTargetLoss(
             target_names=K_TARGETS,
             loss_weights={t: 1.0 for t in K_TARGETS},
-            w_total=1.0,
         )
         loss_fg_heavy = MultiTargetLoss(
             target_names=K_TARGETS,
@@ -78,7 +75,6 @@ class TestMultiTargetLoss:
                 "fg_misses": 1.0,
                 "xp_misses": 1.0,
             },
-            w_total=1.0,
         )
         c1, _ = loss_equal(preds, targets)
         c2, _ = loss_fg_heavy(preds, targets)
@@ -92,7 +88,7 @@ class TestMultiTargetLoss:
 
     def test_backward_pass(self):
         loss_fn = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
-        preds = {k: torch.randn(5, requires_grad=True) for k in K_TARGETS + ["total"]}
+        preds = {k: torch.randn(5, requires_grad=True) for k in K_TARGETS}
         targets = {k: torch.randn(5) for k in preds}
         combined, _ = loss_fn(preds, targets)
         combined.backward()
@@ -218,12 +214,10 @@ class TestMultiHeadTrainer:
             "val_loss_pat_points",
             "val_loss_fg_misses",
             "val_loss_xp_misses",
-            "val_mae_total",
             "val_mae_fg_yard_points",
             "val_mae_pat_points",
             "val_mae_fg_misses",
             "val_mae_xp_misses",
-            "val_rmse_total",
         }
         assert expected_keys.issubset(set(history.keys()))
 

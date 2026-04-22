@@ -174,7 +174,6 @@ class TestMakeDataloaders:
         rng = np.random.default_rng(42)
         X = rng.standard_normal((n, input_dim)).astype(np.float32)
         y = {t: rng.standard_normal(n).astype(np.float32) for t in targets}
-        y["total"] = sum(y[t] for t in targets)
         return X, y
 
     def test_batch_size_1(self):
@@ -207,7 +206,6 @@ class TestMakeDataloaders:
         """Empty training data should surface a clear error at construction or iteration."""
         X_tr = np.zeros((0, 4), dtype=np.float32)
         y_tr = {t: np.zeros(0, dtype=np.float32) for t in TARGETS}
-        y_tr["total"] = np.zeros(0, dtype=np.float32)
         X_val, y_val = self._make_flat_data(4)
         with pytest.raises((ValueError, RuntimeError)):
             train_loader, _ = make_dataloaders(X_tr, y_tr, X_val, y_val, batch_size=4)
@@ -233,18 +231,15 @@ class TestMultiTargetLoss:
     def _make_preds_and_targets(self, batch=4):
         torch.manual_seed(42)
         preds = {t: torch.randn(batch) for t in TARGETS}
-        preds["total"] = sum(preds[t] for t in TARGETS)
         targets = {t: torch.randn(batch) for t in TARGETS}
-        targets["total"] = sum(targets[t] for t in TARGETS)
         return preds, targets
 
     def test_equal_weights_sum_matches_components(self):
-        """With all weights=1 and w_total=0, combined loss equals sum of per-target losses."""
+        """With all weights=1, combined loss equals sum of per-target losses."""
         preds, targets = self._make_preds_and_targets()
         loss_fn = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights={t: 1.0 for t in TARGETS},
-            w_total=0.0,
         )
         combined, components = loss_fn(preds, targets)
         expected = sum(components[f"loss_{t}"] for t in TARGETS)
@@ -256,12 +251,10 @@ class TestMultiTargetLoss:
         base = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights={t: 1.0 for t in TARGETS},
-            w_total=0.0,
         )
         weighted = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights={"rushing_floor": 2.0, "receiving_floor": 1.0, "td_points": 1.0},
-            w_total=0.0,
         )
         base_loss, base_comp = base(preds, targets)
         weighted_loss, _ = weighted(preds, targets)
@@ -277,21 +270,9 @@ class TestMultiTargetLoss:
         masked = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights={"rushing_floor": 1.0, "receiving_floor": 0.0, "td_points": 1.0},
-            w_total=0.0,
         )
         loss, comp = masked(preds, targets)
         expected = comp["loss_rushing_floor"] + comp["loss_td_points"]
-        assert loss.item() == pytest.approx(expected, abs=1e-6)
-
-    def test_w_total_adds_total_auxiliary(self):
-        preds, targets = self._make_preds_and_targets()
-        weighted = MultiTargetLoss(
-            target_names=TARGETS,
-            loss_weights={t: 1.0 for t in TARGETS},
-            w_total=0.5,
-        )
-        loss, comp = weighted(preds, targets)
-        expected = sum(comp[f"loss_{t}"] for t in TARGETS) + 0.5 * comp["loss_total_aux"]
         assert loss.item() == pytest.approx(expected, abs=1e-6)
 
     def test_gradient_flows_to_each_target_head(self):
@@ -300,14 +281,11 @@ class TestMultiTargetLoss:
         # equal 2x the gradients from the base loss for the scaled target.
         torch.manual_seed(42)
         preds1 = {t: torch.randn(4, requires_grad=True) for t in TARGETS}
-        preds1["total"] = sum(preds1[t] for t in TARGETS)
         targets = {t: torch.randn(4) for t in TARGETS}
-        targets["total"] = sum(targets[t] for t in TARGETS)
 
         base = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights={t: 1.0 for t in TARGETS},
-            w_total=0.0,
         )
         loss1, _ = base(preds1, targets)
         loss1.backward()
@@ -315,11 +293,9 @@ class TestMultiTargetLoss:
 
         torch.manual_seed(42)
         preds2 = {t: torch.randn(4, requires_grad=True) for t in TARGETS}
-        preds2["total"] = sum(preds2[t] for t in TARGETS)
         scaled = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights={"rushing_floor": 2.0, "receiving_floor": 1.0, "td_points": 1.0},
-            w_total=0.0,
         )
         loss2, _ = scaled(preds2, targets)
         loss2.backward()
@@ -334,14 +310,11 @@ class TestMultiTargetLoss:
         """weight=0 on target k must produce zero gradient on preds[k]."""
         torch.manual_seed(42)
         preds = {t: torch.randn(4, requires_grad=True) for t in TARGETS}
-        preds["total"] = sum(preds[t] for t in TARGETS)
         targets = {t: torch.randn(4) for t in TARGETS}
-        targets["total"] = sum(targets[t] for t in TARGETS)
 
         loss_fn = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights={"rushing_floor": 1.0, "receiving_floor": 0.0, "td_points": 1.0},
-            w_total=0.0,
         )
         loss, _ = loss_fn(preds, targets)
         loss.backward()
@@ -354,17 +327,14 @@ class TestMultiTargetLoss:
         """When gate logits are present, BCE supervision is added."""
         torch.manual_seed(0)
         preds = {t: torch.randn(4) for t in TARGETS}
-        preds["total"] = sum(preds[t] for t in TARGETS)
         preds["td_points_gate_logit"] = torch.randn(4)
         targets = {t: torch.randn(4) for t in TARGETS}
-        targets["total"] = sum(targets[t] for t in TARGETS)
         # Force a positive td_points target so BCE has both classes in the batch.
         targets["td_points"] = torch.tensor([0.0, 6.0, 0.0, 12.0])
 
         loss_fn = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights={t: 1.0 for t in TARGETS},
-            w_total=0.0,
             td_gate_weight=1.0,
             gated_td_target="td_points",
         )
@@ -443,11 +413,9 @@ class TestMultiHeadHistoryTrainer:
             "val_loss_rushing_floor",
             "val_loss_receiving_floor",
             "val_loss_td_points",
-            "val_mae_total",
             "val_mae_rushing_floor",
             "val_mae_receiving_floor",
             "val_mae_td_points",
-            "val_rmse_total",
         }
         assert expected_keys.issubset(set(history.keys()))
 

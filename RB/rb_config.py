@@ -185,7 +185,6 @@ RB_LOSS_WEIGHTS = {
     "receptions": 1.0,  # 2.0 / 2.0 (anchor)
     "fumbles_lost": 4.0,
 }
-RB_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target, raw-stat units) ===
 RB_HUBER_DELTAS = {
@@ -195,7 +194,6 @@ RB_HUBER_DELTAS = {
     "receiving_yards": 15.0,
     "receptions": 2.0,
     "fumbles_lost": 0.5,
-    "total": 3.0,  # aggregated fantasy-points total (RB scale)
 }
 
 # === LR Scheduler ===

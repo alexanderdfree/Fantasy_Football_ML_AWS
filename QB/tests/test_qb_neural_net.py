@@ -23,7 +23,7 @@ class TestMultiHeadNet:
     def test_output_keys(self, model):
         x = torch.randn(4, 10)
         out = model(x)
-        assert set(out.keys()) == set(QB_TARGETS) | {"total"}
+        assert set(out.keys()) == set(QB_TARGETS)
 
     def test_output_shapes(self, model):
         batch_size = 8
@@ -31,14 +31,6 @@ class TestMultiHeadNet:
         out = model(x)
         for key in out:
             assert out[key].shape == (batch_size,)
-
-    def test_total_equals_sum(self, model):
-        model.eval()
-        x = torch.randn(4, 10)
-        with torch.no_grad():
-            out = model(x)
-        expected = sum(out[t] for t in QB_TARGETS)
-        torch.testing.assert_close(out["total"], expected)
 
     def test_custom_backbone(self):
         model = MultiHeadNet(
@@ -48,7 +40,8 @@ class TestMultiHeadNet:
         )
         x = torch.randn(2, 5)
         out = model(x)
-        assert out["total"].shape == (2,)
+        for t in QB_TARGETS:
+            assert out[t].shape == (2,)
 
     def test_single_sample_eval_mode(self):
         """Batch norm can fail with batch_size=1 in train mode; eval mode should work."""
@@ -61,7 +54,8 @@ class TestMultiHeadNet:
         with torch.no_grad():
             x = torch.randn(1, 10)
             out = model(x)
-        assert out["total"].shape == (1,)
+        for t in QB_TARGETS:
+            assert out[t].shape == (1,)
 
     def test_predict_numpy(self):
         model = MultiHeadNet(
@@ -73,7 +67,7 @@ class TestMultiHeadNet:
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
 
-        assert set(preds.keys()) == set(QB_TARGETS) | {"total"}
+        assert set(preds.keys()) == set(QB_TARGETS)
         for key in preds:
             assert isinstance(preds[key], np.ndarray)
             assert preds[key].shape == (5,)
@@ -87,13 +81,14 @@ class TestMultiHeadNet:
         X = np.random.randn(1, 5).astype(np.float32)
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
-        assert preds["total"].shape == (1,)
+        for t in QB_TARGETS:
+            assert preds[t].shape == (1,)
 
     def test_gradients_flow(self, model):
         """Verify backward pass works (gradients reach input)."""
         x = torch.randn(4, 10, requires_grad=True)
         out = model(x)
-        loss = out["total"].sum()
+        loss = sum(out[t].sum() for t in QB_TARGETS)
         loss.backward()
         assert x.grad is not None
         assert x.grad.shape == (4, 10)
@@ -112,26 +107,11 @@ class TestMultiHeadNet:
         x = torch.randn(4, 5) * 0.01
         x.requires_grad_(True)
         out = model(x)
-        loss = out["total"].sum()
+        loss = sum(out[t].sum() for t in QB_TARGETS)
         loss.backward()
         assert x.grad is not None
         assert not torch.isnan(x.grad).any(), "NaN gradient near zero"
         assert (x.grad != 0).any(), "Gradients should be non-zero near zero"
-
-    def test_total_equals_sum_train_mode(self):
-        """Total = sum of heads should hold in train mode too."""
-        model = MultiHeadNet(
-            input_dim=10,
-            target_names=QB_TARGETS,
-            backbone_layers=[32, 16],
-            head_hidden=8,
-            dropout=0.0,
-        )
-        model.train()
-        x = torch.randn(4, 10)
-        out = model(x)
-        expected = sum(out[t] for t in QB_TARGETS)
-        torch.testing.assert_close(out["total"], expected)
 
     def test_single_backbone_layer(self):
         """Single-layer backbone (current QB config) should work correctly."""
@@ -146,8 +126,8 @@ class TestMultiHeadNet:
         x = torch.randn(4, 10)
         with torch.no_grad():
             out = model(x)
-        assert out["total"].shape == (4,)
         for key in QB_TARGETS:
+            assert out[key].shape == (4,)
             assert (out[key] >= 0).all()
 
     def test_dropout_effect(self):
@@ -168,7 +148,9 @@ class TestMultiHeadNet:
         with torch.no_grad():
             out_eval = model(x)
 
-        assert not torch.allclose(out_train["total"].detach(), out_eval["total"])
+        train_sum = sum(out_train[t].detach() for t in QB_TARGETS)
+        eval_sum = sum(out_eval[t] for t in QB_TARGETS)
+        assert not torch.allclose(train_sum, eval_sum)
 
     def test_outputs_non_negative_eval(self, model):
         """Clamp ensures all head outputs are non-negative in eval mode."""
@@ -215,6 +197,7 @@ class TestMultiHeadNet:
         )
         x = torch.randn(4, 10)
         out = model(x)
-        assert out["total"].shape == (4,)
+        for t in QB_TARGETS:
+            assert out[t].shape == (4,)
         passing_tds_head = model.heads["passing_tds"]
         assert passing_tds_head[0].out_features == 32

@@ -179,19 +179,12 @@ class TestMultiHeadNetWithHistory:
 
     def test_output_keys(self, model, inputs):
         out = model(*inputs)
-        assert set(out.keys()) == {"rushing_floor", "receiving_floor", "td_points", "total"}
+        assert set(out.keys()) == {"rushing_floor", "receiving_floor", "td_points"}
 
     def test_output_shapes(self, model, inputs):
         out = model(*inputs)
         for key in out:
             assert out[key].shape == (4,)
-
-    def test_total_equals_sum(self, model, inputs):
-        model.eval()
-        with torch.no_grad():
-            out = model(*inputs)
-        expected = out["rushing_floor"] + out["receiving_floor"] + out["td_points"]
-        torch.testing.assert_close(out["total"], expected)
 
     def test_non_negative_outputs(self, model, inputs):
         model.eval()
@@ -276,8 +269,9 @@ class TestMultiHeadNetWithHistory:
         model.eval()
         with torch.no_grad():
             out = model(*inputs)
-        assert out["total"].shape == (4,)
-        assert torch.isfinite(out["total"]).all()
+        for t in TARGETS:
+            assert out[t].shape == (4,)
+            assert torch.isfinite(out[t]).all()
 
     def test_gated_fusion(self, inputs):
         model = MultiHeadNetWithHistory(
@@ -294,7 +288,8 @@ class TestMultiHeadNetWithHistory:
         model.eval()
         with torch.no_grad():
             out = model(*inputs)
-        assert out["total"].shape == (4,)
+        for t in TARGETS:
+            assert out[t].shape == (4,)
 
     def test_predict_numpy(self, model):
         X_s = np.random.randn(4, 5).astype(np.float32)
@@ -302,7 +297,7 @@ class TestMultiHeadNetWithHistory:
         mask = np.ones((4, 6), dtype=bool)
         device = torch.device("cpu")
         preds = model.predict_numpy(X_s, X_h, mask, device)
-        assert set(preds.keys()) == {"rushing_floor", "receiving_floor", "td_points", "total"}
+        assert set(preds.keys()) == {"rushing_floor", "receiving_floor", "td_points"}
         for key in preds:
             assert isinstance(preds[key], np.ndarray)
             assert preds[key].shape == (4,)
@@ -312,7 +307,7 @@ class TestMultiHeadNetWithHistory:
         x_history = torch.randn(4, 6, 3, requires_grad=True)
         mask = torch.ones(4, 6, dtype=torch.bool)
         out = model(x_static, x_history, mask)
-        out["total"].sum().backward()
+        sum(out[t].sum() for t in TARGETS).backward()
         assert x_static.grad is not None
         assert x_history.grad is not None
 
@@ -366,19 +361,12 @@ class TestMultiHeadNetWithNestedHistory:
 
     def test_output_keys(self, model, batch):
         preds = model(*batch)
-        assert set(preds.keys()) == set(K_TARGETS + ["total"])
+        assert set(preds.keys()) == set(K_TARGETS)
 
     def test_output_shapes(self, model, batch):
         preds = model(*batch)
-        for key in K_TARGETS + ["total"]:
+        for key in K_TARGETS:
             assert preds[key].shape == (4,), f"{key}: {preds[key].shape}"
-
-    def test_total_equals_sum(self, model, batch):
-        model.eval()
-        with torch.no_grad():
-            preds = model(*batch)
-        total_check = sum(preds[t] for t in K_TARGETS)
-        assert torch.allclose(preds["total"], total_check)
 
     def test_non_negative_outputs(self, model, batch):
         """Default: all K heads are non-negative (clamp min=0)."""
@@ -424,7 +412,7 @@ class TestMultiHeadNetWithNestedHistory:
         outer_mask = torch.ones(B, G, dtype=torch.bool)
         inner_mask = torch.ones(B, G, K, dtype=torch.bool)
         preds = model(x_static, x_kicks, outer_mask, inner_mask)
-        preds["total"].sum().backward()
+        sum(preds[t].sum() for t in K_TARGETS).backward()
         assert x_static.grad is not None
         assert x_kicks.grad is not None
         assert (x_static.grad != 0).any()
@@ -452,7 +440,7 @@ class TestMultiHeadNetWithNestedHistory:
         outer = np.ones((B, G), dtype=bool)
         inner = np.ones((B, G, K), dtype=bool)
         preds = model.predict_numpy(X_static, X_kicks, outer, inner, torch.device("cpu"))
-        for key in K_TARGETS + ["total"]:
+        for key in K_TARGETS:
             assert isinstance(preds[key], np.ndarray)
             assert preds[key].shape == (B,)
 
@@ -549,8 +537,3 @@ class TestNonNegativeFloor:
             )
         for t in K_TARGETS:
             assert torch.all(preds[t] == 0.0), f"{t}: expected exact zeros, got {preds[t].tolist()}"
-        # The K 4-head total must also be reachable at exact zero — this is the
-        # scenario K's ~2.77 pt floor previously made impossible.
-        assert torch.all(preds["total"] == 0.0), (
-            f"total should be exact 0 when all heads are 0, got {preds['total'].tolist()}"
-        )

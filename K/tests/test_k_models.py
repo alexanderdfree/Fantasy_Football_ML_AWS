@@ -35,17 +35,9 @@ class TestRidgeMultiTarget:
         model.fit(X, y_dict)
         preds = model.predict(X)
 
-        assert set(preds.keys()) == K_TARGETS_SET | {"total"}
+        assert set(preds.keys()) == K_TARGETS_SET
         for key in preds:
             assert preds[key].shape == (len(X),)
-
-    def test_total_is_sum_of_components(self, simple_data):
-        X, y_dict = simple_data
-        model = RidgeMultiTarget(target_names=K_TARGETS, alpha=1.0)
-        model.fit(X, y_dict)
-        preds = model.predict(X)
-        expected = sum(preds[t] for t in K_TARGETS)
-        np.testing.assert_allclose(preds["total"], expected, atol=1e-6)
 
     def test_predict_total_matches(self, simple_data):
         X, y_dict = simple_data
@@ -53,7 +45,7 @@ class TestRidgeMultiTarget:
         model.fit(X, y_dict)
         total = model.predict_total(X)
         preds = model.predict(X)
-        np.testing.assert_allclose(total, preds["total"], atol=1e-6)
+        np.testing.assert_allclose(total, sum(preds[t] for t in K_TARGETS), atol=1e-6)
 
     def test_different_alphas(self, simple_data):
         X, y_dict = simple_data
@@ -68,7 +60,8 @@ class TestRidgeMultiTarget:
         model = RidgeMultiTarget(target_names=K_TARGETS, alpha=1.0)
         model.fit(X, y_dict)
         preds = model.predict(X[:1])
-        assert preds["total"].shape == (1,)
+        for t in K_TARGETS:
+            assert preds[t].shape == (1,)
 
     def test_feature_importance_keys(self, simple_data):
         X, y_dict = simple_data

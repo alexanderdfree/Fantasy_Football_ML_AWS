@@ -36,15 +36,13 @@ class GatedTDHead(nn.Module):
 
 
 class MultiHeadNet(nn.Module):
-    """Multi-head neural network for position-agnostic fantasy point decomposition.
+    """Multi-head neural network for position-agnostic raw-stat prediction.
 
     Architecture:
         Input (N features)
             -> Shared backbone [Linear -> BN -> ReLU -> Dropout] x len(backbone_layers)
             -> One head per target: Linear -> ReLU -> Linear -> squeeze
-            -> Softplus on non-negative targets (preserves gradient flow near zero)
-
-    Total prediction = sum of all heads.
+            -> Clamp >= 0 on non-negative targets
     """
 
     def __init__(
@@ -56,7 +54,6 @@ class MultiHeadNet(nn.Module):
         dropout: float = 0.3,
         head_hidden_overrides: dict = None,
         non_negative_targets: set = None,
-        aggregate_fn=None,
     ):
         super().__init__()
         self.target_names = target_names
@@ -65,9 +62,6 @@ class MultiHeadNet(nn.Module):
         self.non_negative_targets = (
             set(target_names) if non_negative_targets is None else non_negative_targets
         )
-        # None → sum per-target heads (legacy). Pass aggregate_fn_for(pos) to
-        # weight raw-stat preds into fantasy points via shared.aggregate_targets.
-        self.aggregate_fn = aggregate_fn
 
         # === Shared Backbone ===
         backbone_blocks = []
@@ -105,10 +99,6 @@ class MultiHeadNet(nn.Module):
             if name in self.non_negative_targets:
                 val = torch.clamp(val, min=0.0)
             preds[name] = val
-        if self.aggregate_fn is not None:
-            preds["total"] = self.aggregate_fn(preds)
-        else:
-            preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
 
     def predict_numpy(self, X: np.ndarray, device: torch.device) -> dict:
@@ -246,7 +236,6 @@ class MultiHeadNetWithHistory(nn.Module):
         td_gate_hidden: int = 16,
         gated_td_target=None,  # legacy str; kept for backward compat
         gated_td_targets: list[str] | None = None,
-        aggregate_fn=None,
     ):
         super().__init__()
         self.target_names = target_names
@@ -263,8 +252,6 @@ class MultiHeadNetWithHistory(nn.Module):
             else:
                 gated_td_targets = list(gated_td_target)
         self.gated_td_targets = list(gated_td_targets)
-        # None → sum per-target heads (legacy); see MultiHeadNet for full comment.
-        self.aggregate_fn = aggregate_fn
         self.d_model = d_model
         self.n_targets = len(target_names)
 
@@ -406,10 +393,6 @@ class MultiHeadNetWithHistory(nn.Module):
                 if name in self.non_negative_targets:
                     val = torch.clamp(val, min=0.0)
                 preds[name] = val
-        if self.aggregate_fn is not None:
-            preds["total"] = self.aggregate_fn(preds)
-        else:
-            preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
 
     def predict_numpy(
@@ -462,14 +445,12 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         max_games: int = 17,
         attn_dropout: float = 0.0,
         encoder_hidden_dim: int = 0,
-        aggregate_fn=None,
     ):
         super().__init__()
         self.target_names = target_names
         self.non_negative_targets = (
             set(target_names) if non_negative_targets is None else non_negative_targets
         )
-        self.aggregate_fn = aggregate_fn
         self.d_model = d_model
         self.d_kick = d_kick
         self.n_targets = len(target_names)
@@ -588,10 +569,6 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             if name in self.non_negative_targets:
                 val = torch.clamp(val, min=0.0)
             preds[name] = val
-        if self.aggregate_fn is not None:
-            preds["total"] = self.aggregate_fn(preds)
-        else:
-            preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
 
     def predict_numpy(

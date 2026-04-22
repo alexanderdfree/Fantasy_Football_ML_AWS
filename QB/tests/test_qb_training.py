@@ -31,7 +31,7 @@ class TestMultiTargetLoss:
         loss_fn = MultiTargetLoss(target_names=QB_TARGETS, loss_weights=QB_LOSS_WEIGHTS)
         preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
-        expected_keys = {f"loss_{t}" for t in QB_TARGETS} | {"loss_total_aux", "loss_combined"}
+        expected_keys = {f"loss_{t}" for t in QB_TARGETS} | {"loss_combined"}
         assert set(components.keys()) == expected_keys
 
     def test_components_are_scalars(self, make_tensors):
@@ -50,7 +50,6 @@ class TestMultiTargetLoss:
             "rushing_tds": torch.tensor([0.0, 1.0]),
             "interceptions": torch.tensor([1.0, 0.0]),
             "fumbles_lost": torch.tensor([0.0, 1.0]),
-            "total": torch.tensor([25.0, 30.0]),
         }
         combined, _ = loss_fn(targets, targets)
         assert pytest.approx(combined.item(), abs=1e-6) == 0.0
@@ -60,14 +59,12 @@ class TestMultiTargetLoss:
         loss_equal = MultiTargetLoss(
             target_names=QB_TARGETS,
             loss_weights={t: 1.0 for t in QB_TARGETS},
-            w_total=1.0,
         )
         heavy_weights = {t: 1.0 for t in QB_TARGETS}
         heavy_weights["passing_yards"] = 10.0
         loss_passing_heavy = MultiTargetLoss(
             target_names=QB_TARGETS,
             loss_weights=heavy_weights,
-            w_total=1.0,
         )
         c1, _ = loss_equal(preds, targets)
         c2, _ = loss_passing_heavy(preds, targets)
@@ -81,7 +78,7 @@ class TestMultiTargetLoss:
 
     def test_backward_pass(self):
         loss_fn = MultiTargetLoss(target_names=QB_TARGETS, loss_weights=QB_LOSS_WEIGHTS)
-        preds = {k: torch.randn(5, requires_grad=True) for k in QB_TARGETS + ["total"]}
+        preds = {k: torch.randn(5, requires_grad=True) for k in QB_TARGETS}
         targets = {k: torch.randn(5) for k in preds}
         combined, _ = loss_fn(preds, targets)
         combined.backward()
@@ -225,7 +222,7 @@ class TestMultiHeadTrainer:
         trainer, train_loader, val_loader = setup_trainer
         history = trainer.train(train_loader, val_loader, n_epochs=5)
         expected_keys = (
-            {"train_loss", "val_loss", "val_mae_total", "val_rmse_total"}
+            {"train_loss", "val_loss"}
             | {f"val_loss_{t}" for t in QB_TARGETS}
             | {f"val_mae_{t}" for t in QB_TARGETS}
         )

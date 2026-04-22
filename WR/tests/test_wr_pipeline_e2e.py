@@ -28,7 +28,7 @@ from WR.wr_features import add_wr_specific_features, fill_wr_nans, get_wr_featur
 from WR.wr_targets import compute_wr_targets
 
 SPLITS_DIR = Path(__file__).resolve().parents[2] / "data" / "splits"
-_ALL_TARGETS = (*WR_TARGETS, "total")
+_ALL_TARGETS = tuple(WR_TARGETS)
 
 
 def _build_tiny_cfg() -> dict:

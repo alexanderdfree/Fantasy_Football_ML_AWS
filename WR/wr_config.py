@@ -133,7 +133,6 @@ WR_LOSS_WEIGHTS = {
     "receptions": 1.0,  # 2.0 / 2.0 (anchor)
     "fumbles_lost": 4.0,
 }
-WR_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (per-target, raw-stat units) ===
 WR_HUBER_DELTAS = {
@@ -141,7 +140,6 @@ WR_HUBER_DELTAS = {
     "receiving_yards": 15.0,
     "receptions": 2.0,
     "fumbles_lost": 0.5,
-    "total": 3.0,  # explicit delta for total aux loss (aggregated fantasy points)
 }
 
 # === LR Scheduler ===
@@ -225,7 +223,6 @@ WR_CONFIG_TINY = {
     "nn_patience": 1,
     "nn_log_every": 1,
     "loss_weights": WR_LOSS_WEIGHTS,
-    "loss_w_total": WR_LOSS_W_TOTAL,
     "huber_deltas": WR_HUBER_DELTAS,
     "scheduler_type": "cosine_warm_restarts",
     "cosine_t0": 1,

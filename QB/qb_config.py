@@ -144,11 +144,9 @@ QB_LOSS_WEIGHTS = {
     "interceptions": 4.0,
     "fumbles_lost": 4.0,
 }
-QB_LOSS_W_TOTAL = 1.0
 
 # === Huber Deltas (raw-stat units) ===
 # Yards δ is in yards; count-target δ is in counts (TDs, INTs, fumbles).
-# ``total`` δ is in aggregated fantasy points (QBs score ~25 pts, δ≈4).
 QB_HUBER_DELTAS = {
     "passing_yards": 25.0,
     "rushing_yards": 15.0,
@@ -156,7 +154,6 @@ QB_HUBER_DELTAS = {
     "rushing_tds": 0.5,
     "interceptions": 0.5,
     "fumbles_lost": 0.5,
-    "total": 4.0,
 }
 
 # === LR Scheduler ===

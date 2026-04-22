@@ -325,18 +325,18 @@ class RidgeMultiTarget:
             model.fit(X_train, y_train_dict[name])
 
     def predict(self, X: np.ndarray) -> dict:
-        """Returns dict of per-target predictions plus total."""
+        """Returns dict of per-target predictions."""
         preds = {}
         for name, model in self._models.items():
             pred = model.predict(X)
             if name in self.non_negative_targets:
                 pred = np.maximum(pred, 0)
             preds[name] = pred
-        preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
 
     def predict_total(self, X: np.ndarray) -> np.ndarray:
-        return self.predict(X)["total"]
+        preds = self.predict(X)
+        return sum(preds[t] for t in self.target_names)
 
     def get_feature_importance(self, feature_names: list) -> dict:
         return {
@@ -448,7 +448,6 @@ class LightGBMMultiTarget:
             first = next(iter(self._models.values()))
             X_in = pd.DataFrame(X, columns=getattr(first, "feature_names_in_", None))
         preds = {name: np.maximum(model.predict(X_in), 0) for name, model in self._models.items()}
-        preds["total"] = sum(preds[t] for t in self.target_names)
         return preds
 
     def get_feature_importance(self, feature_names):
