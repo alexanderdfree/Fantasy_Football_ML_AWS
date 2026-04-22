@@ -1,6 +1,6 @@
 # Fantasy Football Weekly Points Predictor
 
-A per-position machine learning system that predicts weekly NFL fantasy points for QBs, RBs, WRs, TEs, Kickers, and D/STs — comparing a Ridge baseline, a custom PyTorch multi-head neural network (with attention for skill positions), and LightGBM across the 2012–2025 seasons. Served as a Flask dashboard at [alexfree.me](https://alexfree.me).
+A per-position machine learning system that predicts weekly NFL fantasy points for QBs, RBs, WRs, TEs, Kickers, and D/STs — comparing a Ridge baseline, a custom PyTorch multi-head neural network (with an attention variant at every position), and LightGBM across the 2012–2025 seasons. Served as a Flask dashboard at [alexfree.me](https://alexfree.me).
 
 CS 372 (Duke, Spring 2026) final project. Solo.
 
@@ -18,6 +18,10 @@ The answer differs by position — see the Evaluation section below. Each positi
 - **RB** (6): `rushing_tds`, `receiving_tds`, `rushing_yards`, `receiving_yards`, `receptions`, `fumbles_lost`
 - **WR** (4): `receiving_tds`, `receiving_yards`, `receptions`, `fumbles_lost`
 - **TE** (4): `receiving_tds`, `receiving_yards`, `receptions`, `fumbles_lost`
+- **K** (4): `fg_yard_points`, `pat_points`, `fg_misses`, `xp_misses` — signs `[+1, +1, -1, -1]` applied at aggregation
+- **DST** (10): `def_sacks`, `def_ints`, `def_fumble_rec`, `def_fumbles_forced`, `def_safeties`, `def_tds`, `def_blocked_kicks`, `special_teams_tds`, `points_allowed`, `yards_allowed` — aggregated via NFL-standard linear coefficients plus PA/YA tier bonuses
+
+K was out of scope for the raw-stat migration (its heads were already raw counts/values); DST was migrated to the 10-target raw-stat decomposition in commit `cc0c627`.
 
 Sharing a backbone across per-target heads is what makes the neural net competitive at small sample sizes; reporting MAE in raw units (yards / TDs / receptions) keeps per-target accuracy interpretable and decouples model error from scoring-format choice. Design rationale is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -30,7 +34,7 @@ nflverse API ─┐
   ┌──────────────────────┐    ┌──────────────────────────────────────────┐
   │ src/data + src/features │▶ │ Three model families per position        │
   │ (rolling, EWMA, share,   │  │   Ridge  │  MultiHeadNet (PyTorch)       │
-  │  matchup, weather/odds)  │  │          │  + Attention (skill positions)│
+  │  matchup, weather/odds)  │  │          │  + Attention (all positions)  │
   └──────────────────────┘    │                LightGBM                  │
                                └──────────────────────────────────────────┘
                                                 │
@@ -79,7 +83,7 @@ Full training on GPU runs on EC2 via CI; see [docs/ec2_design.md](docs/ec2_desig
 
 Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination), top-12 hit rate (agreement with the actual weekly top 12 at the position, PPR scoring). Numbers from [benchmark_results.json](benchmark_results.json).
 
-> Benchmarks pending retrain on new raw-stat targets — the values below were produced against the prior `*_floor` / `td_points` decomposition and will be refreshed once the migration training run completes.
+> Benchmarks below pre-date the K/DST attention-NN additions (commits `801b61a`, `cc0c627`) and the raw-stat migration for DST — TODO - alex fill in: refresh benchmarks after next full EC2 training run.
 
 | Position | Ridge MAE | NN MAE | Attn NN MAE | LGBM MAE | Best | R² (best) | Top-12 (best) |
 |---|---|---|---|---|---|---|---|
@@ -87,8 +91,10 @@ Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy po
 | RB  | 4.358 | **4.169** | 4.245 | 4.191 | MultiHeadNet | 0.418  | 0.528 |
 | WR  | 4.439 | 4.218 | **4.185** | 4.233 | Attention NN | 0.359  | 0.377 |
 | TE  | 3.592 | 3.513 | **3.486** | 3.524 | Attention NN | 0.292  | 0.483 |
-| K   | **3.605** | 3.707 | — | — | Ridge        | 0.067  | 0.495 |
-| DST | **3.826** | 3.875 | — | — | Ridge        | 0.055  | 0.472 |
+| K   | **3.605** | 3.707 | —ᵃ | — | Ridge        | 0.067  | 0.495 |
+| DST | **3.826** | 3.875 | —ᵃ | — | Ridge        | 0.055  | 0.472 |
+
+ᵃ TODO - alex fill in: Attn NN MAE for K/DST after retrain with attention enabled (commits `801b61a`, `cc0c627`).
 
 **Takeaways:**
 - The neural nets win on skill positions (RB, WR, TE) where interaction and sequence structure matters. Attention pulls slightly ahead on WR/TE.
