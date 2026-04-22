@@ -34,9 +34,6 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -107,7 +104,7 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6
         with:
-          use_oidc: true
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage-${{ matrix.shard }}.xml
           flags: ${{ matrix.shard }}
           fail_ci_if_error: false
