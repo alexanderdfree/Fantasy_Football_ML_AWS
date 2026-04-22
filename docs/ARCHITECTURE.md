@@ -4,6 +4,7 @@
 |---|---|---|
 | Accepted | 2026-04-16 | Alex Free (CS 372) |
 | Updated | 2026-04-19 | D7/D9 and §2 diagram reconciled with the EC2 training switch; the Batch path is preserved as standby (see [docs/batch_design.md](batch_design.md)). |
+| Updated | 2026-04-21 | D2/D4/D6 reconciled with attention now running on all six positions (K nested per-kick + outer per-game; DST standard attention), DST target migration from 5 mixed-bucket heads to 10 raw stats, and the per-position `{POS}_ATTN_STATIC_FEATURES` allowlist that blocks rolling features from leaking into the attention branch. |
 
 ## Table of Contents
 
@@ -13,7 +14,7 @@
    - [D1: Temporal split](#d1-temporal-split-201223-train--2024-val--2025-test)
    - [D2: Multi-target decomposition with shared NN backbone](#d2-multi-target-decomposition-with-shared-nn-backbone)
    - [D3: Three-way model comparison, no ensemble](#d3-three-way-model-comparison-no-ensemble)
-   - [D4: Attention over game history (skill positions only)](#d4-attention-over-game-history-skill-positions-only)
+   - [D4: Attention over game history (all positions)](#d4-attention-over-game-history-all-positions)
    - [D5: Output-constraint stack for zero-inflated, non-negative targets](#d5-output-constraint-stack)
    - [D6: Explicit per-position feature allowlist](#d6-explicit-per-position-feature-allowlist)
    - [D7: EC2 warm instance over Batch/SageMaker for parallel training](#d7-ec2-warm-instance-over-batchsagemaker)
@@ -59,7 +60,7 @@
                     │   Three model families (per position)    │
                     │  ┌────────┐ ┌─────────┐ ┌──────────────┐ │
                     │  │ Ridge  │ │ Multi-  │ │ Attention NN │ │
-                    │  │ (base) │ │ HeadNet │ │ (QB/RB/WR/TE)│ │
+                    │  │ (base) │ │ HeadNet │ │ (all pos.)   │ │
                     │  └────────┘ └─────────┘ └──────────────┘ │
                     │  + LightGBM (selective positions)        │
                     └──────────────────────────────────────────┘
@@ -116,7 +117,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 
 **Decision.** Decompose each position's prediction into a small set of *raw NFL stat* targets (yards, TD counts, receptions, interceptions, fumbles_lost) rather than pre-scored fantasy-point buckets. Train one neural network per position with a shared backbone and one head per target. Convert per-target predictions to fantasy points *after* the model runs via a deterministic aggregator ([shared/aggregate_targets.py](../shared/aggregate_targets.py)) that multiplies each raw-stat prediction by the corresponding coefficient in `src/config.py:SCORING_PPR` (or `SCORING_HALF_PPR` / `SCORING_STANDARD`). The final totals (`preds["total"]`) and the `w_total · Huber(total)` auxiliary loss are produced through that aggregator rather than a naive `sum(heads)`.
 
-Current target sets (6 for QB/RB, 4 for WR/TE):
+Current target sets (6 for QB/RB, 4 for WR/TE/K, 10 for DST):
 
 | Pos | Targets |
 |---|---|
@@ -124,6 +125,10 @@ Current target sets (6 for QB/RB, 4 for WR/TE):
 | RB | `rushing_tds`, `receiving_tds`, `rushing_yards`, `receiving_yards`, `receptions`, `fumbles_lost` |
 | WR | `receiving_tds`, `receiving_yards`, `receptions`, `fumbles_lost` |
 | TE | `receiving_tds`, `receiving_yards`, `receptions`, `fumbles_lost` |
+| K | `fg_yard_points`, `pat_points`, `fg_misses`, `xp_misses` |
+| DST | `def_sacks`, `def_ints`, `def_fumble_rec`, `def_fumbles_forced`, `def_safeties`, `def_tds`, `def_blocked_kicks`, `special_teams_tds`, `points_allowed`, `yards_allowed` |
+
+K's four heads (`fg_yard_points`, `pat_points`, `fg_misses`, `xp_misses`) are out of scope for the raw-stat migration — they're already raw counts/sums by construction, just with per-head sign coefficients (`[+1, +1, -1, -1]`) applied at aggregation time. DST, by contrast, *did* migrate: the previous 5-head decomposition (mixing point-scaled buckets like `defensive_scoring` and `pts_allowed_bonus`) was replaced with the 10 raw stats above in commit `cc0c627`, so that DST now follows the same "heads predict raw events → aggregator prices them" discipline as QB/RB/WR/TE. The PA/YA bonuses are applied in the DST-specific branch of the aggregator ([shared/aggregate_targets.py:148-169](../shared/aggregate_targets.py)) via vectorized tier lookups against `DST/dst_targets.py`.
 
 **Context.** Fantasy points collapse heterogeneous events (a receiving TD is structurally very different from a passing yard) into a single scalar. Decomposing lets each head specialize, lets us apply different loss deltas per component, and — critically — keeps MAE reporting interpretable in native stat units ("the model is off by ±18 passing yards, ±0.4 passing TDs per game") rather than in ambiguous point buckets. An earlier iteration of this ADR had targets like `passing_floor = passing_yards × 0.04` and `td_points = pass_TD × 4 + rush_TD × 6` baked in; the migration to raw stats moved all scoring coefficients to one place and decoupled model error from scoring-format choice.
 
@@ -141,7 +146,7 @@ Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value
 
 **Rejected.** Single-target models under-fit the structure — every head would implicitly have to learn "what is a TD" separately from "what is a rushing yard." Fantasy-point-component heads (the previous iteration) made MAE hard to reason about — a `td_points` MAE of 4.25 could mean either "off by ~0.7 TDs/game" or "off by ~1 TD/game and a PAT." Raw-stat targets are unambiguous.
 
-**Consequence.** Aux total-loss and inference-time totals both flow through `shared/aggregate_targets.py:predictions_to_fantasy_points` — changing scoring coefficients is a single-file edit. The per-position adjustment functions (`compute_qb_adjustment`, `compute_fumble_adjustment`, etc.) are retired for QB/RB/WR/TE; their effects (interception penalty, fumble penalty) are now direct targets (`interceptions`, `fumbles_lost`) that the aggregator prices in. K and DST retain `compute_adjustment_fn` (out of scope for this migration).
+**Consequence.** Aux total-loss and inference-time totals both flow through `shared/aggregate_targets.py:predictions_to_fantasy_points` — changing scoring coefficients is a single-file edit. The per-position adjustment functions (`compute_qb_adjustment`, `compute_fumble_adjustment`, etc.) are retired for QB/RB/WR/TE; their effects (interception penalty, fumble penalty) are now direct targets (`interceptions`, `fumbles_lost`) that the aggregator prices in. DST now flows through the same aggregator (10 raw stats plus a tiered PA/YA bonus lookup, commit `cc0c627`); K retains its own aggregation path — the 4 heads stay as raw counts and only the sign vector is applied at aggregation time.
 
 **References.** [shared/aggregate_targets.py](../shared/aggregate_targets.py) (aggregator + `TARGET_UNITS` + `POINT_EQUIVALENT_MULTIPLIER`), [src/config.py](../src/config.py) (`SCORING_PPR`, `SCORING_HALF_PPR`, `SCORING_STANDARD`), [shared/neural_net.py:38-145](../shared/neural_net.py) (`MultiHeadNet`, `aggregate_fn` plumbing), [shared/training.py](../shared/training.py) (`MultiTargetLoss`), per-position `compute_{pos}_targets` in `QB/qb_targets.py`, `RB/rb_targets.py`, `WR/wr_targets.py`, `TE/te_targets.py`, and `{POS}/{pos}_config.py` (target lists + loss weights + Huber deltas in raw-stat units). Consolidated in commit `99d7086`; raw-stat migration follows.
 
@@ -169,9 +174,9 @@ Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value
 
 ---
 
-### D4: Attention over game history (skill positions only)
+### D4: Attention over game history (all positions)
 
-**Decision.** For QB, RB, WR, TE, replace pure rolling features with a variable-length game-history branch processed by learned-query attention, fused with the standard static feature vector. Skip this for K and DST.
+**Decision.** Every position (QB, RB, WR, TE, K, DST) replaces pure rolling features with a variable-length game-history branch processed by learned-query attention, fused with the standard static feature vector. All six positions set `{POS}_TRAIN_ATTENTION_NN = True` and share the `d_model=32` / `n_heads=2` attention shape; K additionally wraps a per-kick inner attention pool inside the outer per-game sequence.
 
 **Context.** Rolling means lose order — "three good games then a bad one" looks identical to "one bad then three good." Attention over the last N games lets the model weight recent games higher, attend more to games pre-injury, and in principle learn role-change signals (backup becomes starter) that a fixed window can't capture.
 
@@ -182,13 +187,18 @@ Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value
 | Pure rolling features | Mean/variance only | Yes |
 | LSTM / Transformer over history | Order + interactions | No (overfits on ~300 rows) |
 | Rolling + attention-pool over history (chosen for skill positions) | Both | Marginal |
-| Rolling only for K/DST | (N/A) | Yes |
+| Rolling + attention-pool over per-game sequence (chosen for DST) | Both | Marginal |
+| Rolling + nested (per-kick ⊕ per-game) attention (chosen for K) | Per-kick conditions + per-game order | Marginal |
 
-**Chosen: learned-query attention pool for skill positions.** A small attention head (`d_model=32`, 2 heads) is cheap enough not to overfit, with positional encoding for recency. For K/DST, the per-game signal is so noisy and the feature count so small that the attention branch added variance without meaningfully reducing MAE — dropped.
+**Chosen: learned-query attention pool on every position.** A small attention head (`d_model=32`, 2 heads) is cheap enough not to overfit, with positional encoding for recency. Originally the skill positions (QB/RB/WR/TE) shipped with attention and K/DST stayed on rolling-only; subsequent measurements showed that with the right history channels (raw defensive stats for DST, per-kick rows for K) the attention branch paid for itself on both. The implementations differ:
 
-**Rejected.** A full LSTM or Transformer was tried conceptually (see [docs/design_lstm_multihead.md](design_lstm_multihead.md)) but rejected as over-parameterized for this regime. Kept the design doc as an artifact of the consideration.
+- **QB / RB / WR / TE** — outer attention over prior games; per-game row is the rolling-stat snapshot. Unchanged in spirit from the original skill-position design.
+- **DST** (commit `cc0c627`) — outer attention over prior games using a 14-stat per-game sequence (the 10 raw targets plus 4 raw opponent-context columns `opp_scoring`, `opp_fumbles`, `opp_interceptions`, `opp_qb_epa`, see [DST/dst_config.py:194-211](../DST/dst_config.py)). No gated fusion, no gated TD head.
+- **K** (commit `801b61a`) — **nested attention**: the outer attention is over prior games, but each game token is itself produced by an *inner* attention pool over up to `K_ATTN_MAX_KICKS_PER_GAME = 10` kicks within that game (with per-kick features like `kick_distance`, `fg_prob`, `is_q4`, `game_wind`, see [K/k_config.py:118-134](../K/k_config.py)). The inner pool summarizes per-kick conditions; the outer pool weights which prior games matter. This lets the model distinguish "3-for-3 from short range in a dome" from "3-for-3 in a blizzard from 50+" — a signal pure per-game rollups destroy.
 
-**References.** [shared/neural_net.py:209-393](../shared/neural_net.py) (`AttentionPool`, `MultiHeadNetWithHistory`, `GatedTDHead`), [docs/design_lstm_multihead.md](design_lstm_multihead.md). Evolved across commits `b31bdf7` → `c399c12` → `99d7086`.
+**Rejected.** A full LSTM or Transformer was tried conceptually (see [docs/design_lstm_multihead.md](design_lstm_multihead.md)) but rejected as over-parameterized for this regime. Kept the design doc as an artifact of the consideration. An earlier version of this ADR rejected attention on K and DST — that decision was reversed once the input schemas were redesigned to give the attention branch something real to chew on (raw per-kick rows for K, raw defensive stats rather than pre-rolled windows for DST).
+
+**References.** [shared/neural_net.py](../shared/neural_net.py) — `GatedTDHead` (L9), `AttentionPool` (L122), `MultiHeadNetWithHistory` (L202, outer-only attention used by QB/RB/WR/TE/DST), `MultiHeadNetWithNestedHistory` (L431, inner-kick ⊕ outer-game attention used by K); [K/k_config.py:102-152](../K/k_config.py) (nested attention, per-kick stats, static allowlist); [DST/dst_config.py:169-228](../DST/dst_config.py) (DST attention + history stats + static allowlist); [docs/design_lstm_multihead.md](design_lstm_multihead.md). Evolved across commits `b31bdf7` → `c399c12` → `99d7086` → `cc0c627` (DST attention + raw-stat targets) → `801b61a` (K nested attention).
 
 ---
 
@@ -208,7 +218,7 @@ Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value
 
 **Chosen rationale.** Each constraint was added in response to a specific observed failure, not as a precaution. This ADR captures them together because they form a *coherent* stack — remove any one and a specific failure mode returns.
 
-**References.** [shared/neural_net.py:61-102](../shared/neural_net.py) (clamp + non-negative set), [shared/training.py](../shared/training.py) (`MultiTargetLoss` with Huber), [DST/dst_config.py:76](../DST/dst_config.py) (`DST_NN_NON_NEGATIVE_TARGETS = {"defensive_scoring", "td_points"}` — DST is out of scope for the raw-stat migration and keeps its prior target set), feature clipping in [shared/pipeline.py](../shared/pipeline.py). The `GatedTDHead` is now parameterized over a list of gated targets (`RB` has two: `rushing_tds` + `receiving_tds`; `WR`/`TE` have one: `receiving_tds`; `QB` has none — see D2). See also the "Fixed" section of [TODO.md](../TODO.md) for each bug history.
+**References.** [shared/neural_net.py:61-107](../shared/neural_net.py) (`non_negative_targets` set + per-head softplus), [shared/training.py](../shared/training.py) (`MultiTargetLoss` with Huber), [DST/dst_config.py:121](../DST/dst_config.py) (`DST_NN_NON_NEGATIVE_TARGETS = set(DST_TARGETS)` — after the commit `cc0c627` migration all 10 raw DST heads are non-negative, so the set is simply the full target list; the `pts_allowed_bonus` head that used to warrant DST opting out of the global clamp is no longer a head — its negative values are produced downstream by the tier-lookup in `shared/aggregate_targets.py`), feature clipping in [shared/pipeline.py](../shared/pipeline.py). The `GatedTDHead` is now parameterized over a list of gated targets (`RB` has two: `rushing_tds` + `receiving_tds`; `WR`/`TE` have one: `receiving_tds`; `QB`, `K`, and `DST` have none — see D2). See also the "Fixed" section of [TODO.md](../TODO.md) for each bug history.
 
 ---
 
@@ -228,9 +238,11 @@ Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value
 
 **Chosen: opt-in allowlist.** A reviewer can diff a PR and see exactly what features the model sees. Adding a feature is a deliberate act. The inconvenience (a config edit per experiment) is the point — it forces intentionality.
 
+**Extension: per-position attention-static allowlist.** When D4 grew to cover all six positions, the Ridge/base-NN allowlist turned out not to be enough. The attention branch already consumes temporal signal through its game-history channel, so feeding it the *same* rolling/EWMA/trend features again is both redundant and a leakage risk (the rolling features reach back farther than the attention window, so they silently smuggle older-season information past what's on the visible sequence). Landed in commit `2500ecc`: every position now defines a `{POS}_ATTN_STATIC_FEATURES` list that the pipeline consults when building the attention NN's static channel, distinct from the Ridge/base-NN `{POS}_INCLUDE_FEATURES`. Rolling, EWMA, and trend columns are explicitly kept out. Example: DST's attention static branch sees only 9 columns (`is_home`, `week`, `spread_line`, `total_line`, `rest_days`, `div_game`, `is_dome`, `prior_season_dst_pts_avg`, `prior_season_pts_allowed_avg`) — see [DST/dst_config.py:218-228](../DST/dst_config.py); K swaps its rolling features out for shift-1 "last-game" features ([K/k_config.py:140-152](../K/k_config.py)) because everything further back is in the inner kick sequence anyway.
+
 **Rejected.** Opt-out was the earlier pattern and was exactly how the feature-clipping bug and the schedule-features-at-inference bug slipped in. Allowlist refactor landed in commit `18170a6` alongside the gated TD change.
 
-**References.** [QB/qb_config.py](../QB/qb_config.py) (`QB_INCLUDE_FEATURES`), [TE/te_config.py](../TE/te_config.py), [shared/pipeline.py](../shared/pipeline.py). Weather/Vegas features (from [docs/design_weather_and_odds.md](design_weather_and_odds.md)) are opted in per-position through the same mechanism.
+**References.** [QB/qb_config.py](../QB/qb_config.py) (`QB_INCLUDE_FEATURES`, `QB_ATTN_STATIC_FEATURES`), [TE/te_config.py](../TE/te_config.py), [DST/dst_config.py:218-228](../DST/dst_config.py), [K/k_config.py:140-152](../K/k_config.py), [shared/pipeline.py](../shared/pipeline.py). Weather/Vegas features (from [docs/design_weather_and_odds.md](design_weather_and_odds.md)) are opted in per-position through the same mechanism.
 
 ---
 
@@ -404,3 +416,6 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 | `0e814a1` | Infra | Docker optimization — two images (D8) |
 | `4145257`, `8a50eec` | Infra | Batch cold-start stack (D9) |
 | `ffb3119` | Infra | CI/CD + test gating + final batch infra (D10) |
+| `cc0c627` | Modeling | DST attention NN + migrate DST targets from 5 mixed-bucket heads to 10 raw stats (D2, D4, D5) |
+| `2500ecc` | Modeling | Per-position `{POS}_ATTN_STATIC_FEATURES` allowlist — rolling/EWMA/trend features blocked from the attention-NN static branch (D4, D6) |
+| `801b61a` | Modeling | K nested attention — outer over games + inner per-kick pool; attention now covers all six positions (D4) |
