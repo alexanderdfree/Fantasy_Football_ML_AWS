@@ -18,14 +18,15 @@ NN training -> weekly backtest. A regression anywhere in that chain breaks
 this test first.
 
 Notes:
-  - This test must run from the project root because shared.weather_features
-    and shared.pipeline load data/raw/schedules_2012_2025.parquet with a
-    relative path.
-  - It writes model artifacts under QB/outputs/; those files are regenerated
-    on the next real pipeline run, so overwriting them is acceptable.
+  - The pipeline hard-codes ``{POS}/outputs`` for artifact saves; we chdir
+    into a tmp workspace per run and symlink ``data/`` so schedule parquet
+    reads keep working without overwriting the checked-in production
+    checkpoints.
 """
 
+import os
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -147,8 +148,14 @@ def synthetic_splits():
     return train, val, test
 
 
-def _run_once(splits, seed=42):
-    """Run the QB pipeline once with the given seed and return the result."""
+def _run_once(splits, workdir, seed=42):
+    """Run the QB pipeline once inside ``workdir`` and return the result.
+
+    ``shared.pipeline.run_pipeline`` writes model artifacts to ``QB/outputs``
+    relative to cwd; chdir'ing into a fresh tmp workspace keeps those writes
+    out of the checked-in tree. ``data/`` is symlinked so
+    ``data/raw/schedules_2012_2025.parquet`` resolves for weather features.
+    """
     # Seed Python-level RNGs in case any component reads them before being
     # re-seeded inside run_pipeline.
     np.random.seed(seed)
@@ -158,26 +165,38 @@ def _run_once(splits, seed=42):
 
     train, val, test = splits
     cfg = _tiny_qb_config()
-    # Pass defensive copies so the pipeline can't mutate the fixture across runs.
-    return run_pipeline("QB", cfg, train.copy(), val.copy(), test.copy(), seed=seed)
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    cwd = os.getcwd()
+    try:
+        os.chdir(workdir)
+        data_link = workdir / "data"
+        if not data_link.exists():
+            data_link.symlink_to(Path(cwd) / "data", target_is_directory=True)
+        # Pass defensive copies so the pipeline can't mutate the fixture across runs.
+        return run_pipeline("QB", cfg, train.copy(), val.copy(), test.copy(), seed=seed)
+    finally:
+        os.chdir(cwd)
 
 
 @pytest.fixture(scope="module")
-def pipeline_run(synthetic_splits):
+def pipeline_run(synthetic_splits, tmp_path_factory):
     """Single pipeline invocation shared across tests (saves ~6s per test)."""
+    workdir = tmp_path_factory.mktemp("qb_e2e_run1")
     t0 = time.time()
-    result = _run_once(synthetic_splits, seed=42)
+    result = _run_once(synthetic_splits, workdir, seed=42)
     result["_elapsed"] = time.time() - t0
     return result
 
 
 @pytest.fixture(scope="module")
-def pipeline_run_repeat(synthetic_splits, pipeline_run):
+def pipeline_run_repeat(synthetic_splits, pipeline_run, tmp_path_factory):
     """Second pipeline invocation with the same seed for bit-identity tests.
 
     Depends on pipeline_run so both share the synthetic_splits fixture.
     """
-    return _run_once(synthetic_splits, seed=42)
+    workdir = tmp_path_factory.mktemp("qb_e2e_run2")
+    return _run_once(synthetic_splits, workdir, seed=42)
 
 
 @pytest.mark.e2e

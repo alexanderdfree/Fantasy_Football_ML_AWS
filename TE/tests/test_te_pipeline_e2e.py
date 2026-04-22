@@ -9,11 +9,17 @@ shrunken hyperparameters (2-layer x 8-unit NN, 1 epoch). Asserts:
   - two independent runs with seed=42 produce bit-identical predictions.
 
 Budget: < 20 seconds.
+
+The pipeline hard-codes ``{POS}/outputs`` for artifact saves; we chdir into
+a tmp workspace per run and symlink ``data/`` so schedule parquet reads keep
+working without overwriting the checked-in production checkpoints.
 """
 
 from __future__ import annotations
 
+import os
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -48,15 +54,29 @@ def _build_tiny_cfg() -> dict:
     }
 
 
-def _run_tiny_pipeline(seed: int = 42):
-    """Build fresh tiny splits and run the TE pipeline. Returns result dict."""
+def _run_tiny_pipeline(workdir, seed: int = 42):
+    """Build fresh tiny splits and run the TE pipeline inside ``workdir``.
+
+    chdir isolates ``TE/outputs`` writes; symlinked ``data/`` lets the
+    pipeline read schedule parquets for weather features.
+    """
     train, val, test = _build_tiny_te_splits(seed=seed)
-    # Pandas fragmentation warnings are signal noise from build_features on
-    # tiny synthetic data — suppress only inside this helper to keep pytest
-    # output readable.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        return run_pipeline("TE", _build_tiny_cfg(), train, val, test, seed=seed)
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    cwd = os.getcwd()
+    try:
+        os.chdir(workdir)
+        data_link = workdir / "data"
+        if not data_link.exists():
+            data_link.symlink_to(Path(cwd) / "data", target_is_directory=True)
+        # Pandas fragmentation warnings are signal noise from build_features on
+        # tiny synthetic data — suppress only inside this helper to keep pytest
+        # output readable.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return run_pipeline("TE", _build_tiny_cfg(), train, val, test, seed=seed)
+    finally:
+        os.chdir(cwd)
 
 
 # ---------------------------------------------------------------------------
@@ -66,19 +86,21 @@ def _run_tiny_pipeline(seed: int = 42):
 
 
 @pytest.fixture(scope="module")
-def pipeline_run():
+def pipeline_run(tmp_path_factory):
     """Single pipeline invocation shared across tests (saves ~6s per test)."""
-    return _run_tiny_pipeline(seed=42)
+    workdir = tmp_path_factory.mktemp("te_e2e_run1")
+    return _run_tiny_pipeline(workdir, seed=42)
 
 
 @pytest.fixture(scope="module")
-def pipeline_run_repeat(pipeline_run):
+def pipeline_run_repeat(pipeline_run, tmp_path_factory):
     """Second pipeline invocation with the same seed for bit-identity checks.
 
     Fresh tiny splits are rebuilt inside _run_tiny_pipeline — the reproducibility
     contract is that two independent builds with the same seed must agree.
     """
-    return _run_tiny_pipeline(seed=42)
+    workdir = tmp_path_factory.mktemp("te_e2e_run2")
+    return _run_tiny_pipeline(workdir, seed=42)
 
 
 class TestPipelineE2E:
