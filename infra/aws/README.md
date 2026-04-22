@@ -1,5 +1,7 @@
 # AWS serving infrastructure
 
+_Last verified: 2026-04-21._
+
 Stands up the ECS Fargate + ALB + ACM stack that serves `alexfree.me`.
 
 Training infra lives in `infra/ec2/` — this directory is serving-only.

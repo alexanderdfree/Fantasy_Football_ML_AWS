@@ -1,5 +1,7 @@
 # ff-training EC2 trainer
 
+_Last verified: 2026-04-21._
+
 A 24/7 `g4dn.xlarge` that runs `batch/train.py` on GPU with zero cold start, driven by `.github/workflows/train-ec2.yml`.
 
 ## First-time setup
