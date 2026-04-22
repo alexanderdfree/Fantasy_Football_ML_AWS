@@ -75,11 +75,13 @@ batch/
 # Infra (EC2 bootstrap, IAM, user-data) — never belongs in a container
 infra/
 
-# Training data — keep data/splits + data/raw (both needed for inference;
-# K pipeline reconstructs kicker stats from raw weekly parquets).
-# (no exclusions under data/)
+# Training + inference data — fetched from S3 at container startup via
+# shared.model_sync.sync_data_from_s3 (keeps the image ~60 MB smaller).
+data/
 
-# Per-position outputs — exclude figures (large PNGs), keep models/ for inference
+# Per-position outputs — models fetched from S3 at startup via
+# shared.model_sync.sync_models_from_s3; figures are always local scratch.
+**/outputs/models/
 **/outputs/figures/
 
 # Benchmark / tuning artifacts (local scratch, not needed at runtime)

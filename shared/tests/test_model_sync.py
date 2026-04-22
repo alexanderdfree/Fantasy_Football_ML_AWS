@@ -35,8 +35,17 @@ class _FakeBody:
         return self._data
 
 
+class _FakePaginator:
+    def __init__(self, objects: dict[str, bytes]):
+        self._objects = objects
+
+    def paginate(self, Bucket: str, Prefix: str):  # noqa: N803
+        contents = [{"Key": k} for k in self._objects if k.startswith(Prefix)]
+        yield {"Contents": contents}
+
+
 class _FakeS3:
-    """Returns per-position tarballs keyed by the exact S3 key."""
+    """Returns per-key object bodies; also paginates by prefix for ListBucket."""
 
     def __init__(self, objects: dict[str, bytes]):
         self._objects = objects
@@ -47,6 +56,10 @@ class _FakeS3:
         if Key not in self._objects:
             raise KeyError(f"NoSuchKey: {Key}")
         return {"Body": _FakeBody(self._objects[Key])}
+
+    def get_paginator(self, op: str):
+        assert op == "list_objects_v2"
+        return _FakePaginator(self._objects)
 
 
 def test_sync_noop_when_bucket_unset(monkeypatch, capsys):
@@ -127,3 +140,47 @@ def test_extract_allows_nested_subdirs(tmp_path):
     model_sync._extract_tarball(data, dest)
     assert (dest / "nn_scaler.pkl").read_bytes() == b"a"
     assert (dest / "lightgbm" / "receiving_floor.pkl").read_bytes() == b"b"
+
+
+def test_data_sync_noop_when_bucket_unset(monkeypatch, capsys):
+    monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
+    assert model_sync.sync_data_from_s3() is None
+    assert "unset" in capsys.readouterr().out
+
+
+def test_data_sync_downloads_splits_and_raw(monkeypatch, tmp_path):
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    objects = {
+        "data/train.parquet": b"TRAIN",
+        "data/val.parquet": b"VAL",
+        "data/test.parquet": b"TEST",
+        "data/raw/weekly_2012_2025.parquet": b"WEEKLY",
+        "data/raw/schedules_2012_2025.parquet": b"SCHED",
+        "data/raw/weekly_2023_2023.parquet": b"SHOULD_SKIP",
+        "data/raw/notes.txt": b"SHOULD_SKIP_TOO",
+    }
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_data_from_s3()
+
+    assert summary is not None
+    assert summary["files"] == 5
+    assert (tmp_path / "data" / "splits" / "train.parquet").read_bytes() == b"TRAIN"
+    assert (tmp_path / "data" / "splits" / "val.parquet").read_bytes() == b"VAL"
+    assert (tmp_path / "data" / "splits" / "test.parquet").read_bytes() == b"TEST"
+    assert (tmp_path / "data" / "raw" / "weekly_2012_2025.parquet").read_bytes() == b"WEEKLY"
+    assert (tmp_path / "data" / "raw" / "schedules_2012_2025.parquet").read_bytes() == b"SCHED"
+    assert not (tmp_path / "data" / "raw" / "weekly_2023_2023.parquet").exists()
+    assert not (tmp_path / "data" / "raw" / "notes.txt").exists()
+
+
+def test_data_sync_raises_on_missing_split(monkeypatch, tmp_path):
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    fake_s3 = _FakeS3(objects={"data/raw/weekly_2012_2025.parquet": b"x"})
+    with mock.patch("boto3.client", return_value=fake_s3):
+        with pytest.raises(KeyError, match="NoSuchKey"):
+            model_sync.sync_data_from_s3()
