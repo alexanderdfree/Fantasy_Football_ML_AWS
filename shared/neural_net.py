@@ -6,6 +6,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def apply_non_negative(val: torch.Tensor, name: str, non_negative: set) -> torch.Tensor:
+    """Clamp ``val`` to ``>= 0`` when ``name`` is in ``non_negative``.
+
+    Must use ``torch.clamp(min=0.0)``: softplus introduces a ~0.693 floor per
+    head that compounds across targets. See TODO.md archive entry
+    "Softplus floor inflated low-scoring predictions".
+    """
+    if name in non_negative:
+        return torch.clamp(val, min=0.0)
+    return val
+
+
 class GatedTDHead(nn.Module):
     """Two-stage hurdle head for zero-inflated TD prediction.
 
@@ -96,9 +108,7 @@ class MultiHeadNet(nn.Module):
         preds = {}
         for name, head in self.heads.items():
             val = head(shared).squeeze(-1)
-            if name in self.non_negative_targets:
-                val = torch.clamp(val, min=0.0)
-            preds[name] = val
+            preds[name] = apply_non_negative(val, name, self.non_negative_targets)
         return preds
 
     def predict_numpy(self, X: np.ndarray, device: torch.device) -> dict:
@@ -381,9 +391,7 @@ class MultiHeadNetWithHistory(nn.Module):
                 preds[f"{name}_gate_logit"] = gate_logit
             else:
                 val = head(head_input).squeeze(-1)
-                if name in self.non_negative_targets:
-                    val = torch.clamp(val, min=0.0)
-                preds[name] = val
+                preds[name] = apply_non_negative(val, name, self.non_negative_targets)
         return preds
 
     def predict_numpy(
@@ -557,9 +565,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             history_vec = self.history_norms[i](history_per_target[:, i, :])
             head_input = torch.cat([shared_static, history_vec], dim=-1)
             val = self.heads[name](head_input).squeeze(-1)
-            if name in self.non_negative_targets:
-                val = torch.clamp(val, min=0.0)
-            preds[name] = val
+            preds[name] = apply_non_negative(val, name, self.non_negative_targets)
         return preds
 
     def predict_numpy(
@@ -578,3 +584,99 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             im = torch.BoolTensor(inner_mask).to(device)
             preds = self.forward(s, k, om, im)
             return {key: v.cpu().numpy() for key, v in preds.items()}
+
+
+# ---------------------------------------------------------------------------
+# Factories
+#
+# Every ``MultiHeadNet*`` has several optional kwargs whose defaults silently
+# change behavior (e.g. ``non_negative_targets=None`` clamps every head).
+# Training paths like ``_train_nn`` / ``_train_attention_nn`` / the CV loop
+# used to construct models directly with inline kwarg lists, which let one
+# site drift from the others — see TODO.md archive entry "``run_cv_pipeline``
+# missing ``non_negative_targets`` on MultiHeadNet". Routing every construction
+# through a single factory per variant makes that drift architecturally
+# impossible: there is one place that maps ``cfg`` → model kwargs.
+# ---------------------------------------------------------------------------
+
+
+def build_multihead_net(
+    cfg: dict,
+    *,
+    input_dim: int,
+    targets: list[str],
+) -> "MultiHeadNet":
+    """Construct a MultiHeadNet from a training ``cfg`` dict."""
+    return MultiHeadNet(
+        input_dim=input_dim,
+        target_names=targets,
+        backbone_layers=cfg["nn_backbone_layers"],
+        head_hidden=cfg["nn_head_hidden"],
+        dropout=cfg["nn_dropout"],
+        head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
+        non_negative_targets=cfg.get("nn_non_negative_targets"),
+    )
+
+
+def build_multihead_net_with_history(
+    cfg: dict,
+    *,
+    static_dim: int,
+    game_dim: int,
+    targets: list[str],
+) -> "MultiHeadNetWithHistory":
+    """Construct a MultiHeadNetWithHistory from a training ``cfg`` dict."""
+    return MultiHeadNetWithHistory(
+        static_dim=static_dim,
+        game_dim=game_dim,
+        target_names=targets,
+        backbone_layers=cfg["nn_backbone_layers"],
+        d_model=cfg.get("attn_d_model", 32),
+        n_attn_heads=cfg.get("attn_n_heads", 2),
+        head_hidden=cfg["nn_head_hidden"],
+        dropout=cfg["nn_dropout"],
+        head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
+        non_negative_targets=cfg.get("nn_non_negative_targets"),
+        project_kv=cfg.get("attn_project_kv", False),
+        use_positional_encoding=cfg.get("attn_positional_encoding", False),
+        max_seq_len=cfg.get("attn_max_seq_len", 17),
+        use_gated_fusion=cfg.get("attn_gated_fusion", False),
+        attn_dropout=cfg.get("attn_dropout", 0.0),
+        encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
+        gated_td=cfg.get("attn_gated_td", False),
+        td_gate_hidden=cfg.get("attn_td_gate_hidden", 16),
+        gated_td_targets=cfg.get("gated_td_targets"),
+    )
+
+
+def build_multihead_net_with_nested_history(
+    cfg: dict,
+    *,
+    static_dim: int,
+    kick_dim: int,
+    max_games: int,
+    targets: list[str],
+) -> "MultiHeadNetWithNestedHistory":
+    """Construct a MultiHeadNetWithNestedHistory from a training ``cfg`` dict.
+
+    ``max_games`` is derived from the padded history tensor shape at the call
+    site, not from ``cfg``, since it can differ between CV folds and holdout.
+    """
+    return MultiHeadNetWithNestedHistory(
+        static_dim=static_dim,
+        kick_dim=kick_dim,
+        target_names=targets,
+        backbone_layers=cfg["nn_backbone_layers"],
+        d_kick=cfg.get("attn_kick_dim", 16),
+        d_model=cfg.get("attn_d_model", 32),
+        n_attn_heads=cfg.get("attn_n_heads", 2),
+        head_hidden=cfg["nn_head_hidden"],
+        dropout=cfg["nn_dropout"],
+        head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
+        non_negative_targets=cfg.get("nn_non_negative_targets"),
+        project_kv=cfg.get("attn_project_kv", False),
+        use_positional_encoding=cfg.get("attn_positional_encoding", False),
+        max_games=max_games,
+        attn_dropout=cfg.get("attn_dropout", 0.0),
+        encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
+    )
