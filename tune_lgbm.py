@@ -124,7 +124,14 @@ def _make_objective(folds_data, targets):
             reg_lambda=trial.suggest_float("reg_lambda", 0.01, 10.0, log=True),
             reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 5.0, log=True),
             min_split_gain=trial.suggest_float("min_split_gain", 0.0, 0.5),
-            objective=trial.suggest_categorical("objective", ["huber", "fair", "regression"]),
+            # Objective fixed to "huber" per the LGBM-unification PR (PR 3 of
+            # the NN loss refactor). Earlier tunes searched over
+            # {"huber", "fair", "regression"} and the Fair optimum landed on
+            # QB/RB/WR/TE for hyperparams that don't translate cleanly to
+            # other objectives — the split was undocumented and forced a
+            # per-position alpha/c difference. Removing the search keeps the
+            # loss family fixed across positions; K/DST already used "huber".
+            objective="huber",
         )
 
         # --- Evaluate across CV folds ---
