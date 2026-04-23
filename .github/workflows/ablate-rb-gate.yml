@@ -17,9 +17,13 @@ on:
         default: "42"
 
 concurrency:
-  # Reuse the train-ec2 concurrency group — only one thing can run on the
-  # single g4dn.xlarge at a time.
-  group: train-ec2
+  # Separate group from ``train-ec2`` so a new merge to main (which triggers
+  # train-ec2 with cancel-in-progress: true) doesn't cancel an in-flight or
+  # queued ablation. OS-level mutual exclusion on the instance is handled by
+  # the flock on /var/lock/ff-train.lock inside the SSM shell below — if
+  # train-ec2 is running, the ablation's flock -n fails with exit 2 and the
+  # workflow reports that cleanly instead of silently queuing.
+  group: ec2-diagnostic
   cancel-in-progress: false
 
 env:
