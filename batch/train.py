@@ -11,7 +11,9 @@ Environment variables set via job definition / container overrides:
 """
 
 import argparse
+import datetime
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -27,8 +29,18 @@ import boto3
 import pandas as pd
 import torch
 
+from shared.artifact_gc import prune as _gc_prune
+from shared.model_sync import (
+    build_manifest,
+    legacy_model_key,
+    load_manifest,
+    manifest_key,
+    new_history_key,
+    write_manifest,
+)
 from shared.registry import (
     ALL_POSITIONS,
+    INFERENCE_REGISTRY,
     accepts_dataframes,
     get_runner,
     is_cpu_only,
@@ -137,12 +149,77 @@ def sync_raw_data(s3_bucket):
             _download_if_stale(s3, s3_bucket, key, local_path)
 
 
-def upload_artifacts(s3_bucket, position, model_dir):
-    """Tar model artifacts and upload to S3.
+def _validate_remote_tarball(s3_client, bucket: str, key: str, position: str) -> None:
+    """Re-download the just-uploaded tarball and confirm it's structurally
+    sound — reopenable, contains ``benchmark_metrics.json`` (parseable), and
+    includes the NN weight + scaler files the inference registry expects.
 
-    Fails fast if model_dir is empty or missing benchmark_metrics.json — an
-    empty tarball shipped to S3 would silently mask a broken pipeline run
-    until someone tried to download the model weeks later.
+    Runs AFTER the versioned upload and BEFORE the manifest write, so a
+    corrupted or truncated upload can't be promoted to ``current``. Any
+    raise here leaves the old manifest in place and the site keeps serving
+    the previous good artifact.
+    """
+    obj = s3_client.get_object(Bucket=bucket, Key=key)
+    data = obj["Body"].read()
+
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        members = {m.name for m in tar.getmembers()}
+        bench = "benchmark_metrics.json"
+        if bench not in members:
+            raise RuntimeError(
+                f"{position}: uploaded tarball s3://{bucket}/{key} is missing "
+                f"{bench}. Contents: {sorted(members)}"
+            )
+        # Parseability — catches a zero-byte or malformed metrics file that
+        # slipped past _extract_metrics but would then crash benchmark readers.
+        extracted = tar.extractfile(bench)
+        if extracted is None:
+            raise RuntimeError(f"{position}: {bench} in s3://{bucket}/{key} is not a regular file")
+        try:
+            json.loads(extracted.read())
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"{position}: {bench} in s3://{bucket}/{key} is not valid JSON: {e}"
+            ) from e
+
+    reg = INFERENCE_REGISTRY[position]
+    required = {reg["nn_file"], "nn_scaler.pkl", "nn_scaler_meta.json"}
+    if reg.get("train_attention_nn") and reg.get("attn_nn_file"):
+        required.update(
+            {
+                reg["attn_nn_file"],
+                "attention_nn_scaler.pkl",
+                "attention_nn_scaler_meta.json",
+            }
+        )
+    # Ridge and LightGBM save into per-target subdirs or with dispatching file
+    # names; leaving those out of the strict allowlist avoids false positives
+    # on legitimate layouts. The NN weight + scaler pair is the canonical
+    # "successful train" signal.
+    missing = required - members
+    if missing:
+        raise RuntimeError(
+            f"{position}: uploaded tarball s3://{bucket}/{key} is missing "
+            f"required files: {sorted(missing)}. Contents: {sorted(members)}"
+        )
+
+
+def upload_artifacts(s3_bucket, position, model_dir):
+    """Tar, upload to a versioned history key, validate, atomically promote,
+    then mirror to the legacy key for pre-manifest consumers.
+
+    Order (each step raises on failure):
+      1. Structural check of ``model_dir`` (fast-fail before S3 round-trips).
+      2. Build tarball, hash it, pick timestamped + sha7 history key.
+      3. Upload to ``history/{ts}-{sha7}/model.tar.gz``.
+      4. Re-download + validate (reopenable, expected files present).
+      5. Read old ``manifest.json`` (None on first run).
+      6. Write new ``manifest.json`` with ``current=new, previous=old.current``
+         — **this write is the atomic promotion**. Any earlier failure leaves
+         the old manifest in place and the site keeps serving the previous
+         good artifact.
+      7. Overwrite legacy ``model.tar.gz`` mirror (pre-manifest compat).
+      8. Best-effort retention prune (failure is non-fatal).
     """
     if not os.path.isdir(model_dir):
         raise RuntimeError(
@@ -160,6 +237,10 @@ def upload_artifacts(s3_bucket, position, model_dir):
         )
 
     s3 = boto3.client("s3")
+    # Mirrors shared.model_sync's consumer-side env read so producer/consumer
+    # paths can't drift. Default "models" matches the legacy layout.
+    s3_prefix = os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/")
+
     with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
         tmp_path = tmp.name
 
@@ -169,9 +250,46 @@ def upload_artifacts(s3_bucket, position, model_dir):
                 full_path = os.path.join(model_dir, item)
                 tar.add(full_path, arcname=item)
 
-        s3_key = f"models/{position}/model.tar.gz"
-        print(f"Uploading artifacts to s3://{s3_bucket}/{s3_key}")
-        s3.upload_file(tmp_path, s3_bucket, s3_key)
+        tar_bytes = os.path.getsize(tmp_path)
+        with open(tmp_path, "rb") as f:
+            sha7 = hashlib.sha256(f.read()).hexdigest()[:7]
+        ts = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+        new_key = new_history_key(s3_prefix, position, ts, sha7)
+
+        print(f"Uploading artifacts to s3://{s3_bucket}/{new_key}")
+        s3.upload_file(tmp_path, s3_bucket, new_key)
+
+        print(f"Validating uploaded tarball at s3://{s3_bucket}/{new_key}")
+        _validate_remote_tarball(s3, s3_bucket, new_key, position)
+
+        old_manifest = load_manifest(s3, s3_bucket, s3_prefix, position)
+        new_manifest = build_manifest(
+            new_key=new_key,
+            sha7=sha7,
+            bytes_=tar_bytes,
+            uploaded_at=ts,
+            old_manifest=old_manifest,
+        )
+        write_manifest(s3, s3_bucket, s3_prefix, position, new_manifest)
+        print(f"Promoted s3://{s3_bucket}/{manifest_key(s3_prefix, position)}")
+
+        # Legacy mirror goes LAST — pre-manifest consumers see the same bytes
+        # as the freshly-promoted current. Written last so a failure between
+        # steps 6 and 7 leaves the site on the (working) new current with a
+        # stale legacy; the other direction would be worse.
+        legacy_k = legacy_model_key(s3_prefix, position)
+        s3.upload_file(tmp_path, s3_bucket, legacy_k)
+        print(f"Updated legacy mirror s3://{s3_bucket}/{legacy_k}")
+
+        try:
+            deleted = _gc_prune(s3, s3_bucket, s3_prefix, position, new_manifest)
+            if deleted:
+                print(f"Pruned {len(deleted)} old history entries.")
+        except Exception as e:
+            # Retention failure is recoverable — next successful run will
+            # re-prune. Don't let it mask the upload success.
+            print(f"WARNING: retention prune failed (non-fatal): {e!r}")
+
         print("Artifact upload complete.")
     finally:
         os.unlink(tmp_path)

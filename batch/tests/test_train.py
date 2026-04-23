@@ -1,19 +1,114 @@
 """Tests for batch/train.py — position registry, S3 staging, artifact handling."""
 
 import argparse
+import io
 import json
 import os
 import shutil
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 from unittest import mock
 
 import pytest
+from botocore.exceptions import ClientError
 
 PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+
+def _nosuchkey_error(key: str) -> ClientError:
+    return ClientError(
+        error_response={"Error": {"Code": "NoSuchKey", "Message": f"{key} not found"}},
+        operation_name="GetObject",
+    )
+
+
+class _FakeBody:
+    def __init__(self, data: bytes):
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+
+class _FakePaginator:
+    def __init__(self, objects: dict):
+        self._objects = objects
+
+    def paginate(self, Bucket: str, Prefix: str):  # noqa: N803
+        contents = [{"Key": k} for k in self._objects if k.startswith(Prefix)]
+        yield {"Contents": contents}
+
+
+class _FakeS3Producer:
+    """In-memory S3 fake supporting the operations ``upload_artifacts`` uses:
+    ``upload_file`` (local → key), ``put_object`` (bytes → key), ``get_object``,
+    ``list_objects_v2`` (via paginator), and ``delete_objects``.
+
+    The ``ops`` list records every mutating call in order so tests can assert
+    that the legacy mirror upload happens **after** the manifest put — the
+    atomic-promotion invariant documented in batch/train.py::upload_artifacts.
+    Missing keys raise ``ClientError`` with code ``NoSuchKey`` to mirror real
+    boto3 semantics.
+    """
+
+    def __init__(self):
+        self.objects: dict[str, bytes] = {}
+        self.ops: list[tuple[str, str]] = []
+
+    def upload_file(self, local_path, Bucket, Key):  # noqa: N803
+        with open(local_path, "rb") as f:
+            self.objects[Key] = f.read()
+        self.ops.append(("upload_file", Key))
+
+    def put_object(self, Bucket, Key, Body, ContentType=None):  # noqa: N803
+        if hasattr(Body, "read"):
+            Body = Body.read()
+        self.objects[Key] = Body
+        self.ops.append(("put_object", Key))
+
+    def get_object(self, Bucket, Key):  # noqa: N803
+        if Key not in self.objects:
+            raise _nosuchkey_error(Key)
+        return {"Body": _FakeBody(self.objects[Key])}
+
+    def get_paginator(self, op):
+        assert op == "list_objects_v2"
+        return _FakePaginator(self.objects)
+
+    def delete_objects(self, Bucket, Delete):  # noqa: N803
+        for obj in Delete["Objects"]:
+            self.objects.pop(obj["Key"], None)
+            self.ops.append(("delete", obj["Key"]))
+
+
+def _write_fake_model_dir(d: Path, pos: str) -> None:
+    """Populate ``d`` with the exact set of files the inference registry will
+    expect for ``pos`` plus ``benchmark_metrics.json``. Keeps validation
+    tests honest — if a future position adds a required file, the registry
+    change flows straight through here via ``INFERENCE_REGISTRY[pos]``.
+    """
+    from shared.registry import INFERENCE_REGISTRY
+
+    reg = INFERENCE_REGISTRY[pos]
+    files = {
+        reg["nn_file"]: b"fake-nn-weights",
+        "nn_scaler.pkl": b"fake-scaler",
+        "nn_scaler_meta.json": b"{}",
+        "benchmark_metrics.json": b'{"position":"' + pos.encode() + b'"}',
+    }
+    if reg.get("train_attention_nn") and reg.get("attn_nn_file"):
+        files[reg["attn_nn_file"]] = b"fake-attn-weights"
+        files["attention_nn_scaler.pkl"] = b"fake-attn-scaler"
+        files["attention_nn_scaler_meta.json"] = b"{}"
+    # A single ridge file is enough to make the dir non-empty beyond the
+    # required set; validation doesn't enforce Ridge's per-target layout.
+    files["ridge_model.pkl"] = b"fake-ridge"
+    for name, data in files.items():
+        (d / name).write_bytes(data)
 
 
 # ---------------------------------------------------------------------------
@@ -284,25 +379,185 @@ class TestDownloadIfStale:
 
 
 class TestUploadArtifacts:
+    """upload_artifacts ships to ``models/{POS}/history/{ts}-{sha}/model.tar.gz``,
+    structurally validates the uploaded bytes, then atomically promotes via a
+    manifest.json write. Legacy ``model.tar.gz`` is mirrored last for consumers
+    running pre-manifest code. See the docstring on upload_artifacts."""
+
     @mock.patch("batch.train.boto3.client")
-    def test_uploads_tar_to_correct_s3_key(self, mock_boto_client):
+    def test_uploads_versioned_key_and_writes_manifest(self, mock_boto_client, tmp_path):
         from batch.train import upload_artifacts
 
-        mock_s3 = mock.MagicMock()
-        mock_boto_client.return_value = mock_s3
+        fake_s3 = _FakeS3Producer()
+        mock_boto_client.return_value = fake_s3
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create fake model files + required metrics file
-            Path(tmpdir, "ridge_model.pkl").write_text("fake")
-            Path(tmpdir, "nn_model.pt").write_text("fake")
-            Path(tmpdir, "benchmark_metrics.json").write_text("{}")
+        d = tmp_path / "model"
+        d.mkdir()
+        _write_fake_model_dir(d, "RB")
 
-            upload_artifacts("my-bucket", "RB", tmpdir)
+        upload_artifacts("my-bucket", "RB", str(d))
 
-        mock_s3.upload_file.assert_called_once()
-        call_args = mock_s3.upload_file.call_args
-        assert call_args.args[1] == "my-bucket"
-        assert call_args.args[2] == "models/RB/model.tar.gz"
+        # Exactly one versioned history key was written.
+        history_keys = [k for k in fake_s3.objects if k.startswith("models/RB/history/")]
+        assert len(history_keys) == 1
+        history_key = history_keys[0]
+        assert history_key.endswith("/model.tar.gz")
+
+        # Manifest is present and points current at the versioned key.
+        manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
+        assert manifest["schema_version"] == 1
+        assert manifest["current"]["key"] == history_key
+        assert manifest["previous"] is None  # first write
+        assert history_key in manifest["history"]
+
+        # Legacy mirror was written too (pre-manifest consumer compat).
+        assert "models/RB/model.tar.gz" in fake_s3.objects
+        # All three tarball bytes agree — otherwise pre-manifest consumers
+        # would see different bytes than manifest-aware consumers.
+        assert fake_s3.objects[history_key] == fake_s3.objects["models/RB/model.tar.gz"]
+
+    @mock.patch("batch.train.boto3.client")
+    def test_legacy_mirror_upload_happens_after_manifest_write(self, mock_boto_client, tmp_path):
+        """Ordering invariant: the manifest put MUST be committed before the
+        legacy mirror upload. A crash between the two leaves consumers on the
+        freshly-promoted current; the reverse would briefly expose new bytes
+        to old consumers without manifest-aware fallback being available."""
+        from batch.train import upload_artifacts
+
+        fake_s3 = _FakeS3Producer()
+        mock_boto_client.return_value = fake_s3
+
+        d = tmp_path / "model"
+        d.mkdir()
+        _write_fake_model_dir(d, "RB")
+
+        upload_artifacts("my-bucket", "RB", str(d))
+
+        manifest_idx = next(
+            i for i, (_, k) in enumerate(fake_s3.ops) if k == "models/RB/manifest.json"
+        )
+        legacy_idx = next(
+            i
+            for i, (op, k) in enumerate(fake_s3.ops)
+            if op == "upload_file" and k == "models/RB/model.tar.gz"
+        )
+        assert manifest_idx < legacy_idx, (
+            f"manifest put must precede legacy mirror, got ops: {fake_s3.ops}"
+        )
+
+    @mock.patch("batch.train.boto3.client")
+    def test_validation_rejects_missing_required_file(self, mock_boto_client, tmp_path):
+        """Validation re-downloads the uploaded tarball and checks for
+        required files. A missing nn_scaler.pkl must raise BEFORE the
+        manifest write — otherwise a promoted bad artifact sticks."""
+        from batch.train import upload_artifacts
+
+        fake_s3 = _FakeS3Producer()
+        mock_boto_client.return_value = fake_s3
+
+        d = tmp_path / "model"
+        d.mkdir()
+        _write_fake_model_dir(d, "RB")
+        # Remove a required file AFTER the dir was populated.
+        (d / "nn_scaler.pkl").unlink()
+
+        with pytest.raises(RuntimeError, match="missing required files"):
+            upload_artifacts("my-bucket", "RB", str(d))
+
+        # Manifest must NOT have been written — the promotion didn't happen.
+        assert "models/RB/manifest.json" not in fake_s3.objects
+        # Legacy mirror must NOT have been overwritten.
+        assert "models/RB/model.tar.gz" not in fake_s3.objects
+
+    @mock.patch("batch.train.boto3.client")
+    def test_validation_detects_truncation(self, mock_boto_client, tmp_path):
+        """If the uploaded bytes get truncated (replication lag, network blip),
+        validation's tarfile reopen fails and the manifest stays on the
+        previous good pointer. We simulate by intercepting the first
+        upload_file to store only the first 32 bytes."""
+        from batch.train import upload_artifacts
+
+        fake_s3 = _FakeS3Producer()
+        original_upload = fake_s3.upload_file
+
+        def truncated_upload(local_path, Bucket, Key):  # noqa: N803
+            with open(local_path, "rb") as f:
+                fake_s3.objects[Key] = f.read()[:32]  # deliberately truncated
+            fake_s3.ops.append(("upload_file", Key))
+
+        mock_boto_client.return_value = fake_s3
+        fake_s3.upload_file = truncated_upload  # type: ignore[method-assign]
+
+        d = tmp_path / "model"
+        d.mkdir()
+        _write_fake_model_dir(d, "RB")
+
+        try:
+            with pytest.raises((RuntimeError, tarfile.TarError, OSError, EOFError)):
+                upload_artifacts("my-bucket", "RB", str(d))
+        finally:
+            fake_s3.upload_file = original_upload  # type: ignore[method-assign]
+
+        assert "models/RB/manifest.json" not in fake_s3.objects
+
+    @mock.patch("batch.train.boto3.client")
+    def test_second_upload_promotes_old_current_to_previous(self, mock_boto_client, tmp_path):
+        """After two back-to-back uploads, manifest.previous must equal the
+        first upload's current. This is the rollback path: if upload #2's
+        artifact later fails to load, ``shared.model_sync._sync_one`` falls
+        back to #1's versioned key via manifest.previous."""
+        from batch.train import upload_artifacts
+
+        fake_s3 = _FakeS3Producer()
+        mock_boto_client.return_value = fake_s3
+
+        d = tmp_path / "model"
+        d.mkdir()
+        _write_fake_model_dir(d, "RB")
+
+        upload_artifacts("my-bucket", "RB", str(d))
+        first_manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
+        first_current_key = first_manifest["current"]["key"]
+
+        # Second upload with slightly different bytes so sha7 differs.
+        (d / "benchmark_metrics.json").write_bytes(b'{"position":"RB","round":2}')
+        upload_artifacts("my-bucket", "RB", str(d))
+
+        second_manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
+        assert second_manifest["previous"] is not None
+        assert second_manifest["previous"]["key"] == first_current_key
+        assert second_manifest["current"]["key"] != first_current_key
+        # Both versioned artifacts remain in S3 — the fallback has bytes to
+        # serve from.
+        assert first_current_key in fake_s3.objects
+        assert second_manifest["current"]["key"] in fake_s3.objects
+
+    @mock.patch("batch.train.boto3.client")
+    def test_manifest_validates_end_to_end_with_consumer(
+        self, mock_boto_client, tmp_path, monkeypatch
+    ):
+        """Contract test: what upload_artifacts writes, shared.model_sync can
+        read. Uses a real RB tarball layout (via _write_fake_model_dir) and
+        shared.model_sync._sync_one against the same fake S3. If the producer
+        ever changes the manifest schema without updating the consumer, this
+        test breaks."""
+        from batch.train import upload_artifacts
+        from shared import model_sync
+
+        fake_s3 = _FakeS3Producer()
+        mock_boto_client.return_value = fake_s3
+
+        d = tmp_path / "model"
+        d.mkdir()
+        _write_fake_model_dir(d, "RB")
+        upload_artifacts("my-bucket", "RB", str(d))
+
+        dest_root = tmp_path / "consumer_root"
+        result = model_sync._sync_one(fake_s3, "my-bucket", "models", "RB", dest_root)
+
+        assert result["source"] == "current"
+        assert (dest_root / "RB" / "outputs" / "models" / "nn_scaler.pkl").is_file()
+        assert (dest_root / "RB" / "outputs" / "models" / "rb_multihead_nn.pt").is_file()
 
     def test_raises_on_empty_model_dir(self, tmp_path):
         from batch.train import upload_artifacts
