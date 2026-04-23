@@ -3,8 +3,20 @@ name: Run Tests
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".gitignore"
+      - "LICENSE*"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".gitignore"
+      - "LICENSE*"
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
@@ -32,7 +44,50 @@ jobs:
       - name: ruff format --check
         run: ruff format --check .
 
+  # Build the test venv once and hand it to every shard as an artifact. Each
+  # shard used to redundantly run `uv pip install -r requirements-dev.txt`
+  # (~15-20s of wheel extraction even with the uv cache warm). With 7 shards
+  # that was ~2 minutes of compute per CI run burned on the same install.
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements*.txt"
+      - name: Create venv and install test deps
+        run: |
+          # uv venv uses symlinks to the Python in setup-python's toolcache
+          # (/opt/hostedtoolcache/Python/3.12.x/). Both this job and the test
+          # matrix run actions/setup-python@v6 with the same python-version,
+          # so the symlink target is identical across runners.
+          uv venv --python 3.12 ./venv
+          uv pip install --python ./venv/bin/python -r requirements-dev.txt
+          # nfl_data_py pulls old numpy/pandas if its deps resolve; install
+          # without dependencies (matches batch/Dockerfile.train line 38).
+          uv pip install --python ./venv/bin/python --no-deps nfl_data_py==0.3.3
+      - name: Tar venv
+        # Pre-tar into one file. upload-artifact pays per-file metadata overhead
+        # that dominates for Python site-packages (thousands of small files).
+        run: tar -cf venv.tar venv
+      - name: Upload venv artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: venv
+          path: venv.tar
+          retention-days: 1
+          # The tar already holds compressed wheels and binaries; skip zip-level
+          # re-compression so upload isn't CPU-bound for no size win.
+          compression-level: 0
+
   test:
+    needs: setup
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -43,21 +98,20 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up Python 3.12
+        # The venv's python is a symlink to setup-python's toolcache path,
+        # so this job has to set up the same Python version to make the
+        # symlink target resolvable. Instant on warm runners.
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+      - name: Download venv artifact
+        uses: actions/download-artifact@v4
         with:
-          enable-cache: true
-          cache-dependency-glob: "requirements*.txt"
+          name: venv
 
-      - name: Install dependencies
-        run: uv pip install --system -r requirements-dev.txt
-
-      - name: Install nfl_data_py (no-deps, matches Dockerfile)
-        run: uv pip install --system --no-deps nfl_data_py==0.3.3
+      - name: Extract venv
+        run: tar -xf venv.tar
 
       # data/raw/ is gitignored (28 MB of player stats). The pipeline_e2e +
       # regression tests load data/raw/schedules_2012_2025.parquet via
@@ -75,7 +129,7 @@ jobs:
         if: steps.sched-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p data/raw
-          python - <<'PY'
+          ./venv/bin/python - <<'PY'
           import nfl_data_py as nfl
           sched = nfl.import_schedules(list(range(2012, 2026)))
           sched.to_parquet('data/raw/schedules_2012_2025.parquet')
@@ -95,7 +149,7 @@ jobs:
 
       - name: Run tests
         run: >-
-          python -m pytest
+          ./venv/bin/python -m pytest
           ${{ steps.shard.outputs.paths }}
           -n auto --dist=loadfile
           ${{ steps.shard.outputs.cov }}
