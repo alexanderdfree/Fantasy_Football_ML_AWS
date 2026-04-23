@@ -17,6 +17,7 @@ on:
       - "K/**"
       - "DST/**"
       - "src/**"
+      - "tune_lgbm.py"
       - "requirements.txt"
       - ".github/workflows/batch-image.yml"
   workflow_dispatch: {}

@@ -28,6 +28,44 @@ from shared.pipeline import _prepare_position_data
 from src.config import SPLITS_DIR
 from src.data.split import expanding_window_folds
 
+
+def _ensure_data_from_s3():
+    """Download train/val/test splits and data/raw/ from S3 when ``S3_BUCKET``
+    is set and the local files are missing.
+
+    Lets tune_lgbm.py run inside the training container (which has no baked-in
+    data) by reusing the same boto3 + ETag-cache helpers as ``batch/train.py``.
+    No-op locally when ``S3_BUCKET`` isn't set or when the files already exist
+    — callers with their own ``data/splits`` layout aren't affected.
+    """
+    bucket = os.environ.get("S3_BUCKET")
+    if not bucket:
+        return
+    prefix = os.environ.get("S3_DATA_PREFIX", "data")
+
+    # Local import so ``python tune_lgbm.py --print-best`` can run on machines
+    # that don't have boto3 + full batch/train deps, e.g. offline inspection.
+    from batch.train import download_data, sync_raw_data
+
+    splits_needed = not all(
+        os.path.exists(os.path.join(SPLITS_DIR, f))
+        for f in ("train.parquet", "val.parquet", "test.parquet")
+    )
+    if splits_needed:
+        print(f"[tune_lgbm] Downloading splits from s3://{bucket}/{prefix}/ to {SPLITS_DIR}/")
+        download_data(bucket, prefix, SPLITS_DIR)
+    else:
+        print(f"[tune_lgbm] Splits already present at {SPLITS_DIR}/")
+
+    if not os.path.isdir("data/raw") or not any(
+        f.endswith(".parquet") for f in os.listdir("data/raw")
+    ):
+        print(f"[tune_lgbm] Syncing data/raw/ from s3://{bucket}/data/raw/")
+        sync_raw_data(bucket)
+    else:
+        print("[tune_lgbm] data/raw/ already populated")
+
+
 # ---------------------------------------------------------------------------
 # Position config loading
 # ---------------------------------------------------------------------------
@@ -124,7 +162,14 @@ def _make_objective(folds_data, targets):
             reg_lambda=trial.suggest_float("reg_lambda", 0.01, 10.0, log=True),
             reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 5.0, log=True),
             min_split_gain=trial.suggest_float("min_split_gain", 0.0, 0.5),
-            objective=trial.suggest_categorical("objective", ["huber", "fair", "regression"]),
+            # Objective fixed to "huber" per the LGBM-unification PR (PR 3 of
+            # the NN loss refactor). Earlier tunes searched over
+            # {"huber", "fair", "regression"} and the Fair optimum landed on
+            # QB/RB/WR/TE for hyperparams that don't translate cleanly to
+            # other objectives — the split was undocumented and forced a
+            # per-position alpha/c difference. Removing the search keeps the
+            # loss family fixed across positions; K/DST already used "huber".
+            objective="huber",
         )
 
         # --- Evaluate across CV folds ---
@@ -334,6 +379,11 @@ def main():
     )
     args = parser.parse_args()
 
+    # Pull splits + raw data from S3 when running in the container. No-op
+    # locally if the files already exist.
+    if not args.print_best:
+        _ensure_data_from_s3()
+
     all_results = {}
 
     for pos in args.positions:
@@ -415,6 +465,22 @@ def main():
             json.dump(all_results, f, indent=2, default=str)
         os.replace(tmp, results_path)
         print(f"\nResults saved to {results_path}")
+
+        # Upload to S3 + echo as a delimited stdout block so the results
+        # survive a --rm container. The retune workflow greps between markers
+        # to extract structured params for PR 3b.
+        bucket = os.environ.get("S3_BUCKET")
+        if bucket:
+            import boto3
+
+            s3 = boto3.client("s3")
+            s3_key = "tune_lgbm/tune_lgbm_results.json"
+            s3.upload_file(results_path, bucket, s3_key)
+            print(f"Uploaded results to s3://{bucket}/{s3_key}")
+
+        print("\n==== BEST_PARAMS_JSON_START ====")
+        print(json.dumps(all_results, indent=2, default=str))
+        print("==== BEST_PARAMS_JSON_END ====")
 
 
 if __name__ == "__main__":

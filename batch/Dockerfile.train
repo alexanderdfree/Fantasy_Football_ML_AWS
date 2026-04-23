@@ -51,5 +51,10 @@ COPY WR/ WR/
 COPY TE/ TE/
 COPY K/ K/
 COPY DST/ DST/
+# tune_lgbm.py ships in the image so retune-lgbm.yml can run Optuna via
+# ``docker run --entrypoint python $IMAGE tune_lgbm.py ...`` on the same
+# warm EC2 trainer that train-ec2.yml uses. tune_lgbm.py imports from
+# shared/src/{POS}/ above, so its COPY stays next to them here.
+COPY tune_lgbm.py .
 
 ENTRYPOINT ["python", "batch/train.py"]

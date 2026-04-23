@@ -1,0 +1,198 @@
+name: Retune LGBM
+
+# Runs tune_lgbm.py on the EC2 trainer. Mirrors train-ec2.yml's instance
+# start + SSM flow, but overrides the container entrypoint to run Optuna
+# instead of batch/train.py. Ships tuned hyperparams as stdout — the
+# caller hand-copies the best_params block into the position config in a
+# follow-up PR.
+#
+# Trigger manually via Actions UI → "Retune LGBM" → Run workflow. Default
+# positions = QB RB WR TE (K/DST already used huber pre-PR-3).
+
+on:
+  workflow_dispatch:
+    inputs:
+      positions:
+        description: "Space-separated positions to tune"
+        default: "QB RB WR TE"
+      n_trials:
+        description: "Optuna trials per position"
+        default: "50"
+      timeout_sec:
+        description: "Per-position Optuna timeout (sec, 0 = no cap)"
+        default: "0"
+
+concurrency:
+  # Reuse the train-ec2 concurrency group — only one job on the single
+  # g4dn.xlarge at a time.
+  group: train-ec2
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: ff-training
+
+jobs:
+  retune:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve instance ID
+        id: inst
+        run: |
+          ID="${{ vars.EC2_TRAINER_INSTANCE_ID }}"
+          if [ -z "$ID" ]; then
+            echo "EC2_TRAINER_INSTANCE_ID repo variable is not set."
+            exit 1
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve ECR image URI
+        id: img
+        run: |
+          ACCT=$(aws sts get-caller-identity --query Account --output text)
+          echo "uri=$ACCT.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Start instance (no-op if already running)
+        run: |
+          aws ec2 start-instances --instance-ids "${{ steps.inst.outputs.id }}" --region "$AWS_REGION" >/dev/null
+          aws ec2 wait instance-running --instance-ids "${{ steps.inst.outputs.id }}" --region "$AWS_REGION"
+
+      - name: Wait for SSM agent online
+        run: |
+          for i in $(seq 1 30); do
+            STATUS=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
+              --region "$AWS_REGION" \
+              --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || echo "None")
+            if [ "$STATUS" = "Online" ]; then
+              echo "SSM online"; exit 0
+            fi
+            echo "SSM status: $STATUS (attempt $i/30)"
+            sleep 10
+          done
+          echo "Timed out waiting for SSM"; exit 1
+
+      - name: Run Optuna retune via docker
+        id: tune
+        run: |
+          POSITIONS="${{ github.event.inputs.positions || 'QB RB WR TE' }}"
+          N_TRIALS="${{ github.event.inputs.n_trials || '50' }}"
+          TIMEOUT_SEC="${{ github.event.inputs.timeout_sec || '0' }}"
+          IMAGE="${{ steps.img.outputs.uri }}"
+          TIMEOUT_ARG=""
+          if [ "$TIMEOUT_SEC" != "0" ]; then
+            TIMEOUT_ARG="--timeout $TIMEOUT_SEC"
+          fi
+          # Override the container entrypoint to run tune_lgbm.py instead of
+          # batch/train.py. Env vars mirror ff-train (infra/ec2/user-data.sh).
+          jq -n --arg cmd "set -eu
+          exec 200>/var/lock/ff-train.lock
+          flock -n 200 || { echo 'retune-lgbm: ff-train lock held'; exit 2; }
+          mkdir -p /opt/ff/scratch/input /opt/ff/scratch/raw /opt/ff/logs
+          date -Iseconds > /opt/ff/logs/last-activity
+          docker pull '$IMAGE'
+          docker run --rm \
+            --entrypoint python \
+            -e S3_BUCKET=ff-predictor-training \
+            -e S3_DATA_PREFIX=data \
+            -e LOG_EVERY=10 \
+            -e AWS_DEFAULT_REGION=$AWS_REGION \
+            -v /opt/ff/scratch/input:/opt/ml/input/data/training \
+            -v /opt/ff/scratch/raw:/opt/ml/code/data/raw \
+            '$IMAGE' tune_lgbm.py $POSITIONS --n-trials $N_TRIALS $TIMEOUT_ARG 2>&1 | tee -a /var/log/ff-train/retune-lgbm.log
+          date -Iseconds > /opt/ff/logs/last-activity
+          " '{commands: [$cmd]}' > /tmp/ssm-params.json
+          CMD_ID=$(aws ssm send-command \
+            --targets "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
+            --document-name AWS-RunShellScript \
+            --comment "retune-lgbm ${{ github.sha }}" \
+            --parameters file:///tmp/ssm-params.json \
+            --cloud-watch-output-config "CloudWatchLogGroupName=/ff/training,CloudWatchOutputEnabled=true" \
+            --region "$AWS_REGION" --query Command.CommandId --output text)
+          echo "command_id=$CMD_ID" >> "$GITHUB_OUTPUT"
+          echo "Retune command: $CMD_ID"
+
+      - name: Wait for retune to complete
+        run: |
+          # 50 trials × 4 positions × ~12s/trial ≈ 40 min; give 90 min headroom.
+          CMD_ID="${{ steps.tune.outputs.command_id }}"
+          INST="${{ steps.inst.outputs.id }}"
+          deadline=$(( $(date +%s) + 5400 ))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$CMD_ID" \
+              --instance-id "$INST" \
+              --region "$AWS_REGION" \
+              --query Status --output text)
+            case "$STATUS" in
+              Success)                    echo "Retune succeeded"; exit 0 ;;
+              Cancelled|TimedOut|Failed)  echo "Retune terminal: $STATUS"; exit 1 ;;
+              Pending|InProgress|Delayed) echo "Status: $STATUS -- sleeping 30s"; sleep 30 ;;
+              *)                          echo "Unknown status: $STATUS"; exit 1 ;;
+            esac
+          done
+          echo "Timed out after 90 min"; exit 1
+
+      - name: Cancel SSM command on cancel/failure
+        if: (cancelled() || failure()) && steps.tune.outputs.command_id != ''
+        run: |
+          aws ssm cancel-command \
+            --command-id "${{ steps.tune.outputs.command_id }}" \
+            --instance-ids "${{ steps.inst.outputs.id }}" \
+            --region "$AWS_REGION" || true
+
+      - name: Stream retune output to Actions log
+        if: always()
+        run: |
+          OUT=$(aws ssm get-command-invocation \
+            --command-id "${{ steps.tune.outputs.command_id }}" \
+            --instance-id "${{ steps.inst.outputs.id }}" \
+            --region "$AWS_REGION" \
+            --query StandardOutputContent --output text)
+          echo "$OUT"
+          # SSM StandardOutputContent is capped at ~24KB — tune_lgbm.py with
+          # LOG_EVERY=10 over 4 positions × 50 trials will exceed that. Full
+          # logs land in CloudWatch /ff/training via --cloud-watch-output-config.
+          {
+            echo '## LGBM retune — tail of output'
+            echo '```'
+            printf '%s\n' "$OUT" | tail -80
+            echo '```'
+            echo ''
+            echo 'Full log: CloudWatch `/ff/training` (Actions-runner output is truncated at ~24KB).'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download results from S3
+        if: success()
+        run: |
+          # tune_lgbm.py uploads the structured best-params JSON here. PR 3b
+          # consumes this file to write the new {POS}_LGBM_* constants into
+          # the position configs.
+          aws s3 cp s3://ff-predictor-training/tune_lgbm/tune_lgbm_results.json \
+            tune_lgbm_results.json --region "$AWS_REGION"
+          echo "== tune_lgbm_results.json =="
+          cat tune_lgbm_results.json
+          {
+            echo ''
+            echo '## tune_lgbm_results.json'
+            echo '```json'
+            cat tune_lgbm_results.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results as workflow artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tune_lgbm_results
+          path: tune_lgbm_results.json
+          retention-days: 30
