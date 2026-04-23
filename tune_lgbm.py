@@ -143,8 +143,17 @@ def _prepare_cv_folds(pos, cfg):
 # ---------------------------------------------------------------------------
 
 
-def _make_objective(folds_data, targets):
-    """Return an Optuna objective function that evaluates LightGBM on CV folds."""
+def _make_objective(folds_data, targets, lgbm_objective):
+    """Return an Optuna objective function that evaluates LightGBM on CV folds.
+
+    ``lgbm_objective`` is the fixed loss family (``"huber"``, ``"fair"``, etc.)
+    pulled from the position's cfg. Earlier revisions searched over
+    ``{"huber", "fair", "regression"}`` and landed on Fair for QB/RB/WR/TE and
+    Huber for K/DST — an undocumented split. PR 3 of the loss refactor
+    unified RB/WR/TE/K/DST on ``"huber"``; QB stays on ``"fair"`` because its
+    passing_yards heavy tail regresses ~0.2 pts/game under Huber's 90th-
+    percentile-quantile quadratic zone. Respecting cfg keeps this explicit.
+    """
 
     def objective(trial):
         # --- Sample hyperparameters ---
@@ -162,14 +171,7 @@ def _make_objective(folds_data, targets):
             reg_lambda=trial.suggest_float("reg_lambda", 0.01, 10.0, log=True),
             reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 5.0, log=True),
             min_split_gain=trial.suggest_float("min_split_gain", 0.0, 0.5),
-            # Objective fixed to "huber" per the LGBM-unification PR (PR 3 of
-            # the NN loss refactor). Earlier tunes searched over
-            # {"huber", "fair", "regression"} and the Fair optimum landed on
-            # QB/RB/WR/TE for hyperparams that don't translate cleanly to
-            # other objectives — the split was undocumented and forced a
-            # per-position alpha/c difference. Removing the search keeps the
-            # loss family fixed across positions; K/DST already used "huber".
-            objective="huber",
+            objective=lgbm_objective,
         )
 
         # --- Evaluate across CV folds ---
@@ -424,10 +426,11 @@ def main():
             pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=1),
         )
 
-        objective = _make_objective(folds_data, targets)
+        lgbm_objective = cfg.get("lgbm_objective", "huber")
+        objective = _make_objective(folds_data, targets, lgbm_objective)
 
         print(f"\n{'=' * 70}")
-        print(f"  Tuning {pos} LightGBM — {args.n_trials} trials")
+        print(f"  Tuning {pos} LightGBM — {args.n_trials} trials (objective={lgbm_objective})")
         print(f"{'=' * 70}")
 
         study.optimize(
