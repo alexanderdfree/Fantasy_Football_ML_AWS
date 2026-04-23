@@ -262,6 +262,123 @@ def _replace_model_dir_contents(src: str, dst: str) -> None:
     shutil.copytree(src, dst, dirs_exist_ok=True)
 
 
+def _run_rb_gate_ablation(train_df, val_df, test_df, seed: int) -> None:
+    """Three-way ablation on RB TD heads: Huber+gate vs Poisson+no-gate vs
+    Poisson+gate. Prints a decision table; skips S3 upload.
+
+    Mirrors ``scripts/ablate_rb_gate.py`` but runs inside the container so
+    the downloaded splits are reused across variants (cuts ~30s × 3 of repeated
+    data-prep). The shipping RB config (variant B) ships Poisson+no-gate;
+    this function answers whether that was the right call by comparing
+    fantasy-point MAE and per-target TD MAE across the three variants.
+    """
+    import copy
+
+    from RB.run_rb_pipeline import RB_CONFIG, run_rb_pipeline
+
+    def _variant_a(cfg: dict) -> dict:
+        """Pre-PR-2 baseline: Huber + gate on both TD heads."""
+        cfg = copy.deepcopy(cfg)
+        cfg["head_losses"] = {
+            "rushing_tds": "huber",
+            "receiving_tds": "huber",
+            "rushing_yards": "huber",
+            "receiving_yards": "huber",
+            "receptions": "huber",
+            "fumbles_lost": "huber",
+        }
+        cfg["gated_targets"] = ["rushing_tds", "receiving_tds"]
+        cfg["loss_weights"] = {
+            "rushing_tds": 4.0,
+            "receiving_tds": 4.0,
+            "rushing_yards": 0.133,
+            "receiving_yards": 0.133,
+            "receptions": 1.0,
+            "fumbles_lost": 4.0,
+        }
+        cfg["huber_deltas"] = {
+            "rushing_tds": 0.5,
+            "receiving_tds": 0.5,
+            "rushing_yards": 15.0,
+            "receiving_yards": 15.0,
+            "receptions": 2.0,
+            "fumbles_lost": 0.5,
+        }
+        cfg["nn_head_hidden_overrides"] = {"rushing_tds": 64, "receiving_tds": 64}
+        return cfg
+
+    def _variant_b(cfg: dict) -> dict:
+        """Shipping (PR #96): Poisson NLL on TDs, no TD gate."""
+        return copy.deepcopy(cfg)
+
+    def _variant_c(cfg: dict) -> dict:
+        """Poisson NLL on TDs + gate — tests whether gate adds signal on top."""
+        cfg = copy.deepcopy(cfg)
+        cfg["gated_targets"] = ["receptions", "rushing_tds", "receiving_tds"]
+        return cfg
+
+    variants = [
+        ("A", "Huber + gate on TDs (pre-PR-2 baseline)", _variant_a),
+        ("B", "Poisson NLL, no gate (PR #96 shipping)", _variant_b),
+        ("C", "Poisson NLL + gate on TDs", _variant_c),
+    ]
+
+    rows: list[dict] = []
+    for name, label, fn in variants:
+        print(f"\n{'=' * 72}\nVariant {name}: {label}\n{'=' * 72}", flush=True)
+        result = run_rb_pipeline(train_df, val_df, test_df, seed=seed, config=fn(RB_CONFIG))
+        attn = result.get("attn_nn_metrics")
+        if attn is None:
+            raise RuntimeError(f"Variant {name}: attn_nn_metrics missing from pipeline result")
+        row = {
+            "variant": name,
+            "label": label,
+            "fp_mae": attn["total"]["mae"],
+            "fp_rmse": attn["total"]["rmse"],
+            "rushing_tds_mae": attn["rushing_tds"]["mae"],
+            "receiving_tds_mae": attn["receiving_tds"]["mae"],
+            "receptions_mae": attn["receptions"]["mae"],
+            "gate_aucs": {
+                t: attn[t].get("gate_auc")
+                for t in attn
+                if isinstance(attn.get(t), dict) and "gate_auc" in attn[t]
+            },
+        }
+        rows.append(row)
+
+    print(f"\n{'=' * 72}\nRB TD-gate ablation — summary\n{'=' * 72}")
+    print(
+        f"{'Var':<4}{'FP MAE':>10}{'FP RMSE':>10}{'Rush TD MAE':>14}"
+        f"{'Rec TD MAE':>14}{'Rec MAE':>10}"
+    )
+    print("-" * 62)
+    for r in rows:
+        print(
+            f"{r['variant']:<4}{r['fp_mae']:>10.3f}{r['fp_rmse']:>10.3f}"
+            f"{r['rushing_tds_mae']:>14.3f}{r['receiving_tds_mae']:>14.3f}"
+            f"{r['receptions_mae']:>10.3f}"
+        )
+    if any(r["gate_aucs"] for r in rows):
+        print("\nGate AUCs (attention NN, gated targets only):")
+        for r in rows:
+            if r["gate_aucs"]:
+                auc_str = ", ".join(
+                    f"{t}={auc:.3f}" if auc is not None else f"{t}=n/a"
+                    for t, auc in r["gate_aucs"].items()
+                )
+                print(f"  {r['variant']}: {auc_str}")
+
+    by_var = {r["variant"]: r for r in rows}
+    a, b, c = by_var["A"]["fp_mae"], by_var["B"]["fp_mae"], by_var["C"]["fp_mae"]
+    margin_a = b - a
+    margin_c = b - c
+    print(f"\nFP-MAE margin vs B (positive = gate helps): A={margin_a:+.3f}, C={margin_c:+.3f}")
+    if max(margin_a, margin_c) >= 0.05:
+        print("Decision: keep a gate on TDs — exceeds 0.05 pt/game threshold.")
+    else:
+        print("Decision: drop gate on TDs (variant B wins) — below 0.05 pt/game threshold.")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--position", required=True, choices=ALL_POSITIONS)
@@ -273,9 +390,19 @@ def main():
         "artifacts so main() can be smoke-tested end-to-end without "
         "AWS credentials or training data.",
     )
+    parser.add_argument(
+        "--ablation",
+        choices=["rb-gate"],
+        default=None,
+        help="Run a named ablation instead of a standard training run. "
+        "'rb-gate' requires --position RB; runs the three-way TD-gate "
+        "ablation and prints the decision table. Skips S3 upload.",
+    )
     args = parser.parse_args()
 
     pos = args.position
+    if args.ablation == "rb-gate" and pos != "RB":
+        parser.error("--ablation rb-gate requires --position RB")
 
     # Print build fingerprint so stale container images are immediately obvious.
     _fingerprint_file = os.path.join(os.path.dirname(__file__), "train.py")
@@ -330,6 +457,14 @@ def main():
             val_df = pd.read_parquet(os.path.join(data_dir, "val.parquet"))
             test_df = pd.read_parquet(os.path.join(data_dir, "test.parquet"))
             print(f"Loaded data: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
+        if args.ablation == "rb-gate":
+            # Ablation runs the pipeline 3x with config overrides and prints
+            # a decision table. No S3 artifact upload — this is a diagnostic
+            # run, not a shipping build.
+            with _timed("run_ablation", store=phase_seconds):
+                _run_rb_gate_ablation(train_df, val_df, test_df, seed=args.seed)
+            print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
+            return
         with _timed("run_pipeline", store=phase_seconds):
             result = run_fn(train_df, val_df, test_df, seed=args.seed)
     else:

@@ -90,6 +90,32 @@ class TestArgumentParsing:
         args = parser.parse_args(["--position", "QB", "--seed", "123"])
         assert args.seed == 123
 
+    def test_ablation_flag_requires_known_name(self):
+        """--ablation accepts 'rb-gate' but not arbitrary strings."""
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            "--position", required=True, choices=["QB", "RB", "WR", "TE", "K", "DST"]
+        )
+        parser.add_argument("--ablation", choices=["rb-gate"], default=None)
+        args = parser.parse_args(["--position", "RB", "--ablation", "rb-gate"])
+        assert args.ablation == "rb-gate"
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--position", "RB", "--ablation", "nope"])
+
+    def test_ablation_rb_gate_rejects_non_rb_position(self, capsys):
+        """batch.train.main() must error when --ablation rb-gate is paired with
+        a non-RB position — otherwise the ablation would clobber another
+        position's run with bogus RB overrides."""
+        from batch import train
+
+        with (
+            mock.patch.object(
+                sys, "argv", ["train.py", "--position", "WR", "--ablation", "rb-gate"]
+            ),
+            pytest.raises(SystemExit),
+        ):
+            train.main()
+
 
 # ---------------------------------------------------------------------------
 # _assert_gpu: CPU-only bypass
