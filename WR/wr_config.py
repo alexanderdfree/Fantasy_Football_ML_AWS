@@ -107,6 +107,13 @@ WR_RIDGE_ALPHA_GRIDS = {
     "fumbles_lost": [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
+# === ElasticNet (optional parallel linear baseline, L1+L2) ===
+# Off by default. Reuses WR_RIDGE_ALPHA_GRIDS and searches over WR_ENET_L1_RATIOS.
+# Skips PCA regardless of WR_RIDGE_PCA_COMPONENTS — L1 sparsity on a rotated
+# basis zeros components, not original features.
+WR_TRAIN_ELASTICNET = False
+WR_ENET_L1_RATIOS = [0.3, 0.5, 0.7]
+
 # === Neural Net ===
 # 2012+ dataset: widened from [96] to [128] to exploit largest training set.
 # Largest position dataset can support more capacity with less overfitting risk.

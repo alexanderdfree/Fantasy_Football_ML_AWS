@@ -22,6 +22,7 @@ from WR.wr_config import (
     WR_COSINE_ETA_MIN,
     WR_COSINE_T0,
     WR_COSINE_T_MULT,
+    WR_ENET_L1_RATIOS,
     WR_GATED_TARGETS,
     WR_HEAD_LOSSES,
     WR_HUBER_DELTAS,
@@ -51,6 +52,7 @@ from WR.wr_config import (
     WR_SPECIFIC_FEATURES,
     WR_TARGETS,
     WR_TRAIN_ATTENTION_NN,
+    WR_TRAIN_ELASTICNET,
     WR_TRAIN_LIGHTGBM,
 )
 from WR.wr_data import filter_to_wr
@@ -97,6 +99,8 @@ WR_CONFIG = {
     "attn_gate_weight": WR_ATTN_GATE_WEIGHT,
     "gated_targets": WR_GATED_TARGETS,
     "head_losses": WR_HEAD_LOSSES,
+    "train_elasticnet": WR_TRAIN_ELASTICNET,
+    "enet_l1_ratios": WR_ENET_L1_RATIOS,
     "train_lightgbm": WR_TRAIN_LIGHTGBM,
     "lgbm_n_estimators": WR_LGBM_N_ESTIMATORS,
     "lgbm_learning_rate": WR_LGBM_LEARNING_RATE,

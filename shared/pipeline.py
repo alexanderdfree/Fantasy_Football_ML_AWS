@@ -30,7 +30,7 @@ from shared.evaluation import (
     print_comparison_table,
 )
 from shared.feature_build import build_position_features, scale_and_clip
-from shared.models import LightGBMMultiTarget, RidgeMultiTarget
+from shared.models import ElasticNetMultiTarget, LightGBMMultiTarget, RidgeMultiTarget
 from shared.neural_net import (
     build_multihead_net,
     build_multihead_net_with_history,
@@ -52,6 +52,7 @@ from src.data.split import expanding_window_folds
 from src.evaluation.metrics import compute_metrics
 from src.features.engineer import build_game_history_arrays, get_attn_static_columns
 from src.models.baseline import SeasonAverageBaseline
+from src.models.elastic_net import ElasticNetModel
 from src.models.linear import RidgeModel
 
 
@@ -273,6 +274,102 @@ def _tune_ridge_alphas_cv(
     return best_alphas
 
 
+# ---------------------------------------------------------------------------
+# ElasticNet hyperparameter tuning helpers
+#
+# Parallel to Ridge's single-alpha-per-target tuning. ElasticNet adds a
+# second axis (l1_ratio) for L1/L2 mixing. The search is nested — for each
+# l1_ratio we run the same coarse-then-fine alpha routine Ridge uses, and
+# pick the (l1_ratio, alpha) pair at the joint minimum. No PCA branch: L1
+# on a rotated basis doesn't zero original features, which defeats the
+# purpose of choosing ElasticNet over Ridge in the first place.
+# ---------------------------------------------------------------------------
+
+
+def _eval_enet_cv(X, y, folds, alpha, l1_ratio):
+    """Evaluate a single ElasticNet (alpha, l1_ratio) across CV folds.
+
+    Returns mean post-clip MAE, matching Ridge's ``_eval_alpha_cv`` so the
+    two linear baselines are tuned on the same objective.
+    """
+    maes = []
+    for train_idx, val_idx in folds:
+        model = ElasticNetModel(alpha=alpha, l1_ratio=l1_ratio)
+        model.fit(X[train_idx], y[train_idx])
+        preds = np.maximum(model.predict(X[val_idx]), 0)
+        maes.append(np.mean(np.abs(preds - y[val_idx])))
+    return np.mean(maes)
+
+
+def _tune_enet_cv(
+    X_train,
+    y_train_dict,
+    split_values,
+    targets,
+    alpha_grids,
+    l1_ratios,
+    n_cv_folds=4,
+    refine_points=5,
+):
+    """Per-target ElasticNet tuning over (alpha, l1_ratio).
+
+    For each target, for each l1_ratio candidate, runs Ridge's two-pass
+    coarse/fine alpha search. The best (alpha, l1_ratio) pair is the joint
+    minimum across all passes. Per-ratio alpha refinement is independent —
+    optimal alpha scales with l1_ratio because L1 and L2 penalize differently.
+
+    Returns ``dict[target, {"alpha": float, "l1_ratio": float}]``.
+    """
+    folds = _build_expanding_cv_folds(split_values, n_cv_folds)
+    best = {}
+
+    for target in targets:
+        y = y_train_dict[target]
+        grid = list(alpha_grids[target])
+        best_mae = float("inf")
+        best_alpha = grid[0]
+        best_l1_ratio = l1_ratios[0]
+
+        for l1_ratio in l1_ratios:
+            # --- Pass 1: coarse alpha search at this l1_ratio ---
+            coarse_maes = Parallel(n_jobs=-1, prefer="threads")(
+                delayed(_eval_enet_cv)(X_train, y, folds, alpha, l1_ratio) for alpha in grid
+            )
+            idx = int(np.argmin(coarse_maes))
+            mae = float(coarse_maes[idx])
+            alpha_here = grid[idx]
+
+            # --- Pass 2: fine refinement around the coarse winner ---
+            if refine_points > 0 and len(grid) >= 2:
+                log_step = np.log10(grid[1]) - np.log10(grid[0])
+                center = np.log10(alpha_here)
+                fine_grid = list(np.logspace(center - log_step, center + log_step, refine_points))
+                fine_maes = Parallel(n_jobs=-1, prefer="threads")(
+                    delayed(_eval_enet_cv)(X_train, y, folds, alpha, l1_ratio)
+                    for alpha in fine_grid
+                )
+                fine_idx = int(np.argmin(fine_maes))
+                if fine_maes[fine_idx] < mae:
+                    mae = float(fine_maes[fine_idx])
+                    alpha_here = fine_grid[fine_idx]
+
+            if mae < best_mae:
+                best_mae = mae
+                best_alpha = alpha_here
+                best_l1_ratio = l1_ratio
+
+        best[target] = {
+            "alpha": round(float(best_alpha), 6),
+            "l1_ratio": round(float(best_l1_ratio), 4),
+        }
+        print(
+            f"  {target}: best alpha={best[target]['alpha']:.4f}, "
+            f"l1_ratio={best[target]['l1_ratio']:.2f} (CV MAE={best_mae:.3f})"
+        )
+
+    return best
+
+
 def _build_scheduler(optimizer, cfg, train_loader):
     """Create the LR scheduler from config."""
     sched_type = cfg["scheduler_type"]
@@ -383,6 +480,27 @@ def _prepare_train_val(position, cfg, train_df, val_df):
         )
     )
     return X_train, X_val, y_train_dict, y_val_dict, pos_train, pos_val, feature_cols
+
+
+def build_train_matrix(position: str, cfg: dict) -> tuple[np.ndarray, dict, list[str]]:
+    """Rebuild the training feature matrix + target dict for a position.
+
+    Entry point for diagnostics that need the exact ``X_train`` the pipeline
+    sees (SHAP, permutation importance, ablation scripts). Delegates to
+    ``_prepare_train_val`` so there's no parallel feature-building logic to
+    drift — the deprecation of ``analysis_rb_feature_signal.py`` happened
+    because it inlined a copy of the pipeline setup and missed target renames.
+
+    Val is built and discarded; training-side feature engineering is agnostic
+    to whether val is present, so the work is cheap and the interface stays
+    single-purpose.
+    """
+    train_df = _read_split(f"{SPLITS_DIR}/train.parquet")
+    val_df = _read_split(f"{SPLITS_DIR}/val.parquet")
+    X_train, _, y_train_dict, _, _, _, feature_cols = _prepare_train_val(
+        position, cfg, train_df, val_df
+    )
+    return X_train, y_train_dict, feature_cols
 
 
 def _train_nn(
@@ -629,6 +747,38 @@ def _train_lightgbm(
     return model, val_preds, test_preds, metrics
 
 
+def _train_elasticnet(
+    X_train,
+    X_test,
+    y_train_dict,
+    y_test_dict,
+    cfg,
+    targets,
+    best_hparams,
+):
+    """Train an ElasticNet multi-target model.
+
+    ``best_hparams`` is the dict returned by ``_tune_enet_cv`` — per-target
+    ``{"alpha": ..., "l1_ratio": ...}``. Two-stage / classification heads fall
+    through to their existing domain-specific classes; only vanilla targets
+    use ElasticNet. Returns ``(model, test_preds, metrics)``.
+    """
+    alphas = {t: best_hparams[t]["alpha"] for t in best_hparams}
+    l1_ratios = {t: best_hparams[t]["l1_ratio"] for t in best_hparams}
+    model = ElasticNetMultiTarget(
+        target_names=targets,
+        alpha=alphas,
+        l1_ratio=l1_ratios,
+        two_stage_targets=cfg.get("two_stage_targets", {}),
+        classification_targets=cfg.get("classification_targets", {}),
+        non_negative_targets=cfg.get("nn_non_negative_targets"),
+    )
+    model.fit(X_train, y_train_dict)
+    test_preds = model.predict(X_test)
+    metrics = compute_target_metrics(y_test_dict, test_preds, targets)
+    return model, test_preds, metrics
+
+
 def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=42):
     """Run the full position model pipeline.
 
@@ -746,6 +896,49 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         ridge_model.fit(X_train, y_train_dict)
         ridge_test_preds = ridge_model.predict(X_test)
         ridge_metrics = compute_target_metrics(y_test_dict, ridge_test_preds, targets)
+
+    # --- ElasticNet (optional parallel linear baseline with L1+L2) ---
+    enet_model = None
+    enet_test_preds = None
+    enet_metrics = None
+    if cfg.get("train_elasticnet", False):
+        print(f"\n=== {pos} ElasticNet Multi-Target (CV alpha + l1_ratio) ===")
+        enet_tune_grids = {
+            t: cfg.get("enet_alpha_grids", cfg["ridge_alpha_grids"])[t] for t in ridge_tune_targets
+        }
+        enet_l1_ratios = cfg.get("enet_l1_ratios", [0.3, 0.5, 0.7])
+        with timed("elasticnet_tune"):
+            enet_best = (
+                _tune_enet_cv(
+                    X_train,
+                    y_train_dict,
+                    pos_train[cv_col].values,
+                    targets=ridge_tune_targets,
+                    alpha_grids=enet_tune_grids,
+                    l1_ratios=enet_l1_ratios,
+                    n_cv_folds=cfg.get("ridge_cv_folds", 4),
+                    refine_points=cfg.get("ridge_refine_points", 5),
+                )
+                if ridge_tune_targets
+                else {}
+            )
+        with timed("elasticnet_fit"):
+            enet_model, enet_test_preds, enet_metrics = _train_elasticnet(
+                X_train,
+                X_test,
+                y_train_dict,
+                y_test_dict,
+                cfg,
+                targets,
+                enet_best,
+            )
+        non_converged = [
+            t for t, info in enet_model.convergence_report().items() if not info["converged"]
+        ]
+        if non_converged:
+            # Surface silent non-convergence — CV-optimal coefficients lose meaning
+            # if the solver didn't actually reach tol.
+            print(f"  WARNING: ElasticNet did not converge for: {non_converged}")
 
     # --- Multi-head NN ---
     print(f"\n=== {pos} Multi-Head Neural Net ===")
@@ -895,6 +1088,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         f"{pos} Ridge Multi-Target": ridge_metrics,
         f"{pos} Multi-Head NN": nn_metrics,
     }
+    if enet_metrics is not None:
+        comparison[f"{pos} ElasticNet"] = enet_metrics
     if attn_nn_metrics is not None:
         comparison[f"{pos} Attention NN"] = attn_nn_metrics
     if lgbm_metrics is not None:
@@ -929,6 +1124,15 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     print(f"\nRidge Top-12 Hit Rate:    {ridge_ranking['season_avg_hit_rate']:.3f}")
     print(f"NN Top-12 Hit Rate:       {nn_ranking['season_avg_hit_rate']:.3f}")
 
+    enet_ranking = None
+    if enet_test_preds is not None:
+        pos_test["pred_enet_total"] = _total(enet_test_preds)
+        for t in targets:
+            pos_test[f"pred_enet_{t}"] = enet_test_preds[t]
+        backtest_pred_columns["ElasticNet"] = "pred_enet_total"
+        enet_ranking = compute_ranking_metrics(pos_test, pred_col="pred_enet_total")
+        print(f"ElasticNet Top-12 Hit Rate: {enet_ranking['season_avg_hit_rate']:.3f}")
+
     attn_nn_ranking = None
     if attn_nn_test_preds is not None:
         pos_test["pred_attn_nn_total"] = _total(attn_nn_test_preds)
@@ -960,6 +1164,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         os.makedirs(f"{output_dir}/figures", exist_ok=True)
 
         ridge_model.save(f"{output_dir}/models")
+        if enet_model is not None:
+            enet_model.save(f"{output_dir}/models/elasticnet")
         torch.save(
             wrap_state_dict(model.state_dict(), feature_cols, targets),
             f"{output_dir}/models/{pos_lower}_multihead_nn.pt",
@@ -1035,6 +1241,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         "ridge": ridge_test_preds,
         "nn": nn_test_preds,
     }
+    if enet_test_preds is not None:
+        per_target_preds["elasticnet"] = enet_test_preds
     if attn_nn_test_preds is not None:
         per_target_preds["attn_nn"] = attn_nn_test_preds
     if lgbm_test_preds is not None:
@@ -1050,6 +1258,9 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         "test_df": pos_test,
         "per_target_preds": per_target_preds,
     }
+    if enet_metrics is not None:
+        result["elasticnet_metrics"] = enet_metrics
+        result["elasticnet_ranking"] = enet_ranking
     if attn_nn_metrics is not None:
         result["attn_nn_metrics"] = attn_nn_metrics
         result["attn_nn_ranking"] = attn_nn_ranking

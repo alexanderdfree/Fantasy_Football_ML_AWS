@@ -79,6 +79,15 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         "ridge_top12": round(result.get("ridge_ranking", {}).get("season_avg_hit_rate", 0), 3),
         "nn_top12": round(result.get("nn_ranking", {}).get("season_avg_hit_rate", 0), 3),
     }
+    if "elasticnet_metrics" in result:
+        enet = result["elasticnet_metrics"]["total"]
+        summary["elasticnet_mae"] = round(enet["mae"], 3)
+        summary["elasticnet_r2"] = round(enet["r2"], 3)
+        summary["elasticnet_per_target"] = _per_target(result["elasticnet_metrics"])
+        summary["elasticnet_top12"] = round(
+            result.get("elasticnet_ranking", {}).get("season_avg_hit_rate", 0),
+            3,
+        )
     if "attn_nn_metrics" in result:
         attn = result["attn_nn_metrics"]["total"]
         summary["attn_nn_mae"] = round(attn["mae"], 3)
@@ -117,6 +126,8 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
 
 def _best_model_mae(s: dict) -> tuple[str, float]:
     models = {"Ridge": s["ridge_mae"], "NN": s["nn_mae"]}
+    if "elasticnet_mae" in s:
+        models["ENet"] = s["elasticnet_mae"]
     if "attn_nn_mae" in s:
         models["Attn"] = s["attn_nn_mae"]
     if "lgbm_mae" in s:
@@ -128,10 +139,13 @@ def _best_model_mae(s: dict) -> tuple[str, float]:
 def print_comparison_table(summaries: list, *, header: str, show_time: bool = True) -> None:
     """Print MAE / R² / Top-12 / per-target comparison tables."""
     has_cv = any("cv_ridge_mae_mean" in s for s in summaries)
+    has_enet = any("elasticnet_mae" in s for s in summaries)
     has_attn = any("attn_nn_mae" in s for s in summaries)
     has_lgbm = any("lgbm_mae" in s for s in summaries)
 
     hdr = f"{'Pos':<5} {'Ridge':>9} {'NN':>9}"
+    if has_enet:
+        hdr += f" {'ENet':>9}"
     if has_attn:
         hdr += f" {'Attn NN':>9}"
     if has_lgbm:
@@ -149,6 +163,8 @@ def print_comparison_table(summaries: list, *, header: str, show_time: bool = Tr
     for s in summaries:
         best_name, _ = _best_model_mae(s)
         line = f"{s['position']:<5} {s['ridge_mae']:>9.3f} {s['nn_mae']:>9.3f}"
+        if has_enet:
+            line += f" {s.get('elasticnet_mae', float('nan')):>9.3f}"
         if has_attn:
             line += f" {s.get('attn_nn_mae', float('nan')):>9.3f}"
         if has_lgbm:
@@ -163,12 +179,16 @@ def print_comparison_table(summaries: list, *, header: str, show_time: bool = Tr
     print("-" * w)
     for s in summaries:
         models = {"Ridge": s["ridge_r2"], "NN": s["nn_r2"]}
+        if "elasticnet_r2" in s:
+            models["ENet"] = s["elasticnet_r2"]
         if "attn_nn_r2" in s:
             models["Attn"] = s["attn_nn_r2"]
         if "lgbm_r2" in s:
             models["LGBM"] = s["lgbm_r2"]
         best = max(models, key=models.get)
         line = f"{s['position']:<5} {s['ridge_r2']:>9.3f} {s['nn_r2']:>9.3f}"
+        if has_enet:
+            line += f" {s.get('elasticnet_r2', float('nan')):>9.3f}"
         if has_attn:
             line += f" {s.get('attn_nn_r2', float('nan')):>9.3f}"
         if has_lgbm:
@@ -181,12 +201,16 @@ def print_comparison_table(summaries: list, *, header: str, show_time: bool = Tr
     print("-" * w)
     for s in summaries:
         models = {"Ridge": s["ridge_top12"], "NN": s["nn_top12"]}
+        if "elasticnet_top12" in s:
+            models["ENet"] = s["elasticnet_top12"]
         if "attn_nn_top12" in s:
             models["Attn"] = s["attn_nn_top12"]
         if "lgbm_top12" in s:
             models["LGBM"] = s["lgbm_top12"]
         best = max(models, key=models.get)
         line = f"{s['position']:<5} {s['ridge_top12']:>9.3f} {s['nn_top12']:>9.3f}"
+        if has_enet:
+            line += f" {s.get('elasticnet_top12', 0):>9.3f}"
         if has_attn:
             line += f" {s.get('attn_nn_top12', 0):>9.3f}"
         if has_lgbm:
@@ -197,6 +221,8 @@ def print_comparison_table(summaries: list, *, header: str, show_time: bool = Tr
 
     tgt_w, col_w = 20, 9
     pt_hdr = f"  {'Target':<{tgt_w}} {'Ridge':>{col_w}} {'NN':>{col_w}}"
+    if has_enet:
+        pt_hdr += f" {'ENet':>{col_w}}"
     if has_attn:
         pt_hdr += f" {'Attn NN':>{col_w}}"
     if has_lgbm:
@@ -219,6 +245,7 @@ def print_comparison_table(summaries: list, *, header: str, show_time: bool = Tr
                 for mname, key in [
                     ("Ridge", "ridge_per_target"),
                     ("NN", "nn_per_target"),
+                    ("ENet", "elasticnet_per_target"),
                     ("Attn", "attn_nn_per_target"),
                     ("LGBM", "lgbm_per_target"),
                 ]:
@@ -230,6 +257,8 @@ def print_comparison_table(summaries: list, *, header: str, show_time: bool = Tr
                 line = f"  {t:<{tgt_w}}"
                 line += f" {models.get('Ridge', float('nan')):>{col_w}.3f}"
                 line += f" {models.get('NN', float('nan')):>{col_w}.3f}"
+                if has_enet:
+                    line += f" {models.get('ENet', float('nan')):>{col_w}.3f}"
                 if has_attn:
                     line += f" {models.get('Attn', float('nan')):>{col_w}.3f}"
                 if has_lgbm:

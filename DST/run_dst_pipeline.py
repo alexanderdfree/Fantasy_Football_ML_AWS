@@ -29,6 +29,7 @@ from DST.dst_config import (
     DST_COSINE_ETA_MIN,
     DST_COSINE_T0,
     DST_COSINE_T_MULT,
+    DST_ENET_L1_RATIOS,
     DST_HEAD_LOSSES,
     DST_HUBER_DELTAS,
     DST_LGBM_COLSAMPLE_BYTREE,
@@ -60,6 +61,7 @@ from DST.dst_config import (
     DST_SPECIFIC_FEATURES,
     DST_TARGETS,
     DST_TRAIN_ATTENTION_NN,
+    DST_TRAIN_ELASTICNET,
     DST_TRAIN_LIGHTGBM,
 )
 from DST.dst_data import build_dst_data, filter_to_dst
@@ -123,6 +125,8 @@ DST_CONFIG = {
     "attn_gated": DST_ATTN_GATED,
     "head_losses": DST_HEAD_LOSSES,
     # LightGBM
+    "train_elasticnet": DST_TRAIN_ELASTICNET,
+    "enet_l1_ratios": DST_ENET_L1_RATIOS,
     "train_lightgbm": DST_TRAIN_LIGHTGBM,
     "lgbm_n_estimators": DST_LGBM_N_ESTIMATORS,
     "lgbm_learning_rate": DST_LGBM_LEARNING_RATE,

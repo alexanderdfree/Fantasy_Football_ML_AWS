@@ -103,6 +103,13 @@ DST_RIDGE_ALPHA_GRIDS = {
     "yards_allowed": _DST_ALPHA_RAW_SCALE,
 }
 
+# === ElasticNet (optional parallel linear baseline, L1+L2) ===
+# Off by default. Reuses DST_RIDGE_ALPHA_GRIDS and searches over DST_ENET_L1_RATIOS.
+# Skips PCA regardless of DST_RIDGE_PCA_COMPONENTS — L1 sparsity on a rotated
+# basis zeros components, not original features.
+DST_TRAIN_ELASTICNET = False
+DST_ENET_L1_RATIOS = [0.3, 0.5, 0.7]
+
 # === Neural Net ===
 DST_NN_BACKBONE_LAYERS = [128, 64]  # Wider backbone for many features
 DST_NN_HEAD_HIDDEN = 32

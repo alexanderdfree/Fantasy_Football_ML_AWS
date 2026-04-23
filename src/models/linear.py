@@ -1,3 +1,4 @@
+import json
 import os
 
 import joblib
@@ -57,6 +58,12 @@ class RidgeModel:
             # A prior run saved a PCA here; this run doesn't use one. Remove
             # it so load() won't resurrect a stale PCA with mismatched shape.
             os.remove(pca_path)
+        meta = {
+            "alpha": float(self.model.alpha),
+            "pca_n_components": self.pca_n_components,
+        }
+        with open(f"{model_dir}/meta.json", "w") as f:
+            json.dump(meta, f)
 
     def load(self, model_dir: str = "outputs/models") -> None:
         self.scaler = joblib.load(f"{model_dir}/scaler.pkl")

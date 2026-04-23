@@ -18,6 +18,7 @@ from TE.te_config import (
     TE_ATTN_N_HEADS,
     TE_ATTN_POSITIONAL_ENCODING,
     TE_ATTN_STATIC_FEATURES,
+    TE_ENET_L1_RATIOS,
     TE_GATED_TARGETS,
     TE_HEAD_LOSSES,
     TE_HUBER_DELTAS,
@@ -48,6 +49,7 @@ from TE.te_config import (
     TE_SPECIFIC_FEATURES,
     TE_TARGETS,
     TE_TRAIN_ATTENTION_NN,
+    TE_TRAIN_ELASTICNET,
     TE_TRAIN_LIGHTGBM,
 )
 from TE.te_data import filter_to_te
@@ -91,6 +93,8 @@ TE_CONFIG = {
     "attn_gate_weight": TE_ATTN_GATE_WEIGHT,
     "gated_targets": TE_GATED_TARGETS,
     "head_losses": TE_HEAD_LOSSES,
+    "train_elasticnet": TE_TRAIN_ELASTICNET,
+    "enet_l1_ratios": TE_ENET_L1_RATIOS,
     "train_lightgbm": TE_TRAIN_LIGHTGBM,
     "lgbm_n_estimators": TE_LGBM_N_ESTIMATORS,
     "lgbm_learning_rate": TE_LGBM_LEARNING_RATE,
