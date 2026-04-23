@@ -170,3 +170,29 @@ jobs:
             echo ''
             echo 'Full log: CloudWatch `/ff/training` (Actions-runner output is truncated at ~24KB).'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download results from S3
+        if: success()
+        run: |
+          # tune_lgbm.py uploads the structured best-params JSON here. PR 3b
+          # consumes this file to write the new {POS}_LGBM_* constants into
+          # the position configs.
+          aws s3 cp s3://ff-predictor-training/tune_lgbm/tune_lgbm_results.json \
+            tune_lgbm_results.json --region "$AWS_REGION"
+          echo "== tune_lgbm_results.json =="
+          cat tune_lgbm_results.json
+          {
+            echo ''
+            echo '## tune_lgbm_results.json'
+            echo '```json'
+            cat tune_lgbm_results.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results as workflow artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tune_lgbm_results
+          path: tune_lgbm_results.json
+          retention-days: 30
