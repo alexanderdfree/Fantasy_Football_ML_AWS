@@ -301,19 +301,34 @@ RB_GATED_TARGETS = ["receptions", "rushing_tds", "receiving_tds"]
 RB_ATTN_GATE_HIDDEN = 16
 RB_ATTN_GATE_WEIGHT = 1.0
 
-# === LightGBM (Optuna-tuned, 50 trials, CV MAE 4.5149) ===
+# === LightGBM (Optuna retune, 50 trials, CV MAE 4.5244) ===
+# Flipped from ``"fair"`` to ``"huber"`` as part of the PR 3 LGBM unification
+# (QB is the one exception — see QB_LGBM_OBJECTIVE). Retuned on the huber
+# objective, holdout comparison vs the old fair config:
+#   Total MAE        4.479 -> 4.155  (-0.325)
+#   Rushing Yards    21.3  -> 17.6   (-3.7)
+#   Receiving Yards   9.15 ->  8.68  (-0.47)
+#   Rushing Tds      0.299 -> 0.321  (+0.022)
+#   Receiving Tds    0.093 -> 0.108  (+0.015)
+#   Top-12 hit rate  0.476 -> 0.508  (+0.032)
+#   Spearman rho     0.577 -> 0.733  (+0.156)
+# Big yards improvements dominate a small TD regression. The CV MAE moved
+# only +0.0095 vs the old fair (4.5149 → 4.5244) — within the plan's ±0.05
+# tolerance — so the holdout -0.325 comes from the better hyperparams, not
+# a lucky CV→holdout draw. Full tune_lgbm_results.json in retune run
+# 24823926033 artifacts.
 RB_TRAIN_LIGHTGBM = True
-RB_LGBM_N_ESTIMATORS = 1400
-RB_LGBM_LEARNING_RATE = 0.0704275
-RB_LGBM_NUM_LEAVES = 54
-RB_LGBM_MAX_DEPTH = 9
-RB_LGBM_SUBSAMPLE = 0.830769
-RB_LGBM_COLSAMPLE_BYTREE = 0.401929
-RB_LGBM_REG_LAMBDA = 0.0371884
-RB_LGBM_REG_ALPHA = 0.718914
-RB_LGBM_MIN_CHILD_SAMPLES = 69
-RB_LGBM_MIN_SPLIT_GAIN = 0.302108
-RB_LGBM_OBJECTIVE = "fair"
+RB_LGBM_N_ESTIMATORS = 2000
+RB_LGBM_LEARNING_RATE = 0.0918744
+RB_LGBM_NUM_LEAVES = 16
+RB_LGBM_MAX_DEPTH = -1
+RB_LGBM_SUBSAMPLE = 0.547198
+RB_LGBM_COLSAMPLE_BYTREE = 0.783541
+RB_LGBM_REG_LAMBDA = 8.2532
+RB_LGBM_REG_ALPHA = 4.91934
+RB_LGBM_MIN_CHILD_SAMPLES = 20
+RB_LGBM_MIN_SPLIT_GAIN = 0.315457
+RB_LGBM_OBJECTIVE = "huber"
 
 # === Tiny config for end-to-end smoke tests ===
 # Shrunk copy of the production config: 1 epoch, 2-layer x 8-unit backbone,
