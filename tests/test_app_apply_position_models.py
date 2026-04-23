@@ -480,9 +480,18 @@ def test_health_route_degraded_when_load_errors_present(monkeypatch):
 
 
 @pytest.mark.integration
-def test_apply_position_models_ridge_load_failure_propagates(_mocked_app, monkeypatch):
-    """A RidgeMultiTarget.load exception should be recorded in
-    ``_cache['position_load_errors']`` before re-raising."""
+def test_apply_position_models_ridge_load_failure_records_and_nan_fills(
+    _mocked_app, monkeypatch
+):
+    """A RidgeMultiTarget.load exception is recorded in
+    ``_cache['position_load_errors']`` under ``{pos}_ridge`` and the position's
+    ``ridge_pred`` rows are NaN'd — but the function does NOT raise.
+
+    This is the Part B graceful-degradation contract: one model's failure must
+    not take down the position. ``_ensure_position_loaded`` still marks the
+    position loaded (with degraded preds); ``_degraded_positions`` surfaces it
+    for the frontend banner.
+    """
     import app as app_mod
 
     class _BadRidge:
@@ -494,7 +503,9 @@ def test_apply_position_models_ridge_load_failure_propagates(_mocked_app, monkey
 
     monkeypatch.setattr(app_mod, "RidgeMultiTarget", _BadRidge)
 
-    # Minimal registry stub for QB.
+    # Minimal registry stub for QB. Attention + LGBM disabled so only Ridge
+    # fails and NN still runs — confirms the function presses on after
+    # recording Ridge's error.
     monkeypatch.setattr(
         app_mod,
         "POSITION_REGISTRY",
@@ -525,6 +536,14 @@ def test_apply_position_models_ridge_load_failure_propagates(_mocked_app, monkey
     df = _make_qb_df(n=4)
     _mocked_app._cache.clear()
 
-    with pytest.raises(RuntimeError, match="ridge artifact missing"):
-        _mocked_app._apply_position_models(df, df, df, "QB", results)
+    # MUST NOT raise — the failure is absorbed per the Part B contract.
+    _mocked_app._apply_position_models(df, df, df, "QB", results)
+
+    # Error recorded under the per-model key used by _degraded_positions().
     assert "QB_ridge" in _mocked_app._cache["position_load_errors"]
+    # Ridge column NaN'd for this position's rows so the frontend renders "--"
+    # instead of misleading 0.0 (the DataFrame's init value for ridge_pred).
+    assert results["ridge_pred"].isna().all()
+    # NN still ran and wrote its predictions — Ridge's failure isn't allowed to
+    # cascade and take the other models with it.
+    assert results["nn_pred"].notna().all()
