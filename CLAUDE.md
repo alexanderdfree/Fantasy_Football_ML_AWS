@@ -57,7 +57,7 @@ Commands live in [SETUP.md](SETUP.md). Shortcuts:
 
 ## CI & training
 
-- `tests.yml` — ruff + pytest on push/PR. Installs via `uv` (migrated in `3c897d8`) and shards pytest across `QB/RB/WR/TE/K/DST/shared` matrix jobs. If `Run Tests` silently stops firing on rapid force-push cadence (occasional GitHub Actions bug), run `pytest` locally and merge with `gh pr merge --squash`.
+- `tests.yml` — ruff + pytest on push/PR. Installs via `uv` (migrated in `3c897d8`) and shards pytest across `QB/RB/WR/TE/K/DST/shared` matrix jobs. Each shard uploads coverage to Codecov under a matching flag; the project target is **80% per component/flag** (see [codecov.yml](codecov.yml)). Diagnostic CLIs (`QB/diagnose_qb_outliers.py`, `RB/analyze_rb_errors.py`) are excluded from the coverage denominator. If `Run Tests` silently stops firing on rapid force-push cadence (occasional GitHub Actions bug), run `pytest` locally and merge with `gh pr merge --squash`.
 - `batch-image.yml` → `train-ec2.yml` — image build triggers EC2 training. The `detect` job diffs the merge commit and only retrains positions whose code changed. AWS g4dn.xlarge OD quota is 4 vCPU (one instance); spot quota is higher. Check quota before dispatching if you touch infra.
 - `deploy.yml` — ECS Flask deploy.
 

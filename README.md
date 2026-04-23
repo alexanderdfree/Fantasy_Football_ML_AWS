@@ -77,6 +77,8 @@ pytest
 pytest -m unit        # fast tests only
 ```
 
+Coverage is tracked on [Codecov](https://app.codecov.io/gh/alexanderdfree/Fantasy_Football_ML_AWS) with an **80% target per position and shared component** (see [codecov.yml](codecov.yml)). One-off diagnostic CLIs (`QB/diagnose_qb_outliers.py`, `RB/analyze_rb_errors.py`) are excluded from the denominator — everything else gets pulled in.
+
 Full training on GPU runs on EC2 via CI; see [docs/ec2_design.md](docs/ec2_design.md) for the pipeline and [infra/ec2/README.md](infra/ec2/README.md) for operator notes.
 
 ## Evaluation
