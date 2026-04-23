@@ -183,11 +183,18 @@ WR_ATTN_STATIC_CATEGORIES = [
     "weather_vegas",
 ]
 WR_ATTN_STATIC_FEATURES = [c for cat in WR_ATTN_STATIC_CATEGORIES for c in WR_INCLUDE_FEATURES[cat]]
-# Single hurdle gate on receptions (variance/mean ~2.0, zero-excess fits).
-# receiving_tds moved off the gated list to plain Poisson NLL — dispersion
-# ~1.0 on WR TDs, so the hurdle shape was unmotivated there.
+# Hurdle gate on receptions + BCE gate on receiving_tds. Matches the
+# "Variant C" config for RB (see RB/rb_config.py for the ablation table).
+# WR doesn't have its own ablation, but the mechanism is target-agnostic:
+# the BCE gate on (y > 0) gives the attention branch per-target access to
+# "did this player score a TD this week?" signal that's otherwise hidden
+# inside the count-mean. The PR #96 benchmark review flagged a +0.049
+# per-target MAE regression on receiving_tds when the gate came off; this
+# restores the gate without disturbing the PR #96 reception hurdle win.
+# head_losses below keeps receiving_tds on ``poisson_nll`` (BCE gate loss
+# is added in addition to the Poisson NLL via ``gated_targets``).
 WR_ATTN_GATED = True
-WR_GATED_TARGETS = ["receptions"]
+WR_GATED_TARGETS = ["receptions", "receiving_tds"]
 WR_ATTN_GATE_HIDDEN = 16
 WR_ATTN_GATE_WEIGHT = 1.0
 
