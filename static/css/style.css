@@ -172,6 +172,25 @@ body {
     font-size: 14px;
 }
 
+/* Per-position degradation notice — populated by loadPredictions() in
+   static/js/app.js when /api/predictions returns a non-empty
+   degraded_positions list. Scoped `.hidden` (not a global utility) so
+   toggling visibility doesn't collide with other elements. */
+.degraded-banner {
+    background: rgba(234, 179, 8, 0.12);
+    border: 1px solid rgba(234, 179, 8, 0.35);
+    border-left: 3px solid rgb(234, 179, 8);
+    color: rgb(234, 179, 8);
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin: 0 0 12px;
+}
+
+.degraded-banner.hidden {
+    display: none;
+}
+
 .loading-sub {
     font-size: 13px !important;
     color: var(--text-muted) !important;

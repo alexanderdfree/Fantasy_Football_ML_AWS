@@ -114,9 +114,12 @@ class TestPredictions:
         r = client_with_data.get("/api/predictions")
         assert r.status_code == 200
         body = r.get_json()
-        assert set(body) == {"players", "total"}
+        # ``degraded_positions`` powers the frontend banner (feat/partb-...);
+        # empty list in the happy-path scenario where every position loaded.
+        assert set(body) == {"players", "total", "degraded_positions"}
         assert body["total"] == len(body["players"])
         assert body["total"] > 0
+        assert body["degraded_positions"] == []
         # Row schema
         row = body["players"][0]
         expected_keys = {
