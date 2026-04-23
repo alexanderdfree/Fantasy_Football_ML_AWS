@@ -11,9 +11,11 @@ from shared.neural_net import (
     MultiHeadNet,
     MultiHeadNetWithHistory,
     MultiHeadNetWithNestedHistory,
+    SelfAttentionBlock,
     SwiGLU,
     _apply_history_dropout,
     _build_game_encoder,
+    _build_self_attention_stack,
     apply_non_negative,
     build_multihead_net,
     build_multihead_net_with_history,
@@ -340,6 +342,92 @@ class TestAttentionPool:
         pool = AttentionPool(d_model=4, n_heads=2, n_targets=3, use_alibi_bias=True)
         # Only 2 slopes registered regardless of n_targets.
         assert pool.alibi_slopes.shape == (2,)
+
+
+# ---------------------------------------------------------------------------
+# SelfAttentionBlock + _build_self_attention_stack
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSelfAttentionBlock:
+    def test_preserves_shape(self):
+        block = SelfAttentionBlock(d_model=16, n_heads=4, dim_feedforward=32, dropout=0.0)
+        x = torch.randn(3, 5, 16)
+        mask = torch.ones(3, 5, dtype=torch.bool)
+        out = block(x, mask=mask)
+        assert out.shape == x.shape and torch.isfinite(out).all()
+
+    def test_handles_all_padding_row_without_nan(self):
+        """nn.MultiheadAttention produces NaN for rows where every key is
+        masked. The block's nan_to_num guard must zero those out so the
+        residual path stays well-defined."""
+        block = SelfAttentionBlock(d_model=16, n_heads=4, dim_feedforward=32, dropout=0.0)
+        x = torch.randn(2, 5, 16)
+        mask = torch.zeros(2, 5, dtype=torch.bool)
+        mask[0, :3] = True  # row 0 has 3 real
+        # row 1 all padding
+        block.eval()
+        with torch.no_grad():
+            out = block(x, mask=mask)
+        assert torch.isfinite(out).all()
+
+    def test_residual_path_keeps_input_signal(self):
+        """Pre-LN with zeroed attention-output weights must be near-identity
+        when the FFN output is also zero — sanity-check the residual
+        connection."""
+        block = SelfAttentionBlock(d_model=8, n_heads=2, dim_feedforward=16, dropout=0.0)
+        # Zero both MHA output projection and FFN final layer so the
+        # residual paths pass x unchanged after LN-wrapped branches.
+        with torch.no_grad():
+            block.self_attn.out_proj.weight.zero_()
+            block.self_attn.out_proj.bias.zero_()
+            block.ffn[-1].weight.zero_()
+            block.ffn[-1].bias.zero_()
+        x = torch.randn(2, 4, 8)
+        mask = torch.ones(2, 4, dtype=torch.bool)
+        block.eval()
+        with torch.no_grad():
+            out = block(x, mask=mask)
+        torch.testing.assert_close(out, x)
+
+    def test_gradient_flow(self):
+        block = SelfAttentionBlock(d_model=8, n_heads=2, dim_feedforward=16, dropout=0.0)
+        x = torch.randn(2, 4, 8, requires_grad=True)
+        mask = torch.ones(2, 4, dtype=torch.bool)
+        block(x, mask=mask).sum().backward()
+        assert x.grad is not None and (x.grad != 0).any()
+
+    def test_no_mask_is_equivalent_to_all_true_mask(self):
+        """When every position is real, passing mask=None must match
+        mask=all-True exactly (nn.MultiheadAttention treats them the same)."""
+        torch.manual_seed(0)
+        block = SelfAttentionBlock(d_model=8, n_heads=2, dim_feedforward=16, dropout=0.0)
+        block.eval()
+        x = torch.randn(2, 4, 8)
+        mask = torch.ones(2, 4, dtype=torch.bool)
+        with torch.no_grad():
+            out_mask = block(x, mask=mask)
+            out_none = block(x, mask=None)
+        torch.testing.assert_close(out_mask, out_none, atol=1e-6, rtol=0)
+
+
+@pytest.mark.unit
+class TestBuildSelfAttentionStack:
+    def test_zero_layers_returns_none(self):
+        assert (
+            _build_self_attention_stack(
+                d_model=16, n_layers=0, n_heads=4, dim_feedforward=32, dropout=0.0
+            )
+            is None
+        )
+
+    def test_positive_layers_returns_stack(self):
+        stack = _build_self_attention_stack(
+            d_model=16, n_layers=3, n_heads=4, dim_feedforward=32, dropout=0.0
+        )
+        assert len(stack) == 3
+        assert all(isinstance(b, SelfAttentionBlock) for b in stack)
 
 
 # ---------------------------------------------------------------------------
@@ -1107,6 +1195,42 @@ class TestBuildMultiHeadNetWithHistory:
         for t in TARGETS:
             assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
 
+    def test_self_attn_defaults_off(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.self_attn_stack is None
+
+    def test_self_attn_opt_in_builds_stack(self):
+        cfg = self._base_cfg() | {
+            "attn_d_model": 8,
+            "attn_self_layers": 2,
+            "attn_self_heads": 2,
+            "attn_self_ffn_dim": 16,
+        }
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.self_attn_stack is not None and len(model.self_attn_stack) == 2
+        assert all(isinstance(b, SelfAttentionBlock) for b in model.self_attn_stack)
+
+    def test_self_attn_forward_is_finite(self):
+        cfg = self._base_cfg() | {
+            "attn_d_model": 8,
+            "attn_self_layers": 2,
+            "attn_self_heads": 2,
+            "attn_self_ffn_dim": 16,
+        }
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 5),
+                    torch.randn(4, 7, 3),
+                    torch.ones(4, 7, dtype=torch.bool),
+                )
+        for t in TARGETS:
+            assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
+
 
 @pytest.mark.unit
 class TestBuildMultiHeadNetWithNestedHistory:
@@ -1277,6 +1401,51 @@ class TestBuildMultiHeadNetWithNestedHistory:
 
     def test_alibi_bias_forward_is_finite(self):
         cfg = self._base_cfg() | {"attn_use_alibi_bias": True}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_nested_history(
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+            )
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 7),
+                    torch.randn(4, 5, 3, 9),
+                    torch.ones(4, 5, dtype=torch.bool),
+                    torch.ones(4, 5, 3, dtype=torch.bool),
+                )
+        for t in K_TARGETS:
+            assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
+
+    def test_self_attn_defaults_off(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.self_attn_stack is None
+
+    def test_self_attn_opt_in_outer_only(self):
+        """Self-attention stack lives on the outer (game) sequence only —
+        the inner kick pool is a different granularity and must stay
+        untouched (no transformer blocks registered under inner_pool)."""
+        cfg = self._base_cfg() | {
+            "attn_d_model": 8,
+            "attn_self_layers": 1,
+            "attn_self_heads": 2,
+            "attn_self_ffn_dim": 16,
+        }
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.self_attn_stack is not None and len(model.self_attn_stack) == 1
+        # No self-attention wiring exists on the inner pool.
+        assert not any(isinstance(m, SelfAttentionBlock) for m in model.inner_pool.modules())
+
+    def test_self_attn_forward_is_finite(self):
+        cfg = self._base_cfg() | {
+            "attn_d_model": 8,
+            "attn_self_layers": 1,
+            "attn_self_heads": 2,
+            "attn_self_ffn_dim": 16,
+        }
         with torch.random.fork_rng():
             model = build_multihead_net_with_nested_history(
                 cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS

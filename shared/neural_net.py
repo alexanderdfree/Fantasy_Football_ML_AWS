@@ -100,6 +100,83 @@ def _build_game_encoder(
     )
 
 
+class SelfAttentionBlock(nn.Module):
+    """Pre-LN transformer encoder block for contextualising the game sequence.
+
+    Each block does::
+
+        x = x + Dropout(MultiHeadSelfAttention(LN(x)))
+        x = x + Dropout(FFN(LN(x)))
+
+    Pre-LN scheme (Xiong et al. 2020) is empirically more stable than
+    post-LN with AdamW and small batches — which matches this project's
+    training setup. The block preserves sequence shape ``[B, S, d_model]``
+    so a stack of blocks sits transparently between the per-game encoder
+    and the learned-query AttentionPool.
+
+    ``mask`` follows the project convention: ``True`` at real positions,
+    ``False`` at padding. The block inverts it to the
+    ``key_padding_mask`` convention ``nn.MultiheadAttention`` expects.
+    All-padding rows produce NaN attention outputs by construction; the
+    ``nan_to_num`` guard after the MHA call replaces them with zeros so
+    the residual path is well-defined.
+    """
+
+    def __init__(self, d_model: int, n_heads: int, dim_feedforward: int, dropout: float = 0.0):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(d_model)
+        self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        self.dropout1 = nn.Dropout(dropout)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, dim_feedforward),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim_feedforward, d_model),
+        )
+        self.dropout2 = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        h = self.norm1(x)
+        key_padding_mask = ~mask if mask is not None else None
+        attn_out, _ = self.self_attn(h, h, h, key_padding_mask=key_padding_mask, need_weights=False)
+        # All-padding rows ⇒ MHA divides by zero along seq dim ⇒ NaN. Zero
+        # them so the residual path is well-defined and downstream pools can
+        # still mask those rows out properly.
+        attn_out = attn_out.nan_to_num(0.0)
+        x = x + self.dropout1(attn_out)
+        h = self.norm2(x)
+        x = x + self.dropout2(self.ffn(h))
+        return x
+
+
+def _build_self_attention_stack(
+    *,
+    d_model: int,
+    n_layers: int,
+    n_heads: int,
+    dim_feedforward: int,
+    dropout: float,
+) -> nn.ModuleList | None:
+    """Build ``n_layers`` transformer encoder blocks (Pre-LN).
+
+    Returns ``None`` when ``n_layers == 0`` so callers can cheaply opt out.
+    """
+    if n_layers <= 0:
+        return None
+    return nn.ModuleList(
+        [
+            SelfAttentionBlock(
+                d_model=d_model,
+                n_heads=n_heads,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+            )
+            for _ in range(n_layers)
+        ]
+    )
+
+
 def _build_backbone(
     input_dim: int,
     hidden_dims: list[int],
@@ -460,6 +537,10 @@ class MultiHeadNetWithHistory(nn.Module):
         use_swiglu_encoder: bool = False,
         attn_entropy_coeff: float = 0.0,
         use_alibi_bias: bool = False,
+        self_attn_layers: int = 0,
+        self_attn_heads: int = 2,
+        self_attn_ffn_dim: int | None = None,
+        self_attn_dropout: float = 0.0,
     ):
         super().__init__()
         self.target_names = target_names
@@ -496,6 +577,19 @@ class MultiHeadNetWithHistory(nn.Module):
         self.use_positional_encoding = use_positional_encoding
         if use_positional_encoding:
             self.pos_embedding = nn.Embedding(max_seq_len, d_model)
+
+        # Optional Pre-LN transformer stack that lets games contextualise each
+        # other (hot streak, bye-week rest, post-injury ramp) before the
+        # learned-query pool extracts per-target summaries. Default ffn dim
+        # follows the standard transformer 4× rule when not explicitly set.
+        ffn_dim = self_attn_ffn_dim if self_attn_ffn_dim is not None else 4 * d_model
+        self.self_attn_stack = _build_self_attention_stack(
+            d_model=d_model,
+            n_layers=self_attn_layers,
+            n_heads=self_attn_heads,
+            dim_feedforward=ffn_dim,
+            dropout=self_attn_dropout,
+        )
 
         # Per-target queries: each target pulls its own slice of history
         # instead of routing through a single shared summary.
@@ -581,6 +675,15 @@ class MultiHeadNetWithHistory(nn.Module):
         # Sequence dropout: during training, randomly mask real games so the
         # pool never locks onto any one game. Eval uses the full mask.
         history_mask = _apply_history_dropout(history_mask, self.history_dropout, self.training)
+
+        # Optional self-attention stack: lets games attend to each other
+        # before the learned-query pool extracts per-target summaries. Sits
+        # after positional encoding so temporal signal is available to the
+        # MHA, and after sequence dropout so it sees the same dropped-games
+        # view as the pool (consistent regularisation).
+        if self.self_attn_stack is not None:
+            for block in self.self_attn_stack:
+                encoded = block(encoded, mask=history_mask)
 
         # Per-target attention pool: [batch, n_targets, n_heads * d_model]
         history_per_target = self.attn_pool(encoded, history_mask)
@@ -680,6 +783,10 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         use_swiglu_encoder: bool = False,
         attn_entropy_coeff: float = 0.0,
         use_alibi_bias: bool = False,
+        self_attn_layers: int = 0,
+        self_attn_heads: int = 2,
+        self_attn_ffn_dim: int | None = None,
+        self_attn_dropout: float = 0.0,
     ):
         super().__init__()
         self.target_names = target_names
@@ -728,6 +835,18 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         self.use_positional_encoding = use_positional_encoding
         if use_positional_encoding:
             self.pos_embedding = nn.Embedding(max_games, d_model)
+
+        # Optional Pre-LN transformer stack on the outer (game) sequence only.
+        # Inner kick pool is intentionally untouched — kicks within a game
+        # aren't a "games attending to each other" problem.
+        ffn_dim = self_attn_ffn_dim if self_attn_ffn_dim is not None else 4 * d_model
+        self.self_attn_stack = _build_self_attention_stack(
+            d_model=d_model,
+            n_layers=self_attn_layers,
+            n_heads=self_attn_heads,
+            dim_feedforward=ffn_dim,
+            dropout=self_attn_dropout,
+        )
 
         # Outer pool receives the ALiBi bias when enabled. Inner kick pool
         # stays unchanged — kicks within a game have no "games-ago" notion,
@@ -792,6 +911,11 @@ class MultiHeadNetWithNestedHistory(nn.Module):
 
         # Game-level sequence dropout on the outer mask only.
         outer_mask = _apply_history_dropout(outer_mask, self.history_dropout, self.training)
+
+        # Optional self-attention stack over games (outer sequence only).
+        if self.self_attn_stack is not None:
+            for block in self.self_attn_stack:
+                encoded = block(encoded, mask=outer_mask)
 
         history_per_target = self.attn_pool(encoded, outer_mask)  # [B, n_targets, attn_out]
         if history_per_target.dim() == 2:
@@ -903,6 +1027,10 @@ def build_multihead_net_with_history(
         use_swiglu_encoder=cfg.get("attn_use_swiglu_encoder", False),
         attn_entropy_coeff=cfg.get("attn_entropy_coeff", 0.0),
         use_alibi_bias=cfg.get("attn_use_alibi_bias", False),
+        self_attn_layers=cfg.get("attn_self_layers", 0),
+        self_attn_heads=cfg.get("attn_self_heads", 2),
+        self_attn_ffn_dim=cfg.get("attn_self_ffn_dim"),
+        self_attn_dropout=cfg.get("attn_self_dropout", 0.0),
     )
 
 
@@ -941,4 +1069,8 @@ def build_multihead_net_with_nested_history(
         use_swiglu_encoder=cfg.get("attn_use_swiglu_encoder", False),
         attn_entropy_coeff=cfg.get("attn_entropy_coeff", 0.0),
         use_alibi_bias=cfg.get("attn_use_alibi_bias", False),
+        self_attn_layers=cfg.get("attn_self_layers", 0),
+        self_attn_heads=cfg.get("attn_self_heads", 2),
+        self_attn_ffn_dim=cfg.get("attn_self_ffn_dim"),
+        self_attn_dropout=cfg.get("attn_self_dropout", 0.0),
     )
