@@ -261,6 +261,14 @@ class AttentionPool(nn.Module):
     ``T_t = exp(log_temperature_t)`` so each target can sharpen (T<1) or soften
     (T>1) its attention distribution independently. Initialised to 0 so
     ``exp(0)=1`` → behaviour identical to the baseline at step zero.
+
+    Optional ``use_alibi_bias`` adds an ALiBi-style time-decay bias to the
+    pre-softmax attention scores: ``score(b, h, s) += -slope[h] * games_ago(b, s)``.
+    ``games_ago`` is computed per row from the mask (caller must place real
+    games at positions ``0..n_real-1``, oldest first) so older games get
+    a larger additive penalty. Complements or replaces the absolute learned
+    ``pos_embedding`` on the parent models — ALiBi generalises to variable
+    sequence lengths without an extra parameter table.
     """
 
     def __init__(
@@ -272,6 +280,7 @@ class AttentionPool(nn.Module):
         attn_dropout: float = 0.0,
         learn_temperature: bool = False,
         compute_entropy: bool = False,
+        use_alibi_bias: bool = False,
     ):
         super().__init__()
         self.queries = nn.Parameter(torch.randn(n_targets, n_heads, d_model) * 0.02)
@@ -299,6 +308,30 @@ class AttentionPool(nn.Module):
         # regulariser can pull it post-forward without an extra return tuple.
         # Disabled by default to keep the hot path allocation-free.
         self.compute_entropy = compute_entropy
+
+        # ALiBi-style linear distance bias. Slopes are the standard geometric
+        # sequence from Press et al. 2022 (``2^(-8*i/n_heads)``) — a sensible
+        # generic default. Stored as a buffer (not a parameter) so they're
+        # constant across training. Empty when the feature is off.
+        self.use_alibi_bias = use_alibi_bias
+        if use_alibi_bias:
+            self.register_buffer("alibi_slopes", self._alibi_slopes(n_heads))
+        else:
+            self.alibi_slopes = None
+
+    @staticmethod
+    def _alibi_slopes(n_heads: int) -> torch.Tensor:
+        """Geometric ALiBi slope sequence: ``slope_h = 2^(-8 * (h+1) / n_heads)``.
+
+        Matches Press, Smith & Lewis 2022. For small ``n_heads`` (e.g. 2)
+        this gives slopes ≈ (0.0625, 0.00390625); the larger slope's head
+        learns a recency-biased distribution while the smaller slope's head
+        stays close to a uniform-over-history pattern.
+        """
+        return torch.tensor(
+            [2.0 ** (-8.0 * (h + 1) / n_heads) for h in range(n_heads)],
+            dtype=torch.float32,
+        )
 
     def forward(self, keys: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
         """
@@ -331,6 +364,24 @@ class AttentionPool(nn.Module):
             inv_t = torch.exp(-self.log_temperature)  # [n_targets]
             inv_t = inv_t.repeat_interleave(self.n_heads).view(1, -1, 1)
             attn = attn * inv_t
+
+        if self.use_alibi_bias:
+            # Per-row games_ago: the most-recent real game is 0, the oldest is
+            # n_real-1. With right-padding, position ``s`` of a row with
+            # ``n_real`` real games has games_ago = n_real - 1 - s. When mask
+            # is None (tests), all positions are treated as real.
+            seq_len = keys.size(1)
+            if mask is not None:
+                n_real = mask.sum(dim=-1, keepdim=True)  # [batch, 1]
+            else:
+                n_real = torch.full((batch_size, 1), seq_len, device=keys.device, dtype=torch.long)
+            positions = torch.arange(seq_len, device=keys.device)  # [seq_len]
+            games_ago = (n_real - 1 - positions).clamp(min=0).float()  # [batch, seq_len]
+            # Slopes repeated across targets so target t shares the same slope
+            # set across its n_heads. Flat order matches q_flat reshape, so
+            # ``slopes.repeat(n_targets)`` yields [h0, h1, ..., h0, h1, ...].
+            slopes = self.alibi_slopes.repeat(self.n_targets).view(1, -1, 1)
+            attn = attn - slopes * games_ago.unsqueeze(1)
 
         if mask is not None:
             # mask: [batch, seq_len] -> [batch, 1, seq_len]
@@ -408,6 +459,7 @@ class MultiHeadNetWithHistory(nn.Module):
         history_dropout: float = 0.0,
         use_swiglu_encoder: bool = False,
         attn_entropy_coeff: float = 0.0,
+        use_alibi_bias: bool = False,
     ):
         super().__init__()
         self.target_names = target_names
@@ -455,6 +507,7 @@ class MultiHeadNetWithHistory(nn.Module):
             attn_dropout=attn_dropout,
             learn_temperature=learn_attn_temperature,
             compute_entropy=(attn_entropy_coeff != 0.0),
+            use_alibi_bias=use_alibi_bias,
         )
 
         attn_out_dim = n_attn_heads * d_model
@@ -626,6 +679,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         history_dropout: float = 0.0,
         use_swiglu_encoder: bool = False,
         attn_entropy_coeff: float = 0.0,
+        use_alibi_bias: bool = False,
     ):
         super().__init__()
         self.target_names = target_names
@@ -675,6 +729,9 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         if use_positional_encoding:
             self.pos_embedding = nn.Embedding(max_games, d_model)
 
+        # Outer pool receives the ALiBi bias when enabled. Inner kick pool
+        # stays unchanged — kicks within a game have no "games-ago" notion,
+        # so the bias doesn't apply at that granularity.
         self.attn_pool = AttentionPool(
             d_model,
             n_heads=n_attn_heads,
@@ -683,6 +740,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             attn_dropout=attn_dropout,
             learn_temperature=learn_attn_temperature,
             compute_entropy=(attn_entropy_coeff != 0.0),
+            use_alibi_bias=use_alibi_bias,
         )
 
         attn_out_dim = n_attn_heads * d_model
@@ -844,6 +902,7 @@ def build_multihead_net_with_history(
         history_dropout=cfg.get("attn_history_dropout", 0.0),
         use_swiglu_encoder=cfg.get("attn_use_swiglu_encoder", False),
         attn_entropy_coeff=cfg.get("attn_entropy_coeff", 0.0),
+        use_alibi_bias=cfg.get("attn_use_alibi_bias", False),
     )
 
 
@@ -881,4 +940,5 @@ def build_multihead_net_with_nested_history(
         history_dropout=cfg.get("attn_history_dropout", 0.0),
         use_swiglu_encoder=cfg.get("attn_use_swiglu_encoder", False),
         attn_entropy_coeff=cfg.get("attn_entropy_coeff", 0.0),
+        use_alibi_bias=cfg.get("attn_use_alibi_bias", False),
     )
