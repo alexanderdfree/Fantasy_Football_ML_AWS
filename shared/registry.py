@@ -241,6 +241,7 @@ def get_inference_spec(pos: str) -> dict:
             WR_NN_BACKBONE_LAYERS,
             WR_NN_DROPOUT,
             WR_NN_HEAD_HIDDEN,
+            WR_NN_HEAD_HIDDEN_OVERRIDES,
             WR_SPECIFIC_FEATURES,
             WR_TARGETS,
         )
@@ -267,6 +268,7 @@ def get_inference_spec(pos: str) -> dict:
                 backbone_layers=WR_NN_BACKBONE_LAYERS,
                 head_hidden=WR_NN_HEAD_HIDDEN,
                 dropout=WR_NN_DROPOUT,
+                head_hidden_overrides=WR_NN_HEAD_HIDDEN_OVERRIDES,
             ),
             "train_attention_nn": bool(getattr(wr_cfg, "WR_TRAIN_ATTENTION_NN", False)),
             "attn_nn_file": "wr_attention_nn.pt",
