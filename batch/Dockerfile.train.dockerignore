@@ -12,6 +12,13 @@
 !K/**
 !DST/**
 !requirements.txt
+# tune_lgbm.py is COPY'd into the image (see batch/Dockerfile.train) so the
+# retune-lgbm workflow can run Optuna via ``docker run --entrypoint python``.
+# Without this re-include, the allowlist rejects it and the image build fails
+# at ``COPY tune_lgbm.py .`` ("not found"). PR #98's build failed exactly
+# this way — batch-image workflow turned red, but diagnostic workflows kept
+# pulling the last good pre-PR-98 image and crashed when they tried to run it.
+!tune_lgbm.py
 batch/tests/**
 batch/__pycache__/**
 **/__pycache__/**
