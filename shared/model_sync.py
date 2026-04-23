@@ -2,25 +2,29 @@
 
 Opt-in via FF_MODEL_S3_BUCKET env var. Unset/empty -> no-op (dev, tests).
 
-`sync_models_from_s3` reads s3://{bucket}/{prefix}/{POS}/model.tar.gz (prefix
-defaults to "models", matching batch/train.py:upload_artifacts) and extracts
-into {repo_root}/{POS}/outputs/models/ so shared.registry's literal model_dir
-paths resolve to the freshly-synced files.
+``sync_models_from_s3`` reads each position's ``manifest.json`` to find the
+currently-promoted artifact, falls back to ``previous`` on any load failure,
+and finally falls back to the legacy
+``s3://{bucket}/{prefix}/{POS}/model.tar.gz`` key for pre-manifest buckets
+(migration compat). See ``shared/artifact_gc.py`` for retention.
 
-`sync_data_from_s3` pulls the splits + raw weekly parquets that inference
+``sync_data_from_s3`` pulls the splits + raw weekly parquets that inference
 needs (K reconstructs kicker stats from data/raw/, all positions read
 schedules for weather features). These were previously baked into the
 Docker image via the deploy workflow; fetching at boot shrinks the image
 and decouples deploy.yml from data changes.
 
-Fail-loud: any S3 or tar error raises, so gunicorn --preload aborts before
-binding :8000 and ECS marks the task unhealthy, blocking a broken rollout.
+Fail-loud: if both the manifest's ``current`` AND ``previous`` entries fail,
+the raise propagates and gunicorn --preload aborts before binding :8000,
+blocking a broken rollout. Per-position graceful degradation in the Flask
+layer lives in ``app.py``.
 """
 
 from __future__ import annotations
 
 import concurrent.futures
 import io
+import json
 import os
 import tarfile
 import time
@@ -34,9 +38,101 @@ _SPLIT_KEYS = ("train.parquet", "val.parquet", "test.parquet")
 _RAW_PREFIX = "data/raw/"
 _RAW_EXCLUDE_SUFFIX = "_2023_2023.parquet"
 
+# Manifest schema lives in a single place so producer + consumer can't drift.
+# Schema v1:
+#   {
+#     "schema_version": 1,
+#     "current":  {"key": "...", "sha7": "...", "bytes": int, "uploaded_at": "..."},
+#     "previous": <same shape> | null,
+#     "history":  ["key0", "key1", ...]   // newest-first, capped at HISTORY_KEEP_N
+#   }
+MANIFEST_SCHEMA_VERSION = 1
+HISTORY_KEEP_N = 5
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+def manifest_key(prefix: str, pos: str) -> str:
+    return f"{prefix}/{pos}/manifest.json"
+
+
+def legacy_model_key(prefix: str, pos: str) -> str:
+    return f"{prefix}/{pos}/model.tar.gz"
+
+
+def history_prefix(prefix: str, pos: str) -> str:
+    return f"{prefix}/{pos}/history/"
+
+
+def new_history_key(prefix: str, pos: str, ts: str, sha7: str) -> str:
+    return f"{history_prefix(prefix, pos)}{ts}-{sha7}/model.tar.gz"
+
+
+def load_manifest(s3_client, bucket: str, prefix: str, pos: str) -> dict | None:
+    """Return the parsed manifest.json for ``pos``, or ``None`` if absent.
+
+    Re-raises any other S3 error so the caller can't silently confuse a
+    missing manifest with a permissions / transient failure.
+    """
+    from botocore.exceptions import ClientError
+
+    try:
+        obj = s3_client.get_object(Bucket=bucket, Key=manifest_key(prefix, pos))
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchKey", "404"):
+            return None
+        raise
+    return json.loads(obj["Body"].read())
+
+
+def write_manifest(s3_client, bucket: str, prefix: str, pos: str, manifest: dict) -> None:
+    """Publish a ``manifest.json``. This write IS the atomic promotion —
+    after the put returns, subsequent consumer syncs will pull the new
+    artifact. Earlier steps in the producer (validation, history upload)
+    only raise; a raise leaves the old manifest in place and the site keeps
+    serving the previous good artifact.
+    """
+    body = json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8")
+    s3_client.put_object(
+        Bucket=bucket,
+        Key=manifest_key(prefix, pos),
+        Body=body,
+        ContentType="application/json",
+    )
+
+
+def build_manifest(
+    new_key: str,
+    sha7: str,
+    bytes_: int,
+    uploaded_at: str,
+    old_manifest: dict | None = None,
+    keep_history: int = HISTORY_KEEP_N,
+) -> dict:
+    """Pure helper: return the dict for the new manifest given the new upload
+    and the old manifest (``None`` on first write). ``previous`` becomes the
+    old ``current``; ``history`` prepends the new key and caps at ``keep_history``
+    newest-first. Duplicates of the new key in the old history are stripped
+    (idempotent on retry).
+    """
+    new_entry = {
+        "key": new_key,
+        "sha7": sha7,
+        "bytes": bytes_,
+        "uploaded_at": uploaded_at,
+    }
+    old = old_manifest or {}
+    old_current = old.get("current")
+    old_history = [k for k in (old.get("history") or []) if k != new_key]
+    return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "current": new_entry,
+        "previous": old_current,
+        "history": [new_key] + old_history[: keep_history - 1],
+    }
 
 
 def _extract_tarball(data: bytes, dest: Path) -> None:
@@ -50,20 +146,66 @@ def _extract_tarball(data: bytes, dest: Path) -> None:
         tar.extractall(dest, filter="data")
 
 
-def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict:
-    key = f"{prefix}/{pos}/model.tar.gz"
-    dest = root / pos / "outputs" / "models"
+def _try_key(s3_client, bucket: str, key: str, dest: Path) -> dict:
+    """Download + extract one tarball key. Raises on any S3 / tar / extract
+    error — the caller decides whether to fall back."""
     t0 = time.time()
     obj = s3_client.get_object(Bucket=bucket, Key=key)
     data = obj["Body"].read()
     _extract_tarball(data, dest)
-    return {"pos": pos, "bytes": len(data), "secs": round(time.time() - t0, 2)}
+    return {"key": key, "bytes": len(data), "secs": round(time.time() - t0, 2)}
+
+
+def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict:
+    """Sync one position with manifest-driven fallback.
+
+    Order: manifest.current → manifest.previous → legacy ``model.tar.gz``
+    (only when manifest is absent; a manifest-present-but-all-entries-broken
+    state is a real bug, not something to paper over with a stale legacy
+    copy). Any fall-through is logged with the grep-able tag
+    ``source=previous`` / ``source=legacy`` so on-call can tell from
+    CloudWatch whether we're serving last-known-good.
+    """
+    from botocore.exceptions import ClientError
+
+    dest = root / pos / "outputs" / "models"
+    manifest = load_manifest(s3_client, bucket, prefix, pos)
+
+    if manifest is None:
+        # Pre-migration buckets, first boot after the producer change.
+        r = _try_key(s3_client, bucket, legacy_model_key(prefix, pos), dest)
+        print(f"[model_sync] {pos}: source=legacy ({r['key']})", flush=True)
+        return {"pos": pos, "source": "legacy", **r}
+
+    tried: list[tuple[str, str, str]] = []
+    for label in ("current", "previous"):
+        entry = manifest.get(label)
+        if not entry or not entry.get("key"):
+            continue
+        try:
+            r = _try_key(s3_client, bucket, entry["key"], dest)
+        except (ClientError, tarfile.TarError, RuntimeError, OSError, EOFError) as e:
+            # ``EOFError`` covers truncated-gzip from ``gzip.py``; ``tarfile.TarError``
+            # covers "not a gzip file" / corrupt header; ``ClientError`` handles
+            # S3-side issues (NoSuchKey, throttling, etc.). Anything else is a
+            # real bug and should fail loud.
+            tried.append((label, entry["key"], repr(e)))
+            print(
+                f"[model_sync] {pos} {label} ({entry['key']}) FAILED: {e!r} — falling through",
+                flush=True,
+            )
+            continue
+        print(f"[model_sync] {pos}: source={label} ({r['key']})", flush=True)
+        return {"pos": pos, "source": label, **r}
+
+    raise RuntimeError(f"[model_sync] {pos}: all manifest entries failed: {tried!r}")
 
 
 def sync_models_from_s3() -> dict | None:
-    """Download+extract all six position tarballs in parallel.
+    """Download+extract all six position tarballs in parallel, preferring
+    the manifest-pointed ``current`` with automatic fallback to ``previous``.
 
-    Returns a summary dict, or None if FF_MODEL_S3_BUCKET is unset/empty.
+    Returns a summary dict, or ``None`` if ``FF_MODEL_S3_BUCKET`` is unset/empty.
     """
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
     if not bucket:
@@ -76,7 +218,7 @@ def sync_models_from_s3() -> dict | None:
 
     s3 = boto3.client("s3")
 
-    print(f"[model_sync] syncing s3://{bucket}/{prefix}/{{POS}}/model.tar.gz -> {root}")
+    print(f"[model_sync] syncing s3://{bucket}/{prefix}/{{POS}}/ -> {root}")
     t0 = time.time()
     results: list[dict] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(POSITIONS)) as pool:
