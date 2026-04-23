@@ -40,6 +40,66 @@ def _apply_history_dropout(mask: torch.Tensor, rate: float, training: bool) -> t
     return torch.where(restore, mask, dropped)
 
 
+class SwiGLU(nn.Module):
+    """Single SwiGLU projection: ``silu(W_g(x)) * W_v(x)``.
+
+    Maps ``d_in -> d_out`` with two parallel linear projections (gate + value),
+    a SiLU (Swish) nonlinearity on the gate, and an element-wise product.
+    Used as a drop-in replacement for ``Linear(d_in, d_out) -> ReLU`` in the
+    game encoder when the SwiGLU knob is opted in.
+
+    Parameter count is ~2× the vanilla Linear it replaces; in exchange SwiGLU
+    gives smoother gradients near zero than ReLU and a learned multiplicative
+    gate per output channel.
+    """
+
+    def __init__(self, d_in: int, d_out: int):
+        super().__init__()
+        self.gate_proj = nn.Linear(d_in, d_out)
+        self.value_proj = nn.Linear(d_in, d_out)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.silu(self.gate_proj(x)) * self.value_proj(x)
+
+
+def _build_game_encoder(
+    in_dim: int, d_model: int, encoder_hidden_dim: int, use_swiglu: bool
+) -> nn.Sequential:
+    """Construct the per-game encoder that feeds the outer AttentionPool.
+
+    Four shapes, selected by (``encoder_hidden_dim``, ``use_swiglu``):
+      * ``0, False``    — ``Linear -> ReLU``                  (legacy 1-layer)
+      * ``0, True``     — ``SwiGLU``                          (1-layer SwiGLU)
+      * ``>0, False``   — ``Linear -> ReLU -> LN -> Linear -> ReLU``
+                                                              (legacy 2-layer)
+      * ``>0, True``    — ``SwiGLU -> LN -> SwiGLU``          (2-layer SwiGLU)
+
+    Shared by ``MultiHeadNetWithHistory`` and
+    ``MultiHeadNetWithNestedHistory`` (where the inner pool has already
+    collapsed kicks to a per-game vector, so ``in_dim == d_kick``).
+    """
+    if encoder_hidden_dim > 0:
+        if use_swiglu:
+            return nn.Sequential(
+                SwiGLU(in_dim, encoder_hidden_dim),
+                nn.LayerNorm(encoder_hidden_dim),
+                SwiGLU(encoder_hidden_dim, d_model),
+            )
+        return nn.Sequential(
+            nn.Linear(in_dim, encoder_hidden_dim),
+            nn.ReLU(),
+            nn.LayerNorm(encoder_hidden_dim),
+            nn.Linear(encoder_hidden_dim, d_model),
+            nn.ReLU(),
+        )
+    if use_swiglu:
+        return nn.Sequential(SwiGLU(in_dim, d_model))
+    return nn.Sequential(
+        nn.Linear(in_dim, d_model),
+        nn.ReLU(),
+    )
+
+
 def _build_backbone(
     input_dim: int,
     hidden_dims: list[int],
@@ -329,6 +389,7 @@ class MultiHeadNetWithHistory(nn.Module):
         gated_targets: list[str] | None = None,
         learn_attn_temperature: bool = False,
         history_dropout: float = 0.0,
+        use_swiglu_encoder: bool = False,
     ):
         super().__init__()
         self.target_names = target_names
@@ -343,21 +404,15 @@ class MultiHeadNetWithHistory(nn.Module):
         # attention against fixating on any one game and forces every head to
         # derive signal from a rotating subset of the season.
         self.history_dropout = history_dropout
+        self.use_swiglu_encoder = use_swiglu_encoder
 
         # === Game History Branch ===
-        if encoder_hidden_dim > 0:
-            self.game_encoder = nn.Sequential(
-                nn.Linear(game_dim, encoder_hidden_dim),
-                nn.ReLU(),
-                nn.LayerNorm(encoder_hidden_dim),
-                nn.Linear(encoder_hidden_dim, d_model),
-                nn.ReLU(),
-            )
-        else:
-            self.game_encoder = nn.Sequential(
-                nn.Linear(game_dim, d_model),
-                nn.ReLU(),
-            )
+        self.game_encoder = _build_game_encoder(
+            in_dim=game_dim,
+            d_model=d_model,
+            encoder_hidden_dim=encoder_hidden_dim,
+            use_swiglu=use_swiglu_encoder,
+        )
 
         # Positional encoding: gives the model temporal ordering signal
         # so it can distinguish recent games from older ones.
@@ -529,6 +584,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         encoder_hidden_dim: int = 0,
         learn_attn_temperature: bool = False,
         history_dropout: float = 0.0,
+        use_swiglu_encoder: bool = False,
     ):
         super().__init__()
         self.target_names = target_names
@@ -542,8 +598,13 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         # perturbed — kick-level inner masks stay intact since K already has
         # <=10 kicks per game and dropping kicks is a different granularity.
         self.history_dropout = history_dropout
+        self.use_swiglu_encoder = use_swiglu_encoder
 
         # === Inner: per-kick encoder + single-query pool ===
+        # Kick encoder stays as Linear+ReLU regardless of the SwiGLU flag —
+        # the flag targets the outer *game* encoder per the attention-layer
+        # spec. If kick_encoder ever becomes a SwiGLU target too, expose a
+        # separate flag rather than overloading this one.
         self.kick_encoder = nn.Sequential(
             nn.Linear(kick_dim, d_kick),
             nn.ReLU(),
@@ -558,19 +619,12 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         )
 
         # === Outer: game encoder + per-target attention pool ===
-        if encoder_hidden_dim > 0:
-            self.game_encoder = nn.Sequential(
-                nn.Linear(d_kick, encoder_hidden_dim),
-                nn.ReLU(),
-                nn.LayerNorm(encoder_hidden_dim),
-                nn.Linear(encoder_hidden_dim, d_model),
-                nn.ReLU(),
-            )
-        else:
-            self.game_encoder = nn.Sequential(
-                nn.Linear(d_kick, d_model),
-                nn.ReLU(),
-            )
+        self.game_encoder = _build_game_encoder(
+            in_dim=d_kick,
+            d_model=d_model,
+            encoder_hidden_dim=encoder_hidden_dim,
+            use_swiglu=use_swiglu_encoder,
+        )
 
         self.use_positional_encoding = use_positional_encoding
         if use_positional_encoding:
@@ -729,6 +783,7 @@ def build_multihead_net_with_history(
         gated_targets=cfg.get("gated_targets"),
         learn_attn_temperature=cfg.get("attn_learn_temperature", False),
         history_dropout=cfg.get("attn_history_dropout", 0.0),
+        use_swiglu_encoder=cfg.get("attn_use_swiglu_encoder", False),
     )
 
 
@@ -764,4 +819,5 @@ def build_multihead_net_with_nested_history(
         encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
         learn_attn_temperature=cfg.get("attn_learn_temperature", False),
         history_dropout=cfg.get("attn_history_dropout", 0.0),
+        use_swiglu_encoder=cfg.get("attn_use_swiglu_encoder", False),
     )
