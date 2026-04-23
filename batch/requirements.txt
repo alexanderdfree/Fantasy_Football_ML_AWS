@@ -8,3 +8,4 @@ joblib==1.5.3
 lightgbm==4.6.0
 mord==0.7
 boto3==1.42.89
+optuna==4.8.0
