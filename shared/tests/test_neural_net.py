@@ -11,6 +11,7 @@ from shared.neural_net import (
     MultiHeadNet,
     MultiHeadNetWithHistory,
     MultiHeadNetWithNestedHistory,
+    _apply_history_dropout,
     apply_non_negative,
     build_multihead_net,
     build_multihead_net_with_history,
@@ -223,6 +224,66 @@ class TestAttentionPool:
         out.sum().backward()
         assert pool.log_temperature.grad is not None
         assert pool.log_temperature.grad.shape == (3,)
+
+
+# ---------------------------------------------------------------------------
+# _apply_history_dropout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestApplyHistoryDropout:
+    # Every test that consumes the torch RNG (rate>0, training=True) is wrapped
+    # in ``torch.random.fork_rng`` so the global stream is unchanged for
+    # downstream tests — otherwise later model-init draws shift and a
+    # pre-existing flaky gradient-flow test would land on a bad seed.
+    def test_noop_when_rate_zero(self):
+        mask = torch.tensor([[True, True, False], [True, True, True]])
+        out = _apply_history_dropout(mask, rate=0.0, training=True)
+        assert torch.equal(out, mask)
+
+    def test_noop_when_eval(self):
+        mask = torch.ones(4, 8, dtype=torch.bool)
+        # rate>0 but training=False → no rand_like call, RNG untouched.
+        out = _apply_history_dropout(mask, rate=0.9, training=False)
+        assert torch.equal(out, mask)
+
+    def test_padding_never_restored(self):
+        mask = torch.tensor([[True, False, False], [False, True, True]])
+        with torch.random.fork_rng():
+            torch.manual_seed(0)
+            for _ in range(20):
+                out = _apply_history_dropout(mask, rate=0.5, training=True)
+                # Positions that were False in input must remain False.
+                assert not (out & ~mask).any()
+
+    def test_all_dropped_row_restored(self):
+        # Single row with only one real game — with rate=1.0 every real slot
+        # would drop, so the fallback must restore the original mask.
+        mask = torch.tensor([[True, False, False, False]])
+        with torch.random.fork_rng():
+            out = _apply_history_dropout(mask, rate=1.0, training=True)
+        assert torch.equal(out, mask)
+
+    def test_empty_row_stays_empty(self):
+        # A row that was all-padding stays all-padding even with dropout.
+        mask = torch.tensor([[False, False, False], [True, True, True]])
+        with torch.random.fork_rng():
+            torch.manual_seed(0)
+            out = _apply_history_dropout(mask, rate=0.5, training=True)
+        assert not out[0].any()
+        assert out[1].any()  # row 1 must still carry signal
+
+    def test_drops_something_at_high_rate(self):
+        mask = torch.ones(64, 16, dtype=torch.bool)
+        with torch.random.fork_rng():
+            torch.manual_seed(0)
+            out = _apply_history_dropout(mask, rate=0.5, training=True)
+        # At 50% rate over 64*16=1024 positions, losing zero is astronomically
+        # unlikely. Must strictly shrink the mask.
+        assert (out != mask).sum() > 0
+        # Every row still keeps at least one real game.
+        assert out.any(dim=-1).all()
 
 
 # ---------------------------------------------------------------------------
@@ -713,6 +774,32 @@ class TestBuildMultiHeadNetWithHistory:
         assert model.attn_pool.learn_temperature is True
         assert model.attn_pool.log_temperature.shape == (len(TARGETS),)
 
+    def test_history_dropout_defaults_zero(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.history_dropout == 0.0
+
+    def test_history_dropout_from_cfg(self):
+        cfg = self._base_cfg() | {"attn_history_dropout": 0.25}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.history_dropout == 0.25
+
+    def test_history_dropout_is_noop_in_eval(self):
+        """Eval path must ignore history_dropout entirely (determinism)."""
+        cfg = self._base_cfg() | {"attn_history_dropout": 0.9}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            model.eval()
+            x_static = torch.randn(4, 5)
+            x_history = torch.randn(4, 6, 3)
+            mask = torch.ones(4, 6, dtype=torch.bool)
+            with torch.no_grad():
+                out1 = model(x_static, x_history, mask)
+                out2 = model(x_static, x_history, mask)
+        for k in TARGETS:
+            torch.testing.assert_close(out1[k], out2[k])
+
 
 @pytest.mark.unit
 class TestBuildMultiHeadNetWithNestedHistory:
@@ -762,3 +849,16 @@ class TestBuildMultiHeadNetWithNestedHistory:
         )
         assert model.attn_pool.learn_temperature is True
         assert model.attn_pool.log_temperature.shape == (len(K_TARGETS),)
+
+    def test_history_dropout_defaults_zero(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.history_dropout == 0.0
+
+    def test_history_dropout_from_cfg(self):
+        cfg = self._base_cfg() | {"attn_history_dropout": 0.15}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.history_dropout == 0.15

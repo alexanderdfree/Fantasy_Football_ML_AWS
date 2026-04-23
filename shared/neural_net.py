@@ -18,6 +18,28 @@ def apply_non_negative(val: torch.Tensor, name: str, non_negative: set) -> torch
     return val
 
 
+def _apply_history_dropout(mask: torch.Tensor, rate: float, training: bool) -> torch.Tensor:
+    """Randomly drop real-game positions from a history mask during training.
+
+    Each ``True`` entry in ``mask`` is independently flipped to ``False`` with
+    probability ``rate``. Padding positions (already ``False``) are never
+    re-enabled. Rows where every real game would be dropped fall back to the
+    original mask so the attention branch always sees at least one real game
+    and the head receives a non-zero signal.
+
+    No-op when ``rate <= 0`` or the model is in eval mode.
+    """
+    if not training or rate <= 0.0:
+        return mask
+    drop = torch.rand_like(mask, dtype=torch.float) < rate
+    dropped = mask & ~drop
+    # Rows that had any real games but lost them all — restore originals.
+    had_real = mask.any(dim=-1, keepdim=True)
+    keeps_some = dropped.any(dim=-1, keepdim=True)
+    restore = had_real & ~keeps_some
+    return torch.where(restore, mask, dropped)
+
+
 def _build_backbone(
     input_dim: int,
     hidden_dims: list[int],
@@ -306,6 +328,7 @@ class MultiHeadNetWithHistory(nn.Module):
         gate_hidden: int = 16,
         gated_targets: list[str] | None = None,
         learn_attn_temperature: bool = False,
+        history_dropout: float = 0.0,
     ):
         super().__init__()
         self.target_names = target_names
@@ -316,6 +339,10 @@ class MultiHeadNetWithHistory(nn.Module):
         self.gated_targets = list(gated_targets) if gated_targets else []
         self.d_model = d_model
         self.n_targets = len(target_names)
+        # Sequence-level dropout over the outer history mask. Regularises
+        # attention against fixating on any one game and forces every head to
+        # derive signal from a rotating subset of the season.
+        self.history_dropout = history_dropout
 
         # === Game History Branch ===
         if encoder_hidden_dim > 0:
@@ -417,6 +444,10 @@ class MultiHeadNetWithHistory(nn.Module):
             positions = torch.arange(seq_len, device=encoded.device)
             encoded = encoded + self.pos_embedding(positions)
 
+        # Sequence dropout: during training, randomly mask real games so the
+        # pool never locks onto any one game. Eval uses the full mask.
+        history_mask = _apply_history_dropout(history_mask, self.history_dropout, self.training)
+
         # Per-target attention pool: [batch, n_targets, n_heads * d_model]
         history_per_target = self.attn_pool(encoded, history_mask)
         if history_per_target.dim() == 2:
@@ -497,6 +528,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         attn_dropout: float = 0.0,
         encoder_hidden_dim: int = 0,
         learn_attn_temperature: bool = False,
+        history_dropout: float = 0.0,
     ):
         super().__init__()
         self.target_names = target_names
@@ -506,6 +538,10 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         self.d_model = d_model
         self.d_kick = d_kick
         self.n_targets = len(target_names)
+        # Game-level sequence dropout. Only the outer (game) mask is
+        # perturbed — kick-level inner masks stay intact since K already has
+        # <=10 kicks per game and dropping kicks is a different granularity.
+        self.history_dropout = history_dropout
 
         # === Inner: per-kick encoder + single-query pool ===
         self.kick_encoder = nn.Sequential(
@@ -595,6 +631,9 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         if self.use_positional_encoding:
             positions = torch.arange(G, device=encoded.device)
             encoded = encoded + self.pos_embedding(positions)
+
+        # Game-level sequence dropout on the outer mask only.
+        outer_mask = _apply_history_dropout(outer_mask, self.history_dropout, self.training)
 
         history_per_target = self.attn_pool(encoded, outer_mask)  # [B, n_targets, attn_out]
         if history_per_target.dim() == 2:
@@ -689,6 +728,7 @@ def build_multihead_net_with_history(
         gate_hidden=cfg.get("attn_gate_hidden", 16),
         gated_targets=cfg.get("gated_targets"),
         learn_attn_temperature=cfg.get("attn_learn_temperature", False),
+        history_dropout=cfg.get("attn_history_dropout", 0.0),
     )
 
 
@@ -723,4 +763,5 @@ def build_multihead_net_with_nested_history(
         attn_dropout=cfg.get("attn_dropout", 0.0),
         encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
         learn_attn_temperature=cfg.get("attn_learn_temperature", False),
+        history_dropout=cfg.get("attn_history_dropout", 0.0),
     )
