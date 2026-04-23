@@ -166,14 +166,31 @@ WR_ATTN_HISTORY_STATS = [
 # branch. The attention branch learns its own temporal representation from
 # WR_ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
 # categories are intentionally excluded to avoid duplicating that signal.
+# ``defense`` is also excluded: WR_OPP_ATTN_HISTORY_STATS feeds the opposing
+# defense's trailing form through a parallel attention branch, which makes
+# the L5 static aggregates redundant for the NN. (They stay in
+# WR_INCLUDE_FEATURES["defense"] so Ridge / LightGBM still see them.)
 WR_ATTN_STATIC_CATEGORIES = [
     "prior_season",
     "matchup",
-    "defense",
     "contextual",
     "weather_vegas",
 ]
 WR_ATTN_STATIC_FEATURES = [c for cat in WR_ATTN_STATIC_CATEGORIES for c in WR_INCLUDE_FEATURES[cat]]
+
+# Per-game opponent-defense stats fed to the second attention branch. Mirror
+# the L5 static aggregates (opp_def_*_L5) but unrolled per game, so the NN
+# learns the trailing-form weighting itself instead of being handed a fixed
+# 5-game mean. Built by src.features.engineer.build_opp_defense_history_arrays.
+WR_OPP_ATTN_HISTORY_STATS = [
+    "def_sacks",
+    "def_pass_yds_allowed",
+    "def_pass_td_allowed",
+    "def_ints",
+    "def_rush_yds_allowed",
+    "def_pts_allowed",
+]
+WR_OPP_ATTN_MAX_SEQ_LEN = 17
 # Hurdle gate on receptions + BCE gate on receiving_tds. Matches the
 # "Variant C" config for RB (see RB/rb_config.py for the ablation table).
 # WR doesn't have its own ablation, but the mechanism is target-agnostic:

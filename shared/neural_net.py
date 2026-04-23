@@ -577,6 +577,7 @@ class MultiHeadNetWithHistory(nn.Module):
         self_attn_ffn_dim: int | None = None,
         self_attn_dropout: float = 0.0,
         condition_queries_on_static: bool = False,
+        opp_game_dim: int | None = None,
     ):
         super().__init__()
         self.target_names = target_names
@@ -652,6 +653,36 @@ class MultiHeadNetWithHistory(nn.Module):
         # scales (rushing_tds ~1, rushing_yards ~80), so one norm per target.
         self.history_norms = nn.ModuleList([nn.LayerNorm(attn_out_dim) for _ in target_names])
 
+        # === Optional Opponent-Defense History Branch ===
+        # Parallel attention branch over the opposing defense's game log.
+        # Active when ``opp_game_dim`` is provided (a second per-game feature
+        # dimension). Disabled (None) ⇒ model behaviour is byte-identical to
+        # the single-branch version, which keeps RB / K / DST unaffected.
+        self.use_opp_history = opp_game_dim is not None
+        if self.use_opp_history:
+            self.opp_game_encoder = _build_game_encoder(
+                in_dim=opp_game_dim,
+                d_model=d_model,
+                encoder_hidden_dim=encoder_hidden_dim,
+                use_swiglu=use_swiglu_encoder,
+            )
+            if use_positional_encoding:
+                # Separate embedding so the opp branch learns its own recency
+                # weighting independent of the player-history branch.
+                self.opp_pos_embedding = nn.Embedding(max_seq_len, d_model)
+            self.opp_attn_pool = AttentionPool(
+                d_model,
+                n_heads=n_attn_heads,
+                n_targets=self.n_targets,
+                project_kv=project_kv,
+                attn_dropout=attn_dropout,
+                learn_temperature=learn_attn_temperature,
+                compute_entropy=(attn_entropy_coeff != 0.0),
+            )
+            self.opp_history_norms = nn.ModuleList(
+                [nn.LayerNorm(attn_out_dim) for _ in target_names]
+            )
+
         # Gated fusion: static features control how much to trust history.
         # Prevents noisy attention signal from degrading static feature quality.
         # Per-target gates since each head gets its own history vec.
@@ -675,8 +706,11 @@ class MultiHeadNetWithHistory(nn.Module):
         backbone_out_dim = backbone_layers[-1]
         overrides = head_hidden_overrides or {}
 
-        # === Output Heads (consume shared_static ⊕ per-target history) ===
-        head_in_dim = backbone_out_dim + attn_out_dim
+        # === Output Heads (consume shared_static ⊕ per-target histories) ===
+        # Head input: [static_rep, player_hist_vec, (opp_hist_vec if enabled)]
+        head_in_dim = (
+            backbone_out_dim + attn_out_dim + (attn_out_dim if self.use_opp_history else 0)
+        )
         self.heads = nn.ModuleDict()
         gated_set = set(self.gated_targets)
         for name in target_names:
@@ -699,12 +733,18 @@ class MultiHeadNetWithHistory(nn.Module):
         x_static: torch.Tensor,
         x_history: torch.Tensor,
         history_mask: torch.Tensor,
+        x_opp_history: torch.Tensor | None = None,
+        opp_history_mask: torch.Tensor | None = None,
     ) -> dict:
         """
         Args:
             x_static: [batch, static_dim] — standard feature vector
-            x_history: [batch, seq_len, game_dim] — padded game history
+            x_history: [batch, seq_len, game_dim] — padded player-game history
             history_mask: [batch, seq_len] — True for real games
+            x_opp_history: [batch, opp_seq_len, opp_game_dim] — padded opponent
+                defense game history. Required iff the model was built with
+                ``opp_game_dim``; ignored otherwise.
+            opp_history_mask: [batch, opp_seq_len] — True for real opp games.
         """
         # Encode game history
         encoded = self.game_encoder(x_history)  # [batch, seq_len, d_model]
@@ -737,6 +777,24 @@ class MultiHeadNetWithHistory(nn.Module):
             # Back-compat guard: single-target AttentionPool squeezes. Add axis.
             history_per_target = history_per_target.unsqueeze(1)
 
+        # Optional opponent-defense history branch — parallel encode + pool.
+        opp_per_target = None
+        if self.use_opp_history:
+            if x_opp_history is None or opp_history_mask is None:
+                raise ValueError(
+                    "Model was built with opp_game_dim set; forward() requires "
+                    "x_opp_history and opp_history_mask."
+                )
+            opp_encoded = self.opp_game_encoder(x_opp_history)
+            if self.use_positional_encoding:
+                opp_seq_len = opp_encoded.size(1)
+                opp_positions = torch.arange(opp_seq_len, device=opp_encoded.device)
+                opp_encoded = opp_encoded + self.opp_pos_embedding(opp_positions)
+            opp_mask = _apply_history_dropout(opp_history_mask, self.history_dropout, self.training)
+            opp_per_target = self.opp_attn_pool(opp_encoded, opp_mask)
+            if opp_per_target.dim() == 2:
+                opp_per_target = opp_per_target.unsqueeze(1)
+
         # Shared backbone processes static features only.
         shared_static = self.backbone(x_static)
 
@@ -747,7 +805,11 @@ class MultiHeadNetWithHistory(nn.Module):
                 gate = self.fusion_gates[i](torch.cat([x_static, history_vec], dim=-1))
                 history_vec = gate * history_vec
 
-            head_input = torch.cat([shared_static, history_vec], dim=-1)
+            parts = [shared_static, history_vec]
+            if self.use_opp_history:
+                opp_vec = self.opp_history_norms[i](opp_per_target[:, i, :])
+                parts.append(opp_vec)
+            head_input = torch.cat(parts, dim=-1)
             head = self.heads[name]
             if isinstance(head, GatedHead):
                 pred, gate_logit, mu, log_alpha = head(head_input)
@@ -766,13 +828,24 @@ class MultiHeadNetWithHistory(nn.Module):
         Returns ``None`` when the coefficient is 0 (the feature is off) or no
         forward has materialised ``last_attn_entropy`` yet. MultiHeadTrainer
         treats ``None`` as "skip" to keep the hot path allocation-free.
+
+        When the opp-history branch is active its entropy is averaged with
+        the player-history branch's so one coefficient controls both.
         """
         if self.attn_entropy_coeff == 0.0:
             return None
-        entropy = getattr(self.attn_pool, "last_attn_entropy", None)
-        if entropy is None:
+        entropies = []
+        player_entropy = getattr(self.attn_pool, "last_attn_entropy", None)
+        if player_entropy is not None:
+            entropies.append(player_entropy)
+        if self.use_opp_history:
+            opp_entropy = getattr(self.opp_attn_pool, "last_attn_entropy", None)
+            if opp_entropy is not None:
+                entropies.append(opp_entropy)
+        if not entropies:
             return None
-        return self.attn_entropy_coeff * entropy
+        mean_entropy = entropies[0] if len(entropies) == 1 else sum(entropies) / len(entropies)
+        return self.attn_entropy_coeff * mean_entropy
 
     def predict_numpy(
         self,
@@ -780,13 +853,25 @@ class MultiHeadNetWithHistory(nn.Module):
         X_history: np.ndarray,
         history_mask: np.ndarray,
         device: torch.device,
+        X_opp_history: np.ndarray | None = None,
+        opp_history_mask: np.ndarray | None = None,
     ) -> dict:
         self.eval()
         with torch.no_grad():
             s = torch.FloatTensor(X_static).to(device)
             h = torch.FloatTensor(X_history).to(device)
             m = torch.BoolTensor(history_mask).to(device)
-            preds = self.forward(s, h, m)
+            opp_h = None
+            opp_m = None
+            if self.use_opp_history:
+                if X_opp_history is None or opp_history_mask is None:
+                    raise ValueError(
+                        "predict_numpy requires X_opp_history and opp_history_mask "
+                        "for a model built with opp_game_dim."
+                    )
+                opp_h = torch.FloatTensor(X_opp_history).to(device)
+                opp_m = torch.BoolTensor(opp_history_mask).to(device)
+            preds = self.forward(s, h, m, opp_h, opp_m)
             return {k: v.cpu().numpy() for k, v in preds.items()}
 
 
@@ -1054,8 +1139,16 @@ def build_multihead_net_with_history(
     static_dim: int,
     game_dim: int,
     targets: list[str],
+    opp_game_dim: int | None = None,
 ) -> "MultiHeadNetWithHistory":
-    """Construct a MultiHeadNetWithHistory from a training ``cfg`` dict."""
+    """Construct a MultiHeadNetWithHistory from a training ``cfg`` dict.
+
+    When ``opp_game_dim`` is provided, the model adds a parallel attention
+    branch over the opposing defense's per-game history (see
+    ``MultiHeadNetWithHistory.__init__``). When ``None`` (the default), the
+    model is identical to the single-branch version — the code path used by
+    RB / K / DST is unchanged.
+    """
     return MultiHeadNetWithHistory(
         static_dim=static_dim,
         game_dim=game_dim,
@@ -1086,6 +1179,7 @@ def build_multihead_net_with_history(
         self_attn_ffn_dim=cfg.get("attn_self_ffn_dim"),
         self_attn_dropout=cfg.get("attn_self_dropout", 0.0),
         condition_queries_on_static=cfg.get("attn_condition_queries_on_static", False),
+        opp_game_dim=opp_game_dim,
     )
 
 

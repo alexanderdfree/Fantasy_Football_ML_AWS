@@ -9,12 +9,16 @@ import torch
 from shared.neural_net import MultiHeadNetWithHistory
 from shared.training import (
     MultiHeadHistoryTrainer,
+    MultiHeadHistoryWithOppTrainer,
     MultiTargetDataset,
     MultiTargetHistoryDataset,
+    MultiTargetHistoryWithOppDataset,
     MultiTargetLoss,
     collate_with_history,
+    collate_with_history_and_opp,
     make_dataloaders,
     make_history_dataloaders,
+    make_history_with_opp_dataloaders,
 )
 
 TARGETS = ["rushing_yards", "receiving_yards", "rushing_tds"]
@@ -567,3 +571,123 @@ class TestAttentionEntropyRegulariserWiring:
         # match. The regularised final loss must strictly exceed it.
         torch.testing.assert_close(base_loss, entropy_only_base, atol=1e-5, rtol=0)
         assert final_loss.item() > base_loss.item()
+
+
+# ---------------------------------------------------------------------------
+# Opp-history dataset / collate / trainer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestMultiTargetHistoryWithOppDataset:
+    def test_length_and_item_tuple(self):
+        X_s = np.random.randn(6, 4).astype(np.float32)
+        X_h = [np.random.randn(np.random.randint(1, 5), 3).astype(np.float32) for _ in range(6)]
+        X_o = [np.random.randn(np.random.randint(1, 7), 5).astype(np.float32) for _ in range(6)]
+        y = {"t1": np.random.randn(6).astype(np.float32)}
+        ds = MultiTargetHistoryWithOppDataset(X_s, X_h, X_o, y)
+        assert len(ds) == 6
+        s, h, o, t = ds[2]
+        assert s.shape == (4,)
+        assert h.dim() == 2 and h.size(-1) == 3
+        assert o.dim() == 2 and o.size(-1) == 5
+        assert "t1" in t
+
+    def test_length_mismatch_raises(self):
+        with pytest.raises(ValueError, match="opp history len"):
+            MultiTargetHistoryWithOppDataset(
+                np.zeros((4, 3), dtype=np.float32),
+                [np.zeros((1, 2), dtype=np.float32)] * 4,
+                [np.zeros((1, 2), dtype=np.float32)] * 3,  # wrong length
+                {"t1": np.zeros(4, dtype=np.float32)},
+            )
+
+
+@pytest.mark.unit
+class TestCollateWithHistoryAndOpp:
+    def test_shapes_and_masks(self):
+        X_s = np.random.randn(4, 3).astype(np.float32)
+        X_h = [
+            np.random.randn(2, 5).astype(np.float32),
+            np.random.randn(3, 5).astype(np.float32),
+            np.random.randn(1, 5).astype(np.float32),
+            np.random.randn(4, 5).astype(np.float32),
+        ]
+        X_o = [
+            np.random.randn(3, 6).astype(np.float32),
+            np.random.randn(2, 6).astype(np.float32),
+            np.random.randn(5, 6).astype(np.float32),
+            np.random.randn(1, 6).astype(np.float32),
+        ]
+        y = {"t1": np.random.randn(4).astype(np.float32)}
+        ds = MultiTargetHistoryWithOppDataset(X_s, X_h, X_o, y)
+        batch = [ds[i] for i in range(4)]
+        s, h, hm, o, om, t = collate_with_history_and_opp(batch)
+        assert s.shape == (4, 3)
+        assert h.shape == (4, 4, 5)  # max player-seq = 4
+        assert hm.shape == (4, 4)
+        assert o.shape == (4, 5, 6)  # max opp-seq = 5
+        assert om.shape == (4, 5)
+        # Mask sums match the actual sequence lengths.
+        assert hm.sum(dim=1).tolist() == [2, 3, 1, 4]
+        assert om.sum(dim=1).tolist() == [3, 2, 5, 1]
+
+
+@pytest.mark.unit
+class TestMultiHeadHistoryWithOppTrainer:
+    def _build_trainer(self, model):
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
+        criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        return MultiHeadHistoryWithOppTrainer(
+            model, optimizer, scheduler, criterion, torch.device("cpu"), target_names=TARGETS
+        )
+
+    def test_forward_batch_passes_opp_tensors(self):
+        """Forward batch unpacks the 6-tuple and calls the model with both
+        histories, producing all target keys."""
+        torch.manual_seed(0)
+        model = MultiHeadNetWithHistory(
+            static_dim=4,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=5,
+        )
+        trainer = self._build_trainer(model)
+        batch = (
+            torch.randn(4, 4),
+            torch.randn(4, 6, 3),
+            torch.ones(4, 6, dtype=torch.bool),
+            torch.randn(4, 5, 5),
+            torch.ones(4, 5, dtype=torch.bool),
+            {t: torch.randn(4) for t in TARGETS},
+        )
+        preds, y = trainer._forward_batch(batch)
+        for t in TARGETS:
+            assert t in preds
+            assert preds[t].shape == (4,)
+
+    def test_train_one_epoch_end_to_end(self):
+        """End-to-end: dataloader → ``trainer.train`` for one epoch runs
+        without shape/device errors and reports finite losses."""
+        torch.manual_seed(0)
+        X_s = np.random.randn(32, 4).astype(np.float32)
+        X_h = [np.random.randn(np.random.randint(1, 5), 3).astype(np.float32) for _ in range(32)]
+        X_o = [np.random.randn(np.random.randint(1, 5), 5).astype(np.float32) for _ in range(32)]
+        y = {t: np.random.randn(32).astype(np.float32) for t in TARGETS}
+
+        train_loader, val_loader = make_history_with_opp_dataloaders(
+            X_s, X_h, X_o, y, X_s, X_h, X_o, y, batch_size=8
+        )
+        model = MultiHeadNetWithHistory(
+            static_dim=4,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=5,
+        )
+        trainer = self._build_trainer(model)
+        history = trainer.train(train_loader, val_loader, n_epochs=1)
+        assert np.isfinite(history["train_loss"][0])
+        assert np.isfinite(history["val_loss"][0])
