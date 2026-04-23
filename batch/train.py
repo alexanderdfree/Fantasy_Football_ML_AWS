@@ -308,19 +308,24 @@ def _run_rb_gate_ablation(train_df, val_df, test_df, seed: int) -> None:
         return cfg
 
     def _variant_b(cfg: dict) -> dict:
-        """Shipping (PR #96): Poisson NLL on TDs, no TD gate."""
-        return copy.deepcopy(cfg)
+        """Pre-TD-gate-restoration (PR #96 shipping): Poisson NLL on TDs with
+        no gate on them. Explicitly forces ``gated_targets=["receptions"]`` so
+        this variant stays meaningful even as the live RB_CONFIG's list evolves."""
+        cfg = copy.deepcopy(cfg)
+        cfg["gated_targets"] = ["receptions"]
+        return cfg
 
     def _variant_c(cfg: dict) -> dict:
-        """Poisson NLL on TDs + gate — tests whether gate adds signal on top."""
+        """Current shipping: Poisson NLL on TDs + BCE gate on each TD head on top
+        of the reception hurdle."""
         cfg = copy.deepcopy(cfg)
         cfg["gated_targets"] = ["receptions", "rushing_tds", "receiving_tds"]
         return cfg
 
     variants = [
         ("A", "Huber + gate on TDs (pre-PR-2 baseline)", _variant_a),
-        ("B", "Poisson NLL, no gate (PR #96 shipping)", _variant_b),
-        ("C", "Poisson NLL + gate on TDs", _variant_c),
+        ("B", "Poisson NLL, no TD gate (PR #96 config)", _variant_b),
+        ("C", "Poisson NLL + gate on TDs (current shipping)", _variant_c),
     ]
 
     rows: list[dict] = []

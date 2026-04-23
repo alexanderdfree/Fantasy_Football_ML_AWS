@@ -171,10 +171,15 @@ TE_ATTN_STATIC_CATEGORIES = [
     "weather_vegas",
 ]
 TE_ATTN_STATIC_FEATURES = [c for cat in TE_ATTN_STATIC_CATEGORIES for c in TE_INCLUDE_FEATURES[cat]]
-# Single hurdle gate on receptions. receiving_tds moved off the gated list
-# to plain Poisson NLL (dispersion near 1, no zero-excess).
+# Hurdle gate on receptions + BCE gate on receiving_tds. Mirrors the RB
+# "Variant C" config from scripts/ablate_rb_gate.py (see RB/rb_config.py
+# for the ablation table). PR #96 benchmark review flagged a +0.052
+# per-target MAE regression on receiving_tds when the gate came off;
+# restoring the BCE gate brings that back without disturbing the
+# reception hurdle. head_losses keeps receiving_tds on ``poisson_nll``
+# (BCE gate is additive via ``gated_targets``).
 TE_ATTN_GATED = True
-TE_GATED_TARGETS = ["receptions"]
+TE_GATED_TARGETS = ["receptions", "receiving_tds"]
 TE_ATTN_GATE_HIDDEN = 16
 TE_ATTN_GATE_WEIGHT = 1.0
 

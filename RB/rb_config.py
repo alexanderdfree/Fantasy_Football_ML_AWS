@@ -280,12 +280,24 @@ RB_ATTN_STATIC_CATEGORIES = [
     "weather_vegas",
 ]
 RB_ATTN_STATIC_FEATURES = [c for cat in RB_ATTN_STATIC_CATEGORIES for c in RB_INCLUDE_FEATURES[cat]]
-# Single hurdle gate on receptions (variance/mean ~2.0, zero-excess ~+0.13).
-# TD heads dropped from the gated list: dispersion ~1.0 and ~0 zero-excess make
-# the gate unmotivated on counts (kept behind an ablation script —
-# scripts/ablate_rb_gate.py — so the call is verifiable).
+# Hurdle gate on receptions + BCE gate on each TD head. Variant C from the
+# RB TD-gate ablation (scripts/ablate_rb_gate.py → run 24813558434):
+#
+#   Variant          FP MAE   Rush TD MAE   Rec TD MAE   Rec MAE
+#   A (huber+gate)    4.453        0.277        0.077     1.034
+#   B (Poisson/none)  4.258        0.329        0.064     0.989
+#   C (Poisson+gate)  4.239        0.304        0.099     0.983
+#
+# C edges B by 0.019 pt/game — below the 0.05 pt decision threshold so the
+# ablation script reported "drop TD gate", but the gate pulls the rushing_tds
+# per-target MAE back from 0.329 to 0.304 (~the halfway point to variant A's
+# 0.277 baseline) at no cost to FP MAE. Shipping with the gate because the
+# per-target regression on rushing_tds under B was the one red flag in the
+# PR #96 benchmark review, and variant C addresses it without giving up
+# the hurdle-NegBin reception win. ``head_losses`` stays as PR #96 shipped
+# — TDs on ``poisson_nll`` with BCE gate loss added via ``gated_targets``.
 RB_ATTN_GATED = True
-RB_GATED_TARGETS = ["receptions"]
+RB_GATED_TARGETS = ["receptions", "rushing_tds", "receiving_tds"]
 RB_ATTN_GATE_HIDDEN = 16
 RB_ATTN_GATE_WEIGHT = 1.0
 

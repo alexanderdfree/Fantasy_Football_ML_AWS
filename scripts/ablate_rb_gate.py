@@ -61,26 +61,30 @@ def _apply_variant_a(cfg: dict) -> dict:
 
 
 def _apply_variant_b(cfg: dict) -> dict:
-    """Variant B: Poisson NLL on TDs with no gate. Matches PR 2's shipping RB config."""
-    return copy.deepcopy(cfg)  # RB_CONFIG already encodes variant B
+    """Variant B: Poisson NLL on TDs with no gate on TDs — the PR #96 shipping
+    config before the TD-gate-restoration PR. Explicitly forces
+    ``gated_targets = ["receptions"]`` so this variant stays meaningful even
+    as the live RB_CONFIG's gated_targets list evolves."""
+    cfg = copy.deepcopy(cfg)
+    cfg["gated_targets"] = ["receptions"]
+    return cfg
 
 
 def _apply_variant_c(cfg: dict) -> dict:
-    """Variant C: Poisson NLL on TDs + gate — tests whether the gate still adds signal
-    on top of the better loss family."""
+    """Variant C: Poisson NLL on TDs + BCE gate on each TD head on top of
+    the reception hurdle. Matches the current shipping RB config after the
+    TD-gate-restoration PR. ``head_losses`` stays as PR #96 shipped — TDs
+    on ``poisson_nll``; the BCE gate loss is added in addition via
+    ``gated_targets``."""
     cfg = copy.deepcopy(cfg)
     cfg["gated_targets"] = ["receptions", "rushing_tds", "receiving_tds"]
-    # Keep head_losses as variant B's Poisson-TDs setup. Poisson loss is applied
-    # to preds[name] = sigmoid(gate) * softplus(mu); BCE gate loss is added
-    # separately. Not exact zero-truncated Poisson on positives, but the
-    # standard "hurdle-Poisson" interpretation in the gated-head literature.
     return cfg
 
 
 VARIANTS = {
     "A": ("Huber + gate on TDs (pre-PR-2 baseline)", _apply_variant_a),
-    "B": ("Poisson NLL, no gate (PR 2 shipping config)", _apply_variant_b),
-    "C": ("Poisson NLL + gate on TDs", _apply_variant_c),
+    "B": ("Poisson NLL, no TD gate (PR #96 config)", _apply_variant_b),
+    "C": ("Poisson NLL + gate on TDs (current shipping)", _apply_variant_c),
 }
 
 
