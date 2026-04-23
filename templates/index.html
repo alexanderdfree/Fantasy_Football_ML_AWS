@@ -90,6 +90,11 @@
                 <span id="results-count">0 players</span>
             </div>
 
+            <!-- Degraded-positions banner: shown when /api/predictions reports
+                 any position whose models failed to load. loadPredictions()
+                 fills the text and toggles `.hidden`. -->
+            <div id="degraded-banner" class="degraded-banner hidden" role="status" aria-live="polite"></div>
+
             <!-- Player Table -->
             <div class="table-container">
                 <table id="predictions-table">

@@ -225,6 +225,7 @@ async function loadPredictions() {
     try {
         const data = await fetchJSON(`/api/predictions?${params}`);
         allPlayers = data.players || [];
+        renderDegradedBanner(data.degraded_positions || []);
         renderTable();
     } catch (e) {
         console.error("Failed to load predictions:", e);
@@ -234,6 +235,20 @@ async function loadPredictions() {
     } finally {
         container.classList.remove("loading");
     }
+}
+
+function renderDegradedBanner(degraded) {
+    const banner = document.getElementById("degraded-banner");
+    if (!banner) return;
+    if (!degraded || degraded.length === 0) {
+        banner.classList.add("hidden");
+        banner.textContent = "";
+        return;
+    }
+    banner.textContent =
+        `Heads up: predictions unavailable for ${degraded.join(", ")}. ` +
+        `Showing last updated data for the other positions.`;
+    banner.classList.remove("hidden");
 }
 
 function renderTable() {

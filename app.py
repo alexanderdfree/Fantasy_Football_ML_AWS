@@ -335,7 +335,17 @@ def _load_dst_splits():
 
 
 def _apply_position_models(train, val, test, pos, results):
-    """Load pre-trained position-specific models and write predictions into results."""
+    """Load pre-trained position-specific models and write predictions into
+    results. Graceful per-model degradation: a single model's load failure is
+    recorded in ``_cache["position_load_errors"]`` and the corresponding
+    pred column is NaN'd for this position's rows, but other models still
+    load and the caller continues with the remaining five positions.
+
+    Setup failures (feature build, data filter) are unrecoverable and
+    propagate — they usually mean base data is missing, which would break
+    every position. ``_ensure_position_loaded`` catches these and records
+    the position as fully failed.
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     reg = POSITION_REGISTRY[pos]
 
@@ -367,6 +377,8 @@ def _apply_position_models(train, val, test, pos, results):
     target_signs = reg.get("target_signs")
 
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)
+    pos_index = pos_test.index
+    errors = _cache.setdefault("position_load_errors", {})
 
     def _combine_total(preds: dict) -> np.ndarray:
         if aggregate_fn is not None:
@@ -380,17 +392,26 @@ def _apply_position_models(train, val, test, pos, results):
             total = total + adj_values
         return total
 
-    # Ridge predictions — load failures propagate; global handler returns JSON 500.
+    # Each of the four model blocks below sets its ``*_preds`` / ``*_total``
+    # locals on success. On failure, the error is recorded under
+    # ``{pos}_{model_type}`` in ``position_load_errors`` and the locals stay
+    # None — the results-write block at the bottom NaN's the pred column for
+    # this position's rows when that happens.
+
+    ridge_preds = None
+    ridge_total = None
     try:
         ridge = RidgeMultiTarget(target_names=targets)
         ridge.load(model_dir)
         ridge_preds = ridge.predict(X_test_pos)
         ridge_total = _combine_total(ridge_preds)
     except Exception as e:
-        _cache.setdefault("position_load_errors", {})[f"{pos}_ridge"] = str(e)
-        raise
+        errors[f"{pos}_ridge"] = str(e)
+        print(f"[app] {pos} ridge load failed: {e!r} — NaN'ing ridge_pred")
 
     # NN predictions — integrity-check scaler+weights before running inference.
+    nn_preds = None
+    nn_total = None
     try:
         nn_scaler = joblib.load(f"{model_dir}/nn_scaler.pkl")
         nn_meta = read_scaler_meta(f"{model_dir}/nn_scaler_meta.json")
@@ -416,8 +437,8 @@ def _apply_position_models(train, val, test, pos, results):
         nn_preds = nn_model.predict_numpy(X_test_scaled, device)
         nn_total = _combine_total(nn_preds)
     except Exception as e:
-        _cache.setdefault("position_load_errors", {})[f"{pos}_nn"] = str(e)
-        raise
+        errors[f"{pos}_nn"] = str(e)
+        print(f"[app] {pos} nn load failed: {e!r} — NaN'ing nn_pred")
 
     # Attention NN — enabled per-position via ``reg["train_attention_nn"]``.
     # Flat-history variant for QB/RB/WR/TE/DST; nested per-kick variant for K.
@@ -505,8 +526,10 @@ def _apply_position_models(train, val, test, pos, results):
                 )
             attn_nn_total = _combine_total(attn_nn_preds)
         except Exception as e:
-            _cache.setdefault("position_load_errors", {})[f"{pos}_attn_nn"] = str(e)
-            raise
+            errors[f"{pos}_attn_nn"] = str(e)
+            print(f"[app] {pos} attn_nn load failed: {e!r} — leaving attn_nn_pred NaN")
+            attn_nn_preds = None
+            attn_nn_total = None
 
     # LightGBM — only trained for QB/RB/WR/TE. Same no-column-emitted policy for
     # K/DST as Attention NN.
@@ -519,37 +542,50 @@ def _apply_position_models(train, val, test, pos, results):
             lgbm_preds = lgbm_model.predict(X_test_pos)
             lgbm_total = _combine_total(lgbm_preds)
         except Exception as e:
-            _cache.setdefault("position_load_errors", {})[f"{pos}_lgbm"] = str(e)
-            raise
+            errors[f"{pos}_lgbm"] = str(e)
+            print(f"[app] {pos} lgbm load failed: {e!r} — leaving lgbm_pred NaN")
+            lgbm_preds = None
+            lgbm_total = None
 
-    # Write into results
-    pos_index = pos_test.index
-    results.loc[pos_index, "ridge_pred"] = np.round(ridge_total, 2).astype(np.float32)
-    results.loc[pos_index, "nn_pred"] = np.round(nn_total, 2).astype(np.float32)
+    # Write into results — NaN the pred column when its model failed so the
+    # frontend renders "--" instead of a misleading 0.0 (the DataFrame
+    # initializes ridge_pred and nn_pred to 0.0 in _load_base_data_locked).
+    if ridge_total is not None:
+        results.loc[pos_index, "ridge_pred"] = np.round(ridge_total, 2).astype(np.float32)
+    else:
+        results.loc[pos_index, "ridge_pred"] = np.nan
+    if nn_total is not None:
+        results.loc[pos_index, "nn_pred"] = np.round(nn_total, 2).astype(np.float32)
+    else:
+        results.loc[pos_index, "nn_pred"] = np.nan
     if attn_nn_total is not None:
         results.loc[pos_index, "attn_nn_pred"] = np.round(attn_nn_total, 2).astype(np.float32)
     if lgbm_total is not None:
         results.loc[pos_index, "lgbm_pred"] = np.round(lgbm_total, 2).astype(np.float32)
 
-    # Cache per-target metrics for /api/position_details
+    # Cache per-target metrics for /api/position_details. Each model's MAE is
+    # only emitted if that model's preds are available, so a partial-failure
+    # position still shows metrics for the models that loaded.
     target_metrics = {}
     for t in targets:
         if t in pos_test.columns:
             actual_t = pos_test[t].values
-            tm = {
-                "ridge_mae": round(float(np.mean(np.abs(ridge_preds[t] - actual_t))), 3),
-                "nn_mae": round(float(np.mean(np.abs(nn_preds[t] - actual_t))), 3),
-            }
+            tm = {}
+            if ridge_preds is not None and t in ridge_preds:
+                tm["ridge_mae"] = round(float(np.mean(np.abs(ridge_preds[t] - actual_t))), 3)
+            if nn_preds is not None and t in nn_preds:
+                tm["nn_mae"] = round(float(np.mean(np.abs(nn_preds[t] - actual_t))), 3)
             if attn_nn_preds is not None and t in attn_nn_preds:
                 tm["attn_nn_mae"] = round(float(np.mean(np.abs(attn_nn_preds[t] - actual_t))), 3)
             if lgbm_preds is not None and t in lgbm_preds:
                 tm["lgbm_mae"] = round(float(np.mean(np.abs(lgbm_preds[t] - actual_t))), 3)
             target_metrics[t] = tm
     total_actual = pos_test["fantasy_points"].values
-    total_tm = {
-        "ridge_mae": round(float(np.mean(np.abs(ridge_total - total_actual))), 3),
-        "nn_mae": round(float(np.mean(np.abs(nn_total - total_actual))), 3),
-    }
+    total_tm = {}
+    if ridge_total is not None:
+        total_tm["ridge_mae"] = round(float(np.mean(np.abs(ridge_total - total_actual))), 3)
+    if nn_total is not None:
+        total_tm["nn_mae"] = round(float(np.mean(np.abs(nn_total - total_actual))), 3)
     if attn_nn_total is not None:
         total_tm["attn_nn_mae"] = round(float(np.mean(np.abs(attn_nn_total - total_actual))), 3)
     if lgbm_total is not None:
@@ -653,24 +689,80 @@ def _load_base_data_locked():
 
 
 def _ensure_position_loaded(pos):
-    """Apply position-specific model. Idempotent, thread-safe."""
+    """Apply position-specific model. Idempotent, thread-safe, degrade-aware.
+
+    ``_apply_position_models`` records per-model failures internally and
+    NaN's the affected pred columns — the position still counts as "loaded"
+    in that case (the DataFrame rows are there, just with some NaN preds).
+    An outer ``try/except`` here catches unrecoverable setup failures
+    (feature build, parquet read) and marks the position as fully failed
+    so the other five still serve.
+    """
     _ensure_base_data()
     if pos in _cache.get("positions_loaded", ()):
         return
+    if pos in _cache.get("positions_failed", ()):
+        return  # cached hard-failure — don't retry every request
     with _cache_lock:
         if "splits" not in _cache:
             return
         if pos in _cache["positions_loaded"]:
             return
+        if pos in _cache.get("positions_failed", set()):
+            return
         train, val, test = _cache["splits"][pos]
         print(f"Applying {pos}-specific model...")
-        _apply_position_models(train, val, test, pos, _cache["results"])
+        try:
+            _apply_position_models(train, val, test, pos, _cache["results"])
+        except Exception as e:
+            # Anything that slips past the inner per-model try/excepts —
+            # typically data-loading or feature-building failures that affect
+            # the whole position. Cache so we don't retry on every request,
+            # and leave the pred columns untouched (still the default init
+            # values from _load_base_data_locked).
+            import traceback
+
+            traceback.print_exc()
+            _cache.setdefault("positions_failed", set()).add(pos)
+            _cache.setdefault("position_load_errors", {})[pos] = repr(e)
+            print(f"[app] {pos} fully failed: {e!r} — serving degraded")
+            return
         _cache["positions_loaded"].add(pos)
 
 
 def _ensure_all_positions_loaded():
+    """Load every position, best-effort. A per-position failure records in
+    ``positions_failed`` but does not re-raise — the remaining positions
+    still get loaded. If EVERY position fails, raise a top-level error so
+    gunicorn ``--preload`` aborts at boot and ECS blocks the broken
+    rollout (preserves the existing fail-loud contract for the
+    all-broken case).
+    """
     for pos in _ALL_POSITIONS:
         _ensure_position_loaded(pos)
+    failed = _cache.get("positions_failed", set())
+    if failed and len(failed) == len(_ALL_POSITIONS):
+        raise RuntimeError(
+            f"All positions failed to load — see position_load_errors: "
+            f"{list(_cache.get('position_load_errors', {}).keys())}"
+        )
+
+
+def _degraded_positions() -> list[str]:
+    """Positions with any recorded model-load error (fully failed OR partial
+    per-model failure). Returned sorted so the frontend banner has a stable
+    ordering across requests.
+    """
+    errs = _cache.get("position_load_errors", {})
+    if not errs:
+        return []
+    degraded: set[str] = set()
+    for key in errs:
+        for p in _ALL_POSITIONS:
+            if key == p or key.startswith(f"{p}_"):
+                degraded.add(p)
+                break
+    return sorted(degraded)
 
 
 _MODEL_PRED_COLUMNS = [
@@ -763,7 +855,15 @@ def api_predictions():
     else:
         rows.sort(key=lambda x: x.get("actual") or 0, reverse=reverse)
 
-    return jsonify({"players": rows, "total": len(rows)})
+    return jsonify(
+        {
+            "players": rows,
+            "total": len(rows),
+            # Surfaced so the frontend can render a banner. See
+            # static/js/app.js::loadPredictions and _degraded_positions above.
+            "degraded_positions": _degraded_positions(),
+        }
+    )
 
 
 @app.route("/api/metrics")
