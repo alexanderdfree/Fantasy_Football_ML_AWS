@@ -99,18 +99,21 @@ jobs:
           SEED="${{ github.event.inputs.seed || '42' }}"
           IMAGE="${{ steps.img.outputs.uri }}"
           # Compose the docker run with the same env + mounts ff-train uses
-          # (see infra/ec2/user-data.sh), but override the --ablation flag
-          # and let the entrypoint (python batch/train.py) pick it up.
-          # flock against the ff-train lock so a training run can't start
-          # mid-ablation.
-          jq -n --arg cmd "set -eu
-          exec 200>/var/lock/ff-train.lock
-          flock -n 200 || { echo 'ablate-rb-gate: ff-train lock held by another run'; exit 2; }
+          # (see infra/ec2/user-data.sh). SSM's AWS-RunShellScript runs via
+          # /bin/sh = dash on Ubuntu, which doesn't support bash's
+          # ``exec 200>file ; flock -n 200`` FD-redirect trick. Use
+          # ``flock -xn -E 99 FILE COMMAND ARGS...`` — POSIX-friendly, with
+          # a distinct exit code 99 when the lock can't be acquired so
+          # "train-ec2 running" is reported cleanly vs a real docker failure.
+          # Full stdout/stderr lands in CloudWatch /ff/training via
+          # --cloud-watch-output-config on the send-command below, so the
+          # host-side ``tee -a /var/log/...`` is dropped here.
+          jq -n --arg cmd "set -u
           mkdir -p /opt/ff/scratch/input /opt/ff/scratch/model /opt/ff/scratch/raw /opt/ff/logs
           date -Iseconds > /opt/ff/logs/last-activity
-          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin \$(echo '$IMAGE' | cut -d/ -f1) >/dev/null
-          docker pull '$IMAGE'
-          docker run --rm --gpus all \
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin \$(echo $IMAGE | cut -d/ -f1) >/dev/null
+          docker pull $IMAGE
+          flock -xn -E 99 /var/lock/ff-train.lock docker run --rm --gpus all \
             -e S3_BUCKET=ff-predictor-training \
             -e S3_DATA_PREFIX=data \
             -e LOG_EVERY=1 \
@@ -119,8 +122,14 @@ jobs:
             -v /opt/ff/scratch/input:/opt/ml/input/data/training \
             -v /opt/ff/scratch/model:/opt/ml/model \
             -v /opt/ff/scratch/raw:/opt/ml/code/data/raw \
-            '$IMAGE' --position RB --ablation rb-gate --seed $SEED 2>&1 | tee -a /var/log/ff-train/rb-ablate.log
+            $IMAGE --position RB --ablation rb-gate --seed $SEED
+          RC=\$?
           date -Iseconds > /opt/ff/logs/last-activity
+          if [ \$RC -eq 99 ]; then
+            echo 'ablate-rb-gate: flock failed — train-ec2 or another diagnostic is running'
+            exit 2
+          fi
+          exit \$RC
           " '{commands: [$cmd]}' > /tmp/ssm-params.json
           CMD_ID=$(aws ssm send-command \
             --targets "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \

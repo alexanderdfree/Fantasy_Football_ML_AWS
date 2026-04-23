@@ -98,13 +98,17 @@ jobs:
           fi
           # Override the container entrypoint to run tune_lgbm.py instead of
           # batch/train.py. Env vars mirror ff-train (infra/ec2/user-data.sh).
-          jq -n --arg cmd "set -eu
-          exec 200>/var/lock/ff-train.lock
-          flock -n 200 || { echo 'retune-lgbm: ff-train lock held'; exit 2; }
+          # SSM uses /bin/sh (dash) which doesn't support bash's
+          # ``exec 200>FILE ; flock -n 200`` form — switch to
+          # ``flock -xn -E 99 FILE COMMAND ARGS...`` (POSIX). Host-side tee
+          # dropped; full output lands in CloudWatch /ff/training via
+          # --cloud-watch-output-config below.
+          jq -n --arg cmd "set -u
           mkdir -p /opt/ff/scratch/input /opt/ff/scratch/raw /opt/ff/logs
           date -Iseconds > /opt/ff/logs/last-activity
-          docker pull '$IMAGE'
-          docker run --rm \
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin \$(echo $IMAGE | cut -d/ -f1) >/dev/null
+          docker pull $IMAGE
+          flock -xn -E 99 /var/lock/ff-train.lock docker run --rm \
             --entrypoint python \
             -e S3_BUCKET=ff-predictor-training \
             -e S3_DATA_PREFIX=data \
@@ -112,8 +116,14 @@ jobs:
             -e AWS_DEFAULT_REGION=$AWS_REGION \
             -v /opt/ff/scratch/input:/opt/ml/input/data/training \
             -v /opt/ff/scratch/raw:/opt/ml/code/data/raw \
-            '$IMAGE' tune_lgbm.py $POSITIONS --n-trials $N_TRIALS $TIMEOUT_ARG 2>&1 | tee -a /var/log/ff-train/retune-lgbm.log
+            $IMAGE tune_lgbm.py $POSITIONS --n-trials $N_TRIALS $TIMEOUT_ARG
+          RC=\$?
           date -Iseconds > /opt/ff/logs/last-activity
+          if [ \$RC -eq 99 ]; then
+            echo 'retune-lgbm: flock failed — train-ec2 or another diagnostic is running'
+            exit 2
+          fi
+          exit \$RC
           " '{commands: [$cmd]}' > /tmp/ssm-params.json
           CMD_ID=$(aws ssm send-command \
             --targets "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
