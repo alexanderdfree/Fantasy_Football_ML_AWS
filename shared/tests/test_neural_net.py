@@ -343,6 +343,80 @@ class TestAttentionPool:
         # Only 2 slopes registered regardless of n_targets.
         assert pool.alibi_slopes.shape == (2,)
 
+    def test_cond_default_off(self):
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=3)
+        assert pool.cond_dim == 0
+        assert not hasattr(pool, "cond_proj")
+
+    def test_cond_proj_is_zero_initialised(self):
+        """Zero-init on weights and bias is the invariant that lets
+        baseline equivalence hold at step 0."""
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=3, cond_dim=5)
+        assert pool.cond_dim == 5
+        assert pool.cond_proj.weight.shape == (3 * 2 * 8, 5)
+        assert torch.all(pool.cond_proj.weight == 0)
+        assert torch.all(pool.cond_proj.bias == 0)
+
+    def test_cond_matches_baseline_at_init(self):
+        """With cond_proj zero-init, the conditioned pool must produce the
+        same output as a non-conditioned pool at step zero."""
+        torch.manual_seed(0)
+        base = AttentionPool(d_model=8, n_heads=2, n_targets=3)
+        torch.manual_seed(0)
+        cond = AttentionPool(d_model=8, n_heads=2, n_targets=3, cond_dim=5)
+        keys = torch.randn(3, 6, 8)
+        mask = torch.ones(3, 6, dtype=torch.bool)
+        ctx = torch.randn(3, 5)
+        base.eval()
+        cond.eval()
+        with torch.no_grad():
+            out_base = base(keys, mask)
+            out_cond = cond(keys, mask, context=ctx)
+        torch.testing.assert_close(out_base, out_cond, atol=1e-6, rtol=0)
+
+    def test_cond_different_contexts_yield_different_outputs(self):
+        """Once cond_proj has non-zero weights, varying context must change
+        the pool output — otherwise conditioning would be a no-op in practice."""
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=1, cond_dim=5)
+        with torch.no_grad():
+            pool.cond_proj.weight.normal_(std=0.1)
+        keys = torch.randn(4, 6, 8)
+        mask = torch.ones(4, 6, dtype=torch.bool)
+        ctx_a = torch.randn(4, 5)
+        ctx_b = torch.randn(4, 5)
+        pool.eval()
+        with torch.no_grad():
+            out_a = pool(keys, mask, context=ctx_a)
+            out_b = pool(keys, mask, context=ctx_b)
+        assert not torch.allclose(out_a, out_b)
+
+    def test_cond_gradient_flows_through_context_and_proj(self):
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=2, cond_dim=5)
+        # Break the zero-init so gradient can flow through the delta path.
+        with torch.no_grad():
+            pool.cond_proj.weight.normal_(std=0.1)
+        keys = torch.randn(3, 6, 8)
+        mask = torch.ones(3, 6, dtype=torch.bool)
+        ctx = torch.randn(3, 5, requires_grad=True)
+        pool(keys, mask, context=ctx).sum().backward()
+        assert ctx.grad is not None and (ctx.grad != 0).any()
+        assert pool.cond_proj.weight.grad is not None
+        assert (pool.cond_proj.weight.grad != 0).any()
+
+    def test_cond_ignored_when_cond_dim_zero(self):
+        """When the feature is off, passing a context argument must be a
+        no-op: output must equal the mask-only forward."""
+        torch.manual_seed(0)
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=2)
+        keys = torch.randn(3, 6, 8)
+        mask = torch.ones(3, 6, dtype=torch.bool)
+        ctx = torch.randn(3, 5)
+        pool.eval()
+        with torch.no_grad():
+            out_no_ctx = pool(keys, mask)
+            out_with_ctx = pool(keys, mask, context=ctx)
+        torch.testing.assert_close(out_no_ctx, out_with_ctx)
+
 
 # ---------------------------------------------------------------------------
 # SelfAttentionBlock + _build_self_attention_stack
@@ -1231,6 +1305,36 @@ class TestBuildMultiHeadNetWithHistory:
         for t in TARGETS:
             assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
 
+    def test_condition_queries_defaults_off(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.condition_queries_on_static is False
+        assert model.attn_pool.cond_dim == 0
+
+    def test_condition_queries_sets_cond_dim_to_static_dim(self):
+        cfg = self._base_cfg() | {"attn_condition_queries_on_static": True}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.condition_queries_on_static is True
+        assert model.attn_pool.cond_dim == 5
+
+    def test_condition_queries_forward_is_finite(self):
+        """End-to-end forward with query conditioning on must produce
+        finite predictions. Pool-level baseline equivalence at init is
+        checked by ``TestAttentionPool::test_cond_matches_baseline_at_init``."""
+        cfg = self._base_cfg() | {"attn_condition_queries_on_static": True}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 5),
+                    torch.randn(4, 7, 3),
+                    torch.ones(4, 7, dtype=torch.bool),
+                )
+        for t in TARGETS:
+            assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
+
 
 @pytest.mark.unit
 class TestBuildMultiHeadNetWithNestedHistory:
@@ -1446,6 +1550,42 @@ class TestBuildMultiHeadNetWithNestedHistory:
             "attn_self_heads": 2,
             "attn_self_ffn_dim": 16,
         }
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_nested_history(
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+            )
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 7),
+                    torch.randn(4, 5, 3, 9),
+                    torch.ones(4, 5, dtype=torch.bool),
+                    torch.ones(4, 5, 3, dtype=torch.bool),
+                )
+        for t in K_TARGETS:
+            assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
+
+    def test_condition_queries_defaults_off(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.condition_queries_on_static is False
+        assert model.attn_pool.cond_dim == 0
+        # Inner kick pool never enables conditioning.
+        assert model.inner_pool.cond_dim == 0
+
+    def test_condition_queries_outer_only(self):
+        """Conditioning lives on the outer (games-ago) pool only; the inner
+        kick pool has no matchup-context notion and must stay unconditioned."""
+        cfg = self._base_cfg() | {"attn_condition_queries_on_static": True}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_pool.cond_dim == 7
+        assert model.inner_pool.cond_dim == 0
+
+    def test_condition_queries_forward_is_finite(self):
+        cfg = self._base_cfg() | {"attn_condition_queries_on_static": True}
         with torch.random.fork_rng():
             model = build_multihead_net_with_nested_history(
                 cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
