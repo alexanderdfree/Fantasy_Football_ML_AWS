@@ -25,7 +25,6 @@ from shared.error_analysis import (
     run_stratified_analysis,
 )
 
-
 # --------------------------------------------------------------------------
 # Helper: build a "results" dict in the same shape the stratified analysis
 # produces (keyed stratum -> model -> target -> metrics_df).
