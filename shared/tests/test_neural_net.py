@@ -11,7 +11,9 @@ from shared.neural_net import (
     MultiHeadNet,
     MultiHeadNetWithHistory,
     MultiHeadNetWithNestedHistory,
+    SwiGLU,
     _apply_history_dropout,
+    _build_game_encoder,
     apply_non_negative,
     build_multihead_net,
     build_multihead_net_with_history,
@@ -224,6 +226,79 @@ class TestAttentionPool:
         out.sum().backward()
         assert pool.log_temperature.grad is not None
         assert pool.log_temperature.grad.shape == (3,)
+
+
+# ---------------------------------------------------------------------------
+# SwiGLU + _build_game_encoder
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSwiGLU:
+    def test_output_shape_and_finite(self):
+        block = SwiGLU(4, 8)
+        x = torch.randn(3, 4)
+        out = block(x)
+        assert out.shape == (3, 8)
+        assert torch.isfinite(out).all()
+
+    def test_is_nonlinear(self):
+        """Sanity: SwiGLU shouldn't degenerate to a pure linear map."""
+        block = SwiGLU(4, 8)
+        x = torch.randn(2, 4)
+        y_2x = block(2.0 * x)
+        y_x = block(x)
+        # For a linear map we'd have y(2x) == 2*y(x); SwiGLU's gate breaks that.
+        assert not torch.allclose(y_2x, 2.0 * y_x, atol=1e-4)
+
+    def test_gradient_flows_through_both_projections(self):
+        block = SwiGLU(4, 8)
+        x = torch.randn(3, 4, requires_grad=True)
+        block(x).sum().backward()
+        assert x.grad is not None and (x.grad != 0).any()
+        # Both projections must receive a gradient.
+        assert block.gate_proj.weight.grad is not None
+        assert block.value_proj.weight.grad is not None
+        assert (block.gate_proj.weight.grad != 0).any()
+        assert (block.value_proj.weight.grad != 0).any()
+
+
+@pytest.mark.unit
+class TestBuildGameEncoder:
+    def test_default_is_linear_relu(self):
+        enc = _build_game_encoder(in_dim=4, d_model=8, encoder_hidden_dim=0, use_swiglu=False)
+        # Baseline 1-layer: Linear -> ReLU. Must not silently change structure.
+        assert len(enc) == 2
+        assert isinstance(enc[0], torch.nn.Linear)
+        assert isinstance(enc[1], torch.nn.ReLU)
+        assert enc[0].in_features == 4 and enc[0].out_features == 8
+
+    def test_default_two_layer_shape(self):
+        enc = _build_game_encoder(in_dim=4, d_model=8, encoder_hidden_dim=16, use_swiglu=False)
+        # Baseline 2-layer: Linear -> ReLU -> LN -> Linear -> ReLU.
+        assert len(enc) == 5
+        assert isinstance(enc[0], torch.nn.Linear) and isinstance(enc[1], torch.nn.ReLU)
+        assert isinstance(enc[2], torch.nn.LayerNorm)
+        assert isinstance(enc[3], torch.nn.Linear) and isinstance(enc[4], torch.nn.ReLU)
+
+    def test_swiglu_one_layer(self):
+        enc = _build_game_encoder(in_dim=4, d_model=8, encoder_hidden_dim=0, use_swiglu=True)
+        assert len(enc) == 1
+        assert isinstance(enc[0], SwiGLU)
+        x = torch.randn(3, 4)
+        out = enc(x)
+        assert out.shape == (3, 8)
+
+    def test_swiglu_two_layer(self):
+        enc = _build_game_encoder(in_dim=4, d_model=8, encoder_hidden_dim=16, use_swiglu=True)
+        # SwiGLU -> LN -> SwiGLU.
+        assert len(enc) == 3
+        assert isinstance(enc[0], SwiGLU)
+        assert isinstance(enc[1], torch.nn.LayerNorm)
+        assert isinstance(enc[2], SwiGLU)
+        x = torch.randn(3, 4)
+        out = enc(x)
+        assert out.shape == (3, 8)
 
 
 # ---------------------------------------------------------------------------
@@ -800,6 +875,45 @@ class TestBuildMultiHeadNetWithHistory:
         for k in TARGETS:
             torch.testing.assert_close(out1[k], out2[k])
 
+    def test_swiglu_encoder_defaults_off(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.use_swiglu_encoder is False
+        assert not any(isinstance(m, SwiGLU) for m in model.game_encoder.modules())
+
+    def test_swiglu_encoder_opt_in_one_layer(self):
+        cfg = self._base_cfg() | {"attn_use_swiglu_encoder": True}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.use_swiglu_encoder is True
+        assert any(isinstance(m, SwiGLU) for m in model.game_encoder.modules())
+
+    def test_swiglu_encoder_opt_in_two_layer(self):
+        cfg = self._base_cfg() | {
+            "attn_use_swiglu_encoder": True,
+            "attn_encoder_hidden_dim": 16,
+        }
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        swiglus = [m for m in model.game_encoder.modules() if isinstance(m, SwiGLU)]
+        assert len(swiglus) == 2  # SwiGLU -> LN -> SwiGLU
+        lns = [m for m in model.game_encoder.modules() if isinstance(m, torch.nn.LayerNorm)]
+        assert len(lns) == 1
+
+    def test_swiglu_encoder_forward_produces_predictions(self):
+        cfg = self._base_cfg() | {"attn_use_swiglu_encoder": True}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 5),
+                    torch.randn(4, 6, 3),
+                    torch.ones(4, 6, dtype=torch.bool),
+                )
+        for t in TARGETS:
+            assert out[t].shape == (4,)
+            assert torch.isfinite(out[t]).all()
+
 
 @pytest.mark.unit
 class TestBuildMultiHeadNetWithNestedHistory:
@@ -862,3 +976,45 @@ class TestBuildMultiHeadNetWithNestedHistory:
             cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
         )
         assert model.history_dropout == 0.15
+
+    def test_swiglu_encoder_defaults_off(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.use_swiglu_encoder is False
+        # Game encoder (outer) must be vanilla; kick encoder always stays
+        # Linear+ReLU regardless of the flag.
+        assert not any(isinstance(m, SwiGLU) for m in model.game_encoder.modules())
+        assert not any(isinstance(m, SwiGLU) for m in model.kick_encoder.modules())
+
+    def test_swiglu_encoder_opt_in_leaves_kick_encoder_vanilla(self):
+        """The SwiGLU flag targets the outer game encoder only — kick
+        encoder stays Linear+ReLU so we don't silently broaden its scope."""
+        cfg = self._base_cfg() | {"attn_use_swiglu_encoder": True}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.use_swiglu_encoder is True
+        assert any(isinstance(m, SwiGLU) for m in model.game_encoder.modules())
+        assert not any(isinstance(m, SwiGLU) for m in model.kick_encoder.modules())
+
+    def test_swiglu_encoder_forward_still_produces_predictions(self):
+        cfg = self._base_cfg() | {
+            "attn_use_swiglu_encoder": True,
+            "attn_encoder_hidden_dim": 16,
+        }
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_nested_history(
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+            )
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 7),
+                    torch.randn(4, 5, 3, 9),
+                    torch.ones(4, 5, dtype=torch.bool),
+                    torch.ones(4, 5, 3, dtype=torch.bool),
+                )
+        for t in K_TARGETS:
+            assert out[t].shape == (4,)
+            assert torch.isfinite(out[t]).all()
