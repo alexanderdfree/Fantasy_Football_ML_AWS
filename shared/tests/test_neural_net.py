@@ -168,6 +168,62 @@ class TestAttentionPool:
         assert out.shape == (4, 32)
         assert torch.isfinite(out).all()
 
+    def test_learn_temperature_default_off(self):
+        pool = AttentionPool(d_model=16, n_heads=2, n_targets=3)
+        assert pool.learn_temperature is False
+        assert not hasattr(pool, "log_temperature")
+
+    def test_learn_temperature_param_shape_and_init(self):
+        pool = AttentionPool(d_model=16, n_heads=2, n_targets=3, learn_temperature=True)
+        assert pool.learn_temperature is True
+        # Per-target scalar (one temperature replicated across heads).
+        assert pool.log_temperature.shape == (3,)
+        # Init at 0 → T=exp(0)=1, equivalent to no temperature at step zero.
+        assert torch.allclose(pool.log_temperature, torch.zeros(3))
+
+    def test_learn_temperature_matches_baseline_at_init(self):
+        """At init log_T=0 so outputs must match a non-temperature pool exactly."""
+        torch.manual_seed(0)
+        base = AttentionPool(d_model=16, n_heads=2, n_targets=3)
+        torch.manual_seed(0)
+        with_temp = AttentionPool(d_model=16, n_heads=2, n_targets=3, learn_temperature=True)
+        keys = torch.randn(4, 8, 16)
+        mask = torch.ones(4, 8, dtype=torch.bool)
+        base.eval()
+        with_temp.eval()
+        with torch.no_grad():
+            out_base = base(keys, mask)
+            out_temp = with_temp(keys, mask)
+        assert torch.allclose(out_base, out_temp, atol=1e-6)
+
+    def test_learn_temperature_sharpens_distribution(self):
+        """Negative log_temperature ⇒ T<1 ⇒ sharper (lower-entropy) attention."""
+        torch.manual_seed(0)
+        pool = AttentionPool(d_model=8, n_heads=1, n_targets=1, learn_temperature=True)
+        with torch.no_grad():
+            pool.log_temperature.fill_(-2.0)  # T = exp(-2) ≈ 0.135 → very sharp
+        keys = torch.randn(2, 10, 8)
+
+        # Reproduce the internal attn scores to measure entropy directly.
+        q = pool.queries.reshape(-1, 8)
+        attn = torch.einsum("qd,bsd->bqs", q, keys) * pool.scale
+        baseline_weights = torch.softmax(attn, dim=-1)
+        sharpened_weights = torch.softmax(
+            attn * torch.exp(-pool.log_temperature).view(1, -1, 1), dim=-1
+        )
+        baseline_entropy = -(baseline_weights * baseline_weights.clamp_min(1e-12).log()).sum(-1)
+        sharpened_entropy = -(sharpened_weights * sharpened_weights.clamp_min(1e-12).log()).sum(-1)
+        assert (sharpened_entropy < baseline_entropy).all()
+
+    def test_learn_temperature_gradient_flows(self):
+        pool = AttentionPool(d_model=16, n_heads=2, n_targets=3, learn_temperature=True)
+        keys = torch.randn(4, 8, 16)
+        mask = torch.ones(4, 8, dtype=torch.bool)
+        out = pool(keys, mask)
+        out.sum().backward()
+        assert pool.log_temperature.grad is not None
+        assert pool.log_temperature.grad.shape == (3,)
+
 
 # ---------------------------------------------------------------------------
 # MultiHeadNetWithHistory
@@ -645,6 +701,18 @@ class TestBuildMultiHeadNetWithHistory:
         model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
         assert model.non_negative_targets == set()
 
+    def test_learn_attn_temperature_defaults_off(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.attn_pool.learn_temperature is False
+
+    def test_learn_attn_temperature_opt_in(self):
+        cfg = self._base_cfg() | {"attn_learn_temperature": True}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.attn_pool.learn_temperature is True
+        assert model.attn_pool.log_temperature.shape == (len(TARGETS),)
+
 
 @pytest.mark.unit
 class TestBuildMultiHeadNetWithNestedHistory:
@@ -680,3 +748,17 @@ class TestBuildMultiHeadNetWithNestedHistory:
             cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
         )
         assert model.non_negative_targets == {"fg_yard_points"}
+
+    def test_learn_attn_temperature_defaults_off(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_pool.learn_temperature is False
+
+    def test_learn_attn_temperature_opt_in(self):
+        cfg = self._base_cfg() | {"attn_learn_temperature": True}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_pool.learn_temperature is True
+        assert model.attn_pool.log_temperature.shape == (len(K_TARGETS),)

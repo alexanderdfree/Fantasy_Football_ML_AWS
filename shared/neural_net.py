@@ -174,6 +174,11 @@ class AttentionPool(nn.Module):
     [batch, n_heads * d_model] shape.
 
     Optional K/V projections separate "what to attend to" from "what to extract".
+
+    Optional ``learn_temperature`` adds a per-target learned softmax temperature
+    ``T_t = exp(log_temperature_t)`` so each target can sharpen (T<1) or soften
+    (T>1) its attention distribution independently. Initialised to 0 so
+    ``exp(0)=1`` → behaviour identical to the baseline at step zero.
     """
 
     def __init__(
@@ -183,6 +188,7 @@ class AttentionPool(nn.Module):
         n_targets: int = 1,
         project_kv: bool = False,
         attn_dropout: float = 0.0,
+        learn_temperature: bool = False,
     ):
         super().__init__()
         self.queries = nn.Parameter(torch.randn(n_targets, n_heads, d_model) * 0.02)
@@ -197,6 +203,13 @@ class AttentionPool(nn.Module):
             self.value_proj = nn.Linear(d_model, d_model, bias=False)
 
         self.attn_drop = nn.Dropout(attn_dropout) if attn_dropout > 0 else nn.Identity()
+
+        # Per-target learned temperature. Stored as log so T = exp(log_T) is
+        # always positive; init to 0 (T=1) preserves baseline scores exactly
+        # at the start of training.
+        self.learn_temperature = learn_temperature
+        if learn_temperature:
+            self.log_temperature = nn.Parameter(torch.zeros(n_targets))
 
     def forward(self, keys: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
         """
@@ -221,6 +234,14 @@ class AttentionPool(nn.Module):
         q_flat = self.queries.reshape(self.n_targets * self.n_heads, self.d_model)
         # attn scores: [batch, n_targets * n_heads, seq_len]
         attn = torch.einsum("qd,bsd->bqs", q_flat, k) * self.scale
+
+        if self.learn_temperature:
+            # Per-target inverse-temperature, replicated across heads so one
+            # scalar controls all heads of the same target. Shape broadcasts
+            # over [batch, ..., seq_len].
+            inv_t = torch.exp(-self.log_temperature)  # [n_targets]
+            inv_t = inv_t.repeat_interleave(self.n_heads).view(1, -1, 1)
+            attn = attn * inv_t
 
         if mask is not None:
             # mask: [batch, seq_len] -> [batch, 1, seq_len]
@@ -284,6 +305,7 @@ class MultiHeadNetWithHistory(nn.Module):
         gated: bool = False,
         gate_hidden: int = 16,
         gated_targets: list[str] | None = None,
+        learn_attn_temperature: bool = False,
     ):
         super().__init__()
         self.target_names = target_names
@@ -324,6 +346,7 @@ class MultiHeadNetWithHistory(nn.Module):
             n_targets=self.n_targets,
             project_kv=project_kv,
             attn_dropout=attn_dropout,
+            learn_temperature=learn_attn_temperature,
         )
 
         attn_out_dim = n_attn_heads * d_model
@@ -473,6 +496,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         max_games: int = 17,
         attn_dropout: float = 0.0,
         encoder_hidden_dim: int = 0,
+        learn_attn_temperature: bool = False,
     ):
         super().__init__()
         self.target_names = target_names
@@ -522,6 +546,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             n_targets=self.n_targets,
             project_kv=project_kv,
             attn_dropout=attn_dropout,
+            learn_temperature=learn_attn_temperature,
         )
 
         attn_out_dim = n_attn_heads * d_model
@@ -663,6 +688,7 @@ def build_multihead_net_with_history(
         gated=cfg.get("attn_gated", False),
         gate_hidden=cfg.get("attn_gate_hidden", 16),
         gated_targets=cfg.get("gated_targets"),
+        learn_attn_temperature=cfg.get("attn_learn_temperature", False),
     )
 
 
@@ -696,4 +722,5 @@ def build_multihead_net_with_nested_history(
         max_games=max_games,
         attn_dropout=cfg.get("attn_dropout", 0.0),
         encoder_hidden_dim=cfg.get("attn_encoder_hidden_dim", 0),
+        learn_attn_temperature=cfg.get("attn_learn_temperature", False),
     )
