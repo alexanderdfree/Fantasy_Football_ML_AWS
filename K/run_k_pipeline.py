@@ -15,7 +15,6 @@ from K.k_config import (
     K_ATTN_D_MODEL,
     K_ATTN_DROPOUT,
     K_ATTN_ENCODER_HIDDEN_DIM,
-    K_ATTN_GATED_FUSION,
     K_ATTN_KICK_DIM,
     K_ATTN_KICK_STATS,
     K_ATTN_LR,
@@ -114,7 +113,9 @@ K_CONFIG = {
     "attn_encoder_hidden_dim": K_ATTN_ENCODER_HIDDEN_DIM,
     "attn_project_kv": K_ATTN_PROJECT_KV,
     "attn_positional_encoding": K_ATTN_POSITIONAL_ENCODING,
-    "attn_gated_fusion": K_ATTN_GATED_FUSION,
+    # `attn_gated_fusion` intentionally omitted — the nested attention path
+    # (MultiHeadNetWithNestedHistory) does not consume it; setting it would
+    # be a silent no-op and invite config drift.
     "attn_dropout": K_ATTN_DROPOUT,
     "attn_lr": K_ATTN_LR,
     "attn_weight_decay": K_ATTN_WEIGHT_DECAY,

@@ -114,7 +114,9 @@ K_ATTN_ENCODER_HIDDEN_DIM = 32
 K_ATTN_MAX_GAMES = 17
 K_ATTN_PROJECT_KV = False
 K_ATTN_POSITIONAL_ENCODING = True
-K_ATTN_GATED_FUSION = False
+# Gated fusion is intentionally absent: MultiHeadNetWithNestedHistory does not
+# implement it (only the flat MultiHeadNetWithHistory does), so exposing it
+# here would be a no-op invite to config drift.
 K_ATTN_DROPOUT = 0.05
 K_ATTN_LR = 1e-3
 K_ATTN_WEIGHT_DECAY = 5e-5

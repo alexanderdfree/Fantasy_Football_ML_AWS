@@ -162,9 +162,11 @@ def build_nested_kick_history(
     For each row in `weekly_df`, gathers that kicker's prior-week kicks from
     `kicks_df` (same player_id, same season, `kicks.week < weekly.week`),
     bucketed by prior-game index. Outer dim is game-ordered oldest-first
-    (most recent game in the last real slot); inner dim preserves kick order
-    within each game. Truncation keeps the most recent `max_games` games and
-    the most recent `max_kicks_per_game` kicks per game.
+    (most recent game in the last real slot). Within a game, kicks are sorted
+    by ``play_id`` (PBP's monotonically increasing per-play sequence number)
+    so within-game ordering is deterministic. Truncation keeps the most recent
+    `max_games` games and, within each game, the last `max_kicks_per_game`
+    kicks under the play_id ordering.
 
     Returns:
         X_history:  [n, max_games, max_kicks_per_game, kick_dim] float32, zero-padded
@@ -189,9 +191,12 @@ def build_nested_kick_history(
     if len(kicks_df) == 0:
         return X_history, outer_mask, inner_mask
 
-    kicks_sorted = kicks_df.sort_values(["player_id", "season", "week"], kind="stable").reset_index(
-        drop=True
-    )
+    # play_id is the secondary sort when present (per-attempt ordering within a
+    # game); fall back to whatever original row order kicks_df had if absent.
+    sort_keys = ["player_id", "season", "week"]
+    if "play_id" in kicks_df.columns:
+        sort_keys.append("play_id")
+    kicks_sorted = kicks_df.sort_values(sort_keys, kind="stable").reset_index(drop=True)
     kick_values = kicks_sorted[kick_stats].to_numpy(dtype=np.float32)
     np.nan_to_num(kick_values, copy=False, nan=0.0)
 

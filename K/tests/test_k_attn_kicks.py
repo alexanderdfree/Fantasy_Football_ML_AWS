@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from K.k_config import K_ATTN_KICK_STATS
+from K.k_data import reconstruct_kicker_kicks_from_pbp
 from K.k_features import build_nested_kick_history
 
 
@@ -144,6 +145,31 @@ class TestBuildNestedKickHistory:
         kept = {X[0, 0, 0, distance_idx], X[0, 0, 1, distance_idx]}
         assert kept == {40.0, 50.0}, f"inner truncation kept wrong distances: {kept}"
 
+    def test_inner_truncation_uses_play_id_when_present(self):
+        """play_id is the deterministic within-game sort key. Truncation must
+        keep the highest play_ids (latest kicks of the game), regardless of
+        the row order in kicks_df."""
+        weekly = _weekly("K1", 2023, [2])
+        # Shuffle row order intentionally — sort must rely on play_id, not insertion order.
+        kicks = pd.DataFrame(
+            [
+                _kick("K1", 2023, 1, kick_distance=30.0, play_id=300),  # 3rd
+                _kick("K1", 2023, 1, kick_distance=10.0, play_id=100),  # 1st
+                _kick("K1", 2023, 1, kick_distance=50.0, play_id=500),  # 5th
+                _kick("K1", 2023, 1, kick_distance=20.0, play_id=200),  # 2nd
+                _kick("K1", 2023, 1, kick_distance=40.0, play_id=400),  # 4th
+            ]
+        )
+        X, outer, inner = build_nested_kick_history(
+            weekly, kicks, K_ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
+        )
+        distance_idx = K_ATTN_KICK_STATS.index("kick_distance")
+        # Highest 2 play_ids (400, 500) → distances 40.0 and 50.0
+        kept = {X[0, 0, 0, distance_idx], X[0, 0, 1, distance_idx]}
+        assert kept == {40.0, 50.0}, (
+            f"inner truncation should pick highest-play_id kicks; got {kept}"
+        )
+
     def test_different_players_dont_cross_contaminate(self):
         weekly = _weekly("K1", 2023, [2])
         kicks = pd.DataFrame(
@@ -204,6 +230,30 @@ class TestBuildNestedKickHistory:
             build_nested_kick_history(
                 weekly, kicks, K_ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
             )
+
+
+@pytest.mark.unit
+class TestReconstructKickerKicksFromPbp:
+    def test_empty_seasons_returns_empty_dataframe_with_schema(self):
+        """An empty seasons list must short-circuit cleanly without
+        ``IndexError`` on ``seasons[0]`` and must return the documented schema."""
+        df = reconstruct_kicker_kicks_from_pbp([])
+        assert len(df) == 0
+        for col in (
+            "player_id",
+            "season",
+            "week",
+            "play_id",
+            "is_fg",
+            "is_xp",
+            "kick_distance",
+            "kick_made",
+            "fg_prob",
+            "is_q4",
+            "score_diff",
+            "game_wind",
+        ):
+            assert col in df.columns, f"empty-seasons schema missing {col}"
 
 
 @pytest.mark.unit
