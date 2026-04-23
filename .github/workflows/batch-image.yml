@@ -7,6 +7,11 @@ name: Build & Push Batch Training Image
 on:
   push:
     branches: [main]
+    # Use negations at the end to skip rebuilds when only tests or docs change.
+    # Negative patterns placed later override earlier positive matches, so a
+    # change to QB/tests/foo.py matches QB/** then gets excluded by !**/tests/**.
+    # train-ec2.yml's detect job already strips tests before deciding to
+    # retrain; this just stops us rebuilding the image on the way there.
     paths:
       - "batch/**"
       - "shared/**"
@@ -20,6 +25,8 @@ on:
       - "tune_lgbm.py"
       - "requirements.txt"
       - ".github/workflows/batch-image.yml"
+      - "!**/tests/**"
+      - "!**/*.md"
   workflow_dispatch: {}
 
 env:

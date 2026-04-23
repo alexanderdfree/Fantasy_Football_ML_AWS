@@ -19,7 +19,6 @@ TE_SPECIFIC_FEATURES = [
 # === TE Feature Whitelist ===
 # Explicit include list — new columns must be opted in, preventing silent leakage.
 _TE_ROLLING_STATS = [
-    "fantasy_points",
     "targets",
     "receptions",
     "carries",
@@ -31,26 +30,19 @@ _TE_ROLLING_STATS = [
 TE_INCLUDE_FEATURES = {
     # L3/L8 for all stats; snap_pct also keeps L5.
     # L5 mean/std/max dropped (>0.97 corr with L3/L8) except snap_pct.
-    # min variant only exists for fantasy_points (kept at all windows).
     "rolling": [
-        col
+        f"rolling_{a}_{stat}_L{w}"
         for stat in _TE_ROLLING_STATS
         for w in [3, 5, 8]
-        for col in (
-            (
-                [f"rolling_{a}_{stat}_L{w}" for a in ["mean", "std", "max"]]
-                if w != 5 or stat == "snap_pct"
-                else []
-            )
-            + ([f"rolling_min_{stat}_L{w}"] if stat == "fantasy_points" else [])
-        )
+        for a in ["mean", "std", "max"]
+        if w != 5 or stat == "snap_pct"
     ],
     "prior_season": [
         f"prior_season_{a}_{stat}" for stat in _TE_ROLLING_STATS for a in ["mean", "std", "max"]
     ],
     # All EWMA dropped (>0.98 corr with rolling means)
     "ewma": [],
-    "trend": ["trend_fantasy_points", "trend_targets", "trend_carries", "trend_snap_pct"],
+    "trend": ["trend_targets", "trend_carries", "trend_snap_pct"],
     "share": [
         "target_share_L3",
         "target_share_L5",
@@ -149,7 +141,6 @@ TE_ATTN_MAX_SEQ_LEN = 17
 TE_ATTN_POSITIONAL_ENCODING = True
 TE_ATTN_DROPOUT = 0.0
 TE_ATTN_HISTORY_STATS = [
-    "fantasy_points",
     "receiving_yards",
     "rushing_yards",
     "receiving_tds",
@@ -163,18 +154,40 @@ TE_ATTN_HISTORY_STATS = [
 # branch. The attention branch learns its own temporal representation from
 # TE_ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
 # categories are intentionally excluded to avoid duplicating that signal.
+# ``defense`` is also excluded: TE_OPP_ATTN_HISTORY_STATS feeds the opposing
+# defense's trailing form through a parallel attention branch, which makes
+# the L5 static aggregates redundant for the NN. (They stay in
+# TE_INCLUDE_FEATURES["defense"] so Ridge / LightGBM still see them.)
 TE_ATTN_STATIC_CATEGORIES = [
     "prior_season",
     "matchup",
-    "defense",
     "contextual",
     "weather_vegas",
 ]
 TE_ATTN_STATIC_FEATURES = [c for cat in TE_ATTN_STATIC_CATEGORIES for c in TE_INCLUDE_FEATURES[cat]]
-# Single hurdle gate on receptions. receiving_tds moved off the gated list
-# to plain Poisson NLL (dispersion near 1, no zero-excess).
+
+# Per-game opponent-defense stats fed to the second attention branch. Mirror
+# the L5 static aggregates (opp_def_*_L5) but unrolled per game, so the NN
+# learns the trailing-form weighting itself instead of being handed a fixed
+# 5-game mean. Built by src.features.engineer.build_opp_defense_history_arrays.
+TE_OPP_ATTN_HISTORY_STATS = [
+    "def_sacks",
+    "def_pass_yds_allowed",
+    "def_pass_td_allowed",
+    "def_ints",
+    "def_rush_yds_allowed",
+    "def_pts_allowed",
+]
+TE_OPP_ATTN_MAX_SEQ_LEN = 17
+# Hurdle gate on receptions + BCE gate on receiving_tds. Mirrors the RB
+# "Variant C" config from scripts/ablate_rb_gate.py (see RB/rb_config.py
+# for the ablation table). PR #96 benchmark review flagged a +0.052
+# per-target MAE regression on receiving_tds when the gate came off;
+# restoring the BCE gate brings that back without disturbing the
+# reception hurdle. head_losses keeps receiving_tds on ``poisson_nll``
+# (BCE gate is additive via ``gated_targets``).
 TE_ATTN_GATED = True
-TE_GATED_TARGETS = ["receptions"]
+TE_GATED_TARGETS = ["receptions", "receiving_tds"]
 TE_ATTN_GATE_HIDDEN = 16
 TE_ATTN_GATE_WEIGHT = 1.0
 

@@ -19,7 +19,6 @@ WR_SPECIFIC_FEATURES = [
 # === WR Feature Whitelist ===
 # Explicit include list — new columns must be opted in, preventing silent leakage.
 _WR_ROLLING_STATS = [
-    "fantasy_points",
     "targets",
     "receptions",
     "carries",
@@ -31,26 +30,19 @@ _WR_ROLLING_STATS = [
 WR_INCLUDE_FEATURES = {
     # L3/L8 for all stats; snap_pct also keeps L5.
     # L5 mean/std/max dropped (>0.97 corr with L3/L8) except snap_pct.
-    # min variant only exists for fantasy_points (kept at all windows).
     "rolling": [
-        col
+        f"rolling_{a}_{stat}_L{w}"
         for stat in _WR_ROLLING_STATS
         for w in [3, 5, 8]
-        for col in (
-            (
-                [f"rolling_{a}_{stat}_L{w}" for a in ["mean", "std", "max"]]
-                if w != 5 or stat == "snap_pct"
-                else []
-            )
-            + ([f"rolling_min_{stat}_L{w}"] if stat == "fantasy_points" else [])
-        )
+        for a in ["mean", "std", "max"]
+        if w != 5 or stat == "snap_pct"
     ],
     "prior_season": [
         f"prior_season_{a}_{stat}" for stat in _WR_ROLLING_STATS for a in ["mean", "std", "max"]
     ],
     # All EWMA dropped (>0.98 corr with rolling means)
     "ewma": [],
-    "trend": ["trend_fantasy_points", "trend_targets", "trend_carries", "trend_snap_pct"],
+    "trend": ["trend_targets", "trend_carries", "trend_snap_pct"],
     "share": [
         "target_share_L3",
         "target_share_L5",
@@ -161,7 +153,6 @@ WR_ATTN_MAX_SEQ_LEN = 17
 WR_ATTN_POSITIONAL_ENCODING = True
 WR_ATTN_DROPOUT = 0.0
 WR_ATTN_HISTORY_STATS = [
-    "fantasy_points",
     "receiving_yards",
     "rushing_yards",
     "receiving_tds",
@@ -175,19 +166,43 @@ WR_ATTN_HISTORY_STATS = [
 # branch. The attention branch learns its own temporal representation from
 # WR_ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
 # categories are intentionally excluded to avoid duplicating that signal.
+# ``defense`` is also excluded: WR_OPP_ATTN_HISTORY_STATS feeds the opposing
+# defense's trailing form through a parallel attention branch, which makes
+# the L5 static aggregates redundant for the NN. (They stay in
+# WR_INCLUDE_FEATURES["defense"] so Ridge / LightGBM still see them.)
 WR_ATTN_STATIC_CATEGORIES = [
     "prior_season",
     "matchup",
-    "defense",
     "contextual",
     "weather_vegas",
 ]
 WR_ATTN_STATIC_FEATURES = [c for cat in WR_ATTN_STATIC_CATEGORIES for c in WR_INCLUDE_FEATURES[cat]]
-# Single hurdle gate on receptions (variance/mean ~2.0, zero-excess fits).
-# receiving_tds moved off the gated list to plain Poisson NLL — dispersion
-# ~1.0 on WR TDs, so the hurdle shape was unmotivated there.
+
+# Per-game opponent-defense stats fed to the second attention branch. Mirror
+# the L5 static aggregates (opp_def_*_L5) but unrolled per game, so the NN
+# learns the trailing-form weighting itself instead of being handed a fixed
+# 5-game mean. Built by src.features.engineer.build_opp_defense_history_arrays.
+WR_OPP_ATTN_HISTORY_STATS = [
+    "def_sacks",
+    "def_pass_yds_allowed",
+    "def_pass_td_allowed",
+    "def_ints",
+    "def_rush_yds_allowed",
+    "def_pts_allowed",
+]
+WR_OPP_ATTN_MAX_SEQ_LEN = 17
+# Hurdle gate on receptions + BCE gate on receiving_tds. Matches the
+# "Variant C" config for RB (see RB/rb_config.py for the ablation table).
+# WR doesn't have its own ablation, but the mechanism is target-agnostic:
+# the BCE gate on (y > 0) gives the attention branch per-target access to
+# "did this player score a TD this week?" signal that's otherwise hidden
+# inside the count-mean. The PR #96 benchmark review flagged a +0.049
+# per-target MAE regression on receiving_tds when the gate came off; this
+# restores the gate without disturbing the PR #96 reception hurdle win.
+# head_losses below keeps receiving_tds on ``poisson_nll`` (BCE gate loss
+# is added in addition to the Poisson NLL via ``gated_targets``).
 WR_ATTN_GATED = True
-WR_GATED_TARGETS = ["receptions"]
+WR_GATED_TARGETS = ["receptions", "receiving_tds"]
 WR_ATTN_GATE_HIDDEN = 16
 WR_ATTN_GATE_WEIGHT = 1.0
 

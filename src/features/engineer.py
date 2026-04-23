@@ -245,6 +245,197 @@ def build_game_history_arrays(
     return X_history, history_mask
 
 
+# === Opponent-Defense History Extraction (for second attention branch) ===
+
+# Canonical per-game defensive stats. The attention branch learns the trailing-
+# form signal directly from this sequence; keeping these six mirrors the
+# existing L5 static features so the NN gets an equivalent opponent-defense
+# signal (just unrolled). `def_pts_allowed` is sourced from schedule scores;
+# the rest are aggregated from player rows in the training frame.
+OPP_DEFENSE_HISTORY_STATS = [
+    "def_sacks",
+    "def_pass_yds_allowed",
+    "def_pass_td_allowed",
+    "def_ints",
+    "def_rush_yds_allowed",
+    "def_pts_allowed",
+]
+
+
+def build_opp_defense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate per-(opponent_team, season, week) defensive stats.
+
+    Mirrors the aggregation inside :func:`_build_defense_matchup_features` but
+    returns the *unrolled* per-game frame so it can drive an attention sequence
+    instead of a pre-computed L5 average. `def_pts_allowed` is merged in from
+    the cached schedules parquet so the 6-stat schema matches the L5 feature
+    set column-for-column (minus the ``_L5`` suffix).
+
+    The caller is expected to pass an **all-position** DataFrame — the sacks /
+    pass-yards / rush-yards aggregates sum over every offensive player, so a
+    position-filtered frame would miss contributions from other positions.
+
+    Returns:
+        DataFrame with columns ``opponent_team, season, week`` + the six
+        defensive stats in :data:`OPP_DEFENSE_HISTORY_STATS`.
+    """
+    required = {
+        "opponent_team",
+        "season",
+        "week",
+        "sacks",
+        "passing_yards",
+        "passing_tds",
+        "interceptions",
+        "rushing_yards",
+    }
+    missing = required - set(df.columns)
+    if missing or df["opponent_team"].isna().all():
+        # Return an empty frame with the full schema so callers downstream
+        # degrade gracefully to zero-filled history tensors.
+        return pd.DataFrame(columns=["opponent_team", "season", "week"] + OPP_DEFENSE_HISTORY_STATS)
+
+    def_stats = (
+        df.groupby(["opponent_team", "season", "week"])
+        .agg(
+            def_sacks=("sacks", "sum"),
+            def_pass_yds_allowed=("passing_yards", "sum"),
+            def_pass_td_allowed=("passing_tds", "sum"),
+            def_ints=("interceptions", "sum"),
+            def_rush_yds_allowed=("rushing_yards", "sum"),
+        )
+        .reset_index()
+    )
+
+    # Points allowed — sourced from schedule scores (away_score for the home
+    # team and vice versa). Same pattern as ``_build_defense_matchup_features``.
+    schedules_path = f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    try:
+        schedules = pd.read_parquet(schedules_path)
+    except FileNotFoundError:
+        # Tests and callers without the schedules cache still get the five
+        # player-derived stats; pts_allowed falls back to 0.
+        def_stats["def_pts_allowed"] = 0.0
+        return def_stats[["opponent_team", "season", "week"] + OPP_DEFENSE_HISTORY_STATS]
+
+    schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
+    away_pts = schedules_reg[["season", "week", "away_team", "home_score"]].copy()
+    away_pts.columns = ["season", "week", "team", "def_pts_allowed"]
+    home_pts = schedules_reg[["season", "week", "home_team", "away_score"]].copy()
+    home_pts.columns = ["season", "week", "team", "def_pts_allowed"]
+    pts_allowed = pd.concat([away_pts, home_pts], ignore_index=True).drop_duplicates(
+        subset=["season", "week", "team"]
+    )
+
+    def_stats = def_stats.merge(
+        pts_allowed.rename(columns={"team": "opponent_team"}),
+        on=["opponent_team", "season", "week"],
+        how="left",
+    )
+    def_stats["def_pts_allowed"] = def_stats["def_pts_allowed"].fillna(0.0)
+
+    return def_stats[["opponent_team", "season", "week"] + OPP_DEFENSE_HISTORY_STATS]
+
+
+def build_opp_defense_history_arrays(
+    df: pd.DataFrame,
+    opp_def_per_game: pd.DataFrame,
+    opp_stats: list[str] | None = None,
+    max_seq_len: int = 17,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build per-sample padded arrays of the opponent defense's prior games.
+
+    Analogue of :func:`build_game_history_arrays` but the sequence being
+    gathered is the *opponent defense's* game log instead of the player's own.
+    For each ``(opponent_team, season, week)`` in ``df``, looks up that
+    defense's games in ``opp_def_per_game`` within the same season and
+    strictly before the target week (shift-by-1 equivalent, realised via the
+    ``week_opp < week_target`` filter).
+
+    Args:
+        df: per-sample DataFrame — must contain ``opponent_team``, ``season``,
+            ``week``. Sorted order is not required; results are scattered back
+            to caller row order.
+        opp_def_per_game: frame from :func:`build_opp_defense_per_game_df`;
+            columns ``opponent_team, season, week`` + stat columns.
+        opp_stats: subset of columns in ``opp_def_per_game`` to include per
+            game; defaults to :data:`OPP_DEFENSE_HISTORY_STATS` intersected
+            with the frame's columns.
+        max_seq_len: pad/truncate sequences to this length.
+
+    Returns:
+        ``(X_opp, opp_mask)`` where ``X_opp`` is ``[n, max_seq_len, opp_dim]``
+        float32 (oldest → newest within the sequence) and ``opp_mask`` is
+        ``[n, max_seq_len]`` bool (``True`` = real game).
+    """
+    if opp_stats is None:
+        opp_stats = OPP_DEFENSE_HISTORY_STATS
+    # Intersect with the lookup frame to stay robust to missing columns — same
+    # convention as build_game_history_arrays.
+    opp_stats = [s for s in opp_stats if s in opp_def_per_game.columns]
+    opp_dim = len(opp_stats)
+
+    n = len(df)
+    X_opp = np.zeros((n, max_seq_len, opp_dim), dtype=np.float32)
+    opp_mask = np.zeros((n, max_seq_len), dtype=bool)
+
+    if n == 0 or opp_dim == 0 or len(opp_def_per_game) == 0:
+        return X_opp, opp_mask
+
+    # Pre-sort the lookup frame so per-(team, season) slices are already in
+    # chronological order. One sort avoids an O(n·log n) cost per sample.
+    lookup = opp_def_per_game.sort_values(["opponent_team", "season", "week"]).reset_index(
+        drop=True
+    )
+    # (opp_team, season) -> contiguous index range into the sorted lookup.
+    groups: dict[tuple, tuple[int, np.ndarray, np.ndarray]] = {}
+    team_arr = lookup["opponent_team"].to_numpy()
+    season_arr = lookup["season"].to_numpy()
+    week_arr = lookup["week"].to_numpy()
+    stat_arr = lookup[opp_stats].to_numpy(dtype=np.float32)
+    for idx in range(len(lookup)):
+        key = (team_arr[idx], season_arr[idx])
+        slot = groups.get(key)
+        if slot is None:
+            groups[key] = (idx, idx + 1)
+        else:
+            start, _ = slot
+            groups[key] = (start, idx + 1)
+
+    df_opp = df["opponent_team"].to_numpy()
+    df_season = df["season"].to_numpy()
+    df_week = df["week"].to_numpy()
+
+    for row_idx in range(n):
+        key = (df_opp[row_idx], df_season[row_idx])
+        slot = groups.get(key)
+        if slot is None:
+            continue
+        start, end = slot
+        # Prior games = rows in (start, end) whose week is strictly less than
+        # target week. `week_arr` is sorted within the group, so the upper bound
+        # is found by a linear walk (seasons cap at ~17 weeks; no need for bisect).
+        take_end = start
+        target_week = df_week[row_idx]
+        while take_end < end and week_arr[take_end] < target_week:
+            take_end += 1
+        seq_len = take_end - start
+        if seq_len <= 0:
+            continue
+        if seq_len > max_seq_len:
+            # Keep the MOST RECENT max_seq_len games (drop oldest), same
+            # semantics as build_game_history_arrays' tail-take.
+            slice_start = take_end - max_seq_len
+            seq_len = max_seq_len
+        else:
+            slice_start = start
+        X_opp[row_idx, :seq_len] = stat_arr[slice_start:take_end]
+        opp_mask[row_idx, :seq_len] = True
+
+    np.nan_to_num(X_opp, copy=False, nan=0.0)
+    return X_opp, opp_mask
+
+
 def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     """Build opponent/matchup features."""
     # Determine opponent from schedule or opponent_team column

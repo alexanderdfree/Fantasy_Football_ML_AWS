@@ -3,6 +3,19 @@ name: Deploy to ECS
 on:
   push:
     branches: [main]
+    # Only redeploy Flask when the serving surface actually changes. Training-
+    # only edits (batch/**, QB/qb_config.py, etc.) don't need a new task
+    # revision. shared/** is in because app.py imports from it; if that ever
+    # splits into shared/serving/ vs shared/training/, narrow this filter.
+    paths:
+      - "app.py"
+      - "templates/**"
+      - "static/**"
+      - "src/**"
+      - "shared/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - ".github/workflows/deploy.yml"
 
 env:
   AWS_REGION: us-east-1

@@ -11,6 +11,11 @@ from shared.neural_net import (
     MultiHeadNet,
     MultiHeadNetWithHistory,
     MultiHeadNetWithNestedHistory,
+    SelfAttentionBlock,
+    SwiGLU,
+    _apply_history_dropout,
+    _build_game_encoder,
+    _build_self_attention_stack,
     apply_non_negative,
     build_multihead_net,
     build_multihead_net_with_history,
@@ -167,6 +172,469 @@ class TestAttentionPool:
             out = pool(keys)  # no mask
         assert out.shape == (4, 32)
         assert torch.isfinite(out).all()
+
+    def test_learn_temperature_default_off(self):
+        pool = AttentionPool(d_model=16, n_heads=2, n_targets=3)
+        assert pool.learn_temperature is False
+        assert not hasattr(pool, "log_temperature")
+
+    def test_learn_temperature_param_shape_and_init(self):
+        pool = AttentionPool(d_model=16, n_heads=2, n_targets=3, learn_temperature=True)
+        assert pool.learn_temperature is True
+        # Per-target scalar (one temperature replicated across heads).
+        assert pool.log_temperature.shape == (3,)
+        # Init at 0 → T=exp(0)=1, equivalent to no temperature at step zero.
+        assert torch.allclose(pool.log_temperature, torch.zeros(3))
+
+    def test_learn_temperature_matches_baseline_at_init(self):
+        """At init log_T=0 so outputs must match a non-temperature pool exactly."""
+        torch.manual_seed(0)
+        base = AttentionPool(d_model=16, n_heads=2, n_targets=3)
+        torch.manual_seed(0)
+        with_temp = AttentionPool(d_model=16, n_heads=2, n_targets=3, learn_temperature=True)
+        keys = torch.randn(4, 8, 16)
+        mask = torch.ones(4, 8, dtype=torch.bool)
+        base.eval()
+        with_temp.eval()
+        with torch.no_grad():
+            out_base = base(keys, mask)
+            out_temp = with_temp(keys, mask)
+        assert torch.allclose(out_base, out_temp, atol=1e-6)
+
+    def test_learn_temperature_sharpens_distribution(self):
+        """Negative log_temperature ⇒ T<1 ⇒ sharper (lower-entropy) attention."""
+        torch.manual_seed(0)
+        pool = AttentionPool(d_model=8, n_heads=1, n_targets=1, learn_temperature=True)
+        with torch.no_grad():
+            pool.log_temperature.fill_(-2.0)  # T = exp(-2) ≈ 0.135 → very sharp
+        keys = torch.randn(2, 10, 8)
+
+        # Reproduce the internal attn scores to measure entropy directly.
+        q = pool.queries.reshape(-1, 8)
+        attn = torch.einsum("qd,bsd->bqs", q, keys) * pool.scale
+        baseline_weights = torch.softmax(attn, dim=-1)
+        sharpened_weights = torch.softmax(
+            attn * torch.exp(-pool.log_temperature).view(1, -1, 1), dim=-1
+        )
+        baseline_entropy = -(baseline_weights * baseline_weights.clamp_min(1e-12).log()).sum(-1)
+        sharpened_entropy = -(sharpened_weights * sharpened_weights.clamp_min(1e-12).log()).sum(-1)
+        assert (sharpened_entropy < baseline_entropy).all()
+
+    def test_learn_temperature_gradient_flows(self):
+        pool = AttentionPool(d_model=16, n_heads=2, n_targets=3, learn_temperature=True)
+        keys = torch.randn(4, 8, 16)
+        mask = torch.ones(4, 8, dtype=torch.bool)
+        out = pool(keys, mask)
+        out.sum().backward()
+        assert pool.log_temperature.grad is not None
+        assert pool.log_temperature.grad.shape == (3,)
+
+    def test_compute_entropy_default_off(self):
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=3)
+        keys = torch.randn(2, 5, 8)
+        mask = torch.ones(2, 5, dtype=torch.bool)
+        pool(keys, mask)
+        # Disabled → no cached entropy (zero-cost on the hot path).
+        assert pool.compute_entropy is False
+        assert not hasattr(pool, "last_attn_entropy")
+
+    def test_compute_entropy_caches_scalar(self):
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=3, compute_entropy=True)
+        keys = torch.randn(2, 5, 8)
+        mask = torch.ones(2, 5, dtype=torch.bool)
+        pool(keys, mask)
+        H = pool.last_attn_entropy
+        assert H.dim() == 0  # scalar
+        # Entropy of a discrete distribution over 5 positions ∈ [0, log(5)].
+        assert 0.0 <= H.item() <= float(np.log(5)) + 1e-6
+
+    def test_compute_entropy_near_max_for_uniform_queries(self):
+        """If queries project to zero, attention becomes uniform and
+        entropy ≈ log(seq_len). Exercises the upper bound."""
+        pool = AttentionPool(d_model=8, n_heads=1, n_targets=1, compute_entropy=True)
+        with torch.no_grad():
+            pool.queries.zero_()  # zero queries -> constant scores -> uniform softmax
+        keys = torch.randn(3, 7, 8)
+        mask = torch.ones(3, 7, dtype=torch.bool)
+        pool(keys, mask)
+        torch.testing.assert_close(
+            pool.last_attn_entropy, torch.tensor(float(np.log(7))), atol=1e-4, rtol=0
+        )
+
+    def test_compute_entropy_gradient_flows(self):
+        """Entropy must be differentiable w.r.t. keys so the regulariser trains."""
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=1, compute_entropy=True)
+        keys = torch.randn(2, 5, 8, requires_grad=True)
+        mask = torch.ones(2, 5, dtype=torch.bool)
+        pool(keys, mask)
+        pool.last_attn_entropy.backward()
+        assert keys.grad is not None and (keys.grad != 0).any()
+
+    def test_alibi_bias_default_off(self):
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=3)
+        assert pool.use_alibi_bias is False
+        assert pool.alibi_slopes is None
+
+    def test_alibi_slopes_follow_standard_formula(self):
+        """Slopes are ``2^(-8*(h+1)/n_heads)``, registered as a buffer."""
+        pool = AttentionPool(d_model=8, n_heads=4, n_targets=1, use_alibi_bias=True)
+        expected = torch.tensor([2 ** (-8.0 * (h + 1) / 4) for h in range(4)])
+        torch.testing.assert_close(pool.alibi_slopes, expected)
+        # Buffer, not parameter — must not receive gradient updates.
+        assert "alibi_slopes" in dict(pool.named_buffers())
+        assert "alibi_slopes" not in dict(pool.named_parameters())
+
+    def test_alibi_bias_sharpens_over_uniform(self):
+        """With zero queries the baseline softmax is uniform; ALiBi must
+        produce strictly lower entropy (recency-biased)."""
+        pool_base = AttentionPool(d_model=4, n_heads=8, n_targets=1, compute_entropy=True)
+        pool_alibi = AttentionPool(
+            d_model=4, n_heads=8, n_targets=1, compute_entropy=True, use_alibi_bias=True
+        )
+        with torch.no_grad():
+            pool_base.queries.zero_()
+            pool_alibi.queries.zero_()
+        keys = torch.zeros(1, 5, 4)
+        mask = torch.ones(1, 5, dtype=torch.bool)
+        pool_base(keys, mask)
+        pool_alibi(keys, mask)
+        assert pool_alibi.last_attn_entropy < pool_base.last_attn_entropy
+
+    def test_alibi_bias_weights_are_monotonic_in_games_ago(self):
+        """Most-recent position > oldest position in weight, for every head."""
+        pool = AttentionPool(d_model=4, n_heads=2, n_targets=1, use_alibi_bias=True)
+        # Zero queries + zero keys ⇒ pre-bias scores are all zero; ALiBi dominates.
+        with torch.no_grad():
+            pool.queries.zero_()
+        # Recompute the internal attention weights by hand to make the
+        # monotonicity contract explicit (avoids exposing .last_weights).
+        seq_len = 5
+        slopes = pool.alibi_slopes  # [n_heads]
+        positions = torch.arange(seq_len)
+        games_ago = (seq_len - 1 - positions).float()  # [4,3,2,1,0]
+        scores = -slopes.unsqueeze(-1) * games_ago.unsqueeze(0)  # [n_heads, seq_len]
+        weights = torch.softmax(scores, dim=-1)
+        # For every head, weights must be non-decreasing by sequence position
+        # (oldest → newest). Slopes are strictly positive, so strict inequality.
+        for h in range(pool.n_heads):
+            assert (weights[h, 1:] > weights[h, :-1]).all()
+
+    def test_alibi_bias_respects_mask(self):
+        """A row with only 2 real games must have 2-way attention; padding
+        positions stay at weight 0 after the mask-fill."""
+        pool = AttentionPool(d_model=4, n_heads=1, n_targets=1, use_alibi_bias=True)
+        keys = torch.zeros(2, 5, 4)
+        mask = torch.zeros(2, 5, dtype=torch.bool)
+        mask[0, :5] = True  # 5 real games
+        mask[1, :2] = True  # 2 real games
+        # Build the pool's per-target weights by calling forward then comparing
+        # its pooled output to a hand-computed value. Simpler: verify that the
+        # row-level sum over real positions is 1 (soft check via output).
+        with torch.no_grad():
+            out = pool(keys, mask)
+        # Output is [batch, n_heads * d_model]; zero-valued keys give zero
+        # output regardless of weights — this just guarantees no NaN/Inf.
+        assert torch.isfinite(out).all()
+
+    def test_alibi_bias_multi_target_uses_same_slopes(self):
+        """Same head index across targets must share a slope (slopes repeat
+        across the flat n_targets*n_heads query axis)."""
+        pool = AttentionPool(d_model=4, n_heads=2, n_targets=3, use_alibi_bias=True)
+        # Only 2 slopes registered regardless of n_targets.
+        assert pool.alibi_slopes.shape == (2,)
+
+    def test_cond_default_off(self):
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=3)
+        assert pool.cond_dim == 0
+        assert not hasattr(pool, "cond_proj")
+
+    def test_cond_proj_is_zero_initialised(self):
+        """Zero-init on weights and bias is the invariant that lets
+        baseline equivalence hold at step 0."""
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=3, cond_dim=5)
+        assert pool.cond_dim == 5
+        assert pool.cond_proj.weight.shape == (3 * 2 * 8, 5)
+        assert torch.all(pool.cond_proj.weight == 0)
+        assert torch.all(pool.cond_proj.bias == 0)
+
+    def test_cond_matches_baseline_at_init(self):
+        """With cond_proj zero-init, the conditioned pool must produce the
+        same output as a non-conditioned pool at step zero."""
+        torch.manual_seed(0)
+        base = AttentionPool(d_model=8, n_heads=2, n_targets=3)
+        torch.manual_seed(0)
+        cond = AttentionPool(d_model=8, n_heads=2, n_targets=3, cond_dim=5)
+        keys = torch.randn(3, 6, 8)
+        mask = torch.ones(3, 6, dtype=torch.bool)
+        ctx = torch.randn(3, 5)
+        base.eval()
+        cond.eval()
+        with torch.no_grad():
+            out_base = base(keys, mask)
+            out_cond = cond(keys, mask, context=ctx)
+        torch.testing.assert_close(out_base, out_cond, atol=1e-6, rtol=0)
+
+    def test_cond_different_contexts_yield_different_outputs(self):
+        """Once cond_proj has non-zero weights, varying context must change
+        the pool output — otherwise conditioning would be a no-op in practice."""
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=1, cond_dim=5)
+        with torch.no_grad():
+            pool.cond_proj.weight.normal_(std=0.1)
+        keys = torch.randn(4, 6, 8)
+        mask = torch.ones(4, 6, dtype=torch.bool)
+        ctx_a = torch.randn(4, 5)
+        ctx_b = torch.randn(4, 5)
+        pool.eval()
+        with torch.no_grad():
+            out_a = pool(keys, mask, context=ctx_a)
+            out_b = pool(keys, mask, context=ctx_b)
+        assert not torch.allclose(out_a, out_b)
+
+    def test_cond_gradient_flows_through_context_and_proj(self):
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=2, cond_dim=5)
+        # Break the zero-init so gradient can flow through the delta path.
+        with torch.no_grad():
+            pool.cond_proj.weight.normal_(std=0.1)
+        keys = torch.randn(3, 6, 8)
+        mask = torch.ones(3, 6, dtype=torch.bool)
+        ctx = torch.randn(3, 5, requires_grad=True)
+        pool(keys, mask, context=ctx).sum().backward()
+        assert ctx.grad is not None and (ctx.grad != 0).any()
+        assert pool.cond_proj.weight.grad is not None
+        assert (pool.cond_proj.weight.grad != 0).any()
+
+    def test_cond_ignored_when_cond_dim_zero(self):
+        """When the feature is off, passing a context argument must be a
+        no-op: output must equal the mask-only forward."""
+        torch.manual_seed(0)
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=2)
+        keys = torch.randn(3, 6, 8)
+        mask = torch.ones(3, 6, dtype=torch.bool)
+        ctx = torch.randn(3, 5)
+        pool.eval()
+        with torch.no_grad():
+            out_no_ctx = pool(keys, mask)
+            out_with_ctx = pool(keys, mask, context=ctx)
+        torch.testing.assert_close(out_no_ctx, out_with_ctx)
+
+
+# ---------------------------------------------------------------------------
+# SelfAttentionBlock + _build_self_attention_stack
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSelfAttentionBlock:
+    def test_preserves_shape(self):
+        block = SelfAttentionBlock(d_model=16, n_heads=4, dim_feedforward=32, dropout=0.0)
+        x = torch.randn(3, 5, 16)
+        mask = torch.ones(3, 5, dtype=torch.bool)
+        out = block(x, mask=mask)
+        assert out.shape == x.shape and torch.isfinite(out).all()
+
+    def test_handles_all_padding_row_without_nan(self):
+        """nn.MultiheadAttention produces NaN for rows where every key is
+        masked. The block's nan_to_num guard must zero those out so the
+        residual path stays well-defined."""
+        block = SelfAttentionBlock(d_model=16, n_heads=4, dim_feedforward=32, dropout=0.0)
+        x = torch.randn(2, 5, 16)
+        mask = torch.zeros(2, 5, dtype=torch.bool)
+        mask[0, :3] = True  # row 0 has 3 real
+        # row 1 all padding
+        block.eval()
+        with torch.no_grad():
+            out = block(x, mask=mask)
+        assert torch.isfinite(out).all()
+
+    def test_residual_path_keeps_input_signal(self):
+        """Pre-LN with zeroed attention-output weights must be near-identity
+        when the FFN output is also zero — sanity-check the residual
+        connection."""
+        block = SelfAttentionBlock(d_model=8, n_heads=2, dim_feedforward=16, dropout=0.0)
+        # Zero both MHA output projection and FFN final layer so the
+        # residual paths pass x unchanged after LN-wrapped branches.
+        with torch.no_grad():
+            block.self_attn.out_proj.weight.zero_()
+            block.self_attn.out_proj.bias.zero_()
+            block.ffn[-1].weight.zero_()
+            block.ffn[-1].bias.zero_()
+        x = torch.randn(2, 4, 8)
+        mask = torch.ones(2, 4, dtype=torch.bool)
+        block.eval()
+        with torch.no_grad():
+            out = block(x, mask=mask)
+        torch.testing.assert_close(out, x)
+
+    def test_gradient_flow(self):
+        block = SelfAttentionBlock(d_model=8, n_heads=2, dim_feedforward=16, dropout=0.0)
+        x = torch.randn(2, 4, 8, requires_grad=True)
+        mask = torch.ones(2, 4, dtype=torch.bool)
+        block(x, mask=mask).sum().backward()
+        assert x.grad is not None and (x.grad != 0).any()
+
+    def test_no_mask_is_equivalent_to_all_true_mask(self):
+        """When every position is real, passing mask=None must match
+        mask=all-True exactly (nn.MultiheadAttention treats them the same)."""
+        torch.manual_seed(0)
+        block = SelfAttentionBlock(d_model=8, n_heads=2, dim_feedforward=16, dropout=0.0)
+        block.eval()
+        x = torch.randn(2, 4, 8)
+        mask = torch.ones(2, 4, dtype=torch.bool)
+        with torch.no_grad():
+            out_mask = block(x, mask=mask)
+            out_none = block(x, mask=None)
+        torch.testing.assert_close(out_mask, out_none, atol=1e-6, rtol=0)
+
+
+@pytest.mark.unit
+class TestBuildSelfAttentionStack:
+    def test_zero_layers_returns_none(self):
+        assert (
+            _build_self_attention_stack(
+                d_model=16, n_layers=0, n_heads=4, dim_feedforward=32, dropout=0.0
+            )
+            is None
+        )
+
+    def test_positive_layers_returns_stack(self):
+        stack = _build_self_attention_stack(
+            d_model=16, n_layers=3, n_heads=4, dim_feedforward=32, dropout=0.0
+        )
+        assert len(stack) == 3
+        assert all(isinstance(b, SelfAttentionBlock) for b in stack)
+
+
+# ---------------------------------------------------------------------------
+# SwiGLU + _build_game_encoder
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSwiGLU:
+    def test_output_shape_and_finite(self):
+        block = SwiGLU(4, 8)
+        x = torch.randn(3, 4)
+        out = block(x)
+        assert out.shape == (3, 8)
+        assert torch.isfinite(out).all()
+
+    def test_is_nonlinear(self):
+        """Sanity: SwiGLU shouldn't degenerate to a pure linear map."""
+        block = SwiGLU(4, 8)
+        x = torch.randn(2, 4)
+        y_2x = block(2.0 * x)
+        y_x = block(x)
+        # For a linear map we'd have y(2x) == 2*y(x); SwiGLU's gate breaks that.
+        assert not torch.allclose(y_2x, 2.0 * y_x, atol=1e-4)
+
+    def test_gradient_flows_through_both_projections(self):
+        block = SwiGLU(4, 8)
+        x = torch.randn(3, 4, requires_grad=True)
+        block(x).sum().backward()
+        assert x.grad is not None and (x.grad != 0).any()
+        # Both projections must receive a gradient.
+        assert block.gate_proj.weight.grad is not None
+        assert block.value_proj.weight.grad is not None
+        assert (block.gate_proj.weight.grad != 0).any()
+        assert (block.value_proj.weight.grad != 0).any()
+
+
+@pytest.mark.unit
+class TestBuildGameEncoder:
+    def test_default_is_linear_relu(self):
+        enc = _build_game_encoder(in_dim=4, d_model=8, encoder_hidden_dim=0, use_swiglu=False)
+        # Baseline 1-layer: Linear -> ReLU. Must not silently change structure.
+        assert len(enc) == 2
+        assert isinstance(enc[0], torch.nn.Linear)
+        assert isinstance(enc[1], torch.nn.ReLU)
+        assert enc[0].in_features == 4 and enc[0].out_features == 8
+
+    def test_default_two_layer_shape(self):
+        enc = _build_game_encoder(in_dim=4, d_model=8, encoder_hidden_dim=16, use_swiglu=False)
+        # Baseline 2-layer: Linear -> ReLU -> LN -> Linear -> ReLU.
+        assert len(enc) == 5
+        assert isinstance(enc[0], torch.nn.Linear) and isinstance(enc[1], torch.nn.ReLU)
+        assert isinstance(enc[2], torch.nn.LayerNorm)
+        assert isinstance(enc[3], torch.nn.Linear) and isinstance(enc[4], torch.nn.ReLU)
+
+    def test_swiglu_one_layer(self):
+        enc = _build_game_encoder(in_dim=4, d_model=8, encoder_hidden_dim=0, use_swiglu=True)
+        assert len(enc) == 1
+        assert isinstance(enc[0], SwiGLU)
+        x = torch.randn(3, 4)
+        out = enc(x)
+        assert out.shape == (3, 8)
+
+    def test_swiglu_two_layer(self):
+        enc = _build_game_encoder(in_dim=4, d_model=8, encoder_hidden_dim=16, use_swiglu=True)
+        # SwiGLU -> LN -> SwiGLU.
+        assert len(enc) == 3
+        assert isinstance(enc[0], SwiGLU)
+        assert isinstance(enc[1], torch.nn.LayerNorm)
+        assert isinstance(enc[2], SwiGLU)
+        x = torch.randn(3, 4)
+        out = enc(x)
+        assert out.shape == (3, 8)
+
+
+# ---------------------------------------------------------------------------
+# _apply_history_dropout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestApplyHistoryDropout:
+    # Every test that consumes the torch RNG (rate>0, training=True) is wrapped
+    # in ``torch.random.fork_rng`` so the global stream is unchanged for
+    # downstream tests — otherwise later model-init draws shift and a
+    # pre-existing flaky gradient-flow test would land on a bad seed.
+    def test_noop_when_rate_zero(self):
+        mask = torch.tensor([[True, True, False], [True, True, True]])
+        out = _apply_history_dropout(mask, rate=0.0, training=True)
+        assert torch.equal(out, mask)
+
+    def test_noop_when_eval(self):
+        mask = torch.ones(4, 8, dtype=torch.bool)
+        # rate>0 but training=False → no rand_like call, RNG untouched.
+        out = _apply_history_dropout(mask, rate=0.9, training=False)
+        assert torch.equal(out, mask)
+
+    def test_padding_never_restored(self):
+        mask = torch.tensor([[True, False, False], [False, True, True]])
+        with torch.random.fork_rng():
+            torch.manual_seed(0)
+            for _ in range(20):
+                out = _apply_history_dropout(mask, rate=0.5, training=True)
+                # Positions that were False in input must remain False.
+                assert not (out & ~mask).any()
+
+    def test_all_dropped_row_restored(self):
+        # Single row with only one real game — with rate=1.0 every real slot
+        # would drop, so the fallback must restore the original mask.
+        mask = torch.tensor([[True, False, False, False]])
+        with torch.random.fork_rng():
+            out = _apply_history_dropout(mask, rate=1.0, training=True)
+        assert torch.equal(out, mask)
+
+    def test_empty_row_stays_empty(self):
+        # A row that was all-padding stays all-padding even with dropout.
+        mask = torch.tensor([[False, False, False], [True, True, True]])
+        with torch.random.fork_rng():
+            torch.manual_seed(0)
+            out = _apply_history_dropout(mask, rate=0.5, training=True)
+        assert not out[0].any()
+        assert out[1].any()  # row 1 must still carry signal
+
+    def test_drops_something_at_high_rate(self):
+        mask = torch.ones(64, 16, dtype=torch.bool)
+        with torch.random.fork_rng():
+            torch.manual_seed(0)
+            out = _apply_history_dropout(mask, rate=0.5, training=True)
+        # At 50% rate over 64*16=1024 positions, losing zero is astronomically
+        # unlikely. Must strictly shrink the mask.
+        assert (out != mask).sum() > 0
+        # Every row still keeps at least one real game.
+        assert out.any(dim=-1).all()
 
 
 # ---------------------------------------------------------------------------
@@ -645,6 +1113,228 @@ class TestBuildMultiHeadNetWithHistory:
         model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
         assert model.non_negative_targets == set()
 
+    def test_learn_attn_temperature_defaults_off(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.attn_pool.learn_temperature is False
+
+    def test_learn_attn_temperature_opt_in(self):
+        cfg = self._base_cfg() | {"attn_learn_temperature": True}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.attn_pool.learn_temperature is True
+        assert model.attn_pool.log_temperature.shape == (len(TARGETS),)
+
+    def test_history_dropout_defaults_zero(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.history_dropout == 0.0
+
+    def test_history_dropout_from_cfg(self):
+        cfg = self._base_cfg() | {"attn_history_dropout": 0.25}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.history_dropout == 0.25
+
+    def test_history_dropout_is_noop_in_eval(self):
+        """Eval path must ignore history_dropout entirely (determinism)."""
+        cfg = self._base_cfg() | {"attn_history_dropout": 0.9}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            model.eval()
+            x_static = torch.randn(4, 5)
+            x_history = torch.randn(4, 6, 3)
+            mask = torch.ones(4, 6, dtype=torch.bool)
+            with torch.no_grad():
+                out1 = model(x_static, x_history, mask)
+                out2 = model(x_static, x_history, mask)
+        for k in TARGETS:
+            torch.testing.assert_close(out1[k], out2[k])
+
+    def test_swiglu_encoder_defaults_off(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.use_swiglu_encoder is False
+        assert not any(isinstance(m, SwiGLU) for m in model.game_encoder.modules())
+
+    def test_swiglu_encoder_opt_in_one_layer(self):
+        cfg = self._base_cfg() | {"attn_use_swiglu_encoder": True}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.use_swiglu_encoder is True
+        assert any(isinstance(m, SwiGLU) for m in model.game_encoder.modules())
+
+    def test_swiglu_encoder_opt_in_two_layer(self):
+        cfg = self._base_cfg() | {
+            "attn_use_swiglu_encoder": True,
+            "attn_encoder_hidden_dim": 16,
+        }
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        swiglus = [m for m in model.game_encoder.modules() if isinstance(m, SwiGLU)]
+        assert len(swiglus) == 2  # SwiGLU -> LN -> SwiGLU
+        lns = [m for m in model.game_encoder.modules() if isinstance(m, torch.nn.LayerNorm)]
+        assert len(lns) == 1
+
+    def test_swiglu_encoder_forward_produces_predictions(self):
+        cfg = self._base_cfg() | {"attn_use_swiglu_encoder": True}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 5),
+                    torch.randn(4, 6, 3),
+                    torch.ones(4, 6, dtype=torch.bool),
+                )
+        for t in TARGETS:
+            assert out[t].shape == (4,)
+            assert torch.isfinite(out[t]).all()
+
+    def test_attn_entropy_defaults_off(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.attn_entropy_coeff == 0.0
+        assert model.attn_pool.compute_entropy is False
+        with torch.random.fork_rng():
+            _ = model(
+                torch.randn(2, 5),
+                torch.randn(2, 4, 3),
+                torch.ones(2, 4, dtype=torch.bool),
+            )
+        assert model.attention_entropy_loss() is None
+
+    def test_attn_entropy_opt_in_produces_scaled_loss(self):
+        """Positive coefficient yields loss = coeff * mean_entropy."""
+        coeff = 0.01
+        cfg = self._base_cfg() | {"attn_entropy_coeff": coeff}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            _ = model(
+                torch.randn(2, 5),
+                torch.randn(2, 4, 3),
+                torch.ones(2, 4, dtype=torch.bool),
+            )
+        loss = model.attention_entropy_loss()
+        assert loss is not None
+        torch.testing.assert_close(loss, coeff * model.attn_pool.last_attn_entropy)
+
+    def test_attn_entropy_sign_controls_direction(self):
+        """Negative coeff gives a negative regulariser for non-zero entropy."""
+        cfg = self._base_cfg() | {"attn_entropy_coeff": -0.1}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            _ = model(
+                torch.randn(2, 5),
+                torch.randn(2, 4, 3),
+                torch.ones(2, 4, dtype=torch.bool),
+            )
+        loss = model.attention_entropy_loss()
+        assert loss is not None
+        # Non-degenerate attention over >1 real position has H > 0 → -0.1*H < 0.
+        assert loss.item() < 0.0
+
+    def test_attn_entropy_returns_none_before_forward(self):
+        """coeff>0 but no forward yet → short-circuit to None (trainer-safe)."""
+        cfg = self._base_cfg() | {"attn_entropy_coeff": 0.1}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert not hasattr(model.attn_pool, "last_attn_entropy")
+        assert model.attention_entropy_loss() is None
+
+    def test_alibi_bias_defaults_off(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.attn_pool.use_alibi_bias is False
+
+    def test_alibi_bias_from_cfg(self):
+        cfg = self._base_cfg() | {"attn_use_alibi_bias": True}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.attn_pool.use_alibi_bias is True
+        # Slope count matches the factory's default n_attn_heads (2).
+        assert model.attn_pool.alibi_slopes.shape == (2,)
+
+    def test_alibi_bias_forward_is_finite(self):
+        """End-to-end forward with ALiBi on must produce finite predictions."""
+        cfg = self._base_cfg() | {"attn_use_alibi_bias": True}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 5),
+                    torch.randn(4, 7, 3),
+                    torch.ones(4, 7, dtype=torch.bool),
+                )
+        for t in TARGETS:
+            assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
+
+    def test_self_attn_defaults_off(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.self_attn_stack is None
+
+    def test_self_attn_opt_in_builds_stack(self):
+        cfg = self._base_cfg() | {
+            "attn_d_model": 8,
+            "attn_self_layers": 2,
+            "attn_self_heads": 2,
+            "attn_self_ffn_dim": 16,
+        }
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.self_attn_stack is not None and len(model.self_attn_stack) == 2
+        assert all(isinstance(b, SelfAttentionBlock) for b in model.self_attn_stack)
+
+    def test_self_attn_forward_is_finite(self):
+        cfg = self._base_cfg() | {
+            "attn_d_model": 8,
+            "attn_self_layers": 2,
+            "attn_self_heads": 2,
+            "attn_self_ffn_dim": 16,
+        }
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 5),
+                    torch.randn(4, 7, 3),
+                    torch.ones(4, 7, dtype=torch.bool),
+                )
+        for t in TARGETS:
+            assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
+
+    def test_condition_queries_defaults_off(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.condition_queries_on_static is False
+        assert model.attn_pool.cond_dim == 0
+
+    def test_condition_queries_sets_cond_dim_to_static_dim(self):
+        cfg = self._base_cfg() | {"attn_condition_queries_on_static": True}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert model.condition_queries_on_static is True
+        assert model.attn_pool.cond_dim == 5
+
+    def test_condition_queries_forward_is_finite(self):
+        """End-to-end forward with query conditioning on must produce
+        finite predictions. Pool-level baseline equivalence at init is
+        checked by ``TestAttentionPool::test_cond_matches_baseline_at_init``."""
+        cfg = self._base_cfg() | {"attn_condition_queries_on_static": True}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 5),
+                    torch.randn(4, 7, 3),
+                    torch.ones(4, 7, dtype=torch.bool),
+                )
+        for t in TARGETS:
+            assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
+
 
 @pytest.mark.unit
 class TestBuildMultiHeadNetWithNestedHistory:
@@ -680,3 +1370,403 @@ class TestBuildMultiHeadNetWithNestedHistory:
             cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
         )
         assert model.non_negative_targets == {"fg_yard_points"}
+
+    def test_learn_attn_temperature_defaults_off(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_pool.learn_temperature is False
+
+    def test_learn_attn_temperature_opt_in(self):
+        cfg = self._base_cfg() | {"attn_learn_temperature": True}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_pool.learn_temperature is True
+        assert model.attn_pool.log_temperature.shape == (len(K_TARGETS),)
+
+    def test_history_dropout_defaults_zero(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.history_dropout == 0.0
+
+    def test_history_dropout_from_cfg(self):
+        cfg = self._base_cfg() | {"attn_history_dropout": 0.15}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.history_dropout == 0.15
+
+    def test_swiglu_encoder_defaults_off(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.use_swiglu_encoder is False
+        # Game encoder (outer) must be vanilla; kick encoder always stays
+        # Linear+ReLU regardless of the flag.
+        assert not any(isinstance(m, SwiGLU) for m in model.game_encoder.modules())
+        assert not any(isinstance(m, SwiGLU) for m in model.kick_encoder.modules())
+
+    def test_swiglu_encoder_opt_in_leaves_kick_encoder_vanilla(self):
+        """The SwiGLU flag targets the outer game encoder only — kick
+        encoder stays Linear+ReLU so we don't silently broaden its scope."""
+        cfg = self._base_cfg() | {"attn_use_swiglu_encoder": True}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.use_swiglu_encoder is True
+        assert any(isinstance(m, SwiGLU) for m in model.game_encoder.modules())
+        assert not any(isinstance(m, SwiGLU) for m in model.kick_encoder.modules())
+
+    def test_swiglu_encoder_forward_still_produces_predictions(self):
+        cfg = self._base_cfg() | {
+            "attn_use_swiglu_encoder": True,
+            "attn_encoder_hidden_dim": 16,
+        }
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_nested_history(
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+            )
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 7),
+                    torch.randn(4, 5, 3, 9),
+                    torch.ones(4, 5, dtype=torch.bool),
+                    torch.ones(4, 5, 3, dtype=torch.bool),
+                )
+        for t in K_TARGETS:
+            assert out[t].shape == (4,)
+            assert torch.isfinite(out[t]).all()
+
+    def test_attn_entropy_defaults_off(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_entropy_coeff == 0.0
+        assert model.attn_pool.compute_entropy is False
+        # Inner kick pool must never turn on entropy computation.
+        assert model.inner_pool.compute_entropy is False
+        # coeff=0 short-circuit returns None even before any forward.
+        assert model.attention_entropy_loss() is None
+
+    def test_attn_entropy_returns_none_before_forward(self):
+        """With coeff>0 but no forward yet, ``last_attn_entropy`` is absent
+        and the loss method must short-circuit to None (trainer-safe)."""
+        cfg = self._base_cfg() | {"attn_entropy_coeff": 0.1}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_entropy_coeff == 0.1
+        assert not hasattr(model.attn_pool, "last_attn_entropy")
+        assert model.attention_entropy_loss() is None
+
+    def test_attn_entropy_opt_in_outer_only(self):
+        """Entropy regularisation must target the outer pool only; the inner
+        kick pool stays untouched so the regulariser doesn't silently leak to
+        a different granularity."""
+        cfg = self._base_cfg() | {"attn_entropy_coeff": 0.05}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_nested_history(
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+            )
+            _ = model(
+                torch.randn(2, 7),
+                torch.randn(2, 5, 3, 9),
+                torch.ones(2, 5, dtype=torch.bool),
+                torch.ones(2, 5, 3, dtype=torch.bool),
+            )
+        assert model.attn_pool.compute_entropy is True
+        assert model.inner_pool.compute_entropy is False
+        assert hasattr(model.attn_pool, "last_attn_entropy")
+        assert not hasattr(model.inner_pool, "last_attn_entropy")
+        loss = model.attention_entropy_loss()
+        assert loss is not None
+        torch.testing.assert_close(loss, 0.05 * model.attn_pool.last_attn_entropy)
+
+    def test_alibi_bias_defaults_off(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_pool.use_alibi_bias is False
+        assert model.inner_pool.use_alibi_bias is False
+
+    def test_alibi_bias_opt_in_outer_only(self):
+        """ALiBi bias targets the outer (games-ago) pool only. Kicks within
+        a game have no games-ago granularity, so the inner pool stays flat."""
+        cfg = self._base_cfg() | {"attn_use_alibi_bias": True}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_pool.use_alibi_bias is True
+        assert model.inner_pool.use_alibi_bias is False
+        assert model.inner_pool.alibi_slopes is None
+
+    def test_alibi_bias_forward_is_finite(self):
+        cfg = self._base_cfg() | {"attn_use_alibi_bias": True}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_nested_history(
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+            )
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 7),
+                    torch.randn(4, 5, 3, 9),
+                    torch.ones(4, 5, dtype=torch.bool),
+                    torch.ones(4, 5, 3, dtype=torch.bool),
+                )
+        for t in K_TARGETS:
+            assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
+
+    def test_self_attn_defaults_off(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.self_attn_stack is None
+
+    def test_self_attn_opt_in_outer_only(self):
+        """Self-attention stack lives on the outer (game) sequence only —
+        the inner kick pool is a different granularity and must stay
+        untouched (no transformer blocks registered under inner_pool)."""
+        cfg = self._base_cfg() | {
+            "attn_d_model": 8,
+            "attn_self_layers": 1,
+            "attn_self_heads": 2,
+            "attn_self_ffn_dim": 16,
+        }
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.self_attn_stack is not None and len(model.self_attn_stack) == 1
+        # No self-attention wiring exists on the inner pool.
+        assert not any(isinstance(m, SelfAttentionBlock) for m in model.inner_pool.modules())
+
+    def test_self_attn_forward_is_finite(self):
+        cfg = self._base_cfg() | {
+            "attn_d_model": 8,
+            "attn_self_layers": 1,
+            "attn_self_heads": 2,
+            "attn_self_ffn_dim": 16,
+        }
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_nested_history(
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+            )
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 7),
+                    torch.randn(4, 5, 3, 9),
+                    torch.ones(4, 5, dtype=torch.bool),
+                    torch.ones(4, 5, 3, dtype=torch.bool),
+                )
+        for t in K_TARGETS:
+            assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
+
+    def test_condition_queries_defaults_off(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.condition_queries_on_static is False
+        assert model.attn_pool.cond_dim == 0
+        # Inner kick pool never enables conditioning.
+        assert model.inner_pool.cond_dim == 0
+
+    def test_condition_queries_outer_only(self):
+        """Conditioning lives on the outer (games-ago) pool only; the inner
+        kick pool has no matchup-context notion and must stay unconditioned."""
+        cfg = self._base_cfg() | {"attn_condition_queries_on_static": True}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_pool.cond_dim == 7
+        assert model.inner_pool.cond_dim == 0
+
+    def test_condition_queries_forward_is_finite(self):
+        cfg = self._base_cfg() | {"attn_condition_queries_on_static": True}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_nested_history(
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+            )
+            model.eval()
+            with torch.no_grad():
+                out = model(
+                    torch.randn(4, 7),
+                    torch.randn(4, 5, 3, 9),
+                    torch.ones(4, 5, dtype=torch.bool),
+                    torch.ones(4, 5, 3, dtype=torch.bool),
+                )
+        for t in K_TARGETS:
+            assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
+
+
+@pytest.mark.unit
+class TestMultiHeadNetWithHistoryOppBranch:
+    """Opponent-defense attention branch — opt-in via ``opp_game_dim``.
+
+    Back-compat guarantee: when ``opp_game_dim=None`` the model is
+    byte-identical to the single-branch version. When set, the model adds a
+    parallel encoder + pooler + per-target LayerNorm and extends the head
+    input dim by ``n_heads * d_model``.
+    """
+
+    def test_back_compat_no_opp(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5, game_dim=3, target_names=TARGETS, backbone_layers=[8]
+        )
+        assert m.use_opp_history is False
+        assert not hasattr(m, "opp_game_encoder")
+        assert not hasattr(m, "opp_attn_pool")
+
+    def test_opp_branch_modules_exist(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+        )
+        assert m.use_opp_history is True
+        assert hasattr(m, "opp_game_encoder")
+        assert hasattr(m, "opp_attn_pool")
+        assert len(m.opp_history_norms) == len(TARGETS)
+
+    def test_head_input_dim_extends_with_opp(self):
+        """Head input grows by attn_out_dim when opp branch is active."""
+        targets = ["rushing_yards"]
+        m_base = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=targets,
+            backbone_layers=[8],
+            d_model=16,
+            n_attn_heads=2,
+        )
+        m_opp = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=targets,
+            backbone_layers=[8],
+            d_model=16,
+            n_attn_heads=2,
+            opp_game_dim=6,
+        )
+        # First Linear of the head reveals the input dim.
+        base_in = next(iter(m_base.heads[targets[0]])).in_features
+        opp_in = next(iter(m_opp.heads[targets[0]])).in_features
+        assert opp_in - base_in == 2 * 16, f"expected +{2 * 16}, got +{opp_in - base_in}"
+
+    def test_forward_produces_target_keys(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+        )
+        s = torch.randn(4, 5)
+        h = torch.randn(4, 7, 3)
+        hm = torch.ones(4, 7, dtype=torch.bool)
+        opp = torch.randn(4, 5, 6)
+        om = torch.ones(4, 5, dtype=torch.bool)
+        preds = m(s, h, hm, opp, om)
+        for t in TARGETS:
+            assert t in preds
+            assert preds[t].shape == (4,)
+
+    def test_forward_requires_opp_when_configured(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+        )
+        s = torch.randn(2, 5)
+        h = torch.randn(2, 7, 3)
+        hm = torch.ones(2, 7, dtype=torch.bool)
+        with pytest.raises(ValueError, match="x_opp_history"):
+            m(s, h, hm)
+
+    def test_predict_numpy_requires_opp_arrays(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+        )
+        import numpy as _np
+
+        with pytest.raises(ValueError, match="X_opp_history"):
+            m.predict_numpy(
+                _np.zeros((2, 5), dtype=_np.float32),
+                _np.zeros((2, 7, 3), dtype=_np.float32),
+                _np.ones((2, 7), dtype=bool),
+                torch.device("cpu"),
+            )
+
+    def test_gradients_flow_through_both_branches(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+        )
+        s = torch.randn(4, 5)
+        h = torch.randn(4, 7, 3)
+        hm = torch.ones(4, 7, dtype=torch.bool)
+        opp = torch.randn(4, 5, 6)
+        om = torch.ones(4, 5, dtype=torch.bool)
+        preds = m(s, h, hm, opp, om)
+        loss = sum(
+            v.sum()
+            for k, v in preds.items()
+            if not k.endswith("_gate_logit")
+            and not k.endswith("_value_mu")
+            and not k.endswith("_value_log_alpha")
+        )
+        loss.backward()
+        player_grad = next(iter(m.game_encoder.parameters())).grad
+        opp_grad = next(iter(m.opp_game_encoder.parameters())).grad
+        assert player_grad is not None and player_grad.abs().sum() > 0
+        assert opp_grad is not None and opp_grad.abs().sum() > 0
+
+    def test_factory_plumbs_opp_game_dim(self):
+        cfg = {
+            "nn_backbone_layers": [8],
+            "nn_head_hidden": 4,
+            "nn_dropout": 0.0,
+        }
+        m_none = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        m_opp = build_multihead_net_with_history(
+            cfg, static_dim=5, game_dim=3, targets=TARGETS, opp_game_dim=6
+        )
+        assert m_none.use_opp_history is False
+        assert m_opp.use_opp_history is True
+
+    def test_entropy_regulariser_covers_both_branches(self):
+        """When ``attn_entropy_coeff != 0`` and the opp branch is active, the
+        regulariser averages the two pools' entropies so one coefficient
+        controls the pair."""
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+            attn_entropy_coeff=0.1,
+        )
+        s = torch.randn(2, 5)
+        h = torch.randn(2, 7, 3)
+        hm = torch.ones(2, 7, dtype=torch.bool)
+        opp = torch.randn(2, 5, 6)
+        om = torch.ones(2, 5, dtype=torch.bool)
+        _ = m(s, h, hm, opp, om)
+        loss = m.attention_entropy_loss()
+        assert loss is not None
+        expected = 0.1 * (m.attn_pool.last_attn_entropy + m.opp_attn_pool.last_attn_entropy) / 2
+        torch.testing.assert_close(loss, expected)

@@ -36,6 +36,10 @@ venv/
 
 # pytest
 .pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # IDE
 .idea/
@@ -68,3 +72,5 @@ credentials*
 secrets*
 .env.*
 !.env.example
+.coverage
+coverage*.xml
