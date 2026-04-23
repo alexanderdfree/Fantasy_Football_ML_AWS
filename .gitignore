@@ -68,3 +68,5 @@ credentials*
 secrets*
 .env.*
 !.env.example
+.coverage
+coverage*.xml
