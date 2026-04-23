@@ -480,9 +480,7 @@ def test_health_route_degraded_when_load_errors_present(monkeypatch):
 
 
 @pytest.mark.integration
-def test_apply_position_models_ridge_load_failure_records_and_nan_fills(
-    _mocked_app, monkeypatch
-):
+def test_apply_position_models_ridge_load_failure_records_and_nan_fills(_mocked_app, monkeypatch):
     """A RidgeMultiTarget.load exception is recorded in
     ``_cache['position_load_errors']`` under ``{pos}_ridge`` and the position's
     ``ridge_pred`` rows are NaN'd — but the function does NOT raise.
