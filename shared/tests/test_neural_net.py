@@ -999,6 +999,13 @@ class TestBuildMultiHeadNetWithHistory:
         # Non-degenerate attention over >1 real position has H > 0 → -0.1*H < 0.
         assert loss.item() < 0.0
 
+    def test_attn_entropy_returns_none_before_forward(self):
+        """coeff>0 but no forward yet → short-circuit to None (trainer-safe)."""
+        cfg = self._base_cfg() | {"attn_entropy_coeff": 0.1}
+        model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        assert not hasattr(model.attn_pool, "last_attn_entropy")
+        assert model.attention_entropy_loss() is None
+
 
 @pytest.mark.unit
 class TestBuildMultiHeadNetWithNestedHistory:
@@ -1112,6 +1119,19 @@ class TestBuildMultiHeadNetWithNestedHistory:
         assert model.attn_pool.compute_entropy is False
         # Inner kick pool must never turn on entropy computation.
         assert model.inner_pool.compute_entropy is False
+        # coeff=0 short-circuit returns None even before any forward.
+        assert model.attention_entropy_loss() is None
+
+    def test_attn_entropy_returns_none_before_forward(self):
+        """With coeff>0 but no forward yet, ``last_attn_entropy`` is absent
+        and the loss method must short-circuit to None (trainer-safe)."""
+        cfg = self._base_cfg() | {"attn_entropy_coeff": 0.1}
+        model = build_multihead_net_with_nested_history(
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_entropy_coeff == 0.1
+        assert not hasattr(model.attn_pool, "last_attn_entropy")
+        assert model.attention_entropy_loss() is None
 
     def test_attn_entropy_opt_in_outer_only(self):
         """Entropy regularisation must target the outer pool only; the inner
