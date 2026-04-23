@@ -29,7 +29,6 @@ import pandas as pd
 import pytest
 import torch
 
-
 # Reuse QB as the canonical "flat-history" position + DST for adjustment_fn.
 # The function's per-position branches are structurally identical aside from
 # the attention-history-structure fork (nested for K, flat for others).

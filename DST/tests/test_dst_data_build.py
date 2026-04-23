@@ -19,7 +19,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-
 # --- Synthetic fixtures --------------------------------------------------
 
 _TEAMS = ["BUF", "KC", "SF", "DAL"]

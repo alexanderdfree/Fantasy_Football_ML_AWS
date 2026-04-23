@@ -25,7 +25,6 @@ from shared.registry import (
     is_cpu_only,
 )
 
-
 # --------------------------------------------------------------------------
 # Meta + lightweight lookups
 # --------------------------------------------------------------------------
@@ -40,7 +39,7 @@ def test_all_positions_match_expected_set():
 @pytest.mark.unit
 def test_cpu_only_positions_is_k_and_dst():
     """Only K and DST run on CPU in Batch; the rest need GPU."""
-    assert CPU_ONLY_POSITIONS == {"K", "DST"}
+    assert {"K", "DST"} == CPU_ONLY_POSITIONS
 
 
 @pytest.mark.unit

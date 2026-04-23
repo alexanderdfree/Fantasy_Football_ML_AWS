@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-
 # --------------------------------------------------------------------------
 # Synthetic PBP frame — covers FG + XP rows and field required by the loader
 # --------------------------------------------------------------------------
