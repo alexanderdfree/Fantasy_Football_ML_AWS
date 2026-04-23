@@ -227,6 +227,47 @@ class TestAttentionPool:
         assert pool.log_temperature.grad is not None
         assert pool.log_temperature.grad.shape == (3,)
 
+    def test_compute_entropy_default_off(self):
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=3)
+        keys = torch.randn(2, 5, 8)
+        mask = torch.ones(2, 5, dtype=torch.bool)
+        pool(keys, mask)
+        # Disabled → no cached entropy (zero-cost on the hot path).
+        assert pool.compute_entropy is False
+        assert not hasattr(pool, "last_attn_entropy")
+
+    def test_compute_entropy_caches_scalar(self):
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=3, compute_entropy=True)
+        keys = torch.randn(2, 5, 8)
+        mask = torch.ones(2, 5, dtype=torch.bool)
+        pool(keys, mask)
+        H = pool.last_attn_entropy
+        assert H.dim() == 0  # scalar
+        # Entropy of a discrete distribution over 5 positions ∈ [0, log(5)].
+        assert 0.0 <= H.item() <= float(np.log(5)) + 1e-6
+
+    def test_compute_entropy_near_max_for_uniform_queries(self):
+        """If queries project to zero, attention becomes uniform and
+        entropy ≈ log(seq_len). Exercises the upper bound."""
+        pool = AttentionPool(d_model=8, n_heads=1, n_targets=1, compute_entropy=True)
+        with torch.no_grad():
+            pool.queries.zero_()  # zero queries -> constant scores -> uniform softmax
+        keys = torch.randn(3, 7, 8)
+        mask = torch.ones(3, 7, dtype=torch.bool)
+        pool(keys, mask)
+        torch.testing.assert_close(
+            pool.last_attn_entropy, torch.tensor(float(np.log(7))), atol=1e-4, rtol=0
+        )
+
+    def test_compute_entropy_gradient_flows(self):
+        """Entropy must be differentiable w.r.t. keys so the regulariser trains."""
+        pool = AttentionPool(d_model=8, n_heads=2, n_targets=1, compute_entropy=True)
+        keys = torch.randn(2, 5, 8, requires_grad=True)
+        mask = torch.ones(2, 5, dtype=torch.bool)
+        pool(keys, mask)
+        pool.last_attn_entropy.backward()
+        assert keys.grad is not None and (keys.grad != 0).any()
+
 
 # ---------------------------------------------------------------------------
 # SwiGLU + _build_game_encoder
@@ -914,6 +955,50 @@ class TestBuildMultiHeadNetWithHistory:
             assert out[t].shape == (4,)
             assert torch.isfinite(out[t]).all()
 
+    def test_attn_entropy_defaults_off(self):
+        model = build_multihead_net_with_history(
+            self._base_cfg(), static_dim=5, game_dim=3, targets=TARGETS
+        )
+        assert model.attn_entropy_coeff == 0.0
+        assert model.attn_pool.compute_entropy is False
+        with torch.random.fork_rng():
+            _ = model(
+                torch.randn(2, 5),
+                torch.randn(2, 4, 3),
+                torch.ones(2, 4, dtype=torch.bool),
+            )
+        assert model.attention_entropy_loss() is None
+
+    def test_attn_entropy_opt_in_produces_scaled_loss(self):
+        """Positive coefficient yields loss = coeff * mean_entropy."""
+        coeff = 0.01
+        cfg = self._base_cfg() | {"attn_entropy_coeff": coeff}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            _ = model(
+                torch.randn(2, 5),
+                torch.randn(2, 4, 3),
+                torch.ones(2, 4, dtype=torch.bool),
+            )
+        loss = model.attention_entropy_loss()
+        assert loss is not None
+        torch.testing.assert_close(loss, coeff * model.attn_pool.last_attn_entropy)
+
+    def test_attn_entropy_sign_controls_direction(self):
+        """Negative coeff gives a negative regulariser for non-zero entropy."""
+        cfg = self._base_cfg() | {"attn_entropy_coeff": -0.1}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+            _ = model(
+                torch.randn(2, 5),
+                torch.randn(2, 4, 3),
+                torch.ones(2, 4, dtype=torch.bool),
+            )
+        loss = model.attention_entropy_loss()
+        assert loss is not None
+        # Non-degenerate attention over >1 real position has H > 0 → -0.1*H < 0.
+        assert loss.item() < 0.0
+
 
 @pytest.mark.unit
 class TestBuildMultiHeadNetWithNestedHistory:
@@ -1018,3 +1103,35 @@ class TestBuildMultiHeadNetWithNestedHistory:
         for t in K_TARGETS:
             assert out[t].shape == (4,)
             assert torch.isfinite(out[t]).all()
+
+    def test_attn_entropy_defaults_off(self):
+        model = build_multihead_net_with_nested_history(
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+        )
+        assert model.attn_entropy_coeff == 0.0
+        assert model.attn_pool.compute_entropy is False
+        # Inner kick pool must never turn on entropy computation.
+        assert model.inner_pool.compute_entropy is False
+
+    def test_attn_entropy_opt_in_outer_only(self):
+        """Entropy regularisation must target the outer pool only; the inner
+        kick pool stays untouched so the regulariser doesn't silently leak to
+        a different granularity."""
+        cfg = self._base_cfg() | {"attn_entropy_coeff": 0.05}
+        with torch.random.fork_rng():
+            model = build_multihead_net_with_nested_history(
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+            )
+            _ = model(
+                torch.randn(2, 7),
+                torch.randn(2, 5, 3, 9),
+                torch.ones(2, 5, dtype=torch.bool),
+                torch.ones(2, 5, 3, dtype=torch.bool),
+            )
+        assert model.attn_pool.compute_entropy is True
+        assert model.inner_pool.compute_entropy is False
+        assert hasattr(model.attn_pool, "last_attn_entropy")
+        assert not hasattr(model.inner_pool, "last_attn_entropy")
+        loss = model.attention_entropy_loss()
+        assert loss is not None
+        torch.testing.assert_close(loss, 0.05 * model.attn_pool.last_attn_entropy)

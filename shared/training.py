@@ -369,6 +369,15 @@ class MultiHeadTrainer:
 
                 self.optimizer.zero_grad()
                 loss, _ = self.criterion(preds, y_batch)
+                # Attention entropy regulariser: additive term that models can
+                # optionally expose via ``attention_entropy_loss``. Returns
+                # ``None`` when the feature is off so the hot path is a single
+                # attribute check.
+                entropy_fn = getattr(self.model, "attention_entropy_loss", None)
+                if entropy_fn is not None:
+                    entropy_term = entropy_fn()
+                    if entropy_term is not None:
+                        loss = loss + entropy_term
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
