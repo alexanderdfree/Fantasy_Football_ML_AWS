@@ -55,6 +55,11 @@ K_RIDGE_CV_FOLDS = 3
 K_CV_SPLIT_COLUMN = "season"
 K_RIDGE_REFINE_POINTS = 0
 
+# === ElasticNet (optional parallel linear baseline, L1+L2) ===
+# Off by default. Reuses K_RIDGE_ALPHA_GRIDS and searches over K_ENET_L1_RATIOS.
+K_TRAIN_ELASTICNET = False
+K_ENET_L1_RATIOS = [0.3, 0.5, 0.7]
+
 # === Neural Net (2015-2025 dataset: more data allows larger model) ===
 K_NN_BACKBONE_LAYERS = [64, 32]
 K_NN_HEAD_HIDDEN = 16

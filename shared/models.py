@@ -12,6 +12,7 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.preprocessing import StandardScaler
 
+from src.models.elastic_net import ElasticNetModel
 from src.models.linear import RidgeModel
 
 
@@ -370,6 +371,131 @@ class RidgeMultiTarget:
                 self._models[name] = TwoStageRidge()
             else:
                 self._models[name] = RidgeModel()
+            self._models[name].load(target_dir)
+
+
+class ElasticNetMultiTarget:
+    """ElasticNet parallel to RidgeMultiTarget (L1+L2 linear baseline).
+
+    Replaces only the vanilla RidgeModel branch with ElasticNet; two-stage and
+    ordinal classification targets keep their existing domain-specific classes
+    (those aren't plain linear regressions). Never uses PCA — L1 on a rotated
+    basis zeros components, not original features, which defeats the purpose.
+    """
+
+    def __init__(
+        self,
+        target_names: list[str],
+        alpha: float | dict[str, float] = 1.0,
+        l1_ratio: float | dict[str, float] = 0.5,
+        two_stage_targets: dict | None = None,
+        classification_targets: dict | None = None,
+        non_negative_targets: set | None = None,
+        max_iter: int = 5000,
+        tol: float = 1e-4,
+    ):
+        self.target_names = target_names
+        self.non_negative_targets = (
+            set(target_names) if non_negative_targets is None else non_negative_targets
+        )
+        self._two_stage_targets = two_stage_targets or {}
+        self._classification_targets = classification_targets or {}
+        special = set(self._two_stage_targets) | set(self._classification_targets)
+        if isinstance(alpha, dict):
+            missing = set(target_names) - set(alpha) - special
+            if missing:
+                raise ValueError(f"alpha dict missing keys for targets: {missing}")
+            self._alphas = {name: alpha.get(name, 1.0) for name in target_names}
+        else:
+            self._alphas = {name: alpha for name in target_names}
+        if isinstance(l1_ratio, dict):
+            missing = set(target_names) - set(l1_ratio) - special
+            if missing:
+                raise ValueError(f"l1_ratio dict missing keys for targets: {missing}")
+            self._l1_ratios = {name: l1_ratio.get(name, 0.5) for name in target_names}
+        else:
+            self._l1_ratios = {name: l1_ratio for name in target_names}
+        self._models = {}
+        for name in target_names:
+            if name in self._classification_targets:
+                cfg = dict(self._classification_targets[name])
+                model_type = cfg.pop("type", "ordinal")
+                if model_type == "gated_ordinal":
+                    self._models[name] = GatedOrdinalTDClassifier(**cfg)
+                else:
+                    self._models[name] = OrdinalTDClassifier(**cfg)
+            elif name in self._two_stage_targets:
+                self._models[name] = TwoStageRidge(**self._two_stage_targets[name])
+            else:
+                self._models[name] = ElasticNetModel(
+                    alpha=self._alphas[name],
+                    l1_ratio=self._l1_ratios[name],
+                    max_iter=max_iter,
+                    tol=tol,
+                )
+
+    def fit(self, X_train: np.ndarray, y_train_dict: dict) -> None:
+        for name, model in self._models.items():
+            model.fit(X_train, y_train_dict[name])
+
+    def predict(self, X: np.ndarray) -> dict:
+        preds = {}
+        for name, model in self._models.items():
+            pred = model.predict(X)
+            if name in self.non_negative_targets:
+                pred = np.maximum(pred, 0)
+            preds[name] = pred
+        return preds
+
+    def predict_total(self, X: np.ndarray) -> np.ndarray:
+        preds = self.predict(X)
+        return sum(preds[t] for t in self.target_names)
+
+    def get_feature_importance(self, feature_names: list) -> dict:
+        return {
+            name: model.get_feature_importance(feature_names)
+            for name, model in self._models.items()
+            if hasattr(model, "get_feature_importance")
+        }
+
+    def convergence_report(self) -> dict:
+        """Per-target convergence status for ElasticNet heads.
+
+        Used by the pipeline to log whether CV-selected (alpha, l1_ratio) pairs
+        actually converged. Two-stage and ordinal heads are omitted — they
+        don't expose a ConvergenceWarning path in a way that's meaningful here.
+        """
+        return {
+            name: {"converged": model.converged, "n_iter": model.n_iter}
+            for name, model in self._models.items()
+            if isinstance(model, ElasticNetModel)
+        }
+
+    def save(self, model_dir: str) -> None:
+        for name, model in self._models.items():
+            target_dir = f"{model_dir}/{name}"
+            # Match RidgeMultiTarget's guard: load() infers the model type from
+            # on-disk sidecars, so a prior run's stale files corrupt the inferred
+            # type. Wiping guarantees a clean state per save.
+            if os.path.isdir(target_dir):
+                shutil.rmtree(target_dir)
+            model.save(target_dir)
+
+    def load(self, model_dir: str) -> None:
+        for name in self.target_names:
+            target_dir = f"{model_dir}/{name}"
+            td_meta_path = f"{target_dir}/td_classifier_meta.json"
+            if os.path.exists(td_meta_path):
+                with open(td_meta_path) as f:
+                    meta = json.load(f)
+                if meta.get("gated"):
+                    self._models[name] = GatedOrdinalTDClassifier()
+                else:
+                    self._models[name] = OrdinalTDClassifier()
+            elif os.path.exists(f"{target_dir}/classifier.pkl"):
+                self._models[name] = TwoStageRidge()
+            else:
+                self._models[name] = ElasticNetModel()
             self._models[name].load(target_dir)
 
 

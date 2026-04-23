@@ -112,6 +112,13 @@ QB_RIDGE_ALPHA_GRIDS = {
     "fumbles_lost": [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
+# === ElasticNet (optional parallel linear baseline, L1+L2) ===
+# Off by default. When enabled, the pipeline reuses QB_RIDGE_ALPHA_GRIDS and
+# searches over QB_ENET_L1_RATIOS. Skips PCA — L1 on a rotated basis doesn't
+# zero original features, so PCA defeats the reason to pick ElasticNet.
+QB_TRAIN_ELASTICNET = False
+QB_ENET_L1_RATIOS = [0.3, 0.5, 0.7]
+
 # === Neural Net (2012+ dataset: wider backbone, relaxed regularization) ===
 QB_NN_BACKBONE_LAYERS = [128]
 QB_NN_HEAD_HIDDEN = 32

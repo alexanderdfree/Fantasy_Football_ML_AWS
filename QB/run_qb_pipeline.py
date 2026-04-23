@@ -24,6 +24,7 @@ from QB.qb_config import (
     QB_COSINE_ETA_MIN,
     QB_COSINE_T0,
     QB_COSINE_T_MULT,
+    QB_ENET_L1_RATIOS,
     QB_HEAD_LOSSES,
     QB_HUBER_DELTAS,
     QB_LGBM_COLSAMPLE_BYTREE,
@@ -51,6 +52,7 @@ from QB.qb_config import (
     QB_SPECIFIC_FEATURES,
     QB_TARGETS,
     QB_TRAIN_ATTENTION_NN,
+    QB_TRAIN_ELASTICNET,
     QB_TRAIN_LIGHTGBM,
 )
 from QB.qb_data import filter_to_qb
@@ -101,6 +103,8 @@ QB_CONFIG = {
     "attn_gate_hidden": QB_ATTN_GATE_HIDDEN,
     "attn_gate_weight": QB_ATTN_GATE_WEIGHT,
     "head_losses": QB_HEAD_LOSSES,
+    "train_elasticnet": QB_TRAIN_ELASTICNET,
+    "enet_l1_ratios": QB_ENET_L1_RATIOS,
     "train_lightgbm": QB_TRAIN_LIGHTGBM,
     "lgbm_n_estimators": QB_LGBM_N_ESTIMATORS,
     "lgbm_learning_rate": QB_LGBM_LEARNING_RATE,

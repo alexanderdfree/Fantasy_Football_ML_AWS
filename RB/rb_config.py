@@ -156,6 +156,12 @@ RB_TD_MODEL_TYPE = "gated_ordinal"
 # (after is_home removal) to 49.8.  Both yard targets improve by ~0.002 MAE.
 RB_RIDGE_PCA_COMPONENTS = 80
 
+# === ElasticNet (optional parallel linear baseline, L1+L2) ===
+# Off by default. Reuses RB_RIDGE_ALPHA_GRIDS and searches over RB_ENET_L1_RATIOS.
+# Intentionally skips PCA — L1 on a rotated basis doesn't zero original features.
+RB_TRAIN_ELASTICNET = False
+RB_ENET_L1_RATIOS = [0.3, 0.5, 0.7]
+
 # === Neural Net ===
 # [128, 64] two-layer backbone — single [128] was underfitting (early stop epoch 54,
 # flat val loss from epoch 3). Added depth + larger heads + less regularization.

@@ -101,6 +101,11 @@ TE_RIDGE_ALPHA_GRIDS = {
     "fumbles_lost": [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
 
+# === ElasticNet (optional parallel linear baseline, L1+L2) ===
+# Off by default. Reuses TE_RIDGE_ALPHA_GRIDS and searches over TE_ENET_L1_RATIOS.
+TE_TRAIN_ELASTICNET = False
+TE_ENET_L1_RATIOS = [0.3, 0.5, 0.7]
+
 # === Neural Net (2012+ dataset: relaxed regularization) ===
 TE_NN_BACKBONE_LAYERS = [96, 48]
 TE_NN_HEAD_HIDDEN = 24

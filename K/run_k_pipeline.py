@@ -28,6 +28,7 @@ from K.k_config import (
     K_ATTN_STATIC_FEATURES,
     K_ATTN_WEIGHT_DECAY,
     K_CV_SPLIT_COLUMN,
+    K_ENET_L1_RATIOS,
     K_HUBER_DELTAS,
     K_LGBM_COLSAMPLE_BYTREE,
     K_LGBM_LEARNING_RATE,
@@ -59,6 +60,7 @@ from K.k_config import (
     K_SPECIFIC_FEATURES,
     K_TARGETS,
     K_TRAIN_ATTENTION_NN,
+    K_TRAIN_ELASTICNET,
     K_TRAIN_LIGHTGBM,
 )
 from K.k_data import filter_to_k, kicker_season_split, load_kicker_data, load_kicker_kicks
@@ -118,6 +120,8 @@ K_CONFIG = {
     "attn_weight_decay": K_ATTN_WEIGHT_DECAY,
     "attn_batch_size": K_ATTN_BATCH_SIZE,
     "attn_patience": K_ATTN_PATIENCE,
+    "train_elasticnet": K_TRAIN_ELASTICNET,
+    "enet_l1_ratios": K_ENET_L1_RATIOS,
     "train_lightgbm": K_TRAIN_LIGHTGBM,
     "lgbm_n_estimators": K_LGBM_N_ESTIMATORS,
     "lgbm_learning_rate": K_LGBM_LEARNING_RATE,

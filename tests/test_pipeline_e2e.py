@@ -165,3 +165,49 @@ def test_pipeline_predictions_dataframe_size(pipeline_run, position):
         f"{position}: preds matrix shape {preds_matrix.shape} != ({n_test_rows}, {n_targets})"
     )
     assert np.all(np.isfinite(preds_matrix)), f"{position}: preds matrix contains NaN/Inf"
+
+
+@pytest.mark.e2e
+def test_pipeline_trains_elasticnet_when_enabled(tmp_path_factory):
+    """With ``train_elasticnet=True``, run_pipeline fits ElasticNet alongside
+    Ridge and reports its metrics + per-target preds. Smoke-tests the full
+    tune→fit→predict→save chain on QB so a future regression in the
+    ElasticNet code path can't silently skip CI.
+    """
+    splits_root = Path(__file__).resolve().parents[1] / "data" / "splits"
+    if not (splits_root / "train.parquet").exists():
+        pytest.skip(f"Real splits not present at {splits_root}; skipping E2E")
+
+    cfg = build_tiny_config("QB")
+    cfg["train_elasticnet"] = True  # flip the switch the tiny override turned off
+    cfg.setdefault("enet_l1_ratios", [0.5])  # single ratio keeps the tune fast
+    splits = load_tiny_splits("QB")
+    workdir = tmp_path_factory.mktemp("e2e_QB_enet")
+    result = run_pipeline_in_tmp("QB", cfg, splits, workdir, seed=42)
+
+    assert "elasticnet_metrics" in result
+    assert "elasticnet_ranking" in result
+    assert "elasticnet" in result["per_target_preds"]
+
+    n_test = len(result["test_df"])
+    for target in cfg["targets"]:
+        arr = np.asarray(result["per_target_preds"]["elasticnet"][target])
+        assert arr.shape == (n_test,)
+        assert np.all(np.isfinite(arr))
+        assert np.all(arr >= 0)  # non-negative clamping enforced
+
+    # ElasticNet artifacts land under models/elasticnet/<target>/.
+    enet_dir = workdir / "QB" / "outputs" / "models" / "elasticnet"
+    assert enet_dir.is_dir()
+    for target in cfg["targets"]:
+        tdir = enet_dir / target
+        assert tdir.is_dir(), f"ElasticNet per-target dir missing for {target}"
+        # vanilla targets persist the alpha / l1_ratio / convergence meta.
+        meta = tdir / "meta.json"
+        if meta.exists():
+            import json as _json
+
+            info = _json.loads(meta.read_text())
+            assert "alpha" in info
+            assert "l1_ratio" in info
+            assert "converged" in info
