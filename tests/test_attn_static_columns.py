@@ -185,7 +185,7 @@ class TestAttnStaticWhitelistIncludesStatic:
         assert not missing, f"{pos} attention static set missing expected columns: {missing}"
 
     def test_qb_prior_season_present(self):
-        assert "prior_season_mean_fantasy_points" in _static_cols("QB")
+        assert "prior_season_mean_passing_yards" in _static_cols("QB")
 
     def test_dst_contextual_present(self):
         """DST static set keeps is_home, is_dome, spread/total, prior-season means."""

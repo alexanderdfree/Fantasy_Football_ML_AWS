@@ -361,13 +361,13 @@ RAW_STAT_COLS = [
 ]
 
 ROLLING_INSPECT_COLS = [
-    "rolling_mean_fantasy_points_L3",
-    "rolling_max_fantasy_points_L3",
+    "rolling_mean_attempts_L3",
+    "rolling_max_attempts_L3",
     "rolling_mean_carries_L3",
     "rolling_mean_rushing_yards_L3",
     "rolling_mean_passing_yards_L3",
-    "prior_season_max_fantasy_points",
-    "prior_season_mean_fantasy_points",
+    "prior_season_max_passing_yards",
+    "prior_season_mean_passing_yards",
     "prior_season_mean_carries",
     "prior_season_mean_rushing_yards",
     "opp_recv_pts_allowed_to_pos",

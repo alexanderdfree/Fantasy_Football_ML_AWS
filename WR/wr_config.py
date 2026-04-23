@@ -19,7 +19,6 @@ WR_SPECIFIC_FEATURES = [
 # === WR Feature Whitelist ===
 # Explicit include list — new columns must be opted in, preventing silent leakage.
 _WR_ROLLING_STATS = [
-    "fantasy_points",
     "targets",
     "receptions",
     "carries",
@@ -31,26 +30,19 @@ _WR_ROLLING_STATS = [
 WR_INCLUDE_FEATURES = {
     # L3/L8 for all stats; snap_pct also keeps L5.
     # L5 mean/std/max dropped (>0.97 corr with L3/L8) except snap_pct.
-    # min variant only exists for fantasy_points (kept at all windows).
     "rolling": [
-        col
+        f"rolling_{a}_{stat}_L{w}"
         for stat in _WR_ROLLING_STATS
         for w in [3, 5, 8]
-        for col in (
-            (
-                [f"rolling_{a}_{stat}_L{w}" for a in ["mean", "std", "max"]]
-                if w != 5 or stat == "snap_pct"
-                else []
-            )
-            + ([f"rolling_min_{stat}_L{w}"] if stat == "fantasy_points" else [])
-        )
+        for a in ["mean", "std", "max"]
+        if w != 5 or stat == "snap_pct"
     ],
     "prior_season": [
         f"prior_season_{a}_{stat}" for stat in _WR_ROLLING_STATS for a in ["mean", "std", "max"]
     ],
     # All EWMA dropped (>0.98 corr with rolling means)
     "ewma": [],
-    "trend": ["trend_fantasy_points", "trend_targets", "trend_carries", "trend_snap_pct"],
+    "trend": ["trend_targets", "trend_carries", "trend_snap_pct"],
     "share": [
         "target_share_L3",
         "target_share_L5",
@@ -161,7 +153,6 @@ WR_ATTN_MAX_SEQ_LEN = 17
 WR_ATTN_POSITIONAL_ENCODING = True
 WR_ATTN_DROPOUT = 0.0
 WR_ATTN_HISTORY_STATS = [
-    "fantasy_points",
     "receiving_yards",
     "rushing_yards",
     "receiving_tds",
