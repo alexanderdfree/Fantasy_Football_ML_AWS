@@ -271,6 +271,7 @@ class AttentionPool(nn.Module):
         project_kv: bool = False,
         attn_dropout: float = 0.0,
         learn_temperature: bool = False,
+        compute_entropy: bool = False,
     ):
         super().__init__()
         self.queries = nn.Parameter(torch.randn(n_targets, n_heads, d_model) * 0.02)
@@ -292,6 +293,12 @@ class AttentionPool(nn.Module):
         self.learn_temperature = learn_temperature
         if learn_temperature:
             self.log_temperature = nn.Parameter(torch.zeros(n_targets))
+
+        # When ``compute_entropy`` is set, forward stores the mean entropy of
+        # this forward's attention weights on ``self.last_attn_entropy`` so a
+        # regulariser can pull it post-forward without an extra return tuple.
+        # Disabled by default to keep the hot path allocation-free.
+        self.compute_entropy = compute_entropy
 
     def forward(self, keys: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
         """
@@ -332,6 +339,16 @@ class AttentionPool(nn.Module):
         weights = F.softmax(attn, dim=-1)
         # Handle all-padding rows (softmax of all -inf = nan)
         weights = weights.nan_to_num(0.0)
+
+        if self.compute_entropy:
+            # H(p) = -sum_s p_s * log(p_s). For rows of all-zero (all padding)
+            # the sum degenerates to 0 thanks to the +eps floor inside log.
+            # Averaged across batch and all n_targets * n_heads distributions,
+            # yielding a single scalar for the regulariser to consume.
+            eps = 1e-12
+            per_dist_entropy = -(weights * (weights + eps).log()).sum(dim=-1)
+            self.last_attn_entropy = per_dist_entropy.mean()
+
         weights = self.attn_drop(weights)
         # pooled: [batch, n_targets * n_heads, d_model]
         pooled = torch.bmm(weights, v)
@@ -390,6 +407,7 @@ class MultiHeadNetWithHistory(nn.Module):
         learn_attn_temperature: bool = False,
         history_dropout: float = 0.0,
         use_swiglu_encoder: bool = False,
+        attn_entropy_coeff: float = 0.0,
     ):
         super().__init__()
         self.target_names = target_names
@@ -405,6 +423,13 @@ class MultiHeadNetWithHistory(nn.Module):
         # derive signal from a rotating subset of the season.
         self.history_dropout = history_dropout
         self.use_swiglu_encoder = use_swiglu_encoder
+
+        # Entropy regulariser: loss += coeff * mean(H(attn_weights)).
+        # Positive coeff ⇒ penalises high entropy ⇒ sharper attention.
+        # Negative coeff ⇒ penalises low  entropy ⇒ smoother attention.
+        # Zero is a strict no-op: the pool skips the entropy computation and
+        # MultiHeadTrainer never calls ``attention_entropy_loss``.
+        self.attn_entropy_coeff = attn_entropy_coeff
 
         # === Game History Branch ===
         self.game_encoder = _build_game_encoder(
@@ -429,6 +454,7 @@ class MultiHeadNetWithHistory(nn.Module):
             project_kv=project_kv,
             attn_dropout=attn_dropout,
             learn_temperature=learn_attn_temperature,
+            compute_entropy=(attn_entropy_coeff != 0.0),
         )
 
         attn_out_dim = n_attn_heads * d_model
@@ -532,6 +558,20 @@ class MultiHeadNetWithHistory(nn.Module):
                 preds[name] = apply_non_negative(val, name, self.non_negative_targets)
         return preds
 
+    def attention_entropy_loss(self) -> torch.Tensor | None:
+        """Post-forward regulariser: ``coeff * E[H(attn_weights)]``.
+
+        Returns ``None`` when the coefficient is 0 (the feature is off) or no
+        forward has materialised ``last_attn_entropy`` yet. MultiHeadTrainer
+        treats ``None`` as "skip" to keep the hot path allocation-free.
+        """
+        if self.attn_entropy_coeff == 0.0:
+            return None
+        entropy = getattr(self.attn_pool, "last_attn_entropy", None)
+        if entropy is None:
+            return None
+        return self.attn_entropy_coeff * entropy
+
     def predict_numpy(
         self,
         X_static: np.ndarray,
@@ -585,6 +625,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         learn_attn_temperature: bool = False,
         history_dropout: float = 0.0,
         use_swiglu_encoder: bool = False,
+        attn_entropy_coeff: float = 0.0,
     ):
         super().__init__()
         self.target_names = target_names
@@ -599,6 +640,10 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         # <=10 kicks per game and dropping kicks is a different granularity.
         self.history_dropout = history_dropout
         self.use_swiglu_encoder = use_swiglu_encoder
+        # Entropy regulariser. Same contract as MultiHeadNetWithHistory —
+        # applied to the *outer* game-level pool only; the inner kick pool
+        # is a different granularity and is left untouched.
+        self.attn_entropy_coeff = attn_entropy_coeff
 
         # === Inner: per-kick encoder + single-query pool ===
         # Kick encoder stays as Linear+ReLU regardless of the SwiGLU flag —
@@ -637,6 +682,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             project_kv=project_kv,
             attn_dropout=attn_dropout,
             learn_temperature=learn_attn_temperature,
+            compute_entropy=(attn_entropy_coeff != 0.0),
         )
 
         attn_out_dim = n_attn_heads * d_model
@@ -702,6 +748,19 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             val = self.heads[name](head_input).squeeze(-1)
             preds[name] = apply_non_negative(val, name, self.non_negative_targets)
         return preds
+
+    def attention_entropy_loss(self) -> torch.Tensor | None:
+        """Post-forward regulariser for the outer (game-level) attention pool.
+
+        See ``MultiHeadNetWithHistory.attention_entropy_loss`` for the
+        contract. The inner kick pool is deliberately excluded.
+        """
+        if self.attn_entropy_coeff == 0.0:
+            return None
+        entropy = getattr(self.attn_pool, "last_attn_entropy", None)
+        if entropy is None:
+            return None
+        return self.attn_entropy_coeff * entropy
 
     def predict_numpy(
         self,
@@ -784,6 +843,7 @@ def build_multihead_net_with_history(
         learn_attn_temperature=cfg.get("attn_learn_temperature", False),
         history_dropout=cfg.get("attn_history_dropout", 0.0),
         use_swiglu_encoder=cfg.get("attn_use_swiglu_encoder", False),
+        attn_entropy_coeff=cfg.get("attn_entropy_coeff", 0.0),
     )
 
 
@@ -820,4 +880,5 @@ def build_multihead_net_with_nested_history(
         learn_attn_temperature=cfg.get("attn_learn_temperature", False),
         history_dropout=cfg.get("attn_history_dropout", 0.0),
         use_swiglu_encoder=cfg.get("attn_use_swiglu_encoder", False),
+        attn_entropy_coeff=cfg.get("attn_entropy_coeff", 0.0),
     )

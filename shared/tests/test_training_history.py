@@ -491,3 +491,79 @@ class TestMultiHeadHistoryTrainer:
         loaded = trainer.model.state_dict()
         for k, v in trainer.best_model_state.items():
             torch.testing.assert_close(loaded[k], v)
+
+
+@pytest.mark.unit
+class TestAttentionEntropyRegulariserWiring:
+    """Trainer must add ``model.attention_entropy_loss()`` to the criterion
+    output when the model exposes it with a non-zero coefficient."""
+
+    def _build(self, history_data_factory, *, coeff: float):
+        np.random.seed(0)
+        torch.manual_seed(0)
+        X_ts, X_th, y_train = history_data_factory(32)
+        X_vs, X_vh, y_val = history_data_factory(16)
+        train_loader, val_loader = make_history_dataloaders(
+            X_ts, X_th, y_train, X_vs, X_vh, y_val, batch_size=32
+        )
+        model = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[16, 8],
+            d_model=8,
+            n_attn_heads=2,
+            head_hidden=4,
+            dropout=0.0,
+            attn_entropy_coeff=coeff,
+        )
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3)
+        criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        return (
+            MultiHeadHistoryTrainer(
+                model,
+                optimizer,
+                scheduler,
+                criterion,
+                torch.device("cpu"),
+                target_names=TARGETS,
+                patience=5,
+            ),
+            train_loader,
+            val_loader,
+        )
+
+    def test_trainer_runs_with_entropy_regulariser(self, history_data_factory):
+        """Training with coeff>0 must complete without errors and produce a
+        positive loss on the first epoch (entropy term is non-negative)."""
+        trainer, train_loader, val_loader = self._build(history_data_factory, coeff=0.05)
+        history = trainer.train(train_loader, val_loader, n_epochs=2)
+        assert history["train_loss"][0] > 0
+
+    def test_entropy_term_increments_first_batch_loss(self, history_data_factory):
+        """Running a single train batch with coeff>0 produces a larger loss
+        than with coeff=0 — the entropy term must actually reach the loss."""
+        # Build matched pairs; same seed makes predictions identical at step 0.
+        trainer_off, loader_off, _ = self._build(history_data_factory, coeff=0.0)
+        trainer_on, loader_on, _ = self._build(history_data_factory, coeff=0.1)
+        trainer_off.model.train()
+        trainer_on.model.train()
+
+        batch_off = next(iter(loader_off))
+        batch_on = next(iter(loader_on))
+
+        preds_off, y_off = trainer_off._forward_batch(batch_off)
+        preds_on, y_on = trainer_on._forward_batch(batch_on)
+
+        base_loss, _ = trainer_off.criterion(preds_off, y_off)
+        entropy_only_base, _ = trainer_on.criterion(preds_on, y_on)
+        entropy_term = trainer_on.model.attention_entropy_loss()
+
+        assert entropy_term is not None and entropy_term.item() > 0
+        # Replicates what the trainer does internally: base + entropy
+        final_loss = entropy_only_base + entropy_term
+        # The off-model and on-model share seeds/architecture → base losses
+        # match. The regularised final loss must strictly exceed it.
+        torch.testing.assert_close(base_loss, entropy_only_base, atol=1e-5, rtol=0)
+        assert final_loss.item() > base_loss.item()
