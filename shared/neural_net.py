@@ -346,6 +346,13 @@ class AttentionPool(nn.Module):
     a larger additive penalty. Complements or replaces the absolute learned
     ``pos_embedding`` on the parent models — ALiBi generalises to variable
     sequence lengths without an extra parameter table.
+
+    Optional ``cond_dim`` enables opponent/context-conditioned queries. When
+    set >0, forward expects a ``context: [batch, cond_dim]`` tensor; queries
+    become per-row ``q_base + cond_proj(context)`` so each target can ask a
+    different question depending on who the player is facing. ``cond_proj``
+    is zero-initialised so ``q_per_row == q_base`` at step zero, preserving
+    baseline behaviour exactly.
     """
 
     def __init__(
@@ -358,6 +365,7 @@ class AttentionPool(nn.Module):
         learn_temperature: bool = False,
         compute_entropy: bool = False,
         use_alibi_bias: bool = False,
+        cond_dim: int = 0,
     ):
         super().__init__()
         self.queries = nn.Parameter(torch.randn(n_targets, n_heads, d_model) * 0.02)
@@ -396,6 +404,16 @@ class AttentionPool(nn.Module):
         else:
             self.alibi_slopes = None
 
+        # Context conditioning: per-row query delta ``cond_proj(context)``
+        # added onto the static ``q_base``. Zero-init the projection so the
+        # conditioned pool is numerically identical to the non-conditioned
+        # baseline at step zero — any drift has to be learned explicitly.
+        self.cond_dim = cond_dim
+        if cond_dim > 0:
+            self.cond_proj = nn.Linear(cond_dim, n_targets * n_heads * d_model)
+            nn.init.zeros_(self.cond_proj.weight)
+            nn.init.zeros_(self.cond_proj.bias)
+
     @staticmethod
     def _alibi_slopes(n_heads: int) -> torch.Tensor:
         """Geometric ALiBi slope sequence: ``slope_h = 2^(-8 * (h+1) / n_heads)``.
@@ -410,11 +428,18 @@ class AttentionPool(nn.Module):
             dtype=torch.float32,
         )
 
-    def forward(self, keys: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
+    def forward(
+        self,
+        keys: torch.Tensor,
+        mask: torch.Tensor = None,
+        context: torch.Tensor = None,
+    ) -> torch.Tensor:
         """
         Args:
             keys: [batch, seq_len, d_model] — encoded game history
             mask: [batch, seq_len] — True where real game, False where padding
+            context: [batch, cond_dim] — per-row conditioning tensor. Ignored
+                when ``cond_dim == 0``. Required when ``cond_dim > 0``.
 
         Returns:
             [batch, n_targets, n_heads * d_model] when n_targets > 1,
@@ -431,8 +456,18 @@ class AttentionPool(nn.Module):
 
         # Flatten queries to [n_targets * n_heads, d_model] for a single matmul.
         q_flat = self.queries.reshape(self.n_targets * self.n_heads, self.d_model)
-        # attn scores: [batch, n_targets * n_heads, seq_len]
-        attn = torch.einsum("qd,bsd->bqs", q_flat, k) * self.scale
+        if self.cond_dim > 0 and context is not None:
+            # Per-row query delta from the conditioning tensor. Zero-init of
+            # ``cond_proj`` makes delta exactly zero at step 0; gradients
+            # flow through ``context`` and the projection weights thereafter.
+            delta = self.cond_proj(context).view(
+                batch_size, self.n_targets * self.n_heads, self.d_model
+            )
+            q_per_row = q_flat.unsqueeze(0) + delta  # [batch, n_t*n_h, d_model]
+            attn = torch.einsum("bqd,bsd->bqs", q_per_row, k) * self.scale
+        else:
+            # attn scores: [batch, n_targets * n_heads, seq_len]
+            attn = torch.einsum("qd,bsd->bqs", q_flat, k) * self.scale
 
         if self.learn_temperature:
             # Per-target inverse-temperature, replicated across heads so one
@@ -541,6 +576,7 @@ class MultiHeadNetWithHistory(nn.Module):
         self_attn_heads: int = 2,
         self_attn_ffn_dim: int | None = None,
         self_attn_dropout: float = 0.0,
+        condition_queries_on_static: bool = False,
     ):
         super().__init__()
         self.target_names = target_names
@@ -551,6 +587,12 @@ class MultiHeadNetWithHistory(nn.Module):
         self.gated_targets = list(gated_targets) if gated_targets else []
         self.d_model = d_model
         self.n_targets = len(target_names)
+        # Opponent/context-conditioned queries. When enabled, the forward
+        # passes the raw static feature vector to the AttentionPool as
+        # ``context``; the pool adds a per-row projection of that vector to
+        # the static ``q_base``. Zero-init on the projection preserves
+        # baseline behaviour at step 0.
+        self.condition_queries_on_static = condition_queries_on_static
         # Sequence-level dropout over the outer history mask. Regularises
         # attention against fixating on any one game and forces every head to
         # derive signal from a rotating subset of the season.
@@ -602,6 +644,7 @@ class MultiHeadNetWithHistory(nn.Module):
             learn_temperature=learn_attn_temperature,
             compute_entropy=(attn_entropy_coeff != 0.0),
             use_alibi_bias=use_alibi_bias,
+            cond_dim=static_dim if condition_queries_on_static else 0,
         )
 
         attn_out_dim = n_attn_heads * d_model
@@ -685,8 +728,11 @@ class MultiHeadNetWithHistory(nn.Module):
             for block in self.self_attn_stack:
                 encoded = block(encoded, mask=history_mask)
 
-        # Per-target attention pool: [batch, n_targets, n_heads * d_model]
-        history_per_target = self.attn_pool(encoded, history_mask)
+        # Per-target attention pool: [batch, n_targets, n_heads * d_model].
+        # When query conditioning is on, the pool adds ``cond_proj(x_static)``
+        # to the static ``q_base`` so each row's query reflects this matchup.
+        context = x_static if self.condition_queries_on_static else None
+        history_per_target = self.attn_pool(encoded, history_mask, context=context)
         if history_per_target.dim() == 2:
             # Back-compat guard: single-target AttentionPool squeezes. Add axis.
             history_per_target = history_per_target.unsqueeze(1)
@@ -787,6 +833,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         self_attn_heads: int = 2,
         self_attn_ffn_dim: int | None = None,
         self_attn_dropout: float = 0.0,
+        condition_queries_on_static: bool = False,
     ):
         super().__init__()
         self.target_names = target_names
@@ -796,6 +843,9 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         self.d_model = d_model
         self.d_kick = d_kick
         self.n_targets = len(target_names)
+        # Opponent/context-conditioned queries. Outer (game) pool only — the
+        # inner kick pool has no notion of matchup context.
+        self.condition_queries_on_static = condition_queries_on_static
         # Game-level sequence dropout. Only the outer (game) mask is
         # perturbed — kick-level inner masks stay intact since K already has
         # <=10 kicks per game and dropping kicks is a different granularity.
@@ -860,6 +910,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             learn_temperature=learn_attn_temperature,
             compute_entropy=(attn_entropy_coeff != 0.0),
             use_alibi_bias=use_alibi_bias,
+            cond_dim=static_dim if condition_queries_on_static else 0,
         )
 
         attn_out_dim = n_attn_heads * d_model
@@ -917,7 +968,10 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             for block in self.self_attn_stack:
                 encoded = block(encoded, mask=outer_mask)
 
-        history_per_target = self.attn_pool(encoded, outer_mask)  # [B, n_targets, attn_out]
+        context = x_static if self.condition_queries_on_static else None
+        history_per_target = self.attn_pool(
+            encoded, outer_mask, context=context
+        )  # [B, n_targets, attn_out]
         if history_per_target.dim() == 2:
             history_per_target = history_per_target.unsqueeze(1)
 
@@ -1031,6 +1085,7 @@ def build_multihead_net_with_history(
         self_attn_heads=cfg.get("attn_self_heads", 2),
         self_attn_ffn_dim=cfg.get("attn_self_ffn_dim"),
         self_attn_dropout=cfg.get("attn_self_dropout", 0.0),
+        condition_queries_on_static=cfg.get("attn_condition_queries_on_static", False),
     )
 
 
@@ -1073,4 +1128,5 @@ def build_multihead_net_with_nested_history(
         self_attn_heads=cfg.get("attn_self_heads", 2),
         self_attn_ffn_dim=cfg.get("attn_self_ffn_dim"),
         self_attn_dropout=cfg.get("attn_self_dropout", 0.0),
+        condition_queries_on_static=cfg.get("attn_condition_queries_on_static", False),
     )
