@@ -53,7 +53,12 @@ from shared.weather_features import WEATHER_FEATURES_ALL
 from src.config import SCORING_HALF_PPR, SCORING_STANDARD, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 from src.data.loader import compute_fantasy_points
 from src.evaluation.metrics import compute_metrics, compute_positional_metrics
-from src.features.engineer import build_game_history_arrays, get_attn_static_columns
+from src.features.engineer import (
+    build_game_history_arrays,
+    build_opp_defense_history_arrays,
+    build_opp_defense_per_game_df,
+    get_attn_static_columns,
+)
 from TE.te_config import TE_SPECIFIC_FEATURES, TE_TARGETS
 from WR.wr_config import WR_SPECIFIC_FEATURES, WR_TARGETS
 
@@ -514,16 +519,46 @@ def _apply_position_models(train, val, test, pos, results):
                 hist_test, mask_test = build_game_history_arrays(
                     pos_test, history_stats=hist_stats, max_seq_len=max_seq_len
                 )
+
+                # Optional opponent-defense attention branch — mirrors the
+                # pipeline: aggregate per-(opp_team, season, week) stats from
+                # the PRE-FILTER all-position frames, then build a padded
+                # sequence of the defense's prior games for each pos_test row.
+                # CLAUDE.md rule: keep training and inference feature paths
+                # byte-for-byte consistent.
+                opp_history_stats = reg.get("opp_attn_history_stats") or []
+                opp_hist_test = opp_mask_test = None
+                opp_game_dim = None
+                if opp_history_stats:
+                    opp_max_seq_len = reg.get("opp_attn_max_seq_len", max_seq_len)
+                    all_pos = pd.concat([train, val, test], ignore_index=True)
+                    opp_def_per_game = build_opp_defense_per_game_df(all_pos)
+                    opp_hist_test, opp_mask_test = build_opp_defense_history_arrays(
+                        pos_test, opp_def_per_game, opp_history_stats, opp_max_seq_len
+                    )
+                    opp_game_dim = opp_hist_test.shape[2]
+
                 attn_model = MultiHeadNetWithHistory(
                     static_dim=len(attn_static_cols),
                     game_dim=hist_test.shape[2],
                     target_names=targets,
+                    opp_game_dim=opp_game_dim,
                     **reg["attn_nn_kwargs_static"],
                 ).to(device)
                 attn_model.load_state_dict(attn_state_dict)
-                attn_nn_preds = attn_model.predict_numpy(
-                    X_test_attn_scaled, hist_test, mask_test, device
-                )
+                if opp_game_dim is not None:
+                    attn_nn_preds = attn_model.predict_numpy(
+                        X_test_attn_scaled,
+                        hist_test,
+                        mask_test,
+                        device,
+                        X_opp_history=opp_hist_test,
+                        opp_history_mask=opp_mask_test,
+                    )
+                else:
+                    attn_nn_preds = attn_model.predict_numpy(
+                        X_test_attn_scaled, hist_test, mask_test, device
+                    )
             attn_nn_total = _combine_total(attn_nn_preds)
         except Exception as e:
             errors[f"{pos}_attn_nn"] = str(e)

@@ -1600,3 +1600,173 @@ class TestBuildMultiHeadNetWithNestedHistory:
                 )
         for t in K_TARGETS:
             assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
+
+
+@pytest.mark.unit
+class TestMultiHeadNetWithHistoryOppBranch:
+    """Opponent-defense attention branch — opt-in via ``opp_game_dim``.
+
+    Back-compat guarantee: when ``opp_game_dim=None`` the model is
+    byte-identical to the single-branch version. When set, the model adds a
+    parallel encoder + pooler + per-target LayerNorm and extends the head
+    input dim by ``n_heads * d_model``.
+    """
+
+    def test_back_compat_no_opp(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5, game_dim=3, target_names=TARGETS, backbone_layers=[8]
+        )
+        assert m.use_opp_history is False
+        assert not hasattr(m, "opp_game_encoder")
+        assert not hasattr(m, "opp_attn_pool")
+
+    def test_opp_branch_modules_exist(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+        )
+        assert m.use_opp_history is True
+        assert hasattr(m, "opp_game_encoder")
+        assert hasattr(m, "opp_attn_pool")
+        assert len(m.opp_history_norms) == len(TARGETS)
+
+    def test_head_input_dim_extends_with_opp(self):
+        """Head input grows by attn_out_dim when opp branch is active."""
+        targets = ["rushing_yards"]
+        m_base = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=targets,
+            backbone_layers=[8],
+            d_model=16,
+            n_attn_heads=2,
+        )
+        m_opp = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=targets,
+            backbone_layers=[8],
+            d_model=16,
+            n_attn_heads=2,
+            opp_game_dim=6,
+        )
+        # First Linear of the head reveals the input dim.
+        base_in = next(iter(m_base.heads[targets[0]])).in_features
+        opp_in = next(iter(m_opp.heads[targets[0]])).in_features
+        assert opp_in - base_in == 2 * 16, f"expected +{2 * 16}, got +{opp_in - base_in}"
+
+    def test_forward_produces_target_keys(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+        )
+        s = torch.randn(4, 5)
+        h = torch.randn(4, 7, 3)
+        hm = torch.ones(4, 7, dtype=torch.bool)
+        opp = torch.randn(4, 5, 6)
+        om = torch.ones(4, 5, dtype=torch.bool)
+        preds = m(s, h, hm, opp, om)
+        for t in TARGETS:
+            assert t in preds
+            assert preds[t].shape == (4,)
+
+    def test_forward_requires_opp_when_configured(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+        )
+        s = torch.randn(2, 5)
+        h = torch.randn(2, 7, 3)
+        hm = torch.ones(2, 7, dtype=torch.bool)
+        with pytest.raises(ValueError, match="x_opp_history"):
+            m(s, h, hm)
+
+    def test_predict_numpy_requires_opp_arrays(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+        )
+        import numpy as _np
+
+        with pytest.raises(ValueError, match="X_opp_history"):
+            m.predict_numpy(
+                _np.zeros((2, 5), dtype=_np.float32),
+                _np.zeros((2, 7, 3), dtype=_np.float32),
+                _np.ones((2, 7), dtype=bool),
+                torch.device("cpu"),
+            )
+
+    def test_gradients_flow_through_both_branches(self):
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+        )
+        s = torch.randn(4, 5)
+        h = torch.randn(4, 7, 3)
+        hm = torch.ones(4, 7, dtype=torch.bool)
+        opp = torch.randn(4, 5, 6)
+        om = torch.ones(4, 5, dtype=torch.bool)
+        preds = m(s, h, hm, opp, om)
+        loss = sum(
+            v.sum()
+            for k, v in preds.items()
+            if not k.endswith("_gate_logit")
+            and not k.endswith("_value_mu")
+            and not k.endswith("_value_log_alpha")
+        )
+        loss.backward()
+        player_grad = next(iter(m.game_encoder.parameters())).grad
+        opp_grad = next(iter(m.opp_game_encoder.parameters())).grad
+        assert player_grad is not None and player_grad.abs().sum() > 0
+        assert opp_grad is not None and opp_grad.abs().sum() > 0
+
+    def test_factory_plumbs_opp_game_dim(self):
+        cfg = {
+            "nn_backbone_layers": [8],
+            "nn_head_hidden": 4,
+            "nn_dropout": 0.0,
+        }
+        m_none = build_multihead_net_with_history(cfg, static_dim=5, game_dim=3, targets=TARGETS)
+        m_opp = build_multihead_net_with_history(
+            cfg, static_dim=5, game_dim=3, targets=TARGETS, opp_game_dim=6
+        )
+        assert m_none.use_opp_history is False
+        assert m_opp.use_opp_history is True
+
+    def test_entropy_regulariser_covers_both_branches(self):
+        """When ``attn_entropy_coeff != 0`` and the opp branch is active, the
+        regulariser averages the two pools' entropies so one coefficient
+        controls the pair."""
+        m = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[8],
+            opp_game_dim=6,
+            attn_entropy_coeff=0.1,
+        )
+        s = torch.randn(2, 5)
+        h = torch.randn(2, 7, 3)
+        hm = torch.ones(2, 7, dtype=torch.bool)
+        opp = torch.randn(2, 5, 6)
+        om = torch.ones(2, 5, dtype=torch.bool)
+        _ = m(s, h, hm, opp, om)
+        loss = m.attention_entropy_loss()
+        assert loss is not None
+        expected = 0.1 * (m.attn_pool.last_attn_entropy + m.opp_attn_pool.last_attn_entropy) / 2
+        torch.testing.assert_close(loss, expected)

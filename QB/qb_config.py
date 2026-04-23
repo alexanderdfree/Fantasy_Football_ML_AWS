@@ -197,14 +197,31 @@ QB_ATTN_HISTORY_STATS = [
 # branch. The attention branch learns its own temporal representation from
 # QB_ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
 # categories are intentionally excluded to avoid duplicating that signal.
+# ``defense`` is also excluded: QB_OPP_ATTN_HISTORY_STATS feeds the opposing
+# defense's trailing form through a parallel attention branch, which makes
+# the L5 static aggregates redundant for the NN. (They stay in
+# QB_INCLUDE_FEATURES["defense"] so Ridge / LightGBM still see them.)
 QB_ATTN_STATIC_CATEGORIES = [
     "prior_season",
     "matchup",
-    "defense",
     "contextual",
     "weather_vegas",
 ]
 QB_ATTN_STATIC_FEATURES = [c for cat in QB_ATTN_STATIC_CATEGORIES for c in QB_INCLUDE_FEATURES[cat]]
+
+# Per-game opponent-defense stats fed to the second attention branch. Mirror
+# the L5 static aggregates (opp_def_*_L5) but unrolled per game, so the NN
+# learns the trailing-form weighting itself instead of being handed a fixed
+# 5-game mean. Built by src.features.engineer.build_opp_defense_history_arrays.
+QB_OPP_ATTN_HISTORY_STATS = [
+    "def_sacks",
+    "def_pass_yds_allowed",
+    "def_pass_td_allowed",
+    "def_ints",
+    "def_rush_yds_allowed",
+    "def_pts_allowed",
+]
+QB_OPP_ATTN_MAX_SEQ_LEN = 17
 # Gated hurdle heads are DISABLED for QB. QBs throw so many TDs that the zero-
 # inflation assumption behind the hurdle model does not hold (median TD count
 # per start is ~2); a plain regression head outperforms the two-stage gate.
