@@ -405,10 +405,13 @@ class TestUploadArtifacts:
 
         # Manifest is present and points current at the versioned key.
         manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
-        assert manifest["schema_version"] == 1
+        assert manifest["schema_version"] == 2
         assert manifest["current"]["key"] == history_key
         assert manifest["previous"] is None  # first write
         assert history_key in manifest["history"]
+        # The fixture writes fake bytes that can't be deserialized → smoke
+        # test fails → ``stable`` stays unset on this first upload.
+        assert manifest["stable"] is None
 
         # Legacy mirror was written too (pre-manifest consumer compat).
         assert "models/RB/model.tar.gz" in fake_s3.objects

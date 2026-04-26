@@ -163,3 +163,45 @@ def test_prune_no_op_when_history_empty():
     deleted = prune(fake, "bucket", "models", "QB", manifest)
     assert deleted == []
     fake.delete_objects.assert_not_called()
+
+
+def test_prune_preserves_stable_key_outside_history_window():
+    """The artifact pointed to by ``stable`` must survive prune even when
+    it's older than the ``keep_n`` newest history entries. This is the
+    conservation guarantee the consumer's stable-first fallback depends on:
+    if a stretch of failing-smoke-test retrains pushes ``stable`` off the
+    history window, the pointer still resolves to a real key.
+    """
+    keys = [_history_key(n) for n in range(1, 11)]  # 10 entries, oldest n=1
+    fake = _FakeS3Gc(keys)
+
+    # Manifest's history is the newest 5 (keys 6..10). Stable points at the
+    # OLDEST key (n=1), which would otherwise be pruned.
+    manifest = {
+        "current": {"key": _history_key(10)},
+        "stable": {"key": _history_key(1)},
+        "previous": {"key": _history_key(9)},
+        "history": [_history_key(n) for n in range(10, 5, -1)],
+    }
+    deleted = prune(fake, "bucket", "models", "QB", manifest, keep_n=5)
+
+    assert _history_key(1) not in deleted
+    assert _history_key(1) in fake._keys
+    # The other out-of-window entries (n=2..5) are still pruned.
+    assert set(deleted) == {_history_key(n) for n in range(2, 6)}
+
+
+def test_prune_handles_missing_stable_field():
+    """Old (v1) manifests have no ``stable`` field. Prune must read absence
+    as 'no stable pin' and behave exactly as before — keep current, previous,
+    and the top-N history."""
+    keys = [_history_key(n) for n in range(1, 6)]
+    fake = _FakeS3Gc(keys)
+    manifest = {
+        "current": {"key": _history_key(5)},
+        "previous": {"key": _history_key(4)},
+        "history": [_history_key(n) for n in range(5, 0, -1)],
+    }
+    deleted = prune(fake, "bucket", "models", "QB", manifest, keep_n=5)
+    # All 5 keys are in history[:5] → nothing to delete.
+    assert deleted == []

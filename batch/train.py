@@ -45,6 +45,7 @@ from shared.registry import (
     get_runner,
     is_cpu_only,
 )
+from shared.smoke_test import SmokeTestFailed, run_smoke_test
 from shared.utils import seed_everything
 from shared.utils import timed as _timed
 
@@ -204,22 +205,55 @@ def _validate_remote_tarball(s3_client, bucket: str, key: str, position: str) ->
         )
 
 
-def upload_artifacts(s3_bucket, position, model_dir):
-    """Tar, upload to a versioned history key, validate, atomically promote,
-    then mirror to the legacy key for pre-manifest consumers.
+def _try_smoke_test(position: str, model_dir: str) -> bool:
+    """Run the post-upload load+predict smoke test. Returns True on pass,
+    False on any failure. Never raises — a failure must NOT abort the upload
+    (the artifact is still useful in ``current``/``history`` for forensics);
+    it only pins the manifest's ``stable`` pointer to the previous good run.
 
-    Order (each step raises on failure):
+    The producer is responsible for passing the boolean result through to
+    ``build_manifest(..., smoke_passed=...)``.
+    """
+    try:
+        run_smoke_test(position, model_dir)
+    except SmokeTestFailed as e:
+        print(
+            f"[smoke_test] {position}: FAIL ({e}) — stable pointer NOT advanced",
+            flush=True,
+        )
+        return False
+    except Exception as e:
+        # An unexpected exception during smoke test (import error, OOM, etc.)
+        # is treated as a smoke-test failure rather than aborting the upload —
+        # blocking promotion is the safe default. Logged loudly for triage.
+        print(
+            f"[smoke_test] {position}: UNEXPECTED {e!r} — stable pointer NOT advanced",
+            flush=True,
+        )
+        return False
+    print(f"[smoke_test] {position}: PASS", flush=True)
+    return True
+
+
+def upload_artifacts(s3_bucket, position, model_dir):
+    """Tar, upload to a versioned history key, validate, smoke-test, atomically
+    promote, then mirror to the legacy key for pre-manifest consumers.
+
+    Order (each step raises on failure unless noted):
       1. Structural check of ``model_dir`` (fast-fail before S3 round-trips).
       2. Build tarball, hash it, pick timestamped + sha7 history key.
       3. Upload to ``history/{ts}-{sha7}/model.tar.gz``.
       4. Re-download + validate (reopenable, expected files present).
-      5. Read old ``manifest.json`` (None on first run).
-      6. Write new ``manifest.json`` with ``current=new, previous=old.current``
-         — **this write is the atomic promotion**. Any earlier failure leaves
-         the old manifest in place and the site keeps serving the previous
-         good artifact.
-      7. Overwrite legacy ``model.tar.gz`` mirror (pre-manifest compat).
-      8. Best-effort retention prune (failure is non-fatal).
+      5. Run load+predict smoke test on the local ``model_dir`` (non-fatal —
+         only gates whether the new manifest's ``stable`` pointer advances).
+      6. Read old ``manifest.json`` (None on first run).
+      7. Write new ``manifest.json`` with ``current=new, previous=old.current``
+         and ``stable`` advanced iff smoke test passed — **this write is the
+         atomic promotion**. Any earlier raise leaves the old manifest in
+         place and the site keeps serving the previous good artifact.
+      8. Overwrite legacy ``model.tar.gz`` mirror (pre-manifest compat).
+      9. Best-effort retention prune (failure is non-fatal). The artifact
+         pointed to by ``stable`` is exempted from pruning.
     """
     if not os.path.isdir(model_dir):
         raise RuntimeError(
@@ -262,6 +296,8 @@ def upload_artifacts(s3_bucket, position, model_dir):
         print(f"Validating uploaded tarball at s3://{s3_bucket}/{new_key}")
         _validate_remote_tarball(s3, s3_bucket, new_key, position)
 
+        smoke_passed = _try_smoke_test(position, model_dir)
+
         old_manifest = load_manifest(s3, s3_bucket, s3_prefix, position)
         new_manifest = build_manifest(
             new_key=new_key,
@@ -269,6 +305,7 @@ def upload_artifacts(s3_bucket, position, model_dir):
             bytes_=tar_bytes,
             uploaded_at=ts,
             old_manifest=old_manifest,
+            smoke_passed=smoke_passed,
         )
         write_manifest(s3, s3_bucket, s3_prefix, position, new_manifest)
         print(f"Promoted s3://{s3_bucket}/{manifest_key(s3_prefix, position)}")

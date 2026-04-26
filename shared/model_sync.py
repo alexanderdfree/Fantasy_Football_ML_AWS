@@ -2,11 +2,12 @@
 
 Opt-in via FF_MODEL_S3_BUCKET env var. Unset/empty -> no-op (dev, tests).
 
-``sync_models_from_s3`` reads each position's ``manifest.json`` to find the
-currently-promoted artifact, falls back to ``previous`` on any load failure,
-and finally falls back to the legacy
-``s3://{bucket}/{prefix}/{POS}/model.tar.gz`` key for pre-manifest buckets
-(migration compat). See ``shared/artifact_gc.py`` for retention.
+``sync_models_from_s3`` reads each position's ``manifest.json`` and prefers
+the smoke-test-validated ``stable`` artifact, falling back to ``current``
+then ``previous`` only when ``stable`` is missing or fails to load. For
+pre-manifest buckets it falls back to the legacy
+``s3://{bucket}/{prefix}/{POS}/model.tar.gz`` key (migration compat).
+See ``shared/artifact_gc.py`` for retention; ``stable`` is exempted from GC.
 
 ``sync_data_from_s3`` pulls the splits + raw weekly parquets that inference
 needs (K reconstructs kicker stats from data/raw/, all positions read
@@ -14,10 +15,10 @@ schedules for weather features). These were previously baked into the
 Docker image via the deploy workflow; fetching at boot shrinks the image
 and decouples deploy.yml from data changes.
 
-Fail-loud: if both the manifest's ``current`` AND ``previous`` entries fail,
-the raise propagates and gunicorn --preload aborts before binding :8000,
-blocking a broken rollout. Per-position graceful degradation in the Flask
-layer lives in ``app.py``.
+Fail-loud: if every manifest entry (``stable``, ``current``, ``previous``)
+fails, the raise propagates and gunicorn --preload aborts before binding
+:8000, blocking a broken rollout. Per-position graceful degradation in the
+Flask layer lives in ``app.py``.
 """
 
 from __future__ import annotations
@@ -39,14 +40,18 @@ _RAW_PREFIX = "data/raw/"
 _RAW_EXCLUDE_SUFFIX = "_2023_2023.parquet"
 
 # Manifest schema lives in a single place so producer + consumer can't drift.
-# Schema v1:
+# Schema v2:
 #   {
-#     "schema_version": 1,
+#     "schema_version": 2,
 #     "current":  {"key": "...", "sha7": "...", "bytes": int, "uploaded_at": "..."},
-#     "previous": <same shape> | null,
+#     "stable":   <same shape> | null,    // last upload that PASSED smoke test
+#     "previous": <same shape> | null,    // the prior current (forensics)
 #     "history":  ["key0", "key1", ...]   // newest-first, capped at HISTORY_KEEP_N
 #   }
-MANIFEST_SCHEMA_VERSION = 1
+# v1 manifests (no "stable") are read transparently — the consumer falls
+# through to "current" until the next successful smoke test populates
+# "stable". This keeps the migration window safe.
+MANIFEST_SCHEMA_VERSION = 2
 HISTORY_KEEP_N = 5
 
 
@@ -110,6 +115,7 @@ def build_manifest(
     bytes_: int,
     uploaded_at: str,
     old_manifest: dict | None = None,
+    smoke_passed: bool = False,
     keep_history: int = HISTORY_KEEP_N,
 ) -> dict:
     """Pure helper: return the dict for the new manifest given the new upload
@@ -117,6 +123,11 @@ def build_manifest(
     old ``current``; ``history`` prepends the new key and caps at ``keep_history``
     newest-first. Duplicates of the new key in the old history are stripped
     (idempotent on retry).
+
+    ``stable`` advances to the new entry when ``smoke_passed=True`` and
+    otherwise carries forward the old ``stable`` (or ``None`` if there was
+    none). The ``stable`` pointer is the only reason to consult the old
+    manifest beyond ``previous``.
     """
     new_entry = {
         "key": new_key,
@@ -126,10 +137,12 @@ def build_manifest(
     }
     old = old_manifest or {}
     old_current = old.get("current")
+    old_stable = old.get("stable")
     old_history = [k for k in (old.get("history") or []) if k != new_key]
     return {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "current": new_entry,
+        "stable": new_entry if smoke_passed else old_stable,
         "previous": old_current,
         "history": [new_key] + old_history[: keep_history - 1],
     }
@@ -159,12 +172,19 @@ def _try_key(s3_client, bucket: str, key: str, dest: Path) -> dict:
 def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict:
     """Sync one position with manifest-driven fallback.
 
-    Order: manifest.current → manifest.previous → legacy ``model.tar.gz``
-    (only when manifest is absent; a manifest-present-but-all-entries-broken
-    state is a real bug, not something to paper over with a stale legacy
-    copy). Any fall-through is logged with the grep-able tag
-    ``source=previous`` / ``source=legacy`` so on-call can tell from
-    CloudWatch whether we're serving last-known-good.
+    Order: manifest.stable → manifest.current → manifest.previous → legacy
+    ``model.tar.gz`` (only when manifest is absent; a manifest-present-but-
+    all-entries-broken state is a real bug, not something to paper over with
+    a stale legacy copy). The frontend prefers ``stable`` because that's the
+    last artifact a smoke test confirmed actually loads + predicts; serving
+    ``current`` means stable was missing or unreadable, which is page-worthy.
+
+    A v1-shaped manifest (no ``stable`` slot) reads as ``stable=None`` and
+    falls through to ``current`` automatically — that's the migration window.
+
+    Each fall-through is logged with the grep-able tag
+    ``source=stable|current|previous|legacy`` so on-call can tell from
+    CloudWatch which artifact tier we ended up on.
     """
     from botocore.exceptions import ClientError
 
@@ -178,7 +198,7 @@ def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict
         return {"pos": pos, "source": "legacy", **r}
 
     tried: list[tuple[str, str, str]] = []
-    for label in ("current", "previous"):
+    for label in ("stable", "current", "previous"):
         entry = manifest.get(label)
         if not entry or not entry.get("key"):
             continue
