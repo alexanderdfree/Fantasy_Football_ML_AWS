@@ -199,13 +199,13 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
 
     depth_off = depth[depth["formation"] == "Offense"].copy()
     depth_off["depth_team"] = pd.to_numeric(depth_off["depth_team"], errors="coerce")
-    # One row per player-week: take the most recent (last) entry per week
-    depth_off = depth_off.sort_values(["gsis_id", "season", "week"])
+    # One row per player-week. ``min`` picks the best (lowest) rank a player
+    # held that week — order-independent (so deterministic across runs) and
+    # meaningful when a player is listed at multiple positions in one week
+    # (e.g., starter at TE + third-string FB → rank 1, their primary role).
     depth_agg = (
         depth_off.groupby(["gsis_id", "season", "week"])
-        .agg(
-            depth_chart_rank=("depth_team", "last"),
-        )
+        .agg(depth_chart_rank=("depth_team", "min"))
         .reset_index()
     )
 

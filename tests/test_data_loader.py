@@ -209,6 +209,44 @@ def test_load_raw_data_fresh_fetch_old_seasons_only(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("depth_order", [["1", "3"], ["3", "1"]])
+def test_load_raw_data_depth_chart_rank_picks_min_deterministically(
+    tmp_path, monkeypatch, depth_order
+):
+    """When a player has multiple Offense-formation rows in the same week with
+    different ``depth_team`` values, the merged ``depth_chart_rank`` must be
+    the minimum (best rank) regardless of input row order — guards against
+    the ``agg('last')`` non-determinism the previous loader had."""
+    import src.data.loader as loader
+
+    _mock_all_nfl_helpers(monkeypatch)
+
+    # Override depth charts: two Offense rows for the same player-week with
+    # different depth_team values. The parametrize swaps row order so we
+    # exercise both possible "last" answers under the old code.
+    def _two_row_depth_charts(seasons):
+        return pd.DataFrame(
+            {
+                "gsis_id": ["P00", "P00"],
+                "season": [seasons[0]] * 2,
+                "week": [1] * 2,
+                "formation": ["Offense", "Offense"],
+                "depth_team": depth_order,
+            }
+        )
+
+    monkeypatch.setattr(loader.nfl, "import_depth_charts", _two_row_depth_charts)
+
+    df = loader.load_raw_data([2022, 2023], cache_dir=str(tmp_path))
+    p00_row = df[df["player_id"] == "P00"].iloc[0]
+    assert p00_row["depth_chart_rank"] == 1.0, (
+        f"depth_chart_rank should be 1 (best rank held that week) regardless "
+        f"of input row order; got {p00_row['depth_chart_rank']} for input "
+        f"order {depth_order}"
+    )
+
+
+@pytest.mark.unit
 def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
     """Pre-written caches → the loader skips every nfl.* call and reads from disk."""
     import src.data.loader as loader
