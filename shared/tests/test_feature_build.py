@@ -182,9 +182,7 @@ class TestFillNansWithTrainMeans:
         train = pd.DataFrame({"feat_a": [np.nan, np.nan], "feat_b": [1.0, 2.0]})
         val = pd.DataFrame({"feat_a": [np.nan, 5.0], "feat_b": [np.nan, 4.0]})
         test = pd.DataFrame({"feat_a": [np.nan], "feat_b": [np.nan]})
-        out_t, out_v, out_te = fill_nans_with_train_means(
-            train, val, test, ["feat_a", "feat_b"]
-        )
+        out_t, out_v, out_te = fill_nans_with_train_means(train, val, test, ["feat_a", "feat_b"])
         # All-NaN train column → filled with 0 (not left as NaN).
         assert out_t["feat_a"].isna().sum() == 0
         assert (out_t["feat_a"] == 0.0).all()

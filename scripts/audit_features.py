@@ -5,9 +5,10 @@ SETUP.md first-time data pull), runs each skill position's
 ``add_*_specific_features`` pipeline, and prints pre-fill NaN/Inf rates plus
 basic distribution stats per whitelisted feature.
 
-Special section for ``depth_chart_rank``: distribution per position +
-non-determinism surface area on the raw depth-chart cache (bug-1 from the
-plan in ``/Users/alex/.claude/plans/first-i-need-you-delightful-avalanche.md``).
+Special section for ``depth_chart_rank``: distribution per position + a
+non-determinism surface-area count on the raw depth-chart cache (the share
+of player-week groups with >1 row, which the previous ``agg('last')`` was
+non-deterministic over).
 
 K and DST features are pre-computed on dedicated team/kicker datasets rather
 than the splits, so this script reports on them only at the depth-chart /
@@ -160,21 +161,18 @@ def _audit_depth_chart(
         return
 
     print("\n  Distribution per position (% rows at each rank):")
-    print(
-        f"    {'pos':<6}{'rank=1':>9}{'rank=2':>9}{'rank=3':>9}{'NaN':>9}{'rows':>12}"
-    )
+    print(f"    {'pos':<6}{'rank=1':>9}{'rank=2':>9}{'rank=3':>9}{'NaN':>9}{'rows':>12}")
     for pos in ["QB", "RB", "WR", "TE"]:
         sub = full[full["position"] == pos]
         if len(sub) == 0:
             continue
         rank = sub["depth_chart_rank"]
         n = len(rank)
-
-        def pct(target: float) -> float:
-            return 100.0 * (rank == target).sum() / n
-
+        pct1 = 100.0 * (rank == 1.0).sum() / n
+        pct2 = 100.0 * (rank == 2.0).sum() / n
+        pct3 = 100.0 * (rank == 3.0).sum() / n
         print(
-            f"    {pos:<6}{pct(1.0):8.2f}%{pct(2.0):8.2f}%{pct(3.0):8.2f}%"
+            f"    {pos:<6}{pct1:8.2f}%{pct2:8.2f}%{pct3:8.2f}%"
             f"{rank.isna().mean() * 100:8.2f}%{n:>12,}"
         )
 
