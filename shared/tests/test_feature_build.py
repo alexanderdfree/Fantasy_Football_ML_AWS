@@ -8,7 +8,12 @@ import pandas as pd
 import pytest
 from sklearn.preprocessing import StandardScaler
 
-from shared.feature_build import FEATURE_CLIP, build_position_features, scale_and_clip
+from shared.feature_build import (
+    FEATURE_CLIP,
+    build_position_features,
+    fill_nans_with_train_means,
+    scale_and_clip,
+)
 
 # ---------------------------------------------------------------------------
 # scale_and_clip
@@ -141,3 +146,62 @@ class TestBuildPositionFeatures:
         assert list(pos_val["feat_a"]) == [0.0, 2.0]
         # unchanged
         assert list(pos_test["feat_a"]) == [3.0, 4.0]
+
+
+# ---------------------------------------------------------------------------
+# fill_nans_with_train_means
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestFillNansWithTrainMeans:
+    def test_fills_nans_with_train_mean_only(self):
+        # Train mean for feat_a = (1+3)/2 = 2.0; val/test NaNs must take the
+        # train mean, not their own.
+        train = pd.DataFrame({"feat_a": [1.0, 3.0]})
+        val = pd.DataFrame({"feat_a": [np.nan, 100.0]})
+        test = pd.DataFrame({"feat_a": [np.nan]})
+        out_t, out_v, out_te = fill_nans_with_train_means(train, val, test, ["feat_a"])
+        assert list(out_t["feat_a"]) == [1.0, 3.0]
+        assert out_v["feat_a"].iloc[0] == 2.0
+        assert out_v["feat_a"].iloc[1] == 100.0
+        assert out_te["feat_a"].iloc[0] == 2.0
+
+    def test_inf_replaced_then_filled(self):
+        train = pd.DataFrame({"feat_a": [1.0, 3.0]})
+        val = pd.DataFrame({"feat_a": [np.inf, -np.inf]})
+        test = pd.DataFrame({"feat_a": [np.nan]})
+        _, out_v, _ = fill_nans_with_train_means(train, val, test, ["feat_a"])
+        # +/-inf replaced with NaN, then filled with train mean = 2.0.
+        assert list(out_v["feat_a"]) == [2.0, 2.0]
+
+    def test_all_nan_train_column_zeros_with_warning(self, capsys):
+        # Bug #5 from the plan: a column entirely NaN in train would leave
+        # train_mean = NaN, so fillna(NaN) was a no-op and the silent zero-
+        # feature only got caught by build_position_features's catch-all.
+        train = pd.DataFrame({"feat_a": [np.nan, np.nan], "feat_b": [1.0, 2.0]})
+        val = pd.DataFrame({"feat_a": [np.nan, 5.0], "feat_b": [np.nan, 4.0]})
+        test = pd.DataFrame({"feat_a": [np.nan], "feat_b": [np.nan]})
+        out_t, out_v, out_te = fill_nans_with_train_means(
+            train, val, test, ["feat_a", "feat_b"]
+        )
+        # All-NaN train column → filled with 0 (not left as NaN).
+        assert out_t["feat_a"].isna().sum() == 0
+        assert (out_t["feat_a"] == 0.0).all()
+        assert out_v["feat_a"].iloc[0] == 0.0
+        # The non-zero val cell isn't clobbered.
+        assert out_v["feat_a"].iloc[1] == 5.0
+        assert out_te["feat_a"].iloc[0] == 0.0
+        # Non-all-NaN column behaves normally (train mean = 1.5).
+        assert out_v["feat_b"].iloc[0] == 1.5
+        # And the warning surfaces the silent failure.
+        captured = capsys.readouterr().out
+        assert "feat_a" in captured
+        assert "entirely NaN in training" in captured
+
+    def test_missing_train_column_raises_keyerror(self):
+        train = pd.DataFrame({"feat_a": [1.0]})
+        val = pd.DataFrame({"feat_a": [1.0]})
+        test = pd.DataFrame({"feat_a": [1.0]})
+        with pytest.raises(KeyError, match="not in train_df"):
+            fill_nans_with_train_means(train, val, test, ["feat_a", "feat_missing"])

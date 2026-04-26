@@ -161,15 +161,23 @@ class TestFillRBNans:
         # mean of [1.0, NaN, 3.0] = 2.0
         assert pytest.approx(val["feat1"].iloc[0]) == 2.0
 
-    def test_all_nan_train_propagates_nan(self, make_splits):
-        """If training set is all NaN, mean is NaN — val/test stay NaN."""
+    def test_all_nan_train_fills_with_zero(self, make_splits, capsys):
+        """If training set is all NaN, train_mean is NaN; previously the fill
+        was a silent no-op and the catch-all `.fillna(0)` in
+        `build_position_features` masked the failure. The hardened
+        `fill_nans_with_train_means` now substitutes 0 explicitly and prints
+        a warning so the silent zero-feature is visible."""
         train, val, test = make_splits(
             [np.nan, np.nan],
             [np.nan],
             [np.nan],
         )
         train, val, test = fill_rb_nans(train, val, test, ["feat1"])
-        assert np.isnan(val["feat1"].iloc[0])
+        assert val["feat1"].iloc[0] == 0.0
+        assert test["feat1"].iloc[0] == 0.0
+        captured = capsys.readouterr().out
+        assert "feat1" in captured
+        assert "entirely NaN in training" in captured
 
     def test_no_nans_unchanged(self, make_splits):
         train, val, test = make_splits(

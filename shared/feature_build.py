@@ -154,10 +154,35 @@ def fill_nans_with_train_means(
     Using train-set statistics for every split is the leakage-safe contract
     every position's ``fill_*_nans`` already follows; lifting the loop here
     keeps the ``cfg["fill_nans_fn"]`` signature intact.
+
+    Two failure modes that used to be silent are now explicit:
+
+    - A column listed in ``cols`` but missing from ``train_df`` raises
+      ``KeyError`` with the offending columns named (used to surface as a
+      cryptic pandas KeyError on ``train_df[cols]`` access).
+    - A column entirely NaN in ``train_df`` has ``train_means[col] = NaN``,
+      so the per-column ``fillna`` would be a no-op and the NaN would only
+      get caught by ``build_position_features``'s catch-all ``.fillna(0)``
+      with no signal that anything went wrong. We now log a warning and
+      substitute 0 for those columns, matching the catch-all's behavior
+      but making the silent zero-feature visible.
     """
+    missing = [c for c in cols if c not in train_df.columns]
+    if missing:
+        raise KeyError(f"fill_nans_with_train_means: cols not in train_df: {missing}")
+
     for split_df in (train_df, val_df, test_df):
         split_df[cols] = split_df[cols].replace([np.inf, -np.inf], np.nan)
+
     train_means = train_df[cols].mean()
+    all_nan_cols = [c for c in cols if pd.isna(train_means[c])]
+    if all_nan_cols:
+        print(
+            f"  WARNING: {len(all_nan_cols)} feature(s) entirely NaN in training "
+            f"set; filling with 0: {all_nan_cols}"
+        )
+        train_means[all_nan_cols] = 0.0
+
     for split_df in (train_df, val_df, test_df):
         for col in cols:
             split_df[col] = split_df[col].fillna(train_means[col])

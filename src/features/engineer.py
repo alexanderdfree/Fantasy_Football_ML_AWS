@@ -643,9 +643,11 @@ def _build_contextual_features(df: pd.DataFrame) -> pd.DataFrame:
     if "game_status" not in df.columns:
         df["game_status"] = 1.0
 
-    # Depth chart rank (merged in loader; ensure default)
+    # Depth chart rank (merged in loader; ensure default).
+    # 3.0 matches loader.py's NaN-fill convention so "no depth chart data"
+    # produces the same signal regardless of which fallback fires.
     if "depth_chart_rank" not in df.columns:
-        df["depth_chart_rank"] = 1.0
+        df["depth_chart_rank"] = 3.0
 
     return df
 
