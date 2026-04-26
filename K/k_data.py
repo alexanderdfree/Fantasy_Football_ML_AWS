@@ -337,6 +337,22 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
         print(f"  WARNING: 2025 PBP backfill failed ({e}), PBP features will be NaN for 2025")
 
 
+_KICKS_SCHEMA = [
+    "player_id",
+    "season",
+    "week",
+    "play_id",
+    "is_fg",
+    "is_xp",
+    "kick_distance",
+    "kick_made",
+    "fg_prob",
+    "is_q4",
+    "score_diff",
+    "game_wind",
+]
+
+
 def reconstruct_kicker_kicks_from_pbp(
     seasons: list[int],
     cache_dir: str = CACHE_DIR,
@@ -348,8 +364,14 @@ def reconstruct_kicker_kicks_from_pbp(
     weekly-aggregated rows produced by `reconstruct_kicker_weekly_from_pbp`.
 
     XP rows have `kick_distance=0` and `fg_prob=0`; the `is_xp` flag
-    disambiguates (don't conflate with a 0%-probability FG).
+    disambiguates (don't conflate with a 0%-probability FG). The `play_id`
+    column carries PBP's stable per-play sequence number so downstream
+    consumers can sort kicks within a game and apply deterministic
+    most-recent truncation.
     """
+    if not seasons:
+        return pd.DataFrame(columns=_KICKS_SCHEMA)
+
     cache_path = f"{cache_dir}/kicker_kicks_pbp_{seasons[0]}_{seasons[-1]}.parquet"
     if os.path.exists(cache_path):
         return pd.read_parquet(cache_path)
@@ -357,68 +379,64 @@ def reconstruct_kicker_kicks_from_pbp(
     all_kicks = []
     for yr in seasons:
         print(f"  Loading per-kick PBP for {yr}...")
+        # Wrap the entire per-year extraction (not just import_pbp_data) so a
+        # missing column or unexpected schema in one season doesn't abort the
+        # whole load. Mirrors the defensive posture of _backfill_2025_pbp_columns.
         try:
             pbp = nfl.import_pbp_data([yr], downcast=True)
+            pbp = pbp[pbp["season_type"] == "REG"]
+
+            fg_rows = pbp[pbp["field_goal_attempt"] == 1]
+            fg_kicks = pd.DataFrame(
+                {
+                    "player_id": fg_rows["kicker_player_id"],
+                    "season": fg_rows["season"],
+                    "week": fg_rows["week"],
+                    "play_id": fg_rows["play_id"].astype("int64"),
+                    "is_fg": 1,
+                    "is_xp": 0,
+                    "kick_distance": fg_rows["kick_distance"].fillna(0).astype(float),
+                    "kick_made": (fg_rows["field_goal_result"] == "made").astype(int),
+                    "fg_prob": fg_rows["fg_prob"].fillna(0).astype(float),
+                    "is_q4": (fg_rows["qtr"] >= 4).astype(int),
+                    "score_diff": fg_rows["score_differential"].fillna(0).astype(float),
+                    "game_wind": fg_rows["wind"].fillna(0).astype(float),
+                }
+            )
+
+            xp_rows = pbp[pbp["extra_point_attempt"] == 1]
+            xp_kicks = pd.DataFrame(
+                {
+                    "player_id": xp_rows["kicker_player_id"],
+                    "season": xp_rows["season"],
+                    "week": xp_rows["week"],
+                    "play_id": xp_rows["play_id"].astype("int64"),
+                    "is_fg": 0,
+                    "is_xp": 1,
+                    "kick_distance": 0.0,
+                    "kick_made": (xp_rows["extra_point_result"] == "good").astype(int),
+                    "fg_prob": 0.0,
+                    "is_q4": (xp_rows["qtr"] >= 4).astype(int),
+                    "score_diff": xp_rows["score_differential"].fillna(0).astype(float),
+                    "game_wind": xp_rows["wind"].fillna(0).astype(float),
+                }
+            )
+
+            all_kicks.append(pd.concat([fg_kicks, xp_kicks], ignore_index=True))
         except Exception as e:
-            print(f"  WARNING: per-kick PBP load failed for {yr} ({e}); skipping")
+            print(f"  WARNING: per-kick PBP extraction failed for {yr} ({e}); skipping")
             continue
-        pbp = pbp[pbp["season_type"] == "REG"]
-
-        fg_rows = pbp[pbp["field_goal_attempt"] == 1]
-        fg_kicks = pd.DataFrame(
-            {
-                "player_id": fg_rows["kicker_player_id"],
-                "season": fg_rows["season"],
-                "week": fg_rows["week"],
-                "is_fg": 1,
-                "is_xp": 0,
-                "kick_distance": fg_rows["kick_distance"].fillna(0).astype(float),
-                "kick_made": (fg_rows["field_goal_result"] == "made").astype(int),
-                "fg_prob": fg_rows["fg_prob"].fillna(0).astype(float),
-                "is_q4": (fg_rows["qtr"] >= 4).astype(int),
-                "score_diff": fg_rows["score_differential"].fillna(0).astype(float),
-                "game_wind": fg_rows["wind"].fillna(0).astype(float),
-            }
-        )
-
-        xp_rows = pbp[pbp["extra_point_attempt"] == 1]
-        xp_kicks = pd.DataFrame(
-            {
-                "player_id": xp_rows["kicker_player_id"],
-                "season": xp_rows["season"],
-                "week": xp_rows["week"],
-                "is_fg": 0,
-                "is_xp": 1,
-                "kick_distance": 0.0,
-                "kick_made": (xp_rows["extra_point_result"] == "good").astype(int),
-                "fg_prob": 0.0,
-                "is_q4": (xp_rows["qtr"] >= 4).astype(int),
-                "score_diff": xp_rows["score_differential"].fillna(0).astype(float),
-                "game_wind": xp_rows["wind"].fillna(0).astype(float),
-            }
-        )
-
-        all_kicks.append(pd.concat([fg_kicks, xp_kicks], ignore_index=True))
 
     if not all_kicks:
-        return pd.DataFrame(
-            columns=[
-                "player_id",
-                "season",
-                "week",
-                "is_fg",
-                "is_xp",
-                "kick_distance",
-                "kick_made",
-                "fg_prob",
-                "is_q4",
-                "score_diff",
-                "game_wind",
-            ]
-        )
+        return pd.DataFrame(columns=_KICKS_SCHEMA)
 
     result = pd.concat(all_kicks, ignore_index=True)
     result = result.dropna(subset=["player_id"]).reset_index(drop=True)
+    # Sort by (player_id, season, week, play_id) so downstream truncation by
+    # most-recent kicks within a game has well-defined semantics.
+    result = result.sort_values(
+        ["player_id", "season", "week", "play_id"], kind="stable"
+    ).reset_index(drop=True)
 
     os.makedirs(cache_dir, exist_ok=True)
     result.to_parquet(cache_path)

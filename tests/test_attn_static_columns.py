@@ -249,8 +249,9 @@ class TestGetAttnStaticColumnsFunction:
 # ---------------------------------------------------------------------------
 # K — different contract. K's attention static list is the complete source of
 # truth (attn_static_from_df=True), so the filter is a no-op at runtime. The
-# invariants are (a) no temporal features in the static list, (b) the new L1
-# engineered columns stay OUT of K_ALL_FEATURES so Ridge and the base NN
+# invariants are (a) no rolling/trend/temporal aggregate engineered features
+# in the static list (week and other game-time scalars are fine), (b) the new
+# L1 engineered columns stay OUT of K_ALL_FEATURES so Ridge and the base NN
 # never see them.
 # ---------------------------------------------------------------------------
 
