@@ -80,11 +80,22 @@ def cv_pipeline_run(synthetic_cv_splits, tmp_path_factory):
 
 
 @pytest.mark.e2e
+@pytest.mark.timeout(180)
 class TestQBRunCVPipeline:
+    """Per-test timeout bumped to 180s (vs the 60s global default) because the
+    module-scoped ``cv_pipeline_run`` fixture trains 4 CV folds + a final
+    holdout retrain — that lands at ~30s locally on Apple silicon but ~100-
+    120s on ubuntu-latest's slower x86 cores. With the default ``timeout_method
+    = "thread"`` (per pyproject.toml) a sub-60s default can't kill C-extension
+    NN / sklearn fits, so the xdist worker hangs instead of erroring cleanly.
+    See ``RB/tests/test_rb_pipeline_e2e.py`` which already uses ``timeout(180)``
+    for the same reason.
+    """
+
     def test_completes_within_budget(self, cv_pipeline_run):
-        """CV smoke must finish in under 60s on tiny synthetic data."""
-        assert cv_pipeline_run["_elapsed"] < 60.0, (
-            f"run_cv_pipeline took {cv_pipeline_run['_elapsed']:.1f}s (budget 60s)"
+        """CV smoke must finish under the 180s class timeout on slow CI."""
+        assert cv_pipeline_run["_elapsed"] < 180.0, (
+            f"run_cv_pipeline took {cv_pipeline_run['_elapsed']:.1f}s (budget 180s)"
         )
 
     def test_result_has_cv_metrics(self, cv_pipeline_run):
@@ -203,10 +214,14 @@ def cv_pipeline_run_with_lgbm(synthetic_cv_splits, tmp_path_factory):
 
 
 @pytest.mark.e2e
+@pytest.mark.timeout(180)
 class TestQBRunCVPipelineWithLGBM:
     """LightGBM-enabled CV path: per-fold LGBM training + final-holdout LGBM
     + ranking + lgbm_metrics result key. Mirrors the baseline class but with
-    train_lightgbm flipped on."""
+    train_lightgbm flipped on. Same 180s class timeout reasoning as
+    ``TestQBRunCVPipeline``: LGBM gradient boosting adds ~30-60s on top of
+    the NN folds and the default 60s/test timeout would hang the xdist worker
+    (thread-method timeouts can't preempt LightGBM's C++ training loop)."""
 
     def test_lgbm_cv_metrics_present(self, cv_pipeline_run_with_lgbm):
         cv = cv_pipeline_run_with_lgbm["cv_metrics"]
