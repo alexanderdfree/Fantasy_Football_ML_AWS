@@ -230,6 +230,19 @@ QB_ATTN_GATE_HIDDEN = 16
 QB_ATTN_GATE_WEIGHT = 1.0
 
 # === LightGBM (Optuna-tuned, 50 trials, CV MAE 5.7415) ===
+# QB is the one position that keeps Fair after PR 3's unification attempt.
+# Running a 50-trial Huber retune regressed QB total MAE 6.269 -> 6.479
+# (+0.210 pts/game), with passing_yards MAE jumping 66.1 -> 71.2 (+5.0).
+# Root cause: LightGBM's Huber uses ``alpha=0.9`` as a *quantile* — the 90th
+# percentile of residuals demarcates the quadratic-to-linear transition.
+# On QB passing_yards (typical residuals 0-100 yards, tail to 200+), that
+# threshold puts 90% of residuals in Huber's quadratic zone. The resulting
+# effective-OLS behavior drags the model toward fitting moderate-size
+# residuals on the heavy tail, which generalizes poorly across seasons.
+# Fair's log-curvature-everywhere downweights the tail smoothly and beats
+# Huber by 0.21 pts on QB holdout.
+# RB/WR/TE/K/DST don't have a passing_yards-like heavy tail and tolerate
+# Huber; they unified to "huber" in the same PR.
 QB_TRAIN_LIGHTGBM = True
 QB_LGBM_N_ESTIMATORS = 1500
 QB_LGBM_LEARNING_RATE = 0.0612763

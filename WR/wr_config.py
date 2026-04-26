@@ -215,18 +215,30 @@ WR_HEAD_LOSSES = {
     "fumbles_lost": "poisson_nll",
 }
 
-# === LightGBM (Optuna-tuned, 50 trials, CV MAE 4.7319) ===
+# === LightGBM (Optuna retune, 50 trials, CV MAE 4.6876) ===
+# Flipped from ``"fair"`` to ``"huber"`` as part of the PR 3 LGBM unification
+# (QB is the one exception — see QB_LGBM_OBJECTIVE). Retuned on the huber
+# objective, holdout comparison vs the old fair config:
+#   Total MAE        4.203 -> 4.221  (+0.018)
+#   Receiving Yards  19.94 -> 19.87  (-0.07)
+#   Receiving Tds    0.269 -> 0.293  (+0.024)
+#   Receptions       1.368 -> 1.351  (-0.017)
+#   Top-12 hit rate  0.389 -> 0.393  (+0.004)
+#   Spearman rho     0.644 -> 0.648  (+0.004)
+# CV MAE improved (-0.044). Holdout nudge (+0.018) is well inside the plan's
+# ±0.05 tolerance. Full tune_lgbm_results.json in retune run 24823926033.
 WR_TRAIN_LIGHTGBM = True
-WR_LGBM_N_ESTIMATORS = 900
-WR_LGBM_LEARNING_RATE = 0.0183694
-WR_LGBM_NUM_LEAVES = 58
-WR_LGBM_SUBSAMPLE = 0.588592
-WR_LGBM_COLSAMPLE_BYTREE = 0.401101
-WR_LGBM_REG_LAMBDA = 9.57554
-WR_LGBM_REG_ALPHA = 0.674656
-WR_LGBM_MIN_CHILD_SAMPLES = 37
-WR_LGBM_MIN_SPLIT_GAIN = 0.370048
-WR_LGBM_OBJECTIVE = "fair"
+WR_LGBM_N_ESTIMATORS = 1600
+WR_LGBM_LEARNING_RATE = 0.08782007
+WR_LGBM_NUM_LEAVES = 31
+WR_LGBM_MAX_DEPTH = 9
+WR_LGBM_SUBSAMPLE = 0.7318847
+WR_LGBM_COLSAMPLE_BYTREE = 0.48205232
+WR_LGBM_REG_LAMBDA = 0.1113962
+WR_LGBM_REG_ALPHA = 1.2740795
+WR_LGBM_MIN_CHILD_SAMPLES = 63
+WR_LGBM_MIN_SPLIT_GAIN = 0.2346478
+WR_LGBM_OBJECTIVE = "huber"
 
 
 # === Tiny-scale config for E2E smoke tests ===
