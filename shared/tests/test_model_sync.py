@@ -32,14 +32,21 @@ def _make_tarball(members: dict[str, bytes]) -> bytes:
 def _manifest_bytes(
     current_key: str,
     previous_key: str | None = None,
+    stable_key: str | None = None,
     sha7: str = "abc1234",
     bytes_: int = 4096,
+    schema_version: int = 2,
 ) -> bytes:
     """Build a well-formed manifest.json body pointing at the given keys.
 
     Kept in this test module (not shared.model_sync) so that tests exercise
     the exact JSON shape a real producer would write — drift between
     build_manifest and the consumer's schema expectations would show up here.
+
+    ``schema_version=1`` omits the ``stable`` field entirely so the
+    backwards-compat path (consumer reading a pre-migration manifest) can be
+    exercised. ``schema_version=2`` includes ``stable`` (None unless
+    ``stable_key`` is set).
     """
     current = {
         "key": current_key,
@@ -55,14 +62,23 @@ def _manifest_bytes(
             "bytes": bytes_,
             "uploaded_at": "2026-04-22T00-00-00Z",
         }
-    return json.dumps(
-        {
-            "schema_version": 1,
-            "current": current,
-            "previous": previous,
-            "history": [current_key] + ([previous_key] if previous_key else []),
-        }
-    ).encode("utf-8")
+    body: dict = {
+        "schema_version": schema_version,
+        "current": current,
+        "previous": previous,
+        "history": [current_key] + ([previous_key] if previous_key else []),
+    }
+    if schema_version >= 2:
+        stable = None
+        if stable_key is not None:
+            stable = {
+                "key": stable_key,
+                "sha7": "stab123",
+                "bytes": bytes_,
+                "uploaded_at": "2026-04-21T00-00-00Z",
+            }
+        body["stable"] = stable
+    return json.dumps(body).encode("utf-8")
 
 
 class _FakeBody:
@@ -358,6 +374,130 @@ def test_sync_one_raises_when_current_fails_and_previous_is_null(monkeypatch, tm
             model_sync.sync_models_from_s3()
 
 
+# --- Manifest v2: stable-first fallback chain ---
+
+
+def test_sync_one_prefers_stable_over_current(monkeypatch, tmp_path):
+    """Happy path under the new contract: when the manifest names a stable
+    artifact (from a passing smoke test on the writer side), ``_sync_one``
+    pulls THAT artifact and reports source=stable. The current slot is left
+    untouched in S3 — current is whatever the latest upload was, even if its
+    smoke test failed."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    stable_tar = _make_tarball({"marker.pkl": b"FROM_STABLE"})
+    current_tar = _make_tarball({"marker.pkl": b"FROM_CURRENT"})
+
+    objects: dict[str, bytes] = {}
+    for pos in model_sync.POSITIONS:
+        cur_key = f"models/{pos}/history/2026-04-25T00-00-00Z-newnew1/model.tar.gz"
+        stable_key = f"models/{pos}/history/2026-04-23T00-00-00Z-stab123/model.tar.gz"
+        objects[cur_key] = current_tar
+        objects[stable_key] = stable_tar
+        objects[f"models/{pos}/manifest.json"] = _manifest_bytes(
+            current_key=cur_key, stable_key=stable_key
+        )
+
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_models_from_s3()
+
+    assert all(r["source"] == "stable" for r in summary["positions"])
+    for pos in model_sync.POSITIONS:
+        extracted = tmp_path / pos / "outputs" / "models" / "marker.pkl"
+        assert extracted.read_bytes() == b"FROM_STABLE"
+    # Current key bytes must NOT have been pulled — the stable key wins
+    # outright and we don't probe further when stable succeeds.
+    keys_called = {key for _, key in fake_s3.calls}
+    for pos in model_sync.POSITIONS:
+        cur_key = f"models/{pos}/history/2026-04-25T00-00-00Z-newnew1/model.tar.gz"
+        assert cur_key not in keys_called
+
+
+def test_sync_one_falls_through_when_stable_missing_v1_manifest(monkeypatch, tmp_path):
+    """Backwards compat: a v1-shaped manifest has no ``stable`` field at all.
+    Consumer must treat that as "no stable yet" and fall through to current
+    without erroring. This is the migration window when the new producer
+    rolls out — until the first post-deploy training run sets ``stable``,
+    the frontend serves ``current``."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    tar = _make_tarball({"marker.pkl": b"V1_CURRENT"})
+    objects: dict[str, bytes] = {}
+    for pos in model_sync.POSITIONS:
+        cur_key = f"models/{pos}/history/v1-cur/model.tar.gz"
+        objects[cur_key] = tar
+        objects[f"models/{pos}/manifest.json"] = _manifest_bytes(
+            current_key=cur_key, schema_version=1
+        )
+
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_models_from_s3()
+
+    assert all(r["source"] == "current" for r in summary["positions"])
+
+
+def test_sync_one_falls_through_when_stable_corrupt(monkeypatch, tmp_path, capsys):
+    """Stable points at a key whose bytes are corrupt (e.g. a delete-and-
+    rewrite race or a flipped bit on disk). Consumer falls through to current
+    rather than raising — but logs the failure so on-call sees the
+    degradation."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    good_tar = _make_tarball({"marker.pkl": b"FROM_CURRENT"})
+    objects: dict[str, bytes] = {}
+    for pos in model_sync.POSITIONS:
+        cur_key = f"models/{pos}/history/cur/model.tar.gz"
+        stable_key = f"models/{pos}/history/stable-broken/model.tar.gz"
+        objects[stable_key] = b"NOT A GZIP TARBALL"
+        objects[cur_key] = good_tar
+        objects[f"models/{pos}/manifest.json"] = _manifest_bytes(
+            current_key=cur_key, stable_key=stable_key
+        )
+
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_models_from_s3()
+
+    assert all(r["source"] == "current" for r in summary["positions"])
+    out = capsys.readouterr().out
+    # The stable failure must be loud — it's page-worthy in production.
+    assert "stable" in out and "FAILED" in out
+
+
+def test_sync_one_full_chain_falls_to_previous_when_stable_and_current_corrupt(
+    monkeypatch, tmp_path
+):
+    """Stable + current both broken, previous good — must fall through the
+    full chain to previous. Establishes that the chain is stable→current→
+    previous, not stable→previous (skipping current)."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    good_tar = _make_tarball({"marker.pkl": b"FROM_PREVIOUS"})
+    objects: dict[str, bytes] = {}
+    for pos in model_sync.POSITIONS:
+        cur_key = f"models/{pos}/history/cur-broken/model.tar.gz"
+        prev_key = f"models/{pos}/history/prev-good/model.tar.gz"
+        stable_key = f"models/{pos}/history/stable-broken/model.tar.gz"
+        objects[cur_key] = b"BROKEN_CUR"
+        objects[stable_key] = b"BROKEN_STABLE"
+        objects[prev_key] = good_tar
+        objects[f"models/{pos}/manifest.json"] = _manifest_bytes(
+            current_key=cur_key, previous_key=prev_key, stable_key=stable_key
+        )
+
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_models_from_s3()
+
+    assert all(r["source"] == "previous" for r in summary["positions"])
+
+
 # --- Pure-function tests for build_manifest ---
 
 
@@ -369,9 +509,12 @@ def test_build_manifest_first_write_has_null_previous():
         uploaded_at="2026-04-23T00-00-00Z",
         old_manifest=None,
     )
-    assert m["schema_version"] == 1
+    assert m["schema_version"] == 2
     assert m["current"]["key"] == "models/QB/history/t1/model.tar.gz"
     assert m["previous"] is None
+    # Default smoke_passed=False on first write — stable is null until a
+    # smoke test passes.
+    assert m["stable"] is None
     assert m["history"] == ["models/QB/history/t1/model.tar.gz"]
 
 
@@ -412,6 +555,88 @@ def test_build_manifest_caps_history_at_keep_n():
     )
     assert len(m["history"]) == model_sync.HISTORY_KEEP_N
     assert m["history"][0] == "brand-new"
+
+
+def test_build_manifest_smoke_passed_advances_stable():
+    """A passing smoke test promotes the new entry into the ``stable`` slot.
+    When there is no prior manifest, ``stable`` and ``current`` agree."""
+    m = model_sync.build_manifest(
+        new_key="models/QB/history/t1/model.tar.gz",
+        sha7="abc1234",
+        bytes_=1000,
+        uploaded_at="2026-04-23T00-00-00Z",
+        old_manifest=None,
+        smoke_passed=True,
+    )
+    assert m["stable"]["key"] == "models/QB/history/t1/model.tar.gz"
+    assert m["stable"] == m["current"]
+
+
+def test_build_manifest_smoke_failed_pins_old_stable():
+    """A failing smoke test does NOT advance ``stable`` — the prior good
+    pointer carries forward verbatim. Current and history still update so
+    the artifact is auditable in S3."""
+    old_stable = {
+        "key": "old-stable",
+        "sha7": "stb1234",
+        "bytes": 1,
+        "uploaded_at": "t-2",
+    }
+    old = {
+        "current": {"key": "old-cur", "sha7": "cur1234", "bytes": 1, "uploaded_at": "t-1"},
+        "stable": old_stable,
+        "previous": {"key": "old-prev", "sha7": "prv1234", "bytes": 1, "uploaded_at": "t-3"},
+        "history": ["old-cur", "old-prev"],
+    }
+    m = model_sync.build_manifest(
+        new_key="new-broken",
+        sha7="brk1234",
+        bytes_=1,
+        uploaded_at="t",
+        old_manifest=old,
+        smoke_passed=False,
+    )
+    assert m["current"]["key"] == "new-broken"
+    assert m["stable"] == old_stable, "stable must not move when smoke fails"
+    assert m["previous"] == old["current"]
+
+
+def test_build_manifest_smoke_failed_first_run_leaves_stable_null():
+    """First-ever upload with a failing smoke test — there's no prior stable
+    to pin to, so stable starts as None. Migration window: the consumer
+    falls through to ``current`` until the next passing smoke test."""
+    m = model_sync.build_manifest(
+        new_key="brand-new-broken",
+        sha7="brk1234",
+        bytes_=1,
+        uploaded_at="t",
+        old_manifest=None,
+        smoke_passed=False,
+    )
+    assert m["current"]["key"] == "brand-new-broken"
+    assert m["stable"] is None
+
+
+def test_build_manifest_smoke_passed_after_prior_failure_advances_stable():
+    """A retrain that passes smoke test after a stretch of failures advances
+    stable to the new key, leapfrogging the old pinned stable."""
+    old_stable = {"key": "old-stable", "sha7": "stb1234", "bytes": 1, "uploaded_at": "t-2"}
+    old = {
+        "current": {"key": "broken-cur", "sha7": "brk1234", "bytes": 1, "uploaded_at": "t-1"},
+        "stable": old_stable,
+        "previous": None,
+        "history": ["broken-cur"],
+    }
+    m = model_sync.build_manifest(
+        new_key="new-good",
+        sha7="good123",
+        bytes_=1,
+        uploaded_at="t",
+        old_manifest=old,
+        smoke_passed=True,
+    )
+    assert m["stable"]["key"] == "new-good"
+    assert m["current"]["key"] == "new-good"
 
 
 def test_build_manifest_idempotent_on_same_new_key():

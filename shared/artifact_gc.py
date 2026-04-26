@@ -20,15 +20,20 @@ def prune(
     keep_n: int = HISTORY_KEEP_N,
 ) -> list[str]:
     """Delete keys under ``history_prefix(prefix, pos)`` that are NOT in the
-    manifest's keep set: {current.key, previous.key, *history[:keep_n]}.
+    manifest's keep set: {current.key, stable.key, previous.key, *history[:keep_n]}.
 
     Source of truth for "what exists" is the S3 listing (not the manifest),
     so orphan keys from abandoned uploads also get swept up. Returns the list
     of keys that were deleted. Idempotent on retry — a re-run with the same
     manifest deletes nothing new.
+
+    ``stable`` is exempted regardless of its history-list position so the
+    last-known-good artifact survives even after ``keep_n`` newer (possibly
+    smoke-failing) uploads have rolled into the top of ``history``. This is
+    the conservation guarantee the consumer's stable-first fallback depends on.
     """
     keep: set[str] = set()
-    for label in ("current", "previous"):
+    for label in ("current", "stable", "previous"):
         entry = manifest.get(label)
         if entry and entry.get("key"):
             keep.add(entry["key"])
