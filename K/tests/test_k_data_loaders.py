@@ -34,6 +34,7 @@ def _synthetic_pbp(season: int, n_fg: int = 6, n_xp: int = 4) -> pd.DataFrame:
                 "posteam": ["KC", "BUF"][i % 2],
                 "kicker_player_id": f"K{i % 2:02d}",
                 "kicker_player_name": f"Kicker {i % 2}",
+                "play_id": 1000 + i,
                 "field_goal_attempt": 1,
                 "extra_point_attempt": 0,
                 "field_goal_result": "made" if i % 2 == 0 else "missed",
@@ -58,6 +59,7 @@ def _synthetic_pbp(season: int, n_fg: int = 6, n_xp: int = 4) -> pd.DataFrame:
                 "posteam": ["KC", "BUF"][i % 2],
                 "kicker_player_id": f"K{i % 2:02d}",
                 "kicker_player_name": f"Kicker {i % 2}",
+                "play_id": 2000 + i,
                 "field_goal_attempt": 0,
                 "extra_point_attempt": 1,
                 "field_goal_result": None,
@@ -81,6 +83,7 @@ def _synthetic_pbp(season: int, n_fg: int = 6, n_xp: int = 4) -> pd.DataFrame:
             "posteam": "KC",
             "kicker_player_id": None,
             "kicker_player_name": None,
+            "play_id": 3000,
             "field_goal_attempt": 0,
             "extra_point_attempt": 0,
             "field_goal_result": None,
@@ -104,6 +107,7 @@ def _synthetic_pbp(season: int, n_fg: int = 6, n_xp: int = 4) -> pd.DataFrame:
             "posteam": "KC",
             "kicker_player_id": "K00",
             "kicker_player_name": "Kicker 0",
+            "play_id": 4000,
             "field_goal_attempt": 1,
             "extra_point_attempt": 0,
             "field_goal_result": "made",
@@ -215,7 +219,7 @@ def test_reconstruct_kicks_pbp_skips_failing_seasons(tmp_path, monkeypatch, caps
     # Every season fails, so the result is the empty frame the function returns.
     out = k_data.reconstruct_kicker_kicks_from_pbp([2020], cache_dir=str(tmp_path))
     assert out.empty
-    assert "per-kick PBP load failed" in capsys.readouterr().out
+    assert "per-kick PBP extraction failed" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------
