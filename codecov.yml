@@ -36,17 +36,10 @@ ignore:
   # project target reflect production code.
   - "QB/diagnose_qb_outliers.py"
   - "RB/analyze_rb_errors.py"
-  # Dead code superseded by shared/ equivalents. src.training.trainer was
-  # replaced by shared/training.py's multi-head trainer, and
-  # src.evaluation.backtest by shared/backtest.py. Neither is imported by
-  # any production module (`grep -rn "from src.training\|from src.evaluation.backtest"`
-  # returns only internal self-references). Keep them for analysis scripts,
-  # not counted against the coverage target.
-  - "src/training/trainer.py"
-  - "src/evaluation/backtest.py"
-  # One-shot data-preprocessing CLI — only invoked from SETUP.md's first-time
-  # data pull snippet, never in training or serving.
-  - "src/data/preprocessing.py"
+  # Note: src/training/trainer.py, src/evaluation/backtest.py, and
+  # src/data/preprocessing.py were previously ignored as "dead/one-off"
+  # but now have direct test coverage (97-100%) — keep them in the
+  # coverage denominator for the Src component.
 
 comment:
   layout: "reach, diff, flags, components, files"
