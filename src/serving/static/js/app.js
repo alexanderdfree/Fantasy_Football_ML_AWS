@@ -1,6 +1,7 @@
 /* Fantasy Football Predictor - Frontend */
 
 const PAGE_SIZE = 50;
+const VALID_SCORING = ["ppr", "half_ppr", "standard"];
 let allPlayers = [];
 let currentPage = 1;
 let currentSort = "actual";
@@ -11,6 +12,12 @@ let positionR2Chart = null;
 let weeklyMaeChart = null;
 let positionDetailsData = null;
 let perfFilterInitialized = false;
+let currentScoring = (() => {
+    const stored = localStorage.getItem("scoringFormat");
+    return VALID_SCORING.includes(stored) ? stored : "ppr";
+})();
+let currentPlayerId = null;
+let modalOpen = false;
 
 function escapeHtml(str) {
     if (str == null) return "";
@@ -49,26 +56,31 @@ const COLORS = {
     lgbmBg: "rgba(245, 158, 11, 0.2)",
 };
 
-// Per-target fantasy-point-equivalent multipliers (PPR). Mirror of
-// shared/aggregate_targets.py:POINT_EQUIVALENT_MULTIPLIER. Applied only to
-// count-style targets where the raw MAE would be dominated by the scoring
-// coefficient (e.g. 0.4 TDs = 2.4 points under PPR rushing/receiving scoring).
-const POINT_EQUIVALENT_MULTIPLIER = {
+// Per-target fantasy-point-equivalent multipliers. Mirror of
+// shared/aggregate_targets.py:POINT_EQUIVALENT_MULTIPLIER, but `receptions`
+// depends on scoring format (1.0 / 0.5 / 0.0). Applied only to count-style
+// targets where the raw MAE would be dominated by the scoring coefficient
+// (e.g. 0.4 TDs = 2.4 points).
+const RECEPTION_WEIGHT = { ppr: 1.0, half_ppr: 0.5, standard: 0.0 };
+const BASE_POINT_EQUIVALENT = {
     passing_tds: 4.0,
     rushing_tds: 6.0,
     receiving_tds: 6.0,
     interceptions: 2.0,
     fumbles_lost: 2.0,
-    receptions: 1.0,
 };
+function pointEquivMultiplier(targetKey, scoring) {
+    if (targetKey === "receptions") return RECEPTION_WEIGHT[scoring] ?? 1.0;
+    return BASE_POINT_EQUIVALENT[targetKey];
+}
 
 // Format a per-target MAE with its raw unit, and — for targets with a known
 // point-equivalent multiplier — also show the implied fantasy-point delta.
 // The API serializes a `unit` field per target (from shared/aggregate_targets.py:TARGET_UNITS).
-function formatTargetMae(val, targetKey, unit) {
+function formatTargetMae(val, targetKey, unit, scoring) {
     if (val == null) return "--";
     const raw = unit ? `${fmt(val, 2)} ${unit}` : fmt(val, 2);
-    const mult = POINT_EQUIVALENT_MULTIPLIER[targetKey];
+    const mult = pointEquivMultiplier(targetKey, scoring);
     return mult != null ? `${raw} (${fmt(val * mult, 2)} pts)` : raw;
 }
 
@@ -84,6 +96,7 @@ async function init() {
     setupModal();
     setupSearch();
     setupModelToggle();
+    setupScoringToggle();
     setupWikiClickHandler();
     setupWikiHashRouter();
 
@@ -184,6 +197,55 @@ function setupModelToggle() {
 }
 
 // ---------------------------------------------------------------------------
+// Scoring Toggle (PPR / Half-PPR / Standard)
+//
+// Lives in the global header so it persists across tabs. Persisted in
+// localStorage so the choice survives reloads. On change we always reload
+// the predictions table (the underlying view) and then refresh whichever
+// secondary view is currently active. Model Architecture and the Wiki are
+// scoring-invariant so we don't reload them.
+// ---------------------------------------------------------------------------
+function setupScoringToggle() {
+    const container = document.getElementById("scoring-filter");
+    if (!container) return;
+    // Apply saved value: mark the matching pill active and clear the others.
+    container.querySelectorAll(".pill").forEach(pill => {
+        pill.classList.toggle("active", pill.dataset.value === currentScoring);
+    });
+    container.querySelectorAll(".pill").forEach(pill => {
+        pill.addEventListener("click", () => {
+            const next = pill.dataset.value;
+            if (!VALID_SCORING.includes(next) || next === currentScoring) {
+                container.querySelectorAll(".pill").forEach(p =>
+                    p.classList.toggle("active", p.dataset.value === currentScoring),
+                );
+                return;
+            }
+            container.querySelectorAll(".pill").forEach(p => p.classList.remove("active"));
+            pill.classList.add("active");
+            currentScoring = next;
+            try {
+                localStorage.setItem("scoringFormat", currentScoring);
+            } catch (_e) { /* storage may be disabled — non-fatal */ }
+            onScoringChanged();
+        });
+    });
+}
+
+function onScoringChanged() {
+    // Always reload the predictions table — it's the default landing view.
+    currentPage = 1;
+    loadPredictions();
+    // Refresh whichever secondary tab is currently visible.
+    const activeTab = document.querySelector(".nav-tabs .tab.active");
+    const view = activeTab ? activeTab.dataset.view : null;
+    if (view === "standings") loadStandings();
+    if (view === "model-performance") loadMetrics();
+    // If the player modal is open, re-fetch with the new format.
+    if (modalOpen && currentPlayerId) openPlayerModal(currentPlayerId);
+}
+
+// ---------------------------------------------------------------------------
 // Sort Headers
 // ---------------------------------------------------------------------------
 function setupSortHeaders() {
@@ -221,6 +283,7 @@ async function loadPredictions() {
         position, week, search,
         sort: currentSort,
         order: currentOrder,
+        scoring: currentScoring,
     });
 
     const container = document.querySelector("#view-predictions .table-container");
@@ -364,7 +427,9 @@ async function loadStandings() {
     container.classList.add("loading");
 
     try {
-        const data = await fetchJSON(`/api/top_players?position=${position}`);
+        const data = await fetchJSON(
+            `/api/top_players?position=${position}&scoring=${currentScoring}`,
+        );
 
         const tbody = document.getElementById("standings-body");
         tbody.innerHTML = data.players.map((p, i) => `
@@ -399,10 +464,11 @@ async function loadStandings() {
 // ---------------------------------------------------------------------------
 async function loadMetrics() {
     try {
+        const q = `?scoring=${currentScoring}`;
         const [metrics, weekly, posDetails] = await Promise.all([
-            fetchJSON("/api/metrics"),
-            fetchJSON("/api/weekly_accuracy"),
-            fetchJSON("/api/position_details"),
+            fetchJSON(`/api/metrics${q}`),
+            fetchJSON(`/api/weekly_accuracy${q}`),
+            fetchJSON(`/api/position_details${q}`),
         ]);
         positionDetailsData = posDetails;
 
@@ -457,18 +523,20 @@ function renderPositionModelDetail(pos) {
     const tm = d.target_metrics || {};
 
     // Per-target rows render MAE in the target's native unit (yards / TDs / receptions).
-    // For TD/INT/fumble targets, the raw MAE is also shown in fantasy-point-equivalent terms
-    // via the PPR multiplier (so 0.40 TDs renders as "0.40 TDs (2.40 pts)").
+    // For TD/INT/fumble/reception targets, the raw MAE is also shown in
+    // fantasy-point-equivalent terms via the active scoring multiplier (so
+    // 0.40 TDs renders as "0.40 TDs (2.40 pts)" and 0.50 receptions as
+    // "(0.50 pts)" PPR / "(0.25 pts)" half / "(0.00 pts)" standard).
     const targetRows = (d.targets || []).map(t => {
         const m = tm[t.key] || {};
         const unit = m.unit;
         return `<tr>
             <td class="tm-name">${t.label}</td>
             <td class="tm-formula">${t.formula}</td>
-            <td class="tm-val">${formatTargetMae(m.ridge_mae, t.key, unit)}</td>
-            <td class="tm-val">${formatTargetMae(m.nn_mae, t.key, unit)}</td>
-            <td class="tm-val">${formatTargetMae(m.attn_nn_mae, t.key, unit)}</td>
-            <td class="tm-val">${formatTargetMae(m.lgbm_mae, t.key, unit)}</td>
+            <td class="tm-val">${formatTargetMae(m.ridge_mae, t.key, unit, currentScoring)}</td>
+            <td class="tm-val">${formatTargetMae(m.nn_mae, t.key, unit, currentScoring)}</td>
+            <td class="tm-val">${formatTargetMae(m.attn_nn_mae, t.key, unit, currentScoring)}</td>
+            <td class="tm-val">${formatTargetMae(m.lgbm_mae, t.key, unit, currentScoring)}</td>
         </tr>`;
     }).join("");
 
@@ -633,8 +701,11 @@ function setupModal() {
 }
 
 async function openPlayerModal(playerId) {
+    currentPlayerId = playerId;
     try {
-        const data = await fetchJSON(`/api/player/${playerId}`);
+        const data = await fetchJSON(
+            `/api/player/${encodeURIComponent(playerId)}?scoring=${currentScoring}`,
+        );
 
         document.getElementById("modal-name").textContent = data.name;
         document.getElementById("modal-pos-team").textContent = `${data.position} - ${data.team}`;
@@ -695,16 +766,20 @@ async function openPlayerModal(playerId) {
         });
 
         document.getElementById("player-modal").classList.add("open");
+        modalOpen = true;
     } catch (e) {
         console.error("Failed to load player:", e);
         document.getElementById("modal-name").textContent = "Error loading player";
         document.getElementById("modal-pos-team").textContent = "";
         document.getElementById("player-modal").classList.add("open");
+        modalOpen = true;
     }
 }
 
 function closeModal() {
     document.getElementById("player-modal").classList.remove("open");
+    modalOpen = false;
+    currentPlayerId = null;
 }
 
 // ---------------------------------------------------------------------------
