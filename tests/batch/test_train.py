@@ -559,8 +559,8 @@ class TestUploadArtifacts:
         result = model_sync._sync_one(fake_s3, "my-bucket", "models", "RB", dest_root)
 
         assert result["source"] == "current"
-        assert (dest_root / "RB" / "outputs" / "models" / "nn_scaler.pkl").is_file()
-        assert (dest_root / "RB" / "outputs" / "models" / "rb_multihead_nn.pt").is_file()
+        assert (dest_root / "rb" / "outputs" / "models" / "nn_scaler.pkl").is_file()
+        assert (dest_root / "rb" / "outputs" / "models" / "rb_multihead_nn.pt").is_file()
 
     def test_raises_on_empty_model_dir(self, tmp_path):
         from src.batch.train import upload_artifacts
