@@ -156,3 +156,71 @@ tests/ + QB/tests/ + ...            Unit, integration, e2e tests
 ## Individual Contributions
 
 This project was completed individually (no partner) — claiming the 10-pt solo project rubric item.
+
+## Full-Stack Engineering
+
+Beyond the ML rubric core, the project ships a production deploy at [alexfree.me](https://alexfree.me), GPU training on AWS, and CI/CD that gates every push. Operator runbooks are linked above in **Deeper Reading** — this section summarizes the architecture and the meaningful enhancements that landed along the way.
+
+### AWS Infrastructure
+
+```
+GitHub Actions
+   │ push to main
+   ├──▶ batch-image.yml ──▶ ECR (training image)
+   │                              │
+   │                              ▼ workflow_run
+   │        ┌────────────────────────────────────────┐
+   │        │ EC2 g4dn.xlarge (warm T4 GPU host)     │
+   │        │   batch/train.py via SSM Run Command   │
+   │        │   per-position change detection        │
+   │        └────────────────────────────────────────┘
+   │                              │ manifest + tar.gz
+   │                              ▼
+   │        ┌────────────────────────────────────────┐
+   │        │ S3: ff-predictor-training              │
+   │        │   manifest v2 (stable / current /      │
+   │        │   previous + 5-version history)        │
+   │        │   smoke-test gate before promotion     │
+   │        └────────────────────────────────────────┘
+   │                              │ s3:GetObject (task role)
+   ▼                              ▼
+deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS ──▶ alexfree.me
+```
+
+- **Training** — a warm `g4dn.xlarge` T4 GPU host is driven via SSM Run Command from [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml). A `detect` job diffs the merge commit and only retrains positions whose code actually changed; the instance auto-shuts down on idle to keep cost flat.
+- **Artifact safety** — S3 manifest schema v2 tracks `stable` / `current` / `previous` plus a 5-version `history`. New artifacts must clear a smoke-test gate before being promoted to `stable`. [scripts/promote.py](scripts/promote.py) supports manual rollback to any history entry; bucket versioning is defense-in-depth.
+- **Serving** — ECS Fargate (arm64, 1 vCPU / 2 GB) sits behind an ALB with ACM-terminated HTTPS. The slim Flask image fetches models from S3 at boot rather than baking them in — keeps the image roughly 3× smaller and lets prod track new artifacts without a full redeploy.
+- **IAM** — the serving task role is scoped to `s3:GetObject` on `ff-predictor-training/models/*` only.
+- **Standby path** — the AWS Batch image is still built behind a `BATCH_ACTIVE` repo variable so the GPU layer can fail over without a code change.
+
+**Notable enhancements**
+- Always-stable serving + smoke-test gate + S3 bucket versioning (PR #130, `c7fa2d7`)
+- Versioned history + manifest-driven rollback (PR #104, `1b20e9e`)
+- Operational rollback CLI [scripts/promote.py](scripts/promote.py) (PR #122, `e8bf2a7`)
+- Slim arm64 serving image with runtime S3 model fetch (PR #83, `3243d72`)
+- 24/7 warm EC2 host eliminates 3–5 min Batch scale-up → sub-15-min push-to-serve
+
+### GitHub CI/CD
+
+```
+push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov · 80% target)
+             │
+             ├──▶ batch-image.yml ──▶ train-ec2.yml ──▶ EC2 GPU host
+             │                                          (per-position retrain)
+             │
+             └──▶ deploy.yml ────────▶ ECR ──▶ ECS Fargate
+```
+
+- Four production workflows ([tests.yml](.github/workflows/tests.yml), [batch-image.yml](.github/workflows/batch-image.yml), [train-ec2.yml](.github/workflows/train-ec2.yml), [deploy.yml](.github/workflows/deploy.yml)) plus two diagnostic ones ([ablate-rb-gate.yml](.github/workflows/ablate-rb-gate.yml), [retune-lgbm.yml](.github/workflows/retune-lgbm.yml)) for one-click experiments on the GPU host.
+- **`tests.yml`** — 7-shard pytest matrix (QB / RB / WR / TE / K / DST / shared) with per-shard Codecov flags and an 80% per-component target enforced via [codecov.yml](codecov.yml). Within-shard parallelism via `pytest-xdist`.
+- **`batch-image.yml` → `train-ec2.yml`** — the image build is gated by path filters; the `detect` job in `train-ec2.yml` diffs `HEAD^..HEAD` and retrains *only* the positions whose code changed. Cross-cutting changes (`shared/`, `src/`, `requirements.txt`) retrain all six.
+- **`deploy.yml`** — native `arm64` runner (no QEMU emulation), BuildKit cache persisted across runs, path-filtered to the serving surface so docs-only or test-only changes don't trigger a deploy.
+- All Python installs use `uv` for ~10× faster cold starts than pip.
+
+**Notable enhancements**
+- `uv` migration across CI (PR #51, `3c897d8`)
+- Per-component Codecov flags with 80% per-flag target (PR #78, `84b45b9`)
+- Position-level change detection — skip retrains for tests-only or docs-only PRs (PR #84, `b087189`)
+- Native `arm64` deploy runner + BuildKit cache (PR #83, `3243d72`)
+- Pytest sharding (PR #48, `40f49b2`) + xdist within shards (PR #57, `2f42867`)
+- Diagnostic workflows: RB TD-gate ablation (PR #97, `3e49419`) and LightGBM Optuna retune (PR #98, `b7fde11`)
