@@ -4,7 +4,9 @@ NFL.com is treated as a reference baseline for the test season (2025 by default)
 For each position, we run the standard pipeline once, then for the same
 (player_id, season, week) cells compute MAE / RMSE / R² of:
 
-  1. Our model's predicted fantasy points (PPR; best-of attn_nn / nn / ridge).
+  1. Our model's predicted fantasy points (PPR). Picks the lowest-MAE model
+     from {attn_nn, nn, ridge} that has metrics on the eval window;
+     ties broken by attn_nn -> nn -> ridge priority.
   2. NFL.com's projected raw stats × our PPR scoring (apples-to-apples).
   3. Reference: NFL.com's own ``PlayerWeekProjectedPts`` (their standard scoring).
   4. Reference: ``SeasonAverageBaseline`` recomputed on the matched subset.
@@ -62,6 +64,21 @@ _TIE_TOLERANCE_PTS = 0.01
 
 
 # ---------- Internal helpers -------------------------------------------------
+
+
+def _json_default(o):
+    """Strict serializer for ``json.dump`` -- handles numpy scalars + arrays.
+
+    Replaces an earlier ``default=float`` which silently coerced *any* unknown
+    type via ``float(o)`` and could mask bugs (e.g. a stray list silently
+    becoming ``float([list])`` and dying far from the cause). This raises a
+    clear ``TypeError`` for anything we don't explicitly know how to serialize.
+    """
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    if isinstance(o, np.generic):  # np.int64, np.float64, np.bool_, ...
+        return o.item()
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable: {o!r}")
 
 
 _MODEL_PRIORITY: tuple[tuple[str, str], ...] = (
@@ -267,6 +284,19 @@ def _compute_position_comparison(
     # If we filter test_df by season we have to apply the same mask to preds —
     # which is one-to-one only if the pipeline's test_df is exactly the eval window.
     full_test = pipeline_result["test_df"].reset_index(drop=True)
+    # Tripwire: per-target preds MUST be aligned 1:1 with full_test row order.
+    # Today every position's filter_fn is a simple boolean mask, but a future
+    # K/DST refactor that introduces a sort/groupby could silently break this.
+    # Fail loud here rather than silently mis-attribute predictions to rows.
+    expected_n = len(full_test)
+    for target_name, vals in model_preds.items():
+        if len(vals) != expected_n:
+            raise RuntimeError(
+                f"{pos} pipeline emitted misaligned predictions: "
+                f"per_target_preds[{target_name!r}] has {len(vals)} rows but "
+                f"test_df has {expected_n}. Refusing to season-mask a "
+                "non-aligned array."
+            )
     season_mask = (full_test["season"] == eval_season).to_numpy()
     preds_filtered = {t: np.asarray(v)[season_mask] for t, v in model_preds.items()}
 
@@ -414,7 +444,7 @@ def main(
     os.makedirs(output_dir, exist_ok=True)
     out_path = os.path.join(output_dir, "nflcom_baseline_comparison.json")
     with open(out_path, "w") as f:
-        json.dump(result, f, indent=2, default=float)
+        json.dump(result, f, indent=2, default=_json_default)
     print(f"\nWrote {out_path}")
 
     _print_comparison_table(per_pos_results)
@@ -431,7 +461,14 @@ def _parse_args() -> argparse.Namespace:
         default=SCORING_FORMAT_DEFAULT,
         choices=["ppr", "half_ppr", "standard"],
     )
-    parser.add_argument("--positions", nargs="+", default=list(TARGET_POSITIONS_DEFAULT))
+    parser.add_argument(
+        "--positions",
+        nargs="+",
+        default=list(TARGET_POSITIONS_DEFAULT),
+        choices=list(TARGET_POSITIONS_DEFAULT),
+        metavar="POS",
+        help="Positions to compare (default: all). DST is hard-skipped (no upstream data).",
+    )
     parser.add_argument("--output-dir", default=OUTPUT_DIR_DEFAULT)
     parser.add_argument("--force-refresh-nflcom", action="store_true")
     return parser.parse_args()

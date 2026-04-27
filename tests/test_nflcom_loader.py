@@ -225,10 +225,15 @@ def test_load_projections_force_refresh_bypasses_cache(tmp_path):
     load_nflcom_projections(
         seasons=[2024], weeks=[1], cache_dir=str(tmp_path), reader=_fixture_reader_qb_only
     )
-    calls = {"n": 0}
+    # Thread-safe counter — the loader fan-outs fetches across a thread pool.
+    import threading
+
+    lock = threading.Lock()
+    counter = {"n": 0}
 
     def counting_reader(url: str):
-        calls["n"] += 1
+        with lock:
+            counter["n"] += 1
         return _fixture_reader_qb_only(url)
 
     load_nflcom_projections(
@@ -239,7 +244,55 @@ def test_load_projections_force_refresh_bypasses_cache(tmp_path):
         force_refresh=True,
     )
     # Reader was called once per (year, week, position) attempt = 1 × 1 × 5 positions.
-    assert calls["n"] == len(NFLCOM_POSITIONS)
+    assert counter["n"] == len(NFLCOM_POSITIONS)
+
+
+def test_read_one_projection_retries_transient_then_succeeds():
+    """A non-404 HTTPError on first attempt should be retried; second attempt wins."""
+    from src.data.nflcom_loader import _read_one_projection
+
+    state = {"n": 0}
+
+    def stub(url: str):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise HTTPError(url, 503, "Service Unavailable", hdrs=None, fp=None)
+        return pd.read_csv(FIXTURE_QB)
+
+    df = _read_one_projection(2024, 1, "QB", reader=stub, backoff_s=0.0)
+    assert df is not None
+    assert state["n"] == 2  # retried once
+    assert len(df) == 5
+
+
+def test_read_one_projection_does_not_retry_404():
+    """404 means 'this week doesn't exist' — must not retry, must return None."""
+    from src.data.nflcom_loader import _read_one_projection
+
+    state = {"n": 0}
+
+    def stub(url: str):
+        state["n"] += 1
+        raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+    df = _read_one_projection(2024, 1, "QB", reader=stub, backoff_s=0.0)
+    assert df is None
+    assert state["n"] == 1  # NOT retried
+
+
+def test_read_one_projection_gives_up_after_max_retries():
+    """Persistent transient errors should ultimately give up and return None."""
+    from src.data.nflcom_loader import _read_one_projection
+
+    state = {"n": 0}
+
+    def stub(url: str):
+        state["n"] += 1
+        raise HTTPError(url, 503, "Service Unavailable", hdrs=None, fp=None)
+
+    df = _read_one_projection(2024, 1, "QB", reader=stub, max_retries=1, backoff_s=0.0)
+    assert df is None
+    assert state["n"] == 2  # initial + 1 retry
 
 
 def test_load_projections_empty_seasons_raises():

@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.error import HTTPError, URLError
 
 import nfl_data_py as nfl
@@ -38,6 +40,13 @@ NFLCOM_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K")
 
 NFLCOM_DEFAULT_WEEKS = tuple(range(1, 19))  # NFL regular season is 18 weeks since 2021.
 _CACHE_VERSION = "v1"
+
+# Network defensiveness: 404 is expected (late-season weeks) and not retried.
+# Other transient failures (5xx, ECONNRESET, DNS blips) are retried once after
+# a short backoff before giving up. CLAUDE.md: "network/data-source boundaries
+# are real and should be defensive."
+_RETRY_BACKOFF_S = 0.5
+_MAX_FETCH_WORKERS = 8  # Concurrent (year, week, position) HTTP fetches.
 
 # NFL.com 'Fum' column is total fumbles; our internal `fumbles_lost` target is
 # the lost subset. League-average lost rate is ~50%; impact on FP is ~0.1 pt/game
@@ -159,38 +168,72 @@ def _projection_url(year: int, week: int, position: str) -> str:
     return f"{NFLCOM_BASE}/{year}/{week}/projected/{position}_projected.csv"
 
 
+def _is_404(err: Exception) -> bool:
+    """True iff the exception is an HTTPError with status 404."""
+    return isinstance(err, HTTPError) and getattr(err, "code", None) == 404
+
+
 def _read_one_projection(
     year: int,
     week: int,
     position: str,
     *,
     reader=pd.read_csv,
+    max_retries: int = 1,
+    backoff_s: float = _RETRY_BACKOFF_S,
 ) -> pd.DataFrame | None:
     """Fetch one (year, week, position) CSV from upstream.
 
-    Returns ``None`` on 404 / connection errors / empty file. Logs a warning so
-    operators see late-season weeks dropping out rather than silently shrinking
-    the frame.
+    Returns ``None`` on 404 / persistent connection errors / empty file. Logs a
+    warning so operators see late-season weeks dropping out rather than silently
+    shrinking the frame.
+
+    Retries non-404 transient errors (URLError, 5xx, etc.) once after
+    ``backoff_s`` seconds. 404s are not retried (they are the expected signal
+    for a week that doesn't exist yet).
 
     ``reader`` injectable for tests — pass a stub to avoid network.
     """
     url = _projection_url(year, week, position)
-    try:
-        df = reader(url)
-    except (HTTPError, URLError, FileNotFoundError) as e:
-        # Late-season weeks for an in-progress year often 404; treat as expected.
-        print(f"  WARN nflcom: skip {position} {year} W{week} ({type(e).__name__})")
+    last_err: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            df = reader(url)
+        except (HTTPError, URLError, FileNotFoundError) as e:
+            last_err = e
+            if _is_404(e) or isinstance(e, FileNotFoundError):
+                # 404 is expected — no retry, just log and skip.
+                print(f"  WARN nflcom: skip {position} {year} W{week} (404 / not found)")
+                return None
+            if attempt < max_retries:
+                # Transient — back off and retry once.
+                print(
+                    f"  WARN nflcom: transient {type(e).__name__} on {position} "
+                    f"{year} W{week}; retrying in {backoff_s}s"
+                )
+                time.sleep(backoff_s)
+                continue
+            print(
+                f"  WARN nflcom: skip {position} {year} W{week} "
+                f"({type(e).__name__} after {max_retries} retry)"
+            )
+            return None
+        except pd.errors.EmptyDataError:
+            print(f"  WARN nflcom: skip {position} {year} W{week} (empty CSV)")
+            return None
+        else:
+            if df.empty:
+                return None
+            df = df.copy()
+            df["season"] = year
+            df["week"] = week
+            df["position"] = position
+            return df
+    # Unreachable — both branches above exit explicitly. Defensive return for
+    # the type-checker.
+    if last_err is not None:
         return None
-    except pd.errors.EmptyDataError:
-        print(f"  WARN nflcom: skip {position} {year} W{week} (empty CSV)")
-        return None
-    if df.empty:
-        return None
-    df = df.copy()
-    df["season"] = year
-    df["week"] = week
-    df["position"] = position
-    return df
+    return None
 
 
 def _normalize_one_position(df: pd.DataFrame, position: str) -> pd.DataFrame:
@@ -261,14 +304,32 @@ def load_nflcom_projections(
     if os.path.exists(cache_path) and not force_refresh:
         return pd.read_parquet(cache_path)
 
+    # Parallelize the (year, week, position) fetch fan-out. Each task is one
+    # HTTP GET, so I/O-bound — threads beat sequential by ~5-10x for typical
+    # year-ranges. Workers cap is small enough to not anger raw.githubusercontent.com.
+    tasks = [
+        (year, week, position)
+        for year in seasons
+        for week in weeks_to_try
+        for position in NFLCOM_POSITIONS
+    ]
     parts: list[pd.DataFrame] = []
-    for year in seasons:
-        for week in weeks_to_try:
-            for position in NFLCOM_POSITIONS:
-                raw = _read_one_projection(year, week, position, reader=reader)
-                if raw is None:
-                    continue
-                parts.append(_normalize_one_position(raw, position))
+    with ThreadPoolExecutor(max_workers=_MAX_FETCH_WORKERS) as executor:
+        futures = {
+            executor.submit(_read_one_projection, year, week, position, reader=reader): (
+                year,
+                week,
+                position,
+            )
+            for year, week, position in tasks
+        }
+        for future in as_completed(futures):
+            year, week, position = futures[future]
+            raw = future.result()
+            if raw is None:
+                continue
+            parts.append(_normalize_one_position(raw, position))
+
     if not parts:
         # Don't poison the cache with an empty frame — bare retry next call.
         raise RuntimeError(
@@ -276,6 +337,9 @@ def load_nflcom_projections(
             "check upstream URL or network access."
         )
     df = pd.concat(parts, ignore_index=True)
+    # Sort for deterministic cache contents (parallel fetch returns rows in
+    # nondeterministic order); makes diffs across re-fetches stable.
+    df = df.sort_values(["season", "week", "position", "player_name"]).reset_index(drop=True)
     df.to_parquet(cache_path)
     return df
 
