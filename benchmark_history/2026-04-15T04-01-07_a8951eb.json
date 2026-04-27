@@ -1,0 +1,96 @@
+{
+  "run_id": "2026-04-15T04:01:07_a8951eb",
+  "timestamp": "2026-04-15T04:01:07",
+  "git_hash": "a8951eb",
+  "note": "2012+ dataset re-tune: TE with reduced dropout (0.30), weight decay (3e-4), plus EWMA/L5 feature drops",
+  "positions": [
+    "TE"
+  ],
+  "config": {
+    "global": {
+      "train_seasons": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "val_seasons": [
+        2024
+      ],
+      "test_seasons": [
+        2025
+      ],
+      "nn_epochs": 200,
+      "nn_batch_size": 256,
+      "nn_patience": 15,
+      "nn_dropout": 0.3,
+      "nn_lr": 0.001
+    },
+    "te": {
+      "targets": [
+        "receiving_floor",
+        "rushing_floor",
+        "td_points"
+      ],
+      "nn_backbone_layers": [
+        96,
+        48
+      ],
+      "nn_head_hidden": 24,
+      "nn_head_hidden_overrides": {
+        "td_points": 32
+      },
+      "nn_dropout": 0.3,
+      "nn_lr": 0.0005,
+      "nn_weight_decay": 0.0003,
+      "nn_epochs": 300,
+      "nn_batch_size": 128,
+      "nn_patience": 25,
+      "loss_weights": {
+        "receiving_floor": 1.2,
+        "rushing_floor": 0.2,
+        "td_points": 3.0
+      },
+      "loss_w_total": 0.4,
+      "huber_deltas": {
+        "receiving_floor": 1.5,
+        "rushing_floor": 0.5,
+        "td_points": 3.0
+      },
+      "scheduler_type": "onecycle",
+      "onecycle_max_lr": 0.002,
+      "onecycle_pct_start": 0.3
+    }
+  },
+  "results": [
+    {
+      "position": "TE",
+      "ridge_mae": 3.822,
+      "ridge_r2": 0.302,
+      "nn_mae": 3.619,
+      "nn_r2": 0.295,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "receiving_floor": 2.639,
+        "rushing_floor": 0.033,
+        "td_points": 1.566
+      },
+      "ridge_per_target": {
+        "receiving_floor": 2.768,
+        "rushing_floor": 0.028,
+        "td_points": 1.832
+      },
+      "ridge_top12": 0.454,
+      "nn_top12": 0.463,
+      "elapsed_sec": 35.0
+    }
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "run_id": "2026-04-15T06:49:40_c399c12",
+  "timestamp": "2026-04-15T06:49:40",
+  "git_hash": "c399c12",
+  "note": "attention fine-tune: K/V projections, positional encoding, gated fusion, d_model=48, n_heads=4, TD head=64, attn-specific training params",
+  "positions": [
+    "RB"
+  ],
+  "config": {
+    "global": {
+      "train_seasons": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "val_seasons": [
+        2024
+      ],
+      "test_seasons": [
+        2025
+      ],
+      "nn_epochs": 200,
+      "nn_batch_size": 256,
+      "nn_patience": 15,
+      "nn_dropout": 0.3,
+      "nn_lr": 0.001
+    },
+    "rb": {
+      "targets": [
+        "rushing_floor",
+        "receiving_floor",
+        "td_points"
+      ],
+      "nn_backbone_layers": [
+        128,
+        64
+      ],
+      "nn_head_hidden": 48,
+      "nn_dropout": 0.15,
+      "nn_lr": 0.001,
+      "nn_weight_decay": 5e-05,
+      "nn_epochs": 300,
+      "nn_batch_size": 256,
+      "nn_patience": 30,
+      "nn_head_hidden_overrides": {
+        "td_points": 64
+      },
+      "loss_weights": {
+        "rushing_floor": 1.2,
+        "receiving_floor": 1.0,
+        "td_points": 2.0
+      },
+      "loss_w_total": 0.25,
+      "huber_deltas": {
+        "rushing_floor": 2.0,
+        "receiving_floor": 2.5,
+        "td_points": 3.0
+      },
+      "scheduler_type": "cosine_warm_restarts",
+      "cosine_t0": 40,
+      "cosine_t_mult": 2,
+      "cosine_eta_min": 1e-05,
+      "train_attention_nn": true,
+      "attn_d_model": 48,
+      "attn_n_heads": 4,
+      "attn_max_seq_len": 17,
+      "attn_project_kv": true,
+      "attn_positional_encoding": true,
+      "attn_gated_fusion": true,
+      "attn_dropout": 0.1,
+      "attn_lr": 0.0005,
+      "attn_weight_decay": 0.0001,
+      "attn_batch_size": 128,
+      "attn_patience": 35,
+      "attn_history_stats": [
+        "fantasy_points",
+        "fantasy_points_floor",
+        "rushing_yards",
+        "receiving_yards",
+        "rushing_tds",
+        "receiving_tds",
+        "carries",
+        "targets",
+        "receptions",
+        "snap_pct",
+        "rushing_first_downs",
+        "receiving_first_downs"
+      ]
+    }
+  },
+  "results": [
+    {
+      "position": "RB",
+      "ridge_mae": 4.424,
+      "ridge_r2": 0.431,
+      "nn_mae": 4.275,
+      "nn_r2": 0.38,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "rushing_floor": 1.865,
+        "receiving_floor": 1.818,
+        "td_points": 2.02
+      },
+      "ridge_per_target": {
+        "rushing_floor": 1.917,
+        "receiving_floor": 1.919,
+        "td_points": 2.259
+      },
+      "ridge_top12": 0.44,
+      "nn_top12": 0.444,
+      "attn_nn_mae": 4.293,
+      "attn_nn_r2": 0.367,
+      "attn_nn_per_target": {
+        "rushing_floor": 1.85,
+        "receiving_floor": 1.828,
+        "td_points": 2.049
+      },
+      "attn_nn_top12": 0.444,
+      "elapsed_sec": 72.1
+    }
+  ]
+}

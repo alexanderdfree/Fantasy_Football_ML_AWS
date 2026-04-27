@@ -1,0 +1,93 @@
+{
+  "run_id": "2026-04-15T06:02:16_1d501fe",
+  "timestamp": "2026-04-15T06:02:16",
+  "git_hash": "1d501fe",
+  "note": "added 6 opp defense features",
+  "positions": [
+    "QB"
+  ],
+  "config": {
+    "global": {
+      "train_seasons": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "val_seasons": [
+        2024
+      ],
+      "test_seasons": [
+        2025
+      ],
+      "nn_epochs": 200,
+      "nn_batch_size": 256,
+      "nn_patience": 15,
+      "nn_dropout": 0.3,
+      "nn_lr": 0.001
+    },
+    "qb": {
+      "targets": [
+        "passing_floor",
+        "rushing_floor",
+        "td_points"
+      ],
+      "nn_backbone_layers": [
+        96,
+        48
+      ],
+      "nn_head_hidden": 20,
+      "nn_dropout": 0.35,
+      "nn_lr": 0.0005,
+      "nn_weight_decay": 0.0003,
+      "nn_epochs": 300,
+      "nn_batch_size": 128,
+      "nn_patience": 25,
+      "loss_weights": {
+        "passing_floor": 1.5,
+        "rushing_floor": 0.8,
+        "td_points": 3.0
+      },
+      "loss_w_total": 0.3,
+      "huber_deltas": {
+        "passing_floor": 1.5,
+        "rushing_floor": 1.0,
+        "td_points": 3.0
+      },
+      "scheduler_type": "onecycle",
+      "onecycle_max_lr": 0.002,
+      "onecycle_pct_start": 0.3
+    }
+  },
+  "results": [
+    {
+      "position": "QB",
+      "ridge_mae": 6.375,
+      "ridge_r2": 0.302,
+      "nn_mae": 6.206,
+      "nn_r2": 0.291,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "passing_floor": 2.632,
+        "rushing_floor": 1.112,
+        "td_points": 3.808
+      },
+      "ridge_per_target": {
+        "passing_floor": 2.734,
+        "rushing_floor": 1.184,
+        "td_points": 4.016
+      },
+      "ridge_top12": 0.481,
+      "nn_top12": 0.509,
+      "elapsed_sec": 27.4
+    }
+  ]
+}

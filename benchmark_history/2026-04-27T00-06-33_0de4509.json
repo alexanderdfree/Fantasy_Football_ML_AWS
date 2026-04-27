@@ -1,0 +1,108 @@
+{
+  "run_id": "2026-04-27T00:06:33_0de4509",
+  "timestamp": "2026-04-27T00:06:33",
+  "git_hash": "0de4509",
+  "note": "EC2 auto-run (0de4509)",
+  "backend": "ec2",
+  "instance_type": "g4dn.xlarge (On-Demand)",
+  "positions": [
+    "K"
+  ],
+  "results": [
+    {
+      "position": "K",
+      "ridge_mae": 6.548,
+      "ridge_r2": -1.65,
+      "nn_mae": 6.971,
+      "nn_r2": -1.927,
+      "nn_wins_mae": false,
+      "nn_per_target": {
+        "fg_yard_points": {
+          "mae": 6.815,
+          "r2": -1.785
+        },
+        "pat_points": {
+          "mae": 1.201,
+          "r2": -0.088
+        },
+        "fg_misses": {
+          "mae": 0.393,
+          "r2": 0.001
+        },
+        "xp_misses": {
+          "mae": 0.161,
+          "r2": -0.015
+        }
+      },
+      "ridge_per_target": {
+        "fg_yard_points": {
+          "mae": 6.815,
+          "r2": -1.785
+        },
+        "pat_points": {
+          "mae": 1.215,
+          "r2": -0.07
+        },
+        "fg_misses": {
+          "mae": 0.366,
+          "r2": -0.022
+        },
+        "xp_misses": {
+          "mae": 0.19,
+          "r2": -0.059
+        }
+      },
+      "ridge_top12": 0.431,
+      "nn_top12": 0.417,
+      "attn_nn_mae": 7.279,
+      "attn_nn_r2": -2.111,
+      "attn_nn_per_target": {
+        "fg_yard_points": {
+          "mae": 6.814,
+          "r2": -1.785
+        },
+        "pat_points": {
+          "mae": 1.162,
+          "r2": -0.062
+        },
+        "fg_misses": {
+          "mae": 0.416,
+          "r2": -0.016
+        },
+        "xp_misses": {
+          "mae": 0.132,
+          "r2": -0.03
+        }
+      },
+      "attn_nn_top12": 0.417,
+      "lgbm_mae": 7.017,
+      "lgbm_r2": -1.947,
+      "lgbm_per_target": {
+        "fg_yard_points": {
+          "mae": 6.815,
+          "r2": -1.785
+        },
+        "pat_points": {
+          "mae": 1.082,
+          "r2": 0.106
+        },
+        "fg_misses": {
+          "mae": 0.411,
+          "r2": -0.003
+        },
+        "xp_misses": {
+          "mae": 0.156,
+          "r2": 0.001
+        }
+      },
+      "lgbm_top12": 0.426,
+      "elapsed_sec": 57.6,
+      "phase_seconds": {
+        "assert_gpu": 0.1,
+        "sync_raw_data": 0.4,
+        "run_pipeline": 56.1,
+        "copy_artifacts": 0.0
+      }
+    }
+  ]
+}

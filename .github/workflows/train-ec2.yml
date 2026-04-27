@@ -301,7 +301,7 @@ jobs:
           done
           exit $fail
 
-      - name: Append EC2 run to benchmark_history.json
+      - name: Append EC2 run to benchmark_history/
         run: |
           BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
           POSITIONS="${{ needs.detect.outputs.positions }}"
@@ -315,20 +315,21 @@ jobs:
             --positions $POSITIONS \
             --note "EC2 auto-run (${GITHUB_SHA::7})"
 
-      - name: Commit and push benchmark_history.json
+      - name: Commit and push benchmark_history/
         run: |
-          if git diff --quiet benchmark_history.json; then
-            echo "No history changes — skipping commit."
-            exit 0
-          fi
           BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add benchmark_history.json
+          git add benchmark_history/
+          if git diff --cached --quiet -- benchmark_history/; then
+            echo "No history changes — skipping commit."
+            exit 0
+          fi
           staged=$(git diff --cached --name-only)
-          if [ "$staged" != "benchmark_history.json" ]; then
-            echo "ERROR: unexpected staged paths (expected benchmark_history.json only):"
-            echo "$staged"
+          unexpected=$(echo "$staged" | grep -v '^benchmark_history/' || true)
+          if [ -n "$unexpected" ]; then
+            echo "ERROR: unexpected staged paths (expected benchmark_history/ only):"
+            echo "$unexpected"
             exit 1
           fi
           git commit -m "chore(ci): append EC2 benchmark run ${GITHUB_SHA::7}"

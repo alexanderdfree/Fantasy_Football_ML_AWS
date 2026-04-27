@@ -67,46 +67,63 @@ def test_get_git_hash_returns_unknown_on_called_process_error(monkeypatch):
 
 
 @pytest.mark.unit
-def test_append_to_history_creates_new_file(tmp_path, capsys):
-    path = tmp_path / "history.json"
-    append_to_history(str(path), {"run_id": "r1"})
-    assert path.exists()
-    assert json.loads(path.read_text()) == [{"run_id": "r1"}]
-    assert "appended" in capsys.readouterr().out.lower()
+def test_append_to_history_creates_new_file_and_dir(tmp_path, capsys):
+    """First write creates the directory and a single ``{run_id}.json`` file."""
+    history_dir = tmp_path / "history"
+    append_to_history(str(history_dir), {"run_id": "r1"})
+    expected = history_dir / "r1.json"
+    assert expected.exists()
+    assert json.loads(expected.read_text()) == {"run_id": "r1"}
+    assert "written" in capsys.readouterr().out.lower()
 
 
 @pytest.mark.unit
-def test_append_to_history_appends_to_existing(tmp_path):
-    path = tmp_path / "history.json"
-    path.write_text(json.dumps([{"run_id": "r1"}]))
-    append_to_history(str(path), {"run_id": "r2"})
-    entries = json.loads(path.read_text())
-    assert [e["run_id"] for e in entries] == ["r1", "r2"]
+def test_append_to_history_writes_separate_files_per_run(tmp_path):
+    """Two writes produce two distinct files; existing files are preserved."""
+    history_dir = tmp_path / "history"
+    append_to_history(str(history_dir), {"run_id": "r1"})
+    append_to_history(str(history_dir), {"run_id": "r2"})
+    files = sorted(p.name for p in history_dir.glob("*.json"))
+    assert files == ["r1.json", "r2.json"]
+    assert json.loads((history_dir / "r1.json").read_text()) == {"run_id": "r1"}
+    assert json.loads((history_dir / "r2.json").read_text()) == {"run_id": "r2"}
 
 
 @pytest.mark.unit
-def test_append_to_history_quarantines_corrupt_json(tmp_path, capsys):
-    """Malformed JSON file → quarantined with .corrupt-{ts} suffix and fresh
-    history is started with just the new entry."""
-    path = tmp_path / "history.json"
-    path.write_text("{not valid json")
-    append_to_history(str(path), {"run_id": "rN"})
-    out = capsys.readouterr().out
-    assert "corrupt" in out
-    # Fresh file has just the new entry
-    assert json.loads(path.read_text()) == [{"run_id": "rN"}]
-    # Quarantine file exists
-    quarantined = list(tmp_path.glob("history.json.corrupt-*"))
-    assert len(quarantined) == 1
+def test_append_to_history_sanitizes_colons_in_filename(tmp_path):
+    """ISO timestamps in run_id contain colons; the filename strips them."""
+    history_dir = tmp_path / "history"
+    run_id = "2026-04-27T00:06:33_abc1234"
+    append_to_history(str(history_dir), {"run_id": run_id})
+    files = list(history_dir.glob("*.json"))
+    assert len(files) == 1
+    assert ":" not in files[0].name
+    assert files[0].name == "2026-04-27T00-06-33_abc1234.json"
+    # run_id field inside the JSON body is preserved unchanged
+    assert json.loads(files[0].read_text())["run_id"] == run_id
+
+
+@pytest.mark.unit
+def test_append_to_history_falls_back_to_timestamp_when_run_id_missing(tmp_path):
+    """Older ablation-style entries had only ``timestamp`` — filename derives
+    from that."""
+    history_dir = tmp_path / "history"
+    append_to_history(str(history_dir), {"timestamp": "2026-04-27T00:06:33Z"})
+    files = list(history_dir.glob("*.json"))
+    assert len(files) == 1
+    assert files[0].name == "2026-04-27T00-06-33Z.json"
 
 
 @pytest.mark.unit
 def test_append_to_history_serializes_sets_via_json_default(tmp_path):
     """``_json_default`` is wired in; sets become sorted lists in the JSON."""
-    path = tmp_path / "history.json"
-    append_to_history(str(path), {"positions": {"QB", "RB", "WR"}})
-    payload = json.loads(path.read_text())
-    assert payload[0]["positions"] == ["QB", "RB", "WR"]
+    history_dir = tmp_path / "history"
+    append_to_history(
+        str(history_dir),
+        {"run_id": "r1", "positions": {"QB", "RB", "WR"}},
+    )
+    payload = json.loads((history_dir / "r1.json").read_text())
+    assert payload["positions"] == ["QB", "RB", "WR"]
 
 
 @pytest.mark.unit
@@ -321,41 +338,102 @@ def test_print_comparison_with_all_variants(capsys):
 
 
 @pytest.mark.unit
-def test_history_comparison_missing_file_noop(tmp_path, capsys):
-    print_history_comparison(str(tmp_path / "nope.json"), [_canned_summary("QB")])
+def test_history_comparison_missing_dir_noop(tmp_path, capsys):
+    print_history_comparison(str(tmp_path / "nope"), [_canned_summary("QB")])
     assert capsys.readouterr().out == ""
 
 
 @pytest.mark.unit
 def test_history_comparison_corrupt_file_prints_warning(tmp_path, capsys):
-    path = tmp_path / "history.json"
-    path.write_text("{not valid json")
-    print_history_comparison(str(path), [_canned_summary("QB")])
+    """A malformed file in the dir is reported but the rest of the dir
+    still renders. This run is the only file, so comparison has no rows
+    but still emits the warning."""
+    history_dir = tmp_path / "history"
+    history_dir.mkdir()
+    (history_dir / "2026-04-01_run.json").write_text("{not valid json")
+    print_history_comparison(str(history_dir), [_canned_summary("QB")])
     assert "could not read" in capsys.readouterr().out
 
 
 @pytest.mark.unit
 def test_history_comparison_prints_per_position_tables(tmp_path, capsys):
-    path = tmp_path / "history.json"
-    history = [
-        {
-            "timestamp": "2026-03-01T12:00:00",
-            "git_hash": "abc1234",
-            "note": "prior run",
-            "results": [{"position": "QB", "ridge_mae": 6.0, "nn_mae": 5.5, "nn_top12": 0.4}],
-        },
-        {  # new run (excluded from the 'history' rows)
-            "timestamp": "2026-04-01T12:00:00",
-            "git_hash": "def5678",
-            "note": "new",
-            "results": [{"position": "QB", "ridge_mae": 5.0}],
-        },
-    ]
-    path.write_text(json.dumps(history))
+    history_dir = tmp_path / "history"
+    history_dir.mkdir()
+    # Older file (sorts first lexicographically) — appears as a history row.
+    (history_dir / "2026-03-01T12-00-00_abc1234.json").write_text(
+        json.dumps(
+            {
+                "run_id": "2026-03-01T12:00:00_abc1234",
+                "timestamp": "2026-03-01T12:00:00",
+                "git_hash": "abc1234",
+                "note": "prior run",
+                "results": [{"position": "QB", "ridge_mae": 6.0, "nn_mae": 5.5, "nn_top12": 0.4}],
+            }
+        )
+    )
+    # Newer file (sorts last) — represents the just-written run, excluded.
+    (history_dir / "2026-04-01T12-00-00_def5678.json").write_text(
+        json.dumps(
+            {
+                "run_id": "2026-04-01T12:00:00_def5678",
+                "timestamp": "2026-04-01T12:00:00",
+                "git_hash": "def5678",
+                "note": "new",
+                "results": [{"position": "QB", "ridge_mae": 5.0}],
+            }
+        )
+    )
 
     new = _canned_summary("QB", attn_nn_mae=4.3, lgbm_mae=4.6)
-    print_history_comparison(str(path), [new], last_n=5)
+    print_history_comparison(str(history_dir), [new], last_n=5)
     out = capsys.readouterr().out
     assert "QB history" in out
     assert "prior run" in out
     assert "> NEW" in out
+
+
+@pytest.mark.unit
+def test_history_comparison_ignores_ablations_subdir(tmp_path, capsys):
+    """Files under ``benchmark_history/ablations/`` must not appear in the
+    main per-position comparison."""
+    history_dir = tmp_path / "history"
+    ablations = history_dir / "ablations"
+    ablations.mkdir(parents=True)
+    # Top-level: one historical run + one new run.
+    (history_dir / "2026-03-01T12-00-00_abc.json").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-03-01T12:00:00",
+                "git_hash": "abc1234",
+                "note": "prior",
+                "results": [{"position": "QB", "ridge_mae": 6.0, "nn_mae": 5.5}],
+            }
+        )
+    )
+    (history_dir / "2026-04-01T12-00-00_def.json").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-04-01T12:00:00",
+                "git_hash": "def5678",
+                "note": "new",
+                "results": [{"position": "QB", "ridge_mae": 5.0}],
+            }
+        )
+    )
+    # An ablation file that should be ignored — has a position in `variants`,
+    # but no `results` key, and lives in a subdir the listdir won't recurse into.
+    (ablations / "2026-03-15T12-00-00_xyz_rb_td_gate.json").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-03-15T12:00:00",
+                "kind": "ablation",
+                "name": "rb_td_gate",
+                "variants": [{"variant": "A"}],
+            }
+        )
+    )
+
+    print_history_comparison(str(history_dir), [_canned_summary("QB")])
+    out = capsys.readouterr().out
+    assert "prior" in out  # historical run rendered
+    assert "rb_td_gate" not in out  # ablation kept out of the comparison

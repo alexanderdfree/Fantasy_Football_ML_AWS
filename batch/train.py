@@ -651,8 +651,8 @@ def main():
             "Refusing to upload incomplete artifacts."
         )
     metrics = _extract_metrics(pos, result)
-    # Record end-to-end elapsed and the per-phase breakdown so the row
-    # appended to benchmark_history.json by batch/benchmark.py --download-only
+    # Record end-to-end elapsed and the per-phase breakdown so the run
+    # written under benchmark_history/ by batch/benchmark.py --download-only
     # carries timing. elapsed_sec captures everything from seeding through
     # the S3 upload, matching local benchmark.py's wrap around run_one().
     metrics["elapsed_sec"] = round(time.monotonic() - _t_total, 1)

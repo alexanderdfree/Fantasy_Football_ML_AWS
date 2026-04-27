@@ -158,9 +158,9 @@ def _main_stubs(tmp_path, monkeypatch):
 
     # RESULTS_FILE writes are fine — they go to cwd which we monkeypatch.chdir'd
     # to tmp_path. Actually main() does os.chdir(project_root) FIRST, overriding
-    # that. We patch RESULTS_FILE/HISTORY_FILE to point under tmp_path.
+    # that. We patch RESULTS_FILE/HISTORY_DIR to point under tmp_path.
     monkeypatch.setattr(bb, "RESULTS_FILE", str(tmp_path / "results.json"))
-    monkeypatch.setattr(bb, "HISTORY_FILE", str(tmp_path / "history.json"))
+    monkeypatch.setattr(bb, "HISTORY_DIR", str(tmp_path / "history"))
 
     return launched, printed, appended
 

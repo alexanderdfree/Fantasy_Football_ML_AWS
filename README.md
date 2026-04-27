@@ -63,7 +63,7 @@ Install and first-time setup: see [SETUP.md](SETUP.md).
 Common commands once set up:
 
 ```bash
-# Run the comparison benchmark (all positions) and append to benchmark_history.json
+# Run the comparison benchmark (all positions) — writes one file per run to benchmark_history/
 python benchmark.py
 
 # Benchmark one position

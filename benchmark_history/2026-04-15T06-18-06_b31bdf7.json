@@ -1,0 +1,94 @@
+{
+  "run_id": "2026-04-15T06:18:06_b31bdf7",
+  "timestamp": "2026-04-15T06:18:06",
+  "git_hash": "b31bdf7",
+  "note": "baseline before injury+depth features",
+  "positions": [
+    "RB"
+  ],
+  "config": {
+    "global": {
+      "train_seasons": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "val_seasons": [
+        2024
+      ],
+      "test_seasons": [
+        2025
+      ],
+      "nn_epochs": 200,
+      "nn_batch_size": 256,
+      "nn_patience": 15,
+      "nn_dropout": 0.3,
+      "nn_lr": 0.001
+    },
+    "rb": {
+      "targets": [
+        "rushing_floor",
+        "receiving_floor",
+        "td_points"
+      ],
+      "nn_backbone_layers": [
+        128,
+        64
+      ],
+      "nn_head_hidden": 48,
+      "nn_dropout": 0.15,
+      "nn_lr": 0.001,
+      "nn_weight_decay": 5e-05,
+      "nn_epochs": 300,
+      "nn_batch_size": 256,
+      "nn_patience": 30,
+      "loss_weights": {
+        "rushing_floor": 1.2,
+        "receiving_floor": 1.0,
+        "td_points": 2.0
+      },
+      "loss_w_total": 0.25,
+      "huber_deltas": {
+        "rushing_floor": 2.0,
+        "receiving_floor": 2.5,
+        "td_points": 3.0
+      },
+      "scheduler_type": "cosine_warm_restarts",
+      "cosine_t0": 40,
+      "cosine_t_mult": 2,
+      "cosine_eta_min": 1e-05
+    }
+  },
+  "results": [
+    {
+      "position": "RB",
+      "ridge_mae": 4.566,
+      "ridge_r2": 0.433,
+      "nn_mae": 4.25,
+      "nn_r2": 0.439,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "rushing_floor": 1.854,
+        "receiving_floor": 1.855,
+        "td_points": 2.095
+      },
+      "ridge_per_target": {
+        "rushing_floor": 1.982,
+        "receiving_floor": 1.956,
+        "td_points": 2.34
+      },
+      "ridge_top12": 0.435,
+      "nn_top12": 0.444,
+      "elapsed_sec": 32.9
+    }
+  ]
+}

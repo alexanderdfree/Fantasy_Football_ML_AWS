@@ -1,0 +1,200 @@
+{
+  "run_id": "2026-04-15T03:12:47_4a56a8a",
+  "timestamp": "2026-04-15T03:12:47",
+  "git_hash": "4a56a8a",
+  "note": "fix survivorship bias: min-games filter now applied to training data only (was previously applied to full dataset before split, leaking future game counts into val/test)",
+  "positions": [
+    "RB",
+    "QB",
+    "WR"
+  ],
+  "config": {
+    "global": {
+      "train_seasons": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "val_seasons": [
+        2024
+      ],
+      "test_seasons": [
+        2025
+      ],
+      "nn_epochs": 200,
+      "nn_batch_size": 256,
+      "nn_patience": 15,
+      "nn_dropout": 0.3,
+      "nn_lr": 0.001
+    },
+    "rb": {
+      "targets": [
+        "rushing_floor",
+        "receiving_floor",
+        "td_points"
+      ],
+      "nn_backbone_layers": [
+        64
+      ],
+      "nn_head_hidden": 32,
+      "nn_dropout": 0.3,
+      "nn_lr": 0.0008,
+      "nn_weight_decay": 0.0002,
+      "nn_epochs": 300,
+      "nn_batch_size": 256,
+      "nn_patience": 30,
+      "loss_weights": {
+        "rushing_floor": 1.2,
+        "receiving_floor": 1.0,
+        "td_points": 2.0
+      },
+      "loss_w_total": 0.6,
+      "huber_deltas": {
+        "rushing_floor": 1.0,
+        "receiving_floor": 1.0,
+        "td_points": 2.0
+      },
+      "scheduler_type": "plateau",
+      "plateau_factor": 0.5,
+      "plateau_patience": 8
+    },
+    "qb": {
+      "targets": [
+        "passing_floor",
+        "rushing_floor",
+        "td_points"
+      ],
+      "nn_backbone_layers": [
+        80,
+        40
+      ],
+      "nn_head_hidden": 20,
+      "nn_dropout": 0.4,
+      "nn_lr": 0.0005,
+      "nn_weight_decay": 0.0005,
+      "nn_epochs": 300,
+      "nn_batch_size": 64,
+      "nn_patience": 25,
+      "loss_weights": {
+        "passing_floor": 1.5,
+        "rushing_floor": 0.8,
+        "td_points": 2.5
+      },
+      "loss_w_total": 0.3,
+      "huber_deltas": {
+        "passing_floor": 1.5,
+        "rushing_floor": 1.0,
+        "td_points": 2.0
+      },
+      "scheduler_type": "onecycle",
+      "onecycle_max_lr": 0.002,
+      "onecycle_pct_start": 0.3
+    },
+    "wr": {
+      "targets": [
+        "receiving_floor",
+        "rushing_floor",
+        "td_points"
+      ],
+      "nn_backbone_layers": [
+        96
+      ],
+      "nn_head_hidden": 32,
+      "nn_dropout": 0.25,
+      "nn_lr": 0.001,
+      "nn_weight_decay": 0.0001,
+      "nn_epochs": 250,
+      "nn_batch_size": 512,
+      "nn_patience": 20,
+      "loss_weights": {
+        "receiving_floor": 1.5,
+        "rushing_floor": 0.3,
+        "td_points": 2.0
+      },
+      "loss_w_total": 0.3,
+      "huber_deltas": {
+        "receiving_floor": 1.5,
+        "rushing_floor": 0.5,
+        "td_points": 2.0
+      },
+      "scheduler_type": "cosine_warm_restarts",
+      "cosine_t0": 40,
+      "cosine_t_mult": 2,
+      "cosine_eta_min": 1e-05
+    }
+  },
+  "results": [
+    {
+      "position": "RB",
+      "ridge_mae": 4.689,
+      "ridge_r2": 0.42,
+      "nn_mae": 4.412,
+      "nn_r2": 0.405,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "rushing_floor": 1.931,
+        "receiving_floor": 1.893,
+        "td_points": 2.178
+      },
+      "ridge_per_target": {
+        "rushing_floor": 2.015,
+        "receiving_floor": 2.002,
+        "td_points": 2.461
+      },
+      "ridge_top12": 0.444,
+      "nn_top12": 0.463,
+      "elapsed_sec": 27.3
+    },
+    {
+      "position": "QB",
+      "ridge_mae": 6.78,
+      "ridge_r2": 0.115,
+      "nn_mae": 6.678,
+      "nn_r2": 0.12,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "passing_floor": 2.575,
+        "rushing_floor": 1.16,
+        "td_points": 4.235
+      },
+      "ridge_per_target": {
+        "passing_floor": 2.641,
+        "rushing_floor": 1.21,
+        "td_points": 4.279
+      },
+      "ridge_top12": 0.505,
+      "nn_top12": 0.519,
+      "elapsed_sec": 25.9
+    },
+    {
+      "position": "WR",
+      "ridge_mae": 4.853,
+      "ridge_r2": 0.308,
+      "nn_mae": 4.302,
+      "nn_r2": 0.344,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "receiving_floor": 3.31,
+        "rushing_floor": 0.125,
+        "td_points": 1.494
+      },
+      "ridge_per_target": {
+        "receiving_floor": 3.663,
+        "rushing_floor": 0.162,
+        "td_points": 1.947
+      },
+      "ridge_top12": 0.347,
+      "nn_top12": 0.361,
+      "elapsed_sec": 34.4
+    }
+  ]
+}

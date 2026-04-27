@@ -24,7 +24,7 @@ from shared.benchmark_utils import (
 )
 
 RESULTS_FILE = "benchmark_results.json"
-HISTORY_FILE = "benchmark_history.json"
+HISTORY_DIR = "benchmark_history"
 
 
 def collect_global_config():
@@ -111,7 +111,7 @@ if __name__ == "__main__":
     git_hash = get_git_hash()
     now = datetime.datetime.now().isoformat(timespec="seconds")
     append_to_history(
-        HISTORY_FILE,
+        HISTORY_DIR,
         {
             "run_id": f"{now}_{git_hash}",
             "timestamp": now,
@@ -126,4 +126,4 @@ if __name__ == "__main__":
         },
     )
 
-    print_history_comparison(HISTORY_FILE, summaries)
+    print_history_comparison(HISTORY_DIR, summaries)

@@ -442,5 +442,5 @@ XGBoost has no dependency conflicts with the existing stack (numpy, pandas, scik
 3. **Compare 2-way vs. 3-way ensemble**: Does adding XGBoost to the Ridge+NN ensemble reduce total MAE? Check both total and per-target.
 4. **Inspect feature importance**: XGBoost's gain-based importance should highlight different features than Ridge's coefficient magnitudes. If they're identical, the ensemble isn't gaining diversity.
 5. **Check per-target improvements**: XGBoost should especially help `td_points` (discrete, threshold-driven) and targets where feature interactions matter (e.g., carry share x matchup quality).
-6. **Run full benchmark** across all positions: `python benchmark.py RB QB WR TE --note "added XGBoost"`. Compare against prior benchmark results in `benchmark_history.json`.
+6. **Run full benchmark** across all positions: `python benchmark.py RB QB WR TE --note "added XGBoost"`. Compare against prior benchmark results under `benchmark_history/`.
 7. **Validate app inference**: Run `python app.py`, hit the API, confirm `xgb_pred` column appears with reasonable values.
