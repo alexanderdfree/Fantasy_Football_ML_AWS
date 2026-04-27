@@ -87,13 +87,21 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     #
     # ``fumbles_lost`` isn't a preprocessed column directly (the position
     # targets.py modules sum it), so we compose it inline from the three
-    # source components present in every weekly row.
+    # source components present in every weekly row. Synthetic test
+    # fixtures sometimes omit one or more components — guard via ``in``
+    # checks so adding into a missing column doesn't crash with
+    # ``AttributeError: 'int' object has no attribute 'fillna'``.
+    def _col_or_zero(name: str) -> pd.Series:
+        if name in df.columns:
+            return df[name].fillna(0)
+        return pd.Series(0, index=df.index, dtype=float)
+
     df_fumbles = (
-        df.get("sack_fumbles_lost", 0).fillna(0)
-        + df.get("rushing_fumbles_lost", 0).fillna(0)
-        + df.get("receiving_fumbles_lost", 0).fillna(0)
+        _col_or_zero("sack_fumbles_lost")
+        + _col_or_zero("rushing_fumbles_lost")
+        + _col_or_zero("receiving_fumbles_lost")
     )
-    df_total_yards = df["rushing_yards"].fillna(0) + df["receiving_yards"].fillna(0)
+    df_total_yards = _col_or_zero("rushing_yards") + _col_or_zero("receiving_yards")
     prior_extra = (
         pd.DataFrame(
             {
