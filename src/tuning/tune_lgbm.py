@@ -375,6 +375,18 @@ def main():
     parser.add_argument("--n-trials", type=int, default=50, help="Number of Optuna trials")
     parser.add_argument("--timeout", type=int, default=None, help="Timeout in seconds per position")
     parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=1,
+        help=(
+            "Optuna trials run in parallel (thread-based; safe with the SQLite "
+            "storage used here). Default 1 preserves the historical serial "
+            "behavior. When raising this, remember that LightGBM's per-trial "
+            "n_jobs=-1 will oversubscribe a small box — pick e.g. n_jobs=2 "
+            "rather than -1 on a 4-vCPU host."
+        ),
+    )
+    parser.add_argument(
         "--print-best",
         action="store_true",
         help="Print best params from saved study without running new trials",
@@ -438,6 +450,7 @@ def main():
             n_trials=args.n_trials,
             timeout=args.timeout,
             show_progress_bar=True,
+            n_jobs=args.n_jobs,
         )
 
         elapsed = time.time() - t0

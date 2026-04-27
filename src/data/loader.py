@@ -1,12 +1,15 @@
 import os
-import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
+
 import nfl_data_py as nfl
+import pandas as pd
+
 from src.config import (
+    CACHE_DIR,
     SCORING,
-    SCORING_STANDARD,
     SCORING_HALF_PPR,
     SCORING_PPR,
-    CACHE_DIR,
+    SCORING_STANDARD,
     SEASONS,
 )
 
@@ -53,7 +56,15 @@ def load_team_week_stats(seasons: list[int] = None, cache_dir: str = CACHE_DIR) 
 
 
 def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.DataFrame:
-    """Load and merge NFL weekly data, rosters, snap counts, and schedules."""
+    """Load and merge NFL weekly data, rosters, snap counts, and schedules.
+
+    The six independent network/parquet fetches (weekly, rosters, schedules,
+    snap counts, injuries, depth charts) run in a ``ThreadPoolExecutor`` so a
+    cold cache populates in parallel. Each is HTTP/parquet I/O and so spends
+    most of its time off the GIL. Cache hits short-circuit at the start of
+    each helper so warm starts pay only the parquet read cost (also fanned
+    out, but trivial).
+    """
     if seasons is None:
         seasons = SEASONS
 
@@ -62,11 +73,12 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
     rosters_path = f"{cache_dir}/rosters_{seasons[0]}_{seasons[-1]}.parquet"
     schedules_path = f"{cache_dir}/schedules_{seasons[0]}_{seasons[-1]}.parquet"
     snap_path = f"{cache_dir}/snap_counts_{seasons[0]}_{seasons[-1]}.parquet"
+    injury_path = f"{cache_dir}/injuries_{seasons[0]}_{seasons[-1]}.parquet"
+    depth_path = f"{cache_dir}/depth_charts_{seasons[0]}_{seasons[-1]}.parquet"
 
-    # 1. Weekly player stats
-    if os.path.exists(weekly_path):
-        weekly = pd.read_parquet(weekly_path)
-    else:
+    def _fetch_weekly():
+        if os.path.exists(weekly_path):
+            return pd.read_parquet(weekly_path)
         # nfl_data_py only has player_stats up to 2024; 2025+ uses nflverse stats_player
         old_seasons = [s for s in seasons if s <= 2024]
         new_seasons = [s for s in seasons if s >= 2025]
@@ -88,11 +100,11 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
             parts.append(df_new)
         weekly = pd.concat(parts, ignore_index=True)
         weekly.to_parquet(weekly_path)
+        return weekly
 
-    # 2. Roster data for reliable position labels
-    if os.path.exists(rosters_path):
-        rosters = pd.read_parquet(rosters_path)
-    else:
+    def _fetch_rosters():
+        if os.path.exists(rosters_path):
+            return pd.read_parquet(rosters_path)
         rosters = nfl.import_seasonal_rosters(seasons)
         # Coerce mixed-type columns that break parquet serialization
         # (e.g. jersey_number is str in older seasons, int in newer)
@@ -100,21 +112,50 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
             if rosters[col].dtype == object:
                 rosters[col] = rosters[col].astype(str)
         rosters.to_parquet(rosters_path)
+        return rosters
 
-    # 3. Schedule data for opponent info
-    if os.path.exists(schedules_path):
-        schedules = pd.read_parquet(schedules_path)
-    else:
+    def _fetch_schedules():
+        if os.path.exists(schedules_path):
+            return pd.read_parquet(schedules_path)
         schedules = nfl.import_schedules(seasons)
         schedules.to_parquet(schedules_path)
+        return schedules
 
-    # 4. Snap counts (only available from 2012+)
-    if os.path.exists(snap_path):
-        snap_counts = pd.read_parquet(snap_path)
-    else:
+    def _fetch_snap_counts():
+        if os.path.exists(snap_path):
+            return pd.read_parquet(snap_path)
         snap_seasons = [s for s in seasons if s >= 2012]
         snap_counts = nfl.import_snap_counts(snap_seasons) if snap_seasons else pd.DataFrame()
         snap_counts.to_parquet(snap_path)
+        return snap_counts
+
+    def _fetch_injuries():
+        if os.path.exists(injury_path):
+            return pd.read_parquet(injury_path)
+        injuries = nfl.import_injuries(seasons)
+        injuries.to_parquet(injury_path)
+        return injuries
+
+    def _fetch_depth():
+        if os.path.exists(depth_path):
+            return pd.read_parquet(depth_path)
+        depth = nfl.import_depth_charts(seasons)
+        depth.to_parquet(depth_path)
+        return depth
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        weekly_f = pool.submit(_fetch_weekly)
+        rosters_f = pool.submit(_fetch_rosters)
+        schedules_f = pool.submit(_fetch_schedules)
+        snap_counts_f = pool.submit(_fetch_snap_counts)
+        injuries_f = pool.submit(_fetch_injuries)
+        depth_f = pool.submit(_fetch_depth)
+        weekly = weekly_f.result()
+        rosters = rosters_f.result()
+        schedules = schedules_f.result()
+        snap_counts = snap_counts_f.result()
+        injuries = injuries_f.result()
+        depth = depth_f.result()
 
     # --- Merge rosters for position override ---
     roster_pos = rosters[["player_id", "season", "position"]].drop_duplicates(
@@ -152,13 +193,6 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
             weekly["snap_pct"] = float("nan")
 
     # 5. Injury reports
-    injury_path = f"{cache_dir}/injuries_{seasons[0]}_{seasons[-1]}.parquet"
-    if os.path.exists(injury_path):
-        injuries = pd.read_parquet(injury_path)
-    else:
-        injuries = nfl.import_injuries(seasons)
-        injuries.to_parquet(injury_path)
-
     practice_map = {
         "Full Participation in Practice": 2,
         "Limited Participation in Practice": 1,
@@ -190,13 +224,6 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
     weekly["game_status"] = weekly["game_status"].fillna(1.0)
 
     # 6. Depth charts (Offense formation, most recent entry per player-week)
-    depth_path = f"{cache_dir}/depth_charts_{seasons[0]}_{seasons[-1]}.parquet"
-    if os.path.exists(depth_path):
-        depth = pd.read_parquet(depth_path)
-    else:
-        depth = nfl.import_depth_charts(seasons)
-        depth.to_parquet(depth_path)
-
     depth_off = depth[depth["formation"] == "Offense"].copy()
     depth_off["depth_team"] = pd.to_numeric(depth_off["depth_team"], errors="coerce")
     # One row per player-week. ``min`` picks the best (lowest) rank a player

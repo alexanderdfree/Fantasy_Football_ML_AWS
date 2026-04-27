@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import sys
 
 import joblib
 import lightgbm as lgb
@@ -14,6 +15,14 @@ from sklearn.preprocessing import StandardScaler
 
 from src.models.elastic_net import ElasticNetModel
 from src.models.linear import RidgeModel
+
+# LightGBM thread count for tree learning. ``-1`` (all cores) crashes on macOS
+# under nested OpenMP runtimes (libomp from numpy/sklearn vs. LightGBM's
+# bundled libgomp) — the segfault reproduces inside ``Dataset.__init_from_np2d``
+# the moment the construct call hits the OMP region. Linux (CI + EC2
+# production) is safe and gets full parallelism; other platforms stay at 1
+# unless ``LGBM_N_JOBS`` is set explicitly to override.
+_LGBM_N_JOBS = -1 if sys.platform.startswith("linux") else int(os.environ.get("LGBM_N_JOBS", "1"))
 
 
 class TwoStageRidge:
@@ -532,7 +541,7 @@ class LightGBMMultiTarget:
             min_split_gain=min_split_gain,
             objective=objective,
             random_state=seed,
-            n_jobs=1,
+            n_jobs=_LGBM_N_JOBS,
             verbosity=-1,
         )
         self._models = {name: lgb.LGBMRegressor(**self._params) for name in target_names}
