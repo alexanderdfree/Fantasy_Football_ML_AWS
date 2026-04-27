@@ -89,13 +89,23 @@ INCLUDE_FEATURES = {
     ]
     + ["rolling_min_fantasy_points_L5"],
     # Standard mean/std/max aggregates over _ROLLING_STATS, minus the cells
-    # filtered by _PRIOR_SEASON_DROPS, plus three appended PR-#191 features:
+    # filtered by _PRIOR_SEASON_DROPS, plus appended custom features:
     #   * prior_season_total_touchdowns: full-season sum of rushing_tds +
     #     receiving_tds. Built in src.features.engineer.build_features.
     #   * prior_season_mean_catch_rate / mean_yards_per_carry: derived
     #     ratios that restore the player-specific rate signal lost when
     #     PR #190 dropped the receptions / rushing_yards aggregates. Built
     #     in src.rb.features._compute_features.
+    #   * prior_season_total_yards / games_played / mean_fumbles_lost
+    #     (PR #192): decomposed restoration of the fantasy-points signal
+    #     PR #191 dropped. The post-#191 EC2 retrain showed a +0.072 MAE
+    #     Attention NN regression because the FP aggregates were carrying
+    #     signal the decomposed features (catch_rate, YPC, total_touchdowns)
+    #     didn't fully recover. These three close that gap orthogonally:
+    #     total_yards is the ~90%-of-FP volume×efficiency component;
+    #     games_played gives the model the count needed to convert per-game
+    #     means into season totals; mean_fumbles_lost is the negative-FP
+    #     component absent from every other prior_season aggregate.
     "prior_season": [
         f"prior_season_{a}_{stat}"
         for stat in _ROLLING_STATS
@@ -106,6 +116,9 @@ INCLUDE_FEATURES = {
         "prior_season_total_touchdowns",
         "prior_season_mean_catch_rate",
         "prior_season_mean_yards_per_carry",
+        "prior_season_total_yards",
+        "prior_season_games_played",
+        "prior_season_mean_fumbles_lost",
     ],
     # All EWMA dropped (>0.98 corr with rolling means)
     "ewma": [],

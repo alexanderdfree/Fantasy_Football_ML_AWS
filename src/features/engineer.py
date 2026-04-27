@@ -64,6 +64,64 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     prior_tds["season"] = prior_tds["season"] + 1
     df = df.merge(prior_tds, on=["player_id", "season"], how="left")
 
+    # Three more prior-season aggregates (PR #192) that decompose the
+    # fantasy-points signal into orthogonal upstream pieces. PR #191 dropped
+    # both prior_season_mean_fantasy_points and prior_season_max_fantasy_points
+    # but the post-merge EC2 retrain showed a +0.072 Attention NN MAE
+    # regression — the FP aggregates were carrying signal that the
+    # decomposed features (catch_rate, YPC, total_touchdowns) didn't fully
+    # restore. These three close that gap:
+    #
+    #  * prior_season_total_yards: sum of (rushing_yards + receiving_yards)
+    #    across S-1 games. Yards × 0.1 is ~90% of FP for non-TD-heavy backs;
+    #    the *combined* total (rather than separate rushing/receiving sums)
+    #    avoids re-introducing the prior_season_*_rushing_yards redundancy
+    #    PR #190 found with prior_season_*_carries.
+    #  * prior_season_games_played: count of S-1 game rows. Lets Ridge / the
+    #    base NN convert per-game means (mean_carries, mean_targets, etc.)
+    #    to season totals — closes the volume gap for non-TD components.
+    #  * prior_season_mean_fumbles_lost: per-game fumble rate. Negative-FP
+    #    component currently absent from every prior_season aggregate. Mean
+    #    rather than total because rates compose better with the existing
+    #    per-game means; total has many zeros and high variance.
+    #
+    # ``fumbles_lost`` isn't a preprocessed column directly (the position
+    # targets.py modules sum it), so we compose it inline from the three
+    # source components present in every weekly row. Synthetic test
+    # fixtures sometimes omit one or more components — guard via ``in``
+    # checks so adding into a missing column doesn't crash with
+    # ``AttributeError: 'int' object has no attribute 'fillna'``.
+    def _col_or_zero(name: str) -> pd.Series:
+        if name in df.columns:
+            return df[name].fillna(0)
+        return pd.Series(0, index=df.index, dtype=float)
+
+    df_fumbles = (
+        _col_or_zero("sack_fumbles_lost")
+        + _col_or_zero("rushing_fumbles_lost")
+        + _col_or_zero("receiving_fumbles_lost")
+    )
+    df_total_yards = _col_or_zero("rushing_yards") + _col_or_zero("receiving_yards")
+    prior_extra = (
+        pd.DataFrame(
+            {
+                "player_id": df["player_id"],
+                "season": df["season"],
+                "_total_yards": df_total_yards,
+                "_fumbles_lost": df_fumbles,
+            }
+        )
+        .groupby(["player_id", "season"])
+        .agg(
+            prior_season_total_yards=("_total_yards", "sum"),
+            prior_season_games_played=("_total_yards", "size"),
+            prior_season_mean_fumbles_lost=("_fumbles_lost", "mean"),
+        )
+        .reset_index()
+    )
+    prior_extra["season"] = prior_extra["season"] + 1
+    df = df.merge(prior_extra, on=["player_id", "season"], how="left")
+
     # --- EWMA Features (14) ---
     ewma_cols: dict[str, pd.Series] = {}
     for stat in EWMA_STATS:
