@@ -14,8 +14,13 @@ on:
       - "src/**"
       - "shared/**"
       - "Dockerfile"
+      - ".dockerignore"
       - "requirements.txt"
       - ".github/workflows/deploy.yml"
+  # Manual trigger for one-offs — re-deploying after a non-code change like
+  # an S3 model refresh, or after a deploy that completed successfully but
+  # didn't roll the task because of an ECS-side hiccup.
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-east-1
