@@ -251,8 +251,14 @@ ATTN_LR = 1e-3
 ATTN_WEIGHT_DECAY = 5e-5
 ATTN_BATCH_SIZE = 256
 ATTN_PATIENCE = 35
+# Per-game stats fed into the attention sequence. fantasy_points is
+# intentionally excluded because its main rushing/receiving scoring
+# components here (yards + TDs + receptions) are already represented in
+# the sequence, so adding it would be largely redundant. Lagged
+# fantasy_points signal still reaches Ridge / LightGBM / the base NN
+# through the rolling / prior_season / trend categories of
+# INCLUDE_FEATURES.
 ATTN_HISTORY_STATS = [
-    "fantasy_points",
     "rushing_yards",
     "receiving_yards",
     "rushing_tds",
