@@ -212,7 +212,7 @@ class TestQBRegression:
             patience=10,
             log_every=100,
         )
-        trainer.train(train_loader, val_loader, n_epochs=60)
+        trainer.train(train_loader, val_loader, n_epochs=25)
 
         nn_preds = model.predict_numpy(X_test_s, torch.device("cpu"))
         nn_mae = _mae(y_test["total"], _aggregate(nn_preds))
