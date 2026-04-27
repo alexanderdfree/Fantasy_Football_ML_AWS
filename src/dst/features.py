@@ -1,15 +1,15 @@
 import pandas as pd
 
-from src.dst.config import DST_ALL_FEATURES
+from src.dst.config import ALL_FEATURES
 from src.shared.feature_build import fill_nans_with_train_means, rolling_agg
 
 
-def get_dst_feature_columns() -> list[str]:
+def get_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the DST model."""
-    return list(DST_ALL_FEATURES)
+    return list(ALL_FEATURES)
 
 
-def compute_dst_features(df: pd.DataFrame) -> None:
+def compute_features(df: pd.DataFrame) -> None:
     """Compute all D/ST features in-place.
 
     Must be called on the FULL dataset (before splitting) so that rolling
@@ -18,7 +18,7 @@ def compute_dst_features(df: pd.DataFrame) -> None:
     df.sort_values(["team", "season", "week"], inplace=True)
 
     # Pre-compute D/ST fantasy points for rolling features.  We use the
-    # tier-mapped ``fantasy_points`` column produced by compute_dst_targets
+    # tier-mapped ``fantasy_points`` column produced by compute_targets
     # so the rolling window matches what the model is actually predicting.
     df["_dst_total_pts"] = df["fantasy_points"]
 
@@ -123,7 +123,7 @@ def compute_dst_features(df: pd.DataFrame) -> None:
     df.drop(columns=["_dst_total_pts", "_turnovers"], inplace=True, errors="ignore")
 
 
-def add_dst_specific_features(
+def add_specific_features(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -132,7 +132,7 @@ def add_dst_specific_features(
     return train_df, val_df, test_df
 
 
-def fill_dst_nans(
+def fill_nans(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,

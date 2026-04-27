@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.dst.config import DST_TARGETS
+from src.dst.config import TARGETS
 from tests.shared.position_fixtures import (
     make_sim_df as _make_sim_df,
 )
@@ -31,7 +31,7 @@ from tests.shared.position_fixtures import (
 )
 
 # DST scoring scale: team defenses typically score 5-15 fantasy pts/week.
-DST_SCORING_SCALE = 15
+SCORING_SCALE = 15
 
 
 def pytest_configure(config):
@@ -54,7 +54,7 @@ def make_sim_df():
 
     def _factory(n_weeks: int = 4, n_players: int = 15, seed: int = 42):
         return _make_sim_df(
-            DST_SCORING_SCALE,
+            SCORING_SCALE,
             n_weeks,
             n_players,
             seed,
@@ -70,7 +70,7 @@ def make_test_df():
 
     def _factory(n_weeks: int = 3, n_players: int = 15, seed: int = 42):
         return _make_test_df(
-            DST_SCORING_SCALE,
+            SCORING_SCALE,
             n_weeks,
             n_players,
             seed,
@@ -90,7 +90,7 @@ def make_tensors():
     """
 
     def _factory(n: int = 10, seed: int | None = None):
-        return _make_tensors(DST_TARGETS, n=n, seed=seed)
+        return _make_tensors(TARGETS, n=n, seed=seed)
 
     return _factory
 
@@ -110,7 +110,7 @@ def make_splits():
 def make_df():
     """Factory: build a single-row DST DataFrame with sensible defaults.
 
-    Mirrors the old ``_make_dst_row`` helper from test_dst_targets.py.
+    Mirrors the old ``_make_row`` helper from test_dst_targets.py.
     Any keyword argument overrides the default for that field.  Returns
     a fresh DataFrame per call — safe to mutate in-test.
     """
@@ -138,7 +138,7 @@ def make_df():
 def make_team_games():
     """Factory: multi-week DST DataFrame for one team.
 
-    ``compute_dst_features`` reads the raw-stat columns + ``fantasy_points``
+    ``compute_features`` reads the raw-stat columns + ``fantasy_points``
     for rolling aggregates. ``fantasy_points`` is populated with a placeholder
     linear sum (no PA/YA tier bonus) since the tests that use this fixture
     care about rolling windows, not exact tier scoring.
@@ -177,7 +177,7 @@ def make_team_games():
             }
         )
         # Placeholder fantasy_points (linear-only) — real tier scoring happens
-        # in compute_dst_targets. This column feeds rolling-feature windows.
+        # in compute_targets. This column feeds rolling-feature windows.
         df["fantasy_points"] = (
             df["def_sacks"]
             + df["def_ints"] * 2
@@ -199,7 +199,7 @@ def make_team_games():
 
 
 @pytest.fixture(scope="session")
-def tiny_dst_dataset():
+def tiny_dataset():
     """Deterministic tiny DST dataset for E2E / regression tests.
 
     32 teams x 4 seasons x 17 weeks = 2176 team-week rows.  Targets,
@@ -207,10 +207,10 @@ def tiny_dst_dataset():
     few hundred trainable rows — plenty for a 1-epoch smoke test, tiny
     enough to finish in < 20s.
     """
-    return _build_tiny_dst_dataset(seed=42)
+    return _build_tiny_dataset(seed=42)
 
 
-def _build_tiny_dst_dataset(seed: int = 42) -> pd.DataFrame:
+def _build_tiny_dataset(seed: int = 42) -> pd.DataFrame:
     """Build the synthetic DST dataset.  Separated so the E2E reproducibility
     test can rebuild it without touching fixture caching."""
     rng = np.random.RandomState(seed)
@@ -305,7 +305,7 @@ def _build_tiny_dst_dataset(seed: int = 42) -> pd.DataFrame:
                 )
 
     df = pd.DataFrame(rows)
-    # Pipeline-compatible extras (mimic build_dst_data's post-processing)
+    # Pipeline-compatible extras (mimic build_data's post-processing)
     df["player_id"] = df["team"]
     df["player_display_name"] = df["team"] + " D/ST"
     df["player_name"] = df["team"]

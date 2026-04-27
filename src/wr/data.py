@@ -1,7 +1,7 @@
 import pandas as pd
 
 
-def filter_to_wr(df: pd.DataFrame) -> pd.DataFrame:
+def filter_to_position(df: pd.DataFrame) -> pd.DataFrame:
     """Filter featured DataFrame to WR rows only."""
     wr_df = df[df["position"] == "WR"].copy()
     pos_cols = ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]

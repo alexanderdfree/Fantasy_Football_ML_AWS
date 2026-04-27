@@ -8,7 +8,7 @@ keeps the WR-specific ``wr_player_games_factory`` feature-input builder.
 import pandas as pd
 import pytest
 
-from src.wr.config import WR_TARGETS
+from src.wr.config import TARGETS
 from tests.shared.position_fixtures import (
     make_position_df as _make_position_df,
 )
@@ -29,7 +29,7 @@ from tests.shared.position_fixtures import (
 )
 
 # WR fantasy points typically land in the 0-20 PPR range.
-WR_SCORING_SCALE = 20
+SCORING_SCALE = 20
 
 
 def pytest_configure(config):
@@ -50,7 +50,7 @@ def wr_sim_df_factory():
 
     def _make(n_weeks: int = 4, n_players: int = 15, seed: int = 42):
         return _make_sim_df(
-            WR_SCORING_SCALE,
+            SCORING_SCALE,
             n_weeks,
             n_players,
             seed,
@@ -73,7 +73,7 @@ def wr_test_df_factory():
 
     def _make(n_weeks: int = 3, n_players: int = 15, seed: int = 42):
         return _make_test_df(
-            WR_SCORING_SCALE,
+            SCORING_SCALE,
             n_weeks,
             n_players,
             seed,
@@ -95,7 +95,7 @@ def wr_nn_tensors_factory():
     """Factory producing (preds, targets) tensor dicts for MultiTargetLoss tests."""
 
     def _make(n: int = 10, seed: int = 42):
-        return _make_tensors(WR_TARGETS, n=n, seed=seed)
+        return _make_tensors(TARGETS, n=n, seed=seed)
 
     return _make
 
@@ -108,13 +108,13 @@ def wr_nn_tensors(wr_nn_tensors_factory):
 
 @pytest.fixture(scope="session")
 def wr_nan_splits_factory():
-    """Factory producing (train, val, test) DataFrames for fill_wr_nans tests."""
+    """Factory producing (train, val, test) DataFrames for fill_nans tests."""
     return _make_splits
 
 
 @pytest.fixture(scope="session")
 def wr_position_df_factory():
-    """Factory for DataFrames used by filter_to_wr tests (position + pos_* cols)."""
+    """Factory for DataFrames used by filter_to_position tests (position + pos_* cols)."""
 
     def _make(positions, has_pos_cols: bool = True):
         return _make_position_df(positions, stat_col="receiving_yards", has_pos_cols=has_pos_cols)

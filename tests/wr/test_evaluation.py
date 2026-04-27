@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
-from src.wr.config import WR_TARGETS
+from src.wr.config import TARGETS
 
 
 @pytest.mark.unit
@@ -28,15 +28,15 @@ class TestComputeTargetMetrics:
     def test_calls_compute_metrics_for_each_target(self, mock_metrics):
         mock_metrics.return_value = {"mae": 1.0, "rmse": 1.5, "r2": 0.8}
         y_true, y_pred = self._make_dicts()
-        result = compute_target_metrics(y_true, y_pred, WR_TARGETS)
-        assert mock_metrics.call_count == len(WR_TARGETS) + 1
-        assert set(result.keys()) == set(WR_TARGETS) | {"total"}
+        result = compute_target_metrics(y_true, y_pred, TARGETS)
+        assert mock_metrics.call_count == len(TARGETS) + 1
+        assert set(result.keys()) == set(TARGETS) | {"total"}
 
     @patch("src.shared.evaluation.compute_metrics")
     def test_returns_correct_structure(self, mock_metrics):
         mock_metrics.return_value = {"mae": 2.0, "rmse": 3.0, "r2": 0.5}
         y_true, y_pred = self._make_dicts(10)
-        result = compute_target_metrics(y_true, y_pred, WR_TARGETS)
+        result = compute_target_metrics(y_true, y_pred, TARGETS)
         for target in result:
             assert "mae" in result[target]
             assert "rmse" in result[target]
@@ -52,7 +52,7 @@ class TestComputeTargetMetrics:
             "fumbles_lost": np.array([0.0, 0.0]),
             "total": np.array([20.0, 7.0]),
         }
-        result = compute_target_metrics(y, y, WR_TARGETS)
+        result = compute_target_metrics(y, y, TARGETS)
         assert result["total"]["mae"] == 0.0
 
 

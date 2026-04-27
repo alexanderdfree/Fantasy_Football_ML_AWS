@@ -2,10 +2,10 @@
 # Raw-stat targets (see src/shared/aggregate_targets.py). Fantasy points are
 # aggregated from these predictions via predictions_to_fantasy_points.
 # Rushing targets dropped - WR rushing stats are too sparse for reliable signal.
-WR_TARGETS = ["receiving_tds", "receiving_yards", "receptions", "fumbles_lost"]
+TARGETS = ["receiving_tds", "receiving_yards", "receptions", "fumbles_lost"]
 
 # === WR-Specific Features ===
-WR_SPECIFIC_FEATURES = [
+SPECIFIC_FEATURES = [
     "yards_per_reception_L3",
     "yards_per_target_L3",
     "reception_rate_L3",
@@ -18,7 +18,7 @@ WR_SPECIFIC_FEATURES = [
 
 # === WR Feature Whitelist ===
 # Explicit include list — new columns must be opted in, preventing silent leakage.
-_WR_ROLLING_STATS = [
+_ROLLING_STATS = [
     "targets",
     "receptions",
     "carries",
@@ -27,18 +27,18 @@ _WR_ROLLING_STATS = [
     "snap_pct",
 ]
 
-WR_INCLUDE_FEATURES = {
+INCLUDE_FEATURES = {
     # L3/L8 for all stats; snap_pct also keeps L5.
     # L5 mean/std/max dropped (>0.97 corr with L3/L8) except snap_pct.
     "rolling": [
         f"rolling_{a}_{stat}_L{w}"
-        for stat in _WR_ROLLING_STATS
+        for stat in _ROLLING_STATS
         for w in [3, 5, 8]
         for a in ["mean", "std", "max"]
         if w != 5 or stat == "snap_pct"
     ],
     "prior_season": [
-        f"prior_season_{a}_{stat}" for stat in _WR_ROLLING_STATS for a in ["mean", "std", "max"]
+        f"prior_season_{a}_{stat}" for stat in _ROLLING_STATS for a in ["mean", "std", "max"]
     ],
     # All EWMA dropped (>0.98 corr with rolling means)
     "ewma": [],
@@ -81,7 +81,7 @@ WR_INCLUDE_FEATURES = {
         "is_dome",
         "temp_adjusted",
     ],
-    "specific": WR_SPECIFIC_FEATURES,
+    "specific": SPECIFIC_FEATURES,
 }
 
 # === Ridge ===
@@ -89,10 +89,10 @@ import numpy as np
 
 # PCR: 30 components. Benchmark showed -0.094 MAE vs no-PCA baseline (4.507 → 4.413).
 # PCA removes collinear directions the alpha grid can't fully address.
-WR_RIDGE_PCA_COMPONENTS = 30
+RIDGE_PCA_COMPONENTS = 30
 # Alpha grids sized to each target's dynamic range: yards use a wider high-alpha
 # tail; count-style targets (TDs, receptions, fumbles) stay in the standard band.
-WR_RIDGE_ALPHA_GRIDS = {
+RIDGE_ALPHA_GRIDS = {
     "receiving_tds": [round(x, 4) for x in np.logspace(-1, 4, 15)],
     "receiving_yards": [round(x, 4) for x in np.logspace(-1, 4, 15)],
     "receptions": [round(x, 4) for x in np.logspace(-2, 3, 15)],
@@ -100,32 +100,32 @@ WR_RIDGE_ALPHA_GRIDS = {
 }
 
 # === ElasticNet (optional parallel linear baseline, L1+L2) ===
-# Off by default. Reuses WR_RIDGE_ALPHA_GRIDS and searches over WR_ENET_L1_RATIOS.
-# Skips PCA regardless of WR_RIDGE_PCA_COMPONENTS — L1 sparsity on a rotated
+# Off by default. Reuses RIDGE_ALPHA_GRIDS and searches over ENET_L1_RATIOS.
+# Skips PCA regardless of RIDGE_PCA_COMPONENTS — L1 sparsity on a rotated
 # basis zeros components, not original features.
-WR_TRAIN_ELASTICNET = False
-WR_ENET_L1_RATIOS = [0.3, 0.5, 0.7]
+TRAIN_ELASTICNET = False
+ENET_L1_RATIOS = [0.3, 0.5, 0.7]
 
 # === Neural Net ===
 # 2012+ dataset: widened from [96] to [128] to exploit largest training set.
 # Largest position dataset can support more capacity with less overfitting risk.
-WR_NN_BACKBONE_LAYERS = [128]
-WR_NN_HEAD_HIDDEN = 32
+NN_BACKBONE_LAYERS = [128]
+NN_HEAD_HIDDEN = 32
 # Larger head for the hurdle-NegBin reception head (two value outputs).
 # receiving_tds moved to plain Poisson NLL so it no longer needs extra capacity.
-WR_NN_HEAD_HIDDEN_OVERRIDES = {"receptions": 64}
-WR_NN_DROPOUT = 0.20
-WR_NN_LR = 1e-3
-WR_NN_WEIGHT_DECAY = 1e-4
-WR_NN_EPOCHS = 250
-WR_NN_BATCH_SIZE = 512
-WR_NN_PATIENCE = 25
+NN_HEAD_HIDDEN_OVERRIDES = {"receptions": 64}
+NN_DROPOUT = 0.20
+NN_LR = 1e-3
+NN_WEIGHT_DECAY = 1e-4
+NN_EPOCHS = 250
+NN_BATCH_SIZE = 512
+NN_PATIENCE = 25
 
 # === Loss Weights ===
 # Yards head keeps the 2.0/delta rebalance (without it, yards gradients
 # dominate the count heads). Poisson NLL and hurdle-NegBin heads use weight 1.0
 # (their losses already sit near ~1.0 at typical rates).
-WR_LOSS_WEIGHTS = {
+LOSS_WEIGHTS = {
     "receiving_tds": 1.0,  # Poisson NLL
     "receiving_yards": 0.133,  # 2.0 / 15  (Huber)
     "receptions": 1.0,  # hurdle_negbin, fraction-scaled internally
@@ -134,25 +134,25 @@ WR_LOSS_WEIGHTS = {
 
 # === Huber Deltas (per-target, raw-stat units) ===
 # Only Huber heads need a delta.
-WR_HUBER_DELTAS = {
+HUBER_DELTAS = {
     "receiving_yards": 15.0,
 }
 
 # === LR Scheduler ===
-WR_SCHEDULER_TYPE = "cosine_warm_restarts"
-WR_COSINE_T0 = 40
-WR_COSINE_T_MULT = 2
-WR_COSINE_ETA_MIN = 1e-5
+SCHEDULER_TYPE = "cosine_warm_restarts"
+COSINE_T0 = 40
+COSINE_T_MULT = 2
+COSINE_ETA_MIN = 1e-5
 
 # === Attention NN (game history variant) ===
-WR_TRAIN_ATTENTION_NN = True
-WR_ATTN_D_MODEL = 32
-WR_ATTN_N_HEADS = 2
-WR_ATTN_ENCODER_HIDDEN_DIM = 0
-WR_ATTN_MAX_SEQ_LEN = 17
-WR_ATTN_POSITIONAL_ENCODING = True
-WR_ATTN_DROPOUT = 0.0
-WR_ATTN_HISTORY_STATS = [
+TRAIN_ATTENTION_NN = True
+ATTN_D_MODEL = 32
+ATTN_N_HEADS = 2
+ATTN_ENCODER_HIDDEN_DIM = 0
+ATTN_MAX_SEQ_LEN = 17
+ATTN_POSITIONAL_ENCODING = True
+ATTN_DROPOUT = 0.0
+ATTN_HISTORY_STATS = [
     "receiving_yards",
     "rushing_yards",
     "receiving_tds",
@@ -162,27 +162,27 @@ WR_ATTN_HISTORY_STATS = [
     "carries",
     "snap_pct",
 ]
-# Categories of WR_INCLUDE_FEATURES that flow into the attention NN's static
+# Categories of INCLUDE_FEATURES that flow into the attention NN's static
 # branch. The attention branch learns its own temporal representation from
-# WR_ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
+# ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
 # categories are intentionally excluded to avoid duplicating that signal.
-# ``defense`` is also excluded: WR_OPP_ATTN_HISTORY_STATS feeds the opposing
+# ``defense`` is also excluded: OPP_ATTN_HISTORY_STATS feeds the opposing
 # defense's trailing form through a parallel attention branch, which makes
 # the L5 static aggregates redundant for the NN. (They stay in
-# WR_INCLUDE_FEATURES["defense"] so Ridge / LightGBM still see them.)
-WR_ATTN_STATIC_CATEGORIES = [
+# INCLUDE_FEATURES["defense"] so Ridge / LightGBM still see them.)
+ATTN_STATIC_CATEGORIES = [
     "prior_season",
     "matchup",
     "contextual",
     "weather_vegas",
 ]
-WR_ATTN_STATIC_FEATURES = [c for cat in WR_ATTN_STATIC_CATEGORIES for c in WR_INCLUDE_FEATURES[cat]]
+ATTN_STATIC_FEATURES = [c for cat in ATTN_STATIC_CATEGORIES for c in INCLUDE_FEATURES[cat]]
 
 # Per-game opponent-defense stats fed to the second attention branch. Mirror
 # the L5 static aggregates (opp_def_*_L5) but unrolled per game, so the NN
 # learns the trailing-form weighting itself instead of being handed a fixed
 # 5-game mean. Built by src.features.engineer.build_opp_defense_history_arrays.
-WR_OPP_ATTN_HISTORY_STATS = [
+OPP_ATTN_HISTORY_STATS = [
     "def_sacks",
     "def_pass_yds_allowed",
     "def_pass_td_allowed",
@@ -190,7 +190,7 @@ WR_OPP_ATTN_HISTORY_STATS = [
     "def_rush_yds_allowed",
     "def_pts_allowed",
 ]
-WR_OPP_ATTN_MAX_SEQ_LEN = 17
+OPP_ATTN_MAX_SEQ_LEN = 17
 # Hurdle gate on receptions + BCE gate on receiving_tds. Matches the
 # "Variant C" config for RB (see RB/rb_config.py for the ablation table).
 # WR doesn't have its own ablation, but the mechanism is target-agnostic:
@@ -201,14 +201,14 @@ WR_OPP_ATTN_MAX_SEQ_LEN = 17
 # restores the gate without disturbing the PR #96 reception hurdle win.
 # head_losses below keeps receiving_tds on ``poisson_nll`` (BCE gate loss
 # is added in addition to the Poisson NLL via ``gated_targets``).
-WR_ATTN_GATED = True
-WR_GATED_TARGETS = ["receptions", "receiving_tds"]
-WR_ATTN_GATE_HIDDEN = 16
-WR_ATTN_GATE_WEIGHT = 1.0
+ATTN_GATED = True
+GATED_TARGETS = ["receptions", "receiving_tds"]
+ATTN_GATE_HIDDEN = 16
+ATTN_GATE_WEIGHT = 1.0
 
 # Per-head loss family. TDs + fumbles on Poisson NLL; receptions on
 # zero-truncated NegBin-2 hurdle (see GatedHead + hurdle_negbin_value_loss).
-WR_HEAD_LOSSES = {
+HEAD_LOSSES = {
     "receiving_tds": "poisson_nll",
     "receiving_yards": "huber",
     "receptions": "hurdle_negbin",
@@ -217,7 +217,7 @@ WR_HEAD_LOSSES = {
 
 # === LightGBM (Optuna retune, 50 trials, CV MAE 4.6876) ===
 # Flipped from ``"fair"`` to ``"huber"`` as part of the PR 3 LGBM unification
-# (QB is the one exception — see QB_LGBM_OBJECTIVE). Retuned on the huber
+# (QB is the one exception — see LGBM_OBJECTIVE). Retuned on the huber
 # objective, holdout comparison vs the old fair config:
 #   Total MAE        4.203 -> 4.221  (+0.018)
 #   Receiving Yards  19.94 -> 19.87  (-0.07)
@@ -227,28 +227,28 @@ WR_HEAD_LOSSES = {
 #   Spearman rho     0.644 -> 0.648  (+0.004)
 # CV MAE improved (-0.044). Holdout nudge (+0.018) is well inside the plan's
 # ±0.05 tolerance. Full tune_lgbm_results.json in retune run 24823926033.
-WR_TRAIN_LIGHTGBM = True
-WR_LGBM_N_ESTIMATORS = 1600
-WR_LGBM_LEARNING_RATE = 0.08782007
-WR_LGBM_NUM_LEAVES = 31
-WR_LGBM_MAX_DEPTH = 9
-WR_LGBM_SUBSAMPLE = 0.7318847
-WR_LGBM_COLSAMPLE_BYTREE = 0.48205232
-WR_LGBM_REG_LAMBDA = 0.1113962
-WR_LGBM_REG_ALPHA = 1.2740795
-WR_LGBM_MIN_CHILD_SAMPLES = 63
-WR_LGBM_MIN_SPLIT_GAIN = 0.2346478
-WR_LGBM_OBJECTIVE = "huber"
+TRAIN_LIGHTGBM = True
+LGBM_N_ESTIMATORS = 1600
+LGBM_LEARNING_RATE = 0.08782007
+LGBM_NUM_LEAVES = 31
+LGBM_MAX_DEPTH = 9
+LGBM_SUBSAMPLE = 0.7318847
+LGBM_COLSAMPLE_BYTREE = 0.48205232
+LGBM_REG_LAMBDA = 0.1113962
+LGBM_REG_ALPHA = 1.2740795
+LGBM_MIN_CHILD_SAMPLES = 63
+LGBM_MIN_SPLIT_GAIN = 0.2346478
+LGBM_OBJECTIVE = "huber"
 
 
 # === Tiny-scale config for E2E smoke tests ===
 # Shrunk copy of the production hyperparameters: 1 epoch, 2-layer NN with 8
 # units, no attention, no LightGBM. Keeps the full-pipeline E2E test under
 # ~20s while still exercising every stage of run_pipeline().
-WR_CONFIG_TINY = {
-    "targets": WR_TARGETS,
-    "specific_features": WR_SPECIFIC_FEATURES,
-    "ridge_alpha_grids": {t: [1.0] for t in WR_TARGETS},
+CONFIG_TINY = {
+    "targets": TARGETS,
+    "specific_features": SPECIFIC_FEATURES,
+    "ridge_alpha_grids": {t: [1.0] for t in TARGETS},
     "ridge_pca_components": None,
     "ridge_cv_folds": 2,
     "ridge_refine_points": 0,
@@ -262,8 +262,8 @@ WR_CONFIG_TINY = {
     "nn_batch_size": 64,
     "nn_patience": 1,
     "nn_log_every": 1,
-    "loss_weights": WR_LOSS_WEIGHTS,
-    "huber_deltas": WR_HUBER_DELTAS,
+    "loss_weights": LOSS_WEIGHTS,
+    "huber_deltas": HUBER_DELTAS,
     "scheduler_type": "cosine_warm_restarts",
     "cosine_t0": 1,
     "cosine_t_mult": 2,

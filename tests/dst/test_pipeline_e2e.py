@@ -8,11 +8,11 @@ mismatches, config drift, missing columns) that position-unit tests miss.
 
 Design choices
 --------------
-* **Dataset** — 32 teams x 4 seasons x 17 weeks via the ``tiny_dst_dataset``
+* **Dataset** — 32 teams x 4 seasons x 17 weeks via the ``tiny_dataset``
   fixture (conftest.py).  Seasons 2022-2024 train/val, 2025 test.  Every
   team plays 17 games per season so the ``MIN_GAMES_PER_SEASON=6`` filter
   does not wipe rows.
-* **Config** — ``DST_CONFIG_TINY`` in dst_config.py: 2-layer 8-unit NN,
+* **Config** — ``CONFIG_TINY`` in dst_config.py: 2-layer 8-unit NN,
   1 epoch, no LightGBM, no attention.  The rest of the production config
   (targets, ridge grids, loss weights) is kept so the test exercises
   representative code.
@@ -24,7 +24,7 @@ Design choices
   non-determinism in the shared kernel.
 
 Budget: < 20 s.  If the test ever exceeds that, the NN is too deep or
-the dataset is too large — revisit DST_CONFIG_TINY before raising the
+the dataset is too large — revisit CONFIG_TINY before raising the
 timeout.
 """
 
@@ -37,27 +37,27 @@ import pandas as pd
 import pytest
 
 from src.dst.config import (
-    DST_ATTN_HISTORY_STATS,
-    DST_ATTN_STATIC_FEATURES,
-    DST_CONFIG_TINY,
-    DST_HUBER_DELTAS,
-    DST_LOSS_WEIGHTS,
-    DST_POISSON_TARGETS,
-    DST_RIDGE_ALPHA_GRIDS,
-    DST_SPECIFIC_FEATURES,
-    DST_TARGETS,
+    ATTN_HISTORY_STATS,
+    ATTN_STATIC_FEATURES,
+    CONFIG_TINY,
+    HUBER_DELTAS,
+    LOSS_WEIGHTS,
+    POISSON_TARGETS,
+    RIDGE_ALPHA_GRIDS,
+    SPECIFIC_FEATURES,
+    TARGETS,
 )
-from src.dst.data import filter_to_dst
+from src.dst.data import filter_to_position
 from src.dst.features import (
-    add_dst_specific_features,
-    compute_dst_features,
-    fill_dst_nans,
-    get_dst_feature_columns,
+    add_specific_features,
+    compute_features,
+    fill_nans,
+    get_feature_columns,
 )
-from src.dst.targets import compute_dst_targets
+from src.dst.targets import compute_targets
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_pipeline
-from tests.dst.conftest import _build_tiny_dst_dataset
+from tests.dst.conftest import _build_tiny_dataset
 
 
 def _build_synthetic_schedules(df: pd.DataFrame) -> pd.DataFrame:
@@ -101,27 +101,27 @@ def _build_synthetic_schedules(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _make_dst_tiny_cfg() -> dict:
-    """Build the full DST cfg dict using ``DST_CONFIG_TINY`` for training knobs.
+    """Build the full DST cfg dict using ``CONFIG_TINY`` for training knobs.
 
     Non-training fields (targets, callables, alpha grids, loss/Huber)
     match the production DST config so the test covers the real dispatch
     paths in ``src.shared.pipeline.run_pipeline``.
     """
     cfg = {
-        "targets": DST_TARGETS,
-        "ridge_alpha_grids": DST_RIDGE_ALPHA_GRIDS,
-        "specific_features": DST_SPECIFIC_FEATURES,
-        "filter_fn": filter_to_dst,
-        "compute_targets_fn": compute_dst_targets,
-        "add_features_fn": add_dst_specific_features,
-        "fill_nans_fn": fill_dst_nans,
-        "get_feature_columns_fn": get_dst_feature_columns,
+        "targets": TARGETS,
+        "ridge_alpha_grids": RIDGE_ALPHA_GRIDS,
+        "specific_features": SPECIFIC_FEATURES,
+        "filter_fn": filter_to_position,
+        "compute_targets_fn": compute_targets,
+        "add_features_fn": add_specific_features,
+        "fill_nans_fn": fill_nans,
+        "get_feature_columns_fn": get_feature_columns,
         "compute_adjustment_fn": None,
-        "loss_weights": DST_LOSS_WEIGHTS,
-        "huber_deltas": DST_HUBER_DELTAS,
-        "poisson_targets": DST_POISSON_TARGETS,
+        "loss_weights": LOSS_WEIGHTS,
+        "huber_deltas": HUBER_DELTAS,
+        "poisson_targets": POISSON_TARGETS,
     }
-    cfg.update(DST_CONFIG_TINY)
+    cfg.update(CONFIG_TINY)
     return cfg
 
 
@@ -129,12 +129,12 @@ def _build_tiny_splits(seed: int = 42):
     """Build tiny synthetic DST splits ready for run_pipeline.
 
     DST's production pipeline computes features on the full dataset
-    before splitting (compute_dst_features); we mirror that here so
+    before splitting (compute_features); we mirror that here so
     rolling windows see the full season history.
     """
-    df = _build_tiny_dst_dataset(seed=seed)
-    df = compute_dst_targets(df)
-    compute_dst_features(df)
+    df = _build_tiny_dataset(seed=seed)
+    df = compute_targets(df)
+    compute_features(df)
     # Split: 2022-2023 train, 2024 val, 2025 test (mirrors src.config values
     # but shifted to the tiny dataset range).
     train = df[df["season"].isin([2022, 2023])].copy()
@@ -144,7 +144,7 @@ def _build_tiny_splits(seed: int = 42):
 
 
 @pytest.fixture(scope="module")
-def tiny_cwd(tmp_path_factory, tiny_dst_dataset):
+def tiny_cwd(tmp_path_factory, tiny_dataset):
     """Redirect CWD so run_pipeline's ``DST/outputs`` writes land in tmp_path.
 
     Also stubs out the schedule-parquet loader so it returns a synthetic
@@ -167,7 +167,7 @@ def tiny_cwd(tmp_path_factory, tiny_dst_dataset):
     # short-circuits on the ``_schedule_merged`` column, so if a df already
     # has synthetic schedule-derived columns it is left alone.  We still
     # replace _load_schedules so the initial path-open never happens.
-    synthetic_sched = _build_synthetic_schedules(tiny_dst_dataset)
+    synthetic_sched = _build_synthetic_schedules(tiny_dataset)
     from src.shared import weather_features as _wf
 
     mp.setattr(_wf, "_schedule_cache", synthetic_sched)
@@ -210,7 +210,7 @@ class TestDSTPipelineE2E:
     """Full-pipeline smoke + reproducibility tests."""
 
     def test_pipeline_runs_without_exception(self, pipeline_run):
-        """run_pipeline(DST_CONFIG_TINY) must complete cleanly."""
+        """run_pipeline(CONFIG_TINY) must complete cleanly."""
         result = pipeline_run
         assert result is not None
         assert "ridge_metrics" in result
@@ -224,7 +224,7 @@ class TestDSTPipelineE2E:
         n_test = len(result["test_df"])
         for model_key in ("ridge", "nn"):
             preds = result["per_target_preds"][model_key]
-            for t in DST_TARGETS:
+            for t in TARGETS:
                 assert preds[t].shape == (n_test,)
                 assert np.isfinite(preds[t]).all(), f"{model_key}.{t} contains NaN/inf"
 
@@ -234,7 +234,7 @@ class TestDSTPipelineE2E:
         Strongest check for hidden non-determinism in the shared kernel
         (dataloader shuffle, dropout masks, dict-iteration order, ...).
         """
-        for t in DST_TARGETS:
+        for t in TARGETS:
             # Ridge is deterministic — exact equality expected.
             np.testing.assert_allclose(
                 pipeline_run["per_target_preds"]["ridge"][t],
@@ -257,7 +257,7 @@ class TestDSTPipelineE2E:
     def test_ridge_metrics_structure(self, pipeline_run):
         """Ridge metrics must include MAE/R2 for every target + total."""
         ridge_metrics = pipeline_run["ridge_metrics"]
-        for key in list(DST_TARGETS) + ["total"]:
+        for key in list(TARGETS) + ["total"]:
             assert key in ridge_metrics, f"Ridge metrics missing '{key}'"
             for metric in ("mae", "rmse", "r2"):
                 assert metric in ridge_metrics[key]
@@ -275,8 +275,8 @@ class TestDSTPipelineE2E:
         # still set for serving + ranking metric reporting, but the NN itself
         # trains on raw-stat heads only.
         cfg["train_attention_nn"] = True
-        cfg["attn_history_stats"] = DST_ATTN_HISTORY_STATS
-        cfg["attn_static_features"] = DST_ATTN_STATIC_FEATURES
+        cfg["attn_history_stats"] = ATTN_HISTORY_STATS
+        cfg["attn_static_features"] = ATTN_STATIC_FEATURES
         cfg["attn_max_seq_len"] = 17
         cfg["attn_d_model"] = 8
         cfg["attn_n_heads"] = 2
@@ -292,6 +292,6 @@ class TestDSTPipelineE2E:
         assert "attn_nn_metrics" in result
         attn_preds = result["per_target_preds"]["attn_nn"]
         n_test = len(result["test_df"])
-        for t in DST_TARGETS:
+        for t in TARGETS:
             assert attn_preds[t].shape == (n_test,)
             assert np.isfinite(attn_preds[t]).all(), f"Attention NN.{t} contains NaN/inf"

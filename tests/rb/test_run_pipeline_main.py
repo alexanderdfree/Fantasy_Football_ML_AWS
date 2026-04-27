@@ -1,4 +1,4 @@
-"""Coverage smoke test for ``RB/run_rb_pipeline.py``'s ``__main__`` block.
+"""Coverage smoke test for ``RB/run.py``'s ``__main__`` block.
 
 Mirrors ``QB/tests/test_qb_run_pipeline_main.py``. Runs the script via
 ``runpy`` with mocked ``src.shared.pipeline.run_pipeline`` / ``run_cv_pipeline``
@@ -34,7 +34,7 @@ def _patch_shared_pipeline(monkeypatch):
 @pytest.mark.unit
 def test_main_default_invokes_run_pipeline(monkeypatch):
     calls = _patch_shared_pipeline(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["run_rb_pipeline.py"])
+    monkeypatch.setattr(sys, "argv", ["run.py"])
     runpy.run_path(str(_MODULE_PATH), run_name="__main__")
     assert len(calls) == 1
     assert calls[0]["position"] == "RB"
@@ -44,7 +44,7 @@ def test_main_default_invokes_run_pipeline(monkeypatch):
 @pytest.mark.unit
 def test_main_tiny_wires_shrunk_config(monkeypatch):
     calls = _patch_shared_pipeline(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["run_rb_pipeline.py", "--tiny"])
+    monkeypatch.setattr(sys, "argv", ["run.py", "--tiny"])
     runpy.run_path(str(_MODULE_PATH), run_name="__main__")
     assert len(calls) == 1
     cfg = calls[0]["cfg"]
@@ -56,7 +56,7 @@ def test_main_tiny_wires_shrunk_config(monkeypatch):
 @pytest.mark.unit
 def test_main_cv_routes_to_run_cv_pipeline(monkeypatch):
     calls = _patch_shared_pipeline(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["run_rb_pipeline.py", "--cv"])
+    monkeypatch.setattr(sys, "argv", ["run.py", "--cv"])
     runpy.run_path(str(_MODULE_PATH), run_name="__main__")
     assert len(calls) == 1
     assert calls[0]["position"] == "RB"
@@ -75,15 +75,15 @@ def test_run_rb_pipeline_function_passes_through(monkeypatch):
     monkeypatch.setattr(rb_pipe, "run_pipeline", _fake)
     monkeypatch.setattr(rb_pipe, "run_cv_pipeline", _fake)
 
-    result = rb_pipe.run_rb_pipeline("train", "val", "test", seed=7)
+    result = rb_pipe.run("train", "val", "test", seed=7)
     assert result == {"ok": True}
     assert seen["position"] == "RB"
     assert seen["args"][-1] == 7
-    assert seen["cfg"] is rb_pipe.RB_CONFIG
+    assert seen["cfg"] is rb_pipe.CONFIG
 
     custom = {"custom": True, "targets": ["x"]}
-    rb_pipe.run_rb_pipeline(None, None, None, config=custom)
+    rb_pipe.run(None, None, None, config=custom)
     assert seen["cfg"] == custom
 
-    rb_pipe.run_rb_cv_pipeline("full", "test", seed=11)
+    rb_pipe.run_cv("full", "test", seed=11)
     assert seen["args"][-1] == 11

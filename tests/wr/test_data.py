@@ -1,12 +1,12 @@
-"""Tests for WR.wr_data — filter_to_wr and compute_team_wr_totals."""
+"""Tests for WR.wr_data — filter_to_position and compute_team_wr_totals."""
 
 import pandas as pd
 import pytest
 
-from src.wr.data import compute_team_wr_totals, filter_to_wr
+from src.wr.data import compute_team_wr_totals, filter_to_position
 
 # ---------------------------------------------------------------------------
-# filter_to_wr
+# filter_to_position
 # ---------------------------------------------------------------------------
 
 
@@ -14,41 +14,41 @@ from src.wr.data import compute_team_wr_totals, filter_to_wr
 class TestFilterToWR:
     def test_filters_only_wr_rows(self, wr_position_df_factory):
         df = wr_position_df_factory(["QB", "RB", "WR", "WR", "TE"])
-        result = filter_to_wr(df)
+        result = filter_to_position(df)
         assert len(result) == 2
         assert (result["position"] == "WR").all()
 
     def test_drops_position_encoding_columns(self, wr_position_df_factory):
         df = wr_position_df_factory(["WR", "WR"])
-        result = filter_to_wr(df)
+        result = filter_to_position(df)
         for col in ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]:
             assert col not in result.columns
 
     def test_keeps_non_position_columns(self, wr_position_df_factory):
         df = wr_position_df_factory(["WR"])
-        result = filter_to_wr(df)
+        result = filter_to_position(df)
         assert "receiving_yards" in result.columns
 
     def test_no_position_encoding_columns(self, wr_position_df_factory):
         df = wr_position_df_factory(["WR", "QB"], has_pos_cols=False)
-        result = filter_to_wr(df)
+        result = filter_to_position(df)
         assert len(result) == 1
 
     def test_empty_result_when_no_wrs(self, wr_position_df_factory):
         df = wr_position_df_factory(["QB", "RB", "TE"])
-        result = filter_to_wr(df)
+        result = filter_to_position(df)
         assert len(result) == 0
         assert isinstance(result, pd.DataFrame)
 
     def test_empty_input(self):
         df = pd.DataFrame({"position": pd.Series(dtype=str)})
-        result = filter_to_wr(df)
+        result = filter_to_position(df)
         assert len(result) == 0
 
     def test_does_not_mutate_original(self, wr_position_df_factory):
         df = wr_position_df_factory(["WR", "QB"])
         original_cols = list(df.columns)
-        _ = filter_to_wr(df)
+        _ = filter_to_position(df)
         assert list(df.columns) == original_cols
         assert len(df) == 2
 

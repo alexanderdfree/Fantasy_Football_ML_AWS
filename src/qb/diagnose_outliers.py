@@ -30,7 +30,7 @@ import torch
 from sklearn.preprocessing import StandardScaler
 
 from src.config import SPLITS_DIR
-from src.qb.run_pipeline import QB_CONFIG
+from src.qb.run_pipeline import CONFIG
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import RidgeMultiTarget
 from src.shared.neural_net import build_multihead_net
@@ -95,10 +95,10 @@ def _train_models(seed=42):
         pos_val,
         pos_test,
         feature_cols,
-    ) = _prepare_position_data("QB", QB_CONFIG, train_df, val_df, test_df)
+    ) = _prepare_position_data("QB", CONFIG, train_df, val_df, test_df)
 
     # --- Ridge ---
-    cfg = QB_CONFIG
+    cfg = CONFIG
     targets = cfg["targets"]
     best_alphas = _tune_ridge_alphas_cv(
         X_train,

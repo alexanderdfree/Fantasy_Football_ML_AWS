@@ -17,9 +17,9 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.k.config import K_HUBER_DELTAS, K_LOSS_WEIGHTS, K_TARGETS
-from src.k.features import compute_k_features, get_k_feature_columns
-from src.k.targets import compute_k_targets
+from src.k.config import HUBER_DELTAS, LOSS_WEIGHTS, TARGETS
+from src.k.features import compute_features, get_feature_columns
+from src.k.targets import compute_targets
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
@@ -31,13 +31,13 @@ from src.shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataload
 
 
 @pytest.fixture(scope="module")
-def k_training_arrays(tiny_k_dataset):
+def k_training_arrays(tiny_dataset):
     """Prepare (X_train, X_val, y_train, y_val, baseline_mae, feature_cols)."""
-    feature_cols = get_k_feature_columns()
+    feature_cols = get_feature_columns()
 
-    df = tiny_k_dataset.copy()
-    df = compute_k_targets(df)
-    compute_k_features(df)
+    df = tiny_dataset.copy()
+    df = compute_targets(df)
+    compute_features(df)
     df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
     train_df = df[df["season"] <= 2023].copy()
@@ -46,10 +46,10 @@ def k_training_arrays(tiny_k_dataset):
     X_train = train_df[feature_cols].values.astype(np.float32)
     X_val = val_df[feature_cols].values.astype(np.float32)
 
-    y_train_dict = {t: train_df[t].values.astype(np.float32) for t in K_TARGETS}
-    y_val_dict = {t: val_df[t].values.astype(np.float32) for t in K_TARGETS}
-    val_total = sum(y_val_dict[t] for t in K_TARGETS)
-    train_total = sum(y_train_dict[t] for t in K_TARGETS)
+    y_train_dict = {t: train_df[t].values.astype(np.float32) for t in TARGETS}
+    y_val_dict = {t: val_df[t].values.astype(np.float32) for t in TARGETS}
+    val_total = sum(y_val_dict[t] for t in TARGETS)
+    train_total = sum(y_train_dict[t] for t in TARGETS)
 
     baseline_preds = np.full(len(X_val), float(train_total.mean()), dtype=np.float32)
     baseline_mae = float(np.mean(np.abs(baseline_preds - val_total)))
@@ -66,7 +66,7 @@ def k_training_arrays(tiny_k_dataset):
 
 
 def _total_mae(preds: dict, y_true_total: np.ndarray) -> float:
-    total = sum(preds[t] for t in K_TARGETS)
+    total = sum(preds[t] for t in TARGETS)
     return float(np.mean(np.abs(total - y_true_total)))
 
 
@@ -74,7 +74,7 @@ def _total_mae(preds: dict, y_true_total: np.ndarray) -> float:
 def ridge_mae(k_training_arrays):
     """Train Ridge once, return its total-MAE on val."""
     d = k_training_arrays
-    model = RidgeMultiTarget(target_names=K_TARGETS, alpha=1.0)
+    model = RidgeMultiTarget(target_names=TARGETS, alpha=1.0)
     model.fit(d["X_train"], d["y_train_dict"])
     return _total_mae(model.predict(d["X_val"]), d["val_total"])
 
@@ -84,7 +84,7 @@ def lightgbm_mae(k_training_arrays):
     """Train LightGBM once, return its total-MAE on val."""
     d = k_training_arrays
     model = LightGBMMultiTarget(
-        target_names=K_TARGETS,
+        target_names=TARGETS,
         n_estimators=200,
         learning_rate=0.05,
         num_leaves=15,
@@ -151,7 +151,7 @@ def test_nn_within_25pct_of_lightgbm(k_training_arrays, lightgbm_mae):
     )
     model = MultiHeadNet(
         input_dim=X_train_s.shape[1],
-        target_names=K_TARGETS,
+        target_names=TARGETS,
         backbone_layers=[16, 8],
         head_hidden=4,
         dropout=0.0,
@@ -159,9 +159,9 @@ def test_nn_within_25pct_of_lightgbm(k_training_arrays, lightgbm_mae):
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
     criterion = MultiTargetLoss(
-        target_names=K_TARGETS,
-        loss_weights=K_LOSS_WEIGHTS,
-        huber_deltas=K_HUBER_DELTAS,
+        target_names=TARGETS,
+        loss_weights=LOSS_WEIGHTS,
+        huber_deltas=HUBER_DELTAS,
     )
     trainer = MultiHeadTrainer(
         model=model,
@@ -169,7 +169,7 @@ def test_nn_within_25pct_of_lightgbm(k_training_arrays, lightgbm_mae):
         scheduler=scheduler,
         criterion=criterion,
         device=torch.device("cpu"),
-        target_names=K_TARGETS,
+        target_names=TARGETS,
         patience=5,
         log_every=50,
     )

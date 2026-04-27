@@ -25,7 +25,7 @@ import math
 import numpy as np
 
 from src.config import TRAIN_SEASONS
-from src.dst.data import build_dst_data
+from src.dst.data import build_data
 
 RARE_TARGETS = ["def_safeties", "def_tds", "def_blocked_kicks", "special_teams_tds"]
 
@@ -98,7 +98,7 @@ def recommend(stats: dict) -> str:
 
 def main() -> None:
     print(f"Building DST data (train seasons = {TRAIN_SEASONS[0]}-{TRAIN_SEASONS[-1]}) ...")
-    df = build_dst_data()
+    df = build_data()
     train = df[df["season"].isin(TRAIN_SEASONS)].copy()
     print(f"  n_team_games (train) = {len(train):,}\n")
 

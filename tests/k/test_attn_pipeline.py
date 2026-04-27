@@ -1,6 +1,6 @@
 """End-to-end test for the K attention-NN pipeline variant.
 
-Runs the shared pipeline with K_CONFIG_TINY_ATTN + synthetic per-kick data,
+Runs the shared pipeline with CONFIG_TINY_ATTN + synthetic per-kick data,
 asserts the attention branch produces finite predictions, and verifies that
 Ridge + base NN metrics are bit-identical to a non-attention run (proves the
 L1 rolling features don't leak into the non-attention code path).
@@ -14,29 +14,29 @@ import pandas as pd
 import pytest
 
 from src.k.config import (
-    K_ATTN_KICK_STATS,
-    K_ATTN_MAX_GAMES,
-    K_ATTN_MAX_KICKS_PER_GAME,
-    K_CONFIG_TINY,
-    K_CONFIG_TINY_ATTN,
+    ATTN_KICK_STATS,
+    ATTN_MAX_GAMES,
+    ATTN_MAX_KICKS_PER_GAME,
+    CONFIG_TINY,
+    CONFIG_TINY_ATTN,
 )
-from src.k.data import filter_to_k
+from src.k.data import filter_to_position
 from src.k.features import (
-    add_k_specific_features,
+    add_specific_features,
     build_nested_kick_history,
-    compute_k_features,
-    fill_k_nans,
-    get_k_feature_columns,
+    compute_features,
+    fill_nans,
+    get_feature_columns,
 )
-from src.k.targets import compute_k_targets
+from src.k.targets import compute_targets
 from src.shared.pipeline import run_pipeline
 
 
 @pytest.fixture(scope="module")
-def prepared_splits(tiny_k_dataset):
-    df = tiny_k_dataset.copy()
-    df = compute_k_targets(df)
-    compute_k_features(df)
+def prepared_splits(tiny_dataset):
+    df = tiny_dataset.copy()
+    df = compute_targets(df)
+    compute_features(df)
     return (
         df[df["season"] <= 2023].copy(),
         df[df["season"] == 2024].copy(),
@@ -59,11 +59,11 @@ def outputs_dir(tmp_path_factory):
 
 def _callables() -> dict:
     return {
-        "filter_fn": filter_to_k,
-        "compute_targets_fn": compute_k_targets,
-        "add_features_fn": add_k_specific_features,
-        "fill_nans_fn": fill_k_nans,
-        "get_feature_columns_fn": get_k_feature_columns,
+        "filter_fn": filter_to_position,
+        "compute_targets_fn": compute_targets,
+        "add_features_fn": add_specific_features,
+        "fill_nans_fn": fill_nans,
+        "get_feature_columns_fn": get_feature_columns,
         "compute_adjustment_fn": None,
     }
 
@@ -73,12 +73,12 @@ def _attn_config(kicks_df: pd.DataFrame) -> dict:
     builder = functools.partial(
         build_nested_kick_history,
         kicks_df=kicks_df,
-        kick_stats=K_ATTN_KICK_STATS,
+        kick_stats=ATTN_KICK_STATS,
         # Shrink the window aggressively for the E2E budget.
         max_games=4,
         max_kicks_per_game=3,
     )
-    cfg = dict(K_CONFIG_TINY_ATTN)
+    cfg = dict(CONFIG_TINY_ATTN)
     cfg.update(
         {
             **_callables(),
@@ -90,15 +90,15 @@ def _attn_config(kicks_df: pd.DataFrame) -> dict:
 
 def _base_config() -> dict:
     """Identical to _attn_config but with attention disabled — for diff checks."""
-    cfg = dict(K_CONFIG_TINY)
+    cfg = dict(CONFIG_TINY)
     cfg.update(_callables())
     return cfg
 
 
 @pytest.fixture(scope="module")
-def attn_pipeline_run(prepared_splits, tiny_k_kicks, outputs_dir):
+def attn_pipeline_run(prepared_splits, tiny_kicks, outputs_dir):
     train, val, test = prepared_splits
-    cfg = _attn_config(tiny_k_kicks)
+    cfg = _attn_config(tiny_kicks)
     return run_pipeline("K", cfg, train.copy(), val.copy(), test.copy(), seed=42)
 
 

@@ -1,7 +1,7 @@
 import pandas as pd
 
 from src.features.engineer import flatten_include_features
-from src.qb.config import QB_INCLUDE_FEATURES
+from src.qb.config import INCLUDE_FEATURES
 from src.shared.feature_build import (
     fill_nans_with_train_means,
     rolling_agg,
@@ -9,20 +9,20 @@ from src.shared.feature_build import (
 )
 
 
-def get_qb_feature_columns() -> list[str]:
+def get_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the QB model."""
-    return flatten_include_features(QB_INCLUDE_FEATURES)
+    return flatten_include_features(INCLUDE_FEATURES)
 
 
-def add_qb_specific_features(train_df, val_df, test_df):
-    """Add QB-specific engineered features (see QB_SPECIFIC_FEATURES) to each split."""
+def add_specific_features(train_df, val_df, test_df):
+    """Add QB-specific engineered features (see SPECIFIC_FEATURES) to each split."""
     for df in [train_df, val_df, test_df]:
-        _compute_qb_features(df)
+        _compute_features(df)
     return train_df, val_df, test_df
 
 
-def _compute_qb_features(df: pd.DataFrame) -> None:
-    """Compute all QB-specific features (see QB_SPECIFIC_FEATURES) in-place."""
+def _compute_features(df: pd.DataFrame) -> None:
+    """Compute all QB-specific features (see SPECIFIC_FEATURES) in-place."""
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
     grp = ["player_id", "season"]
@@ -67,6 +67,6 @@ def _compute_qb_features(df: pd.DataFrame) -> None:
     df["sack_damage_per_dropback_L3"] = safe_divide(sack_yds_roll, dropbacks)
 
 
-def fill_qb_nans(train_df, val_df, test_df, qb_feature_cols):
+def fill_nans(train_df, val_df, test_df, qb_feature_cols):
     """Fill NaNs in QB-specific feature columns using training set statistics."""
     return fill_nans_with_train_means(train_df, val_df, test_df, qb_feature_cols)

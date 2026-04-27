@@ -1,7 +1,7 @@
 """End-to-end smoke + compatibility test for ``src.shared.pipeline.run_cv_pipeline``.
 
 run_cv_pipeline is the expanding-window CV orchestrator used by
-``QB/run_qb_pipeline.py --cv``. The non-CV E2E test
+``QB/run.py --cv``. The non-CV E2E test
 (``test_qb_pipeline_e2e.py``) covers ``run_pipeline`` only — this file fills
 that gap.
 
@@ -31,7 +31,7 @@ import torch
 
 # Reuse the generator + tiny-config helper from the run_pipeline E2E. Runtime
 # attribute access avoids re-importing if the module is already loaded.
-from tests.qb.test_pipeline_e2e import _generate_qb_season, _tiny_qb_config
+from tests.qb.test_pipeline_e2e import _generate_season, _tiny_config
 
 
 @pytest.fixture(scope="module")
@@ -44,10 +44,10 @@ def synthetic_cv_splits():
     full_df and 2025 as the holdout test.
     """
     full_df = pd.concat(
-        [_generate_qb_season(s, seed=300 + (s - 2012)) for s in range(2012, 2025)],
+        [_generate_season(s, seed=300 + (s - 2012)) for s in range(2012, 2025)],
         ignore_index=True,
     )
-    test_df = _generate_qb_season(2025, seed=400)
+    test_df = _generate_season(2025, seed=400)
     return full_df, test_df
 
 
@@ -58,7 +58,7 @@ def cv_pipeline_run(synthetic_cv_splits, tmp_path_factory):
 
     full_df, test_df = synthetic_cv_splits
     workdir = tmp_path_factory.mktemp("qb_cv_run")
-    cfg = _tiny_qb_config()
+    cfg = _tiny_config()
 
     cwd = os.getcwd()
     try:
@@ -139,12 +139,12 @@ class TestQBRunCVPipeline:
 
     def test_best_cv_alphas_round_trip(self, cv_pipeline_run):
         """``best_cv_alphas`` must carry one alpha per non-special CV target."""
-        from src.qb.config import QB_TARGETS
+        from src.qb.config import TARGETS
 
         best = cv_pipeline_run["best_cv_alphas"]
         # In the tiny config no two_stage / classification targets, so all
-        # QB_TARGETS should be present with positive float alphas.
-        for target in QB_TARGETS:
+        # TARGETS should be present with positive float alphas.
+        for target in TARGETS:
             assert target in best
             assert best[target] > 0
 
@@ -181,7 +181,7 @@ def cv_pipeline_run_with_lgbm(synthetic_cv_splits, tmp_path_factory):
     full_df, test_df = synthetic_cv_splits
     workdir = tmp_path_factory.mktemp("qb_cv_run_lgbm")
 
-    cfg = _tiny_qb_config()
+    cfg = _tiny_config()
     # Tiny LGBM hyperparameters so the 4-fold CV + final-holdout retrain
     # stays under the 60s budget.
     cfg.update(
@@ -239,7 +239,7 @@ class TestQBRunCVPipelineWithLGBM:
 
 @pytest.mark.unit
 def test_run_qb_cv_pipeline_wrapper_dispatches_to_run_cv_pipeline(monkeypatch):
-    """``QB.run_qb_pipeline.run_qb_cv_pipeline`` is the wrapper called by
+    """``QB.run.run_cv`` is the wrapper called by
     ``--cv`` and ``src.shared.registry.get_cv_runner('QB')``. Verify it forwards
     to ``run_cv_pipeline`` with the QB position + config — without paying for
     the real CV training.
@@ -253,14 +253,14 @@ def test_run_qb_cv_pipeline_wrapper_dispatches_to_run_cv_pipeline(monkeypatch):
         return {"cv_metrics": {"ridge": {}, "nn": {}}}
 
     monkeypatch.setattr(qb_pipe, "run_cv_pipeline", _fake_cv)
-    qb_pipe.run_qb_cv_pipeline(full_df="full", test_df="test", seed=7)
+    qb_pipe.run_cv(full_df="full", test_df="test", seed=7)
     assert len(seen) == 1
     assert seen[0]["position"] == "QB"
-    assert seen[0]["cfg"] is qb_pipe.QB_CONFIG
+    assert seen[0]["cfg"] is qb_pipe.CONFIG
     # full_df, test_df, seed travel as positional args.
     assert seen[0]["args"][-1] == 7
 
-    # Custom cfg overrides QB_CONFIG via the ``or`` short-circuit.
+    # Custom cfg overrides CONFIG via the ``or`` short-circuit.
     custom = {"custom": True, "targets": ["x"]}
-    qb_pipe.run_qb_cv_pipeline(full_df=None, test_df=None, seed=11, config=custom)
+    qb_pipe.run_cv(full_df=None, test_df=None, seed=11, config=custom)
     assert seen[1]["cfg"] == custom

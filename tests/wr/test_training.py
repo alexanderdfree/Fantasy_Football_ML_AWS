@@ -11,34 +11,34 @@ from src.shared.training import (
     MultiTargetLoss,
     make_dataloaders,
 )
-from src.wr.config import WR_LOSS_WEIGHTS, WR_TARGETS
+from src.wr.config import LOSS_WEIGHTS, TARGETS
 
 
 @pytest.mark.unit
 class TestMultiTargetLoss:
     def test_output_types(self, wr_nn_tensors):
-        loss_fn = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         preds, targets = wr_nn_tensors
         combined, components = loss_fn(preds, targets)
         assert isinstance(combined, torch.Tensor)
         assert isinstance(components, dict)
 
     def test_component_keys(self, wr_nn_tensors):
-        loss_fn = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         preds, targets = wr_nn_tensors
         _, components = loss_fn(preds, targets)
-        expected = {f"loss_{t}" for t in WR_TARGETS} | {"loss_combined"}
+        expected = {f"loss_{t}" for t in TARGETS} | {"loss_combined"}
         assert set(components.keys()) == expected
 
     def test_components_are_scalars(self, wr_nn_tensors):
-        loss_fn = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         preds, targets = wr_nn_tensors
         _, components = loss_fn(preds, targets)
         for key, val in components.items():
             assert isinstance(val, float), f"{key} is not a float"
 
     def test_zero_loss_on_perfect_prediction(self):
-        loss_fn = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         targets = {
             "receiving_tds": torch.tensor([1.0, 0.0]),
             "receiving_yards": torch.tensor([80.0, 40.0]),
@@ -51,13 +51,13 @@ class TestMultiTargetLoss:
     def test_weights_affect_loss(self, wr_nn_tensors):
         preds, targets = wr_nn_tensors
         loss_equal = MultiTargetLoss(
-            target_names=WR_TARGETS,
-            loss_weights={t: 1.0 for t in WR_TARGETS},
+            target_names=TARGETS,
+            loss_weights={t: 1.0 for t in TARGETS},
         )
-        heavy_weights = {t: 1.0 for t in WR_TARGETS}
+        heavy_weights = {t: 1.0 for t in TARGETS}
         heavy_weights["receiving_yards"] = 10.0
         loss_heavy = MultiTargetLoss(
-            target_names=WR_TARGETS,
+            target_names=TARGETS,
             loss_weights=heavy_weights,
         )
         c1, _ = loss_equal(preds, targets)
@@ -65,14 +65,14 @@ class TestMultiTargetLoss:
         assert c1.item() != c2.item()
 
     def test_combined_loss_is_positive(self, wr_nn_tensors):
-        loss_fn = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         preds, targets = wr_nn_tensors
         combined, _ = loss_fn(preds, targets)
         assert combined.item() >= 0
 
     def test_backward_pass(self):
-        loss_fn = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
-        preds = {k: torch.randn(5, requires_grad=True) for k in WR_TARGETS}
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        preds = {k: torch.randn(5, requires_grad=True) for k in TARGETS}
         targets = {k: torch.randn(5) for k in preds}
         combined, _ = loss_fn(preds, targets)
         combined.backward()
@@ -148,24 +148,24 @@ class TestMultiHeadTrainer:
         X_train = np.random.randn(n_train, d).astype(np.float32)
         X_val = np.random.randn(n_val, d).astype(np.float32)
 
-        y_train = {t: np.random.randn(n_train).astype(np.float32) for t in WR_TARGETS}
-        y_val = {t: np.random.randn(n_val).astype(np.float32) for t in WR_TARGETS}
+        y_train = {t: np.random.randn(n_train).astype(np.float32) for t in TARGETS}
+        y_val = {t: np.random.randn(n_val).astype(np.float32) for t in TARGETS}
 
-        y_train["total"] = sum(y_train[t] for t in WR_TARGETS)
-        y_val["total"] = sum(y_val[t] for t in WR_TARGETS)
+        y_train["total"] = sum(y_train[t] for t in TARGETS)
+        y_val["total"] = sum(y_val[t] for t in TARGETS)
 
         train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
 
         model = MultiHeadNet(
             input_dim=d,
-            target_names=WR_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[16, 8],
             head_hidden=4,
             dropout=0.1,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
-        criterion = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
+        criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         device = torch.device("cpu")
 
         trainer = MultiHeadTrainer(
@@ -174,7 +174,7 @@ class TestMultiHeadTrainer:
             scheduler,
             criterion,
             device,
-            target_names=WR_TARGETS,
+            target_names=TARGETS,
             patience=5,
         )
         return trainer, train_loader, val_loader
@@ -191,8 +191,8 @@ class TestMultiHeadTrainer:
         trainer, train_loader, val_loader = setup_trainer
         history = trainer.train(train_loader, val_loader, n_epochs=5)
         expected_keys = {"train_loss", "val_loss"}
-        expected_keys |= {f"val_loss_{t}" for t in WR_TARGETS}
-        expected_keys |= {f"val_mae_{t}" for t in WR_TARGETS}
+        expected_keys |= {f"val_loss_{t}" for t in TARGETS}
+        expected_keys |= {f"val_mae_{t}" for t in TARGETS}
         assert expected_keys.issubset(set(history.keys()))
 
     def test_losses_decrease(self, setup_trainer):
@@ -206,22 +206,22 @@ class TestMultiHeadTrainer:
         n_train, n_val, d = 32, 32, 3
         X_train = np.random.randn(n_train, d).astype(np.float32)
         X_val = np.random.randn(n_val, d).astype(np.float32) * 5 + 10
-        y_train = {t: np.random.randn(n_train).astype(np.float32) for t in WR_TARGETS}
-        y_train["total"] = sum(y_train[t] for t in WR_TARGETS)
-        y_val = {t: np.random.randn(n_val).astype(np.float32) * 10 for t in WR_TARGETS}
-        y_val["total"] = sum(y_val[t] for t in WR_TARGETS)
+        y_train = {t: np.random.randn(n_train).astype(np.float32) for t in TARGETS}
+        y_train["total"] = sum(y_train[t] for t in TARGETS)
+        y_val = {t: np.random.randn(n_val).astype(np.float32) * 10 for t in TARGETS}
+        y_val["total"] = sum(y_val[t] for t in TARGETS)
 
         train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
         model = MultiHeadNet(
             input_dim=d,
-            target_names=WR_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[256, 128],
             head_hidden=64,
             dropout=0.0,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, factor=0.5)
-        criterion = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
+        criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
 
         trainer = MultiHeadTrainer(
             model,
@@ -229,7 +229,7 @@ class TestMultiHeadTrainer:
             scheduler,
             criterion,
             torch.device("cpu"),
-            target_names=WR_TARGETS,
+            target_names=TARGETS,
             patience=3,
         )
         history = trainer.train(train_loader, val_loader, n_epochs=500)

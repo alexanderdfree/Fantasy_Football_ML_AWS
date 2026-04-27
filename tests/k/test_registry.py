@@ -53,8 +53,8 @@ class TestKAttentionRegistryWiring:
         static_dim = len(reg["attn_static_features"])
         kick_dim = len(reg["attn_kick_stats"])
         targets = reg["targets"]
-        assert static_dim > 0, "K_ATTN_STATIC_FEATURES must not be empty"
-        assert kick_dim > 0, "K_ATTN_KICK_STATS must not be empty"
+        assert static_dim > 0, "ATTN_STATIC_FEATURES must not be empty"
+        assert kick_dim > 0, "ATTN_KICK_STATS must not be empty"
 
         model = MultiHeadNetWithNestedHistory(
             static_dim=static_dim,
@@ -73,19 +73,19 @@ class TestKAttentionRegistryWiring:
         fresh.load_state_dict(state, strict=True)
 
     def test_kwargs_align_with_training_config(self, reg):
-        """Registry kwargs must mirror the K_ATTN_* values used at training."""
+        """Registry kwargs must mirror the ATTN_* values used at training."""
         import src.k.config as k_cfg
 
         kw = reg["attn_nn_kwargs_static"]
-        assert kw["d_kick"] == k_cfg.K_ATTN_KICK_DIM
-        assert kw["d_model"] == k_cfg.K_ATTN_D_MODEL
-        assert kw["n_attn_heads"] == k_cfg.K_ATTN_N_HEADS
-        assert kw["encoder_hidden_dim"] == k_cfg.K_ATTN_ENCODER_HIDDEN_DIM
-        assert kw["max_games"] == k_cfg.K_ATTN_MAX_GAMES
-        assert reg["attn_max_games"] == k_cfg.K_ATTN_MAX_GAMES
-        assert reg["attn_max_kicks_per_game"] == k_cfg.K_ATTN_MAX_KICKS_PER_GAME
-        assert reg["attn_kick_stats"] == list(k_cfg.K_ATTN_KICK_STATS)
-        assert reg["attn_static_features"] == list(k_cfg.K_ATTN_STATIC_FEATURES)
+        assert kw["d_kick"] == k_cfg.ATTN_KICK_DIM
+        assert kw["d_model"] == k_cfg.ATTN_D_MODEL
+        assert kw["n_attn_heads"] == k_cfg.ATTN_N_HEADS
+        assert kw["encoder_hidden_dim"] == k_cfg.ATTN_ENCODER_HIDDEN_DIM
+        assert kw["max_games"] == k_cfg.ATTN_MAX_GAMES
+        assert reg["attn_max_games"] == k_cfg.ATTN_MAX_GAMES
+        assert reg["attn_max_kicks_per_game"] == k_cfg.ATTN_MAX_KICKS_PER_GAME
+        assert reg["attn_kick_stats"] == list(k_cfg.ATTN_KICK_STATS)
+        assert reg["attn_static_features"] == list(k_cfg.ATTN_STATIC_FEATURES)
 
     def test_predict_numpy_end_to_end(self, reg):
         """Tiny forward pass through predict_numpy — catches signature drift

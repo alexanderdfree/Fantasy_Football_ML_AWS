@@ -1,13 +1,13 @@
 # === K Seasons (post-PAT rule change: 2015+) ===
-K_SEASONS = list(range(2015, 2026))  # 2015-2025
+SEASONS = list(range(2015, 2026))  # 2015-2025
 
 # === K Target Decomposition ===
 # 4 non-negative raw-value heads. Total fantasy points = sum with signs
 # [+1, +1, -1, -1] applied at inference (see src/shared/registry.py K entry).
-K_TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
+TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
 
 # === K-Specific Features ===
-K_SPECIFIC_FEATURES = [
+SPECIFIC_FEATURES = [
     # Rolling performance
     "fg_attempts_L3",
     "fg_accuracy_L5",
@@ -26,7 +26,7 @@ K_SPECIFIC_FEATURES = [
 ]
 
 # Contextual features available for kickers
-K_CONTEXTUAL_FEATURES = [
+CONTEXTUAL_FEATURES = [
     "is_home",
     "week",
     "implied_team_total",
@@ -37,42 +37,42 @@ K_CONTEXTUAL_FEATURES = [
     "game_temp",
 ]
 
-K_ALL_FEATURES = K_SPECIFIC_FEATURES + K_CONTEXTUAL_FEATURES
+ALL_FEATURES = SPECIFIC_FEATURES + CONTEXTUAL_FEATURES
 
 # No general features apply to kickers — all dropped
-K_DROP_FEATURES = set()  # Not used; kickers bypass the general feature pipeline
+DROP_FEATURES = set()  # Not used; kickers bypass the general feature pipeline
 
 # === Ridge ===
 import numpy as np
 
-K_RIDGE_ALPHA_GRIDS = {
+RIDGE_ALPHA_GRIDS = {
     "fg_yard_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
     "pat_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
     "fg_misses": [round(x, 4) for x in np.logspace(-1, 4, 15)],
     "xp_misses": [round(x, 4) for x in np.logspace(-1, 4, 15)],
 }
-K_RIDGE_CV_FOLDS = 3
-K_CV_SPLIT_COLUMN = "season"
-K_RIDGE_REFINE_POINTS = 0
+RIDGE_CV_FOLDS = 3
+CV_SPLIT_COLUMN = "season"
+RIDGE_REFINE_POINTS = 0
 
 # === ElasticNet (optional parallel linear baseline, L1+L2) ===
-# Off by default. Reuses K_RIDGE_ALPHA_GRIDS and searches over K_ENET_L1_RATIOS.
-K_TRAIN_ELASTICNET = False
-K_ENET_L1_RATIOS = [0.3, 0.5, 0.7]
+# Off by default. Reuses RIDGE_ALPHA_GRIDS and searches over ENET_L1_RATIOS.
+TRAIN_ELASTICNET = False
+ENET_L1_RATIOS = [0.3, 0.5, 0.7]
 
 # === Neural Net (2015-2025 dataset: more data allows larger model) ===
-K_NN_BACKBONE_LAYERS = [64, 32]
-K_NN_HEAD_HIDDEN = 16
-K_NN_DROPOUT = 0.25
-K_NN_LR = 3e-4
-K_NN_WEIGHT_DECAY = 2e-4
-K_NN_EPOCHS = 250
-K_NN_BATCH_SIZE = 128
-K_NN_PATIENCE = 30
+NN_BACKBONE_LAYERS = [64, 32]
+NN_HEAD_HIDDEN = 16
+NN_DROPOUT = 0.25
+NN_LR = 3e-4
+NN_WEIGHT_DECAY = 2e-4
+NN_EPOCHS = 250
+NN_BATCH_SIZE = 128
+NN_PATIENCE = 30
 
 # === Loss Weights ===
 # Equal per-target weights.
-K_LOSS_WEIGHTS = {
+LOSS_WEIGHTS = {
     "fg_yard_points": 1.0,
     "pat_points": 1.0,
     "fg_misses": 1.0,
@@ -81,7 +81,7 @@ K_LOSS_WEIGHTS = {
 
 # === Huber Deltas (per-target) ===
 # Harmonized to 2.0 across targets.
-K_HUBER_DELTAS = {
+HUBER_DELTAS = {
     "fg_yard_points": 2.0,
     "pat_points": 2.0,
     "fg_misses": 2.0,
@@ -90,46 +90,46 @@ K_HUBER_DELTAS = {
 
 # Per-head loss family. Default "huber"; PR 2 introduces "poisson_nll" and
 # "hurdle_negbin" options. All heads on "huber" here = no behavior change.
-K_HEAD_LOSSES = {t: "huber" for t in K_TARGETS}
+HEAD_LOSSES = {t: "huber" for t in TARGETS}
 
 # === Non-negative NN targets ===
 # All 4 K heads are non-negative raw counts/points; signs are applied only in
 # the final fantasy total aggregation, not in the per-head outputs.
-K_NN_NON_NEGATIVE_TARGETS = set(K_TARGETS)
+NN_NON_NEGATIVE_TARGETS = set(TARGETS)
 
 # === LR Scheduler ===
-K_SCHEDULER_TYPE = "onecycle"
-K_ONECYCLE_MAX_LR = 1e-3
-K_ONECYCLE_PCT_START = 0.3
+SCHEDULER_TYPE = "onecycle"
+ONECYCLE_MAX_LR = 1e-3
+ONECYCLE_PCT_START = 0.3
 
 # === Cross-season split (now matching other positions) ===
-K_MIN_GAMES = 4
+MIN_GAMES = 4
 
 # === Attention NN (nested: per-kick inner pool, per-game outer attention) ===
-K_TRAIN_ATTENTION_NN = True
+TRAIN_ATTENTION_NN = True
 # Outer attention over prior games — mirrors RB's proven d_model=32 / n_heads=2.
-K_ATTN_D_MODEL = 32
-K_ATTN_N_HEADS = 2
-K_ATTN_ENCODER_HIDDEN_DIM = 32
-K_ATTN_MAX_GAMES = 17
-K_ATTN_PROJECT_KV = False
-K_ATTN_POSITIONAL_ENCODING = True
+ATTN_D_MODEL = 32
+ATTN_N_HEADS = 2
+ATTN_ENCODER_HIDDEN_DIM = 32
+ATTN_MAX_GAMES = 17
+ATTN_PROJECT_KV = False
+ATTN_POSITIONAL_ENCODING = True
 # Gated fusion is intentionally absent: MultiHeadNetWithNestedHistory does not
 # implement it (only the flat MultiHeadNetWithHistory does), so exposing it
 # here would be a no-op invite to config drift.
-K_ATTN_DROPOUT = 0.05
-K_ATTN_LR = 1e-3
-K_ATTN_WEIGHT_DECAY = 5e-5
-K_ATTN_BATCH_SIZE = 256
-K_ATTN_PATIENCE = 35
+ATTN_DROPOUT = 0.05
+ATTN_LR = 1e-3
+ATTN_WEIGHT_DECAY = 5e-5
+ATTN_BATCH_SIZE = 256
+ATTN_PATIENCE = 35
 
 # Inner pool over kicks within a game.
-K_ATTN_KICK_DIM = 16
-K_ATTN_MAX_KICKS_PER_GAME = 10
+ATTN_KICK_DIM = 16
+ATTN_MAX_KICKS_PER_GAME = 10
 # Per-kick features consumed by the inner pool. Game-level context (wind,
 # is_home) is replicated across kicks in the same game so the inner pool
 # can condition on conditions without requiring a parallel static channel.
-K_ATTN_KICK_STATS = [
+ATTN_KICK_STATS = [
     "is_fg",
     "is_xp",
     "kick_distance",
@@ -142,10 +142,10 @@ K_ATTN_KICK_STATS = [
 ]
 
 # L1 (shift-1) rolling features. Engineered into the DataFrame by
-# compute_k_features but intentionally excluded from K_ALL_FEATURES — the
-# attention NN's static branch reads them directly via K_ATTN_STATIC_FEATURES
-# so Ridge and the base NN continue to train only on K_SPECIFIC_FEATURES.
-K_ATTN_L1_FEATURES = [
+# compute_features but intentionally excluded from ALL_FEATURES — the
+# attention NN's static branch reads them directly via ATTN_STATIC_FEATURES
+# so Ridge and the base NN continue to train only on SPECIFIC_FEATURES.
+ATTN_L1_FEATURES = [
     "fg_attempts_L1",
     "fg_accuracy_L1",
     "pat_volume_L1",
@@ -157,33 +157,33 @@ K_ATTN_L1_FEATURES = [
     "q4_fg_rate_L1",
     "xp_accuracy_L1",
 ]
-K_ATTN_STATIC_FEATURES = K_ATTN_L1_FEATURES + K_CONTEXTUAL_FEATURES
+ATTN_STATIC_FEATURES = ATTN_L1_FEATURES + CONTEXTUAL_FEATURES
 
 # === LightGBM ===
-K_TRAIN_LIGHTGBM = True
-K_LGBM_N_ESTIMATORS = 300
-K_LGBM_LEARNING_RATE = 0.05
-K_LGBM_NUM_LEAVES = 15
-K_LGBM_MAX_DEPTH = -1
-K_LGBM_SUBSAMPLE = 0.8
-K_LGBM_COLSAMPLE_BYTREE = 0.8
-K_LGBM_REG_LAMBDA = 2.0
-K_LGBM_REG_ALPHA = 0.1
-K_LGBM_MIN_CHILD_SAMPLES = 30
-K_LGBM_MIN_SPLIT_GAIN = 0.0
-K_LGBM_OBJECTIVE = "huber"
+TRAIN_LIGHTGBM = True
+LGBM_N_ESTIMATORS = 300
+LGBM_LEARNING_RATE = 0.05
+LGBM_NUM_LEAVES = 15
+LGBM_MAX_DEPTH = -1
+LGBM_SUBSAMPLE = 0.8
+LGBM_COLSAMPLE_BYTREE = 0.8
+LGBM_REG_LAMBDA = 2.0
+LGBM_REG_ALPHA = 0.1
+LGBM_MIN_CHILD_SAMPLES = 30
+LGBM_MIN_SPLIT_GAIN = 0.0
+LGBM_OBJECTIVE = "huber"
 
 
 # === Tiny config for E2E smoke tests ===
 # Shrunk to 1 epoch with a 2-layer x 8-unit NN so the full pipeline runs
 # in well under 20s on CPU. Used by K/tests/test_k_pipeline_e2e.py.
-K_CONFIG_TINY = {
-    "targets": K_TARGETS,
-    "ridge_alpha_grids": {t: [1.0] for t in K_TARGETS},
+CONFIG_TINY = {
+    "targets": TARGETS,
+    "ridge_alpha_grids": {t: [1.0] for t in TARGETS},
     "ridge_cv_folds": 2,
-    "cv_split_column": K_CV_SPLIT_COLUMN,
+    "cv_split_column": CV_SPLIT_COLUMN,
     "ridge_refine_points": 0,
-    "specific_features": K_SPECIFIC_FEATURES,
+    "specific_features": SPECIFIC_FEATURES,
     "nn_backbone_layers": [8, 8],
     "nn_head_hidden": 4,
     "nn_dropout": 0.0,
@@ -194,23 +194,23 @@ K_CONFIG_TINY = {
     "nn_batch_size": 32,
     "nn_patience": 1,
     "nn_log_every": 1,
-    "loss_weights": K_LOSS_WEIGHTS,
-    "huber_deltas": K_HUBER_DELTAS,
+    "loss_weights": LOSS_WEIGHTS,
+    "huber_deltas": HUBER_DELTAS,
     "scheduler_type": "onecycle",
     "onecycle_max_lr": 1e-3,
     "onecycle_pct_start": 0.3,
     "train_lightgbm": False,
 }
 
-# Attention tiny config — reuses K_CONFIG_TINY base plus a shrunk attention
+# Attention tiny config — reuses CONFIG_TINY base plus a shrunk attention
 # branch. Used by the E2E attention test. `attn_history_builder_fn` must be
 # supplied by the caller (it captures a kicks_df in its closure).
-K_CONFIG_TINY_ATTN = {
-    **K_CONFIG_TINY,
+CONFIG_TINY_ATTN = {
+    **CONFIG_TINY,
     "train_attention_nn": True,
     "attn_history_structure": "nested",
     "attn_static_from_df": True,
-    "attn_static_features": K_ATTN_STATIC_FEATURES,
+    "attn_static_features": ATTN_STATIC_FEATURES,
     "attn_d_model": 8,
     "attn_n_heads": 1,
     "attn_kick_dim": 4,

@@ -258,7 +258,7 @@ class TestSubmitJob:
         # Both should match the fixed timestamp prefix
         assert all(n.startswith("ff-rb-1700000000-") for n in names), names
 
-    def test_k_routes_to_cpu_def_when_configured(self):
+    def test_routes_to_cpu_def_when_configured(self):
         """If FF_JOB_DEFINITION_CPU is set, K/DST should use it."""
         import src.batch.launch as mod
 
@@ -273,7 +273,7 @@ class TestSubmitJob:
         assert defs[0] == "cpu-def"  # K routed to CPU
         assert defs[1] == mod.JOB_DEFINITION  # QB stays on GPU
 
-    def test_k_falls_back_to_default_when_cpu_def_unset(self):
+    def test_falls_back_to_default_when_cpu_def_unset(self):
         """If no CPU def is configured, K/DST still run on the default queue."""
         import src.batch.launch as mod
 

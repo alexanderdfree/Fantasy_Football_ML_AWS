@@ -429,7 +429,7 @@ def _run_rb_gate_ablation(train_df, val_df, test_df, seed: int) -> None:
     """
     import copy
 
-    from src.rb.run_pipeline import RB_CONFIG, run_rb_pipeline
+    from src.rb.run_pipeline import CONFIG, run
 
     def _variant_a(cfg: dict) -> dict:
         """Pre-PR-2 baseline: Huber + gate on both TD heads."""
@@ -465,7 +465,7 @@ def _run_rb_gate_ablation(train_df, val_df, test_df, seed: int) -> None:
     def _variant_b(cfg: dict) -> dict:
         """Pre-TD-gate-restoration (PR #96 shipping): Poisson NLL on TDs with
         no gate on them. Explicitly forces ``gated_targets=["receptions"]`` so
-        this variant stays meaningful even as the live RB_CONFIG's list evolves."""
+        this variant stays meaningful even as the live CONFIG's list evolves."""
         cfg = copy.deepcopy(cfg)
         cfg["gated_targets"] = ["receptions"]
         return cfg
@@ -486,7 +486,7 @@ def _run_rb_gate_ablation(train_df, val_df, test_df, seed: int) -> None:
     rows: list[dict] = []
     for name, label, fn in variants:
         print(f"\n{'=' * 72}\nVariant {name}: {label}\n{'=' * 72}", flush=True)
-        result = run_rb_pipeline(train_df, val_df, test_df, seed=seed, config=fn(RB_CONFIG))
+        result = run(train_df, val_df, test_df, seed=seed, config=fn(CONFIG))
         attn = result.get("attn_nn_metrics")
         if attn is None:
             raise RuntimeError(f"Variant {name}: attn_nn_metrics missing from pipeline result")

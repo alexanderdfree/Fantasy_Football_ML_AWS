@@ -1,4 +1,4 @@
-"""Coverage smoke test for ``TE/run_te_pipeline.py``'s ``__main__`` block.
+"""Coverage smoke test for ``TE/run.py``'s ``__main__`` block.
 
 TE's CLI only has the ``--tiny`` flag (no ``--cv`` split), so this file
 only asserts the default and tiny paths plus the module-level wrapper.
@@ -31,7 +31,7 @@ def _patch_shared_pipeline(monkeypatch):
 @pytest.mark.unit
 def test_main_default_invokes_run_pipeline(monkeypatch):
     calls = _patch_shared_pipeline(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["run_te_pipeline.py"])
+    monkeypatch.setattr(sys, "argv", ["run.py"])
     runpy.run_path(str(_MODULE_PATH), run_name="__main__")
     assert len(calls) == 1
     assert calls[0]["position"] == "TE"
@@ -40,7 +40,7 @@ def test_main_default_invokes_run_pipeline(monkeypatch):
 @pytest.mark.unit
 def test_main_tiny_wires_shrunk_config(monkeypatch):
     calls = _patch_shared_pipeline(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["run_te_pipeline.py", "--tiny"])
+    monkeypatch.setattr(sys, "argv", ["run.py", "--tiny"])
     runpy.run_path(str(_MODULE_PATH), run_name="__main__")
     assert len(calls) == 1
     cfg = calls[0]["cfg"]
@@ -60,12 +60,12 @@ def test_run_te_pipeline_function_passes_through(monkeypatch):
 
     monkeypatch.setattr(te_pipe, "run_pipeline", _fake)
 
-    result = te_pipe.run_te_pipeline("train", "val", "test", seed=7)
+    result = te_pipe.run("train", "val", "test", seed=7)
     assert result == {"ok": True}
     assert seen["position"] == "TE"
     assert seen["args"][-1] == 7
-    assert seen["cfg"] is te_pipe.TE_CONFIG
+    assert seen["cfg"] is te_pipe.CONFIG
 
     custom = {"custom": True, "targets": ["x"]}
-    te_pipe.run_te_pipeline(None, None, None, config=custom)
+    te_pipe.run(None, None, None, config=custom)
     assert seen["cfg"] == custom

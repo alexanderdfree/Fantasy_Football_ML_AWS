@@ -1,12 +1,12 @@
-"""Tests for RB.rb_data — filter_to_rb and compute_team_rb_totals."""
+"""Tests for RB.rb_data — filter_to_position and compute_team_rb_totals."""
 
 import pandas as pd
 import pytest
 
-from src.rb.data import compute_team_rb_totals, filter_to_rb
+from src.rb.data import compute_team_rb_totals, filter_to_position
 
 # ---------------------------------------------------------------------------
-# filter_to_rb
+# filter_to_position
 # ---------------------------------------------------------------------------
 
 
@@ -14,42 +14,42 @@ from src.rb.data import compute_team_rb_totals, filter_to_rb
 class TestFilterToRB:
     def test_filters_only_rb_rows(self, make_position_df):
         df = make_position_df(["QB", "RB", "WR", "RB", "TE"])
-        result = filter_to_rb(df)
+        result = filter_to_position(df)
         assert len(result) == 2
         assert (result["position"] == "RB").all()
 
     def test_drops_position_encoding_columns(self, make_position_df):
         df = make_position_df(["RB", "RB"])
-        result = filter_to_rb(df)
+        result = filter_to_position(df)
         for col in ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]:
             assert col not in result.columns
 
     def test_keeps_non_position_columns(self, make_position_df):
         df = make_position_df(["RB"])
-        result = filter_to_rb(df)
+        result = filter_to_position(df)
         assert "rushing_yards" in result.columns
 
     def test_no_position_encoding_columns(self, make_position_df):
         """Should not crash when pos_XX columns are absent."""
         df = make_position_df(["RB", "QB"], has_pos_cols=False)
-        result = filter_to_rb(df)
+        result = filter_to_position(df)
         assert len(result) == 1
 
     def test_empty_result_when_no_rbs(self, make_position_df):
         df = make_position_df(["QB", "WR", "TE"])
-        result = filter_to_rb(df)
+        result = filter_to_position(df)
         assert len(result) == 0
         assert isinstance(result, pd.DataFrame)
 
     def test_empty_input(self):
         df = pd.DataFrame({"position": pd.Series(dtype=str)})
-        result = filter_to_rb(df)
+        result = filter_to_position(df)
         assert len(result) == 0
 
     def test_does_not_mutate_original(self, make_position_df):
         df = make_position_df(["RB", "QB"])
         original_cols = list(df.columns)
-        _ = filter_to_rb(df)
+        _ = filter_to_position(df)
         assert list(df.columns) == original_cols
         assert len(df) == 2  # original unchanged
 

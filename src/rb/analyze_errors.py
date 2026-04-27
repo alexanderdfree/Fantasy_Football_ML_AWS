@@ -14,8 +14,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.rb.config import RB_TARGETS
-from src.rb.run_pipeline import run_rb_pipeline
+from src.rb.config import TARGETS
+from src.rb.run_pipeline import run
 from src.shared.error_analysis import (
     add_stratification_columns,
     find_top_error_sources,
@@ -62,11 +62,11 @@ def main():
     parser.add_argument("--no-plots", action="store_true", help="Skip figure generation")
     args = parser.parse_args()
 
-    targets = RB_TARGETS
+    targets = TARGETS
 
     # Run pipeline to get test DataFrame with predictions
     print("Running RB pipeline...")
-    result = run_rb_pipeline()
+    result = run()
     df = result["test_df"].copy()
 
     # Compute actual total from target columns (not fantasy_points, which includes fumbles)

@@ -1027,7 +1027,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         with timed("attn_nn_train"):
             # Static features: either filter the base matrix (RB-style whitelist)
             # or rebuild directly from the DataFrame (K-style — its L1 attention
-            # features live outside K_ALL_FEATURES to stay out of Ridge/base NN).
+            # features live outside ALL_FEATURES to stay out of Ridge/base NN).
             if cfg.get("attn_static_from_df", False):
                 attn_static_cols = cfg["attn_static_features"]
                 X_attn_train = pos_train[attn_static_cols].to_numpy(dtype=np.float32)

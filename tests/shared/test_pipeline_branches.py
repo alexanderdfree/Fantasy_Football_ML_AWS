@@ -170,7 +170,7 @@ def test_build_train_matrix_loads_synthetic_splits(tmp_path, monkeypatch):
     tmp dir + write minimal parquets that survive the QB feature build."""
     import src.shared.pipeline as p
 
-    # Synthetic frames that filter_to_qb + the QB feature builder accept.
+    # Synthetic frames that filter_to_position + the QB feature builder accept.
     rng = np.random.default_rng(0)
     rows = []
     for season in (2022, 2023):
@@ -222,12 +222,12 @@ def test_build_train_matrix_loads_synthetic_splits(tmp_path, monkeypatch):
 
     monkeypatch.setattr(p, "SPLITS_DIR", str(splits_dir))
 
-    from src.qb.run_pipeline import QB_CONFIG
+    from src.qb.run_pipeline import CONFIG
 
-    X_train, y_train_dict, feature_cols = build_train_matrix("QB", QB_CONFIG)
+    X_train, y_train_dict, feature_cols = build_train_matrix("QB", CONFIG)
 
     assert X_train.ndim == 2
     assert X_train.shape[0] > 0
     assert X_train.shape[1] == len(feature_cols)
     # At least one of QB's targets should be present.
-    assert any(t in y_train_dict for t in QB_CONFIG["targets"])
+    assert any(t in y_train_dict for t in CONFIG["targets"])

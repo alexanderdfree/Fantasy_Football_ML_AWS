@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from src.features.engineer import flatten_include_features
-from src.rb.config import RB_INCLUDE_FEATURES
+from src.rb.config import INCLUDE_FEATURES
 from src.rb.data import compute_team_rb_totals
 from src.shared.feature_build import (
     fill_nans_with_train_means,
@@ -11,12 +11,12 @@ from src.shared.feature_build import (
 )
 
 
-def get_rb_feature_columns() -> list[str]:
+def get_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the RB model."""
-    return flatten_include_features(RB_INCLUDE_FEATURES)
+    return flatten_include_features(INCLUDE_FEATURES)
 
 
-def add_rb_specific_features(
+def add_specific_features(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -41,11 +41,11 @@ def add_rb_specific_features(
         df["career_carries"] = lookup.reindex(keys).values
 
     for df in [train_df, val_df, test_df]:
-        _compute_rb_features(df)
+        _compute_features(df)
     return train_df, val_df, test_df
 
 
-def _compute_rb_features(df: pd.DataFrame) -> None:
+def _compute_features(df: pd.DataFrame) -> None:
     """Compute all 14 RB-specific features in-place."""
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
@@ -142,7 +142,7 @@ def _compute_rb_features(df: pd.DataFrame) -> None:
     df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
 
 
-def fill_rb_nans(
+def fill_nans(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -150,7 +150,7 @@ def fill_rb_nans(
 ) -> tuple:
     """Fill NaNs in RB-specific feature columns using training set statistics.
 
-    Called AFTER temporal_split() and AFTER add_rb_specific_features().
+    Called AFTER temporal_split() and AFTER add_specific_features().
     Uses ONLY training set statistics to prevent leakage.
     """
     return fill_nans_with_train_means(train_df, val_df, test_df, rb_feature_cols)

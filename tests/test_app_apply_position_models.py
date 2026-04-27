@@ -52,7 +52,7 @@ def _make_results_frame(n: int = 12) -> pd.DataFrame:
     )
 
 
-def _make_qb_df(n: int = 12) -> pd.DataFrame:
+def _make_df(n: int = 12) -> pd.DataFrame:
     """Synthetic QB DataFrame that survives the pipeline's feature build."""
     rng = np.random.default_rng(0)
     return pd.DataFrame(
@@ -235,7 +235,7 @@ def test_apply_position_models_qb_flat_path(_mocked_app, _qb_registry):
     per-target metrics land in _cache['position_details']['QB'].
     """
     results = _make_results_frame(n=12)
-    df = _make_qb_df(n=12)
+    df = _make_df(n=12)
     _mocked_app._cache.clear()
 
     _mocked_app._apply_position_models(df, df, df, "QB", results)
@@ -289,7 +289,7 @@ def test_apply_position_models_with_attention(_mocked_app, monkeypatch):
     monkeypatch.setattr(app_mod, "POSITION_REGISTRY", _Stub())
 
     results = _make_results_frame(n=6)
-    df = _make_qb_df(n=6)
+    df = _make_df(n=6)
     _mocked_app._cache.clear()
 
     _mocked_app._apply_position_models(df, df, df, "QB", results)
@@ -329,7 +329,7 @@ def test_apply_position_models_with_adjustment_fn(_mocked_app, monkeypatch):
     monkeypatch.setattr(app_mod, "POSITION_REGISTRY", _Stub())
 
     results = _make_results_frame(n=6)
-    df = _make_qb_df(n=6)
+    df = _make_df(n=6)
     _mocked_app._cache.clear()
 
     _mocked_app._apply_position_models(df, df, df, "QB", results)
@@ -545,7 +545,7 @@ def test_apply_position_models_ridge_load_failure_records_and_nan_fills(_mocked_
         )(),
     )
     results = _make_results_frame(n=4)
-    df = _make_qb_df(n=4)
+    df = _make_df(n=4)
     _mocked_app._cache.clear()
 
     # MUST NOT raise — the failure is absorbed per the Part B contract.

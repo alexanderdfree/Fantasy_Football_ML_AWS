@@ -56,7 +56,7 @@ python -m src.serving.app
 # → http://localhost:5050
 ```
 
-The dashboard loads pre-trained model artifacts from each position's `src/{POS}/outputs/models/` directory. If a position's models are missing, run the benchmark for that position first (see below) to populate them.
+The dashboard loads pre-trained model artifacts from each position's `src/{pos}/outputs/models/` directory. If a position's models are missing, run the benchmark for that position first (see below) to populate them.
 
 ## Run benchmarks
 
@@ -66,7 +66,7 @@ python -m src.benchmarking.benchmark RB           # one position
 python -m src.benchmarking.benchmark QB RB WR     # several positions
 ```
 
-Each run writes a `{run_id}.json` file under [benchmark_history/](benchmark_history/) with the git SHA, timestamp, and per-position config snapshot (used by CI to track benchmark drift) and refreshes the model artifacts under `src/{POS}/outputs/models/`. Headline results are summarized in the Evaluation section of [README.md](README.md).
+Each run writes a `{run_id}.json` file under [benchmark_history/](benchmark_history/) with the git SHA, timestamp, and per-position config snapshot (used by CI to track benchmark drift) and refreshes the model artifacts under `src/{pos}/outputs/models/`. Headline results are summarized in the Evaluation section of [README.md](README.md).
 
 ## Run tests
 

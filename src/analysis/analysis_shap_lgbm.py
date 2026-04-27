@@ -39,7 +39,7 @@ from src.shared.pipeline import build_train_matrix  # noqa: E402
 def _load_position_config(pos: str) -> dict:
     """Import the position's CONFIG dict from its runner module.
 
-    Position runners expose ``{POS}_CONFIG`` (e.g. ``QB_CONFIG``) by the time
+    Position runners expose ``{POS}_CONFIG`` (e.g. ``CONFIG``) by the time
     they're imported; pulling it off the module gives the same cfg the
     pipeline used to fit the saved LightGBM.
     """

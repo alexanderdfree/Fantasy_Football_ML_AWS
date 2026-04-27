@@ -3,7 +3,7 @@ import pandas as pd
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
 
-def compute_wr_targets(df: pd.DataFrame) -> pd.DataFrame:
+def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
     """Compute the 4 raw-stat prediction targets for WR rows.
 
     Targets (raw NFL stats; fantasy points are aggregated downstream via

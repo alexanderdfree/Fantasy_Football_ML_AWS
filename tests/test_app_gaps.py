@@ -370,17 +370,17 @@ def test_ensure_position_loaded_noop_if_in_failed_set(monkeypatch):
 class _CfgModule:
     """Fixture config module with the attributes _position_arch_payload reads."""
 
-    QB_NN_EPOCHS = 10
-    QB_NN_BATCH_SIZE = 32
-    QB_NN_LR = 1e-3
-    QB_NN_WEIGHT_DECAY = 0.0
-    QB_NN_DROPOUT = 0.1
-    QB_NN_PATIENCE = 5
-    QB_HUBER_DELTAS = {"passing_yards": 25.0}
-    QB_LOSS_WEIGHTS = {"passing_yards": 1.0}
-    QB_RIDGE_ALPHA_GRIDS = {"passing_yards": [1.0]}
-    QB_NN_BACKBONE_LAYERS = [32, 16]
-    QB_NN_HEAD_HIDDEN = 16
+    NN_EPOCHS = 10
+    NN_BATCH_SIZE = 32
+    NN_LR = 1e-3
+    NN_WEIGHT_DECAY = 0.0
+    NN_DROPOUT = 0.1
+    NN_PATIENCE = 5
+    HUBER_DELTAS = {"passing_yards": 25.0}
+    LOSS_WEIGHTS = {"passing_yards": 1.0}
+    RIDGE_ALPHA_GRIDS = {"passing_yards": [1.0]}
+    NN_BACKBONE_LAYERS = [32, 16]
+    NN_HEAD_HIDDEN = 16
 
 
 @pytest.mark.integration
@@ -388,10 +388,10 @@ def test_position_arch_payload_cosine_warm_restarts_scheduler():
     import src.serving.app as app_mod
 
     cfg = _CfgModule()
-    cfg.QB_SCHEDULER_TYPE = "cosine_warm_restarts"
-    cfg.QB_COSINE_T0 = 10
-    cfg.QB_COSINE_T_MULT = 2
-    cfg.QB_COSINE_ETA_MIN = 1e-5
+    cfg.SCHEDULER_TYPE = "cosine_warm_restarts"
+    cfg.COSINE_T0 = 10
+    cfg.COSINE_T_MULT = 2
+    cfg.COSINE_ETA_MIN = 1e-5
     payload = app_mod._position_arch_payload(
         "QB", cfg, specific=["f_spec"], targets=["passing_yards"], include_features=["a", "b"]
     )
@@ -403,9 +403,9 @@ def test_position_arch_payload_onecycle_scheduler():
     import src.serving.app as app_mod
 
     cfg = _CfgModule()
-    cfg.QB_SCHEDULER_TYPE = "onecycle"
-    cfg.QB_ONECYCLE_MAX_LR = 0.01
-    cfg.QB_ONECYCLE_PCT_START = 0.3
+    cfg.SCHEDULER_TYPE = "onecycle"
+    cfg.ONECYCLE_MAX_LR = 0.01
+    cfg.ONECYCLE_PCT_START = 0.3
     payload = app_mod._position_arch_payload(
         "QB", cfg, specific=["f_spec"], targets=["passing_yards"], include_features=["a"]
     )
@@ -417,7 +417,7 @@ def test_position_arch_payload_plateau_scheduler():
     import src.serving.app as app_mod
 
     cfg = _CfgModule()
-    cfg.QB_SCHEDULER_TYPE = "plateau"
+    cfg.SCHEDULER_TYPE = "plateau"
     payload = app_mod._position_arch_payload(
         "QB", cfg, specific=["f_spec"], targets=["passing_yards"], include_features=["a"]
     )
@@ -431,7 +431,7 @@ def test_position_arch_payload_include_features_as_dict():
     import src.serving.app as app_mod
 
     cfg = _CfgModule()
-    cfg.QB_SCHEDULER_TYPE = "plateau"
+    cfg.SCHEDULER_TYPE = "plateau"
     payload = app_mod._position_arch_payload(
         "QB",
         cfg,
@@ -598,14 +598,14 @@ def test_load_k_splits_delegates_to_k_data_helpers(monkeypatch):
     k_df = pd.DataFrame({"player_id": ["K1"], "season": [2024], "week": [1]})
     kicks_df = pd.DataFrame({"player_id": ["K1"], "kick_distance": [40.0]})
 
-    monkeypatch.setattr(app_mod, "load_kicker_data", lambda: k_df)
-    monkeypatch.setattr(app_mod, "load_kicker_kicks", lambda df: kicks_df)
+    monkeypatch.setattr(app_mod, "load_data", lambda: k_df)
+    monkeypatch.setattr(app_mod, "load_kicks", lambda df: kicks_df)
     monkeypatch.setattr(
         app_mod,
-        "kicker_season_split",
+        "season_split",
         lambda df: (df.iloc[:0], df.iloc[:0], df),
     )
-    monkeypatch.setattr(app_mod, "compute_k_features", lambda df: None)
+    monkeypatch.setattr(app_mod, "compute_features", lambda df: None)
 
     # POSITION_REGISTRY['K']['compute_targets_fn'] — stub to pass-through.
     class _StubReg:
@@ -630,8 +630,8 @@ def test_load_dst_splits_filters_by_season(monkeypatch):
             "week": [1, 1, 1, 1],
         }
     )
-    monkeypatch.setattr(app_mod, "build_dst_data", lambda: dst_df)
-    monkeypatch.setattr(app_mod, "compute_dst_features", lambda df: None)
+    monkeypatch.setattr(app_mod, "build_data", lambda: dst_df)
+    monkeypatch.setattr(app_mod, "compute_features", lambda df: None)
 
     class _StubReg:
         def __getitem__(self, k):

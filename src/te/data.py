@@ -1,7 +1,7 @@
 import pandas as pd
 
 
-def filter_to_te(df: pd.DataFrame) -> pd.DataFrame:
+def filter_to_position(df: pd.DataFrame) -> pd.DataFrame:
     """Filter featured DataFrame to TE rows only."""
     te_df = df[df["position"] == "TE"].copy()
     pos_cols = ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]

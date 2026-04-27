@@ -8,11 +8,11 @@ a direct target.
 
 import pandas as pd
 
-from src.rb.config import RB_TARGETS
+from src.rb.config import TARGETS
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
 
-def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
+def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
     """Emit the 6 raw-stat RB prediction targets.
 
     Columns:
@@ -43,7 +43,7 @@ def compute_rb_targets(df: pd.DataFrame) -> pd.DataFrame:
     # Sanity check: aggregator reproduces the RB slice of fantasy_points (PPR).
     # The full fantasy_points column carries passing terms that RBs don't
     # predict, so we back those out before comparing.
-    preds = {t: df[t].to_numpy() for t in RB_TARGETS}
+    preds = {t: df[t].to_numpy() for t in TARGETS}
     df["fantasy_points_check"] = predictions_to_fantasy_points("RB", preds, "ppr")
 
     passing_component = (

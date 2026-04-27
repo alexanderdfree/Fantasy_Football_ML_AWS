@@ -2,10 +2,10 @@ import pandas as pd
 
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
-_TE_RAW_TARGETS = ("receiving_tds", "receiving_yards", "receptions", "fumbles_lost")
+_RAW_TARGETS = ("receiving_tds", "receiving_yards", "receptions", "fumbles_lost")
 
 
-def compute_te_targets(df: pd.DataFrame) -> pd.DataFrame:
+def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
     """Compute the 4 raw-stat prediction targets for TE rows.
 
     Targets:
@@ -35,7 +35,7 @@ def compute_te_targets(df: pd.DataFrame) -> pd.DataFrame:
     # pre-computed fantasy_points column. Flag rows where they diverge to
     # catch upstream data corruption.
     if "fantasy_points" in df.columns:
-        preds = {t: df[t].values for t in _TE_RAW_TARGETS}
+        preds = {t: df[t].values for t in _RAW_TARGETS}
         te_points = predictions_to_fantasy_points("TE", preds, "ppr")
         residual = df["fantasy_points"] - te_points
         for col, weight in (

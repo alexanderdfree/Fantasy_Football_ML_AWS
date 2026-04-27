@@ -6,7 +6,7 @@ from src.config import CACHE_DIR, SEASONS
 from src.data.loader import load_team_week_stats
 
 
-def build_dst_data() -> pd.DataFrame:
+def build_data() -> pd.DataFrame:
     """Build team-level D/ST data from schedules, weekly stats, and team-week stats.
 
     Strategy:
@@ -399,6 +399,6 @@ def build_dst_data() -> pd.DataFrame:
     return dst_df
 
 
-def filter_to_dst(df: pd.DataFrame) -> pd.DataFrame:
+def filter_to_position(df: pd.DataFrame) -> pd.DataFrame:
     """Identity filter — D/ST data is pre-built at team level."""
     return df.copy()

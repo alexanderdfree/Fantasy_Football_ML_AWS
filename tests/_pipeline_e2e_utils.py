@@ -72,121 +72,121 @@ _TINY_OVERRIDES: dict[str, Any] = {
 
 
 def _qb_tiny() -> dict:
-    from src.qb.run_pipeline import QB_CONFIG
+    from src.qb.run_pipeline import CONFIG
 
-    return _shrink(QB_CONFIG)
+    return _shrink(CONFIG)
 
 
 def _rb_tiny() -> dict:
-    from src.rb.run_pipeline import RB_CONFIG
+    from src.rb.run_pipeline import CONFIG
 
-    return _shrink(RB_CONFIG)
+    return _shrink(CONFIG)
 
 
 def _wr_tiny() -> dict:
-    """WR config — prefer WR_CONFIG_TINY if present, else shrink WR_CONFIG.
+    """WR config — prefer CONFIG_TINY if present, else shrink CONFIG.
 
     WR (like QB/RB/TE) no longer uses a ``compute_adjustment_fn`` — the fumble
     penalty is now a direct target priced by ``src/shared/aggregate_targets.py``
     per docs/ARCHITECTURE.md. Only K and DST still wire an adjustment function.
     """
-    from src.wr.data import filter_to_wr
+    from src.wr.data import filter_to_position
     from src.wr.features import (
-        add_wr_specific_features,
-        fill_wr_nans,
-        get_wr_feature_columns,
+        add_specific_features,
+        fill_nans,
+        get_feature_columns,
     )
-    from src.wr.targets import compute_wr_targets
+    from src.wr.targets import compute_targets
 
     callables = {
-        "filter_fn": filter_to_wr,
-        "compute_targets_fn": compute_wr_targets,
-        "add_features_fn": add_wr_specific_features,
-        "fill_nans_fn": fill_wr_nans,
-        "get_feature_columns_fn": get_wr_feature_columns,
+        "filter_fn": filter_to_position,
+        "compute_targets_fn": compute_targets,
+        "add_features_fn": add_specific_features,
+        "fill_nans_fn": fill_nans,
+        "get_feature_columns_fn": get_feature_columns,
     }
     try:
-        from src.wr.config import WR_CONFIG_TINY
+        from src.wr.config import CONFIG_TINY
 
-        cfg = dict(WR_CONFIG_TINY)
+        cfg = dict(CONFIG_TINY)
     except ImportError:
-        from src.wr.run_pipeline import WR_CONFIG
+        from src.wr.run_pipeline import CONFIG
 
-        cfg = _shrink(WR_CONFIG)
+        cfg = _shrink(CONFIG)
     cfg.update(callables)
     return cfg
 
 
 def _te_tiny() -> dict:
-    """TE config — use TE_CONFIG_TINY if exposed, else shrink TE_CONFIG inline."""
-    from src.te.data import filter_to_te
+    """TE config — use CONFIG_TINY if exposed, else shrink CONFIG inline."""
+    from src.te.data import filter_to_position
     from src.te.features import (
-        add_te_specific_features,
-        fill_te_nans,
-        get_te_feature_columns,
+        add_specific_features,
+        fill_nans,
+        get_feature_columns,
     )
-    from src.te.targets import compute_te_targets
+    from src.te.targets import compute_targets
 
     callables = {
-        "filter_fn": filter_to_te,
-        "compute_targets_fn": compute_te_targets,
-        "add_features_fn": add_te_specific_features,
-        "fill_nans_fn": fill_te_nans,
-        "get_feature_columns_fn": get_te_feature_columns,
+        "filter_fn": filter_to_position,
+        "compute_targets_fn": compute_targets,
+        "add_features_fn": add_specific_features,
+        "fill_nans_fn": fill_nans,
+        "get_feature_columns_fn": get_feature_columns,
     }
     try:
-        from src.te.config import TE_CONFIG_TINY
+        from src.te.config import CONFIG_TINY
 
-        cfg = dict(TE_CONFIG_TINY)
+        cfg = dict(CONFIG_TINY)
     except ImportError:
-        from src.te.run_pipeline import TE_CONFIG
+        from src.te.run_pipeline import CONFIG
 
-        cfg = _shrink(TE_CONFIG)
+        cfg = _shrink(CONFIG)
     cfg.update(callables)
     return cfg
 
 
 def _k_tiny() -> dict:
-    """K config — use K_CONFIG_TINY if exposed, else build a shrunk cfg from k_config.py."""
-    from src.k.data import filter_to_k
+    """K config — use CONFIG_TINY if exposed, else build a shrunk cfg from k_config.py."""
+    from src.k.data import filter_to_position
     from src.k.features import (
-        add_k_specific_features,
-        fill_k_nans,
-        get_k_feature_columns,
+        add_specific_features,
+        fill_nans,
+        get_feature_columns,
     )
-    from src.k.targets import compute_k_targets
+    from src.k.targets import compute_targets
 
     try:
-        from src.k.config import K_CONFIG_TINY
+        from src.k.config import CONFIG_TINY
 
-        cfg = dict(K_CONFIG_TINY)
+        cfg = dict(CONFIG_TINY)
     except ImportError:
         # Build a fresh tiny config from the exported config module constants.
         from src.k.config import (
-            K_CV_SPLIT_COLUMN,
-            K_HUBER_DELTAS,
-            K_LOSS_WEIGHTS,
-            K_SPECIFIC_FEATURES,
-            K_TARGETS,
+            CV_SPLIT_COLUMN,
+            HUBER_DELTAS,
+            LOSS_WEIGHTS,
+            SPECIFIC_FEATURES,
+            TARGETS,
         )
 
         cfg = {
-            "targets": K_TARGETS,
-            "specific_features": K_SPECIFIC_FEATURES,
-            "loss_weights": K_LOSS_WEIGHTS,
-            "huber_deltas": K_HUBER_DELTAS,
-            "cv_split_column": K_CV_SPLIT_COLUMN,
-            "ridge_alpha_grids": {t: [1.0, 10.0] for t in K_TARGETS},
+            "targets": TARGETS,
+            "specific_features": SPECIFIC_FEATURES,
+            "loss_weights": LOSS_WEIGHTS,
+            "huber_deltas": HUBER_DELTAS,
+            "cv_split_column": CV_SPLIT_COLUMN,
+            "ridge_alpha_grids": {t: [1.0, 10.0] for t in TARGETS},
         }
         cfg.update(_TINY_OVERRIDES)
 
     cfg.update(
         {
-            "filter_fn": filter_to_k,
-            "compute_targets_fn": compute_k_targets,
-            "add_features_fn": add_k_specific_features,
-            "fill_nans_fn": fill_k_nans,
-            "get_feature_columns_fn": get_k_feature_columns,
+            "filter_fn": filter_to_position,
+            "compute_targets_fn": compute_targets,
+            "add_features_fn": add_specific_features,
+            "fill_nans_fn": fill_nans,
+            "get_feature_columns_fn": get_feature_columns,
             "compute_adjustment_fn": None,
         }
     )
@@ -194,42 +194,42 @@ def _k_tiny() -> dict:
 
 
 def _dst_tiny() -> dict:
-    """DST config — use DST_CONFIG_TINY if exposed, else build a shrunk cfg inline."""
+    """DST config — use CONFIG_TINY if exposed, else build a shrunk cfg inline."""
     from src.dst.config import (
-        DST_HUBER_DELTAS,
-        DST_LOSS_WEIGHTS,
-        DST_SPECIFIC_FEATURES,
-        DST_TARGETS,
+        HUBER_DELTAS,
+        LOSS_WEIGHTS,
+        SPECIFIC_FEATURES,
+        TARGETS,
     )
-    from src.dst.data import filter_to_dst
+    from src.dst.data import filter_to_position
     from src.dst.features import (
-        add_dst_specific_features,
-        fill_dst_nans,
-        get_dst_feature_columns,
+        add_specific_features,
+        fill_nans,
+        get_feature_columns,
     )
-    from src.dst.targets import compute_dst_targets
+    from src.dst.targets import compute_targets
 
     cfg = {
-        "targets": DST_TARGETS,
-        "ridge_alpha_grids": {t: [1.0, 10.0] for t in DST_TARGETS},
-        "specific_features": DST_SPECIFIC_FEATURES,
-        "loss_weights": DST_LOSS_WEIGHTS,
-        "huber_deltas": DST_HUBER_DELTAS,
-        "filter_fn": filter_to_dst,
-        "compute_targets_fn": compute_dst_targets,
-        "add_features_fn": add_dst_specific_features,
-        "fill_nans_fn": fill_dst_nans,
-        "get_feature_columns_fn": get_dst_feature_columns,
+        "targets": TARGETS,
+        "ridge_alpha_grids": {t: [1.0, 10.0] for t in TARGETS},
+        "specific_features": SPECIFIC_FEATURES,
+        "loss_weights": LOSS_WEIGHTS,
+        "huber_deltas": HUBER_DELTAS,
+        "filter_fn": filter_to_position,
+        "compute_targets_fn": compute_targets,
+        "add_features_fn": add_specific_features,
+        "fill_nans_fn": fill_nans,
+        "get_feature_columns_fn": get_feature_columns,
         "compute_adjustment_fn": None,
     }
     cfg.update(_TINY_OVERRIDES)
 
     try:
-        from src.dst.config import DST_CONFIG_TINY
+        from src.dst.config import CONFIG_TINY
 
-        cfg.update(DST_CONFIG_TINY)
+        cfg.update(CONFIG_TINY)
     except ImportError:
-        # DST_CONFIG_TINY not exposed; the generic tiny overrides above suffice.
+        # CONFIG_TINY not exposed; the generic tiny overrides above suffice.
         pass
     return cfg
 
@@ -328,18 +328,18 @@ def _load_player_splits(
 def _build_k_splits(n_players: int = 30) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build tiny K splits using the K loader (cached PBP parquet).
 
-    Mirrors the logic in ``K/run_k_pipeline.py``: loads the reconstructed
+    Mirrors the logic in ``K/run.py``: loads the reconstructed
     kicker weekly data, computes targets + features on the full frame, then
     splits by season (train<=2023 / val=2024 / test=2025) and subsets to
     the top-N most active kickers.
     """
-    from src.k.data import load_kicker_data
-    from src.k.features import compute_k_features
-    from src.k.targets import compute_k_targets
+    from src.k.data import load_data
+    from src.k.features import compute_features
+    from src.k.targets import compute_targets
 
-    full = load_kicker_data()
-    full = compute_k_targets(full)
-    compute_k_features(full)
+    full = load_data()
+    full = compute_targets(full)
+    compute_features(full)
 
     top = _top_n_players(full, n_players)
     full = full[full["player_id"].isin(top)].copy()
@@ -352,13 +352,13 @@ def _build_k_splits(n_players: int = 30) -> tuple[pd.DataFrame, pd.DataFrame, pd
 
 def _build_dst_splits() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build tiny D/ST splits using the DST team-level builder."""
-    from src.dst.data import build_dst_data
-    from src.dst.features import compute_dst_features
-    from src.dst.targets import compute_dst_targets
+    from src.dst.data import build_data
+    from src.dst.features import compute_features
+    from src.dst.targets import compute_targets
 
-    full = build_dst_data()
-    full = compute_dst_targets(full)
-    compute_dst_features(full)
+    full = build_data()
+    full = compute_targets(full)
+    compute_features(full)
 
     # Restrict to the last 4 seasons so rolling features stabilise while
     # keeping the frame tiny enough for a <20s pipeline round-trip.

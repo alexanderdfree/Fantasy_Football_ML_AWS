@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.k.config import K_ALL_FEATURES
+from src.k.config import ALL_FEATURES
 from src.shared.feature_build import (
     fill_nans_with_train_means,
     rolling_agg,
@@ -9,12 +9,12 @@ from src.shared.feature_build import (
 )
 
 
-def get_k_feature_columns() -> list[str]:
+def get_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the K model."""
-    return list(K_ALL_FEATURES)
+    return list(ALL_FEATURES)
 
 
-def compute_k_features(df: pd.DataFrame) -> None:
+def compute_features(df: pd.DataFrame) -> None:
     """Compute all kicker-specific features in-place.
 
     Must be called on the FULL dataset (before splitting) so that rolling
@@ -23,7 +23,7 @@ def compute_k_features(df: pd.DataFrame) -> None:
     """
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
-    # Rolling-feature input: signed fantasy total written by compute_k_targets.
+    # Rolling-feature input: signed fantasy total written by compute_targets.
     df["_k_total_pts"] = df["fantasy_points"]
 
     # Cross-season grouping (no season reset): kickers have stable multi-year
@@ -94,8 +94,8 @@ def compute_k_features(df: pd.DataFrame) -> None:
 
     # ---------------------------------------------------------------
     # L1 (shift-1) equivalents — attention NN's static branch consumes
-    # these via K_ATTN_STATIC_FEATURES. They live in `df` but are NOT
-    # listed in K_ALL_FEATURES, so Ridge and the base NN never see them.
+    # these via ATTN_STATIC_FEATURES. They live in `df` but are NOT
+    # listed in ALL_FEATURES, so Ridge and the base NN never see them.
     # Skip L1 versions of k_pts_trend (needs two windows) and k_pts_std
     # (undefined at L1).
     # ---------------------------------------------------------------
@@ -131,7 +131,7 @@ def compute_k_features(df: pd.DataFrame) -> None:
     )
 
 
-def add_k_specific_features(
+def add_specific_features(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -140,7 +140,7 @@ def add_k_specific_features(
     return train_df, val_df, test_df
 
 
-def fill_k_nans(
+def fill_nans(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,

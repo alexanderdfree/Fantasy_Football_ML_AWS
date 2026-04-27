@@ -112,7 +112,7 @@ class TestDegradedPositionsHelper:
         }
         assert degraded_mode_app._degraded_positions() == ["QB", "WR"]
 
-    def test_dst_prefix_does_not_absorb_other_positions(self, degraded_mode_app):
+    def test_prefix_does_not_absorb_other_positions(self, degraded_mode_app):
         """ "DST" doesn't contain an underscore; the parser must not false-match
         it against keys like "QB_nn"."""
         degraded_mode_app._cache["position_load_errors"] = {

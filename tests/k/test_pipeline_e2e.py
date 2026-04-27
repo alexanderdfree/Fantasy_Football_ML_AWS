@@ -18,28 +18,28 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.k.config import K_CONFIG_TINY
-from src.k.data import filter_to_k
+from src.k.config import CONFIG_TINY
+from src.k.data import filter_to_position
 from src.k.features import (
-    add_k_specific_features,
-    compute_k_features,
-    fill_k_nans,
-    get_k_feature_columns,
+    add_specific_features,
+    compute_features,
+    fill_nans,
+    get_feature_columns,
 )
-from src.k.targets import compute_k_targets
+from src.k.targets import compute_targets
 from src.shared.pipeline import run_pipeline
 
 
 def _build_e2e_config() -> dict:
-    """Complete the K_CONFIG_TINY dict with the callables run_pipeline needs."""
-    cfg = dict(K_CONFIG_TINY)
+    """Complete the CONFIG_TINY dict with the callables run_pipeline needs."""
+    cfg = dict(CONFIG_TINY)
     cfg.update(
         {
-            "filter_fn": filter_to_k,
-            "compute_targets_fn": compute_k_targets,
-            "add_features_fn": add_k_specific_features,
-            "fill_nans_fn": fill_k_nans,
-            "get_feature_columns_fn": get_k_feature_columns,
+            "filter_fn": filter_to_position,
+            "compute_targets_fn": compute_targets,
+            "add_features_fn": add_specific_features,
+            "fill_nans_fn": fill_nans,
+            "get_feature_columns_fn": get_feature_columns,
             "compute_adjustment_fn": None,
         }
     )
@@ -47,17 +47,17 @@ def _build_e2e_config() -> dict:
 
 
 @pytest.fixture(scope="module")
-def prepared_splits(tiny_k_splits):
+def prepared_splits(tiny_splits):
     """Tiny kicker splits with targets+features computed on the full frame.
 
     The real pipeline computes K features before splitting (rolling features
     need prior weeks across split boundaries). We do the same here, then
     return train/val/test frames already enriched.
     """
-    train, val, test = tiny_k_splits
+    train, val, test = tiny_splits
     full = pd.concat([train, val, test], ignore_index=True)
-    full = compute_k_targets(full)
-    compute_k_features(full)
+    full = compute_targets(full)
+    compute_features(full)
     return (
         full[full["season"] <= 2023].copy(),
         full[full["season"] == 2024].copy(),
@@ -105,7 +105,7 @@ def pipeline_run_repeat(prepared_splits, e2e_outputs_dir, pipeline_run):
 
 
 @pytest.mark.e2e
-def test_k_pipeline_e2e_runs_without_exception(pipeline_run):
+def test_pipeline_e2e_runs_without_exception(pipeline_run):
     """Smoke: pipeline completes end-to-end with tiny config + synthetic data."""
     result = pipeline_run
     assert "ridge_metrics" in result
@@ -115,7 +115,7 @@ def test_k_pipeline_e2e_runs_without_exception(pipeline_run):
 
 
 @pytest.mark.e2e
-def test_k_pipeline_predictions_finite_and_shaped(pipeline_run):
+def test_pipeline_predictions_finite_and_shaped(pipeline_run):
     """Predictions must be finite and shaped like the test set."""
     result = pipeline_run
 
@@ -131,7 +131,7 @@ def test_k_pipeline_predictions_finite_and_shaped(pipeline_run):
 
 
 @pytest.mark.e2e
-def test_k_pipeline_bit_identical_across_seeded_runs(pipeline_run, pipeline_run_repeat):
+def test_pipeline_bit_identical_across_seeded_runs(pipeline_run, pipeline_run_repeat):
     """Reproducibility: two runs with seed=42 produce bit-identical predictions.
 
     Covers the reviewer concern that "training is reproducible" is unverified.

@@ -20,52 +20,52 @@ import pandas as pd
 import pytest
 
 from src.dst.config import (
-    DST_CONFIG_TINY,
-    DST_HUBER_DELTAS,
-    DST_LOSS_WEIGHTS,
-    DST_POISSON_TARGETS,
-    DST_RIDGE_ALPHA_GRIDS,
-    DST_SPECIFIC_FEATURES,
-    DST_TARGETS,
+    CONFIG_TINY,
+    HUBER_DELTAS,
+    LOSS_WEIGHTS,
+    POISSON_TARGETS,
+    RIDGE_ALPHA_GRIDS,
+    SPECIFIC_FEATURES,
+    TARGETS,
 )
-from src.dst.data import filter_to_dst
+from src.dst.data import filter_to_position
 from src.dst.features import (
-    add_dst_specific_features,
-    compute_dst_features,
-    fill_dst_nans,
-    get_dst_feature_columns,
+    add_specific_features,
+    compute_features,
+    fill_nans,
+    get_feature_columns,
 )
-from src.dst.targets import compute_dst_targets
+from src.dst.targets import compute_targets
 from src.shared.pipeline import run_pipeline
-from tests.dst.conftest import _build_tiny_dst_dataset
+from tests.dst.conftest import _build_tiny_dataset
 from tests.dst.test_pipeline_e2e import _build_synthetic_schedules
 
 
 def _make_dst_elasticnet_cfg() -> dict:
     cfg = {
-        "targets": DST_TARGETS,
-        "ridge_alpha_grids": DST_RIDGE_ALPHA_GRIDS,
-        "specific_features": DST_SPECIFIC_FEATURES,
-        "filter_fn": filter_to_dst,
-        "compute_targets_fn": compute_dst_targets,
-        "add_features_fn": add_dst_specific_features,
-        "fill_nans_fn": fill_dst_nans,
-        "get_feature_columns_fn": get_dst_feature_columns,
+        "targets": TARGETS,
+        "ridge_alpha_grids": RIDGE_ALPHA_GRIDS,
+        "specific_features": SPECIFIC_FEATURES,
+        "filter_fn": filter_to_position,
+        "compute_targets_fn": compute_targets,
+        "add_features_fn": add_specific_features,
+        "fill_nans_fn": fill_nans,
+        "get_feature_columns_fn": get_feature_columns,
         "compute_adjustment_fn": None,
-        "loss_weights": DST_LOSS_WEIGHTS,
-        "huber_deltas": DST_HUBER_DELTAS,
-        "poisson_targets": DST_POISSON_TARGETS,
+        "loss_weights": LOSS_WEIGHTS,
+        "huber_deltas": HUBER_DELTAS,
+        "poisson_targets": POISSON_TARGETS,
     }
-    cfg.update(DST_CONFIG_TINY)
+    cfg.update(CONFIG_TINY)
     cfg["train_elasticnet"] = True
     cfg["enet_l1_ratios"] = [0.5]  # single l1_ratio keeps the tune step fast
     return cfg
 
 
 def _build_tiny_splits(seed: int = 42):
-    df = _build_tiny_dst_dataset(seed=seed)
-    df = compute_dst_targets(df)
-    compute_dst_features(df)
+    df = _build_tiny_dataset(seed=seed)
+    df = compute_targets(df)
+    compute_features(df)
     train = df[df["season"].isin([2022, 2023])].copy()
     val = df[df["season"] == 2024].copy()
     test = df[df["season"] == 2025].copy()
@@ -78,7 +78,7 @@ def test_run_pipeline_with_train_elasticnet_true(tmp_path_factory):
     """``cfg["train_elasticnet"] = True`` → run_pipeline produces an
     ``elasticnet_metrics`` block alongside ridge / nn metrics, and the
     comparison table includes the ElasticNet row."""
-    tiny_dst = _build_tiny_dst_dataset(seed=42)
+    tiny_dst = _build_tiny_dataset(seed=42)
     sched = _build_synthetic_schedules(tiny_dst)
 
     mp = pytest.MonkeyPatch()
@@ -102,14 +102,14 @@ def test_run_pipeline_with_train_elasticnet_true(tmp_path_factory):
         # Per-target + total rows must all carry MAE.
         assert "total" in enet_metrics
         assert np.isfinite(enet_metrics["total"]["mae"])
-        for t in DST_TARGETS:
+        for t in TARGETS:
             assert t in enet_metrics
             assert np.isfinite(enet_metrics[t]["mae"])
 
         # Per-target preds must be present and finite.
         enet_preds = result["per_target_preds"]["elasticnet"]
         n_test = len(result["test_df"])
-        for t in DST_TARGETS:
+        for t in TARGETS:
             assert enet_preds[t].shape == (n_test,)
             assert np.isfinite(enet_preds[t]).all()
     finally:

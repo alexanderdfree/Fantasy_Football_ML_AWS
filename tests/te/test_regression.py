@@ -29,18 +29,18 @@ from src.shared.feature_build import scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
 from src.te.config import (
-    TE_CONFIG_TINY,
-    TE_LGBM_MIN_CHILD_SAMPLES,
-    TE_LGBM_NUM_LEAVES,
-    TE_TARGETS,
+    CONFIG_TINY,
+    LGBM_MIN_CHILD_SAMPLES,
+    LGBM_NUM_LEAVES,
+    TARGETS,
 )
-from src.te.data import filter_to_te
+from src.te.data import filter_to_position
 from src.te.features import (
-    add_te_specific_features,
-    fill_te_nans,
-    get_te_feature_columns,
+    add_specific_features,
+    fill_nans,
+    get_feature_columns,
 )
-from src.te.targets import compute_te_targets
+from src.te.targets import compute_targets
 
 pytestmark = [
     pytest.mark.regression,
@@ -50,26 +50,26 @@ pytestmark = [
 
 
 @pytest.fixture(scope="module")
-def te_training_tensors(te_tiny_splits):
+def te_training_tensors(tiny_splits):
     """Build (X_train, X_val, X_test, y_*_dict, feature_cols) for regression tests."""
-    train, val, test = te_tiny_splits
+    train, val, test = tiny_splits
 
-    pos_train = filter_to_te(train)
-    pos_val = filter_to_te(val)
-    pos_test = filter_to_te(test)
+    pos_train = filter_to_position(train)
+    pos_val = filter_to_position(val)
+    pos_test = filter_to_position(test)
 
-    pos_train = compute_te_targets(pos_train)
-    pos_val = compute_te_targets(pos_val)
-    pos_test = compute_te_targets(pos_test)
+    pos_train = compute_targets(pos_train)
+    pos_val = compute_targets(pos_val)
+    pos_test = compute_targets(pos_test)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pos_train, pos_val, pos_test = add_te_specific_features(pos_train, pos_val, pos_test)
-        pos_train, pos_val, pos_test = fill_te_nans(
-            pos_train, pos_val, pos_test, TE_CONFIG_TINY["specific_features"]
+        pos_train, pos_val, pos_test = add_specific_features(pos_train, pos_val, pos_test)
+        pos_train, pos_val, pos_test = fill_nans(
+            pos_train, pos_val, pos_test, CONFIG_TINY["specific_features"]
         )
 
-    feature_cols = get_te_feature_columns()
+    feature_cols = get_feature_columns()
     for df in (pos_train, pos_val, pos_test):
         missing = [c for c in feature_cols if c not in df.columns]
         for col in missing:
@@ -80,9 +80,9 @@ def te_training_tensors(te_tiny_splits):
     X_val = pos_val[feature_cols].values.astype(np.float32)
     X_test = pos_test[feature_cols].values.astype(np.float32)
 
-    y_train = {t: pos_train[t].values.astype(np.float32) for t in TE_TARGETS}
-    y_val = {t: pos_val[t].values.astype(np.float32) for t in TE_TARGETS}
-    y_test = {t: pos_test[t].values.astype(np.float32) for t in TE_TARGETS}
+    y_train = {t: pos_train[t].values.astype(np.float32) for t in TARGETS}
+    y_val = {t: pos_val[t].values.astype(np.float32) for t in TARGETS}
+    y_test = {t: pos_test[t].values.astype(np.float32) for t in TARGETS}
     # Total = aggregated fantasy points under PPR (new source of truth for
     # evaluating TE predictions post-migration).
     for d in (y_train, y_val, y_test):
@@ -114,13 +114,13 @@ def te_lgbm_mae(te_training_tensors):
         # Small num_leaves / min_child_samples constraints keep LightGBM
         # usable on the tiny dataset (cap at 1300 rows train).
         lgbm = LightGBMMultiTarget(
-            target_names=TE_TARGETS,
+            target_names=TARGETS,
             n_estimators=50,
             learning_rate=0.1,
-            num_leaves=min(TE_LGBM_NUM_LEAVES, 7),
+            num_leaves=min(LGBM_NUM_LEAVES, 7),
             subsample=0.9,
             colsample_bytree=0.9,
-            min_child_samples=min(TE_LGBM_MIN_CHILD_SAMPLES, 10),
+            min_child_samples=min(LGBM_MIN_CHILD_SAMPLES, 10),
             objective="huber",
             seed=42,
         )
@@ -149,7 +149,7 @@ def _season_average_mae(pos_train, pos_test, target="fantasy_points") -> float:
 class TestTERegressionThresholds:
     def test_ridge_beats_season_average_baseline(self, te_training_tensors):
         t = te_training_tensors
-        model = RidgeMultiTarget(target_names=TE_TARGETS, alpha=1.0)
+        model = RidgeMultiTarget(target_names=TARGETS, alpha=1.0)
         model.fit(t["X_train"], t["y_train"])
         preds = model.predict(t["X_test"])
 
@@ -171,7 +171,7 @@ class TestTERegressionThresholds:
         """
         t = te_training_tensors
 
-        ridge = RidgeMultiTarget(target_names=TE_TARGETS, alpha=1.0)
+        ridge = RidgeMultiTarget(target_names=TARGETS, alpha=1.0)
         ridge.fit(t["X_train"], t["y_train"])
         ridge_preds = ridge.predict(t["X_test"])
         ridge_mae = _mae(_aggregate_preds_total(ridge_preds), t["y_test"]["total"])
@@ -206,7 +206,7 @@ class TestTERegressionThresholds:
 
         model = MultiHeadNet(
             input_dim=X_train_s.shape[1],
-            target_names=TE_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
             dropout=0.0,
@@ -215,21 +215,21 @@ class TestTERegressionThresholds:
 
         X_train_t = torch.tensor(X_train_s, dtype=torch.float32)
         y_train_t = {
-            t_name: torch.tensor(t["y_train"][t_name], dtype=torch.float32) for t_name in TE_TARGETS
+            t_name: torch.tensor(t["y_train"][t_name], dtype=torch.float32) for t_name in TARGETS
         }
 
         model.train()
         for _ in range(50):
             optimizer.zero_grad()
             out = model(X_train_t)
-            loss = sum(((out[k] - y_train_t[k]) ** 2).mean() for k in TE_TARGETS)
+            loss = sum(((out[k] - y_train_t[k]) ** 2).mean() for k in TARGETS)
             loss.backward()
             optimizer.step()
 
         model.eval()
         with torch.no_grad():
             nn_out = model(torch.tensor(X_test_s, dtype=torch.float32))
-        nn_preds = {k: nn_out[k].numpy() for k in TE_TARGETS}
+        nn_preds = {k: nn_out[k].numpy() for k in TARGETS}
         total_pred = _aggregate_preds_total(nn_preds)
         nn_mae = _mae(total_pred, t["y_test"]["total"])
 

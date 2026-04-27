@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.te.config import TE_TARGETS
+from src.te.config import TARGETS
 from tests.shared.position_fixtures import (
     make_position_df as _make_position_df,
 )
@@ -32,7 +32,7 @@ from tests.shared.position_fixtures import (
 )
 
 # TE fantasy points typically span 0-15 (lower than WRs).
-TE_SCORING_SCALE = 15
+SCORING_SCALE = 15
 
 
 def pytest_configure(config):
@@ -53,7 +53,7 @@ def te_sim_df_factory():
 
     def _factory(n_weeks: int = 4, n_players: int = 15, seed: int = 42):
         return _make_sim_df(
-            TE_SCORING_SCALE,
+            SCORING_SCALE,
             n_weeks,
             n_players,
             seed,
@@ -76,7 +76,7 @@ def te_test_df_factory():
 
     def _factory(n_weeks: int = 3, n_players: int = 15, seed: int = 42):
         return _make_test_df(
-            TE_SCORING_SCALE,
+            SCORING_SCALE,
             n_weeks,
             n_players,
             seed,
@@ -98,7 +98,7 @@ def te_tensor_factory():
     """Factory for random TE (preds, targets) tensor dicts used by loss tests."""
 
     def _factory(n: int = 10, seed: int = 42):
-        return _make_tensors(TE_TARGETS, n=n, seed=seed)
+        return _make_tensors(TARGETS, n=n, seed=seed)
 
     return _factory
 
@@ -111,13 +111,13 @@ def te_tensors(te_tensor_factory):
 
 @pytest.fixture(scope="session")
 def te_splits_factory():
-    """Factory for (train, val, test) DataFrames used by fill_te_nans tests."""
+    """Factory for (train, val, test) DataFrames used by fill_nans tests."""
     return _make_splits
 
 
 @pytest.fixture(scope="session")
 def te_position_df_factory():
-    """Factory for position-encoded DataFrames used by filter_to_te tests."""
+    """Factory for position-encoded DataFrames used by filter_to_position tests."""
 
     def _factory(positions, has_pos_cols: bool = True):
         return _make_position_df(positions, stat_col="receiving_yards", has_pos_cols=has_pos_cols)
@@ -131,20 +131,20 @@ def te_position_df_factory():
 
 
 @pytest.fixture(scope="session")
-def te_tiny_splits():
+def tiny_splits():
     """Build tiny synthetic TE-only train/val/test splits for E2E/regression tests.
 
     50 players x 2 seasons x 17 weeks = 1700 rows per split, deterministic (seed=42).
     All columns required by the full pipeline (raw stats, opponent, schedule-friendly
     team, position encoding, etc.) are populated.
     """
-    return _build_tiny_te_splits(seed=42)
+    return _build_tiny_splits(seed=42)
 
 
-def _build_tiny_te_splits(seed: int = 42):
+def _build_tiny_splits(seed: int = 42):
     """Construct fully-featured tiny TE splits.
 
-    Shared by ``te_tiny_splits`` and callable directly for tests that need
+    Shared by ``tiny_splits`` and callable directly for tests that need
     two fresh independent builds (e.g. reproducibility assertions).
     """
     from src.features.engineer import build_features

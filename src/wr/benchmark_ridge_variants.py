@@ -21,16 +21,16 @@ from src.config import MIN_GAMES_PER_SEASON, SPLITS_DIR
 from src.evaluation.metrics import compute_metrics
 from src.shared.models import RidgeMultiTarget
 from src.shared.pipeline import _tune_ridge_alphas_cv
-from src.wr.config import WR_RIDGE_ALPHA_GRIDS, WR_SPECIFIC_FEATURES, WR_TARGETS
-from src.wr.data import filter_to_wr
+from src.wr.config import RIDGE_ALPHA_GRIDS, SPECIFIC_FEATURES, TARGETS
+from src.wr.data import filter_to_position
 from src.wr.features import (
-    add_wr_specific_features,
-    fill_wr_nans,
-    get_wr_feature_columns,
+    add_specific_features,
+    fill_nans,
+    get_feature_columns,
 )
-from src.wr.targets import compute_wr_targets
+from src.wr.targets import compute_targets
 
-# ── Aggressive feature drops (on top of WR_INCLUDE_FEATURES whitelist) ────────
+# ── Aggressive feature drops (on top of INCLUDE_FEATURES whitelist) ────────
 EXTRA_DROPS = {
     # Zero variance
     "is_home",
@@ -97,8 +97,8 @@ def _run_variant(
         Xi_train,
         y_train_dict,
         pos_train["season"].values,
-        targets=WR_TARGETS,
-        alpha_grids=WR_RIDGE_ALPHA_GRIDS,
+        targets=TARGETS,
+        alpha_grids=RIDGE_ALPHA_GRIDS,
         n_cv_folds=4,
         refine_points=5,
         pca_n_components=pca_n,
@@ -106,7 +106,7 @@ def _run_variant(
 
     # Fit final model
     model = RidgeMultiTarget(
-        target_names=WR_TARGETS,
+        target_names=TARGETS,
         alpha=best_alphas,
         pca_n_components=pca_n,
     )
@@ -114,11 +114,11 @@ def _run_variant(
 
     # Predict
     preds = model.predict(Xi_test)
-    preds["total"] = sum(preds[t] for t in WR_TARGETS)
+    preds["total"] = sum(preds[t] for t in TARGETS)
 
     # Metrics
     target_metrics = {}
-    for t in WR_TARGETS:
+    for t in TARGETS:
         target_metrics[t] = compute_metrics(y_test_dict[t], preds[t])
     target_metrics["total"] = compute_metrics(y_test_dict["total"], preds["total"])
 
@@ -141,27 +141,27 @@ def main():
     val_df = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
     test_df = pd.read_parquet(f"{SPLITS_DIR}/test.parquet")
 
-    pos_train = filter_to_wr(train_df)
-    pos_val = filter_to_wr(val_df)
-    pos_test = filter_to_wr(test_df)
+    pos_train = filter_to_position(train_df)
+    pos_val = filter_to_position(val_df)
+    pos_test = filter_to_position(test_df)
 
     games_per_season = pos_train.groupby(["player_id", "season"])["week"].transform("count")
     pos_train = pos_train[games_per_season >= MIN_GAMES_PER_SEASON].copy()
 
-    pos_train = compute_wr_targets(pos_train)
-    pos_val = compute_wr_targets(pos_val)
-    pos_test = compute_wr_targets(pos_test)
+    pos_train = compute_targets(pos_train)
+    pos_val = compute_targets(pos_val)
+    pos_test = compute_targets(pos_test)
 
-    pos_train, pos_val, pos_test = add_wr_specific_features(pos_train, pos_val, pos_test)
-    pos_train, pos_val, pos_test = fill_wr_nans(
+    pos_train, pos_val, pos_test = add_specific_features(pos_train, pos_val, pos_test)
+    pos_train, pos_val, pos_test = fill_nans(
         pos_train,
         pos_val,
         pos_test,
-        WR_SPECIFIC_FEATURES,
+        SPECIFIC_FEATURES,
     )
 
     # Base feature columns (current WR config)
-    base_cols = get_wr_feature_columns()
+    base_cols = get_feature_columns()
     for df in [pos_train, pos_val, pos_test]:
         df[base_cols] = df[base_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
@@ -169,12 +169,12 @@ def main():
     aggressive_cols = [c for c in base_cols if c not in EXTRA_DROPS]
 
     # Target dicts
-    y_train_dict = {t: pos_train[t].values for t in WR_TARGETS}
-    y_val_dict = {t: pos_val[t].values for t in WR_TARGETS}
-    y_test_dict = {t: pos_test[t].values for t in WR_TARGETS}
-    y_train_dict["total"] = sum(pos_train[t].values for t in WR_TARGETS)
-    y_val_dict["total"] = sum(pos_val[t].values for t in WR_TARGETS)
-    y_test_dict["total"] = sum(pos_test[t].values for t in WR_TARGETS)
+    y_train_dict = {t: pos_train[t].values for t in TARGETS}
+    y_val_dict = {t: pos_val[t].values for t in TARGETS}
+    y_test_dict = {t: pos_test[t].values for t in TARGETS}
+    y_train_dict["total"] = sum(pos_train[t].values for t in TARGETS)
+    y_val_dict["total"] = sum(pos_val[t].values for t in TARGETS)
+    y_test_dict["total"] = sum(pos_test[t].values for t in TARGETS)
 
     print(f"Train: {len(pos_train)}, Val: {len(pos_val)}, Test: {len(pos_test)}")
     print(f"Base features: {len(base_cols)}, Aggressive features: {len(aggressive_cols)}")

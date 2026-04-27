@@ -8,8 +8,8 @@ import pytest
 
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
 
-K_TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
-K_TARGETS_SET = set(K_TARGETS)
+TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
+TARGETS_SET = set(TARGETS)
 
 
 def _make_target_dicts(n=50):
@@ -33,15 +33,15 @@ class TestComputeTargetMetrics:
         """Kickers have 4 targets, so 4+1(total) = 5 calls."""
         mock_metrics.return_value = {"mae": 1.0, "rmse": 1.5, "r2": 0.8}
         y_true, y_pred = _make_target_dicts()
-        result = compute_target_metrics(y_true, y_pred, K_TARGETS)
+        result = compute_target_metrics(y_true, y_pred, TARGETS)
         assert mock_metrics.call_count == 5  # total + 4 targets
-        assert set(result.keys()) == K_TARGETS_SET | {"total"}
+        assert set(result.keys()) == TARGETS_SET | {"total"}
 
     @patch("src.shared.evaluation.compute_metrics")
     def test_returns_correct_structure(self, mock_metrics):
         mock_metrics.return_value = {"mae": 2.0, "rmse": 3.0, "r2": 0.5}
         y_true, y_pred = _make_target_dicts(10)
-        result = compute_target_metrics(y_true, y_pred, K_TARGETS)
+        result = compute_target_metrics(y_true, y_pred, TARGETS)
         for target in result:
             assert "mae" in result[target]
             assert "rmse" in result[target]
@@ -57,7 +57,7 @@ class TestComputeTargetMetrics:
             "xp_misses": np.array([0.0, 0.0]),
             "total": np.array([12.0, 14.0]),
         }
-        result = compute_target_metrics(y, y, K_TARGETS)
+        result = compute_target_metrics(y, y, TARGETS)
         assert result["total"]["mae"] == 0.0
 
 

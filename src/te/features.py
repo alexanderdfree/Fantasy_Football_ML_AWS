@@ -6,23 +6,23 @@ from src.shared.feature_build import (
     rolling_agg,
     safe_divide,
 )
-from src.te.config import TE_INCLUDE_FEATURES
+from src.te.config import INCLUDE_FEATURES
 from src.te.data import compute_team_te_totals
 
 
-def get_te_feature_columns() -> list[str]:
+def get_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the TE model."""
-    return flatten_include_features(TE_INCLUDE_FEATURES)
+    return flatten_include_features(INCLUDE_FEATURES)
 
 
-def add_te_specific_features(train_df, val_df, test_df):
+def add_specific_features(train_df, val_df, test_df):
     """Add 8 TE-specific engineered features to each split."""
     for df in [train_df, val_df, test_df]:
-        _compute_te_features(df)
+        _compute_features(df)
     return train_df, val_df, test_df
 
 
-def _compute_te_features(df: pd.DataFrame) -> None:
+def _compute_features(df: pd.DataFrame) -> None:
     """Compute all 8 TE-specific features in-place."""
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
@@ -56,6 +56,6 @@ def _compute_te_features(df: pd.DataFrame) -> None:
     df["td_rate_per_target_L3"] = safe_divide(recv_tds_roll, tgt_roll)
 
 
-def fill_te_nans(train_df, val_df, test_df, te_feature_cols):
+def fill_nans(train_df, val_df, test_df, te_feature_cols):
     """Fill NaNs in TE-specific feature columns using training set statistics."""
     return fill_nans_with_train_means(train_df, val_df, test_df, te_feature_cols)

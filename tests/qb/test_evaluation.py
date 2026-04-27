@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.qb.config import QB_TARGETS
+from src.qb.config import TARGETS
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
 
 # ---------------------------------------------------------------------------
@@ -34,15 +34,15 @@ class TestComputeTargetMetrics:
     def test_calls_compute_metrics_for_each_target(self, mock_metrics):
         mock_metrics.return_value = {"mae": 1.0, "rmse": 1.5, "r2": 0.8}
         y_true, y_pred = self._make_dicts()
-        result = compute_target_metrics(y_true, y_pred, QB_TARGETS)
-        assert mock_metrics.call_count == len(QB_TARGETS) + 1  # + total
-        assert set(result.keys()) == set(QB_TARGETS) | {"total"}
+        result = compute_target_metrics(y_true, y_pred, TARGETS)
+        assert mock_metrics.call_count == len(TARGETS) + 1  # + total
+        assert set(result.keys()) == set(TARGETS) | {"total"}
 
     @patch("src.shared.evaluation.compute_metrics")
     def test_returns_correct_structure(self, mock_metrics):
         mock_metrics.return_value = {"mae": 2.0, "rmse": 3.0, "r2": 0.5}
         y_true, y_pred = self._make_dicts(10)
-        result = compute_target_metrics(y_true, y_pred, QB_TARGETS)
+        result = compute_target_metrics(y_true, y_pred, TARGETS)
         for target in result:
             assert "mae" in result[target]
             assert "rmse" in result[target]
@@ -61,7 +61,7 @@ class TestComputeTargetMetrics:
             "fumbles_lost": np.array([0.0, 1.0]),
             "total": np.array([25.0, 30.0]),
         }
-        result = compute_target_metrics(y, y, QB_TARGETS)
+        result = compute_target_metrics(y, y, TARGETS)
         assert result["total"]["mae"] == 0.0
 
 

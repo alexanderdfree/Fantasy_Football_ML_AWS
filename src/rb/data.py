@@ -1,7 +1,7 @@
 import pandas as pd
 
 
-def filter_to_rb(df: pd.DataFrame) -> pd.DataFrame:
+def filter_to_position(df: pd.DataFrame) -> pd.DataFrame:
     """Filter featured DataFrame to RB rows only.
 
     Must be called AFTER build_features() and AFTER temporal_split()

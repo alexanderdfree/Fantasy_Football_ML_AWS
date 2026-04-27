@@ -1,18 +1,18 @@
-"""Tests for DST.dst_data — filter_to_dst (identity filter).
+"""Tests for DST.dst_data — filter_to_position (identity filter).
 
-D/ST data is pre-built at team-level (via build_dst_data), so filter_to_dst
+D/ST data is pre-built at team-level (via build_data), so filter_to_position
 is an identity filter that returns a copy of the input.
 """
 
 import pandas as pd
 import pytest
 
-from src.dst.data import filter_to_dst
+from src.dst.data import filter_to_position
 
 
 @pytest.mark.unit
 class TestFilterToDST:
-    """D/ST data is team-level and pre-built; filter_to_dst is identity (copy)."""
+    """D/ST data is team-level and pre-built; filter_to_position is identity (copy)."""
 
     def test_returns_copy_of_input(self):
         df = pd.DataFrame(
@@ -24,7 +24,7 @@ class TestFilterToDST:
                 "def_ints": [1, 2],
             }
         )
-        result = filter_to_dst(df)
+        result = filter_to_position(df)
         pd.testing.assert_frame_equal(result, df)
 
     def test_does_not_mutate_original(self):
@@ -36,20 +36,20 @@ class TestFilterToDST:
         )
         original_cols = list(df.columns)
         original_len = len(df)
-        _ = filter_to_dst(df)
+        _ = filter_to_position(df)
         assert list(df.columns) == original_cols
         assert len(df) == original_len
 
     def test_returned_is_independent_copy(self):
         """Mutating the result should not affect the input."""
         df = pd.DataFrame({"team": ["KC"], "def_sacks": [3]})
-        result = filter_to_dst(df)
+        result = filter_to_position(df)
         result["def_sacks"] = 99
         assert df["def_sacks"].iloc[0] == 3
 
     def test_empty_input(self):
         df = pd.DataFrame({"team": pd.Series(dtype=str), "def_sacks": pd.Series(dtype=int)})
-        result = filter_to_dst(df)
+        result = filter_to_position(df)
         assert len(result) == 0
 
     def test_preserves_all_columns(self, make_df):
@@ -65,7 +65,7 @@ class TestFilterToDST:
             opp_qb_epa_L5=0.1,
             team="KC",
         )
-        result = filter_to_dst(df)
+        result = filter_to_position(df)
         assert set(result.columns) == set(df.columns)
 
     def test_multiple_teams_preserved(self):
@@ -77,6 +77,6 @@ class TestFilterToDST:
                 "def_sacks": range(len(teams)),
             }
         )
-        result = filter_to_dst(df)
+        result = filter_to_position(df)
         assert len(result) == len(teams)
         assert set(result["team"]) == set(teams)

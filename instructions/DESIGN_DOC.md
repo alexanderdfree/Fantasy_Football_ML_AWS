@@ -120,22 +120,23 @@ Final-Project/
 │   │   ├── weather_features.py    # Vegas odds + venue/weather feature engineering
 │   │   └── tests/                 # Shared-infra unit/integration tests
 │   │
-│   ├── QB/  RB/  WR/  TE/         # Skill-position pipelines (shared structure)
-│   │   ├── {pos}_config.py        # Hyperparams, feature allowlist, target decomposition
-│   │   ├── {pos}_data.py          # Position-specific data prep
-│   │   ├── {pos}_targets.py       # Target construction (decomposition formulas)
-│   │   ├── {pos}_features.py      # Position-specific engineered features
-│   │   ├── run_{pos}_pipeline.py  # Entry point (calls src/shared/pipeline.py)
-│   │   ├── outputs/models/        # Trained model artifacts (gitignored)
-│   │   └── tests/                 # Per-position test suite
+│   ├── qb/  rb/  wr/  te/         # Skill-position pipelines (shared structure)
+│   │   ├── config.py              # Hyperparams, feature allowlist, target decomposition
+│   │   ├── data.py                # Position-specific data prep
+│   │   ├── targets.py             # Target construction (decomposition formulas)
+│   │   ├── features.py            # Position-specific engineered features
+│   │   ├── run_pipeline.py        # Entry point (calls src/shared/pipeline.py)
+│   │   └── outputs/models/        # Trained model artifacts (gitignored)
 │   │
-│   ├── K/                         # Kicker model (custom feature pipeline, bypasses general features)
-│   │   ├── k_config.py, k_data.py, k_targets.py, k_features.py
-│   │   ├── run_k_pipeline.py, outputs/, tests/
+│   ├── k/                         # Kicker model (custom feature pipeline, bypasses general features)
+│   │   ├── config.py, data.py, targets.py, features.py
+│   │   ├── run_pipeline.py, outputs/
 │   │
-│   ├── DST/                       # D/ST model (custom feature pipeline, bypasses general features)
-│   │   ├── dst_config.py, dst_data.py, dst_targets.py, dst_features.py
-│   │   ├── run_dst_pipeline.py, outputs/, tests/
+│   ├── dst/                       # D/ST model (custom feature pipeline, bypasses general features)
+│   │   ├── config.py, data.py, targets.py, features.py
+│   │   ├── run_pipeline.py, outputs/
+│   │
+│   │   # (per-position tests live under tests/{pos}/, not under src/)
 │   │
 │   ├── batch/                     # Training orchestration (active: EC2; standby: Batch)
 │   │   ├── launch.py              # Local Batch launcher (standby path)

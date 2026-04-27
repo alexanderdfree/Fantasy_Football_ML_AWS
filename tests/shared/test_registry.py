@@ -2,7 +2,7 @@
 per-position config knob through to ``nn_kwargs``.
 
 Regression guard for the "silent override drop" bug: WR's config defined
-``WR_NN_HEAD_HIDDEN_OVERRIDES = {"receptions": 64}`` but the registry's WR
+``NN_HEAD_HIDDEN_OVERRIDES = {"receptions": 64}`` but the registry's WR
 entry built ``nn_kwargs`` without ``head_hidden_overrides``. Training used
 the config directly (cfg.get), so the checkpoint had a 64-wide receptions
 head, but ``app.py`` built the inference model from the registry kwargs,
@@ -27,7 +27,7 @@ def test_head_hidden_overrides_match_position_config(pos):
     the kwarg (MultiHeadNet defaults ``head_hidden_overrides=None``).
     """
     config_module = importlib.import_module(f"src.{pos.lower()}.config")
-    cfg_overrides = getattr(config_module, f"{pos}_NN_HEAD_HIDDEN_OVERRIDES", None)
+    cfg_overrides = getattr(config_module, "NN_HEAD_HIDDEN_OVERRIDES", None)
 
     reg_overrides = INFERENCE_REGISTRY[pos]["nn_kwargs"].get("head_hidden_overrides")
 

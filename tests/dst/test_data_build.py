@@ -1,6 +1,6 @@
-"""Coverage tests for ``DST/dst_data.py::build_dst_data``.
+"""Coverage tests for ``DST/dst_data.py::build_data``.
 
-``build_dst_data`` reads three inputs — weekly player stats, schedules,
+``build_data`` reads three inputs — weekly player stats, schedules,
 and team-week stats — and performs the bulk of the 400-line merge/
 aggregation logic that powered this file's 6% Codecov number. This
 file exercises the full pipe with synthetic parquet fixtures and a
@@ -27,7 +27,7 @@ _WEEKS = list(range(1, 4))  # 3 weeks — enough for L5 rolling shift to populat
 
 
 def _make_weekly(seed: int = 0) -> pd.DataFrame:
-    """Tiny weekly player-stats frame with just the columns build_dst_data reads."""
+    """Tiny weekly player-stats frame with just the columns build_data reads."""
     rng = np.random.default_rng(seed)
     rows = []
     # One QB + one non-QB per team per week; cycle opponents so every team sees
@@ -60,7 +60,7 @@ def _make_weekly(seed: int = 0) -> pd.DataFrame:
 
 
 def _make_schedules() -> pd.DataFrame:
-    """Schedules with the cols build_dst_data indexes into, in REG game_type."""
+    """Schedules with the cols build_data indexes into, in REG game_type."""
     rows = []
     for s in _SEASONS:
         for w in _WEEKS:
@@ -87,7 +87,7 @@ def _make_schedules() -> pd.DataFrame:
 
 
 def _make_team_stats(seed: int = 1) -> pd.DataFrame:
-    """Team-week stats with the defensive + offensive cols that feed build_dst_data."""
+    """Team-week stats with the defensive + offensive cols that feed build_data."""
     rng = np.random.default_rng(seed)
     rows = []
     for s in _SEASONS:
@@ -115,7 +115,7 @@ def _make_team_stats(seed: int = 1) -> pd.DataFrame:
 
 @pytest.fixture()
 def synthetic_parquets(tmp_path, monkeypatch):
-    """Write the three parquets build_dst_data expects + patch CACHE_DIR/SEASONS.
+    """Write the three parquets build_data expects + patch CACHE_DIR/SEASONS.
 
     Also stubs ``load_team_week_stats`` + ``nfl.import_team_desc`` so no
     network traffic happens. Returns the tmp cache directory for debugging.
@@ -153,9 +153,9 @@ def synthetic_parquets(tmp_path, monkeypatch):
 @pytest.mark.unit
 def test_build_dst_data_rows_per_team_week(synthetic_parquets):
     """Every (season, week, team) combo in schedules must yield one DST row."""
-    from src.dst.data import build_dst_data
+    from src.dst.data import build_data
 
-    df = build_dst_data()
+    df = build_data()
     # 4 teams × 3 weeks × 1 season = 12 rows
     assert len(df) == len(_TEAMS) * len(_WEEKS) * len(_SEASONS)
     assert set(df["team"].unique()) == set(_TEAMS)
@@ -165,9 +165,9 @@ def test_build_dst_data_rows_per_team_week(synthetic_parquets):
 @pytest.mark.unit
 def test_build_dst_data_schema(synthetic_parquets):
     """Output schema must include derived defensive + context columns."""
-    from src.dst.data import build_dst_data
+    from src.dst.data import build_data
 
-    df = build_dst_data()
+    df = build_data()
     required = {
         "points_allowed",
         "spread_line",
@@ -212,9 +212,9 @@ def test_build_dst_data_schema(synthetic_parquets):
 @pytest.mark.unit
 def test_build_dst_data_no_nans_in_fills(synthetic_parquets):
     """All columns in the fillna block must be NaN-free post build."""
-    from src.dst.data import build_dst_data
+    from src.dst.data import build_data
 
-    df = build_dst_data()
+    df = build_data()
     fill_cols = [
         "def_sacks",
         "def_ints",
@@ -254,9 +254,9 @@ def test_build_dst_data_is_dome_maps_roof(synthetic_parquets):
 
     Our synthetic schedule alternates roof per week, so both values show up.
     """
-    from src.dst.data import build_dst_data
+    from src.dst.data import build_data
 
-    df = build_dst_data()
+    df = build_data()
     assert df["is_dome"].isin([0, 1]).all()
     assert df["is_dome"].sum() > 0  # at least one dome row
     assert (df["is_dome"] == 0).sum() > 0  # and at least one outdoors row
@@ -265,7 +265,7 @@ def test_build_dst_data_is_dome_maps_roof(synthetic_parquets):
 @pytest.mark.unit
 def test_build_dst_data_logo_fallback_on_nfl_error(synthetic_parquets, monkeypatch):
     """If ``nfl.import_team_desc`` raises, headshot_url defaults to empty str
-    (covers the ``except Exception`` branch at the bottom of build_dst_data)."""
+    (covers the ``except Exception`` branch at the bottom of build_data)."""
     import src.dst.data as dst_data
 
     def _boom():
@@ -273,17 +273,17 @@ def test_build_dst_data_logo_fallback_on_nfl_error(synthetic_parquets, monkeypat
 
     monkeypatch.setattr(dst_data.nfl, "import_team_desc", _boom)
 
-    df = dst_data.build_dst_data()
+    df = dst_data.build_data()
     assert (df["headshot_url"] == "").all()
 
 
 @pytest.mark.unit
 def test_filter_to_dst_is_identity():
-    """``filter_to_dst`` must return a copy equal to the input frame."""
-    from src.dst.data import filter_to_dst
+    """``filter_to_position`` must return a copy equal to the input frame."""
+    from src.dst.data import filter_to_position
 
     df = pd.DataFrame({"team": ["KC", "BUF"], "season": [2024, 2024], "week": [1, 1]})
-    out = filter_to_dst(df)
+    out = filter_to_position(df)
     pd.testing.assert_frame_equal(out, df)
     # Copy, not the same reference
     assert out is not df

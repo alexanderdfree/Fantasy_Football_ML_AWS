@@ -12,8 +12,8 @@ from src.shared.training import (
     make_dataloaders,
 )
 
-K_TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
-K_LOSS_WEIGHTS = {
+TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
+LOSS_WEIGHTS = {
     "fg_yard_points": 1.0,
     "pat_points": 1.0,
     "fg_misses": 1.0,
@@ -24,7 +24,7 @@ K_LOSS_WEIGHTS = {
 @pytest.mark.unit
 class TestMultiTargetLoss:
     def test_output_types(self, make_tensors):
-        loss_fn = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         preds, targets = make_tensors()
         combined, components = loss_fn(preds, targets)
         assert isinstance(combined, torch.Tensor)
@@ -32,7 +32,7 @@ class TestMultiTargetLoss:
 
     def test_component_keys(self, make_tensors):
         """Kicker loss has 4 per-target components plus combined."""
-        loss_fn = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
         assert set(components.keys()) == {
@@ -44,14 +44,14 @@ class TestMultiTargetLoss:
         }
 
     def test_components_are_scalars(self, make_tensors):
-        loss_fn = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
         for key, val in components.items():
             assert isinstance(val, float), f"{key} is not a float"
 
     def test_zero_loss_on_perfect_prediction(self):
-        loss_fn = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         targets = {
             "fg_yard_points": torch.tensor([9.0, 12.0]),
             "pat_points": torch.tensor([3.0, 2.0]),
@@ -64,11 +64,11 @@ class TestMultiTargetLoss:
     def test_weights_affect_loss(self, make_tensors):
         preds, targets = make_tensors()
         loss_equal = MultiTargetLoss(
-            target_names=K_TARGETS,
-            loss_weights={t: 1.0 for t in K_TARGETS},
+            target_names=TARGETS,
+            loss_weights={t: 1.0 for t in TARGETS},
         )
         loss_fg_heavy = MultiTargetLoss(
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             loss_weights={
                 "fg_yard_points": 10.0,
                 "pat_points": 1.0,
@@ -81,14 +81,14 @@ class TestMultiTargetLoss:
         assert c1.item() != c2.item()
 
     def test_combined_loss_is_positive(self, make_tensors):
-        loss_fn = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         preds, targets = make_tensors()
         combined, _ = loss_fn(preds, targets)
         assert combined.item() >= 0
 
     def test_backward_pass(self):
-        loss_fn = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
-        preds = {k: torch.randn(5, requires_grad=True) for k in K_TARGETS}
+        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        preds = {k: torch.randn(5, requires_grad=True) for k in TARGETS}
         targets = {k: torch.randn(5) for k in preds}
         combined, _ = loss_fn(preds, targets)
         combined.backward()
@@ -164,24 +164,24 @@ class TestMultiHeadTrainer:
         X_train = np.random.randn(n_train, d).astype(np.float32)
         X_val = np.random.randn(n_val, d).astype(np.float32)
 
-        y_train = {t: np.random.randn(n_train).astype(np.float32) for t in K_TARGETS}
-        y_val = {t: np.random.randn(n_val).astype(np.float32) for t in K_TARGETS}
+        y_train = {t: np.random.randn(n_train).astype(np.float32) for t in TARGETS}
+        y_val = {t: np.random.randn(n_val).astype(np.float32) for t in TARGETS}
 
-        y_train["total"] = sum(y_train[t] for t in K_TARGETS)
-        y_val["total"] = sum(y_val[t] for t in K_TARGETS)
+        y_train["total"] = sum(y_train[t] for t in TARGETS)
+        y_val["total"] = sum(y_val[t] for t in TARGETS)
 
         train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
 
         model = MultiHeadNet(
             input_dim=d,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[16, 8],
             head_hidden=4,
             dropout=0.1,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
-        criterion = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
+        criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         device = torch.device("cpu")
 
         trainer = MultiHeadTrainer(
@@ -190,7 +190,7 @@ class TestMultiHeadTrainer:
             scheduler,
             criterion,
             device,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             patience=5,
         )
         return trainer, train_loader, val_loader
@@ -232,22 +232,22 @@ class TestMultiHeadTrainer:
         n_train, n_val, d = 32, 32, 3
         X_train = np.random.randn(n_train, d).astype(np.float32)
         X_val = np.random.randn(n_val, d).astype(np.float32) * 5 + 10
-        y_train = {t: np.random.randn(n_train).astype(np.float32) for t in K_TARGETS}
-        y_train["total"] = sum(y_train[t] for t in K_TARGETS)
-        y_val = {t: np.random.randn(n_val).astype(np.float32) * 10 for t in K_TARGETS}
-        y_val["total"] = sum(y_val[t] for t in K_TARGETS)
+        y_train = {t: np.random.randn(n_train).astype(np.float32) for t in TARGETS}
+        y_train["total"] = sum(y_train[t] for t in TARGETS)
+        y_val = {t: np.random.randn(n_val).astype(np.float32) * 10 for t in TARGETS}
+        y_val["total"] = sum(y_val[t] for t in TARGETS)
 
         train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
         model = MultiHeadNet(
             input_dim=d,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[256, 128],
             head_hidden=64,
             dropout=0.0,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, factor=0.5)
-        criterion = MultiTargetLoss(target_names=K_TARGETS, loss_weights=K_LOSS_WEIGHTS)
+        criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
 
         trainer = MultiHeadTrainer(
             model,
@@ -255,7 +255,7 @@ class TestMultiHeadTrainer:
             scheduler,
             criterion,
             torch.device("cpu"),
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             patience=3,
         )
         history = trainer.train(train_loader, val_loader, n_epochs=500)

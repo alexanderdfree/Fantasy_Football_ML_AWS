@@ -302,10 +302,10 @@ def player_df_factory():
 # Legacy default — retained for backward compatibility with shared tests that
 # exercise MultiTargetLoss / MultiHeadNetWithHistory against the pre-migration
 # fantasy-point-component target schema. New shared tests should prefer
-# ``TARGETS_RB_RAW`` and the ``tiny_synthetic_rb_raw`` fixture below.
+# ``TARGETS_RB_RAW`` and the ``tiny_synthetic_raw`` fixture below.
 TARGETS_DEFAULT = ["rushing_yards", "receiving_yards", "rushing_tds"]
 
-# Raw-stat RB target list (matches ``RB_TARGETS`` in ``RB/rb_config.py`` after
+# Raw-stat RB target list (matches ``TARGETS`` in ``RB/rb_config.py`` after
 # the target migration). Use this for new shared tests that want to mirror the
 # production target schema without depending on per-position config imports.
 TARGETS_RB_RAW = [
@@ -359,7 +359,7 @@ def history_data_factory():
 
 
 @pytest.fixture
-def tiny_synthetic_rb_raw(history_data_factory):
+def tiny_synthetic_raw(history_data_factory):
     """Synthetic RB training triple with raw-stat targets (post-migration).
 
     Wraps ``history_data_factory`` pre-configured with ``TARGETS_RB_RAW`` so

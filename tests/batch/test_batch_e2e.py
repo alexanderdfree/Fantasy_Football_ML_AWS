@@ -98,7 +98,7 @@ def test_dry_run_never_calls_boto3(tmp_path, monkeypatch):
 def test_dry_run_skips_position_pipeline_import(tmp_path, monkeypatch):
     """Dry-run should not import the heavy QB pipeline module.
 
-    If dry-run accidentally called the real run_qb_pipeline, any of the
+    If dry-run accidentally called the real run, any of the
     heavy src.shared.pipeline imports (matplotlib, lightgbm, torch training
     loops) would fire. The position-runner-module import check is a fast,
     deterministic proxy.

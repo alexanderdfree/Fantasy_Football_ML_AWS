@@ -7,7 +7,7 @@ cover the happy path + most of argparse. This file fills in:
 - ``sync_raw_data`` paginator loop
 - ``_validate_remote_tarball`` missing-bench / not-a-regular-file /
   malformed-JSON / missing-NN-weights branches
-- ``_run_rb_gate_ablation`` — mocks ``run_rb_pipeline`` so all three
+- ``_run_rb_gate_ablation`` — mocks ``run`` so all three
   variants complete in-process, with + without gate-AUC rows
 - the ``--ablation rb-gate`` CLI dispatch path
 - the ``result is None`` RuntimeError branch
@@ -213,9 +213,7 @@ def test_run_rb_gate_ablation_runs_three_variants(monkeypatch, capsys):
         }
 
     # Patch the module-level import the ablation function does inside.
-    monkeypatch.setattr(
-        "src.rb.run_pipeline.run_rb_pipeline", _canned_run_rb_pipeline, raising=False
-    )
+    monkeypatch.setattr("src.rb.run_pipeline.run", _canned_run_rb_pipeline, raising=False)
 
     import pandas as pd
 
@@ -250,7 +248,7 @@ def test_run_rb_gate_ablation_drop_gate_when_margins_are_tiny(monkeypatch, capsy
             }
         }
 
-    monkeypatch.setattr("src.rb.run_pipeline.run_rb_pipeline", _canned, raising=False)
+    monkeypatch.setattr("src.rb.run_pipeline.run", _canned, raising=False)
     import pandas as pd
 
     t._run_rb_gate_ablation(pd.DataFrame({"x": [1]}), pd.DataFrame(), pd.DataFrame(), seed=1)
@@ -264,7 +262,7 @@ def test_run_rb_gate_ablation_raises_if_attn_metrics_missing(monkeypatch):
     from src.batch import train as t
 
     monkeypatch.setattr(
-        "src.rb.run_pipeline.run_rb_pipeline",
+        "src.rb.run_pipeline.run",
         lambda *a, **k: {"ridge_metrics": {"total": {"mae": 5.0}}},  # no attn
         raising=False,
     )

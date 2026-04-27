@@ -22,25 +22,25 @@ import pytest
 
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_pipeline
-from src.wr.config import WR_CONFIG_TINY, WR_TARGETS
-from src.wr.data import filter_to_wr
-from src.wr.features import add_wr_specific_features, fill_wr_nans, get_wr_feature_columns
-from src.wr.targets import compute_wr_targets
+from src.wr.config import CONFIG_TINY, TARGETS
+from src.wr.data import filter_to_position
+from src.wr.features import add_specific_features, fill_nans, get_feature_columns
+from src.wr.targets import compute_targets
 
 SPLITS_DIR = Path(__file__).resolve().parents[2] / "data" / "splits"
-_ALL_TARGETS = tuple(WR_TARGETS)
+_ALL_TARGETS = tuple(TARGETS)
 
 
 def _build_tiny_cfg() -> dict:
     """Assemble the tiny config with position-specific callables attached."""
-    cfg = dict(WR_CONFIG_TINY)
+    cfg = dict(CONFIG_TINY)
     cfg.update(
         {
-            "filter_fn": filter_to_wr,
-            "compute_targets_fn": compute_wr_targets,
-            "add_features_fn": add_wr_specific_features,
-            "fill_nans_fn": fill_wr_nans,
-            "get_feature_columns_fn": get_wr_feature_columns,
+            "filter_fn": filter_to_position,
+            "compute_targets_fn": compute_targets,
+            "add_features_fn": add_specific_features,
+            "fill_nans_fn": fill_nans,
+            "get_feature_columns_fn": get_feature_columns,
             "aggregate_fn": aggregate_fn_for("WR"),
         }
     )

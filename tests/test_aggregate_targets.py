@@ -7,7 +7,7 @@ import torch
 
 from src.config import SCORING_PPR
 from src.data.loader import compute_fantasy_points
-from src.dst.targets import compute_dst_targets
+from src.dst.targets import compute_targets
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
 
@@ -123,16 +123,16 @@ def _dst_sample_preds_numpy():
     }
 
 
-def test_dst_aggregator_matches_compute_dst_targets_numpy():
-    """predictions_to_fantasy_points('DST', ...) on true stats must match compute_dst_targets fantasy_points."""
+def test_aggregator_matches_compute_dst_targets_numpy():
+    """predictions_to_fantasy_points('DST', ...) on true stats must match compute_targets fantasy_points."""
     preds = _dst_sample_preds_numpy()
     df = pd.DataFrame(preds)
-    expected = compute_dst_targets(df)["fantasy_points"].values
+    expected = compute_targets(df)["fantasy_points"].values
     actual = predictions_to_fantasy_points("DST", preds, "ppr")
     np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-9)
 
 
-def test_dst_aggregator_scalar_values():
+def test_aggregator_scalar_values():
     """Hand-computed: all 3 rows."""
     preds = _dst_sample_preds_numpy()
     actual = predictions_to_fantasy_points("DST", preds, "ppr")
@@ -142,7 +142,7 @@ def test_dst_aggregator_scalar_values():
     np.testing.assert_allclose(actual, [27.0, -6.0, 45.0], atol=1e-9)
 
 
-def test_dst_aggregator_works_on_torch_tensors():
+def test_aggregator_works_on_torch_tensors():
     """The NN forward pass calls aggregate_fn on torch tensors — must not break."""
     preds_np = _dst_sample_preds_numpy()
     preds_torch = {k: torch.tensor(v, dtype=torch.float32) for k, v in preds_np.items()}
@@ -156,7 +156,7 @@ def test_dst_aggregator_works_on_torch_tensors():
     )
 
 
-def test_dst_aggregator_tier_boundaries_vectorized():
+def test_aggregator_tier_boundaries_vectorized():
     """Sweep PA/YA across every tier edge — must match the scalar helpers."""
     from src.dst.targets import _pts_allowed_to_bonus, _yds_allowed_to_bonus
 

@@ -3,8 +3,9 @@ import os
 import nfl_data_py as nfl
 import pandas as pd
 
-from src.config import CACHE_DIR, SEASONS
-from src.k.config import K_MIN_GAMES, K_SEASONS
+from src.config import CACHE_DIR
+from src.config import SEASONS as GLOBAL_SEASONS
+from src.k.config import MIN_GAMES, SEASONS
 
 # ---------------------------------------------------------------------------
 # PBP-based kicker reconstruction (2015-2024)
@@ -185,13 +186,13 @@ def reconstruct_kicker_weekly_from_pbp(
 # ---------------------------------------------------------------------------
 
 
-def load_kicker_data() -> pd.DataFrame:
+def load_data() -> pd.DataFrame:
     """Load kicker data combining PBP reconstruction (2015-2024) + weekly (2025).
 
     Merges schedule info for Vegas lines and home/away.
     """
-    pbp_seasons = [s for s in K_SEASONS if s <= 2024]
-    weekly_seasons = [s for s in K_SEASONS if s >= 2025]
+    pbp_seasons = [s for s in SEASONS if s <= 2024]
+    weekly_seasons = [s for s in SEASONS if s >= 2025]
 
     parts = []
 
@@ -203,7 +204,9 @@ def load_kicker_data() -> pd.DataFrame:
 
     # --- Existing weekly data for 2025+ ---
     if weekly_seasons:
-        weekly = pd.read_parquet(f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet")
+        weekly = pd.read_parquet(
+            f"{CACHE_DIR}/weekly_{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}.parquet"
+        )
         k_weekly = weekly[
             (weekly["position"] == "K")
             & (weekly["season_type"] == "REG")
@@ -240,10 +243,12 @@ def load_kicker_data() -> pd.DataFrame:
 
     # Apply min-games filter
     games_per_season = k_df.groupby(["player_id", "season"])["week"].transform("count")
-    k_df = k_df[games_per_season >= K_MIN_GAMES].copy()
+    k_df = k_df[games_per_season >= MIN_GAMES].copy()
 
     # --- Merge schedule info (is_home, Vegas lines) ---
-    schedules = pd.read_parquet(f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
+    schedules = pd.read_parquet(
+        f"{CACHE_DIR}/schedules_{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}.parquet"
+    )
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
 
     home = schedules_reg[["season", "week", "home_team", "spread_line", "total_line"]].copy()
@@ -470,15 +475,15 @@ def reconstruct_kicker_kicks_from_pbp(
     return result
 
 
-def load_kicker_kicks(k_df: pd.DataFrame) -> pd.DataFrame:
+def load_kicks(k_df: pd.DataFrame) -> pd.DataFrame:
     """Load per-kick records aligned with the weekly kicker DataFrame.
 
-    Called separately from `load_kicker_data` so the serving path (app.py)
+    Called separately from `load_data` so the serving path (app.py)
     doesn't pay the PBP re-parse cost. Returns a DataFrame restricted to the
-    (player_id, season) pairs that survive the K_MIN_GAMES filter, with
+    (player_id, season) pairs that survive the MIN_GAMES filter, with
     `is_home` merged from the schedule-joined weekly DataFrame.
     """
-    kicks_df = reconstruct_kicker_kicks_from_pbp(K_SEASONS)
+    kicks_df = reconstruct_kicker_kicks_from_pbp(SEASONS)
 
     valid_keys = k_df[["player_id", "season"]].drop_duplicates()
     kicks_df = kicks_df.merge(valid_keys, on=["player_id", "season"], how="inner")
@@ -490,12 +495,12 @@ def load_kicker_kicks(k_df: pd.DataFrame) -> pd.DataFrame:
     return kicks_df
 
 
-def filter_to_k(df: pd.DataFrame) -> pd.DataFrame:
+def filter_to_position(df: pd.DataFrame) -> pd.DataFrame:
     """Identity filter — kicker data is pre-filtered."""
     return df.copy()
 
 
-def kicker_season_split(k_df: pd.DataFrame) -> tuple:
+def season_split(k_df: pd.DataFrame) -> tuple:
     """Split kicker data by season (cross-season, matching other positions).
 
     Train: 2015-2023, Val: 2024, Test: 2025

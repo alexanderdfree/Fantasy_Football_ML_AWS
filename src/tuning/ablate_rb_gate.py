@@ -24,7 +24,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.rb.run_pipeline import RB_CONFIG, run_rb_pipeline  # noqa: E402
+from src.rb.run_pipeline import CONFIG, run  # noqa: E402
 from src.shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso  # noqa: E402
 
 ABLATION_NAME = "rb_td_gate"
@@ -67,7 +67,7 @@ def _apply_variant_b(cfg: dict) -> dict:
     """Variant B: Poisson NLL on TDs with no gate on TDs — the PR #96 shipping
     config before the TD-gate-restoration PR. Explicitly forces
     ``gated_targets = ["receptions"]`` so this variant stays meaningful even
-    as the live RB_CONFIG's gated_targets list evolves."""
+    as the live CONFIG's gated_targets list evolves."""
     cfg = copy.deepcopy(cfg)
     cfg["gated_targets"] = ["receptions"]
     return cfg
@@ -93,11 +93,11 @@ VARIANTS = {
 
 def run_variant(variant: str, seed: int) -> dict:
     label, fn = VARIANTS[variant]
-    cfg = fn(RB_CONFIG)
+    cfg = fn(CONFIG)
     print(f"\n{'=' * 72}")
     print(f"Variant {variant}: {label}")
     print(f"{'=' * 72}")
-    result = run_rb_pipeline(seed=seed, config=cfg)
+    result = run(seed=seed, config=cfg)
 
     # compute_target_metrics stores per-model metrics on ``result["model_metrics"]``
     # or similar — read the attention-NN entry since that's the gated path.

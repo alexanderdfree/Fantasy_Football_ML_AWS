@@ -6,23 +6,23 @@ from src.shared.feature_build import (
     rolling_agg,
     safe_divide,
 )
-from src.wr.config import WR_INCLUDE_FEATURES
+from src.wr.config import INCLUDE_FEATURES
 from src.wr.data import compute_team_wr_totals
 
 
-def get_wr_feature_columns() -> list[str]:
+def get_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the WR model."""
-    return flatten_include_features(WR_INCLUDE_FEATURES)
+    return flatten_include_features(INCLUDE_FEATURES)
 
 
-def add_wr_specific_features(train_df, val_df, test_df):
+def add_specific_features(train_df, val_df, test_df):
     """Add 8 WR-specific engineered features to each split."""
     for df in [train_df, val_df, test_df]:
-        _compute_wr_features(df)
+        _compute_features(df)
     return train_df, val_df, test_df
 
 
-def _compute_wr_features(df: pd.DataFrame) -> None:
+def _compute_features(df: pd.DataFrame) -> None:
     """Compute all 8 WR-specific features in-place."""
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
@@ -55,6 +55,6 @@ def _compute_wr_features(df: pd.DataFrame) -> None:
     df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
 
 
-def fill_wr_nans(train_df, val_df, test_df, wr_feature_cols):
+def fill_nans(train_df, val_df, test_df, wr_feature_cols):
     """Fill NaNs in WR-specific feature columns using training set statistics."""
     return fill_nans_with_train_means(train_df, val_df, test_df, wr_feature_cols)

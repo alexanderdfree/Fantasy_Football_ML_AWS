@@ -93,26 +93,26 @@ def _prepare_cv_folds(pos, cfg):
     print(f"\nPreparing CV folds for {pos}...")
     if pos == "K":
         # Kickers use a PBP-reconstructed dataset (2015+), not the general splits.
-        from src.k.data import kicker_season_split, load_kicker_data
-        from src.k.features import compute_k_features
-        from src.k.targets import compute_k_targets
+        from src.k.data import load_data, season_split
+        from src.k.features import compute_features
+        from src.k.targets import compute_targets
 
-        k_df = load_kicker_data()
-        k_df = compute_k_targets(k_df)
-        compute_k_features(k_df)
-        train_df, val_df, _ = kicker_season_split(k_df)
+        k_df = load_data()
+        k_df = compute_targets(k_df)
+        compute_features(k_df)
+        train_df, val_df, _ = season_split(k_df)
         full_df = pd.concat([train_df, val_df], ignore_index=True)
         folds = expanding_window_folds(full_df, min_train_season=2015)
     elif pos == "DST":
         # DST builds team-level data internally, not from the general splits.
         from src.config import TRAIN_SEASONS, VAL_SEASONS
-        from src.dst.data import build_dst_data
-        from src.dst.features import compute_dst_features
-        from src.dst.targets import compute_dst_targets
+        from src.dst.data import build_data
+        from src.dst.features import compute_features
+        from src.dst.targets import compute_targets
 
-        dst_df = build_dst_data()
-        dst_df = compute_dst_targets(dst_df)
-        compute_dst_features(dst_df)
+        dst_df = build_data()
+        dst_df = compute_targets(dst_df)
+        compute_features(dst_df)
         train_df = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()
         val_df = dst_df[dst_df["season"].isin(VAL_SEASONS)].copy()
         full_df = pd.concat([train_df, val_df], ignore_index=True)
@@ -209,23 +209,23 @@ def _run_comparison(pos, cfg, best_params):
     print(f"{'=' * 70}")
 
     if pos == "K":
-        from src.k.data import kicker_season_split, load_kicker_data
-        from src.k.features import compute_k_features
-        from src.k.targets import compute_k_targets
+        from src.k.data import load_data, season_split
+        from src.k.features import compute_features
+        from src.k.targets import compute_targets
 
-        k_df = load_kicker_data()
-        k_df = compute_k_targets(k_df)
-        compute_k_features(k_df)
-        train_df, val_df, test_df = kicker_season_split(k_df)
+        k_df = load_data()
+        k_df = compute_targets(k_df)
+        compute_features(k_df)
+        train_df, val_df, test_df = season_split(k_df)
     elif pos == "DST":
         from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
-        from src.dst.data import build_dst_data
-        from src.dst.features import compute_dst_features
-        from src.dst.targets import compute_dst_targets
+        from src.dst.data import build_data
+        from src.dst.features import compute_features
+        from src.dst.targets import compute_targets
 
-        dst_df = build_dst_data()
-        dst_df = compute_dst_targets(dst_df)
-        compute_dst_features(dst_df)
+        dst_df = build_data()
+        dst_df = compute_targets(dst_df)
+        compute_features(dst_df)
         train_df = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()
         val_df = dst_df[dst_df["season"].isin(VAL_SEASONS)].copy()
         test_df = dst_df[dst_df["season"].isin(TEST_SEASONS)].copy()

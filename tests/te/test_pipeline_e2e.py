@@ -1,6 +1,6 @@
 """End-to-end smoke test for the TE pipeline.
 
-Exercises `src.shared.pipeline.run_pipeline(..., TE_CONFIG_TINY)` on a deterministic
+Exercises `src.shared.pipeline.run_pipeline(..., CONFIG_TINY)` on a deterministic
 tiny synthetic dataset (50 players x 2 seasons x 17 weeks, seed=42) using
 shrunken hyperparameters (2-layer x 8-unit NN, 1 epoch). Asserts:
 
@@ -25,15 +25,15 @@ import numpy as np
 import pytest
 
 from src.shared.pipeline import run_pipeline
-from src.te.config import TE_CONFIG_TINY, TE_TARGETS
-from src.te.data import filter_to_te
+from src.te.config import CONFIG_TINY, TARGETS
+from src.te.data import filter_to_position
 from src.te.features import (
-    add_te_specific_features,
-    fill_te_nans,
-    get_te_feature_columns,
+    add_specific_features,
+    fill_nans,
+    get_feature_columns,
 )
-from src.te.targets import compute_te_targets
-from tests.te.conftest import _build_tiny_te_splits
+from src.te.targets import compute_targets
+from tests.te.conftest import _build_tiny_splits
 
 pytestmark = [
     pytest.mark.e2e,
@@ -43,14 +43,14 @@ pytestmark = [
 
 
 def _build_tiny_cfg() -> dict:
-    """Bundle TE_CONFIG_TINY with the TE callables required by run_pipeline."""
+    """Bundle CONFIG_TINY with the TE callables required by run_pipeline."""
     return {
-        **TE_CONFIG_TINY,
-        "filter_fn": filter_to_te,
-        "compute_targets_fn": compute_te_targets,
-        "add_features_fn": add_te_specific_features,
-        "fill_nans_fn": fill_te_nans,
-        "get_feature_columns_fn": get_te_feature_columns,
+        **CONFIG_TINY,
+        "filter_fn": filter_to_position,
+        "compute_targets_fn": compute_targets,
+        "add_features_fn": add_specific_features,
+        "fill_nans_fn": fill_nans,
+        "get_feature_columns_fn": get_feature_columns,
     }
 
 
@@ -60,7 +60,7 @@ def _run_tiny_pipeline(workdir, seed: int = 42):
     chdir isolates ``TE/outputs`` writes; symlinked ``data/`` lets the
     pipeline read schedule parquets for weather features.
     """
-    train, val, test = _build_tiny_te_splits(seed=seed)
+    train, val, test = _build_tiny_splits(seed=seed)
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     cwd = os.getcwd()
@@ -104,9 +104,9 @@ def pipeline_run_repeat(pipeline_run, tmp_path_factory):
 
 
 class TestPipelineE2E:
-    def test_pipeline_completes_and_produces_finite_predictions(self, te_tiny_splits, pipeline_run):
+    def test_pipeline_completes_and_produces_finite_predictions(self, tiny_splits, pipeline_run):
         """Smoke: pipeline runs cleanly, predictions finite and correctly shaped."""
-        _, _, test = te_tiny_splits
+        _, _, test = tiny_splits
         result = pipeline_run
 
         # Structural assertions.
@@ -123,7 +123,7 @@ class TestPipelineE2E:
             assert np.isfinite(arr).all(), f"{pred_col} has NaN/Inf"
 
         # Per-target predictions also present and finite.
-        for target in TE_TARGETS:
+        for target in TARGETS:
             for model in ("ridge", "nn"):
                 col = f"pred_{model}_{target}"
                 assert col in test_df.columns

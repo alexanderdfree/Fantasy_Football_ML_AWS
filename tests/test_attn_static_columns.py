@@ -20,23 +20,28 @@ from __future__ import annotations
 
 import pytest
 
-from src.dst.config import DST_ATTN_STATIC_FEATURES
-from src.dst.features import get_dst_feature_columns
+import src.dst.config as dst_cfg
+import src.dst.features as dst_features
+import src.k.config as k_cfg
+import src.qb.config as qb_cfg
+import src.qb.features as qb_features
+import src.rb.config as rb_cfg
+import src.rb.features as rb_features
+import src.te.config as te_cfg
+import src.te.features as te_features
+import src.wr.config as wr_cfg
+import src.wr.features as wr_features
 from src.features.engineer import get_attn_static_columns
-from src.k.config import (
-    K_ALL_FEATURES,
-    K_ATTN_L1_FEATURES,
-    K_ATTN_STATIC_FEATURES,
-    K_CONTEXTUAL_FEATURES,
-)
-from src.qb.config import QB_ATTN_STATIC_CATEGORIES, QB_ATTN_STATIC_FEATURES
-from src.qb.features import get_qb_feature_columns
-from src.rb.config import RB_ATTN_STATIC_CATEGORIES, RB_ATTN_STATIC_FEATURES
-from src.rb.features import get_rb_feature_columns
-from src.te.config import TE_ATTN_STATIC_CATEGORIES, TE_ATTN_STATIC_FEATURES
-from src.te.features import get_te_feature_columns
-from src.wr.config import WR_ATTN_STATIC_CATEGORIES, WR_ATTN_STATIC_FEATURES
-from src.wr.features import get_wr_feature_columns
+
+# Per-position resolvers — keyed by uppercase position label so the test
+# parametrize values stay as data, not symbol references.
+_POSITION_CFG = {
+    "QB": (qb_cfg, qb_features),
+    "RB": (rb_cfg, rb_features),
+    "WR": (wr_cfg, wr_features),
+    "TE": (te_cfg, te_features),
+    "DST": (dst_cfg, dst_features),
+}
 
 # Columns that must NEVER appear in the attention static set — they're
 # either temporal aggregates (leaking what the attention branch already
@@ -91,28 +96,13 @@ _EXPECTED_SKILL_STATIC = {
 # guard — if the count changes unexpectedly (feature added / renamed), the
 # test fails loudly and you re-check on purpose instead of silently
 # retraining on a different feature set.
-_EXPECTED_COUNTS = {
-    "QB": len(QB_ATTN_STATIC_FEATURES),
-    "RB": len(RB_ATTN_STATIC_FEATURES),
-    "WR": len(WR_ATTN_STATIC_FEATURES),
-    "TE": len(TE_ATTN_STATIC_FEATURES),
-    "DST": len(DST_ATTN_STATIC_FEATURES),
-}
+_EXPECTED_COUNTS = {pos: len(cfg.ATTN_STATIC_FEATURES) for pos, (cfg, _) in _POSITION_CFG.items()}
 
 
 def _static_cols(pos: str) -> list[str]:
     """Resolve the attention static column set for ``pos`` from the config."""
-    if pos == "QB":
-        return get_attn_static_columns(get_qb_feature_columns(), QB_ATTN_STATIC_FEATURES)
-    if pos == "RB":
-        return get_attn_static_columns(get_rb_feature_columns(), RB_ATTN_STATIC_FEATURES)
-    if pos == "WR":
-        return get_attn_static_columns(get_wr_feature_columns(), WR_ATTN_STATIC_FEATURES)
-    if pos == "TE":
-        return get_attn_static_columns(get_te_feature_columns(), TE_ATTN_STATIC_FEATURES)
-    if pos == "DST":
-        return get_attn_static_columns(get_dst_feature_columns(), DST_ATTN_STATIC_FEATURES)
-    raise ValueError(pos)
+    cfg, features = _POSITION_CFG[pos]
+    return get_attn_static_columns(features.get_feature_columns(), cfg.ATTN_STATIC_FEATURES)
 
 
 @pytest.mark.unit
@@ -148,29 +138,27 @@ class TestAttnStaticWhitelistExcludesSpecific:
     (``yards_per_carry_L3`` etc.) used to leak into the attention static set
     because their names didn't match the old prefix/suffix blacklist."""
 
-    def test_rb_specific_leaks_fixed(self):
+    def test_specific_leaks_fixed(self):
         leaks = set(_static_cols("RB")) & _FORBIDDEN_RB_SPECIFIC
         assert not leaks, f"RB-specific features leaked into attention static: {sorted(leaks)}"
 
-    def test_qb_specific_leaks_fixed(self):
+    def test_specific_leaks_fixed(self):
         leaks = set(_static_cols("QB")) & _FORBIDDEN_QB_SPECIFIC
         assert not leaks, f"QB-specific features leaked into attention static: {sorted(leaks)}"
 
-    def test_wr_specific_leaks_fixed(self):
+    def test_specific_leaks_fixed(self):
         leaks = set(_static_cols("WR")) & _FORBIDDEN_WR_SPECIFIC
         assert not leaks, f"WR-specific features leaked into attention static: {sorted(leaks)}"
 
-    def test_te_specific_leaks_fixed(self):
+    def test_specific_leaks_fixed(self):
         leaks = set(_static_cols("TE")) & _FORBIDDEN_TE_SPECIFIC
         assert not leaks, f"TE-specific features leaked into attention static: {sorted(leaks)}"
 
-    def test_dst_specific_excluded(self):
-        """Every DST_SPECIFIC feature is a rolling/ewma/trend aggregate; none
+    def test_specific_excluded(self):
+        """Every SPECIFIC feature is a rolling/ewma/trend aggregate; none
         should appear in the attention static set."""
-        from src.dst.config import DST_SPECIFIC_FEATURES
-
-        leaks = set(_static_cols("DST")) & set(DST_SPECIFIC_FEATURES)
-        assert not leaks, f"DST_SPECIFIC features leaked into attention static: {sorted(leaks)}"
+        leaks = set(_static_cols("DST")) & set(dst_cfg.SPECIFIC_FEATURES)
+        assert not leaks, f"SPECIFIC features leaked into attention static: {sorted(leaks)}"
 
 
 @pytest.mark.unit
@@ -184,10 +172,10 @@ class TestAttnStaticWhitelistIncludesStatic:
         missing = _EXPECTED_SKILL_STATIC - got
         assert not missing, f"{pos} attention static set missing expected columns: {missing}"
 
-    def test_qb_prior_season_present(self):
+    def test_prior_season_present(self):
         assert "prior_season_mean_passing_yards" in _static_cols("QB")
 
-    def test_dst_contextual_present(self):
+    def test_contextual_present(self):
         """DST static set keeps is_home, is_dome, spread/total, prior-season means."""
         got = set(_static_cols("DST"))
         for col in ("is_home", "is_dome", "spread_line", "total_line"):
@@ -209,18 +197,12 @@ class TestAttnStaticWhitelistShape:
         cols = _static_cols(pos)
         assert len(cols) == len(set(cols)), f"{pos} attention static has duplicates"
 
-    @pytest.mark.parametrize(
-        "pos,categories",
-        [
-            ("QB", QB_ATTN_STATIC_CATEGORIES),
-            ("RB", RB_ATTN_STATIC_CATEGORIES),
-            ("WR", WR_ATTN_STATIC_CATEGORIES),
-            ("TE", TE_ATTN_STATIC_CATEGORIES),
-        ],
-    )
-    def test_categories_exclude_temporal_buckets(self, pos, categories):
+    @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE"])
+    def test_categories_exclude_temporal_buckets(self, pos):
         """Config-level invariant: the category whitelist must not include
         ``rolling`` / ``ewma`` / ``trend`` / ``share`` / ``specific``."""
+        cfg, _ = _POSITION_CFG[pos]
+        categories = cfg.ATTN_STATIC_CATEGORIES
         forbidden = {"rolling", "ewma", "trend", "share", "specific"}
         bad = set(categories) & forbidden
         assert not bad, f"{pos}_ATTN_STATIC_CATEGORIES includes forbidden bucket: {sorted(bad)}"
@@ -251,12 +233,12 @@ class TestGetAttnStaticColumnsFunction:
 # truth (attn_static_from_df=True), so the filter is a no-op at runtime. The
 # invariants are (a) no rolling/trend/temporal aggregate engineered features
 # in the static list (week and other game-time scalars are fine), (b) the new
-# L1 engineered columns stay OUT of K_ALL_FEATURES so Ridge and the base NN
+# L1 engineered columns stay OUT of ALL_FEATURES so Ridge and the base NN
 # never see them.
 # ---------------------------------------------------------------------------
 
-_K_FORBIDDEN_STATIC_COLS = {
-    # L3/L5/L8 rolling features engineered by compute_k_features
+_FORBIDDEN_STATIC_COLS = {
+    # L3/L5/L8 rolling features engineered by compute_features
     "fg_attempts_L3",
     "fg_accuracy_L5",
     "pat_volume_L3",
@@ -275,34 +257,34 @@ _K_FORBIDDEN_STATIC_COLS = {
 @pytest.mark.unit
 class TestKAttentionStaticFeatures:
     def test_no_l3_l5_features_in_static_set(self):
-        leaks = set(K_ATTN_STATIC_FEATURES) & _K_FORBIDDEN_STATIC_COLS
-        assert not leaks, f"K_ATTN_STATIC_FEATURES contains L3/L5 rolling features: {sorted(leaks)}"
+        leaks = set(k_cfg.ATTN_STATIC_FEATURES) & _FORBIDDEN_STATIC_COLS
+        assert not leaks, f"K ATTN_STATIC_FEATURES contains L3/L5 rolling features: {sorted(leaks)}"
 
     def test_no_rolling_or_share_prefixes(self):
         leaks = [
             c
-            for c in K_ATTN_STATIC_FEATURES
+            for c in k_cfg.ATTN_STATIC_FEATURES
             if c.startswith("rolling_") or c.startswith("ewma_") or c.startswith("trend_")
         ]
-        assert not leaks, f"K_ATTN_STATIC_FEATURES has temporal prefixes: {leaks}"
+        assert not leaks, f"K ATTN_STATIC_FEATURES has temporal prefixes: {leaks}"
 
     def test_l1_features_excluded_from_k_all_features(self):
-        """Critical: the engineered L1 columns must NOT live in K_ALL_FEATURES,
+        """Critical: the engineered L1 columns must NOT live in K's ALL_FEATURES,
         or Ridge and the base NN would train on them — the exact leakage the
         attn_static_from_df path was designed to prevent."""
-        all_features = set(K_ALL_FEATURES)
-        leaks = set(K_ATTN_L1_FEATURES) & all_features
-        assert not leaks, f"L1 attention features leaked into K_ALL_FEATURES: {sorted(leaks)}"
+        all_features = set(k_cfg.ALL_FEATURES)
+        leaks = set(k_cfg.ATTN_L1_FEATURES) & all_features
+        assert not leaks, f"K L1 attention features leaked into ALL_FEATURES: {sorted(leaks)}"
 
     def test_column_count_matches_config(self):
         """Drift guard: unexpected count shift => feature added/removed silently."""
-        expected = len(K_ATTN_L1_FEATURES) + len(K_CONTEXTUAL_FEATURES)
-        assert len(K_ATTN_STATIC_FEATURES) == expected
+        expected = len(k_cfg.ATTN_L1_FEATURES) + len(k_cfg.CONTEXTUAL_FEATURES)
+        assert len(k_cfg.ATTN_STATIC_FEATURES) == expected
 
     def test_no_duplicates(self):
-        assert len(K_ATTN_STATIC_FEATURES) == len(set(K_ATTN_STATIC_FEATURES))
+        assert len(k_cfg.ATTN_STATIC_FEATURES) == len(set(k_cfg.ATTN_STATIC_FEATURES))
 
     def test_contextual_features_present(self):
-        got = set(K_ATTN_STATIC_FEATURES)
+        got = set(k_cfg.ATTN_STATIC_FEATURES)
         for col in ("is_home", "implied_team_total", "total_line", "game_wind"):
-            assert col in got, f"K_ATTN_STATIC_FEATURES missing {col}"
+            assert col in got, f"K ATTN_STATIC_FEATURES missing {col}"

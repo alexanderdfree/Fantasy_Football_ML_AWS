@@ -22,7 +22,7 @@ import torch
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
 from src.shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
-from src.wr.config import WR_LOSS_WEIGHTS, WR_TARGETS
+from src.wr.config import LOSS_WEIGHTS, TARGETS
 
 
 def _synthetic_wr_dataset(n: int = 800, n_features: int = 10, seed: int = 42):
@@ -79,7 +79,7 @@ def _synthetic_wr_dataset(n: int = 800, n_features: int = 10, seed: int = 42):
 
 
 def _total(d: dict) -> np.ndarray:
-    return sum(d[t] for t in WR_TARGETS)
+    return sum(d[t] for t in TARGETS)
 
 
 def _mae_total(preds_dict: dict, y_dict: dict) -> float:
@@ -89,8 +89,8 @@ def _mae_total(preds_dict: dict, y_dict: dict) -> float:
 
 def _baseline_mae(y_train: dict, y_val: dict) -> float:
     """Season-average baseline: predict train-set mean for every val row."""
-    per_target_mean = {t: float(np.mean(y_train[t])) for t in WR_TARGETS}
-    total_pred = sum(per_target_mean[t] for t in WR_TARGETS)
+    per_target_mean = {t: float(np.mean(y_train[t])) for t in TARGETS}
+    total_pred = sum(per_target_mean[t] for t in TARGETS)
     total_true = _total(y_val)
     return float(np.mean(np.abs(total_pred - total_true)))
 
@@ -104,14 +104,14 @@ def test_all_models_beat_season_average_baseline():
     baseline = _baseline_mae(y_train, y_val)
 
     # Ridge
-    ridge = RidgeMultiTarget(target_names=WR_TARGETS, alpha=1.0)
+    ridge = RidgeMultiTarget(target_names=TARGETS, alpha=1.0)
     ridge.fit(X_train, y_train)
     ridge_mae = _mae_total(ridge.predict(X_val), y_val)
     assert ridge_mae < baseline, f"Ridge {ridge_mae:.3f} >= baseline {baseline:.3f}"
 
     # LightGBM (tiny: 50 estimators, small leaves — learnable signal is simple)
     lgbm = LightGBMMultiTarget(
-        target_names=WR_TARGETS,
+        target_names=TARGETS,
         n_estimators=50,
         learning_rate=0.1,
         num_leaves=15,
@@ -143,12 +143,12 @@ def test_lightgbm_within_tolerance_of_ridge():
     """
     X_train, X_val, y_train, y_val = _synthetic_wr_dataset()
 
-    ridge = RidgeMultiTarget(target_names=WR_TARGETS, alpha=1.0)
+    ridge = RidgeMultiTarget(target_names=TARGETS, alpha=1.0)
     ridge.fit(X_train, y_train)
     ridge_mae = _mae_total(ridge.predict(X_val), y_val)
 
     lgbm = LightGBMMultiTarget(
-        target_names=WR_TARGETS,
+        target_names=TARGETS,
         n_estimators=500,
         learning_rate=0.1,
         num_leaves=15,
@@ -180,7 +180,7 @@ def test_nn_mae_within_30pct_of_lightgbm():
     X_train, X_val, y_train, y_val = _synthetic_wr_dataset()
 
     lgbm = LightGBMMultiTarget(
-        target_names=WR_TARGETS,
+        target_names=TARGETS,
         n_estimators=500,
         learning_rate=0.1,
         num_leaves=15,
@@ -211,14 +211,14 @@ def _train_tiny_nn_mae(X_train, X_val, y_train, y_val) -> float:
     train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=64)
     model = MultiHeadNet(
         input_dim=X_train.shape[1],
-        target_names=WR_TARGETS,
+        target_names=TARGETS,
         backbone_layers=[32, 16],
         head_hidden=8,
         dropout=0.0,
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
-    criterion = MultiTargetLoss(target_names=WR_TARGETS, loss_weights=WR_LOSS_WEIGHTS)
+    criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
     device = torch.device("cpu")
     trainer = MultiHeadTrainer(
         model,
@@ -226,7 +226,7 @@ def _train_tiny_nn_mae(X_train, X_val, y_train, y_val) -> float:
         scheduler,
         criterion,
         device,
-        target_names=WR_TARGETS,
+        target_names=TARGETS,
         patience=10,
     )
     trainer.train(train_loader, val_loader, n_epochs=80)

@@ -140,12 +140,12 @@ Pipeline registry in `src/batch/train.py`:
 
 ```python
 POSITIONS = {
-    "QB": ("QB.run_qb_pipeline", "run_qb_pipeline", True),
-    "RB": ("RB.run_rb_pipeline", "run_rb_pipeline", True),
-    "WR": ("WR.run_wr_pipeline", "run_wr_pipeline", True),
-    "TE": ("TE.run_te_pipeline", "run_te_pipeline", True),
-    "K":  ("K.run_k_pipeline",   "run_k_pipeline",  False),
-    "DST": ("DST.run_dst_pipeline", "run_dst_pipeline", False),
+    "QB":  ("src.qb.run_pipeline",  "run", True),
+    "RB":  ("src.rb.run_pipeline",  "run", True),
+    "WR":  ("src.wr.run_pipeline",  "run", True),
+    "TE":  ("src.te.run_pipeline",  "run", True),
+    "K":   ("src.k.run_pipeline",   "run", False),
+    "DST": ("src.dst.run_pipeline", "run", False),
 }
 ```
 

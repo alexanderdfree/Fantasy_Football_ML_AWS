@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.rb.config import RB_TARGETS
+from src.rb.config import TARGETS
 from tests.shared.position_fixtures import (
     make_position_df as _make_position_df,
 )
@@ -35,7 +35,7 @@ from tests.shared.position_fixtures import (
 )
 
 # RB scoring scale: ~20 fantasy points typical.
-RB_SCORING_SCALE = 20
+SCORING_SCALE = 20
 
 
 def pytest_configure(config):
@@ -50,7 +50,7 @@ def pytest_configure(config):
 @pytest.fixture(scope="session")
 def make_sim_df():
     def _make(n_weeks: int, n_players: int, seed: int = 42):
-        return _make_sim_df(RB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="P")
+        return _make_sim_df(SCORING_SCALE, n_weeks, n_players, seed, id_prefix="P")
 
     return _make
 
@@ -64,7 +64,7 @@ def sim_df_default(make_sim_df):
 @pytest.fixture(scope="session")
 def make_ranking_df():
     def _make(n_weeks: int, n_players: int, seed: int = 42):
-        return _make_ranking_df_shared(RB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="P")
+        return _make_ranking_df_shared(SCORING_SCALE, n_weeks, n_players, seed, id_prefix="P")
 
     return _make
 
@@ -72,7 +72,7 @@ def make_ranking_df():
 @pytest.fixture(scope="session")
 def make_tensors():
     def _make(n: int = 10, seed: int = 42):
-        return _make_tensors(RB_TARGETS, n=n, seed=seed)
+        return _make_tensors(TARGETS, n=n, seed=seed)
 
     return _make
 
@@ -139,7 +139,7 @@ def make_player_games():
     return _build_player_games
 
 
-def _build_rb_row(**overrides) -> pd.DataFrame:
+def _build_row(**overrides) -> pd.DataFrame:
     """Single-row RB DataFrame with sensible defaults. fantasy_points auto-computed."""
     defaults = {
         "rushing_yards": 60,
@@ -181,7 +181,7 @@ def _build_rb_row(**overrides) -> pd.DataFrame:
 @pytest.fixture(scope="session")
 def make_rb_row():
     """Factory for single-row RB target inputs."""
-    return _build_rb_row
+    return _build_row
 
 
 @pytest.fixture(scope="session")
@@ -213,7 +213,7 @@ def simple_ridge_data():
 _SYNTH_TEAMS = ["KC", "BUF", "SF", "BAL", "PHI", "DAL", "CIN", "NYJ"]
 
 
-def _build_synthetic_rb_dataset(
+def _build_synthetic_dataset(
     n_players: int = 50,
     seasons: tuple = (2022, 2023),
     n_weeks: int = 17,
@@ -225,7 +225,7 @@ def _build_synthetic_rb_dataset(
     satisfy MIN_GAMES_PER_SEASON=6 after filtering.
 
     Fields mirror the raw `weekly` schema the pipeline expects. Values are
-    drawn from plausible RB distributions so compute_rb_targets, feature
+    drawn from plausible RB distributions so compute_targets, feature
     engineering, and the NN training loop all see non-degenerate signal.
     """
     rng = np.random.default_rng(seed)
@@ -329,13 +329,13 @@ def _build_synthetic_rb_dataset(
 
 
 @pytest.fixture(scope="session")
-def synthetic_rb_dataset():
+def synthetic_dataset():
     """Full-season synthetic RB DataFrame (50 players x 2 seasons x 17 weeks)."""
-    return _build_synthetic_rb_dataset()
+    return _build_synthetic_dataset()
 
 
 @pytest.fixture(scope="session")
-def synthetic_rb_splits(synthetic_rb_dataset):
+def synthetic_splits(synthetic_dataset):
     """Split synthetic RB data into (train, val, test).
 
     Train: full first season (17 weeks).
@@ -347,7 +347,7 @@ def synthetic_rb_splits(synthetic_rb_dataset):
     so expanding-window folds still work. Keeping training to one season
     sticks to the coordinator's "2 seasons x 17 weeks" recipe.
     """
-    df = synthetic_rb_dataset
+    df = synthetic_dataset
     seasons = sorted(df["season"].unique())
     train = df[df["season"] == seasons[0]].copy()
     held = df[df["season"] == seasons[-1]].copy()

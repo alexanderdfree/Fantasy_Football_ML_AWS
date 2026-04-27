@@ -1,7 +1,7 @@
 import pandas as pd
 
 
-def compute_k_targets(df: pd.DataFrame) -> pd.DataFrame:
+def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
     """Compute the 4 kicker prediction targets and fantasy_points total.
 
     Target decomposition (all non-negative raw counts / point values):

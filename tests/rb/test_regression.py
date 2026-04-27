@@ -21,7 +21,7 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.rb.config import RB_LOSS_WEIGHTS, RB_TARGETS
+from src.rb.config import LOSS_WEIGHTS, TARGETS
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
@@ -58,7 +58,7 @@ def _build_regression_data(n_train: int = 800, n_test: int = 200, seed: int = 42
     coefs = {}
     bias = {}
     noise_scale = {}
-    for t in RB_TARGETS:
+    for t in TARGETS:
         b, c_scale, n_scale = _TARGET_SCALES[t]
         coefs[t] = rng.standard_normal(d).astype(np.float32) * c_scale
         bias[t] = b
@@ -72,14 +72,14 @@ def _build_regression_data(n_train: int = 800, n_test: int = 200, seed: int = 42
         noise = rng.standard_normal(X.shape[0]).astype(np.float32) * noise_scale[t]
         return np.clip(linear + interaction + step_up + step_down + noise, 0, None)
 
-    y_train = {t: _target(X_train, t) for t in RB_TARGETS}
-    y_test = {t: _target(X_test, t) for t in RB_TARGETS}
+    y_train = {t: _target(X_train, t) for t in TARGETS}
+    y_test = {t: _target(X_test, t) for t in TARGETS}
 
     return X_train, X_test, y_train, y_test
 
 
 def _total(preds: dict) -> np.ndarray:
-    return sum(preds[t] for t in RB_TARGETS)
+    return sum(preds[t] for t in TARGETS)
 
 
 def _mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -99,7 +99,7 @@ def regression_data():
 @pytest.fixture(scope="module")
 def trained_ridge(regression_data):
     X_train, X_test, y_train, y_test = regression_data
-    model = RidgeMultiTarget(target_names=RB_TARGETS, alpha=1.0)
+    model = RidgeMultiTarget(target_names=TARGETS, alpha=1.0)
     model.fit(X_train, y_train)
     preds = model.predict(X_test)
     return model, preds
@@ -114,11 +114,11 @@ def trained_lgbm(regression_data):
     fit_idx, val_idx = idx[:split], idx[split:]
 
     X_fit, X_val = X_train[fit_idx], X_train[val_idx]
-    y_fit = {t: y_train[t][fit_idx] for t in RB_TARGETS}
-    y_val = {t: y_train[t][val_idx] for t in RB_TARGETS}
+    y_fit = {t: y_train[t][fit_idx] for t in TARGETS}
+    y_val = {t: y_train[t][val_idx] for t in TARGETS}
 
     model = LightGBMMultiTarget(
-        target_names=RB_TARGETS,
+        target_names=TARGETS,
         n_estimators=500,
         learning_rate=0.03,
         num_leaves=31,
@@ -148,8 +148,8 @@ def trained_nn(regression_data):
     split = int(0.8 * X_train_s.shape[0])
     fit_idx, val_idx = idx[:split], idx[split:]
 
-    y_fit = {t: y_train[t][fit_idx] for t in RB_TARGETS}
-    y_val = {t: y_train[t][val_idx] for t in RB_TARGETS}
+    y_fit = {t: y_train[t][fit_idx] for t in TARGETS}
+    y_val = {t: y_train[t][val_idx] for t in TARGETS}
 
     torch.manual_seed(42)
     np.random.seed(42)
@@ -164,7 +164,7 @@ def trained_nn(regression_data):
 
     model = MultiHeadNet(
         input_dim=X_train_s.shape[1],
-        target_names=RB_TARGETS,
+        target_names=TARGETS,
         backbone_layers=[64, 32],
         head_hidden=16,
         dropout=0.1,
@@ -175,7 +175,7 @@ def trained_nn(regression_data):
         patience=3,
         factor=0.5,
     )
-    criterion = MultiTargetLoss(target_names=RB_TARGETS, loss_weights=RB_LOSS_WEIGHTS)
+    criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
 
     trainer = MultiHeadTrainer(
         model,
@@ -183,7 +183,7 @@ def trained_nn(regression_data):
         scheduler,
         criterion,
         torch.device("cpu"),
-        target_names=RB_TARGETS,
+        target_names=TARGETS,
         patience=15,
     )
     # More epochs than the old decomposed target set because raw yard

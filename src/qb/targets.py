@@ -9,11 +9,11 @@ so a single -2 pts penalty applies regardless of how the fumble occurred.
 
 import pandas as pd
 
-from src.qb.config import QB_TARGETS
+from src.qb.config import TARGETS
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
 
-def compute_qb_targets(df: pd.DataFrame) -> pd.DataFrame:
+def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
     """Emit the 6 raw-stat prediction targets for QB rows.
 
     Targets (identity unless noted):
@@ -39,7 +39,7 @@ def compute_qb_targets(df: pd.DataFrame) -> pd.DataFrame:
         + df["receiving_fumbles_lost"].fillna(0)
     )
 
-    preds_truth = {t: df[t].to_numpy() for t in QB_TARGETS}
+    preds_truth = {t: df[t].to_numpy() for t in TARGETS}
     fantasy_points_check = predictions_to_fantasy_points("QB", preds_truth, "ppr")
     receiving_component = (
         df["receptions"].fillna(0) * 1.0

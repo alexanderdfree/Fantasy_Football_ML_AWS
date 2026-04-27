@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.k.config import K_ATTN_KICK_STATS
+from src.k.config import ATTN_KICK_STATS
 from src.k.data import reconstruct_kicker_kicks_from_pbp
 from src.k.features import build_nested_kick_history
 
@@ -50,9 +50,9 @@ class TestBuildNestedKickHistory:
         weekly = _weekly("K1", 2023, [1, 2, 3])
         kicks = pd.DataFrame([_kick("K1", 2023, 1), _kick("K1", 2023, 2)])
         X, outer, inner = build_nested_kick_history(
-            weekly, kicks, K_ATTN_KICK_STATS, max_games=5, max_kicks_per_game=4
+            weekly, kicks, ATTN_KICK_STATS, max_games=5, max_kicks_per_game=4
         )
-        assert X.shape == (3, 5, 4, len(K_ATTN_KICK_STATS))
+        assert X.shape == (3, 5, 4, len(ATTN_KICK_STATS))
         assert outer.shape == (3, 5)
         assert inner.shape == (3, 5, 4)
 
@@ -61,7 +61,7 @@ class TestBuildNestedKickHistory:
         weekly = _weekly("K1", 2023, [1, 2])
         kicks = pd.DataFrame([_kick("K1", 2023, 1), _kick("K1", 2023, 1)])
         X, outer, inner = build_nested_kick_history(
-            weekly, kicks, K_ATTN_KICK_STATS, max_games=3, max_kicks_per_game=3
+            weekly, kicks, ATTN_KICK_STATS, max_games=3, max_kicks_per_game=3
         )
         # Row 0 = week 1 — nothing prior
         assert not outer[0].any()
@@ -84,9 +84,9 @@ class TestBuildNestedKickHistory:
             ]
         )
         X, outer, inner = build_nested_kick_history(
-            weekly, kicks, K_ATTN_KICK_STATS, max_games=5, max_kicks_per_game=5
+            weekly, kicks, ATTN_KICK_STATS, max_games=5, max_kicks_per_game=5
         )
-        distance_idx = K_ATTN_KICK_STATS.index("kick_distance")
+        distance_idx = ATTN_KICK_STATS.index("kick_distance")
         # Two prior games (weeks 1 and 2)
         assert outer[0, 0] and outer[0, 1]
         assert not outer[0, 2:].any()
@@ -105,9 +105,9 @@ class TestBuildNestedKickHistory:
             ]
         )
         X, outer, inner = build_nested_kick_history(
-            weekly, kicks, K_ATTN_KICK_STATS, max_games=5, max_kicks_per_game=2
+            weekly, kicks, ATTN_KICK_STATS, max_games=5, max_kicks_per_game=2
         )
-        distance_idx = K_ATTN_KICK_STATS.index("kick_distance")
+        distance_idx = ATTN_KICK_STATS.index("kick_distance")
         assert X[0, 0, 0, distance_idx] == 20.0  # oldest
         assert X[0, 1, 0, distance_idx] == 30.0
         assert X[0, 2, 0, distance_idx] == 40.0  # most recent
@@ -120,9 +120,9 @@ class TestBuildNestedKickHistory:
             [_kick("K1", 2023, w, kick_distance=float(w * 10)) for w in range(1, 8)]
         )
         X, outer, inner = build_nested_kick_history(
-            weekly, kicks, K_ATTN_KICK_STATS, max_games=3, max_kicks_per_game=1
+            weekly, kicks, ATTN_KICK_STATS, max_games=3, max_kicks_per_game=1
         )
-        distance_idx = K_ATTN_KICK_STATS.index("kick_distance")
+        distance_idx = ATTN_KICK_STATS.index("kick_distance")
         # Only 3 most recent games kept (weeks 5, 6, 7), oldest-first
         assert outer[0, 0] and outer[0, 1] and outer[0, 2]
         assert X[0, 0, 0, distance_idx] == 50.0
@@ -136,9 +136,9 @@ class TestBuildNestedKickHistory:
             [_kick("K1", 2023, 1, kick_distance=float(d)) for d in [10, 20, 30, 40, 50]]
         )
         X, outer, inner = build_nested_kick_history(
-            weekly, kicks, K_ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
+            weekly, kicks, ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
         )
-        distance_idx = K_ATTN_KICK_STATS.index("kick_distance")
+        distance_idx = ATTN_KICK_STATS.index("kick_distance")
         # Most recent 2 kicks from week 1 should land in slot 0
         assert outer[0, 0]
         assert inner[0, 0, 0] and inner[0, 0, 1]
@@ -161,9 +161,9 @@ class TestBuildNestedKickHistory:
             ]
         )
         X, outer, inner = build_nested_kick_history(
-            weekly, kicks, K_ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
+            weekly, kicks, ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
         )
-        distance_idx = K_ATTN_KICK_STATS.index("kick_distance")
+        distance_idx = ATTN_KICK_STATS.index("kick_distance")
         # Highest 2 play_ids (400, 500) → distances 40.0 and 50.0
         kept = {X[0, 0, 0, distance_idx], X[0, 0, 1, distance_idx]}
         assert kept == {40.0, 50.0}, (
@@ -179,9 +179,9 @@ class TestBuildNestedKickHistory:
             ]
         )
         X, outer, inner = build_nested_kick_history(
-            weekly, kicks, K_ATTN_KICK_STATS, max_games=3, max_kicks_per_game=3
+            weekly, kicks, ATTN_KICK_STATS, max_games=3, max_kicks_per_game=3
         )
-        distance_idx = K_ATTN_KICK_STATS.index("kick_distance")
+        distance_idx = ATTN_KICK_STATS.index("kick_distance")
         assert outer[0, 0]
         assert X[0, 0, 0, distance_idx] == 30.0
         assert not inner[0, 0, 1:].any()
@@ -195,32 +195,32 @@ class TestBuildNestedKickHistory:
             ]
         )
         X, outer, inner = build_nested_kick_history(
-            weekly, kicks, K_ATTN_KICK_STATS, max_games=3, max_kicks_per_game=3
+            weekly, kicks, ATTN_KICK_STATS, max_games=3, max_kicks_per_game=3
         )
-        distance_idx = K_ATTN_KICK_STATS.index("kick_distance")
+        distance_idx = ATTN_KICK_STATS.index("kick_distance")
         assert outer[0, 0] and not outer[0, 1:].any()
         assert X[0, 0, 0, distance_idx] == 30.0
 
     def test_empty_kicks_df(self):
         """No kick records at all — all masks False, output all zeros."""
         weekly = _weekly("K1", 2023, [1, 2])
-        kicks = pd.DataFrame(columns=["player_id", "season", "week", *K_ATTN_KICK_STATS])
+        kicks = pd.DataFrame(columns=["player_id", "season", "week", *ATTN_KICK_STATS])
         X, outer, inner = build_nested_kick_history(
-            weekly, kicks, K_ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
+            weekly, kicks, ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
         )
-        assert X.shape == (2, 2, 2, len(K_ATTN_KICK_STATS))
+        assert X.shape == (2, 2, 2, len(ATTN_KICK_STATS))
         assert not outer.any()
         assert not inner.any()
 
     def test_empty_weekly_df(self):
         weekly = pd.DataFrame(columns=["player_id", "season", "week"])
         kicks = pd.DataFrame(
-            [_kick("K1", 2023, 1)], columns=["player_id", "season", "week", *K_ATTN_KICK_STATS]
+            [_kick("K1", 2023, 1)], columns=["player_id", "season", "week", *ATTN_KICK_STATS]
         )
         X, outer, inner = build_nested_kick_history(
-            weekly, kicks, K_ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
+            weekly, kicks, ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
         )
-        assert X.shape == (0, 2, 2, len(K_ATTN_KICK_STATS))
+        assert X.shape == (0, 2, 2, len(ATTN_KICK_STATS))
         assert outer.shape == (0, 2)
 
     def test_missing_kick_stat_raises(self):
@@ -228,7 +228,7 @@ class TestBuildNestedKickHistory:
         kicks = pd.DataFrame([_kick("K1", 2023, 1)]).drop(columns=["fg_prob"])
         with pytest.raises(KeyError, match="fg_prob"):
             build_nested_kick_history(
-                weekly, kicks, K_ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
+                weekly, kicks, ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
             )
 
 

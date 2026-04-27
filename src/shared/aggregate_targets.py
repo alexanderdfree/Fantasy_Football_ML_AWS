@@ -147,7 +147,7 @@ def _tier_bonuses(values, boundaries: list[int], bonuses: list[int]):
 def _dst_predictions_to_fantasy_points(preds_dict: dict):
     """Aggregate the 10 DST raw-stat predictions into fantasy points.
 
-    Must match ``DST.dst_targets.compute_dst_targets``'s ``fantasy_points``
+    Must match ``DST.dst_targets.compute_targets``'s ``fantasy_points``
     column exactly. Used at serving time (``app.py:_combine_total``) and for
     benchmark reporting; training itself supervises only the raw-stat heads.
 
