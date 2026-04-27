@@ -50,6 +50,12 @@ The NN clamps outputs to ≥ 0 per head. Default (`non_negative_targets=None` in
 ### Always diff training vs inference paths
 The training pipeline in `src/shared/pipeline.py` and the serving code in `src/serving/app.py` both build features. They have drifted silently in the past (weather/Vegas merge in training but not serving; scaler clip in one path but not the other). If you touch feature building in either, check the other.
 
+### Use `torch` ops inside NN training paths, not `numpy`
+Anything that runs inside the forward pass, loss, or an `aggregate_fn` callback must stay in `torch` to preserve gradients. `np.digitize`/`np.clip`/`np.where` on tensors silently breaks autograd — call `torch.bucketize`/`torch.clamp`/`torch.where` instead. Note that `torch.bucketize(..., right=False)` and `np.digitize(..., right=False)` use opposite edge-inclusion conventions; verify boundaries when porting.
+
+### Don't commit data or large binaries
+Datasets (`*.parquet`, `*.csv`), model weights, and demo media (`.mov`/`.mp4`) never live in git. Training data loads via `nfl_data_py` at workflow runtime; demo videos go to YouTube and are linked from [README.md](README.md). For new CI data dependencies, fetch in the workflow step — do not stash a file in the repo to "make CI green."
+
 ## Running code
 
 Commands live in [SETUP.md](SETUP.md). Shortcuts:
@@ -66,7 +72,16 @@ Commands live in [SETUP.md](SETUP.md). Shortcuts:
 
 AWS-side operational notes live in auto-memory (GPU quota, training path, CI anomaly) — Claude loads those automatically, so this file doesn't duplicate them.
 
+## Worktree workflow
+
+This repo is regularly worked from `.claude/worktrees/<name>` clones where the parent worktree holds `main`. Two quirks:
+
+- **`gh pr merge --delete-branch` fails** in a worktree (it tries to `git checkout main`, which is held by the parent). Use `gh pr merge <N> --squash` then `git push origin --delete <branch>` separately. Local feature branch can stay.
+- **"Is X on `main`?" / dead-link checks** must read `origin/main:<path>` via `git fetch origin main --quiet && git show origin/main:<path>` — never `cat <path>` in the worktree, which lags `main`.
+
 ## When making changes
 - Respect the **TODO.md archive** — it encodes the project's accumulated "already tried" knowledge.
 - Update tests and fixtures when you change feature lists or targets (archive has multiple entries where this was missed).
 - Don't add error handling, fallbacks, or validation for cases that can't happen (see top-level CLAUDE-Code guidance on scope). One exception: network/data-source boundaries are real and should be defensive.
+- **For NN/feature/loss/target changes, run the actual pipeline before merging.** `pytest -m unit` and CI tests don't catch metric regressions. Run `python -m src.{pos}.run_pipeline` on the affected position and diff `benchmark_history/` output against the prior run. The K refactor regression and the QB metrics-label bug both shipped because tests passed without the pipeline being run.
+- **Sub-agent contract.** When dispatching parallel worker agents, each worker must commit, push its branch, and open the PR as part of its task. Before reporting completion, verify with `gh pr list` that every worker shipped — incomplete worker output (uncommitted worktree state, no PR) is a recurring failure mode and the orchestrator must catch it, not the user.
