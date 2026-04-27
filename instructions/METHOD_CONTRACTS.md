@@ -500,7 +500,7 @@ One-hot: `pos_QB`, `pos_RB`, `pos_WR`, `pos_TE` (using `pd.get_dummies`)
 Each position then adds its own specific features (varying count per position) and drops
 irrelevant ones (e.g., QBs drop receiver-centric features, RBs drop passing features).
 Weather/Vegas features (implied_team_total, implied_opp_total, is_dome, etc.) are added
-per-position from `shared/weather_features.py`.
+per-position from `src/shared/weather_features.py`.
 K and DST bypass the general feature pipeline entirely and use custom features.
 
 #### `get_feature_columns() -> list[str]`

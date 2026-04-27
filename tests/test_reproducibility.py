@@ -117,7 +117,7 @@ def _nn_state_dict_from_outputs(pos_outputs: Path, position: str) -> dict:
     ``{"state_dict": ..., "feature_cols_hash": ..., ...}`` introduced alongside
     the scaler/weights integrity guardrail.
     """
-    from shared.artifact_integrity import unwrap_state_dict
+    from src.shared.artifact_integrity import unwrap_state_dict
 
     pos_lower = position.lower()
     nn_path = pos_outputs / "models" / f"{pos_lower}_multihead_nn.pt"

@@ -73,7 +73,7 @@ jobs:
 
       # data/raw/ is gitignored (28 MB of player stats). The pipeline_e2e +
       # regression tests load data/raw/schedules_2012_2025.parquet via
-      # shared.weather_features and src.features.engineer. Fetch it from
+      # src.shared.weather_features and src.features.engineer. Fetch it from
       # nfl_data_py (same call as src/data/loader.load_raw_data) and cache
       # across CI runs since completed-season schedules don't change.
       - name: Cache schedule parquet across CI runs
@@ -98,11 +98,11 @@ jobs:
         id: shard
         run: |
           if [ "${{ matrix.shard }}" = "shared" ]; then
-            echo "paths=tests/ batch/tests/ shared/tests/" >> "$GITHUB_OUTPUT"
-            echo "cov=--cov=src --cov=shared --cov=app --cov=batch" >> "$GITHUB_OUTPUT"
+            echo "paths=tests/ src/batch/tests/ src/shared/tests/ src/scripts/tests/" >> "$GITHUB_OUTPUT"
+            echo "cov=--cov=src" >> "$GITHUB_OUTPUT"
           else
-            echo "paths=${{ matrix.shard }}/tests/" >> "$GITHUB_OUTPUT"
-            echo "cov=--cov=src --cov=${{ matrix.shard }}" >> "$GITHUB_OUTPUT"
+            echo "paths=src/${{ matrix.shard }}/tests/" >> "$GITHUB_OUTPUT"
+            echo "cov=--cov=src.${{ matrix.shard }} --cov=src" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run tests

@@ -17,14 +17,15 @@ filterwarnings = [
 ]
 testpaths = [
     "tests",
-    "QB/tests",
-    "RB/tests",
-    "WR/tests",
-    "TE/tests",
-    "K/tests",
-    "DST/tests",
-    "batch/tests",
-    "shared/tests",
+    "src/QB/tests",
+    "src/RB/tests",
+    "src/WR/tests",
+    "src/TE/tests",
+    "src/K/tests",
+    "src/DST/tests",
+    "src/batch/tests",
+    "src/shared/tests",
+    "src/scripts/tests",
 ]
 
 [tool.ruff]
@@ -32,7 +33,8 @@ line-length = 100
 target-version = "py311"
 extend-exclude = [
     "data", "outputs", "analysis_output", "infra",
-    "docs", "static", "templates", "*.ipynb",
+    "docs", "src/serving/static", "src/serving/templates",
+    "models", "notebooks", "videos", "*.ipynb",
 ]
 
 [tool.ruff.lint]
@@ -50,11 +52,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/**"    = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
-"tests/**"       = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
-"**/*_config.py" = ["E402"]
-"benchmark.py"   = ["T201"]
-"tune_*.py"      = ["T201"]
+"**/tests/**"                = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
+"tests/**"                   = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
+"**/*_config.py"             = ["E402"]
+"src/benchmarking/**/*.py"   = ["T201"]
+"src/tuning/**/*.py"         = ["T201"]
+"src/analysis/**/*.py"       = ["T201"]
 
 [tool.ruff.format]
 quote-style = "double"

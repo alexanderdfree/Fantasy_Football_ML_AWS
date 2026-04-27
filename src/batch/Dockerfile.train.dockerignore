@@ -1,0 +1,14 @@
+# Override of root .dockerignore for training builds (src/batch/Dockerfile.train).
+# Root .dockerignore excludes src/batch/ and infra/ to shrink the inference image;
+# training needs src/batch/. After the src/ migration, all Python source lives
+# under src/, so the allowlist collapses to a single !src/** entry plus the
+# top-level requirements.txt and pyproject.toml.
+**
+!src/**
+!requirements.txt
+!pyproject.toml
+src/batch/tests/**
+src/**/tests/**
+src/**/__pycache__/**
+**/__pycache__/**
+**/*.pyc

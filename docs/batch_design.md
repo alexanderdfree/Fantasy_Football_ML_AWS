@@ -2,7 +2,7 @@
 
 > **Status (2026-04-21): Standby path.** The active training path is EC2 warm-host ([docs/ec2_design.md](ec2_design.md)). Reactivate Batch by setting repo variable `BATCH_ACTIVE=true`.
 >
-> Image builds still track HEAD ([`.github/workflows/batch-image.yml`](../.github/workflows/batch-image.yml)) so reactivation is one repo-variable flip and a push — Batch resources ([`batch/launch.py`](../batch/launch.py), [`batch/train.py`](../batch/train.py), [`batch/Dockerfile.train`](../batch/Dockerfile.train)) remain in place.
+> Image builds still track HEAD ([`.github/workflows/batch-image.yml`](../.github/workflows/batch-image.yml)) so reactivation is one repo-variable flip and a push — Batch resources ([`src/batch/launch.py`](../batch/launch.py), [`src/batch/train.py`](../batch/train.py), [`batch/Dockerfile.train`](../batch/Dockerfile.train)) remain in place.
 
 ## Problem
 
@@ -61,7 +61,7 @@ batch/
   __init__.py
   train.py              ← container entry point
   launch.py             ← job submitter (boto3 Batch client)
-  benchmark.py          ← benchmark suite
+  src/benchmarking/benchmark.py ← benchmark suite
   Dockerfile.train      ← GPU training image
   requirements.txt      ← container-only deps (no torch — base image provides it)
   tests/
@@ -114,7 +114,7 @@ ENTRYPOINT ["python", "batch/train.py"]
 | `S3_DATA_PREFIX` | `data` | S3 key prefix for training data |
 | `REQUIRE_GPU` | `1` | Fail fast if CUDA unavailable. **Auto-skipped for K/DST** (CPU-only pipelines). |
 
-### Launcher Environment Variables (`batch/launch.py`)
+### Launcher Environment Variables (`src/batch/launch.py`)
 
 | Variable | Default | Description |
 |---|---|---|
@@ -132,7 +132,7 @@ Derived from root `requirements.txt`:
 
 ## Position Pipeline Invocation
 
-Pipeline registry in `batch/train.py`:
+Pipeline registry in `src/batch/train.py`:
 
 ```python
 POSITIONS = {
@@ -150,7 +150,7 @@ POSITIONS = {
 
 ## Job Submission
 
-`batch/launch.py` submits jobs via `boto3.client('batch').submit_job()`:
+`src/batch/launch.py` submits jobs via `boto3.client('batch').submit_job()`:
 
 ```python
 batch.submit_job(
@@ -313,8 +313,8 @@ docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/ff-training:latest
 
 ## Rollback
 
-The existing Flask Dockerfile and `app.py` inference code are completely unaffected.
-CUDA auto-detection in `shared/pipeline.py` falls back to CPU. Local pipeline scripts
+The existing Flask Dockerfile and `src/serving/app.py` inference code are completely unaffected.
+CUDA auto-detection in `src/shared/pipeline.py` falls back to CPU. Local pipeline scripts
 (`python -m QB.run_qb_pipeline`) work identically without any AWS dependencies.
 
 ## CPU-only Queue for K/DST (optional)
@@ -326,7 +326,7 @@ cheaper CPU Spot pool:
 1. Register a CPU compute env (e.g. `c6i.large` Spot) + job queue + CPU job
    definition (`ff-training-job-cpu`) pointing at the same ECR image.
 2. Export `FF_JOB_DEFINITION_CPU=ff-training-job-cpu` before running
-   `batch/launch.py`. K and DST will submit there; QB/RB/WR/TE stay on the GPU
+   `src/batch/launch.py`. K and DST will submit there; QB/RB/WR/TE stay on the GPU
    queue.
 3. When `FF_JOB_DEFINITION_CPU` is unset, K/DST fall back to the GPU definition —
    so it's safe to deploy this code before the CPU infra exists.
@@ -338,12 +338,12 @@ Two workflows cover the training image and the inference service:
 - `.github/workflows/batch-image.yml` — builds `batch/Dockerfile.train`, pushes
   to ECR (`ff-training`), and registers a new revision of the `ff-training-job`
   Batch job definition pinned to the new image SHA. Triggered by changes under
-  `batch/`, `shared/`, position dirs, `src/`, or `requirements.txt`.
+  `src/batch/`, `src/shared/`, position dirs, `src/`, or `requirements.txt`.
 - `.github/workflows/deploy.yml` — builds the inference `Dockerfile`, pushes to
   ECR (`fantasy-predictor`), and updates the ECS service. Now gated on the
   full test suite.
 - `.github/workflows/tests.yml` — runs pytest across **all** position test
-  directories plus `batch/` and `shared/` on every push and PR.
+  directories plus `src/batch/` and `src/shared/` on every push and PR.
 
 ## Cold-start optimization (image pull acceleration)
 
@@ -354,10 +354,10 @@ registry. Three stacking optimizations target this:
 ### 2b. Explicit COPYs in Dockerfile.train
 
 `batch/Dockerfile.train` used to end with `COPY . .`, shipping the Flask UI
-(`app.py`, `static/`, `templates/`), scratch scripts (`tune_*.py`,
+(`src/serving/app.py`, `src/serving/static/`, `src/serving/templates/`), scratch scripts (`src/tuning/tune_*.py`,
 `benchmark_*.py`, `analysis_*.py`), and everything else at the repo root into
 the training image. The Dockerfile now copies only the dirs that
-`batch/train.py` actually imports: `batch/`, `shared/`, `src/`, and the six
+`src/batch/train.py` actually imports: `src/batch/`, `src/shared/`, `src/`, and the six
 position dirs. `.dockerignore` handles the coarse exclusions (caches, outputs,
 `*.db` files, `data/`).
 

@@ -30,26 +30,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -r requirements.txt && \
     uv pip install --system --no-deps nfl_data_py==0.3.3
 
-# Only the paths app.py actually imports. data/ and **/outputs/models/ are
-# deliberately NOT copied — shared.model_sync fetches them from S3 at
-# container startup, which shrinks the image and decouples deploys from
-# data/model changes.
-COPY app.py .
-COPY shared/ shared/
+# All Python source, Flask templates/static, and per-position assets live
+# under src/. data/ and src/**/outputs/models/ are deliberately NOT copied —
+# src.shared.model_sync fetches them from S3 at container startup, which
+# shrinks the image and decouples deploys from data/model changes.
 COPY src/ src/
-COPY QB/ QB/
-COPY RB/ RB/
-COPY WR/ WR/
-COPY TE/ TE/
-COPY K/ K/
-COPY DST/ DST/
-COPY templates/ templates/
-COPY static/ static/
 
 # Markdown source files served by the in-app Wiki tab (/api/wiki/<slug>).
-# Only the .md files in app.py:WIKI_DOCS — non-MD files in instructions/ and
-# infra/*/ (shell scripts, JSON policies, .docx, .html) are intentionally
-# excluded to keep the slim image lean.
+# Only the .md files in src/serving/app.py:WIKI_DOCS — non-MD files in
+# instructions/ and infra/*/ (shell scripts, JSON policies, .docx, .html)
+# are intentionally excluded to keep the slim image lean.
 COPY README.md SETUP.md ATTRIBUTION.md TODO.md ./
 COPY docs/ docs/
 COPY instructions/DESIGN_DOC.md instructions/METHOD_CONTRACTS.md instructions/SELF_ASSESSMENT_EVIDENCE.md instructions/
@@ -61,4 +51,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--preload", "--timeout", "120", "--access-logfile", "-", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--preload", "--timeout", "120", "--access-logfile", "-", "src.serving.app:app"]

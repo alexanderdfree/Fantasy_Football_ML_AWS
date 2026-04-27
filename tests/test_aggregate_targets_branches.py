@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 import torch
 
-from shared.aggregate_targets import (
+from src.shared.aggregate_targets import (
     _dst_predictions_to_fantasy_points,
     _tier_bonuses,
     aggregate_fn_for,
@@ -29,7 +29,7 @@ def test_tier_bonuses_numpy_and_torch_agree():
     [21, 28) → 0, [28, 35) → -1, [35, 999] → -4. We pick inputs that land in
     several different tiers (including boundary values).
     """
-    from shared.aggregate_targets import _PA_BONUSES, _PA_BOUNDARIES
+    from src.shared.aggregate_targets import _PA_BONUSES, _PA_BOUNDARIES
 
     values_np = np.array([0.0, 6.9, 14.0, 27.999, 35.0], dtype=np.float64)
     values_t = torch.tensor(values_np.tolist(), dtype=torch.float32)
