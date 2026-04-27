@@ -84,7 +84,7 @@ Full training on GPU runs on EC2 via CI; see [docs/ec2_design.md](docs/ec2_desig
 ## Video Links
 
 - Demo video — non-technical (3–5 min): [DemoRecording.mov](DemoRecording.mov)
-- Technical walkthrough: [TechnicalWalkthrough.mov](TechnicalWalkthrough.mov)
+- Technical walkthrough (hosted on YouTube — file too large for the repo): https://youtu.be/eyuTnk3qLk8
 
 ## Evaluation
 
