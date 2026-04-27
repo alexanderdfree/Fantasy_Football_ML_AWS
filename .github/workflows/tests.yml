@@ -3,20 +3,15 @@ name: Run Tests
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".gitignore"
-      - "LICENSE*"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".gitignore"
-      - "LICENSE*"
+
+# Docs-only PRs no longer need a separate workflow to emit a green
+# `tests-pass`: the `detect` job below strips docs files from the diff
+# and emits an empty matrix when nothing else changed, the test job is
+# skipped, and the `tests-pass` aggregator treats `skipped` as success.
+# A previous `tests-skip.yml` covered this case via a positive paths
+# filter — that file was removed in favor of unified detect handling.
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
@@ -85,6 +80,23 @@ jobs:
           echo "Changed files:"
           printf '  %s\n' $files
 
+          # ---- Strip docs/markdown/license-only changes. ----
+          # If the diff contains only docs files, no test shard needs to
+          # run — emit an empty matrix and let `tests-pass` accept the
+          # `skipped` result. Patterns mirror the old tests-skip.yml
+          # paths filter, kept here as the single source of truth.
+          DOCS_REGEX='(\.md$|^docs/|^\.github/ISSUE_TEMPLATE/|^\.gitignore$|^LICENSE)'
+          non_docs=$(printf '%s\n' "$files" | grep -vE "$DOCS_REGEX" || true)
+          if [ -z "$non_docs" ]; then
+            echo "Only docs/markdown/license changed -> no shards needed."
+            echo "shards=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Subsequent regex checks operate on the docs-stripped view so
+          # a mixed PR (docs/ + src/qb/) scopes to QB without the docs
+          # files spuriously triggering anything.
+          files="$non_docs"
+
           # ---- Global triggers — run all 7 shards. ----
           # src/shared/                    -> imported by every position
           # src/{data,features,models,training,evaluation}/ -> shared infra
@@ -95,8 +107,8 @@ jobs:
           # tests/__init__.py | tests/fixtures/
           # pyproject.toml                 -> ruff/pytest/coverage config
           # requirements*.txt              -> dep changes affect every shard
-          # .github/workflows/tests*.yml   -> the workflow itself
-          GLOBAL_REGEX='^(src/(shared|data|features|models|training|evaluation)/|src/(__init__|config)\.py$|conftest\.py$|tests/(conftest\.py|_pipeline_e2e_utils\.py|__init__\.py|fixtures/)|pyproject\.toml$|requirements.*\.txt$|\.github/workflows/tests(-skip)?\.yml$)'
+          # .github/workflows/tests.yml    -> the workflow itself
+          GLOBAL_REGEX='^(src/(shared|data|features|models|training|evaluation)/|src/(__init__|config)\.py$|conftest\.py$|tests/(conftest\.py|_pipeline_e2e_utils\.py|__init__\.py|fixtures/)|pyproject\.toml$|requirements.*\.txt$|\.github/workflows/tests\.yml$)'
           if printf '%s\n' "$files" | grep -qE "$GLOBAL_REGEX"; then
             echo "Global file changed -> running all 7 shards."
             echo "shards=$ALL" >> "$GITHUB_OUTPUT"
@@ -125,9 +137,11 @@ jobs:
           fi
 
           if [ -z "$shards" ]; then
-            # paths-ignore should have caught pure-docs PRs upstream, so an
-            # empty shard list here means an unrecognized path changed.
-            # Default to all 7 rather than silently skip a real change.
+            # The docs-strip step above already short-circuits pure-doc
+            # diffs, so reaching here means a non-doc path changed but
+            # didn't match any global / per-position / shared rule —
+            # e.g. another workflow file, infra/, etc. Default to all 7
+            # rather than silently skip a real change.
             echo "No matching shards — defaulting to all 7 (conservative)."
             echo "shards=$ALL" >> "$GITHUB_OUTPUT"
             exit 0
@@ -250,10 +264,11 @@ jobs:
           disable_search: true
           fail_ci_if_error: false
 
-  # Single aggregator check for branch protection. Pairs with the same-named
-  # job in tests-skip.yml so docs-only PRs (skipped via paths-ignore above)
-  # still report this check green. Branch protection should require
-  # `tests-pass` instead of the individual shard names.
+  # Single aggregator check for branch protection. `detect` emits an empty
+  # matrix when only docs/markdown/license files changed, so the `test`
+  # job is skipped and this aggregator reports green without running any
+  # shard. Branch protection should require `tests-pass` instead of the
+  # individual shard names.
   tests-pass:
     name: tests-pass
     runs-on: ubuntu-latest
