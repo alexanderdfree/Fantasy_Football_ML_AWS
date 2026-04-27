@@ -302,8 +302,9 @@ class TestOpponentLeakage:
         result = build_features(df)
 
         opp_cols = [c for c in result.columns if c.startswith("opp_")]
-        if not opp_cols:
-            pytest.skip("No opponent feature columns generated")
+        # build_features generates opp_* matchup features whenever opposing
+        # teams are present in the input. If they vanish, that's a regression.
+        assert opp_cols, "build_features dropped every opp_* matchup feature"
 
         # P1 plays against SF. Week 7's opp features should NOT include the week 7 spike.
         p1_w7 = result[(result["player_id"] == "P1") & (result["week"] == 7)]
@@ -346,21 +347,23 @@ class TestCrossSeasonLeakage:
         df = build_features(pd.concat([s1, s2], ignore_index=True))
 
         prior_cols = [c for c in df.columns if c.startswith("prior_season_")]
-        if not prior_cols:
-            pytest.skip("No prior_season columns generated")
+        # build_features always emits prior_season_* columns when it sees more
+        # than one season; missing them means a feature-engineering regression.
+        assert prior_cols, "build_features dropped every prior_season_* feature"
 
         # Season 2023 rows should have prior_season stats reflecting 2022 (~50 pts)
         s2_row = df[df["season"] == 2023].iloc[0]
         prior_mean_col = [c for c in prior_cols if "mean" in c and "fantasy_points" in c]
-        if prior_mean_col:
-            val = s2_row[prior_mean_col[0]]
-            assert val > 20, f"Prior season mean = {val}, expected ~50 from 2022 season"
+        assert prior_mean_col, (
+            f"Expected a prior_season_*_mean*_fantasy_points column; only saw: {prior_cols}"
+        )
+        val = s2_row[prior_mean_col[0]]
+        assert val > 20, f"Prior season mean = {val}, expected ~50 from 2022 season"
 
         # Season 2022 rows should have NaN prior_season stats (no 2021 data)
         s1_row = df[df["season"] == 2022].iloc[0]
-        if prior_mean_col:
-            val = s1_row[prior_mean_col[0]]
-            assert np.isnan(val), f"Prior season for 2022 = {val}, expected NaN (no 2021 data)"
+        val = s1_row[prior_mean_col[0]]
+        assert np.isnan(val), f"Prior season for 2022 = {val}, expected NaN (no 2021 data)"
 
 
 # ---------------------------------------------------------------------------

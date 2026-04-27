@@ -62,6 +62,12 @@ def test_load_team_week_stats_network_fetches_and_caches(tmp_path, monkeypatch, 
     the failure is logged via WARNING."""
     import src.data.loader as loader
 
+    # Capture the real read_parquet for cache round-trip verification — the
+    # monkeypatch below replaces loader.pd.read_parquet, which is the same
+    # object as pd.read_parquet, so the test itself can't call the real one
+    # by name.
+    real_read_parquet = pd.read_parquet
+
     def _fake_read_parquet(path, *args, **kwargs):
         s = str(path)
         if "2022" in s:
@@ -74,14 +80,21 @@ def test_load_team_week_stats_network_fetches_and_caches(tmp_path, monkeypatch, 
 
     out = loader.load_team_week_stats([2021, 2022, 2023], cache_dir=str(tmp_path))
     assert len(out) == 2  # 2021 + 2023 survived
-    # Cache file must be written
-    assert (tmp_path / "team_stats_2021_2023.parquet").exists()
+    assert set(out["season"].tolist()) == {2021, 2023}
+    # Cache file must be written and round-trip the merged frame.
+    cache_path = tmp_path / "team_stats_2021_2023.parquet"
+    assert cache_path.exists()
+    cached = real_read_parquet(cache_path)
+    assert len(cached) == 2
+    assert set(cached["season"].tolist()) == {2021, 2023}
     # Warning printed for the failing season
     assert "team_stats fetch failed for 2022" in capsys.readouterr().out
 
 
 @pytest.mark.unit
-def test_load_team_week_stats_all_fail_returns_empty_and_does_not_cache(tmp_path, monkeypatch):
+def test_load_team_week_stats_all_fail_returns_empty_and_does_not_cache(
+    tmp_path, monkeypatch, capsys
+):
     """Every season 404s → return empty DF, but do NOT poison the cache."""
     import src.data.loader as loader
 
@@ -94,6 +107,8 @@ def test_load_team_week_stats_all_fail_returns_empty_and_does_not_cache(tmp_path
     assert out.empty
     # No cache file written.
     assert not (tmp_path / "team_stats_2020_2020.parquet").exists()
+    # The failing season was logged so an operator can see why the result is empty.
+    assert "team_stats fetch failed for 2020" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------
@@ -251,8 +266,17 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
     """Pre-written caches → the loader skips every nfl.* call and reads from disk."""
     import src.data.loader as loader
 
-    def _boom(*a, **k):
-        raise AssertionError("nfl_data_py was called despite cache hit")
+    boom_calls: list[str] = []
+
+    def _make_boom(name):
+        def _boom(*a, **k):
+            # Why: the cache short-circuit is the contract this test pins. We
+            # collect call sites instead of raising so a regression yields a
+            # readable list rather than an opaque first-failure.
+            boom_calls.append(name)
+            raise AssertionError(f"nfl_data_py.{name} was called despite cache hit")
+
+        return _boom
 
     # Stub everything to scream if called.
     for name in (
@@ -263,13 +287,15 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
         "import_injuries",
         "import_depth_charts",
     ):
-        monkeypatch.setattr(loader.nfl, name, _boom)
+        monkeypatch.setattr(loader.nfl, name, _make_boom(name))
     # import_ids is called inside the snap-merge try/except; it's ok for it to fire.
-    monkeypatch.setattr(
-        loader.nfl,
-        "import_ids",
-        lambda: pd.DataFrame({"pfr_id": ["pfr1"], "gsis_id": ["P00"]}),
-    )
+    ids_calls: list[None] = []
+
+    def _ids():
+        ids_calls.append(None)
+        return pd.DataFrame({"pfr_id": ["pfr1"], "gsis_id": ["P00"]})
+
+    monkeypatch.setattr(loader.nfl, "import_ids", _ids)
 
     seasons = [2022, 2023]
     # Pre-write every cache.
@@ -336,6 +362,13 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
     # Enrichment columns still land from the merge path.
     assert "snap_pct" in out.columns
     assert "depth_chart_rank" in out.columns
+    # The cache short-circuit must skip every nfl.* fetch helper.
+    assert boom_calls == [], f"nfl_data_py was hit despite caches: {boom_calls}"
+    # import_ids fires inside the snap-merge try block — confirm the path took
+    # the merge branch (not the bare-except fallback) on a cache hit.
+    assert len(ids_calls) == 1
+    # Player from cache propagates through the merge.
+    assert "P00" in out["player_id"].tolist()
 
 
 @pytest.mark.unit
@@ -389,6 +422,19 @@ def test_load_raw_data_new_season_url_branch(tmp_path, monkeypatch):
     # Renamed columns must land.
     assert "recent_team" in df.columns
     assert "interceptions" in df.columns
+    # Pin the rename mapping on the 2025 row itself: the url branch supplied
+    # team/passing_interceptions/sacks_suffered/sack_yards_lost; if any of
+    # the renames silently broke, downstream feature engineering would drop
+    # the column to all-NaN without erroring.
+    row_2025 = df[df["season"] == 2025].iloc[0]
+    assert row_2025["recent_team"] == "KC"
+    assert row_2025["interceptions"] == 1
+    assert row_2025["sacks"] == 2
+    assert row_2025["sack_yards"] == 14
+    # The pre-rename columns must not survive — otherwise dtypes diverge from
+    # the 2024 path and downstream concat would produce mixed-dtype warnings.
+    assert "team" not in df.columns
+    assert "passing_interceptions" not in df.columns
 
 
 @pytest.mark.unit
