@@ -1413,16 +1413,5 @@ def health():
     return jsonify({"status": "ok"})
 
 
-# Pre-warm under gunicorn --preload: runs once in the master before fork,
-# so workers inherit the populated _cache via copy-on-write. Without this,
-# the first user request drives _ensure_metrics() on a sync worker — that
-# read 11 years of PBP via nfl_data_py before the kicker_kicks_pbp_*.parquet
-# cache landed in S3, stalled both workers (RLock), starved /health, and
-# ECS replaced the task. Gated on FF_MODEL_S3_BUCKET so tests/dev (which
-# don't sync data and don't need the pre-warm) stay on the lazy path.
-if os.environ.get("FF_MODEL_S3_BUCKET"):
-    _ensure_metrics()
-
-
 if __name__ == "__main__":
     app.run(debug=True, port=5050, use_reloader=False)
