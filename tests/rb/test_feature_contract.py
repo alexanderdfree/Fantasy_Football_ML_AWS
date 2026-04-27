@@ -231,10 +231,11 @@ class TestFeatureNaNContract:
     def test_career_carries_nan_rate(self, rb_featured_frame):
         """career_carries is cumsum().shift(1) — one NaN per player, filled to 0."""
         col = "career_carries"
-        if col not in rb_featured_frame.columns:
-            pytest.skip(f"{col} not present")
-        # add_specific_features fills the lead NaN with 0, so post-call the
-        # rate should be 0%.
+        # add_specific_features unconditionally creates career_carries and
+        # fills the lead NaN with 0, so post-call the rate should be 0%.
+        assert col in rb_featured_frame.columns, (
+            f"{col} missing — add_specific_features must always create it"
+        )
         nan_rate = rb_featured_frame[col].isna().mean()
         assert nan_rate <= _MAX_NAN_RATE["cumulative"], (
             f"{col} NaN rate {nan_rate:.3f} exceeds cumulative ceiling"
