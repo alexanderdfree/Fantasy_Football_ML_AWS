@@ -127,9 +127,12 @@ def _stub_app(monkeypatch):
         "build_position_features",
         lambda tr, va, te, reg, fc: (tr, va, te),
     )
-    # K nested path calls build_nested_kick_history — stub to tiny tensors.
+    # K nested path calls k_features.build_nested_kick_history — stub to tiny
+    # tensors. Patch on the imported module alias so the call site resolves
+    # to our stub (the bare name is no longer an attribute on app_mod after
+    # the cross-position-collision cleanup in PR2).
     monkeypatch.setattr(
-        app_mod,
+        app_mod.k_features,
         "build_nested_kick_history",
         lambda df, **kw: (
             np.zeros((len(df), 2, 3, 4), dtype=np.float32),
@@ -598,14 +601,16 @@ def test_load_k_splits_delegates_to_k_data_helpers(monkeypatch):
     k_df = pd.DataFrame({"player_id": ["K1"], "season": [2024], "week": [1]})
     kicks_df = pd.DataFrame({"player_id": ["K1"], "kick_distance": [40.0]})
 
-    monkeypatch.setattr(app_mod, "load_data", lambda: k_df)
-    monkeypatch.setattr(app_mod, "load_kicks", lambda df: kicks_df)
+    # K data + features live on the module aliases after the PR2 collision
+    # cleanup (load_data is no longer a bare attribute on app_mod).
+    monkeypatch.setattr(app_mod.k_data, "load_data", lambda: k_df)
+    monkeypatch.setattr(app_mod.k_data, "load_kicks", lambda df: kicks_df)
     monkeypatch.setattr(
-        app_mod,
+        app_mod.k_data,
         "season_split",
         lambda df: (df.iloc[:0], df.iloc[:0], df),
     )
-    monkeypatch.setattr(app_mod, "compute_features", lambda df: None)
+    monkeypatch.setattr(app_mod.k_features, "compute_features", lambda df: None)
 
     # POSITION_REGISTRY['K']['compute_targets_fn'] — stub to pass-through.
     class _StubReg:
@@ -630,8 +635,9 @@ def test_load_dst_splits_filters_by_season(monkeypatch):
             "week": [1, 1, 1, 1],
         }
     )
-    monkeypatch.setattr(app_mod, "build_data", lambda: dst_df)
-    monkeypatch.setattr(app_mod, "compute_features", lambda df: None)
+    # DST data + features live on module aliases after PR2's collision cleanup.
+    monkeypatch.setattr(app_mod.dst_data, "build_data", lambda: dst_df)
+    monkeypatch.setattr(app_mod.dst_features, "compute_features", lambda df: None)
 
     class _StubReg:
         def __getitem__(self, k):

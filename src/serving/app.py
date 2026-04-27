@@ -1390,18 +1390,17 @@ def _position_arch_payload(pos, cfg, specific, targets, include_features, attn_h
     def get(name, default=None):
         return getattr(cfg, name, default)
 
-    prefix = pos.upper()
-
-    # Scheduler summary string
-    scheduler = get(f"{prefix}_SCHEDULER_TYPE", "unknown")
+    # Scheduler summary string. Constants on each position cfg are unprefixed
+    # (e.g. cfg.SCHEDULER_TYPE) — the position is implicit from the cfg module.
+    scheduler = get("SCHEDULER_TYPE", "unknown")
     if scheduler == "cosine_warm_restarts":
-        t0 = get(f"{prefix}_COSINE_T0", "?")
-        tm = get(f"{prefix}_COSINE_T_MULT", "?")
-        em = get(f"{prefix}_COSINE_ETA_MIN", "?")
+        t0 = get("COSINE_T0", "?")
+        tm = get("COSINE_T_MULT", "?")
+        em = get("COSINE_ETA_MIN", "?")
         scheduler_str = f"CosineAnnealingWarmRestarts(T0={t0}, T_mult={tm}, eta_min={em})"
     elif scheduler == "onecycle":
-        mx = get(f"{prefix}_ONECYCLE_MAX_LR", "?")
-        ps = get(f"{prefix}_ONECYCLE_PCT_START", "?")
+        mx = get("ONECYCLE_MAX_LR", "?")
+        ps = get("ONECYCLE_PCT_START", "?")
         scheduler_str = f"OneCycleLR(max_lr={mx}, pct_start={ps})"
     elif scheduler == "plateau":
         scheduler_str = "ReduceLROnPlateau"
@@ -1423,18 +1422,18 @@ def _position_arch_payload(pos, cfg, specific, targets, include_features, attn_h
 
     payload = {
         "targets": list(targets),
-        "backbone_layers": list(get(f"{prefix}_NN_BACKBONE_LAYERS", [])),
-        "head_hidden": get(f"{prefix}_NN_HEAD_HIDDEN"),
-        "head_hidden_overrides": dict(get(f"{prefix}_NN_HEAD_HIDDEN_OVERRIDES", {}) or {}),
-        "dropout": get(f"{prefix}_NN_DROPOUT"),
-        "lr": get(f"{prefix}_NN_LR"),
-        "weight_decay": get(f"{prefix}_NN_WEIGHT_DECAY"),
-        "batch_size": get(f"{prefix}_NN_BATCH_SIZE"),
-        "epochs": get(f"{prefix}_NN_EPOCHS"),
-        "patience": get(f"{prefix}_NN_PATIENCE"),
+        "backbone_layers": list(get("NN_BACKBONE_LAYERS", [])),
+        "head_hidden": get("NN_HEAD_HIDDEN"),
+        "head_hidden_overrides": dict(get("NN_HEAD_HIDDEN_OVERRIDES", {}) or {}),
+        "dropout": get("NN_DROPOUT"),
+        "lr": get("NN_LR"),
+        "weight_decay": get("NN_WEIGHT_DECAY"),
+        "batch_size": get("NN_BATCH_SIZE"),
+        "epochs": get("NN_EPOCHS"),
+        "patience": get("NN_PATIENCE"),
         "scheduler": scheduler_str,
-        "attention_enabled": bool(get(f"{prefix}_TRAIN_ATTENTION_NN", False)),
-        "lightgbm_enabled": bool(get(f"{prefix}_TRAIN_LIGHTGBM", False)),
+        "attention_enabled": bool(get("TRAIN_ATTENTION_NN", False)),
+        "lightgbm_enabled": bool(get("TRAIN_LIGHTGBM", False)),
         "feature_count": len(flat_features),
         "features": grouped,
     }
