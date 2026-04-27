@@ -58,4 +58,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # invokes it via ``python -m src.tuning.tune_lgbm``.
 COPY src/ src/
 
+# Temporary: bake LGBM_N_JOBS=-1 into the image so the next EC2 train run
+# benchmarks LightGBM tree-thread parallelism on g4dn.xlarge. The default
+# in src/shared/models.py stays at 1 (env-var-only opt-in, per PR #181).
+# Revert this line after the comparison run lands in benchmark_history/.
+ENV LGBM_N_JOBS=-1
 ENTRYPOINT ["python", "-m", "src.batch.train"]
