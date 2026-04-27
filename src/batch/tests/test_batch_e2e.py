@@ -24,7 +24,7 @@ PROJECT_ROOT = str(Path(__file__).resolve().parents[3])
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-TRAIN_CLI = Path(PROJECT_ROOT) / "batch" / "train.py"
+TRAIN_CLI = Path(PROJECT_ROOT) / "src" / "batch" / "train.py"
 
 
 @pytest.mark.e2e

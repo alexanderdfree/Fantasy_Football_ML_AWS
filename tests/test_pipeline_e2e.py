@@ -197,7 +197,7 @@ def test_pipeline_trains_elasticnet_when_enabled(tmp_path_factory):
         assert np.all(arr >= 0)  # non-negative clamping enforced
 
     # ElasticNet artifacts land under models/elasticnet/<target>/.
-    enet_dir = workdir / "QB" / "outputs" / "models" / "elasticnet"
+    enet_dir = workdir / "src" / "QB" / "outputs" / "models" / "elasticnet"
     assert enet_dir.is_dir()
     for target in cfg["targets"]:
         tdir = enet_dir / target

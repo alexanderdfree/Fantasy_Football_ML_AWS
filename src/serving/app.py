@@ -420,7 +420,13 @@ def _render_wiki_doc(slug: str) -> str:
         if cached is not None:
             return cached
     meta = WIKI_DOCS[slug]
-    abs_path = os.path.join(os.path.dirname(__file__), meta["path"])
+    # WIKI_DOCS paths are relative to repo root (e.g. "docs/ARCHITECTURE.md").
+    # After the src/ migration this module lives at src/serving/app.py, so
+    # repo root is two parents up. The Dockerfile copies the same .md files
+    # into /app at the same relative paths, so this resolves correctly in
+    # both local dev and the deployed container.
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    abs_path = os.path.join(repo_root, meta["path"])
     with open(abs_path, encoding="utf-8") as f:
         text = f.read()
     html = markdown.markdown(

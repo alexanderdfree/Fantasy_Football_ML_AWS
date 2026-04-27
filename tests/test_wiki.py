@@ -70,7 +70,12 @@ class TestWikiRegistryIntegrity:
 
         import src.serving.app as app_mod
 
-        repo_root = os.path.dirname(os.path.abspath(app_mod.__file__))
+        # WIKI_DOCS paths are repo-root-relative (e.g. "docs/ARCHITECTURE.md").
+        # After the src/ migration the app module lives at src/serving/app.py,
+        # so repo root is two parents up from its file location — must match
+        # the resolution _render_wiki_doc() uses.
+        app_dir = os.path.dirname(os.path.abspath(app_mod.__file__))
+        repo_root = os.path.abspath(os.path.join(app_dir, "..", ".."))
         missing = [
             (slug, meta["path"])
             for slug, meta in app_mod.WIKI_DOCS.items()
