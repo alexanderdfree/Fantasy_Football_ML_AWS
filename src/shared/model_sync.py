@@ -56,7 +56,11 @@ HISTORY_KEEP_N = 5
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent
+    # __file__ is at <repo>/src/shared/model_sync.py — three parents up.
+    # ``parent.parent`` returned <repo>/src/ before, so the data sync silently
+    # wrote splits/raw under src/data/ instead of <repo>/data/ where the Flask
+    # app reads them (CWD = /app in the container).
+    return Path(__file__).resolve().parent.parent.parent
 
 
 def manifest_key(prefix: str, pos: str) -> str:
@@ -193,7 +197,7 @@ def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict
     # (``src/qb/outputs/models``). On case-sensitive Linux these diverge, so
     # the destination must be normalized here even though macOS APFS papered
     # over it during the rename refactor.
-    dest = root / pos.lower() / "outputs" / "models"
+    dest = root / "src" / pos.lower() / "outputs" / "models"
     manifest = load_manifest(s3_client, bucket, prefix, pos)
 
     if manifest is None:

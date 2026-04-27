@@ -162,9 +162,35 @@ def test_sync_extracts_all_positions_via_legacy_fallback(monkeypatch, tmp_path):
     assert {r["pos"] for r in summary["positions"]} == set(model_sync.POSITIONS)
     assert {r["source"] for r in summary["positions"]} == {"legacy"}
     for pos in model_sync.POSITIONS:
-        extracted = tmp_path / pos.lower() / "outputs" / "models" / f"{pos.lower()}_marker.pkl"
+        extracted = (
+            tmp_path / "src" / pos.lower() / "outputs" / "models" / f"{pos.lower()}_marker.pkl"
+        )
         assert extracted.is_file()
         assert extracted.read_bytes() == b"payload-" + pos.encode()
+
+
+def test_repo_root_resolves_to_actual_repo_root():
+    """Contract: ``_repo_root()`` must return the directory the deployed Flask
+    app's CWD resolves to (``/app`` in the container), not a subdirectory.
+
+    Guards against the post-#150 regression: when ``model_sync.py`` moved
+    from ``<repo>/shared/`` to ``<repo>/src/shared/`` the ``parent.parent``
+    chain stopped at ``<repo>/src/``, so ``sync_data_from_s3`` silently wrote
+    splits to ``<repo>/src/data/splits/`` while the app reads from
+    ``<repo>/data/splits/``. The previous tests only checked the relative
+    offset under a monkeypatched root, so they couldn't catch a mis-anchored
+    root in production. Asserting the un-monkeypatched root contains both
+    ``src/serving/app.py`` and ``requirements.txt`` pins the live invariant.
+    """
+    root = model_sync._repo_root()
+    assert (root / "src" / "serving" / "app.py").is_file(), (
+        f"_repo_root() = {root!s} but src/serving/app.py is not under it; "
+        "the function is anchored above or below the actual repo root."
+    )
+    assert (root / "requirements.txt").is_file(), (
+        f"_repo_root() = {root!s} but requirements.txt is not under it; "
+        "the function is anchored above or below the actual repo root."
+    )
 
 
 def test_sync_one_dest_string_path_matches_registry_model_dir(monkeypatch, tmp_path):
@@ -194,12 +220,9 @@ def test_sync_one_dest_string_path_matches_registry_model_dir(monkeypatch, tmp_p
 
     monkeypatch.setattr(model_sync, "_extract_tarball", fake_extract)
 
-    # Mimic the live layout: ``_repo_root`` points at the (real) src/ dir.
-    # We pin it to ``tmp_path / "src"`` so the registry's relative
-    # ``src/{pos}/outputs/models`` paths anchor correctly at ``tmp_path``.
-    fake_src = tmp_path / "src"
-    fake_src.mkdir()
-
+    # ``_repo_root`` returns the actual repo root; ``_sync_one`` is responsible
+    # for prepending ``src/`` so the dest matches the registry's
+    # ``src/{pos}/outputs/models`` model_dir.
     fake_tar = _make_tarball({"sentinel": b"x"})
     fake_s3 = _FakeS3({f"models/{pos}/model.tar.gz": fake_tar for pos in model_sync.POSITIONS})
 
@@ -210,7 +233,7 @@ def test_sync_one_dest_string_path_matches_registry_model_dir(monkeypatch, tmp_p
         # Drive the legacy-path branch directly so we don't depend on the
         # manifest fixture — the dest computation is the same on every
         # branch.
-        model_sync._sync_one(fake_s3, "test-bucket", "models", pos, fake_src)
+        model_sync._sync_one(fake_s3, "test-bucket", "models", pos, tmp_path)
 
     for pos in model_sync.POSITIONS:
         sync_dest_str = str(captured[pos])
@@ -286,7 +309,9 @@ def test_sync_one_prefers_current_from_manifest(monkeypatch, tmp_path):
     wr = next(r for r in summary["positions"] if r["pos"] == "WR")
     assert wr["source"] == "current"
     assert wr["key"] == "models/WR/history/2026-04-23T00-00-00Z-aaa1234/model.tar.gz"
-    assert (tmp_path / "wr" / "outputs" / "models" / "nn_scaler.pkl").read_bytes() == b"CURRENT"
+    assert (
+        tmp_path / "src" / "wr" / "outputs" / "models" / "nn_scaler.pkl"
+    ).read_bytes() == b"CURRENT"
 
 
 def test_sync_one_falls_back_to_previous_when_current_corrupt(monkeypatch, tmp_path, capsys):
@@ -352,7 +377,7 @@ def test_sync_one_falls_back_to_previous_when_current_nosuchkey(monkeypatch, tmp
 
     assert all(r["source"] == "previous" for r in summary["positions"])
     for pos in model_sync.POSITIONS:
-        extracted = tmp_path / pos.lower() / "outputs" / "models" / "marker.pkl"
+        extracted = tmp_path / "src" / pos.lower() / "outputs" / "models" / "marker.pkl"
         assert extracted.read_bytes() == b"FROM_PREVIOUS"
 
 
@@ -462,7 +487,7 @@ def test_sync_one_prefers_stable_over_current(monkeypatch, tmp_path):
 
     assert all(r["source"] == "stable" for r in summary["positions"])
     for pos in model_sync.POSITIONS:
-        extracted = tmp_path / pos.lower() / "outputs" / "models" / "marker.pkl"
+        extracted = tmp_path / "src" / pos.lower() / "outputs" / "models" / "marker.pkl"
         assert extracted.read_bytes() == b"FROM_STABLE"
     # Current key bytes must NOT have been pulled — the stable key wins
     # outright and we don't probe further when stable succeeds.
