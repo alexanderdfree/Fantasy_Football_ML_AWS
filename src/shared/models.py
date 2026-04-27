@@ -3,7 +3,6 @@
 import json
 import os
 import shutil
-import sys
 
 import joblib
 import lightgbm as lgb
@@ -16,13 +15,19 @@ from sklearn.preprocessing import StandardScaler
 from src.models.elastic_net import ElasticNetModel
 from src.models.linear import RidgeModel
 
-# LightGBM thread count for tree learning. ``-1`` (all cores) crashes on macOS
-# under nested OpenMP runtimes (libomp from numpy/sklearn vs. LightGBM's
-# bundled libgomp) — the segfault reproduces inside ``Dataset.__init_from_np2d``
-# the moment the construct call hits the OMP region. Linux (CI + EC2
-# production) is safe and gets full parallelism; other platforms stay at 1
-# unless ``LGBM_N_JOBS`` is set explicitly to override.
-_LGBM_N_JOBS = -1 if sys.platform.startswith("linux") else int(os.environ.get("LGBM_N_JOBS", "1"))
+# LightGBM thread count for tree learning. Default ``1`` (single-threaded).
+# Override via ``LGBM_N_JOBS`` env var — typically set to ``-1`` only on the
+# EC2 training host where data is large enough that LGBM's tree-learning
+# threads dominate cost. Two reasons we don't enable per-platform by default:
+# (1) On macOS, ``-1`` segfaults inside ``Dataset.__init_from_np2d`` under
+#     nested OpenMP runtimes (libomp from numpy/sklearn vs. LightGBM's
+#     bundled libgomp).
+# (2) On Linux CI runners, ``-1`` oversubscribes the 2- or 4-core box because
+#     it stacks on top of joblib's parallel Ridge tuning (``n_jobs=-1`` thread
+#     pool in ``src/shared/pipeline.py``) and the per-position E2E test budget
+#     blows past 40s. PR #180's first attempt at platform-default ``-1``
+#     reproduced this — see commit message for the budget assertion.
+_LGBM_N_JOBS = int(os.environ.get("LGBM_N_JOBS", "1"))
 
 
 class TwoStageRidge:
