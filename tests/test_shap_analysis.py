@@ -47,7 +47,9 @@ def test_sample_background_caps_at_population():
 def test_cli_rejects_tiny_background(monkeypatch, capsys):
     """Smoke check on argparse: --background-samples 50 must fail."""
     mod = importlib.import_module("src.analysis.analysis_shap_lgbm")
-    monkeypatch.setattr(sys, "argv", ["src/analysis/analysis_shap_lgbm.py", "QB", "--background-samples", "50"])
+    monkeypatch.setattr(
+        sys, "argv", ["src/analysis/analysis_shap_lgbm.py", "QB", "--background-samples", "50"]
+    )
     with pytest.raises(SystemExit):
         mod.main()
 
