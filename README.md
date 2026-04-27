@@ -81,6 +81,11 @@ Coverage is tracked on [Codecov](https://app.codecov.io/gh/alexanderdfree/Fantas
 
 Full training on GPU runs on EC2 via CI; see [docs/ec2_design.md](docs/ec2_design.md) for the pipeline and [infra/ec2/README.md](infra/ec2/README.md) for operator notes.
 
+## Video Links
+
+- Demo video — non-technical (3–5 min): [DemoRecording.mov](DemoRecording.mov)
+- Technical walkthrough: [TechnicalWalkthrough.mov](TechnicalWalkthrough.mov)
+
 ## Evaluation
 
 Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination), top-12 hit rate (agreement with the actual weekly top 12 at the position, PPR scoring). Numbers from [benchmark_results.json](benchmark_results.json).
@@ -103,11 +108,6 @@ Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy po
 - Ridge wins K and DST — the signal at those positions is too weak for a higher-capacity model to pay off.
 - LightGBM is the best model at QB, narrowly. It's within a rounding error of NN everywhere else.
 - Error analysis and per-target breakdown: [docs/expert_comparison.md](docs/expert_comparison.md) and the per-position NN/Ridge/LightGBM breakdowns in [benchmark_results.json](benchmark_results.json).
-
-## Video Links
-
-- Demo video — non-technical (3–5 min): [DemoRecording.mov](DemoRecording.mov)
-- Technical walkthrough: _TODO — add link before submission_
 
 ## Repo Layout
 
@@ -153,6 +153,6 @@ tests/ + QB/tests/ + ...            Unit, integration, e2e tests
 - [TODO.md](TODO.md) — issue log, open items, and a "Fixed" archive that doubles as a lessons-learned catalog
 - [ATTRIBUTION.md](ATTRIBUTION.md) — data, libraries, and AI tool usage
 
-## Solo Project
+## Individual Contributions
 
 This project was completed individually (no partner) — claiming the 10-pt solo project rubric item.
