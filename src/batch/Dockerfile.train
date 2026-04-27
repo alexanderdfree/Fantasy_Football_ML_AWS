@@ -10,6 +10,20 @@
 ARG PULL_THROUGH_PREFIX=
 FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
 
+# torch.compile (added in PR #183 via _maybe_compile) lazy-compiles graphs at
+# first forward pass. Inductor's CPU vec-ISA probe (pick_vec_isa →
+# cpp_compiler_search) needs a working C++ compiler to dry-build a vectorized
+# fingerprint, even when the model is on CUDA — attention masking / padding
+# / dtype casts can fall back to CPU codegen. The pytorch:*-runtime base is
+# intentionally minimal (no toolchain), so without g++ Inductor raises
+# ``InductorError: InvalidCxxCompiler`` on the first forward pass and kills
+# training (PR #185's train-ec2 run reproduced this). Place this layer before
+# the uv install so a Python-deps change doesn't invalidate it.
+# ``--no-install-recommends`` keeps the addition lean (~50 MB on a ~7 GB base).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends g++ && \
+    rm -rf /var/lib/apt/lists/*
+
 # uv: pinned single-binary installer (~10x faster than pip + parallel wheel
 # downloads). Pin to a specific minor so this COPY layer doesn't invalidate
 # every time astral publishes a new release.
