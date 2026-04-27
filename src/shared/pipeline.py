@@ -135,28 +135,32 @@ def _nn_device() -> torch.device:
 
 
 def _maybe_compile(model: torch.nn.Module) -> torch.nn.Module:
-    """Wrap ``model`` with ``torch.compile`` on CUDA; return unchanged otherwise.
+    """No-op: returns ``model`` unchanged.
 
-    The compiled wrapper shares parameters with ``model`` (no copy), so
-    callers can pass the wrapper to the trainer for fused-kernel forward
-    passes while continuing to use the original module for state_dict /
-    load_state_dict / predict_numpy / persistence. Updates to parameters
-    inside the trained wrapper are visible through the original.
+    Previously wrapped models with ``torch.compile(model, dynamic=True)`` on
+    CUDA. The first successful EC2 measurement (cb3c960 train-ec2 run, after
+    the g++ fix in PR #187 unblocked Inductor) showed total ``run_pipeline``
+    time grew from ~1180s to ~1558s — a +32% wall-clock regression — with
+    ``attn_nn_train`` as the dominant offender (e.g., QB ``attn_nn_train``
+    136s on T4 vs ~37s locally on macOS/MPS without compile). Two reasons
+    compile loses on this hardware:
 
-    Disabled on CPU because the ~30s compile cost outweighs any speedup
-    when there are no GPU kernels to fuse. ``dynamic=True`` so the
-    attention paths' variable padded-sequence length doesn't trigger a
-    recompile every batch. Any compile-time failure (rare custom ops,
-    backend mismatch) falls through to eager execution rather than
-    aborting the run.
+    - **T4 is sm_75 with few SMs.** Inductor logged ``Not enough SMs to use
+      max_autotune_gemm mode`` — the headline GEMM optimization is disabled
+      because the GPU is too small for it.
+    - **Dynamic shapes defeat ``dynamic=True``.** The attention path's
+      variable padded-sequence lengths still trigger guard re-checks (and
+      occasionally full recompiles) for each new shape, so the per-batch
+      compile-overhead never amortizes.
+
+    Kept as an indirection so the four call sites don't need to change and
+    so a future re-test on different hardware (sm_80+ Ampere, or a path
+    with shape-pinned attention) is a one-function edit. To re-enable for
+    a measurement, restore the ``torch.compile(model, dynamic=True)`` call
+    here and re-run train-ec2; compare the resulting benchmark against the
+    first compile-off baseline this commit produces.
     """
-    if not torch.cuda.is_available() or not hasattr(torch, "compile"):
-        return model
-    try:
-        return torch.compile(model, dynamic=True)
-    except Exception as e:
-        print(f"[compile] torch.compile failed ({e}); proceeding eagerly")
-        return model
+    return model
 
 
 def _scale_xs(*X_arrays: np.ndarray) -> tuple[StandardScaler, list[np.ndarray]]:
