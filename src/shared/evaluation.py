@@ -8,19 +8,10 @@ import pandas as pd
 
 from src.evaluation.metrics import compute_metrics
 from src.shared.aggregate_targets import (
-    POSITION_TARGET_MAP,
     TARGET_UNITS,
+    infer_position,
     predictions_to_fantasy_points,
 )
-
-
-def _infer_position(target_names: list[str]) -> str | None:
-    """Return the first position whose target map fully matches ``target_names``."""
-    name_set = set(target_names)
-    for pos, tmap in POSITION_TARGET_MAP.items():
-        if set(tmap.keys()) == name_set:
-            return pos
-    return None
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
@@ -102,7 +93,7 @@ def compute_target_metrics(
     """
     results = {}
 
-    position = _infer_position(target_names)
+    position = infer_position(target_names)
     if position is not None:
         true_pts = predictions_to_fantasy_points(position, y_true_dict, "ppr")
         pred_pts = predictions_to_fantasy_points(position, y_pred_dict, "ppr")
