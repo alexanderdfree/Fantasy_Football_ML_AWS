@@ -173,3 +173,10 @@ class TestComputeQBTargets:
         _ = compute_targets(df)
         captured = capsys.readouterr()
         assert "discrepancy" not in captured.out
+
+    def test_sanity_check_warns_on_inconsistent_fantasy_points(self, capsys):
+        """If fantasy_points doesn't match the raw stats + receiving, warn."""
+        df = _make_row(passing_yards=275, passing_tds=2, fantasy_points=999.0)
+        _ = compute_targets(df)
+        captured = capsys.readouterr()
+        assert "discrepancy" in captured.out
