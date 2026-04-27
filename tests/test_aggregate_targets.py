@@ -103,6 +103,79 @@ def test_aggregator_unknown_position():
 
 
 # ---------------------------------------------------------------------------
+# K branch: signed sum [+1, +1, -1, -1] over fg_yard_points / pat_points /
+# fg_misses / xp_misses. Format-invariant.
+# ---------------------------------------------------------------------------
+
+
+def _k_sample_preds_numpy():
+    """Sample K raw-stat preds — 3 player-weeks."""
+    return {
+        "fg_yard_points": np.array([3.0, 0.0, 5.5]),  # 30/0/55 yards made × 0.1
+        "pat_points": np.array([2.0, 0.0, 3.0]),
+        "fg_misses": np.array([0.0, 1.0, 0.0]),
+        "xp_misses": np.array([0.0, 0.0, 1.0]),
+    }
+
+
+def test_k_aggregator_scalar_values():
+    """Hand-computed signed totals."""
+    actual = predictions_to_fantasy_points("K", _k_sample_preds_numpy(), "ppr")
+    # Row 0: 3 + 2 - 0 - 0 =  5
+    # Row 1: 0 + 0 - 1 - 0 = -1
+    # Row 2: 5.5 + 3 - 0 - 1 = 7.5
+    np.testing.assert_allclose(actual, [5.0, -1.0, 7.5], atol=1e-9)
+
+
+def test_k_aggregator_matches_compute_k_targets():
+    """predictions_to_fantasy_points('K', ...) on true stats must match
+    src.k.targets.compute_targets's fantasy_points column."""
+    from src.k.targets import compute_targets as compute_k_targets
+
+    df = pd.DataFrame(
+        {
+            "fg_yards_made": [30.0, 0.0, 55.0],
+            "pat_made": [2.0, 0.0, 3.0],
+            "fg_missed": [0.0, 1.0, 0.0],
+            "pat_missed": [0.0, 0.0, 1.0],
+        }
+    )
+    df_with_targets = compute_k_targets(df)
+    expected = df_with_targets["fantasy_points"].values
+    preds = {
+        t: df_with_targets[t].values
+        for t in ("fg_yard_points", "pat_points", "fg_misses", "xp_misses")
+    }
+    actual = predictions_to_fantasy_points("K", preds, "ppr")
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-9)
+
+
+def test_k_aggregator_works_on_torch_tensors():
+    """Aggregator runs inside the NN aggregate_fn callback for some positions —
+    must accept torch tensors and return a tensor."""
+    preds_np = _k_sample_preds_numpy()
+    preds_torch = {k: torch.tensor(v, dtype=torch.float32) for k, v in preds_np.items()}
+    out = predictions_to_fantasy_points("K", preds_torch, "ppr")
+    assert isinstance(out, torch.Tensor)
+    np.testing.assert_allclose(
+        out.detach().numpy(),
+        predictions_to_fantasy_points("K", preds_np, "ppr"),
+        rtol=0,
+        atol=1e-5,
+    )
+
+
+def test_k_aggregator_format_invariant():
+    """Kicker scoring is the same in PPR/half/standard — output must not vary."""
+    preds = _k_sample_preds_numpy()
+    ppr = predictions_to_fantasy_points("K", preds, "ppr")
+    half = predictions_to_fantasy_points("K", preds, "half_ppr")
+    std = predictions_to_fantasy_points("K", preds, "standard")
+    np.testing.assert_allclose(ppr, half, atol=1e-9)
+    np.testing.assert_allclose(ppr, std, atol=1e-9)
+
+
+# ---------------------------------------------------------------------------
 # DST branch: linear raw-stat coefficients + tier-mapped PA/YA bonuses.
 # ---------------------------------------------------------------------------
 

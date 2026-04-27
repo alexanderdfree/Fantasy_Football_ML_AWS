@@ -22,8 +22,12 @@ _SCORING_BY_FORMAT = {
 }
 
 # Map each position's raw-stat target names to the scoring-dict key.
-# DST uses a separate aggregation path (tier-mapped PA/YA + linear stats),
-# see ``_dst_predictions_to_fantasy_points``.
+# K and DST use separate aggregation paths and are NOT in this map:
+# - K is a sign-vector sum (see ``_k_predictions_to_fantasy_points``).
+# - DST is linear stats + tier-mapped PA/YA bonuses
+#   (see ``_dst_predictions_to_fantasy_points``).
+# Their target sets are tracked in ``K_TARGETS`` / ``DST_TARGETS`` below so
+# ``infer_position`` can route them.
 POSITION_TARGET_MAP = {
     "QB": {
         "passing_yards": "passing_yards",
@@ -54,6 +58,26 @@ POSITION_TARGET_MAP = {
         "fumbles_lost": "fumbles_lost",
     },
 }
+
+# K and DST target sets — used by ``infer_position`` to route them to their
+# bespoke aggregators instead of the standard linear ``target * weight`` path.
+# Must stay in sync with ``src/k/config.py::TARGETS`` and
+# ``src/dst/config.py::TARGETS`` (covered by parity tests in
+# tests/test_aggregate_targets.py).
+K_TARGETS: tuple[str, ...] = ("fg_yard_points", "pat_points", "fg_misses", "xp_misses")
+DST_TARGETS: tuple[str, ...] = (
+    "def_sacks",
+    "def_ints",
+    "def_fumble_rec",
+    "def_fumbles_forced",
+    "def_safeties",
+    "def_tds",
+    "def_blocked_kicks",
+    "special_teams_tds",
+    "points_allowed",
+    "yards_allowed",
+)
+
 
 # Display units for per-target MAE reporting.
 TARGET_UNITS = {
@@ -170,6 +194,26 @@ def _dst_predictions_to_fantasy_points(preds_dict: dict):
     return linear + pa_bonus + ya_bonus
 
 
+def _k_predictions_to_fantasy_points(preds_dict: dict):
+    """Aggregate K's 4 raw-stat predictions into fantasy points.
+
+    Sign vector ``[+1, +1, -1, -1]`` over
+    ``[fg_yard_points, pat_points, fg_misses, xp_misses]`` — fg_yard_points
+    and pat_points add, misses subtract. Format-invariant; kicker scoring
+    doesn't change between PPR / half / standard.
+
+    Must match ``src.k.targets.compute_targets``'s ``fantasy_points`` column
+    exactly. Works on numpy arrays and torch Tensors; the return type
+    mirrors the input type.
+    """
+    return (
+        preds_dict["fg_yard_points"]
+        + preds_dict["pat_points"]
+        - preds_dict["fg_misses"]
+        - preds_dict["xp_misses"]
+    )
+
+
 def predictions_to_fantasy_points(
     pos: str,
     preds_dict: dict,
@@ -178,13 +222,16 @@ def predictions_to_fantasy_points(
     """Aggregate per-target predictions to fantasy points.
 
     Args:
-        pos: Position code (QB/RB/WR/TE/DST).
+        pos: Position code (QB/RB/WR/TE/K/DST).
         preds_dict: target_name -> per-sample prediction array (or tensor). A
             ``"total"`` key is ignored if present.
-        scoring_format: ``"ppr"``, ``"half_ppr"``, or ``"standard"``.
+        scoring_format: ``"ppr"``, ``"half_ppr"``, or ``"standard"``. Ignored
+            for K and DST (their formulas are scoring-format-invariant).
     """
     if pos == "DST":
         return _dst_predictions_to_fantasy_points(preds_dict)
+    if pos == "K":
+        return _k_predictions_to_fantasy_points(preds_dict)
     if pos not in POSITION_TARGET_MAP:
         raise ValueError(f"No target map for position: {pos}")
     if scoring_format not in _SCORING_BY_FORMAT:
@@ -206,3 +253,21 @@ def predictions_to_fantasy_points(
 def aggregate_fn_for(pos: str, scoring_format: str = "ppr"):
     """Return a callable `aggregate_fn(preds_dict) -> np.ndarray` bound to one position."""
     return partial(predictions_to_fantasy_points, pos, scoring_format=scoring_format)
+
+
+def infer_position(target_names) -> str | None:
+    """Return the position whose target list fully matches ``target_names``.
+
+    QB / RB / WR / TE are matched via ``POSITION_TARGET_MAP``; K and DST use
+    bespoke aggregators and are matched against ``K_TARGETS`` / ``DST_TARGETS``.
+    Returns ``None`` for unknown sets (callers fall back to a plain sum).
+    """
+    name_set = set(target_names)
+    for pos, tmap in POSITION_TARGET_MAP.items():
+        if set(tmap.keys()) == name_set:
+            return pos
+    if name_set == set(K_TARGETS):
+        return "K"
+    if name_set == set(DST_TARGETS):
+        return "DST"
+    return None

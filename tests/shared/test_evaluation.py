@@ -14,9 +14,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.shared.aggregate_targets import infer_position
 from src.shared.evaluation import (
     _gate_metrics,
-    _infer_position,
     _sigmoid,
     build_gate_info,
     compute_fantasy_points_mae,
@@ -180,7 +180,7 @@ def test_compute_target_metrics_with_gate_info_adds_diagnostics():
 
 
 # --------------------------------------------------------------------------
-# _infer_position
+# infer_position
 # --------------------------------------------------------------------------
 
 
@@ -194,12 +194,93 @@ def test_infer_position_matches_qb():
         "interceptions",
         "fumbles_lost",
     ]
-    assert _infer_position(qb_targets) == "QB"
+    assert infer_position(qb_targets) == "QB"
+
+
+@pytest.mark.unit
+def test_infer_position_matches_k():
+    """K and DST target sets must route to their bespoke aggregators rather
+    than fall through to the plain-sum branch in compute_target_metrics."""
+    from src.k.config import TARGETS as K_CONFIG_TARGETS
+
+    assert infer_position(K_CONFIG_TARGETS) == "K"
+    # Order shouldn't matter.
+    assert infer_position(list(reversed(K_CONFIG_TARGETS))) == "K"
+
+
+@pytest.mark.unit
+def test_infer_position_matches_dst():
+    from src.dst.config import TARGETS as DST_CONFIG_TARGETS
+
+    assert infer_position(DST_CONFIG_TARGETS) == "DST"
 
 
 @pytest.mark.unit
 def test_infer_position_returns_none_on_novel_set():
-    assert _infer_position(["alpha", "beta"]) is None
+    assert infer_position(["alpha", "beta"]) is None
+
+
+@pytest.mark.unit
+def test_compute_target_metrics_k_uses_signed_aggregation():
+    """K total must be signed sum (fg_yard + pat - fg_miss - xp_miss), not
+    the unsigned plain-sum fallback."""
+    y_true = {
+        "fg_yard_points": np.array([3.0, 5.5, 4.0]),
+        "pat_points": np.array([2.0, 3.0, 1.0]),
+        "fg_misses": np.array([0.0, 1.0, 0.0]),
+        "xp_misses": np.array([0.0, 0.0, 1.0]),
+    }
+    y_pred = {k: v.copy() for k, v in y_true.items()}
+    targets = list(y_true.keys())
+
+    # Perfect preds → 0 MAE.
+    assert compute_target_metrics(y_true, y_pred, targets)["total"]["mae"] == pytest.approx(0.0)
+
+    # Perturb fg_misses by +1: signed aggregator yields |Δtotal| = 1 per row.
+    # Plain-sum fallback would also give 1 here, so the discriminating check
+    # is the fg_yard_points test below.
+    y_pred_off = {k: v.copy() for k, v in y_true.items()}
+    y_pred_off["fg_misses"] = y_pred_off["fg_misses"] + 1.0
+    assert compute_target_metrics(y_true, y_pred_off, targets)["total"]["mae"] == pytest.approx(1.0)
+
+    # Discriminating check: perturb fg_yard_points by +2 AND fg_misses by +2.
+    # Signed: total error = +2 - 2 = 0. Plain-sum: total error = +2 + 2 = 4.
+    y_pred_cancel = {k: v.copy() for k, v in y_true.items()}
+    y_pred_cancel["fg_yard_points"] = y_pred_cancel["fg_yard_points"] + 2.0
+    y_pred_cancel["fg_misses"] = y_pred_cancel["fg_misses"] + 2.0
+    assert compute_target_metrics(y_true, y_pred_cancel, targets)["total"]["mae"] == pytest.approx(
+        0.0
+    )
+
+
+@pytest.mark.unit
+def test_compute_target_metrics_dst_uses_proper_aggregation():
+    """DST total must use ``_dst_predictions_to_fantasy_points`` (linear stats
+    + tier-mapped PA/YA bonuses), not the plain raw-stat sum that's dominated
+    by yards_allowed (scale 0-600)."""
+    y_true = {
+        "def_sacks": np.array([3.0, 0.0, 5.0]),
+        "def_ints": np.array([1.0, 0.0, 2.0]),
+        "def_fumble_rec": np.array([1.0, 0.0, 1.0]),
+        "def_fumbles_forced": np.array([2.0, 1.0, 3.0]),
+        "def_safeties": np.array([0.0, 0.0, 1.0]),
+        "def_tds": np.array([1.0, 0.0, 2.0]),
+        "def_blocked_kicks": np.array([0.0, 0.0, 1.0]),
+        "special_teams_tds": np.array([1.0, 0.0, 0.0]),
+        "points_allowed": np.array([10.0, 35.0, 0.0]),
+        "yards_allowed": np.array([220.0, 420.0, 80.0]),
+    }
+    y_pred = {k: v.copy() for k, v in y_true.items()}
+    targets = list(y_true.keys())
+
+    # Perfect preds → 0 MAE.
+    assert compute_target_metrics(y_true, y_pred, targets)["total"]["mae"] == pytest.approx(0.0)
+
+    # Perturb yards_allowed by +100. Proper aggregator: bounded tier-bonus
+    # shift (≤ 10 fp/row across the whole YA range). Plain-sum: 100 fp/row.
+    y_pred_off = {k: v.copy() for k, v in y_true.items()}
+    y_pred_off["yards_allowed"] = y_pred_off["yards_allowed"] + 100.0
+    assert compute_target_metrics(y_true, y_pred_off, targets)["total"]["mae"] < 10.0
 
 
 # --------------------------------------------------------------------------
