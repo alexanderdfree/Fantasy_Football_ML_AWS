@@ -94,8 +94,10 @@ class TestComputeWRFeatures:
         _compute_features(df)
         later = df[df["week"] >= 3]
         shares = later["team_wr_target_share_L3"].dropna()
-        if len(shares) > 0:
-            assert (shares <= 1.01).all()
+        # Why: rolling-3 share is defined from week 3 onward (3 weeks >= 3 in a 5-week run)
+        assert len(shares) == 3
+        # Why: solo WR -> share == 1.0; 1.01 ceiling absorbs float rounding
+        assert (shares <= 1.01).all()
 
     def test_team_target_share_two_players(self, wr_player_games_factory):
         """Two WRs should roughly split target share."""
@@ -105,8 +107,8 @@ class TestComputeWRFeatures:
         _compute_features(df)
         later = df[(df["week"] >= 3) & (df["player_id"] == "W1")]
         shares = later["team_wr_target_share_L3"].dropna()
-        if len(shares) > 0:
-            assert all(0.4 <= s <= 0.6 for s in shares)
+        assert len(shares) == 3
+        assert all(0.4 <= s <= 0.6 for s in shares)
 
     def test_multiple_seasons_independent(self, wr_player_games_factory):
         s1 = wr_player_games_factory(season=2022, n_weeks=3, targets=12, receiving_yards=120)

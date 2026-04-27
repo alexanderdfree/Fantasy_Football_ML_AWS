@@ -84,10 +84,17 @@ def _load_tiny_splits(
 
 @pytest.fixture(scope="module")
 def tiny_splits():
-    """Load and cache the tiny split once per module."""
+    """Load and cache the tiny split once per module.
+
+    Skipped when ``data/splits/*.parquet`` is absent (worktree clones,
+    fresh CI checkouts before the data step). Splits are produced by
+    the data-pull workflow documented in SETUP.md; tests cannot
+    synthesize them because run_pipeline expects 100+ engineered
+    upstream feature columns.
+    """
     splits_dir = SPLITS_DIR
     if not (splits_dir / "train.parquet").exists():
-        pytest.skip("data/splits/train.parquet not available")
+        pytest.skip(f"engineered splits absent at {splits_dir} (run data pull — see SETUP.md)")
     return _load_tiny_splits()
 
 
