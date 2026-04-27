@@ -119,6 +119,31 @@ def _nn_device() -> torch.device:
     return torch.device("cpu")
 
 
+def _maybe_compile(model: torch.nn.Module) -> torch.nn.Module:
+    """Wrap ``model`` with ``torch.compile`` on CUDA; return unchanged otherwise.
+
+    The compiled wrapper shares parameters with ``model`` (no copy), so
+    callers can pass the wrapper to the trainer for fused-kernel forward
+    passes while continuing to use the original module for state_dict /
+    load_state_dict / predict_numpy / persistence. Updates to parameters
+    inside the trained wrapper are visible through the original.
+
+    Disabled on CPU because the ~30s compile cost outweighs any speedup
+    when there are no GPU kernels to fuse. ``dynamic=True`` so the
+    attention paths' variable padded-sequence length doesn't trigger a
+    recompile every batch. Any compile-time failure (rare custom ops,
+    backend mismatch) falls through to eager execution rather than
+    aborting the run.
+    """
+    if not torch.cuda.is_available() or not hasattr(torch, "compile"):
+        return model
+    try:
+        return torch.compile(model, dynamic=True)
+    except Exception as e:
+        print(f"[compile] torch.compile failed ({e}); proceeding eagerly")
+        return model
+
+
 def _scale_xs(*X_arrays: np.ndarray) -> tuple[StandardScaler, list[np.ndarray]]:
     """Fit a StandardScaler on the first array, transform + clip all arrays.
 
@@ -549,7 +574,7 @@ def _train_nn(
     model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
 
     history = _run_nn_training(
-        model=model,
+        model=_maybe_compile(model),
         train_loader=train_loader,
         val_loader=val_loader,
         cfg=cfg,
@@ -671,7 +696,7 @@ def _train_attention_nn(
     ).to(device)
 
     history = _run_nn_training(
-        model=model,
+        model=_maybe_compile(model),
         train_loader=train_loader,
         val_loader=val_loader,
         cfg=cfg,
@@ -768,7 +793,7 @@ def _train_nested_attention_nn(
     ).to(device)
 
     history = _run_nn_training(
-        model=model,
+        model=_maybe_compile(model),
         train_loader=train_loader,
         val_loader=val_loader,
         cfg=cfg,
@@ -1493,7 +1518,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
 
         _run_nn_training(
-            model=model,
+            model=_maybe_compile(model),
             train_loader=train_loader,
             val_loader=val_loader,
             cfg=cfg,
