@@ -634,7 +634,7 @@ def main():
 
     # Copy model artifacts to output dir FIRST so a later metrics write cannot
     # be clobbered by a same-named file under src_model_dir.
-    src_model_dir = os.path.join(pos, "outputs", "models")
+    src_model_dir = os.path.join(pos.lower(), "outputs", "models")
     if os.path.isdir(src_model_dir):
         print(f"Copying model artifacts from {src_model_dir} to {model_dir}")
         with _timed("copy_artifacts", store=phase_seconds):

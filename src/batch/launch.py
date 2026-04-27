@@ -252,7 +252,7 @@ def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
 
     for pos in positions:
         s3_key = f"models/{pos}/model.tar.gz"
-        local_model_dir = os.path.join(pos, "outputs", "models")
+        local_model_dir = os.path.join(pos.lower(), "outputs", "models")
         os.makedirs(local_model_dir, exist_ok=True)
 
         # Stale-artifact guard: compare remote LastModified to job stoppedAt.

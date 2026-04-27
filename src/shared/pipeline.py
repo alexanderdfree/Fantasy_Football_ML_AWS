@@ -876,7 +876,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     pos = position
     pos_lower = pos.lower()
     targets = cfg["targets"]
-    output_dir = f"{pos}/outputs"
+    output_dir = f"{pos_lower}/outputs"
 
     # --- Load data ---
     if train_df is None:
@@ -1393,7 +1393,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     pos = position
     pos_lower = pos.lower()
     targets = cfg["targets"]
-    output_dir = f"{pos}/outputs"
+    output_dir = f"{pos_lower}/outputs"
 
     # --- Load data ---
     if full_df is None:
