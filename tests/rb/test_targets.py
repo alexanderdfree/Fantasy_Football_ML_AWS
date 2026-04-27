@@ -112,3 +112,13 @@ class TestComputeRBTargets:
         assert result["receptions"].iloc[0] == 10
         assert result["rushing_tds"].iloc[0] == 4
         assert result["receiving_tds"].iloc[0] == 2
+
+    def test_nflverse_ppr_mismatch_warning(self, make_rb_row, capsys):
+        """If `fantasy_points_ppr` (nflverse) drifts from `fantasy_points` by
+        more than 0.5 pt on any row, compute_targets prints an INFO line so
+        the discrepancy is visible during pipeline runs."""
+        df = make_rb_row(rushing_yards=80, receiving_yards=40, receptions=4, rushing_tds=1)
+        df["fantasy_points_ppr"] = df["fantasy_points"] - 1.0
+        compute_targets(df)
+        captured = capsys.readouterr().out
+        assert "differ from nflverse fantasy_points_ppr" in captured
