@@ -1,5 +1,7 @@
 """Generic training infrastructure: loss, dataset, dataloaders, and trainer."""
 
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -8,6 +10,15 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin")
+
+# DataLoader worker-process count. Default 0 (synchronous, in-process loading)
+# preserves macOS / small-dataset behavior — spawning workers can be net-
+# negative on tiny CV folds and trips ``spawn``-context fork issues on macOS.
+# Set ``NN_DATALOADER_NUM_WORKERS`` on EC2 g4dn (4 vCPU) to overlap CPU-side
+# batch construction with GPU compute. Pair with ``persistent_workers`` to
+# avoid the worker-respawn cost per epoch.
+_NUM_WORKERS = int(os.environ.get("NN_DATALOADER_NUM_WORKERS", "0"))
+_PERSISTENT_WORKERS = _NUM_WORKERS > 0
 
 
 def negbin2_log_prob(y: torch.Tensor, mu: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
@@ -259,8 +270,9 @@ def make_history_dataloaders(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=_NUM_WORKERS,
         pin_memory=True,
+        persistent_workers=_PERSISTENT_WORKERS,
         drop_last=True,
         collate_fn=collate_with_history,
     )
@@ -268,8 +280,9 @@ def make_history_dataloaders(
         val_ds,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=0,
+        num_workers=_NUM_WORKERS,
         pin_memory=True,
+        persistent_workers=_PERSISTENT_WORKERS,
         collate_fn=collate_with_history,
     )
     return train_loader, val_loader
@@ -288,12 +301,18 @@ def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
         train_ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=_NUM_WORKERS,
         pin_memory=True,
+        persistent_workers=_PERSISTENT_WORKERS,
         drop_last=True,
     )
     val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=_NUM_WORKERS,
+        pin_memory=True,
+        persistent_workers=_PERSISTENT_WORKERS,
     )
     return train_loader, val_loader
 
@@ -582,8 +601,9 @@ def make_history_with_opp_dataloaders(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=_NUM_WORKERS,
         pin_memory=True,
+        persistent_workers=_PERSISTENT_WORKERS,
         drop_last=True,
         collate_fn=collate_with_history_and_opp,
     )
@@ -591,8 +611,9 @@ def make_history_with_opp_dataloaders(
         val_ds,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=0,
+        num_workers=_NUM_WORKERS,
         pin_memory=True,
+        persistent_workers=_PERSISTENT_WORKERS,
         collate_fn=collate_with_history_and_opp,
     )
     return train_loader, val_loader
@@ -676,16 +697,18 @@ def make_nested_kick_dataloaders(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=_NUM_WORKERS,
         pin_memory=True,
+        persistent_workers=_PERSISTENT_WORKERS,
         drop_last=True,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=0,
+        num_workers=_NUM_WORKERS,
         pin_memory=True,
+        persistent_workers=_PERSISTENT_WORKERS,
     )
     return train_loader, val_loader
 

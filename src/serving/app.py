@@ -8,6 +8,8 @@ import os
 import re
 import sys
 import threading
+import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 import markdown
 
@@ -16,8 +18,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import matplotlib
 
 matplotlib.use("Agg")
-
-import traceback
 
 import joblib
 import numpy as np
@@ -991,8 +991,6 @@ def _ensure_position_loaded(pos):
             # the whole position. Cache so we don't retry on every request,
             # and leave the pred columns untouched (still the default init
             # values from _load_base_data_locked).
-            import traceback
-
             traceback.print_exc()
             _cache.setdefault("positions_failed", set()).add(pos)
             _cache.setdefault("position_load_errors", {})[pos] = repr(e)
@@ -1002,16 +1000,56 @@ def _ensure_position_loaded(pos):
 
 
 def _ensure_all_positions_loaded():
-    """Load every position, best-effort. A per-position failure records in
-    ``positions_failed`` but does not re-raise — the remaining positions
-    still get loaded. If EVERY position fails, raise a top-level error so
-    gunicorn ``--preload`` aborts at boot and ECS blocks the broken
-    rollout (preserves the existing fail-loud contract for the
-    all-broken case).
+    """Load every position, best-effort, in parallel. A per-position failure
+    records in ``positions_failed`` but does not re-raise — the remaining
+    positions still get loaded. If EVERY position fails, raise a top-level
+    error so gunicorn ``--preload`` aborts at boot and ECS blocks the broken
+    rollout (preserves the existing fail-loud contract for the all-broken case).
+
+    The 6 positions are loaded via a ``ThreadPoolExecutor`` because each one is
+    independent: ``_apply_position_models`` writes to disjoint row-indices in
+    ``_cache["results"]`` (filtered by ``pos_index``) and to per-position keys
+    in ``position_load_errors``/``position_details``. Most of the per-position
+    work is joblib unpickling + ``torch.load`` + numpy/BLAS, which all release
+    the GIL — so threads give real wall-clock parallelism on CPU-only serving.
+
+    Bypasses the per-position branch in ``_ensure_position_loaded`` (which
+    re-acquires ``_cache_lock``) because the caller (``_ensure_metrics``)
+    already holds the RLock — worker threads are different threads and would
+    deadlock waiting for it. The caller's lock provides the "no concurrent
+    request races on _cache" guarantee that the per-position lock provided
+    on the request path; we update ``positions_loaded``/``positions_failed``
+    here in the calling thread after each future completes.
     """
-    for pos in _ALL_POSITIONS:
-        _ensure_position_loaded(pos)
-    failed = _cache.get("positions_failed", set())
+    _ensure_base_data()
+    if "splits" not in _cache:
+        return
+    splits = _cache["splits"]
+    loaded = _cache.setdefault("positions_loaded", set())
+    failed = _cache.setdefault("positions_failed", set())
+    errors = _cache.setdefault("position_load_errors", {})
+    pending = [p for p in _ALL_POSITIONS if p not in loaded and p not in failed]
+
+    def _load_one(pos):
+        try:
+            train, val, test = splits[pos]
+            print(f"Applying {pos}-specific model...")
+            _apply_position_models(train, val, test, pos, _cache["results"])
+            return pos, None
+        except Exception as e:
+            return pos, e
+
+    if pending:
+        with ThreadPoolExecutor(max_workers=len(pending)) as pool:
+            for pos, err in pool.map(_load_one, pending):
+                if err is None:
+                    loaded.add(pos)
+                else:
+                    traceback.print_exception(type(err), err, err.__traceback__)
+                    failed.add(pos)
+                    errors[pos] = repr(err)
+                    print(f"[app] {pos} fully failed: {err!r} — serving degraded")
+
     if failed and len(failed) == len(_ALL_POSITIONS):
         raise RuntimeError(
             f"All positions failed to load — see position_load_errors: "
