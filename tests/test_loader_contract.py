@@ -91,12 +91,6 @@ def test_required_columns_present(weekly_fixture: pd.DataFrame) -> None:
         f"{sorted(missing)}. This is a schema break — a downstream feature "
         "will silently NaN-fill or KeyError."
     )
-    extras = actual - REQUIRED_COLUMNS
-    if extras:
-        print(
-            f"[loader contract] {len(extras)} extra columns present (OK): "
-            f"{sorted(extras)[:10]}{'...' if len(extras) > 10 else ''}"
-        )
 
 
 @pytest.mark.unit
@@ -302,18 +296,120 @@ def test_load_raw_data_uses_cache_and_returns_fixture_schema(
 
 
 @pytest.mark.integration
-@pytest.mark.skip(
-    reason="nflverse GitHub fallback is triggered only for seasons >= 2025 "
-    "via a direct pd.read_parquet(url) call in loader.py. Patching that "
-    "seam without also breaking the cache-read pd.read_parquet calls "
-    "requires a loader refactor. Tracked as a follow-up."
-)
-def test_nflverse_github_fallback_schema_matches_primary_path() -> None:
-    """Placeholder: verify loader's 2025+ fallback path (nflverse GitHub
-    release parquet) returns a frame matching the same schema as the
+def test_nflverse_github_fallback_schema_matches_primary_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify loader's 2025+ fallback path (nflverse GitHub release parquet)
+    returns a frame matching the same required-column contract as the
     nfl_data_py primary path.
 
-    Blocked on adding a mockable seam (e.g. a `_fetch_weekly_parquet(url)`
-    helper) in ``src/data/loader.py``.
+    Mocking strategy: ``loader.pd.read_parquet`` is the single seam used both
+    for the URL fetch (string path) and for cache reads (Path / .parquet).
+    The fake dispatches on ``"stats_player_week_"`` substring — URL fetches
+    return the 2025 schema (with pre-rename column names), cache reads
+    delegate to the real ``pd.read_parquet`` so previously-written caches
+    keep working.
     """
-    raise AssertionError("should have been skipped")
+    from src.data import loader as loader_module
+
+    # Pre-write every supporting cache so the only network-shaped read is the
+    # 2025 nflverse parquet URL.
+    seasons = [2025]
+    suffix = f"{seasons[0]}_{seasons[-1]}"
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    cache_shapes: dict[str, dict[str, str]] = {
+        f"rosters_{suffix}": {"player_id": "object", "season": "int32", "position": "object"},
+        f"schedules_{suffix}": {
+            "season": "int32",
+            "week": "int32",
+            "home_team": "object",
+            "away_team": "object",
+        },
+        f"snap_counts_{suffix}": {
+            "pfr_player_id": "object",
+            "season": "int32",
+            "week": "int32",
+            "offense_pct": "float64",
+        },
+        f"injuries_{suffix}": {
+            "gsis_id": "object",
+            "season": "int32",
+            "week": "int32",
+            "practice_status": "object",
+            "report_status": "object",
+        },
+        f"depth_charts_{suffix}": {
+            "gsis_id": "object",
+            "season": "int32",
+            "week": "int32",
+            "formation": "object",
+            "depth_team": "object",
+        },
+    }
+    for stem, columns in cache_shapes.items():
+        _empty_frame(columns).to_parquet(cache_dir / f"{stem}.parquet")
+
+    real_read_parquet = pd.read_parquet
+    url_calls: list[str] = []
+
+    def _fake_read_parquet(path, *args, **kwargs):
+        s = str(path)
+        if "stats_player_week_" in s:
+            url_calls.append(s)
+            # Why: minimal frame matching every column the URL branch needs
+            # to rename, plus enough required-contract columns to assert the
+            # loader output passes the same gate as the primary path.
+            return pd.DataFrame(
+                {
+                    "player_id": ["P00", "P01"],
+                    "season": [2025, 2025],
+                    "week": [1, 2],
+                    "position": ["QB", "RB"],
+                    "team": ["KC", "SF"],  # → recent_team
+                    "opponent_team": ["SF", "KC"],
+                    "fantasy_points": [22.5, 14.0],
+                    "passing_yards": [300.0, 0.0],
+                    "passing_tds": [2, 0],
+                    "passing_interceptions": [1, 0],  # → interceptions
+                    "sacks_suffered": [2, 0],  # → sacks
+                    "sack_yards_lost": [14, 0],  # → sack_yards
+                    "rushing_yards": [10.0, 80.0],
+                    "rushing_tds": [0, 1],
+                    "receiving_yards": [0.0, 20.0],
+                    "receiving_tds": [0, 0],
+                    "receptions": [0, 3],
+                    "targets": [0, 4],
+                    "attempts": [40, 0],
+                    "carries": [3, 18],
+                }
+            )
+        return real_read_parquet(path, *args, **kwargs)
+
+    monkeypatch.setattr(loader_module.pd, "read_parquet", _fake_read_parquet)
+    monkeypatch.setattr(
+        loader_module.nfl,
+        "import_ids",
+        lambda: _empty_frame({"pfr_id": "object", "gsis_id": "object"}),
+    )
+
+    df = loader_module.load_raw_data(seasons=seasons, cache_dir=str(cache_dir))
+
+    # The URL branch must have fired (otherwise we proved nothing).
+    assert any("stats_player_week_2025" in url for url in url_calls), (
+        f"2025 URL branch never executed; only saw: {url_calls}"
+    )
+
+    # Same schema gate the primary-path test asserts.
+    missing = REQUIRED_COLUMNS - set(df.columns)
+    assert not missing, f"2025 fallback path missing required columns: {missing}"
+
+    # Renames must have happened.
+    assert "team" not in df.columns, "pre-rename column 'team' leaked through"
+    assert "passing_interceptions" not in df.columns
+    assert df["recent_team"].iloc[0] == "KC"
+
+    # Every loader-merge-added column lands.
+    for col in _LOADER_MERGE_ADDED:
+        assert col in df.columns, f"2025 path didn't add {col!r} during merge"

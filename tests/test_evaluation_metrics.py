@@ -27,7 +27,10 @@ def test_compute_metrics_happy_path():
     m = compute_metrics(y_true, y_pred)
     assert math.isclose(m["mae"], 0.15, abs_tol=1e-9)
     assert m["rmse"] > 0
-    # R² should be close to 1 since predictions track truth closely
+    # Why: predictions deviate from truth by ≤0.2 on a [1, 4] range — variance
+    # of residuals is ~0.025, variance of truth is 1.25 → R² = 1 - 0.025/1.25
+    # = 0.98. The 0.9 floor is a wide tolerance band that catches a sign
+    # flip or normalization regression without wedging on float noise.
     assert m["r2"] > 0.9
 
 
