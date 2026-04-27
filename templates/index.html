@@ -30,6 +30,7 @@
         <button class="tab" data-view="standings">Season Leaders</button>
         <button class="tab" data-view="model-performance">Model Performance</button>
         <button class="tab" data-view="model-architecture">Model Architecture</button>
+        <button class="tab" data-view="wiki">Wiki</button>
     </nav>
 
     <!-- Loading Overlay -->
@@ -346,6 +347,18 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
             <div class="section-header">Features by Position</div>
             <div id="arch-feature-accordions">
                 <p class="arch-loading">Loading features…</p>
+            </div>
+        </section>
+
+        <!-- ============ WIKI VIEW ============ -->
+        <section id="view-wiki" class="view">
+            <div class="wiki-layout">
+                <aside class="wiki-sidebar" id="wiki-sidebar" aria-label="Documentation index">
+                    <p class="arch-loading">Loading documentation…</p>
+                </aside>
+                <article class="wiki-content" id="wiki-content">
+                    <p class="arch-loading">Select a document.</p>
+                </article>
             </div>
         </section>
     </main>

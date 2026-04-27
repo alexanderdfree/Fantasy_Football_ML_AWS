@@ -84,6 +84,8 @@ async function init() {
     setupModal();
     setupSearch();
     setupModelToggle();
+    setupWikiClickHandler();
+    setupWikiHashRouter();
 
     // Load weeks dropdown
     try {
@@ -127,6 +129,7 @@ function setupNavTabs() {
             if (view === "model-performance") loadMetrics();
             if (view === "standings") loadStandings();
             if (view === "model-architecture") loadModelArchitecture();
+            if (view === "wiki") loadWiki();
         });
     });
 }
@@ -824,5 +827,125 @@ async function loadModelArchitecture() {
         console.error("Failed to load model architecture:", e);
         tableEl.innerHTML = `<p class="arch-error">Failed to load: ${e.message}</p>`;
         accEl.innerHTML = "";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wiki — render committed markdown docs in the Wiki tab. The sidebar is
+// fetched once from /api/wiki/index; doc bodies are fetched lazily and
+// cached server-side. Intra-wiki links arrive as `#wiki:slug[:anchor]` and
+// are intercepted to swap content without a page reload.
+// ---------------------------------------------------------------------------
+const WIKI_DEFAULT_SLUG = "architecture";
+let wikiIndexLoaded = false;
+let wikiCurrentSlug = null;
+const wikiPageCache = new Map();
+
+function parseWikiHash(hash) {
+    if (!hash || !hash.startsWith("#wiki:")) return null;
+    const rest = hash.slice("#wiki:".length);
+    const [slug, ...anchorParts] = rest.split(":");
+    return { slug, anchor: anchorParts.join(":") || null };
+}
+
+function renderWikiSidebar(items) {
+    const groups = new Map();
+    items.forEach(item => {
+        if (!groups.has(item.group)) groups.set(item.group, []);
+        groups.get(item.group).push(item);
+    });
+    const html = Array.from(groups.entries()).map(([group, entries]) => {
+        const links = entries.map(item =>
+            `<li><a href="#wiki:${escapeHtml(item.slug)}" class="wiki-sidebar-link" data-slug="${escapeHtml(item.slug)}">${escapeHtml(item.name)}</a></li>`
+        ).join("");
+        return `<div class="wiki-sidebar-group">
+            <h3 class="wiki-sidebar-heading">${escapeHtml(group)}</h3>
+            <ul class="wiki-sidebar-list">${links}</ul>
+        </div>`;
+    }).join("");
+    document.getElementById("wiki-sidebar").innerHTML = html;
+}
+
+function setWikiActiveSidebar(slug) {
+    document.querySelectorAll(".wiki-sidebar-link").forEach(a => {
+        a.classList.toggle("active", a.dataset.slug === slug);
+    });
+}
+
+async function loadWikiPage(slug, anchor = null) {
+    const contentEl = document.getElementById("wiki-content");
+    const cached = wikiPageCache.get(slug);
+    if (cached) {
+        contentEl.innerHTML = cached;
+    } else {
+        contentEl.innerHTML = `<p class="arch-loading">Loading…</p>`;
+        try {
+            const data = await fetchJSON(`/api/wiki/${encodeURIComponent(slug)}`);
+            if (data.error) throw new Error(data.error);
+            wikiPageCache.set(slug, data.html);
+            contentEl.innerHTML = data.html;
+        } catch (e) {
+            console.error("Failed to load wiki page:", e);
+            contentEl.innerHTML = `<p class="arch-error">Failed to load: ${escapeHtml(e.message)}</p>`;
+            return;
+        }
+    }
+    wikiCurrentSlug = slug;
+    setWikiActiveSidebar(slug);
+    const newHash = anchor ? `#wiki:${slug}:${anchor}` : `#wiki:${slug}`;
+    if (location.hash !== newHash) {
+        history.replaceState(null, "", newHash);
+    }
+    if (anchor) {
+        const target = document.getElementById(anchor);
+        if (target) target.scrollIntoView({ behavior: "auto", block: "start" });
+        else contentEl.scrollTop = 0;
+    } else {
+        contentEl.scrollTop = 0;
+    }
+}
+
+async function loadWiki() {
+    if (!wikiIndexLoaded) {
+        try {
+            const items = await fetchJSON("/api/wiki/index");
+            renderWikiSidebar(items);
+            wikiIndexLoaded = true;
+        } catch (e) {
+            console.error("Failed to load wiki index:", e);
+            document.getElementById("wiki-sidebar").innerHTML =
+                `<p class="arch-error">Failed to load index: ${escapeHtml(e.message)}</p>`;
+            return;
+        }
+    }
+    const fromHash = parseWikiHash(location.hash);
+    const slug = (fromHash && fromHash.slug) || wikiCurrentSlug || WIKI_DEFAULT_SLUG;
+    const anchor = fromHash ? fromHash.anchor : null;
+    await loadWikiPage(slug, anchor);
+}
+
+function setupWikiClickHandler() {
+    // One delegated listener on the wiki view catches both sidebar clicks and
+    // intra-content `#wiki:` links produced by the server-side link rewriter.
+    const view = document.getElementById("view-wiki");
+    if (!view) return;
+    view.addEventListener("click", e => {
+        const a = e.target.closest("a");
+        if (!a) return;
+        const href = a.getAttribute("href") || "";
+        if (!href.startsWith("#wiki:")) return;
+        e.preventDefault();
+        const parsed = parseWikiHash(href);
+        if (parsed) loadWikiPage(parsed.slug, parsed.anchor);
+    });
+}
+
+function setupWikiHashRouter() {
+    // If the page loads with a #wiki: hash, activate the wiki tab and route.
+    const fromHash = parseWikiHash(location.hash);
+    if (!fromHash) return;
+    const wikiTab = document.querySelector('.nav-tabs .tab[data-view="wiki"]');
+    if (wikiTab && !wikiTab.classList.contains("active")) {
+        wikiTab.click();
     }
 }
