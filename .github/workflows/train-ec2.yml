@@ -25,6 +25,11 @@ concurrency:
 env:
   AWS_REGION: us-east-1
   S3_BUCKET: ff-predictor-training
+  # Same cluster/service deploy.yml targets — used by the post-train ECS
+  # rollover step so freshly promoted stable model artifacts get picked
+  # up by the running task without a code-change deploy.
+  ECS_CLUSTER: fantasy-cluster
+  ECS_SERVICE: fantasy-service
 
 jobs:
   detect:
@@ -301,6 +306,29 @@ jobs:
             echo "| $POS | $status | $LM | $mb |" >> "$GITHUB_STEP_SUMMARY"
           done
           exit $fail
+
+      - name: Refresh ECS service to pick up new model artifacts
+        # Boot-time sync_models_from_s3 / sync_data_from_s3 only run when an
+        # ECS task starts, so freshly promoted stable pointers in S3 are
+        # invisible to the running task until something restarts it. Forcing
+        # a rolling redeploy here pulls the same image and re-runs both
+        # syncs at boot. Idempotent — if no stables advanced this run, the
+        # new task picks up the same artifacts. ``services-stable`` waits
+        # for the new task to reach RUNNING and the old to drain, so a
+        # task that fails to load the new artifacts surfaces here instead
+        # of silently serving NaN preds. See artifact_gc.py for the
+        # parallel: only smoke-passed artifacts ever become stable.
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --region "$AWS_REGION" \
+            --force-new-deployment \
+            --no-cli-pager > /dev/null
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region "$AWS_REGION"
 
       - name: Append EC2 run to benchmark_history/
         run: |
