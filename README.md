@@ -106,7 +106,7 @@ Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy po
 
 ## Video Links
 
-- Demo video: _TODO — add link before submission_
+- Demo video — non-technical (3–5 min): [DemoRecording.mov](DemoRecording.mov)
 - Technical walkthrough: _TODO — add link before submission_
 
 ## Repo Layout
