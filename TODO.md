@@ -14,6 +14,11 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **Rationale:** Kickers have stable multi-year careers and small per-season sample sizes (~17 games), so cross-season windows provide more signal. Comment above the `grp` assignment records this rationale.
 - **Risk:** If a kicker changes teams or role between seasons, stale cross-season features could mislead the model. Likely small impact.
 
+### [LOW] Optuna parallel trials wired but disabled by default
+- **File:** `src/tuning/tune_lgbm.py:448` (`study.optimize(n_jobs=args.n_jobs)`), CLI flag definition at `:378`.
+- **What:** `--n-jobs` exists (default `1`) and is plumbed into `study.optimize`. The default keeps trials serial — nothing flips it on yet. Optuna's thread-based trial parallelism is safe with the existing SQLite storage at `:432`.
+- **Why not flipped:** Needs a wall-clock benchmark on the tuning host to confirm a win, and the value must be coordinated with the LGBM tree-learning `n_jobs=-1` (set on Linux in `src/shared/models.py:_LGBM_N_JOBS`) to avoid oversubscribing a 4-vCPU box. On EC2 g4dn picking `--n-jobs=2` (with LGBM at `-1`) is the obvious starting point; `--n-jobs=-1` will fight the per-trial tree-learning threads.
+
 ### [LOW] `_cache` dict grows without eviction
 - **File:** `app.py:63`
 - **What:** `_get_data()` caches results in a module-level dict (serialized by `_cache_lock` since #31). The cache is never cleared. Not a real problem for a class project (server restarts frequently), but worth noting.
