@@ -1,4 +1,4 @@
-"""Coverage tests for ``shared/pipeline.py`` branches that ``run_pipeline``
+"""Coverage tests for ``src/shared/pipeline.py`` branches that ``run_pipeline``
 doesn't reach with the default tiny config.
 
 These functions are imported but never exercised end-to-end:
@@ -6,7 +6,7 @@ These functions are imported but never exercised end-to-end:
 - ``_train_elasticnet`` — wired up only when ``cfg["train_elasticnet"]=True``.
   Default tiny configs leave it off.
 - ``_tune_ridge_alphas_cv`` fine-refinement branch — fires only when
-  ``refine_points > 0``. ``shared/tests/test_pipeline_helpers.py`` already
+  ``refine_points > 0``. ``src/shared/tests/test_pipeline_helpers.py`` already
   hits the ``refine_points=0`` shortcut and the ``_eval_alpha_cv``-without-
   refinement coarse path.
 - ``build_train_matrix`` — diagnostic entry point for SHAP / ablation

@@ -167,7 +167,7 @@ The existing NaN fill logic (player mean → position mean → zero) should work
 
 No new fill logic is needed — the existing step 3 (zero fill) handles all remaining NaNs, which is correct behavior for binary features and reasonable for Vegas lines (0 = no information).
 
-### 6. No changes to `shared/neural_net.py` or `shared/training.py`
+### 6. No changes to `src/shared/neural_net.py` or `src/shared/training.py`
 
 The neural network and training infrastructure are feature-count-agnostic. `input_dim` is inferred from the feature array at pipeline runtime. Adding 12 features just increases `input_dim` from ~70 to ~82. No architectural changes needed.
 

@@ -1,4 +1,4 @@
-"""Unit tests for the per-head loss primitives in shared.training."""
+"""Unit tests for the per-head loss primitives in src.shared.training."""
 
 import numpy as np
 import pytest

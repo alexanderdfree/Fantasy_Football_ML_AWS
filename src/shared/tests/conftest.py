@@ -8,13 +8,13 @@ Hosts the session-scoped base fixtures reused across the new E2E suite:
 - ``frozen_rng`` — seeds numpy, torch, python ``random``, and ``PYTHONHASHSEED``.
 
 Also hosts the fixtures promoted from the duplicated helpers previously inlined
-across ``shared/tests/test_*.py`` (error-analysis, weather, training data
+across ``src/shared/tests/test_*.py`` (error-analysis, weather, training data
 factories), and registers the shared pytest marker vocabulary locally so the
 suite runs standalone. Unit 7 registers the same markers globally in
 ``pyproject.toml`` — pytest tolerates duplicate registration.
 
 Project root is put on ``sys.path`` for consumers that invoke
-``pytest shared/tests/...`` directly without going through the root conftest.
+``pytest src/shared/tests/...`` directly without going through the root conftest.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def pytest_configure(config):
 # ---------------------------------------------------------------------------
 
 # Column schema used by ``filter_to_{qb,rb,wr,te}`` and the downstream
-# ``shared.pipeline`` feature-builder. Keep this minimal — only the columns
+# ``src.shared.pipeline`` feature-builder. Keep this minimal — only the columns
 # the filters + engineer actually read.
 _SYNTHETIC_COLUMNS = [
     "player_id",

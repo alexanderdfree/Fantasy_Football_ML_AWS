@@ -7,7 +7,7 @@ the smoke-test-validated ``stable`` artifact, falling back to ``current``
 then ``previous`` only when ``stable`` is missing or fails to load. For
 pre-manifest buckets it falls back to the legacy
 ``s3://{bucket}/{prefix}/{POS}/model.tar.gz`` key (migration compat).
-See ``shared/artifact_gc.py`` for retention; ``stable`` is exempted from GC.
+See ``src/shared/artifact_gc.py`` for retention; ``stable`` is exempted from GC.
 
 ``sync_data_from_s3`` pulls the splits + raw weekly parquets that inference
 needs (K reconstructs kicker stats from data/raw/, all positions read

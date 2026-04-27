@@ -87,7 +87,7 @@ def _wr_tiny() -> dict:
     """WR config — prefer WR_CONFIG_TINY if present, else shrink WR_CONFIG.
 
     WR (like QB/RB/TE) no longer uses a ``compute_adjustment_fn`` — the fumble
-    penalty is now a direct target priced by ``shared/aggregate_targets.py``
+    penalty is now a direct target priced by ``src/shared/aggregate_targets.py``
     per docs/ARCHITECTURE.md. Only K and DST still wire an adjustment function.
     """
     from src.WR.wr_data import filter_to_wr
@@ -394,7 +394,7 @@ def run_pipeline_in_tmp(
     tmp_path: Path,
     seed: int = 42,
 ) -> dict:
-    """Run ``shared.pipeline.run_pipeline`` inside ``tmp_path``.
+    """Run ``src.shared.pipeline.run_pipeline`` inside ``tmp_path``.
 
     The pipeline hard-codes ``{POS}/outputs`` for artifact saves. We chdir
     into a tmp workspace and symlink ``data/`` so schedule parquet reads

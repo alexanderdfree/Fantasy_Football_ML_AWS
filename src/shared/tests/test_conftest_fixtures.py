@@ -1,4 +1,4 @@
-"""Coverage tests for the unused fixtures in ``shared/tests/conftest.py``.
+"""Coverage tests for the unused fixtures in ``src/shared/tests/conftest.py``.
 
 The conftest defines several session-scoped helpers
 (``tiny_synthetic_games``, ``tiny_model_artifact``, ``frozen_rng``,

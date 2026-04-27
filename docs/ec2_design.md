@@ -25,8 +25,9 @@ GITHUB ACTIONS (push to main)                AWS
   train-ec2.yml (workflow_run after image built)
     detect job
     └─ git diff HEAD^ HEAD → scope positions
-         (shared|src|batch|requirements.txt → all 6;
-          otherwise only the {POS}/ dirs that changed)
+         (src/{shared,batch,data,features,models,training,evaluation}/
+          or src/config.py or requirements.txt → all 6;
+          otherwise only the src/{POS}/ dirs that changed)
 
     train job  (skipped if detect.positions is empty)
     ├─ aws ec2 start-instances ────> EC2 g4dn.xlarge
@@ -75,7 +76,7 @@ Same as Batch. Training container reads `s3://ff-predictor-training/data/{train,
 
 ## Training Container
 
-Reused as-is from Batch path. `batch/Dockerfile.train` produces the image, CI pushes to ECR `ff-training:latest`, the EC2 instance pulls it via nvidia-docker with `--gpus all`. Env vars passed to the container (`S3_BUCKET`, `S3_DATA_PREFIX`, `LOG_EVERY`, `REQUIRE_GPU`) are unchanged.
+Reused as-is from Batch path. `src/batch/Dockerfile.train` produces the image, CI pushes to ECR `ff-training:latest`, the EC2 instance pulls it via nvidia-docker with `--gpus all`. Env vars passed to the container (`S3_BUCKET`, `S3_DATA_PREFIX`, `LOG_EVERY`, `REQUIRE_GPU`) are unchanged.
 
 ## Instance Spec
 
@@ -102,7 +103,7 @@ Inline `ff-training-workload`:
 ## CI: .github/workflows/train-ec2.yml
 
 Triggers:
-- `workflow_run` after `batch-image.yml` succeeds on `main` — the image-build path filter (`batch/**`, `shared/**`, position dirs, `src/**`, `requirements.txt`) gates whether this fires at all, so non-model commits never train.
+- `workflow_run` after `batch-image.yml` succeeds on `main` — the image-build path filter (`src/**` excluding `**/tests/**` and `**/*.md`, plus `requirements.txt`) gates whether this fires at all, so non-model commits never train.
 - `workflow_dispatch` with inputs `positions`, `seed` — break-glass for re-runs.
 
 A `detect` job runs first and scopes which positions to train:
@@ -144,7 +145,7 @@ See [`infra/ec2/README.md`](../infra/ec2/README.md).
 
 Batch remains a drop-in fallback:
 1. Set repo variable `BATCH_ACTIVE=true` (re-enables job-definition registration in `batch-image.yml`).
-2. Run `python batch/launch.py` locally — Batch resources already provisioned; no infra work needed.
+2. Run `python src/batch/launch.py` locally — Batch resources already provisioned; no infra work needed.
 3. Optional: disable `train-ec2.yml` by renaming or setting a repo variable guard.
 
 ## Reactivating Batch image-sync

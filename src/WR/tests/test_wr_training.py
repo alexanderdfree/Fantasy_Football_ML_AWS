@@ -1,4 +1,4 @@
-"""Tests for shared.training — MultiTargetLoss, dataloaders, trainer (WR targets)."""
+"""Tests for src.shared.training — MultiTargetLoss, dataloaders, trainer (WR targets)."""
 
 import numpy as np
 import pytest

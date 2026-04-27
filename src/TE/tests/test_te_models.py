@@ -1,4 +1,4 @@
-"""Tests for shared.models.RidgeMultiTarget (using TE targets)."""
+"""Tests for src.shared.models.RidgeMultiTarget (using TE targets)."""
 
 import numpy as np
 import pandas as pd

@@ -1,4 +1,4 @@
-"""Tests for shared.training — MultiTargetLoss, MultiTargetDataset, dataloaders, trainer (QB targets)."""
+"""Tests for src.shared.training — MultiTargetLoss, MultiTargetDataset, dataloaders, trainer (QB targets)."""
 
 import numpy as np
 import pytest

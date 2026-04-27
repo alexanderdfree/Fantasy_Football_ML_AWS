@@ -1,4 +1,4 @@
-"""Tests for shared.models.RidgeMultiTarget (using Kicker targets).
+"""Tests for src.shared.models.RidgeMultiTarget (using Kicker targets).
 
 Kickers have 4 targets (fg_yard_points, pat_points, fg_misses, xp_misses).
 """

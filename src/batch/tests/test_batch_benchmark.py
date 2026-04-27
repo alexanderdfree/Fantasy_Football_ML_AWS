@@ -1,4 +1,4 @@
-"""Coverage tests for ``batch/benchmark.py``.
+"""Coverage tests for ``src/batch/benchmark.py``.
 
 The CLI launches AWS Batch jobs and aggregates benchmark_metrics.json from
 each position's model artifacts. These tests stub every external call
@@ -107,7 +107,7 @@ def _main_stubs(tmp_path, monkeypatch):
     # — we make that safe by pointing ``__file__``'s parent to tmp_path.
     monkeypatch.chdir(tmp_path)
     # main() still calls os.chdir(os.path.join(os.path.dirname(__file__), ".."))
-    # which resolves relative to batch/benchmark.py — safe because we don't
+    # which resolves relative to src/batch/benchmark.py — safe because we don't
     # write anything there (RESULTS_FILE/HISTORY_FILE land in project root,
     # which our append_to_history stub won't touch).
 
@@ -134,7 +134,7 @@ def _main_stubs(tmp_path, monkeypatch):
     }
     monkeypatch.setattr(bb, "download_metrics", lambda positions: fake_metrics)
 
-    # summary + table + history — shared.benchmark_utils functions re-bound
+    # summary + table + history — src.shared.benchmark_utils functions re-bound
     # on bench at import time. summarize returns a dict, the other three
     # are no-ops.
     monkeypatch.setattr(
@@ -171,7 +171,7 @@ def test_main_download_only_skips_submit(_main_stubs, monkeypatch):
     import src.batch.benchmark as bb
 
     launched, printed, appended = _main_stubs
-    monkeypatch.setattr("sys.argv", ["batch/benchmark.py", "--download-only"])
+    monkeypatch.setattr("sys.argv", ["src/batch/benchmark.py", "--download-only"])
     bb.main()
     # No submit/upload/wait calls — launched must be empty.
     assert launched == []
@@ -189,7 +189,7 @@ def test_main_full_launch_path(_main_stubs, monkeypatch):
     launched, printed, appended = _main_stubs
     monkeypatch.setattr(
         "sys.argv",
-        ["batch/benchmark.py", "--positions", "QB", "RB", "--note", "unit test", "--seed", "7"],
+        ["src/batch/benchmark.py", "--positions", "QB", "RB", "--note", "unit test", "--seed", "7"],
     )
     bb.main()
 
@@ -219,7 +219,7 @@ def test_main_empty_metrics_early_returns(monkeypatch, tmp_path):
     monkeypatch.setattr(bb, "print_comparison_table", lambda *a, **k: None)
     monkeypatch.setattr(bb, "summarize_pipeline_result", lambda *a, **k: {})
 
-    monkeypatch.setattr("sys.argv", ["batch/benchmark.py", "--positions", "QB"])
+    monkeypatch.setattr("sys.argv", ["src/batch/benchmark.py", "--positions", "QB"])
     bb.main()
     # Early-return branch: no history writes.
     assert appended == []
@@ -241,7 +241,7 @@ def test_main_reports_failed_jobs(monkeypatch, tmp_path, capsys):
 
     monkeypatch.setattr(bb, "wait_for_jobs", _wait)
     monkeypatch.setattr(bb, "download_metrics", lambda positions: {})  # early-exit after
-    monkeypatch.setattr("sys.argv", ["batch/benchmark.py", "--positions", "QB", "RB"])
+    monkeypatch.setattr("sys.argv", ["src/batch/benchmark.py", "--positions", "QB", "RB"])
     bb.main()
     out = capsys.readouterr().out
     assert "Failed positions" in out
@@ -262,7 +262,7 @@ def test_main_reports_submit_exception(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(bb, "submit_job", _bad_submit)
     monkeypatch.setattr(bb, "wait_for_jobs", lambda job_ids: {})
     monkeypatch.setattr(bb, "download_metrics", lambda positions: {})
-    monkeypatch.setattr("sys.argv", ["batch/benchmark.py", "--positions", "QB"])
+    monkeypatch.setattr("sys.argv", ["src/batch/benchmark.py", "--positions", "QB"])
     bb.main()
     out = capsys.readouterr().out
     assert "FAILED to submit" in out

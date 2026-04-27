@@ -1,6 +1,6 @@
 """End-to-end smoke test for the DST pipeline.
 
-Exercises ``shared.pipeline.run_pipeline`` all the way through on a tiny
+Exercises ``src.shared.pipeline.run_pipeline`` all the way through on a tiny
 synthetic dataset — the only test in the DST suite that runs the full
 orchestration (feature prep -> Ridge tuning -> NN training -> ranking /
 backtest / artifact save).  This catches integration bugs (shape
@@ -63,7 +63,7 @@ from src.shared.pipeline import run_pipeline
 def _build_synthetic_schedules(df: pd.DataFrame) -> pd.DataFrame:
     """Build a minimal schedules DataFrame the pipeline can merge against.
 
-    ``shared.weather_features._load_schedules`` expects a parquet on disk
+    ``src.shared.weather_features._load_schedules`` expects a parquet on disk
     at ``data/raw/schedules_2012_2025.parquet``.  The E2E test chdirs
     to tmp_path (so artifact writes don't pollute the repo), which
     breaks that relative path.  We monkeypatch ``_load_schedules`` to
@@ -105,7 +105,7 @@ def _make_dst_tiny_cfg() -> dict:
 
     Non-training fields (targets, callables, alpha grids, loss/Huber)
     match the production DST config so the test covers the real dispatch
-    paths in ``shared.pipeline.run_pipeline``.
+    paths in ``src.shared.pipeline.run_pipeline``.
     """
     cfg = {
         "targets": DST_TARGETS,

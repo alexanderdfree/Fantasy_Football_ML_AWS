@@ -1,6 +1,6 @@
 """Coverage smoke test for ``QB/run_qb_pipeline.py``'s ``__main__`` block.
 
-Runs the script via ``runpy`` with mocked ``shared.pipeline.run_pipeline`` /
+Runs the script via ``runpy`` with mocked ``src.shared.pipeline.run_pipeline`` /
 ``run_cv_pipeline`` so we exercise the argparse + dispatch logic without
 paying for a real training round-trip. Every other QB test either imports
 ``QB_CONFIG`` directly or drives its own tiny pipeline — none touch the
@@ -20,7 +20,7 @@ _MODULE_PATH = Path(__file__).resolve().parents[1] / "run_qb_pipeline.py"
 
 
 def _patch_shared_pipeline(monkeypatch):
-    """Replace shared.pipeline run_* with no-op stubs that log invocations.
+    """Replace src.shared.pipeline run_* with no-op stubs that log invocations.
 
     Returns a list that gets populated with (position, cfg, kwargs) per
     call, so tests can assert which dispatch branch fired.
@@ -79,7 +79,7 @@ def test_run_qb_pipeline_function_passes_through(monkeypatch):
     ``run_qb_pipeline.py`` did ``from src.shared.pipeline import run_pipeline``
     at import time, so by now the name ``run_pipeline`` inside that module
     is bound to the original function. Patch the module attribute directly
-    rather than ``shared.pipeline.run_pipeline``.
+    rather than ``src.shared.pipeline.run_pipeline``.
     """
     import src.QB.run_qb_pipeline as qb_pipe
 

@@ -1,4 +1,4 @@
-"""Unit tests for shared.artifact_integrity.
+"""Unit tests for src.shared.artifact_integrity.
 
 These guard the scaler/NN-weights integrity check that prevents the
 "NN MAE = 25" failure mode: inference silently using a scaler that was

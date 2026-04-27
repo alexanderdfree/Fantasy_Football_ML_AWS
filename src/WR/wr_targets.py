@@ -7,7 +7,7 @@ def compute_wr_targets(df: pd.DataFrame) -> pd.DataFrame:
     """Compute the 4 raw-stat prediction targets for WR rows.
 
     Targets (raw NFL stats; fantasy points are aggregated downstream via
-    ``shared.aggregate_targets.predictions_to_fantasy_points``):
+    ``src.shared.aggregate_targets.predictions_to_fantasy_points``):
 
       - receiving_tds: raw receiving TD count
       - receiving_yards: raw receiving yards

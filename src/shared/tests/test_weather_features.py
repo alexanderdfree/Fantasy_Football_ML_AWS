@@ -1,4 +1,4 @@
-"""Tests for shared.weather_features — get_weather_feature_columns and merge_schedule_features."""
+"""Tests for src.shared.weather_features — get_weather_feature_columns and merge_schedule_features."""
 
 from unittest.mock import patch
 

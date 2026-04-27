@@ -1,4 +1,4 @@
-"""Tests for shared.backtest — run_weekly_simulation (DST context).
+"""Tests for src.shared.backtest — run_weekly_simulation (DST context).
 
 DST is team-level — ``player_id`` holds the team code.  Fantasy-point
 scale is 5–15 per week (see ``make_sim_df`` fixture in conftest.py).
@@ -119,7 +119,7 @@ class TestRunWeeklySimulation:
 @pytest.mark.unit
 class TestBacktestDeterminism:
     """Two runs with the same synthetic input must produce identical
-    weekly equity curves.  Guards shared/backtest.py against silent
+    weekly equity curves.  Guards src/shared/backtest.py against silent
     non-determinism (e.g., dict-iteration order, unsorted groupby).
     """
 

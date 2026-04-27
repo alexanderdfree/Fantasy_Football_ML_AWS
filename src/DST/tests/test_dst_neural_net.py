@@ -1,4 +1,4 @@
-"""Tests for shared.neural_net.MultiHeadNet (using a DST target subset).
+"""Tests for src.shared.neural_net.MultiHeadNet (using a DST target subset).
 
 Uses 3 of the 10 DST raw-stat targets (def_sacks, def_tds, points_allowed)
 as representative test data — exercises multi-head NN shapes, dropout,

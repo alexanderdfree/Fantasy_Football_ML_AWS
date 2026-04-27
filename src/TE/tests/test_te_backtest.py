@@ -1,4 +1,4 @@
-"""Tests for shared.backtest — run_weekly_simulation (TE context)."""
+"""Tests for src.shared.backtest — run_weekly_simulation (TE context)."""
 
 import numpy as np
 import pandas as pd

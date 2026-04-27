@@ -34,7 +34,7 @@ def _ensure_data_from_s3():
     is set and the local files are missing.
 
     Lets tune_lgbm.py run inside the training container (which has no baked-in
-    data) by reusing the same boto3 + ETag-cache helpers as ``batch/train.py``.
+    data) by reusing the same boto3 + ETag-cache helpers as ``src/batch/train.py``.
     No-op locally when ``S3_BUCKET`` isn't set or when the files already exist
     — callers with their own ``data/splits`` layout aren't affected.
     """
@@ -44,7 +44,7 @@ def _ensure_data_from_s3():
     prefix = os.environ.get("S3_DATA_PREFIX", "data")
 
     # Local import so ``python tune_lgbm.py --print-best`` can run on machines
-    # that don't have boto3 + full batch/train deps, e.g. offline inspection.
+    # that don't have boto3 + full src/batch/train deps, e.g. offline inspection.
     from src.batch.train import download_data, sync_raw_data
 
     splits_needed = not all(

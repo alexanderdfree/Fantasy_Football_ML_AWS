@@ -1,6 +1,6 @@
 """End-to-end pipeline smoke test for the WR position.
 
-Runs the full ``shared.pipeline.run_pipeline`` with a shrunk config
+Runs the full ``src.shared.pipeline.run_pipeline`` with a shrunk config
 (2-layer × 8-unit NN, 1 epoch, no attention/LightGBM) on a tiny
 slice of real data (50 players × 2 seasons). Asserts:
 

@@ -1,6 +1,6 @@
 """Full-pipeline smoke test for the QB position.
 
-Runs shared.pipeline.run_pipeline end-to-end on a tiny synthetic dataset
+Runs src.shared.pipeline.run_pipeline end-to-end on a tiny synthetic dataset
 with a shrunk NN (1 layer x 8 units, 1 epoch) and asserts:
 
   - No exceptions
@@ -151,7 +151,7 @@ def synthetic_splits():
 def _run_once(splits, workdir, seed=42):
     """Run the QB pipeline once inside ``workdir`` and return the result.
 
-    ``shared.pipeline.run_pipeline`` writes model artifacts to ``QB/outputs``
+    ``src.shared.pipeline.run_pipeline`` writes model artifacts to ``QB/outputs``
     relative to cwd; chdir'ing into a fresh tmp workspace keeps those writes
     out of the checked-in tree. ``data/`` is symlinked so
     ``data/raw/schedules_2012_2025.parquet`` resolves for weather features.

@@ -1,7 +1,7 @@
-"""Shared fixtures for K (Kicker) tests — thin wrappers over shared.tests.position_fixtures.
+"""Shared fixtures for K (Kicker) tests — thin wrappers over src.shared.tests.position_fixtures.
 
 Generic factories (``make_sim_df``, ``make_test_df``, ``make_tensors``,
-``make_splits``) come from ``shared/tests/position_fixtures.py``.  Only
+``make_splits``) come from ``src/shared/tests/position_fixtures.py``.  Only
 kicker-specific helpers remain: ``make_kicker_games`` (per-week stat
 frame for feature tests) and the tiny synthetic dataset used by E2E /
 regression tests.
@@ -210,7 +210,7 @@ def _build_tiny_k_dataset(
     rng = np.random.default_rng(seed)
     # Match the real kicker dataset: 2015-2025, split train<=2023 / val=2024 /
     # test=2025. Multiple seasons in train are required for expanding-window
-    # CV (`shared/pipeline._build_expanding_cv_folds`) to produce non-empty
+    # CV (`src/shared/pipeline._build_expanding_cv_folds`) to produce non-empty
     # folds; with a single train season, every fold is skipped and downstream
     # `np.mean([])` warnings fire.
     base_season = 2015

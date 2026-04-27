@@ -1,4 +1,4 @@
-"""Coverage tests for ``shared/registry.py``.
+"""Coverage tests for ``src/shared/registry.py``.
 
 The registry is a lazy dispatch table: each position has metadata in
 ``_POSITION_META`` + a bespoke branch in ``get_inference_spec`` that wires

@@ -1,4 +1,4 @@
-"""Tests for batch/train.py — position registry, S3 staging, artifact handling."""
+"""Tests for src/batch/train.py — position registry, S3 staging, artifact handling."""
 
 import argparse
 import io
@@ -50,7 +50,7 @@ class _FakeS3Producer:
 
     The ``ops`` list records every mutating call in order so tests can assert
     that the legacy mirror upload happens **after** the manifest put — the
-    atomic-promotion invariant documented in batch/train.py::upload_artifacts.
+    atomic-promotion invariant documented in src/batch/train.py::upload_artifacts.
     Missing keys raise ``ClientError`` with code ``NoSuchKey`` to mirror real
     boto3 semantics.
     """
@@ -507,7 +507,7 @@ class TestUploadArtifacts:
     def test_second_upload_promotes_old_current_to_previous(self, mock_boto_client, tmp_path):
         """After two back-to-back uploads, manifest.previous must equal the
         first upload's current. This is the rollback path: if upload #2's
-        artifact later fails to load, ``shared.model_sync._sync_one`` falls
+        artifact later fails to load, ``src.shared.model_sync._sync_one`` falls
         back to #1's versioned key via manifest.previous."""
         from src.batch.train import upload_artifacts
 
@@ -539,9 +539,9 @@ class TestUploadArtifacts:
     def test_manifest_validates_end_to_end_with_consumer(
         self, mock_boto_client, tmp_path, monkeypatch
     ):
-        """Contract test: what upload_artifacts writes, shared.model_sync can
+        """Contract test: what upload_artifacts writes, src.shared.model_sync can
         read. Uses a real RB tarball layout (via _write_fake_model_dir) and
-        shared.model_sync._sync_one against the same fake S3. If the producer
+        src.shared.model_sync._sync_one against the same fake S3. If the producer
         ever changes the manifest schema without updating the consumer, this
         test breaks."""
         from src.batch.train import upload_artifacts

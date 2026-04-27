@@ -1,7 +1,7 @@
 """Coverage smoke test for ``WR/run_wr_pipeline.py``'s ``__main__`` block.
 
 Mirrors the QB/RB versions — drives argparse + dispatch with mocked
-``shared.pipeline.run_pipeline`` / ``run_cv_pipeline`` so the CLI branch
+``src.shared.pipeline.run_pipeline`` / ``run_cv_pipeline`` so the CLI branch
 gets exercised without a real training run.
 """
 

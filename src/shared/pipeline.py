@@ -117,7 +117,7 @@ def _scale_xs(*X_arrays: np.ndarray) -> tuple[StandardScaler, list[np.ndarray]]:
 
     Returns ``(scaler, [X_train_s, X_val_s, ...])``. Callers unpack the list
     with as many positional targets as they passed in. See
-    ``shared/feature_build.py::scale_and_clip`` for the clip rationale.
+    ``src/shared/feature_build.py::scale_and_clip`` for the clip rationale.
     """
     scaler = StandardScaler()
     scaled = [scale_and_clip(scaler, X_arrays[0], fit=True)]

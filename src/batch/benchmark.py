@@ -5,9 +5,9 @@ Runs the same pipelines as benchmark.py but on AWS Batch GPU instances
 artifacts and prints a unified comparison table.
 
 Usage:
-    python batch/benchmark.py                          # all 6 positions
-    python batch/benchmark.py --positions RB WR QB     # subset
-    python batch/benchmark.py --note "attention + LGBM on GPU"
+    python src/batch/benchmark.py                          # all 6 positions
+    python src/batch/benchmark.py --positions RB WR QB     # subset
+    python src/batch/benchmark.py --note "attention + LGBM on GPU"
 """
 
 import argparse
@@ -111,7 +111,7 @@ def main():
         print("Uploading data splits to S3...")
         upload_data(S3_BUCKET)
 
-        # Submit all jobs in parallel (mirrors batch/launch.py:main)
+        # Submit all jobs in parallel (mirrors src/batch/launch.py:main)
         total_t0 = time.time()
         print(f"Submitting {len(args.positions)} benchmark jobs: {args.positions}")
         job_ids = {}

@@ -1,6 +1,6 @@
 """AWS Batch training entry point.
 
-Batch runs this as: python batch/train.py --position RB --seed 42
+Batch runs this as: python src/batch/train.py --position RB --seed 42
 
 Environment variables set via job definition / container overrides:
   TRAINING_DATA_DIR  = /opt/ml/input/data/training/
@@ -132,7 +132,7 @@ def download_data(s3_bucket, s3_prefix, local_dir):
 def sync_raw_data(s3_bucket):
     """Sync s3://{bucket}/data/raw/*.parquet into the container's data/raw/.
 
-    Needed by shared/weather_features._load_schedules() (all positions during
+    Needed by src/shared/weather_features._load_schedules() (all positions during
     feature engineering) and by K/DST's self-contained loaders (k_data,
     dst_data). CACHE_DIR="data/raw" in src/config.py resolves relative to
     the container WORKDIR=/opt/ml/code. .dockerignore excludes data/ so these
@@ -271,7 +271,7 @@ def upload_artifacts(s3_bucket, position, model_dir):
         )
 
     s3 = boto3.client("s3")
-    # Mirrors shared.model_sync's consumer-side env read so producer/consumer
+    # Mirrors src.shared.model_sync's consumer-side env read so producer/consumer
     # paths can't drift. Default "models" matches the legacy layout.
     s3_prefix = os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/")
 
@@ -568,7 +568,7 @@ def main():
     _fingerprint_file = os.path.join(os.path.dirname(__file__), "train.py")
     with open(_fingerprint_file, "rb") as _f:
         _hash = hashlib.sha256(_f.read()).hexdigest()[:12]
-    print(f"[batch/train.py] build fingerprint: {_hash}")
+    print(f"[src/batch/train.py] build fingerprint: {_hash}")
 
     _t_total = time.monotonic()
     phase_seconds: dict[str, float] = {}
@@ -584,7 +584,7 @@ def main():
     s3_prefix = os.environ.get("S3_DATA_PREFIX", "data")
     data_dir = os.environ.get("TRAINING_DATA_DIR", "/opt/ml/input/data/training")
     model_dir = os.environ.get("MODEL_OUTPUT_DIR", "/opt/ml/model")
-    # LOG_EVERY is consumed directly by shared.pipeline._resolve_nn_log_every()
+    # LOG_EVERY is consumed directly by src.shared.pipeline._resolve_nn_log_every()
     # so we don't need to inject it into cfg from here. Historically we
     # monkey-patched run_pipeline, but that only worked if callers used
     # `import src.shared.pipeline as pipeline_mod; pipeline_mod.run_pipeline(...)`.
@@ -652,7 +652,7 @@ def main():
         )
     metrics = _extract_metrics(pos, result)
     # Record end-to-end elapsed and the per-phase breakdown so the run
-    # written under benchmark_history/ by batch/benchmark.py --download-only
+    # written under benchmark_history/ by src/batch/benchmark.py --download-only
     # carries timing. elapsed_sec captures everything from seeding through
     # the S3 upload, matching local benchmark.py's wrap around run_one().
     metrics["elapsed_sec"] = round(time.monotonic() - _t_total, 1)

@@ -1,6 +1,6 @@
 """End-to-end pipeline smoke tests across all 6 positions.
 
-Exercises ``shared.pipeline.run_pipeline`` for each position with a shrunk
+Exercises ``src.shared.pipeline.run_pipeline`` for each position with a shrunk
 config (1 epoch, 2-layer x 8-unit NN, no attention, no LightGBM). Asserts the
 orchestration completes, predictions are finite and correctly shaped, and
 model artifacts land on disk. Budget: < 20s per position on CPU.
@@ -118,7 +118,7 @@ def test_pipeline_writes_model_artifacts(pipeline_run, position):
     cfg = pipeline_run["cfg"]
 
     pos_lower = position.lower()
-    models_dir = workdir / position / "outputs" / "models"
+    models_dir = workdir / "src" / position / "outputs" / "models"
     assert models_dir.is_dir(), f"{position}: models dir not created"
 
     nn_path = models_dir / f"{pos_lower}_multihead_nn.pt"
