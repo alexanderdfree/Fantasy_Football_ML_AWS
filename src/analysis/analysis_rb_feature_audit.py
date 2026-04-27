@@ -1,8 +1,8 @@
 """Multicollinearity audit for the RB attention-NN feature set.
 
 Loads ``data/splits/train.parquet`` (general features pre-computed by SETUP.md's
-first-time data pull), runs ``add_rb_specific_features`` to materialise the 14
-RB-specific engineered columns, and computes:
+first-time data pull), runs ``add_specific_features`` (from ``src.rb.features``)
+to materialise the RB-specific engineered columns, and computes:
 
   1. Pairwise Pearson + Spearman correlations across the full ``INCLUDE_FEATURES``
      set, with a focused subset for ``ATTN_STATIC_FEATURES`` (what the attention
@@ -40,7 +40,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 from scipy.stats import spearmanr
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
@@ -66,22 +65,44 @@ OUT_DIR = PROJECT_ROOT / "analysis_output"
 OUT_JSON = OUT_DIR / "rb_feature_audit.json"
 OUT_HEATMAP = OUT_DIR / "rb_feature_audit_static_corr.png"
 
-# Hypotheses the plan flagged as "likely redundant by construction" — we test
-# each one explicitly so the report can confirm or refute, rather than burying
-# the result inside a 43x43 matrix.
+# Hypotheses the original audit (PR #190) flagged as "likely redundant by
+# construction" — we test each explicitly so the report can confirm or refute,
+# rather than burying the result inside the full correlation matrix.
+#
+# Some of these pairs reference columns that PR #190 then dropped from
+# ``INCLUDE_FEATURES`` / ``SPECIFIC_FEATURES`` based on this very audit
+# (notably ``target_share_L5``, ``carry_share_L5``, ``opp_def_rank_vs_pos``,
+# ``opp_fantasy_pts_allowed_to_pos``, ``weighted_opportunities_L3``). The
+# audit's hypothesis-test helper reports "missing column" rather than
+# crashing for any pair where one side no longer exists, so re-running this
+# script on the post-drop schema is safe and serves as a regression check
+# that those columns stay dropped. Pairs where both sides survived (e.g.
+# ``team_rb_carry_hhi_L3`` ↔ ``team_rb_target_hhi_L3``) continue to test
+# every run.
 PRE_REGISTERED_PAIRS = [
-    ("opp_def_rank_vs_pos", "opp_fantasy_pts_allowed_to_pos", "rank() of the other"),
-    ("target_share_L3", "target_share_L5", "L5 violates the >0.97-corr drop rule"),
-    ("carry_share_L3", "carry_share_L5", "L5 violates the >0.97-corr drop rule"),
-    ("team_rb_carry_hhi_L3", "team_rb_target_hhi_L3", "both team-level concentration"),
+    (
+        "opp_def_rank_vs_pos",
+        "opp_fantasy_pts_allowed_to_pos",
+        "rank() of the other (dropped PR #190)",
+    ),
+    (
+        "target_share_L3",
+        "target_share_L5",
+        "L5 violates the >0.97-corr drop rule (dropped PR #190)",
+    ),
+    ("carry_share_L3", "carry_share_L5", "L5 violates the >0.97-corr drop rule (dropped PR #190)"),
+    ("team_rb_carry_hhi_L3", "team_rb_target_hhi_L3", "both team-level concentration (kept)"),
     (
         "opp_def_pts_allowed_L5",
         "opp_fantasy_pts_allowed_to_pos",
-        "different aggregations of opp def quality",
+        "different aggregations of opp def quality (sum dropped PR #190)",
     ),
-    ("weighted_opportunities_L3", "opportunity_index_L3", "raw count vs share of same quantity"),
-    ("yards_per_carry_L3", "rushing_epa_per_attempt_L3", "two rushing efficiency metrics"),
-    ("team_rb_carry_share_L3", "team_rb_target_share_L3", "two RB usage shares on same team"),
+    ("yards_per_carry_L3", "rushing_epa_per_attempt_L3", "two rushing efficiency metrics (kept)"),
+    (
+        "team_rb_carry_share_L3",
+        "team_rb_target_share_L3",
+        "two RB usage shares on same team (kept)",
+    ),
 ]
 
 
@@ -200,24 +221,31 @@ def _pre_registered_table(df: pd.DataFrame, pairs: list[tuple[str, str, str]]) -
 
 
 def _save_static_heatmap(corr: pd.DataFrame, path: Path) -> None:
+    """Save a Pearson-r heatmap of the static feature block.
+
+    Uses ``matplotlib.imshow`` directly rather than ``seaborn.heatmap`` so the
+    audit script doesn't pull in ``seaborn`` as a dependency (``seaborn`` is
+    not pinned in ``requirements.txt``).
+    """
     if corr.empty:
         return
-    fig, ax = plt.subplots(figsize=(max(8, 0.32 * len(corr)), max(7, 0.32 * len(corr))))
-    sns.heatmap(
-        corr,
+    n = len(corr)
+    fig, ax = plt.subplots(figsize=(max(8, 0.32 * n), max(7, 0.32 * n)))
+    im = ax.imshow(
+        corr.to_numpy(),
         cmap="RdBu_r",
-        center=0.0,
         vmin=-1.0,
         vmax=1.0,
-        square=True,
-        cbar_kws={"label": "Pearson r"},
-        xticklabels=True,
-        yticklabels=True,
-        ax=ax,
+        aspect="equal",
+        interpolation="nearest",
     )
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(corr.columns, rotation=70, ha="right", fontsize=7)
+    ax.set_yticklabels(corr.index, fontsize=7)
     ax.set_title("RB ATTN_STATIC_FEATURES correlation (training split)")
-    plt.xticks(rotation=70, ha="right", fontsize=7)
-    plt.yticks(rotation=0, fontsize=7)
+    cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
+    cbar.set_label("Pearson r")
     plt.tight_layout()
     plt.savefig(path, dpi=150)
     plt.close(fig)

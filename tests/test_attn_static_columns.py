@@ -94,8 +94,10 @@ _FORBIDDEN_SHARE_COLS = {
 # defense, contextual, weather/vegas, prior-season).
 # (``opp_def_rank_vs_pos`` was dropped from RB by the multicollinearity
 # audit — it's a per-week rank() of ``opp_fantasy_pts_allowed_to_pos`` so
-# Spearman = 1.0 by construction. Switched the example column to one
-# still present in all four skill positions' matchup category.)
+# the relationship is monotonic by construction (|Spearman| measured at
+# 0.937 on the RB train split — not 1.0 because of ties in the per-week
+# rank). Switched the example column to one still present in all four
+# skill positions' matchup category.)
 _EXPECTED_SKILL_STATIC = {
     "opp_rush_pts_allowed_to_pos",
     "is_home",
