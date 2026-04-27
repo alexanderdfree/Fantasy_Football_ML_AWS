@@ -17,6 +17,14 @@ filterwarnings = [
 ]
 testpaths = ["tests"]
 
+# coverage.py>=7.4 on Python 3.12+ supports a sys.monitoring (PEP 669) backed
+# core that's substantially cheaper than the default sys.settrace path. We
+# don't request branch coverage anywhere (codecov.yml only asks for lines), so
+# the sysmon limitation around branches doesn't apply.
+[tool.coverage.run]
+core = "sysmon"
+branch = false
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -43,6 +51,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**"                = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
 "tests/**"                   = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
+"conftest.py"                = ["E402"]
 "src/*/config.py"            = ["E402"]
 "src/scripts/**/*.py"        = ["E402"]
 "src/benchmarking/**/*.py"   = ["T201"]

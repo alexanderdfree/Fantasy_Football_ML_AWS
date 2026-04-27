@@ -115,6 +115,7 @@ jobs:
           python -m pytest
           ${{ steps.shard.outputs.paths }}
           -n auto --dist=loadfile
+          --durations=15
           ${{ steps.shard.outputs.cov }}
           --cov-report=xml:coverage-${{ matrix.shard }}.xml
           --junitxml=junit-${{ matrix.shard }}.xml
