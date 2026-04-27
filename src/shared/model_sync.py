@@ -188,7 +188,12 @@ def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict
     """
     from botocore.exceptions import ClientError
 
-    dest = root / pos / "outputs" / "models"
+    # S3 keys are uppercase POS (set by the producer in src/batch/train.py);
+    # the local layout is lowercase to match the registry's model_dir entries
+    # (``src/qb/outputs/models``). On case-sensitive Linux these diverge, so
+    # the destination must be normalized here even though macOS APFS papered
+    # over it during the rename refactor.
+    dest = root / pos.lower() / "outputs" / "models"
     manifest = load_manifest(s3_client, bucket, prefix, pos)
 
     if manifest is None:

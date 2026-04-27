@@ -277,7 +277,7 @@ LGBM_OBJECTIVE = "huber"
 
 # ===========================================================================
 # CONFIG_TINY — shrunk config for E2E smoke tests.
-# Used by DST/tests/test_dst_pipeline_e2e.py to exercise the full pipeline
+# Used by tests/dst/test_pipeline_e2e.py to exercise the full pipeline
 # end-to-end in < 20s on tiny synthetic data: 2 backbone layers x 8 units,
 # 1 epoch, no LightGBM, attention off by default.  Only the NN-training
 # hyperparameters are shrunk; the rest of the config matches production to

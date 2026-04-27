@@ -1,8 +1,8 @@
 """End-to-end smoke + compatibility test for ``src.shared.pipeline.run_cv_pipeline``.
 
 run_cv_pipeline is the expanding-window CV orchestrator used by
-``QB/run.py --cv``. The non-CV E2E test
-(``test_qb_pipeline_e2e.py``) covers ``run_pipeline`` only — this file fills
+``src/qb/run_pipeline.py --cv``. The non-CV E2E test
+(``tests/qb/test_pipeline_e2e.py``) covers ``run_pipeline`` only — this file fills
 that gap.
 
 Coverage goal: drive run_cv_pipeline end-to-end on tiny synthetic QB splits
@@ -88,7 +88,7 @@ class TestQBRunCVPipeline:
     120s on ubuntu-latest's slower x86 cores. With the default ``timeout_method
     = "thread"`` (per pyproject.toml) a sub-60s default can't kill C-extension
     NN / sklearn fits, so the xdist worker hangs instead of erroring cleanly.
-    See ``RB/tests/test_rb_pipeline_e2e.py`` which already uses ``timeout(180)``
+    See ``tests/rb/test_pipeline_e2e.py`` which already uses ``timeout(180)``
     for the same reason.
     """
 

@@ -17,7 +17,7 @@ read-only audit.
 
 Usage::
 
-    python scripts/audit_features.py [--splits-dir DIR] [--raw-dir DIR]
+    python -m src.scripts.audit_features [--splits-dir DIR] [--raw-dir DIR]
 """
 
 from __future__ import annotations

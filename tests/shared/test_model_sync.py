@@ -162,7 +162,7 @@ def test_sync_extracts_all_positions_via_legacy_fallback(monkeypatch, tmp_path):
     assert {r["pos"] for r in summary["positions"]} == set(model_sync.POSITIONS)
     assert {r["source"] for r in summary["positions"]} == {"legacy"}
     for pos in model_sync.POSITIONS:
-        extracted = tmp_path / pos / "outputs" / "models" / f"{pos.lower()}_marker.pkl"
+        extracted = tmp_path / pos.lower() / "outputs" / "models" / f"{pos.lower()}_marker.pkl"
         assert extracted.is_file()
         assert extracted.read_bytes() == b"payload-" + pos.encode()
 
@@ -229,7 +229,7 @@ def test_sync_one_prefers_current_from_manifest(monkeypatch, tmp_path):
     wr = next(r for r in summary["positions"] if r["pos"] == "WR")
     assert wr["source"] == "current"
     assert wr["key"] == "models/WR/history/2026-04-23T00-00-00Z-aaa1234/model.tar.gz"
-    assert (tmp_path / "WR" / "outputs" / "models" / "nn_scaler.pkl").read_bytes() == b"CURRENT"
+    assert (tmp_path / "wr" / "outputs" / "models" / "nn_scaler.pkl").read_bytes() == b"CURRENT"
 
 
 def test_sync_one_falls_back_to_previous_when_current_corrupt(monkeypatch, tmp_path, capsys):
@@ -295,7 +295,7 @@ def test_sync_one_falls_back_to_previous_when_current_nosuchkey(monkeypatch, tmp
 
     assert all(r["source"] == "previous" for r in summary["positions"])
     for pos in model_sync.POSITIONS:
-        extracted = tmp_path / pos / "outputs" / "models" / "marker.pkl"
+        extracted = tmp_path / pos.lower() / "outputs" / "models" / "marker.pkl"
         assert extracted.read_bytes() == b"FROM_PREVIOUS"
 
 
@@ -405,7 +405,7 @@ def test_sync_one_prefers_stable_over_current(monkeypatch, tmp_path):
 
     assert all(r["source"] == "stable" for r in summary["positions"])
     for pos in model_sync.POSITIONS:
-        extracted = tmp_path / pos / "outputs" / "models" / "marker.pkl"
+        extracted = tmp_path / pos.lower() / "outputs" / "models" / "marker.pkl"
         assert extracted.read_bytes() == b"FROM_STABLE"
     # Current key bytes must NOT have been pulled — the stable key wins
     # outright and we don't probe further when stable succeeds.

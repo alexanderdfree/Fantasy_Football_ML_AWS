@@ -281,7 +281,7 @@ ATTN_STATIC_CATEGORIES = [
 ]
 ATTN_STATIC_FEATURES = [c for cat in ATTN_STATIC_CATEGORIES for c in INCLUDE_FEATURES[cat]]
 # Hurdle gate on receptions + BCE gate on each TD head. Variant C from the
-# RB TD-gate ablation (scripts/ablate_rb_gate.py → run 24813558434):
+# RB TD-gate ablation (src/tuning/ablate_rb_gate.py → run 24813558434):
 #
 #   Variant          FP MAE   Rush TD MAE   Rec TD MAE   Rec MAE
 #   A (huber+gate)    4.453        0.277        0.077     1.034

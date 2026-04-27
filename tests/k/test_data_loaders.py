@@ -1,4 +1,4 @@
-"""Coverage tests for ``K/k_data.py``.
+"""Coverage tests for ``src/k/data.py``.
 
 Mocks ``nfl.import_pbp_data`` with synthetic per-play DataFrames so the
 full PBP → weekly-kicker aggregation pipeline runs in-process. Also tests

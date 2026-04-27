@@ -10,9 +10,9 @@ C beats B by >= 0.05 pts/game on fantasy-point MAE. Otherwise land variant B
 permanently (which is what PR 2's RB config already does).
 
 Usage:
-    python scripts/ablate_rb_gate.py           # full three-way
-    python scripts/ablate_rb_gate.py --seed 7  # override seed
-    python scripts/ablate_rb_gate.py --only B  # run one variant only
+    python -m src.tuning.ablate_rb_gate           # full three-way
+    python -m src.tuning.ablate_rb_gate --seed 7  # override seed
+    python -m src.tuning.ablate_rb_gate --only B  # run one variant only
 """
 
 from __future__ import annotations

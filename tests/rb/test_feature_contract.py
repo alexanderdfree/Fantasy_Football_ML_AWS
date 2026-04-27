@@ -1,4 +1,4 @@
-"""Feature contract tests for RB.rb_features.
+"""Feature contract tests for src.rb.features.
 
 Locks down what `add_specific_features` is allowed to output:
 

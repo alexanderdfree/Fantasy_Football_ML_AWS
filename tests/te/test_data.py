@@ -1,4 +1,4 @@
-"""Tests for TE.te_data — filter_to_position and compute_team_te_totals."""
+"""Tests for src.te.data — filter_to_position and compute_team_te_totals."""
 
 import pandas as pd
 import pytest

@@ -1,4 +1,4 @@
-"""Tests for QB.qb_features — _compute_features and fill_nans."""
+"""Tests for src.qb.features — _compute_features and fill_nans."""
 
 import numpy as np
 import pandas as pd

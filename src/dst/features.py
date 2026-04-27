@@ -94,7 +94,7 @@ def compute_features(df: pd.DataFrame) -> None:
         .fillna(0)
     )
 
-    # opp_scoring_L3 is computed in dst_data.py via opponent merge to ensure
+    # opp_scoring_L3 is computed in src/dst/data.py via opponent merge to ensure
     # correct opponent alignment; just make sure it survives this pass.
 
     # --- Prior-season features (index-safe merge) ---

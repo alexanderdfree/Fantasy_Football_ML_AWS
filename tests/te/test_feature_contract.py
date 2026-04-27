@@ -1,4 +1,4 @@
-"""Feature contract tests for TE.te_features.add_specific_features.
+"""Feature contract tests for src.te.features.add_specific_features.
 
 Asserts:
   - the 8 TE-specific engineered columns are present on every split,
@@ -29,7 +29,7 @@ from src.te.features import (
 pytestmark = pytest.mark.unit
 
 
-# The exact 8 columns documented in te_config.SPECIFIC_FEATURES.
+# The exact 8 columns documented in src.te.config.SPECIFIC_FEATURES.
 # If a feature is added/removed, both the config and this contract must move together.
 EXPECTED_TE_SPECIFIC = [
     "yards_per_reception_L3",

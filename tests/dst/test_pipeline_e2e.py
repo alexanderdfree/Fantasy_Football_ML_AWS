@@ -12,7 +12,7 @@ Design choices
   fixture (conftest.py).  Seasons 2022-2024 train/val, 2025 test.  Every
   team plays 17 games per season so the ``MIN_GAMES_PER_SEASON=6`` filter
   does not wipe rows.
-* **Config** — ``CONFIG_TINY`` in dst_config.py: 2-layer 8-unit NN,
+* **Config** — ``CONFIG_TINY`` in src/dst/config.py: 2-layer 8-unit NN,
   1 epoch, no LightGBM, no attention.  The rest of the production config
   (targets, ridge grids, loss weights) is kept so the test exercises
   representative code.

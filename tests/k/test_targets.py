@@ -1,4 +1,4 @@
-"""Tests for K.k_targets — 4-head compute_targets."""
+"""Tests for src.k.targets — 4-head compute_targets."""
 
 import numpy as np
 import pandas as pd

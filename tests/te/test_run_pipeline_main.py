@@ -1,4 +1,4 @@
-"""Coverage smoke test for ``TE/run.py``'s ``__main__`` block.
+"""Coverage smoke test for ``src/te/run_pipeline.py``'s ``__main__`` block.
 
 TE's CLI only has the ``--tiny`` flag (no ``--cv`` split), so this file
 only asserts the default and tiny paths plus the module-level wrapper.

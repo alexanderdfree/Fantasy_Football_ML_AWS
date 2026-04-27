@@ -1,4 +1,4 @@
-"""Tests for TE.te_features — _compute_features and fill_nans."""
+"""Tests for src.te.features — _compute_features and fill_nans."""
 
 import numpy as np
 import pandas as pd

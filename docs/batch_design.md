@@ -30,7 +30,7 @@ src/batch/launch.py ─────────────> S3: s3://ff-trainin
        │     (g4dn.xlarge Spot)        stdout/stderr streamed
        │     src.batch.train --position RB
        │       ├─ boto3: download data from S3
-       │       ├─ run_rb_pipeline(train_df, val_df, test_df)
+       │       ├─ src.rb.run_pipeline.run(train_df, val_df, test_df)
        │       ├─ save benchmark_metrics.json
        │       └─ boto3: upload model.tar.gz to S3
        │

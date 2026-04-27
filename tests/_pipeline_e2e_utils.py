@@ -147,7 +147,7 @@ def _te_tiny() -> dict:
 
 
 def _k_tiny() -> dict:
-    """K config — use CONFIG_TINY if exposed, else build a shrunk cfg from k_config.py."""
+    """K config — use CONFIG_TINY if exposed, else build a shrunk cfg from src/k/config.py."""
     from src.k.data import filter_to_position
     from src.k.features import (
         add_specific_features,
@@ -328,7 +328,7 @@ def _load_player_splits(
 def _build_k_splits(n_players: int = 30) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build tiny K splits using the K loader (cached PBP parquet).
 
-    Mirrors the logic in ``K/run.py``: loads the reconstructed
+    Mirrors the logic in ``src/k/run_pipeline.py``: loads the reconstructed
     kicker weekly data, computes targets + features on the full frame, then
     splits by season (train<=2023 / val=2024 / test=2025) and subsets to
     the top-N most active kickers.

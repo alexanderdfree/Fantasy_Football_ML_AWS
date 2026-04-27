@@ -3,7 +3,7 @@
 Previously both baselines sorted internally but returned `.values` in sorted
 order, so predictions misaligned with the caller's row order whenever the
 caller did not pre-sort. Callers in src/shared/pipeline.py and
-DST/tests/test_dst_regression.py do not pre-sort, so every baseline MAE the
+tests/dst/test_regression.py do not pre-sort, so every baseline MAE the
 project reports was wrong. The fix makes the baselines self-aligning; these
 tests pin that behavior.
 """

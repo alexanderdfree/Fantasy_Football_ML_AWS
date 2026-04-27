@@ -1,4 +1,4 @@
-"""Tests for QB.qb_targets — compute_targets (raw-stat migration)."""
+"""Tests for src.qb.targets — compute_targets (raw-stat migration)."""
 
 import numpy as np
 import pandas as pd

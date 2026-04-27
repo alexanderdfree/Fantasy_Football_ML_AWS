@@ -1,4 +1,4 @@
-"""Tests for K.k_data — filter_to_position (identity filter) and season_split."""
+"""Tests for src.k.data — filter_to_position (identity filter) and season_split."""
 
 import pandas as pd
 import pytest

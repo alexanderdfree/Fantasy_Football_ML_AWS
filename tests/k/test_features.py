@@ -1,4 +1,4 @@
-"""Tests for K.k_features — compute_features and fill_nans.
+"""Tests for src.k.features — compute_features and fill_nans.
 
 Kicker features are computed on the full dataset before splitting, and use
 CROSS-SEASON rolling windows (all other positions reset per-season) because

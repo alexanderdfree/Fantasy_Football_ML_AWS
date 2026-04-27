@@ -305,7 +305,7 @@ def player_df_factory():
 # ``TARGETS_RB_RAW`` and the ``tiny_synthetic_raw`` fixture below.
 TARGETS_DEFAULT = ["rushing_yards", "receiving_yards", "rushing_tds"]
 
-# Raw-stat RB target list (matches ``TARGETS`` in ``RB/rb_config.py`` after
+# Raw-stat RB target list (matches ``TARGETS`` in ``src/rb/config.py`` after
 # the target migration). Use this for new shared tests that want to mirror the
 # production target schema without depending on per-position config imports.
 TARGETS_RB_RAW = [

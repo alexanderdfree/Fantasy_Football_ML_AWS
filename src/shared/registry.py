@@ -347,7 +347,7 @@ def get_inference_spec(pos: str) -> dict:
 
         # K attention NN uses nested kick history (inner: per-game kicks,
         # outer: per-target across prior games). Kwargs mirror those passed
-        # into MultiHeadNetWithNestedHistory by K/run.py.
+        # into MultiHeadNetWithNestedHistory by src/k/run_pipeline.py.
         k_max_games = getattr(k_cfg, "ATTN_MAX_GAMES", 17)
         k_attn_nn_kwargs_static = dict(
             backbone_layers=list(NN_BACKBONE_LAYERS),

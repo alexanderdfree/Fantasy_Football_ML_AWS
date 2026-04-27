@@ -1,6 +1,6 @@
-"""Coverage smoke test for ``RB/run.py``'s ``__main__`` block.
+"""Coverage smoke test for ``src/rb/run_pipeline.py``'s ``__main__`` block.
 
-Mirrors ``QB/tests/test_qb_run_pipeline_main.py``. Runs the script via
+Mirrors ``tests/qb/test_run_pipeline_main.py``. Runs the script via
 ``runpy`` with mocked ``src.shared.pipeline.run_pipeline`` / ``run_cv_pipeline``
 so we exercise the argparse + dispatch logic without a real training
 round-trip.
