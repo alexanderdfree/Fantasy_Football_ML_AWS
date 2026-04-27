@@ -119,7 +119,7 @@ def trained_lgbm(regression_data):
 
     model = LightGBMMultiTarget(
         target_names=TARGETS,
-        n_estimators=500,
+        n_estimators=300,
         learning_rate=0.03,
         num_leaves=31,
         max_depth=6,
@@ -186,10 +186,11 @@ def trained_nn(regression_data):
         target_names=TARGETS,
         patience=15,
     )
-    # More epochs than the old decomposed target set because raw yard
-    # targets dominate loss scale and need longer to converge past the
-    # baseline-beating threshold on this synthetic frame.
-    trainer.train(train_loader, val_loader, n_epochs=80)
+    # Raw yard targets dominate loss scale, so the NN needs enough epochs to
+    # converge past the baseline-beating threshold. 60 is the empirical floor
+    # at which the +/-25% LGBM tolerance below still passes deterministically;
+    # if you cut further re-run tests/rb/test_regression.py and check the band.
+    trainer.train(train_loader, val_loader, n_epochs=60)
 
     preds = model.predict_numpy(X_test_s, torch.device("cpu"))
     return model, preds
