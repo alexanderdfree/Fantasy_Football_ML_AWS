@@ -11,10 +11,14 @@ TARGETS = [
 ]
 
 # === RB-Specific Features ===
+# Dropped in the audit (analysis_output/rb_feature_audit.json,
+# docs/rb_feature_history.md):
+#   - weighted_opportunities_L3: r=0.940 with opportunity_index_L3 (the share
+#     normalises out team-level usage; the raw count duplicates that signal
+#     scaled by team usage). Compute block also removed from rb/features.py.
 SPECIFIC_FEATURES = [
     "yards_per_carry_L3",
     "reception_rate_L3",
-    "weighted_opportunities_L3",
     "team_rb_carry_share_L3",
     "team_rb_target_share_L3",
     "rushing_epa_per_attempt_L3",
@@ -41,6 +45,27 @@ _ROLLING_STATS = [
     "snap_pct",
 ]
 
+# Per-cell drops from the multicollinearity audit
+# (analysis_output/rb_feature_audit.json, docs/rb_feature_history.md):
+#   * receptions/{mean,std,max}: r=0.937–0.982 with the matching targets
+#     aggregates (catch rate is stable across seasons, so prior-season
+#     receptions ≈ targets × constant).
+#   * rushing_yards/{mean,std,max}: r=0.943–0.963 with the matching carries
+#     aggregates (yards/carry varies < 30% YoY).
+#   * std_{receiving_yards, fantasy_points}: r=0.91–0.94 with the matching
+#     max aggregate; max is the more interpretable shape stat for skewed
+#     yardage distributions.
+_PRIOR_SEASON_DROPS = {
+    "prior_season_mean_receptions",
+    "prior_season_std_receptions",
+    "prior_season_max_receptions",
+    "prior_season_mean_rushing_yards",
+    "prior_season_std_rushing_yards",
+    "prior_season_max_rushing_yards",
+    "prior_season_std_receiving_yards",
+    "prior_season_std_fantasy_points",
+}
+
 INCLUDE_FEATURES = {
     # L3/L8 only — all L5 dropped (>0.97 corr with L3/L8).
     # min variant only exists for fantasy_points (kept at all windows).
@@ -55,24 +80,38 @@ INCLUDE_FEATURES = {
     ]
     + ["rolling_min_fantasy_points_L5"],
     "prior_season": [
-        f"prior_season_{a}_{stat}" for stat in _ROLLING_STATS for a in ["mean", "std", "max"]
+        f"prior_season_{a}_{stat}"
+        for stat in _ROLLING_STATS
+        for a in ["mean", "std", "max"]
+        if f"prior_season_{a}_{stat}" not in _PRIOR_SEASON_DROPS
     ],
     # All EWMA dropped (>0.98 corr with rolling means)
     "ewma": [],
     "trend": ["trend_fantasy_points", "trend_targets", "trend_carries", "trend_snap_pct"],
+    # Audit drops:
+    #   * target_share_L5 (r=0.966 with L3) and carry_share_L5 (r=0.984 with L3)
+    #     — match the documented >0.97 L5-drop rule applied to all rolling_*_L5;
+    #     share-L5 was never re-audited under that rule until now.
+    #   * carry_share_L3 (r=0.982 with team_rb_carry_share_L3) — the two
+    #     denominators differ only by QB scrambles; the RB-specific
+    #     denominator (in SPECIFIC_FEATURES) is the cleaner signal for an
+    #     RB model.
     "share": [
         "target_share_L3",
-        "target_share_L5",
-        "carry_share_L3",
-        "carry_share_L5",
         "snap_pct",
         "air_yards_share",
     ],
+    # Audit drop:
+    #   * opp_fantasy_pts_allowed_to_pos (VIF 193) — sum ≈ rush + recv
+    #     components by construction; the components carry directional info
+    #     (rush-friendly vs pass-funnel defenses) the sum collapses.
+    #   * opp_def_rank_vs_pos — by construction
+    #     rank(opp_fantasy_pts_allowed_to_pos) per week (engineer.py:480-482),
+    #     Spearman = 1.0 with the value being ranked. The rank carries
+    #     strictly less info than either the raw value or its components.
     "matchup": [
-        "opp_fantasy_pts_allowed_to_pos",
         "opp_rush_pts_allowed_to_pos",
         "opp_recv_pts_allowed_to_pos",
-        "opp_def_rank_vs_pos",
     ],
     "defense": [
         "opp_def_sacks_L5",
@@ -82,10 +121,12 @@ INCLUDE_FEATURES = {
         "opp_def_rush_yds_allowed_L5",
         "opp_def_pts_allowed_L5",
     ],
+    # Audit drop:
+    #   * is_returning_from_absence (r=0.934 with days_rest) — the indicator
+    #     is essentially `days_rest > 13`; days_rest carries the magnitude.
     "contextual": [
         "is_home",
         "week",
-        "is_returning_from_absence",
         "days_rest",
         "practice_status",
         "game_status",

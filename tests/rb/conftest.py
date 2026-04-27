@@ -298,13 +298,13 @@ def _build_synthetic_dataset(
                         "pos_WR": 0,
                         "pos_TE": 0,
                         # Features the pipeline may reference; default to 0.
+                        # target_share_L5, carry_share_L3, carry_share_L5,
+                        # is_returning_from_absence, opp_fantasy_pts_allowed_to_pos,
+                        # and opp_def_rank_vs_pos all dropped in the multicollinearity
+                        # audit — see docs/rb_feature_history.md.
                         "target_share_L3": 0.0,
-                        "target_share_L5": 0.0,
-                        "carry_share_L3": 0.0,
-                        "carry_share_L5": 0.0,
                         "air_yards_share": 0.0,
                         "is_home": week % 2,
-                        "is_returning_from_absence": 0,
                         "days_rest": 7,
                         "practice_status": 0,
                         "game_status": 0,
@@ -313,10 +313,8 @@ def _build_synthetic_dataset(
                         "trend_targets": 0.0,
                         "trend_carries": 0.0,
                         "trend_snap_pct": 0.0,
-                        "opp_fantasy_pts_allowed_to_pos": 10.0,
                         "opp_rush_pts_allowed_to_pos": 5.0,
                         "opp_recv_pts_allowed_to_pos": 5.0,
-                        "opp_def_rank_vs_pos": 16,
                         "opp_def_sacks_L5": 2.0,
                         "opp_def_pass_yds_allowed_L5": 250.0,
                         "opp_def_pass_td_allowed_L5": 1.5,

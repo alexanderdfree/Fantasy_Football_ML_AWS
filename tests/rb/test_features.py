@@ -9,7 +9,6 @@ from src.rb.features import _compute_features, fill_nans
 FEATURE_COLS = [
     "yards_per_carry_L3",
     "reception_rate_L3",
-    "weighted_opportunities_L3",
     "team_rb_carry_share_L3",
     "team_rb_target_share_L3",
     "rushing_epa_per_attempt_L3",
@@ -47,7 +46,7 @@ class TestComputeRBFeatures:
         _compute_features(df)
         week1 = df[df["week"] == 1]
         # Shifted rolling means should produce NaN -> filled to 0
-        for col in ["yards_per_carry_L3", "reception_rate_L3", "weighted_opportunities_L3"]:
+        for col in ["yards_per_carry_L3", "reception_rate_L3"]:
             val = week1[col].iloc[0]
             assert val == 0.0 or np.isnan(val), f"{col} = {val} for week 1"
 
@@ -100,16 +99,6 @@ class TestComputeRBFeatures:
         shares = later["team_rb_carry_share_L3"].dropna()
         if len(shares) > 0:
             assert all(0.4 <= s <= 0.6 for s in shares)
-
-    def test_weighted_opportunities(self, make_player_games):
-        """weighted_opportunities_L3 = rolling mean of (carries + 2*targets)."""
-        df = make_player_games(n_weeks=5, carries=10, targets=5)
-        _compute_features(df)
-        # carries + 2*targets = 10 + 10 = 20
-        week3 = df[df["week"] == 3]
-        val = week3["weighted_opportunities_L3"].iloc[0]
-        # shift sees weeks 1,2 -> mean of [20, 20] = 20.0
-        assert pytest.approx(val, abs=0.01) == 20.0
 
     def test_multiple_seasons_independent(self, make_player_games):
         """Features should not leak across seasons."""
