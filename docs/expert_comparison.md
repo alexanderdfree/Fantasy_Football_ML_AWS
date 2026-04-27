@@ -34,7 +34,7 @@ From `benchmark_results.json`, evaluated on the 2025 test season:
 
 *Historical decomposition — QB/RB/WR rows above were produced under the prior `*_floor` / `td_points` target decomposition (see ADR-001 D2). Under the current raw-stat target decomposition, per-target MAE is reported in native stat units (yards, TDs, receptions, etc.) rather than fantasy-point components; aggregator-computed fantasy-point totals should land close to these values on the first full retrain.*
 
-**K and DST**: Results not yet in the expert-comparison table. Both positions received attention-NN variants in commits `801b61a` (K, nested per-kick history) and `cc0c627` (DST, attention + 10 raw-stat targets) — TODO - alex fill in: K/DST MAE + R² comparisons against academic/expert baselines after next full EC2 retrain.
+**K and DST**: Results not yet in the expert-comparison table. Both positions received attention-NN variants in commits `801b61a` (K, nested per-kick history) and `cc0c627` (DST, attention + 10 raw-stat targets); their MAE/R² figures will land here after the next benchmark refresh against the current code (`python benchmark.py K DST`).
 
 Per-target MAE breakdown (Neural Net, historical decomposition):
 
@@ -138,7 +138,7 @@ The NN outperforms Ridge by 0.705 MAE points (4.233 vs. 4.938), the largest arch
 
 4. **No public expert site publishes raw MAE for direct comparison:** Industry accuracy tracking (FantasyPros, FFA) uses relative rankings, not absolute error metrics. This makes exact head-to-head comparison impossible, but our results fall within the ranges where professional projection systems operate.
 
-5. **K and DST attention-NN results pending:** Both positions received attention-based architectures in commits `801b61a` (K) and `cc0c627` (DST), but benchmark numbers in this document pre-date that work — TODO - alex fill in: K/DST MAE + R² against academic/expert baselines after next full EC2 retrain.
+5. **K and DST attention-NN results pending:** Both positions received attention-based architectures in commits `801b61a` (K) and `cc0c627` (DST), but the benchmark numbers in this document pre-date that work. Their MAE/R² against academic/expert baselines will populate after the next benchmark refresh.
 
 ---
 
