@@ -93,6 +93,38 @@ def _fixture_reader_qb_only(url: str) -> pd.DataFrame:
     raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
 
 
+def test_normalize_one_position_handles_nan_team():
+    """A NaN Team or PlayerOpponent must normalize to '' (empty), not the literal
+    string 'NAN' (which would happen if we cast to str before normalizing)."""
+    from src.data.nflcom_loader import _normalize_one_position
+
+    raw = pd.DataFrame(
+        [
+            {
+                "PlayerName": "Test",
+                "PlayerId": 999,
+                "Pos": "QB",
+                "Team": float("nan"),
+                "PlayerOpponent": float("nan"),
+                "PassingYDS": 200.0,
+                "PassingTD": 1.0,
+                "PassingInt": 0.0,
+                "RushingYDS": 0.0,
+                "RushingTD": 0.0,
+                "Fum": 0.0,
+                "PlayerWeekProjectedPts": 8.0,
+                "ProjectedRank": 1,
+                "season": 2025,
+                "week": 1,
+                "position": "QB",
+            }
+        ]
+    )
+    out = _normalize_one_position(raw, "QB")
+    assert out["team"].iloc[0] == ""
+    assert out["opponent"].iloc[0] == ""
+
+
 def test_load_projections_parses_fixture_schema(tmp_path):
     df = load_nflcom_projections(
         seasons=[2024],
@@ -418,6 +450,76 @@ def test_load_with_gsis_id_position_fallback(tmp_path):
     assert allen["player_id"] == "00-AALLEN"
     # All five still match.
     assert df["player_id"].notna().sum() == 5
+
+
+def test_load_with_gsis_id_position_fallback_skips_collisions(tmp_path):
+    """Two distinct gsis_ids share the same (norm_name, season, position).
+    The fallback must NOT silently pick one — both rows stay unmatched.
+    """
+    # NFL.com fixture has 'Josh Allen' on BUF; rosters give us TWO Josh Allens
+    # (different gsis_ids), neither on BUF. Primary join misses; unique-only
+    # fallback should refuse to pick.
+    rosters = _make_rosters(
+        [
+            {
+                "player_id": "00-AALLEN-1",
+                "player_name": "Josh Allen",
+                "team": "JAX",  # different team
+                "position": "QB",
+                "season": 2024,
+            },
+            {
+                "player_id": "00-AALLEN-2",
+                "player_name": "Josh Allen",  # same normalized name
+                "team": "TEN",  # different team
+                "position": "QB",
+                "season": 2024,
+            },
+            # Other fixture players match cleanly via primary or fallback.
+            {
+                "player_id": "00-MAHOMES",
+                "player_name": "Patrick Mahomes II",
+                "team": "KC",
+                "position": "QB",
+                "season": 2024,
+            },
+            {
+                "player_id": "00-LAMAR",
+                "player_name": "Lamar Jackson",
+                "team": "BAL",
+                "position": "QB",
+                "season": 2024,
+            },
+            {
+                "player_id": "00-AJM",
+                "player_name": "AJ McCarron",
+                "team": "CIN",
+                "position": "QB",
+                "season": 2024,
+            },
+            {
+                "player_id": "00-WINSTON",
+                "player_name": "Jameis Winston",
+                "team": "CLE",
+                "position": "QB",
+                "season": 2024,
+            },
+        ]
+    )
+    df = load_nflcom_with_gsis_id(
+        seasons=[2024],
+        cache_dir=str(tmp_path),
+        rosters=rosters,
+        reader=_fixture_reader_qb_only,
+        # Lower threshold for this test: only 4/5 will match (Allen stays
+        # unmatched), giving us 80%.
+        min_match_rate=0.5,
+    )
+    allen = df[df["player_name"] == "Josh Allen"].iloc[0]
+    # Collision should leave Allen unmatched, not silently pick AALLEN-1 or -2.
+    assert pd.isna(allen["player_id"])
+    # The other 4 still match.
+    assert df["player_id"].notna().sum() == 4
 
 
 def test_load_with_gsis_id_below_threshold_raises(tmp_path):

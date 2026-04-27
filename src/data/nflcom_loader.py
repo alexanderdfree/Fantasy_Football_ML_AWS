@@ -208,8 +208,12 @@ def _normalize_one_position(df: pd.DataFrame, position: str) -> pd.DataFrame:
             "position": df["position"],
             "nflcom_player_id": df["PlayerId"].astype(str),
             "player_name": df["PlayerName"].astype(str),
-            "team": df["Team"].astype(str).map(_team_abbr_normalize),
-            "opponent": df["PlayerOpponent"].astype(str).map(_team_abbr_normalize),
+            # Don't .astype(str) before normalizing — that would coerce NaN to
+            # the literal string "nan" (which then survives team-canonicalization
+            # as "NAN"). Pass the original series and let _team_abbr_normalize
+            # detect float NaN via pd.isna and emit "" instead.
+            "team": df["Team"].map(_team_abbr_normalize),
+            "opponent": df["PlayerOpponent"].map(_team_abbr_normalize),
             "nflcom_projected_pts": pd.to_numeric(
                 df.get("PlayerWeekProjectedPts"), errors="coerce"
             ).fillna(0.0),
@@ -384,22 +388,40 @@ def load_nflcom_with_gsis_id(
         how="left",
     )
 
-    # Fallback: for rows still unmatched, try (norm_name, season, position).
+    # Fallback: for rows still unmatched, try (norm_name, season, position) —
+    # but ONLY when that key maps to a single distinct player_id. When two
+    # players share the same normalized name + position in a season (it
+    # happens — multiple "Mike Williams" types), neither row should silently
+    # adopt one of them; leave them unmatched and let the diagnostics surface.
     unmatched_mask = primary["player_id"].isna()
     if unmatched_mask.any():
-        fallback_lookup = lookup.drop(columns=["team"]).drop_duplicates(
-            subset=["norm_name", "season", "position"]
+        unique_keys = (
+            lookup.groupby(["norm_name", "season", "position"])["player_id"]
+            .nunique(dropna=True)
+            .reset_index(name="_n_distinct")
         )
+        unique_keys = unique_keys[unique_keys["_n_distinct"] == 1][
+            ["norm_name", "season", "position"]
+        ]
+        fallback_lookup = (
+            lookup.drop(columns=["team"])
+            .merge(unique_keys, on=["norm_name", "season", "position"], how="inner")
+            .drop_duplicates(subset=["norm_name", "season", "position"])
+        )
+        # Preserve row identity through the merge: pandas.merge does NOT
+        # guarantee row-order, so we carry the original index through and
+        # assign back by index rather than by position.
+        unmatched_rows = primary.loc[unmatched_mask].drop(columns=["player_id"])
         fallback = (
-            primary.loc[unmatched_mask]
-            .drop(columns=["player_id"])
+            unmatched_rows.reset_index()
             .merge(
                 fallback_lookup[["norm_name", "season", "position", "player_id"]],
                 on=["norm_name", "season", "position"],
                 how="left",
             )
+            .set_index("index")
         )
-        primary.loc[unmatched_mask, "player_id"] = fallback["player_id"].values
+        primary.loc[fallback.index, "player_id"] = fallback["player_id"]
 
     # Diagnostics
     n_total = len(primary)

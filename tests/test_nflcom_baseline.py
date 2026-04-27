@@ -136,24 +136,60 @@ def _make_nflcom_df_for_qb(test_df: pd.DataFrame, *, perfect: bool = False) -> p
 # ---------- Pure-function tests ---------------------------------------------
 
 
-def test_select_model_predictions_prefers_attn_nn():
+def test_select_model_predictions_picks_lowest_mae():
+    """When all three models are available with metrics, pick the lowest-MAE one
+    rather than the first in priority order."""
     pipeline_result = {
         "per_target_preds": {
             "ridge": {"x": np.zeros(2)},
             "nn": {"x": np.ones(2)},
             "attn_nn": {"x": np.full(2, 7.0)},
         },
-        "attn_nn_metrics": {"total": {"mae": 1.0}},
+        "attn_nn_metrics": {"total": {"mae": 5.0}},  # worst
+        "nn_metrics": {"total": {"mae": 4.5}},  # best
+        "ridge_metrics": {"total": {"mae": 4.7}},
+    }
+    preds, label = ab._select_model_predictions(pipeline_result, "QB")
+    assert label == "Multi-Head NN"
+    np.testing.assert_array_equal(preds["x"], np.ones(2))
+
+
+def test_select_model_predictions_attn_wins_when_lowest_mae():
+    pipeline_result = {
+        "per_target_preds": {
+            "ridge": {"x": np.zeros(2)},
+            "nn": {"x": np.ones(2)},
+            "attn_nn": {"x": np.full(2, 7.0)},
+        },
+        "attn_nn_metrics": {"total": {"mae": 4.0}},  # best
+        "nn_metrics": {"total": {"mae": 4.5}},
+        "ridge_metrics": {"total": {"mae": 4.7}},
     }
     preds, label = ab._select_model_predictions(pipeline_result, "QB")
     assert label == "Attention NN"
     np.testing.assert_array_equal(preds["x"], np.full(2, 7.0))
 
 
-def test_select_model_predictions_falls_back_to_nn():
+def test_select_model_predictions_tie_resolved_by_priority():
+    """When two models tie on MAE, fall back to priority order (attn > nn > ridge)."""
+    pipeline_result = {
+        "per_target_preds": {
+            "ridge": {"x": np.zeros(2)},
+            "nn": {"x": np.ones(2)},
+            "attn_nn": {"x": np.full(2, 7.0)},
+        },
+        "attn_nn_metrics": {"total": {"mae": 4.5}},
+        "nn_metrics": {"total": {"mae": 4.5}},
+        "ridge_metrics": {"total": {"mae": 4.5}},
+    }
+    preds, label = ab._select_model_predictions(pipeline_result, "QB")
+    assert label == "Attention NN"
+
+
+def test_select_model_predictions_falls_back_to_nn_when_no_metrics():
+    """Metrics dicts entirely missing — use priority order on whatever preds exist."""
     pipeline_result = {
         "per_target_preds": {"ridge": {"x": np.zeros(2)}, "nn": {"x": np.ones(2)}},
-        # No attn_nn_metrics — falls through.
     }
     preds, label = ab._select_model_predictions(pipeline_result, "K")
     assert label == "Multi-Head NN"
@@ -165,9 +201,70 @@ def test_select_model_predictions_falls_back_to_ridge():
     assert label == "Ridge Multi-Target"
 
 
+def test_select_model_predictions_skips_nan_mae():
+    """A model with NaN MAE shouldn't win even if it's first in priority."""
+    pipeline_result = {
+        "per_target_preds": {
+            "nn": {"x": np.ones(2)},
+            "ridge": {"x": np.zeros(2)},
+        },
+        "nn_metrics": {"total": {"mae": float("nan")}},
+        "ridge_metrics": {"total": {"mae": 5.0}},
+    }
+    preds, label = ab._select_model_predictions(pipeline_result, "QB")
+    assert label == "Ridge Multi-Target"
+
+
 def test_select_model_predictions_raises_when_empty():
     with pytest.raises(RuntimeError, match="No model predictions"):
         ab._select_model_predictions({"per_target_preds": {}}, "QB")
+
+
+def test_aggregate_k_predictions_uses_signed_sum():
+    """K's penalty heads must subtract: total = fg_yard_points + pat_points
+    - fg_misses - xp_misses."""
+    preds = {
+        "fg_yard_points": np.array([6.0, 9.0]),
+        "pat_points": np.array([3.0, 2.0]),
+        "fg_misses": np.array([1.0, 0.0]),
+        "xp_misses": np.array([0.0, 1.0]),
+    }
+    out = ab._aggregate_k_predictions(preds)
+    # row 0: 6 + 3 - 1 - 0 = 8
+    # row 1: 9 + 2 - 0 - 1 = 10
+    np.testing.assert_array_almost_equal(out, [8.0, 10.0])
+
+
+def test_aggregate_k_predictions_subset_of_targets_works():
+    """If a model only emits some heads, aggregator should still work on the subset."""
+    preds = {
+        "fg_yard_points": np.array([5.0]),
+        "pat_points": np.array([2.0]),
+        # no fg_misses / xp_misses
+    }
+    out = ab._aggregate_k_predictions(preds)
+    np.testing.assert_array_almost_equal(out, [7.0])
+
+
+def test_attach_model_predictions_k_aggregator(monkeypatch):
+    """End-to-end: _attach_model_predictions for K must use the signed sum."""
+    test_df = pd.DataFrame(
+        {
+            "player_id": ["00-K1", "00-K2"],
+            "season": [2025, 2025],
+            "week": [1, 1],
+            "position": ["K", "K"],
+            "fantasy_points": [8.0, 10.0],
+        }
+    )
+    preds = {
+        "fg_yard_points": np.array([6.0, 9.0]),
+        "pat_points": np.array([3.0, 2.0]),
+        "fg_misses": np.array([1.0, 0.0]),
+        "xp_misses": np.array([0.0, 1.0]),
+    }
+    out = ab._attach_model_predictions(test_df, preds, "K", scoring_format="ppr")
+    np.testing.assert_array_almost_equal(out["model_pred_total"].to_numpy(), [8.0, 10.0])
 
 
 def test_decide_winner():

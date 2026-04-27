@@ -47,7 +47,7 @@ from src.shared.aggregate_targets import (
     TARGET_UNITS,
     predictions_to_fantasy_points,
 )
-from src.shared.registry import get_runner
+from src.shared.registry import get_inference_spec, get_runner
 
 EVAL_SEASON_DEFAULT = TEST_SEASONS[0] if TEST_SEASONS else 2025
 TARGET_POSITIONS_DEFAULT: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
@@ -64,19 +64,51 @@ _TIE_TOLERANCE_PTS = 0.01
 # ---------- Internal helpers -------------------------------------------------
 
 
+_MODEL_PRIORITY: tuple[tuple[str, str], ...] = (
+    ("attn_nn", "Attention NN"),
+    ("nn", "Multi-Head NN"),
+    ("ridge", "Ridge Multi-Target"),
+)
+
+
 def _select_model_predictions(pipeline_result: dict, pos: str) -> tuple[dict, str]:
     """Pick the best-available model's per-target preds.
 
-    Order: attn_nn -> nn -> ridge. K and DST do not run attention; they fall back
-    to nn -> ridge automatically.
+    Prefers the model with the lowest ``metrics["total"]["mae"]`` among those
+    present in ``per_target_preds``. Falls back to a fixed
+    attn_nn -> nn -> ridge priority order when metrics are missing or
+    unusable. K and DST never run attn_nn; they fall back automatically.
     """
     per_target_preds = pipeline_result["per_target_preds"]
-    if "attn_nn" in per_target_preds and pipeline_result.get("attn_nn_metrics") is not None:
-        return per_target_preds["attn_nn"], "Attention NN"
-    if "nn" in per_target_preds:
-        return per_target_preds["nn"], "Multi-Head NN"
-    if "ridge" in per_target_preds:
-        return per_target_preds["ridge"], "Ridge Multi-Target"
+
+    candidates: list[tuple[float, int, str, str]] = []
+    for priority_idx, (model_key, model_label) in enumerate(_MODEL_PRIORITY):
+        if model_key not in per_target_preds:
+            continue
+        metrics = pipeline_result.get(f"{model_key}_metrics")
+        if not isinstance(metrics, dict):
+            continue
+        total = metrics.get("total")
+        if not isinstance(total, dict):
+            continue
+        mae = total.get("mae")
+        try:
+            mae_value = float(mae)
+        except (TypeError, ValueError):
+            continue
+        if np.isnan(mae_value):
+            continue
+        # Tuple sort: lowest MAE first, priority tie-broken by index (lower wins).
+        candidates.append((mae_value, priority_idx, model_key, model_label))
+
+    if candidates:
+        _, _, best_key, best_label = min(candidates)
+        return per_target_preds[best_key], best_label
+
+    # No usable metrics — fall back to fixed priority for whatever preds exist.
+    for model_key, model_label in _MODEL_PRIORITY:
+        if model_key in per_target_preds:
+            return per_target_preds[model_key], model_label
     raise RuntimeError(f"No model predictions found in pipeline_result for {pos}")
 
 
@@ -133,16 +165,41 @@ def _attach_model_predictions(
         # Routed via _dst_predictions_to_fantasy_points (uses tier lookups).
         out["model_pred_total"] = predictions_to_fantasy_points(pos, model_preds)
     else:
-        # K: pipeline emits a `total` head; fall back to the named target if needed.
-        if "total" in model_preds:
-            out["model_pred_total"] = np.asarray(model_preds["total"])
-        else:
-            # Sum all named heads as a defensive fallback.
-            stacked = np.stack(
-                [np.asarray(v) for k, v in model_preds.items() if k != "total"], axis=0
-            )
-            out["model_pred_total"] = stacked.sum(axis=0)
+        # K: aggregate via the per-position signed sum. K's penalty heads
+        # (fg_misses, xp_misses) carry positive raw values but contribute
+        # negatively to fantasy points; a plain sum would systematically
+        # overstate the projection. The canonical sign vector lives in the
+        # registry's inference spec so we use the same source of truth as the
+        # serving path.
+        out["model_pred_total"] = _aggregate_k_predictions(model_preds)
     return out
+
+
+def _aggregate_k_predictions(preds: dict) -> np.ndarray:
+    """Apply K's signed-sum aggregator to a per-target prediction dict.
+
+    Mirrors ``src.k.targets.compute_targets`` and the registry's K
+    ``target_signs``: ``fantasy_points = fg_yard_points + pat_points
+    - fg_misses - xp_misses``. Falls back to a plain sum only if the
+    registry doesn't expose signs (defensive — shouldn't happen for K).
+    """
+    spec = get_inference_spec("K")
+    signs = spec.get("target_signs")
+    if not signs:
+        # Defensive fallback: treat every head as additive (matches old behavior).
+        return sum(np.asarray(v) for v in preds.values())
+    total = None
+    for target, sign in signs.items():
+        if target not in preds:
+            continue
+        contribution = np.asarray(preds[target]) * float(sign)
+        total = contribution if total is None else total + contribution
+    if total is None:
+        raise RuntimeError(
+            "K aggregation: model_preds had no overlap with target_signs keys; "
+            f"got {list(preds)} vs {list(signs)}"
+        )
+    return total
 
 
 def _decide_winner(model_mae: float, nflcom_mae: float) -> str:
