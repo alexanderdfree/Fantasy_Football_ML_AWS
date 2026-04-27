@@ -16,6 +16,7 @@ This file fills in:
 
 from __future__ import annotations
 
+import os
 from unittest import mock
 
 import numpy as np
@@ -559,10 +560,15 @@ def test_ensure_all_positions_tolerates_partial_failure(monkeypatch):
         # success: populate nothing
 
     monkeypatch.setattr(app_mod, "_apply_position_models", _only_qb_fails)
+    # Why: must not raise. Partial-failure contract — failed positions are
+    # recorded and the wrapper still returns so /health can flag degradation
+    # without taking the request down.
     app_mod._ensure_all_positions_loaded()
-    # No raise. QB in failed, others in loaded.
-    assert "QB" in app_mod._cache["positions_failed"]
-    assert "RB" in app_mod._cache["positions_loaded"]
+    assert app_mod._cache["positions_failed"] == {"QB"}
+    assert "QB only" in app_mod._cache["position_load_errors"]["QB"]
+    expected_loaded = set(app_mod._ALL_POSITIONS) - {"QB"}
+    assert app_mod._cache["positions_loaded"] == expected_loaded
+    assert "QB" in app_mod._degraded_positions()
 
 
 @pytest.mark.integration
@@ -649,3 +655,164 @@ def test_load_dst_splits_filters_by_season(monkeypatch):
     # 2025 is TEST_SEASONS
     assert len(test) == 1
     assert test.iloc[0]["season"] == 2025
+
+
+# --------------------------------------------------------------------------
+# Wiki endpoints + helpers
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_wiki_index_lists_every_doc(client):
+    """``/api/wiki/index`` enumerates every WIKI_DOCS entry with slug/name/group."""
+    import src.serving.app as app_mod
+
+    resp = client.get("/api/wiki/index")
+    # Why: this endpoint never depends on _cache so a 200 is the only acceptable
+    # status — anything else means WIKI_DOCS got into an inconsistent state.
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert isinstance(body, list)
+    assert len(body) == len(app_mod.WIKI_DOCS)
+    for entry in body:
+        assert set(entry) == {"slug", "name", "group"}
+        assert entry["slug"] in app_mod.WIKI_DOCS
+
+
+@pytest.mark.integration
+def test_wiki_page_unknown_slug_returns_404(client):
+    """Unknown slug → 404 JSON. Why: slug typos in the SPA must not surface as 5xx."""
+    resp = client.get("/api/wiki/does-not-exist")
+    assert resp.status_code == 404
+    assert resp.get_json() == {"error": "Unknown doc"}
+
+
+@pytest.mark.integration
+def test_wiki_page_returns_rendered_html(client):
+    """Known slug → JSON {slug, name, group, html} with markdown rendered to HTML."""
+    import src.serving.app as app_mod
+
+    slug = next(iter(app_mod.WIKI_DOCS))
+    resp = client.get(f"/api/wiki/{slug}")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert set(body) == {"slug", "name", "group", "html"}
+    assert body["slug"] == slug
+    # markdown.markdown emits HTML tags — the rendered string must contain at
+    # least one. Why: a regression in _render_wiki_doc that returns raw markdown
+    # would silently break the wiki UI without breaking any other test.
+    assert "<" in body["html"] and ">" in body["html"]
+
+
+@pytest.mark.integration
+def test_wiki_render_doc_caches_html(app_module, monkeypatch):
+    """Second call hits the cached HTML rather than re-rendering markdown."""
+    slug = next(iter(app_module.WIKI_DOCS))
+
+    calls = {"count": 0}
+    real_md = app_module.markdown.markdown
+
+    def _counting_md(text, **kwargs):
+        calls["count"] += 1
+        return real_md(text, **kwargs)
+
+    monkeypatch.setattr(app_module.markdown, "markdown", _counting_md)
+
+    app_module._render_wiki_doc(slug)
+    app_module._render_wiki_doc(slug)
+    # Why: the second call must reuse the cached HTML — repeated markdown
+    # parsing on every wiki page request would dominate p95 latency.
+    assert calls["count"] == 1
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "href",
+    ["", "#section", "https://example.com/page", "http://x", "mailto:a@b"],
+)
+def test_wiki_rewrite_href_passes_through_external_and_anchor(href):
+    """External URLs, mailto, anchor-only, and empty hrefs must NOT be rewritten."""
+    import src.serving.app as app_mod
+
+    assert app_mod._wiki_rewrite_href(href, "docs/ARCHITECTURE.md") == href
+
+
+@pytest.mark.integration
+def test_wiki_rewrite_href_unknown_target_passes_through():
+    """A relative path that doesn't resolve to a registered wiki doc is returned unchanged."""
+    import src.serving.app as app_mod
+
+    assert app_mod._wiki_rewrite_href("nonexistent.md", "docs/ARCHITECTURE.md") == "nonexistent.md"
+
+
+@pytest.mark.integration
+def test_wiki_rewrite_href_resolves_known_target_with_anchor():
+    """A relative path pointing to a registered doc → ``#wiki:slug:anchor``."""
+    import src.serving.app as app_mod
+
+    slugs = list(app_mod.WIKI_DOCS)
+    # Why: this test depends on the cross-doc rewrite path which only fires
+    # when WIKI_DOCS holds at least two entries. A future regression that
+    # collapses the registry should fail loudly here, not silently skip.
+    assert len(slugs) >= 2
+    src_slug, target_slug = slugs[0], slugs[1]
+    src_path = app_mod.WIKI_DOCS[src_slug]["path"]
+    target_path = app_mod.WIKI_DOCS[target_slug]["path"]
+    rel = os.path.relpath(target_path, os.path.dirname(src_path) or ".")
+    rewritten = app_mod._wiki_rewrite_href(rel + "#section", src_path)
+    assert rewritten == f"#wiki:{target_slug}:section"
+    rewritten_no_anchor = app_mod._wiki_rewrite_href(rel, src_path)
+    assert rewritten_no_anchor == f"#wiki:{target_slug}"
+
+
+# --------------------------------------------------------------------------
+# /api/model_architecture — error handler + unknown-scheduler fallback
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_model_architecture_error_handler_returns_json_500(client, monkeypatch):
+    """If _position_arch_payload raises, the route returns a JSON 500 (not HTML)."""
+    import src.serving.app as app_mod
+
+    def _boom(*a, **k):
+        raise RuntimeError("arch payload exploded")
+
+    monkeypatch.setattr(app_mod, "_position_arch_payload", _boom)
+    resp = client.get("/api/model_architecture")
+    # Why: the strategy doc requires structured JSON for /api/* errors so the
+    # SPA can surface the message instead of rendering Flask's HTML 500 page.
+    assert resp.status_code == 500
+    assert resp.is_json
+    assert "arch payload exploded" in resp.get_json()["error"]
+
+
+@pytest.mark.integration
+def test_position_arch_payload_unknown_scheduler_falls_back_to_str():
+    """Unknown SCHEDULER_TYPE → str(value) so the UI shows whatever was set."""
+    import src.serving.app as app_mod
+
+    cfg = _CfgModule()
+    cfg.SCHEDULER_TYPE = "constant"
+    payload = app_mod._position_arch_payload(
+        "QB", cfg, specific=["f_spec"], targets=["passing_yards"], include_features=["a"]
+    )
+    assert payload["scheduler"] == "constant"
+
+
+@pytest.mark.integration
+def test_position_arch_payload_attn_history_appended_when_provided():
+    """`attn_history` arg surfaces under features.attention_history for the UI."""
+    import src.serving.app as app_mod
+
+    cfg = _CfgModule()
+    cfg.SCHEDULER_TYPE = "plateau"
+    payload = app_mod._position_arch_payload(
+        "QB",
+        cfg,
+        specific=["f_spec"],
+        targets=["passing_yards"],
+        include_features=["a"],
+        attn_history=["passing_yards", "rushing_yards"],
+    )
+    assert payload["features"]["attention_history"] == ["passing_yards", "rushing_yards"]
