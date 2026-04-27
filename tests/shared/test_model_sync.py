@@ -167,6 +167,63 @@ def test_sync_extracts_all_positions_via_legacy_fallback(monkeypatch, tmp_path):
         assert extracted.read_bytes() == b"payload-" + pos.encode()
 
 
+def test_sync_one_dest_string_path_matches_registry_model_dir(monkeypatch, tmp_path):
+    """Contract: ``_sync_one``'s extraction directory must equal — *as a
+    case-sensitive path string* — the directory ``registry.get_inference_spec
+    (pos)['model_dir']`` resolves to. Files must land where the Flask app
+    will look for them.
+
+    Why string compare and not ``Path.samefile``: the bug we're guarding
+    against is uppercase-vs-lowercase position divergence that survived PR
+    #154's rename — model_sync kept extracting to the uppercase-POS path
+    while the registry started reading from the lowercase one. macOS APFS
+    folded the two paths to one inode and the existing tests passed; ECS
+    Linux is case-sensitive and the deployed app would have failed to load
+    any model. A string-based assertion is the only kind that catches this
+    on a developer's mac before it hits prod.
+    """
+    captured: dict[str, Path] = {}
+
+    def fake_extract(_data: bytes, dest: Path) -> None:
+        # Record the dest each call; skip the actual untar — we don't need
+        # real artifacts, just the path string the caller built.
+        captured[fake_extract.current_pos] = dest
+        dest.mkdir(parents=True, exist_ok=True)
+
+    fake_extract.current_pos = ""  # populated per-iteration below
+
+    monkeypatch.setattr(model_sync, "_extract_tarball", fake_extract)
+
+    # Mimic the live layout: ``_repo_root`` points at the (real) src/ dir.
+    # We pin it to ``tmp_path / "src"`` so the registry's relative
+    # ``src/{pos}/outputs/models`` paths anchor correctly at ``tmp_path``.
+    fake_src = tmp_path / "src"
+    fake_src.mkdir()
+
+    fake_tar = _make_tarball({"sentinel": b"x"})
+    fake_s3 = _FakeS3({f"models/{pos}/model.tar.gz": fake_tar for pos in model_sync.POSITIONS})
+
+    from src.shared.registry import get_inference_spec
+
+    for pos in model_sync.POSITIONS:
+        fake_extract.current_pos = pos
+        # Drive the legacy-path branch directly so we don't depend on the
+        # manifest fixture — the dest computation is the same on every
+        # branch.
+        model_sync._sync_one(fake_s3, "test-bucket", "models", pos, fake_src)
+
+    for pos in model_sync.POSITIONS:
+        sync_dest_str = str(captured[pos])
+        registry_rel = get_inference_spec(pos)["model_dir"]
+        registry_dest_str = str(tmp_path / registry_rel)
+        assert sync_dest_str == registry_dest_str, (
+            f"{pos}: model_sync._extract_tarball(dest='{sync_dest_str}'), "
+            f"but registry says serving reads from '{registry_dest_str}'. "
+            "Path strings must match exactly (case-sensitive) so synced "
+            "artifacts are reachable through the serving path on Linux."
+        )
+
+
 def test_sync_honors_custom_prefix(monkeypatch, tmp_path):
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setenv("FF_MODEL_S3_PREFIX", "nightly/v2")

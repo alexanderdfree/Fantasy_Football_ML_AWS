@@ -10,9 +10,9 @@ it via a new manifest.json put, and mirrors the legacy ``model.tar.gz`` so
 pre-manifest consumers see the same bytes.
 
 Usage:
-    python scripts/promote.py --position WR --list
-    python scripts/promote.py --position WR --to models/WR/history/...sha7/model.tar.gz
-    python scripts/promote.py --position WR --to ... --dry-run
+    python -m src.scripts.promote --position WR --list
+    python -m src.scripts.promote --position WR --to models/WR/history/...sha7/model.tar.gz
+    python -m src.scripts.promote --position WR --to ... --dry-run
 
 All state lives in ``src.shared.model_sync``'s manifest helpers — producer
 (``src/batch/train.py``), consumer (``src/shared/model_sync.py``), and this operator

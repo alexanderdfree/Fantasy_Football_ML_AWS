@@ -4,7 +4,7 @@ Tests 6 Ridge configurations on the same data split, reporting per-target MAE,
 total MAE, R2, condition number, and feature count for each variant.
 
 Usage:
-    python WR/benchmark_ridge_variants.py
+    python -m src.wr.benchmark_ridge_variants
 """
 
 import os
