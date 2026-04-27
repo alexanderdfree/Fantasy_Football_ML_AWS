@@ -18,7 +18,7 @@ that uses the rolling mean should trivially outperform "mean of all weeks".
 
 * ``MAE_baseline > MAE_ridge``               (Ridge beats naive mean)
 * ``MAE_lgbm <= MAE_ridge * 1.10``           (LightGBM at least on par)
-* ``|MAE_nn - MAE_lgbm| / MAE_lgbm <= 0.25`` (NN within +/-25 % of LightGBM)
+* ``|MAE_nn - MAE_lgbm| / MAE_lgbm <= 0.35`` (NN within +/-35 % of LightGBM)
 
 Band is wide enough that CPU-vs-GPU / BLAS-version numerical noise
 doesn't flake it, tight enough that flipping "mean" to "sum" in a feature
@@ -46,7 +46,7 @@ from src.evaluation.metrics import compute_metrics
 from src.models.baseline import SeasonAverageBaseline
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.feature_build import scale_and_clip
-from src.shared.models import RidgeMultiTarget
+from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
 from src.shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
 
@@ -130,22 +130,17 @@ def regression_results(tiny_dataset):
     # the tier-mapped PA/YA means ``sum(raw)`` is NOT the truth we want here.
     ridge_mae = compute_metrics(fp_test, dst_agg(ridge.predict(X_test)))["mae"]
 
-    # --- LightGBM multi-target (optional — skip cleanly if not installed) ---
-    try:
-        from src.shared.models import LightGBMMultiTarget
-
-        lgbm = LightGBMMultiTarget(
-            target_names=TARGETS,
-            n_estimators=50,
-            learning_rate=0.1,
-            num_leaves=15,
-            min_child_samples=5,
-            seed=SEED,
-        )
-        lgbm.fit(X_train, y_train, feature_names=_TINY_FEATURE_COLS)
-        lgbm_mae = compute_metrics(fp_test, dst_agg(lgbm.predict(X_test)))["mae"]
-    except Exception:  # lightgbm not installed or fits failed on tiny data
-        lgbm_mae = None
+    # --- LightGBM multi-target ---
+    lgbm = LightGBMMultiTarget(
+        target_names=TARGETS,
+        n_estimators=50,
+        learning_rate=0.1,
+        num_leaves=15,
+        min_child_samples=5,
+        seed=SEED,
+    )
+    lgbm.fit(X_train, y_train, feature_names=_TINY_FEATURE_COLS)
+    lgbm_mae = compute_metrics(fp_test, dst_agg(lgbm.predict(X_test)))["mae"]
 
     # --- NN (shrunk) ---
     np.random.seed(SEED)
@@ -233,8 +228,6 @@ class TestDSTRegression:
     def test_lightgbm_not_much_worse_than_ridge(self, regression_results):
         """LightGBM should perform at least as well as Ridge (+/-10 %)."""
         lgbm = regression_results["lgbm"]
-        if lgbm is None:
-            pytest.skip("LightGBM unavailable in this environment")
         ridge = regression_results["ridge"]
         assert lgbm <= ridge * 1.10, (
             f"LightGBM MAE {lgbm:.3f} is >10 % worse than Ridge {ridge:.3f} — "
@@ -251,8 +244,6 @@ class TestDSTRegression:
         regression to match tree-based ensembles on this synthetic set.
         """
         lgbm = regression_results["lgbm"]
-        if lgbm is None:
-            pytest.skip("LightGBM unavailable in this environment")
         nn = regression_results["nn"]
         rel_diff = abs(nn - lgbm) / lgbm
         assert rel_diff <= 0.35, (
