@@ -169,6 +169,51 @@ def test_reconstruct_weekly_from_pbp_cache_hit(tmp_path, monkeypatch):
     assert out.iloc[0]["player_id"] == "K01"
 
 
+@pytest.mark.unit
+def test_reconstruct_weekly_pbp_skips_failing_seasons(tmp_path, monkeypatch, capsys):
+    """If ``import_pbp_data`` throws (e.g. upstream 502), the per-year body is
+    skipped, a WARNING is logged, and the partial result is NOT cached so the
+    next call doesn't treat a partial frame as authoritative."""
+    import K.k_data as k_data
+
+    def _bad(seasons, downcast=True):
+        raise RuntimeError(f"pbp fetch boom for {seasons}")
+
+    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _bad)
+
+    out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
+    assert out.empty
+    assert "PBP weekly extraction failed" in capsys.readouterr().out
+    # No poisoned cache.
+    assert not (tmp_path / "kicker_pbp_2020_2020.parquet").exists()
+
+
+@pytest.mark.unit
+def test_reconstruct_weekly_pbp_partial_failure_skips_cache(tmp_path, monkeypatch, capsys):
+    """If only some seasons fail, returned frame contains the survivors but
+    the combined cache key is NOT written (it would silently claim coverage
+    of the failed years)."""
+    import K.k_data as k_data
+
+    def _selective(seasons, downcast=True):
+        yr = seasons[0]
+        if yr == 2021:
+            raise RuntimeError("upstream 502 for 2021")
+        return _synthetic_pbp(yr)
+
+    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _selective)
+
+    out = k_data.reconstruct_kicker_weekly_from_pbp([2020, 2021], cache_dir=str(tmp_path))
+    # 2020 survives; 2021 was dropped.
+    assert not out.empty
+    assert 2020 in out["season"].values
+    assert 2021 not in out["season"].values
+    captured = capsys.readouterr().out
+    assert "PBP weekly extraction failed for 2021" in captured
+    assert "not caching partial result" in captured
+    assert not (tmp_path / "kicker_pbp_2020_2021.parquet").exists()
+
+
 # --------------------------------------------------------------------------
 # Tests — reconstruct_kicker_kicks_from_pbp
 # --------------------------------------------------------------------------
@@ -240,6 +285,14 @@ def _cached_pbp(tmp_path, monkeypatch):
     # Restrict K_SEASONS so cache path key is predictable.
     monkeypatch.setattr(k_data, "K_SEASONS", [2022, 2023, 2024])
     monkeypatch.setattr(k_data, "K_MIN_GAMES", 1)  # don't filter our tiny frame
+
+    # Enforce the docstring's "without touching nflverse" claim — without this
+    # guard, a default-arg pitfall on cache_dir silently caused cache misses
+    # and the test passed only because nflverse usually returned valid data.
+    def _no_network(*args, **kwargs):
+        raise AssertionError("nfl.import_pbp_data must not be called when the PBP cache hits")
+
+    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
 
     # Synthetic kicker weekly cache (2022-2024).
     kicker_rows = []
@@ -458,6 +511,17 @@ def test_load_kicker_data_includes_2025_weekly_branch(tmp_path, monkeypatch):
     monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(k_data, "K_SEASONS", [2024, 2025])
     monkeypatch.setattr(k_data, "K_MIN_GAMES", 1)
+
+    # Enforce the docstring's "skip real PBP via the cache-hit shortcut" claim:
+    # neither reconstruct_kicker_weekly_from_pbp (cache-hit) nor _backfill_2025
+    # (stubbed below) should reach the network.
+    def _no_network(*args, **kwargs):
+        raise AssertionError(
+            "nfl.import_pbp_data must not be called: 2024 must hit cache, "
+            "and the 2025 backfill is stubbed to no-op"
+        )
+
+    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
 
     # 2024 PBP cache
     pd.DataFrame(

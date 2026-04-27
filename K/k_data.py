@@ -13,7 +13,7 @@ from src.config import CACHE_DIR, SEASONS
 
 def reconstruct_kicker_weekly_from_pbp(
     seasons: list[int],
-    cache_dir: str = CACHE_DIR,
+    cache_dir: str | None = None,
 ) -> pd.DataFrame:
     """Reconstruct weekly kicker stats from play-by-play data.
 
@@ -22,101 +22,120 @@ def reconstruct_kicker_weekly_from_pbp(
     plays into a weekly kicker-level dataframe matching the schema expected
     by k_targets.py, plus additional PBP-derived columns for features.
     """
+    # Resolve at call time so module-level monkeypatches of CACHE_DIR take
+    # effect (using `cache_dir: str = CACHE_DIR` as a default would freeze
+    # the value at function-definition time).
+    if cache_dir is None:
+        cache_dir = CACHE_DIR
     cache_path = f"{cache_dir}/kicker_pbp_{seasons[0]}_{seasons[-1]}.parquet"
     if os.path.exists(cache_path):
         return pd.read_parquet(cache_path)
 
     all_weekly = []
+    skipped_seasons: list[int] = []
     for yr in seasons:
         print(f"  Loading PBP for {yr}...")
-        pbp = nfl.import_pbp_data([yr], downcast=True)
-        # Keep only regular season
-        pbp = pbp[pbp["season_type"] == "REG"]
+        # Wrap the entire per-year extraction so a 502 / empty frame / schema
+        # change in one season doesn't abort the whole load. Mirrors the
+        # defensive posture of reconstruct_kicker_kicks_from_pbp.
+        try:
+            pbp = nfl.import_pbp_data([yr], downcast=True)
+            # Keep only regular season
+            pbp = pbp[pbp["season_type"] == "REG"]
 
-        # --- Field goals ---
-        fg = pbp[pbp["field_goal_attempt"] == 1].copy()
-        fg["fg_made_flag"] = (fg["field_goal_result"] == "made").astype(int)
-        fg["fg_missed_flag"] = (fg["field_goal_result"] != "made").astype(int)
-        # Distance buckets matching weekly_data schema
-        d = fg["kick_distance"]
-        made = fg["fg_made_flag"].astype(bool)
-        fg["fg_made_0_19"] = ((d < 20) & made).astype(int)
-        fg["fg_made_20_29"] = ((d >= 20) & (d < 30) & made).astype(int)
-        fg["fg_made_30_39"] = ((d >= 30) & (d < 40) & made).astype(int)
-        fg["fg_made_40_49"] = ((d >= 40) & (d < 50) & made).astype(int)
-        fg["fg_made_50_59"] = ((d >= 50) & (d < 60) & made).astype(int)
-        fg["fg_made_60_"] = ((d >= 60) & made).astype(int)
-        # Missed buckets
-        missed = fg["fg_missed_flag"].astype(bool)
-        fg["fg_missed_40_49"] = ((d >= 40) & (d < 50) & missed).astype(int)
-        fg["fg_missed_50_59"] = ((d >= 50) & (d < 60) & missed).astype(int)
-        fg["fg_missed_60_"] = ((d >= 60) & missed).astype(int)
-        # PBP-only situational flags
-        fg["is_clutch"] = (fg["score_differential"].abs() <= 7).astype(int)
-        fg["clutch_made"] = (fg["is_clutch"] & fg["fg_made_flag"]).astype(int)
-        fg["is_q4"] = (fg["qtr"] >= 4).astype(int)
-        fg["q4_made"] = (fg["is_q4"] & fg["fg_made_flag"]).astype(int)
-        fg["is_long"] = (d >= 40).astype(int)
-        fg["long_made"] = (fg["is_long"] & fg["fg_made_flag"]).astype(int)
-        # Sum of kick_distance restricted to made FGs — per-attempt contribution
-        # to the `fg_yards_made` season-week aggregate consumed by k_targets.
-        fg["_fg_yards_made_flag"] = fg["fg_made_flag"] * fg["kick_distance"]
+            # --- Field goals ---
+            fg = pbp[pbp["field_goal_attempt"] == 1].copy()
+            fg["fg_made_flag"] = (fg["field_goal_result"] == "made").astype(int)
+            fg["fg_missed_flag"] = (fg["field_goal_result"] != "made").astype(int)
+            # Distance buckets matching weekly_data schema
+            d = fg["kick_distance"]
+            made = fg["fg_made_flag"].astype(bool)
+            fg["fg_made_0_19"] = ((d < 20) & made).astype(int)
+            fg["fg_made_20_29"] = ((d >= 20) & (d < 30) & made).astype(int)
+            fg["fg_made_30_39"] = ((d >= 30) & (d < 40) & made).astype(int)
+            fg["fg_made_40_49"] = ((d >= 40) & (d < 50) & made).astype(int)
+            fg["fg_made_50_59"] = ((d >= 50) & (d < 60) & made).astype(int)
+            fg["fg_made_60_"] = ((d >= 60) & made).astype(int)
+            # Missed buckets
+            missed = fg["fg_missed_flag"].astype(bool)
+            fg["fg_missed_40_49"] = ((d >= 40) & (d < 50) & missed).astype(int)
+            fg["fg_missed_50_59"] = ((d >= 50) & (d < 60) & missed).astype(int)
+            fg["fg_missed_60_"] = ((d >= 60) & missed).astype(int)
+            # PBP-only situational flags
+            fg["is_clutch"] = (fg["score_differential"].abs() <= 7).astype(int)
+            fg["clutch_made"] = (fg["is_clutch"] & fg["fg_made_flag"]).astype(int)
+            fg["is_q4"] = (fg["qtr"] >= 4).astype(int)
+            fg["q4_made"] = (fg["is_q4"] & fg["fg_made_flag"]).astype(int)
+            fg["is_long"] = (d >= 40).astype(int)
+            fg["long_made"] = (fg["is_long"] & fg["fg_made_flag"]).astype(int)
+            # Sum of kick_distance restricted to made FGs — per-attempt contribution
+            # to the `fg_yards_made` season-week aggregate consumed by k_targets.
+            fg["_fg_yards_made_flag"] = fg["fg_made_flag"] * fg["kick_distance"]
 
-        weekly_fg = (
-            fg.groupby(["kicker_player_id", "kicker_player_name", "posteam", "season", "week"])
-            .agg(
-                fg_att=("fg_made_flag", "count"),
-                fg_made=("fg_made_flag", "sum"),
-                fg_missed=("fg_missed_flag", "sum"),
-                fg_made_0_19=("fg_made_0_19", "sum"),
-                fg_made_20_29=("fg_made_20_29", "sum"),
-                fg_made_30_39=("fg_made_30_39", "sum"),
-                fg_made_40_49=("fg_made_40_49", "sum"),
-                fg_made_50_59=("fg_made_50_59", "sum"),
-                fg_made_60_=("fg_made_60_", "sum"),
-                fg_missed_40_49=("fg_missed_40_49", "sum"),
-                fg_missed_50_59=("fg_missed_50_59", "sum"),
-                fg_missed_60_=("fg_missed_60_", "sum"),
-                fg_yards_made=("_fg_yards_made_flag", "sum"),
-                # PBP-derived aggregates
-                avg_fg_distance=("kick_distance", "mean"),
-                max_fg_distance=("kick_distance", "max"),
-                avg_fg_prob=("fg_prob", "mean"),
-                clutch_fg_att=("is_clutch", "sum"),
-                clutch_fg_made=("clutch_made", "sum"),
-                q4_fg_att=("is_q4", "sum"),
-                q4_fg_made=("q4_made", "sum"),
-                long_fg_att=("is_long", "sum"),
-                long_fg_made=("long_made", "sum"),
-                # Weather (game-level, same for all plays in a game)
-                game_wind=("wind", "first"),
-                game_temp=("temp", "first"),
-                roof=("roof", "first"),
-                surface=("surface", "first"),
+            weekly_fg = (
+                fg.groupby(["kicker_player_id", "kicker_player_name", "posteam", "season", "week"])
+                .agg(
+                    fg_att=("fg_made_flag", "count"),
+                    fg_made=("fg_made_flag", "sum"),
+                    fg_missed=("fg_missed_flag", "sum"),
+                    fg_made_0_19=("fg_made_0_19", "sum"),
+                    fg_made_20_29=("fg_made_20_29", "sum"),
+                    fg_made_30_39=("fg_made_30_39", "sum"),
+                    fg_made_40_49=("fg_made_40_49", "sum"),
+                    fg_made_50_59=("fg_made_50_59", "sum"),
+                    fg_made_60_=("fg_made_60_", "sum"),
+                    fg_missed_40_49=("fg_missed_40_49", "sum"),
+                    fg_missed_50_59=("fg_missed_50_59", "sum"),
+                    fg_missed_60_=("fg_missed_60_", "sum"),
+                    fg_yards_made=("_fg_yards_made_flag", "sum"),
+                    # PBP-derived aggregates
+                    avg_fg_distance=("kick_distance", "mean"),
+                    max_fg_distance=("kick_distance", "max"),
+                    avg_fg_prob=("fg_prob", "mean"),
+                    clutch_fg_att=("is_clutch", "sum"),
+                    clutch_fg_made=("clutch_made", "sum"),
+                    q4_fg_att=("is_q4", "sum"),
+                    q4_fg_made=("q4_made", "sum"),
+                    long_fg_att=("is_long", "sum"),
+                    long_fg_made=("long_made", "sum"),
+                    # Weather (game-level, same for all plays in a game)
+                    game_wind=("wind", "first"),
+                    game_temp=("temp", "first"),
+                    roof=("roof", "first"),
+                    surface=("surface", "first"),
+                )
+                .reset_index()
             )
-            .reset_index()
-        )
 
-        # --- Extra points ---
-        xp = pbp[pbp["extra_point_attempt"] == 1].copy()
-        xp["xp_made"] = (xp["extra_point_result"] == "good").astype(int)
-        xp["xp_missed"] = (xp["extra_point_result"] != "good").astype(int)
+            # --- Extra points ---
+            xp = pbp[pbp["extra_point_attempt"] == 1].copy()
+            xp["xp_made"] = (xp["extra_point_result"] == "good").astype(int)
+            xp["xp_missed"] = (xp["extra_point_result"] != "good").astype(int)
 
-        weekly_xp = (
-            xp.groupby(["kicker_player_id", "season", "week"])
-            .agg(
-                pat_att=("xp_made", "count"),
-                pat_made=("xp_made", "sum"),
-                pat_missed=("xp_missed", "sum"),
+            weekly_xp = (
+                xp.groupby(["kicker_player_id", "season", "week"])
+                .agg(
+                    pat_att=("xp_made", "count"),
+                    pat_made=("xp_made", "sum"),
+                    pat_missed=("xp_missed", "sum"),
+                )
+                .reset_index()
             )
-            .reset_index()
-        )
 
-        # Merge FG + XP
-        weekly_k = weekly_fg.merge(
-            weekly_xp, on=["kicker_player_id", "season", "week"], how="outer"
-        )
-        all_weekly.append(weekly_k)
+            # Merge FG + XP
+            weekly_k = weekly_fg.merge(
+                weekly_xp, on=["kicker_player_id", "season", "week"], how="outer"
+            )
+            all_weekly.append(weekly_k)
+        except Exception as e:
+            print(f"  WARNING: PBP weekly extraction failed for {yr} ({e}); skipping")
+            skipped_seasons.append(yr)
+            continue
+
+    if not all_weekly:
+        # Every season failed (e.g. nflverse-wide outage). Return empty so the
+        # caller can decide how to proceed; do NOT cache.
+        return pd.DataFrame()
 
     result = pd.concat(all_weekly, ignore_index=True)
 
@@ -147,6 +166,13 @@ def reconstruct_kicker_weekly_from_pbp(
 
     # Derive venue features
     result["is_dome"] = result["roof"].isin(["dome", "closed"]).astype(int)
+
+    if skipped_seasons:
+        # Don't poison the combined cache key with a partial result — the next
+        # call would treat it as authoritative for the full range and silently
+        # serve incomplete data.
+        print(f"  Skipped seasons {skipped_seasons}; not caching partial result to {cache_path}")
+        return result
 
     os.makedirs(cache_dir, exist_ok=True)
     result.to_parquet(cache_path)
