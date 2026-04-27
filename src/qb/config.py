@@ -189,6 +189,7 @@ ATTN_HISTORY_STATS = [
     "completions",
     "carries",
     "interceptions",
+    "fumbles_lost",
     "snap_pct",
     "sacks",
     "sack_yards",
