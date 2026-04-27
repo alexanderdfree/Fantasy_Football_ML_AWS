@@ -74,6 +74,12 @@ _FORBIDDEN_TE_SPECIFIC = {
     "team_te_target_share_L3",
     "td_rate_per_target_L3",
 }
+_FORBIDDEN_SPECIFIC = {
+    "QB": _FORBIDDEN_QB_SPECIFIC,
+    "RB": _FORBIDDEN_RB_SPECIFIC,
+    "WR": _FORBIDDEN_WR_SPECIFIC,
+    "TE": _FORBIDDEN_TE_SPECIFIC,
+}
 _FORBIDDEN_SHARE_COLS = {
     "target_share_L3",
     "target_share_L5",
@@ -138,21 +144,10 @@ class TestAttnStaticWhitelistExcludesSpecific:
     (``yards_per_carry_L3`` etc.) used to leak into the attention static set
     because their names didn't match the old prefix/suffix blacklist."""
 
-    def test_specific_leaks_fixed(self):
-        leaks = set(_static_cols("RB")) & _FORBIDDEN_RB_SPECIFIC
-        assert not leaks, f"RB-specific features leaked into attention static: {sorted(leaks)}"
-
-    def test_specific_leaks_fixed(self):
-        leaks = set(_static_cols("QB")) & _FORBIDDEN_QB_SPECIFIC
-        assert not leaks, f"QB-specific features leaked into attention static: {sorted(leaks)}"
-
-    def test_specific_leaks_fixed(self):
-        leaks = set(_static_cols("WR")) & _FORBIDDEN_WR_SPECIFIC
-        assert not leaks, f"WR-specific features leaked into attention static: {sorted(leaks)}"
-
-    def test_specific_leaks_fixed(self):
-        leaks = set(_static_cols("TE")) & _FORBIDDEN_TE_SPECIFIC
-        assert not leaks, f"TE-specific features leaked into attention static: {sorted(leaks)}"
+    @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE"])
+    def test_specific_leaks_fixed(self, pos):
+        leaks = set(_static_cols(pos)) & _FORBIDDEN_SPECIFIC[pos]
+        assert not leaks, f"{pos}-specific features leaked into attention static: {sorted(leaks)}"
 
     def test_specific_excluded(self):
         """Every SPECIFIC feature is a rolling/ewma/trend aggregate; none
