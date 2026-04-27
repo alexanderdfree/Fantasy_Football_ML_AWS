@@ -49,7 +49,7 @@ def outputs_dir(tmp_path_factory):
     """Redirect pipeline artifact writes to a tmp dir."""
     cwd = os.getcwd()
     tmp_dir = tmp_path_factory.mktemp("k_attn_e2e_outputs")
-    (tmp_dir / "K" / "outputs").mkdir(parents=True, exist_ok=True)
+    (tmp_dir / "k" / "outputs").mkdir(parents=True, exist_ok=True)
     try:
         os.chdir(tmp_dir)
         yield tmp_dir

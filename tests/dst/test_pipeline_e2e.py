@@ -16,7 +16,7 @@ Design choices
   1 epoch, no LightGBM, no attention.  The rest of the production config
   (targets, ridge grids, loss weights) is kept so the test exercises
   representative code.
-* **CWD override** — ``run_pipeline`` writes artifacts to ``DST/outputs``
+* **CWD override** — ``run_pipeline`` writes artifacts to ``dst/outputs``
   (a relative path).  We ``chdir`` into ``tmp_path`` so the real repo
   outputs are untouched.
 * **Reproducibility** — two runs with the same seed must produce
@@ -145,7 +145,7 @@ def _build_tiny_splits(seed: int = 42):
 
 @pytest.fixture(scope="module")
 def tiny_cwd(tmp_path_factory, tiny_dataset):
-    """Redirect CWD so run_pipeline's ``DST/outputs`` writes land in tmp_path.
+    """Redirect CWD so run_pipeline's ``dst/outputs`` writes land in tmp_path.
 
     Also stubs out the schedule-parquet loader so it returns a synthetic
     frame keyed to the tiny dataset — the real parquet is resolved by a
@@ -160,8 +160,8 @@ def tiny_cwd(tmp_path_factory, tiny_dataset):
     mp.chdir(tmp_path)
     # Pre-create the directory the pipeline expects so any early file
     # operations don't fail before its os.makedirs call runs.
-    os.makedirs(tmp_path / "DST" / "outputs" / "models", exist_ok=True)
-    os.makedirs(tmp_path / "DST" / "outputs" / "figures", exist_ok=True)
+    os.makedirs(tmp_path / "dst" / "outputs" / "models", exist_ok=True)
+    os.makedirs(tmp_path / "dst" / "outputs" / "figures", exist_ok=True)
 
     # Stub the weather_features schedule loader.  merge_schedule_features
     # short-circuits on the ``_schedule_merged`` column, so if a df already

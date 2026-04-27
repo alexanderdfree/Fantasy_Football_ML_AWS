@@ -84,8 +84,8 @@ def test_run_pipeline_with_train_elasticnet_true(tmp_path_factory):
     mp = pytest.MonkeyPatch()
     tmp_path = tmp_path_factory.mktemp("dst_enet_e2e")
     mp.chdir(tmp_path)
-    os.makedirs(tmp_path / "DST" / "outputs" / "models", exist_ok=True)
-    os.makedirs(tmp_path / "DST" / "outputs" / "figures", exist_ok=True)
+    os.makedirs(tmp_path / "dst" / "outputs" / "models", exist_ok=True)
+    os.makedirs(tmp_path / "dst" / "outputs" / "figures", exist_ok=True)
 
     from src.shared import weather_features as _wf
 
