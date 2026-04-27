@@ -49,12 +49,19 @@ _ROLLING_STATS = [
 # (analysis_output/rb_feature_audit.json, docs/rb_feature_history.md):
 #   * receptions/{mean,std,max}: r=0.937–0.982 with the matching targets
 #     aggregates (catch rate is stable across seasons, so prior-season
-#     receptions ≈ targets × constant).
+#     receptions ≈ targets × constant). The catch-rate residual is restored
+#     via the derived `prior_season_mean_catch_rate` (see rb/features.py).
 #   * rushing_yards/{mean,std,max}: r=0.943–0.963 with the matching carries
-#     aggregates (yards/carry varies < 30% YoY).
+#     aggregates (yards/carry varies < 30% YoY). YPC residual is restored
+#     via `prior_season_mean_yards_per_carry`.
 #   * std_{receiving_yards, fantasy_points}: r=0.91–0.94 with the matching
 #     max aggregate; max is the more interpretable shape stat for skewed
 #     yardage distributions.
+#   * mean_/max_fantasy_points (PR #191): per-target prior-season aggregates
+#     (carries, targets, snap_pct, plus the new total_touchdowns) plus the
+#     volume×rate features above carry the signal that prior_season_fp was
+#     standing in for. fp is a position-scoring sum; the components are
+#     more directly informative for prediction.
 _PRIOR_SEASON_DROPS = {
     "prior_season_mean_receptions",
     "prior_season_std_receptions",
@@ -64,6 +71,8 @@ _PRIOR_SEASON_DROPS = {
     "prior_season_max_rushing_yards",
     "prior_season_std_receiving_yards",
     "prior_season_std_fantasy_points",
+    "prior_season_mean_fantasy_points",
+    "prior_season_max_fantasy_points",
 }
 
 INCLUDE_FEATURES = {
@@ -79,11 +88,24 @@ INCLUDE_FEATURES = {
         )
     ]
     + ["rolling_min_fantasy_points_L5"],
+    # Standard mean/std/max aggregates over _ROLLING_STATS, minus the cells
+    # filtered by _PRIOR_SEASON_DROPS, plus three appended PR-#191 features:
+    #   * prior_season_total_touchdowns: full-season sum of rushing_tds +
+    #     receiving_tds. Built in src.features.engineer.build_features.
+    #   * prior_season_mean_catch_rate / mean_yards_per_carry: derived
+    #     ratios that restore the player-specific rate signal lost when
+    #     PR #190 dropped the receptions / rushing_yards aggregates. Built
+    #     in src.rb.features._compute_features.
     "prior_season": [
         f"prior_season_{a}_{stat}"
         for stat in _ROLLING_STATS
         for a in ["mean", "std", "max"]
         if f"prior_season_{a}_{stat}" not in _PRIOR_SEASON_DROPS
+    ]
+    + [
+        "prior_season_total_touchdowns",
+        "prior_season_mean_catch_rate",
+        "prior_season_mean_yards_per_carry",
     ],
     # All EWMA dropped (>0.98 corr with rolling means)
     "ewma": [],

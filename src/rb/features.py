@@ -139,6 +139,41 @@ def _compute_features(df: pd.DataFrame) -> None:
     air_yds_roll = _sum(df, "receiving_air_yards")
     df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
 
+    # Prior-season rate features (PR #191). PR #190 dropped the receptions
+    # and rushing_yards aggregates because they're functionally derived from
+    # targets and carries respectively (r=0.96-0.98). The dropped aggregates
+    # carried a residual ~3.6% variance that maps to player-specific
+    # catch_rate / yards-per-carry — signal that no other feature in
+    # INCLUDE_FEATURES["prior_season"] encoded after the drop. These two
+    # derived rates restore that signal directly.
+    #
+    # The upstream prior_season_*_receptions and prior_season_*_rushing_yards
+    # columns are still materialised by src.features.engineer.build_features
+    # (they're computed for ALL positions; only the per-position whitelist
+    # filters them).
+    #
+    # Volume guards: very-low-volume players (e.g. a special-teamer with one
+    # carry in their prior season) produce pathological rate values when
+    # both numerator and denominator are small — an empirical sanity check
+    # found pre-guard YPC values in [-8, +29], well outside any plausible RB
+    # season range. The thresholds below require ≥0.5 carries/game (~3 over
+    # the MIN_GAMES_PER_SEASON=6 floor) and ≥0.5 targets/game before
+    # computing the rate. Below that, the rate is NaN and fill_nans (called
+    # downstream) substitutes the train mean.
+    _min_per_game_volume = 0.5
+    if "prior_season_mean_receptions" in df.columns:
+        catch_rate = safe_divide(
+            df["prior_season_mean_receptions"], df["prior_season_mean_targets"]
+        )
+        df["prior_season_mean_catch_rate"] = catch_rate.where(
+            df["prior_season_mean_targets"] >= _min_per_game_volume
+        )
+    if "prior_season_mean_rushing_yards" in df.columns:
+        ypc = safe_divide(df["prior_season_mean_rushing_yards"], df["prior_season_mean_carries"])
+        df["prior_season_mean_yards_per_carry"] = ypc.where(
+            df["prior_season_mean_carries"] >= _min_per_game_volume
+        )
+
 
 def fill_nans(
     train_df: pd.DataFrame,
