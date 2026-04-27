@@ -11,8 +11,8 @@ import torch
 
 from src.shared.neural_net import MultiHeadNet
 
-K_TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
-K_TARGETS_SET = set(K_TARGETS)
+TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
+TARGETS_SET = set(TARGETS)
 
 
 @pytest.mark.unit
@@ -21,7 +21,7 @@ class TestMultiHeadNet:
     def model(self):
         return MultiHeadNet(
             input_dim=10,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
             dropout=0.1,
@@ -31,7 +31,7 @@ class TestMultiHeadNet:
         """Kicker model exposes the 4 K heads."""
         x = torch.randn(4, 10)
         out = model(x)
-        assert set(out.keys()) == K_TARGETS_SET
+        assert set(out.keys()) == TARGETS_SET
 
     def test_output_shapes(self, model):
         batch_size = 8
@@ -43,38 +43,38 @@ class TestMultiHeadNet:
     def test_custom_backbone(self):
         model = MultiHeadNet(
             input_dim=5,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[64, 32, 16],
         )
         x = torch.randn(2, 5)
         out = model(x)
-        for t in K_TARGETS:
+        for t in TARGETS:
             assert out[t].shape == (2,)
 
     def test_single_sample_eval_mode(self):
         model = MultiHeadNet(
             input_dim=10,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[16, 8],
         )
         model.eval()
         with torch.no_grad():
             x = torch.randn(1, 10)
             out = model(x)
-        for t in K_TARGETS:
+        for t in TARGETS:
             assert out[t].shape == (1,)
 
     def test_predict_numpy(self):
         model = MultiHeadNet(
             input_dim=10,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[16, 8],
         )
         X = np.random.randn(5, 10).astype(np.float32)
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
 
-        assert set(preds.keys()) == K_TARGETS_SET
+        assert set(preds.keys()) == TARGETS_SET
         for key in preds:
             assert isinstance(preds[key], np.ndarray)
             assert preds[key].shape == (5,)
@@ -82,19 +82,19 @@ class TestMultiHeadNet:
     def test_predict_numpy_single_sample(self):
         model = MultiHeadNet(
             input_dim=5,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[8, 4],
         )
         X = np.random.randn(1, 5).astype(np.float32)
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
-        for t in K_TARGETS:
+        for t in TARGETS:
             assert preds[t].shape == (1,)
 
     def test_gradients_flow(self, model):
         x = torch.randn(4, 10, requires_grad=True)
         out = model(x)
-        loss = sum(out[t].sum() for t in K_TARGETS)
+        loss = sum(out[t].sum() for t in TARGETS)
         loss.backward()
         assert x.grad is not None
         assert x.grad.shape == (4, 10)
@@ -105,7 +105,7 @@ class TestMultiHeadNet:
         torch.manual_seed(0)
         model = MultiHeadNet(
             input_dim=5,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[16],
             head_hidden=4,
             dropout=0.0,
@@ -114,17 +114,17 @@ class TestMultiHeadNet:
         x = torch.randn(4, 5) * 0.01
         x.requires_grad_(True)
         out = model(x)
-        loss = sum(out[t].sum() for t in K_TARGETS)
+        loss = sum(out[t].sum() for t in TARGETS)
         loss.backward()
         assert x.grad is not None
         assert not torch.isnan(x.grad).any()
         assert (x.grad != 0).any()
 
-    def test_k_config_backbone(self):
+    def test_config_backbone(self):
         """K config uses [64, 32] backbone with head_hidden=16."""
         model = MultiHeadNet(
             input_dim=10,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[64, 32],
             head_hidden=16,
             dropout=0.25,
@@ -133,14 +133,14 @@ class TestMultiHeadNet:
         x = torch.randn(4, 10)
         with torch.no_grad():
             out = model(x)
-        for key in K_TARGETS:
+        for key in TARGETS:
             assert out[key].shape == (4,)
             assert (out[key] >= 0).all()
 
     def test_dropout_effect(self):
         model = MultiHeadNet(
             input_dim=10,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[32, 16],
             dropout=0.5,
         )
@@ -154,8 +154,8 @@ class TestMultiHeadNet:
         with torch.no_grad():
             out_eval = model(x)
 
-        train_sum = sum(out_train[t].detach() for t in K_TARGETS)
-        eval_sum = sum(out_eval[t] for t in K_TARGETS)
+        train_sum = sum(out_train[t].detach() for t in TARGETS)
+        eval_sum = sum(out_eval[t] for t in TARGETS)
         assert not torch.allclose(train_sum, eval_sum)
 
     def test_outputs_non_negative_eval(self, model):
@@ -164,14 +164,14 @@ class TestMultiHeadNet:
         x = torch.randn(4, 10)
         with torch.no_grad():
             out = model(x)
-        for key in K_TARGETS:
+        for key in TARGETS:
             assert (out[key] >= 0).all(), f"Negative value in {key} (eval)"
 
     def test_outputs_non_negative_train(self, model):
         model.train()
         x = torch.randn(4, 10)
         out = model(x)
-        for key in K_TARGETS:
+        for key in TARGETS:
             assert (out[key] >= 0).all(), f"Negative value in {key} (train)"
 
     def test_no_nan_output(self, model):
@@ -193,14 +193,14 @@ class TestMultiHeadNet:
     def test_head_hidden_overrides(self):
         model = MultiHeadNet(
             input_dim=10,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
             head_hidden_overrides={"fg_yard_points": 24},
         )
         x = torch.randn(4, 10)
         out = model(x)
-        for t in K_TARGETS:
+        for t in TARGETS:
             assert out[t].shape == (4,)
         fg_head = model.heads["fg_yard_points"]
         assert fg_head[0].out_features == 24

@@ -1016,7 +1016,7 @@ class TestNonNegativeFloor:
         model = MultiHeadNetWithNestedHistory(
             static_dim=7,
             kick_dim=9,
-            target_names=K_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[16, 8],
             d_kick=8,
             d_model=16,
@@ -1034,7 +1034,7 @@ class TestNonNegativeFloor:
                 torch.ones(B, G, dtype=torch.bool),
                 torch.ones(B, G, K, dtype=torch.bool),
             )
-        for t in K_TARGETS:
+        for t in TARGETS:
             assert torch.all(preds[t] == 0.0), f"{t}: expected exact zeros, got {preds[t].tolist()}"
 
 
@@ -1347,7 +1347,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
 
     def test_builds_correct_type(self):
         model = build_multihead_net_with_nested_history(
-            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert isinstance(model, MultiHeadNetWithNestedHistory)
 
@@ -1358,7 +1358,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
             "attn_positional_encoding": True,
         }
         model = build_multihead_net_with_nested_history(
-            cfg, static_dim=7, kick_dim=9, max_games=10, targets=K_TARGETS
+            cfg, static_dim=7, kick_dim=9, max_games=10, targets=TARGETS
         )
         assert model.d_kick == 8
         assert model.d_model == 16
@@ -1367,40 +1367,40 @@ class TestBuildMultiHeadNetWithNestedHistory:
     def test_forwards_non_negative_targets_from_cfg(self):
         cfg = self._base_cfg() | {"nn_non_negative_targets": {"fg_yard_points"}}
         model = build_multihead_net_with_nested_history(
-            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.non_negative_targets == {"fg_yard_points"}
 
     def test_learn_attn_temperature_defaults_off(self):
         model = build_multihead_net_with_nested_history(
-            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.attn_pool.learn_temperature is False
 
     def test_learn_attn_temperature_opt_in(self):
         cfg = self._base_cfg() | {"attn_learn_temperature": True}
         model = build_multihead_net_with_nested_history(
-            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.attn_pool.learn_temperature is True
-        assert model.attn_pool.log_temperature.shape == (len(K_TARGETS),)
+        assert model.attn_pool.log_temperature.shape == (len(TARGETS),)
 
     def test_history_dropout_defaults_zero(self):
         model = build_multihead_net_with_nested_history(
-            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.history_dropout == 0.0
 
     def test_history_dropout_from_cfg(self):
         cfg = self._base_cfg() | {"attn_history_dropout": 0.15}
         model = build_multihead_net_with_nested_history(
-            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.history_dropout == 0.15
 
     def test_swiglu_encoder_defaults_off(self):
         model = build_multihead_net_with_nested_history(
-            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.use_swiglu_encoder is False
         # Game encoder (outer) must be vanilla; kick encoder always stays
@@ -1413,7 +1413,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
         encoder stays Linear+ReLU so we don't silently broaden its scope."""
         cfg = self._base_cfg() | {"attn_use_swiglu_encoder": True}
         model = build_multihead_net_with_nested_history(
-            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.use_swiglu_encoder is True
         assert any(isinstance(m, SwiGLU) for m in model.game_encoder.modules())
@@ -1426,7 +1426,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
         }
         with torch.random.fork_rng():
             model = build_multihead_net_with_nested_history(
-                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=TARGETS
             )
             model.eval()
             with torch.no_grad():
@@ -1436,13 +1436,13 @@ class TestBuildMultiHeadNetWithNestedHistory:
                     torch.ones(4, 5, dtype=torch.bool),
                     torch.ones(4, 5, 3, dtype=torch.bool),
                 )
-        for t in K_TARGETS:
+        for t in TARGETS:
             assert out[t].shape == (4,)
             assert torch.isfinite(out[t]).all()
 
     def test_attn_entropy_defaults_off(self):
         model = build_multihead_net_with_nested_history(
-            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.attn_entropy_coeff == 0.0
         assert model.attn_pool.compute_entropy is False
@@ -1456,7 +1456,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
         and the loss method must short-circuit to None (trainer-safe)."""
         cfg = self._base_cfg() | {"attn_entropy_coeff": 0.1}
         model = build_multihead_net_with_nested_history(
-            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.attn_entropy_coeff == 0.1
         assert not hasattr(model.attn_pool, "last_attn_entropy")
@@ -1469,7 +1469,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
         cfg = self._base_cfg() | {"attn_entropy_coeff": 0.05}
         with torch.random.fork_rng():
             model = build_multihead_net_with_nested_history(
-                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=TARGETS
             )
             _ = model(
                 torch.randn(2, 7),
@@ -1487,7 +1487,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
 
     def test_alibi_bias_defaults_off(self):
         model = build_multihead_net_with_nested_history(
-            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.attn_pool.use_alibi_bias is False
         assert model.inner_pool.use_alibi_bias is False
@@ -1497,7 +1497,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
         a game have no games-ago granularity, so the inner pool stays flat."""
         cfg = self._base_cfg() | {"attn_use_alibi_bias": True}
         model = build_multihead_net_with_nested_history(
-            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.attn_pool.use_alibi_bias is True
         assert model.inner_pool.use_alibi_bias is False
@@ -1507,7 +1507,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
         cfg = self._base_cfg() | {"attn_use_alibi_bias": True}
         with torch.random.fork_rng():
             model = build_multihead_net_with_nested_history(
-                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=TARGETS
             )
             model.eval()
             with torch.no_grad():
@@ -1517,12 +1517,12 @@ class TestBuildMultiHeadNetWithNestedHistory:
                     torch.ones(4, 5, dtype=torch.bool),
                     torch.ones(4, 5, 3, dtype=torch.bool),
                 )
-        for t in K_TARGETS:
+        for t in TARGETS:
             assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
 
     def test_self_attn_defaults_off(self):
         model = build_multihead_net_with_nested_history(
-            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.self_attn_stack is None
 
@@ -1537,7 +1537,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
             "attn_self_ffn_dim": 16,
         }
         model = build_multihead_net_with_nested_history(
-            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.self_attn_stack is not None and len(model.self_attn_stack) == 1
         # No self-attention wiring exists on the inner pool.
@@ -1552,7 +1552,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
         }
         with torch.random.fork_rng():
             model = build_multihead_net_with_nested_history(
-                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=TARGETS
             )
             model.eval()
             with torch.no_grad():
@@ -1562,12 +1562,12 @@ class TestBuildMultiHeadNetWithNestedHistory:
                     torch.ones(4, 5, dtype=torch.bool),
                     torch.ones(4, 5, 3, dtype=torch.bool),
                 )
-        for t in K_TARGETS:
+        for t in TARGETS:
             assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
 
     def test_condition_queries_defaults_off(self):
         model = build_multihead_net_with_nested_history(
-            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            self._base_cfg(), static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.condition_queries_on_static is False
         assert model.attn_pool.cond_dim == 0
@@ -1579,7 +1579,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
         kick pool has no matchup-context notion and must stay unconditioned."""
         cfg = self._base_cfg() | {"attn_condition_queries_on_static": True}
         model = build_multihead_net_with_nested_history(
-            cfg, static_dim=7, kick_dim=9, max_games=17, targets=K_TARGETS
+            cfg, static_dim=7, kick_dim=9, max_games=17, targets=TARGETS
         )
         assert model.attn_pool.cond_dim == 7
         assert model.inner_pool.cond_dim == 0
@@ -1588,7 +1588,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
         cfg = self._base_cfg() | {"attn_condition_queries_on_static": True}
         with torch.random.fork_rng():
             model = build_multihead_net_with_nested_history(
-                cfg, static_dim=7, kick_dim=9, max_games=5, targets=K_TARGETS
+                cfg, static_dim=7, kick_dim=9, max_games=5, targets=TARGETS
             )
             model.eval()
             with torch.no_grad():
@@ -1598,7 +1598,7 @@ class TestBuildMultiHeadNetWithNestedHistory:
                     torch.ones(4, 5, dtype=torch.bool),
                     torch.ones(4, 5, 3, dtype=torch.bool),
                 )
-        for t in K_TARGETS:
+        for t in TARGETS:
             assert out[t].shape == (4,) and torch.isfinite(out[t]).all()
 
 

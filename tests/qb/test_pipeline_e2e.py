@@ -12,8 +12,8 @@ with a shrunk NN (1 layer x 8 units, 1 epoch) and asserts:
 
 Targets <20 s total wall clock. Verified via --durations=10.
 
-This exercises the orchestration layer: filter_to_qb -> compute_qb_targets ->
-add_qb_specific_features -> fill_qb_nans -> Ridge CV tuning -> Ridge fit ->
+This exercises the orchestration layer: filter_to_position -> compute_targets ->
+add_specific_features -> fill_nans -> Ridge CV tuning -> Ridge fit ->
 NN training -> weekly backtest. A regression anywhere in that chain breaks
 this test first.
 
@@ -37,7 +37,7 @@ import torch
 TEAMS = ["BUF", "KC", "DAL", "PHI", "SF", "LA", "ATL", "CIN"]
 
 
-def _generate_qb_season(season, seed, n_players=25, n_weeks=17):
+def _generate_season(season, seed, n_players=25, n_weeks=17):
     """Build a synthetic QB-season DataFrame with columns run_pipeline needs."""
     rng = np.random.default_rng(seed)
     rows = []
@@ -85,7 +85,7 @@ def _generate_qb_season(season, seed, n_players=25, n_weeks=17):
                 }
             )
     df = pd.DataFrame(rows)
-    # Fantasy points consistent with QB scoring so compute_qb_targets'
+    # Fantasy points consistent with QB scoring so compute_targets'
     # decomposition check passes without warnings.
     df["fantasy_points"] = (
         df["passing_yards"] * 0.04
@@ -98,8 +98,8 @@ def _generate_qb_season(season, seed, n_players=25, n_weeks=17):
     return df
 
 
-def _tiny_qb_config():
-    """Shrunk copy of QB_CONFIG for E2E smoke.
+def _tiny_config():
+    """Shrunk copy of CONFIG for E2E smoke.
 
     Changes from the production config:
       - 1-layer 8-unit NN backbone, 4-unit heads
@@ -107,9 +107,9 @@ def _tiny_qb_config():
       - Attention NN and LightGBM disabled (cover those in unit tests)
       - Ridge CV reduced to 2 folds, 0 refine points
     """
-    from src.QB.run_qb_pipeline import QB_CONFIG
+    from src.qb.run_pipeline import CONFIG
 
-    cfg = dict(QB_CONFIG)
+    cfg = dict(CONFIG)
     cfg.update(
         {
             "nn_backbone_layers": [8],
@@ -140,11 +140,11 @@ def synthetic_splits():
     non-empty folds. val=2023 and test=2024 remain single-season.
     """
     train = pd.concat(
-        [_generate_qb_season(season, seed=100 + (season - 2012)) for season in range(2012, 2023)],
+        [_generate_season(season, seed=100 + (season - 2012)) for season in range(2012, 2023)],
         ignore_index=True,
     )
-    val = _generate_qb_season(2023, seed=200)
-    test = _generate_qb_season(2024, seed=201)
+    val = _generate_season(2023, seed=200)
+    test = _generate_season(2024, seed=201)
     return train, val, test
 
 
@@ -164,7 +164,7 @@ def _run_once(splits, workdir, seed=42):
     from src.shared.pipeline import run_pipeline
 
     train, val, test = splits
-    cfg = _tiny_qb_config()
+    cfg = _tiny_config()
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     cwd = os.getcwd()
@@ -222,7 +222,7 @@ class TestQBPipelineE2E:
     def test_prediction_shapes(self, synthetic_splits, pipeline_run):
         """Prediction vectors must align with the test set length."""
         _, _, test = synthetic_splits
-        expected_n = len(test)  # filter_to_qb keeps all 25 x 17 = 425 rows
+        expected_n = len(test)  # filter_to_position keeps all 25 x 17 = 425 rows
         for model_name in ("ridge", "nn"):
             for target, arr in pipeline_run["per_target_preds"][model_name].items():
                 assert arr.shape == (expected_n,), (

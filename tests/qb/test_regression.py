@@ -23,7 +23,7 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.QB.qb_config import QB_LOSS_WEIGHTS, QB_TARGETS
+from src.qb.config import LOSS_WEIGHTS, TARGETS
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
@@ -117,7 +117,7 @@ def _aggregate(preds):
 class TestQBRegression:
     def test_ridge_beats_baseline(self, synthetic_qb_data):
         X_train, y_train, X_test, y_test = synthetic_qb_data
-        model = RidgeMultiTarget(target_names=QB_TARGETS, alpha=1.0)
+        model = RidgeMultiTarget(target_names=TARGETS, alpha=1.0)
         model.fit(X_train, y_train)
         preds = model.predict(X_test)
         ridge_mae = _mae(y_test["total"], _aggregate(preds))
@@ -129,12 +129,12 @@ class TestQBRegression:
     def test_lightgbm_competitive_with_ridge(self, synthetic_qb_data):
         X_train, y_train, X_test, y_test = synthetic_qb_data
 
-        ridge = RidgeMultiTarget(target_names=QB_TARGETS, alpha=1.0)
+        ridge = RidgeMultiTarget(target_names=TARGETS, alpha=1.0)
         ridge.fit(X_train, y_train)
         ridge_mae = _mae(y_test["total"], _aggregate(ridge.predict(X_test)))
 
         lgbm = LightGBMMultiTarget(
-            target_names=QB_TARGETS,
+            target_names=TARGETS,
             n_estimators=100,
             learning_rate=0.1,
             num_leaves=15,
@@ -161,7 +161,7 @@ class TestQBRegression:
 
         # LightGBM reference
         lgbm = LightGBMMultiTarget(
-            target_names=QB_TARGETS,
+            target_names=TARGETS,
             n_estimators=100,
             learning_rate=0.1,
             num_leaves=15,
@@ -187,7 +187,7 @@ class TestQBRegression:
         )
         model = MultiHeadNet(
             input_dim=X_train_s.shape[1],
-            target_names=QB_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
             dropout=0.1,
@@ -199,8 +199,8 @@ class TestQBRegression:
             factor=0.5,
         )
         criterion = MultiTargetLoss(
-            target_names=QB_TARGETS,
-            loss_weights=QB_LOSS_WEIGHTS,
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
         )
         trainer = MultiHeadTrainer(
             model,
@@ -208,7 +208,7 @@ class TestQBRegression:
             scheduler,
             criterion,
             torch.device("cpu"),
-            target_names=QB_TARGETS,
+            target_names=TARGETS,
             patience=10,
             log_every=100,
         )

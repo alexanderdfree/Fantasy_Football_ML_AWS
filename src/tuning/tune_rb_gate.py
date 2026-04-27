@@ -11,12 +11,12 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.RB.run_rb_pipeline import RB_CONFIG
+from src.rb.run_pipeline import CONFIG
 from src.shared.pipeline import run_pipeline
 
 
 def run_variant(label, overrides, seed=42):
-    cfg = copy.deepcopy(RB_CONFIG)
+    cfg = copy.deepcopy(CONFIG)
     cfg.update(overrides)
     t0 = time.time()
     results = run_pipeline("RB", cfg, seed=seed)

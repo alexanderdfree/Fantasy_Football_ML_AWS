@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.K.k_config import K_TARGETS
+from src.k.config import TARGETS
 from tests.shared.position_fixtures import (
     make_sim_df as _make_sim_df,
 )
@@ -29,7 +29,7 @@ from tests.shared.position_fixtures import (
 )
 
 # Kickers typically score 5-15 fantasy points per game; FG driven.
-K_SCORING_SCALE = 12.0
+SCORING_SCALE = 12.0
 
 
 def pytest_configure(config):
@@ -52,7 +52,7 @@ def make_sim_df():
 
     def _make(n_weeks: int, n_players: int, seed: int = 42):
         return _make_sim_df(
-            K_SCORING_SCALE,
+            SCORING_SCALE,
             n_weeks,
             n_players,
             seed,
@@ -75,7 +75,7 @@ def make_test_df():
 
     def _make(n_weeks: int, n_players: int, seed: int = 42):
         return _make_test_df(
-            K_SCORING_SCALE,
+            SCORING_SCALE,
             n_weeks,
             n_players,
             seed,
@@ -101,7 +101,7 @@ def make_tensors():
     """
 
     def _make(n: int = 10, seed: int = 42):
-        return _make_tensors(K_TARGETS, n=n, seed=seed)
+        return _make_tensors(TARGETS, n=n, seed=seed)
 
     return _make
 
@@ -117,7 +117,7 @@ def make_splits():
 # ---------------------------------------------------------------------------
 
 
-def _build_kicker_games(
+def _build_games(
     player_id: str = "K1",
     n_weeks: int = 6,
     season: int = 2023,
@@ -140,7 +140,7 @@ def _build_kicker_games(
 ) -> pd.DataFrame:
     """Build multi-week kicker data for feature tests.
 
-    Includes a pre-computed `fantasy_points` column — compute_k_features reads
+    Includes a pre-computed `fantasy_points` column — compute_features reads
     it to build the rolling total-points statistics. After the 4-head target
     refactor, the signed fantasy total is the canonical rolling input.
     """
@@ -174,7 +174,7 @@ def _build_kicker_games(
 @pytest.fixture(scope="session")
 def make_kicker_games():
     """Factory fixture: build multi-week kicker games DataFrame."""
-    return _build_kicker_games
+    return _build_games
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ def make_kicker_games():
 # ---------------------------------------------------------------------------
 
 
-def _build_tiny_k_dataset(
+def _build_tiny_dataset(
     n_players: int = 50,
     n_seasons: int = 10,
     n_weeks: int = 17,
@@ -196,7 +196,7 @@ def _build_tiny_k_dataset(
     Cross-season history is preserved so rolling features fire.
 
     Covers seasons [base_season, base_season + n_seasons] inclusive — with
-    defaults that's 2015-2025 (11 seasons), matching the real K_SEASONS
+    defaults that's 2015-2025 (11 seasons), matching the real SEASONS
     range. Multi-season training data is required for the pipeline's
     expanding-window Ridge CV tuning to build non-empty folds.
     """
@@ -337,30 +337,30 @@ def _build_tiny_k_dataset(
 
 
 @pytest.fixture(scope="session")
-def tiny_k_dataset():
+def tiny_dataset():
     """Session-scoped tiny kicker dataset (50 players x 11 seasons x 17 weeks).
 
     Returns a single DataFrame covering 2015-2025 so pipeline season splits
     produce non-empty train/val/test partitions AND train has enough unique
     seasons (9) for expanding-window Ridge CV to build non-empty folds.
     """
-    return _build_tiny_k_dataset(n_players=50, n_seasons=10, n_weeks=17, seed=42)
+    return _build_tiny_dataset(n_players=50, n_seasons=10, n_weeks=17, seed=42)
 
 
 @pytest.fixture(scope="session")
-def tiny_k_splits(tiny_k_dataset):
+def tiny_splits(tiny_dataset):
     """Session-scoped train/val/test splits from the tiny kicker dataset.
 
     Split mirrors the real pipeline: train <= 2023, val = 2024, test = 2025.
     """
-    df = tiny_k_dataset
+    df = tiny_dataset
     train = df[df["season"] <= 2023].copy()
     val = df[df["season"] == 2024].copy()
     test = df[df["season"] == 2025].copy()
     return train, val, test
 
 
-def _build_tiny_k_kicks(weekly_df: pd.DataFrame, seed: int = 123) -> pd.DataFrame:
+def _build_tiny_kicks(weekly_df: pd.DataFrame, seed: int = 123) -> pd.DataFrame:
     """Expand each weekly row into per-kick records.
 
     Produces `fg_att` FG rows and `pat_att` XP rows per weekly row, with random
@@ -431,10 +431,10 @@ def _build_tiny_k_kicks(weekly_df: pd.DataFrame, seed: int = 123) -> pd.DataFram
 @pytest.fixture(scope="session")
 def make_tiny_k_kicks():
     """Factory: expand a weekly kicker DataFrame into per-kick rows."""
-    return _build_tiny_k_kicks
+    return _build_tiny_kicks
 
 
 @pytest.fixture(scope="session")
-def tiny_k_kicks(tiny_k_dataset):
-    """Session-scoped per-kick records matching tiny_k_dataset."""
-    return _build_tiny_k_kicks(tiny_k_dataset, seed=123)
+def tiny_kicks(tiny_dataset):
+    """Session-scoped per-kick records matching tiny_dataset."""
+    return _build_tiny_kicks(tiny_dataset, seed=123)

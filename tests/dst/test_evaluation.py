@@ -10,7 +10,7 @@ from src.shared.evaluation import compute_ranking_metrics, compute_target_metric
 
 # Small subset of the 10 DST raw-stat targets — enough to exercise
 # compute_target_metrics / compute_ranking_metrics without needing the full list.
-DST_TARGETS = ["def_sacks", "def_tds", "points_allowed"]
+TARGETS = ["def_sacks", "def_tds", "points_allowed"]
 
 
 def _make_target_dicts(n=50):
@@ -32,7 +32,7 @@ class TestComputeTargetMetrics:
     def test_calls_compute_metrics_for_each_target(self, mock_metrics):
         mock_metrics.return_value = {"mae": 1.0, "rmse": 1.5, "r2": 0.8}
         y_true, y_pred = _make_target_dicts()
-        result = compute_target_metrics(y_true, y_pred, DST_TARGETS)
+        result = compute_target_metrics(y_true, y_pred, TARGETS)
         assert mock_metrics.call_count == 4  # total + 3 targets
         assert set(result.keys()) == {
             "total",
@@ -45,7 +45,7 @@ class TestComputeTargetMetrics:
     def test_returns_correct_structure(self, mock_metrics):
         mock_metrics.return_value = {"mae": 2.0, "rmse": 3.0, "r2": 0.5}
         y_true, y_pred = _make_target_dicts(10)
-        result = compute_target_metrics(y_true, y_pred, DST_TARGETS)
+        result = compute_target_metrics(y_true, y_pred, TARGETS)
         for target in result:
             assert "mae" in result[target]
             assert "rmse" in result[target]
@@ -60,7 +60,7 @@ class TestComputeTargetMetrics:
             "points_allowed": np.array([17.0, 21.0]),
             "total": np.array([11.0, 15.0]),
         }
-        result = compute_target_metrics(y, y, DST_TARGETS)
+        result = compute_target_metrics(y, y, TARGETS)
         assert result["total"]["mae"] == 0.0
 
 

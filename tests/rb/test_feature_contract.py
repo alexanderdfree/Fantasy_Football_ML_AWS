@@ -1,8 +1,8 @@
 """Feature contract tests for RB.rb_features.
 
-Locks down what `add_rb_specific_features` is allowed to output:
+Locks down what `add_specific_features` is allowed to output:
 
-* The full column list advertised by `get_rb_feature_columns()`.
+* The full column list advertised by `get_feature_columns()`.
 * Dtype stability per column (numeric outputs must stay numeric so the
   downstream StandardScaler / LightGBM / NN don't silently coerce).
 * Per-feature NaN ceilings — computed features are allowed some NaN on the
@@ -20,18 +20,18 @@ import pandas as pd
 import pytest
 
 from src.features.engineer import get_attn_static_columns
-from src.RB.rb_config import RB_ATTN_STATIC_FEATURES, RB_INCLUDE_FEATURES, RB_SPECIFIC_FEATURES
-from src.RB.rb_features import (
-    add_rb_specific_features,
-    fill_rb_nans,
-    get_rb_feature_columns,
+from src.rb.config import ATTN_STATIC_FEATURES, INCLUDE_FEATURES, SPECIFIC_FEATURES
+from src.rb.features import (
+    add_specific_features,
+    fill_nans,
+    get_feature_columns,
 )
 
 # ---------------------------------------------------------------------------
 # Contract spec
 # ---------------------------------------------------------------------------
 
-# Features computed directly by `_compute_rb_features` over raw stats.
+# Features computed directly by `_compute_features` over raw stats.
 # These share the same leading-edge NaN profile because they all stem from
 # `shift(1).rolling(3, min_periods=1)...`.
 _COMPUTED_L3_FEATURES = {
@@ -56,7 +56,7 @@ _CUMULATIVE_FEATURES = {"career_carries"}
 
 
 def _build_multi_player_frame(n_players: int = 6, n_weeks: int = 8) -> pd.DataFrame:
-    """Synthetic multi-player RB frame large enough to exercise _compute_rb_features."""
+    """Synthetic multi-player RB frame large enough to exercise _compute_features."""
     rng = np.random.default_rng(42)
     teams = ["KC", "BUF", "SF"]
     rows = []
@@ -92,7 +92,7 @@ def _build_multi_player_frame(n_players: int = 6, n_weeks: int = 8) -> pd.DataFr
 
 @pytest.fixture(scope="module")
 def rb_featured_frame():
-    """One synthetic frame with `add_rb_specific_features` applied once.
+    """One synthetic frame with `add_specific_features` applied once.
 
     Uses a realistic 3-split layout matching what the pipeline passes in
     (train = bulk of weeks, val = small, test = small). All three splits get
@@ -106,7 +106,7 @@ def rb_featured_frame():
     split_a = df[df["week"] <= weeks[-3]].copy()
     split_b = df[df["week"] == weeks[-2]].copy()
     split_c = df[df["week"] == weeks[-1]].copy()
-    a, _, _ = add_rb_specific_features(split_a, split_b, split_c)
+    a, _, _ = add_specific_features(split_a, split_b, split_c)
     return a.sort_values(["player_id", "season", "week"])
 
 
@@ -118,40 +118,38 @@ def rb_featured_frame():
 @pytest.mark.unit
 class TestFeatureColumnContract:
     def test_feature_list_non_empty(self):
-        cols = get_rb_feature_columns()
+        cols = get_feature_columns()
         assert len(cols) > 0
 
     def test_all_specific_features_present_in_full_list(self):
-        """Every RB_SPECIFIC_FEATURES entry must appear in the flattened list."""
-        full = set(get_rb_feature_columns())
-        missing = set(RB_SPECIFIC_FEATURES) - full
+        """Every SPECIFIC_FEATURES entry must appear in the flattened list."""
+        full = set(get_feature_columns())
+        missing = set(SPECIFIC_FEATURES) - full
         assert not missing, f"Specific features missing from feature list: {missing}"
 
     def test_no_duplicate_columns(self):
-        cols = get_rb_feature_columns()
+        cols = get_feature_columns()
         assert len(cols) == len(set(cols)), "Duplicate columns in feature list"
 
     def test_feature_groups_flatten_match(self):
         """The flat feature list must be the concatenation of every group."""
-        flat = get_rb_feature_columns()
-        expected_total = sum(len(v) for v in RB_INCLUDE_FEATURES.values())
+        flat = get_feature_columns()
+        expected_total = sum(len(v) for v in INCLUDE_FEATURES.values())
         assert len(flat) == expected_total
 
     def test_compute_adds_every_specific_feature(self, rb_featured_frame):
-        """add_rb_specific_features must create every advertised RB-specific column."""
-        for col in RB_SPECIFIC_FEATURES:
-            assert col in rb_featured_frame.columns, (
-                f"add_rb_specific_features did not create {col}"
-            )
+        """add_specific_features must create every advertised RB-specific column."""
+        for col in SPECIFIC_FEATURES:
+            assert col in rb_featured_frame.columns, f"add_specific_features did not create {col}"
 
     def test_specific_features_excluded_from_attn_static(self):
-        """RB_SPECIFIC_FEATURES are per-game signals consumed by the attention
-        branch via RB_ATTN_HISTORY_STATS — they must not leak into the
+        """SPECIFIC_FEATURES are per-game signals consumed by the attention
+        branch via ATTN_HISTORY_STATS — they must not leak into the
         attention NN's static-feature branch (the old blacklist missed
         ``yards_per_carry_L3``, ``team_rb_carry_share_L3``,
         ``opportunity_index_L3``, ``career_carries`` …)."""
-        static_cols = get_attn_static_columns(get_rb_feature_columns(), RB_ATTN_STATIC_FEATURES)
-        leaks = set(RB_SPECIFIC_FEATURES) & set(static_cols)
+        static_cols = get_attn_static_columns(get_feature_columns(), ATTN_STATIC_FEATURES)
+        leaks = set(SPECIFIC_FEATURES) & set(static_cols)
         assert not leaks, f"RB specific features leaked into attention static: {sorted(leaks)}"
 
 
@@ -165,7 +163,7 @@ class TestFeatureDtypeContract:
     def test_all_specific_features_are_numeric(self, rb_featured_frame):
         """Computed RB features must be numeric (float or int)."""
         non_numeric = []
-        for col in RB_SPECIFIC_FEATURES:
+        for col in SPECIFIC_FEATURES:
             if col not in rb_featured_frame.columns:
                 continue
             if not pd.api.types.is_numeric_dtype(rb_featured_frame[col]):
@@ -202,14 +200,14 @@ class TestFeatureNaNContract:
     def test_no_feature_is_fully_nan(self, rb_featured_frame):
         fully_nan = [
             col
-            for col in RB_SPECIFIC_FEATURES
+            for col in SPECIFIC_FEATURES
             if col in rb_featured_frame.columns and rb_featured_frame[col].isna().all()
         ]
         assert not fully_nan, f"Features fully NaN: {fully_nan}"
 
     def test_no_inf_values(self, rb_featured_frame):
         """Division helpers must guard against divide-by-zero (no inf outputs)."""
-        for col in RB_SPECIFIC_FEATURES:
+        for col in SPECIFIC_FEATURES:
             if col not in rb_featured_frame.columns:
                 continue
             series = rb_featured_frame[col]
@@ -235,7 +233,7 @@ class TestFeatureNaNContract:
         col = "career_carries"
         if col not in rb_featured_frame.columns:
             pytest.skip(f"{col} not present")
-        # add_rb_specific_features fills the lead NaN with 0, so post-call the
+        # add_specific_features fills the lead NaN with 0, so post-call the
         # rate should be 0%.
         nan_rate = rb_featured_frame[col].isna().mean()
         assert nan_rate <= _MAX_NAN_RATE["cumulative"], (
@@ -244,27 +242,25 @@ class TestFeatureNaNContract:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end invariants: fill_rb_nans produces a ready-to-train frame
+# End-to-end invariants: fill_nans produces a ready-to-train frame
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 class TestFillRBNansInvariants:
     def test_post_fill_no_nan_in_specific_features(self):
-        """After fill_rb_nans, RB-specific features must contain zero NaN / inf."""
+        """After fill_nans, RB-specific features must contain zero NaN / inf."""
         df = _build_multi_player_frame()
         weeks = sorted(df["week"].unique())
         a = df[df["week"] <= weeks[-3]].copy()
         b = df[df["week"] == weeks[-2]].copy()
         c = df[df["week"] == weeks[-1]].copy()
-        a, b, c = add_rb_specific_features(a, b, c)
-        a, b, c = fill_rb_nans(a, b, c, RB_SPECIFIC_FEATURES)
+        a, b, c = add_specific_features(a, b, c)
+        a, b, c = fill_nans(a, b, c, SPECIFIC_FEATURES)
 
         for split_name, split in [("train", a), ("val", b), ("test", c)]:
             nan_cols = [
-                col
-                for col in RB_SPECIFIC_FEATURES
-                if col in split.columns and split[col].isna().any()
+                col for col in SPECIFIC_FEATURES if col in split.columns and split[col].isna().any()
             ]
             # Allowed: all-NaN training column → train mean is NaN → propagates.
             # In this synthetic frame we do not expect any such column.
@@ -272,7 +268,7 @@ class TestFillRBNansInvariants:
 
             inf_cols = [
                 col
-                for col in RB_SPECIFIC_FEATURES
+                for col in SPECIFIC_FEATURES
                 if col in split.columns
                 and pd.api.types.is_numeric_dtype(split[col])
                 and np.isinf(split[col]).any()

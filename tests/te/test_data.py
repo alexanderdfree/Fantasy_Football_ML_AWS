@@ -1,12 +1,12 @@
-"""Tests for TE.te_data — filter_to_te and compute_team_te_totals."""
+"""Tests for TE.te_data — filter_to_position and compute_team_te_totals."""
 
 import pandas as pd
 import pytest
 
-from src.TE.te_data import compute_team_te_totals, filter_to_te
+from src.te.data import compute_team_te_totals, filter_to_position
 
 # ---------------------------------------------------------------------------
-# filter_to_te
+# filter_to_position
 # ---------------------------------------------------------------------------
 
 
@@ -14,41 +14,41 @@ from src.TE.te_data import compute_team_te_totals, filter_to_te
 class TestFilterToTE:
     def test_filters_only_te_rows(self, te_position_df_factory):
         df = te_position_df_factory(["QB", "RB", "WR", "TE", "TE"])
-        result = filter_to_te(df)
+        result = filter_to_position(df)
         assert len(result) == 2
         assert (result["position"] == "TE").all()
 
     def test_drops_position_encoding_columns(self, te_position_df_factory):
         df = te_position_df_factory(["TE", "TE"])
-        result = filter_to_te(df)
+        result = filter_to_position(df)
         for col in ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]:
             assert col not in result.columns
 
     def test_keeps_non_position_columns(self, te_position_df_factory):
         df = te_position_df_factory(["TE"])
-        result = filter_to_te(df)
+        result = filter_to_position(df)
         assert "receiving_yards" in result.columns
 
     def test_no_position_encoding_columns(self, te_position_df_factory):
         df = te_position_df_factory(["TE", "QB"], has_pos_cols=False)
-        result = filter_to_te(df)
+        result = filter_to_position(df)
         assert len(result) == 1
 
     def test_empty_result_when_no_tes(self, te_position_df_factory):
         df = te_position_df_factory(["QB", "RB", "WR"])
-        result = filter_to_te(df)
+        result = filter_to_position(df)
         assert len(result) == 0
         assert isinstance(result, pd.DataFrame)
 
     def test_empty_input(self):
         df = pd.DataFrame({"position": pd.Series(dtype=str)})
-        result = filter_to_te(df)
+        result = filter_to_position(df)
         assert len(result) == 0
 
     def test_does_not_mutate_original(self, te_position_df_factory):
         df = te_position_df_factory(["TE", "QB"])
         original_cols = list(df.columns)
-        _ = filter_to_te(df)
+        _ = filter_to_position(df)
         assert list(df.columns) == original_cols
         assert len(df) == 2
 

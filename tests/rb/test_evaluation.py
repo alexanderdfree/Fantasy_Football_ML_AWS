@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.RB.rb_config import RB_TARGETS
+from src.rb.config import TARGETS
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
 
 # ---------------------------------------------------------------------------
@@ -18,7 +18,7 @@ from src.shared.evaluation import compute_ranking_metrics, compute_target_metric
 class TestComputeTargetMetrics:
     def _make_dicts(self, n=50):
         np.random.seed(42)
-        y_true = {t: np.random.rand(n) * 10 for t in RB_TARGETS}
+        y_true = {t: np.random.rand(n) * 10 for t in TARGETS}
         y_true["total"] = np.random.rand(n) * 20
         y_pred = {k: v + np.random.randn(n) * 0.5 for k, v in y_true.items()}
         return y_true, y_pred
@@ -27,16 +27,16 @@ class TestComputeTargetMetrics:
     def test_calls_compute_metrics_for_each_target(self, mock_metrics):
         mock_metrics.return_value = {"mae": 1.0, "rmse": 1.5, "r2": 0.8}
         y_true, y_pred = self._make_dicts()
-        result = compute_target_metrics(y_true, y_pred, RB_TARGETS)
+        result = compute_target_metrics(y_true, y_pred, TARGETS)
         # total + 6 RB targets.
-        assert mock_metrics.call_count == 1 + len(RB_TARGETS)
-        assert set(result.keys()) == {"total"} | set(RB_TARGETS)
+        assert mock_metrics.call_count == 1 + len(TARGETS)
+        assert set(result.keys()) == {"total"} | set(TARGETS)
 
     @patch("src.shared.evaluation.compute_metrics")
     def test_returns_correct_structure(self, mock_metrics):
         mock_metrics.return_value = {"mae": 2.0, "rmse": 3.0, "r2": 0.5}
         y_true, y_pred = self._make_dicts(10)
-        result = compute_target_metrics(y_true, y_pred, RB_TARGETS)
+        result = compute_target_metrics(y_true, y_pred, TARGETS)
         for target in result:
             assert "mae" in result[target]
             assert "rmse" in result[target]
@@ -46,9 +46,9 @@ class TestComputeTargetMetrics:
     @patch("src.shared.evaluation.compute_metrics")
     def test_perfect_predictions(self, mock_metrics):
         mock_metrics.return_value = {"mae": 0.0, "rmse": 0.0, "r2": 1.0}
-        y = {t: np.array([1.0, 2.0]) for t in RB_TARGETS}
-        y["total"] = np.array([len(RB_TARGETS) * 1.0, len(RB_TARGETS) * 2.0])
-        result = compute_target_metrics(y, y, RB_TARGETS)
+        y = {t: np.array([1.0, 2.0]) for t in TARGETS}
+        y["total"] = np.array([len(TARGETS) * 1.0, len(TARGETS) * 2.0])
+        result = compute_target_metrics(y, y, TARGETS)
         assert result["total"]["mae"] == 0.0
 
 

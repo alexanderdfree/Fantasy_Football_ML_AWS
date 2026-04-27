@@ -1,13 +1,13 @@
-"""Tests for WR.wr_targets - compute_wr_targets (raw-stat targets)."""
+"""Tests for WR.wr_targets - compute_targets (raw-stat targets)."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.WR.wr_targets import compute_wr_targets
+from src.wr.targets import compute_targets
 
 
-def _make_wr_row(**overrides):
+def _make_row(**overrides):
     """Create a single-row WR DataFrame with sensible defaults."""
     defaults = {
         "receiving_yards": 80,
@@ -48,29 +48,29 @@ def _make_wr_row(**overrides):
 @pytest.mark.unit
 class TestComputeWRTargets:
     def test_receiving_tds_identity(self):
-        df = _make_wr_row(receiving_tds=2)
-        result = compute_wr_targets(df)
+        df = _make_row(receiving_tds=2)
+        result = compute_targets(df)
         assert pytest.approx(result["receiving_tds"].iloc[0]) == 2.0
 
     def test_receiving_yards_identity(self):
-        df = _make_wr_row(receiving_yards=95)
-        result = compute_wr_targets(df)
+        df = _make_row(receiving_yards=95)
+        result = compute_targets(df)
         assert pytest.approx(result["receiving_yards"].iloc[0]) == 95.0
 
     def test_receptions_identity(self):
-        df = _make_wr_row(receptions=7)
-        result = compute_wr_targets(df)
+        df = _make_row(receptions=7)
+        result = compute_targets(df)
         assert pytest.approx(result["receptions"].iloc[0]) == 7.0
 
     def test_fumbles_lost_sums_all_three_categories(self):
-        df = _make_wr_row(sack_fumbles_lost=1, receiving_fumbles_lost=1, rushing_fumbles_lost=1)
-        result = compute_wr_targets(df)
+        df = _make_row(sack_fumbles_lost=1, receiving_fumbles_lost=1, rushing_fumbles_lost=1)
+        result = compute_targets(df)
         assert pytest.approx(result["fumbles_lost"].iloc[0]) == 3.0
 
     def test_fumbles_lost_sack_only(self):
         """Rare trick-play sack fumble on a WR still counts toward fumbles_lost."""
-        df = _make_wr_row(sack_fumbles_lost=1, rushing_fumbles_lost=0, receiving_fumbles_lost=0)
-        result = compute_wr_targets(df)
+        df = _make_row(sack_fumbles_lost=1, rushing_fumbles_lost=0, receiving_fumbles_lost=0)
+        result = compute_targets(df)
         assert pytest.approx(result["fumbles_lost"].iloc[0]) == 1.0
 
     def test_all_nan_stats_treated_as_zero(self):
@@ -93,41 +93,41 @@ class TestComputeWRTargets:
                 }
             ]
         )
-        result = compute_wr_targets(df)
+        result = compute_targets(df)
         assert result["receiving_tds"].iloc[0] == 0.0
         assert result["receiving_yards"].iloc[0] == 0.0
         assert result["receptions"].iloc[0] == 0.0
         assert result["fumbles_lost"].iloc[0] == 0.0
 
     def test_does_not_mutate_original(self):
-        df = _make_wr_row()
+        df = _make_row()
         original_cols = set(df.columns)
-        _ = compute_wr_targets(df)
+        _ = compute_targets(df)
         assert set(df.columns) == original_cols
 
     def test_zero_game(self):
-        df = _make_wr_row(
+        df = _make_row(
             receptions=0,
             receiving_yards=0,
             receiving_tds=0,
             rushing_tds=0,
             rushing_yards=0,
         )
-        result = compute_wr_targets(df)
+        result = compute_targets(df)
         assert result["receiving_tds"].iloc[0] == 0.0
         assert result["receiving_yards"].iloc[0] == 0.0
         assert result["receptions"].iloc[0] == 0.0
         assert result["fumbles_lost"].iloc[0] == 0.0
 
     def test_big_game(self):
-        df = _make_wr_row(
+        df = _make_row(
             receptions=10,
             receiving_yards=150,
             receiving_tds=2,
             rushing_yards=0,
             rushing_tds=0,
         )
-        result = compute_wr_targets(df)
+        result = compute_targets(df)
         assert result["receiving_tds"].iloc[0] == 2.0
         assert result["receiving_yards"].iloc[0] == 150.0
         assert result["receptions"].iloc[0] == 10.0

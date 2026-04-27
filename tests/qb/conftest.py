@@ -8,7 +8,7 @@ target list to those factories.
 
 import pytest
 
-from src.QB.qb_config import QB_TARGETS
+from src.qb.config import TARGETS
 from tests.shared.position_fixtures import (
     make_position_df as _make_position_df,
 )
@@ -29,7 +29,7 @@ from tests.shared.position_fixtures import (
 )
 
 # QBs score higher than any other skill position (~25-pt scale).
-QB_SCORING_SCALE = 25
+SCORING_SCALE = 25
 
 
 def pytest_configure(config):
@@ -39,7 +39,7 @@ def pytest_configure(config):
 @pytest.fixture
 def make_sim_df():
     def _make(n_weeks=4, n_players=15, seed=42):
-        return _make_sim_df(QB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="QB")
+        return _make_sim_df(SCORING_SCALE, n_weeks, n_players, seed, id_prefix="QB")
 
     return _make
 
@@ -47,7 +47,7 @@ def make_sim_df():
 @pytest.fixture
 def make_test_df():
     def _make(n_weeks=3, n_players=15, seed=42):
-        return _make_test_df(QB_SCORING_SCALE, n_weeks, n_players, seed, id_prefix="QB")
+        return _make_test_df(SCORING_SCALE, n_weeks, n_players, seed, id_prefix="QB")
 
     return _make
 
@@ -55,7 +55,7 @@ def make_test_df():
 @pytest.fixture
 def make_tensors():
     def _make(n=10, seed=42):
-        return _make_tensors(QB_TARGETS, n=n, seed=seed)
+        return _make_tensors(TARGETS, n=n, seed=seed)
 
     return _make
 

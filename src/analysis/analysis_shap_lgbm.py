@@ -39,12 +39,12 @@ from src.shared.pipeline import build_train_matrix  # noqa: E402
 def _load_position_config(pos: str) -> dict:
     """Import the position's CONFIG dict from its runner module.
 
-    Position runners expose ``{POS}_CONFIG`` (e.g. ``QB_CONFIG``) by the time
+    Position runners expose ``{POS}_CONFIG`` (e.g. ``CONFIG``) by the time
     they're imported; pulling it off the module gives the same cfg the
     pipeline used to fit the saved LightGBM.
     """
     pos_lower = pos.lower()
-    mod = importlib.import_module(f"{pos}.run_{pos_lower}_pipeline")
+    mod = importlib.import_module(f"src.{pos_lower}.run_pipeline")
     cfg_name = f"{pos}_CONFIG"
     if not hasattr(mod, cfg_name):
         raise AttributeError(f"{mod.__name__} has no {cfg_name}")

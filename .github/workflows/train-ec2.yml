@@ -96,12 +96,13 @@ jobs:
             exit 0
           fi
 
-          # Per-position: any non-test change under src/{POS}/ retrains that
+          # Per-position: any non-test change under src/{pos}/ retrains that
           # position. Docs and markdown still trigger retraining (cheap);
-          # the narrower filter above is scoped to tests/ only.
+          # the narrower filter above is scoped to tests/ only. Position dirs
+          # are lowercase on disk; lowercase $p with ${p,,} for the path match.
           positions=""
           for p in $ALL; do
-            if printf '%s\n' "$model_files" | grep -qE "^src/${p}/"; then
+            if printf '%s\n' "$model_files" | grep -qE "^src/${p,,}/"; then
               positions="${positions:+$positions }$p"
             fi
           done

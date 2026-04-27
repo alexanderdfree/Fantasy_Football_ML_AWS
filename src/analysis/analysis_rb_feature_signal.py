@@ -33,16 +33,16 @@ from src.data.loader import compute_all_floor_formats, compute_all_scoring_forma
 from src.data.split import expanding_window_folds, temporal_split
 from src.features.engineer import build_features, flatten_include_features
 from src.models.linear import RidgeModel
-from src.RB.rb_config import (
-    RB_INCLUDE_FEATURES,
-    RB_RIDGE_ALPHA_GRIDS,
-    RB_RIDGE_PCA_COMPONENTS,
-    RB_SPECIFIC_FEATURES,
-    RB_TARGETS,
+from src.rb.config import (
+    INCLUDE_FEATURES,
+    RIDGE_ALPHA_GRIDS,
+    RIDGE_PCA_COMPONENTS,
+    SPECIFIC_FEATURES,
+    TARGETS,
 )
-from src.RB.rb_data import filter_to_rb
-from src.RB.rb_features import add_rb_specific_features, fill_rb_nans
-from src.RB.rb_targets import compute_rb_targets
+from src.rb.data import filter_to_position
+from src.rb.features import add_specific_features, fill_nans
+from src.rb.targets import compute_targets
 from src.shared.weather_features import WEATHER_FEATURES_ALL, merge_schedule_features
 
 os.makedirs("analysis_output", exist_ok=True)
@@ -51,10 +51,10 @@ os.makedirs("analysis_output", exist_ok=True)
 DEPTH_FEATURE = "depth_chart_rank"
 ALL_SIGNAL_FEATURES = WEATHER_FEATURES_ALL + [DEPTH_FEATURE]
 
-TARGETS = RB_TARGETS  # ["rushing_floor", "receiving_floor", "td_points"]
+TARGETS = TARGETS  # ["rushing_floor", "receiving_floor", "td_points"]
 
 # Current production whitelist for weather_vegas
-PRODUCTION_WEATHER = RB_INCLUDE_FEATURES[
+PRODUCTION_WEATHER = INCLUDE_FEATURES[
     "weather_vegas"
 ]  # ["implied_opp_total", "total_line", "rest_advantage"]
 
@@ -66,14 +66,14 @@ PRODUCTION_WEATHER = RB_INCLUDE_FEATURES[
 
 def _build_feature_cols_with_all_weather():
     """Build feature list with ALL 12 weather features included."""
-    include = dict(RB_INCLUDE_FEATURES)
+    include = dict(INCLUDE_FEATURES)
     include["weather_vegas"] = list(WEATHER_FEATURES_ALL)
     return flatten_include_features(include)
 
 
 def _build_feature_cols_with_weather(weather_keep, keep_depth=True):
     """Build feature list with a specific set of weather features."""
-    include = dict(RB_INCLUDE_FEATURES)
+    include = dict(INCLUDE_FEATURES)
     include["weather_vegas"] = list(weather_keep)
     if not keep_depth:
         include["contextual"] = [c for c in include["contextual"] if c != DEPTH_FEATURE]
@@ -97,9 +97,9 @@ def load_and_prepare():
     train_df, val_df, test_df = temporal_split(df)
 
     # Filter to RB
-    rb_train = filter_to_rb(train_df)
-    rb_val = filter_to_rb(val_df)
-    rb_test = filter_to_rb(test_df)
+    rb_train = filter_to_position(train_df)
+    rb_val = filter_to_position(val_df)
+    rb_test = filter_to_position(test_df)
 
     # Min-games filter on training
     games = rb_train.groupby(["player_id", "season"])["week"].transform("count")
@@ -113,13 +113,13 @@ def load_and_prepare():
         merge_schedule_features(_df, label=split_name)
 
     # Compute targets
-    rb_train = compute_rb_targets(rb_train)
-    rb_val = compute_rb_targets(rb_val)
-    rb_test = compute_rb_targets(rb_test)
+    rb_train = compute_targets(rb_train)
+    rb_val = compute_targets(rb_val)
+    rb_test = compute_targets(rb_test)
 
     # Add RB-specific features
-    rb_train, rb_val, rb_test = add_rb_specific_features(rb_train, rb_val, rb_test)
-    rb_train, rb_val, rb_test = fill_rb_nans(rb_train, rb_val, rb_test, RB_SPECIFIC_FEATURES)
+    rb_train, rb_val, rb_test = add_specific_features(rb_train, rb_val, rb_test)
+    rb_train, rb_val, rb_test = fill_nans(rb_train, rb_val, rb_test, SPECIFIC_FEATURES)
 
     # Build feature columns with ALL weather features present
     feature_cols = _build_feature_cols_with_all_weather()
@@ -298,7 +298,7 @@ def analyze_permutation_importance(rb_train, rb_test, feature_cols):
         X_test = rb_test[feature_cols].values.astype(np.float32).copy()
         y_test = rb_test[tgt].values
 
-        n_components = min(RB_RIDGE_PCA_COMPONENTS, X_train.shape[1] - 1)
+        n_components = min(RIDGE_PCA_COMPONENTS, X_train.shape[1] - 1)
         model = RidgeModel(alpha=10.0, pca_n_components=n_components)
         model.fit(X_train, rb_train[tgt].values)
 
@@ -400,7 +400,7 @@ def run_ablation(rb_full, all_feature_cols):
         for _fold_idx, fold_train, fold_val in folds:
             X_tr = fold_train[config_cols].values.astype(np.float32)
             X_va = fold_val[config_cols].values.astype(np.float32)
-            pca_n = min(RB_RIDGE_PCA_COMPONENTS, X_tr.shape[1] - 1)
+            pca_n = min(RIDGE_PCA_COMPONENTS, X_tr.shape[1] - 1)
 
             # Fit per-target, accumulate for total
             total_pred = np.zeros(len(fold_val))
@@ -412,7 +412,7 @@ def run_ablation(rb_full, all_feature_cols):
 
                 # Quick alpha search (coarse grid)
                 best_alpha, best_mae = 10.0, float("inf")
-                for alpha in RB_RIDGE_ALPHA_GRIDS[tgt]:
+                for alpha in RIDGE_ALPHA_GRIDS[tgt]:
                     m = RidgeModel(alpha=alpha, pca_n_components=pca_n)
                     m.fit(X_tr, y_tr)
                     mae = mean_absolute_error(y_va, m.predict(X_va))

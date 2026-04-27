@@ -1,4 +1,4 @@
-"""Coverage smoke test for ``WR/run_wr_pipeline.py``'s ``__main__`` block.
+"""Coverage smoke test for ``WR/run.py``'s ``__main__`` block.
 
 Mirrors the QB/RB versions — drives argparse + dispatch with mocked
 ``src.shared.pipeline.run_pipeline`` / ``run_cv_pipeline`` so the CLI branch
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "WR" / "run_wr_pipeline.py"
+_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "wr" / "run_pipeline.py"
 
 
 def _patch_shared_pipeline(monkeypatch):
@@ -33,7 +33,7 @@ def _patch_shared_pipeline(monkeypatch):
 @pytest.mark.unit
 def test_main_default_invokes_run_pipeline(monkeypatch):
     calls = _patch_shared_pipeline(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["run_wr_pipeline.py"])
+    monkeypatch.setattr(sys, "argv", ["run.py"])
     runpy.run_path(str(_MODULE_PATH), run_name="__main__")
     assert len(calls) == 1
     assert calls[0]["position"] == "WR"
@@ -42,7 +42,7 @@ def test_main_default_invokes_run_pipeline(monkeypatch):
 @pytest.mark.unit
 def test_main_tiny_wires_shrunk_config(monkeypatch):
     calls = _patch_shared_pipeline(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["run_wr_pipeline.py", "--tiny"])
+    monkeypatch.setattr(sys, "argv", ["run.py", "--tiny"])
     runpy.run_path(str(_MODULE_PATH), run_name="__main__")
     assert len(calls) == 1
     cfg = calls[0]["cfg"]
@@ -54,7 +54,7 @@ def test_main_tiny_wires_shrunk_config(monkeypatch):
 @pytest.mark.unit
 def test_main_cv_routes_to_run_cv_pipeline(monkeypatch):
     calls = _patch_shared_pipeline(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["run_wr_pipeline.py", "--cv"])
+    monkeypatch.setattr(sys, "argv", ["run.py", "--cv"])
     runpy.run_path(str(_MODULE_PATH), run_name="__main__")
     assert len(calls) == 1
     assert calls[0]["position"] == "WR"
@@ -62,7 +62,7 @@ def test_main_cv_routes_to_run_cv_pipeline(monkeypatch):
 
 @pytest.mark.unit
 def test_run_wr_pipeline_function_passes_through(monkeypatch):
-    import src.WR.run_wr_pipeline as wr_pipe
+    import src.wr.run_pipeline as wr_pipe
 
     seen: dict = {}
 
@@ -73,15 +73,15 @@ def test_run_wr_pipeline_function_passes_through(monkeypatch):
     monkeypatch.setattr(wr_pipe, "run_pipeline", _fake)
     monkeypatch.setattr(wr_pipe, "run_cv_pipeline", _fake)
 
-    result = wr_pipe.run_wr_pipeline("train", "val", "test", seed=7)
+    result = wr_pipe.run("train", "val", "test", seed=7)
     assert result == {"ok": True}
     assert seen["position"] == "WR"
     assert seen["args"][-1] == 7
-    assert seen["cfg"] is wr_pipe.WR_CONFIG
+    assert seen["cfg"] is wr_pipe.CONFIG
 
     custom = {"custom": True, "targets": ["x"]}
-    wr_pipe.run_wr_pipeline(None, None, None, config=custom)
+    wr_pipe.run(None, None, None, config=custom)
     assert seen["cfg"] == custom
 
-    wr_pipe.run_wr_cv_pipeline("full", "test", seed=11)
+    wr_pipe.run_cv("full", "test", seed=11)
     assert seen["args"][-1] == 11

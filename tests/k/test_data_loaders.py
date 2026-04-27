@@ -132,7 +132,7 @@ def _synthetic_pbp(season: int, n_fg: int = 6, n_xp: int = 4) -> pd.DataFrame:
 
 @pytest.mark.unit
 def test_reconstruct_weekly_from_pbp_happy_path(tmp_path, monkeypatch):
-    import src.K.k_data as k_data
+    import src.k.data as k_data
 
     def _fake_pbp(seasons, downcast=True):
         return _synthetic_pbp(seasons[0])
@@ -153,7 +153,7 @@ def test_reconstruct_weekly_from_pbp_happy_path(tmp_path, monkeypatch):
 @pytest.mark.unit
 def test_reconstruct_weekly_from_pbp_cache_hit(tmp_path, monkeypatch):
     """Pre-existing cache parquet → no PBP call, just a load-and-return."""
-    import src.K.k_data as k_data
+    import src.k.data as k_data
 
     # Pre-write the cache file.
     cache_path = tmp_path / "kicker_pbp_2021_2021.parquet"
@@ -174,7 +174,7 @@ def test_reconstruct_weekly_pbp_skips_failing_seasons(tmp_path, monkeypatch, cap
     """If ``import_pbp_data`` throws (e.g. upstream 502), the per-year body is
     skipped, a WARNING is logged, and the partial result is NOT cached so the
     next call doesn't treat a partial frame as authoritative."""
-    import src.K.k_data as k_data
+    import src.k.data as k_data
 
     def _bad(seasons, downcast=True):
         raise RuntimeError(f"pbp fetch boom for {seasons}")
@@ -193,7 +193,7 @@ def test_reconstruct_weekly_pbp_partial_failure_skips_cache(tmp_path, monkeypatc
     """If only some seasons fail, returned frame contains the survivors but
     the combined cache key is NOT written (it would silently claim coverage
     of the failed years)."""
-    import src.K.k_data as k_data
+    import src.k.data as k_data
 
     def _selective(seasons, downcast=True):
         yr = seasons[0]
@@ -221,7 +221,7 @@ def test_reconstruct_weekly_pbp_partial_failure_skips_cache(tmp_path, monkeypatc
 
 @pytest.mark.unit
 def test_reconstruct_kicks_from_pbp_happy_path(tmp_path, monkeypatch):
-    import src.K.k_data as k_data
+    import src.k.data as k_data
 
     monkeypatch.setattr(
         k_data.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
@@ -237,7 +237,7 @@ def test_reconstruct_kicks_from_pbp_happy_path(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 def test_reconstruct_kicks_from_pbp_cache_hit(tmp_path, monkeypatch):
-    import src.K.k_data as k_data
+    import src.k.data as k_data
 
     cache_path = tmp_path / "kicker_kicks_pbp_2022_2022.parquet"
     pd.DataFrame(
@@ -255,7 +255,7 @@ def test_reconstruct_kicks_from_pbp_cache_hit(tmp_path, monkeypatch):
 @pytest.mark.unit
 def test_reconstruct_kicks_pbp_skips_failing_seasons(tmp_path, monkeypatch, capsys):
     """If ``import_pbp_data`` throws for a season, we log and continue."""
-    import src.K.k_data as k_data
+    import src.k.data as k_data
 
     def _bad(seasons, downcast=True):
         raise RuntimeError(f"pbp fetch boom for {seasons}")
@@ -268,23 +268,23 @@ def test_reconstruct_kicks_pbp_skips_failing_seasons(tmp_path, monkeypatch, caps
 
 
 # --------------------------------------------------------------------------
-# Tests — load_kicker_data (cache-hit shortcut path only; the full PBP path
+# Tests — load_data (cache-hit shortcut path only; the full PBP path
 # is exercised by reconstruct_* tests above).
 # --------------------------------------------------------------------------
 
 
 @pytest.fixture()
 def _cached_pbp(tmp_path, monkeypatch):
-    """Pre-write kicker_pbp cache so load_kicker_data skips the PBP chain."""
-    import src.K.k_data as k_data
+    """Pre-write kicker_pbp cache so load_data skips the PBP chain."""
+    import src.k.data as k_data
     from src.config import SEASONS
 
     monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
     monkeypatch.setattr("src.config.CACHE_DIR", str(tmp_path))
 
-    # Restrict K_SEASONS so cache path key is predictable.
-    monkeypatch.setattr(k_data, "K_SEASONS", [2022, 2023, 2024])
-    monkeypatch.setattr(k_data, "K_MIN_GAMES", 1)  # don't filter our tiny frame
+    # Restrict SEASONS so cache path key is predictable.
+    monkeypatch.setattr(k_data, "SEASONS", [2022, 2023, 2024])
+    monkeypatch.setattr(k_data, "MIN_GAMES", 1)  # don't filter our tiny frame
 
     # Enforce the docstring's "without touching nflverse" claim — without this
     # guard, a default-arg pitfall on cache_dir silently caused cache misses
@@ -341,7 +341,7 @@ def _cached_pbp(tmp_path, monkeypatch):
             )
     pd.DataFrame(kicker_rows).to_parquet(tmp_path / "kicker_pbp_2022_2024.parquet")
 
-    # Schedule parquet — needs SEASONS[0]-SEASONS[-1] key to match load_kicker_data.
+    # Schedule parquet — needs SEASONS[0]-SEASONS[-1] key to match load_data.
     sched_path = tmp_path / f"schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
     sched_rows = []
     for season in [2022, 2023, 2024]:
@@ -364,11 +364,11 @@ def _cached_pbp(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 def test_load_kicker_data_uses_pbp_cache(_cached_pbp):
-    """With a pre-written PBP cache and no 2025 weekly, load_kicker_data
+    """With a pre-written PBP cache and no 2025 weekly, load_data
     walks the cache-hit branch and merges schedules without touching nflverse."""
-    from src.K.k_data import load_kicker_data
+    from src.k.data import load_data
 
-    df = load_kicker_data()
+    df = load_data()
     assert len(df) > 0
     assert "is_home" in df.columns
     assert "implied_team_total" in df.columns
@@ -378,23 +378,23 @@ def test_load_kicker_data_uses_pbp_cache(_cached_pbp):
 
 
 # --------------------------------------------------------------------------
-# Tests — filter_to_k + kicker_season_split
+# Tests — filter_to_position + season_split
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 def test_filter_to_k_is_identity():
-    from src.K.k_data import filter_to_k
+    from src.k.data import filter_to_position
 
     df = pd.DataFrame({"player_id": ["K1"], "season": [2024], "week": [1]})
-    out = filter_to_k(df)
+    out = filter_to_position(df)
     pd.testing.assert_frame_equal(out, df)
     assert out is not df  # copy, not same ref
 
 
 @pytest.mark.unit
 def test_kicker_season_split_splits_by_year(capsys):
-    from src.K.k_data import kicker_season_split
+    from src.k.data import season_split
 
     df = pd.DataFrame(
         {
@@ -403,7 +403,7 @@ def test_kicker_season_split_splits_by_year(capsys):
             "week": [1, 1, 1, 1, 2, 2],
         }
     )
-    train, val, test = kicker_season_split(df)
+    train, val, test = season_split(df)
     assert set(train["season"].unique()) <= {2022, 2023}
     assert set(val["season"].unique()) == {2024}
     assert set(test["season"].unique()) == {2025}
@@ -412,7 +412,7 @@ def test_kicker_season_split_splits_by_year(capsys):
 
 
 # --------------------------------------------------------------------------
-# Tests — load_kicker_kicks (minimal: cache-hit branch)
+# Tests — load_kicks (minimal: cache-hit branch)
 # --------------------------------------------------------------------------
 
 
@@ -421,7 +421,7 @@ def test_backfill_2025_pbp_columns_updates_in_place(monkeypatch):
     """``_backfill_2025_pbp_columns`` must overwrite PBP-derived columns on
     rows whose ``season`` is in the backfill list — existing NaNs should
     become populated values once the fake PBP frame fires."""
-    import src.K.k_data as k_data
+    import src.k.data as k_data
 
     monkeypatch.setattr(
         k_data.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
@@ -466,7 +466,7 @@ def test_backfill_2025_pbp_columns_updates_in_place(monkeypatch):
 def test_backfill_2025_pbp_logs_warning_on_failure(monkeypatch, capsys):
     """If ``import_pbp_data`` raises, _backfill logs a warning and leaves
     k_df untouched (swallowed by the outer try/except)."""
-    import src.K.k_data as k_data
+    import src.k.data as k_data
 
     def _boom(*args, **kwargs):
         raise RuntimeError("network down")
@@ -489,7 +489,7 @@ def test_backfill_2025_pbp_logs_warning_on_failure(monkeypatch, capsys):
 @pytest.mark.unit
 def test_backfill_2025_pbp_early_returns_when_no_matching_seasons():
     """``k_df`` without any rows matching ``seasons`` → no-op early return."""
-    import src.K.k_data as k_data
+    import src.k.data as k_data
 
     k_df = pd.DataFrame(
         {"player_id": ["K01"], "season": [2023], "week": [1], "roof": [float("nan")]}
@@ -502,15 +502,15 @@ def test_backfill_2025_pbp_early_returns_when_no_matching_seasons():
 
 @pytest.mark.unit
 def test_load_kicker_data_includes_2025_weekly_branch(tmp_path, monkeypatch):
-    """``load_kicker_data`` must walk the 2025-weekly branch when K_SEASONS
+    """``load_data`` must walk the 2025-weekly branch when SEASONS
     contains 2025. We pre-seed the weekly parquet, skip real PBP via the
     cache-hit shortcut, and stub _backfill so it's a no-op."""
-    import src.K.k_data as k_data
+    import src.k.data as k_data
     from src.config import SEASONS
 
     monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
-    monkeypatch.setattr(k_data, "K_SEASONS", [2024, 2025])
-    monkeypatch.setattr(k_data, "K_MIN_GAMES", 1)
+    monkeypatch.setattr(k_data, "SEASONS", [2024, 2025])
+    monkeypatch.setattr(k_data, "MIN_GAMES", 1)
 
     # Enforce the docstring's "skip real PBP via the cache-hit shortcut" claim:
     # neither reconstruct_kicker_weekly_from_pbp (cache-hit) nor _backfill_2025
@@ -603,7 +603,7 @@ def test_load_kicker_data_includes_2025_weekly_branch(tmp_path, monkeypatch):
     # Stub _backfill_2025_pbp_columns so it's a no-op (covered separately).
     monkeypatch.setattr(k_data, "_backfill_2025_pbp_columns", lambda df, seasons: None)
 
-    df = k_data.load_kicker_data()
+    df = k_data.load_data()
     # Has rows from both 2024 (PBP) and 2025 (weekly).
     assert 2024 in df["season"].values
     assert 2025 in df["season"].values
@@ -613,9 +613,9 @@ def test_load_kicker_data_includes_2025_weekly_branch(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 def test_load_kicker_kicks_with_stubbed_reconstruct(monkeypatch):
-    """load_kicker_kicks delegates to ``reconstruct_kicker_kicks_from_pbp``;
+    """load_kicks delegates to ``reconstruct_kicker_kicks_from_pbp``;
     stub that out and verify the merge + is_home fill logic."""
-    import src.K.k_data as k_data
+    import src.k.data as k_data
 
     stub_kicks = pd.DataFrame(
         {
@@ -642,7 +642,7 @@ def test_load_kicker_kicks_with_stubbed_reconstruct(monkeypatch):
             "is_home": [1, 0, 1],
         }
     )
-    out = k_data.load_kicker_kicks(k_df)
+    out = k_data.load_kicks(k_df)
     assert len(out) == 3
     assert "is_home" in out.columns
     assert out["is_home"].isin([0, 1]).all()

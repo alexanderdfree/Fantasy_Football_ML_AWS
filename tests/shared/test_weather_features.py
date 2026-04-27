@@ -30,12 +30,12 @@ def _clear_schedule_cache():
 
 @pytest.mark.unit
 class TestGetWeatherFeatureColumns:
-    def test_qb_drops_is_grass(self):
+    def test_drops_is_grass(self):
         result = get_weather_feature_columns("QB", [])
         assert "is_grass" not in result
         assert "is_dome" in result
 
-    def test_rb_drops_five_features(self):
+    def test_drops_five_features(self):
         result = get_weather_feature_columns("RB", [])
         for dropped in WEATHER_DROPS_BY_POSITION["RB"]:
             assert dropped not in result
@@ -44,7 +44,7 @@ class TestGetWeatherFeatureColumns:
         for col in remaining:
             assert col in result
 
-    def test_te_drops(self):
+    def test_drops(self):
         result = get_weather_feature_columns("TE", [])
         for dropped in WEATHER_DROPS_BY_POSITION["TE"]:
             assert dropped not in result

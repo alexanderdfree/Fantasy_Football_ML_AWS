@@ -43,10 +43,11 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**"                = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
 "tests/**"                   = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
-"**/*_config.py"             = ["E402"]
+"src/*/config.py"            = ["E402"]
+"src/scripts/**/*.py"        = ["E402"]
 "src/benchmarking/**/*.py"   = ["T201"]
 "src/tuning/**/*.py"         = ["T201"]
-"src/analysis/**/*.py"       = ["T201"]
+"src/analysis/**/*.py"       = ["T201", "E402"]
 
 [tool.ruff.format]
 quote-style = "double"

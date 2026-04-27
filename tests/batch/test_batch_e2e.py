@@ -98,7 +98,7 @@ def test_dry_run_never_calls_boto3(tmp_path, monkeypatch):
 def test_dry_run_skips_position_pipeline_import(tmp_path, monkeypatch):
     """Dry-run should not import the heavy QB pipeline module.
 
-    If dry-run accidentally called the real run_qb_pipeline, any of the
+    If dry-run accidentally called the real run, any of the
     heavy src.shared.pipeline imports (matplotlib, lightgbm, torch training
     loops) would fire. The position-runner-module import check is a fast,
     deterministic proxy.
@@ -107,13 +107,13 @@ def test_dry_run_skips_position_pipeline_import(tmp_path, monkeypatch):
     monkeypatch.setenv("MODEL_OUTPUT_DIR", str(model_dir))
     monkeypatch.setenv("REQUIRE_GPU", "0")
 
-    before = {k for k in sys.modules if k.startswith("src.QB.run_qb_pipeline")}
+    before = {k for k in sys.modules if k.startswith("src.qb.run_pipeline")}
 
     from src.batch import train as train_mod
 
     with mock.patch("sys.argv", ["train.py", "--position", "QB", "--dry-run"]):
         train_mod.main()
 
-    after = {k for k in sys.modules if k.startswith("src.QB.run_qb_pipeline")}
+    after = {k for k in sys.modules if k.startswith("src.qb.run_pipeline")}
     newly_imported = after - before
     assert not newly_imported, f"--dry-run imported heavy pipeline modules: {newly_imported}"

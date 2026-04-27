@@ -254,7 +254,7 @@ def tiny_qb_model(tmp_path_factory):
     nn_scaler.fit(X)
     joblib.dump(nn_scaler, str(model_dir / "nn_scaler.pkl"))
 
-    # Feature-column manifest — mirrors get_qb_feature_columns() shape
+    # Feature-column manifest — mirrors get_feature_columns() shape
     feature_cols = [f"feat_{i}" for i in range(n_features)]
     (model_dir / "feature_columns.json").write_text(json.dumps(feature_cols))
 

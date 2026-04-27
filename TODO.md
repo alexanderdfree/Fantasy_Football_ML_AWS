@@ -9,7 +9,7 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 ## Open
 
 ### [ACKNOWLEDGED] K features use cross-season rolling windows
-- **File:** `src/K/k_features.py:27`
+- **File:** `src/k/features.py:27`
 - **What:** Kicker features group by `["player_id"]` only (no season reset), so rolling windows span across seasons. A kicker's late-season 2024 stats influence early-2025 predictions.
 - **Rationale:** Kickers have stable multi-year careers and small per-season sample sizes (~17 games), so cross-season windows provide more signal. Comment above the `grp` assignment records this rationale.
 - **Risk:** If a kicker changes teams or role between seasons, stale cross-season features could mislead the model. Likely small impact.
@@ -23,7 +23,7 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **What:** Last incomplete batch is dropped in all three DataLoaders (attention, multi-target, history-multi-target). With batch_size=512 (WR) and 32,521 training rows, 121 rows (~0.4%) are never seen. Standard practice, but combined with early stopping means those rows never contribute.
 
 ### [LOW] K targets overwrite `fantasy_points` column
-- **File:** `src/K/k_targets.py:31`
+- **File:** `src/k/targets.py:31`
 - **What:** `df["fantasy_points"] = df["fg_yard_points"] + df["pat_points"] - df["fg_misses"] - df["xp_misses"]` overwrites the original column. Safe if called once, but calling twice would use the already-computed value. Not a current bug, just fragile.
 
 ### [LOW] Redundant NaN handling in feature engineering
@@ -35,7 +35,7 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **What:** K/DST test rows are appended to `results` with `offset = results.index.max() + 1`. Assumes the general test data has a well-behaved index. If the general test parquet has gaps, K/DST indices could collide. Probably safe in practice since parquet preserves sequential indices.
 
 ### [UNCERTAIN] Team share features computed per-split
-- **Files:** `src/RB/rb_features.py:74`, `src/WR/wr_features.py:58`, `src/TE/te_features.py:51`
+- **Files:** `src/rb/features.py:74`, `src/wr/features.py:58`, `src/te/features.py:51`
 - **What:** Team carry/target shares are computed within each split independently (`compute_team_*_totals` runs on each split's own data). A player's share could differ between train and test if their teammates are distributed differently across splits. By design (prevents leakage), but the share values won't be globally consistent.
 
 ---
@@ -83,7 +83,7 @@ Kept for the lessons-learned value — each entry captures a debug-to-root-cause
 - **Lesson:** When renaming functions, grep for all call sites across the project — not just the file where the function is defined.
 
 ### [FIXED] DST `pts_allowed_bonus` clamped to >= 0, but target ranges from -4 to +10
-- **Files:** `src/shared/neural_net.py`, `src/DST/dst_config.py`, `src/DST/run_dst_pipeline.py`, `src/serving/app.py`
+- **Files:** `src/shared/neural_net.py`, `src/dst/config.py`, `src/dst/run_pipeline.py`, `src/serving/app.py`
 - **What:** The softplus-to-clamp fix applied `clamp(min=0)` globally to all heads. But DST's `pts_allowed_bonus` ranges from -4 (35+ points allowed) to +10 (shutout). The model couldn't predict negative tiers.
 - **Fix:** Added `non_negative_targets` parameter to `MultiHeadNet.__init__` (defaults to all targets). DST config specifies `{"defensive_scoring", "td_points"}`, leaving `pts_allowed_bonus` unconstrained.
 - **Lesson:** Output constraints must be per-head when targets have different valid ranges. A global clamp works for most positions but breaks any target that can legitimately be negative.
@@ -129,7 +129,7 @@ Kept for the lessons-learned value — each entry captures a debug-to-root-cause
 - **Lesson:** When adding new features to `*_features.py`, update the corresponding test fixture and expected feature list.
 
 ### [FIXED] DST prior-season feature alignment used `.values`
-- **File:** `src/DST/dst_features.py:74-86`
+- **File:** `src/dst/features.py:74-86`
 - **What:** Prior-season features were merged via `season+1` then assigned back using `.values` (strips index). If the merge reordered rows, assignments would be silently misaligned.
 - **Fix:** Changed to index-preserving merge: `reset_index()` → merge → `set_index("index")` → loc-based assignment using the original index.
 

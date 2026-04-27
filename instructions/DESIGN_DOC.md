@@ -28,7 +28,7 @@ Below are the 15 Machine Learning rubric items this project is designed to hit. 
 | 6 | **Simulation-based evaluation** (week-by-week prediction accuracy simulation) | 7 | `src/shared/backtest.py` |
 | 7 | **Feature engineering** (rolling averages, snap %, target share, matchup strength, etc.) | 5 | `src/features/engineer.py` |
 | 8 | **Defined and trained a custom neural network architecture** (PyTorch) | 5 | `src/shared/neural_net.py` |
-| 9 | **Systematic hyperparameter tuning** (≥3 configs documented) | 5 | Position-specific configs (`src/QB/qb_config.py`, etc.) |
+| 9 | **Systematic hyperparameter tuning** (≥3 configs documented) | 5 | Position-specific configs (`src/qb/config.py`, etc.) |
 | 10 | **Regularization** (L2 + dropout + early stopping — at least 2 required) | 5 | `src/shared/neural_net.py`, `src/shared/training.py` |
 | 11 | **Modular code design** with reusable functions/classes | 3 | `src/`, `src/shared/`, position folders |
 | 12 | **Train/validation/test split** with documented ratios | 3 | `src/data/split.py` |
@@ -120,22 +120,23 @@ Final-Project/
 │   │   ├── weather_features.py    # Vegas odds + venue/weather feature engineering
 │   │   └── tests/                 # Shared-infra unit/integration tests
 │   │
-│   ├── QB/  RB/  WR/  TE/         # Skill-position pipelines (shared structure)
-│   │   ├── {pos}_config.py        # Hyperparams, feature allowlist, target decomposition
-│   │   ├── {pos}_data.py          # Position-specific data prep
-│   │   ├── {pos}_targets.py       # Target construction (decomposition formulas)
-│   │   ├── {pos}_features.py      # Position-specific engineered features
-│   │   ├── run_{pos}_pipeline.py  # Entry point (calls src/shared/pipeline.py)
-│   │   ├── outputs/models/        # Trained model artifacts (gitignored)
-│   │   └── tests/                 # Per-position test suite
+│   ├── qb/  rb/  wr/  te/         # Skill-position pipelines (shared structure)
+│   │   ├── config.py              # Hyperparams, feature allowlist, target decomposition
+│   │   ├── data.py                # Position-specific data prep
+│   │   ├── targets.py             # Target construction (decomposition formulas)
+│   │   ├── features.py            # Position-specific engineered features
+│   │   ├── run_pipeline.py        # Entry point (calls src/shared/pipeline.py)
+│   │   └── outputs/models/        # Trained model artifacts (gitignored)
 │   │
-│   ├── K/                         # Kicker model (custom feature pipeline, bypasses general features)
-│   │   ├── k_config.py, k_data.py, k_targets.py, k_features.py
-│   │   ├── run_k_pipeline.py, outputs/, tests/
+│   ├── k/                         # Kicker model (custom feature pipeline, bypasses general features)
+│   │   ├── config.py, data.py, targets.py, features.py
+│   │   ├── run_pipeline.py, outputs/
 │   │
-│   ├── DST/                       # D/ST model (custom feature pipeline, bypasses general features)
-│   │   ├── dst_config.py, dst_data.py, dst_targets.py, dst_features.py
-│   │   ├── run_dst_pipeline.py, outputs/, tests/
+│   ├── dst/                       # D/ST model (custom feature pipeline, bypasses general features)
+│   │   ├── config.py, data.py, targets.py, features.py
+│   │   ├── run_pipeline.py, outputs/
+│   │
+│   │   # (per-position tests live under tests/{pos}/, not under src/)
 │   │
 │   ├── batch/                     # Training orchestration (active: EC2; standby: Batch)
 │   │   ├── launch.py              # Local Batch launcher (standby path)
@@ -782,7 +783,7 @@ Ridge coefficient analysis provides feature importance per target via `RidgeMult
 Each position has its own pipeline script that orchestrates training. The general flow:
 
 ```python
-# Per-position pipeline (e.g., src/RB/run_rb_pipeline.py):
+# Per-position pipeline (e.g., src/rb/run_pipeline.py):
 #
 # 1. LOAD:      loader.load_raw_data(SEASONS) + cache as parquet
 # 2. PREPROCESS: preprocessing.preprocess(raw_df)  — NO min-games filter here

@@ -6,7 +6,7 @@ band of each other) on a deterministic synthetic dataset.
 
 Design
 ------
-* Dataset: ``tiny_dst_dataset`` (32 teams x 4 seasons x 17 weeks, fixed seed).
+* Dataset: ``tiny_dataset`` (32 teams x 4 seasons x 17 weeks, fixed seed).
 * Split:   earliest 3 seasons -> train, last season -> test.
 * Models:  Ridge (per-target, PCA off), LightGBM (per-target), small NN.
 * Baseline: season-average per team (``SeasonAverageBaseline``).
@@ -33,15 +33,15 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.DST.dst_config import (
-    DST_ALL_FEATURES,
-    DST_HUBER_DELTAS,
-    DST_LOSS_WEIGHTS,
-    DST_NN_NON_NEGATIVE_TARGETS,
-    DST_TARGETS,
+from src.dst.config import (
+    ALL_FEATURES,
+    HUBER_DELTAS,
+    LOSS_WEIGHTS,
+    NN_NON_NEGATIVE_TARGETS,
+    TARGETS,
 )
-from src.DST.dst_features import compute_dst_features
-from src.DST.dst_targets import compute_dst_targets
+from src.dst.features import compute_features
+from src.dst.targets import compute_targets
 from src.evaluation.metrics import compute_metrics
 from src.models.baseline import SeasonAverageBaseline
 from src.shared.aggregate_targets import aggregate_fn_for
@@ -53,18 +53,18 @@ from src.shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataload
 SEED = 42
 
 # Features the tiny synthetic dataset supplies.  This is a subset of
-# DST_ALL_FEATURES — some opponent-scoring rolling features are built in
-# dst_data.build_dst_data (from opponent merges) rather than
-# compute_dst_features, so we mirror that logic here by feeding the
+# ALL_FEATURES — some opponent-scoring rolling features are built in
+# dst_data.build_data (from opponent merges) rather than
+# compute_features, so we mirror that logic here by feeding the
 # tiny-dataset values directly.
-_TINY_FEATURE_COLS = list(DST_ALL_FEATURES)
+_TINY_FEATURE_COLS = list(ALL_FEATURES)
 
 
-def _prepare_tiny(tiny_dst_dataset: pd.DataFrame):
+def _prepare_tiny(tiny_dataset: pd.DataFrame):
     """Compute targets + features, then split into (train, test) tensors."""
-    df = tiny_dst_dataset.copy()
-    df = compute_dst_targets(df)
-    compute_dst_features(df)
+    df = tiny_dataset.copy()
+    df = compute_targets(df)
+    compute_features(df)
 
     # 0-fill any feature the tiny dataset didn't materialise.  In prod the
     # pipeline's merge_schedule_features and the dst_data opponent merges
@@ -74,7 +74,7 @@ def _prepare_tiny(tiny_dst_dataset: pd.DataFrame):
         if col not in df.columns:
             df[col] = 0.0
         df[col] = df[col].replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    # ``fantasy_points`` is already written by compute_dst_targets (linear
+    # ``fantasy_points`` is already written by compute_targets (linear
     # raw-stat combo + PA/YA tier bonuses). Don't overwrite it — we want
     # the real scoring, which is what baseline / NN total supervision uses.
 
@@ -87,8 +87,8 @@ def _prepare_tiny(tiny_dst_dataset: pd.DataFrame):
 
     X_train = train[_TINY_FEATURE_COLS].values.astype(np.float32)
     X_test = test[_TINY_FEATURE_COLS].values.astype(np.float32)
-    y_train = {t: train[t].values.astype(np.float32) for t in DST_TARGETS}
-    y_test = {t: test[t].values.astype(np.float32) for t in DST_TARGETS}
+    y_train = {t: train[t].values.astype(np.float32) for t in TARGETS}
+    y_test = {t: test[t].values.astype(np.float32) for t in TARGETS}
     # Fantasy-point truth used only for baseline / model MAE comparison — the
     # NN itself trains on raw-stat heads, no aux total supervision.
     fp_test = test["fantasy_points"].values.astype(np.float32)
@@ -101,14 +101,14 @@ def _prepare_tiny(tiny_dst_dataset: pd.DataFrame):
 
 
 @pytest.fixture(scope="module")
-def regression_results(tiny_dst_dataset):
+def regression_results(tiny_dataset):
     """Train Ridge + NN on the tiny dataset and return summary MAEs.
 
     Scope is ``module`` — expensive enough to warrant reuse across the
     four regression asserts, but not so stateful that session reuse is
     worth the extra coupling.
     """
-    X_train, X_test, y_train, y_test, fp_test, train_df, test_df = _prepare_tiny(tiny_dst_dataset)
+    X_train, X_test, y_train, y_test, fp_test, train_df, test_df = _prepare_tiny(tiny_dataset)
     dst_agg = aggregate_fn_for("DST")
 
     # --- Baseline (season-average of fantasy_points per team) ---
@@ -120,9 +120,9 @@ def regression_results(tiny_dst_dataset):
     np.random.seed(SEED)
     torch.manual_seed(SEED)
     ridge = RidgeMultiTarget(
-        target_names=DST_TARGETS,
+        target_names=TARGETS,
         alpha=1.0,
-        non_negative_targets=DST_NN_NON_NEGATIVE_TARGETS,
+        non_negative_targets=NN_NON_NEGATIVE_TARGETS,
         pca_n_components=None,  # PCA unused on tiny data
     )
     ridge.fit(X_train, y_train)
@@ -135,7 +135,7 @@ def regression_results(tiny_dst_dataset):
         from src.shared.models import LightGBMMultiTarget
 
         lgbm = LightGBMMultiTarget(
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             n_estimators=50,
             learning_rate=0.1,
             num_leaves=15,
@@ -164,18 +164,18 @@ def regression_results(tiny_dst_dataset):
 
     model = MultiHeadNet(
         input_dim=X_tr_s.shape[1],
-        target_names=DST_TARGETS,
+        target_names=TARGETS,
         backbone_layers=[16, 8],
         head_hidden=8,
         dropout=0.0,
-        non_negative_targets=DST_NN_NON_NEGATIVE_TARGETS,
+        non_negative_targets=NN_NON_NEGATIVE_TARGETS,
     )
     optim = torch.optim.Adam(model.parameters(), lr=3e-3)
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(optim, patience=3, factor=0.5)
     criterion = MultiTargetLoss(
-        target_names=DST_TARGETS,
-        loss_weights=DST_LOSS_WEIGHTS,
-        huber_deltas=DST_HUBER_DELTAS,
+        target_names=TARGETS,
+        loss_weights=LOSS_WEIGHTS,
+        huber_deltas=HUBER_DELTAS,
     )
     trainer = MultiHeadTrainer(
         model,
@@ -183,7 +183,7 @@ def regression_results(tiny_dst_dataset):
         sched,
         criterion,
         torch.device("cpu"),
-        target_names=DST_TARGETS,
+        target_names=TARGETS,
         patience=5,
         log_every=100,
     )

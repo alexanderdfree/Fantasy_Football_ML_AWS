@@ -21,92 +21,92 @@ import numpy as np
 import pytest
 import torch
 
-from src.RB.rb_config import (
-    RB_ATTN_D_MODEL,
-    RB_ATTN_DROPOUT,
-    RB_ATTN_GATE_HIDDEN,
-    RB_ATTN_GATE_WEIGHT,
-    RB_ATTN_GATED,
-    RB_ATTN_GATED_FUSION,
-    RB_ATTN_HISTORY_STATS,
-    RB_ATTN_MAX_SEQ_LEN,
-    RB_ATTN_N_HEADS,
-    RB_ATTN_POSITIONAL_ENCODING,
-    RB_ATTN_PROJECT_KV,
-    RB_COSINE_ETA_MIN,
-    RB_COSINE_T0,
-    RB_COSINE_T_MULT,
-    RB_GATED_ORDINAL_TARGETS,
-    RB_GATED_TARGETS,
-    RB_HEAD_LOSSES,
-    RB_HUBER_DELTAS,
-    RB_LOSS_WEIGHTS,
-    RB_NN_BACKBONE_LAYERS_TINY,
-    RB_NN_BATCH_SIZE_TINY,
-    RB_NN_DROPOUT,
-    RB_NN_EPOCHS_TINY,
-    RB_NN_HEAD_HIDDEN_TINY,
-    RB_NN_LR,
-    RB_NN_PATIENCE_TINY,
-    RB_NN_WEIGHT_DECAY,
-    RB_RIDGE_ALPHA_GRIDS,
-    RB_RIDGE_PCA_COMPONENTS,
-    RB_SCHEDULER_TYPE,
-    RB_SPECIFIC_FEATURES,
-    RB_TARGETS,
+from src.rb.config import (
+    ATTN_D_MODEL,
+    ATTN_DROPOUT,
+    ATTN_GATE_HIDDEN,
+    ATTN_GATE_WEIGHT,
+    ATTN_GATED,
+    ATTN_GATED_FUSION,
+    ATTN_HISTORY_STATS,
+    ATTN_MAX_SEQ_LEN,
+    ATTN_N_HEADS,
+    ATTN_POSITIONAL_ENCODING,
+    ATTN_PROJECT_KV,
+    COSINE_ETA_MIN,
+    COSINE_T0,
+    COSINE_T_MULT,
+    GATED_ORDINAL_TARGETS,
+    GATED_TARGETS,
+    HEAD_LOSSES,
+    HUBER_DELTAS,
+    LOSS_WEIGHTS,
+    NN_BACKBONE_LAYERS_TINY,
+    NN_BATCH_SIZE_TINY,
+    NN_DROPOUT,
+    NN_EPOCHS_TINY,
+    NN_HEAD_HIDDEN_TINY,
+    NN_LR,
+    NN_PATIENCE_TINY,
+    NN_WEIGHT_DECAY,
+    RIDGE_ALPHA_GRIDS,
+    RIDGE_PCA_COMPONENTS,
+    SCHEDULER_TYPE,
+    SPECIFIC_FEATURES,
+    TARGETS,
 )
-from src.RB.rb_data import filter_to_rb
-from src.RB.rb_features import add_rb_specific_features, fill_rb_nans, get_rb_feature_columns
-from src.RB.rb_targets import compute_rb_targets
+from src.rb.data import filter_to_position
+from src.rb.features import add_specific_features, fill_nans, get_feature_columns
+from src.rb.targets import compute_targets
 
 
 def _build_tiny_config() -> dict:
-    """Shrunk RB_CONFIG for the E2E smoke."""
+    """Shrunk CONFIG for the E2E smoke."""
     return {
-        "targets": RB_TARGETS,
-        "ridge_alpha_grids": RB_RIDGE_ALPHA_GRIDS,
+        "targets": TARGETS,
+        "ridge_alpha_grids": RIDGE_ALPHA_GRIDS,
         "two_stage_targets": {},
-        "classification_targets": RB_GATED_ORDINAL_TARGETS,
-        "ridge_pca_components": RB_RIDGE_PCA_COMPONENTS,
+        "classification_targets": GATED_ORDINAL_TARGETS,
+        "ridge_pca_components": RIDGE_PCA_COMPONENTS,
         "ridge_cv_folds": 2,
         "ridge_refine_points": 0,
         "cv_split_column": "week",
-        "specific_features": RB_SPECIFIC_FEATURES,
-        "filter_fn": filter_to_rb,
-        "compute_targets_fn": compute_rb_targets,
-        "add_features_fn": add_rb_specific_features,
-        "fill_nans_fn": fill_rb_nans,
-        "get_feature_columns_fn": get_rb_feature_columns,
-        "nn_backbone_layers": RB_NN_BACKBONE_LAYERS_TINY,
-        "nn_head_hidden": RB_NN_HEAD_HIDDEN_TINY,
-        "nn_dropout": RB_NN_DROPOUT,
+        "specific_features": SPECIFIC_FEATURES,
+        "filter_fn": filter_to_position,
+        "compute_targets_fn": compute_targets,
+        "add_features_fn": add_specific_features,
+        "fill_nans_fn": fill_nans,
+        "get_feature_columns_fn": get_feature_columns,
+        "nn_backbone_layers": NN_BACKBONE_LAYERS_TINY,
+        "nn_head_hidden": NN_HEAD_HIDDEN_TINY,
+        "nn_dropout": NN_DROPOUT,
         "nn_head_hidden_overrides": None,
-        "nn_lr": RB_NN_LR,
-        "nn_weight_decay": RB_NN_WEIGHT_DECAY,
-        "nn_epochs": RB_NN_EPOCHS_TINY,
-        "nn_batch_size": RB_NN_BATCH_SIZE_TINY,
-        "nn_patience": RB_NN_PATIENCE_TINY,
+        "nn_lr": NN_LR,
+        "nn_weight_decay": NN_WEIGHT_DECAY,
+        "nn_epochs": NN_EPOCHS_TINY,
+        "nn_batch_size": NN_BATCH_SIZE_TINY,
+        "nn_patience": NN_PATIENCE_TINY,
         "nn_log_every": 1,
-        "loss_weights": RB_LOSS_WEIGHTS,
-        "huber_deltas": RB_HUBER_DELTAS,
-        "scheduler_type": RB_SCHEDULER_TYPE,
-        "cosine_t0": RB_COSINE_T0,
-        "cosine_t_mult": RB_COSINE_T_MULT,
-        "cosine_eta_min": RB_COSINE_ETA_MIN,
+        "loss_weights": LOSS_WEIGHTS,
+        "huber_deltas": HUBER_DELTAS,
+        "scheduler_type": SCHEDULER_TYPE,
+        "cosine_t0": COSINE_T0,
+        "cosine_t_mult": COSINE_T_MULT,
+        "cosine_eta_min": COSINE_ETA_MIN,
         "train_attention_nn": False,
-        "attn_d_model": RB_ATTN_D_MODEL,
-        "attn_n_heads": RB_ATTN_N_HEADS,
-        "attn_max_seq_len": RB_ATTN_MAX_SEQ_LEN,
-        "attn_history_stats": RB_ATTN_HISTORY_STATS,
-        "attn_project_kv": RB_ATTN_PROJECT_KV,
-        "attn_positional_encoding": RB_ATTN_POSITIONAL_ENCODING,
-        "attn_gated_fusion": RB_ATTN_GATED_FUSION,
-        "attn_dropout": RB_ATTN_DROPOUT,
-        "attn_gated": RB_ATTN_GATED,
-        "attn_gate_hidden": RB_ATTN_GATE_HIDDEN,
-        "attn_gate_weight": RB_ATTN_GATE_WEIGHT,
-        "gated_targets": RB_GATED_TARGETS,
-        "head_losses": RB_HEAD_LOSSES,
+        "attn_d_model": ATTN_D_MODEL,
+        "attn_n_heads": ATTN_N_HEADS,
+        "attn_max_seq_len": ATTN_MAX_SEQ_LEN,
+        "attn_history_stats": ATTN_HISTORY_STATS,
+        "attn_project_kv": ATTN_PROJECT_KV,
+        "attn_positional_encoding": ATTN_POSITIONAL_ENCODING,
+        "attn_gated_fusion": ATTN_GATED_FUSION,
+        "attn_dropout": ATTN_DROPOUT,
+        "attn_gated": ATTN_GATED,
+        "attn_gate_hidden": ATTN_GATE_HIDDEN,
+        "attn_gate_weight": ATTN_GATE_WEIGHT,
+        "gated_targets": GATED_TARGETS,
+        "head_losses": HEAD_LOSSES,
         "train_lightgbm": False,
     }
 
@@ -129,8 +129,8 @@ def _run_pipeline_in_tmp(train_df, val_df, test_df, seed: int, workdir: str) -> 
     data_raw_src = _find_data_raw_dir()
     try:
         os.chdir(workdir)
-        os.makedirs("src/RB/outputs/models", exist_ok=True)
-        os.makedirs("src/RB/outputs/figures", exist_ok=True)
+        os.makedirs("src/rb/outputs/models", exist_ok=True)
+        os.makedirs("src/rb/outputs/figures", exist_ok=True)
         dst = os.path.join(workdir, "data", "raw")
         if not os.path.exists(dst):
             os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -154,24 +154,24 @@ def _run_pipeline_in_tmp(train_df, val_df, test_df, seed: int, workdir: str) -> 
 
 
 @pytest.fixture(scope="module")
-def pipeline_run(synthetic_rb_splits):
+def pipeline_run(synthetic_splits):
     """Single pipeline invocation shared across tests.
 
     Held open in a TemporaryDirectory for the life of the module so the
     pipeline's per-run artifacts stay intact if a test later reads them.
     """
-    train_df, val_df, test_df = synthetic_rb_splits
+    train_df, val_df, test_df = synthetic_splits
     with tempfile.TemporaryDirectory() as tmp:
         yield _run_pipeline_in_tmp(train_df, val_df, test_df, seed=42, workdir=tmp)
 
 
 @pytest.fixture(scope="module")
-def pipeline_run_repeat(synthetic_rb_splits, pipeline_run):
+def pipeline_run_repeat(synthetic_splits, pipeline_run):
     """Second pipeline invocation with the same seed for bit-identity checks.
 
     Depends on pipeline_run so module-scoped ordering is deterministic.
     """
-    train_df, val_df, test_df = synthetic_rb_splits
+    train_df, val_df, test_df = synthetic_splits
     with tempfile.TemporaryDirectory() as tmp:
         yield _run_pipeline_in_tmp(train_df, val_df, test_df, seed=42, workdir=tmp)
 
@@ -193,12 +193,12 @@ def test_pipeline_runs_to_completion(pipeline_run):
     preds = result["per_target_preds"]
     for model_name in ("ridge", "nn"):
         assert model_name in preds, f"{model_name} missing from per_target_preds"
-        for target in RB_TARGETS:
+        for target in TARGETS:
             vec = preds[model_name][target]
             assert vec.ndim == 1
             assert np.isfinite(vec).all(), f"{model_name}/{target} has non-finite predictions"
 
-    n_test = preds["ridge"][RB_TARGETS[0]].shape[0]
+    n_test = preds["ridge"][TARGETS[0]].shape[0]
     assert n_test > 0
 
 
@@ -214,14 +214,14 @@ def test_pipeline_bit_identical_same_seed(pipeline_run, pipeline_run_repeat):
     preds_a = pipeline_run["per_target_preds"]
     preds_b = pipeline_run_repeat["per_target_preds"]
 
-    for target in RB_TARGETS:
+    for target in TARGETS:
         np.testing.assert_array_equal(
             preds_a["ridge"][target],
             preds_b["ridge"][target],
             err_msg=f"Ridge predictions drifted for {target}",
         )
 
-    for target in RB_TARGETS:
+    for target in TARGETS:
         a = torch.from_numpy(preds_a["nn"][target])
         b = torch.from_numpy(preds_b["nn"][target])
         torch.testing.assert_close(a, b, atol=0.0, rtol=0.0)

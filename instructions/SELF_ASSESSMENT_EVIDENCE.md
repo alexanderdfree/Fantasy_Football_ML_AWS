@@ -17,18 +17,18 @@ A grader who wants to spot-check any claim can use the verification block at the
 
 ### Claim #5 — Error analysis with failure cases (7 pts)
 
-**Primary evidence (in .docx):** `src/QB/diagnose_qb_outliers.py`, `src/RB/analyze_rb_errors.py`, `docs/expert_comparison.md:99-141`.
+**Primary evidence (in .docx):** `src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`, `docs/expert_comparison.md:99-141`.
 
 **Secondary evidence:**
-- The QB diagnostic script's output schema is declared at [src/QB/diagnose_qb_outliers.py:16-17,47-48](../src/QB/diagnose_qb_outliers.py) — it produces `analysis_output/qb_outlier_diagnostic.{md,json}` with per-row attributions, contamination stats, and 8-game player history.
-- The RB analyzer's figure-output is declared at [src/RB/analyze_rb_errors.py:138](../src/RB/analyze_rb_errors.py) — produces `analysis_output/rb_error_mae_by_{stratum}.png` for snap-bucket / opp-tier / TD-bucket / week-phase / volatility-quintile slices.
+- The QB diagnostic script's output schema is declared at [src/qb/diagnose_outliers.py:16-17,47-48](../src/qb/diagnose_outliers.py) — it produces `analysis_output/qb_outlier_diagnostic.{md,json}` with per-row attributions, contamination stats, and 8-game player history.
+- The RB analyzer's figure-output is declared at [src/rb/analyze_errors.py:138](../src/rb/analyze_errors.py) — produces `analysis_output/rb_error_mae_by_{stratum}.png` for snap-bucket / opp-tier / TD-bucket / week-phase / volatility-quintile slices.
 - Both output paths land under `analysis_output/`, which is in [.gitignore](../.gitignore) — these files are not committed.
 
 **Regeneration:**
 ```bash
 # Requires data/splits/*.parquet and trained models in {POS}/outputs/models/
-python src/QB/diagnose_qb_outliers.py     # writes analysis_output/qb_outlier_diagnostic.{md,json}
-python src/RB/analyze_rb_errors.py        # writes analysis_output/rb_error_*.png
+python src/qb/diagnose_outliers.py     # writes analysis_output/qb_outlier_diagnostic.{md,json}
+python src/rb/analyze_errors.py        # writes analysis_output/rb_error_*.png
 ```
 
 **Verification:** Open [docs/expert_comparison.md:103-127](../docs/expert_comparison.md) — the per-position narrative analysis is the discussion component and is committed to the repo. The two diagnostic scripts are the analysis machinery.
@@ -68,7 +68,7 @@ python src/RB/analyze_rb_errors.py        # writes analysis_output/rb_error_*.pn
 
 **Secondary evidence:**
 - The `scale_and_clip` helper in `src/shared/feature_build.py` is the single source of truth — both training ([src/shared/pipeline.py:115](../src/shared/pipeline.py)) and serving paths use it. This deliberately closes the training-vs-inference skew the [TODO.md "Fixed" archive](../TODO.md) repeatedly warned about.
-- Stint-aware grouping for trade safety also appears in [src/TE/te_features.py:51](../src/TE/te_features.py) (not just RB/WR cited in .docx).
+- Stint-aware grouping for trade safety also appears in [src/te/features.py:51](../src/te/features.py) (not just RB/WR cited in .docx).
 - The "Open" section of [TODO.md:21-23](../TODO.md) acknowledges `drop_last=True` discards 121 of 32,521 WR training rows (~0.4%) — same order of magnitude as the clipping rate, and explicitly accepted as a known trade.
 
 ---
@@ -140,8 +140,8 @@ These files are produced by scripts in the repo but live under `analysis_output/
 
 | Output | Generator | Command |
 |---|---|---|
-| `analysis_output/qb_outlier_diagnostic.{md,json}` | [src/QB/diagnose_qb_outliers.py](../src/QB/diagnose_qb_outliers.py) | `python src/QB/diagnose_qb_outliers.py` |
-| `analysis_output/rb_error_mae_by_*.png` | [src/RB/analyze_rb_errors.py](../src/RB/analyze_rb_errors.py) | `python src/RB/analyze_rb_errors.py` |
+| `analysis_output/qb_outlier_diagnostic.{md,json}` | [src/qb/diagnose_outliers.py](../src/qb/diagnose_outliers.py) | `python src/qb/diagnose_outliers.py` |
+| `analysis_output/rb_error_mae_by_*.png` | [src/rb/analyze_errors.py](../src/rb/analyze_errors.py) | `python src/rb/analyze_errors.py` |
 | `benchmark_results.json` (raw-stat target naming) | [src/benchmarking/benchmark.py](../src/benchmarking/benchmark.py) | `python -m src.benchmarking.benchmark` |
 
 The 6 PNGs already in [analysis_output/](../analysis_output/) (weather/Vegas correlations × 4 positions, cross-position summary, RB feature-signal ablation) **are committed** — they were force-added past `.gitignore`.

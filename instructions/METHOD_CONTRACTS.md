@@ -707,7 +707,7 @@ a zero-inflated hurdle head: a sigmoid gate predicts `P(TD > 0)` and a Softplus 
 predicts `E[TD | TD > 0]`; the product is the expected TD count. WR/TE use one gated head
 (`receiving_tds`); QB/K/DST do not use gated TD heads.
 
-**Optimizer and loss (RB raw-stat example, from `src/RB/rb_config.py`):**
+**Optimizer and loss (RB raw-stat example, from `src/rb/config.py`):**
 ```python
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-5)
 criterion = MultiTargetLoss(

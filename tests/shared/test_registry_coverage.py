@@ -46,9 +46,9 @@ def test_cpu_only_positions_is_k_and_dst():
 @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])
 def test_meta_returns_position_dict(pos):
     m = _meta(pos)
-    assert m["runner_module"].endswith(f"run_{pos.lower()}_pipeline")
-    assert m["runner_fn"] == f"run_{pos.lower()}_pipeline"
-    assert m["config_var"] == f"{pos}_CONFIG"
+    assert m["runner_module"].endswith("run_pipeline")
+    assert m["runner_fn"] == "run"
+    assert m["config_var"] == "CONFIG"
 
 
 @pytest.mark.unit
@@ -85,7 +85,7 @@ def test_special_positions_do_not_accept_dataframes(pos):
 def test_get_runner_returns_callable(pos):
     fn = get_runner(pos)
     assert callable(fn)
-    assert fn.__name__ == f"run_{pos.lower()}_pipeline"
+    assert fn.__name__ == "run"
 
 
 @pytest.mark.unit

@@ -41,7 +41,7 @@ def test_tier_bonuses_numpy_and_torch_agree():
 
 
 @pytest.mark.unit
-def test_dst_aggregation_with_torch_inputs():
+def test_aggregation_with_torch_inputs():
     """DST predictions as torch tensors return a torch tensor of the same shape."""
     n = 4
     preds = {

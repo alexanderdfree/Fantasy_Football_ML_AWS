@@ -1,4 +1,4 @@
-"""Tests for DST.dst_targets — compute_dst_targets and tier-bonus helpers.
+"""Tests for DST.dst_targets — compute_targets and tier-bonus helpers.
 
 D/ST targets are 10 raw NFL stat counts. Fantasy points are computed after
 prediction by summing the linear scoring coefficients (sacks*1, INT*2, ...)
@@ -12,14 +12,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.DST.dst_targets import (
+from src.dst.targets import (
     _pts_allowed_to_bonus,
     _yds_allowed_to_bonus,
-    compute_dst_targets,
+    compute_targets,
 )
 
 # ---------------------------------------------------------------------------
-# compute_dst_targets
+# compute_targets
 # ---------------------------------------------------------------------------
 
 
@@ -37,7 +37,7 @@ class TestComputeDSTTargets:
             def_blocked_kicks=1,
             special_teams_tds=1,
         )
-        result = compute_dst_targets(df)
+        result = compute_targets(df)
         assert result["def_sacks"].iloc[0] == 4
         assert result["def_ints"].iloc[0] == 2
         assert result["def_fumble_rec"].iloc[0] == 1
@@ -50,13 +50,13 @@ class TestComputeDSTTargets:
     def test_points_allowed_copied_raw(self, make_df):
         """points_allowed is the raw value — tier mapping only affects fantasy_points."""
         df = make_df(points_allowed=24)
-        result = compute_dst_targets(df)
+        result = compute_targets(df)
         assert pytest.approx(result["points_allowed"].iloc[0]) == 24.0
 
     def test_yards_allowed_copied_raw(self, make_df):
         """yards_allowed is the raw value."""
         df = make_df(yards_allowed=412)
-        result = compute_dst_targets(df)
+        result = compute_targets(df)
         assert pytest.approx(result["yards_allowed"].iloc[0]) == 412.0
 
     def test_fantasy_points_full_sum(self, make_df):
@@ -73,7 +73,7 @@ class TestComputeDSTTargets:
             points_allowed=10,
             yards_allowed=220,
         )
-        result = compute_dst_targets(df)
+        result = compute_targets(df)
         # linear = 3*1 + 1*2 + 1*2 + 2*1 + 0*2 + 1*6 + 1*6 + 0*2 = 21
         # PA tier (10 → 7-13) = +4
         # YA tier (220 → 200-299) = +2
@@ -94,7 +94,7 @@ class TestComputeDSTTargets:
             points_allowed=0,
             yards_allowed=80,
         )
-        result = compute_dst_targets(df)
+        result = compute_targets(df)
         # linear = 6 + 6 + 4 + 4 + 2 + 12 + 6 + 2 = 42
         # PA tier (0 → +10), YA tier (<100 → +5)
         # total = 42 + 10 + 5 = 57
@@ -118,7 +118,7 @@ class TestComputeDSTTargets:
                 }
             ]
         )
-        result = compute_dst_targets(df)
+        result = compute_targets(df)
         for col in [
             "def_sacks",
             "def_ints",
@@ -138,7 +138,7 @@ class TestComputeDSTTargets:
     def test_does_not_mutate_original(self, make_df):
         df = make_df()
         original_cols = set(df.columns)
-        _ = compute_dst_targets(df)
+        _ = compute_targets(df)
         assert set(df.columns) == original_cols
 
 

@@ -24,7 +24,7 @@ import pytest
 @pytest.mark.unit
 def test_condition_number_nonzero_on_full_rank():
     """On a full-rank matrix condition number is finite and >= 1."""
-    from src.WR.benchmark_ridge_variants import _condition_number
+    from src.wr.benchmark_ridge_variants import _condition_number
 
     X = np.random.default_rng(0).normal(size=(30, 4))
     cond = _condition_number(X)
@@ -35,7 +35,7 @@ def test_condition_number_nonzero_on_full_rank():
 @pytest.mark.unit
 def test_condition_number_infinite_on_rank_deficient():
     """A column duplicated → smallest singular value ≈ 0 → cond = inf."""
-    from src.WR.benchmark_ridge_variants import _condition_number
+    from src.wr.benchmark_ridge_variants import _condition_number
 
     base = np.random.default_rng(0).normal(size=(30, 3))
     X = np.hstack([base, base[:, :1]])  # column 3 == column 0
@@ -53,14 +53,12 @@ def test_run_variant_builds_metrics_dict(monkeypatch):
     """``_run_variant`` must call the tuner, fit+predict, and return the
     per-target + total metrics dict. We replace the heavy pieces with
     lightweight stubs so the test runs in milliseconds."""
-    import src.WR.benchmark_ridge_variants as bench
+    import src.wr.benchmark_ridge_variants as bench
 
-    WR_TARGETS = bench.WR_TARGETS
+    TARGETS = bench.TARGETS
 
     # Stub the CV alpha tuner — returns a flat {target: alpha} dict.
-    monkeypatch.setattr(
-        bench, "_tune_ridge_alphas_cv", lambda *a, **k: {t: 1.0 for t in WR_TARGETS}
-    )
+    monkeypatch.setattr(bench, "_tune_ridge_alphas_cv", lambda *a, **k: {t: 1.0 for t in TARGETS})
 
     # Stub RidgeMultiTarget to a trivial model that returns zeros for every target.
     class _FakeRidge:
@@ -71,7 +69,7 @@ def test_run_variant_builds_metrics_dict(monkeypatch):
             self._n_train = len(X)
 
         def predict(self, X):
-            return {t: np.zeros(len(X), dtype=np.float32) for t in WR_TARGETS}
+            return {t: np.zeros(len(X), dtype=np.float32) for t in TARGETS}
 
     monkeypatch.setattr(bench, "RidgeMultiTarget", _FakeRidge)
     monkeypatch.setattr(
@@ -85,10 +83,10 @@ def test_run_variant_builds_metrics_dict(monkeypatch):
     X_train = pd.DataFrame(rng.normal(size=(n, 3)), columns=feature_cols)
     X_test = pd.DataFrame(rng.normal(size=(n, 3)), columns=feature_cols)
 
-    y_train_dict = {t: rng.normal(size=n) for t in WR_TARGETS}
-    y_test_dict = {t: rng.normal(size=n) for t in WR_TARGETS}
-    y_train_dict["total"] = sum(y_train_dict[t] for t in WR_TARGETS)
-    y_test_dict["total"] = sum(y_test_dict[t] for t in WR_TARGETS)
+    y_train_dict = {t: rng.normal(size=n) for t in TARGETS}
+    y_test_dict = {t: rng.normal(size=n) for t in TARGETS}
+    y_train_dict["total"] = sum(y_train_dict[t] for t in TARGETS)
+    y_test_dict["total"] = sum(y_test_dict[t] for t in TARGETS)
 
     pos_train = pd.DataFrame({"season": rng.integers(2020, 2024, n)})
 
@@ -107,7 +105,7 @@ def test_run_variant_builds_metrics_dict(monkeypatch):
     assert result["pca_n"] is None
     assert "metrics" in result
     assert "total" in result["metrics"]
-    assert set(result["metrics"].keys()) == set(WR_TARGETS) | {"total"}
+    assert set(result["metrics"].keys()) == set(TARGETS) | {"total"}
 
 
 # --------------------------------------------------------------------------
@@ -118,15 +116,15 @@ def test_run_variant_builds_metrics_dict(monkeypatch):
 @pytest.fixture()
 def _stub_main(monkeypatch, tmp_path):
     """Stub every heavy call in ``main()`` so it runs in-process in < 1s."""
-    import src.WR.benchmark_ridge_variants as bench
+    import src.wr.benchmark_ridge_variants as bench
 
-    WR_TARGETS = bench.WR_TARGETS
+    TARGETS = bench.TARGETS
 
     # 30 fake WR-season rows with the few columns main touches.
     rng = np.random.default_rng(42)
     n = 30
 
-    # Features that both the fake frame and get_wr_feature_columns() agree on.
+    # Features that both the fake frame and get_feature_columns() agree on.
     # ``is_home`` is in ``EXTRA_DROPS`` so main's aggressive-cols branch will
     # drop it, exercising that code path.
     feature_cols = ["is_home", "season", "week"]
@@ -140,9 +138,9 @@ def _stub_main(monkeypatch, tmp_path):
             "recent_team": ["KC"] * n,
             "is_home": rng.integers(0, 2, n).astype(np.float32),
         }
-        for col in bench.WR_SPECIFIC_FEATURES:
+        for col in bench.SPECIFIC_FEATURES:
             feats[col] = rng.normal(size=n)
-        for t in WR_TARGETS:
+        for t in TARGETS:
             feats[t] = rng.normal(size=n)
         return pd.DataFrame(feats)
 
@@ -155,28 +153,28 @@ def _stub_main(monkeypatch, tmp_path):
     monkeypatch.setattr(bench, "MIN_GAMES_PER_SEASON", 0)
 
     # Feature helpers: pass through so main() keeps the full frame.
-    monkeypatch.setattr(bench, "filter_to_wr", lambda df: df)
-    monkeypatch.setattr(bench, "compute_wr_targets", lambda df: df)
+    monkeypatch.setattr(bench, "filter_to_position", lambda df: df)
+    monkeypatch.setattr(bench, "compute_targets", lambda df: df)
     monkeypatch.setattr(
         bench,
-        "add_wr_specific_features",
+        "add_specific_features",
         lambda tr, va, te: (tr.copy(), va.copy(), te.copy()),
     )
     monkeypatch.setattr(
         bench,
-        "fill_wr_nans",
+        "fill_nans",
         lambda tr, va, te, specs: (tr.copy(), va.copy(), te.copy()),
     )
     # Restrict the feature whitelist so aggressive_cols ends up non-empty after
     # EXTRA_DROPS — we want both the base and aggressive branches in main to fire.
-    monkeypatch.setattr(bench, "get_wr_feature_columns", lambda: feature_cols)
+    monkeypatch.setattr(bench, "get_feature_columns", lambda: feature_cols)
 
     # _run_variant is the inner loop — return canned metrics so main() just
     # drives the aggregation + printing.
     def _canned(name, cols, X_train, X_test, y_train, y_test, pos_train, pca_n=None):
         mae_by_pca = {None: 3.0, 30: 2.7, 50: 2.8, 80: 2.85}.get(pca_n, 3.0)
         metrics = {}
-        for t in WR_TARGETS:
+        for t in TARGETS:
             metrics[t] = {"mae": 1.0, "r2": 0.05, "rmse": 2.0}
         metrics["total"] = {"mae": mae_by_pca, "r2": 0.2, "rmse": 4.0}
         return {
@@ -184,7 +182,7 @@ def _stub_main(monkeypatch, tmp_path):
             "n_features": len(cols),
             "pca_n": pca_n,
             "cond_number": 1e5,
-            "best_alphas": {t: 1.0 for t in WR_TARGETS},
+            "best_alphas": {t: 1.0 for t in TARGETS},
             "metrics": metrics,
             "elapsed": 0.01,
         }

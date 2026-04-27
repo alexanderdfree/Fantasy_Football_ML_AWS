@@ -9,17 +9,18 @@ Orientation file for Claude Code. Human-facing docs live elsewhere — this file
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — design decisions with rejected alternatives.
 
 ## Project shape (six-position symmetry)
-Each of `src/QB/ src/RB/ src/WR/ src/TE/ src/K/ src/DST/` follows the same template:
+Each of `src/qb/ src/rb/ src/wr/ src/te/ src/k/ src/dst/` follows the same template:
 
 ```
-src/{POS}/
-  {pos}_config.py     # hyperparams (Ridge alpha grids, NN dims, loss weights, Huber deltas, LightGBM params)
-  {pos}_data.py       # loading + temporal split specifics
-  {pos}_features.py   # position-specific feature engineering
-  {pos}_targets.py    # raw-stat target definitions
-  run_{pos}_pipeline.py
-  tests/
+src/{pos}/
+  config.py        # hyperparams (Ridge alpha grids, NN dims, loss weights, Huber deltas, LightGBM params)
+  data.py          # loading + temporal split specifics
+  features.py      # position-specific feature engineering
+  targets.py       # raw-stat target definitions
+  run_pipeline.py  # exposes run() and (for QB/RB/WR) run_cv()
 ```
+
+Tests for each position live under `tests/{pos}/`.
 
 Shared plumbing is in [src/shared/](src/shared/): `pipeline.py` (train/eval loop), `models.py` (Ridge + MultiHeadNet), `neural_net.py` (attention), `aggregate_targets.py` (raw-stat → fantasy-point scoring), `training.py`, `evaluation.py`, `backtest.py`.
 
@@ -35,16 +36,16 @@ All six positions train an attention NN (DST landed via `cc0c627`, K via `801b61
 Every position predicts raw NFL stats (yards, TDs, receptions, etc.). Fantasy points are computed *after* prediction via `src.shared.aggregate_targets.predictions_to_fantasy_points(pos, preds)`. If you find yourself training a model directly on `fantasy_points`, stop — you'll break scoring-format flexibility and regress the ~1.9 pt/game double-count fix documented in TODO.md's archive.
 
 ### Feature whitelist is explicit, not inferred
-`{POS}_INCLUDE_FEATURES` in each `{pos}_config.py` is an opt-in list. New columns must be added explicitly — the training code will *not* pick them up automatically. This prevents silent feature leakage. When you add a feature, update both the feature-engineering file *and* the include dict, then update the test fixture (`tests/conftest.py` or `{POS}/tests/conftest.py`).
+`INCLUDE_FEATURES` in each `src/{pos}/config.py` is an opt-in list. New columns must be added explicitly — the training code will *not* pick them up automatically. This prevents silent feature leakage. When you add a feature, update both the feature-engineering file *and* the include dict, then update the test fixture (`tests/conftest.py` or `tests/{pos}/conftest.py`).
 
 ### Attention static-feature whitelist is separate per position
-The attention NN's static branch reads a *second*, smaller allowlist: `{POS}_ATTN_STATIC_FEATURES` (commit `2500ecc`). It is defined per position (QB/RB/WR/TE derive it from a `{POS}_ATTN_STATIC_CATEGORIES` subset of `{POS}_INCLUDE_FEATURES`; DST/K enumerate it directly) and deliberately excludes rolling/ewma/trend columns so the attention branch doesn't double-count signal it already learns from `{POS}_ATTN_HISTORY_STATS`. Adding a feature to `{POS}_INCLUDE_FEATURES` does **not** feed it into attention — add it to `{POS}_ATTN_STATIC_FEATURES` too if that's what you want.
+The attention NN's static branch reads a *second*, smaller allowlist: `ATTN_STATIC_FEATURES` (commit `2500ecc`). It is defined per position (QB/RB/WR/TE derive it from an `ATTN_STATIC_CATEGORIES` subset of `INCLUDE_FEATURES`; DST/K enumerate it directly) and deliberately excludes rolling/ewma/trend columns so the attention branch doesn't double-count signal it already learns from `ATTN_HISTORY_STATS`. Adding a feature to `INCLUDE_FEATURES` does **not** feed it into attention — add it to `ATTN_STATIC_FEATURES` too if that's what you want.
 
 ### Loss weights are tuned inverse-to-Huber-delta
-`{POS}_LOSS_WEIGHTS` ≈ `2.0 / {POS}_HUBER_DELTAS[target]`. The rationale is baked into QB's config comment ([src/QB/qb_config.py](src/QB/qb_config.py)): without this rebalance, yards targets (δ=15–25) dominated count heads (δ=0.5) ~2500× per sample and the count heads collapsed to the mean. If you retune a Huber delta, re-derive the matching loss weight — don't change one without the other.
+`LOSS_WEIGHTS` ≈ `2.0 / HUBER_DELTAS[target]`. The rationale is baked into QB's config comment ([src/qb/config.py](src/qb/config.py)): without this rebalance, yards targets (δ=15–25) dominated count heads (δ=0.5) ~2500× per sample and the count heads collapsed to the mean. If you retune a Huber delta, re-derive the matching loss weight — don't change one without the other.
 
 ### `non_negative_targets` is per-head, not global
-The NN clamps outputs to ≥ 0 per head. Default (`non_negative_targets=None` in `MultiHeadNet`) clamps *every* head, which is what QB/RB/WR/TE rely on — they don't set the config key. K and DST set `{POS}_NN_NON_NEGATIVE_TARGETS = set({POS}_TARGETS)` explicitly (same effect as the default, written out for clarity); if a position ever adds a signed head (e.g. a bonus that can go negative), pass a set that *excludes* that head rather than flipping the behaviour globally. If you construct `MultiHeadNet(...)` anywhere outside `src/shared/pipeline.py::_train_nn`, mirror the `non_negative_targets=cfg.get("nn_non_negative_targets")` kwarg — the CV path was missed once (see TODO.md archive).
+The NN clamps outputs to ≥ 0 per head. Default (`non_negative_targets=None` in `MultiHeadNet`) clamps *every* head, which is what QB/RB/WR/TE rely on — they don't set the config key. K and DST set `NN_NON_NEGATIVE_TARGETS = set(TARGETS)` explicitly (same effect as the default, written out for clarity); if a position ever adds a signed head (e.g. a bonus that can go negative), pass a set that *excludes* that head rather than flipping the behaviour globally. If you construct `MultiHeadNet(...)` anywhere outside `src/shared/pipeline.py::_train_nn`, mirror the `non_negative_targets=cfg.get("nn_non_negative_targets")` kwarg — the CV path was missed once (see TODO.md archive).
 
 ### Always diff training vs inference paths
 The training pipeline in `src/shared/pipeline.py` and the serving code in `src/serving/app.py` both build features. They have drifted silently in the past (weather/Vegas merge in training but not serving; scaler clip in one path but not the other). If you touch feature building in either, check the other.
@@ -53,13 +54,13 @@ The training pipeline in `src/shared/pipeline.py` and the serving code in `src/s
 
 Commands live in [SETUP.md](SETUP.md). Shortcuts:
 - `python -m src.benchmarking.benchmark [POS ...]` — benchmark & refresh artifacts (writes a `{run_id}.json` file under `benchmark_history/`).
-- `python -m src.{POS}.run_{pos}_pipeline` — single position, full local run.
+- `python -m src.{pos}.run_pipeline` — single position, full local run.
 - `pytest -m unit` — fast subset, runs in seconds. `pytest` for the full suite (requires `data/splits/*.parquet`).
 - `ruff check . && ruff format --check .` — lint/format gate used by CI.
 
 ## CI & training
 
-- `tests.yml` — ruff + pytest on push/PR. Installs via `uv` (migrated in `3c897d8`) and shards pytest across `QB/RB/WR/TE/K/DST/shared` matrix jobs (per-position paths under `tests/{pos}/`; the `shared` shard runs `tests/` excluding the per-position dirs). Each shard uploads coverage to Codecov under a matching flag; the project target is **80% per component/flag** (see [codecov.yml](codecov.yml)). Diagnostic CLIs (`src/QB/diagnose_qb_outliers.py`, `src/RB/analyze_rb_errors.py`) are excluded from the coverage denominator. If `Run Tests` silently stops firing on rapid force-push cadence (occasional GitHub Actions bug), run `pytest` locally and merge with `gh pr merge --squash`.
+- `tests.yml` — ruff + pytest on push/PR. Installs via `uv` (migrated in `3c897d8`) and shards pytest across `QB/RB/WR/TE/K/DST/shared` matrix jobs (per-position paths under `tests/{pos}/`; the `shared` shard runs `tests/` excluding the per-position dirs). Each shard uploads coverage to Codecov under a matching flag; the project target is **80% per component/flag** (see [codecov.yml](codecov.yml)). Diagnostic CLIs (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`) are excluded from the coverage denominator. If `Run Tests` silently stops firing on rapid force-push cadence (occasional GitHub Actions bug), run `pytest` locally and merge with `gh pr merge --squash`.
 - `batch-image.yml` → `train-ec2.yml` — image build triggers EC2 training. The `detect` job diffs the merge commit and only retrains positions whose code changed. AWS g4dn.xlarge OD quota is 4 vCPU (one instance); spot quota is higher. Check quota before dispatching if you touch infra.
 - `deploy.yml` — ECS Flask deploy.
 

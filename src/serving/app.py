@@ -25,17 +25,18 @@ import pandas as pd
 import torch
 from flask import Flask, jsonify, render_template, request
 
-import src.DST.dst_config as dst_cfg
-import src.K.k_config as k_cfg
-import src.QB.qb_config as qb_cfg
-import src.RB.rb_config as rb_cfg
-import src.TE.te_config as te_cfg
-import src.WR.wr_config as wr_cfg
+import src.dst.config as dst_cfg
+import src.dst.data as dst_data
+import src.dst.features as dst_features
+import src.k.config as k_cfg
+import src.k.data as k_data
+import src.k.features as k_features
+import src.qb.config as qb_cfg
+import src.rb.config as rb_cfg
+import src.te.config as te_cfg
+import src.wr.config as wr_cfg
 from src.config import SCORING_HALF_PPR, SCORING_STANDARD, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 from src.data.loader import compute_fantasy_points
-from src.DST.dst_config import DST_SPECIFIC_FEATURES, DST_TARGETS
-from src.DST.dst_data import build_dst_data
-from src.DST.dst_features import compute_dst_features
 from src.evaluation.metrics import compute_metrics, compute_positional_metrics
 from src.features.engineer import (
     build_game_history_arrays,
@@ -43,14 +44,6 @@ from src.features.engineer import (
     build_opp_defense_per_game_df,
     get_attn_static_columns,
 )
-from src.K.k_config import K_SPECIFIC_FEATURES, K_TARGETS
-
-# Per-position imports needed only for /api/model_architecture metadata and
-# for K/DST data loaders (these have their own data pipelines, not in registry).
-from src.K.k_data import kicker_season_split, load_kicker_data, load_kicker_kicks
-from src.K.k_features import build_nested_kick_history, compute_k_features
-from src.QB.qb_config import QB_SPECIFIC_FEATURES, QB_TARGETS
-from src.RB.rb_config import RB_SPECIFIC_FEATURES, RB_TARGETS
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.artifact_integrity import (
     assert_scaler_matches,
@@ -67,8 +60,6 @@ from src.shared.neural_net import (
 )
 from src.shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
 from src.shared.weather_features import WEATHER_FEATURES_ALL
-from src.TE.te_config import TE_SPECIFIC_FEATURES, TE_TARGETS
-from src.WR.wr_config import WR_SPECIFIC_FEATURES, WR_TARGETS
 
 sync_data_from_s3()
 sync_models_from_s3()
@@ -227,10 +218,10 @@ POSITION_INFO = {
             },
         ],
         "adjustments": "None - penalties are now direct targets (interceptions, fumbles_lost).",
-        "specific_features": QB_SPECIFIC_FEATURES,
+        "specific_features": qb_cfg.SPECIFIC_FEATURES,
         "architecture": {
-            "backbone": list(qb_cfg.QB_NN_BACKBONE_LAYERS),
-            "head_hidden": qb_cfg.QB_NN_HEAD_HIDDEN,
+            "backbone": list(qb_cfg.NN_BACKBONE_LAYERS),
+            "head_hidden": qb_cfg.NN_HEAD_HIDDEN,
         },
     },
     "RB": {
@@ -252,10 +243,10 @@ POSITION_INFO = {
             },
         ],
         "adjustments": "None - fumbles_lost is now a direct target.",
-        "specific_features": list(RB_SPECIFIC_FEATURES),
+        "specific_features": list(rb_cfg.SPECIFIC_FEATURES),
         "architecture": {
-            "backbone": list(rb_cfg.RB_NN_BACKBONE_LAYERS),
-            "head_hidden": rb_cfg.RB_NN_HEAD_HIDDEN,
+            "backbone": list(rb_cfg.NN_BACKBONE_LAYERS),
+            "head_hidden": rb_cfg.NN_HEAD_HIDDEN,
         },
     },
     "WR": {
@@ -275,10 +266,10 @@ POSITION_INFO = {
             },
         ],
         "adjustments": "None - fumbles_lost is now a direct target.",
-        "specific_features": list(WR_SPECIFIC_FEATURES),
+        "specific_features": list(wr_cfg.SPECIFIC_FEATURES),
         "architecture": {
-            "backbone": list(wr_cfg.WR_NN_BACKBONE_LAYERS),
-            "head_hidden": wr_cfg.WR_NN_HEAD_HIDDEN,
+            "backbone": list(wr_cfg.NN_BACKBONE_LAYERS),
+            "head_hidden": wr_cfg.NN_HEAD_HIDDEN,
         },
     },
     "TE": {
@@ -290,10 +281,10 @@ POSITION_INFO = {
             {"key": "fumbles_lost", "label": "Fumbles Lost", "formula": "raw count"},
         ],
         "adjustments": "None - fumbles_lost is now a direct target.",
-        "specific_features": list(TE_SPECIFIC_FEATURES),
+        "specific_features": list(te_cfg.SPECIFIC_FEATURES),
         "architecture": {
-            "backbone": list(te_cfg.TE_NN_BACKBONE_LAYERS),
-            "head_hidden": te_cfg.TE_NN_HEAD_HIDDEN,
+            "backbone": list(te_cfg.NN_BACKBONE_LAYERS),
+            "head_hidden": te_cfg.NN_HEAD_HIDDEN,
         },
     },
     "K": {
@@ -318,10 +309,10 @@ POSITION_INFO = {
         ],
         "adjustments": "None",
         "formula": "fg_yard_points + pat_points − fg_misses − xp_misses",
-        "specific_features": list(K_SPECIFIC_FEATURES),
+        "specific_features": list(k_cfg.SPECIFIC_FEATURES),
         "architecture": {
-            "backbone": list(k_cfg.K_NN_BACKBONE_LAYERS),
-            "head_hidden": k_cfg.K_NN_HEAD_HIDDEN,
+            "backbone": list(k_cfg.NN_BACKBONE_LAYERS),
+            "head_hidden": k_cfg.NN_HEAD_HIDDEN,
         },
     },
     "DST": {
@@ -358,10 +349,10 @@ POSITION_INFO = {
             "+ def_safeties*2 + def_tds*6 + def_blocked_kicks*2 + special_teams_tds*6 "
             "+ tier_pa(points_allowed) + tier_ya(yards_allowed)"
         ),
-        "specific_features": list(DST_SPECIFIC_FEATURES),
+        "specific_features": list(dst_cfg.SPECIFIC_FEATURES),
         "architecture": {
-            "backbone": list(dst_cfg.DST_NN_BACKBONE_LAYERS),
-            "head_hidden": dst_cfg.DST_NN_HEAD_HIDDEN,
+            "backbone": list(dst_cfg.NN_BACKBONE_LAYERS),
+            "head_hidden": dst_cfg.NN_HEAD_HIDDEN,
         },
     },
 }
@@ -518,11 +509,11 @@ def _load_k_splits():
     Also returns the per-kick records dataframe needed by the attention NN's
     nested kick-history builder at inference time.
     """
-    k_df = load_kicker_data()
+    k_df = k_data.load_data()
     k_df = POSITION_REGISTRY["K"]["compute_targets_fn"](k_df)
-    compute_k_features(k_df)
-    kicks_df = load_kicker_kicks(k_df)
-    train, val, test = kicker_season_split(k_df)
+    k_features.compute_features(k_df)
+    kicks_df = k_data.load_kicks(k_df)
+    train, val, test = k_data.season_split(k_df)
     return train, val, test, kicks_df
 
 
@@ -532,9 +523,9 @@ def _load_dst_splits():
     D/ST operates at team level (not player level), built from schedule
     scores and opponent offensive stats.
     """
-    dst_df = build_dst_data()
+    dst_df = dst_data.build_data()
     dst_df = POSITION_REGISTRY["DST"]["compute_targets_fn"](dst_df)
-    compute_dst_features(dst_df)
+    dst_features.compute_features(dst_df)
     train = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()
     val = dst_df[dst_df["season"].isin(VAL_SEASONS)].copy()
     test = dst_df[dst_df["season"].isin(TEST_SEASONS)].copy()
@@ -708,7 +699,7 @@ def _apply_position_models(train, val, test, pos, results):
                     raise RuntimeError(
                         "K nested attention requires kicks_df cached by _load_k_splits"
                     )
-                hist_test, outer_test, inner_test = build_nested_kick_history(
+                hist_test, outer_test, inner_test = k_features.build_nested_kick_history(
                     pos_test,
                     kicks_df=kicks_df,
                     kick_stats=reg["attn_kick_stats"],
@@ -1399,18 +1390,17 @@ def _position_arch_payload(pos, cfg, specific, targets, include_features, attn_h
     def get(name, default=None):
         return getattr(cfg, name, default)
 
-    prefix = pos.upper()
-
-    # Scheduler summary string
-    scheduler = get(f"{prefix}_SCHEDULER_TYPE", "unknown")
+    # Scheduler summary string. Constants on each position cfg are unprefixed
+    # (e.g. cfg.SCHEDULER_TYPE) — the position is implicit from the cfg module.
+    scheduler = get("SCHEDULER_TYPE", "unknown")
     if scheduler == "cosine_warm_restarts":
-        t0 = get(f"{prefix}_COSINE_T0", "?")
-        tm = get(f"{prefix}_COSINE_T_MULT", "?")
-        em = get(f"{prefix}_COSINE_ETA_MIN", "?")
+        t0 = get("COSINE_T0", "?")
+        tm = get("COSINE_T_MULT", "?")
+        em = get("COSINE_ETA_MIN", "?")
         scheduler_str = f"CosineAnnealingWarmRestarts(T0={t0}, T_mult={tm}, eta_min={em})"
     elif scheduler == "onecycle":
-        mx = get(f"{prefix}_ONECYCLE_MAX_LR", "?")
-        ps = get(f"{prefix}_ONECYCLE_PCT_START", "?")
+        mx = get("ONECYCLE_MAX_LR", "?")
+        ps = get("ONECYCLE_PCT_START", "?")
         scheduler_str = f"OneCycleLR(max_lr={mx}, pct_start={ps})"
     elif scheduler == "plateau":
         scheduler_str = "ReduceLROnPlateau"
@@ -1432,18 +1422,18 @@ def _position_arch_payload(pos, cfg, specific, targets, include_features, attn_h
 
     payload = {
         "targets": list(targets),
-        "backbone_layers": list(get(f"{prefix}_NN_BACKBONE_LAYERS", [])),
-        "head_hidden": get(f"{prefix}_NN_HEAD_HIDDEN"),
-        "head_hidden_overrides": dict(get(f"{prefix}_NN_HEAD_HIDDEN_OVERRIDES", {}) or {}),
-        "dropout": get(f"{prefix}_NN_DROPOUT"),
-        "lr": get(f"{prefix}_NN_LR"),
-        "weight_decay": get(f"{prefix}_NN_WEIGHT_DECAY"),
-        "batch_size": get(f"{prefix}_NN_BATCH_SIZE"),
-        "epochs": get(f"{prefix}_NN_EPOCHS"),
-        "patience": get(f"{prefix}_NN_PATIENCE"),
+        "backbone_layers": list(get("NN_BACKBONE_LAYERS", [])),
+        "head_hidden": get("NN_HEAD_HIDDEN"),
+        "head_hidden_overrides": dict(get("NN_HEAD_HIDDEN_OVERRIDES", {}) or {}),
+        "dropout": get("NN_DROPOUT"),
+        "lr": get("NN_LR"),
+        "weight_decay": get("NN_WEIGHT_DECAY"),
+        "batch_size": get("NN_BATCH_SIZE"),
+        "epochs": get("NN_EPOCHS"),
+        "patience": get("NN_PATIENCE"),
         "scheduler": scheduler_str,
-        "attention_enabled": bool(get(f"{prefix}_TRAIN_ATTENTION_NN", False)),
-        "lightgbm_enabled": bool(get(f"{prefix}_TRAIN_LIGHTGBM", False)),
+        "attention_enabled": bool(get("TRAIN_ATTENTION_NN", False)),
+        "lightgbm_enabled": bool(get("TRAIN_LIGHTGBM", False)),
         "feature_count": len(flat_features),
         "features": grouped,
     }
@@ -1459,48 +1449,48 @@ def api_model_architecture():
             "QB": _position_arch_payload(
                 "QB",
                 qb_cfg,
-                QB_SPECIFIC_FEATURES,
-                QB_TARGETS,
-                getattr(qb_cfg, "QB_INCLUDE_FEATURES", []),
-                getattr(qb_cfg, "QB_ATTN_HISTORY_STATS", None),
+                qb_cfg.SPECIFIC_FEATURES,
+                qb_cfg.TARGETS,
+                getattr(qb_cfg, "INCLUDE_FEATURES", []),
+                getattr(qb_cfg, "ATTN_HISTORY_STATS", None),
             ),
             "RB": _position_arch_payload(
                 "RB",
                 rb_cfg,
-                RB_SPECIFIC_FEATURES,
-                RB_TARGETS,
-                getattr(rb_cfg, "RB_INCLUDE_FEATURES", []),
-                getattr(rb_cfg, "RB_ATTN_HISTORY_STATS", None),
+                rb_cfg.SPECIFIC_FEATURES,
+                rb_cfg.TARGETS,
+                getattr(rb_cfg, "INCLUDE_FEATURES", []),
+                getattr(rb_cfg, "ATTN_HISTORY_STATS", None),
             ),
             "WR": _position_arch_payload(
                 "WR",
                 wr_cfg,
-                WR_SPECIFIC_FEATURES,
-                WR_TARGETS,
-                getattr(wr_cfg, "WR_INCLUDE_FEATURES", []),
-                getattr(wr_cfg, "WR_ATTN_HISTORY_STATS", None),
+                wr_cfg.SPECIFIC_FEATURES,
+                wr_cfg.TARGETS,
+                getattr(wr_cfg, "INCLUDE_FEATURES", []),
+                getattr(wr_cfg, "ATTN_HISTORY_STATS", None),
             ),
             "TE": _position_arch_payload(
                 "TE",
                 te_cfg,
-                TE_SPECIFIC_FEATURES,
-                TE_TARGETS,
-                getattr(te_cfg, "TE_INCLUDE_FEATURES", []),
-                getattr(te_cfg, "TE_ATTN_HISTORY_STATS", None),
+                te_cfg.SPECIFIC_FEATURES,
+                te_cfg.TARGETS,
+                getattr(te_cfg, "INCLUDE_FEATURES", []),
+                getattr(te_cfg, "ATTN_HISTORY_STATS", None),
             ),
             "K": _position_arch_payload(
                 "K",
                 k_cfg,
-                K_SPECIFIC_FEATURES,
-                K_TARGETS,
-                getattr(k_cfg, "K_CONTEXTUAL_FEATURES", []),
+                k_cfg.SPECIFIC_FEATURES,
+                k_cfg.TARGETS,
+                getattr(k_cfg, "CONTEXTUAL_FEATURES", []),
             ),
             "DST": _position_arch_payload(
                 "DST",
                 dst_cfg,
-                DST_SPECIFIC_FEATURES,
-                DST_TARGETS,
-                getattr(dst_cfg, "DST_CONTEXTUAL_FEATURES", []),
+                dst_cfg.SPECIFIC_FEATURES,
+                dst_cfg.TARGETS,
+                getattr(dst_cfg, "CONTEXTUAL_FEATURES", []),
             ),
         }
         return jsonify(

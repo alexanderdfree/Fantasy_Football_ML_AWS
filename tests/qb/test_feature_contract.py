@@ -1,8 +1,8 @@
 """QB feature contract — catches silently dropped features.
 
-Asserts that add_qb_specific_features produces every column listed in
-QB_SPECIFIC_FEATURES with the correct dtype and within per-feature NaN
-ceilings. get_qb_feature_columns() is the authoritative source of the full
+Asserts that add_specific_features produces every column listed in
+SPECIFIC_FEATURES with the correct dtype and within per-feature NaN
+ceilings. get_feature_columns() is the authoritative source of the full
 feature catalog; this contract covers the subset that QB owns (specific
 features); shared rolling/EWMA/etc. features are built upstream.
 
@@ -15,8 +15,8 @@ import pandas as pd
 import pytest
 
 from src.features.engineer import get_attn_static_columns
-from src.QB.qb_config import QB_ATTN_STATIC_FEATURES, QB_INCLUDE_FEATURES, QB_SPECIFIC_FEATURES
-from src.QB.qb_features import add_qb_specific_features, get_qb_feature_columns
+from src.qb.config import ATTN_STATIC_FEATURES, INCLUDE_FEATURES, SPECIFIC_FEATURES
+from src.qb.features import add_specific_features, get_feature_columns
 
 # Per-feature NaN ceilings — the QB pipeline uses .fillna(0) so output NaN
 # fraction must be 0. Anything else indicates a regression in fill logic.
@@ -24,7 +24,7 @@ NAN_CEILING = 0.0
 
 
 def _make_qb_season(n_players=5, n_weeks=17, seed=42):
-    """Synthetic QB-season data with the raw columns needed by _compute_qb_features."""
+    """Synthetic QB-season data with the raw columns needed by _compute_features."""
     rng = np.random.default_rng(seed)
     rows = []
     for pid in range(1, n_players + 1):
@@ -60,15 +60,15 @@ def qb_feature_df():
     train = _make_qb_season(n_players=5, n_weeks=17, seed=42)
     val = _make_qb_season(n_players=3, n_weeks=17, seed=43)
     test = _make_qb_season(n_players=3, n_weeks=17, seed=44)
-    train, val, test = add_qb_specific_features(train, val, test)
+    train, val, test = add_specific_features(train, val, test)
     return train
 
 
 @pytest.mark.unit
 class TestQBFeatureContract:
     def test_all_specific_features_present(self, qb_feature_df):
-        """add_qb_specific_features must produce every column in QB_SPECIFIC_FEATURES."""
-        missing = [c for c in QB_SPECIFIC_FEATURES if c not in qb_feature_df.columns]
+        """add_specific_features must produce every column in SPECIFIC_FEATURES."""
+        missing = [c for c in SPECIFIC_FEATURES if c not in qb_feature_df.columns]
         assert not missing, (
             f"Missing {len(missing)} QB-specific features: {missing}. "
             "A silent rename or deletion has broken the feature contract."
@@ -76,14 +76,14 @@ class TestQBFeatureContract:
 
     def test_specific_features_numeric_dtype(self, qb_feature_df):
         """All specific features must be numeric (float)."""
-        for col in QB_SPECIFIC_FEATURES:
+        for col in SPECIFIC_FEATURES:
             dtype = qb_feature_df[col].dtype
             assert np.issubdtype(dtype, np.number), f"{col} has non-numeric dtype {dtype}"
 
     def test_specific_features_nan_ceiling(self, qb_feature_df):
         """Pipeline fills NaN with 0; every specific feature must be fully dense."""
         n = len(qb_feature_df)
-        for col in QB_SPECIFIC_FEATURES:
+        for col in SPECIFIC_FEATURES:
             nan_frac = qb_feature_df[col].isna().mean()
             assert nan_frac <= NAN_CEILING, (
                 f"{col} NaN fraction {nan_frac:.3f} exceeds ceiling {NAN_CEILING} "
@@ -92,23 +92,23 @@ class TestQBFeatureContract:
 
     def test_specific_features_no_inf(self, qb_feature_df):
         """No feature should contain inf/-inf — all are ratios with zero-guards."""
-        for col in QB_SPECIFIC_FEATURES:
+        for col in SPECIFIC_FEATURES:
             assert not qb_feature_df[col].isin([np.inf, -np.inf]).any(), (
                 f"{col} contains inf/-inf — zero-division guard regressed"
             )
 
     def test_feature_columns_source_of_truth(self):
-        """get_qb_feature_columns() must include every QB_SPECIFIC_FEATURES entry."""
-        all_cols = get_qb_feature_columns()
-        missing = [c for c in QB_SPECIFIC_FEATURES if c not in all_cols]
+        """get_feature_columns() must include every SPECIFIC_FEATURES entry."""
+        all_cols = get_feature_columns()
+        missing = [c for c in SPECIFIC_FEATURES if c not in all_cols]
         assert not missing, (
-            f"QB_SPECIFIC_FEATURES entries missing from get_qb_feature_columns(): "
-            f"{missing}. QB_INCLUDE_FEATURES['specific'] must list them."
+            f"SPECIFIC_FEATURES entries missing from get_feature_columns(): "
+            f"{missing}. INCLUDE_FEATURES['specific'] must list them."
         )
 
     def test_no_duplicate_feature_columns(self):
-        """get_qb_feature_columns() returns unique names (duplicates would silently mask)."""
-        cols = get_qb_feature_columns()
+        """get_feature_columns() returns unique names (duplicates would silently mask)."""
+        cols = get_feature_columns()
         duplicates = [c for c in set(cols) if cols.count(c) > 1]
         assert not duplicates, f"Duplicate feature columns: {duplicates}"
 
@@ -130,15 +130,15 @@ class TestQBFeatureContract:
             assert values.min() >= 0.0, f"{col} has negative values (min={values.min()})"
 
     def test_specific_features_excluded_from_attn_static(self):
-        """QB_SPECIFIC_FEATURES are per-game signals consumed by the attention
-        branch via QB_ATTN_HISTORY_STATS — they must not leak into the
+        """SPECIFIC_FEATURES are per-game signals consumed by the attention
+        branch via ATTN_HISTORY_STATS — they must not leak into the
         attention NN's static-feature branch (the old blacklist missed them)."""
-        static_cols = get_attn_static_columns(get_qb_feature_columns(), QB_ATTN_STATIC_FEATURES)
-        leaks = set(QB_SPECIFIC_FEATURES) & set(static_cols)
+        static_cols = get_attn_static_columns(get_feature_columns(), ATTN_STATIC_FEATURES)
+        leaks = set(SPECIFIC_FEATURES) & set(static_cols)
         assert not leaks, f"QB specific features leaked into attention static: {sorted(leaks)}"
 
     def test_feature_categories_documented(self):
-        """QB_INCLUDE_FEATURES dict contains every documented category."""
+        """INCLUDE_FEATURES dict contains every documented category."""
         expected = {
             "rolling",
             "prior_season",
@@ -151,6 +151,6 @@ class TestQBFeatureContract:
             "weather_vegas",
             "specific",
         }
-        assert expected == set(QB_INCLUDE_FEATURES.keys()), (
-            f"Category mismatch: {set(QB_INCLUDE_FEATURES.keys()) ^ expected}"
+        assert expected == set(INCLUDE_FEATURES.keys()), (
+            f"Category mismatch: {set(INCLUDE_FEATURES.keys()) ^ expected}"
         )

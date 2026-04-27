@@ -13,7 +13,7 @@ import torch
 
 from src.shared.neural_net import MultiHeadNet
 
-DST_TARGETS = ["def_sacks", "def_tds", "points_allowed"]
+TARGETS = ["def_sacks", "def_tds", "points_allowed"]
 
 
 @pytest.mark.unit
@@ -22,7 +22,7 @@ class TestMultiHeadNet:
     def model(self):
         return MultiHeadNet(
             input_dim=10,
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
             dropout=0.1,
@@ -43,31 +43,31 @@ class TestMultiHeadNet:
     def test_custom_backbone(self):
         model = MultiHeadNet(
             input_dim=5,
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[64, 32, 16],
         )
         x = torch.randn(2, 5)
         out = model(x)
-        for t in DST_TARGETS:
+        for t in TARGETS:
             assert out[t].shape == (2,)
 
     def test_single_sample_eval_mode(self):
         model = MultiHeadNet(
             input_dim=10,
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[16, 8],
         )
         model.eval()
         with torch.no_grad():
             x = torch.randn(1, 10)
             out = model(x)
-        for t in DST_TARGETS:
+        for t in TARGETS:
             assert out[t].shape == (1,)
 
     def test_predict_numpy(self):
         model = MultiHeadNet(
             input_dim=10,
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[16, 8],
         )
         X = np.random.randn(5, 10).astype(np.float32)
@@ -82,19 +82,19 @@ class TestMultiHeadNet:
     def test_predict_numpy_single_sample(self):
         model = MultiHeadNet(
             input_dim=5,
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[8, 4],
         )
         X = np.random.randn(1, 5).astype(np.float32)
         device = torch.device("cpu")
         preds = model.predict_numpy(X, device)
-        for t in DST_TARGETS:
+        for t in TARGETS:
             assert preds[t].shape == (1,)
 
     def test_gradients_flow(self, model):
         x = torch.randn(4, 10, requires_grad=True)
         out = model(x)
-        loss = sum(out[t].sum() for t in DST_TARGETS)
+        loss = sum(out[t].sum() for t in TARGETS)
         loss.backward()
         assert x.grad is not None
         assert x.grad.shape == (4, 10)
@@ -105,7 +105,7 @@ class TestMultiHeadNet:
         torch.manual_seed(0)
         model = MultiHeadNet(
             input_dim=5,
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[16],
             head_hidden=4,
             dropout=0.0,
@@ -114,17 +114,17 @@ class TestMultiHeadNet:
         x = torch.randn(4, 5) * 0.01
         x.requires_grad_(True)
         out = model(x)
-        loss = sum(out[t].sum() for t in DST_TARGETS)
+        loss = sum(out[t].sum() for t in TARGETS)
         loss.backward()
         assert x.grad is not None
         assert not torch.isnan(x.grad).any()
         assert (x.grad != 0).any()
 
-    def test_dst_config_backbone(self):
+    def test_config_backbone(self):
         """DST config uses [128, 64] backbone with per-target head overrides."""
         model = MultiHeadNet(
             input_dim=10,
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[128, 64],
             head_hidden=32,
             dropout=0.30,
@@ -134,7 +134,7 @@ class TestMultiHeadNet:
         x = torch.randn(4, 10)
         with torch.no_grad():
             out = model(x)
-        for t in DST_TARGETS:
+        for t in TARGETS:
             assert out[t].shape == (4,)
         assert model.heads["def_tds"][0].out_features == 16
         assert model.heads["points_allowed"][0].out_features == 48
@@ -142,7 +142,7 @@ class TestMultiHeadNet:
     def test_dropout_effect(self):
         model = MultiHeadNet(
             input_dim=10,
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[32, 16],
             dropout=0.5,
         )
@@ -156,15 +156,15 @@ class TestMultiHeadNet:
         with torch.no_grad():
             out_eval = model(x)
 
-        train_sum = sum(out_train[t].detach() for t in DST_TARGETS)
-        eval_sum = sum(out_eval[t] for t in DST_TARGETS)
+        train_sum = sum(out_train[t].detach() for t in TARGETS)
+        eval_sum = sum(out_eval[t] for t in TARGETS)
         assert not torch.allclose(train_sum, eval_sum)
 
     def test_selective_non_negative_targets(self):
         """Only selected targets should be clamped to >= 0."""
         model = MultiHeadNet(
             input_dim=10,
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
             dropout=0.0,
@@ -183,7 +183,7 @@ class TestMultiHeadNet:
         """Default (no non_negative_targets arg) — all targets clamped to >=0."""
         model = MultiHeadNet(
             input_dim=10,
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[32, 16],
             head_hidden=8,
             dropout=0.1,
@@ -192,7 +192,7 @@ class TestMultiHeadNet:
         x = torch.randn(4, 10)
         with torch.no_grad():
             out = model(x)
-        for key in DST_TARGETS:
+        for key in TARGETS:
             assert (out[key] >= 0).all(), f"Negative value in {key} (default clamp)"
 
     def test_no_nan_output(self, model):
@@ -215,14 +215,14 @@ class TestMultiHeadNet:
         """DST uses per-target head overrides — sparse heads smaller, PA wider."""
         model = MultiHeadNet(
             input_dim=10,
-            target_names=DST_TARGETS,
+            target_names=TARGETS,
             backbone_layers=[32, 16],
             head_hidden=16,
             head_hidden_overrides={"def_tds": 8, "points_allowed": 48},
         )
         x = torch.randn(4, 10)
         out = model(x)
-        for t in DST_TARGETS:
+        for t in TARGETS:
             assert out[t].shape == (4,)
         assert model.heads["def_tds"][0].out_features == 8
         assert model.heads["points_allowed"][0].out_features == 48

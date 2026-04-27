@@ -22,14 +22,14 @@ from sklearn.feature_selection import mutual_info_regression
 from sklearn.preprocessing import StandardScaler
 
 from src.data.loader import compute_all_floor_formats, compute_all_scoring_formats, load_raw_data
-from src.QB.qb_targets import compute_qb_targets
-from src.RB.rb_targets import compute_rb_targets
+from src.qb.targets import compute_targets as compute_qb_targets
+from src.rb.targets import compute_targets as compute_rb_targets
 from src.shared.weather_features import (
     WEATHER_DROPS_BY_POSITION,
     merge_schedule_features,
 )
-from src.TE.te_targets import compute_te_targets
-from src.WR.wr_targets import compute_wr_targets
+from src.te.targets import compute_targets as compute_te_targets
+from src.wr.targets import compute_targets as compute_wr_targets
 
 # ── Config ──────────────────────────────────────────────────────────────────
 POSITIONS = {

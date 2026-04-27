@@ -1,7 +1,7 @@
 """Feature contract tests for K (Kicker) position.
 
-Uses `K.k_features.get_k_feature_columns()` as the source of truth: after the
-full K feature pipeline (compute_k_targets -> compute_k_features), every
+Uses `K.k_features.get_feature_columns()` as the source of truth: after the
+full K feature pipeline (compute_targets -> compute_features), every
 advertised feature column must exist, be numeric, and satisfy the documented
 NaN and range ceilings.
 
@@ -13,22 +13,22 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.K.k_config import K_CONTEXTUAL_FEATURES, K_SPECIFIC_FEATURES
-from src.K.k_features import (
-    add_k_specific_features,
-    compute_k_features,
-    fill_k_nans,
-    get_k_feature_columns,
+from src.k.config import CONTEXTUAL_FEATURES, SPECIFIC_FEATURES
+from src.k.features import (
+    add_specific_features,
+    compute_features,
+    fill_nans,
+    get_feature_columns,
 )
-from src.K.k_targets import compute_k_targets
+from src.k.targets import compute_targets
 
 
 @pytest.fixture(scope="module")
-def k_feature_frame(tiny_k_dataset):
+def k_feature_frame(tiny_dataset):
     """Run the K feature pipeline end-to-end and return the resulting frame."""
-    df = tiny_k_dataset.copy()
-    df = compute_k_targets(df)
-    compute_k_features(df)
+    df = tiny_dataset.copy()
+    df = compute_targets(df)
+    compute_features(df)
     # Mimic the pipeline's pre-split fill on the full frame so the contract
     # check reflects what the downstream models actually consume.
     train, val, test = (
@@ -36,14 +36,14 @@ def k_feature_frame(tiny_k_dataset):
         df[df["season"] == 2024].copy(),
         df[df["season"] == 2025].copy(),
     )
-    feature_cols = get_k_feature_columns()
+    feature_cols = get_feature_columns()
     # add_features_fn is a no-op for K (computed before split); call it anyway
     # so the test exercises the real entry points.
-    train, val, test = add_k_specific_features(train, val, test)
+    train, val, test = add_specific_features(train, val, test)
     # Fill only over columns that the K feature pipeline actually produces
     # (specific features are always there; contextual ones come from schedule).
     fillable = [c for c in feature_cols if c in train.columns]
-    train, val, test = fill_k_nans(train, val, test, fillable)
+    train, val, test = fill_nans(train, val, test, fillable)
     return pd.concat([train, val, test], ignore_index=True)
 
 
@@ -54,15 +54,15 @@ def k_feature_frame(tiny_k_dataset):
 
 @pytest.mark.unit
 def test_feature_columns_is_source_of_truth():
-    """get_k_feature_columns() = specific + contextual, in order."""
-    cols = get_k_feature_columns()
-    assert cols == list(K_SPECIFIC_FEATURES) + list(K_CONTEXTUAL_FEATURES)
+    """get_feature_columns() = specific + contextual, in order."""
+    cols = get_feature_columns()
+    assert cols == list(SPECIFIC_FEATURES) + list(CONTEXTUAL_FEATURES)
 
 
 @pytest.mark.unit
 def test_fg_yards_made_column_present(k_feature_frame):
     """`fg_yards_made` (the raw sum-of-kick-distances source of fg_yard_points)
-    must be present after the feature pipeline runs: it feeds compute_k_targets
+    must be present after the feature pipeline runs: it feeds compute_targets
     and must be non-null, non-negative across the frame."""
     assert "fg_yards_made" in k_feature_frame.columns, "fg_yards_made missing after pipeline"
     series = k_feature_frame["fg_yards_made"]
@@ -72,19 +72,19 @@ def test_fg_yards_made_column_present(k_feature_frame):
 
 @pytest.mark.unit
 def test_all_specific_features_present_after_compute(k_feature_frame):
-    """Every K-specific feature column is produced by compute_k_features."""
-    for col in K_SPECIFIC_FEATURES:
+    """Every K-specific feature column is produced by compute_features."""
+    for col in SPECIFIC_FEATURES:
         assert col in k_feature_frame.columns, f"Missing specific feature: {col}"
 
 
 @pytest.mark.unit
 def test_all_contextual_features_present_in_fixture(k_feature_frame):
-    """The synthetic tiny_k_dataset pre-fills all contextual features.
+    """The synthetic tiny_dataset pre-fills all contextual features.
 
     (Real pipeline sources these from the schedule merge; the fixture ships
     them pre-merged so this test can assert the contract end-to-end.)
     """
-    for col in K_CONTEXTUAL_FEATURES:
+    for col in CONTEXTUAL_FEATURES:
         assert col in k_feature_frame.columns, f"Missing contextual feature: {col}"
 
 
@@ -95,14 +95,14 @@ def test_all_contextual_features_present_in_fixture(k_feature_frame):
 
 @pytest.mark.unit
 def test_specific_features_are_numeric(k_feature_frame):
-    for col in K_SPECIFIC_FEATURES:
+    for col in SPECIFIC_FEATURES:
         dtype = k_feature_frame[col].dtype
         assert np.issubdtype(dtype, np.number), f"{col} dtype {dtype} is not numeric"
 
 
 @pytest.mark.unit
 def test_contextual_features_are_numeric(k_feature_frame):
-    for col in K_CONTEXTUAL_FEATURES:
+    for col in CONTEXTUAL_FEATURES:
         dtype = k_feature_frame[col].dtype
         assert np.issubdtype(dtype, np.number), f"{col} dtype {dtype} is not numeric"
 
@@ -115,7 +115,7 @@ def test_contextual_features_are_numeric(k_feature_frame):
 @pytest.mark.unit
 def test_no_inf_in_features(k_feature_frame):
     """No feature column contains +/-Inf (would poison training)."""
-    for col in get_k_feature_columns():
+    for col in get_feature_columns():
         if col in k_feature_frame.columns:
             assert not np.isinf(k_feature_frame[col]).any(), (
                 f"{col} contains Inf after feature pipeline"
@@ -124,8 +124,8 @@ def test_no_inf_in_features(k_feature_frame):
 
 @pytest.mark.unit
 def test_specific_features_have_no_nans(k_feature_frame):
-    """Specific features must be NaN-free after compute_k_features (uses fillna)."""
-    for col in K_SPECIFIC_FEATURES:
+    """Specific features must be NaN-free after compute_features (uses fillna)."""
+    for col in SPECIFIC_FEATURES:
         n_nan = int(k_feature_frame[col].isna().sum())
         assert n_nan == 0, f"{col} has {n_nan} NaNs after compute"
 
@@ -135,7 +135,7 @@ def test_contextual_features_nan_ceiling(k_feature_frame):
     """Contextual feature NaN rate is bounded (fixture pre-fills them)."""
     ceiling = 0.01  # 1% — allow for the odd unmatched row if any slips in
     n_rows = len(k_feature_frame)
-    for col in K_CONTEXTUAL_FEATURES:
+    for col in CONTEXTUAL_FEATURES:
         if col in k_feature_frame.columns:
             nan_rate = float(k_feature_frame[col].isna().sum()) / n_rows
             assert nan_rate <= ceiling, f"{col} NaN rate {nan_rate:.3f} exceeds ceiling {ceiling}"

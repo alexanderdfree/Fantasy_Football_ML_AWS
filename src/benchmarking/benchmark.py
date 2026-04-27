@@ -54,7 +54,7 @@ def collect_global_config():
 def collect_pos_config(pos):
     import importlib
 
-    mod = importlib.import_module(f"src.{pos}.{pos.lower()}_config")
+    mod = importlib.import_module(f"src.{pos.lower()}.config")
     prefix = f"{pos}_"
     return {
         k[len(prefix) :].lower(): v

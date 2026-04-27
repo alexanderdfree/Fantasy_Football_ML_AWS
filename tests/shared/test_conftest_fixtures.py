@@ -2,7 +2,7 @@
 
 The conftest defines several session-scoped helpers
 (``tiny_synthetic_games``, ``tiny_model_artifact``, ``frozen_rng``,
-``tiny_synthetic_rb_raw``) intended for the new E2E suite. They're
+``tiny_synthetic_raw``) intended for the new E2E suite. They're
 documented but currently unused, leaving conftest.py at 58% coverage.
 
 These tests exercise each fixture so the bodies actually run + provide
@@ -171,14 +171,14 @@ def test_frozen_rng_restores_pythonhashseed_after_test(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# tiny_synthetic_rb_raw — wraps history_data_factory with raw-stat target list
+# tiny_synthetic_raw — wraps history_data_factory with raw-stat target list
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-def test_tiny_synthetic_rb_raw_returns_static_history_y_tuple(tiny_synthetic_rb_raw):
+def test_tiny_synthetic_rb_raw_returns_static_history_y_tuple(tiny_synthetic_raw):
     """Factory returns (X_static, X_history list, y_dict) in raw-stat shape."""
-    X_s, X_h, y = tiny_synthetic_rb_raw(n=10, static_dim=4, game_dim=3)
+    X_s, X_h, y = tiny_synthetic_raw(n=10, static_dim=4, game_dim=3)
     assert X_s.shape == (10, 4)
     assert isinstance(X_h, list) and len(X_h) == 10
     # Each history entry is a 2-D (T_i, game_dim) numpy array.

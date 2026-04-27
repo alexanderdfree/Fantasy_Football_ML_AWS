@@ -6,8 +6,8 @@ Trained model artifacts and model loading pointers.
 
 Trained model artifacts (Ridge / MultiHeadNet / Attention NN / LightGBM, one per position) are produced by training and stored in two places:
 
-- **Runtime / local:** `src/{POSITION}/outputs/models/` (gitignored). Populated by running `python -m src.{POSITION}.run_{position}_pipeline` or the multi-position runner via `python -m src.batch.train`. Example: `src/QB/outputs/models/multihead_attn.pt`.
-- **Production / S3:** `s3://<bucket>/models/{POSITION}/model.tar.gz`. The Flask serving container pulls from S3 at startup via [src/shared/model_sync.py](../src/shared/model_sync.py).
+- **Runtime / local:** `src/{pos}/outputs/models/` (gitignored). Populated by running `python -m src.{pos}.run_pipeline` or the multi-position runner via `python -m src.batch.train`. Example: `src/qb/outputs/models/multihead_attn.pt`.
+- **Production / S3:** `s3://<bucket>/models/{POSITION}/model.tar.gz` (uppercase `{POSITION}` in the S3 key). The Flask serving container pulls from S3 at startup via [src/shared/model_sync.py](../src/shared/model_sync.py).
 
 ## Model class implementations
 
@@ -18,12 +18,12 @@ Trained model artifacts (Ridge / MultiHeadNet / Attention NN / LightGBM, one per
 ## Model configurations
 
 Each position has its own configuration module with hyperparameters (NN dims, Ridge alpha grids, LightGBM params, Huber deltas, loss weights):
-- [src/QB/qb_config.py](../src/QB/qb_config.py)
-- [src/RB/rb_config.py](../src/RB/rb_config.py)
-- [src/WR/wr_config.py](../src/WR/wr_config.py)
-- [src/TE/te_config.py](../src/TE/te_config.py)
-- [src/K/k_config.py](../src/K/k_config.py)
-- [src/DST/dst_config.py](../src/DST/dst_config.py)
+- [src/qb/config.py](../src/qb/config.py)
+- [src/rb/config.py](../src/rb/config.py)
+- [src/wr/config.py](../src/wr/config.py)
+- [src/te/config.py](../src/te/config.py)
+- [src/k/config.py](../src/k/config.py)
+- [src/dst/config.py](../src/dst/config.py)
 
 ## Loading entry points
 

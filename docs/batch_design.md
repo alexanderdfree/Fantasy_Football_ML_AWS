@@ -43,8 +43,8 @@ src/batch/launch.py ─────────────> S3: s3://ff-trainin
 src/batch/launch.py <──────────────────────┘
   polls describe_jobs() for status   S3: s3://ff-training/models/
   downloads model artifacts             rb/model.tar.gz
-  extracts to src/RB/outputs/models/    wr/model.tar.gz
-             src/WR/outputs/models/     ...
+  extracts to src/rb/outputs/models/    wr/model.tar.gz
+             src/wr/outputs/models/     ...
              ...
 ```
 
@@ -140,12 +140,12 @@ Pipeline registry in `src/batch/train.py`:
 
 ```python
 POSITIONS = {
-    "QB": ("QB.run_qb_pipeline", "run_qb_pipeline", True),
-    "RB": ("RB.run_rb_pipeline", "run_rb_pipeline", True),
-    "WR": ("WR.run_wr_pipeline", "run_wr_pipeline", True),
-    "TE": ("TE.run_te_pipeline", "run_te_pipeline", True),
-    "K":  ("K.run_k_pipeline",   "run_k_pipeline",  False),
-    "DST": ("DST.run_dst_pipeline", "run_dst_pipeline", False),
+    "QB":  ("src.qb.run_pipeline",  "run", True),
+    "RB":  ("src.rb.run_pipeline",  "run", True),
+    "WR":  ("src.wr.run_pipeline",  "run", True),
+    "TE":  ("src.te.run_pipeline",  "run", True),
+    "K":   ("src.k.run_pipeline",   "run", False),
+    "DST": ("src.dst.run_pipeline", "run", False),
 }
 ```
 
@@ -319,7 +319,7 @@ docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/ff-training:latest
 
 The existing Flask Dockerfile and `src/serving/app.py` inference code are completely unaffected.
 CUDA auto-detection in `src/shared/pipeline.py` falls back to CPU. Local pipeline scripts
-(`python -m src.QB.run_qb_pipeline`) work identically without any AWS dependencies.
+(`python -m src.qb.run_pipeline`) work identically without any AWS dependencies.
 
 ## CPU-only Queue for K/DST (optional)
 

@@ -33,15 +33,35 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.QB.qb_data import filter_to_qb  # noqa: E402
-from src.QB.qb_features import add_qb_specific_features, get_qb_feature_columns  # noqa: E402
-from src.RB.rb_data import filter_to_rb  # noqa: E402
-from src.RB.rb_features import add_rb_specific_features, get_rb_feature_columns  # noqa: E402
+from src.qb.data import filter_to_position as filter_to_qb  # noqa: E402
+from src.qb.features import (  # noqa: E402
+    add_specific_features as add_qb_specific_features,
+)
+from src.qb.features import (
+    get_feature_columns as get_qb_feature_columns,
+)
+from src.rb.data import filter_to_position as filter_to_rb  # noqa: E402
+from src.rb.features import (  # noqa: E402
+    add_specific_features as add_rb_specific_features,
+)
+from src.rb.features import (
+    get_feature_columns as get_rb_feature_columns,
+)
 from src.shared.weather_features import merge_schedule_features  # noqa: E402
-from src.TE.te_data import filter_to_te  # noqa: E402
-from src.TE.te_features import add_te_specific_features, get_te_feature_columns  # noqa: E402
-from src.WR.wr_data import filter_to_wr  # noqa: E402
-from src.WR.wr_features import add_wr_specific_features, get_wr_feature_columns  # noqa: E402
+from src.te.data import filter_to_position as filter_to_te  # noqa: E402
+from src.te.features import (  # noqa: E402
+    add_specific_features as add_te_specific_features,
+)
+from src.te.features import (
+    get_feature_columns as get_te_feature_columns,
+)
+from src.wr.data import filter_to_position as filter_to_wr  # noqa: E402
+from src.wr.features import (  # noqa: E402
+    add_specific_features as add_wr_specific_features,
+)
+from src.wr.features import (
+    get_feature_columns as get_wr_feature_columns,
+)
 
 
 def _column_stats(s: pd.Series) -> dict:
@@ -269,8 +289,8 @@ def main() -> int:
     print(f"\n{'=' * 72}")
     print(
         "K, DST: features pre-computed on dedicated kicker/team datasets, not "
-        "on these splits. Run their pipelines (run_k_pipeline.py / "
-        "run_dst_pipeline.py) to inspect their feature distributions."
+        "on these splits. Run their pipelines (run.py / "
+        "run.py) to inspect their feature distributions."
     )
     print(f"{'=' * 72}\n")
     return 0

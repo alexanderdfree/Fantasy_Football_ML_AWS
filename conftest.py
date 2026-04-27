@@ -2,7 +2,7 @@
 
 Responsibilities:
 1. Put the project root on ``sys.path`` exactly once so every test module can
-   ``import src.shared.*`` / ``import src.QB.qb_data`` etc. without each
+   ``import src.shared.*`` / ``import src.qb.data`` etc. without each
    per-directory ``conftest.py`` having to re-wire the path.
 2. Register the project-wide pytest markers as a belt-and-suspenders backup
    to ``pyproject.toml`` so ``--strict-markers`` never trips on a fresh
