@@ -68,7 +68,7 @@ class TestWikiRegistryIntegrity:
         """
         import os
 
-        import app as app_mod
+        import src.serving.app as app_mod
 
         repo_root = os.path.dirname(os.path.abspath(app_mod.__file__))
         missing = [
