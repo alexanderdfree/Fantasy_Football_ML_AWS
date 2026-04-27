@@ -171,7 +171,8 @@ def test_main_failed_jobs_branch(monkeypatch, capsys):
 @pytest.mark.unit
 def test_main_submit_exception_is_logged(monkeypatch, capsys):
     """Exception from submit_job is caught, printed, and other submissions
-    still proceed (no global abort)."""
+    still proceed (no global abort). The successful position is downloaded;
+    the failed one is silently absent from job_ids and never waited on."""
     from src.batch import launch as lm
 
     monkeypatch.setattr(lm.boto3, "client", lambda *a, **k: mock.MagicMock())
@@ -182,33 +183,59 @@ def test_main_submit_exception_is_logged(monkeypatch, capsys):
             raise RuntimeError("transient aws fault")
         return pos, f"j-{pos}"
 
+    waited_for_ids: list[dict] = []
+
+    def _wait(j, timeout_seconds=None, batch_client=None):
+        waited_for_ids.append(dict(j))
+        return {p: ("SUCCEEDED", 0) for p in j}
+
+    downloaded: list[list[str]] = []
+
+    def _download(positions, stopped_at_by_pos=None, s3_client=None):
+        downloaded.append(list(positions))
+
     monkeypatch.setattr(lm, "submit_job", _bad_submit)
-    monkeypatch.setattr(
-        lm,
-        "wait_for_jobs",
-        lambda j, timeout_seconds=None, batch_client=None: {p: ("SUCCEEDED", 0) for p in j},
-    )
-    monkeypatch.setattr(lm, "download_artifacts", lambda *a, **k: None)
+    monkeypatch.setattr(lm, "wait_for_jobs", _wait)
+    monkeypatch.setattr(lm, "download_artifacts", _download)
     monkeypatch.setattr("sys.argv", ["launch.py", "--positions", "QB", "RB"])
     lm.main()
 
     out = capsys.readouterr().out
-    assert "FAILED to submit" in out
-    assert "QB" in out
+    # The exception is logged with the failing position and the original message
+    # (must include both — a generic "something failed" line wouldn't be enough).
+    assert "[QB] FAILED to submit" in out
+    assert "transient aws fault" in out
+    # Loop did not abort: RB was submitted, waited on, and downloaded. QB,
+    # whose submit raised, never made it into job_ids and is absent from both.
+    assert waited_for_ids == [{"RB": "j-RB"}]
+    assert downloaded == [["RB"]]
 
 
 @pytest.mark.unit
-def test_main_wait_timeout_override(_main_happy_stubs, monkeypatch):
+def test_main_wait_timeout_override(monkeypatch, capsys):
     """``--wait-timeout`` must override WAIT_TIMEOUT_SECONDS on the wait call."""
     from src.batch import launch as lm
 
+    monkeypatch.setattr(lm.boto3, "client", lambda *a, **k: mock.MagicMock())
+    monkeypatch.setattr(lm, "upload_data", lambda *a, **k: None)
+    monkeypatch.setattr(lm, "submit_job", lambda p, s, c: (p, f"j-{p}"))
+    monkeypatch.setattr(lm, "download_artifacts", lambda *a, **k: None)
+
+    captured_timeouts: list[int | None] = []
+
+    def _wait(j, timeout_seconds=None, batch_client=None):
+        captured_timeouts.append(timeout_seconds)
+        return {p: ("SUCCEEDED", 0) for p in j}
+
+    monkeypatch.setattr(lm, "wait_for_jobs", _wait)
+
+    override = 1234
     monkeypatch.setattr(
         "sys.argv",
-        ["launch.py", "--positions", "QB", "--wait-timeout", "1234"],
+        ["launch.py", "--positions", "QB", "--wait-timeout", str(override)],
     )
     lm.main()
-    # The _main_happy_stubs wait stub captured the timeout via closure — we
-    # re-define it here for this assertion.
-    # Find the wait call.
-    # (The fixture's stub ignores timeout; this test just proves the
-    # CLI flag parses cleanly without raising.)
+
+    # main() must forward the CLI override (not the module default
+    # WAIT_TIMEOUT_SECONDS) to wait_for_jobs as `timeout_seconds`.
+    assert captured_timeouts == [override]

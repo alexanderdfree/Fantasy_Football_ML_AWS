@@ -218,17 +218,22 @@ class TestArgumentParsing:
 
 
 class TestAssertGpu:
-    def test_cpu_only_position_skips_require_gpu(self):
-        """K/DST should never fail _assert_gpu even when REQUIRE_GPU=1."""
+    def test_cpu_only_position_skips_require_gpu(self, capsys):
+        """K/DST should never fail _assert_gpu even when REQUIRE_GPU=1, and the
+        skip must be logged so an EC2 run reading container logs can confirm
+        the bypass was deliberate (not a missed REQUIRE_GPU check)."""
         from src.batch.train import _assert_gpu
 
         with (
             mock.patch.dict(os.environ, {"REQUIRE_GPU": "1"}),
             mock.patch("src.batch.train.torch.cuda.is_available", return_value=False),
         ):
-            # Should NOT raise for K or DST
             _assert_gpu("K")
             _assert_gpu("DST")
+
+        out = capsys.readouterr().out
+        assert "K is CPU-only; skipping REQUIRE_GPU assertion" in out
+        assert "DST is CPU-only; skipping REQUIRE_GPU assertion" in out
 
     def test_gpu_position_raises_when_require_gpu_and_no_cuda(self):
         from src.batch.train import _assert_gpu
@@ -240,14 +245,22 @@ class TestAssertGpu:
             with pytest.raises(RuntimeError, match="REQUIRE_GPU=1"):
                 _assert_gpu("RB")
 
-    def test_gpu_position_passes_when_require_gpu_off(self):
+    def test_gpu_position_passes_when_require_gpu_off(self, capsys):
+        """REQUIRE_GPU=0 lets GPU positions run on CPU without raising — local
+        sanity checks on non-GPU boxes rely on this. The "not CPU-only skip"
+        assertion guards against a regression where is_cpu_only("RB") flipped
+        to True and silently bypassed the env check."""
         from src.batch.train import _assert_gpu
 
         with (
             mock.patch.dict(os.environ, {"REQUIRE_GPU": "0"}),
             mock.patch("src.batch.train.torch.cuda.is_available", return_value=False),
         ):
-            _assert_gpu("RB")  # should not raise
+            _assert_gpu("RB")
+
+        out = capsys.readouterr().out
+        assert "torch.cuda.is_available()" in out
+        assert "is CPU-only; skipping REQUIRE_GPU assertion" not in out
 
 
 # ---------------------------------------------------------------------------

@@ -250,7 +250,7 @@ def test_main_reports_failed_jobs(monkeypatch, tmp_path, capsys):
 
 @pytest.mark.unit
 def test_main_reports_submit_exception(monkeypatch, tmp_path, capsys):
-    """If submit_job raises, main() logs the failure and keeps going."""
+    """If submit_job raises, main() logs the failure (and keeps going for other positions)."""
     import src.batch.benchmark as bb
 
     monkeypatch.chdir(tmp_path)
@@ -259,10 +259,25 @@ def test_main_reports_submit_exception(monkeypatch, tmp_path, capsys):
     def _bad_submit(pos, seed):
         raise RuntimeError(f"{pos} submit boom")
 
+    waited_for: list[dict] = []
+
+    def _wait(job_ids):
+        waited_for.append(dict(job_ids))
+        return {}
+
     monkeypatch.setattr(bb, "submit_job", _bad_submit)
-    monkeypatch.setattr(bb, "wait_for_jobs", lambda job_ids: {})
+    monkeypatch.setattr(bb, "wait_for_jobs", _wait)
     monkeypatch.setattr(bb, "download_metrics", lambda positions: {})
-    monkeypatch.setattr("sys.argv", ["src/batch/benchmark.py", "--positions", "QB"])
+    monkeypatch.setattr("sys.argv", ["src/batch/benchmark.py", "--positions", "QB", "RB"])
     bb.main()
     out = capsys.readouterr().out
-    assert "FAILED to submit" in out
+    # Both submit failures must be logged with the position name + the
+    # underlying error message, so a one-line CI tail still pinpoints which
+    # position blew up and why.
+    assert "[QB] FAILED to submit" in out
+    assert "[RB] FAILED to submit" in out
+    assert "QB submit boom" in out
+    assert "RB submit boom" in out
+    # Both submits raised → wait_for_jobs gets an empty job_ids dict (no
+    # jobs to poll). The exception was caught, not propagated.
+    assert waited_for == [{}]

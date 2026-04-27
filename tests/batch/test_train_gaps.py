@@ -231,10 +231,12 @@ def test_run_rb_gate_ablation_runs_three_variants(monkeypatch, capsys):
 
 @pytest.mark.unit
 def test_run_rb_gate_ablation_drop_gate_when_margins_are_tiny(monkeypatch, capsys):
-    """When max margin < 0.05, the decision prints 'drop gate'."""
+    """When the max FP-MAE margin vs variant B is below the 0.05 pt/game
+    threshold, the decision must be 'drop gate' (variant B wins) — not
+    'keep'. All three variants here return identical fp_mae → margin = 0,
+    so the threshold is unambiguously not met."""
     from src.batch import train as t
 
-    # All three variants have near-identical fp_mae → margins tiny.
     def _canned(train_df, val_df, test_df, seed, config):
         return {
             "attn_nn_metrics": {
@@ -253,7 +255,14 @@ def test_run_rb_gate_ablation_drop_gate_when_margins_are_tiny(monkeypatch, capsy
 
     t._run_rb_gate_ablation(pd.DataFrame({"x": [1]}), pd.DataFrame(), pd.DataFrame(), seed=1)
     out = capsys.readouterr().out
+    # Decision must be drop, NOT keep — the inverse must not appear or the
+    # threshold logic flipped.
     assert "drop gate on TDs" in out
+    assert "keep a gate on TDs" not in out
+    # Margin lines confirm we're on the "below threshold" side: A and C both
+    # exactly 0.000 vs B → max margin 0.000 < 0.05 threshold.
+    assert "A=+0.000" in out
+    assert "C=+0.000" in out
 
 
 @pytest.mark.unit
