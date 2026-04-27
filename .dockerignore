@@ -28,12 +28,26 @@ env/
 .DS_Store
 Thumbs.db
 
-# Docs / non-runtime
-docs/
-instructions/
-README.md
-TODO.md
+# Docs / non-runtime — exclude markdown by default; explicitly re-include the
+# files served by the in-app Wiki tab (/api/wiki/<slug> reads paths listed in
+# app.py:WIKI_DOCS). Order matters: re-includes must follow the broad *.md.
 *.md
+!README.md
+!SETUP.md
+!ATTRIBUTION.md
+!TODO.md
+!docs/**/*.md
+!instructions/DESIGN_DOC.md
+!instructions/METHOD_CONTRACTS.md
+!instructions/SELF_ASSESSMENT_EVIDENCE.md
+!infra/ec2/README.md
+!infra/aws/README.md
+
+# instructions/ — non-MD assets (final-project handout HTML, .docx
+# self-assessment, .pdf rubric reference) don't belong in the runtime image.
+instructions/*.html
+instructions/*.docx
+instructions/*.pdf
 
 # Tests
 tests/
@@ -72,8 +86,13 @@ conftest.py
 # Training code — inference doesn't import it
 batch/
 
-# Infra (EC2 bootstrap, IAM, user-data) — never belongs in a container
-infra/
+# Infra — only the README.md files are surfaced in the wiki (re-included
+# above); the bootstrap shell scripts, IAM/JSON policies, and systemd units
+# don't belong in the runtime image.
+infra/**/*.sh
+infra/**/*.json
+infra/**/*.service
+infra/**/*.timer
 
 # Training + inference data — fetched from S3 at container startup via
 # shared.model_sync.sync_data_from_s3 (keeps the image ~60 MB smaller).
