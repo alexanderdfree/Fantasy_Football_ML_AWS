@@ -56,3 +56,24 @@ class TestWikiPage:
         # which the server-side rewriter should turn into `#wiki:batch-design`.
         body = client.get("/api/wiki/architecture").get_json()
         assert "#wiki:batch-design" in body["html"]
+
+
+class TestWikiRegistryIntegrity:
+    def test_every_registered_doc_file_exists(self):
+        """Catches typos in WIKI_DOCS paths and accidental file removals.
+
+        A Dockerfile that fails to copy a registered doc would still pass this
+        test (it runs against the repo, not the deploy artifact), but at least
+        a path typo or a deleted file won't slip through.
+        """
+        import os
+
+        import app as app_mod
+
+        repo_root = os.path.dirname(os.path.abspath(app_mod.__file__))
+        missing = [
+            (slug, meta["path"])
+            for slug, meta in app_mod.WIKI_DOCS.items()
+            if not os.path.isfile(os.path.join(repo_root, meta["path"]))
+        ]
+        assert not missing, f"WIKI_DOCS references missing files: {missing}"
