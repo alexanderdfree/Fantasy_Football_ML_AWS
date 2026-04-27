@@ -44,12 +44,109 @@ jobs:
       - name: ruff format --check
         run: ruff format --check .
 
+  detect:
+    # Decide which shards to run so a PR touching only e.g. `src/qb/` doesn't
+    # spin up all 7 shards. Mirrors train-ec2.yml's detect job in spirit:
+    # global infrastructure changes fan out to all shards; per-position
+    # changes scope down. Default to "all 7" on uncertainty.
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.scope.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Need history to diff against the merge base / previous commit.
+          fetch-depth: 0
+
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -eu
+
+          ALL='["QB","RB","WR","TE","K","DST","shared"]'
+
+          # Resolve the diff base. PRs diff against the PR base SHA (the
+          # merge target on main); pushes to main diff against HEAD~1.
+          if [ "$EVENT" = "pull_request" ]; then
+            BASE="$BASE_SHA"
+          else
+            BASE="HEAD~1"
+          fi
+
+          if ! git rev-parse --verify "$BASE" >/dev/null 2>&1; then
+            echo "Cannot resolve base ($BASE) — defaulting to all shards."
+            echo "shards=$ALL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          files=$(git diff --name-only "$BASE" HEAD)
+          echo "Changed files:"
+          printf '  %s\n' $files
+
+          # ---- Global triggers — run all 7 shards. ----
+          # src/shared/                    -> imported by every position
+          # src/{data,features,models,training,evaluation}/ -> shared infra
+          # src/__init__.py | src/config.py
+          # conftest.py (root)             -> sys.path + marker registration
+          # tests/conftest.py              -> shared Flask + tiny-model fixtures
+          # tests/_pipeline_e2e_utils.py   -> imported by every position e2e
+          # tests/__init__.py | tests/fixtures/
+          # pyproject.toml                 -> ruff/pytest/coverage config
+          # requirements*.txt              -> dep changes affect every shard
+          # .github/workflows/tests*.yml   -> the workflow itself
+          GLOBAL_REGEX='^(src/(shared|data|features|models|training|evaluation)/|src/(__init__|config)\.py$|conftest\.py$|tests/(conftest\.py|_pipeline_e2e_utils\.py|__init__\.py|fixtures/)|pyproject\.toml$|requirements.*\.txt$|\.github/workflows/tests(-skip)?\.yml$)'
+          if printf '%s\n' "$files" | grep -qE "$GLOBAL_REGEX"; then
+            echo "Global file changed -> running all 7 shards."
+            echo "shards=$ALL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # ---- Per-position scoping. ----
+          shards=""
+          for pos in QB RB WR TE K DST; do
+            pos_lower=$(echo "$pos" | tr '[:upper:]' '[:lower:]')
+            if printf '%s\n' "$files" | grep -qE "^(src/${pos_lower}/|tests/${pos_lower}/)"; then
+              shards="${shards:+$shards,}\"$pos\""
+            fi
+          done
+
+          # ---- Shared shard. Runs whenever something the shared shard
+          # actually covers changes:
+          # - tests/*.py (root-level tests like test_app.py)
+          # - tests/{batch,scripts,integration,shared}/
+          # - src/{serving,batch,scripts,benchmarking,tuning,analysis}/
+          #   (these don't affect per-position pipelines but their tests
+          #   live in the shared shard).
+          SHARED_REGEX='^(src/(serving|batch|scripts|benchmarking|tuning|analysis)/|tests/[^/]+\.py$|tests/(batch|scripts|integration|shared)/)'
+          if printf '%s\n' "$files" | grep -qE "$SHARED_REGEX"; then
+            shards="${shards:+$shards,}\"shared\""
+          fi
+
+          if [ -z "$shards" ]; then
+            # paths-ignore should have caught pure-docs PRs upstream, so an
+            # empty shard list here means an unrecognized path changed.
+            # Default to all 7 rather than silently skip a real change.
+            echo "No matching shards — defaulting to all 7 (conservative)."
+            echo "shards=$ALL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Scoped shards: [$shards]"
+          echo "shards=[$shards]" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: detect
+    # The detect step always emits at least one shard for code changes (it
+    # falls back to all 7 on uncertainty), but guard against an empty list
+    # so a future detect-rule bug surfaces as a skip rather than a crash.
+    if: needs.detect.outputs.shards != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [QB, RB, WR, TE, K, DST, shared]
+        shard: ${{ fromJSON(needs.detect.outputs.shards) }}
 
     steps:
       - uses: actions/checkout@v6
@@ -160,13 +257,27 @@ jobs:
   tests-pass:
     name: tests-pass
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, detect, test]
     if: always()
     steps:
       - name: Aggregate matrix result
         run: |
-          if [[ "${{ needs.lint.result }}" != "success" || "${{ needs.test.result }}" != "success" ]]; then
-            echo "::error::Required jobs failed: lint=${{ needs.lint.result }}, test=${{ needs.test.result }}"
+          # `test.result` is "success" when all matrix entries pass and
+          # "skipped" when detect narrowed the matrix to zero shards (or a
+          # future detect-rule bug). Both are acceptable; we only fail
+          # `tests-pass` on a real lint or matrix failure. `detect` itself
+          # must succeed — a detect failure means we cannot trust the
+          # matrix decision.
+          if [[ "${{ needs.lint.result }}" != "success" ]]; then
+            echo "::error::lint failed: ${{ needs.lint.result }}"
             exit 1
           fi
-          echo "All required jobs passed."
+          if [[ "${{ needs.detect.result }}" != "success" ]]; then
+            echo "::error::detect failed: ${{ needs.detect.result }}"
+            exit 1
+          fi
+          if [[ "${{ needs.test.result }}" != "success" && "${{ needs.test.result }}" != "skipped" ]]; then
+            echo "::error::test matrix failed: ${{ needs.test.result }}"
+            exit 1
+          fi
+          echo "All required jobs passed (test=${{ needs.test.result }})."
