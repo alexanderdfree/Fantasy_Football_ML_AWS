@@ -115,6 +115,8 @@ ENET_L1_RATIOS = [0.3, 0.5, 0.7]
 NN_BACKBONE_LAYERS = [128]
 NN_HEAD_HIDDEN = 32
 NN_DROPOUT = 0.20
+# All 6 QB heads are non-negative raw stats (yards, TD counts, INTs, fumbles).
+NN_NON_NEGATIVE_TARGETS = set(TARGETS)
 NN_LR = 5e-4
 NN_WEIGHT_DECAY = 3e-4
 NN_EPOCHS = 300

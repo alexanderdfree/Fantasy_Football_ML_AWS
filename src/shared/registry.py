@@ -157,6 +157,7 @@ def get_inference_spec(pos: str) -> dict:
             NN_BACKBONE_LAYERS,
             NN_DROPOUT,
             NN_HEAD_HIDDEN,
+            NN_NON_NEGATIVE_TARGETS,
             SPECIFIC_FEATURES,
             TARGETS,
         )
@@ -183,6 +184,7 @@ def get_inference_spec(pos: str) -> dict:
                 backbone_layers=NN_BACKBONE_LAYERS,
                 head_hidden=NN_HEAD_HIDDEN,
                 dropout=NN_DROPOUT,
+                non_negative_targets=NN_NON_NEGATIVE_TARGETS,
             ),
             "train_attention_nn": bool(getattr(qb_cfg, "TRAIN_ATTENTION_NN", False)),
             "attn_nn_file": "qb_attention_nn.pt",
@@ -201,6 +203,7 @@ def get_inference_spec(pos: str) -> dict:
             NN_DROPOUT,
             NN_HEAD_HIDDEN,
             NN_HEAD_HIDDEN_OVERRIDES,
+            NN_NON_NEGATIVE_TARGETS,
             SPECIFIC_FEATURES,
             TARGETS,
         )
@@ -228,6 +231,7 @@ def get_inference_spec(pos: str) -> dict:
                 head_hidden=NN_HEAD_HIDDEN,
                 dropout=NN_DROPOUT,
                 head_hidden_overrides=NN_HEAD_HIDDEN_OVERRIDES,
+                non_negative_targets=NN_NON_NEGATIVE_TARGETS,
             ),
             "train_attention_nn": bool(getattr(rb_cfg, "TRAIN_ATTENTION_NN", False)),
             "attn_nn_file": "rb_attention_nn.pt",
@@ -244,6 +248,7 @@ def get_inference_spec(pos: str) -> dict:
             NN_DROPOUT,
             NN_HEAD_HIDDEN,
             NN_HEAD_HIDDEN_OVERRIDES,
+            NN_NON_NEGATIVE_TARGETS,
             SPECIFIC_FEATURES,
             TARGETS,
         )
@@ -271,6 +276,7 @@ def get_inference_spec(pos: str) -> dict:
                 head_hidden=NN_HEAD_HIDDEN,
                 dropout=NN_DROPOUT,
                 head_hidden_overrides=NN_HEAD_HIDDEN_OVERRIDES,
+                non_negative_targets=NN_NON_NEGATIVE_TARGETS,
             ),
             "train_attention_nn": bool(getattr(wr_cfg, "TRAIN_ATTENTION_NN", False)),
             "attn_nn_file": "wr_attention_nn.pt",
@@ -289,6 +295,7 @@ def get_inference_spec(pos: str) -> dict:
             NN_DROPOUT,
             NN_HEAD_HIDDEN,
             NN_HEAD_HIDDEN_OVERRIDES,
+            NN_NON_NEGATIVE_TARGETS,
             SPECIFIC_FEATURES,
             TARGETS,
         )
@@ -316,6 +323,7 @@ def get_inference_spec(pos: str) -> dict:
                 head_hidden=NN_HEAD_HIDDEN,
                 dropout=NN_DROPOUT,
                 head_hidden_overrides=NN_HEAD_HIDDEN_OVERRIDES,
+                non_negative_targets=NN_NON_NEGATIVE_TARGETS,
             ),
             "train_attention_nn": bool(getattr(te_cfg, "TRAIN_ATTENTION_NN", False)),
             "attn_nn_file": "te_attention_nn.pt",

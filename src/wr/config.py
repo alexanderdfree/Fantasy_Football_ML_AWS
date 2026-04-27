@@ -115,6 +115,8 @@ NN_HEAD_HIDDEN = 32
 # receiving_tds moved to plain Poisson NLL so it no longer needs extra capacity.
 NN_HEAD_HIDDEN_OVERRIDES = {"receptions": 64}
 NN_DROPOUT = 0.20
+# All 4 WR heads are non-negative raw stats (TDs, yards, receptions, fumbles).
+NN_NON_NEGATIVE_TARGETS = set(TARGETS)
 NN_LR = 1e-3
 NN_WEIGHT_DECAY = 1e-4
 NN_EPOCHS = 250

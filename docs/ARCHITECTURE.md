@@ -142,7 +142,7 @@ K's four heads (`fg_yard_points`, `pat_points`, `fg_misses`, `xp_misses`) are ou
 
 **Chosen: raw-stat heads with post-aggregation.** The backbone learns position-general features ("is this player healthy? on the field? getting opportunity?"). Heads specialize on individual countable events. The aggregator is the single source of truth for turning those events into fantasy points — swap `SCORING_PPR` for `SCORING_STANDARD` without retraining. Training supervises each raw-stat head independently (weighted Huber per target); no aux total-loss is applied, so the aggregator is only used at serving and reporting time.
 
-Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value head for conditional mean). RB has two gates (`rushing_tds`, `receiving_tds`); WR and TE each have one (`receiving_tds`). QB has none — QBs score too often for the zero-inflation argument to hold.
+Zero-inflated targets get a `GatedHead` (BCE gate on `stat > 0` plus a value head for the conditional mean). RB has three gates (`receptions`, `rushing_tds`, `receiving_tds`); WR and TE each have two (`receptions`, `receiving_tds`) — the `receptions` gate was added in the Variant C ablation (PR #96) since TE/WR have non-trivial 0-reception game mass. QB has none — QBs score too often for the zero-inflation argument to hold.
 
 **Rejected.** Single-target models under-fit the structure — every head would implicitly have to learn "what is a TD" separately from "what is a rushing yard." Fantasy-point-component heads (the previous iteration) made MAE hard to reason about — a `td_points` MAE of 4.25 could mean either "off by ~0.7 TDs/game" or "off by ~1 TD/game and a PAT." Raw-stat targets are unambiguous.
 
