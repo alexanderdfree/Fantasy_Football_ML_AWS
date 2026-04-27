@@ -125,3 +125,12 @@ class TestComputeTETargets:
         total = predictions_to_fantasy_points("TE", preds, "ppr")
         # 6 rec × 1 + 60 yds × 0.1 + 1 TD × 6 = 18
         assert pytest.approx(total[0]) == 18.0
+
+    def test_decomposition_discrepancy_emits_warning(self, capsys):
+        """Rows whose ``fantasy_points`` cannot be reconstructed from the raw
+        stats (data corruption upstream) should print a WARNING line."""
+        # Why: pin fantasy_points to a value the 4 raw targets can't sum to;
+        # _make_row's default stats reconstruct to 17.5 pts, far from 99.0.
+        df = _make_row(fantasy_points=99.0)
+        compute_targets(df)
+        assert "target decomposition discrepancy" in capsys.readouterr().out
