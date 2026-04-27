@@ -42,3 +42,40 @@ def test_head_hidden_overrides_match_position_config(pos):
         assert not reg_overrides, (
             f"{pos}: config has no overrides but registry passes {reg_overrides!r}"
         )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("pos", ALL_POSITIONS)
+def test_attn_kwargs_backbone_layers_match_config(pos):
+    """``INFERENCE_REGISTRY[pos]["attn_nn_kwargs_static"]["backbone_layers"]``
+    must equal the position config's ``NN_BACKBONE_LAYERS``.
+
+    Regression guard for the post-#154 silent-rename bug: ``_attn_kwargs_static``
+    looked up ``f"{POS}_NN_BACKBONE_LAYERS"`` but the rename dropped the
+    per-position prefix from every config attribute. Every getattr fell
+    through to its default (``[]``), and inference built every attention
+    model with no backbone — ``backbone_layers[-1]`` raised
+    ``IndexError: list index out of range`` and ``attn_nn_pred`` came back
+    NaN for QB/RB/WR/TE/DST in production. K was unaffected only because
+    K's kwargs are constructed from direct imports, not via this helper.
+
+    Asserting on backbone_layers specifically is the cheapest invariant
+    that catches the whole class — every other attribute looked up by
+    this helper had a benign default that wouldn't have surfaced the
+    miswired prefix on its own.
+    """
+    config_module = importlib.import_module(f"src.{pos.lower()}.config")
+    cfg_layers = list(getattr(config_module, "NN_BACKBONE_LAYERS", []))
+    assert cfg_layers, (
+        f"{pos}: config defines no NN_BACKBONE_LAYERS — every position with "
+        f"an attention NN needs one. Update src/{pos.lower()}/config.py."
+    )
+
+    reg_kwargs = INFERENCE_REGISTRY[pos]["attn_nn_kwargs_static"]
+    reg_layers = list(reg_kwargs.get("backbone_layers", []))
+    assert reg_layers == cfg_layers, (
+        f"{pos}: config declares NN_BACKBONE_LAYERS={cfg_layers!r} but registry "
+        f"passes backbone_layers={reg_layers!r}. The two paths build different "
+        f"architectures, so MultiHeadNetWithHistory.load_state_dict will fail "
+        f"on the trained checkpoint."
+    )

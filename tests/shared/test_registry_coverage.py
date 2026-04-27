@@ -185,12 +185,12 @@ def test_inference_registry_contains_all_positions():
 
 @pytest.mark.unit
 def test_attn_kwargs_static_falls_back_to_defaults_for_missing_attrs():
-    """When a cfg module doesn't define a `_ATTN_*` attr, the default lands."""
+    """When a cfg module doesn't define an attr, the constructor default lands."""
 
     class _EmptyCfg:
         pass
 
-    kwargs = _attn_kwargs_static(_EmptyCfg(), "FOO")
+    kwargs = _attn_kwargs_static(_EmptyCfg())
     assert kwargs["d_model"] == 32  # default
     assert kwargs["n_attn_heads"] == 2  # default
     assert kwargs["head_hidden"] == 32  # default
@@ -200,13 +200,13 @@ def test_attn_kwargs_static_falls_back_to_defaults_for_missing_attrs():
 
 @pytest.mark.unit
 def test_attn_kwargs_static_populates_head_hidden_overrides_when_set():
-    """If `{PREFIX}_NN_HEAD_HIDDEN_OVERRIDES` is truthy it lands as a dict."""
+    """If ``NN_HEAD_HIDDEN_OVERRIDES`` is truthy it lands as a dict."""
 
     class _Cfg:
-        FOO_NN_HEAD_HIDDEN_OVERRIDES = {"passing_yards": 8, "rushing_yards": 16}
-        FOO_NN_NON_NEGATIVE_TARGETS = {"passing_yards", "rushing_yards"}
+        NN_HEAD_HIDDEN_OVERRIDES = {"passing_yards": 8, "rushing_yards": 16}
+        NN_NON_NEGATIVE_TARGETS = {"passing_yards", "rushing_yards"}
 
-    kwargs = _attn_kwargs_static(_Cfg(), "FOO")
+    kwargs = _attn_kwargs_static(_Cfg())
     assert kwargs["head_hidden_overrides"] == {"passing_yards": 8, "rushing_yards": 16}
     assert kwargs["non_negative_targets"] == {"passing_yards", "rushing_yards"}
 
@@ -214,7 +214,7 @@ def test_attn_kwargs_static_populates_head_hidden_overrides_when_set():
 @pytest.mark.unit
 def test_attn_kwargs_static_populates_gated_targets_when_set():
     class _Cfg:
-        FOO_GATED_TARGETS = ["passing_tds", "rushing_tds"]
+        GATED_TARGETS = ["passing_tds", "rushing_tds"]
 
-    kwargs = _attn_kwargs_static(_Cfg(), "FOO")
+    kwargs = _attn_kwargs_static(_Cfg())
     assert kwargs["gated_targets"] == ["passing_tds", "rushing_tds"]
