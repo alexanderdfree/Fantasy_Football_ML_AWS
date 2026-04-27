@@ -2,7 +2,7 @@
 
 > **Status (2026-04-21): Standby path.** The active training path is EC2 warm-host ([docs/ec2_design.md](ec2_design.md)). Reactivate Batch by setting repo variable `BATCH_ACTIVE=true`.
 >
-> Image builds still track HEAD ([`.github/workflows/batch-image.yml`](../.github/workflows/batch-image.yml)) so reactivation is one repo-variable flip and a push — Batch resources ([`src/batch/launch.py`](../batch/launch.py), [`src/batch/train.py`](../batch/train.py), [`batch/Dockerfile.train`](../batch/Dockerfile.train)) remain in place.
+> Image builds still track HEAD ([`.github/workflows/batch-image.yml`](../.github/workflows/batch-image.yml)) so reactivation is one repo-variable flip and a push — Batch resources ([`src/batch/launch.py`](../src/batch/launch.py), [`src/batch/train.py`](../src/batch/train.py), [`src/batch/Dockerfile.train`](../src/batch/Dockerfile.train)) remain in place.
 
 ## Problem
 
@@ -21,14 +21,14 @@ Goals:
 LOCAL (your laptop)                          AWS
 ─────────────────                   ─────────────────────────────
 
-batch/launch.py ─────────────────> S3: s3://ff-training/data/
+src/batch/launch.py ─────────────> S3: s3://ff-training/data/
   uploads data/splits/*.parquet        train.parquet
   submits 6 Batch jobs                 val.parquet
        │                               test.parquet
        │
        ├─> Batch Job: ff-rb-xxx ───> CloudWatch Logs
        │     (g4dn.xlarge Spot)        stdout/stderr streamed
-       │     train.py --position RB
+       │     src.batch.train --position RB
        │       ├─ boto3: download data from S3
        │       ├─ run_rb_pipeline(train_df, val_df, test_df)
        │       ├─ save benchmark_metrics.json
@@ -40,11 +40,11 @@ batch/launch.py ─────────────────> S3: s3://ff
        ├─> Batch Job: ff-k-xxx  ───> CloudWatch Logs
        └─> Batch Job: ff-dst-xxx ──> CloudWatch Logs
                                            │
-batch/launch.py <──────────────────────────┘
+src/batch/launch.py <──────────────────────┘
   polls describe_jobs() for status   S3: s3://ff-training/models/
   downloads model artifacts             rb/model.tar.gz
-  extracts to RB/outputs/models/        wr/model.tar.gz
-             WR/outputs/models/         ...
+  extracts to src/RB/outputs/models/    wr/model.tar.gz
+             src/WR/outputs/models/     ...
              ...
 ```
 
@@ -57,18 +57,22 @@ locations are predictable and the launcher (`launch.py`) stays simple.
 ## Directory Structure
 
 ```
-batch/
+src/batch/
   __init__.py
   train.py              ← container entry point
   launch.py             ← job submitter (boto3 Batch client)
-  src/benchmarking/benchmark.py ← benchmark suite
+  benchmark.py          ← Batch-side benchmark runner (downloads metrics from S3)
   Dockerfile.train      ← GPU training image
+  Dockerfile.train.dockerignore
   requirements.txt      ← container-only deps (no torch — base image provides it)
   tests/
     __init__.py
     conftest.py
     test_launch.py
     test_train.py
+    ...
+
+src/benchmarking/benchmark.py ← Local multi-position benchmark runner (separate from src/batch/benchmark.py).
 ```
 
 ## Data Flow
@@ -90,12 +94,12 @@ FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime
 
 WORKDIR /opt/ml/code
 
-COPY batch/requirements.txt .
+COPY src/batch/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY src/ src/
 
-ENTRYPOINT ["python", "batch/train.py"]
+ENTRYPOINT ["python", "-m", "src.batch.train"]
 ```
 
 - Base image has PyTorch + CUDA pre-installed (~4 GB)
@@ -124,7 +128,7 @@ ENTRYPOINT ["python", "batch/train.py"]
 | `FF_JOB_DEFINITION_CPU` | (unset) | **Optional CPU job definition for K/DST.** When set, K/DST jobs submit here instead of the GPU queue — saves ~60% of Spot spend on those positions. Falls back to the GPU definition when unset. |
 | `FF_WAIT_TIMEOUT` | `10800` (3h) | Wall-clock cap for `wait_for_jobs` |
 
-### Container Dependencies (`batch/requirements.txt`)
+### Container Dependencies (`src/batch/requirements.txt`)
 
 Derived from root `requirements.txt`:
 - **Excluded**: `torch` (in base image), `flask`, `gunicorn`, `pytest`
@@ -279,7 +283,7 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 REGION=us-east-1
 
 # Build
-docker build -f batch/Dockerfile.train -t ff-training:latest .
+docker build -f src/batch/Dockerfile.train -t ff-training:latest .
 
 # Authenticate
 aws ecr get-login-password --region $REGION | \
@@ -309,13 +313,13 @@ docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/ff-training:latest
 4. Create Job Queue (`ff-training-queue`)
 5. Register Job Definition (`ff-training-job`)
 6. Build and push training image to ECR
-7. Run: `python batch/launch.py`
+7. Run: `python -m src.batch.launch`
 
 ## Rollback
 
 The existing Flask Dockerfile and `src/serving/app.py` inference code are completely unaffected.
 CUDA auto-detection in `src/shared/pipeline.py` falls back to CPU. Local pipeline scripts
-(`python -m QB.run_qb_pipeline`) work identically without any AWS dependencies.
+(`python -m src.QB.run_qb_pipeline`) work identically without any AWS dependencies.
 
 ## CPU-only Queue for K/DST (optional)
 
@@ -326,7 +330,7 @@ cheaper CPU Spot pool:
 1. Register a CPU compute env (e.g. `c6i.large` Spot) + job queue + CPU job
    definition (`ff-training-job-cpu`) pointing at the same ECR image.
 2. Export `FF_JOB_DEFINITION_CPU=ff-training-job-cpu` before running
-   `src/batch/launch.py`. K and DST will submit there; QB/RB/WR/TE stay on the GPU
+   `python -m src.batch.launch`. K and DST will submit there; QB/RB/WR/TE stay on the GPU
    queue.
 3. When `FF_JOB_DEFINITION_CPU` is unset, K/DST fall back to the GPU definition —
    so it's safe to deploy this code before the CPU infra exists.
@@ -335,10 +339,10 @@ cheaper CPU Spot pool:
 
 Two workflows cover the training image and the inference service:
 
-- `.github/workflows/batch-image.yml` — builds `batch/Dockerfile.train`, pushes
+- `.github/workflows/batch-image.yml` — builds `src/batch/Dockerfile.train`, pushes
   to ECR (`ff-training`), and registers a new revision of the `ff-training-job`
-  Batch job definition pinned to the new image SHA. Triggered by changes under
-  `src/batch/`, `src/shared/`, position dirs, `src/`, or `requirements.txt`.
+  Batch job definition pinned to the new image SHA. Triggered by any change
+  under `src/**` (excluding `**/tests/**` and `**/*.md`) or `requirements.txt`.
 - `.github/workflows/deploy.yml` — builds the inference `Dockerfile`, pushes to
   ECR (`fantasy-predictor`), and updates the ECS service. Now gated on the
   full test suite.
@@ -353,9 +357,9 @@ registry. Three stacking optimizations target this:
 
 ### 2b. Explicit COPYs in Dockerfile.train
 
-`batch/Dockerfile.train` used to end with `COPY . .`, shipping the Flask UI
+`src/batch/Dockerfile.train` used to end with `COPY . .`, shipping the Flask UI
 (`src/serving/app.py`, `src/serving/static/`, `src/serving/templates/`), scratch scripts (`src/tuning/tune_*.py`,
-`benchmark_*.py`, `analysis_*.py`), and everything else at the repo root into
+`src/benchmarking/benchmark.py`, `src/analysis/analysis_*.py`), and everything else at the repo root into
 the training image. The Dockerfile now copies only the dirs that
 `src/batch/train.py` actually imports: `src/batch/`, `src/shared/`, `src/`, and the six
 position dirs. `.dockerignore` handles the coarse exclusions (caches, outputs,
@@ -399,13 +403,13 @@ No Batch or ECS configuration changes are required.
 
 ### Build & push
 
-`batch/build_and_push.sh` wires all three together:
+`src/batch/build_and_push.sh` wires all three together:
 
 ```bash
-./batch/build_and_push.sh                        # defaults: us-east-1, ff-training:latest
-IMAGE_TAG=$(git rev-parse --short HEAD) ./batch/build_and_push.sh
-USE_PULL_THROUGH=0 ./batch/build_and_push.sh     # bypass pull-through (for debugging)
-SKIP_SOCI=1 ./batch/build_and_push.sh            # skip SOCI index even if soci is installed
+./src/batch/build_and_push.sh                        # defaults: us-east-1, ff-training:latest
+IMAGE_TAG=$(git rev-parse --short HEAD) ./src/batch/build_and_push.sh
+USE_PULL_THROUGH=0 ./src/batch/build_and_push.sh     # bypass pull-through (for debugging)
+SKIP_SOCI=1 ./src/batch/build_and_push.sh            # skip SOCI index even if soci is installed
 ```
 
 The script logs in to ECR, builds with the pull-through base, pushes the

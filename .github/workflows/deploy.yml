@@ -3,16 +3,24 @@ name: Deploy to ECS
 on:
   push:
     branches: [main]
-    # Only redeploy Flask when the serving surface actually changes. After the
-    # src/ migration the entire serving surface lives under src/ — the training
-    # detector workflow (train-ec2.yml) handles the inverse case of skipping
-    # serving-only changes.
+    # Only redeploy Flask when the serving surface actually changes. The
+    # serving image imports src/serving/, src/shared/, src/features/,
+    # src/models/, src/{POS}/, src/config.py, src/data/, src/training/,
+    # src/evaluation/ — i.e. everything under src/ EXCEPT the training,
+    # tuning, analysis, benchmarking, scripts, and tests subtrees. Negative
+    # patterns at the end refine the broad src/** include.
     paths:
       - "src/**"
       - "Dockerfile"
       - ".dockerignore"
       - "requirements.txt"
       - ".github/workflows/deploy.yml"
+      - "!src/batch/**"
+      - "!src/tuning/**"
+      - "!src/analysis/**"
+      - "!src/benchmarking/**"
+      - "!src/scripts/**"
+      - "!src/**/tests/**"
   # Manual trigger for one-offs — re-deploying after a non-code change like
   # an S3 model refresh, or after a deploy that completed successfully but
   # didn't roll the task because of an ECS-side hiccup.
