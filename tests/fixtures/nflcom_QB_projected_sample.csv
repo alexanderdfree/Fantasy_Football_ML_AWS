@@ -1,0 +1,6 @@
+PlayerName,PlayerId,Pos,Team,PlayerOpponent,PassingYDS,PassingTD,PassingInt,RushingYDS,RushingTD,ReceivingRec,ReceivingYDS,ReceivingTD,RetTD,FumTD,2PT,Fum,PlayerWeekProjectedPts,ProjectedRank,Rank,TotalPoints,ProjectionDiff
+Josh Allen,2560955,QB,BUF,ARI,256.85,1.72,0.89,34.9,0.57,,,,,,,0.57,21.14,1,1,31.18,10.04
+Patrick Mahomes II,2558125,QB,KC,BAL,278.4,1.95,0.65,12.3,0.18,,,,,,,0.41,19.85,3,5,15.22,-4.63
+Lamar Jackson,2560757,QB,BAL,@KC,232.9,1.5,0.9,68.2,0.7,,,,,,,1.0,21.78,2,7,12.04,-9.74
+A.J. McCarron,2543500,QB,CIN,@WAS,180.0,1.0,1.0,5.0,0.0,,,,,,,0.5,9.5,30,30,8.0,-1.5
+Jameis Winston,2549177,QB,CLE,@PIT,212.5,1.3,1.2,8.0,0.1,,,,,,,0.8,12.3,22,22,11.0,-1.3
