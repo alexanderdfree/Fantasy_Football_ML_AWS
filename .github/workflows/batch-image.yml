@@ -8,10 +8,11 @@ on:
   push:
     branches: [main]
     # Use negations at the end to skip rebuilds when only tests or docs change.
-    # Negative patterns placed later override earlier positive matches, so a
-    # change to src/QB/tests/foo.py matches src/** then gets excluded by !**/tests/**.
-    # train-ec2.yml's detect job already strips tests before deciding to
-    # retrain; this just stops us rebuilding the image on the way there.
+    # Tests live at tests/ (top-level), outside src/**, so they don't match the
+    # positive filter; the !**/tests/** is kept defensively for any future
+    # src/**/tests/ tree. train-ec2.yml's detect job already strips tests
+    # before deciding to retrain; this just stops us rebuilding the image
+    # on the way there.
     paths:
       - "src/**"
       - "requirements.txt"

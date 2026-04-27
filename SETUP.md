@@ -73,7 +73,7 @@ Each run writes a `{run_id}.json` file under [benchmark_history/](benchmark_hist
 ```bash
 pytest                       # full suite — unit, integration, e2e
 pytest -m unit               # fast subset (<1 s per test)
-pytest src/RB/tests/         # just one position's tests
+pytest tests/rb/             # just one position's tests
 ```
 
 The e2e tests read `data/splits/*.parquet`, so the first-time data pull must have been done. Individual markers are defined in [pyproject.toml](pyproject.toml).

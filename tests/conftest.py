@@ -1,9 +1,7 @@
 """Shared pytest config for tests/.
 
-Ensures the project root is on ``sys.path`` and registers the pytest markers
-used across the Flask API contract suite (Unit 8), the loader schema contract
-suite (Unit 9), and cross-position pipeline E2E/reproducibility suites
-(Unit 10). Also provides session-scoped fixtures for the API tests.
+Provides the session-scoped Flask/API fixtures used by the API contract suite
+(Unit 8) and cross-position pipeline E2E/reproducibility suites (Unit 10).
 
 The strategy doc (swift-roaming-bumblebee) describes a `/predict_json` endpoint
 as an aspirational API surface. The current app.py exposes a set of read-only
@@ -11,36 +9,18 @@ as an aspirational API surface. The current app.py exposes a set of read-only
 parquet + trained model artifacts. These fixtures codify the *current* contract
 while keeping the `tiny_qb_model` scaffold ready for when `/predict_json`
 lands — new tests can consume it without touching conftest.
+
+Project-root sys.path wiring and pytest-marker registration live in the root
+``conftest.py`` so this file doesn't duplicate them.
 """
 
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
-
-# Ensure project root importable (app.py lives there, uses relative model paths;
-# `from src.data.loader import ...` needs this for the loader-contract suite).
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-
-def pytest_configure(config) -> None:
-    """Register markers used across tests/ (pytest tolerates duplicate registration)."""
-    markers = [
-        "unit: fast isolated test (<=1s), no external I/O, no training loops",
-        "integration: test that exercises real code paths (mocked; no network)",
-        "e2e: full-pipeline smoke test (<20s each)",
-        "regression: numerical-performance assertion (may need fixture data)",
-        "slow: excluded from default run",
-    ]
-    for m in markers:
-        config.addinivalue_line("markers", m)
 
 
 # ---------------------------------------------------------------------------

@@ -154,7 +154,7 @@ Dockerfile                          Slim image for ECS serving (root for build c
 conftest.py                         pytest project-root sys.path bootstrap
 ```
 
-Tests live alongside their source under `src/{POS}/tests/`, `src/shared/tests/`, `src/batch/tests/`, `src/scripts/tests/`, plus the top-level `tests/` for cross-cutting integration + e2e.
+Tests live under the top-level `tests/` tree, mirroring the `src/` layout (`tests/qb/` for `src/QB/`, etc., plus `tests/shared/`, `tests/batch/`, `tests/scripts/`, and root-level `tests/test_*.py` for cross-cutting integration + e2e).
 
 ## Deeper Reading
 
