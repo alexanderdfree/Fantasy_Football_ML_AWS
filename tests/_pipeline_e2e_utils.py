@@ -72,13 +72,13 @@ _TINY_OVERRIDES: dict[str, Any] = {
 
 
 def _qb_tiny() -> dict:
-    from QB.run_qb_pipeline import QB_CONFIG
+    from src.QB.run_qb_pipeline import QB_CONFIG
 
     return _shrink(QB_CONFIG)
 
 
 def _rb_tiny() -> dict:
-    from RB.run_rb_pipeline import RB_CONFIG
+    from src.RB.run_rb_pipeline import RB_CONFIG
 
     return _shrink(RB_CONFIG)
 
@@ -90,13 +90,13 @@ def _wr_tiny() -> dict:
     penalty is now a direct target priced by ``shared/aggregate_targets.py``
     per docs/ARCHITECTURE.md. Only K and DST still wire an adjustment function.
     """
-    from WR.wr_data import filter_to_wr
-    from WR.wr_features import (
+    from src.WR.wr_data import filter_to_wr
+    from src.WR.wr_features import (
         add_wr_specific_features,
         fill_wr_nans,
         get_wr_feature_columns,
     )
-    from WR.wr_targets import compute_wr_targets
+    from src.WR.wr_targets import compute_wr_targets
 
     callables = {
         "filter_fn": filter_to_wr,
@@ -106,11 +106,11 @@ def _wr_tiny() -> dict:
         "get_feature_columns_fn": get_wr_feature_columns,
     }
     try:
-        from WR.wr_config import WR_CONFIG_TINY
+        from src.WR.wr_config import WR_CONFIG_TINY
 
         cfg = dict(WR_CONFIG_TINY)
     except ImportError:
-        from WR.run_wr_pipeline import WR_CONFIG
+        from src.WR.run_wr_pipeline import WR_CONFIG
 
         cfg = _shrink(WR_CONFIG)
     cfg.update(callables)
@@ -119,13 +119,13 @@ def _wr_tiny() -> dict:
 
 def _te_tiny() -> dict:
     """TE config — use TE_CONFIG_TINY if exposed, else shrink TE_CONFIG inline."""
-    from TE.te_data import filter_to_te
-    from TE.te_features import (
+    from src.TE.te_data import filter_to_te
+    from src.TE.te_features import (
         add_te_specific_features,
         fill_te_nans,
         get_te_feature_columns,
     )
-    from TE.te_targets import compute_te_targets
+    from src.TE.te_targets import compute_te_targets
 
     callables = {
         "filter_fn": filter_to_te,
@@ -135,11 +135,11 @@ def _te_tiny() -> dict:
         "get_feature_columns_fn": get_te_feature_columns,
     }
     try:
-        from TE.te_config import TE_CONFIG_TINY
+        from src.TE.te_config import TE_CONFIG_TINY
 
         cfg = dict(TE_CONFIG_TINY)
     except ImportError:
-        from TE.run_te_pipeline import TE_CONFIG
+        from src.TE.run_te_pipeline import TE_CONFIG
 
         cfg = _shrink(TE_CONFIG)
     cfg.update(callables)
@@ -148,21 +148,21 @@ def _te_tiny() -> dict:
 
 def _k_tiny() -> dict:
     """K config — use K_CONFIG_TINY if exposed, else build a shrunk cfg from k_config.py."""
-    from K.k_data import filter_to_k
-    from K.k_features import (
+    from src.K.k_data import filter_to_k
+    from src.K.k_features import (
         add_k_specific_features,
         fill_k_nans,
         get_k_feature_columns,
     )
-    from K.k_targets import compute_k_targets
+    from src.K.k_targets import compute_k_targets
 
     try:
-        from K.k_config import K_CONFIG_TINY
+        from src.K.k_config import K_CONFIG_TINY
 
         cfg = dict(K_CONFIG_TINY)
     except ImportError:
         # Build a fresh tiny config from the exported config module constants.
-        from K.k_config import (
+        from src.K.k_config import (
             K_CV_SPLIT_COLUMN,
             K_HUBER_DELTAS,
             K_LOSS_WEIGHTS,
@@ -195,19 +195,19 @@ def _k_tiny() -> dict:
 
 def _dst_tiny() -> dict:
     """DST config — use DST_CONFIG_TINY if exposed, else build a shrunk cfg inline."""
-    from DST.dst_config import (
+    from src.DST.dst_config import (
         DST_HUBER_DELTAS,
         DST_LOSS_WEIGHTS,
         DST_SPECIFIC_FEATURES,
         DST_TARGETS,
     )
-    from DST.dst_data import filter_to_dst
-    from DST.dst_features import (
+    from src.DST.dst_data import filter_to_dst
+    from src.DST.dst_features import (
         add_dst_specific_features,
         fill_dst_nans,
         get_dst_feature_columns,
     )
-    from DST.dst_targets import compute_dst_targets
+    from src.DST.dst_targets import compute_dst_targets
 
     cfg = {
         "targets": DST_TARGETS,
@@ -225,7 +225,7 @@ def _dst_tiny() -> dict:
     cfg.update(_TINY_OVERRIDES)
 
     try:
-        from DST.dst_config import DST_CONFIG_TINY
+        from src.DST.dst_config import DST_CONFIG_TINY
 
         cfg.update(DST_CONFIG_TINY)
     except ImportError:
@@ -333,9 +333,9 @@ def _build_k_splits(n_players: int = 30) -> tuple[pd.DataFrame, pd.DataFrame, pd
     splits by season (train<=2023 / val=2024 / test=2025) and subsets to
     the top-N most active kickers.
     """
-    from K.k_data import load_kicker_data
-    from K.k_features import compute_k_features
-    from K.k_targets import compute_k_targets
+    from src.K.k_data import load_kicker_data
+    from src.K.k_features import compute_k_features
+    from src.K.k_targets import compute_k_targets
 
     full = load_kicker_data()
     full = compute_k_targets(full)
@@ -352,9 +352,9 @@ def _build_k_splits(n_players: int = 30) -> tuple[pd.DataFrame, pd.DataFrame, pd
 
 def _build_dst_splits() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build tiny D/ST splits using the DST team-level builder."""
-    from DST.dst_data import build_dst_data
-    from DST.dst_features import compute_dst_features
-    from DST.dst_targets import compute_dst_targets
+    from src.DST.dst_data import build_dst_data
+    from src.DST.dst_features import compute_dst_features
+    from src.DST.dst_targets import compute_dst_targets
 
     full = build_dst_data()
     full = compute_dst_targets(full)
@@ -400,7 +400,7 @@ def run_pipeline_in_tmp(
     into a tmp workspace and symlink ``data/`` so schedule parquet reads
     keep working without polluting the checked-in outputs directory.
     """
-    from shared.pipeline import run_pipeline
+    from src.shared.pipeline import run_pipeline
 
     train_df, val_df, test_df = splits
     tmp_path = Path(tmp_path)

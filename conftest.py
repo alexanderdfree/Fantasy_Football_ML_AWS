@@ -2,7 +2,7 @@
 
 Responsibilities:
 1. Put the project root on ``sys.path`` exactly once so every test module can
-   ``import shared.*`` / ``import QB.qb_data`` etc. without each position-level
+   ``import src.shared.*`` / ``import src.QB.qb_data`` etc. without each position-level
    ``conftest.py`` having to re-wire the path. (The six position conftests
    still contain their own path-wiring for now; they will be retired in
    their own PRs.)

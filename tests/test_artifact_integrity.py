@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from shared.artifact_integrity import (
+from src.shared.artifact_integrity import (
     assert_scaler_matches,
     compute_feature_cols_hash,
     read_scaler_meta,

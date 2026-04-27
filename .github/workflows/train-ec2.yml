@@ -79,29 +79,30 @@ jobs:
           printf '  %s\n' $files
 
           # Strip tests/ subtrees before scoping. A PR that only edits
-          # {POS}/tests/, shared/tests/, or batch/tests/ does not affect
-          # model artifacts, so the global + per-position checks below
-          # operate on a tests-free view of the diff. `|| true` keeps the
-          # step alive when grep -v has nothing left to print.
-          model_files=$(printf '%s\n' "$files" | grep -vE '^(QB|RB|WR|TE|K|DST|shared|batch)/tests/' || true)
+          # src/{POS}/tests/, src/shared/tests/, src/batch/tests/, etc. does
+          # not affect model artifacts, so the global + per-position checks
+          # below operate on a tests-free view of the diff. `|| true` keeps
+          # the step alive when grep -v has nothing left to print.
+          model_files=$(printf '%s\n' "$files" | grep -vE '^(tests/|src/[^/]+/tests/)' || true)
           echo "Model-relevant changed files:"
           printf '  %s\n' $model_files
 
           # Global triggers → retrain everything. Must match batch-image.yml's
-          # path filter; if you add a new top-level shared dir there, add it
-          # here too.
-          if printf '%s\n' "$model_files" | grep -qE '^(shared|src|batch)/|^requirements\.txt$'; then
+          # path filter; src/shared/, src/batch/, src/config.py, src/data/,
+          # src/features/, src/models/, src/training/, src/evaluation/ all
+          # change shared signal, so a touch anywhere there retrains all.
+          if printf '%s\n' "$model_files" | grep -qE '^src/(shared|batch|data|features|models|training|evaluation)/|^src/config\.py$|^requirements\.txt$'; then
             echo "Global code changed → retraining all positions."
             echo "positions=$ALL" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Per-position: any non-test change under {POS}/ retrains that
+          # Per-position: any non-test change under src/{POS}/ retrains that
           # position. Docs and markdown still trigger retraining (cheap);
           # the narrower filter above is scoped to tests/ only.
           positions=""
           for p in $ALL; do
-            if printf '%s\n' "$model_files" | grep -qE "^${p}/"; then
+            if printf '%s\n' "$model_files" | grep -qE "^src/${p}/"; then
               positions="${positions:+$positions }$p"
             fi
           done
@@ -149,8 +150,8 @@ jobs:
           cache: "pip"
 
       - name: Install history-update deps
-        # requirements-dev.txt, not requirements.txt: batch/benchmark.py's
-        # import chain (batch.launch → shared.registry → shared.aggregate_targets)
+        # requirements-dev.txt, not requirements.txt: src/batch/benchmark.py's
+        # import chain (src.batch.launch → src.shared.registry → src.shared.aggregate_targets)
         # pulls torch since cc0c627 added the attention NN. Mirrors tests.yml.
         run: pip install -r requirements-dev.txt
 
@@ -308,7 +309,7 @@ jobs:
           # Rebase before appending so a concurrent push doesn't reject us later.
           git fetch origin "$BRANCH"
           git pull --rebase origin "$BRANCH"
-          python batch/benchmark.py \
+          python -m src.batch.benchmark \
             --download-only \
             --backend ec2 \
             --instance-type "g4dn.xlarge (On-Demand)" \

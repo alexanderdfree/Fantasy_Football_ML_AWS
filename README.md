@@ -12,7 +12,7 @@ The system ingests weekly NFL data from [nflverse](https://github.com/nflverse) 
 
 > Can a multi-head neural network with engineered temporal features and target decomposition meaningfully outperform Ridge regression at predicting weekly fantasy output, and what features matter most?
 
-The answer differs by position — see the Evaluation section below. Each position's model predicts a small set of raw NFL stats rather than pre-scored fantasy-point buckets, and a deterministic aggregator ([shared/aggregate_targets.py](shared/aggregate_targets.py)) converts those raw stats to fantasy points under any scoring format. The raw targets per position:
+The answer differs by position — see the Evaluation section below. Each position's model predicts a small set of raw NFL stats rather than pre-scored fantasy-point buckets, and a deterministic aggregator ([src/shared/aggregate_targets.py](src/shared/aggregate_targets.py)) converts those raw stats to fantasy points under any scoring format. The raw targets per position:
 
 - **QB** (6): `passing_yards`, `rushing_yards`, `passing_tds`, `rushing_tds`, `interceptions`, `fumbles_lost`
 - **RB** (6): `rushing_tds`, `receiving_tds`, `rushing_yards`, `receiving_yards`, `receptions`, `fumbles_lost`
@@ -41,9 +41,9 @@ nflverse API ─┐
                                                 ▼
                              ┌──────────────────────────────┐
                              │ EC2 g4dn warm instance (train)│◀── GitHub Actions
-                             │   batch/train.py, 6 parallel │     push to main
-                             │   positions. AWS Batch       │
-                             │   remains the standby path.  │
+                             │   src/batch/train.py, 6      │     push to main
+                             │   parallel positions.        │
+                             │   AWS Batch is the standby.  │
                              └──────────────────────────────┘
                                                 │ model.tar.gz
                                                 ▼
@@ -64,33 +64,33 @@ Common commands once set up:
 
 ```bash
 # Run the comparison benchmark (all positions) — writes one file per run to benchmark_history/
-python benchmark.py
+python -m src.benchmarking.benchmark
 
 # Benchmark one position
-python benchmark.py RB
+python -m src.benchmarking.benchmark RB
 
 # Serve the dashboard locally → http://localhost:5000
-python app.py
+python -m src.serving.app
 
 # Run the test suite
 pytest
 pytest -m unit        # fast tests only
 ```
 
-Coverage is tracked on [Codecov](https://app.codecov.io/gh/alexanderdfree/Fantasy_Football_ML_AWS) with an **80% target per position and shared component** (see [codecov.yml](codecov.yml)). One-off diagnostic CLIs (`QB/diagnose_qb_outliers.py`, `RB/analyze_rb_errors.py`) are excluded from the denominator — everything else gets pulled in.
+Coverage is tracked on [Codecov](https://app.codecov.io/gh/alexanderdfree/Fantasy_Football_ML_AWS) with an **80% target per position and shared component** (see [codecov.yml](codecov.yml)). One-off diagnostic CLIs (`src/QB/diagnose_qb_outliers.py`, `src/RB/analyze_rb_errors.py`) are excluded from the denominator — everything else gets pulled in.
 
 Full training on GPU runs on EC2 via CI; see [docs/ec2_design.md](docs/ec2_design.md) for the pipeline and [infra/ec2/README.md](infra/ec2/README.md) for operator notes.
 
 ## Video Links
 
-- Demo video — non-technical (3–5 min): [DemoRecording.mov](DemoRecording.mov)
+- Demo video — non-technical (3–5 min): [videos/DemoRecording.mov](videos/DemoRecording.mov)
 - Technical walkthrough (hosted on YouTube — file too large for the repo): https://youtu.be/eyuTnk3qLk8
 
 ## Evaluation
 
 Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination), top-12 hit rate (agreement with the actual weekly top 12 at the position, PPR scoring). Numbers from [benchmark_results.json](benchmark_results.json).
 
-> The numbers below come from a benchmark snapshot taken before the K/DST attention-NN additions (commits `801b61a`, `cc0c627`) and the DST raw-stat migration. Re-run `python benchmark.py` to refresh against the current code; the K/DST attention cells will populate at that point.
+> The numbers below come from a benchmark snapshot taken before the K/DST attention-NN additions (commits `801b61a`, `cc0c627`) and the DST raw-stat migration. Re-run `python -m src.benchmarking.benchmark` to refresh against the current code; the K/DST attention cells will populate at that point.
 
 | Position | Ridge MAE | NN MAE | Attn NN MAE | LGBM MAE | Best | R² (best) | Top-12 (best) |
 |---|---|---|---|---|---|---|---|
@@ -111,35 +111,50 @@ Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy po
 
 ## Repo Layout
 
+The repository follows the CS 372 submission rubric: top-level `src/` (all source code), `data/`, `models/`, `notebooks/`, `videos/`, and `docs/` directories alongside the required `README.md` / `SETUP.md` / `ATTRIBUTION.md`.
+
 ```
-app.py                              Flask dashboard + /api/predictions
-benchmark.py                        Multi-position Ridge/NN/Attn/LGBM comparison
-Dockerfile                          Slim image for ECS serving
-batch/                              Training orchestration (EC2 + Batch standby)
-  launch.py                         Local submitter (uploads data, polls, pulls models)
-  train.py                          In-container training entrypoint
-  Dockerfile.train                  Heavy CUDA/PyTorch training image
-QB/ RB/ WR/ TE/ K/ DST/             Per-position configs, features, targets, runners, tests
-shared/                             Cross-position infrastructure
-  neural_net.py                     MultiHeadNet, AttentionPool, GatedTDHead
-  models.py                         RidgeMultiTarget, LightGBMMultiTarget
-  training.py                       MultiTargetLoss, trainer, schedulers
-  pipeline.py                       Position-pipeline orchestrator
-  registry.py                       Position runner dispatch
-  weather_features.py               Vegas odds + weather joins
-src/                                Data + general features
-  config.py                         Seasons, scoring, rolling windows
+src/                                All Python source code
+  QB/ RB/ WR/ TE/ K/ DST/           Per-position configs, features, targets, runners, tests
+  shared/                           Cross-position infrastructure
+    neural_net.py                   MultiHeadNet, AttentionPool, GatedTDHead
+    models.py                       RidgeMultiTarget, LightGBMMultiTarget
+    training.py                     MultiTargetLoss, trainer, schedulers
+    pipeline.py                     Position-pipeline orchestrator
+    registry.py                     Position runner dispatch
+    weather_features.py             Vegas odds + weather joins
+  batch/                            Training orchestration (EC2 + Batch standby)
+    launch.py                       Local submitter (uploads data, polls, pulls models)
+    train.py                        In-container training entrypoint
+    Dockerfile.train                Heavy CUDA/PyTorch training image
+  serving/                          Flask serving stack
+    app.py                          Flask dashboard + /api/predictions + /api/wiki
+    static/, templates/             Frontend assets
+  benchmarking/benchmark.py         Multi-position Ridge/NN/Attn/LGBM comparison
+  tuning/                           Optuna LGBM tuner, RB-gate tuner, ablation runner
+  analysis/                         Post-hoc data + model analysis scripts
+  scripts/                          Operator CLIs (artifact promote, feature audit)
+  config.py                         Shared seasons, scoring, rolling windows
   data/                             loader, split, preprocessing
   features/engineer.py              Feature engineering
-  models/                           SeasonAverageBaseline, LastWeekBaseline, RidgeModel (imported by shared/pipeline)
-  training/trainer.py               Single-head Trainer (pre-MultiHeadNet; unused by current pipelines)
+  models/                           SeasonAverageBaseline, LastWeekBaseline, RidgeModel
+  training/trainer.py               Single-head Trainer
   evaluation/                       metrics, backtest
+
+data/README.md                      Pointer to nflverse loaders + gitignored caches
+models/README.md                    Pointer to per-position artifact dirs + S3 layout
+notebooks/README.md                 Project doesn't use notebooks; analysis lives in src/analysis/
+videos/                             Demo recording + technical walkthrough YouTube link
+docs/                               ARCHITECTURE (ADR-001), design docs, runbooks
 infra/ec2/                          Active training host (warm g4dn.xlarge)
 infra/aws/                          ECS/ALB serving stack
-docs/                               ARCHITECTURE (ADR-001), design docs, runbooks
 instructions/                       CS 372 handout + rubric-mapping design doc
-tests/ + QB/tests/ + ...            Unit, integration, e2e tests
+tests/                              Top-level integration / e2e tests
+Dockerfile                          Slim image for ECS serving (root for build context)
+conftest.py                         pytest project-root sys.path bootstrap
 ```
+
+Tests live alongside their source under `src/{POS}/tests/`, `src/shared/tests/`, `src/batch/tests/`, `src/scripts/tests/`, plus the top-level `tests/` for cross-cutting integration + e2e.
 
 ## Deeper Reading
 
@@ -171,7 +186,7 @@ GitHub Actions
    │                              ▼ workflow_run
    │        ┌────────────────────────────────────────┐
    │        │ EC2 g4dn.xlarge (warm T4 GPU host)     │
-   │        │   batch/train.py via SSM Run Command   │
+   │        │   src.batch.train via SSM Run Command  │
    │        │   per-position change detection        │
    │        └────────────────────────────────────────┘
    │                              │ manifest + tar.gz
@@ -188,7 +203,7 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 ```
 
 - **Training** — a warm `g4dn.xlarge` T4 GPU host is driven via SSM Run Command from [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml). A `detect` job diffs the merge commit and only retrains positions whose code actually changed; the instance auto-shuts down on idle to keep cost flat.
-- **Artifact safety** — S3 manifest schema v2 tracks `stable` / `current` / `previous` plus a 5-version `history`. New artifacts must clear a smoke-test gate before being promoted to `stable`. [scripts/promote.py](scripts/promote.py) supports manual rollback to any history entry; bucket versioning is defense-in-depth.
+- **Artifact safety** — S3 manifest schema v2 tracks `stable` / `current` / `previous` plus a 5-version `history`. New artifacts must clear a smoke-test gate before being promoted to `stable`. [src/scripts/promote.py](src/scripts/promote.py) supports manual rollback to any history entry; bucket versioning is defense-in-depth.
 - **Serving** — ECS Fargate (arm64, 1 vCPU / 2 GB) sits behind an ALB with ACM-terminated HTTPS. The slim Flask image fetches models from S3 at boot rather than baking them in — keeps the image roughly 3× smaller and lets prod track new artifacts without a full redeploy.
 - **IAM** — the serving task role is scoped to `s3:GetObject` on `ff-predictor-training/models/*` only.
 - **Standby path** — the AWS Batch image is still built behind a `BATCH_ACTIVE` repo variable so the GPU layer can fail over without a code change.
@@ -196,7 +211,7 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 **Notable enhancements**
 - Always-stable serving + smoke-test gate + S3 bucket versioning (PR #130, `c7fa2d7`)
 - Versioned history + manifest-driven rollback (PR #104, `1b20e9e`)
-- Operational rollback CLI [scripts/promote.py](scripts/promote.py) (PR #122, `e8bf2a7`)
+- Operational rollback CLI [src/scripts/promote.py](src/scripts/promote.py) (PR #122, `e8bf2a7`)
 - Slim arm64 serving image with runtime S3 model fetch (PR #83, `3243d72`)
 - 24/7 warm EC2 host eliminates 3–5 min Batch scale-up → sub-15-min push-to-serve
 
@@ -213,7 +228,7 @@ push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov ·
 
 - Four production workflows ([tests.yml](.github/workflows/tests.yml), [batch-image.yml](.github/workflows/batch-image.yml), [train-ec2.yml](.github/workflows/train-ec2.yml), [deploy.yml](.github/workflows/deploy.yml)) plus two diagnostic ones ([ablate-rb-gate.yml](.github/workflows/ablate-rb-gate.yml), [retune-lgbm.yml](.github/workflows/retune-lgbm.yml)) for one-click experiments on the GPU host.
 - **`tests.yml`** — 7-shard pytest matrix (QB / RB / WR / TE / K / DST / shared) with per-shard Codecov flags and an 80% per-component target enforced via [codecov.yml](codecov.yml). Within-shard parallelism via `pytest-xdist`.
-- **`batch-image.yml` → `train-ec2.yml`** — the image build is gated by path filters; the `detect` job in `train-ec2.yml` diffs `HEAD^..HEAD` and retrains *only* the positions whose code changed. Cross-cutting changes (`shared/`, `src/`, `requirements.txt`) retrain all six.
+- **`batch-image.yml` → `train-ec2.yml`** — the image build is gated by path filters; the `detect` job in `train-ec2.yml` diffs `HEAD^..HEAD` and retrains *only* the positions whose code changed. Cross-cutting changes (`src/shared/`, `src/batch/`, shared `src/` modules, `requirements.txt`) retrain all six.
 - **`deploy.yml`** — native `arm64` runner (no QEMU emulation), BuildKit cache persisted across runs, path-filtered to the serving surface so docs-only or test-only changes don't trigger a deploy.
 - All Python installs use `uv` for ~10× faster cold starts than pip.
 

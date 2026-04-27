@@ -59,7 +59,7 @@ def degraded_mode_app(monkeypatch):
     """Import ``app`` with a pre-populated minimal cache. Per-test monkeypatches
     of ``_apply_position_models`` control which positions succeed or fail.
     """
-    import app as app_mod
+    import src.serving.app as app_mod
 
     fake_cache = {
         "base_loaded": True,

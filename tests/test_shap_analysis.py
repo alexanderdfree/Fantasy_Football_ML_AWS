@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 def test_sample_background_deterministic():
     """Same (seed, n) must yield identical rows across runs — or SHAP diffs
     would reflect sampling noise instead of real model change."""
-    mod = importlib.import_module("analysis_shap_lgbm")
+    mod = importlib.import_module("src.analysis.analysis_shap_lgbm")
 
     X = np.arange(500 * 4, dtype=np.float32).reshape(500, 4)
     bg1 = mod._sample_background(X, n_samples=50, seed=42)
@@ -37,7 +37,7 @@ def test_sample_background_deterministic():
 
 @pytest.mark.unit
 def test_sample_background_caps_at_population():
-    mod = importlib.import_module("analysis_shap_lgbm")
+    mod = importlib.import_module("src.analysis.analysis_shap_lgbm")
     X = np.ones((30, 3), dtype=np.float32)
     bg = mod._sample_background(X, n_samples=1000, seed=0)
     assert bg.shape == (30, 3)
@@ -46,8 +46,10 @@ def test_sample_background_caps_at_population():
 @pytest.mark.unit
 def test_cli_rejects_tiny_background(monkeypatch, capsys):
     """Smoke check on argparse: --background-samples 50 must fail."""
-    mod = importlib.import_module("analysis_shap_lgbm")
-    monkeypatch.setattr(sys, "argv", ["analysis_shap_lgbm.py", "QB", "--background-samples", "50"])
+    mod = importlib.import_module("src.analysis.analysis_shap_lgbm")
+    monkeypatch.setattr(
+        sys, "argv", ["src/analysis/analysis_shap_lgbm.py", "QB", "--background-samples", "50"]
+    )
     with pytest.raises(SystemExit):
         mod.main()
 
@@ -68,9 +70,9 @@ def test_run_shap_end_to_end(tmp_path, monkeypatch):
     real runner module. Verifies that PNG summary plots and the ranking
     JSON are emitted with the expected shape.
     """
-    from shared.models import LightGBMMultiTarget
+    from src.shared.models import LightGBMMultiTarget
 
-    mod = importlib.import_module("analysis_shap_lgbm")
+    mod = importlib.import_module("src.analysis.analysis_shap_lgbm")
 
     rng = np.random.default_rng(0)
     targets = ["yards", "tds"]
@@ -135,9 +137,9 @@ def test_run_shap_end_to_end(tmp_path, monkeypatch):
 )
 def test_target_filter_rejects_unknown(tmp_path, monkeypatch):
     """--targets with a name not in the model must raise with a useful message."""
-    from shared.models import LightGBMMultiTarget
+    from src.shared.models import LightGBMMultiTarget
 
-    mod = importlib.import_module("analysis_shap_lgbm")
+    mod = importlib.import_module("src.analysis.analysis_shap_lgbm")
 
     rng = np.random.default_rng(0)
     targets = ["yards"]

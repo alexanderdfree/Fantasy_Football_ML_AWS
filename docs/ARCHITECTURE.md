@@ -115,7 +115,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 
 ### D2: Multi-target decomposition with shared NN backbone
 
-**Decision.** Decompose each position's prediction into a small set of *raw NFL stat* targets (yards, TD counts, receptions, interceptions, fumbles_lost) rather than pre-scored fantasy-point buckets. Train one neural network per position with a shared backbone and one head per target. Convert per-target predictions to fantasy points *after* the model runs via a deterministic aggregator ([shared/aggregate_targets.py](../shared/aggregate_targets.py)) that multiplies each raw-stat prediction by the corresponding coefficient in `src/config.py:SCORING_PPR` (or `SCORING_HALF_PPR` / `SCORING_STANDARD`). The aggregator is only applied at serving and benchmark-reporting time; each head trains on its own raw-stat label.
+**Decision.** Decompose each position's prediction into a small set of *raw NFL stat* targets (yards, TD counts, receptions, interceptions, fumbles_lost) rather than pre-scored fantasy-point buckets. Train one neural network per position with a shared backbone and one head per target. Convert per-target predictions to fantasy points *after* the model runs via a deterministic aggregator ([src/shared/aggregate_targets.py](../src/shared/aggregate_targets.py)) that multiplies each raw-stat prediction by the corresponding coefficient in `src/config.py:SCORING_PPR` (or `SCORING_HALF_PPR` / `SCORING_STANDARD`). The aggregator is only applied at serving and benchmark-reporting time; each head trains on its own raw-stat label.
 
 Current target sets (6 for QB/RB, 4 for WR/TE/K, 10 for DST):
 
@@ -148,7 +148,7 @@ Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value
 
 **Consequence.** Inference-time totals flow through `shared/aggregate_targets.py:predictions_to_fantasy_points` — changing scoring coefficients is a single-file edit. The per-position adjustment functions (`compute_qb_adjustment`, `compute_fumble_adjustment`, etc.) are retired for QB/RB/WR/TE; their effects (interception penalty, fumble penalty) are now direct targets (`interceptions`, `fumbles_lost`) that the aggregator prices in. DST flows through the same aggregator (10 raw stats plus a tiered PA/YA bonus lookup, commit `cc0c627`); K retains its own aggregation path — the 4 heads stay as raw counts and only the sign vector is applied at aggregation time.
 
-**References.** [shared/aggregate_targets.py](../shared/aggregate_targets.py) (aggregator + `TARGET_UNITS` + `POINT_EQUIVALENT_MULTIPLIER`), [src/config.py](../src/config.py) (`SCORING_PPR`, `SCORING_HALF_PPR`, `SCORING_STANDARD`), [shared/neural_net.py:38-145](../shared/neural_net.py) (`MultiHeadNet`, `aggregate_fn` plumbing), [shared/training.py](../shared/training.py) (`MultiTargetLoss`), per-position `compute_{pos}_targets` in `QB/qb_targets.py`, `RB/rb_targets.py`, `WR/wr_targets.py`, `TE/te_targets.py`, and `{POS}/{pos}_config.py` (target lists + loss weights + Huber deltas in raw-stat units). Consolidated in commit `99d7086`; raw-stat migration follows.
+**References.** [src/shared/aggregate_targets.py](../src/shared/aggregate_targets.py) (aggregator + `TARGET_UNITS` + `POINT_EQUIVALENT_MULTIPLIER`), [src/config.py](../src/config.py) (`SCORING_PPR`, `SCORING_HALF_PPR`, `SCORING_STANDARD`), [shared/neural_net.py:38-145](../shared/neural_net.py) (`MultiHeadNet`, `aggregate_fn` plumbing), [shared/training.py](../shared/training.py) (`MultiTargetLoss`), per-position `compute_{pos}_targets` in `QB/qb_targets.py`, `RB/rb_targets.py`, `WR/wr_targets.py`, `TE/te_targets.py`, and `{POS}/{pos}_config.py` (target lists + loss weights + Huber deltas in raw-stat units). Consolidated in commit `99d7086`; raw-stat migration follows.
 
 ---
 
@@ -170,7 +170,7 @@ Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value
 
 **Rejected.** Ensembling was considered and rejected because it would obscure exactly the finding the project is trying to produce. (A future production system would of course blend these — that's a follow-up, not this ADR.)
 
-**References.** [shared/models.py](../shared/models.py) (`RidgeMultiTarget`, `LightGBMMultiTarget`), [shared/neural_net.py](../shared/neural_net.py), [shared/pipeline.py](../shared/pipeline.py). LightGBM added in commit `f343c20`.
+**References.** [src/shared/models.py](../src/shared/models.py) (`RidgeMultiTarget`, `LightGBMMultiTarget`), [src/shared/neural_net.py](../src/shared/neural_net.py), [shared/pipeline.py](../shared/pipeline.py). LightGBM added in commit `f343c20`.
 
 ---
 
@@ -198,7 +198,7 @@ Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value
 
 **Rejected.** A full LSTM or Transformer was tried conceptually (see [docs/design_lstm_multihead.md](design_lstm_multihead.md)) but rejected as over-parameterized for this regime. Kept the design doc as an artifact of the consideration. An earlier version of this ADR rejected attention on K and DST — that decision was reversed once the input schemas were redesigned to give the attention branch something real to chew on (raw per-kick rows for K, raw defensive stats rather than pre-rolled windows for DST).
 
-**References.** [shared/neural_net.py](../shared/neural_net.py) — `GatedTDHead` (L9), `AttentionPool` (L122), `MultiHeadNetWithHistory` (L202, outer-only attention used by QB/RB/WR/TE/DST), `MultiHeadNetWithNestedHistory` (L431, inner-kick ⊕ outer-game attention used by K); [K/k_config.py:102-152](../K/k_config.py) (nested attention, per-kick stats, static allowlist); [DST/dst_config.py:169-228](../DST/dst_config.py) (DST attention + history stats + static allowlist); [docs/design_lstm_multihead.md](design_lstm_multihead.md). Evolved across commits `b31bdf7` → `c399c12` → `99d7086` → `cc0c627` (DST attention + raw-stat targets) → `801b61a` (K nested attention).
+**References.** [src/shared/neural_net.py](../src/shared/neural_net.py) — `GatedTDHead` (L9), `AttentionPool` (L122), `MultiHeadNetWithHistory` (L202, outer-only attention used by QB/RB/WR/TE/DST), `MultiHeadNetWithNestedHistory` (L431, inner-kick ⊕ outer-game attention used by K); [K/k_config.py:102-152](../K/k_config.py) (nested attention, per-kick stats, static allowlist); [DST/dst_config.py:169-228](../DST/dst_config.py) (DST attention + history stats + static allowlist); [docs/design_lstm_multihead.md](design_lstm_multihead.md). Evolved across commits `b31bdf7` → `c399c12` → `99d7086` → `cc0c627` (DST attention + raw-stat targets) → `801b61a` (K nested attention).
 
 ---
 
@@ -218,7 +218,7 @@ Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value
 
 **Chosen rationale.** Each constraint was added in response to a specific observed failure, not as a precaution. This ADR captures them together because they form a *coherent* stack — remove any one and a specific failure mode returns.
 
-**References.** [shared/neural_net.py:61-107](../shared/neural_net.py) (`non_negative_targets` set + per-head softplus), [shared/training.py](../shared/training.py) (`MultiTargetLoss` with Huber), [DST/dst_config.py:121](../DST/dst_config.py) (`DST_NN_NON_NEGATIVE_TARGETS = set(DST_TARGETS)` — after the commit `cc0c627` migration all 10 raw DST heads are non-negative, so the set is simply the full target list; the `pts_allowed_bonus` head that used to warrant DST opting out of the global clamp is no longer a head — its negative values are produced downstream by the tier-lookup in `shared/aggregate_targets.py`), feature clipping in [shared/pipeline.py](../shared/pipeline.py). The `GatedTDHead` is now parameterized over a list of gated targets (`RB` has two: `rushing_tds` + `receiving_tds`; `WR`/`TE` have one: `receiving_tds`; `QB`, `K`, and `DST` have none — see D2). See also the "Fixed" section of [TODO.md](../TODO.md) for each bug history.
+**References.** [shared/neural_net.py:61-107](../shared/neural_net.py) (`non_negative_targets` set + per-head softplus), [shared/training.py](../shared/training.py) (`MultiTargetLoss` with Huber), [DST/dst_config.py:121](../DST/dst_config.py) (`DST_NN_NON_NEGATIVE_TARGETS = set(DST_TARGETS)` — after the commit `cc0c627` migration all 10 raw DST heads are non-negative, so the set is simply the full target list; the `pts_allowed_bonus` head that used to warrant DST opting out of the global clamp is no longer a head — its negative values are produced downstream by the tier-lookup in `src/shared/aggregate_targets.py`), feature clipping in [shared/pipeline.py](../shared/pipeline.py). The `GatedTDHead` is now parameterized over a list of gated targets (`RB` has two: `rushing_tds` + `receiving_tds`; `WR`/`TE` have one: `receiving_tds`; `QB`, `K`, and `DST` have none — see D2). See also the "Fixed" section of [TODO.md](../TODO.md) for each bug history.
 
 ---
 
@@ -242,7 +242,7 @@ Zero-inflated TD targets get a `GatedTDHead` (BCE gate on `tds > 0` plus a value
 
 **Rejected.** Opt-out was the earlier pattern and was exactly how the feature-clipping bug and the schedule-features-at-inference bug slipped in. Allowlist refactor landed in commit `18170a6` alongside the gated TD change.
 
-**References.** [QB/qb_config.py](../QB/qb_config.py) (`QB_INCLUDE_FEATURES`, `QB_ATTN_STATIC_FEATURES`), [TE/te_config.py](../TE/te_config.py), [DST/dst_config.py:218-228](../DST/dst_config.py), [K/k_config.py:140-152](../K/k_config.py), [shared/pipeline.py](../shared/pipeline.py). Weather/Vegas features (from [docs/design_weather_and_odds.md](design_weather_and_odds.md)) are opted in per-position through the same mechanism.
+**References.** [src/QB/qb_config.py](../src/QB/qb_config.py) (`QB_INCLUDE_FEATURES`, `QB_ATTN_STATIC_FEATURES`), [TE/te_config.py](../TE/te_config.py), [DST/dst_config.py:218-228](../DST/dst_config.py), [K/k_config.py:140-152](../K/k_config.py), [shared/pipeline.py](../shared/pipeline.py). Weather/Vegas features (from [docs/design_weather_and_odds.md](design_weather_and_odds.md)) are opted in per-position through the same mechanism.
 
 ---
 
@@ -379,11 +379,11 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 
 ### Source files by subsystem
 
-- **Data & features:** [src/data/loader.py](../src/data/loader.py), [src/data/split.py](../src/data/split.py), [src/data/preprocessing.py](../src/data/preprocessing.py), [src/features/engineer.py](../src/features/engineer.py), [shared/weather_features.py](../shared/weather_features.py).
-- **Models:** [shared/models.py](../shared/models.py) (Ridge, LightGBM, ordinal, two-stage), [shared/neural_net.py](../shared/neural_net.py) (MultiHeadNet, attention, gated TD head), [src/models/baseline.py](../src/models/baseline.py).
+- **Data & features:** [src/data/loader.py](../src/data/loader.py), [src/data/split.py](../src/data/split.py), [src/data/preprocessing.py](../src/data/preprocessing.py), [src/features/engineer.py](../src/features/engineer.py), [src/shared/weather_features.py](../src/shared/weather_features.py).
+- **Models:** [src/shared/models.py](../src/shared/models.py) (Ridge, LightGBM, ordinal, two-stage), [src/shared/neural_net.py](../src/shared/neural_net.py) (MultiHeadNet, attention, gated TD head), [src/models/baseline.py](../src/models/baseline.py).
 - **Training:** [shared/training.py](../shared/training.py) (MultiTargetLoss, trainer, schedulers), [shared/pipeline.py](../shared/pipeline.py) (pipeline orchestrator).
 - **Per-position configs:** `QB/qb_config.py`, `RB/rb_config.py`, `WR/wr_config.py`, `TE/te_config.py`, `K/k_config.py`, `DST/dst_config.py`.
-- **Serving:** [app.py](../app.py), [Dockerfile](../Dockerfile).
+- **Serving:** [src/serving/app.py](../src/serving/app.py), [Dockerfile](../Dockerfile).
 - **Training infra (active, EC2):** [infra/ec2/](../infra/ec2/), [batch/train.py](../batch/train.py), [batch/Dockerfile.train](../batch/Dockerfile.train), [batch/build_and_push.sh](../batch/build_and_push.sh), [.github/workflows/train-ec2.yml](../.github/workflows/train-ec2.yml).
 - **Training infra (standby, Batch):** [batch/launch.py](../batch/launch.py), [.github/workflows/batch-image.yml](../.github/workflows/batch-image.yml).
 - **CI:** [.github/workflows/tests.yml](../.github/workflows/tests.yml), [train-ec2.yml](../.github/workflows/train-ec2.yml), [batch-image.yml](../.github/workflows/batch-image.yml), [deploy.yml](../.github/workflows/deploy.yml).

@@ -142,7 +142,7 @@ These files are produced by scripts in the repo but live under `analysis_output/
 |---|---|---|
 | `analysis_output/qb_outlier_diagnostic.{md,json}` | [QB/diagnose_qb_outliers.py](../QB/diagnose_qb_outliers.py) | `python QB/diagnose_qb_outliers.py` |
 | `analysis_output/rb_error_mae_by_*.png` | [RB/analyze_rb_errors.py](../RB/analyze_rb_errors.py) | `python RB/analyze_rb_errors.py` |
-| `benchmark_results.json` (raw-stat target naming) | [benchmark.py](../benchmark.py) | `python benchmark.py` |
+| `benchmark_results.json` (raw-stat target naming) | [src/benchmarking/benchmark.py](../src/benchmarking/benchmark.py) | `python -m src.benchmarking.benchmark` |
 
 The 6 PNGs already in [analysis_output/](../analysis_output/) (weather/Vegas correlations × 4 positions, cross-position summary, RB feature-signal ablation) **are committed** — they were force-added past `.gitignore`.
 
@@ -183,8 +183,8 @@ For each claim, the fastest path to verify:
 | Claim | Quickest verification path |
 |---|---|
 | #1 Solo | [README.md:5,156-158](../README.md) |
-| #2 Web app | Visit [alexfree.me](https://alexfree.me); read [app.py](../app.py), [Dockerfile](../Dockerfile), [infra/aws/](../infra/aws/) |
-| #3 Production deploy | `grep -n "_cache\|_cache_lock\|errorhandler" app.py` finds caching + error handling; [infra/ec2/cloudwatch-agent.json](../infra/ec2/cloudwatch-agent.json) for logging |
+| #2 Web app | Visit [alexfree.me](https://alexfree.me); read [src/serving/app.py](../src/serving/app.py), [Dockerfile](../Dockerfile), [infra/aws/](../infra/aws/) |
+| #3 Production deploy | `grep -rn "_cache\|_cache_lock\|errorhandler" src/serving/app.py` finds caching + error handling; [infra/ec2/cloudwatch-agent.json](../infra/ec2/cloudwatch-agent.json) for logging |
 | #4 Architectures | [README.md:90-99](../README.md) eval table |
 | #5 Error analysis | [docs/expert_comparison.md:99-141](../docs/expert_comparison.md) (committed discussion) + script files exist |
 | #6 Ablation ⭐ | Table above (this doc) reproduced from [tune_rb_gate_results.json](../tune_rb_gate_results.json) |

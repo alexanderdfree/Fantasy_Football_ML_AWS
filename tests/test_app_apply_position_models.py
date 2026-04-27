@@ -84,7 +84,7 @@ def _mocked_app(monkeypatch):
 
     Returns the module under test for direct function invocation.
     """
-    import app as app_mod
+    import src.serving.app as app_mod
 
     # Fake Ridge/LGBM: zero predictions for every target.
     class _FakeMultiTarget:
@@ -185,7 +185,7 @@ def _mocked_app(monkeypatch):
 def _qb_registry(monkeypatch):
     """Swap ``POSITION_REGISTRY['QB']`` for a minimal stub that drives
     the ridge + nn + lgbm branches but not attention (exercised separately)."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     reg = {
         "targets": ["passing_yards", "rushing_yards"],
@@ -196,7 +196,7 @@ def _qb_registry(monkeypatch):
         "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
         "get_feature_columns_fn": lambda: ["f0"],
         "aggregate_fn": lambda preds: sum(preds[t] for t in ("passing_yards", "rushing_yards")),
-        "model_dir": "QB/outputs/models",
+        "model_dir": "src/QB/outputs/models",
         "nn_file": "qb_multihead_nn.pt",
         "nn_kwargs": {},
         "train_attention_nn": False,
@@ -216,7 +216,7 @@ def _qb_registry(monkeypatch):
         def __contains__(self, pos):
             return True
 
-    from shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
+    from src.shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
 
     monkeypatch.setattr(app_mod, "POSITION_REGISTRY", _StubRegistry())
     return reg
@@ -256,7 +256,7 @@ def test_apply_position_models_qb_flat_path(_mocked_app, _qb_registry):
 @pytest.mark.integration
 def test_apply_position_models_with_attention(_mocked_app, monkeypatch):
     """When reg['train_attention_nn'] is True, the attention branch fires."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     reg = {
         "targets": ["passing_yards"],
@@ -267,7 +267,7 @@ def test_apply_position_models_with_attention(_mocked_app, monkeypatch):
         "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
         "get_feature_columns_fn": lambda: ["f0"],
         "aggregate_fn": lambda preds: preds["passing_yards"],
-        "model_dir": "QB/outputs/models",
+        "model_dir": "src/QB/outputs/models",
         "nn_file": "qb_multihead_nn.pt",
         "nn_kwargs": {},
         "train_attention_nn": True,
@@ -301,7 +301,7 @@ def test_apply_position_models_with_attention(_mocked_app, monkeypatch):
 @pytest.mark.integration
 def test_apply_position_models_with_adjustment_fn(_mocked_app, monkeypatch):
     """``compute_adjustment_fn`` (used by DST) must get applied to totals."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     reg = {
         "targets": ["points_allowed"],
@@ -312,7 +312,7 @@ def test_apply_position_models_with_adjustment_fn(_mocked_app, monkeypatch):
         "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
         "get_feature_columns_fn": lambda: ["f0"],
         "compute_adjustment_fn": lambda df: pd.Series(np.ones(len(df)) * 5.0, index=df.index),
-        "model_dir": "QB/outputs/models",
+        "model_dir": "src/QB/outputs/models",
         "nn_file": "fake.pt",
         "nn_kwargs": {},
         "train_attention_nn": False,
@@ -342,7 +342,7 @@ def test_compute_metrics_locked_populates_cache(monkeypatch):
     """``_compute_metrics_locked`` computes overall + per-position metrics
     for every model whose prediction column has any non-NaN row, and caches
     them under ``_cache['metrics']``."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     app_mod._cache.clear()
     n = 30
@@ -377,7 +377,7 @@ def test_compute_metrics_locked_populates_cache(monkeypatch):
 def test_safe_num_handles_nan_inf_and_none():
     """_safe_num converts NaN/inf/None/non-numeric to None; finite floats pass
     through unchanged."""
-    from app import _safe_num
+    from src.serving.app import _safe_num
 
     assert _safe_num(None) is None
     assert _safe_num(float("nan")) is None
@@ -391,7 +391,7 @@ def test_safe_num_handles_nan_inf_and_none():
 @pytest.mark.integration
 def test_safe_str_handles_nan_and_none():
     """_safe_str falls back to the default on None/NaN and str-converts numbers."""
-    from app import _safe_str
+    from src.serving.app import _safe_str
 
     assert _safe_str(None, default="X") == "X"
     assert _safe_str(float("nan"), default="Y") == "Y"
@@ -403,7 +403,7 @@ def test_safe_str_handles_nan_and_none():
 def test_compute_scoring_formats_adds_both_columns():
     """``_compute_scoring_formats`` adds standard + half-PPR columns when
     they're missing. Already-present columns must be preserved."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     df = pd.DataFrame(
         {
@@ -431,7 +431,7 @@ def test_compute_scoring_formats_adds_both_columns():
 @pytest.mark.integration
 def test_categorize_features_buckets_known_prefixes():
     """``_categorize_features`` sorts feature names into buckets by prefix."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     feats = [
         "rolling_mean_yards",
@@ -466,7 +466,7 @@ def test_categorize_features_buckets_known_prefixes():
 @pytest.mark.integration
 def test_health_route_degraded_when_load_errors_present(monkeypatch):
     """/health returns 503 + degraded status when _cache has position_load_errors."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     app_mod._cache.clear()
     app_mod._cache["position_load_errors"] = {"QB_ridge": "missing artifact"}
@@ -490,7 +490,7 @@ def test_apply_position_models_ridge_load_failure_records_and_nan_fills(_mocked_
     position loaded (with degraded preds); ``_degraded_positions`` surfaces it
     for the frontend banner.
     """
-    import app as app_mod
+    import src.serving.app as app_mod
 
     class _BadRidge:
         def __init__(self, **kwargs):

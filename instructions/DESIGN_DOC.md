@@ -30,7 +30,7 @@ Below are the 15 Machine Learning rubric items this project is designed to hit. 
 | 8 | **Defined and trained a custom neural network architecture** (PyTorch) | 5 | `shared/neural_net.py` |
 | 9 | **Systematic hyperparameter tuning** (≥3 configs documented) | 5 | Position-specific configs (`QB/qb_config.py`, etc.) |
 | 10 | **Regularization** (L2 + dropout + early stopping — at least 2 required) | 5 | `shared/neural_net.py`, `shared/training.py` |
-| 11 | **Modular code design** with reusable functions/classes | 3 | `src/`, `shared/`, position folders |
+| 11 | **Modular code design** with reusable functions/classes | 3 | `src/`, `src/shared/`, position folders |
 | 12 | **Train/validation/test split** with documented ratios | 3 | `src/data/split.py` |
 | 13 | **Training curves** (loss and metrics over time) | 3 | `shared/training.py` |
 | 14 | **Baseline model** (constant prediction = player's season average) | 3 | `src/models/baseline.py` |
@@ -77,16 +77,15 @@ Final-Project/
 ├── SETUP.md                       # Install + first-time-run instructions
 ├── ATTRIBUTION.md                 # Data sources, libraries, AI tool usage
 ├── TODO.md                        # Issue log (open) + Fixed archive with lessons
-├── app.py                         # Flask web application (dashboard + /api/predictions)
-├── benchmark.py                   # Multi-model benchmarking script (Ridge, NN, Attn NN, LGBM)
 ├── requirements.txt               # Serving dependencies (CPU-only)
 ├── requirements-dev.txt           # pytest, ruff
 ├── pyproject.toml                 # pytest markers, ruff config
-├── Dockerfile                     # Slim python:3.12-slim image for ECS serving
+├── Dockerfile                     # Slim python:3.12-slim image for ECS serving (root for build context)
 ├── .dockerignore
 ├── .gitignore
+├── conftest.py                    # pytest project-root sys.path bootstrap
 │
-├── src/                           # General multi-position pipeline
+├── src/                           # All Python source code (rubric-required top-level)
 │   ├── config.py                  # Central config: scoring, seasons, rolling windows
 │   ├── data/
 │   │   ├── loader.py              # nfl_data_py ingestion + parquet cache
@@ -97,56 +96,85 @@ Final-Project/
 │   ├── models/
 │   │   ├── baseline.py            # Constant-prediction baseline
 │   │   ├── linear.py              # Scikit-learn Ridge Regression
-│   │   └── neural_net.py          # Legacy NN module (see shared/neural_net.py)
+│   │   └── neural_net.py          # Legacy NN module (see src/shared/neural_net.py)
 │   ├── training/
-│   │   └── trainer.py             # Legacy trainer (see shared/training.py)
-│   └── evaluation/
-│       ├── metrics.py             # MAE, RMSE, R², per-position breakdown
-│       └── backtest.py            # Season-long fantasy simulation
+│   │   └── trainer.py             # Legacy trainer (see src/shared/training.py)
+│   ├── evaluation/
+│   │   ├── metrics.py             # MAE, RMSE, R², per-position breakdown
+│   │   └── backtest.py            # Season-long fantasy simulation
+│   │
+│   ├── shared/                    # Generic multi-target infrastructure
+│   │   ├── neural_net.py          # MultiHeadNet, AttentionPool, GatedTDHead, MultiHeadNetWithHistory
+│   │   ├── models.py              # RidgeMultiTarget, LightGBMMultiTarget, TwoStageRidge
+│   │   ├── training.py            # MultiHeadTrainer, MultiTargetLoss, dataloaders, schedulers
+│   │   ├── pipeline.py            # Position pipeline template (_train_nn, _train_attention_nn, _train_ridge, _train_lgbm)
+│   │   ├── registry.py            # Position runner dispatch
+│   │   ├── aggregate_targets.py   # Raw-stat predictions -> fantasy points (per position)
+│   │   ├── evaluation.py          # Evaluation utilities
+│   │   ├── error_analysis.py      # Residual + failure-case tooling
+│   │   ├── backtest.py            # Simulation/evaluation helpers
+│   │   ├── benchmark_utils.py     # Shared benchmark I/O (history append, formatting)
+│   │   ├── model_sync.py          # Pull/push model artifacts from/to S3
+│   │   ├── artifact_integrity.py  # Artifact-hash + schema validation
+│   │   ├── utils.py               # Small cross-cutting helpers
+│   │   ├── weather_features.py    # Vegas odds + venue/weather feature engineering
+│   │   └── tests/                 # Shared-infra unit/integration tests
+│   │
+│   ├── QB/  RB/  WR/  TE/         # Skill-position pipelines (shared structure)
+│   │   ├── {pos}_config.py        # Hyperparams, feature allowlist, target decomposition
+│   │   ├── {pos}_data.py          # Position-specific data prep
+│   │   ├── {pos}_targets.py       # Target construction (decomposition formulas)
+│   │   ├── {pos}_features.py      # Position-specific engineered features
+│   │   ├── run_{pos}_pipeline.py  # Entry point (calls src/shared/pipeline.py)
+│   │   ├── outputs/models/        # Trained model artifacts (gitignored)
+│   │   └── tests/                 # Per-position test suite
+│   │
+│   ├── K/                         # Kicker model (custom feature pipeline, bypasses general features)
+│   │   ├── k_config.py, k_data.py, k_targets.py, k_features.py
+│   │   ├── run_k_pipeline.py, outputs/, tests/
+│   │
+│   ├── DST/                       # D/ST model (custom feature pipeline, bypasses general features)
+│   │   ├── dst_config.py, dst_data.py, dst_targets.py, dst_features.py
+│   │   ├── run_dst_pipeline.py, outputs/, tests/
+│   │
+│   ├── batch/                     # Training orchestration (active: EC2; standby: Batch)
+│   │   ├── launch.py              # Local Batch launcher (standby path)
+│   │   ├── train.py               # In-container entrypoint — S3 download, run position, S3 upload
+│   │   ├── Dockerfile.train       # CUDA/PyTorch training image
+│   │   ├── Dockerfile.train.dockerignore
+│   │   ├── build_and_push.sh      # Local build + ECR push for the training image
+│   │   ├── benchmark.py           # Batch-side benchmark runner
+│   │   ├── requirements.txt       # Training-only deps (adds torch, no flask)
+│   │   └── tests/
+│   │
+│   ├── serving/                   # Flask serving stack
+│   │   ├── app.py                 # Flask dashboard + /api/predictions + /api/wiki
+│   │   ├── static/                # Frontend CSS / JS
+│   │   └── templates/             # Jinja templates
+│   │
+│   ├── benchmarking/
+│   │   └── benchmark.py           # Multi-model comparison (Ridge / NN / Attn NN / LGBM)
+│   │
+│   ├── tuning/                    # Optuna LGBM tuner, RB-gate tuner, ablation experiments
+│   │   ├── tune_lgbm.py
+│   │   ├── tune_rb_gate.py
+│   │   └── ablate_rb_gate.py
+│   │
+│   ├── analysis/                  # Post-hoc data + model analysis scripts
+│   │   ├── analysis_dst_rare_dispersion.py
+│   │   ├── analysis_rb_feature_signal.py
+│   │   ├── analysis_shap_lgbm.py
+│   │   └── analysis_weather_vegas_correlation.py
+│   │
+│   └── scripts/                   # Operator CLIs (artifact promote, feature audit)
+│       ├── promote.py
+│       ├── audit_features.py
+│       └── tests/
 │
-├── shared/                        # Generic multi-target infrastructure
-│   ├── neural_net.py              # MultiHeadNet, AttentionPool, GatedTDHead, MultiHeadNetWithHistory
-│   ├── models.py                  # RidgeMultiTarget, LightGBMMultiTarget, TwoStageRidge
-│   ├── training.py                # MultiHeadTrainer, MultiTargetLoss, dataloaders, schedulers
-│   ├── pipeline.py                # Position pipeline template (_train_nn, _train_attention_nn, _train_ridge, _train_lgbm)
-│   ├── registry.py                # Position runner dispatch
-│   ├── aggregate_targets.py       # Raw-stat predictions -> fantasy points (per position)
-│   ├── evaluation.py              # Evaluation utilities
-│   ├── error_analysis.py          # Residual + failure-case tooling
-│   ├── backtest.py                # Simulation/evaluation helpers
-│   ├── benchmark_utils.py         # Shared benchmark I/O (history append, formatting)
-│   ├── model_sync.py              # Pull/push model artifacts from/to S3
-│   ├── artifact_integrity.py      # Artifact-hash + schema validation
-│   ├── utils.py                   # Small cross-cutting helpers
-│   ├── weather_features.py        # Vegas odds + venue/weather feature engineering
-│   └── tests/                     # Shared-infra unit/integration tests
-│
-├── QB/  RB/  WR/  TE/             # Skill-position pipelines (shared structure)
-│   ├── {pos}_config.py            # Hyperparams, feature allowlist, target decomposition
-│   ├── {pos}_data.py              # Position-specific data prep
-│   ├── {pos}_targets.py           # Target construction (decomposition formulas)
-│   ├── {pos}_features.py          # Position-specific engineered features
-│   ├── run_{pos}_pipeline.py      # Entry point (calls shared/pipeline.py)
-│   ├── outputs/models/            # Trained model artifacts
-│   └── tests/                     # Per-position test suite
-│
-├── K/                             # Kicker model (custom feature pipeline, bypasses general features)
-│   ├── k_config.py, k_data.py, k_targets.py, k_features.py
-│   ├── run_k_pipeline.py, outputs/, tests/
-│
-├── DST/                           # D/ST model (custom feature pipeline, bypasses general features)
-│   ├── dst_config.py, dst_data.py, dst_targets.py, dst_features.py
-│   ├── run_dst_pipeline.py, outputs/, tests/
-│
-├── batch/                         # Training orchestration (active: EC2; standby: Batch)
-│   ├── launch.py                  # Local Batch launcher (standby path)
-│   ├── train.py                   # In-container entrypoint — S3 download, run position, S3 upload
-│   ├── Dockerfile.train           # CUDA/PyTorch training image
-│   ├── Dockerfile.train.dockerignore
-│   ├── build_and_push.sh          # Local build + ECR push for the training image
-│   ├── benchmark.py               # Batch-side benchmark runner
-│   ├── requirements.txt           # Training-only deps (adds torch, no flask)
-│   └── tests/
+├── data/                          # Rubric-required pointer dir → README + gitignored caches
+├── models/                        # Rubric-required pointer dir → README pointing at src/{POS}/outputs/models
+├── notebooks/                     # Rubric-required pointer dir → README; analysis lives in src/analysis/
+├── videos/                        # Demo + technical-walkthrough videos (rubric-required)
 │
 ├── infra/                         # Cloud infrastructure (operator runbooks + scripts)
 │   ├── ec2/                       # Active training host (warm g4dn.xlarge, SSM-driven)
@@ -767,9 +795,9 @@ Each position has its own pipeline script that orchestrates training. The genera
 # 9. NaN FILL:  Position-specific NaN filling using training set statistics
 # 10. RIDGE:    Train RidgeMultiTarget (one Ridge per target), evaluate
 # 11. NEURAL:   Train MultiHeadNet with MultiHeadTrainer, evaluate
-# 12. SAVE:     Models to {POS}/outputs/models/, figures to {POS}/outputs/figures/
+# 12. SAVE:     Models to src/{POS}/outputs/models/, figures to src/{POS}/outputs/figures/
 #
-# The Flask web app (app.py) loads pre-trained models from all positions and
+# The Flask web app (src/serving/app.py) loads pre-trained models from all positions and
 # serves predictions via a dashboard with API endpoints:
 #   /api/predictions, /api/metrics, /api/weekly_accuracy,
 #   /api/player/<player_id>, /api/top_players, /api/position_details
@@ -793,7 +821,7 @@ These are decisions you should explain in the technical walkthrough video and RE
 
 6. **Multi-format scoring:** The system computes fantasy points for Standard (0 PPR), Half-PPR (0.5), and Full PPR (1.0) formats. The only difference is the reception weight. All three columns are computed during preprocessing, enabling format-specific modeling and comparison. Full PPR remains the default.
 
-7. **Weather and Vegas features:** Vegas-derived features (implied_team_total, implied_opp_total, total_line, spread_line) and venue features (is_dome, wind_adjusted, temp_adjusted) are computed in `shared/weather_features.py`. These provide game-environment context that pure player stats miss — a high implied total signals a projected shootout, while dome games boost passing. Implemented for all positions, with position-specific subsets.
+7. **Weather and Vegas features:** Vegas-derived features (implied_team_total, implied_opp_total, total_line, spread_line) and venue features (is_dome, wind_adjusted, temp_adjusted) are computed in `src/shared/weather_features.py`. These provide game-environment context that pure player stats miss — a high implied total signals a projected shootout, while dome games boost passing. Implemented for all positions, with position-specific subsets.
 
 ---
 
@@ -825,7 +853,7 @@ These are decisions you should explain in the technical walkthrough video and RE
 4. Install dependencies: pip install -r requirements.txt
 5. Download/cache data: data is auto-downloaded on first pipeline run
 6. Run position pipelines: python -m RB.run_rb_pipeline (etc.)
-7. Start web dashboard: python app.py
+7. Start web dashboard: python -m src.serving.app
 8. Expected runtime: under a minute per position on CPU (no GPU required)
 ```
 
@@ -959,7 +987,7 @@ The actual implementation order followed:
 9. **Position folders** — Per-position configs, targets, features, data filters, pipelines
    (QB, RB, WR, TE first; K and DST added later with custom pipelines)
 10. **`tests/`** — Feature leakage tests, RB target tests
-11. **`app.py`** — Flask web dashboard + prediction API
+11. **`src/serving/app.py`** — Flask web dashboard + prediction API
 12. **`docs/`** — Expert comparison, future work proposals
 
 ---
@@ -993,7 +1021,7 @@ The Gradescope self-assessment (3 pts) requires mapping each claimed rubric item
 | 8 | Custom neural network | `shared/neural_net.py` | Multi-head PyTorch architecture |
 | 9 | Hyperparameter tuning | `{POS}/{pos}_config.py` files | Per-position configs with tuned architectures |
 | 10 | Regularization | `shared/neural_net.py`, `shared/training.py` | Dropout + L2 + early stopping + BatchNorm |
-| 11 | Modular code design | `src/`, `shared/`, position folders | Reusable modules and classes |
+| 11 | Modular code design | `src/`, `src/shared/`, position folders | Reusable modules and classes |
 | 12 | Train/val/test split | `src/data/split.py` | Temporal split (2012-2023 / 2024 / 2025) |
 | 13 | Training curves | `shared/training.py` | 4-panel: loss, per-target loss, per-target MAE, total MAE/RMSE |
 | 14 | Baseline model | `src/models/baseline.py` | Season average + last week baselines |

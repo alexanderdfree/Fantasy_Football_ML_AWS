@@ -69,7 +69,7 @@ def _make_k_df(n: int = 6) -> pd.DataFrame:
 @pytest.fixture()
 def _stub_app(monkeypatch):
     """Share the lightweight-model stubs with test_app_apply_position_models."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     class _FakeMultiTarget:
         def __init__(self, target_names, **kwargs):
@@ -171,7 +171,7 @@ def test_apply_position_models_k_nested_attention_branch(_stub_app, monkeypatch)
             "fg_misses": -1.0,
             "xp_misses": -1.0,
         },
-        "model_dir": "K/outputs/models",
+        "model_dir": "src/K/outputs/models",
         "nn_file": "k_multihead_nn.pt",
         "nn_kwargs": {},
         "train_attention_nn": True,
@@ -221,7 +221,7 @@ def test_apply_position_models_k_nested_attention_missing_kicks_df_raises(_stub_
         "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
         "get_feature_columns_fn": lambda: ["static_feat"],
         "target_signs": {"fg_yard_points": 1.0},
-        "model_dir": "K/outputs/models",
+        "model_dir": "src/K/outputs/models",
         "nn_file": "k_multihead_nn.pt",
         "nn_kwargs": {},
         "train_attention_nn": True,
@@ -258,7 +258,7 @@ def test_apply_position_models_k_nested_attention_missing_kicks_df_raises(_stub_
 @pytest.mark.integration
 def test_apply_position_models_lgbm_load_failure_leaves_lgbm_pred_nan(monkeypatch, _stub_app):
     """LGBM load exception → ``lgbm_pred`` stays NaN, ridge/nn unaffected."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     class _BadLGBM:
         def __init__(self, **kwargs):
@@ -329,7 +329,7 @@ def test_apply_position_models_lgbm_load_failure_leaves_lgbm_pred_nan(monkeypatc
 @pytest.mark.integration
 def test_ensure_position_loaded_noop_if_already_loaded(monkeypatch):
     """When pos is already in ``positions_loaded``, function returns immediately."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     app_mod._cache.clear()
     app_mod._cache["base_loaded"] = True
@@ -347,7 +347,7 @@ def test_ensure_position_loaded_noop_if_already_loaded(monkeypatch):
 @pytest.mark.integration
 def test_ensure_position_loaded_noop_if_in_failed_set(monkeypatch):
     """Positions in ``positions_failed`` do not get retried."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     app_mod._cache.clear()
     app_mod._cache["base_loaded"] = True
@@ -385,7 +385,7 @@ class _CfgModule:
 
 @pytest.mark.integration
 def test_position_arch_payload_cosine_warm_restarts_scheduler():
-    import app as app_mod
+    import src.serving.app as app_mod
 
     cfg = _CfgModule()
     cfg.QB_SCHEDULER_TYPE = "cosine_warm_restarts"
@@ -400,7 +400,7 @@ def test_position_arch_payload_cosine_warm_restarts_scheduler():
 
 @pytest.mark.integration
 def test_position_arch_payload_onecycle_scheduler():
-    import app as app_mod
+    import src.serving.app as app_mod
 
     cfg = _CfgModule()
     cfg.QB_SCHEDULER_TYPE = "onecycle"
@@ -414,7 +414,7 @@ def test_position_arch_payload_onecycle_scheduler():
 
 @pytest.mark.integration
 def test_position_arch_payload_plateau_scheduler():
-    import app as app_mod
+    import src.serving.app as app_mod
 
     cfg = _CfgModule()
     cfg.QB_SCHEDULER_TYPE = "plateau"
@@ -428,7 +428,7 @@ def test_position_arch_payload_plateau_scheduler():
 def test_position_arch_payload_include_features_as_dict():
     """When include_features is a {category: [...]} dict, the grouped layout
     is preserved + 'specific' is injected if missing."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     cfg = _CfgModule()
     cfg.QB_SCHEDULER_TYPE = "plateau"
@@ -473,7 +473,7 @@ def test_ensure_position_loaded_records_hard_failure(monkeypatch):
     """When _apply_position_models raises outside the inner try/excepts
     (e.g. feature-build blows up), the position is added to ``positions_failed``
     and position_load_errors carries the repr."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     app_mod._cache.clear()
     app_mod._cache["base_loaded"] = True
@@ -495,7 +495,7 @@ def test_ensure_position_loaded_records_hard_failure(monkeypatch):
 def test_ensure_position_loaded_returns_when_splits_missing(monkeypatch):
     """When base-load ran but ``splits`` was never populated, the function
     returns without calling _apply_position_models."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     app_mod._cache.clear()
     app_mod._cache["base_loaded"] = True
@@ -518,7 +518,7 @@ def test_ensure_position_loaded_returns_when_splits_missing(monkeypatch):
 def test_ensure_all_positions_raises_when_every_position_fails(monkeypatch):
     """If every position ends up in ``positions_failed``, the wrapper raises
     (gunicorn --preload contract)."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     app_mod._cache.clear()
     app_mod._cache["base_loaded"] = True
@@ -540,7 +540,7 @@ def test_ensure_all_positions_raises_when_every_position_fails(monkeypatch):
 @pytest.mark.integration
 def test_ensure_all_positions_tolerates_partial_failure(monkeypatch):
     """If only one position fails, the rest still get loaded and no exception."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     app_mod._cache.clear()
     app_mod._cache["base_loaded"] = True
@@ -564,7 +564,7 @@ def test_ensure_all_positions_tolerates_partial_failure(monkeypatch):
 
 @pytest.mark.integration
 def test_degraded_positions_empty_when_no_errors():
-    import app as app_mod
+    import src.serving.app as app_mod
 
     app_mod._cache.clear()
     assert app_mod._degraded_positions() == []
@@ -574,7 +574,7 @@ def test_degraded_positions_empty_when_no_errors():
 def test_degraded_positions_dedupes_across_per_model_and_pos_keys():
     """Errors keyed as ``{pos}_{model}`` AND bare ``{pos}`` both feed into the
     set; result is sorted unique positions."""
-    import app as app_mod
+    import src.serving.app as app_mod
 
     app_mod._cache.clear()
     app_mod._cache["position_load_errors"] = {
@@ -593,7 +593,7 @@ def test_degraded_positions_dedupes_across_per_model_and_pos_keys():
 
 @pytest.mark.integration
 def test_load_k_splits_delegates_to_k_data_helpers(monkeypatch):
-    import app as app_mod
+    import src.serving.app as app_mod
 
     k_df = pd.DataFrame({"player_id": ["K1"], "season": [2024], "week": [1]})
     kicks_df = pd.DataFrame({"player_id": ["K1"], "kick_distance": [40.0]})
@@ -621,7 +621,7 @@ def test_load_k_splits_delegates_to_k_data_helpers(monkeypatch):
 
 @pytest.mark.integration
 def test_load_dst_splits_filters_by_season(monkeypatch):
-    import app as app_mod
+    import src.serving.app as app_mod
 
     dst_df = pd.DataFrame(
         {

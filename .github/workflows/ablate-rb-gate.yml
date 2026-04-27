@@ -2,7 +2,7 @@ name: Ablate RB TD-gate
 
 # Runs the three-way RB TD-gate ablation on the EC2 trainer. Mirrors
 # train-ec2.yml's instance start + SSM flow, but invokes
-# ``python batch/train.py --position RB --ablation rb-gate`` via a direct
+# ``python -m src.batch.train --position RB --ablation rb-gate`` via a direct
 # ``docker run`` (``ff-train`` on the instance only knows POS + SEED).
 #
 # Trigger manually via Actions UI → "Ablate RB TD-gate" → Run workflow.

@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1.7
+# Base image served via an optional ECR pull-through cache (strategy 2c).
+# When PULL_THROUGH_PREFIX is set, the pytorch base is pulled from ECR
+# instead of Docker Hub — first pull in the region seeds the ECR cache,
+# every subsequent Batch instance pulls from the local AWS network.
+#
+# Example:
+#   --build-arg PULL_THROUGH_PREFIX=123456789012.dkr.ecr.us-east-1.amazonaws.com/dockerhub/
+# Leave unset to pull directly from Docker Hub (original behavior).
+ARG PULL_THROUGH_PREFIX=
+FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
+
+# uv: pinned single-binary installer (~10x faster than pip + parallel wheel
+# downloads). Pin to a specific minor so this COPY layer doesn't invalidate
+# every time astral publishes a new release.
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /usr/local/bin/
+
+WORKDIR /opt/ml/code
+
+# uv defaults to hardlinking wheels from its cache into site-packages. The
+# BuildKit cache mount below lives on a different overlay than the image
+# root, so hardlinking always fails and falls back to copy — explicit copy
+# mode skips the failed probe and silences the warning in CI.
+ENV UV_LINK_MODE=copy
+
+# Single uv-install layer: any change to requirements.txt invalidates exactly
+# one cached layer. The cache mount on /root/.cache/uv persists wheel
+# downloads across builds (CI mirrors this via actions/cache — see
+# batch-image.yml). --break-system-packages is required because the pytorch
+# base image's system Python 3.12 is PEP 668 marked. nfl_data_py needs
+# --no-deps (mord/old-numpy conflict), so it runs in the same RUN but as a
+# separate uv call. appdirs/fastparquet are runtime deps of nfl_data_py that
+# we install explicitly since --no-deps skipped them.
+COPY src/batch/requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --break-system-packages -r requirements.txt appdirs fastparquet && \
+    uv pip install --system --break-system-packages --no-deps nfl_data_py==0.3.3 && \
+    (pip check || echo "pip check: nfl_data_py wants old numpy/pandas; not imported at training time")
+
+# All Python source lives under src/ after the rubric-driven src/ migration.
+# .dockerignore handles the coarse exclusions (Flask UI, scratch scripts,
+# tests); src/ is the only Python copy needed. tune_lgbm.py is at
+# src/tuning/tune_lgbm.py and ships with the rest of src/ — retune-lgbm.yml
+# invokes it via ``python -m src.tuning.tune_lgbm``.
+COPY src/ src/
+
+ENTRYPOINT ["python", "-m", "src.batch.train"]

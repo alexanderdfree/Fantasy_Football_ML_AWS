@@ -30,7 +30,8 @@ Thumbs.db
 
 # Docs / non-runtime — exclude markdown by default; explicitly re-include the
 # files served by the in-app Wiki tab (/api/wiki/<slug> reads paths listed in
-# app.py:WIKI_DOCS). Order matters: re-includes must follow the broad *.md.
+# src/serving/app.py:WIKI_DOCS). Order matters: re-includes must follow the
+# broad *.md.
 *.md
 !README.md
 !SETUP.md
@@ -73,18 +74,18 @@ logs/
 *.pem
 *.key
 
-# Analysis / scratch (not needed in production containers)
+# Analysis / scratch (not needed in production containers). After the src/
+# migration these scripts moved to themed subdirs under src/, so the
+# .dockerignore prefixes shifted accordingly.
 analysis_output/
-analysis_*.py
-benchmark.py
-benchmark_*.py
-tune_lgbm.py
-tune_rb_gate.py
-tune_*.py
+src/analysis/
+src/benchmarking/
+src/tuning/
+src/scripts/
 conftest.py
 
-# Training code — inference doesn't import it
-batch/
+# Training code — inference doesn't import it.
+src/batch/
 
 # Infra — only the README.md files are surfaced in the wiki (re-included
 # above); the bootstrap shell scripts, IAM/JSON policies, and systemd units
@@ -95,25 +96,32 @@ infra/**/*.service
 infra/**/*.timer
 
 # Training + inference data — fetched from S3 at container startup via
-# shared.model_sync.sync_data_from_s3 (keeps the image ~60 MB smaller).
+# src.shared.model_sync.sync_data_from_s3 (keeps the image ~60 MB smaller).
 data/
 
+# Top-level submission-rubric directories that point into src/ — README files
+# only, no runtime artifacts.
+models/
+notebooks/
+videos/
+
 # Per-position outputs — models fetched from S3 at startup via
-# shared.model_sync.sync_models_from_s3; figures are always local scratch.
+# src.shared.model_sync.sync_models_from_s3; figures are always local scratch.
 **/outputs/models/
 **/outputs/figures/
 
-# Benchmark / tuning artifacts (local scratch, not needed at runtime)
+# Benchmark / tuning artifacts (local scratch, not needed at runtime).
 benchmark_*.json
+benchmark_history/
 tune_*.json
 tune_*.db
 *.db
 
-# Dockerfiles themselves (don't need copies inside the image)
+# Dockerfiles themselves (don't need copies inside the image).
 Dockerfile
 Dockerfile.*
 .dockerignore
 
-# Local dev databases / caches
+# Local dev databases / caches.
 *.sqlite
 *.sqlite3

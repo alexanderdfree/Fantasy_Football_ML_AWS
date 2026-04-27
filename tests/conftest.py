@@ -143,7 +143,7 @@ def app_module(monkeypatch):
     monkeypatch restores the original `_cache` attribute at teardown, so
     cross-test contamination through the module-global cache is prevented.
     """
-    import app as app_mod
+    import src.serving.app as app_mod
 
     monkeypatch.setattr(app_mod, "_cache", {})
     return app_mod

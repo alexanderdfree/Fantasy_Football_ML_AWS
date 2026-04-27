@@ -294,7 +294,7 @@ def build_sequences(
 
 **Cross-season handling**: If a player's first game of 2024 is at index `i`, and they played 16 games in 2023, the lookback naturally includes late-2023 games. This is intentional — recent form carries across seasons. If you want to reset at season boundaries, add a check and zero-pad.
 
-## Integration with `shared/pipeline.py`
+## Integration with `src/shared/pipeline.py`
 
 The sequence model slots into the pipeline alongside Ridge and the existing NN. The pipeline changes are:
 
@@ -392,10 +392,10 @@ Rationale: QB and TE have fewer samples, so use smaller hidden sizes and more re
 | `shared/seq_neural_net.py` | **New** | `SequenceMultiHeadNet` class |
 | `shared/seq_training.py` | **New** | `SequenceDataset` + modified trainer |
 | `shared/seq_data.py` | **New** | `build_sequences()` function |
-| `shared/pipeline.py` | **Modify** | Add LSTM training step, 3-way ensemble |
+| `src/shared/pipeline.py` | **Modify** | Add LSTM training step, 3-way ensemble |
 | `{POS}/{pos}_config.py` | **Modify** | Add seq-model hyperparameters |
 | `shared/evaluation.py` | **Modify** | Report LSTM metrics alongside Ridge/NN |
-| `benchmark.py` | **Modify** | Include LSTM in benchmark |
+| `src/benchmarking/benchmark.py` | **Modify** | Include LSTM in benchmark |
 
 ## Risks and Mitigations
 

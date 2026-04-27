@@ -40,7 +40,7 @@ GITHUB ACTIONS (push to main)                AWS
     │   single cmd wrapping             │
     │   for POS in $POSITIONS           ├─ docker pull (credsStore auth)
     │     (sequential — T4)             ├─ docker run --gpus all
-    │                                   │    python batch/train.py
+    │                                   │    python -m src.batch.train
     │                                   │      --position $POS
     │                                   │      (reads s3://ff-predictor-training/data/)
     │                                   │      (writes s3://…/models/$POS/model.tar.gz)
@@ -49,7 +49,7 @@ GITHUB ACTIONS (push to main)                AWS
     ├─ manual poll get-command-invocation (30-min deadline)
     ├─ stream stdout/stderr into Actions log
     ├─ aws s3api head-object (freshness check + summary table)
-    └─ python batch/benchmark.py --download-only --backend ec2 …
+    └─ python -m src.batch.benchmark --download-only --backend ec2 …
          ├─ write {run_id}.json under benchmark_history/
          └─ commit + push (retry-rebase up to 3×)
 ```
@@ -106,14 +106,14 @@ Triggers:
 - `workflow_dispatch` with inputs `positions`, `seed` — break-glass for re-runs.
 
 A `detect` job runs first and scopes which positions to train:
-- On `workflow_run`, `git diff --name-only HEAD^ HEAD` on the merged commit. Changes under `shared/`, `src/`, `batch/`, or `requirements.txt` retrain all six positions; otherwise only the position dirs with changes get retrained. No model-relevant changes → `train` job skipped.
+- On `workflow_run`, `git diff --name-only HEAD^ HEAD` on the merged commit. Changes under `src/shared/`, `src/batch/`, `src/data/`, `src/features/`, `src/models/`, `src/training/`, `src/evaluation/`, `src/config.py`, or `requirements.txt` are treated as global triggers and retrain all six positions; changes under a single `src/{POS}/` subtree retrain only that position. Edits scoped to non-training subtrees (e.g. `src/serving/`, `src/tuning/`, `src/analysis/`, `src/benchmarking/`, `src/scripts/`, `src/**/tests/`) do not trigger retraining. No model-relevant changes → `train` job skipped.
 - On `workflow_dispatch`, the explicit `positions` input is honored verbatim. Empty input falls back to all six (legacy semantics for "retrain after data refresh").
 
 Depends on `batch-image.yml` via `workflow_run` — training only fires after the new image has been pushed for the same commit.
 
 Steps (train job, after `detect` scopes positions):
 1. Configure AWS credentials (existing secrets).
-2. Checkout repo with admin PAT (so the later benchmark-history push bypasses branch protection) and install `requirements-dev.txt` — torch is needed by `batch/benchmark.py`'s import chain.
+2. Checkout repo with admin PAT (so the later benchmark-history push bypasses branch protection) and install `requirements-dev.txt` — torch is needed by `src/batch/benchmark.py`'s import chain.
 3. Resolve instance ID from repo variable `EC2_TRAINER_INSTANCE_ID`.
 4. `aws ec2 start-instances` + `aws ec2 wait instance-running` (no-op if already running).
 5. Poll `aws ssm describe-instance-information` until `PingStatus=Online` (30 × 10s).
@@ -122,7 +122,7 @@ Steps (train job, after `detect` scopes positions):
 8. Manual poll of `get-command-invocation` (30-min deadline — `aws ssm wait command-executed` caps at ~100 s and doesn't honor `AWS_MAX_ATTEMPTS`, so long runs would otherwise be mis-reported as failures).
 9. Stream stdout/stderr into the Actions log via `get-command-invocation --query` (`if: always()`).
 10. `aws s3api head-object` per position → summary table to `$GITHUB_STEP_SUMMARY`; fail if any artifact is missing or older than 20 min.
-11. Write a per-run JSON file under `benchmark_history/` via `python batch/benchmark.py --download-only --backend ec2 --instance-type "g4dn.xlarge (On-Demand)" --positions $POSITIONS --note "EC2 auto-run (${sha::7})"`, then commit + push (retry-rebase up to 3×).
+11. Write a per-run JSON file under `benchmark_history/` via `python -m src.batch.benchmark --download-only --backend ec2 --instance-type "g4dn.xlarge (On-Demand)" --positions $POSITIONS --note "EC2 auto-run (${sha::7})"`, then commit + push (retry-rebase up to 3×).
 
 Concurrency: `group: train-ec2, cancel-in-progress: true` — rapid-iteration pushes supersede in-flight runs.
 

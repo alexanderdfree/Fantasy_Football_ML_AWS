@@ -1,6 +1,6 @@
 name: Build & Push Batch Training Image
 
-# Builds batch/Dockerfile.train, pushes to ECR, and registers a new revision
+# Builds src/batch/Dockerfile.train, pushes to ECR, and registers a new revision
 # of the Batch job definition pinned to the new image digest.
 # Only runs on main when the training image surface actually changes.
 
@@ -9,20 +9,11 @@ on:
     branches: [main]
     # Use negations at the end to skip rebuilds when only tests or docs change.
     # Negative patterns placed later override earlier positive matches, so a
-    # change to QB/tests/foo.py matches QB/** then gets excluded by !**/tests/**.
+    # change to src/QB/tests/foo.py matches src/** then gets excluded by !**/tests/**.
     # train-ec2.yml's detect job already strips tests before deciding to
     # retrain; this just stops us rebuilding the image on the way there.
     paths:
-      - "batch/**"
-      - "shared/**"
-      - "QB/**"
-      - "RB/**"
-      - "WR/**"
-      - "TE/**"
-      - "K/**"
-      - "DST/**"
       - "src/**"
-      - "tune_lgbm.py"
       - "requirements.txt"
       - ".github/workflows/batch-image.yml"
       - "!**/tests/**"
@@ -67,7 +58,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: buildx-${{ runner.os }}-${{ hashFiles('batch/requirements.txt', 'batch/Dockerfile.train') }}
+          key: buildx-${{ runner.os }}-${{ hashFiles('src/batch/requirements.txt', 'src/batch/Dockerfile.train') }}
           restore-keys: |
             buildx-${{ runner.os }}-
 
@@ -81,7 +72,7 @@ jobs:
           docker buildx build \
             --platform linux/amd64 \
             --provenance=false \
-            --file batch/Dockerfile.train \
+            --file src/batch/Dockerfile.train \
             --cache-from type=gha \
             --cache-from type=local,src=/tmp/.buildx-cache \
             --cache-to type=gha,mode=max \
