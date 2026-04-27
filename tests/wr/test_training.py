@@ -11,7 +11,7 @@ from src.shared.training import (
     MultiTargetLoss,
     make_dataloaders,
 )
-from src.WR.wr_config import WR_LOSS_WEIGHTS, WR_TARGETS
+from src.wr.config import WR_LOSS_WEIGHTS, WR_TARGETS
 
 
 @pytest.mark.unit

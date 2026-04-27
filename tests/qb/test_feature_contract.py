@@ -15,8 +15,8 @@ import pandas as pd
 import pytest
 
 from src.features.engineer import get_attn_static_columns
-from src.QB.qb_config import QB_ATTN_STATIC_FEATURES, QB_INCLUDE_FEATURES, QB_SPECIFIC_FEATURES
-from src.QB.qb_features import add_qb_specific_features, get_qb_feature_columns
+from src.qb.config import QB_ATTN_STATIC_FEATURES, QB_INCLUDE_FEATURES, QB_SPECIFIC_FEATURES
+from src.qb.features import add_qb_specific_features, get_qb_feature_columns
 
 # Per-feature NaN ceilings — the QB pipeline uses .fillna(0) so output NaN
 # fraction must be 0. Anything else indicates a regression in fill logic.

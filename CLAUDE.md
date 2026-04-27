@@ -9,7 +9,7 @@ Orientation file for Claude Code. Human-facing docs live elsewhere — this file
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — design decisions with rejected alternatives.
 
 ## Project shape (six-position symmetry)
-Each of `src/QB/ src/RB/ src/WR/ src/TE/ src/K/ src/DST/` follows the same template:
+Each of `src/qb/ src/rb/ src/wr/ src/te/ src/k/ src/dst/` follows the same template:
 
 ```
 src/{POS}/
@@ -41,7 +41,7 @@ Every position predicts raw NFL stats (yards, TDs, receptions, etc.). Fantasy po
 The attention NN's static branch reads a *second*, smaller allowlist: `{POS}_ATTN_STATIC_FEATURES` (commit `2500ecc`). It is defined per position (QB/RB/WR/TE derive it from a `{POS}_ATTN_STATIC_CATEGORIES` subset of `{POS}_INCLUDE_FEATURES`; DST/K enumerate it directly) and deliberately excludes rolling/ewma/trend columns so the attention branch doesn't double-count signal it already learns from `{POS}_ATTN_HISTORY_STATS`. Adding a feature to `{POS}_INCLUDE_FEATURES` does **not** feed it into attention — add it to `{POS}_ATTN_STATIC_FEATURES` too if that's what you want.
 
 ### Loss weights are tuned inverse-to-Huber-delta
-`{POS}_LOSS_WEIGHTS` ≈ `2.0 / {POS}_HUBER_DELTAS[target]`. The rationale is baked into QB's config comment ([src/QB/qb_config.py](src/QB/qb_config.py)): without this rebalance, yards targets (δ=15–25) dominated count heads (δ=0.5) ~2500× per sample and the count heads collapsed to the mean. If you retune a Huber delta, re-derive the matching loss weight — don't change one without the other.
+`{POS}_LOSS_WEIGHTS` ≈ `2.0 / {POS}_HUBER_DELTAS[target]`. The rationale is baked into QB's config comment ([src/qb/config.py](src/qb/config.py)): without this rebalance, yards targets (δ=15–25) dominated count heads (δ=0.5) ~2500× per sample and the count heads collapsed to the mean. If you retune a Huber delta, re-derive the matching loss weight — don't change one without the other.
 
 ### `non_negative_targets` is per-head, not global
 The NN clamps outputs to ≥ 0 per head. Default (`non_negative_targets=None` in `MultiHeadNet`) clamps *every* head, which is what QB/RB/WR/TE rely on — they don't set the config key. K and DST set `{POS}_NN_NON_NEGATIVE_TARGETS = set({POS}_TARGETS)` explicitly (same effect as the default, written out for clarity); if a position ever adds a signed head (e.g. a bonus that can go negative), pass a set that *excludes* that head rather than flipping the behaviour globally. If you construct `MultiHeadNet(...)` anywhere outside `src/shared/pipeline.py::_train_nn`, mirror the `non_negative_targets=cfg.get("nn_non_negative_targets")` kwarg — the CV path was missed once (see TODO.md archive).
@@ -59,7 +59,7 @@ Commands live in [SETUP.md](SETUP.md). Shortcuts:
 
 ## CI & training
 
-- `tests.yml` — ruff + pytest on push/PR. Installs via `uv` (migrated in `3c897d8`) and shards pytest across `QB/RB/WR/TE/K/DST/shared` matrix jobs (per-position paths under `tests/{pos}/`; the `shared` shard runs `tests/` excluding the per-position dirs). Each shard uploads coverage to Codecov under a matching flag; the project target is **80% per component/flag** (see [codecov.yml](codecov.yml)). Diagnostic CLIs (`src/QB/diagnose_qb_outliers.py`, `src/RB/analyze_rb_errors.py`) are excluded from the coverage denominator. If `Run Tests` silently stops firing on rapid force-push cadence (occasional GitHub Actions bug), run `pytest` locally and merge with `gh pr merge --squash`.
+- `tests.yml` — ruff + pytest on push/PR. Installs via `uv` (migrated in `3c897d8`) and shards pytest across `QB/RB/WR/TE/K/DST/shared` matrix jobs (per-position paths under `tests/{pos}/`; the `shared` shard runs `tests/` excluding the per-position dirs). Each shard uploads coverage to Codecov under a matching flag; the project target is **80% per component/flag** (see [codecov.yml](codecov.yml)). Diagnostic CLIs (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`) are excluded from the coverage denominator. If `Run Tests` silently stops firing on rapid force-push cadence (occasional GitHub Actions bug), run `pytest` locally and merge with `gh pr merge --squash`.
 - `batch-image.yml` → `train-ec2.yml` — image build triggers EC2 training. The `detect` job diffs the merge commit and only retrains positions whose code changed. AWS g4dn.xlarge OD quota is 4 vCPU (one instance); spot quota is higher. Check quota before dispatching if you touch infra.
 - `deploy.yml` — ECS Flask deploy.
 

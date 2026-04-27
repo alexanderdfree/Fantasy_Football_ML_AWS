@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "DST" / "run_dst_pipeline.py"
+_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "dst" / "run_pipeline.py"
 
 
 def _synthetic_dst_df() -> pd.DataFrame:
@@ -39,10 +39,10 @@ def _patch_all(monkeypatch):
     already-imported re-bound names inside ``DST.run_dst_pipeline``, so
     both ``runpy``-re-executions and direct calls see the stubs.
     """
-    import src.DST.dst_data as dst_data
-    import src.DST.dst_features as dst_features
-    import src.DST.dst_targets as dst_targets
-    import src.DST.run_dst_pipeline as dst_pipe
+    import src.dst.data as dst_data
+    import src.dst.features as dst_features
+    import src.dst.run_pipeline as dst_pipe
+    import src.dst.targets as dst_targets
     import src.shared.pipeline as sp
 
     df = _synthetic_dst_df()
@@ -81,7 +81,7 @@ def test_run_dst_pipeline_splits_by_season(monkeypatch):
     """``run_dst_pipeline`` must split the built DataFrame into train/val/test
     using the canonical season buckets and pass them to ``run_pipeline``."""
     calls = _patch_all(monkeypatch)
-    import src.DST.run_dst_pipeline as dst_pipe
+    import src.dst.run_pipeline as dst_pipe
     from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 
     result = dst_pipe.run_dst_pipeline(seed=99)

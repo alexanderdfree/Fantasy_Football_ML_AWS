@@ -13,22 +13,22 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.K.k_config import (
+from src.k.config import (
     K_ATTN_KICK_STATS,
     K_ATTN_MAX_GAMES,
     K_ATTN_MAX_KICKS_PER_GAME,
     K_CONFIG_TINY,
     K_CONFIG_TINY_ATTN,
 )
-from src.K.k_data import filter_to_k
-from src.K.k_features import (
+from src.k.data import filter_to_k
+from src.k.features import (
     add_k_specific_features,
     build_nested_kick_history,
     compute_k_features,
     fill_k_nans,
     get_k_feature_columns,
 )
-from src.K.k_targets import compute_k_targets
+from src.k.targets import compute_k_targets
 from src.shared.pipeline import run_pipeline
 
 

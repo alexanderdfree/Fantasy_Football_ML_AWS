@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from src.config import SCORING_HALF_PPR, SCORING_PPR, SCORING_STANDARD
-from src.DST.dst_targets import _PTS_ALLOWED_TIERS, _YDS_ALLOWED_TIERS
+from src.dst.targets import _PTS_ALLOWED_TIERS, _YDS_ALLOWED_TIERS
 
 _SCORING_BY_FORMAT = {
     "standard": SCORING_STANDARD,

@@ -46,7 +46,7 @@ def test_cpu_only_positions_is_k_and_dst():
 @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])
 def test_meta_returns_position_dict(pos):
     m = _meta(pos)
-    assert m["runner_module"].endswith(f"run_{pos.lower()}_pipeline")
+    assert m["runner_module"].endswith("run_pipeline")
     assert m["runner_fn"] == f"run_{pos.lower()}_pipeline"
     assert m["config_var"] == f"{pos}_CONFIG"
 

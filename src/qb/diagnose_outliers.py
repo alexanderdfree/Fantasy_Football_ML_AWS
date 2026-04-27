@@ -30,7 +30,7 @@ import torch
 from sklearn.preprocessing import StandardScaler
 
 from src.config import SPLITS_DIR
-from src.QB.run_qb_pipeline import QB_CONFIG
+from src.qb.run_pipeline import QB_CONFIG
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import RidgeMultiTarget
 from src.shared.neural_net import build_multihead_net

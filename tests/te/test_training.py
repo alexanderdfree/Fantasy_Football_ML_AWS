@@ -11,7 +11,7 @@ from src.shared.training import (
     MultiTargetLoss,
     make_dataloaders,
 )
-from src.TE.te_config import TE_LOSS_WEIGHTS, TE_TARGETS
+from src.te.config import TE_LOSS_WEIGHTS, TE_TARGETS
 
 
 @pytest.mark.unit

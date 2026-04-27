@@ -93,9 +93,9 @@ def _prepare_cv_folds(pos, cfg):
     print(f"\nPreparing CV folds for {pos}...")
     if pos == "K":
         # Kickers use a PBP-reconstructed dataset (2015+), not the general splits.
-        from src.K.k_data import kicker_season_split, load_kicker_data
-        from src.K.k_features import compute_k_features
-        from src.K.k_targets import compute_k_targets
+        from src.k.data import kicker_season_split, load_kicker_data
+        from src.k.features import compute_k_features
+        from src.k.targets import compute_k_targets
 
         k_df = load_kicker_data()
         k_df = compute_k_targets(k_df)
@@ -106,9 +106,9 @@ def _prepare_cv_folds(pos, cfg):
     elif pos == "DST":
         # DST builds team-level data internally, not from the general splits.
         from src.config import TRAIN_SEASONS, VAL_SEASONS
-        from src.DST.dst_data import build_dst_data
-        from src.DST.dst_features import compute_dst_features
-        from src.DST.dst_targets import compute_dst_targets
+        from src.dst.data import build_dst_data
+        from src.dst.features import compute_dst_features
+        from src.dst.targets import compute_dst_targets
 
         dst_df = build_dst_data()
         dst_df = compute_dst_targets(dst_df)
@@ -209,9 +209,9 @@ def _run_comparison(pos, cfg, best_params):
     print(f"{'=' * 70}")
 
     if pos == "K":
-        from src.K.k_data import kicker_season_split, load_kicker_data
-        from src.K.k_features import compute_k_features
-        from src.K.k_targets import compute_k_targets
+        from src.k.data import kicker_season_split, load_kicker_data
+        from src.k.features import compute_k_features
+        from src.k.targets import compute_k_targets
 
         k_df = load_kicker_data()
         k_df = compute_k_targets(k_df)
@@ -219,9 +219,9 @@ def _run_comparison(pos, cfg, best_params):
         train_df, val_df, test_df = kicker_season_split(k_df)
     elif pos == "DST":
         from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
-        from src.DST.dst_data import build_dst_data
-        from src.DST.dst_features import compute_dst_features
-        from src.DST.dst_targets import compute_dst_targets
+        from src.dst.data import build_dst_data
+        from src.dst.features import compute_dst_features
+        from src.dst.targets import compute_dst_targets
 
         dst_df = build_dst_data()
         dst_df = compute_dst_targets(dst_df)

@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.WR.wr_config import WR_SPECIFIC_FEATURES
-from src.WR.wr_features import _compute_wr_features, fill_wr_nans
+from src.wr.config import WR_SPECIFIC_FEATURES
+from src.wr.features import _compute_wr_features, fill_wr_nans
 
 # ---------------------------------------------------------------------------
 # _compute_wr_features

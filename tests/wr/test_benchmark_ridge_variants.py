@@ -24,7 +24,7 @@ import pytest
 @pytest.mark.unit
 def test_condition_number_nonzero_on_full_rank():
     """On a full-rank matrix condition number is finite and >= 1."""
-    from src.WR.benchmark_ridge_variants import _condition_number
+    from src.wr.benchmark_ridge_variants import _condition_number
 
     X = np.random.default_rng(0).normal(size=(30, 4))
     cond = _condition_number(X)
@@ -35,7 +35,7 @@ def test_condition_number_nonzero_on_full_rank():
 @pytest.mark.unit
 def test_condition_number_infinite_on_rank_deficient():
     """A column duplicated → smallest singular value ≈ 0 → cond = inf."""
-    from src.WR.benchmark_ridge_variants import _condition_number
+    from src.wr.benchmark_ridge_variants import _condition_number
 
     base = np.random.default_rng(0).normal(size=(30, 3))
     X = np.hstack([base, base[:, :1]])  # column 3 == column 0
@@ -53,7 +53,7 @@ def test_run_variant_builds_metrics_dict(monkeypatch):
     """``_run_variant`` must call the tuner, fit+predict, and return the
     per-target + total metrics dict. We replace the heavy pieces with
     lightweight stubs so the test runs in milliseconds."""
-    import src.WR.benchmark_ridge_variants as bench
+    import src.wr.benchmark_ridge_variants as bench
 
     WR_TARGETS = bench.WR_TARGETS
 
@@ -118,7 +118,7 @@ def test_run_variant_builds_metrics_dict(monkeypatch):
 @pytest.fixture()
 def _stub_main(monkeypatch, tmp_path):
     """Stub every heavy call in ``main()`` so it runs in-process in < 1s."""
-    import src.WR.benchmark_ridge_variants as bench
+    import src.wr.benchmark_ridge_variants as bench
 
     WR_TARGETS = bench.WR_TARGETS
 

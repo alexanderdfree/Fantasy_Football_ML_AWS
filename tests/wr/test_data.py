@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from src.WR.wr_data import compute_team_wr_totals, filter_to_wr
+from src.wr.data import compute_team_wr_totals, filter_to_wr
 
 # ---------------------------------------------------------------------------
 # filter_to_wr

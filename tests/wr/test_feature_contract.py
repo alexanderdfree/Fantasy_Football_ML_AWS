@@ -20,8 +20,8 @@ import pandas as pd
 import pytest
 
 from src.features.engineer import get_attn_static_columns
-from src.WR.wr_config import WR_ATTN_STATIC_FEATURES, WR_INCLUDE_FEATURES, WR_SPECIFIC_FEATURES
-from src.WR.wr_features import (
+from src.wr.config import WR_ATTN_STATIC_FEATURES, WR_INCLUDE_FEATURES, WR_SPECIFIC_FEATURES
+from src.wr.features import (
     _compute_wr_features,
     add_wr_specific_features,
     get_wr_feature_columns,

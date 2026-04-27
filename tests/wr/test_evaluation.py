@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
-from src.WR.wr_config import WR_TARGETS
+from src.wr.config import WR_TARGETS
 
 
 @pytest.mark.unit

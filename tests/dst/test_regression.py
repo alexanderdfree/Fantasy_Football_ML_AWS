@@ -33,15 +33,15 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.DST.dst_config import (
+from src.dst.config import (
     DST_ALL_FEATURES,
     DST_HUBER_DELTAS,
     DST_LOSS_WEIGHTS,
     DST_NN_NON_NEGATIVE_TARGETS,
     DST_TARGETS,
 )
-from src.DST.dst_features import compute_dst_features
-from src.DST.dst_targets import compute_dst_targets
+from src.dst.features import compute_dst_features
+from src.dst.targets import compute_dst_targets
 from src.evaluation.metrics import compute_metrics
 from src.models.baseline import SeasonAverageBaseline
 from src.shared.aggregate_targets import aggregate_fn_for

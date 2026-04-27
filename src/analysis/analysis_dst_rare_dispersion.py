@@ -25,7 +25,7 @@ import math
 import numpy as np
 
 from src.config import TRAIN_SEASONS
-from src.DST.dst_data import build_dst_data
+from src.dst.data import build_dst_data
 
 RARE_TARGETS = ["def_safeties", "def_tds", "def_blocked_kicks", "special_teams_tds"]
 

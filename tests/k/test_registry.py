@@ -74,7 +74,7 @@ class TestKAttentionRegistryWiring:
 
     def test_kwargs_align_with_training_config(self, reg):
         """Registry kwargs must mirror the K_ATTN_* values used at training."""
-        import src.K.k_config as k_cfg
+        import src.k.config as k_cfg
 
         kw = reg["attn_nn_kwargs_static"]
         assert kw["d_kick"] == k_cfg.K_ATTN_KICK_DIM

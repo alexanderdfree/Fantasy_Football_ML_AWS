@@ -8,7 +8,7 @@ keeps the WR-specific ``wr_player_games_factory`` feature-input builder.
 import pandas as pd
 import pytest
 
-from src.WR.wr_config import WR_TARGETS
+from src.wr.config import WR_TARGETS
 from tests.shared.position_fixtures import (
     make_position_df as _make_position_df,
 )

@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 
 from src.features.engineer import flatten_include_features
-from src.RB.rb_config import RB_INCLUDE_FEATURES
-from src.RB.rb_data import compute_team_rb_totals
+from src.rb.config import RB_INCLUDE_FEATURES
+from src.rb.data import compute_team_rb_totals
 from src.shared.feature_build import (
     fill_nans_with_train_means,
     rolling_agg,

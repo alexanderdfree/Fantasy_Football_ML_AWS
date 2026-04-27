@@ -36,9 +36,9 @@ ignore:
   # behind `if __name__ == "__main__"` and invoked manually when debugging
   # regressions; keeping them out of the coverage denominator lets the 80%
   # project target reflect production code.
-  - "src/QB/diagnose_qb_outliers.py"
-  - "src/RB/analyze_rb_errors.py"
-  - "src/WR/benchmark_ridge_variants.py"
+  - "src/qb/diagnose_outliers.py"
+  - "src/rb/analyze_errors.py"
+  - "src/wr/benchmark_ridge_variants.py"
   # Note: src/training/trainer.py, src/evaluation/backtest.py, and
   # src/data/preprocessing.py were previously ignored as "dead/one-off"
   # but now have direct test coverage (97-100%) — keep them in the
@@ -60,17 +60,17 @@ flag_management:
         informational: true
   individual_flags:
     - name: QB
-      paths: [src/QB/]
+      paths: [src/qb/]
     - name: RB
-      paths: [src/RB/]
+      paths: [src/rb/]
     - name: WR
-      paths: [src/WR/]
+      paths: [src/wr/]
     - name: TE
-      paths: [src/TE/]
+      paths: [src/te/]
     - name: K
-      paths: [src/K/]
+      paths: [src/k/]
     - name: DST
-      paths: [src/DST/]
+      paths: [src/dst/]
     - name: shared
       paths: [src/shared/, src/config.py, src/data/, src/features/, src/models/, src/training/, src/evaluation/, src/serving/, src/batch/]
 
@@ -83,22 +83,22 @@ component_management:
   individual_components:
     - component_id: qb
       name: QB
-      paths: ["src/QB/**"]
+      paths: ["src/qb/**"]
     - component_id: rb
       name: RB
-      paths: ["src/RB/**"]
+      paths: ["src/rb/**"]
     - component_id: wr
       name: WR
-      paths: ["src/WR/**"]
+      paths: ["src/wr/**"]
     - component_id: te
       name: TE
-      paths: ["src/TE/**"]
+      paths: ["src/te/**"]
     - component_id: k
       name: K
-      paths: ["src/K/**"]
+      paths: ["src/k/**"]
     - component_id: dst
       name: DST
-      paths: ["src/DST/**"]
+      paths: ["src/dst/**"]
     - component_id: shared
       name: Shared
       paths: ["src/shared/**"]

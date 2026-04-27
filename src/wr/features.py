@@ -6,8 +6,8 @@ from src.shared.feature_build import (
     rolling_agg,
     safe_divide,
 )
-from src.WR.wr_config import WR_INCLUDE_FEATURES
-from src.WR.wr_data import compute_team_wr_totals
+from src.wr.config import WR_INCLUDE_FEATURES
+from src.wr.data import compute_team_wr_totals
 
 
 def get_wr_feature_columns() -> list[str]:

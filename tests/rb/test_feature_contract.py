@@ -20,8 +20,8 @@ import pandas as pd
 import pytest
 
 from src.features.engineer import get_attn_static_columns
-from src.RB.rb_config import RB_ATTN_STATIC_FEATURES, RB_INCLUDE_FEATURES, RB_SPECIFIC_FEATURES
-from src.RB.rb_features import (
+from src.rb.config import RB_ATTN_STATIC_FEATURES, RB_INCLUDE_FEATURES, RB_SPECIFIC_FEATURES
+from src.rb.features import (
     add_rb_specific_features,
     fill_rb_nans,
     get_rb_feature_columns,

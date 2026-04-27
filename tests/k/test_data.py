@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from src.K.k_data import filter_to_k, kicker_season_split
+from src.k.data import filter_to_k, kicker_season_split
 
 # ---------------------------------------------------------------------------
 # filter_to_k — identity filter

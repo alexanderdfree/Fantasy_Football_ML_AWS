@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.QB.qb_features import _compute_qb_features, fill_qb_nans
+from src.qb.features import _compute_qb_features, fill_qb_nans
 
 
 def _make_player_games(

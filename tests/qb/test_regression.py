@@ -23,7 +23,7 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.QB.qb_config import QB_LOSS_WEIGHTS, QB_TARGETS
+from src.qb.config import QB_LOSS_WEIGHTS, QB_TARGETS
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet

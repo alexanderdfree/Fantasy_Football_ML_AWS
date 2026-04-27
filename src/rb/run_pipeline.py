@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.RB.rb_config import (
+from src.rb.config import (
     RB_ATTN_BATCH_SIZE,
     RB_ATTN_D_MODEL,
     RB_ATTN_DROPOUT,
@@ -64,9 +64,9 @@ from src.RB.rb_config import (
     RB_TRAIN_LIGHTGBM,
     RB_TWO_STAGE_TARGETS,
 )
-from src.RB.rb_data import filter_to_rb
-from src.RB.rb_features import add_rb_specific_features, fill_rb_nans, get_rb_feature_columns
-from src.RB.rb_targets import compute_rb_targets
+from src.rb.data import filter_to_rb
+from src.rb.features import add_rb_specific_features, fill_rb_nans, get_rb_feature_columns
+from src.rb.targets import compute_rb_targets
 from src.shared.pipeline import run_cv_pipeline, run_pipeline
 
 RB_CONFIG = {

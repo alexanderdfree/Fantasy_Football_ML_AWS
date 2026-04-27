@@ -25,18 +25,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.DST.dst_config import (
+from src.dst.config import (
     DST_ALL_FEATURES,
     DST_CONTEXTUAL_FEATURES,
     DST_SPECIFIC_FEATURES,
 )
-from src.DST.dst_features import (
+from src.dst.features import (
     add_dst_specific_features,
     compute_dst_features,
     fill_dst_nans,
     get_dst_feature_columns,
 )
-from src.DST.dst_targets import compute_dst_targets
+from src.dst.targets import compute_dst_targets
 
 # Prior-season features are NaN for the earliest season (no prior history).
 # The NaN-ceiling test raises the threshold for these columns to account

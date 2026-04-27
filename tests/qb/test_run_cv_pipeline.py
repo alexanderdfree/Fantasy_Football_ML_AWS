@@ -139,7 +139,7 @@ class TestQBRunCVPipeline:
 
     def test_best_cv_alphas_round_trip(self, cv_pipeline_run):
         """``best_cv_alphas`` must carry one alpha per non-special CV target."""
-        from src.QB.qb_config import QB_TARGETS
+        from src.qb.config import QB_TARGETS
 
         best = cv_pipeline_run["best_cv_alphas"]
         # In the tiny config no two_stage / classification targets, so all
@@ -244,7 +244,7 @@ def test_run_qb_cv_pipeline_wrapper_dispatches_to_run_cv_pipeline(monkeypatch):
     to ``run_cv_pipeline`` with the QB position + config — without paying for
     the real CV training.
     """
-    import src.QB.run_qb_pipeline as qb_pipe
+    import src.qb.run_pipeline as qb_pipe
 
     seen: list[dict] = []
 

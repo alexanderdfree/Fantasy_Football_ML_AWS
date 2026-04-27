@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.DST.dst_targets import (
+from src.dst.targets import (
     _pts_allowed_to_bonus,
     _yds_allowed_to_bonus,
     compute_dst_targets,

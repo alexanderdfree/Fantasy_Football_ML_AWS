@@ -43,8 +43,8 @@ src/batch/launch.py ─────────────> S3: s3://ff-trainin
 src/batch/launch.py <──────────────────────┘
   polls describe_jobs() for status   S3: s3://ff-training/models/
   downloads model artifacts             rb/model.tar.gz
-  extracts to src/RB/outputs/models/    wr/model.tar.gz
-             src/WR/outputs/models/     ...
+  extracts to src/rb/outputs/models/    wr/model.tar.gz
+             src/wr/outputs/models/     ...
              ...
 ```
 
@@ -319,7 +319,7 @@ docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/ff-training:latest
 
 The existing Flask Dockerfile and `src/serving/app.py` inference code are completely unaffected.
 CUDA auto-detection in `src/shared/pipeline.py` falls back to CPU. Local pipeline scripts
-(`python -m src.QB.run_qb_pipeline`) work identically without any AWS dependencies.
+(`python -m src.qb.run_pipeline`) work identically without any AWS dependencies.
 
 ## CPU-only Queue for K/DST (optional)
 

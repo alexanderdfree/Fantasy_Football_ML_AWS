@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "RB" / "run_rb_pipeline.py"
+_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "rb" / "run_pipeline.py"
 
 
 def _patch_shared_pipeline(monkeypatch):
@@ -64,7 +64,7 @@ def test_main_cv_routes_to_run_cv_pipeline(monkeypatch):
 
 @pytest.mark.unit
 def test_run_rb_pipeline_function_passes_through(monkeypatch):
-    import src.RB.run_rb_pipeline as rb_pipe
+    import src.rb.run_pipeline as rb_pipe
 
     seen: dict = {}
 

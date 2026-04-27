@@ -5,7 +5,7 @@ import pytest
 import torch
 
 from src.shared.neural_net import MultiHeadNet
-from src.TE.te_config import TE_TARGETS
+from src.te.config import TE_TARGETS
 
 pytestmark = pytest.mark.unit
 

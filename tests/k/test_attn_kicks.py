@@ -10,9 +10,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.K.k_config import K_ATTN_KICK_STATS
-from src.K.k_data import reconstruct_kicker_kicks_from_pbp
-from src.K.k_features import build_nested_kick_history
+from src.k.config import K_ATTN_KICK_STATS
+from src.k.data import reconstruct_kicker_kicks_from_pbp
+from src.k.features import build_nested_kick_history
 
 
 def _weekly(player_id: str, season: int, weeks: list[int]) -> pd.DataFrame:

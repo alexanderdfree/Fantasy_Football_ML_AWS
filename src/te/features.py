@@ -6,8 +6,8 @@ from src.shared.feature_build import (
     rolling_agg,
     safe_divide,
 )
-from src.TE.te_config import TE_INCLUDE_FEATURES
-from src.TE.te_data import compute_team_te_totals
+from src.te.config import TE_INCLUDE_FEATURES
+from src.te.data import compute_team_te_totals
 
 
 def get_te_feature_columns() -> list[str]:

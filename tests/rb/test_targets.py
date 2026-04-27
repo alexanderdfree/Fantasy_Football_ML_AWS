@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.RB.rb_config import RB_TARGETS
-from src.RB.rb_targets import compute_rb_targets
+from src.rb.config import RB_TARGETS
+from src.rb.targets import compute_rb_targets
 
 
 @pytest.mark.unit

@@ -17,9 +17,9 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.K.k_config import K_HUBER_DELTAS, K_LOSS_WEIGHTS, K_TARGETS
-from src.K.k_features import compute_k_features, get_k_feature_columns
-from src.K.k_targets import compute_k_targets
+from src.k.config import K_HUBER_DELTAS, K_LOSS_WEIGHTS, K_TARGETS
+from src.k.features import compute_k_features, get_k_feature_columns
+from src.k.targets import compute_k_targets
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet

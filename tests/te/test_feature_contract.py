@@ -19,8 +19,8 @@ import pandas as pd
 import pytest
 
 from src.features.engineer import get_attn_static_columns
-from src.TE.te_config import TE_ATTN_STATIC_FEATURES, TE_SPECIFIC_FEATURES
-from src.TE.te_features import (
+from src.te.config import TE_ATTN_STATIC_FEATURES, TE_SPECIFIC_FEATURES
+from src.te.features import (
     add_te_specific_features,
     fill_te_nans,
     get_te_feature_columns,

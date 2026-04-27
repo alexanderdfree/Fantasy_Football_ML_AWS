@@ -7,7 +7,7 @@ import torch
 
 from src.config import SCORING_PPR
 from src.data.loader import compute_fantasy_points
-from src.DST.dst_targets import compute_dst_targets
+from src.dst.targets import compute_dst_targets
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
 
@@ -158,7 +158,7 @@ def test_dst_aggregator_works_on_torch_tensors():
 
 def test_dst_aggregator_tier_boundaries_vectorized():
     """Sweep PA/YA across every tier edge — must match the scalar helpers."""
-    from src.DST.dst_targets import _pts_allowed_to_bonus, _yds_allowed_to_bonus
+    from src.dst.targets import _pts_allowed_to_bonus, _yds_allowed_to_bonus
 
     pa_values = np.array([0, 1, 6, 7, 13, 14, 20, 21, 27, 28, 34, 35, 40, 55], dtype=np.float64)
     ya_values = np.array(

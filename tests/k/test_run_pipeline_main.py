@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "K" / "run_k_pipeline.py"
+_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "k" / "run_pipeline.py"
 
 
 def _synthetic_k_df(n: int = 6) -> pd.DataFrame:
@@ -37,14 +37,14 @@ def _patch_all(monkeypatch):
     We patch both the source modules (``K.k_data``, ``K.k_features``,
     ``K.k_targets``, ``src.shared.pipeline``) and the re-bound names inside
     ``K.run_k_pipeline``. Source-module patching matters when ``runpy``
-    re-executes the script: the fresh ``from src.K.k_data import load_kicker_data``
+    re-executes the script: the fresh ``from src.k.data import load_kicker_data``
     grabs whatever's on ``K.k_data`` at that moment. Re-binding in-place on
     the already-imported ``k_pipe`` handles direct-call tests.
     """
-    import src.K.k_data as k_data
-    import src.K.k_features as k_features
-    import src.K.k_targets as k_targets
-    import src.K.run_k_pipeline as k_pipe
+    import src.k.data as k_data
+    import src.k.features as k_features
+    import src.k.run_pipeline as k_pipe
+    import src.k.targets as k_targets
     import src.shared.pipeline as sp
 
     k_df = _synthetic_k_df()
@@ -92,7 +92,7 @@ def test_run_k_pipeline_wires_everything(monkeypatch):
     the production config (plus attention history builder injected), and
     the three season splits from ``kicker_season_split``."""
     calls = _patch_all(monkeypatch)
-    import src.K.run_k_pipeline as k_pipe
+    import src.k.run_pipeline as k_pipe
 
     result = k_pipe.run_k_pipeline(seed=13)
     assert result["ridge_metrics"] == {}

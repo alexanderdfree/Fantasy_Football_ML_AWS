@@ -18,15 +18,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.K.k_config import K_CONFIG_TINY
-from src.K.k_data import filter_to_k
-from src.K.k_features import (
+from src.k.config import K_CONFIG_TINY
+from src.k.data import filter_to_k
+from src.k.features import (
     add_k_specific_features,
     compute_k_features,
     fill_k_nans,
     get_k_feature_columns,
 )
-from src.K.k_targets import compute_k_targets
+from src.k.targets import compute_k_targets
 from src.shared.pipeline import run_pipeline
 
 

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.RB.rb_features import _compute_rb_features, fill_rb_nans
+from src.rb.features import _compute_rb_features, fill_rb_nans
 
 RB_FEATURE_COLS = [
     "yards_per_carry_L3",

@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.DST.dst_config import DST_ALL_FEATURES
+from src.dst.config import DST_ALL_FEATURES
 from src.shared.feature_build import fill_nans_with_train_means, rolling_agg
 
 

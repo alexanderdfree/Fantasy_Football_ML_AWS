@@ -36,7 +36,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.DST.dst_config import (
+from src.dst.config import (
     DST_ATTN_HISTORY_STATS,
     DST_ATTN_STATIC_FEATURES,
     DST_CONFIG_TINY,
@@ -47,14 +47,14 @@ from src.DST.dst_config import (
     DST_SPECIFIC_FEATURES,
     DST_TARGETS,
 )
-from src.DST.dst_data import filter_to_dst
-from src.DST.dst_features import (
+from src.dst.data import filter_to_dst
+from src.dst.features import (
     add_dst_specific_features,
     compute_dst_features,
     fill_dst_nans,
     get_dst_feature_columns,
 )
-from src.DST.dst_targets import compute_dst_targets
+from src.dst.targets import compute_dst_targets
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_pipeline
 from tests.dst.conftest import _build_tiny_dst_dataset

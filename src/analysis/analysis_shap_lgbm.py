@@ -44,7 +44,7 @@ def _load_position_config(pos: str) -> dict:
     pipeline used to fit the saved LightGBM.
     """
     pos_lower = pos.lower()
-    mod = importlib.import_module(f"{pos}.run_{pos_lower}_pipeline")
+    mod = importlib.import_module(f"src.{pos_lower}.run_pipeline")
     cfg_name = f"{pos}_CONFIG"
     if not hasattr(mod, cfg_name):
         raise AttributeError(f"{mod.__name__} has no {cfg_name}")

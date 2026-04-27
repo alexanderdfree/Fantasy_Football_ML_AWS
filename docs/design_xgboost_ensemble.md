@@ -159,7 +159,7 @@ class XGBoostMultiTarget:
 
 ## Config Additions
 
-Add these keys to each position's config dict. Example for RB (`src/RB/rb_config.py`):
+Add these keys to each position's config dict. Example for RB (`src/rb/config.py`):
 
 ```python
 # === XGBoost ===
@@ -334,7 +334,7 @@ Add XGBoost config to each position entry:
 After training, each position directory gains an `xgboost/` subdirectory:
 
 ```
-src/RB/outputs/models/
+src/rb/outputs/models/
 ├── rushing_floor/
 │   ├── ridge_model.pkl
 │   └── scaler.pkl

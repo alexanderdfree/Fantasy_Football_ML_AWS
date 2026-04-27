@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.RB.rb_config import RB_GATED_ORDINAL_TARGETS, RB_ORDINAL_TARGETS, RB_TARGETS
+from src.rb.config import RB_GATED_ORDINAL_TARGETS, RB_ORDINAL_TARGETS, RB_TARGETS
 from src.shared.models import (
     GatedOrdinalTDClassifier,
     OrdinalTDClassifier,

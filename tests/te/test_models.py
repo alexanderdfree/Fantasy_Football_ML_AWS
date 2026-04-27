@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from src.shared.models import RidgeMultiTarget
-from src.TE.te_config import TE_TARGETS
+from src.te.config import TE_TARGETS
 
 pytestmark = pytest.mark.unit
 

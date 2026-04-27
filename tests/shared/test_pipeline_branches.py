@@ -222,7 +222,7 @@ def test_build_train_matrix_loads_synthetic_splits(tmp_path, monkeypatch):
 
     monkeypatch.setattr(p, "SPLITS_DIR", str(splits_dir))
 
-    from src.QB.run_qb_pipeline import QB_CONFIG
+    from src.qb.run_pipeline import QB_CONFIG
 
     X_train, y_train_dict, feature_cols = build_train_matrix("QB", QB_CONFIG)
 

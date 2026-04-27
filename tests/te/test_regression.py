@@ -28,19 +28,19 @@ from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
-from src.TE.te_config import (
+from src.te.config import (
     TE_CONFIG_TINY,
     TE_LGBM_MIN_CHILD_SAMPLES,
     TE_LGBM_NUM_LEAVES,
     TE_TARGETS,
 )
-from src.TE.te_data import filter_to_te
-from src.TE.te_features import (
+from src.te.data import filter_to_te
+from src.te.features import (
     add_te_specific_features,
     fill_te_nans,
     get_te_feature_columns,
 )
-from src.TE.te_targets import compute_te_targets
+from src.te.targets import compute_te_targets
 
 pytestmark = [
     pytest.mark.regression,

@@ -14,8 +14,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.RB.rb_config import RB_TARGETS
-from src.RB.run_rb_pipeline import run_rb_pipeline
+from src.rb.config import RB_TARGETS
+from src.rb.run_pipeline import run_rb_pipeline
 from src.shared.error_analysis import (
     add_stratification_columns,
     find_top_error_sources,

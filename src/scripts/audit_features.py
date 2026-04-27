@@ -33,15 +33,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.QB.qb_data import filter_to_qb  # noqa: E402
-from src.QB.qb_features import add_qb_specific_features, get_qb_feature_columns  # noqa: E402
-from src.RB.rb_data import filter_to_rb  # noqa: E402
-from src.RB.rb_features import add_rb_specific_features, get_rb_feature_columns  # noqa: E402
+from src.qb.data import filter_to_qb  # noqa: E402
+from src.qb.features import add_qb_specific_features, get_qb_feature_columns  # noqa: E402
+from src.rb.data import filter_to_rb  # noqa: E402
+from src.rb.features import add_rb_specific_features, get_rb_feature_columns  # noqa: E402
 from src.shared.weather_features import merge_schedule_features  # noqa: E402
-from src.TE.te_data import filter_to_te  # noqa: E402
-from src.TE.te_features import add_te_specific_features, get_te_feature_columns  # noqa: E402
-from src.WR.wr_data import filter_to_wr  # noqa: E402
-from src.WR.wr_features import add_wr_specific_features, get_wr_feature_columns  # noqa: E402
+from src.te.data import filter_to_te  # noqa: E402
+from src.te.features import add_te_specific_features, get_te_feature_columns  # noqa: E402
+from src.wr.data import filter_to_wr  # noqa: E402
+from src.wr.features import add_wr_specific_features, get_wr_feature_columns  # noqa: E402
 
 
 def _column_stats(s: pd.Series) -> dict:

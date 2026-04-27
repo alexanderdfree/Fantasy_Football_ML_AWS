@@ -9,7 +9,7 @@ so a single -2 pts penalty applies regardless of how the fumble occurred.
 
 import pandas as pd
 
-from src.QB.qb_config import QB_TARGETS
+from src.qb.config import QB_TARGETS
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
 

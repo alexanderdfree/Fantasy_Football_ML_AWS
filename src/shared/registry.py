@@ -13,7 +13,7 @@ from src.shared.aggregate_targets import aggregate_fn_for
 
 _POSITION_META = {
     "QB": {
-        "runner_module": "src.QB.run_qb_pipeline",
+        "runner_module": "src.qb.run_pipeline",
         "runner_fn": "run_qb_pipeline",
         "cv_runner_fn": "run_qb_cv_pipeline",
         "config_var": "QB_CONFIG",
@@ -21,7 +21,7 @@ _POSITION_META = {
         "cpu_only": False,
     },
     "RB": {
-        "runner_module": "src.RB.run_rb_pipeline",
+        "runner_module": "src.rb.run_pipeline",
         "runner_fn": "run_rb_pipeline",
         "cv_runner_fn": "run_rb_cv_pipeline",
         "config_var": "RB_CONFIG",
@@ -29,7 +29,7 @@ _POSITION_META = {
         "cpu_only": False,
     },
     "WR": {
-        "runner_module": "src.WR.run_wr_pipeline",
+        "runner_module": "src.wr.run_pipeline",
         "runner_fn": "run_wr_pipeline",
         "cv_runner_fn": "run_wr_cv_pipeline",
         "config_var": "WR_CONFIG",
@@ -37,7 +37,7 @@ _POSITION_META = {
         "cpu_only": False,
     },
     "TE": {
-        "runner_module": "src.TE.run_te_pipeline",
+        "runner_module": "src.te.run_pipeline",
         "runner_fn": "run_te_pipeline",
         "cv_runner_fn": None,
         "config_var": "TE_CONFIG",
@@ -45,7 +45,7 @@ _POSITION_META = {
         "cpu_only": False,
     },
     "K": {
-        "runner_module": "src.K.run_k_pipeline",
+        "runner_module": "src.k.run_pipeline",
         "runner_fn": "run_k_pipeline",
         "cv_runner_fn": None,
         "config_var": "K_CONFIG",
@@ -53,7 +53,7 @@ _POSITION_META = {
         "cpu_only": True,
     },
     "DST": {
-        "runner_module": "src.DST.run_dst_pipeline",
+        "runner_module": "src.dst.run_pipeline",
         "runner_fn": "run_dst_pipeline",
         "cv_runner_fn": None,
         "config_var": "DST_CONFIG",
@@ -152,21 +152,21 @@ def _attn_kwargs_static(cfg, prefix: str) -> dict:
 @cache
 def get_inference_spec(pos: str) -> dict:
     if pos == "QB":
-        import src.QB.qb_config as qb_cfg
-        from src.QB.qb_config import (
+        import src.qb.config as qb_cfg
+        from src.qb.config import (
             QB_NN_BACKBONE_LAYERS,
             QB_NN_DROPOUT,
             QB_NN_HEAD_HIDDEN,
             QB_SPECIFIC_FEATURES,
             QB_TARGETS,
         )
-        from src.QB.qb_data import filter_to_qb
-        from src.QB.qb_features import (
+        from src.qb.data import filter_to_qb
+        from src.qb.features import (
             add_qb_specific_features,
             fill_qb_nans,
             get_qb_feature_columns,
         )
-        from src.QB.qb_targets import compute_qb_targets
+        from src.qb.targets import compute_qb_targets
 
         return {
             "targets": QB_TARGETS,
@@ -177,7 +177,7 @@ def get_inference_spec(pos: str) -> dict:
             "fill_nans_fn": fill_qb_nans,
             "get_feature_columns_fn": get_qb_feature_columns,
             "aggregate_fn": aggregate_fn_for("QB"),
-            "model_dir": "src/QB/outputs/models",
+            "model_dir": "src/qb/outputs/models",
             "nn_file": "qb_multihead_nn.pt",
             "nn_kwargs": dict(
                 backbone_layers=QB_NN_BACKBONE_LAYERS,
@@ -195,8 +195,8 @@ def get_inference_spec(pos: str) -> dict:
             "train_lightgbm": bool(getattr(qb_cfg, "QB_TRAIN_LIGHTGBM", False)),
         }
     if pos == "RB":
-        import src.RB.rb_config as rb_cfg
-        from src.RB.rb_config import (
+        import src.rb.config as rb_cfg
+        from src.rb.config import (
             RB_NN_BACKBONE_LAYERS,
             RB_NN_DROPOUT,
             RB_NN_HEAD_HIDDEN,
@@ -204,13 +204,13 @@ def get_inference_spec(pos: str) -> dict:
             RB_SPECIFIC_FEATURES,
             RB_TARGETS,
         )
-        from src.RB.rb_data import filter_to_rb
-        from src.RB.rb_features import (
+        from src.rb.data import filter_to_rb
+        from src.rb.features import (
             add_rb_specific_features,
             fill_rb_nans,
             get_rb_feature_columns,
         )
-        from src.RB.rb_targets import compute_rb_targets
+        from src.rb.targets import compute_rb_targets
 
         return {
             "targets": RB_TARGETS,
@@ -221,7 +221,7 @@ def get_inference_spec(pos: str) -> dict:
             "fill_nans_fn": fill_rb_nans,
             "get_feature_columns_fn": get_rb_feature_columns,
             "aggregate_fn": aggregate_fn_for("RB"),
-            "model_dir": "src/RB/outputs/models",
+            "model_dir": "src/rb/outputs/models",
             "nn_file": "rb_multihead_nn.pt",
             "nn_kwargs": dict(
                 backbone_layers=RB_NN_BACKBONE_LAYERS,
@@ -238,8 +238,8 @@ def get_inference_spec(pos: str) -> dict:
             "train_lightgbm": bool(getattr(rb_cfg, "RB_TRAIN_LIGHTGBM", False)),
         }
     if pos == "WR":
-        import src.WR.wr_config as wr_cfg
-        from src.WR.wr_config import (
+        import src.wr.config as wr_cfg
+        from src.wr.config import (
             WR_NN_BACKBONE_LAYERS,
             WR_NN_DROPOUT,
             WR_NN_HEAD_HIDDEN,
@@ -247,13 +247,13 @@ def get_inference_spec(pos: str) -> dict:
             WR_SPECIFIC_FEATURES,
             WR_TARGETS,
         )
-        from src.WR.wr_data import filter_to_wr
-        from src.WR.wr_features import (
+        from src.wr.data import filter_to_wr
+        from src.wr.features import (
             add_wr_specific_features,
             fill_wr_nans,
             get_wr_feature_columns,
         )
-        from src.WR.wr_targets import compute_wr_targets
+        from src.wr.targets import compute_wr_targets
 
         return {
             "targets": WR_TARGETS,
@@ -264,7 +264,7 @@ def get_inference_spec(pos: str) -> dict:
             "fill_nans_fn": fill_wr_nans,
             "get_feature_columns_fn": get_wr_feature_columns,
             "aggregate_fn": aggregate_fn_for("WR"),
-            "model_dir": "src/WR/outputs/models",
+            "model_dir": "src/wr/outputs/models",
             "nn_file": "wr_multihead_nn.pt",
             "nn_kwargs": dict(
                 backbone_layers=WR_NN_BACKBONE_LAYERS,
@@ -283,8 +283,8 @@ def get_inference_spec(pos: str) -> dict:
             "train_lightgbm": bool(getattr(wr_cfg, "WR_TRAIN_LIGHTGBM", False)),
         }
     if pos == "TE":
-        import src.TE.te_config as te_cfg
-        from src.TE.te_config import (
+        import src.te.config as te_cfg
+        from src.te.config import (
             TE_NN_BACKBONE_LAYERS,
             TE_NN_DROPOUT,
             TE_NN_HEAD_HIDDEN,
@@ -292,13 +292,13 @@ def get_inference_spec(pos: str) -> dict:
             TE_SPECIFIC_FEATURES,
             TE_TARGETS,
         )
-        from src.TE.te_data import filter_to_te
-        from src.TE.te_features import (
+        from src.te.data import filter_to_te
+        from src.te.features import (
             add_te_specific_features,
             fill_te_nans,
             get_te_feature_columns,
         )
-        from src.TE.te_targets import compute_te_targets
+        from src.te.targets import compute_te_targets
 
         return {
             "targets": TE_TARGETS,
@@ -309,7 +309,7 @@ def get_inference_spec(pos: str) -> dict:
             "fill_nans_fn": fill_te_nans,
             "get_feature_columns_fn": get_te_feature_columns,
             "aggregate_fn": aggregate_fn_for("TE"),
-            "model_dir": "src/TE/outputs/models",
+            "model_dir": "src/te/outputs/models",
             "nn_file": "te_multihead_nn.pt",
             "nn_kwargs": dict(
                 backbone_layers=TE_NN_BACKBONE_LAYERS,
@@ -328,8 +328,8 @@ def get_inference_spec(pos: str) -> dict:
             "train_lightgbm": bool(getattr(te_cfg, "TE_TRAIN_LIGHTGBM", False)),
         }
     if pos == "K":
-        import src.K.k_config as k_cfg
-        from src.K.k_config import (
+        import src.k.config as k_cfg
+        from src.k.config import (
             K_NN_BACKBONE_LAYERS,
             K_NN_DROPOUT,
             K_NN_HEAD_HIDDEN,
@@ -337,13 +337,13 @@ def get_inference_spec(pos: str) -> dict:
             K_SPECIFIC_FEATURES,
             K_TARGETS,
         )
-        from src.K.k_data import filter_to_k
-        from src.K.k_features import (
+        from src.k.data import filter_to_k
+        from src.k.features import (
             add_k_specific_features,
             fill_k_nans,
             get_k_feature_columns,
         )
-        from src.K.k_targets import compute_k_targets
+        from src.k.targets import compute_k_targets
 
         # K attention NN uses nested kick history (inner: per-game kicks,
         # outer: per-target across prior games). Kwargs mirror those passed
@@ -381,7 +381,7 @@ def get_inference_spec(pos: str) -> dict:
                 "fg_misses": -1.0,
                 "xp_misses": -1.0,
             },
-            "model_dir": "src/K/outputs/models",
+            "model_dir": "src/k/outputs/models",
             "nn_file": "k_multihead_nn.pt",
             "nn_kwargs": dict(
                 backbone_layers=K_NN_BACKBONE_LAYERS,
@@ -401,8 +401,8 @@ def get_inference_spec(pos: str) -> dict:
             "train_lightgbm": bool(getattr(k_cfg, "K_TRAIN_LIGHTGBM", False)),
         }
     if pos == "DST":
-        import src.DST.dst_config as dst_cfg
-        from src.DST.dst_config import (
+        import src.dst.config as dst_cfg
+        from src.dst.config import (
             DST_NN_BACKBONE_LAYERS,
             DST_NN_DROPOUT,
             DST_NN_HEAD_HIDDEN,
@@ -411,13 +411,13 @@ def get_inference_spec(pos: str) -> dict:
             DST_SPECIFIC_FEATURES,
             DST_TARGETS,
         )
-        from src.DST.dst_data import filter_to_dst
-        from src.DST.dst_features import (
+        from src.dst.data import filter_to_dst
+        from src.dst.features import (
             add_dst_specific_features,
             fill_dst_nans,
             get_dst_feature_columns,
         )
-        from src.DST.dst_targets import compute_dst_targets
+        from src.dst.targets import compute_dst_targets
 
         return {
             "targets": DST_TARGETS,
@@ -429,7 +429,7 @@ def get_inference_spec(pos: str) -> dict:
             "get_feature_columns_fn": get_dst_feature_columns,
             "compute_adjustment_fn": None,
             "aggregate_fn": aggregate_fn_for("DST"),
-            "model_dir": "src/DST/outputs/models",
+            "model_dir": "src/dst/outputs/models",
             "nn_file": "dst_multihead_nn.pt",
             "nn_kwargs": dict(
                 backbone_layers=DST_NN_BACKBONE_LAYERS,

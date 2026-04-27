@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.RB.rb_config import RB_TARGETS
+from src.rb.config import RB_TARGETS
 from tests.shared.position_fixtures import (
     make_position_df as _make_position_df,
 )

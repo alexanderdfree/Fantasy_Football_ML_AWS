@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.WR.wr_targets import compute_wr_targets
+from src.wr.targets import compute_wr_targets
 
 
 def _make_wr_row(**overrides):

@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.QB.qb_config import (
+from src.qb.config import (
     QB_ATTN_BATCH_SIZE,
     QB_ATTN_D_MODEL,
     QB_ATTN_DROPOUT,
@@ -57,9 +57,9 @@ from src.QB.qb_config import (
     QB_TRAIN_ELASTICNET,
     QB_TRAIN_LIGHTGBM,
 )
-from src.QB.qb_data import filter_to_qb
-from src.QB.qb_features import add_qb_specific_features, fill_qb_nans, get_qb_feature_columns
-from src.QB.qb_targets import compute_qb_targets
+from src.qb.data import filter_to_qb
+from src.qb.features import add_qb_specific_features, fill_qb_nans, get_qb_feature_columns
+from src.qb.targets import compute_qb_targets
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_cv_pipeline, run_pipeline
 

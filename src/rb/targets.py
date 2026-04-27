@@ -8,7 +8,7 @@ a direct target.
 
 import pandas as pd
 
-from src.RB.rb_config import RB_TARGETS
+from src.rb.config import RB_TARGETS
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
 

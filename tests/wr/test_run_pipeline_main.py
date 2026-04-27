@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "WR" / "run_wr_pipeline.py"
+_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "wr" / "run_pipeline.py"
 
 
 def _patch_shared_pipeline(monkeypatch):
@@ -62,7 +62,7 @@ def test_main_cv_routes_to_run_cv_pipeline(monkeypatch):
 
 @pytest.mark.unit
 def test_run_wr_pipeline_function_passes_through(monkeypatch):
-    import src.WR.run_wr_pipeline as wr_pipe
+    import src.wr.run_pipeline as wr_pipe
 
     seen: dict = {}
 

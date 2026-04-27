@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 import torch
 
-from src.RB.rb_config import (
+from src.rb.config import (
     RB_ATTN_D_MODEL,
     RB_ATTN_DROPOUT,
     RB_ATTN_GATE_HIDDEN,
@@ -55,9 +55,9 @@ from src.RB.rb_config import (
     RB_SPECIFIC_FEATURES,
     RB_TARGETS,
 )
-from src.RB.rb_data import filter_to_rb
-from src.RB.rb_features import add_rb_specific_features, fill_rb_nans, get_rb_feature_columns
-from src.RB.rb_targets import compute_rb_targets
+from src.rb.data import filter_to_rb
+from src.rb.features import add_rb_specific_features, fill_rb_nans, get_rb_feature_columns
+from src.rb.targets import compute_rb_targets
 
 
 def _build_tiny_config() -> dict:
@@ -129,8 +129,8 @@ def _run_pipeline_in_tmp(train_df, val_df, test_df, seed: int, workdir: str) -> 
     data_raw_src = _find_data_raw_dir()
     try:
         os.chdir(workdir)
-        os.makedirs("src/RB/outputs/models", exist_ok=True)
-        os.makedirs("src/RB/outputs/figures", exist_ok=True)
+        os.makedirs("src/rb/outputs/models", exist_ok=True)
+        os.makedirs("src/rb/outputs/figures", exist_ok=True)
         dst = os.path.join(workdir, "data", "raw")
         if not os.path.exists(dst):
             os.makedirs(os.path.dirname(dst), exist_ok=True)

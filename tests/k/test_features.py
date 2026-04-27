@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.K.k_features import compute_k_features, fill_k_nans
+from src.k.features import compute_k_features, fill_k_nans
 
 K_FEATURE_COLS = [
     "fg_attempts_L3",

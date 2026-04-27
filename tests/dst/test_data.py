@@ -7,7 +7,7 @@ is an identity filter that returns a copy of the input.
 import pandas as pd
 import pytest
 
-from src.DST.dst_data import filter_to_dst
+from src.dst.data import filter_to_dst
 
 
 @pytest.mark.unit

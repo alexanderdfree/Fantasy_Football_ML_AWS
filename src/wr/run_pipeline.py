@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_cv_pipeline, run_pipeline
-from src.WR.wr_config import (
+from src.wr.config import (
     WR_ATTN_D_MODEL,
     WR_ATTN_DROPOUT,
     WR_ATTN_ENCODER_HIDDEN_DIM,
@@ -58,9 +58,9 @@ from src.WR.wr_config import (
     WR_TRAIN_ELASTICNET,
     WR_TRAIN_LIGHTGBM,
 )
-from src.WR.wr_data import filter_to_wr
-from src.WR.wr_features import add_wr_specific_features, fill_wr_nans, get_wr_feature_columns
-from src.WR.wr_targets import compute_wr_targets
+from src.wr.data import filter_to_wr
+from src.wr.features import add_wr_specific_features, fill_wr_nans, get_wr_feature_columns
+from src.wr.targets import compute_wr_targets
 
 WR_CONFIG = {
     "targets": WR_TARGETS,

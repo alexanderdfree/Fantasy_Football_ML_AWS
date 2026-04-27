@@ -22,10 +22,10 @@ import pytest
 
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_pipeline
-from src.WR.wr_config import WR_CONFIG_TINY, WR_TARGETS
-from src.WR.wr_data import filter_to_wr
-from src.WR.wr_features import add_wr_specific_features, fill_wr_nans, get_wr_feature_columns
-from src.WR.wr_targets import compute_wr_targets
+from src.wr.config import WR_CONFIG_TINY, WR_TARGETS
+from src.wr.data import filter_to_wr
+from src.wr.features import add_wr_specific_features, fill_wr_nans, get_wr_feature_columns
+from src.wr.targets import compute_wr_targets
 
 SPLITS_DIR = Path(__file__).resolve().parents[2] / "data" / "splits"
 _ALL_TARGETS = tuple(WR_TARGETS)

@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.K.k_config import K_ALL_FEATURES, K_ATTN_L1_FEATURES
-from src.K.k_features import compute_k_features
+from src.k.config import K_ALL_FEATURES, K_ATTN_L1_FEATURES
+from src.k.features import compute_k_features
 
 
 @pytest.mark.unit

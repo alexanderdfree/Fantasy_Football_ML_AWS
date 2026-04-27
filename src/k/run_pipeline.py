@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.K.k_config import (
+from src.k.config import (
     K_ATTN_BATCH_SIZE,
     K_ATTN_D_MODEL,
     K_ATTN_DROPOUT,
@@ -62,15 +62,15 @@ from src.K.k_config import (
     K_TRAIN_ELASTICNET,
     K_TRAIN_LIGHTGBM,
 )
-from src.K.k_data import filter_to_k, kicker_season_split, load_kicker_data, load_kicker_kicks
-from src.K.k_features import (
+from src.k.data import filter_to_k, kicker_season_split, load_kicker_data, load_kicker_kicks
+from src.k.features import (
     add_k_specific_features,
     build_nested_kick_history,
     compute_k_features,
     fill_k_nans,
     get_k_feature_columns,
 )
-from src.K.k_targets import compute_k_targets
+from src.k.targets import compute_k_targets
 from src.shared.pipeline import run_pipeline
 
 # attn_history_builder_fn is injected at runtime (closes over kicks_df).

@@ -25,17 +25,17 @@ import pandas as pd
 import torch
 from flask import Flask, jsonify, render_template, request
 
-import src.DST.dst_config as dst_cfg
-import src.K.k_config as k_cfg
-import src.QB.qb_config as qb_cfg
-import src.RB.rb_config as rb_cfg
-import src.TE.te_config as te_cfg
-import src.WR.wr_config as wr_cfg
+import src.dst.config as dst_cfg
+import src.k.config as k_cfg
+import src.qb.config as qb_cfg
+import src.rb.config as rb_cfg
+import src.te.config as te_cfg
+import src.wr.config as wr_cfg
 from src.config import SCORING_HALF_PPR, SCORING_STANDARD, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 from src.data.loader import compute_fantasy_points
-from src.DST.dst_config import DST_SPECIFIC_FEATURES, DST_TARGETS
-from src.DST.dst_data import build_dst_data
-from src.DST.dst_features import compute_dst_features
+from src.dst.config import DST_SPECIFIC_FEATURES, DST_TARGETS
+from src.dst.data import build_dst_data
+from src.dst.features import compute_dst_features
 from src.evaluation.metrics import compute_metrics, compute_positional_metrics
 from src.features.engineer import (
     build_game_history_arrays,
@@ -43,14 +43,14 @@ from src.features.engineer import (
     build_opp_defense_per_game_df,
     get_attn_static_columns,
 )
-from src.K.k_config import K_SPECIFIC_FEATURES, K_TARGETS
+from src.k.config import K_SPECIFIC_FEATURES, K_TARGETS
 
 # Per-position imports needed only for /api/model_architecture metadata and
 # for K/DST data loaders (these have their own data pipelines, not in registry).
-from src.K.k_data import kicker_season_split, load_kicker_data, load_kicker_kicks
-from src.K.k_features import build_nested_kick_history, compute_k_features
-from src.QB.qb_config import QB_SPECIFIC_FEATURES, QB_TARGETS
-from src.RB.rb_config import RB_SPECIFIC_FEATURES, RB_TARGETS
+from src.k.data import kicker_season_split, load_kicker_data, load_kicker_kicks
+from src.k.features import build_nested_kick_history, compute_k_features
+from src.qb.config import QB_SPECIFIC_FEATURES, QB_TARGETS
+from src.rb.config import RB_SPECIFIC_FEATURES, RB_TARGETS
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.artifact_integrity import (
     assert_scaler_matches,
@@ -67,8 +67,8 @@ from src.shared.neural_net import (
 )
 from src.shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
 from src.shared.weather_features import WEATHER_FEATURES_ALL
-from src.TE.te_config import TE_SPECIFIC_FEATURES, TE_TARGETS
-from src.WR.wr_config import WR_SPECIFIC_FEATURES, WR_TARGETS
+from src.te.config import TE_SPECIFIC_FEATURES, TE_TARGETS
+from src.wr.config import WR_SPECIFIC_FEATURES, WR_TARGETS
 
 sync_data_from_s3()
 sync_models_from_s3()

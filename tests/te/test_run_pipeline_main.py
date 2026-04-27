@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "TE" / "run_te_pipeline.py"
+_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "te" / "run_pipeline.py"
 
 
 def _patch_shared_pipeline(monkeypatch):
@@ -50,7 +50,7 @@ def test_main_tiny_wires_shrunk_config(monkeypatch):
 
 @pytest.mark.unit
 def test_run_te_pipeline_function_passes_through(monkeypatch):
-    import src.TE.run_te_pipeline as te_pipe
+    import src.te.run_pipeline as te_pipe
 
     seen: dict = {}
 

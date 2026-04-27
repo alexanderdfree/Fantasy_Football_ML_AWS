@@ -22,7 +22,7 @@ import torch
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
 from src.shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
-from src.WR.wr_config import WR_LOSS_WEIGHTS, WR_TARGETS
+from src.wr.config import WR_LOSS_WEIGHTS, WR_TARGETS
 
 
 def _synthetic_wr_dataset(n: int = 800, n_features: int = 10, seed: int = 42):

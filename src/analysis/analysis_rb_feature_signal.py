@@ -33,16 +33,16 @@ from src.data.loader import compute_all_floor_formats, compute_all_scoring_forma
 from src.data.split import expanding_window_folds, temporal_split
 from src.features.engineer import build_features, flatten_include_features
 from src.models.linear import RidgeModel
-from src.RB.rb_config import (
+from src.rb.config import (
     RB_INCLUDE_FEATURES,
     RB_RIDGE_ALPHA_GRIDS,
     RB_RIDGE_PCA_COMPONENTS,
     RB_SPECIFIC_FEATURES,
     RB_TARGETS,
 )
-from src.RB.rb_data import filter_to_rb
-from src.RB.rb_features import add_rb_specific_features, fill_rb_nans
-from src.RB.rb_targets import compute_rb_targets
+from src.rb.data import filter_to_rb
+from src.rb.features import add_rb_specific_features, fill_rb_nans
+from src.rb.targets import compute_rb_targets
 from src.shared.weather_features import WEATHER_FEATURES_ALL, merge_schedule_features
 
 os.makedirs("analysis_output", exist_ok=True)

@@ -6,7 +6,7 @@ import pytest
 
 from src.config import SCORING_PPR
 from src.data.loader import compute_fantasy_points
-from src.TE.te_targets import compute_te_targets
+from src.te.targets import compute_te_targets
 
 pytestmark = pytest.mark.unit
 

@@ -25,14 +25,14 @@ import numpy as np
 import pytest
 
 from src.shared.pipeline import run_pipeline
-from src.TE.te_config import TE_CONFIG_TINY, TE_TARGETS
-from src.TE.te_data import filter_to_te
-from src.TE.te_features import (
+from src.te.config import TE_CONFIG_TINY, TE_TARGETS
+from src.te.data import filter_to_te
+from src.te.features import (
     add_te_specific_features,
     fill_te_nans,
     get_te_feature_columns,
 )
-from src.TE.te_targets import compute_te_targets
+from src.te.targets import compute_te_targets
 from tests.te.conftest import _build_tiny_te_splits
 
 pytestmark = [

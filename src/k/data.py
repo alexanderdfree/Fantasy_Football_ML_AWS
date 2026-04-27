@@ -4,7 +4,7 @@ import nfl_data_py as nfl
 import pandas as pd
 
 from src.config import CACHE_DIR, SEASONS
-from src.K.k_config import K_MIN_GAMES, K_SEASONS
+from src.k.config import K_MIN_GAMES, K_SEASONS
 
 # ---------------------------------------------------------------------------
 # PBP-based kicker reconstruction (2015-2024)

@@ -107,7 +107,7 @@ def _tiny_qb_config():
       - Attention NN and LightGBM disabled (cover those in unit tests)
       - Ridge CV reduced to 2 folds, 0 refine points
     """
-    from src.QB.run_qb_pipeline import QB_CONFIG
+    from src.qb.run_pipeline import QB_CONFIG
 
     cfg = dict(QB_CONFIG)
     cfg.update(

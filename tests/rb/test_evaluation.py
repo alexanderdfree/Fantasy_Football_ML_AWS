@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.RB.rb_config import RB_TARGETS
+from src.rb.config import RB_TARGETS
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
 
 # ---------------------------------------------------------------------------

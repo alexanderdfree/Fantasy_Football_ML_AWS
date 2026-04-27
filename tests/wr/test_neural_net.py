@@ -5,7 +5,7 @@ import pytest
 import torch
 
 from src.shared.neural_net import MultiHeadNet
-from src.WR.wr_config import WR_TARGETS
+from src.wr.config import WR_TARGETS
 
 
 @pytest.mark.unit

@@ -77,7 +77,7 @@ pytest
 pytest -m unit        # fast tests only
 ```
 
-Coverage is tracked on [Codecov](https://app.codecov.io/gh/alexanderdfree/Fantasy_Football_ML_AWS) with an **80% target per position and shared component** (see [codecov.yml](codecov.yml)). One-off diagnostic CLIs (`src/QB/diagnose_qb_outliers.py`, `src/RB/analyze_rb_errors.py`) are excluded from the denominator — everything else gets pulled in.
+Coverage is tracked on [Codecov](https://app.codecov.io/gh/alexanderdfree/Fantasy_Football_ML_AWS) with an **80% target per position and shared component** (see [codecov.yml](codecov.yml)). One-off diagnostic CLIs (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`) are excluded from the denominator — everything else gets pulled in.
 
 Full training on GPU runs on EC2 via CI; see [docs/ec2_design.md](docs/ec2_design.md) for the pipeline and [infra/ec2/README.md](infra/ec2/README.md) for operator notes.
 
@@ -154,7 +154,7 @@ Dockerfile                          Slim image for ECS serving (root for build c
 conftest.py                         pytest project-root sys.path bootstrap
 ```
 
-Tests live under the top-level `tests/` tree, mirroring the `src/` layout (`tests/qb/` for `src/QB/`, etc., plus `tests/shared/`, `tests/batch/`, `tests/scripts/`, and root-level `tests/test_*.py` for cross-cutting integration + e2e).
+Tests live under the top-level `tests/` tree, mirroring the `src/` layout (`tests/qb/` for `src/qb/`, etc., plus `tests/shared/`, `tests/batch/`, `tests/scripts/`, and root-level `tests/test_*.py` for cross-cutting integration + e2e).
 
 ## Deeper Reading
 

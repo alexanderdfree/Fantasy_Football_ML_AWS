@@ -28,7 +28,7 @@ Below are the 15 Machine Learning rubric items this project is designed to hit. 
 | 6 | **Simulation-based evaluation** (week-by-week prediction accuracy simulation) | 7 | `src/shared/backtest.py` |
 | 7 | **Feature engineering** (rolling averages, snap %, target share, matchup strength, etc.) | 5 | `src/features/engineer.py` |
 | 8 | **Defined and trained a custom neural network architecture** (PyTorch) | 5 | `src/shared/neural_net.py` |
-| 9 | **Systematic hyperparameter tuning** (≥3 configs documented) | 5 | Position-specific configs (`src/QB/qb_config.py`, etc.) |
+| 9 | **Systematic hyperparameter tuning** (≥3 configs documented) | 5 | Position-specific configs (`src/qb/config.py`, etc.) |
 | 10 | **Regularization** (L2 + dropout + early stopping — at least 2 required) | 5 | `src/shared/neural_net.py`, `src/shared/training.py` |
 | 11 | **Modular code design** with reusable functions/classes | 3 | `src/`, `src/shared/`, position folders |
 | 12 | **Train/validation/test split** with documented ratios | 3 | `src/data/split.py` |
@@ -782,7 +782,7 @@ Ridge coefficient analysis provides feature importance per target via `RidgeMult
 Each position has its own pipeline script that orchestrates training. The general flow:
 
 ```python
-# Per-position pipeline (e.g., src/RB/run_rb_pipeline.py):
+# Per-position pipeline (e.g., src/rb/run_pipeline.py):
 #
 # 1. LOAD:      loader.load_raw_data(SEASONS) + cache as parquet
 # 2. PREPROCESS: preprocessing.preprocess(raw_df)  — NO min-games filter here

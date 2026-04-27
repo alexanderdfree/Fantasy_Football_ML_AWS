@@ -24,7 +24,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.RB.run_rb_pipeline import RB_CONFIG, run_rb_pipeline  # noqa: E402
+from src.rb.run_pipeline import RB_CONFIG, run_rb_pipeline  # noqa: E402
 from src.shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso  # noqa: E402
 
 ABLATION_NAME = "rb_td_gate"

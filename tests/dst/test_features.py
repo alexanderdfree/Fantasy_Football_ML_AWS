@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.DST.dst_features import compute_dst_features, fill_dst_nans
+from src.dst.features import compute_dst_features, fill_dst_nans
 
 DST_FEATURE_COLS = [
     "sacks_L3",

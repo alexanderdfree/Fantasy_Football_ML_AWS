@@ -26,7 +26,7 @@ def test_head_hidden_overrides_match_position_config(pos):
     An empty dict / missing attr means "no overrides" — registry may omit
     the kwarg (MultiHeadNet defaults ``head_hidden_overrides=None``).
     """
-    config_module = importlib.import_module(f"src.{pos}.{pos.lower()}_config")
+    config_module = importlib.import_module(f"src.{pos.lower()}.config")
     cfg_overrides = getattr(config_module, f"{pos}_NN_HEAD_HIDDEN_OVERRIDES", None)
 
     reg_overrides = INFERENCE_REGISTRY[pos]["nn_kwargs"].get("head_hidden_overrides")

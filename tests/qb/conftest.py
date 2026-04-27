@@ -8,7 +8,7 @@ target list to those factories.
 
 import pytest
 
-from src.QB.qb_config import QB_TARGETS
+from src.qb.config import QB_TARGETS
 from tests.shared.position_fixtures import (
     make_position_df as _make_position_df,
 )

@@ -429,7 +429,7 @@ def _run_rb_gate_ablation(train_df, val_df, test_df, seed: int) -> None:
     """
     import copy
 
-    from src.RB.run_rb_pipeline import RB_CONFIG, run_rb_pipeline
+    from src.rb.run_pipeline import RB_CONFIG, run_rb_pipeline
 
     def _variant_a(cfg: dict) -> dict:
         """Pre-PR-2 baseline: Huber + gate on both TD heads."""

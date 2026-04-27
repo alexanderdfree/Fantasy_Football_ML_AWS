@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from src.RB.rb_config import RB_TARGETS
+from src.rb.config import RB_TARGETS
 from src.shared.neural_net import MultiHeadNet
 
 

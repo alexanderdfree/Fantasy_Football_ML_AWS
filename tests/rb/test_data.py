@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from src.RB.rb_data import compute_team_rb_totals, filter_to_rb
+from src.rb.data import compute_team_rb_totals, filter_to_rb
 
 # ---------------------------------------------------------------------------
 # filter_to_rb

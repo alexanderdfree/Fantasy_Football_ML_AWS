@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from src.QB.qb_data import filter_to_qb
+from src.qb.data import filter_to_qb
 
 # ---------------------------------------------------------------------------
 # filter_to_qb

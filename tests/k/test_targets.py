@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.K.k_targets import compute_k_targets
+from src.k.targets import compute_k_targets
 
 
 def _make_k_row(**overrides):

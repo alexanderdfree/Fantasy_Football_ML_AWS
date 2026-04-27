@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.K.k_config import K_TARGETS
+from src.k.config import K_TARGETS
 from tests.shared.position_fixtures import (
     make_sim_df as _make_sim_df,
 )

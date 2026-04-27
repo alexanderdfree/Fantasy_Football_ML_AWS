@@ -20,23 +20,23 @@ from __future__ import annotations
 
 import pytest
 
-from src.DST.dst_config import DST_ATTN_STATIC_FEATURES
-from src.DST.dst_features import get_dst_feature_columns
+from src.dst.config import DST_ATTN_STATIC_FEATURES
+from src.dst.features import get_dst_feature_columns
 from src.features.engineer import get_attn_static_columns
-from src.K.k_config import (
+from src.k.config import (
     K_ALL_FEATURES,
     K_ATTN_L1_FEATURES,
     K_ATTN_STATIC_FEATURES,
     K_CONTEXTUAL_FEATURES,
 )
-from src.QB.qb_config import QB_ATTN_STATIC_CATEGORIES, QB_ATTN_STATIC_FEATURES
-from src.QB.qb_features import get_qb_feature_columns
-from src.RB.rb_config import RB_ATTN_STATIC_CATEGORIES, RB_ATTN_STATIC_FEATURES
-from src.RB.rb_features import get_rb_feature_columns
-from src.TE.te_config import TE_ATTN_STATIC_CATEGORIES, TE_ATTN_STATIC_FEATURES
-from src.TE.te_features import get_te_feature_columns
-from src.WR.wr_config import WR_ATTN_STATIC_CATEGORIES, WR_ATTN_STATIC_FEATURES
-from src.WR.wr_features import get_wr_feature_columns
+from src.qb.config import QB_ATTN_STATIC_CATEGORIES, QB_ATTN_STATIC_FEATURES
+from src.qb.features import get_qb_feature_columns
+from src.rb.config import RB_ATTN_STATIC_CATEGORIES, RB_ATTN_STATIC_FEATURES
+from src.rb.features import get_rb_feature_columns
+from src.te.config import TE_ATTN_STATIC_CATEGORIES, TE_ATTN_STATIC_FEATURES
+from src.te.features import get_te_feature_columns
+from src.wr.config import WR_ATTN_STATIC_CATEGORIES, WR_ATTN_STATIC_FEATURES
+from src.wr.features import get_wr_feature_columns
 
 # Columns that must NEVER appear in the attention static set — they're
 # either temporal aggregates (leaking what the attention branch already
@@ -167,7 +167,7 @@ class TestAttnStaticWhitelistExcludesSpecific:
     def test_dst_specific_excluded(self):
         """Every DST_SPECIFIC feature is a rolling/ewma/trend aggregate; none
         should appear in the attention static set."""
-        from src.DST.dst_config import DST_SPECIFIC_FEATURES
+        from src.dst.config import DST_SPECIFIC_FEATURES
 
         leaks = set(_static_cols("DST")) & set(DST_SPECIFIC_FEATURES)
         assert not leaks, f"DST_SPECIFIC features leaked into attention static: {sorted(leaks)}"

@@ -11,8 +11,8 @@ Cross-cutting analysis scripts ([src/analysis/](../src/analysis/)):
 - [analysis_weather_vegas_correlation.py](../src/analysis/analysis_weather_vegas_correlation.py) — weather/Vegas-feature correlation with fantasy outcomes
 
 Per-position diagnostic CLIs:
-- [src/QB/diagnose_qb_outliers.py](../src/QB/diagnose_qb_outliers.py) — week-level outlier diagnostics for QB predictions
-- [src/RB/analyze_rb_errors.py](../src/RB/analyze_rb_errors.py) — RB error decomposition by target
+- [src/qb/diagnose_outliers.py](../src/qb/diagnose_outliers.py) — week-level outlier diagnostics for QB predictions
+- [src/rb/analyze_errors.py](../src/rb/analyze_errors.py) — RB error decomposition by target
 
 Each script is invocable via `python -m src.analysis.<filename>` (or `python src/analysis/<filename>.py`); outputs land in [analysis_output/](../analysis_output/) (gitignored).
 

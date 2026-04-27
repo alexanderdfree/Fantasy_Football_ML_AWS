@@ -120,7 +120,7 @@ def synthetic_parquets(tmp_path, monkeypatch):
     Also stubs ``load_team_week_stats`` + ``nfl.import_team_desc`` so no
     network traffic happens. Returns the tmp cache directory for debugging.
     """
-    import src.DST.dst_data as dst_data
+    import src.dst.data as dst_data
 
     cache_dir = tmp_path / "raw"
     cache_dir.mkdir()
@@ -153,7 +153,7 @@ def synthetic_parquets(tmp_path, monkeypatch):
 @pytest.mark.unit
 def test_build_dst_data_rows_per_team_week(synthetic_parquets):
     """Every (season, week, team) combo in schedules must yield one DST row."""
-    from src.DST.dst_data import build_dst_data
+    from src.dst.data import build_dst_data
 
     df = build_dst_data()
     # 4 teams × 3 weeks × 1 season = 12 rows
@@ -165,7 +165,7 @@ def test_build_dst_data_rows_per_team_week(synthetic_parquets):
 @pytest.mark.unit
 def test_build_dst_data_schema(synthetic_parquets):
     """Output schema must include derived defensive + context columns."""
-    from src.DST.dst_data import build_dst_data
+    from src.dst.data import build_dst_data
 
     df = build_dst_data()
     required = {
@@ -212,7 +212,7 @@ def test_build_dst_data_schema(synthetic_parquets):
 @pytest.mark.unit
 def test_build_dst_data_no_nans_in_fills(synthetic_parquets):
     """All columns in the fillna block must be NaN-free post build."""
-    from src.DST.dst_data import build_dst_data
+    from src.dst.data import build_dst_data
 
     df = build_dst_data()
     fill_cols = [
@@ -254,7 +254,7 @@ def test_build_dst_data_is_dome_maps_roof(synthetic_parquets):
 
     Our synthetic schedule alternates roof per week, so both values show up.
     """
-    from src.DST.dst_data import build_dst_data
+    from src.dst.data import build_dst_data
 
     df = build_dst_data()
     assert df["is_dome"].isin([0, 1]).all()
@@ -266,7 +266,7 @@ def test_build_dst_data_is_dome_maps_roof(synthetic_parquets):
 def test_build_dst_data_logo_fallback_on_nfl_error(synthetic_parquets, monkeypatch):
     """If ``nfl.import_team_desc`` raises, headshot_url defaults to empty str
     (covers the ``except Exception`` branch at the bottom of build_dst_data)."""
-    import src.DST.dst_data as dst_data
+    import src.dst.data as dst_data
 
     def _boom():
         raise RuntimeError("nflverse down")
@@ -280,7 +280,7 @@ def test_build_dst_data_logo_fallback_on_nfl_error(synthetic_parquets, monkeypat
 @pytest.mark.unit
 def test_filter_to_dst_is_identity():
     """``filter_to_dst`` must return a copy equal to the input frame."""
-    from src.DST.dst_data import filter_to_dst
+    from src.dst.data import filter_to_dst
 
     df = pd.DataFrame({"team": ["KC", "BUF"], "season": [2024, 2024], "week": [1, 1]})
     out = filter_to_dst(df)

@@ -6,7 +6,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.shared.pipeline import run_pipeline
-from src.TE.te_config import (
+from src.te.config import (
     TE_ATTN_D_MODEL,
     TE_ATTN_DROPOUT,
     TE_ATTN_ENCODER_HIDDEN_DIM,
@@ -55,9 +55,9 @@ from src.TE.te_config import (
     TE_TRAIN_ELASTICNET,
     TE_TRAIN_LIGHTGBM,
 )
-from src.TE.te_data import filter_to_te
-from src.TE.te_features import add_te_specific_features, fill_te_nans, get_te_feature_columns
-from src.TE.te_targets import compute_te_targets
+from src.te.data import filter_to_te
+from src.te.features import add_te_specific_features, fill_te_nans, get_te_feature_columns
+from src.te.targets import compute_te_targets
 
 TE_CONFIG = {
     "targets": TE_TARGETS,

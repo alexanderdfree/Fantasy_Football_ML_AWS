@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.TE.te_config import TE_TARGETS
+from src.te.config import TE_TARGETS
 from tests.shared.position_fixtures import (
     make_position_df as _make_position_df,
 )

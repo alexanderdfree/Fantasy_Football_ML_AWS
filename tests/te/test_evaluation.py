@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
-from src.TE.te_config import TE_TARGETS
+from src.te.config import TE_TARGETS
 
 pytestmark = pytest.mark.unit
 

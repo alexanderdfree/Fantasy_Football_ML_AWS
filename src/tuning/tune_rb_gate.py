@@ -11,7 +11,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.RB.run_rb_pipeline import RB_CONFIG
+from src.rb.run_pipeline import RB_CONFIG
 from src.shared.pipeline import run_pipeline
 
 

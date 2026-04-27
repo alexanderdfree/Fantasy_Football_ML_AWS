@@ -1,7 +1,7 @@
 import pandas as pd
 
 from src.features.engineer import flatten_include_features
-from src.QB.qb_config import QB_INCLUDE_FEATURES
+from src.qb.config import QB_INCLUDE_FEATURES
 from src.shared.feature_build import (
     fill_nans_with_train_means,
     rolling_agg,

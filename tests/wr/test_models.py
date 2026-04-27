@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from src.shared.models import RidgeMultiTarget
-from src.WR.wr_config import WR_TARGETS
+from src.wr.config import WR_TARGETS
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.QB.qb_targets import compute_qb_targets
+from src.qb.targets import compute_qb_targets
 
 QB_TARGET_COLS = (
     "passing_yards",

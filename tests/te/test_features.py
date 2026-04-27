@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.TE.te_features import _compute_te_features, fill_te_nans
+from src.te.features import _compute_te_features, fill_te_nans
 
 
 def _make_player_games(

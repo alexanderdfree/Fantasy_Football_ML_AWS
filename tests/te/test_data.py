@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from src.TE.te_data import compute_team_te_totals, filter_to_te
+from src.te.data import compute_team_te_totals, filter_to_te
 
 # ---------------------------------------------------------------------------
 # filter_to_te

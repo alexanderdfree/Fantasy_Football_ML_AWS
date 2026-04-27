@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.DST.dst_config import DST_TARGETS
+from src.dst.config import DST_TARGETS
 from tests.shared.position_fixtures import (
     make_sim_df as _make_sim_df,
 )

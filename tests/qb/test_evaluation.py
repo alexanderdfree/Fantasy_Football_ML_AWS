@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.QB.qb_config import QB_TARGETS
+from src.qb.config import QB_TARGETS
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
 
 # ---------------------------------------------------------------------------

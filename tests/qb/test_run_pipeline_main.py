@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "QB" / "run_qb_pipeline.py"
+_MODULE_PATH = Path(__file__).resolve().parents[2] / "src" / "qb" / "run_pipeline.py"
 
 
 def _patch_shared_pipeline(monkeypatch):
@@ -81,7 +81,7 @@ def test_run_qb_pipeline_function_passes_through(monkeypatch):
     is bound to the original function. Patch the module attribute directly
     rather than ``src.shared.pipeline.run_pipeline``.
     """
-    import src.QB.run_qb_pipeline as qb_pipe
+    import src.qb.run_pipeline as qb_pipe
 
     seen: dict = {}
 

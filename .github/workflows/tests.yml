@@ -107,7 +107,7 @@ jobs:
           else
             shard_lower=$(echo "$shard" | tr '[:upper:]' '[:lower:]')
             echo "paths=tests/${shard_lower}/" >> "$GITHUB_OUTPUT"
-            echo "cov=--cov=src.${shard} --cov=src" >> "$GITHUB_OUTPUT"
+            echo "cov=--cov=src.${shard_lower} --cov=src" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run tests

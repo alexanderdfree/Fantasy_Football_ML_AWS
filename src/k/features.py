@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.K.k_config import K_ALL_FEATURES
+from src.k.config import K_ALL_FEATURES
 from src.shared.feature_build import (
     fill_nans_with_train_means,
     rolling_agg,
