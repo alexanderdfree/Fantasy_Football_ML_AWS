@@ -1,0 +1,110 @@
+{
+  "run_id": "2026-04-27T08:44:06_51ad801",
+  "timestamp": "2026-04-27T08:44:06",
+  "git_hash": "51ad801",
+  "note": "EC2 auto-run (2eb4d32)",
+  "backend": "ec2",
+  "instance_type": "g4dn.xlarge (On-Demand)",
+  "positions": [
+    "WR"
+  ],
+  "results": [
+    {
+      "position": "WR",
+      "ridge_mae": 4.351,
+      "ridge_r2": 0.342,
+      "nn_mae": 4.211,
+      "nn_r2": 0.351,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.288,
+          "r2": 0.08
+        },
+        "receiving_yards": {
+          "mae": 19.94,
+          "r2": 0.335
+        },
+        "receptions": {
+          "mae": 1.357,
+          "r2": 0.416
+        },
+        "fumbles_lost": {
+          "mae": 0.011,
+          "r2": -0.011
+        }
+      },
+      "ridge_per_target": {
+        "receiving_tds": {
+          "mae": 0.291,
+          "r2": 0.08
+        },
+        "receiving_yards": {
+          "mae": 20.704,
+          "r2": 0.333
+        },
+        "receptions": {
+          "mae": 1.394,
+          "r2": 0.412
+        },
+        "fumbles_lost": {
+          "mae": 0.026,
+          "r2": -0.0
+        }
+      },
+      "ridge_top12": 0.385,
+      "nn_top12": 0.397,
+      "attn_nn_mae": 4.122,
+      "attn_nn_r2": 0.351,
+      "attn_nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.297,
+          "r2": 0.078
+        },
+        "receiving_yards": {
+          "mae": 19.681,
+          "r2": 0.325
+        },
+        "receptions": {
+          "mae": 1.319,
+          "r2": 0.416
+        },
+        "fumbles_lost": {
+          "mae": 0.011,
+          "r2": -0.011
+        }
+      },
+      "attn_nn_top12": 0.397,
+      "lgbm_mae": 4.231,
+      "lgbm_r2": 0.356,
+      "lgbm_per_target": {
+        "receiving_tds": {
+          "mae": 0.297,
+          "r2": 0.074
+        },
+        "receiving_yards": {
+          "mae": 19.864,
+          "r2": 0.34
+        },
+        "receptions": {
+          "mae": 1.355,
+          "r2": 0.437
+        },
+        "fumbles_lost": {
+          "mae": 0.028,
+          "r2": -0.003
+        }
+      },
+      "lgbm_top12": 0.389,
+      "elapsed_sec": 315.6,
+      "phase_seconds": {
+        "assert_gpu": 0.0,
+        "sync_raw_data": 0.4,
+        "download_data": 0.1,
+        "read_parquets": 0.3,
+        "run_pipeline": 313.6,
+        "copy_artifacts": 0.0
+      }
+    }
+  ]
+}
