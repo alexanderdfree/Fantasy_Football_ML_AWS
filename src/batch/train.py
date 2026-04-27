@@ -82,6 +82,42 @@ def _download_if_stale(s3, bucket, key, local_path):
         f.write(remote_etag)
 
 
+def _read_parquet_cached(parquet_path: str) -> "pd.DataFrame":
+    """Read a parquet split, falling back to a pickle cache when fresh.
+
+    The EC2 entrypoint runs each position as a fresh Python invocation, so
+    six positions re-parse the same train/val/test parquets. A pickle of the
+    materialised DataFrame loads ~5x faster than re-decoding the parquet
+    columns, so the second through sixth invocation can skip the parse cost.
+
+    Cache file lives next to the parquet as ``{path}.pkl``. We treat it as
+    fresh iff its mtime is greater than the parquet's mtime — the parquet's
+    mtime is bumped whenever ``_download_if_stale`` actually pulls bytes
+    from S3, so a remote refresh automatically invalidates the local pickle.
+
+    Any failure to read the pickle (different pandas version, partial write
+    from a previously killed process, etc.) falls through to the parquet
+    parse silently. The pickle is rewritten after every successful parquet
+    parse so the cache self-heals.
+    """
+    pickle_path = parquet_path + ".pkl"
+    try:
+        if os.path.exists(pickle_path) and os.path.getmtime(pickle_path) > os.path.getmtime(
+            parquet_path
+        ):
+            print(f"[parquet-cache] hit: {pickle_path}")
+            return pd.read_pickle(pickle_path)
+    except Exception as e:
+        print(f"[parquet-cache] pickle unreadable ({e}); falling back to parquet parse")
+    print(f"[parquet-cache] miss: parsing {parquet_path}")
+    df = pd.read_parquet(parquet_path)
+    try:
+        df.to_pickle(pickle_path)
+    except Exception as e:
+        print(f"[parquet-cache] failed to write {pickle_path}: {e}")
+    return df
+
+
 def _assert_gpu(position: str):
     """Log GPU status and fail fast if REQUIRE_GPU=1 and CUDA is unavailable.
 
@@ -613,9 +649,9 @@ def main():
         with _timed("download_data", store=phase_seconds):
             download_data(s3_bucket, s3_prefix, data_dir)
         with _timed("read_parquets", store=phase_seconds):
-            train_df = pd.read_parquet(os.path.join(data_dir, "train.parquet"))
-            val_df = pd.read_parquet(os.path.join(data_dir, "val.parquet"))
-            test_df = pd.read_parquet(os.path.join(data_dir, "test.parquet"))
+            train_df = _read_parquet_cached(os.path.join(data_dir, "train.parquet"))
+            val_df = _read_parquet_cached(os.path.join(data_dir, "val.parquet"))
+            test_df = _read_parquet_cached(os.path.join(data_dir, "test.parquet"))
             print(f"Loaded data: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
         if args.ablation == "rb-gate":
             # Ablation runs the pipeline 3x with config overrides and prints
