@@ -5,8 +5,11 @@ No general cross-position model is used.
 """
 
 import os
+import re
 import sys
 import threading
+
+import markdown
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -299,6 +302,136 @@ POSITION_INFO = {
         },
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Wiki — render committed markdown docs as in-app HTML pages.
+# Slug is the only public identifier; raw paths are never accepted from the
+# client, so a path-traversal slug like "../etc/passwd" simply misses the
+# registry and 404s. Order in the dict drives sidebar order.
+# ---------------------------------------------------------------------------
+WIKI_DOCS: dict[str, dict] = {
+    "readme": {"name": "Project Overview", "group": "Overview", "path": "README.md"},
+    "setup": {"name": "Setup & Local Run", "group": "Overview", "path": "SETUP.md"},
+    "attribution": {
+        "name": "Data & Tool Attribution",
+        "group": "Overview",
+        "path": "ATTRIBUTION.md",
+    },
+    "todo": {"name": "TODO & Bug Archive", "group": "Overview", "path": "TODO.md"},
+    "architecture": {
+        "name": "ADR-001: System Architecture",
+        "group": "Architecture",
+        "path": "docs/ARCHITECTURE.md",
+    },
+    "ec2-design": {
+        "name": "EC2 Training Design",
+        "group": "Architecture",
+        "path": "docs/ec2_design.md",
+    },
+    "expert-comparison": {
+        "name": "Expert Projection Comparison",
+        "group": "Architecture",
+        "path": "docs/expert_comparison.md",
+    },
+    "batch-design": {
+        "name": "AWS Batch Design (standby)",
+        "group": "Design History",
+        "path": "docs/batch_design.md",
+    },
+    "design-lstm-multihead": {
+        "name": "LSTM Multi-Head Proposal",
+        "group": "Design History",
+        "path": "docs/design_lstm_multihead.md",
+    },
+    "design-weather-and-odds": {
+        "name": "Weather & Odds Features",
+        "group": "Design History",
+        "path": "docs/design_weather_and_odds.md",
+    },
+    "design-xgboost-ensemble": {
+        "name": "XGBoost Ensemble (rejected)",
+        "group": "Design History",
+        "path": "docs/design_xgboost_ensemble.md",
+    },
+    "design-doc": {
+        "name": "Design Document (rubric spec)",
+        "group": "Specification",
+        "path": "instructions/DESIGN_DOC.md",
+    },
+    "method-contracts": {
+        "name": "Method Contracts",
+        "group": "Specification",
+        "path": "instructions/METHOD_CONTRACTS.md",
+    },
+    "self-assessment": {
+        "name": "Self-Assessment Evidence",
+        "group": "Specification",
+        "path": "instructions/SELF_ASSESSMENT_EVIDENCE.md",
+    },
+    "infra-ec2": {
+        "name": "EC2 Infrastructure",
+        "group": "Infrastructure",
+        "path": "infra/ec2/README.md",
+    },
+    "infra-aws": {
+        "name": "AWS Serving Infrastructure",
+        "group": "Infrastructure",
+        "path": "infra/aws/README.md",
+    },
+}
+
+# Reverse map: normalized repo-relative path -> slug. Used to rewrite intra-wiki
+# markdown links (e.g. "[ARCH](docs/ARCHITECTURE.md)") into in-app `#wiki:slug`
+# anchors so the JS can swap content without a full reload.
+_WIKI_PATH_TO_SLUG = {os.path.normpath(d["path"]): slug for slug, d in WIKI_DOCS.items()}
+
+_WIKI_HREF_RE = re.compile(r'href="([^"]+)"')
+
+
+def _wiki_rewrite_href(href: str, doc_path: str) -> str:
+    """Rewrite an intra-wiki markdown link to a `#wiki:slug[:anchor]` anchor.
+
+    Leaves alone: empty hrefs, pure anchors (`#section`), absolute URLs (`http(s)://`),
+    `mailto:`, and any path that doesn't resolve to a registered wiki doc.
+    """
+    if not href or href.startswith("#") or "://" in href or href.startswith("mailto:"):
+        return href
+    target, _, anchor = href.partition("#")
+    if not target:
+        return href
+    doc_dir = os.path.dirname(doc_path)
+    resolved = os.path.normpath(os.path.join(doc_dir, target))
+    target_slug = _WIKI_PATH_TO_SLUG.get(resolved)
+    if not target_slug:
+        return href
+    return f"#wiki:{target_slug}:{anchor}" if anchor else f"#wiki:{target_slug}"
+
+
+def _render_wiki_doc(slug: str) -> str:
+    """Return cached, rendered HTML for the doc at WIKI_DOCS[slug]."""
+    cache_key = ("wiki", slug)
+    with _cache_lock:
+        cached = _cache.get(cache_key)
+        if cached is not None:
+            return cached
+    meta = WIKI_DOCS[slug]
+    abs_path = os.path.join(os.path.dirname(__file__), meta["path"])
+    with open(abs_path, encoding="utf-8") as f:
+        text = f.read()
+    html = markdown.markdown(
+        text,
+        extensions=["fenced_code", "tables", "toc", "sane_lists"],
+        output_format="html",
+    )
+    doc_path = meta["path"]
+    html = _WIKI_HREF_RE.sub(
+        lambda m: f'href="{_wiki_rewrite_href(m.group(1), doc_path)}"',
+        html,
+    )
+    with _cache_lock:
+        _cache[cache_key] = html
+    return html
 
 
 def _compute_scoring_formats(df):
@@ -1251,6 +1384,25 @@ def api_model_architecture():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/wiki/index")
+def api_wiki_index():
+    return jsonify(
+        [
+            {"slug": slug, "name": meta["name"], "group": meta["group"]}
+            for slug, meta in WIKI_DOCS.items()
+        ]
+    )
+
+
+@app.route("/api/wiki/<slug>")
+def api_wiki_page(slug):
+    if slug not in WIKI_DOCS:
+        return jsonify({"error": "Unknown doc"}), 404
+    meta = WIKI_DOCS[slug]
+    html = _render_wiki_doc(slug)
+    return jsonify({"slug": slug, "name": meta["name"], "group": meta["group"], "html": html})
 
 
 @app.route("/health")
