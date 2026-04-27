@@ -47,6 +47,23 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     prior["season"] = prior["season"] + 1  # align S-1 stats with season S
     df = df.merge(prior, on=["player_id", "season"], how="left")
 
+    # Prior-season total touchdowns: rushing_tds + receiving_tds summed across
+    # all the player's season S-1 games, merged onto season S. TD propensity
+    # (red-zone usage, scheme role) is a player attribute that's typically
+    # consistent year-over-year and complementary to the volume aggregates
+    # above — none of which encode score-converting efficiency. Positions
+    # that don't use TDs (DST/K) simply omit this from their INCLUDE_FEATURES
+    # whitelist; the column is always materialised because rushing_tds and
+    # receiving_tds are present on every preprocessed weekly row.
+    tds_per_season = df.groupby(["player_id", "season"])[["rushing_tds", "receiving_tds"]].sum()
+    prior_tds = (
+        (tds_per_season["rushing_tds"] + tds_per_season["receiving_tds"])
+        .rename("prior_season_total_touchdowns")
+        .reset_index()
+    )
+    prior_tds["season"] = prior_tds["season"] + 1
+    df = df.merge(prior_tds, on=["player_id", "season"], how="left")
+
     # --- EWMA Features (14) ---
     ewma_cols: dict[str, pd.Series] = {}
     for stat in EWMA_STATS:
