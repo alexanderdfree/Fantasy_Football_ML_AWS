@@ -159,6 +159,7 @@ ATTN_HISTORY_STATS = [
     "rushing_tds",
     "targets",
     "receptions",
+    "fumbles_lost",
     "carries",
     "snap_pct",
 ]
