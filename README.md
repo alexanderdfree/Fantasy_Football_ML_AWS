@@ -85,7 +85,7 @@ Full training on GPU runs on EC2 via CI; see [docs/ec2_design.md](docs/ec2_desig
 
 Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination), top-12 hit rate (agreement with the actual weekly top 12 at the position, PPR scoring). Numbers from [benchmark_results.json](benchmark_results.json).
 
-> Benchmarks below pre-date the K/DST attention-NN additions (commits `801b61a`, `cc0c627`) and the raw-stat migration for DST — TODO - alex fill in: refresh benchmarks after next full EC2 training run.
+> The numbers below come from a benchmark snapshot taken before the K/DST attention-NN additions (commits `801b61a`, `cc0c627`) and the DST raw-stat migration. Re-run `python benchmark.py` to refresh against the current code; the K/DST attention cells will populate at that point.
 
 | Position | Ridge MAE | NN MAE | Attn NN MAE | LGBM MAE | Best | R² (best) | Top-12 (best) |
 |---|---|---|---|---|---|---|---|
@@ -96,7 +96,7 @@ Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy po
 | K   | **3.605** | 3.707 | —ᵃ | — | Ridge        | 0.067  | 0.495 |
 | DST | **3.826** | 3.875 | —ᵃ | — | Ridge        | 0.055  | 0.472 |
 
-ᵃ TODO - alex fill in: Attn NN MAE for K/DST after retrain with attention enabled (commits `801b61a`, `cc0c627`).
+ᵃ K/DST attention-NN cells are pending the next benchmark refresh (the snapshot in [benchmark_results.json](benchmark_results.json) pre-dates commits `801b61a` and `cc0c627`). The Ridge / NN columns above are still meaningful baselines for those positions.
 
 **Takeaways:**
 - The neural nets win on skill positions (RB, WR, TE) where interaction and sequence structure matters. Attention pulls slightly ahead on WR/TE.
