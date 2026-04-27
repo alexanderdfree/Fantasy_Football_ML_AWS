@@ -1266,10 +1266,12 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
 
         if attn_model is not None:
-            # Use the same per-position whitelist as ``_train_attention_nn``;
-            # the saved scaler meta must match the columns the model was fit on
-            # or ``assert_scaler_matches`` will fail at inference.
-            attn_static_cols = get_attn_static_columns(feature_cols, cfg["attn_static_features"])
+            # Reuse the exact column list the trainer fit the scaler on. The
+            # branch above (attn_static_from_df) means we can't recompute via
+            # get_attn_static_columns here — for K, that intersection drops
+            # K_ATTN_L1_FEATURES (excluded from K_ALL_FEATURES on purpose) and
+            # the meta would lie about n_features, failing assert_scaler_matches.
+            attn_static_cols = attn_feature_cols
             torch.save(
                 wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
                 f"{output_dir}/models/{pos_lower}_attention_nn.pt",
