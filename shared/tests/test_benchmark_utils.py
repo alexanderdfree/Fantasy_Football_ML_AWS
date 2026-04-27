@@ -22,6 +22,7 @@ from shared.benchmark_utils import (
     print_comparison_table,
     print_history_comparison,
     summarize_pipeline_result,
+    utc_now_iso,
 )
 
 # --------------------------------------------------------------------------
@@ -62,18 +63,43 @@ def test_get_git_hash_returns_unknown_on_called_process_error(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# utc_now_iso
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_utc_now_iso_returns_seconds_precision_naive_iso():
+    """The string is fixed-length ISO8601 with seconds precision and no tz
+    marker (so filenames sort identically to migrated entries) — and the
+    value is in UTC, so local benchmarks and CI runs sort consistently
+    regardless of the operator's timezone."""
+    import datetime as _dt
+
+    s = utc_now_iso()
+    # Format: 2026-04-27T12:34:56 — 19 chars, no offset suffix.
+    assert len(s) == 19
+    parsed = _dt.datetime.fromisoformat(s)
+    assert parsed.tzinfo is None
+    # Compare against UTC now to confirm the helper is UTC-based, not local.
+    delta = abs((_dt.datetime.now(_dt.UTC).replace(tzinfo=None) - parsed).total_seconds())
+    assert delta < 5  # generous bound for slow CI
+
+
+# --------------------------------------------------------------------------
 # append_to_history
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 def test_append_to_history_creates_new_file_and_dir(tmp_path, capsys):
-    """First write creates the directory and a single ``{run_id}.json`` file."""
+    """First write creates the directory and a single ``{run_id}.json`` file,
+    and returns the path so callers can hand it to ``print_history_comparison``."""
     history_dir = tmp_path / "history"
-    append_to_history(str(history_dir), {"run_id": "r1"})
+    written = append_to_history(str(history_dir), {"run_id": "r1"})
     expected = history_dir / "r1.json"
     assert expected.exists()
     assert json.loads(expected.read_text()) == {"run_id": "r1"}
+    assert written == str(expected)
     assert "written" in capsys.readouterr().out.lower()
 
 
@@ -357,9 +383,11 @@ def test_history_comparison_corrupt_file_prints_warning(tmp_path, capsys):
 
 @pytest.mark.unit
 def test_history_comparison_prints_per_position_tables(tmp_path, capsys):
+    """Historical run shows up; the just-written run (passed as
+    ``exclude_path``) is dropped so ``> NEW`` doesn't double up."""
     history_dir = tmp_path / "history"
     history_dir.mkdir()
-    # Older file (sorts first lexicographically) — appears as a history row.
+    # Historical entry — appears as a history row.
     (history_dir / "2026-03-01T12-00-00_abc1234.json").write_text(
         json.dumps(
             {
@@ -371,8 +399,9 @@ def test_history_comparison_prints_per_position_tables(tmp_path, capsys):
             }
         )
     )
-    # Newer file (sorts last) — represents the just-written run, excluded.
-    (history_dir / "2026-04-01T12-00-00_def5678.json").write_text(
+    # The just-written run — excluded explicitly via exclude_path.
+    new_path = history_dir / "2026-04-01T12-00-00_def5678.json"
+    new_path.write_text(
         json.dumps(
             {
                 "run_id": "2026-04-01T12:00:00_def5678",
@@ -385,11 +414,75 @@ def test_history_comparison_prints_per_position_tables(tmp_path, capsys):
     )
 
     new = _canned_summary("QB", attn_nn_mae=4.3, lgbm_mae=4.6)
-    print_history_comparison(str(history_dir), [new], last_n=5)
+    print_history_comparison(str(history_dir), [new], exclude_path=str(new_path), last_n=5)
     out = capsys.readouterr().out
     assert "QB history" in out
     assert "prior run" in out
     assert "> NEW" in out
+    # The excluded run's note must not appear as a historical row.
+    assert "new" not in out.replace("> NEW", "")
+
+
+@pytest.mark.unit
+def test_history_comparison_no_exclude_path_includes_all_files(tmp_path, capsys):
+    """With ``exclude_path=None`` (the default), every top-level file shows
+    up as a historical row — no filename-based skipping."""
+    history_dir = tmp_path / "history"
+    history_dir.mkdir()
+    for ts, h, note in [
+        ("2026-03-01T12-00-00_a.json", "aaa1111", "first"),
+        ("2026-04-01T12-00-00_b.json", "bbb2222", "second"),
+    ]:
+        (history_dir / ts).write_text(
+            json.dumps(
+                {
+                    "timestamp": ts[:19].replace("-", "T", 0),
+                    "git_hash": h,
+                    "note": note,
+                    "results": [{"position": "QB", "ridge_mae": 5.0, "nn_mae": 4.5}],
+                }
+            )
+        )
+
+    print_history_comparison(str(history_dir), [_canned_summary("QB")], last_n=5)
+    out = capsys.readouterr().out
+    # Both files appear in the historical rows since nothing is excluded.
+    assert "first" in out
+    assert "second" in out
+
+
+@pytest.mark.unit
+def test_history_comparison_exclude_path_basename_only(tmp_path, capsys):
+    """``exclude_path`` is matched by basename, so callers can pass either a
+    full path or just the filename and the right run is dropped."""
+    history_dir = tmp_path / "history"
+    history_dir.mkdir()
+    (history_dir / "keep.json").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-03-01T12:00:00",
+                "git_hash": "keep",
+                "note": "keep-me",
+                "results": [{"position": "QB", "ridge_mae": 6.0, "nn_mae": 5.5}],
+            }
+        )
+    )
+    drop_path = history_dir / "drop.json"
+    drop_path.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-04-01T12:00:00",
+                "git_hash": "drop",
+                "note": "drop-me",
+                "results": [{"position": "QB", "ridge_mae": 5.0}],
+            }
+        )
+    )
+
+    print_history_comparison(str(history_dir), [_canned_summary("QB")], exclude_path=str(drop_path))
+    out = capsys.readouterr().out
+    assert "keep-me" in out
+    assert "drop-me" not in out
 
 
 @pytest.mark.unit

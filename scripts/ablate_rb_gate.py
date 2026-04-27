@@ -21,12 +21,11 @@ import argparse
 import copy
 import os
 import sys
-from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from RB.run_rb_pipeline import RB_CONFIG, run_rb_pipeline  # noqa: E402
-from shared.benchmark_utils import append_to_history, get_git_hash  # noqa: E402
+from shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso  # noqa: E402
 
 ABLATION_NAME = "rb_td_gate"
 HISTORY_DIR = "benchmark_history"
@@ -168,7 +167,7 @@ def print_summary(rows: list[dict]) -> None:
 
 
 def _write_ablation(rows: list[dict]) -> None:
-    now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    now = utc_now_iso()
     git_hash = get_git_hash()
     entry = {
         "run_id": f"{now}_{git_hash}_{ABLATION_NAME}",
