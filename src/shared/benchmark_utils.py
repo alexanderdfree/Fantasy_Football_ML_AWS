@@ -1,4 +1,4 @@
-"""Shared helpers for local (benchmark.py) and AWS Batch (batch/benchmark.py)
+"""Shared helpers for local (benchmark.py) and AWS Batch (src/batch/benchmark.py)
 benchmark scripts. Consolidates summary-row construction, comparison-table
 printing, git-hash capture, and history append.
 """
@@ -81,7 +81,7 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
     """Extract a flat summary row from a position pipeline result dict.
 
     Used by both local (benchmark.py with in-memory result) and AWS Batch
-    (batch/benchmark.py with parsed benchmark_metrics.json) — the nested shape
+    (src/batch/benchmark.py with parsed benchmark_metrics.json) — the nested shape
     is identical.
     """
     ridge = result["ridge_metrics"]["total"]
@@ -132,8 +132,8 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         summary["cv_nn_mae_mean"] = round(cv["nn"]["total"]["mae_mean"], 3)
         summary["cv_nn_mae_std"] = round(cv["nn"]["total"]["mae_std"], 3)
         summary["best_cv_alpha"] = result["best_cv_alpha"]
-    # EC2 path: batch/train.py writes these into benchmark_metrics.json so the
-    # row appended by batch/benchmark.py --download-only carries timing. Local
+    # EC2 path: src/batch/train.py writes these into benchmark_metrics.json so the
+    # row appended by src/batch/benchmark.py --download-only carries timing. Local
     # benchmark.py sets elapsed_sec on the summary directly so these no-op for
     # it (result is the in-memory pipeline dict, not the parsed JSON file).
     if "elapsed_sec" in result:

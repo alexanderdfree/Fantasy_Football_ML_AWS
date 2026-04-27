@@ -1,4 +1,4 @@
-"""Additional coverage for ``batch/train.py`` gap branches.
+"""Additional coverage for ``src/batch/train.py`` gap branches.
 
 Existing tests (``test_launch.py``, ``test_train.py``, ``test_batch_e2e.py``)
 cover the happy path + most of argparse. This file fills in:

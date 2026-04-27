@@ -1,4 +1,4 @@
-"""Tests for shared.feature_build — FEATURE_CLIP, scale_and_clip,
+"""Tests for src.shared.feature_build — FEATURE_CLIP, scale_and_clip,
 and build_position_features."""
 
 from __future__ import annotations

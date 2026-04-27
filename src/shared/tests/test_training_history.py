@@ -1,4 +1,4 @@
-"""Tests for shared.training — history-based components (dataset, collation,
+"""Tests for src.shared.training — history-based components (dataset, collation,
 dataloaders, trainer), plus loss-function and non-history dataloader coverage.
 """
 

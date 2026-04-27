@@ -1,5 +1,5 @@
 # === WR Target Decomposition ===
-# Raw-stat targets (see shared/aggregate_targets.py). Fantasy points are
+# Raw-stat targets (see src/shared/aggregate_targets.py). Fantasy points are
 # aggregated from these predictions via predictions_to_fantasy_points.
 # Rushing targets dropped - WR rushing stats are too sparse for reliable signal.
 WR_TARGETS = ["receiving_tds", "receiving_yards", "receptions", "fumbles_lost"]

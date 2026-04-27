@@ -1,7 +1,7 @@
 """QB prediction targets (raw-stat migration).
 
 After migration the model predicts six raw NFL stats and fantasy points are
-aggregated after prediction via ``shared.aggregate_targets``. The only non-
+aggregated after prediction via ``src.shared.aggregate_targets``. The only non-
 identity target is ``fumbles_lost``, which sums all three fumble categories
 (``sack_fumbles_lost`` + ``rushing_fumbles_lost`` + ``receiving_fumbles_lost``)
 so a single -2 pts penalty applies regardless of how the fumble occurred.

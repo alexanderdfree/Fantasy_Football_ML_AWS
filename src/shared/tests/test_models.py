@@ -1,4 +1,4 @@
-"""Tests for shared.models — TwoStageRidge, OrdinalTDClassifier, GatedOrdinalTDClassifier, LightGBMMultiTarget."""
+"""Tests for src.shared.models — TwoStageRidge, OrdinalTDClassifier, GatedOrdinalTDClassifier, LightGBMMultiTarget."""
 
 import numpy as np
 import pandas as pd

@@ -1,6 +1,6 @@
 """End-to-end smoke test for the TE pipeline.
 
-Exercises `shared.pipeline.run_pipeline(..., TE_CONFIG_TINY)` on a deterministic
+Exercises `src.shared.pipeline.run_pipeline(..., TE_CONFIG_TINY)` on a deterministic
 tiny synthetic dataset (50 players x 2 seasons x 17 weeks, seed=42) using
 shrunken hyperparameters (2-layer x 8-unit NN, 1 epoch). Asserts:
 

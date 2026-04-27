@@ -109,7 +109,7 @@ Rationale:
 
 For players with fewer than 5 prior games in the current context (e.g., week 2), pad with zeros from the left and use `pack_padded_sequence` to avoid the LSTM processing padding tokens.
 
-## New File: `shared/seq_neural_net.py`
+## New File: `src/shared/seq_neural_net.py`
 
 ```python
 class SequenceMultiHeadNet(nn.Module):
@@ -200,7 +200,7 @@ class SequenceMultiHeadNet(nn.Module):
         return preds
 ```
 
-## New File: `shared/seq_training.py`
+## New File: `src/shared/seq_training.py`
 
 Extends the existing training infrastructure to handle dual inputs (sequence + static).
 
@@ -236,7 +236,7 @@ The existing `MultiHeadTrainer` calls `model(X_batch)`. The sequence trainer cal
 
 This is the most significant new code. You need to convert the flat player-week DataFrame into (sequence, static, target) tuples.
 
-### New Function: `build_sequences()` in `shared/seq_data.py`
+### New Function: `build_sequences()` in `src/shared/seq_data.py`
 
 ```python
 def build_sequences(
@@ -389,12 +389,12 @@ Rationale: QB and TE have fewer samples, so use smaller hidden sizes and more re
 
 | File | Action | Description |
 |------|--------|-------------|
-| `shared/seq_neural_net.py` | **New** | `SequenceMultiHeadNet` class |
-| `shared/seq_training.py` | **New** | `SequenceDataset` + modified trainer |
-| `shared/seq_data.py` | **New** | `build_sequences()` function |
+| `src/shared/seq_neural_net.py` | **New** | `SequenceMultiHeadNet` class |
+| `src/shared/seq_training.py` | **New** | `SequenceDataset` + modified trainer |
+| `src/shared/seq_data.py` | **New** | `build_sequences()` function |
 | `src/shared/pipeline.py` | **Modify** | Add LSTM training step, 3-way ensemble |
 | `{POS}/{pos}_config.py` | **Modify** | Add seq-model hyperparameters |
-| `shared/evaluation.py` | **Modify** | Report LSTM metrics alongside Ridge/NN |
+| `src/shared/evaluation.py` | **Modify** | Report LSTM metrics alongside Ridge/NN |
 | `src/benchmarking/benchmark.py` | **Modify** | Include LSTM in benchmark |
 
 ## Risks and Mitigations

@@ -1,7 +1,7 @@
 """SHAP diagnostic for trained LightGBM models.
 
 Loads the already-trained per-position LightGBM booster, rebuilds the train
-split via ``shared.pipeline.build_train_matrix`` (the same setup the pipeline
+split via ``src.shared.pipeline.build_train_matrix`` (the same setup the pipeline
 used, so there's no drift between training-time and explain-time feature
 matrices), and emits per-target SHAP summary plots plus a JSON ranking of
 mean absolute SHAP by feature.

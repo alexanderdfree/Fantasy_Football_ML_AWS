@@ -1,6 +1,6 @@
 # === TE Target Decomposition ===
 # Raw-stat targets; fantasy points are aggregated post-prediction via
-# shared.aggregate_targets.predictions_to_fantasy_points("TE", ...).
+# src.shared.aggregate_targets.predictions_to_fantasy_points("TE", ...).
 # Rushing targets dropped — TE rushing stats are near-zero (noise > signal).
 TE_TARGETS = ["receiving_tds", "receiving_yards", "receptions", "fumbles_lost"]
 

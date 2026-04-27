@@ -197,7 +197,7 @@ class TestAllPositionsFailPreservesFailLoud:
     def test_all_six_fail_raises_so_gunicorn_aborts(self, degraded_mode_app):
         """Every position broken → raise so ``gunicorn --preload`` aborts and
         ECS blocks the rollout. Preserves the existing fail-loud contract for
-        the all-broken case documented in ``shared/model_sync.py``."""
+        the all-broken case documented in ``src/shared/model_sync.py``."""
         with mock.patch.object(
             degraded_mode_app,
             "_apply_position_models",

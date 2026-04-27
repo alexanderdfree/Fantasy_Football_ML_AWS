@@ -17,18 +17,18 @@ A grader who wants to spot-check any claim can use the verification block at the
 
 ### Claim #5 — Error analysis with failure cases (7 pts)
 
-**Primary evidence (in .docx):** `QB/diagnose_qb_outliers.py`, `RB/analyze_rb_errors.py`, `docs/expert_comparison.md:99-141`.
+**Primary evidence (in .docx):** `src/QB/diagnose_qb_outliers.py`, `src/RB/analyze_rb_errors.py`, `docs/expert_comparison.md:99-141`.
 
 **Secondary evidence:**
-- The QB diagnostic script's output schema is declared at [QB/diagnose_qb_outliers.py:16-17,47-48](../QB/diagnose_qb_outliers.py) — it produces `analysis_output/qb_outlier_diagnostic.{md,json}` with per-row attributions, contamination stats, and 8-game player history.
-- The RB analyzer's figure-output is declared at [RB/analyze_rb_errors.py:138](../RB/analyze_rb_errors.py) — produces `analysis_output/rb_error_mae_by_{stratum}.png` for snap-bucket / opp-tier / TD-bucket / week-phase / volatility-quintile slices.
+- The QB diagnostic script's output schema is declared at [src/QB/diagnose_qb_outliers.py:16-17,47-48](../src/QB/diagnose_qb_outliers.py) — it produces `analysis_output/qb_outlier_diagnostic.{md,json}` with per-row attributions, contamination stats, and 8-game player history.
+- The RB analyzer's figure-output is declared at [src/RB/analyze_rb_errors.py:138](../src/RB/analyze_rb_errors.py) — produces `analysis_output/rb_error_mae_by_{stratum}.png` for snap-bucket / opp-tier / TD-bucket / week-phase / volatility-quintile slices.
 - Both output paths land under `analysis_output/`, which is in [.gitignore](../.gitignore) — these files are not committed.
 
 **Regeneration:**
 ```bash
 # Requires data/splits/*.parquet and trained models in {POS}/outputs/models/
-python QB/diagnose_qb_outliers.py     # writes analysis_output/qb_outlier_diagnostic.{md,json}
-python RB/analyze_rb_errors.py        # writes analysis_output/rb_error_*.png
+python src/QB/diagnose_qb_outliers.py     # writes analysis_output/qb_outlier_diagnostic.{md,json}
+python src/RB/analyze_rb_errors.py        # writes analysis_output/rb_error_*.png
 ```
 
 **Verification:** Open [docs/expert_comparison.md:103-127](../docs/expert_comparison.md) — the per-position narrative analysis is the discussion component and is committed to the repo. The two diagnostic scripts are the analysis machinery.
@@ -64,11 +64,11 @@ python RB/analyze_rb_errors.py        # writes analysis_output/rb_error_*.png
 
 ### Claim #7 — Preprocessing with quantitative impact (7 pts) ⭐ EVIDENCE OF IMPACT
 
-**Primary evidence (in .docx):** `TODO.md:73-77` (feature clipping with measured frequency 0.3-0.4% values clipped); `shared/pipeline.py:115-125` `_scale_xs`; per-position feature files for trade safety.
+**Primary evidence (in .docx):** `TODO.md:73-77` (feature clipping with measured frequency 0.3-0.4% values clipped); `src/shared/pipeline.py:115-125` `_scale_xs`; per-position feature files for trade safety.
 
 **Secondary evidence:**
-- The `scale_and_clip` helper in `shared/feature_build.py` is the single source of truth — both training ([shared/pipeline.py:115](../shared/pipeline.py)) and serving paths use it. This deliberately closes the training-vs-inference skew the [TODO.md "Fixed" archive](../TODO.md) repeatedly warned about.
-- Stint-aware grouping for trade safety also appears in [TE/te_features.py:51](../TE/te_features.py) (not just RB/WR cited in .docx).
+- The `scale_and_clip` helper in `src/shared/feature_build.py` is the single source of truth — both training ([src/shared/pipeline.py:115](../src/shared/pipeline.py)) and serving paths use it. This deliberately closes the training-vs-inference skew the [TODO.md "Fixed" archive](../TODO.md) repeatedly warned about.
+- Stint-aware grouping for trade safety also appears in [src/TE/te_features.py:51](../src/TE/te_features.py) (not just RB/WR cited in .docx).
 - The "Open" section of [TODO.md:21-23](../TODO.md) acknowledges `drop_last=True` discards 121 of 32,521 WR training rows (~0.4%) — same order of magnitude as the clipping rate, and explicitly accepted as a known trade.
 
 ---
@@ -140,8 +140,8 @@ These files are produced by scripts in the repo but live under `analysis_output/
 
 | Output | Generator | Command |
 |---|---|---|
-| `analysis_output/qb_outlier_diagnostic.{md,json}` | [QB/diagnose_qb_outliers.py](../QB/diagnose_qb_outliers.py) | `python QB/diagnose_qb_outliers.py` |
-| `analysis_output/rb_error_mae_by_*.png` | [RB/analyze_rb_errors.py](../RB/analyze_rb_errors.py) | `python RB/analyze_rb_errors.py` |
+| `analysis_output/qb_outlier_diagnostic.{md,json}` | [src/QB/diagnose_qb_outliers.py](../src/QB/diagnose_qb_outliers.py) | `python src/QB/diagnose_qb_outliers.py` |
+| `analysis_output/rb_error_mae_by_*.png` | [src/RB/analyze_rb_errors.py](../src/RB/analyze_rb_errors.py) | `python src/RB/analyze_rb_errors.py` |
 | `benchmark_results.json` (raw-stat target naming) | [src/benchmarking/benchmark.py](../src/benchmarking/benchmark.py) | `python -m src.benchmarking.benchmark` |
 
 The 6 PNGs already in [analysis_output/](../analysis_output/) (weather/Vegas correlations × 4 positions, cross-position summary, RB feature-signal ablation) **are committed** — they were force-added past `.gitignore`.
@@ -189,11 +189,11 @@ For each claim, the fastest path to verify:
 | #5 Error analysis | [docs/expert_comparison.md:99-141](../docs/expert_comparison.md) (committed discussion) + script files exist |
 | #6 Ablation ⭐ | Table above (this doc) reproduced from [tune_rb_gate_results.json](../tune_rb_gate_results.json) |
 | #7 Preprocessing ⭐ | [TODO.md:73-77](../TODO.md) (z-score 19.5 → ±4σ → 0.3-0.4% clipped) |
-| #8 Time-series | [src/data/split.py:6-37](../src/data/split.py) (temporal split) + [shared/neural_net.py:202+](../shared/neural_net.py) (history attention) |
+| #8 Time-series | [src/data/split.py:6-37](../src/data/split.py) (temporal split) + [src/shared/neural_net.py:202+](../src/shared/neural_net.py) (history attention) |
 | #9 Simulation | [src/evaluation/backtest.py](../src/evaluation/backtest.py) (219 lines, week-by-week replay) |
-| #10 Custom NN | `grep -nE "^class " shared/neural_net.py` lists 5 modules |
+| #10 Custom NN | `grep -nE "^class " src/shared/neural_net.py` lists 5 modules |
 | #11 Hyperparam ⭐ | Tables above (this doc) reproduced from `tune_lgbm_results.json` and per-position configs |
 | #12 Iterations ⭐ | 18-entry table above (this doc) reproduced from [TODO.md "Fixed" archive](../TODO.md) |
 | #13 Both qual+quant | [README.md:90-99](../README.md) (quantitative table) + [docs/expert_comparison.md](../docs/expert_comparison.md) (narrative) + 6 figures in [analysis_output/](../analysis_output/) |
-| #14 Regularization | `grep -nE "Dropout\|BatchNorm\|patience\|weight_decay" shared/neural_net.py shared/training.py` |
+| #14 Regularization | `grep -nE "Dropout\|BatchNorm\|patience\|weight_decay" src/shared/neural_net.py src/shared/training.py` |
 | #15 Feature selection | [docs/ARCHITECTURE.md:225-245](../docs/ARCHITECTURE.md) (D6) + [tests/test_attn_static_columns.py](../tests/test_attn_static_columns.py) enforces it |

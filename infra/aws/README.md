@@ -48,7 +48,7 @@ Namecheap parking.)
 - **Code pushes** → `.github/workflows/deploy.yml` rebuilds the ARM64 image,
   pushes to ECR, re-registers the task def, and force-redeploys the service.
   No manual action.
-- **Fresh models from EC2 training** → `batch/train.py` uploads to
+- **Fresh models from EC2 training** → `src/batch/train.py` uploads to
   `s3://ff-predictor-training/models/{POS}/model.tar.gz`. The running Fargate
   task will pick them up on next restart (trigger via
   `aws ecs update-service --force-new-deployment`).

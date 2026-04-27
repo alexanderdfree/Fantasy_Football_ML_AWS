@@ -3,7 +3,7 @@ import numpy as np
 # === DST Raw-Stat Targets ===
 # Predict the 10 raw NFL stats that make up a D/ST's fantasy-point score.
 # Fantasy points are computed post-prediction via
-# ``shared.aggregate_targets.predictions_to_fantasy_points("DST", preds)``,
+# ``src.shared.aggregate_targets.predictions_to_fantasy_points("DST", preds)``,
 # which applies the linear coefficients (sacks×1, INT×2, ...) and the PA/YA
 # tier bonuses in a single place.
 DST_TARGETS = [

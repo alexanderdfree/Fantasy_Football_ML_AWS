@@ -2,7 +2,7 @@
 
 The default DST E2E test (``test_dst_pipeline_e2e.py``) leaves
 ``train_elasticnet=False`` — so the ~40-stmt ElasticNet block in
-``shared/pipeline.py::run_pipeline`` is never executed by the rest of
+``src/shared/pipeline.py::run_pipeline`` is never executed by the rest of
 the suite. This file flips the flag on, runs the pipeline once on the
 same tiny synthetic DST dataset, and asserts the ElasticNet outputs
 are wired into ``result["elasticnet_metrics"]`` + ranking dicts.

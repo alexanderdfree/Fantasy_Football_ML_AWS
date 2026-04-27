@@ -1,4 +1,4 @@
-"""Tests for batch/launch.py — config validation, job submission, S3 parsing."""
+"""Tests for src/batch/launch.py — config validation, job submission, S3 parsing."""
 
 import argparse
 import datetime

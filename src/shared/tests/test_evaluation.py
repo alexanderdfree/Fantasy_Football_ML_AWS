@@ -1,4 +1,4 @@
-"""Coverage tests for ``shared/evaluation.py``.
+"""Coverage tests for ``src/shared/evaluation.py``.
 
 Exercises the gate-metric diagnostics (``_sigmoid``, ``_gate_metrics``,
 ``build_gate_info``), the gate-info-enabled branch of

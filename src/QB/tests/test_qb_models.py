@@ -1,4 +1,4 @@
-"""Tests for shared.models.RidgeMultiTarget (using QB raw-stat targets)."""
+"""Tests for src.shared.models.RidgeMultiTarget (using QB raw-stat targets)."""
 
 import numpy as np
 import pandas as pd

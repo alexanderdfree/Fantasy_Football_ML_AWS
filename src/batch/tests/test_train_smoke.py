@@ -1,6 +1,6 @@
-"""Tests for batch/train.py's smoke-test wiring into upload_artifacts.
+"""Tests for src/batch/train.py's smoke-test wiring into upload_artifacts.
 
-The smoke test itself is unit-tested in shared/tests/test_smoke_test.py.
+The smoke test itself is unit-tested in src/shared/tests/test_smoke_test.py.
 These tests focus on the *integration* between upload_artifacts and the
 manifest's ``stable`` slot:
 

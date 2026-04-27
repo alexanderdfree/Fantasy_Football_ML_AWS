@@ -1,5 +1,5 @@
 """Additional coverage for the printing + edge-case branches of
-``shared/error_analysis.py``.
+``src/shared/error_analysis.py``.
 
 The existing ``test_error_analysis.py`` covers stratification + metric
 computation. This file fills in the table-printing helpers

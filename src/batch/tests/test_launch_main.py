@@ -1,4 +1,4 @@
-"""Coverage tests for ``batch/launch.py::main`` and ``_print_plan``.
+"""Coverage tests for ``src/batch/launch.py::main`` and ``_print_plan``.
 
 ``test_launch.py`` covers the helpers (upload_data, wait_for_jobs, the
 CPU-definition dispatch, etc.) but never exercises ``main()`` itself or

@@ -1,7 +1,7 @@
-"""Shared fixtures for QB tests — thin wrappers over shared.tests.position_fixtures.
+"""Shared fixtures for QB tests — thin wrappers over src.shared.tests.position_fixtures.
 
 The generic pieces (``make_sim_df``, ``make_test_df``, ``make_tensors``,
-``make_splits``, ``make_df``) live in ``shared/tests/position_fixtures.py``.
+``make_splits``, ``make_df``) live in ``src/shared/tests/position_fixtures.py``.
 This conftest only binds the QB-specific scale (~25 fantasy points) and
 target list to those factories.
 """

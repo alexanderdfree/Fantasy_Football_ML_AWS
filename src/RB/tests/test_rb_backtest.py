@@ -1,4 +1,4 @@
-"""Tests for shared.backtest — run_weekly_simulation (RB-scale)."""
+"""Tests for src.shared.backtest — run_weekly_simulation (RB-scale)."""
 
 import numpy as np
 import pandas as pd

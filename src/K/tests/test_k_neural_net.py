@@ -1,4 +1,4 @@
-"""Tests for shared.neural_net.MultiHeadNet (using Kicker targets).
+"""Tests for src.shared.neural_net.MultiHeadNet (using Kicker targets).
 
 Kickers use 4 non-negative raw-value targets: fg_yard_points, pat_points,
 fg_misses, xp_misses. Signs are applied in the fantasy-total aggregation,

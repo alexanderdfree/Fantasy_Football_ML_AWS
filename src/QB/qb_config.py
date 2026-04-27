@@ -1,6 +1,6 @@
 # === QB Raw-Stat Targets ===
 # Predictions are raw NFL stats; fantasy points are aggregated post-prediction
-# via shared.aggregate_targets.predictions_to_fantasy_points("QB", preds).
+# via src.shared.aggregate_targets.predictions_to_fantasy_points("QB", preds).
 QB_TARGETS = [
     "passing_yards",
     "rushing_yards",

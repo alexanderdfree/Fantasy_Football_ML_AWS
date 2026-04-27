@@ -29,7 +29,7 @@ Feature Matrix X (same features as Ridge/NN)
 
 XGBoost trains one `XGBRegressor` per target (mirroring Ridge's per-target structure), predicts per-target values clamped >= 0, and sums them for the total. No scaler is needed — tree splits are invariant to monotonic transformations.
 
-## New File: `shared/xgboost_model.py`
+## New File: `src/shared/xgboost_model.py`
 
 ```python
 """XGBoost multi-target model for fantasy point decomposition."""
@@ -159,7 +159,7 @@ class XGBoostMultiTarget:
 
 ## Config Additions
 
-Add these keys to each position's config dict. Example for RB (`RB/rb_config.py`):
+Add these keys to each position's config dict. Example for RB (`src/RB/rb_config.py`):
 
 ```python
 # === XGBoost ===
@@ -334,7 +334,7 @@ Add XGBoost config to each position entry:
 After training, each position directory gains an `xgboost/` subdirectory:
 
 ```
-RB/outputs/models/
+src/RB/outputs/models/
 ├── rushing_floor/
 │   ├── ridge_model.pkl
 │   └── scaler.pkl
@@ -418,7 +418,7 @@ XGBoost has no dependency conflicts with the existing stack (numpy, pandas, scik
 
 | File | Action | Description |
 |------|--------|-------------|
-| `shared/xgboost_model.py` | **New** | `XGBoostMultiTarget` class |
+| `src/shared/xgboost_model.py` | **New** | `XGBoostMultiTarget` class |
 | `src/shared/pipeline.py` | **Modify** | Add `_train_xgboost()`, update ensemble, update comparison/ranking/saving |
 | `{POS}/{pos}_config.py` | **Modify** | Add 8 XGBoost hyperparameters per position (6 files) |
 | `src/serving/app.py` | **Modify** | Load and run XGBoost at inference, add `xgb_pred` column |

@@ -1,4 +1,4 @@
-"""Tests for shared.neural_net — GatedHead, AttentionPool, and the
+"""Tests for src.shared.neural_net — GatedHead, AttentionPool, and the
 MultiHeadNetWithHistory / MultiHeadNetWithNestedHistory variants."""
 
 import numpy as np
