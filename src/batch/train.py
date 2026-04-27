@@ -11,6 +11,7 @@ Environment variables set via job definition / container overrides:
 """
 
 import argparse
+import contextlib
 import datetime
 import hashlib
 import io
@@ -80,6 +81,64 @@ def _download_if_stale(s3, bucket, key, local_path):
     s3.download_file(bucket, key, local_path)
     with open(sidecar, "w") as f:
         f.write(remote_etag)
+
+
+def _read_parquet_cached(parquet_path: str) -> "pd.DataFrame":
+    """Read a parquet split, falling back to a Feather cache when fresh.
+
+    The EC2 entrypoint runs each position as a fresh Python invocation, so
+    six positions re-parse the same train/val/test parquets. A Feather (Arrow
+    IPC) snapshot of the materialised DataFrame loads faster than re-decoding
+    the parquet columns, so the second through sixth invocation can skip the
+    parse cost. Feather over pickle: same pyarrow dependency we already use
+    for parquet, but the file format is not code-executing on read so it
+    can't widen the blast radius if the data dir is ever compromised.
+
+    Cache file lives next to the parquet as ``{path}.feather``. We treat it
+    as fresh iff its mtime is greater than the parquet's — ``_download_if_stale``
+    bumps the parquet's mtime whenever it pulls bytes from S3, so a remote
+    refresh automatically invalidates the local cache.
+
+    Writes go through ``tempfile.NamedTemporaryFile`` + ``os.replace`` (mirrors
+    the pattern in ``src.shared.benchmark_utils.append_to_history``) so a
+    process killed mid-write can't leave a half-baked file that a later
+    invocation reads as a stale cache hit. Any read failure (different
+    pyarrow version, partial write that somehow slipped past the rename,
+    etc.) falls through to the parquet parse silently and triggers a
+    self-heal rewrite.
+    """
+    cache_path = parquet_path + ".feather"
+    try:
+        if os.path.exists(cache_path) and os.path.getmtime(cache_path) > os.path.getmtime(
+            parquet_path
+        ):
+            print(f"[parquet-cache] hit: {cache_path}")
+            return pd.read_feather(cache_path)
+    except Exception as e:
+        print(f"[parquet-cache] cache unreadable ({e}); falling back to parquet parse")
+    print(f"[parquet-cache] miss: parsing {parquet_path}")
+    df = pd.read_parquet(parquet_path)
+    tmp_path = None
+    try:
+        cache_dir = os.path.dirname(cache_path) or "."
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=cache_dir,
+            prefix=os.path.basename(cache_path) + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp_file:
+            tmp_path = tmp_file.name
+        df.to_feather(tmp_path)
+        os.replace(tmp_path, cache_path)
+        tmp_path = None
+    except Exception as e:
+        print(f"[parquet-cache] failed to write {cache_path}: {e}")
+    finally:
+        if tmp_path is not None and os.path.exists(tmp_path):
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path)
+    return df
 
 
 def _assert_gpu(position: str):
@@ -613,9 +672,9 @@ def main():
         with _timed("download_data", store=phase_seconds):
             download_data(s3_bucket, s3_prefix, data_dir)
         with _timed("read_parquets", store=phase_seconds):
-            train_df = pd.read_parquet(os.path.join(data_dir, "train.parquet"))
-            val_df = pd.read_parquet(os.path.join(data_dir, "val.parquet"))
-            test_df = pd.read_parquet(os.path.join(data_dir, "test.parquet"))
+            train_df = _read_parquet_cached(os.path.join(data_dir, "train.parquet"))
+            val_df = _read_parquet_cached(os.path.join(data_dir, "val.parquet"))
+            test_df = _read_parquet_cached(os.path.join(data_dir, "test.parquet"))
             print(f"Loaded data: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
         if args.ablation == "rb-gate":
             # Ablation runs the pipeline 3x with config overrides and prints
@@ -651,6 +710,13 @@ def main():
             "Refusing to upload incomplete artifacts."
         )
     metrics = _extract_metrics(pos, result)
+    # Fold the inner pipeline breakdown (ridge_tune, nn_train, attn_nn_train,
+    # lgbm_train, etc.) into the outer phase dict under a ``pipeline.`` prefix
+    # so persisted metrics distinguish "data sync + S3 + outer wrap" from the
+    # phases that actually dominate the GPU box.
+    inner_phases = result.get("phase_seconds", {}) if isinstance(result, dict) else {}
+    for phase, secs in inner_phases.items():
+        phase_seconds[f"pipeline.{phase}"] = secs
     # Record end-to-end elapsed and the per-phase breakdown so the run
     # written under benchmark_history/ by src/batch/benchmark.py --download-only
     # carries timing. elapsed_sec captures everything from seeding through

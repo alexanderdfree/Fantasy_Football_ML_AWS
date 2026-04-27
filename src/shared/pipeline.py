@@ -109,7 +109,54 @@ def _resolve_nn_log_every(cfg):
 
 
 def _nn_device() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        # Batch shapes are stable across epochs (DataLoader uses fixed
+        # batch_size with drop_last=True on train), so the autotuner's
+        # selected kernels stay valid; the one-time search cost amortises
+        # across the epoch loop. Idempotent — safe to set on every call.
+        #
+        # cuDNN benchmark can introduce per-run kernel-selection variation
+        # under unstable shapes or memory pressure. Disable it whenever the
+        # caller has opted into deterministic algorithms (so a single global
+        # toggle drives the whole reproducibility story), and expose
+        # ``FF_DETERMINISTIC=1`` as an out-of-band override for debugging
+        # numerical drift without having to touch ``use_deterministic_algorithms``.
+        force_deterministic = os.environ.get("FF_DETERMINISTIC", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        torch.backends.cudnn.benchmark = not (
+            force_deterministic or torch.are_deterministic_algorithms_enabled()
+        )
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
+def _maybe_compile(model: torch.nn.Module) -> torch.nn.Module:
+    """Wrap ``model`` with ``torch.compile`` on CUDA; return unchanged otherwise.
+
+    The compiled wrapper shares parameters with ``model`` (no copy), so
+    callers can pass the wrapper to the trainer for fused-kernel forward
+    passes while continuing to use the original module for state_dict /
+    load_state_dict / predict_numpy / persistence. Updates to parameters
+    inside the trained wrapper are visible through the original.
+
+    Disabled on CPU because the ~30s compile cost outweighs any speedup
+    when there are no GPU kernels to fuse. ``dynamic=True`` so the
+    attention paths' variable padded-sequence length doesn't trigger a
+    recompile every batch. Any compile-time failure (rare custom ops,
+    backend mismatch) falls through to eager execution rather than
+    aborting the run.
+    """
+    if not torch.cuda.is_available() or not hasattr(torch, "compile"):
+        return model
+    try:
+        return torch.compile(model, dynamic=True)
+    except Exception as e:
+        print(f"[compile] torch.compile failed ({e}); proceeding eagerly")
+        return model
 
 
 def _scale_xs(*X_arrays: np.ndarray) -> tuple[StandardScaler, list[np.ndarray]]:
@@ -542,7 +589,7 @@ def _train_nn(
     model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
 
     history = _run_nn_training(
-        model=model,
+        model=_maybe_compile(model),
         train_loader=train_loader,
         val_loader=val_loader,
         cfg=cfg,
@@ -664,7 +711,7 @@ def _train_attention_nn(
     ).to(device)
 
     history = _run_nn_training(
-        model=model,
+        model=_maybe_compile(model),
         train_loader=train_loader,
         val_loader=val_loader,
         cfg=cfg,
@@ -761,7 +808,7 @@ def _train_nested_attention_nn(
     ).to(device)
 
     history = _run_nn_training(
-        model=model,
+        model=_maybe_compile(model),
         train_loader=train_loader,
         val_loader=val_loader,
         cfg=cfg,
@@ -878,6 +925,12 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     targets = cfg["targets"]
     output_dir = f"{pos_lower}/outputs"
 
+    # Per-phase wall-clock breakdown returned in the result dict so the EC2
+    # entrypoint (src/batch/train.py) can fold it into benchmark_metrics.json.
+    # Without this, the `[timing]` log lines from inside run_pipeline are only
+    # observable via CloudWatch scrape and not persisted alongside metrics.
+    phase_seconds: dict[str, float] = {}
+
     # --- Load data ---
     if train_df is None:
         print("Loading general splits from disk...")
@@ -887,7 +940,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     # --- Prepare position data ---
     print(f"Preparing {pos} data...")
-    with timed("prepare_data"):
+    with timed("prepare_data", store=phase_seconds):
         (
             X_train,
             X_val,
@@ -921,7 +974,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     special_targets = set(two_stage_targets) | set(classification_targets)
     ridge_tune_targets = [t for t in targets if t not in special_targets]
     ridge_tune_grids = {t: cfg["ridge_alpha_grids"][t] for t in ridge_tune_targets}
-    with timed("ridge_tune"):
+    with timed("ridge_tune", store=phase_seconds):
         best_alphas = (
             _tune_ridge_alphas_cv(
                 X_train,
@@ -943,7 +996,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     if pca_n:
         print(f"  PCR: {pca_n} components")
     ridge_non_neg = cfg.get("nn_non_negative_targets")
-    with timed("ridge_fit"):
+    with timed("ridge_fit", store=phase_seconds):
         ridge_model = RidgeMultiTarget(
             target_names=targets,
             alpha=best_alphas,
@@ -966,7 +1019,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             t: cfg.get("enet_alpha_grids", cfg["ridge_alpha_grids"])[t] for t in ridge_tune_targets
         }
         enet_l1_ratios = cfg.get("enet_l1_ratios", [0.3, 0.5, 0.7])
-        with timed("elasticnet_tune"):
+        with timed("elasticnet_tune", store=phase_seconds):
             enet_best = (
                 _tune_enet_cv(
                     X_train,
@@ -981,7 +1034,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                 if ridge_tune_targets
                 else {}
             )
-        with timed("elasticnet_fit"):
+        with timed("elasticnet_fit", store=phase_seconds):
             enet_model, enet_test_preds, enet_metrics = _train_elasticnet(
                 X_train,
                 X_test,
@@ -1001,7 +1054,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     # --- Multi-head NN ---
     print(f"\n=== {pos} Multi-Head Neural Net ===")
-    with timed("nn_train"):
+    with timed("nn_train", store=phase_seconds):
         model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
             position,
             X_train,
@@ -1024,7 +1077,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     attn_history = None
     if cfg.get("train_attention_nn", False):
         print(f"\n=== {pos} Attention Multi-Head Neural Net ===")
-        with timed("attn_nn_train"):
+        with timed("attn_nn_train", store=phase_seconds):
             # Static features: either filter the base matrix (RB-style whitelist)
             # or rebuild directly from the DataFrame (K-style — its L1 attention
             # features live outside ALL_FEATURES to stay out of Ridge/base NN).
@@ -1160,7 +1213,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     lgbm_model = None
     if cfg.get("train_lightgbm", False):
         print(f"\n=== {pos} LightGBM Multi-Target ===")
-        with timed("lgbm_train"):
+        with timed("lgbm_train", store=phase_seconds):
             lgbm_model, lgbm_val_preds, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
                 X_train,
                 X_val,
@@ -1245,13 +1298,13 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     # --- Weekly backtest ---
     print("\n=== Weekly Backtest ===")
-    with timed("backtest"):
+    with timed("backtest", store=phase_seconds):
         sim_results = run_weekly_simulation(pos_test, pred_columns=backtest_pred_columns)
         for model_name, summary in sim_results["season_summary"].items():
             print(f"  {model_name}: MAE={summary['mae']:.3f}, R2={summary['r2']:.3f}")
 
     # --- Save outputs ---
-    with timed("save_artifacts"):
+    with timed("save_artifacts", store=phase_seconds):
         os.makedirs(f"{output_dir}/models", exist_ok=True)
         os.makedirs(f"{output_dir}/figures", exist_ok=True)
 
@@ -1295,7 +1348,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         if lgbm_model is not None:
             lgbm_model.save(f"{output_dir}/models")
 
-    with timed("figures"):
+    with timed("figures", store=phase_seconds):
         plot_training_curves(
             history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png"
         )
@@ -1360,6 +1413,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         "sim_results": sim_results,
         "test_df": pos_test,
         "per_target_preds": per_target_preds,
+        "phase_seconds": phase_seconds,
     }
     if enet_metrics is not None:
         result["elasticnet_metrics"] = enet_metrics
@@ -1479,7 +1533,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
 
         _run_nn_training(
-            model=model,
+            model=_maybe_compile(model),
             train_loader=train_loader,
             val_loader=val_loader,
             cfg=cfg,
