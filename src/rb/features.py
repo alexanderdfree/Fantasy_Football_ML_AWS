@@ -62,11 +62,9 @@ def _compute_features(df: pd.DataFrame) -> None:
     tgt_roll = _sum(df, "targets")
     df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
 
-    df["_raw_weighted_opps"] = df["carries"].fillna(0) + 2 * df["targets"].fillna(0)
-    df["weighted_opportunities_L3"] = rolling_agg(
-        df, "_raw_weighted_opps", grp, window=3, agg="mean"
-    )
-    df.drop(columns=["_raw_weighted_opps"], inplace=True)
+    # weighted_opportunities_L3 dropped in the audit (r=0.940 with
+    # opportunity_index_L3, which is the same quantity normalised by team
+    # weighted opps). See docs/rb_feature_history.md.
 
     team_rb_totals = compute_team_rb_totals(df)
     df_merged = df.merge(team_rb_totals, on=["recent_team", "season", "week"], how="left")

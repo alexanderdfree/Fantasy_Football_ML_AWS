@@ -92,8 +92,12 @@ _FORBIDDEN_SHARE_COLS = {
 # Columns that SHOULD appear in the attention static set across the skill
 # positions — these are the non-temporal, pre-game signals (matchup,
 # defense, contextual, weather/vegas, prior-season).
+# (``opp_def_rank_vs_pos`` was dropped from RB by the multicollinearity
+# audit — it's a per-week rank() of ``opp_fantasy_pts_allowed_to_pos`` so
+# Spearman = 1.0 by construction. Switched the example column to one
+# still present in all four skill positions' matchup category.)
 _EXPECTED_SKILL_STATIC = {
-    "opp_def_rank_vs_pos",
+    "opp_rush_pts_allowed_to_pos",
     "is_home",
     "implied_team_total",
 }

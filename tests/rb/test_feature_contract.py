@@ -37,7 +37,6 @@ from src.rb.features import (
 _COMPUTED_L3_FEATURES = {
     "yards_per_carry_L3",
     "reception_rate_L3",
-    "weighted_opportunities_L3",
     "team_rb_carry_share_L3",
     "team_rb_target_share_L3",
     "rushing_epa_per_attempt_L3",
