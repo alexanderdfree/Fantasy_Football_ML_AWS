@@ -1266,10 +1266,21 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
 
         if attn_model is not None:
-            # Use the same per-position whitelist as ``_train_attention_nn``;
-            # the saved scaler meta must match the columns the model was fit on
-            # or ``assert_scaler_matches`` will fail at inference.
-            attn_static_cols = get_attn_static_columns(feature_cols, cfg["attn_static_features"])
+            # Persist the exact column list the attention scaler was fit on.
+            # Mirror the two trainer paths:
+            #   * attn_static_from_df=True  (K): _train_nested_attention_nn fits
+            #     on attn_feature_cols as-is (already cfg["attn_static_features"]).
+            #   * attn_static_from_df=False (QB/RB/WR/TE): _train_attention_nn
+            #     filters X internally via get_attn_static_columns(feature_cols,
+            #     attn_static_features) before fitting, so we mirror that here.
+            # Reusing attn_feature_cols unconditionally would over-report
+            # n_features for the latter path and trip assert_scaler_matches.
+            if cfg.get("attn_static_from_df", False):
+                attn_static_cols = attn_feature_cols
+            else:
+                attn_static_cols = get_attn_static_columns(
+                    attn_feature_cols, cfg["attn_static_features"]
+                )
             torch.save(
                 wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
                 f"{output_dir}/models/{pos_lower}_attention_nn.pt",
