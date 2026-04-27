@@ -51,37 +51,54 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
     """Build a minimal results DataFrame matching the shape app.py's cache uses.
 
     Columns mirror what `_get_data()` produces: player identifiers, weekly
-    actuals, scoring format breakouts, and model predictions.
+    actuals, scoring format breakouts (PPR / half / standard for both actuals
+    and per-model predictions), and the legacy unsuffixed prediction columns
+    that older tests still read.
     """
     rng = np.random.default_rng(seed)
     positions = ["QB", "RB", "WR", "TE", "K", "DST"]
+    # Mirror the actuals' format multipliers so tests can predict expected
+    # values for the format-aware endpoints.
+    fmt_multipliers = {"ppr": 1.0, "half_ppr": 0.95, "standard": 0.9}
     rows = []
     for pos in positions:
         for i in range(n_per_position):
             for week in (1, 2, 3, 4, 5, 6, 7):
                 actual = float(rng.uniform(5, 30))
+                base_ridge = float(actual + rng.normal(0, 2))
+                base_nn = float(actual + rng.normal(0, 2))
                 # Attention NN and LightGBM aren't trained for K/DST, so those
                 # rows mirror production by leaving the cells NaN.
-                attn_pred = float(actual + rng.normal(0, 2)) if pos not in ("K", "DST") else np.nan
-                lgbm_pred = float(actual + rng.normal(0, 2)) if pos not in ("K", "DST") else np.nan
-                rows.append(
-                    {
-                        "player_id": f"{pos}{i:03d}",
-                        "player_display_name": f"{pos} Player {i}",
-                        "position": pos,
-                        "recent_team": "KC",
-                        "season": 2025,
-                        "week": week,
-                        "headshot_url": "",
-                        "fantasy_points": actual,
-                        "fantasy_points_standard": actual * 0.9,
-                        "fantasy_points_half_ppr": actual * 0.95,
-                        "ridge_pred": float(actual + rng.normal(0, 2)),
-                        "nn_pred": float(actual + rng.normal(0, 2)),
-                        "attn_nn_pred": attn_pred,
-                        "lgbm_pred": lgbm_pred,
-                    }
-                )
+                base_attn = float(actual + rng.normal(0, 2)) if pos not in ("K", "DST") else np.nan
+                base_lgbm = float(actual + rng.normal(0, 2)) if pos not in ("K", "DST") else np.nan
+                row = {
+                    "player_id": f"{pos}{i:03d}",
+                    "player_display_name": f"{pos} Player {i}",
+                    "position": pos,
+                    "recent_team": "KC",
+                    "season": 2025,
+                    "week": week,
+                    "headshot_url": "",
+                    "fantasy_points": actual,
+                    "fantasy_points_standard": actual * fmt_multipliers["standard"],
+                    "fantasy_points_half_ppr": actual * fmt_multipliers["half_ppr"],
+                    # Legacy unsuffixed pred columns kept as PPR aliases.
+                    "ridge_pred": base_ridge,
+                    "nn_pred": base_nn,
+                    "attn_nn_pred": base_attn,
+                    "lgbm_pred": base_lgbm,
+                }
+                # Per-format pred columns. NaN preds (K/DST attn/lgbm) stay NaN
+                # across all three formats — multiplying by a constant preserves
+                # NaN under numpy / float arithmetic.
+                for fmt, m in fmt_multipliers.items():
+                    row[f"ridge_pred_{fmt}"] = base_ridge * m
+                    row[f"nn_pred_{fmt}"] = base_nn * m
+                    row[f"attn_nn_pred_{fmt}"] = (
+                        base_attn * m if not np.isnan(base_attn) else np.nan
+                    )
+                    row[f"lgbm_pred_{fmt}"] = base_lgbm * m if not np.isnan(base_lgbm) else np.nan
+                rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -122,18 +139,52 @@ def _synthetic_metrics() -> dict:
 @pytest.fixture
 def synthetic_cache():
     """Return the dict that can be spliced into `app._cache` for tests."""
+    metrics = _synthetic_metrics()
+    # Per-format metrics: each format scales actuals by a different multiplier
+    # so the endpoints can verify they pick up the right cache slot.
+    metrics_by_format = {
+        "ppr": metrics,
+        "half_ppr": _scale_metrics(metrics, 0.95),
+        "standard": _scale_metrics(metrics, 0.9),
+    }
     return {
         "results": _synthetic_results(),
-        "metrics": _synthetic_metrics(),
+        "metrics": metrics,
+        "metrics_by_format": metrics_by_format,
         "position_details": {
             pos: {
                 "n_features": 42,
                 "n_samples_test": 100,
-                "target_metrics": {"total": {"ridge_mae": 5.0, "nn_mae": 4.8}},
+                "target_metrics": {
+                    "total": {"ridge_mae": 5.0, "nn_mae": 4.8},
+                    "total_by_format": {
+                        "ppr": {"ridge_mae": 5.0, "nn_mae": 4.8},
+                        "half_ppr": {"ridge_mae": 4.75, "nn_mae": 4.56},
+                        "standard": {"ridge_mae": 4.5, "nn_mae": 4.32},
+                    },
+                },
             }
             for pos in ["QB", "RB", "WR", "TE", "K", "DST"]
         },
     }
+
+
+def _scale_metrics(metrics: dict, multiplier: float) -> dict:
+    """Return a copy of metrics with overall + by_position MAE/RMSE scaled."""
+    scaled = {}
+    for model, m in metrics.items():
+        overall = m.get("overall")
+        scaled_overall = (
+            {k: round(v * multiplier, 4) if k in ("mae", "rmse") else v for k, v in overall.items()}
+            if overall
+            else None
+        )
+        scaled_by_pos = [
+            {k: (round(v * multiplier, 4) if k in ("mae", "rmse") else v) for k, v in row.items()}
+            for row in m.get("by_position", [])
+        ]
+        scaled[model] = {"overall": scaled_overall, "by_position": scaled_by_pos}
+    return scaled
 
 
 @pytest.fixture

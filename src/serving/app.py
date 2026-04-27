@@ -51,6 +51,7 @@ from src.K.k_data import kicker_season_split, load_kicker_data, load_kicker_kick
 from src.K.k_features import build_nested_kick_history, compute_k_features
 from src.QB.qb_config import QB_SPECIFIC_FEATURES, QB_TARGETS
 from src.RB.rb_config import RB_SPECIFIC_FEATURES, RB_TARGETS
+from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.artifact_integrity import (
     assert_scaler_matches,
     read_scaler_meta,
@@ -105,6 +106,35 @@ def _safe_str(v, default=""):
     return str(v)
 
 
+_VALID_SCORING = ("ppr", "half_ppr", "standard")
+_MODEL_PRED_PREFIXES = ("ridge", "nn", "attn_nn", "lgbm")
+
+
+def _validate_scoring(arg):
+    """Return arg if it is a known scoring format, else 'ppr' (default).
+
+    Used at every endpoint that accepts ?scoring=. Silent fallback so a stale
+    bookmark doesn't error; bad clients are caught by the unit tests.
+    """
+    if arg in _VALID_SCORING:
+        return arg
+    return "ppr"
+
+
+def _actual_col(fmt):
+    """DataFrame column for the actual fantasy-point value in this scoring format.
+
+    PPR is canonical and stored under 'fantasy_points' (no suffix); the other
+    two are populated via compute_fantasy_points in _compute_scoring_formats.
+    """
+    return "fantasy_points" if fmt == "ppr" else f"fantasy_points_{fmt}"
+
+
+def _pred_col(prefix, fmt):
+    """DataFrame column for a model's aggregated prediction in this scoring format."""
+    return f"{prefix}_pred_{fmt}"
+
+
 _PLAYER_ROW_COLS = [
     "player_id",
     "player_display_name",
@@ -112,16 +142,45 @@ _PLAYER_ROW_COLS = [
     "recent_team",
     "week",
     "fantasy_points",
+    "fantasy_points_half_ppr",
+    "fantasy_points_standard",
     "ridge_pred",
     "nn_pred",
     "attn_nn_pred",
     "lgbm_pred",
+    "ridge_pred_ppr",
+    "ridge_pred_half_ppr",
+    "ridge_pred_standard",
+    "nn_pred_ppr",
+    "nn_pred_half_ppr",
+    "nn_pred_standard",
+    "attn_nn_pred_ppr",
+    "attn_nn_pred_half_ppr",
+    "attn_nn_pred_standard",
+    "lgbm_pred_ppr",
+    "lgbm_pred_half_ppr",
+    "lgbm_pred_standard",
     "headshot_url",
 ]
 
 
-def _records_to_player_rows(df):
+def _round_or_none(v):
+    """Round a numeric to 2dp, returning None for NaN / missing / non-numeric."""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(f):
+        return None
+    return round(f, 2)
+
+
+def _records_to_player_rows(df, scoring="ppr"):
     cols = [c for c in _PLAYER_ROW_COLS if c in df.columns]
+    actual_key = _actual_col(scoring)
+    pred_keys = {prefix: _pred_col(prefix, scoring) for prefix in _MODEL_PRED_PREFIXES}
     return [
         {
             "player_id": _safe_str(r.get("player_id")),
@@ -129,11 +188,11 @@ def _records_to_player_rows(df):
             "position": _safe_str(r.get("position")),
             "team": _safe_str(r.get("recent_team")),
             "week": int(r["week"]),
-            "actual": _safe_num(round(r["fantasy_points"], 2)),
-            "ridge_pred": _safe_num(r.get("ridge_pred")),
-            "nn_pred": _safe_num(r.get("nn_pred")),
-            "attn_nn_pred": _safe_num(r.get("attn_nn_pred")),
-            "lgbm_pred": _safe_num(r.get("lgbm_pred")),
+            "actual": _round_or_none(r.get(actual_key)),
+            "ridge_pred": _safe_num(r.get(pred_keys["ridge"])),
+            "nn_pred": _safe_num(r.get(pred_keys["nn"])),
+            "attn_nn_pred": _safe_num(r.get(pred_keys["attn_nn"])),
+            "lgbm_pred": _safe_num(r.get(pred_keys["lgbm"])),
             "headshot": _safe_str(r.get("headshot_url", "")),
         }
         for r in df[cols].to_dict(orient="records")
@@ -528,17 +587,27 @@ def _apply_position_models(train, val, test, pos, results):
     pos_index = pos_test.index
     errors = _cache.setdefault("position_load_errors", {})
 
-    def _combine_total(preds: dict) -> np.ndarray:
+    def _combine_total(preds: dict, fmt: str = "ppr") -> np.ndarray:
+        # QB/RB/WR/TE/DST go through predictions_to_fantasy_points which knows
+        # the per-format reception weight; QB/DST values happen to be format-
+        # invariant by construction (no reception target / DST tier-mapped
+        # aggregator) so the three calls return identical numbers there.
         if aggregate_fn is not None:
-            return aggregate_fn(preds)
+            return predictions_to_fantasy_points(pos, preds, scoring_format=fmt)
+        # K — sign-vectored sum, no reception target, format-invariant.
         if target_signs is not None:
-            # Per-target sign vector (e.g. K: [+1, +1, -1, -1]).
             total = sum(preds[t] * target_signs.get(t, 1.0) for t in targets)
         else:
             total = sum(preds[t] for t in targets)
         if adj_values is not None:
             total = total + adj_values
         return total
+
+    def _per_format_totals(preds):
+        """Return {fmt: total_array} for a single model's preds dict."""
+        if preds is None:
+            return None
+        return {fmt: _combine_total(preds, fmt) for fmt in _VALID_SCORING}
 
     # Each of the four model blocks below sets its ``*_preds`` / ``*_total``
     # locals on success. On failure, the error is recorded under
@@ -547,19 +616,19 @@ def _apply_position_models(train, val, test, pos, results):
     # this position's rows when that happens.
 
     ridge_preds = None
-    ridge_total = None
+    ridge_totals = None
     try:
         ridge = RidgeMultiTarget(target_names=targets)
         ridge.load(model_dir)
         ridge_preds = ridge.predict(X_test_pos)
-        ridge_total = _combine_total(ridge_preds)
+        ridge_totals = _per_format_totals(ridge_preds)
     except Exception as e:
         errors[f"{pos}_ridge"] = str(e)
         print(f"[app] {pos} ridge load failed: {e!r} — NaN'ing ridge_pred")
 
     # NN predictions — integrity-check scaler+weights before running inference.
     nn_preds = None
-    nn_total = None
+    nn_totals = None
     try:
         nn_scaler = joblib.load(f"{model_dir}/nn_scaler.pkl")
         nn_meta = read_scaler_meta(f"{model_dir}/nn_scaler_meta.json")
@@ -583,7 +652,7 @@ def _apply_position_models(train, val, test, pos, results):
         ).to(device)
         nn_model.load_state_dict(nn_state_dict)
         nn_preds = nn_model.predict_numpy(X_test_scaled, device)
-        nn_total = _combine_total(nn_preds)
+        nn_totals = _per_format_totals(nn_preds)
     except Exception as e:
         errors[f"{pos}_nn"] = str(e)
         print(f"[app] {pos} nn load failed: {e!r} — NaN'ing nn_pred")
@@ -593,7 +662,7 @@ def _apply_position_models(train, val, test, pos, results):
     # Positions without an attention model leave the column as NaN so the
     # frontend renders "--".
     attn_nn_preds = None
-    attn_nn_total = None
+    attn_nn_totals = None
     if reg.get("train_attention_nn", False) and reg.get("attn_nn_file"):
         try:
             # K resolves its attention static columns directly from the
@@ -702,48 +771,56 @@ def _apply_position_models(train, val, test, pos, results):
                     attn_nn_preds = attn_model.predict_numpy(
                         X_test_attn_scaled, hist_test, mask_test, device
                     )
-            attn_nn_total = _combine_total(attn_nn_preds)
+            attn_nn_totals = _per_format_totals(attn_nn_preds)
         except Exception as e:
             errors[f"{pos}_attn_nn"] = str(e)
             print(f"[app] {pos} attn_nn load failed: {e!r} — leaving attn_nn_pred NaN")
             attn_nn_preds = None
-            attn_nn_total = None
+            attn_nn_totals = None
 
     # LightGBM — only trained for QB/RB/WR/TE. Same no-column-emitted policy for
     # K/DST as Attention NN.
     lgbm_preds = None
-    lgbm_total = None
+    lgbm_totals = None
     if reg.get("train_lightgbm", False):
         try:
             lgbm_model = LightGBMMultiTarget(target_names=targets)
             lgbm_model.load(model_dir)
             lgbm_preds = lgbm_model.predict(X_test_pos)
-            lgbm_total = _combine_total(lgbm_preds)
+            lgbm_totals = _per_format_totals(lgbm_preds)
         except Exception as e:
             errors[f"{pos}_lgbm"] = str(e)
             print(f"[app] {pos} lgbm load failed: {e!r} — leaving lgbm_pred NaN")
             lgbm_preds = None
-            lgbm_total = None
+            lgbm_totals = None
 
     # Write into results — NaN the pred column when its model failed so the
     # frontend renders "--" instead of a misleading 0.0 (the DataFrame
-    # initializes ridge_pred and nn_pred to 0.0 in _load_base_data_locked).
-    if ridge_total is not None:
-        results.loc[pos_index, "ridge_pred"] = np.round(ridge_total, 2).astype(np.float32)
-    else:
-        results.loc[pos_index, "ridge_pred"] = np.nan
-    if nn_total is not None:
-        results.loc[pos_index, "nn_pred"] = np.round(nn_total, 2).astype(np.float32)
-    else:
-        results.loc[pos_index, "nn_pred"] = np.nan
-    if attn_nn_total is not None:
-        results.loc[pos_index, "attn_nn_pred"] = np.round(attn_nn_total, 2).astype(np.float32)
-    if lgbm_total is not None:
-        results.loc[pos_index, "lgbm_pred"] = np.round(lgbm_total, 2).astype(np.float32)
+    # initializes the per-format columns to 0.0 / NaN in _load_base_data_locked).
+    # We write three format-specific columns per model AND the legacy unsuffixed
+    # column (a PPR alias) so existing fixtures / tests keep working.
+    model_totals_pairs = (
+        ("ridge", ridge_totals),
+        ("nn", nn_totals),
+        ("attn_nn", attn_nn_totals),
+        ("lgbm", lgbm_totals),
+    )
+    for prefix, totals in model_totals_pairs:
+        legacy_col = f"{prefix}_pred"
+        if totals is not None:
+            for fmt, arr in totals.items():
+                results.loc[pos_index, _pred_col(prefix, fmt)] = np.round(arr, 2).astype(np.float32)
+            results.loc[pos_index, legacy_col] = np.round(totals["ppr"], 2).astype(np.float32)
+        else:
+            for fmt in _VALID_SCORING:
+                results.loc[pos_index, _pred_col(prefix, fmt)] = np.nan
+            results.loc[pos_index, legacy_col] = np.nan
 
-    # Cache per-target metrics for /api/position_details. Each model's MAE is
-    # only emitted if that model's preds are available, so a partial-failure
-    # position still shows metrics for the models that loaded.
+    # Cache per-target metrics for /api/position_details. Per-target MAEs are
+    # raw-stat (yards / TDs / receptions count) and so are format-invariant —
+    # only the aggregated "total" row depends on scoring format. We cache the
+    # total row three times under target_metrics["total_by_format"][fmt] and
+    # let the API endpoint pick the right one.
     target_metrics = {}
     for t in targets:
         if t in pos_test.columns:
@@ -758,17 +835,34 @@ def _apply_position_models(train, val, test, pos, results):
             if lgbm_preds is not None and t in lgbm_preds:
                 tm["lgbm_mae"] = round(float(np.mean(np.abs(lgbm_preds[t] - actual_t))), 3)
             target_metrics[t] = tm
-    total_actual = pos_test["fantasy_points"].values
-    total_tm = {}
-    if ridge_total is not None:
-        total_tm["ridge_mae"] = round(float(np.mean(np.abs(ridge_total - total_actual))), 3)
-    if nn_total is not None:
-        total_tm["nn_mae"] = round(float(np.mean(np.abs(nn_total - total_actual))), 3)
-    if attn_nn_total is not None:
-        total_tm["attn_nn_mae"] = round(float(np.mean(np.abs(attn_nn_total - total_actual))), 3)
-    if lgbm_total is not None:
-        total_tm["lgbm_mae"] = round(float(np.mean(np.abs(lgbm_total - total_actual))), 3)
-    target_metrics["total"] = total_tm
+    total_by_format = {}
+    for fmt in _VALID_SCORING:
+        actual_col = _actual_col(fmt)
+        total_actual = pos_test[actual_col].values if actual_col in pos_test.columns else None
+        # K/DST splits don't carry the format-suffixed actual columns, but their
+        # scoring is format-invariant so fantasy_points is the same value for
+        # all three; fall back to it if the suffixed column is missing.
+        if total_actual is None and "fantasy_points" in pos_test.columns:
+            total_actual = pos_test["fantasy_points"].values
+        if total_actual is None:
+            continue
+        total_tm = {}
+        if ridge_totals is not None:
+            total_tm["ridge_mae"] = round(
+                float(np.mean(np.abs(ridge_totals[fmt] - total_actual))), 3
+            )
+        if nn_totals is not None:
+            total_tm["nn_mae"] = round(float(np.mean(np.abs(nn_totals[fmt] - total_actual))), 3)
+        if attn_nn_totals is not None:
+            total_tm["attn_nn_mae"] = round(
+                float(np.mean(np.abs(attn_nn_totals[fmt] - total_actual))), 3
+            )
+        if lgbm_totals is not None:
+            total_tm["lgbm_mae"] = round(float(np.mean(np.abs(lgbm_totals[fmt] - total_actual))), 3)
+        total_by_format[fmt] = total_tm
+    # Default "total" key keeps the PPR view for callers that haven't migrated.
+    target_metrics["total"] = total_by_format.get("ppr", {})
+    target_metrics["total_by_format"] = total_by_format
     _cache.setdefault("position_details", {})[pos] = {
         "n_features": len(feature_cols),
         "n_samples_test": len(pos_test),
@@ -842,11 +936,19 @@ def _load_base_data_locked():
         pos_test_df.index = pos_rows.index
         results = pd.concat([results, pos_rows])
 
+    # Initialize per-model, per-format prediction columns. ridge/nn default to
+    # 0.0 (every row gets a value once the position loads); attn_nn/lgbm default
+    # to NaN so K/DST rows — which have no attn_nn/lgbm models — are correctly
+    # excluded from overall MAE in _compute_metrics_locked.
+    for fmt in _VALID_SCORING:
+        results[_pred_col("ridge", fmt)] = 0.0
+        results[_pred_col("nn", fmt)] = 0.0
+        results[_pred_col("attn_nn", fmt)] = np.nan
+        results[_pred_col("lgbm", fmt)] = np.nan
+    # Legacy unsuffixed columns kept as a PPR alias so existing tests / code
+    # that reads results["ridge_pred"] doesn't break.
     results["ridge_pred"] = 0.0
     results["nn_pred"] = 0.0
-    # NaN for attn_nn/lgbm — not every position has them (K/DST), so leaving
-    # missing rows unset lets _ensure_metrics exclude them from per-model
-    # overall MAE instead of dragging it toward zero.
     results["attn_nn_pred"] = np.nan
     results["lgbm_pred"] = np.nan
 
@@ -944,52 +1046,70 @@ def _degraded_positions() -> list[str]:
 
 
 _MODEL_PRED_COLUMNS = [
-    ("Ridge Regression", "ridge_pred"),
-    ("Neural Network", "nn_pred"),
-    ("Attention NN", "attn_nn_pred"),
-    ("LightGBM", "lgbm_pred"),
+    ("Ridge Regression", "ridge"),
+    ("Neural Network", "nn"),
+    ("Attention NN", "attn_nn"),
+    ("LightGBM", "lgbm"),
 ]
 
 
 def _ensure_metrics():
-    if "metrics" in _cache:
+    if "metrics_by_format" in _cache:
         return
     with _cache_lock:
-        if "metrics" in _cache:
+        if "metrics_by_format" in _cache:
             return
         _ensure_all_positions_loaded()
         _compute_metrics_locked()
 
 
 def _compute_metrics_locked():
+    """Compute overall + per-position MAE/RMSE/R² for every model under each
+    of the three scoring formats, caching the results under
+    ``_cache["metrics_by_format"][fmt]``. Keeps ``_cache["metrics"]`` as a PPR
+    alias for callers that haven't migrated.
+    """
     results = _cache["results"]
-    metrics = {}
-    for name, pred_col in _MODEL_PRED_COLUMNS:
-        pred_series = results[pred_col]
-        # Skip rows where this model has no prediction (K/DST for attn/lgbm).
-        available_mask = pred_series.notna().values
-        if not available_mask.any():
-            metrics[name] = {"overall": None, "by_position": []}
+    metrics_by_format = {}
+    for fmt in _VALID_SCORING:
+        actual_col = _actual_col(fmt)
+        if actual_col not in results.columns:
             continue
-        y_avail = results["fantasy_points"].values[available_mask]
-        preds_avail = pred_series.values[available_mask]
-        overall = compute_metrics(y_avail, preds_avail)
-        pos_df = results.loc[available_mask, ["position"]].copy()
-        pos_df["pred"] = preds_avail
-        pos_df["actual"] = y_avail
-        pos_metrics = compute_positional_metrics(pos_df, "pred", "actual")
-        metrics[name] = {
-            "overall": {k: round(v, 4) for k, v in overall.items()},
-            "by_position": pos_metrics.to_dict(orient="records"),
-        }
-    _cache["metrics"] = metrics
+        actual_values = results[actual_col].values
+        per_format = {}
+        for name, prefix in _MODEL_PRED_COLUMNS:
+            pred_col = _pred_col(prefix, fmt)
+            if pred_col not in results.columns:
+                per_format[name] = {"overall": None, "by_position": []}
+                continue
+            pred_series = results[pred_col]
+            # Skip rows where this model has no prediction (K/DST for attn/lgbm).
+            available_mask = pred_series.notna().values
+            if not available_mask.any():
+                per_format[name] = {"overall": None, "by_position": []}
+                continue
+            y_avail = actual_values[available_mask]
+            preds_avail = pred_series.values[available_mask]
+            overall = compute_metrics(y_avail, preds_avail)
+            pos_df = results.loc[available_mask, ["position"]].copy()
+            pos_df["pred"] = preds_avail
+            pos_df["actual"] = y_avail
+            pos_metrics = compute_positional_metrics(pos_df, "pred", "actual")
+            per_format[name] = {
+                "overall": {k: round(v, 4) for k, v in overall.items()},
+                "by_position": pos_metrics.to_dict(orient="records"),
+            }
+        metrics_by_format[fmt] = per_format
+    _cache["metrics_by_format"] = metrics_by_format
+    _cache["metrics"] = metrics_by_format.get("ppr", {})
     print("Ready!")
 
 
-def _get_data():
-    """Full load: all positions + metrics. Backward-compatible."""
+def _get_data(scoring="ppr"):
+    """Full load: all positions + metrics for the requested scoring format."""
     _ensure_metrics()
-    return _cache["results"], _cache["metrics"]
+    metrics = _cache["metrics_by_format"].get(scoring, _cache["metrics_by_format"]["ppr"])
+    return _cache["results"], metrics
 
 
 # ---------------------------------------------------------------------------
@@ -1009,13 +1129,14 @@ def api_predictions():
     search = request.args.get("search", "").strip().lower()
     sort_by = request.args.get("sort", "fantasy_points")
     order = request.args.get("order", "desc")
+    scoring = _validate_scoring(request.args.get("scoring", "ppr"))
 
     if position != "ALL":
         _ensure_position_loaded(position)
         df = _cache["results"]
         df = df[df["position"] == position]
     else:
-        results, _ = _get_data()
+        results, _ = _get_data(scoring)
         df = results
     if week != "ALL":
         try:
@@ -1025,7 +1146,7 @@ def api_predictions():
     if search:
         df = df[df["player_display_name"].str.lower().str.contains(search, na=False, regex=False)]
 
-    rows = _records_to_player_rows(df)
+    rows = _records_to_player_rows(df, scoring=scoring)
 
     reverse = order == "desc"
     if sort_by in ("actual", "ridge_pred", "nn_pred", "attn_nn_pred", "lgbm_pred", "week"):
@@ -1037,6 +1158,7 @@ def api_predictions():
         {
             "players": rows,
             "total": len(rows),
+            "scoring": scoring,
             # Surfaced so the frontend can render a banner. See
             # static/js/app.js::loadPredictions and _degraded_positions above.
             "degraded_positions": _degraded_positions(),
@@ -1046,7 +1168,8 @@ def api_predictions():
 
 @app.route("/api/metrics")
 def api_metrics():
-    _, metrics = _get_data()
+    scoring = _validate_scoring(request.args.get("scoring", "ppr"))
+    _, metrics = _get_data(scoring)
     return jsonify(metrics)
 
 
@@ -1060,6 +1183,7 @@ def api_weeks():
 
 @app.route("/api/player/<player_id>")
 def api_player(player_id):
+    scoring = _validate_scoring(request.args.get("scoring", "ppr"))
     _ensure_base_data()
     results = _cache["results"]
     match = results[results["player_id"] == player_id]
@@ -1070,16 +1194,18 @@ def api_player(player_id):
     df = results[results["player_id"] == player_id].sort_values("week")
 
     info = df.iloc[0]
-    weekly_cols = ["week", "fantasy_points", "ridge_pred", "nn_pred", "attn_nn_pred", "lgbm_pred"]
+    actual_col = _actual_col(scoring)
+    pred_cols = {prefix: _pred_col(prefix, scoring) for prefix in _MODEL_PRED_PREFIXES}
+    weekly_cols = ["week", actual_col, *pred_cols.values()]
     weekly_cols = [c for c in weekly_cols if c in df.columns]
     weekly = [
         {
             "week": int(r["week"]),
-            "actual": _safe_num(round(r["fantasy_points"], 2)),
-            "ridge_pred": _safe_num(r.get("ridge_pred")),
-            "nn_pred": _safe_num(r.get("nn_pred")),
-            "attn_nn_pred": _safe_num(r.get("attn_nn_pred")),
-            "lgbm_pred": _safe_num(r.get("lgbm_pred")),
+            "actual": _round_or_none(r.get(actual_col)),
+            "ridge_pred": _safe_num(r.get(pred_cols["ridge"])),
+            "nn_pred": _safe_num(r.get(pred_cols["nn"])),
+            "attn_nn_pred": _safe_num(r.get(pred_cols["attn_nn"])),
+            "lgbm_pred": _safe_num(r.get(pred_cols["lgbm"])),
         }
         for r in df[weekly_cols].to_dict(orient="records")
     ]
@@ -1092,8 +1218,9 @@ def api_player(player_id):
             "team": _safe_str(info["recent_team"]),
             "headshot": _safe_str(info.get("headshot_url", "")),
             "weekly": weekly,
-            "season_avg": _safe_num(round(df["fantasy_points"].mean(), 2)),
-            "season_total": _safe_num(round(df["fantasy_points"].sum(), 2)),
+            "season_avg": _safe_num(round(df[actual_col].mean(), 2)),
+            "season_total": _safe_num(round(df[actual_col].sum(), 2)),
+            "scoring": scoring,
         }
     )
 
@@ -1101,21 +1228,22 @@ def api_player(player_id):
 @app.route("/api/top_players")
 def api_top_players():
     position = request.args.get("position", "ALL")
+    scoring = _validate_scoring(request.args.get("scoring", "ppr"))
 
     if position != "ALL":
         _ensure_position_loaded(position)
         df = _cache["results"]
         df = df[df["position"] == position]
     else:
-        results, _ = _get_data()
+        results, _ = _get_data(scoring)
         df = results
 
     agg_dict = {
-        "avg_actual": ("fantasy_points", "mean"),
-        "avg_ridge": ("ridge_pred", "mean"),
-        "avg_nn": ("nn_pred", "mean"),
-        "avg_attn_nn": ("attn_nn_pred", "mean"),
-        "avg_lgbm": ("lgbm_pred", "mean"),
+        "avg_actual": (_actual_col(scoring), "mean"),
+        "avg_ridge": (_pred_col("ridge", scoring), "mean"),
+        "avg_nn": (_pred_col("nn", scoring), "mean"),
+        "avg_attn_nn": (_pred_col("attn_nn", scoring), "mean"),
+        "avg_lgbm": (_pred_col("lgbm", scoring), "mean"),
         "games": ("week", "count"),
     }
     avg = (
@@ -1128,18 +1256,15 @@ def api_top_players():
     avg = avg[avg["games"] >= 6]
     avg = avg.sort_values("avg_actual", ascending=False).head(25)
 
-    def _round_or_none(v):
-        return _safe_num(round(v, 2)) if v == v else None  # NaN-safe
-
     rows = [
         {
             "player_id": _safe_str(r["player_id"]),
             "name": _safe_str(r["player_display_name"]),
             "position": _safe_str(r["position"]),
             "team": _safe_str(r["recent_team"]),
-            "avg_actual": _safe_num(round(r["avg_actual"], 2)),
-            "avg_ridge": _safe_num(round(r["avg_ridge"], 2)),
-            "avg_nn": _safe_num(round(r["avg_nn"], 2)),
+            "avg_actual": _round_or_none(r["avg_actual"]),
+            "avg_ridge": _round_or_none(r["avg_ridge"]),
+            "avg_nn": _round_or_none(r["avg_nn"]),
             "avg_attn_nn": _round_or_none(r["avg_attn_nn"]),
             "avg_lgbm": _round_or_none(r["avg_lgbm"]),
             "games": int(r["games"]),
@@ -1147,20 +1272,21 @@ def api_top_players():
         for r in avg.to_dict(orient="records")
     ]
 
-    return jsonify({"players": rows})
+    return jsonify({"players": rows, "scoring": scoring})
 
 
 @app.route("/api/weekly_accuracy")
 def api_weekly_accuracy():
-    results, _ = _get_data()
-    actual = results["fantasy_points"].values
+    scoring = _validate_scoring(request.args.get("scoring", "ppr"))
+    results, _ = _get_data(scoring)
+    actual = results[_actual_col(scoring)].values
     # Per-row abs error; NaN where a model has no prediction (K/DST attn/lgbm)
     # so groupby.mean() excludes those rows from that model's weekly MAE.
     err_df = results.assign(
-        _ridge_err=np.abs(actual - results["ridge_pred"].values),
-        _nn_err=np.abs(actual - results["nn_pred"].values),
-        _attn_nn_err=np.abs(actual - results["attn_nn_pred"].values),
-        _lgbm_err=np.abs(actual - results["lgbm_pred"].values),
+        _ridge_err=np.abs(actual - results[_pred_col("ridge", scoring)].values),
+        _nn_err=np.abs(actual - results[_pred_col("nn", scoring)].values),
+        _attn_nn_err=np.abs(actual - results[_pred_col("attn_nn", scoring)].values),
+        _lgbm_err=np.abs(actual - results[_pred_col("lgbm", scoring)].values),
     )
     weekly = (
         err_df.groupby("week")
@@ -1185,18 +1311,29 @@ def api_weekly_accuracy():
             "nn_mae": _series_to_list(weekly["nn_mae"]),
             "attn_nn_mae": _series_to_list(weekly["attn_nn_mae"]),
             "lgbm_mae": _series_to_list(weekly["lgbm_mae"]),
+            "scoring": scoring,
         }
     )
 
 
 @app.route("/api/position_details")
 def api_position_details():
-    _get_data()  # ensure cache is populated
+    scoring = _validate_scoring(request.args.get("scoring", "ppr"))
+    _get_data(scoring)  # ensure cache is populated
     details = _cache.get("position_details", {})
     result = {}
     for pos in ["QB", "RB", "WR", "TE", "K", "DST"]:
         info = dict(POSITION_INFO[pos])
-        info.update(details.get(pos, {}))
+        pos_details = dict(details.get(pos, {}))
+        # Swap target_metrics["total"] for the format-specific cached row.
+        # Per-target raw-stat MAE is format-invariant and is left untouched.
+        target_metrics = dict(pos_details.get("target_metrics", {}))
+        total_by_format = target_metrics.pop("total_by_format", {}) or {}
+        if total_by_format:
+            target_metrics["total"] = total_by_format.get(scoring, target_metrics.get("total", {}))
+        if target_metrics:
+            pos_details["target_metrics"] = target_metrics
+        info.update(pos_details)
         result[pos] = info
     return jsonify(result)
 

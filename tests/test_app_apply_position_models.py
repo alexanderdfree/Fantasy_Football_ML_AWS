@@ -341,27 +341,41 @@ def test_apply_position_models_with_adjustment_fn(_mocked_app, monkeypatch):
 def test_compute_metrics_locked_populates_cache(monkeypatch):
     """``_compute_metrics_locked`` computes overall + per-position metrics
     for every model whose prediction column has any non-NaN row, and caches
-    them under ``_cache['metrics']``."""
+    them per scoring format under ``_cache['metrics_by_format']`` (with
+    ``_cache['metrics']`` mirroring the PPR slot)."""
     import src.serving.app as app_mod
 
     app_mod._cache.clear()
     n = 30
     rng = np.random.default_rng(7)
     # Real fantasy_points + ridge/nn predictions; attn_nn only partial; lgbm all NaN.
+    actual = rng.uniform(5, 25, n)
+    ridge = rng.uniform(5, 25, n)
+    nn = rng.uniform(5, 25, n)
+    attn = np.array(list(rng.uniform(5, 25, 20)) + [np.nan] * 10)
+    lgbm = np.full(n, np.nan)
     results = pd.DataFrame(
         {
             "position": (["QB"] * 10 + ["RB"] * 10 + ["WR"] * 10),
-            "fantasy_points": rng.uniform(5, 25, n),
-            "ridge_pred": rng.uniform(5, 25, n),
-            "nn_pred": rng.uniform(5, 25, n),
-            "attn_nn_pred": list(rng.uniform(5, 25, 20)) + [np.nan] * 10,
-            "lgbm_pred": [np.nan] * n,
+            "fantasy_points": actual,
+            "fantasy_points_half_ppr": actual * 0.95,
+            "fantasy_points_standard": actual * 0.9,
         }
     )
+    for fmt, m in (("ppr", 1.0), ("half_ppr", 0.95), ("standard", 0.9)):
+        results[f"ridge_pred_{fmt}"] = ridge * m
+        results[f"nn_pred_{fmt}"] = nn * m
+        results[f"attn_nn_pred_{fmt}"] = attn * m
+        results[f"lgbm_pred_{fmt}"] = lgbm
     app_mod._cache["results"] = results
 
     app_mod._compute_metrics_locked()
     metrics = app_mod._cache["metrics"]
+    metrics_by_format = app_mod._cache["metrics_by_format"]
+    # Per-format cache populated for every scoring format.
+    assert set(metrics_by_format) == {"ppr", "half_ppr", "standard"}
+    # Legacy 'metrics' key mirrors the PPR slot.
+    assert metrics is metrics_by_format["ppr"]
     assert "Ridge Regression" in metrics
     assert "Neural Network" in metrics
     # Ridge + NN have overall metrics; LGBM (all NaN) has None overall + [] by_position.
