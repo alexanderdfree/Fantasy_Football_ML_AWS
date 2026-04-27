@@ -110,17 +110,19 @@ def is_cpu_only(pos: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _attn_kwargs_static(cfg, prefix: str) -> dict:
+def _attn_kwargs_static(cfg) -> dict:
     """Pull all MultiHeadNetWithHistory kwargs from a cfg module EXCEPT the
     runtime-dependent ``static_dim`` / ``game_dim`` / ``target_names`` — those are
     filled in by the caller at inference time once the feature list is known.
 
     Missing config attributes fall back to the MultiHeadNetWithHistory defaults
-    so positions that don't set every knob still work.
+    so positions that don't set every knob still work. Pre-#154 this looked
+    up ``f"{POS}_NAME"``; the rename dropped that prefix from every per-position
+    config module, so we now read bare attribute names.
     """
 
     def g(name, default=None):
-        return getattr(cfg, f"{prefix}_{name}", default)
+        return getattr(cfg, name, default)
 
     gated_targets = g("GATED_TARGETS", None)
 
@@ -193,7 +195,7 @@ def get_inference_spec(pos: str) -> dict:
             "attn_max_seq_len": getattr(qb_cfg, "ATTN_MAX_SEQ_LEN", 17),
             "opp_attn_history_stats": list(getattr(qb_cfg, "OPP_ATTN_HISTORY_STATS", []) or []),
             "opp_attn_max_seq_len": getattr(qb_cfg, "OPP_ATTN_MAX_SEQ_LEN", 17),
-            "attn_nn_kwargs_static": _attn_kwargs_static(qb_cfg, "QB"),
+            "attn_nn_kwargs_static": _attn_kwargs_static(qb_cfg),
             "train_lightgbm": bool(getattr(qb_cfg, "TRAIN_LIGHTGBM", False)),
         }
     if pos == "RB":
@@ -238,7 +240,7 @@ def get_inference_spec(pos: str) -> dict:
             "attn_history_stats": list(getattr(rb_cfg, "ATTN_HISTORY_STATS", []) or []),
             "attn_static_features": list(getattr(rb_cfg, "ATTN_STATIC_FEATURES", []) or []),
             "attn_max_seq_len": getattr(rb_cfg, "ATTN_MAX_SEQ_LEN", 17),
-            "attn_nn_kwargs_static": _attn_kwargs_static(rb_cfg, "RB"),
+            "attn_nn_kwargs_static": _attn_kwargs_static(rb_cfg),
             "train_lightgbm": bool(getattr(rb_cfg, "TRAIN_LIGHTGBM", False)),
         }
     if pos == "WR":
@@ -285,7 +287,7 @@ def get_inference_spec(pos: str) -> dict:
             "attn_max_seq_len": getattr(wr_cfg, "ATTN_MAX_SEQ_LEN", 17),
             "opp_attn_history_stats": list(getattr(wr_cfg, "OPP_ATTN_HISTORY_STATS", []) or []),
             "opp_attn_max_seq_len": getattr(wr_cfg, "OPP_ATTN_MAX_SEQ_LEN", 17),
-            "attn_nn_kwargs_static": _attn_kwargs_static(wr_cfg, "WR"),
+            "attn_nn_kwargs_static": _attn_kwargs_static(wr_cfg),
             "train_lightgbm": bool(getattr(wr_cfg, "TRAIN_LIGHTGBM", False)),
         }
     if pos == "TE":
@@ -332,7 +334,7 @@ def get_inference_spec(pos: str) -> dict:
             "attn_max_seq_len": getattr(te_cfg, "ATTN_MAX_SEQ_LEN", 17),
             "opp_attn_history_stats": list(getattr(te_cfg, "OPP_ATTN_HISTORY_STATS", []) or []),
             "opp_attn_max_seq_len": getattr(te_cfg, "OPP_ATTN_MAX_SEQ_LEN", 17),
-            "attn_nn_kwargs_static": _attn_kwargs_static(te_cfg, "TE"),
+            "attn_nn_kwargs_static": _attn_kwargs_static(te_cfg),
             "train_lightgbm": bool(getattr(te_cfg, "TRAIN_LIGHTGBM", False)),
         }
     if pos == "K":
@@ -451,7 +453,7 @@ def get_inference_spec(pos: str) -> dict:
             "attn_history_stats": list(getattr(dst_cfg, "ATTN_HISTORY_STATS", []) or []),
             "attn_static_features": list(getattr(dst_cfg, "ATTN_STATIC_FEATURES", []) or []),
             "attn_max_seq_len": getattr(dst_cfg, "ATTN_MAX_SEQ_LEN", 17),
-            "attn_nn_kwargs_static": _attn_kwargs_static(dst_cfg, "DST"),
+            "attn_nn_kwargs_static": _attn_kwargs_static(dst_cfg),
             "train_lightgbm": bool(getattr(dst_cfg, "TRAIN_LIGHTGBM", False)),
         }
     raise ValueError(f"Unknown position: {pos}")
