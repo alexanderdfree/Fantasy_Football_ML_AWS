@@ -97,12 +97,17 @@ jobs:
       - name: Resolve shard test paths and coverage flags
         id: shard
         run: |
-          if [ "${{ matrix.shard }}" = "shared" ]; then
-            echo "paths=tests/ src/batch/tests/ src/shared/tests/ src/scripts/tests/" >> "$GITHUB_OUTPUT"
+          shard="${{ matrix.shard }}"
+          if [ "$shard" = "shared" ]; then
+            # tests/ root + shared/batch/scripts; explicitly ignore the
+            # per-position dirs covered by their own matrix shards so we
+            # don't double-run them.
+            echo "paths=tests/ --ignore=tests/qb --ignore=tests/rb --ignore=tests/wr --ignore=tests/te --ignore=tests/k --ignore=tests/dst" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src" >> "$GITHUB_OUTPUT"
           else
-            echo "paths=src/${{ matrix.shard }}/tests/" >> "$GITHUB_OUTPUT"
-            echo "cov=--cov=src.${{ matrix.shard }} --cov=src" >> "$GITHUB_OUTPUT"
+            shard_lower=$(echo "$shard" | tr '[:upper:]' '[:lower:]')
+            echo "paths=tests/${shard_lower}/" >> "$GITHUB_OUTPUT"
+            echo "cov=--cov=src.${shard} --cov=src" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run tests

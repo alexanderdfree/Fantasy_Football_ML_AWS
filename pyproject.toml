@@ -15,18 +15,7 @@ filterwarnings = [
     # output clean.
     "ignore:.*L-BFGS-B solver are deprecated:DeprecationWarning",
 ]
-testpaths = [
-    "tests",
-    "src/QB/tests",
-    "src/RB/tests",
-    "src/WR/tests",
-    "src/TE/tests",
-    "src/K/tests",
-    "src/DST/tests",
-    "src/batch/tests",
-    "src/shared/tests",
-    "src/scripts/tests",
-]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100

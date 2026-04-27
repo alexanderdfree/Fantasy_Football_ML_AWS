@@ -1047,7 +1047,7 @@ The Gradescope self-assessment (3 pts) requires mapping each claimed rubric item
 Validate correctness at each pipeline stage before moving on:
 
 1. **Feature leakage tests:** `tests/test_feature_leakage.py` (328 lines) comprehensively verifies no future data leaks into features
-2. **Unit tests:** `src/RB/tests/test_rb_targets.py` validates target decomposition correctness
+2. **Unit tests:** `tests/rb/test_targets.py` validates target decomposition correctness
 3. **Shape checks:** At each pipeline step, print and verify DataFrame shape
 4. **Target decomposition sanity checks:** Each `compute_{pos}_targets()` function includes a
    `fantasy_points_check` that verifies the sum of decomposed targets matches total fantasy points

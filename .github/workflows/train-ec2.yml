@@ -78,12 +78,11 @@ jobs:
           echo "Changed files:"
           printf '  %s\n' $files
 
-          # Strip tests/ subtrees before scoping. A PR that only edits
-          # src/{POS}/tests/, src/shared/tests/, src/batch/tests/, etc. does
-          # not affect model artifacts, so the global + per-position checks
-          # below operate on a tests-free view of the diff. `|| true` keeps
-          # the step alive when grep -v has nothing left to print.
-          model_files=$(printf '%s\n' "$files" | grep -vE '^(tests/|src/[^/]+/tests/)' || true)
+          # Strip the tests/ subtree before scoping. A PR that only edits
+          # tests/ does not affect model artifacts, so the global + per-position
+          # checks below operate on a tests-free view of the diff. `|| true`
+          # keeps the step alive when grep -v has nothing left to print.
+          model_files=$(printf '%s\n' "$files" | grep -vE '^tests/' || true)
           echo "Model-relevant changed files:"
           printf '  %s\n' $model_files
 

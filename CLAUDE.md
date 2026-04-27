@@ -27,7 +27,7 @@ The rest of `src/` groups by purpose: `src/serving/` (Flask app + assets), `src/
 
 All six positions train an attention NN (DST landed via `cc0c627`, K via `801b61a`). There is no "skill-positions-only" carve-out anymore — if you're adding an NN-related knob, wire it through every position.
 
-**Adding a new position**: copy an existing folder under `src/`, rename files/constants, wire it into `src/batch/train.py` and `.github/workflows/train-ec2.yml`'s position list, add tests under `src/{POS}/tests/`.
+**Adding a new position**: copy an existing folder under `src/`, rename files/constants, wire it into `src/batch/train.py` and `.github/workflows/train-ec2.yml`'s position list, add tests under `tests/{pos}/`.
 
 ## Conventions that bite if ignored
 
@@ -59,7 +59,7 @@ Commands live in [SETUP.md](SETUP.md). Shortcuts:
 
 ## CI & training
 
-- `tests.yml` — ruff + pytest on push/PR. Installs via `uv` (migrated in `3c897d8`) and shards pytest across `QB/RB/WR/TE/K/DST/shared` matrix jobs (paths now under `src/{POS}/tests/`). Each shard uploads coverage to Codecov under a matching flag; the project target is **80% per component/flag** (see [codecov.yml](codecov.yml)). Diagnostic CLIs (`src/QB/diagnose_qb_outliers.py`, `src/RB/analyze_rb_errors.py`) are excluded from the coverage denominator. If `Run Tests` silently stops firing on rapid force-push cadence (occasional GitHub Actions bug), run `pytest` locally and merge with `gh pr merge --squash`.
+- `tests.yml` — ruff + pytest on push/PR. Installs via `uv` (migrated in `3c897d8`) and shards pytest across `QB/RB/WR/TE/K/DST/shared` matrix jobs (per-position paths under `tests/{pos}/`; the `shared` shard runs `tests/` excluding the per-position dirs). Each shard uploads coverage to Codecov under a matching flag; the project target is **80% per component/flag** (see [codecov.yml](codecov.yml)). Diagnostic CLIs (`src/QB/diagnose_qb_outliers.py`, `src/RB/analyze_rb_errors.py`) are excluded from the coverage denominator. If `Run Tests` silently stops firing on rapid force-push cadence (occasional GitHub Actions bug), run `pytest` locally and merge with `gh pr merge --squash`.
 - `batch-image.yml` → `train-ec2.yml` — image build triggers EC2 training. The `detect` job diffs the merge commit and only retrains positions whose code changed. AWS g4dn.xlarge OD quota is 4 vCPU (one instance); spot quota is higher. Check quota before dispatching if you touch infra.
 - `deploy.yml` — ECS Flask deploy.
 

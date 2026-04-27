@@ -15,7 +15,7 @@ These tests stub the model loaders with lightweight fakes:
   → fake classes whose ``.load_state_dict`` no-ops and ``.predict_numpy``
   returns the target → zeros dict shape.
 - ``assert_scaler_matches`` → no-op (integrity check is tested separately
-  in ``src/shared/tests/test_model_sync.py``).
+  in ``tests/shared/test_model_sync.py``).
 
 The goal is branch coverage of the function body, not numerical correctness.
 """
