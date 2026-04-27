@@ -66,7 +66,7 @@ python benchmark.py RB           # one position
 python benchmark.py QB RB WR     # several positions
 ```
 
-Each run appends a row to [benchmark_history.json](benchmark_history.json) with the git SHA, timestamp, and per-position config snapshot (used by CI to track benchmark drift) and refreshes the model artifacts under `{POS}/outputs/models/`. Headline results are summarized in the Evaluation section of [README.md](README.md).
+Each run writes a `{run_id}.json` file under [benchmark_history/](benchmark_history/) with the git SHA, timestamp, and per-position config snapshot (used by CI to track benchmark drift) and refreshes the model artifacts under `{POS}/outputs/models/`. Headline results are summarized in the Evaluation section of [README.md](README.md).
 
 ## Run tests
 

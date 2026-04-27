@@ -1,0 +1,640 @@
+{
+  "run_id": "2026-04-21T09:46:56_801b61a",
+  "timestamp": "2026-04-21T09:46:56",
+  "git_hash": "801b61a",
+  "note": "EC2 auto-run (801b61a)",
+  "backend": "ec2",
+  "instance_type": "g4dn.xlarge (On-Demand)",
+  "positions": [
+    "QB",
+    "RB",
+    "WR",
+    "TE",
+    "K",
+    "DST"
+  ],
+  "results": [
+    {
+      "position": "QB",
+      "ridge_mae": 6.483,
+      "ridge_r2": 0.234,
+      "nn_mae": 6.699,
+      "nn_r2": 0.224,
+      "nn_wins_mae": false,
+      "nn_per_target": {
+        "passing_yards": {
+          "mae": 67.658,
+          "r2": 0.3
+        },
+        "rushing_yards": {
+          "mae": 13.137,
+          "r2": 0.061
+        },
+        "passing_tds": {
+          "mae": 0.988,
+          "r2": -0.026
+        },
+        "rushing_tds": {
+          "mae": 0.544,
+          "r2": -1.56
+        },
+        "interceptions": {
+          "mae": 0.751,
+          "r2": -0.302
+        },
+        "fumbles_lost": {
+          "mae": 0.636,
+          "r2": -1.739
+        }
+      },
+      "ridge_per_target": {
+        "passing_yards": {
+          "mae": 69.719,
+          "r2": 0.307
+        },
+        "rushing_yards": {
+          "mae": 11.134,
+          "r2": 0.231
+        },
+        "passing_tds": {
+          "mae": 0.858,
+          "r2": 0.108
+        },
+        "rushing_tds": {
+          "mae": 0.242,
+          "r2": 0.054
+        },
+        "interceptions": {
+          "mae": 0.608,
+          "r2": -0.055
+        },
+        "fumbles_lost": {
+          "mae": 0.294,
+          "r2": -0.002
+        }
+      },
+      "ridge_top12": 0.491,
+      "nn_top12": 0.5,
+      "attn_nn_mae": 6.547,
+      "attn_nn_r2": 0.207,
+      "attn_nn_per_target": {
+        "passing_yards": {
+          "mae": 67.582,
+          "r2": 0.338
+        },
+        "rushing_yards": {
+          "mae": 11.461,
+          "r2": 0.166
+        },
+        "passing_tds": {
+          "mae": 0.879,
+          "r2": 0.125
+        },
+        "rushing_tds": {
+          "mae": 0.196,
+          "r2": -0.065
+        },
+        "interceptions": {
+          "mae": 0.624,
+          "r2": 0.015
+        },
+        "fumbles_lost": {
+          "mae": 0.246,
+          "r2": -0.048
+        }
+      },
+      "attn_nn_top12": 0.461,
+      "lgbm_mae": 6.269,
+      "lgbm_r2": 0.275,
+      "lgbm_per_target": {
+        "passing_yards": {
+          "mae": 66.0,
+          "r2": 0.359
+        },
+        "rushing_yards": {
+          "mae": 10.882,
+          "r2": 0.257
+        },
+        "passing_tds": {
+          "mae": 0.844,
+          "r2": 0.169
+        },
+        "rushing_tds": {
+          "mae": 0.226,
+          "r2": 0.055
+        },
+        "interceptions": {
+          "mae": 0.618,
+          "r2": 0.043
+        },
+        "fumbles_lost": {
+          "mae": 0.253,
+          "r2": -0.02
+        }
+      },
+      "lgbm_top12": 0.535
+    },
+    {
+      "position": "RB",
+      "ridge_mae": 4.341,
+      "ridge_r2": 0.358,
+      "nn_mae": 4.642,
+      "nn_r2": 0.377,
+      "nn_wins_mae": false,
+      "nn_per_target": {
+        "rushing_tds": {
+          "mae": 0.346,
+          "r2": 0.018
+        },
+        "receiving_tds": {
+          "mae": 0.131,
+          "r2": -0.099
+        },
+        "rushing_yards": {
+          "mae": 18.504,
+          "r2": 0.407
+        },
+        "receiving_yards": {
+          "mae": 9.607,
+          "r2": 0.221
+        },
+        "receptions": {
+          "mae": 1.119,
+          "r2": 0.311
+        },
+        "fumbles_lost": {
+          "mae": 0.107,
+          "r2": -0.19
+        }
+      },
+      "ridge_per_target": {
+        "rushing_tds": {
+          "mae": 0.229,
+          "r2": -0.136
+        },
+        "receiving_tds": {
+          "mae": 0.064,
+          "r2": -0.059
+        },
+        "rushing_yards": {
+          "mae": 18.9,
+          "r2": 0.437
+        },
+        "receiving_yards": {
+          "mae": 9.752,
+          "r2": 0.257
+        },
+        "receptions": {
+          "mae": 1.038,
+          "r2": 0.361
+        },
+        "fumbles_lost": {
+          "mae": 0.068,
+          "r2": 0.021
+        }
+      },
+      "ridge_top12": 0.496,
+      "nn_top12": 0.504,
+      "attn_nn_mae": 4.236,
+      "attn_nn_r2": 0.388,
+      "attn_nn_per_target": {
+        "rushing_tds": {
+          "mae": 0.276,
+          "r2": 0.078
+        },
+        "receiving_tds": {
+          "mae": 0.086,
+          "r2": 0.027
+        },
+        "rushing_yards": {
+          "mae": 18.127,
+          "r2": 0.406
+        },
+        "receiving_yards": {
+          "mae": 9.383,
+          "r2": 0.232
+        },
+        "receptions": {
+          "mae": 1.033,
+          "r2": 0.351
+        },
+        "fumbles_lost": {
+          "mae": 0.056,
+          "r2": 0.007
+        }
+      },
+      "attn_nn_top12": 0.516,
+      "lgbm_mae": 4.327,
+      "lgbm_r2": 0.402,
+      "lgbm_per_target": {
+        "rushing_tds": {
+          "mae": 0.304,
+          "r2": 0.088
+        },
+        "receiving_tds": {
+          "mae": 0.092,
+          "r2": 0.017
+        },
+        "rushing_yards": {
+          "mae": 19.421,
+          "r2": 0.38
+        },
+        "receiving_yards": {
+          "mae": 9.182,
+          "r2": 0.218
+        },
+        "receptions": {
+          "mae": 1.015,
+          "r2": 0.376
+        },
+        "fumbles_lost": {
+          "mae": 0.065,
+          "r2": 0.014
+        }
+      },
+      "lgbm_top12": 0.504
+    },
+    {
+      "position": "WR",
+      "ridge_mae": 4.383,
+      "ridge_r2": 0.341,
+      "nn_mae": 4.157,
+      "nn_r2": 0.34,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.236,
+          "r2": 0.018
+        },
+        "receiving_yards": {
+          "mae": 19.811,
+          "r2": 0.337
+        },
+        "receptions": {
+          "mae": 1.399,
+          "r2": 0.407
+        },
+        "fumbles_lost": {
+          "mae": 0.011,
+          "r2": -0.011
+        }
+      },
+      "ridge_per_target": {
+        "receiving_tds": {
+          "mae": 0.296,
+          "r2": 0.082
+        },
+        "receiving_yards": {
+          "mae": 20.811,
+          "r2": 0.331
+        },
+        "receptions": {
+          "mae": 1.402,
+          "r2": 0.408
+        },
+        "fumbles_lost": {
+          "mae": 0.026,
+          "r2": -0.001
+        }
+      },
+      "ridge_top12": 0.385,
+      "nn_top12": 0.405,
+      "attn_nn_mae": 4.173,
+      "attn_nn_r2": 0.322,
+      "attn_nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.24,
+          "r2": 0.012
+        },
+        "receiving_yards": {
+          "mae": 19.792,
+          "r2": 0.33
+        },
+        "receptions": {
+          "mae": 1.38,
+          "r2": 0.403
+        },
+        "fumbles_lost": {
+          "mae": 0.017,
+          "r2": -0.068
+        }
+      },
+      "attn_nn_top12": 0.389,
+      "lgbm_mae": 4.217,
+      "lgbm_r2": 0.353,
+      "lgbm_per_target": {
+        "receiving_tds": {
+          "mae": 0.269,
+          "r2": 0.069
+        },
+        "receiving_yards": {
+          "mae": 20.003,
+          "r2": 0.341
+        },
+        "receptions": {
+          "mae": 1.373,
+          "r2": 0.433
+        },
+        "fumbles_lost": {
+          "mae": 0.029,
+          "r2": -0.006
+        }
+      },
+      "lgbm_top12": 0.393
+    },
+    {
+      "position": "TE",
+      "ridge_mae": 3.556,
+      "ridge_r2": 0.317,
+      "nn_mae": 3.569,
+      "nn_r2": 0.276,
+      "nn_wins_mae": false,
+      "nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.287,
+          "r2": -0.03
+        },
+        "receiving_yards": {
+          "mae": 14.454,
+          "r2": 0.297
+        },
+        "receptions": {
+          "mae": 1.272,
+          "r2": 0.353
+        },
+        "fumbles_lost": {
+          "mae": 0.084,
+          "r2": -0.508
+        }
+      },
+      "ridge_per_target": {
+        "receiving_tds": {
+          "mae": 0.273,
+          "r2": 0.058
+        },
+        "receiving_yards": {
+          "mae": 14.899,
+          "r2": 0.328
+        },
+        "receptions": {
+          "mae": 1.225,
+          "r2": 0.384
+        },
+        "fumbles_lost": {
+          "mae": 0.025,
+          "r2": -0.004
+        }
+      },
+      "ridge_top12": 0.496,
+      "nn_top12": 0.483,
+      "attn_nn_mae": 3.469,
+      "attn_nn_r2": 0.282,
+      "attn_nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.23,
+          "r2": -0.014
+        },
+        "receiving_yards": {
+          "mae": 14.502,
+          "r2": 0.3
+        },
+        "receptions": {
+          "mae": 1.215,
+          "r2": 0.387
+        },
+        "fumbles_lost": {
+          "mae": 0.021,
+          "r2": -0.052
+        }
+      },
+      "attn_nn_top12": 0.504,
+      "lgbm_mae": 3.499,
+      "lgbm_r2": 0.32,
+      "lgbm_per_target": {
+        "receiving_tds": {
+          "mae": 0.255,
+          "r2": 0.043
+        },
+        "receiving_yards": {
+          "mae": 15.02,
+          "r2": 0.304
+        },
+        "receptions": {
+          "mae": 1.238,
+          "r2": 0.379
+        },
+        "fumbles_lost": {
+          "mae": 0.029,
+          "r2": -0.002
+        }
+      },
+      "lgbm_top12": 0.471
+    },
+    {
+      "position": "K",
+      "ridge_mae": 6.548,
+      "ridge_r2": -1.65,
+      "nn_mae": 6.927,
+      "nn_r2": -1.896,
+      "nn_wins_mae": false,
+      "nn_per_target": {
+        "fg_yard_points": {
+          "mae": 6.805,
+          "r2": -1.778
+        },
+        "pat_points": {
+          "mae": 1.181,
+          "r2": -0.051
+        },
+        "fg_misses": {
+          "mae": 0.407,
+          "r2": -0.014
+        },
+        "xp_misses": {
+          "mae": 0.198,
+          "r2": -0.071
+        }
+      },
+      "ridge_per_target": {
+        "fg_yard_points": {
+          "mae": 6.815,
+          "r2": -1.785
+        },
+        "pat_points": {
+          "mae": 1.215,
+          "r2": -0.07
+        },
+        "fg_misses": {
+          "mae": 0.366,
+          "r2": -0.022
+        },
+        "xp_misses": {
+          "mae": 0.19,
+          "r2": -0.059
+        }
+      },
+      "ridge_top12": 0.431,
+      "nn_top12": 0.38,
+      "attn_nn_mae": 7.233,
+      "attn_nn_r2": -2.079,
+      "attn_nn_per_target": {
+        "fg_yard_points": {
+          "mae": 6.803,
+          "r2": -1.777
+        },
+        "pat_points": {
+          "mae": 1.143,
+          "r2": -0.023
+        },
+        "fg_misses": {
+          "mae": 0.399,
+          "r2": -0.022
+        },
+        "xp_misses": {
+          "mae": 0.175,
+          "r2": -0.051
+        }
+      },
+      "attn_nn_top12": 0.435
+    },
+    {
+      "position": "DST",
+      "ridge_mae": 384.271,
+      "ridge_r2": -3107.166,
+      "nn_mae": 5.105,
+      "nn_r2": 0.065,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "def_sacks": {
+          "mae": 1.467,
+          "r2": -0.025
+        },
+        "def_ints": {
+          "mae": 0.698,
+          "r2": -0.664
+        },
+        "def_fumble_rec": {
+          "mae": 0.4,
+          "r2": -0.326
+        },
+        "def_fumbles_forced": {
+          "mae": 0.739,
+          "r2": -0.197
+        },
+        "def_safeties": {
+          "mae": 0.043,
+          "r2": 0.001
+        },
+        "def_tds": {
+          "mae": 0.083,
+          "r2": -0.008
+        },
+        "def_blocked_kicks": {
+          "mae": 0.088,
+          "r2": -0.028
+        },
+        "special_teams_tds": {
+          "mae": 0.095,
+          "r2": -0.003
+        },
+        "points_allowed": {
+          "mae": 7.621,
+          "r2": 0.062
+        },
+        "yards_allowed": {
+          "mae": 61.419,
+          "r2": 0.095
+        }
+      },
+      "ridge_per_target": {
+        "def_sacks": {
+          "mae": 1.381,
+          "r2": 0.051
+        },
+        "def_ints": {
+          "mae": 0.69,
+          "r2": -0.007
+        },
+        "def_fumble_rec": {
+          "mae": 0.556,
+          "r2": -0.021
+        },
+        "def_fumbles_forced": {
+          "mae": 0.69,
+          "r2": -0.031
+        },
+        "def_safeties": {
+          "mae": 0.051,
+          "r2": -0.004
+        },
+        "def_tds": {
+          "mae": 0.125,
+          "r2": -0.039
+        },
+        "def_blocked_kicks": {
+          "mae": 0.109,
+          "r2": -0.009
+        },
+        "special_teams_tds": {
+          "mae": 0.086,
+          "r2": -0.007
+        },
+        "points_allowed": {
+          "mae": 7.505,
+          "r2": 0.093
+        },
+        "yards_allowed": {
+          "mae": 62.562,
+          "r2": 0.047
+        }
+      },
+      "ridge_top12": 0.306,
+      "nn_top12": 0.514,
+      "attn_nn_mae": 5.269,
+      "attn_nn_r2": 0.03,
+      "attn_nn_per_target": {
+        "def_sacks": {
+          "mae": 1.425,
+          "r2": -0.014
+        },
+        "def_ints": {
+          "mae": 0.697,
+          "r2": -0.021
+        },
+        "def_fumble_rec": {
+          "mae": 0.522,
+          "r2": -0.006
+        },
+        "def_fumbles_forced": {
+          "mae": 0.689,
+          "r2": -0.009
+        },
+        "def_safeties": {
+          "mae": 0.041,
+          "r2": -0.005
+        },
+        "def_tds": {
+          "mae": 0.091,
+          "r2": -0.007
+        },
+        "def_blocked_kicks": {
+          "mae": 0.083,
+          "r2": -0.039
+        },
+        "special_teams_tds": {
+          "mae": 0.08,
+          "r2": -0.018
+        },
+        "points_allowed": {
+          "mae": 7.642,
+          "r2": 0.065
+        },
+        "yards_allowed": {
+          "mae": 62.282,
+          "r2": 0.064
+        }
+      },
+      "attn_nn_top12": 0.495
+    }
+  ]
+}

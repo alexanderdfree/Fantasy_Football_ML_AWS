@@ -1,0 +1,382 @@
+{
+  "run_id": "2026-04-15T18:20:55_ffe08e8",
+  "timestamp": "2026-04-15T18:20:55",
+  "git_hash": "ffe08e8",
+  "note": "deeper encoder (hidden=48) + 4 attn heads + attn dropout + positional encoding all positions",
+  "positions": [
+    "RB",
+    "QB",
+    "WR"
+  ],
+  "config": {
+    "global": {
+      "train_seasons": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "val_seasons": [
+        2024
+      ],
+      "test_seasons": [
+        2025
+      ],
+      "nn_epochs": 200,
+      "nn_batch_size": 256,
+      "nn_patience": 15,
+      "nn_dropout": 0.3,
+      "nn_lr": 0.001
+    },
+    "rb": {
+      "targets": [
+        "rushing_floor",
+        "receiving_floor",
+        "td_points"
+      ],
+      "nn_backbone_layers": [
+        128,
+        64
+      ],
+      "nn_head_hidden": 48,
+      "nn_dropout": 0.15,
+      "nn_lr": 0.001,
+      "nn_weight_decay": 5e-05,
+      "nn_epochs": 300,
+      "nn_batch_size": 256,
+      "nn_patience": 30,
+      "nn_head_hidden_overrides": {
+        "td_points": 64
+      },
+      "loss_weights": {
+        "rushing_floor": 1.2,
+        "receiving_floor": 1.0,
+        "td_points": 2.0
+      },
+      "loss_w_total": 0.25,
+      "huber_deltas": {
+        "rushing_floor": 2.0,
+        "receiving_floor": 2.5,
+        "td_points": 3.0
+      },
+      "scheduler_type": "cosine_warm_restarts",
+      "cosine_t0": 40,
+      "cosine_t_mult": 2,
+      "cosine_eta_min": 1e-05,
+      "train_attention_nn": true,
+      "attn_d_model": 32,
+      "attn_n_heads": 4,
+      "attn_encoder_hidden_dim": 48,
+      "attn_max_seq_len": 17,
+      "attn_project_kv": false,
+      "attn_positional_encoding": true,
+      "attn_gated_fusion": false,
+      "attn_dropout": 0.08,
+      "attn_lr": 0.001,
+      "attn_weight_decay": 5e-05,
+      "attn_batch_size": 256,
+      "attn_patience": 35,
+      "attn_history_stats": [
+        "fantasy_points",
+        "fantasy_points_floor",
+        "rushing_yards",
+        "receiving_yards",
+        "rushing_tds",
+        "receiving_tds",
+        "carries",
+        "targets",
+        "receptions",
+        "snap_pct",
+        "rushing_first_downs",
+        "receiving_first_downs"
+      ]
+    },
+    "qb": {
+      "targets": [
+        "passing_floor",
+        "rushing_floor",
+        "td_points"
+      ],
+      "nn_backbone_layers": [
+        96,
+        48
+      ],
+      "nn_head_hidden": 20,
+      "nn_dropout": 0.35,
+      "nn_lr": 0.0005,
+      "nn_weight_decay": 0.0003,
+      "nn_epochs": 300,
+      "nn_batch_size": 128,
+      "nn_patience": 25,
+      "loss_weights": {
+        "passing_floor": 1.5,
+        "rushing_floor": 0.8,
+        "td_points": 3.0
+      },
+      "loss_w_total": 0.3,
+      "huber_deltas": {
+        "passing_floor": 1.5,
+        "rushing_floor": 1.0,
+        "td_points": 3.0
+      },
+      "scheduler_type": "onecycle",
+      "onecycle_max_lr": 0.002,
+      "onecycle_pct_start": 0.3,
+      "train_attention_nn": true,
+      "attn_d_model": 32,
+      "attn_n_heads": 4,
+      "attn_encoder_hidden_dim": 48,
+      "attn_max_seq_len": 17,
+      "attn_positional_encoding": true,
+      "attn_dropout": 0.1,
+      "attn_patience": 35,
+      "attn_history_stats": [
+        "fantasy_points",
+        "fantasy_points_floor",
+        "passing_yards",
+        "rushing_yards",
+        "passing_tds",
+        "rushing_tds",
+        "attempts",
+        "completions",
+        "carries",
+        "interceptions",
+        "snap_pct",
+        "sacks",
+        "sack_yards"
+      ]
+    },
+    "wr": {
+      "targets": [
+        "receiving_floor",
+        "rushing_floor",
+        "td_points"
+      ],
+      "nn_backbone_layers": [
+        128
+      ],
+      "nn_head_hidden": 32,
+      "nn_dropout": 0.2,
+      "nn_lr": 0.001,
+      "nn_weight_decay": 0.0001,
+      "nn_epochs": 250,
+      "nn_batch_size": 512,
+      "nn_patience": 25,
+      "loss_weights": {
+        "receiving_floor": 1.5,
+        "rushing_floor": 0.3,
+        "td_points": 2.0
+      },
+      "loss_w_total": 0.4,
+      "huber_deltas": {
+        "receiving_floor": 1.5,
+        "rushing_floor": 0.5,
+        "td_points": 2.0
+      },
+      "scheduler_type": "cosine_warm_restarts",
+      "cosine_t0": 40,
+      "cosine_t_mult": 2,
+      "cosine_eta_min": 1e-05,
+      "train_attention_nn": true,
+      "attn_d_model": 32,
+      "attn_n_heads": 4,
+      "attn_encoder_hidden_dim": 48,
+      "attn_max_seq_len": 17,
+      "attn_positional_encoding": true,
+      "attn_dropout": 0.08,
+      "attn_history_stats": [
+        "fantasy_points",
+        "fantasy_points_floor",
+        "receiving_yards",
+        "rushing_yards",
+        "receiving_tds",
+        "rushing_tds",
+        "targets",
+        "receptions",
+        "carries",
+        "snap_pct"
+      ]
+    }
+  },
+  "results": [
+    {
+      "position": "RB",
+      "ridge_mae": 4.424,
+      "ridge_r2": 0.431,
+      "nn_mae": 4.275,
+      "nn_r2": 0.38,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "rushing_floor": 1.865,
+        "receiving_floor": 1.818,
+        "td_points": 2.02
+      },
+      "ridge_per_target": {
+        "rushing_floor": 1.917,
+        "receiving_floor": 1.919,
+        "td_points": 2.259
+      },
+      "ridge_top12": 0.44,
+      "nn_top12": 0.444,
+      "attn_nn_mae": 4.204,
+      "attn_nn_r2": 0.399,
+      "attn_nn_per_target": {
+        "rushing_floor": 1.804,
+        "receiving_floor": 1.832,
+        "td_points": 2.033
+      },
+      "attn_nn_top12": 0.421,
+      "ensemble_mae": 4.243,
+      "ensemble_r2": 0.384,
+      "ensemble_per_target": {
+        "rushing_floor": 1.824,
+        "receiving_floor": 1.828,
+        "td_points": 2.02
+      },
+      "ensemble_top12": 0.435,
+      "ensemble_weights": {
+        "rushing_floor": {
+          "Ridge": 0.02045609733012992,
+          "NN": 0.11248509146804526,
+          "Weather": 0.4660811300176355,
+          "Attn": 0.4009776811841893
+        },
+        "receiving_floor": {
+          "Ridge": 0.0,
+          "NN": 0.1007405636961929,
+          "Weather": 0.20407830976260694,
+          "Attn": 0.6951811265412002
+        },
+        "td_points": {
+          "Ridge": 3.4531149806805135e-16,
+          "NN": 0.9999999999999962,
+          "Weather": 2.4147350785597155e-15,
+          "Attn": 1.0720591345200488e-15
+        }
+      },
+      "elapsed_sec": 63.9
+    },
+    {
+      "position": "QB",
+      "ridge_mae": 6.545,
+      "ridge_r2": 0.242,
+      "nn_mae": 6.663,
+      "nn_r2": 0.154,
+      "nn_wins_mae": false,
+      "nn_per_target": {
+        "passing_floor": 2.881,
+        "rushing_floor": 1.134,
+        "td_points": 3.88
+      },
+      "ridge_per_target": {
+        "passing_floor": 2.819,
+        "rushing_floor": 1.114,
+        "td_points": 3.997
+      },
+      "ridge_top12": 0.481,
+      "nn_top12": 0.505,
+      "attn_nn_mae": 6.68,
+      "attn_nn_r2": 0.15,
+      "attn_nn_per_target": {
+        "passing_floor": 2.869,
+        "rushing_floor": 1.128,
+        "td_points": 3.925
+      },
+      "attn_nn_top12": 0.472,
+      "ensemble_mae": 6.605,
+      "ensemble_r2": 0.179,
+      "ensemble_per_target": {
+        "passing_floor": 2.821,
+        "rushing_floor": 1.098,
+        "td_points": 3.884
+      },
+      "ensemble_top12": 0.505,
+      "ensemble_weights": {
+        "passing_floor": {
+          "Ridge": 0.32866848404270954,
+          "NN": 0.0,
+          "Weather": 0.2762996454006438,
+          "Attn": 0.3950318705566468
+        },
+        "rushing_floor": {
+          "Ridge": 0.29823920409671817,
+          "NN": 0.256586485496428,
+          "Weather": 0.44517431040685396,
+          "Attn": 2.3294871756192302e-19
+        },
+        "td_points": {
+          "Ridge": 1.11943096678193e-16,
+          "NN": 0.0,
+          "Weather": 0.9582815327665697,
+          "Attn": 0.041718467233430714
+        }
+      },
+      "elapsed_sec": 48.3
+    },
+    {
+      "position": "WR",
+      "ridge_mae": 4.507,
+      "ridge_r2": 0.341,
+      "nn_mae": 4.175,
+      "nn_r2": 0.327,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "receiving_floor": 3.208,
+        "rushing_floor": 0.113,
+        "td_points": 1.408
+      },
+      "ridge_per_target": {
+        "receiving_floor": 3.405,
+        "rushing_floor": 0.154,
+        "td_points": 1.826
+      },
+      "ridge_top12": 0.352,
+      "nn_top12": 0.352,
+      "attn_nn_mae": 4.125,
+      "attn_nn_r2": 0.343,
+      "attn_nn_per_target": {
+        "receiving_floor": 3.169,
+        "rushing_floor": 0.141,
+        "td_points": 1.417
+      },
+      "attn_nn_top12": 0.375,
+      "ensemble_mae": 4.133,
+      "ensemble_r2": 0.334,
+      "ensemble_per_target": {
+        "receiving_floor": 3.167,
+        "rushing_floor": 0.113,
+        "td_points": 1.408
+      },
+      "ensemble_top12": 0.338,
+      "ensemble_weights": {
+        "receiving_floor": {
+          "Ridge": 1.5791983573140427e-17,
+          "NN": 0.0797237445599931,
+          "Weather": 0.4710386285563909,
+          "Attn": 0.4492376268836161
+        },
+        "rushing_floor": {
+          "Ridge": 0.0,
+          "NN": 0.9999999999999997,
+          "Weather": 2.498001805406602e-16,
+          "Attn": 3.65376132127615e-16
+        },
+        "td_points": {
+          "Ridge": 0.0,
+          "NN": 1.0,
+          "Weather": 0.0,
+          "Attn": 2.3592239273284576e-15
+        }
+      },
+      "elapsed_sec": 68.2
+    }
+  ]
+}

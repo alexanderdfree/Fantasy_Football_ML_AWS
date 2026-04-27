@@ -9,6 +9,17 @@ import os
 import subprocess
 
 
+def utc_now_iso() -> str:
+    """ISO8601 UTC timestamp with seconds precision (no timezone marker).
+
+    Used as the timestamp prefix in run_ids so local benchmarks and CI runs
+    sort consistently regardless of the operator's local timezone. The
+    marker is omitted to keep the format identical to existing migrated
+    filenames (which were unmarked but already produced under UTC by CI).
+    """
+    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None).isoformat(timespec="seconds")
+
+
 def get_git_hash() -> str:
     try:
         return (
@@ -23,25 +34,33 @@ def get_git_hash() -> str:
         return "unknown"
 
 
-def append_to_history(history_file: str, run_entry: dict) -> None:
-    history = []
-    if os.path.exists(history_file):
-        try:
-            with open(history_file) as f:
-                history = json.load(f)
-        except (json.JSONDecodeError, ValueError) as e:
-            ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            quarantine = f"{history_file}.corrupt-{ts}"
-            os.rename(history_file, quarantine)
-            print(
-                f"WARNING: {history_file} is corrupt ({e}); moved to {quarantine}. Starting fresh."
-            )
-    history.append(run_entry)
-    tmp = f"{history_file}.tmp"
+def _run_filename(run_entry: dict) -> str:
+    # Colons in ISO timestamps are kept inside JSON bodies but stripped from
+    # filenames so the directory plays nicely with shell globs and `find`.
+    stem = run_entry.get("run_id") or run_entry.get("timestamp") or "run"
+    return stem.replace(":", "-") + ".json"
+
+
+def append_to_history(history_dir: str, run_entry: dict) -> str:
+    """Record one run by writing a standalone JSON file under ``history_dir``.
+
+    Each run lives in its own ``{run_id}.json`` file (with ``:`` sanitized to
+    ``-``) so the history can grow indefinitely without bloating a single
+    file. Writes go through ``{path}.tmp`` + ``os.replace`` for crash safety.
+
+    Returns the written path so callers can hand it to
+    ``print_history_comparison`` as ``exclude_path`` — that avoids inferring
+    "the just-written run" from filename sort order, which is fragile under
+    clock skew or mixed timezones.
+    """
+    os.makedirs(history_dir, exist_ok=True)
+    path = os.path.join(history_dir, _run_filename(run_entry))
+    tmp = f"{path}.tmp"
     with open(tmp, "w") as f:
-        json.dump(history, f, indent=2, default=_json_default)
-    os.replace(tmp, history_file)
-    print(f"Run appended to {history_file}")
+        json.dump(run_entry, f, indent=2, default=_json_default)
+    os.replace(tmp, path)
+    print(f"Run written to {path}")
+    return path
 
 
 def _json_default(obj):
@@ -285,25 +304,44 @@ def print_comparison_table(summaries: list, *, header: str, show_time: bool = Tr
 
 
 def print_history_comparison(
-    history_file: str,
+    history_dir: str,
     summaries: list,
     *,
+    exclude_path: str | None = None,
     last_n: int = 5,
 ) -> None:
     """Print per-position tables comparing the new run vs. the last N history runs.
 
-    Reads {history_file}, filters to entries that recorded each position, and
-    prints one table per position with timestamp, git hash, note, and the
-    same MAE/top-12 columns used by summarize_pipeline_result.
+    Reads every ``*.json`` file at the top level of ``history_dir`` (so any
+    ``ablations/`` subdir is naturally excluded), filters to entries that
+    recorded each position, and prints one table per position with timestamp,
+    git hash, note, and MAE/top-12 columns. Filenames are ISO-timestamp-
+    prefixed, so lexical sort orders display chronologically.
+
+    ``exclude_path`` (typically the value returned by ``append_to_history``)
+    drops the just-written run from the historical rows so it doesn't
+    duplicate the explicit ``> NEW`` row built from ``summaries``. The
+    comparison no longer infers "latest filename = new run", which broke
+    when local-time and CI-UTC timestamps mixed.
     """
-    if not os.path.exists(history_file):
+    if not os.path.isdir(history_dir):
         return
-    try:
-        with open(history_file) as f:
-            history = json.load(f)
-    except (json.JSONDecodeError, ValueError):
-        print(f"(could not read {history_file} for comparison)")
-        return
+    exclude_filename = os.path.basename(exclude_path) if exclude_path else None
+    files = sorted(
+        f
+        for f in os.listdir(history_dir)
+        if f.endswith(".json")
+        and f != exclude_filename
+        and os.path.isfile(os.path.join(history_dir, f))
+    )
+    history = []
+    for fn in files:
+        path = os.path.join(history_dir, fn)
+        try:
+            with open(path) as f:
+                history.append(json.load(f))
+        except (json.JSONDecodeError, ValueError):
+            print(f"(could not read {path} for comparison)")
 
     def _fmt(x):
         return f"{x:.3f}" if isinstance(x, (int, float)) else "  \u2014  "
@@ -311,7 +349,7 @@ def print_history_comparison(
     for new in summaries:
         pos = new["position"]
         rows = []
-        for entry in history[:-1]:  # exclude the just-appended new run
+        for entry in history:
             for s in entry.get("results", []):
                 if s.get("position") == pos:
                     rows.append(

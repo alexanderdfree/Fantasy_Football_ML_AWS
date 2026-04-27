@@ -1,0 +1,93 @@
+{
+  "run_id": "2026-04-15T04:47:39_fe507e0",
+  "timestamp": "2026-04-15T04:47:39",
+  "git_hash": "fe507e0",
+  "note": "QB feature expansion: 5 new features (pass_first_down_rate, rushing_epa_per_carry, rush_first_down_rate, yac_rate, sack_damage_per_dropback), td_points loss weight 2.5->3.0, Huber delta 2.0->3.0, w_total 0.4->0.3, drop trend_targets",
+  "positions": [
+    "QB"
+  ],
+  "config": {
+    "global": {
+      "train_seasons": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "val_seasons": [
+        2024
+      ],
+      "test_seasons": [
+        2025
+      ],
+      "nn_epochs": 200,
+      "nn_batch_size": 256,
+      "nn_patience": 15,
+      "nn_dropout": 0.3,
+      "nn_lr": 0.001
+    },
+    "qb": {
+      "targets": [
+        "passing_floor",
+        "rushing_floor",
+        "td_points"
+      ],
+      "nn_backbone_layers": [
+        96,
+        48
+      ],
+      "nn_head_hidden": 20,
+      "nn_dropout": 0.35,
+      "nn_lr": 0.0005,
+      "nn_weight_decay": 0.0003,
+      "nn_epochs": 300,
+      "nn_batch_size": 128,
+      "nn_patience": 25,
+      "loss_weights": {
+        "passing_floor": 1.5,
+        "rushing_floor": 0.8,
+        "td_points": 3.0
+      },
+      "loss_w_total": 0.3,
+      "huber_deltas": {
+        "passing_floor": 1.5,
+        "rushing_floor": 1.0,
+        "td_points": 3.0
+      },
+      "scheduler_type": "onecycle",
+      "onecycle_max_lr": 0.002,
+      "onecycle_pct_start": 0.3
+    }
+  },
+  "results": [
+    {
+      "position": "QB",
+      "ridge_mae": 6.333,
+      "ridge_r2": 0.178,
+      "nn_mae": 6.388,
+      "nn_r2": 0.127,
+      "nn_wins_mae": false,
+      "nn_per_target": {
+        "passing_floor": 2.609,
+        "rushing_floor": 1.161,
+        "td_points": 4.137
+      },
+      "ridge_per_target": {
+        "passing_floor": 2.606,
+        "rushing_floor": 1.227,
+        "td_points": 4.192
+      },
+      "ridge_top12": 0.505,
+      "nn_top12": 0.523,
+      "elapsed_sec": 21.0
+    }
+  ]
+}

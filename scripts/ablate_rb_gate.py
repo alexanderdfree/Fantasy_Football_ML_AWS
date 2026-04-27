@@ -2,7 +2,8 @@
 
 Runs the RB pipeline three times with deep-copied config overrides, prints a
 side-by-side table of fantasy-point MAE + per-head TD MAE + gate AUC, and
-appends the run metadata to ``benchmark_history.json``.
+writes the run metadata as a standalone JSON file under
+``benchmark_history/ablations/``.
 
 Decision rule (from the PR 2 plan): keep the gate on TDs only if variant A or
 C beats B by >= 0.05 pts/game on fantasy-point MAE. Otherwise land variant B
@@ -18,14 +19,16 @@ from __future__ import annotations
 
 import argparse
 import copy
-import json
 import os
 import sys
-from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from RB.run_rb_pipeline import RB_CONFIG, run_rb_pipeline  # noqa: E402
+from shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso  # noqa: E402
+
+ABLATION_NAME = "rb_td_gate"
+HISTORY_DIR = "benchmark_history"
 
 
 def _apply_variant_a(cfg: dict) -> dict:
@@ -163,23 +166,18 @@ def print_summary(rows: list[dict]) -> None:
             print("Decision: drop gate on TDs (variant B wins) — below 0.05 pt/game threshold.")
 
 
-def append_to_history(rows: list[dict], path: str = "benchmark_history.json") -> None:
-    if not os.path.exists(path):
-        return
-    try:
-        with open(path) as f:
-            history = json.load(f)
-    except (json.JSONDecodeError, ValueError):
-        return
+def _write_ablation(rows: list[dict]) -> None:
+    now = utc_now_iso()
+    git_hash = get_git_hash()
     entry = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "run_id": f"{now}_{git_hash}_{ABLATION_NAME}",
+        "timestamp": now,
+        "git_hash": git_hash,
         "kind": "ablation",
-        "name": "rb_td_gate",
+        "name": ABLATION_NAME,
         "variants": rows,
     }
-    history.append(entry)
-    with open(path, "w") as f:
-        json.dump(history, f, indent=2)
+    append_to_history(os.path.join(HISTORY_DIR, "ablations"), entry)
 
 
 def main() -> None:
@@ -193,7 +191,7 @@ def main() -> None:
     parser.add_argument(
         "--no-history",
         action="store_true",
-        help="Skip writing results to benchmark_history.json",
+        help="Skip writing results to benchmark_history/ablations/",
     )
     args = parser.parse_args()
 
@@ -201,7 +199,7 @@ def main() -> None:
     rows = [run_variant(v, args.seed) for v in variants]
     print_summary(rows)
     if not args.no_history:
-        append_to_history(rows)
+        _write_ablation(rows)
 
 
 if __name__ == "__main__":

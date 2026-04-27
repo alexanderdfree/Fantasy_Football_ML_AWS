@@ -50,7 +50,7 @@ The training pipeline in `shared/pipeline.py` and the serving code in `app.py` b
 ## Running code
 
 Commands live in [SETUP.md](SETUP.md). Shortcuts:
-- `python benchmark.py [POS ...]` — benchmark & refresh artifacts (append row to `benchmark_history.json`).
+- `python benchmark.py [POS ...]` — benchmark & refresh artifacts (writes a `{run_id}.json` file under `benchmark_history/`).
 - `python {POS}/run_{pos}_pipeline.py` — single position, full local run.
 - `pytest -m unit` — fast subset, runs in seconds. `pytest` for the full suite (requires `data/splits/*.parquet`).
 - `ruff check . && ruff format --check .` — lint/format gate used by CI.

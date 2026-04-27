@@ -11,7 +11,6 @@ Usage:
 """
 
 import argparse
-import datetime
 import json
 import os
 import sys
@@ -37,10 +36,11 @@ from shared.benchmark_utils import (
     get_git_hash,
     print_comparison_table,
     summarize_pipeline_result,
+    utc_now_iso,
 )
 
 RESULTS_FILE = "benchmark_results.json"
-HISTORY_FILE = "benchmark_history.json"
+HISTORY_DIR = "benchmark_history"
 
 
 def download_metrics(positions):
@@ -94,12 +94,12 @@ def main():
         "--backend",
         choices=["batch", "ec2"],
         default="batch",
-        help="Backend label recorded in benchmark_history.json",
+        help="Backend label recorded in benchmark_history/",
     )
     parser.add_argument(
         "--instance-type",
         default="g4dn.xlarge (Spot)",
-        help="Instance-type label recorded in benchmark_history.json",
+        help="Instance-type label recorded in benchmark_history/",
     )
     args = parser.parse_args()
 
@@ -159,9 +159,9 @@ def main():
     print(f"\nResults saved to {RESULTS_FILE}")
 
     git_hash = get_git_hash()
-    now = datetime.datetime.now().isoformat(timespec="seconds")
+    now = utc_now_iso()
     append_to_history(
-        HISTORY_FILE,
+        HISTORY_DIR,
         {
             "run_id": f"{now}_{git_hash}",
             "timestamp": now,
