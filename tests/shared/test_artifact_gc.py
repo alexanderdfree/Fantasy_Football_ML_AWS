@@ -43,6 +43,7 @@ def _history_key(n: int) -> str:
     return f"models/QB/history/2026-04-{n:02d}T00-00-00Z-aaa{n:04d}/model.tar.gz"
 
 
+@pytest.mark.unit
 def test_prune_keeps_current_previous_and_history():
     """Any key referenced by current/previous/history[:keep_n] must survive."""
     keys = [_history_key(n) for n in range(1, 11)]  # 10 entries
@@ -63,6 +64,7 @@ def test_prune_keeps_current_previous_and_history():
         assert _history_key(n) in fake._keys
 
 
+@pytest.mark.unit
 def test_prune_is_idempotent_on_rerun():
     """A second run with the same manifest deletes nothing new."""
     keys = [_history_key(n) for n in range(1, 8)]  # 7 entries
@@ -81,6 +83,7 @@ def test_prune_is_idempotent_on_rerun():
     assert second == []
 
 
+@pytest.mark.unit
 def test_prune_sweeps_orphans_not_in_manifest():
     """Keys under history/ that the manifest never knew about (e.g. abandoned
     uploads from a crashed producer) get cleaned up too — source of truth is
@@ -104,6 +107,7 @@ def test_prune_sweeps_orphans_not_in_manifest():
         assert k in fake._keys
 
 
+@pytest.mark.unit
 def test_prune_handles_missing_manifest_entries_gracefully():
     """previous may be None on the first post-migration write; current's key
     may be absent if called with a weirdly shaped manifest. Prune must not
@@ -119,6 +123,7 @@ def test_prune_handles_missing_manifest_entries_gracefully():
     assert deleted == [_history_key(1)]
 
 
+@pytest.mark.unit
 def test_prune_respects_custom_position_prefix():
     """Only the requested position's history/ is listed and deleted from —
     prune('QB', ...) must not touch RB's artifacts even if the manifest
@@ -136,6 +141,7 @@ def test_prune_respects_custom_position_prefix():
     assert "models/QB/history/q1/model.tar.gz" not in fake._keys
 
 
+@pytest.mark.unit
 def test_prune_propagates_real_s3_errors():
     """Not a retention concern: if the listing call itself errors (auth,
     throttle), prune should raise so the caller's best-effort try/except
@@ -153,6 +159,7 @@ def test_prune_propagates_real_s3_errors():
         prune(_ErroringS3(), "bucket", "models", "QB", manifest)
 
 
+@pytest.mark.unit
 def test_prune_no_op_when_history_empty():
     """No keys under history/ → no delete call is made (S3 charges per
     request; a cleanup run shouldn't hit delete_objects at all)."""
@@ -165,6 +172,7 @@ def test_prune_no_op_when_history_empty():
     fake.delete_objects.assert_not_called()
 
 
+@pytest.mark.unit
 def test_prune_preserves_stable_key_outside_history_window():
     """The artifact pointed to by ``stable`` must survive prune even when
     it's older than the ``keep_n`` newest history entries. This is the
@@ -191,6 +199,7 @@ def test_prune_preserves_stable_key_outside_history_window():
     assert set(deleted) == {_history_key(n) for n in range(2, 6)}
 
 
+@pytest.mark.unit
 def test_prune_handles_missing_stable_field():
     """Old (v1) manifests have no ``stable`` field. Prune must read absence
     as 'no stable pin' and behave exactly as before — keep current, previous,

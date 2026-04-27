@@ -129,6 +129,7 @@ class _FakeS3:
         return _FakePaginator(self._objects)
 
 
+@pytest.mark.unit
 def test_sync_noop_when_bucket_unset(monkeypatch, capsys):
     monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
     result = model_sync.sync_models_from_s3()
@@ -136,11 +137,13 @@ def test_sync_noop_when_bucket_unset(monkeypatch, capsys):
     assert "unset" in capsys.readouterr().out
 
 
+@pytest.mark.unit
 def test_sync_noop_when_bucket_blank(monkeypatch):
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "   ")
     assert model_sync.sync_models_from_s3() is None
 
 
+@pytest.mark.unit
 def test_sync_extracts_all_positions_via_legacy_fallback(monkeypatch, tmp_path):
     """Pre-migration bucket: no manifest.json, just legacy model.tar.gz per
     position. _sync_one must fall through to the legacy key and report
@@ -169,6 +172,7 @@ def test_sync_extracts_all_positions_via_legacy_fallback(monkeypatch, tmp_path):
         assert extracted.read_bytes() == b"payload-" + pos.encode()
 
 
+@pytest.mark.unit
 def test_repo_root_resolves_to_actual_repo_root():
     """Contract: ``_repo_root()`` must return the directory the deployed Flask
     app's CWD resolves to (``/app`` in the container), not a subdirectory.
@@ -193,6 +197,7 @@ def test_repo_root_resolves_to_actual_repo_root():
     )
 
 
+@pytest.mark.unit
 def test_sync_one_dest_string_path_matches_registry_model_dir(monkeypatch, tmp_path):
     """Contract: ``_sync_one``'s extraction directory must equal — *as a
     case-sensitive path string* — the directory ``registry.get_inference_spec
@@ -247,6 +252,7 @@ def test_sync_one_dest_string_path_matches_registry_model_dir(monkeypatch, tmp_p
         )
 
 
+@pytest.mark.unit
 def test_sync_honors_custom_prefix(monkeypatch, tmp_path):
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setenv("FF_MODEL_S3_PREFIX", "nightly/v2")
@@ -268,6 +274,7 @@ def test_sync_honors_custom_prefix(monkeypatch, tmp_path):
         assert f"nightly/v2/{pos}/model.tar.gz" in keys_called
 
 
+@pytest.mark.unit
 def test_sync_raises_on_missing_key(monkeypatch, tmp_path):
     """No manifest AND no legacy key → ClientError escapes the legacy path."""
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
@@ -294,6 +301,7 @@ def _build_objects_for_all_positions(current_tarball: bytes) -> dict[str, bytes]
     return objects
 
 
+@pytest.mark.unit
 def test_sync_one_prefers_current_from_manifest(monkeypatch, tmp_path):
     """Happy path: manifest.current points at a history/ key, consumer pulls it
     and reports source=current."""
@@ -314,6 +322,7 @@ def test_sync_one_prefers_current_from_manifest(monkeypatch, tmp_path):
     ).read_bytes() == b"CURRENT"
 
 
+@pytest.mark.unit
 def test_sync_one_falls_back_to_previous_when_current_corrupt(monkeypatch, tmp_path, capsys):
     """Current points at a valid key in S3 but the bytes aren't a gzip tarball
     (e.g. a truncated upload slipped past validation, or S3 replication is
@@ -352,6 +361,7 @@ def test_sync_one_falls_back_to_previous_when_current_corrupt(monkeypatch, tmp_p
     assert all(r["source"] == "current" for r in summary["positions"] if r["pos"] != "QB")
 
 
+@pytest.mark.unit
 def test_sync_one_falls_back_to_previous_when_current_nosuchkey(monkeypatch, tmp_path):
     """Current pointer exists in manifest but the actual key is missing from
     S3 (e.g. GC deleted it by mistake, or manifest-write succeeded but
@@ -381,6 +391,7 @@ def test_sync_one_falls_back_to_previous_when_current_nosuchkey(monkeypatch, tmp
         assert extracted.read_bytes() == b"FROM_PREVIOUS"
 
 
+@pytest.mark.unit
 def test_sync_one_raises_when_both_current_and_previous_fail(monkeypatch, tmp_path):
     """Manifest points at two broken artifacts. We deliberately do NOT fall
     back to the legacy key here — if a manifest exists, that's the contract,
@@ -408,6 +419,7 @@ def test_sync_one_raises_when_both_current_and_previous_fail(monkeypatch, tmp_pa
             model_sync.sync_models_from_s3()
 
 
+@pytest.mark.unit
 def test_sync_one_falls_back_on_truncated_gzip(monkeypatch, tmp_path):
     """A truncated gzip (valid header, cut-off payload) raises ``EOFError``
     from gzip.py, not ``tarfile.TarError``. The consumer must catch that
@@ -437,6 +449,7 @@ def test_sync_one_falls_back_on_truncated_gzip(monkeypatch, tmp_path):
     assert all(r["source"] == "previous" for r in summary["positions"])
 
 
+@pytest.mark.unit
 def test_sync_one_raises_when_current_fails_and_previous_is_null(monkeypatch, tmp_path):
     """First-ever post-migration run: previous is None. If current fails
     there's nowhere to fall back to, and the raise blocks the rollout —
@@ -459,6 +472,7 @@ def test_sync_one_raises_when_current_fails_and_previous_is_null(monkeypatch, tm
 # --- Manifest v2: stable-first fallback chain ---
 
 
+@pytest.mark.unit
 def test_sync_one_prefers_stable_over_current(monkeypatch, tmp_path):
     """Happy path under the new contract: when the manifest names a stable
     artifact (from a passing smoke test on the writer side), ``_sync_one``
@@ -497,6 +511,7 @@ def test_sync_one_prefers_stable_over_current(monkeypatch, tmp_path):
         assert cur_key not in keys_called
 
 
+@pytest.mark.unit
 def test_sync_one_falls_through_when_stable_missing_v1_manifest(monkeypatch, tmp_path):
     """Backwards compat: a v1-shaped manifest has no ``stable`` field at all.
     Consumer must treat that as "no stable yet" and fall through to current
@@ -522,6 +537,7 @@ def test_sync_one_falls_through_when_stable_missing_v1_manifest(monkeypatch, tmp
     assert all(r["source"] == "current" for r in summary["positions"])
 
 
+@pytest.mark.unit
 def test_sync_one_falls_through_when_stable_corrupt(monkeypatch, tmp_path, capsys):
     """Stable points at a key whose bytes are corrupt (e.g. a delete-and-
     rewrite race or a flipped bit on disk). Consumer falls through to current
@@ -551,6 +567,7 @@ def test_sync_one_falls_through_when_stable_corrupt(monkeypatch, tmp_path, capsy
     assert "stable" in out and "FAILED" in out
 
 
+@pytest.mark.unit
 def test_sync_one_full_chain_falls_to_previous_when_stable_and_current_corrupt(
     monkeypatch, tmp_path
 ):
@@ -583,6 +600,7 @@ def test_sync_one_full_chain_falls_to_previous_when_stable_and_current_corrupt(
 # --- Pure-function tests for build_manifest ---
 
 
+@pytest.mark.unit
 def test_build_manifest_first_write_has_null_previous():
     m = model_sync.build_manifest(
         new_key="models/QB/history/t1/model.tar.gz",
@@ -600,6 +618,7 @@ def test_build_manifest_first_write_has_null_previous():
     assert m["history"] == ["models/QB/history/t1/model.tar.gz"]
 
 
+@pytest.mark.unit
 def test_build_manifest_promotes_old_current_to_previous():
     old = {
         "current": {"key": "old-cur", "sha7": "old1234", "bytes": 1, "uploaded_at": "t0"},
@@ -621,6 +640,7 @@ def test_build_manifest_promotes_old_current_to_previous():
     assert len(m["history"]) <= model_sync.HISTORY_KEEP_N
 
 
+@pytest.mark.unit
 def test_build_manifest_caps_history_at_keep_n():
     old_history = [f"k{i}" for i in range(model_sync.HISTORY_KEEP_N + 3)]
     old = {
@@ -639,6 +659,7 @@ def test_build_manifest_caps_history_at_keep_n():
     assert m["history"][0] == "brand-new"
 
 
+@pytest.mark.unit
 def test_build_manifest_smoke_passed_advances_stable():
     """A passing smoke test promotes the new entry into the ``stable`` slot.
     When there is no prior manifest, ``stable`` and ``current`` agree."""
@@ -654,6 +675,7 @@ def test_build_manifest_smoke_passed_advances_stable():
     assert m["stable"] == m["current"]
 
 
+@pytest.mark.unit
 def test_build_manifest_smoke_failed_pins_old_stable():
     """A failing smoke test does NOT advance ``stable`` — the prior good
     pointer carries forward verbatim. Current and history still update so
@@ -683,6 +705,7 @@ def test_build_manifest_smoke_failed_pins_old_stable():
     assert m["previous"] == old["current"]
 
 
+@pytest.mark.unit
 def test_build_manifest_smoke_failed_first_run_leaves_stable_null():
     """First-ever upload with a failing smoke test — there's no prior stable
     to pin to, so stable starts as None. Migration window: the consumer
@@ -699,6 +722,7 @@ def test_build_manifest_smoke_failed_first_run_leaves_stable_null():
     assert m["stable"] is None
 
 
+@pytest.mark.unit
 def test_build_manifest_smoke_passed_after_prior_failure_advances_stable():
     """A retrain that passes smoke test after a stretch of failures advances
     stable to the new key, leapfrogging the old pinned stable."""
@@ -721,6 +745,7 @@ def test_build_manifest_smoke_passed_after_prior_failure_advances_stable():
     assert m["current"]["key"] == "new-good"
 
 
+@pytest.mark.unit
 def test_build_manifest_idempotent_on_same_new_key():
     """If a retry uploads the same bytes to the same versioned key, the new
     key shouldn't get duplicated in history."""
@@ -739,12 +764,14 @@ def test_build_manifest_idempotent_on_same_new_key():
     assert m["history"].count("k1") == 1
 
 
+@pytest.mark.unit
 def test_extract_rejects_path_traversal(tmp_path):
     malicious = _make_tarball({"../../../etc/evil.pkl": b"pwn"})
     with pytest.raises(RuntimeError, match="escape"):
         model_sync._extract_tarball(malicious, tmp_path / "dest")
 
 
+@pytest.mark.unit
 def test_extract_allows_nested_subdirs(tmp_path):
     data = _make_tarball(
         {
@@ -758,12 +785,14 @@ def test_extract_allows_nested_subdirs(tmp_path):
     assert (dest / "lightgbm" / "receiving_yards.pkl").read_bytes() == b"b"
 
 
+@pytest.mark.unit
 def test_data_sync_noop_when_bucket_unset(monkeypatch, capsys):
     monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
     assert model_sync.sync_data_from_s3() is None
     assert "unset" in capsys.readouterr().out
 
 
+@pytest.mark.unit
 def test_data_sync_downloads_splits_and_raw(monkeypatch, tmp_path):
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
@@ -792,6 +821,7 @@ def test_data_sync_downloads_splits_and_raw(monkeypatch, tmp_path):
     assert not (tmp_path / "data" / "raw" / "notes.txt").exists()
 
 
+@pytest.mark.unit
 def test_data_sync_raises_on_missing_split(monkeypatch, tmp_path):
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
