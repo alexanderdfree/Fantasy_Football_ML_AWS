@@ -101,6 +101,7 @@ def patch_registry(monkeypatch):
     return _register
 
 
+@pytest.mark.unit
 def test_run_smoke_test_passes_with_valid_artifacts(tmp_path, patch_registry):
     """Happy path: a freshly-trained tiny artifact loads and produces finite
     predictions on a zero input. No exception raised."""
@@ -111,6 +112,7 @@ def test_run_smoke_test_passes_with_valid_artifacts(tmp_path, patch_registry):
     assert run_smoke_test("TST", model_dir) is None
 
 
+@pytest.mark.unit
 def test_run_smoke_test_raises_on_missing_model_dir(tmp_path, patch_registry):
     """Non-existent model_dir → SmokeTestFailed, not a vanilla
     FileNotFoundError, so the producer's catch sees the canonical type."""
@@ -119,6 +121,7 @@ def test_run_smoke_test_raises_on_missing_model_dir(tmp_path, patch_registry):
         run_smoke_test("TST", tmp_path / "does_not_exist")
 
 
+@pytest.mark.unit
 def test_run_smoke_test_raises_on_missing_nn_file(tmp_path, patch_registry):
     """Tarball passed _validate_remote_tarball (NN file present) but the
     file is removed locally before smoke test runs. Should fail in the NN
@@ -131,6 +134,7 @@ def test_run_smoke_test_raises_on_missing_nn_file(tmp_path, patch_registry):
         run_smoke_test("TST", model_dir)
 
 
+@pytest.mark.unit
 def test_run_smoke_test_raises_on_feature_hash_mismatch(tmp_path, patch_registry):
     """Scaler meta lies about its feature_cols_hash (e.g. retrained on a
     different feature set without re-emitting the meta). The smoke test
@@ -146,6 +150,7 @@ def test_run_smoke_test_raises_on_feature_hash_mismatch(tmp_path, patch_registry
         run_smoke_test("TST", model_dir)
 
 
+@pytest.mark.unit
 def test_run_smoke_test_raises_on_n_features_mismatch(tmp_path, patch_registry):
     """The scaler meta says n_features=4 but the registry's feature column
     list has 5. assert_scaler_matches detects this dimension mismatch."""
@@ -158,6 +163,7 @@ def test_run_smoke_test_raises_on_n_features_mismatch(tmp_path, patch_registry):
         run_smoke_test("TST", model_dir)
 
 
+@pytest.mark.unit
 def test_run_smoke_test_raises_on_nan_prediction(tmp_path, patch_registry, monkeypatch):
     """Model loads cleanly but produces NaN output (e.g. a head that
     collapsed to nan during training and got serialized). The smoke test
@@ -181,6 +187,7 @@ def test_run_smoke_test_raises_on_nan_prediction(tmp_path, patch_registry, monke
         run_smoke_test("TST", model_dir)
 
 
+@pytest.mark.unit
 def test_run_smoke_test_raises_on_corrupt_nn_checkpoint(tmp_path, patch_registry):
     """torch.load fails on a non-torch file. The smoke test wraps the
     UnpicklingError / RuntimeError in SmokeTestFailed."""
@@ -192,6 +199,7 @@ def test_run_smoke_test_raises_on_corrupt_nn_checkpoint(tmp_path, patch_registry
         run_smoke_test("TST", model_dir)
 
 
+@pytest.mark.unit
 def test_run_smoke_test_raises_on_missing_ridge(tmp_path, patch_registry):
     """Ridge is loaded first; if its files are missing it fails before NN
     is even touched. The error label must identify the model that failed

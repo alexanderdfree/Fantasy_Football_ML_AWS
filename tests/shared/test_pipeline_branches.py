@@ -212,6 +212,10 @@ def test_build_train_matrix_loads_synthetic_splits(tmp_path, monkeypatch):
                         "receiving_fumbles_lost": 0,
                         "snap_pct": 0.95,
                         "fantasy_points": float(rng.uniform(10, 25)),
+                        # Why: short-circuits merge_schedule_features so the
+                        # test doesn't need data/raw/schedules_2012_2025.parquet
+                        # on disk (matches the pattern in test_feature_build.py).
+                        "_schedule_merged": True,
                     }
                 )
     df = pd.DataFrame(rows)
