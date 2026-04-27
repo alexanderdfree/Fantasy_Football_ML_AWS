@@ -9,8 +9,9 @@
 #
 # Prereqs:
 #   - AWS CLI v2 with credentials for the target account.
-#   - Local {POS}/outputs/models/ directories populated (true today — the
-#     git-committed .pkl / .pt files are the fallback models).
+#   - Local src/{pos}/outputs/models/ directories populated (e.g. via a
+#     prior `python -m src.{pos}.run_pipeline` or by extracting an existing
+#     S3 tarball locally).
 #   - S3 bucket ff-predictor-training exists (it does — training already
 #     writes data/raw/ there).
 #
@@ -27,7 +28,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 log() { echo "[seed-s3] $*"; }
 
 for POS in "${POSITIONS[@]}"; do
-  SRC_DIR="$REPO_ROOT/$POS/outputs/models"
+  pos_lower="${POS,,}"
+  SRC_DIR="$REPO_ROOT/src/$pos_lower/outputs/models"
   if [ ! -d "$SRC_DIR" ]; then
     log "ERROR: missing $SRC_DIR"
     exit 1
@@ -42,11 +44,12 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 for POS in "${POSITIONS[@]}"; do
-  SRC_DIR="$REPO_ROOT/$POS/outputs/models"
+  pos_lower="${POS,,}"
+  SRC_DIR="$REPO_ROOT/src/$pos_lower/outputs/models"
   TARBALL="$TMP/$POS.tar.gz"
-  # -C so tar entries are flat (nn_scaler.pkl, lightgbm/..., not QB/outputs/models/nn_scaler.pkl).
-  # This matches the layout batch/train.py:upload_artifacts produces and
-  # shared.model_sync._extract_tarball expects.
+  # -C so tar entries are flat (nn_scaler.pkl, lightgbm/..., not src/qb/outputs/models/nn_scaler.pkl).
+  # This matches the layout src/batch/train.py:upload_artifacts produces and
+  # src.shared.model_sync._extract_tarball expects.
   log "Tarring $POS from $SRC_DIR..."
   tar -czf "$TARBALL" -C "$SRC_DIR" .
   SIZE_MB=$(du -m "$TARBALL" | cut -f1)

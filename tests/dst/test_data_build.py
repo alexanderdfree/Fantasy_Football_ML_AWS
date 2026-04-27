@@ -1,4 +1,4 @@
-"""Coverage tests for ``DST/dst_data.py::build_data``.
+"""Coverage tests for ``src.dst.data.build_data``.
 
 ``build_data`` reads three inputs — weekly player stats, schedules,
 and team-week stats — and performs the bulk of the 400-line merge/

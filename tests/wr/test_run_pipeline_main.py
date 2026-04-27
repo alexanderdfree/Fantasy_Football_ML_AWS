@@ -1,4 +1,4 @@
-"""Coverage smoke test for ``WR/run.py``'s ``__main__`` block.
+"""Coverage smoke test for ``src/wr/run_pipeline.py``'s ``__main__`` block.
 
 Mirrors the QB/RB versions — drives argparse + dispatch with mocked
 ``src.shared.pipeline.run_pipeline`` / ``run_cv_pipeline`` so the CLI branch

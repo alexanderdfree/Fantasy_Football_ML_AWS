@@ -1,4 +1,4 @@
-"""Tests for DST.dst_data — filter_to_position (identity filter).
+"""Tests for src.dst.data — filter_to_position (identity filter).
 
 D/ST data is pre-built at team-level (via build_data), so filter_to_position
 is an identity filter that returns a copy of the input.

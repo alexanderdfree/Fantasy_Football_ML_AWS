@@ -192,7 +192,7 @@ OPP_ATTN_HISTORY_STATS = [
 ]
 OPP_ATTN_MAX_SEQ_LEN = 17
 # Hurdle gate on receptions + BCE gate on receiving_tds. Matches the
-# "Variant C" config for RB (see RB/rb_config.py for the ablation table).
+# "Variant C" config for RB (see src/rb/config.py for the ablation table).
 # WR doesn't have its own ablation, but the mechanism is target-agnostic:
 # the BCE gate on (y > 0) gives the attention branch per-target access to
 # "did this player score a TD this week?" signal that's otherwise hidden

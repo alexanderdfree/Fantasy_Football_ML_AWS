@@ -1,4 +1,4 @@
-"""Tests for TE.te_targets — compute_targets emits 4 raw-stat columns."""
+"""Tests for src.te.targets — compute_targets emits 4 raw-stat columns."""
 
 import numpy as np
 import pandas as pd

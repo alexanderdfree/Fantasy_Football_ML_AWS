@@ -1,6 +1,6 @@
 """Feature contract tests for K (Kicker) position.
 
-Uses `K.k_features.get_feature_columns()` as the source of truth: after the
+Uses `src.k.features.get_feature_columns()` as the source of truth: after the
 full K feature pipeline (compute_targets -> compute_features), every
 advertised feature column must exist, be numeric, and satisfy the documented
 NaN and range ceilings.

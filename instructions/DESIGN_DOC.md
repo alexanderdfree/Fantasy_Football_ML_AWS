@@ -853,7 +853,7 @@ These are decisions you should explain in the technical walkthrough video and RE
 3. Create virtual environment: python -m venv venv && source venv/bin/activate
 4. Install dependencies: pip install -r requirements.txt
 5. Download/cache data: data is auto-downloaded on first pipeline run
-6. Run position pipelines: python -m RB.run_rb_pipeline (etc.)
+6. Run position pipelines: python -m src.rb.run_pipeline (etc.)
 7. Start web dashboard: python -m src.serving.app
 8. Expected runtime: under a minute per position on CPU (no GPU required)
 ```
@@ -1053,7 +1053,7 @@ Validate correctness at each pipeline stage before moving on:
 4. **Target decomposition sanity checks:** Each `compute_{pos}_targets()` function includes a
    `fantasy_points_check` that verifies the sum of decomposed targets matches total fantasy points
 5. **Model sanity check:** Verify trained models produce predictions in a reasonable range (0-50 PPR points typically)
-6. **Cross-validation with nflverse:** `rb_targets.py` cross-validates computed fantasy points against
+6. **Cross-validation with nflverse:** `src/rb/targets.py` cross-validates computed fantasy points against
    nflverse pre-computed `fantasy_points_ppr` column when available
 
 ---

@@ -180,7 +180,7 @@ OPP_ATTN_HISTORY_STATS = [
 ]
 OPP_ATTN_MAX_SEQ_LEN = 17
 # Hurdle gate on receptions + BCE gate on receiving_tds. Mirrors the RB
-# "Variant C" config from scripts/ablate_rb_gate.py (see RB/rb_config.py
+# "Variant C" config from src/tuning/ablate_rb_gate.py (see src/rb/config.py
 # for the ablation table). PR #96 benchmark review flagged a +0.052
 # per-target MAE regression on receiving_tds when the gate came off;
 # restoring the BCE gate brings that back without disturbing the

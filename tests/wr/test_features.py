@@ -1,4 +1,4 @@
-"""Tests for WR.wr_features — _compute_features and fill_nans."""
+"""Tests for src.wr.features — _compute_features and fill_nans."""
 
 import numpy as np
 import pandas as pd

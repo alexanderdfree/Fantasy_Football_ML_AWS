@@ -1,4 +1,4 @@
-"""Tests for DST.dst_features — compute_features and fill_nans.
+"""Tests for src.dst.features — compute_features and fill_nans.
 
 D/ST features are computed on the FULL team-week dataset before splitting
 (like Kicker features). Groups by team+season (resets per-season, unlike K).

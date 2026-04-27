@@ -1,4 +1,4 @@
-"""Tests for DST.dst_targets — compute_targets and tier-bonus helpers.
+"""Tests for src.dst.targets — compute_targets and tier-bonus helpers.
 
 D/ST targets are 10 raw NFL stat counts. Fantasy points are computed after
 prediction by summing the linear scoring coefficients (sacks*1, INT*2, ...)

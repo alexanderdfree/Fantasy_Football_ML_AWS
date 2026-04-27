@@ -176,7 +176,7 @@ LGBM_OBJECTIVE = "huber"
 
 # === Tiny config for E2E smoke tests ===
 # Shrunk to 1 epoch with a 2-layer x 8-unit NN so the full pipeline runs
-# in well under 20s on CPU. Used by K/tests/test_k_pipeline_e2e.py.
+# in well under 20s on CPU. Used by tests/k/test_pipeline_e2e.py.
 CONFIG_TINY = {
     "targets": TARGETS,
     "ridge_alpha_grids": {t: [1.0] for t in TARGETS},

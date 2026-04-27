@@ -1,4 +1,4 @@
-"""Coverage smoke test for ``K/run.py``'s ``__main__`` block.
+"""Coverage smoke test for ``src/k/run_pipeline.py``'s ``__main__`` block.
 
 K's pipeline does its own data-loading internally (``load_data`` +
 ``load_kicks``), so unlike QB/RB/WR/TE we have to mock the loaders
@@ -34,11 +34,11 @@ def _synthetic_k_df(n: int = 6) -> pd.DataFrame:
 def _patch_all(monkeypatch):
     """Stub loaders + pipeline so ``run()`` runs in-memory.
 
-    We patch both the source modules (``K.k_data``, ``K.k_features``,
-    ``K.k_targets``, ``src.shared.pipeline``) and the re-bound names inside
-    ``K.run``. Source-module patching matters when ``runpy``
+    We patch both the source modules (``src.k.data``, ``src.k.features``,
+    ``src.k.targets``, ``src.shared.pipeline``) and the re-bound names inside
+    ``src.k.run_pipeline``. Source-module patching matters when ``runpy``
     re-executes the script: the fresh ``from src.k.data import load_data``
-    grabs whatever's on ``K.k_data`` at that moment. Re-binding in-place on
+    grabs whatever's on ``src.k.data`` at that moment. Re-binding in-place on
     the already-imported ``k_pipe`` handles direct-call tests.
     """
     import src.k.data as k_data

@@ -10,7 +10,7 @@ Also prints (a) dataset-wide receiving contamination stats in QB rows and
 see whether rolling features were polluted by non-QB usage.
 
 Usage:
-    python -m QB.diagnose_qb_outliers
+    python -m src.qb.diagnose_outliers
 
 Writes:
     analysis_output/qb_outlier_diagnostic.md

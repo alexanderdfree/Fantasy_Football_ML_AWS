@@ -1,4 +1,4 @@
-"""Tests for WR.wr_targets - compute_targets (raw-stat targets)."""
+"""Tests for src.wr.targets - compute_targets (raw-stat targets)."""
 
 import numpy as np
 import pandas as pd

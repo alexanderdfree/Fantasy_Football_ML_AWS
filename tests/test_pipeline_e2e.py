@@ -118,7 +118,7 @@ def test_pipeline_writes_model_artifacts(pipeline_run, position):
     cfg = pipeline_run["cfg"]
 
     pos_lower = position.lower()
-    models_dir = workdir / "src" / position / "outputs" / "models"
+    models_dir = workdir / position / "outputs" / "models"
     assert models_dir.is_dir(), f"{position}: models dir not created"
 
     nn_path = models_dir / f"{pos_lower}_multihead_nn.pt"
@@ -197,7 +197,7 @@ def test_pipeline_trains_elasticnet_when_enabled(tmp_path_factory):
         assert np.all(arr >= 0)  # non-negative clamping enforced
 
     # ElasticNet artifacts land under models/elasticnet/<target>/.
-    enet_dir = workdir / "src" / "QB" / "outputs" / "models" / "elasticnet"
+    enet_dir = workdir / "QB" / "outputs" / "models" / "elasticnet"
     assert enet_dir.is_dir()
     for target in cfg["targets"]:
         tdir = enet_dir / target

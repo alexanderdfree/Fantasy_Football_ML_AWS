@@ -1,4 +1,4 @@
-"""Tests for QB.qb_data — filter_to_position."""
+"""Tests for src.qb.data — filter_to_position."""
 
 import pandas as pd
 import pytest

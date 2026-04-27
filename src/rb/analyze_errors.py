@@ -4,8 +4,8 @@ Runs the RB pipeline, then slices prediction errors by game context,
 player usage, opponent quality, and scoring patterns.
 
 Usage:
-    python RB/analyze_rb_errors.py
-    python RB/analyze_rb_errors.py --no-plots
+    python -m src.rb.analyze_errors
+    python -m src.rb.analyze_errors --no-plots
 """
 
 import argparse

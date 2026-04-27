@@ -21,7 +21,7 @@ def reconstruct_kicker_weekly_from_pbp(
     PBP has FG/XP play-level data from 1999+, while import_weekly_data()
     only has kicker columns starting in 2025. This function aggregates PBP
     plays into a weekly kicker-level dataframe matching the schema expected
-    by k_targets.py, plus additional PBP-derived columns for features.
+    by src/k/targets.py, plus additional PBP-derived columns for features.
     """
     # Resolve at call time so module-level monkeypatches of CACHE_DIR take
     # effect (using `cache_dir: str = CACHE_DIR` as a default would freeze
@@ -70,7 +70,7 @@ def reconstruct_kicker_weekly_from_pbp(
             fg["is_long"] = (d >= 40).astype(int)
             fg["long_made"] = (fg["is_long"] & fg["fg_made_flag"]).astype(int)
             # Sum of kick_distance restricted to made FGs — per-attempt contribution
-            # to the `fg_yards_made` season-week aggregate consumed by k_targets.
+            # to the `fg_yards_made` season-week aggregate consumed by src.k.targets.
             fg["_fg_yards_made_flag"] = fg["fg_made_flag"] * fg["kick_distance"]
 
             weekly_fg = (

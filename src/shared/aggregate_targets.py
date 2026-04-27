@@ -119,7 +119,7 @@ def _tier_bonuses(values, boundaries: list[int], bonuses: list[int]):
     """Vectorized tier lookup for DST PA/YA fantasy-point bonuses.
 
     Works on torch Tensors (preserving autograd-compatible dtype/device) and
-    numpy arrays. Matches the scalar helpers in ``DST/dst_targets.py`` —
+    numpy arrays. Matches the scalar helpers in ``src/dst/targets.py`` —
     values fall into tiers via half-open intervals ``[boundaries[i-1],
     boundaries[i])``.
 
@@ -147,7 +147,7 @@ def _tier_bonuses(values, boundaries: list[int], bonuses: list[int]):
 def _dst_predictions_to_fantasy_points(preds_dict: dict):
     """Aggregate the 10 DST raw-stat predictions into fantasy points.
 
-    Must match ``DST.dst_targets.compute_targets``'s ``fantasy_points``
+    Must match ``src.dst.targets.compute_targets``'s ``fantasy_points``
     column exactly. Used at serving time (``app.py:_combine_total``) and for
     benchmark reporting; training itself supervises only the raw-stat heads.
 

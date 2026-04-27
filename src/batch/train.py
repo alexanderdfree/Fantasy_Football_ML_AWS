@@ -133,8 +133,8 @@ def sync_raw_data(s3_bucket):
     """Sync s3://{bucket}/data/raw/*.parquet into the container's data/raw/.
 
     Needed by src/shared/weather_features._load_schedules() (all positions during
-    feature engineering) and by K/DST's self-contained loaders (k_data,
-    dst_data). CACHE_DIR="data/raw" in src/config.py resolves relative to
+    feature engineering) and by K/DST's self-contained loaders (src.k.data,
+    src.dst.data). CACHE_DIR="data/raw" in src/config.py resolves relative to
     the container WORKDIR=/opt/ml/code. .dockerignore excludes data/ so these
     parquets aren't baked into the image.
     """
@@ -421,7 +421,7 @@ def _run_rb_gate_ablation(train_df, val_df, test_df, seed: int) -> None:
     """Three-way ablation on RB TD heads: Huber+gate vs Poisson+no-gate vs
     Poisson+gate. Prints a decision table; skips S3 upload.
 
-    Mirrors ``scripts/ablate_rb_gate.py`` but runs inside the container so
+    Mirrors ``src/tuning/ablate_rb_gate.py`` but runs inside the container so
     the downloaded splits are reused across variants (cuts ~30s × 3 of repeated
     data-prep). The shipping RB config (variant B) ships Poisson+no-gate;
     this function answers whether that was the right call by comparing

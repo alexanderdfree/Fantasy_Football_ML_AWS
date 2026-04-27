@@ -1,4 +1,4 @@
-"""Tests for WR.wr_data — filter_to_position and compute_team_wr_totals."""
+"""Tests for src.wr.data — filter_to_position and compute_team_wr_totals."""
 
 import pandas as pd
 import pytest

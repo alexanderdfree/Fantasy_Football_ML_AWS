@@ -1,4 +1,4 @@
-"""Coverage smoke test for ``DST/run.py``'s ``__main__`` block.
+"""Coverage smoke test for ``src/dst/run_pipeline.py``'s ``__main__`` block.
 
 DST's pipeline (like K) does its own data-building internally via
 ``build_data()``, so we mock the data builder + ``compute_features``
@@ -35,8 +35,8 @@ def _synthetic_dst_df() -> pd.DataFrame:
 def _patch_all(monkeypatch):
     """Stub data build + feature compute + pipeline dispatch.
 
-    Patches both the source modules (``DST.dst_data`` etc.) and the
-    already-imported re-bound names inside ``DST.run``, so
+    Patches both the source modules (``src.dst.data`` etc.) and the
+    already-imported re-bound names inside ``src.dst.run_pipeline``, so
     both ``runpy``-re-executions and direct calls see the stubs.
     """
     import src.dst.data as dst_data

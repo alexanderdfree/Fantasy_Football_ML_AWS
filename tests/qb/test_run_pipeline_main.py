@@ -1,4 +1,4 @@
-"""Coverage smoke test for ``QB/run.py``'s ``__main__`` block.
+"""Coverage smoke test for ``src/qb/run_pipeline.py``'s ``__main__`` block.
 
 Runs the script via ``runpy`` with mocked ``src.shared.pipeline.run_pipeline`` /
 ``run_cv_pipeline`` so we exercise the argparse + dispatch logic without
