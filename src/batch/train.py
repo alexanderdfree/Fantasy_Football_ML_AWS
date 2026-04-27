@@ -651,6 +651,13 @@ def main():
             "Refusing to upload incomplete artifacts."
         )
     metrics = _extract_metrics(pos, result)
+    # Fold the inner pipeline breakdown (ridge_tune, nn_train, attn_nn_train,
+    # lgbm_train, etc.) into the outer phase dict under a ``pipeline.`` prefix
+    # so persisted metrics distinguish "data sync + S3 + outer wrap" from the
+    # phases that actually dominate the GPU box.
+    inner_phases = result.get("phase_seconds", {}) if isinstance(result, dict) else {}
+    for phase, secs in inner_phases.items():
+        phase_seconds[f"pipeline.{phase}"] = secs
     # Record end-to-end elapsed and the per-phase breakdown so the run
     # written under benchmark_history/ by src/batch/benchmark.py --download-only
     # carries timing. elapsed_sec captures everything from seeding through

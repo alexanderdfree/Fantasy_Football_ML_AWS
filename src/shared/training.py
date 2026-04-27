@@ -386,7 +386,7 @@ class MultiHeadTrainer:
             for batch in train_loader:
                 preds, y_batch = self._forward_batch(batch)
 
-                self.optimizer.zero_grad()
+                self.optimizer.zero_grad(set_to_none=True)
                 loss, _ = self.criterion(preds, y_batch)
                 # Attention entropy regulariser: additive term that models can
                 # optionally expose via ``attention_entropy_loss``. Returns
