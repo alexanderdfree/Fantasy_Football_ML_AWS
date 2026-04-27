@@ -86,7 +86,7 @@ def _run_shap_for_position(
 
     cfg = _load_position_config(pos)
     pos_lower = pos.lower()
-    model_dir = output_dir or f"{pos}/outputs"
+    model_dir = output_dir or f"{pos_lower}/outputs"
     figures_dir = f"{model_dir}/figures"
     os.makedirs(figures_dir, exist_ok=True)
 

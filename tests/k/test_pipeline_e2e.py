@@ -67,14 +67,14 @@ def prepared_splits(tiny_splits):
 
 @pytest.fixture(scope="module")
 def e2e_outputs_dir(tmp_path_factory):
-    """Redirect the pipeline's hard-coded `K/outputs` writes into a tmp dir.
+    """Redirect the pipeline's hard-coded `k/outputs` writes into a tmp dir.
 
     The pipeline writes model/figure artifacts relative to cwd as a side
     effect; we chdir into a throwaway directory so the real repo is untouched.
     """
     cwd = os.getcwd()
     tmp_dir = tmp_path_factory.mktemp("k_e2e_outputs")
-    (tmp_dir / "K" / "outputs").mkdir(parents=True, exist_ok=True)
+    (tmp_dir / "k" / "outputs").mkdir(parents=True, exist_ok=True)
     try:
         os.chdir(tmp_dir)
         yield tmp_dir
