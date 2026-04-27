@@ -15,6 +15,58 @@ import pandas as pd
 import pytest
 
 # --------------------------------------------------------------------------
+# Helpers
+# --------------------------------------------------------------------------
+
+
+def _kicker_pbp_cache_row(player_id: str, season: int, week: int, recent_team: str = "KC") -> dict:
+    """One row matching the schema written by ``reconstruct_kicker_weekly_from_pbp``.
+
+    Tests pre-write a parquet of these to exercise the cache-hit branch without
+    invoking the real PBP aggregation.
+    """
+    return {
+        "player_id": player_id,
+        "player_name": player_id,
+        "recent_team": recent_team,
+        "season": season,
+        "week": week,
+        "position": "K",
+        "season_type": "REG",
+        "fg_att": 3,
+        "fg_made": 2,
+        "fg_missed": 1,
+        "fg_made_0_19": 0,
+        "fg_made_20_29": 1,
+        "fg_made_30_39": 1,
+        "fg_made_40_49": 0,
+        "fg_made_50_59": 0,
+        "fg_made_60_": 0,
+        "fg_missed_40_49": 1,
+        "fg_missed_50_59": 0,
+        "fg_missed_60_": 0,
+        "fg_yards_made": 55.0,
+        "avg_fg_distance": 35.0,
+        "max_fg_distance": 45.0,
+        "avg_fg_prob": 0.85,
+        "clutch_fg_att": 1,
+        "clutch_fg_made": 1,
+        "q4_fg_att": 1,
+        "q4_fg_made": 1,
+        "long_fg_att": 1,
+        "long_fg_made": 0,
+        "game_wind": 5.0,
+        "game_temp": 60.0,
+        "roof": "outdoors",
+        "surface": "grass",
+        "is_dome": 0,
+        "pat_att": 3,
+        "pat_made": 3,
+        "pat_missed": 0,
+    }
+
+
+# --------------------------------------------------------------------------
 # Synthetic PBP frame — covers FG + XP rows and field required by the loader
 # --------------------------------------------------------------------------
 
@@ -295,50 +347,11 @@ def _cached_pbp(tmp_path, monkeypatch):
     monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
 
     # Synthetic kicker weekly cache (2022-2024).
-    kicker_rows = []
-    for season in [2022, 2023, 2024]:
-        for wk in range(1, 4):
-            kicker_rows.append(
-                {
-                    "player_id": f"K{wk}",
-                    "player_name": f"Kicker {wk}",
-                    "recent_team": "KC",
-                    "season": season,
-                    "week": wk,
-                    "position": "K",
-                    "season_type": "REG",
-                    "fg_att": 3,
-                    "fg_made": 2,
-                    "fg_missed": 1,
-                    "fg_made_0_19": 0,
-                    "fg_made_20_29": 1,
-                    "fg_made_30_39": 1,
-                    "fg_made_40_49": 0,
-                    "fg_made_50_59": 0,
-                    "fg_made_60_": 0,
-                    "fg_missed_40_49": 1,
-                    "fg_missed_50_59": 0,
-                    "fg_missed_60_": 0,
-                    "fg_yards_made": 55.0,
-                    "avg_fg_distance": 35.0,
-                    "max_fg_distance": 45.0,
-                    "avg_fg_prob": 0.85,
-                    "clutch_fg_att": 1,
-                    "clutch_fg_made": 1,
-                    "q4_fg_att": 1,
-                    "q4_fg_made": 1,
-                    "long_fg_att": 1,
-                    "long_fg_made": 0,
-                    "game_wind": 5.0,
-                    "game_temp": 60.0,
-                    "roof": "outdoors",
-                    "surface": "grass",
-                    "is_dome": 0,
-                    "pat_att": 3,
-                    "pat_made": 3,
-                    "pat_missed": 0,
-                }
-            )
+    kicker_rows = [
+        _kicker_pbp_cache_row(player_id=f"K{wk}", season=season, week=wk)
+        for season in [2022, 2023, 2024]
+        for wk in range(1, 4)
+    ]
     pd.DataFrame(kicker_rows).to_parquet(tmp_path / "kicker_pbp_2022_2024.parquet")
 
     # Schedule parquet — needs SEASONS[0]-SEASONS[-1] key to match load_data.
@@ -375,6 +388,50 @@ def test_load_kicker_data_uses_pbp_cache(_cached_pbp):
     # Every row must have total_line + implied_team_total post fillna.
     assert df["total_line"].notna().all()
     assert df["implied_team_total"].notna().all()
+
+
+@pytest.mark.unit
+def test_load_kicker_data_fills_missing_is_home_with_zero(tmp_path, monkeypatch):
+    """Schedule merge can leave NaN ``is_home`` for kicker rows whose
+    ``recent_team`` doesn't appear in any schedule row (e.g. mid-season
+    trade with stale schedule cache). Those rows must fall through to
+    ``is_home = 0`` instead of breaking downstream features."""
+    import src.k.data as k_data
+    from src.config import SEASONS
+
+    monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr("src.config.CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(k_data, "SEASONS", [2022])
+    monkeypatch.setattr(k_data, "MIN_GAMES", 1)
+
+    def _no_network(*args, **kwargs):
+        raise AssertionError("import_pbp_data must not be called when the cache hits")
+
+    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
+
+    # PBP cache contains a kicker on team "ZZZ" that the schedule doesn't cover.
+    pd.DataFrame([_kicker_pbp_cache_row("K01", 2022, 1, recent_team="ZZZ")]).to_parquet(
+        tmp_path / "kicker_pbp_2022_2022.parquet"
+    )
+
+    # Schedule covers KC vs BUF only — kicker on ZZZ won't match.
+    sched_path = tmp_path / f"schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    pd.DataFrame(
+        {
+            "season": [2022],
+            "week": [1],
+            "home_team": ["KC"],
+            "away_team": ["BUF"],
+            "spread_line": [-3.0],
+            "total_line": [47.0],
+            "game_type": ["REG"],
+        }
+    ).to_parquet(sched_path)
+
+    df = k_data.load_data()
+    # Unmatched recent_team falls through to is_home = 0 (line 274 fallback).
+    assert (df["is_home"] == 0).all()
+    assert df["is_home"].notna().all()
 
 
 # --------------------------------------------------------------------------
@@ -524,47 +581,9 @@ def test_load_kicker_data_includes_2025_weekly_branch(tmp_path, monkeypatch):
     monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
 
     # 2024 PBP cache
-    pd.DataFrame(
-        {
-            "player_id": ["K01"],
-            "player_name": ["K01"],
-            "recent_team": ["KC"],
-            "season": [2024],
-            "week": [1],
-            "position": ["K"],
-            "season_type": ["REG"],
-            "fg_att": [3],
-            "fg_made": [2],
-            "fg_missed": [1],
-            "fg_made_0_19": [0],
-            "fg_made_20_29": [1],
-            "fg_made_30_39": [1],
-            "fg_made_40_49": [0],
-            "fg_made_50_59": [0],
-            "fg_made_60_": [0],
-            "fg_missed_40_49": [1],
-            "fg_missed_50_59": [0],
-            "fg_missed_60_": [0],
-            "fg_yards_made": [55.0],
-            "avg_fg_distance": [35.0],
-            "max_fg_distance": [45.0],
-            "avg_fg_prob": [0.85],
-            "clutch_fg_att": [1],
-            "clutch_fg_made": [1],
-            "q4_fg_att": [1],
-            "q4_fg_made": [1],
-            "long_fg_att": [1],
-            "long_fg_made": [0],
-            "game_wind": [5.0],
-            "game_temp": [60.0],
-            "roof": ["outdoors"],
-            "surface": ["grass"],
-            "is_dome": [0],
-            "pat_att": [3],
-            "pat_made": [3],
-            "pat_missed": [0],
-        }
-    ).to_parquet(tmp_path / "kicker_pbp_2024_2024.parquet")
+    pd.DataFrame([_kicker_pbp_cache_row("K01", 2024, 1)]).to_parquet(
+        tmp_path / "kicker_pbp_2024_2024.parquet"
+    )
 
     # Weekly frame with a 2025 K row
     weekly_path = tmp_path / f"weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
