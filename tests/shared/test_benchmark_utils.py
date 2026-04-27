@@ -1,4 +1,4 @@
-"""Coverage tests for ``shared/benchmark_utils.py``.
+"""Coverage tests for ``src/shared/benchmark_utils.py``.
 
 The file wires together summary-row construction, comparison-table
 rendering, git-hash capture, and history append. These tests exercise

@@ -1,6 +1,6 @@
 """End-to-end smoke for the RB pipeline.
 
-Exercises `shared.pipeline.run_pipeline` on a tiny synthetic RB dataset with
+Exercises `src.shared.pipeline.run_pipeline` on a tiny synthetic RB dataset with
 a shrunk neural net (2-layer x 8-unit backbone, 1 epoch) and asserts:
 
 * No exceptions.

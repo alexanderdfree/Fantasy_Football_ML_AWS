@@ -87,7 +87,7 @@ class _FakeS3:
 
 
 def _hist_key(n: int) -> str:
-    """Produce a ``shared.model_sync.new_history_key``-shaped path."""
+    """Produce a ``src.shared.model_sync.new_history_key``-shaped path."""
     return f"models/WR/history/2026-04-{n:02d}T00-00-00Z-aaaa{n:03d}/model.tar.gz"
 
 

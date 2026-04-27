@@ -1,8 +1,8 @@
-"""Shared fixtures for RB tests — thin wrappers over shared.tests.position_fixtures.
+"""Shared fixtures for RB tests — thin wrappers over tests.shared.position_fixtures.
 
 Generic factories (``make_sim_df``, ``make_ranking_df``, ``make_tensors``,
 ``make_splits``, ``make_position_df``) now come from
-``shared/tests/position_fixtures.py``.  Only RB-specific helpers remain
+``tests/shared/position_fixtures.py``.  Only RB-specific helpers remain
 here: the multi-week player-games frame, single-row target row, fumble
 DataFrame, synthetic pipeline dataset for E2E/regression tests, and the
 Ridge training data factory.

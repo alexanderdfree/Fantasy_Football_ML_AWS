@@ -1,4 +1,4 @@
-"""Coverage tests for small helpers inside ``shared/pipeline.py``.
+"""Coverage tests for small helpers inside ``src/shared/pipeline.py``.
 
 These functions aren't exercised by the position-level E2E tests because
 E2E goes through ``run_pipeline`` which only hits the onecycle+ridge path.

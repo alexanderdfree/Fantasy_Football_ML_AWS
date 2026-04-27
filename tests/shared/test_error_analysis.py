@@ -1,4 +1,4 @@
-"""Tests for shared.error_analysis — stratification, metrics, and plotting."""
+"""Tests for src.shared.error_analysis — stratification, metrics, and plotting."""
 
 import numpy as np
 import pandas as pd

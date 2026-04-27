@@ -1,6 +1,6 @@
-"""Shared fixtures for WR tests — thin wrappers over shared.tests.position_fixtures.
+"""Shared fixtures for WR tests — thin wrappers over tests.shared.position_fixtures.
 
-Generic factories are imported from ``shared.tests.position_fixtures``;
+Generic factories are imported from ``tests.shared.position_fixtures``;
 this conftest binds them to the WR scoring scale (~20) and targets, and
 keeps the WR-specific ``wr_player_games_factory`` feature-input builder.
 """

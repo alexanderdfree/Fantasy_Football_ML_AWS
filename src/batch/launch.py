@@ -1,12 +1,12 @@
 """Launch parallel AWS Batch training jobs for all positions.
 
 Usage:
-    python batch/launch.py                         # all positions
-    python batch/launch.py --positions RB WR       # subset
-    python batch/launch.py --wait false            # fire and forget
-    python batch/launch.py --dry-run               # print plan, touch nothing
-    python batch/launch.py --wait-timeout 1800     # override 3h default
-    python batch/launch.py --force-upload          # skip ETag dedup
+    python src/batch/launch.py                         # all positions
+    python src/batch/launch.py --positions RB WR       # subset
+    python src/batch/launch.py --wait false            # fire and forget
+    python src/batch/launch.py --dry-run               # print plan, touch nothing
+    python src/batch/launch.py --wait-timeout 1800     # override 3h default
+    python src/batch/launch.py --force-upload          # skip ETag dedup
 
 Config (environment variables, all optional):
     FF_S3_BUCKET        (default: ff-predictor-training)

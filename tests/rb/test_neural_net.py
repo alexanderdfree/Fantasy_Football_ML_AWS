@@ -1,4 +1,4 @@
-"""Tests for shared.neural_net.MultiHeadNet (using RB raw-stat targets)."""
+"""Tests for src.shared.neural_net.MultiHeadNet (using RB raw-stat targets)."""
 
 import numpy as np
 import pytest

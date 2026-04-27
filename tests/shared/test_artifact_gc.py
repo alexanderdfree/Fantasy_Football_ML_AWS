@@ -1,4 +1,4 @@
-"""Tests for shared.artifact_gc.prune — retention for versioned artifacts."""
+"""Tests for src.shared.artifact_gc.prune — retention for versioned artifacts."""
 
 from __future__ import annotations
 

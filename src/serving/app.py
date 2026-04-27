@@ -598,7 +598,7 @@ def _apply_position_models(train, val, test, pos, results):
         try:
             # K resolves its attention static columns directly from the
             # DataFrame (they live outside the Ridge/base-NN feature list, per
-            # shared/pipeline.py::attn_static_from_df). Others use the filtered
+            # src/shared/pipeline.py::attn_static_from_df). Others use the filtered
             # whitelist over the base feature matrix.
             if reg.get("attn_static_from_df", False):
                 attn_static_cols = list(reg.get("attn_static_features", []))

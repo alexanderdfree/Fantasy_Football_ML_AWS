@@ -1,4 +1,4 @@
-"""Tests for shared.evaluation — compute_target_metrics, compute_ranking_metrics (QB targets)."""
+"""Tests for src.shared.evaluation — compute_target_metrics, compute_ranking_metrics (QB targets)."""
 
 from unittest.mock import patch
 

@@ -1,6 +1,6 @@
-"""Shared fixtures for TE tests — thin wrappers over shared.tests.position_fixtures.
+"""Shared fixtures for TE tests — thin wrappers over tests.shared.position_fixtures.
 
-Generic factories are imported from ``shared.tests.position_fixtures``;
+Generic factories are imported from ``tests.shared.position_fixtures``;
 this conftest binds them to the TE scoring scale (~15) and targets, and
 keeps the TE-specific tiny-splits fixture used by E2E and regression tests.
 """

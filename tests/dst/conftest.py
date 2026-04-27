@@ -1,6 +1,6 @@
-"""Shared fixtures for DST tests — thin wrappers over shared.tests.position_fixtures.
+"""Shared fixtures for DST tests — thin wrappers over tests.shared.position_fixtures.
 
-Generic factories come from ``shared/tests/position_fixtures.py``; this
+Generic factories come from ``tests/shared/position_fixtures.py``; this
 conftest binds them to the DST scale (~15 fantasy pts), targets, and
 team-level ``player_id`` convention, and keeps DST-specific helpers for
 single-row target rows, multi-week team frames, and the tiny synthetic

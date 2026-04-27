@@ -1,6 +1,6 @@
 """Retention for versioned artifacts under ``{prefix}/{POS}/history/``.
 
-Invoked best-effort by ``batch/train.py::upload_artifacts`` after the new
+Invoked best-effort by ``src/batch/train.py::upload_artifacts`` after the new
 ``manifest.json`` is written. A prune failure does not fail the training run
 — retention is cleanup, not correctness. Training is flock-serialized on the
 EC2 host so concurrent producers can't race on the same position.

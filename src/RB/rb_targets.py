@@ -1,7 +1,7 @@
 """Raw-stat RB prediction targets.
 
 After the target migration, RB models predict raw NFL stats and
-``shared.aggregate_targets.predictions_to_fantasy_points`` converts them to
+``src.shared.aggregate_targets.predictions_to_fantasy_points`` converts them to
 fantasy points post-prediction. No rolling adjustments — fumbles_lost is now
 a direct target.
 """

@@ -3,7 +3,7 @@ K_SEASONS = list(range(2015, 2026))  # 2015-2025
 
 # === K Target Decomposition ===
 # 4 non-negative raw-value heads. Total fantasy points = sum with signs
-# [+1, +1, -1, -1] applied at inference (see shared/registry.py K entry).
+# [+1, +1, -1, -1] applied at inference (see src/shared/registry.py K entry).
 K_TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
 
 # === K-Specific Features ===

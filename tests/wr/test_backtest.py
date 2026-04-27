@@ -1,4 +1,4 @@
-"""Tests for shared.backtest — run_weekly_simulation (WR context)."""
+"""Tests for src.shared.backtest — run_weekly_simulation (WR context)."""
 
 import numpy as np
 import pandas as pd
@@ -113,7 +113,7 @@ class TestRunWeeklySimulation:
 class TestBacktestDeterminism:
     """Identical inputs must yield identical weekly metrics and rankings.
 
-    Guards shared/backtest.py against inadvertent non-determinism introduced
+    Guards src/shared/backtest.py against inadvertent non-determinism introduced
     by e.g. unstable sort order, dict iteration changes, or RNG leakage.
     """
 

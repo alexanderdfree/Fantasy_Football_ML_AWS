@@ -85,7 +85,7 @@ def compute_dst_targets(df: pd.DataFrame) -> pd.DataFrame:
     df["yards_allowed"] = df["yards_allowed"].fillna(350)
 
     # Fantasy points: linear portion + tier bonuses. Must match
-    # ``shared.aggregate_targets.predictions_to_fantasy_points("DST", …)``.
+    # ``src.shared.aggregate_targets.predictions_to_fantasy_points("DST", …)``.
     linear = (
         df["def_sacks"] * 1
         + df["def_ints"] * 2

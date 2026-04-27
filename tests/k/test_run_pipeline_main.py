@@ -2,7 +2,7 @@
 
 K's pipeline does its own data-loading internally (``load_kicker_data`` +
 ``load_kicker_kicks``), so unlike QB/RB/WR/TE we have to mock the loaders
-and the season split in addition to ``shared.pipeline.run_pipeline`` in
+and the season split in addition to ``src.shared.pipeline.run_pipeline`` in
 order to exercise the function body without touching the PBP cache.
 """
 
@@ -35,7 +35,7 @@ def _patch_all(monkeypatch):
     """Stub loaders + pipeline so ``run_k_pipeline()`` runs in-memory.
 
     We patch both the source modules (``K.k_data``, ``K.k_features``,
-    ``K.k_targets``, ``shared.pipeline``) and the re-bound names inside
+    ``K.k_targets``, ``src.shared.pipeline``) and the re-bound names inside
     ``K.run_k_pipeline``. Source-module patching matters when ``runpy``
     re-executes the script: the fresh ``from src.K.k_data import load_kicker_data``
     grabs whatever's on ``K.k_data`` at that moment. Re-binding in-place on

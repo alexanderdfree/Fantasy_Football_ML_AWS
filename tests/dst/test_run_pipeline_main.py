@@ -2,7 +2,7 @@
 
 DST's pipeline (like K) does its own data-building internally via
 ``build_dst_data()``, so we mock the data builder + ``compute_dst_features``
-+ ``shared.pipeline.run_pipeline`` to exercise the orchestrator without
++ ``src.shared.pipeline.run_pipeline`` to exercise the orchestrator without
 hitting the nflverse parquet reads.
 """
 

@@ -1,4 +1,4 @@
-"""Sanity checks that K's shared/registry.py entry lines up with the
+"""Sanity checks that K's src/shared/registry.py entry lines up with the
 MultiHeadNetWithNestedHistory class it's meant to serve.
 
 Regression guard for the "training-only ghost" bug: K's training pipeline

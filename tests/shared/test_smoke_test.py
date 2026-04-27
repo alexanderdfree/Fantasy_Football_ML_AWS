@@ -1,7 +1,7 @@
-"""Tests for shared.smoke_test — post-upload load+predict gate.
+"""Tests for src.shared.smoke_test — post-upload load+predict gate.
 
 Strategy: build a complete-but-tiny model_dir on disk (Ridge + NN + scaler +
-meta) for a synthetic position config, then patch ``shared.registry.
+meta) for a synthetic position config, then patch ``src.shared.registry.
 INFERENCE_REGISTRY`` so ``run_smoke_test`` reads our fake config. This
 exercises the real load + predict path (including ``assert_scaler_matches``,
 ``unwrap_state_dict``, scaler.transform, NN forward) without requiring an
@@ -89,8 +89,8 @@ def _fake_reg(model_dir: Path) -> dict:
 def patch_registry(monkeypatch):
     """Returns a callable: ``register("TST", fake_reg_dict)``.
 
-    Patches ``shared.registry.INFERENCE_REGISTRY`` with a plain dict so
-    ``shared.smoke_test.run_smoke_test``'s lazy import resolves to it.
+    Patches ``src.shared.registry.INFERENCE_REGISTRY`` with a plain dict so
+    ``src.shared.smoke_test.run_smoke_test``'s lazy import resolves to it.
     """
     registry: dict[str, dict] = {}
 

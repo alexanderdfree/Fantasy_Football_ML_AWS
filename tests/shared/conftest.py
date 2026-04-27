@@ -29,7 +29,7 @@ import torch
 # ---------------------------------------------------------------------------
 
 # Column schema used by ``filter_to_{qb,rb,wr,te}`` and the downstream
-# ``shared.pipeline`` feature-builder. Keep this minimal — only the columns
+# ``src.shared.pipeline`` feature-builder. Keep this minimal — only the columns
 # the filters + engineer actually read.
 _SYNTHETIC_COLUMNS = [
     "player_id",

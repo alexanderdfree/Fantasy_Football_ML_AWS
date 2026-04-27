@@ -443,7 +443,7 @@ class TestFillNansSafe:
 class TestBuildGameHistoryArrays:
     """`build_game_history_arrays` must be robust to unusual caller indices.
 
-    Callers in shared/pipeline.py pass DataFrames that have been filtered and
+    Callers in src/shared/pipeline.py pass DataFrames that have been filtered and
     copied but not always reset_index. Label-based index bookkeeping can
     silently corrupt (or crash) the output if labels repeat. Pin positional
     correctness regardless of index shape.
@@ -506,7 +506,7 @@ class TestBuildGameHistoryArrays:
 # fill zeros and degrade quality. This class pins the contract: stable count,
 # full coverage of documented columns, numeric dtypes, bounded NaN rate.
 
-# Weather/Vegas columns are added by shared.weather_features.merge_schedule_features,
+# Weather/Vegas columns are added by src.shared.weather_features.merge_schedule_features,
 # not by build_features. Excluded from build_features()-only assertions.
 _WEATHER_VEGAS_FEATURES = frozenset(
     {
@@ -607,7 +607,7 @@ class TestFeatureColumnContract:
         """Every column build_features owns must be present in the output.
 
         Weather/Vegas columns are added by a separate merge step
-        (shared.weather_features.merge_schedule_features) and are not part of
+        (src.shared.weather_features.merge_schedule_features) and are not part of
         the build_features contract.
         """
         missing = [c for c in _build_features_owned_cols() if c not in contract_features_df.columns]

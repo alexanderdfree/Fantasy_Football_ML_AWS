@@ -1,4 +1,4 @@
-"""Tests for shared.neural_net.MultiHeadNet (using WR targets)."""
+"""Tests for src.shared.neural_net.MultiHeadNet (using WR targets)."""
 
 import numpy as np
 import pytest

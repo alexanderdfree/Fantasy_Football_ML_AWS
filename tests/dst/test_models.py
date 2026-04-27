@@ -1,4 +1,4 @@
-"""Tests for shared.models.RidgeMultiTarget (using a DST target subset).
+"""Tests for src.shared.models.RidgeMultiTarget (using a DST target subset).
 
 Uses 3 of the 10 DST raw-stat targets (def_sacks, def_tds, points_allowed)
 as representative test data — enough to exercise multi-target ridge

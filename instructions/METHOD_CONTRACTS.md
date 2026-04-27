@@ -635,7 +635,7 @@ class LastWeekBaseline:
         pass
 ```
 
-### 3.2 `shared/models.py`
+### 3.2 `src/shared/models.py`
 
 #### `class RidgeMultiTarget`
 
@@ -661,7 +661,7 @@ class RidgeMultiTarget:
         pass
 ```
 
-### 3.3 `shared/neural_net.py`
+### 3.3 `src/shared/neural_net.py`
 
 #### `class MultiHeadNet(nn.Module)`
 
@@ -707,7 +707,7 @@ a zero-inflated hurdle head: a sigmoid gate predicts `P(TD > 0)` and a Softplus 
 predicts `E[TD | TD > 0]`; the product is the expected TD count. WR/TE use one gated head
 (`receiving_tds`); QB/K/DST do not use gated TD heads.
 
-**Optimizer and loss (RB raw-stat example, from `RB/rb_config.py`):**
+**Optimizer and loss (RB raw-stat example, from `src/RB/rb_config.py`):**
 ```python
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-5)
 criterion = MultiTargetLoss(
@@ -728,7 +728,7 @@ criterion = MultiTargetLoss(
 
 ## 4. Training
 
-### 4.1 `shared/training.py`
+### 4.1 `src/shared/training.py`
 
 #### `class MultiTargetLoss(nn.Module)`
 

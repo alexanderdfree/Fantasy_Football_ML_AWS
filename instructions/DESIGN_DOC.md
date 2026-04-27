@@ -22,17 +22,17 @@ Below are the 15 Machine Learning rubric items this project is designed to hit. 
 |---|-------------|-----|---------------|
 | 1 | **Solo project credit** | 10 | N/A |
 | 2 | **Collected/constructed original dataset through API integration** (`nfl_data_py` ingestion, multi-season join, feature build) | 10 | `src/data/` |
-| 3 | **Compared multiple model architectures quantitatively** (Ridge vs Multi-Head Neural Net, controlled setup) | 7 | `shared/models.py`, `shared/neural_net.py`, position configs |
+| 3 | **Compared multiple model architectures quantitatively** (Ridge vs Multi-Head Neural Net, controlled setup) | 7 | `src/shared/models.py`, `src/shared/neural_net.py`, position configs |
 | 4 | **Error analysis with visualization and discussion of failure cases** | 7 | `docs/expert_comparison.md`, pipeline outputs |
 | 5 | **Applied ML to time-series forecasting** (weekly player projections using rolling temporal features) | 7 | `src/features/engineer.py`, position pipelines |
-| 6 | **Simulation-based evaluation** (week-by-week prediction accuracy simulation) | 7 | `shared/backtest.py` |
+| 6 | **Simulation-based evaluation** (week-by-week prediction accuracy simulation) | 7 | `src/shared/backtest.py` |
 | 7 | **Feature engineering** (rolling averages, snap %, target share, matchup strength, etc.) | 5 | `src/features/engineer.py` |
-| 8 | **Defined and trained a custom neural network architecture** (PyTorch) | 5 | `shared/neural_net.py` |
-| 9 | **Systematic hyperparameter tuning** (≥3 configs documented) | 5 | Position-specific configs (`QB/qb_config.py`, etc.) |
-| 10 | **Regularization** (L2 + dropout + early stopping — at least 2 required) | 5 | `shared/neural_net.py`, `shared/training.py` |
+| 8 | **Defined and trained a custom neural network architecture** (PyTorch) | 5 | `src/shared/neural_net.py` |
+| 9 | **Systematic hyperparameter tuning** (≥3 configs documented) | 5 | Position-specific configs (`src/QB/qb_config.py`, etc.) |
+| 10 | **Regularization** (L2 + dropout + early stopping — at least 2 required) | 5 | `src/shared/neural_net.py`, `src/shared/training.py` |
 | 11 | **Modular code design** with reusable functions/classes | 3 | `src/`, `src/shared/`, position folders |
 | 12 | **Train/validation/test split** with documented ratios | 3 | `src/data/split.py` |
-| 13 | **Training curves** (loss and metrics over time) | 3 | `shared/training.py` |
+| 13 | **Training curves** (loss and metrics over time) | 3 | `src/shared/training.py` |
 | 14 | **Baseline model** (constant prediction = player's season average) | 3 | `src/models/baseline.py` |
 | 15 | **Used ≥3 distinct evaluation metrics** | 3 | `src/evaluation/metrics.py` |
 | 16 | **Interpretable model design or explainability analysis** (Ridge coefficients + permutation importance for NN) | 7 | Pipeline outputs, `docs/expert_comparison.md` |
@@ -45,11 +45,11 @@ These items are naturally implemented by the project but are **not** claimed as 
 
 | Rubric Item | Pts | Where in Code |
 |-------------|-----|---------------|
-| Properly normalized/standardized input features | 3 | `shared/models.py` (StandardScaler in RidgeMultiTarget) |
+| Properly normalized/standardized input features | 3 | `src/shared/models.py` (StandardScaler in RidgeMultiTarget) |
 | Applied basic preprocessing appropriate to modality | 3 | `src/data/preprocessing.py` |
-| Used appropriate data loading with batching and shuffling | 3 | `shared/training.py` (DataLoader) |
-| Used learning rate scheduling | 3 | `shared/training.py` (ReduceLROnPlateau, OneCycleLR, CosineWarmRestarts) |
-| Applied batch normalization | 3 | `shared/neural_net.py` (BatchNorm1d) |
+| Used appropriate data loading with batching and shuffling | 3 | `src/shared/training.py` (DataLoader) |
+| Used learning rate scheduling | 3 | `src/shared/training.py` (ReduceLROnPlateau, OneCycleLR, CosineWarmRestarts) |
+| Applied batch normalization | 3 | `src/shared/neural_net.py` (BatchNorm1d) |
 | Documented design decision with technical tradeoffs | 3 | Section 6 of this doc + technical walkthrough |
 | Substantive ATTRIBUTION.md on AI tool usage | 3 | `ATTRIBUTION.md` |
 
@@ -520,7 +520,7 @@ This is the most critical module. The model is only as good as its features.
 # Position:               one-hot (QB, RB, WR, TE) = 4
 # TOTAL: ~155 general features (before position-specific adds/drops)
 # Each position then adds specific features and drops irrelevant ones.
-# Weather/Vegas features (from shared/weather_features.py) are added per-position.
+# Weather/Vegas features (from src/shared/weather_features.py) are added per-position.
 #
 # NOTE: Exact count depends on which nfl_data_py columns are available
 #       (air_yards_share may be absent). The NN input_dim should be set
@@ -576,7 +576,7 @@ This is the most critical module. The model is only as good as its features.
 # Also extract and save .coef_ for feature importance analysis.
 ```
 
-### 4.8 `shared/neural_net.py` — Multi-Head Neural Network
+### 4.8 `src/shared/neural_net.py` — Multi-Head Neural Network
 
 **Rubric targets: "Custom neural network" (5 pts) + "Regularization" (5 pts) + "Compared multiple architectures" (7 pts, part 2)**
 
@@ -658,7 +658,7 @@ This is the most critical module. The model is only as good as its features.
 # Currently using gated_ordinal (binary gate + ordinal classes {0,6,12,18}).
 ```
 
-### 4.9 `shared/training.py` — Training Loop
+### 4.9 `src/shared/training.py` — Training Loop
 
 **Rubric targets: "Training curves" (3 pts) + "Regularization/early stopping" (5 pts)**
 
@@ -782,7 +782,7 @@ Ridge coefficient analysis provides feature importance per target via `RidgeMult
 Each position has its own pipeline script that orchestrates training. The general flow:
 
 ```python
-# Per-position pipeline (e.g., RB/run_rb_pipeline.py):
+# Per-position pipeline (e.g., src/RB/run_rb_pipeline.py):
 #
 # 1. LOAD:      loader.load_raw_data(SEASONS) + cache as parquet
 # 2. PREPROCESS: preprocessing.preprocess(raw_df)  — NO min-games filter here
@@ -811,7 +811,7 @@ These are decisions you should explain in the technical walkthrough video and RE
 
 1. **Temporal split vs random split:** Random split would leak future information (a player's week 15 stats informing a week 10 prediction). Season-based split is the correct approach for time-series, even though it gives less training data.
 
-2. **Ridge Regression vs plain Linear Regression:** Ridge adds L2 regularization which prevents overfitting on correlated features (many rolling stats are correlated). Implemented as `RidgeMultiTarget` in `shared/models.py` — one Ridge per sub-target, with position-specific alpha grids.
+2. **Ridge Regression vs plain Linear Regression:** Ridge adds L2 regularization which prevents overfitting on correlated features (many rolling stats are correlated). Implemented as `RidgeMultiTarget` in `src/shared/models.py` — one Ridge per sub-target, with position-specific alpha grids.
 
 3. **Multi-head MLP vs single-output MLP vs RNN/LSTM:** Target decomposition (e.g., rushing_floor + receiving_floor + td_points) with a shared backbone + per-target heads outperforms a single-output network. An LSTM could model sequences more naturally, but the MLP with hand-crafted rolling features is simpler and performs comparably on tabular data. LSTM is documented as future work in `docs/design_lstm_multihead.md`.
 
@@ -981,9 +981,9 @@ The actual implementation order followed:
 3. **`src/data/preprocessing.py`** — Cleaning, fantasy points computation
 4. **`src/features/engineer.py`** — Rolling, EWMA, trend, share, matchup features
 5. **`src/data/split.py`** — Temporal split
-6. **`shared/neural_net.py`** — MultiHeadNet architecture
-7. **`shared/models.py`** — RidgeMultiTarget wrapper
-8. **`shared/training.py`** — MultiHeadTrainer, MultiTargetLoss, dataloaders
+6. **`src/shared/neural_net.py`** — MultiHeadNet architecture
+7. **`src/shared/models.py`** — RidgeMultiTarget wrapper
+8. **`src/shared/training.py`** — MultiHeadTrainer, MultiTargetLoss, dataloaders
 9. **Position folders** — Per-position configs, targets, features, data filters, pipelines
    (QB, RB, WR, TE first; K and DST added later with custom pipelines)
 10. **`tests/`** — Feature leakage tests, RB target tests
@@ -1013,19 +1013,19 @@ The Gradescope self-assessment (3 pts) requires mapping each claimed rubric item
 |---|-------------|-------------------|-------------|
 | 1 | Solo project credit | N/A | Completed individually |
 | 2 | Original dataset via API | `src/data/loader.py` | nfl_data_py multi-table ingestion + merge (2012-2025) |
-| 3 | Compared architectures | `shared/models.py`, `shared/neural_net.py`, position configs | RidgeMultiTarget vs MultiHeadNet per position |
+| 3 | Compared architectures | `src/shared/models.py`, `src/shared/neural_net.py`, position configs | RidgeMultiTarget vs MultiHeadNet per position |
 | 4 | Error analysis | `docs/expert_comparison.md`, pipeline outputs | Per-target breakdown, benchmark comparison |
 | 5 | Time-series forecasting | `src/features/engineer.py` | Rolling temporal features + temporal split |
-| 6 | Simulation-based eval | `shared/backtest.py` | Week-by-week prediction accuracy simulation |
+| 6 | Simulation-based eval | `src/shared/backtest.py` | Week-by-week prediction accuracy simulation |
 | 7 | Feature engineering | `src/features/engineer.py`, `{POS}/{pos}_features.py` | 130+ general + position-specific derived features |
-| 8 | Custom neural network | `shared/neural_net.py` | Multi-head PyTorch architecture |
+| 8 | Custom neural network | `src/shared/neural_net.py` | Multi-head PyTorch architecture |
 | 9 | Hyperparameter tuning | `{POS}/{pos}_config.py` files | Per-position configs with tuned architectures |
-| 10 | Regularization | `shared/neural_net.py`, `shared/training.py` | Dropout + L2 + early stopping + BatchNorm |
+| 10 | Regularization | `src/shared/neural_net.py`, `src/shared/training.py` | Dropout + L2 + early stopping + BatchNorm |
 | 11 | Modular code design | `src/`, `src/shared/`, position folders | Reusable modules and classes |
 | 12 | Train/val/test split | `src/data/split.py` | Temporal split (2012-2023 / 2024 / 2025) |
-| 13 | Training curves | `shared/training.py` | 4-panel: loss, per-target loss, per-target MAE, total MAE/RMSE |
+| 13 | Training curves | `src/shared/training.py` | 4-panel: loss, per-target loss, per-target MAE, total MAE/RMSE |
 | 14 | Baseline model | `src/models/baseline.py` | Season average + last week baselines |
-| 15 | ≥3 evaluation metrics | `src/evaluation/metrics.py`, `shared/evaluation.py` | MAE, RMSE, R² |
+| 15 | ≥3 evaluation metrics | `src/evaluation/metrics.py`, `src/shared/evaluation.py` | MAE, RMSE, R² |
 | 16 | Explainability analysis | Pipeline outputs, `docs/expert_comparison.md` | Ridge coefficients + permutation importance |
 
 ---
@@ -1047,7 +1047,7 @@ The Gradescope self-assessment (3 pts) requires mapping each claimed rubric item
 Validate correctness at each pipeline stage before moving on:
 
 1. **Feature leakage tests:** `tests/test_feature_leakage.py` (328 lines) comprehensively verifies no future data leaks into features
-2. **Unit tests:** `RB/tests/test_rb_targets.py` validates target decomposition correctness
+2. **Unit tests:** `tests/rb/test_targets.py` validates target decomposition correctness
 3. **Shape checks:** At each pipeline step, print and verify DataFrame shape
 4. **Target decomposition sanity checks:** Each `compute_{pos}_targets()` function includes a
    `fantasy_points_check` that verifies the sum of decomposed targets matches total fantasy points

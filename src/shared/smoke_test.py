@@ -1,7 +1,7 @@
 """Post-upload smoke test: load every artifact for a position and run a
 minimal predict on each. Raises ``SmokeTestFailed`` on any failure.
 
-Called by ``batch/train.py::upload_artifacts`` after ``_validate_remote_tarball``
+Called by ``src/batch/train.py::upload_artifacts`` after ``_validate_remote_tarball``
 and before the manifest write. A pass advances the manifest's ``stable``
 pointer; a failure leaves ``stable`` pinned to the previous good artifact
 so the frontend keeps serving last-known-good. The new artifact still lands
@@ -46,7 +46,7 @@ from src.shared.neural_net import (
 class SmokeTestFailed(RuntimeError):
     """Raised when the post-upload smoke test detects a broken artifact.
 
-    The producer (``batch/train.py``) catches this and refuses to advance
+    The producer (``src/batch/train.py``) catches this and refuses to advance
     the manifest's ``stable`` pointer. The frontend keeps serving last-known-
     good in the meantime.
     """

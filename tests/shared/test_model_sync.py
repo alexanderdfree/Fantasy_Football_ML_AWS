@@ -1,4 +1,4 @@
-"""Tests for shared.model_sync — S3 tarball sync at container boot."""
+"""Tests for src.shared.model_sync — S3 tarball sync at container boot."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _manifest_bytes(
 ) -> bytes:
     """Build a well-formed manifest.json body pointing at the given keys.
 
-    Kept in this test module (not shared.model_sync) so that tests exercise
+    Kept in this test module (not src.shared.model_sync) so that tests exercise
     the exact JSON shape a real producer would write — drift between
     build_manifest and the consumer's schema expectations would show up here.
 
@@ -109,7 +109,7 @@ class _FakeS3:
     """Returns per-key object bodies; also paginates by prefix for ListBucket.
 
     Missing keys raise ``botocore.exceptions.ClientError`` with code
-    ``NoSuchKey`` to mirror real S3 semantics — ``shared.model_sync``
+    ``NoSuchKey`` to mirror real S3 semantics — ``src.shared.model_sync``
     distinguishes that from other errors when falling back between
     ``current`` and ``previous`` manifest entries.
     """

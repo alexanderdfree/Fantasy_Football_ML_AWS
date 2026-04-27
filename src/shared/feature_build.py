@@ -1,6 +1,6 @@
 """Shared feature-building for training and inference paths.
 
-Both ``shared/pipeline.py::_prepare_position_data`` (training) and
+Both ``src/shared/pipeline.py::_prepare_position_data`` (training) and
 ``app.py::_apply_position_models`` (serving) need the same per-position
 feature-engineering pipeline. They drifted in the past — TODO.md archive
 entry "Weather/Vegas features missing at inference in ``app.py``" was the

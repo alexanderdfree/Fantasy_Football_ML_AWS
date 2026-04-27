@@ -2,7 +2,7 @@
 at any entry from ``history[]``.
 
 Part A (PR #104) introduced automatic ``current → previous`` fallback in
-``shared.model_sync._sync_one`` — that covers a single bad ship. This script
+``src.shared.model_sync._sync_one`` — that covers a single bad ship. This script
 is the escape hatch for the "two consecutive bad ships" case documented in
 #104: both ``current`` and ``previous`` broken, but an older entry in
 ``history[]`` is still good. Operator picks one, script atomically promotes
@@ -14,8 +14,8 @@ Usage:
     python scripts/promote.py --position WR --to models/WR/history/...sha7/model.tar.gz
     python scripts/promote.py --position WR --to ... --dry-run
 
-All state lives in ``shared.model_sync``'s manifest helpers — producer
-(``batch/train.py``), consumer (``shared/model_sync.py``), and this operator
+All state lives in ``src.shared.model_sync``'s manifest helpers — producer
+(``src/batch/train.py``), consumer (``src/shared/model_sync.py``), and this operator
 tool all share one schema. If you're editing the manifest shape, search for
 call sites before landing.
 """
@@ -73,7 +73,7 @@ def list_history(manifest: dict) -> str:
 def _parse_version_from_key(target_key: str) -> tuple[str, str]:
     """Pull ``uploaded_at`` + ``sha7`` out of a history key path.
 
-    Keys are produced by ``shared.model_sync.new_history_key`` and have the
+    Keys are produced by ``src.shared.model_sync.new_history_key`` and have the
     shape ``{prefix}/{POS}/history/{ts}-{sha7}/model.tar.gz`` — the dir name
     before the filename is the only sha7 source we have post-facto (we can't
     recompute it without re-downloading the tarball).

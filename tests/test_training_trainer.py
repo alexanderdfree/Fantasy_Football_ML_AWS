@@ -1,7 +1,7 @@
 """Coverage tests for ``src/training/trainer.py``.
 
 The ``Trainer`` class is the lightweight legacy training wrapper used by
-analysis scripts (it predates ``shared.training.MultiHeadTrainer``). These
+analysis scripts (it predates ``src.shared.training.MultiHeadTrainer``). These
 tests exercise:
 
 - ``__init__`` field defaults

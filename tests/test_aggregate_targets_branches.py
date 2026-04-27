@@ -1,4 +1,4 @@
-"""Branch-coverage tests for ``shared/aggregate_targets.py``.
+"""Branch-coverage tests for ``src/shared/aggregate_targets.py``.
 
 ``tests/test_aggregate_targets.py`` already covers the happy-path parity
 between the aggregator and ``compute_fantasy_points``. These tests fill

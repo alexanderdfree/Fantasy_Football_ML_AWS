@@ -1,4 +1,4 @@
-"""End-to-end smoke + compatibility test for ``shared.pipeline.run_cv_pipeline``.
+"""End-to-end smoke + compatibility test for ``src.shared.pipeline.run_cv_pipeline``.
 
 run_cv_pipeline is the expanding-window CV orchestrator used by
 ``QB/run_qb_pipeline.py --cv``. The non-CV E2E test
@@ -240,7 +240,7 @@ class TestQBRunCVPipelineWithLGBM:
 @pytest.mark.unit
 def test_run_qb_cv_pipeline_wrapper_dispatches_to_run_cv_pipeline(monkeypatch):
     """``QB.run_qb_pipeline.run_qb_cv_pipeline`` is the wrapper called by
-    ``--cv`` and ``shared.registry.get_cv_runner('QB')``. Verify it forwards
+    ``--cv`` and ``src.shared.registry.get_cv_runner('QB')``. Verify it forwards
     to ``run_cv_pipeline`` with the QB position + config — without paying for
     the real CV training.
     """

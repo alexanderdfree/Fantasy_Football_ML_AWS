@@ -14,7 +14,7 @@ component-sum. Thresholds are loose enough not to flake, tight enough to
 catch a regression like "forgot to call .fit" or a shape mismatch that
 silently outputs zeros.
 
-These tests invoke training loops (shared.training.MultiHeadTrainer) so they
+These tests invoke training loops (src.shared.training.MultiHeadTrainer) so they
 are marked @pytest.mark.integration alongside @pytest.mark.regression.
 """
 

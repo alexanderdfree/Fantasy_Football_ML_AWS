@@ -1,4 +1,4 @@
-"""End-to-end smoke for the batch training CLI (batch/train.py).
+"""End-to-end smoke for the batch training CLI (src/batch/train.py).
 
 Invokes the CLI with `--dry-run`, which stubs out the heavy position
 pipeline and S3 calls while still exercising:
@@ -31,7 +31,7 @@ TRAIN_CLI = Path(PROJECT_ROOT) / "src" / "batch" / "train.py"
 @pytest.mark.integration
 @pytest.mark.parametrize("position", ["QB", "DST"])
 def test_dry_run_exits_zero_and_writes_artifacts(position, tmp_path, monkeypatch):
-    """Invoke `batch/train.py --position <POS> --dry-run` via subprocess.
+    """Invoke `src/batch/train.py --position <POS> --dry-run` via subprocess.
 
     Subprocess (rather than importing main()) to exercise the real argparse
     path, the `if __name__ == "__main__"` entry, and PYTHONPATH resolution
@@ -99,7 +99,7 @@ def test_dry_run_skips_position_pipeline_import(tmp_path, monkeypatch):
     """Dry-run should not import the heavy QB pipeline module.
 
     If dry-run accidentally called the real run_qb_pipeline, any of the
-    heavy shared.pipeline imports (matplotlib, lightgbm, torch training
+    heavy src.shared.pipeline imports (matplotlib, lightgbm, torch training
     loops) would fire. The position-runner-module import check is a fast,
     deterministic proxy.
     """

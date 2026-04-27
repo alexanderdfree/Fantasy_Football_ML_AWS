@@ -2,7 +2,7 @@
 
 Previously both baselines sorted internally but returned `.values` in sorted
 order, so predictions misaligned with the caller's row order whenever the
-caller did not pre-sort. Callers in shared/pipeline.py and
+caller did not pre-sort. Callers in src/shared/pipeline.py and
 DST/tests/test_dst_regression.py do not pre-sort, so every baseline MAE the
 project reports was wrong. The fix makes the baselines self-aligning; these
 tests pin that behavior.
@@ -75,7 +75,7 @@ def test_last_week_baseline_preserves_caller_row_order():
 
 @pytest.mark.unit
 def test_baseline_handles_non_unique_index():
-    """`pos_test` in shared/pipeline.py retains its source frame's non-unique
+    """`pos_test` in src/shared/pipeline.py retains its source frame's non-unique
     index after filtering. Baselines must not rely on df.index being unique."""
     df = _build_shuffled_df()
     df.index = [0] * len(df)
