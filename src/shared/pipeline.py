@@ -114,7 +114,22 @@ def _nn_device() -> torch.device:
         # batch_size with drop_last=True on train), so the autotuner's
         # selected kernels stay valid; the one-time search cost amortises
         # across the epoch loop. Idempotent — safe to set on every call.
-        torch.backends.cudnn.benchmark = True
+        #
+        # cuDNN benchmark can introduce per-run kernel-selection variation
+        # under unstable shapes or memory pressure. Disable it whenever the
+        # caller has opted into deterministic algorithms (so a single global
+        # toggle drives the whole reproducibility story), and expose
+        # ``FF_DETERMINISTIC=1`` as an out-of-band override for debugging
+        # numerical drift without having to touch ``use_deterministic_algorithms``.
+        force_deterministic = os.environ.get("FF_DETERMINISTIC", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        torch.backends.cudnn.benchmark = not (
+            force_deterministic or torch.are_deterministic_algorithms_enabled()
+        )
         return torch.device("cuda")
     return torch.device("cpu")
 

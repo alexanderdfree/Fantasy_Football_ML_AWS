@@ -11,6 +11,7 @@ Environment variables set via job definition / container overrides:
 """
 
 import argparse
+import contextlib
 import datetime
 import hashlib
 import io
@@ -83,38 +84,60 @@ def _download_if_stale(s3, bucket, key, local_path):
 
 
 def _read_parquet_cached(parquet_path: str) -> "pd.DataFrame":
-    """Read a parquet split, falling back to a pickle cache when fresh.
+    """Read a parquet split, falling back to a Feather cache when fresh.
 
     The EC2 entrypoint runs each position as a fresh Python invocation, so
-    six positions re-parse the same train/val/test parquets. A pickle of the
-    materialised DataFrame loads ~5x faster than re-decoding the parquet
-    columns, so the second through sixth invocation can skip the parse cost.
+    six positions re-parse the same train/val/test parquets. A Feather (Arrow
+    IPC) snapshot of the materialised DataFrame loads faster than re-decoding
+    the parquet columns, so the second through sixth invocation can skip the
+    parse cost. Feather over pickle: same pyarrow dependency we already use
+    for parquet, but the file format is not code-executing on read so it
+    can't widen the blast radius if the data dir is ever compromised.
 
-    Cache file lives next to the parquet as ``{path}.pkl``. We treat it as
-    fresh iff its mtime is greater than the parquet's mtime — the parquet's
-    mtime is bumped whenever ``_download_if_stale`` actually pulls bytes
-    from S3, so a remote refresh automatically invalidates the local pickle.
+    Cache file lives next to the parquet as ``{path}.feather``. We treat it
+    as fresh iff its mtime is greater than the parquet's — ``_download_if_stale``
+    bumps the parquet's mtime whenever it pulls bytes from S3, so a remote
+    refresh automatically invalidates the local cache.
 
-    Any failure to read the pickle (different pandas version, partial write
-    from a previously killed process, etc.) falls through to the parquet
-    parse silently. The pickle is rewritten after every successful parquet
-    parse so the cache self-heals.
+    Writes go through ``tempfile.NamedTemporaryFile`` + ``os.replace`` (mirrors
+    the pattern in ``src.shared.benchmark_utils.append_to_history``) so a
+    process killed mid-write can't leave a half-baked file that a later
+    invocation reads as a stale cache hit. Any read failure (different
+    pyarrow version, partial write that somehow slipped past the rename,
+    etc.) falls through to the parquet parse silently and triggers a
+    self-heal rewrite.
     """
-    pickle_path = parquet_path + ".pkl"
+    cache_path = parquet_path + ".feather"
     try:
-        if os.path.exists(pickle_path) and os.path.getmtime(pickle_path) > os.path.getmtime(
+        if os.path.exists(cache_path) and os.path.getmtime(cache_path) > os.path.getmtime(
             parquet_path
         ):
-            print(f"[parquet-cache] hit: {pickle_path}")
-            return pd.read_pickle(pickle_path)
+            print(f"[parquet-cache] hit: {cache_path}")
+            return pd.read_feather(cache_path)
     except Exception as e:
-        print(f"[parquet-cache] pickle unreadable ({e}); falling back to parquet parse")
+        print(f"[parquet-cache] cache unreadable ({e}); falling back to parquet parse")
     print(f"[parquet-cache] miss: parsing {parquet_path}")
     df = pd.read_parquet(parquet_path)
+    tmp_path = None
     try:
-        df.to_pickle(pickle_path)
+        cache_dir = os.path.dirname(cache_path) or "."
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=cache_dir,
+            prefix=os.path.basename(cache_path) + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp_file:
+            tmp_path = tmp_file.name
+        df.to_feather(tmp_path)
+        os.replace(tmp_path, cache_path)
+        tmp_path = None
     except Exception as e:
-        print(f"[parquet-cache] failed to write {pickle_path}: {e}")
+        print(f"[parquet-cache] failed to write {cache_path}: {e}")
+    finally:
+        if tmp_path is not None and os.path.exists(tmp_path):
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path)
     return df
 
 
