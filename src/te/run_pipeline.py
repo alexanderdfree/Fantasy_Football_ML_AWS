@@ -5,6 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_pipeline
 from src.te.config import (
     ATTN_D_MODEL,
@@ -41,6 +42,7 @@ from src.te.config import (
     NN_HEAD_HIDDEN,
     NN_HEAD_HIDDEN_OVERRIDES,
     NN_LR,
+    NN_NON_NEGATIVE_TARGETS,
     NN_PATIENCE,
     NN_WEIGHT_DECAY,
     ONECYCLE_MAX_LR,
@@ -68,10 +70,12 @@ CONFIG = {
     "add_features_fn": add_specific_features,
     "fill_nans_fn": fill_nans,
     "get_feature_columns_fn": get_feature_columns,
+    "aggregate_fn": aggregate_fn_for("TE"),
     "nn_backbone_layers": NN_BACKBONE_LAYERS,
     "nn_head_hidden": NN_HEAD_HIDDEN,
     "nn_dropout": NN_DROPOUT,
     "nn_head_hidden_overrides": NN_HEAD_HIDDEN_OVERRIDES,
+    "nn_non_negative_targets": NN_NON_NEGATIVE_TARGETS,
     "nn_lr": NN_LR,
     "nn_weight_decay": NN_WEIGHT_DECAY,
     "nn_epochs": NN_EPOCHS,

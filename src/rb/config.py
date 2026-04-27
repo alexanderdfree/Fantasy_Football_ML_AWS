@@ -168,6 +168,8 @@ ENET_L1_RATIOS = [0.3, 0.5, 0.7]
 NN_BACKBONE_LAYERS = [128, 64]
 NN_HEAD_HIDDEN = 48
 NN_DROPOUT = 0.15
+# All 6 RB heads are non-negative raw stats (yards, TDs, receptions, fumbles).
+NN_NON_NEGATIVE_TARGETS = set(TARGETS)
 NN_LR = 1e-3
 NN_WEIGHT_DECAY = 5e-5
 NN_EPOCHS = 300

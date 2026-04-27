@@ -50,6 +50,7 @@ from src.rb.config import (
     NN_HEAD_HIDDEN,
     NN_HEAD_HIDDEN_OVERRIDES,
     NN_LR,
+    NN_NON_NEGATIVE_TARGETS,
     NN_PATIENCE,
     NN_WEIGHT_DECAY,
     ORDINAL_TARGETS,
@@ -67,6 +68,7 @@ from src.rb.config import (
 from src.rb.data import filter_to_position
 from src.rb.features import add_specific_features, fill_nans, get_feature_columns
 from src.rb.targets import compute_targets
+from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_cv_pipeline, run_pipeline
 
 CONFIG = {
@@ -87,10 +89,12 @@ CONFIG = {
     "add_features_fn": add_specific_features,
     "fill_nans_fn": fill_nans,
     "get_feature_columns_fn": get_feature_columns,
+    "aggregate_fn": aggregate_fn_for("RB"),
     "nn_backbone_layers": NN_BACKBONE_LAYERS,
     "nn_head_hidden": NN_HEAD_HIDDEN,
     "nn_dropout": NN_DROPOUT,
     "nn_head_hidden_overrides": NN_HEAD_HIDDEN_OVERRIDES,
+    "nn_non_negative_targets": NN_NON_NEGATIVE_TARGETS,
     "nn_lr": NN_LR,
     "nn_weight_decay": NN_WEIGHT_DECAY,
     "nn_epochs": NN_EPOCHS,

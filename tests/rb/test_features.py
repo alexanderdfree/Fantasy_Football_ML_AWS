@@ -28,7 +28,7 @@ FEATURE_COLS = [
 
 @pytest.mark.unit
 class TestComputeRBFeatures:
-    def test_all_eight_features_created(self, make_player_games):
+    def test_all_features_created(self, make_player_games):
         df = make_player_games()
         _compute_features(df)
         for col in FEATURE_COLS:
