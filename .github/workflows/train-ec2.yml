@@ -212,6 +212,8 @@ jobs:
       - name: Run training for all positions (sequential)
         id: train
         run: |
+          STARTED_AT=$(date +%s)
+          echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
           POSITIONS="${{ needs.detect.outputs.positions }}"
           SEED="${{ github.event.inputs.seed || '42' }}"
           # Sequential loop inside a single SSM command so we get one command
@@ -281,8 +283,11 @@ jobs:
 
       - name: Verify model artifact freshness
         run: |
+          # Anchor on when training STARTED, not "now": a long sequential
+          # run would otherwise trip the threshold on early positions'
+          # artifacts that aged past 1200s while later positions trained.
           POSITIONS="${{ needs.detect.outputs.positions }}"
-          now=$(date +%s)
+          train_started_at="${{ steps.train.outputs.started_at }}"
           echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
           echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
           fail=0
@@ -299,9 +304,9 @@ jobs:
               continue
             fi
             lm_ts=$(date -d "$LM" +%s)
-            age=$(( now - lm_ts ))
+            age=$(( train_started_at - lm_ts ))
             status="OK"
-            if [ "$age" -gt 1200 ]; then status="STALE (${age}s old)"; fail=1; fi
+            if [ "$age" -gt 1200 ]; then status="STALE (${age}s before train start)"; fail=1; fi
             mb=$(awk "BEGIN{printf \"%.1f\", $SZ/1048576}")
             echo "| $POS | $status | $LM | $mb |" >> "$GITHUB_STEP_SUMMARY"
           done
