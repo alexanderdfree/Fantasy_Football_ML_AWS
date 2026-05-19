@@ -21,7 +21,6 @@ single process skips the parquet read too. Set
 from __future__ import annotations
 
 import contextlib
-import functools
 import hashlib
 import json
 import os
@@ -191,9 +190,3 @@ def clear_in_memory_cache() -> None:
     with _lru_lock:
         _lru.clear()
         _lru_order.clear()
-
-
-@functools.lru_cache(maxsize=1)
-def _warn_once_on_disabled() -> None:
-    if _disabled():
-        print("  [feature_cache] disabled by FF_FEATURE_CACHE_DISABLE")
