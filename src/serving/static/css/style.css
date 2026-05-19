@@ -1096,7 +1096,6 @@ body.model-lgbm .attn-nn-col { display: none; }
 .wiki-content {
     flex: 1 1 auto;
     min-width: 0;
-    max-width: 900px;
     padding: 24px 28px;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
@@ -1170,7 +1169,10 @@ body.model-lgbm .attn-nn-col { display: none; }
     border-radius: 0 var(--radius) var(--radius) 0;
 }
 .wiki-content table {
+    display: block;
     width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
     border-collapse: collapse;
     margin: 0 0 16px 0;
     font-size: 13px;
@@ -1180,6 +1182,8 @@ body.model-lgbm .attn-nn-col { display: none; }
     padding: 8px 12px;
     border-bottom: 1px solid var(--border);
     text-align: left;
+    overflow-wrap: anywhere;
+    vertical-align: top;
 }
 .wiki-content th {
     color: var(--text-secondary);
