@@ -198,10 +198,5 @@ Next steps:
        gh variable set EC2_TRAINER_INSTANCE_ID --body "$INSTANCE_ID"
        gh variable set BATCH_ACTIVE --body "false"
   4. Smoke test: /usr/local/bin/ff-train K 42
-  5. Enable auto-shutdown after you've observed usage for a day:
-       aws ssm send-command --targets "Key=InstanceIds,Values=$INSTANCE_ID" \\
-         --document-name AWS-RunShellScript \\
-         --parameters 'commands=["systemctl enable --now ff-auto-shutdown.timer"]' \\
-         --region $REGION
 ────────────────────────────────────────────────────────────────
 EOF

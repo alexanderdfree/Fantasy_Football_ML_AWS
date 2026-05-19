@@ -144,8 +144,7 @@ aws s3 cp "s3://${BUCKET}/${INFRA_PREFIX}/auto-shutdown.service" \
 aws s3 cp "s3://${BUCKET}/${INFRA_PREFIX}/auto-shutdown.timer" \
   /etc/systemd/system/ff-auto-shutdown.timer --region "$REGION"
 systemctl daemon-reload
-# Intentionally NOT enabling the timer. Operator enables via SSM after
-# observing real usage patterns: systemctl enable --now ff-auto-shutdown.timer
+systemctl enable --now ff-auto-shutdown.timer
 
 # --- 7. GPU driver + warm image pull ------------------------------------
 nvidia-smi --query-gpu=driver_version --format=csv,noheader | awk -F. '{
