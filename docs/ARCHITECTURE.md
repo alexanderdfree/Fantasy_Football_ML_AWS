@@ -1,10 +1,11 @@
 # ADR-001: Fantasy Football Predictor — Consolidated Architecture
 
-| Status | Date | Author |
-|---|---|---|
-| Accepted | 2026-04-16 | Alex Free (CS 372) |
-| Updated | 2026-04-19 | D7/D9 and §2 diagram reconciled with the EC2 training switch; the Batch path is preserved as standby (see [docs/batch_design.md](batch_design.md)). |
-| Updated | 2026-04-21 | D2/D4/D6 reconciled with attention now running on all six positions (K nested per-kick + outer per-game; DST standard attention), DST target migration from 5 mixed-bucket heads to 10 raw stats, and the per-position `{POS}_ATTN_STATIC_FEATURES` allowlist that blocks rolling features from leaking into the attention branch. |
+**Status:** Accepted · **Date:** 2026-04-16 · **Author:** Alex Free (CS 372)
+
+### Update history
+
+- **2026-04-21** — D2/D4/D6 reconciled with attention now running on all six positions (K nested per-kick + outer per-game; DST standard attention), DST target migration from 5 mixed-bucket heads to 10 raw stats, and the per-position `{POS}_ATTN_STATIC_FEATURES` allowlist that blocks rolling features from leaking into the attention branch.
+- **2026-04-19** — D7/D9 and §2 diagram reconciled with the EC2 training switch; the Batch path is preserved as standby (see [docs/batch_design.md](batch_design.md)).
 
 ## Table of Contents
 
