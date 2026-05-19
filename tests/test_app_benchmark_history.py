@@ -223,6 +223,48 @@ class TestRobustness:
         assert row["nn"] == []
 
 
+class TestRepoSlugResolution:
+    """``_resolve_repo_slug`` guards the env-overridable repo slug. The slug
+    is interpolated into an ``href`` in the frontend, so we reject anything
+    that doesn't look like ``owner/repo`` and fall back to the default.
+
+    Hostile env vars are above the user-input threat model, but a typo'd
+    BENCHMARK_REPO_SLUG would otherwise silently break every History row's
+    link without a log line; the warning surfaces that to the operator."""
+
+    def test_unset_falls_back_to_default(self, app_module):
+        assert app_module._resolve_repo_slug(None) == app_module._BENCHMARK_REPO_SLUG_DEFAULT
+
+    def test_empty_string_falls_back_to_default(self, app_module):
+        assert app_module._resolve_repo_slug("") == app_module._BENCHMARK_REPO_SLUG_DEFAULT
+        assert app_module._resolve_repo_slug("   ") == app_module._BENCHMARK_REPO_SLUG_DEFAULT
+
+    def test_well_formed_slug_passes_through(self, app_module):
+        assert app_module._resolve_repo_slug("alice/foo-bar") == "alice/foo-bar"
+        assert app_module._resolve_repo_slug("Org_42/repo.name") == "Org_42/repo.name"
+        # Whitespace is stripped before matching.
+        assert app_module._resolve_repo_slug("  alice/foo  ") == "alice/foo"
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            'evil.com" onclick="x',  # HTML-attribute breakout attempt
+            "owner/repo with space",  # whitespace mid-value
+            "owner/repo>",  # closing-bracket
+            "owner",  # missing /repo
+            "owner/repo/extra",  # too many segments
+            "/owner/repo",  # leading slash
+            "owner//repo",  # double slash
+            "javascript:alert(1)",  # scheme injection attempt
+        ],
+    )
+    def test_malformed_slug_falls_back_with_warning(self, app_module, hostile, caplog):
+        with caplog.at_level("WARNING", logger="src.serving.app"):
+            resolved = app_module._resolve_repo_slug(hostile)
+        assert resolved == app_module._BENCHMARK_REPO_SLUG_DEFAULT
+        assert any("BENCHMARK_REPO_SLUG" in rec.message for rec in caplog.records)
+
+
 class TestCaching:
     def test_repeat_calls_reuse_cache_until_dir_changes(self, history_client, monkeypatch):
         """Two consecutive GETs over an unchanged dir must hit the cache —

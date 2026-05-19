@@ -5,6 +5,7 @@ No general cross-position model is used.
 """
 
 import json
+import logging
 import os
 import re
 import sys
@@ -1587,11 +1588,37 @@ def api_wiki_page(slug):
 
 
 # Env-overridable so a rename or fork doesn't silently break every History
-# row's GitHub link. Fallback is the canonical slug for the live deploy.
+# row's GitHub link. Defense-in-depth: validate the format before trusting
+# it, since the slug ends up interpolated into an href in the frontend.
+# Hostile env vars are above the user-input threat model, but cheap to guard.
 _BENCHMARK_REPO_SLUG_DEFAULT = "alexanderdfree/Fantasy_Football_ML_AWS"
-_BENCHMARK_REPO_SLUG = (
-    os.environ.get("BENCHMARK_REPO_SLUG", "").strip() or _BENCHMARK_REPO_SLUG_DEFAULT
-)
+# Conservative subset of GitHub's actual allowed characters — enough for
+# every real owner/repo combo while rejecting anything that could break out
+# of the href context (quotes, angle brackets, whitespace).
+_REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
+
+def _resolve_repo_slug(env_value: str | None) -> str:
+    """Return the env value if it parses as ``owner/repo``, else the default.
+
+    Empty / whitespace / unset → silent fallback (the common no-override case).
+    Non-empty but malformed → fallback + a warning log so an operator notices
+    they typo'd the env var instead of seeing broken links in prod.
+    """
+    candidate = (env_value or "").strip()
+    if not candidate:
+        return _BENCHMARK_REPO_SLUG_DEFAULT
+    if _REPO_SLUG_RE.match(candidate):
+        return candidate
+    logging.getLogger(__name__).warning(
+        "BENCHMARK_REPO_SLUG=%r does not match owner/repo — falling back to %r",
+        candidate,
+        _BENCHMARK_REPO_SLUG_DEFAULT,
+    )
+    return _BENCHMARK_REPO_SLUG_DEFAULT
+
+
+_BENCHMARK_REPO_SLUG = _resolve_repo_slug(os.environ.get("BENCHMARK_REPO_SLUG"))
 _BENCHMARK_MODELS = ("ridge", "nn", "attn_nn", "lgbm")
 
 # (mtime, rows) — invalidated whenever sync_benchmark_history_from_s3 (or a
@@ -1653,6 +1680,13 @@ def _load_benchmark_history_rows() -> list[dict]:
     manual write) bumps it and forces a reparse. Per-request, this is O(1)
     in the steady state instead of O(N_files * parse). Returns ``[]`` if the
     dir doesn't exist (fresh container before any sync has happened).
+
+    INVARIANT: this cache assumes writes are atomic-rename (the .tmp +
+    os.replace pattern in src/shared/benchmark_utils.py::append_to_history),
+    NOT in-place edits. A rename ticks the parent-directory mtime; rewriting
+    an existing file in place would not, and the cache would serve stale
+    rows. If a future backfill or migration script ever rewrites entries in
+    place, swap the key to ``(dir_mtime, file_count, max(file_mtimes))``.
     """
     global _BENCHMARK_HISTORY_CACHE
     history_dir = _benchmark_history_dir()
