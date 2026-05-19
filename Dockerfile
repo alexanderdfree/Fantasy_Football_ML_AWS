@@ -36,6 +36,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # shrinks the image and decouples deploys from data/model changes.
 COPY src/ src/
 
+# Benchmark history JSONs power the History tab. We bundle the git-tracked
+# floor in the image so the tab is never empty, even if S3 sync is no-op
+# (bucket env var unset, network blip, etc.). sync_benchmark_history_from_s3
+# at container boot layers on any newer runs uploaded since this build.
+COPY benchmark_history/ benchmark_history/
+
 # Markdown source files served by the in-app Wiki tab (/api/wiki/<slug>).
 # Only the .md files in src/serving/app.py:WIKI_DOCS — non-MD files in
 # instructions/ and infra/*/ (shell scripts, JSON policies, .docx, .html)
