@@ -1,6 +1,6 @@
 # Attribution
 
-_Last verified: 2026-04-21._
+_Last verified: 2026-05-19._
 
 Sources, libraries, and AI-tool usage for this project.
 
@@ -33,8 +33,8 @@ Claude Code (Anthropic) was used throughout this project. A substantive account:
 
 Claude produced first drafts of the following before I reviewed and reworked them. None of these landed as-is — each had to be edited to fit the project's constraints, but the initial scaffold saved typing time:
 
-- **Per-position pipeline scaffolds** — the six `{POS}/run_{pos}_pipeline.py` entrypoints share a near-identical shape; Claude wrote the first one (RB) and I had it generate the others as templates that I then specialized.
-- **Pytest fixtures and boilerplate** — `tests/conftest.py`, the per-position `{POS}/tests/conftest.py` files, and the synthetic-DataFrame builders (`_make_player_games()`, etc.) used across feature tests. I authored the assertions; Claude authored the fixture skeletons.
+- **Per-position pipeline scaffolds** — the six `src/{pos}/run_pipeline.py` entrypoints (lowercased and prefix-stripped in PR #154, `668fa81`) share a near-identical shape; Claude wrote the first one (RB) and I had it generate the others as templates that I then specialized. Each module exposes a `run()` function plus `run_cv()` where applicable.
+- **Pytest fixtures and boilerplate** — `tests/conftest.py`, the per-position `tests/{pos}/conftest.py` files (consolidated under the top-level `tests/` tree in PR #152, `7933240`), and the synthetic-DataFrame builders (`_make_player_games()`, etc.) used across feature tests. I authored the assertions; Claude authored the fixture skeletons.
 - **AWS infra glue** — initial drafts of [infra/ec2/launch-instance.sh](infra/ec2/launch-instance.sh), [infra/ec2/user-data.sh](infra/ec2/user-data.sh), the systemd unit files in [infra/ec2/](infra/ec2/), [infra/ec2/cloudwatch-agent.json](infra/ec2/cloudwatch-agent.json), and [infra/aws/bootstrap.sh](infra/aws/bootstrap.sh). I then debugged each against the real AWS environment (see TODO.md "Fixed" archive — multiple ECS deploy bugs traced to drift between these files and live AWS state).
 - **Markdown structure** — first-draft skeletons of [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (the ADR template, the per-decision "Options considered" table layout) and [docs/expert_comparison.md](docs/expert_comparison.md). I wrote the actual decision content, options, and rejected-alternative reasoning; Claude only laid down the structural scaffold.
 - **GitHub Actions YAML** — the initial shapes of [.github/workflows/tests.yml](.github/workflows/tests.yml), [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml), [.github/workflows/batch-image.yml](.github/workflows/batch-image.yml), and [.github/workflows/deploy.yml](.github/workflows/deploy.yml) — pytest-shard matrix, SSM-RunCommand polling, ECR push steps. The matrix configurations and the deploy gating logic I tuned by hand after watching CI runs fail in specific ways.

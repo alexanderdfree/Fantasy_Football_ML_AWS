@@ -4,6 +4,7 @@
 
 ### Update history
 
+- **2026-05-19** — D11 (smoke-test gate + always-stable manifest v2) and D12 (training-step perf composition; `torch.compile` measured and rejected on T4) added. D2 extended to note the user-facing PPR/Half-PPR/Standard scoring switch (PR #153). D4/D6 reconciled with K's `ATTN_L1_FEATURES` removal (PR #199) — K's attention static branch now matches the documented "no rolling features in the attention static channel" convention across all six positions.
 - **2026-04-21** — D2/D4/D6 reconciled with attention now running on all six positions (K nested per-kick + outer per-game; DST standard attention), DST target migration from 5 mixed-bucket heads to 10 raw stats, and the per-position `{POS}_ATTN_STATIC_FEATURES` allowlist that blocks rolling features from leaking into the attention branch.
 - **2026-04-19** — D7/D9 and §2 diagram reconciled with the EC2 training switch; the Batch path is preserved as standby (see [docs/batch_design.md](batch_design.md)).
 
@@ -22,6 +23,8 @@
    - [D8: Two Docker images (slim Flask, heavy training)](#d8-two-docker-images)
    - [D9: Warm training host (replaces Batch cold-start stack)](#d9-warm-training-host)
    - [D10: Trunk-based CI/CD with test-gated deploys](#d10-trunk-based-cicd-with-test-gated-deploys)
+   - [D11: Smoke-test gate + always-stable artifact (manifest v2)](#d11-smoke-test-gate--always-stable-artifact-manifest-v2)
+   - [D12: Training-step perf composition (torch.compile rejected on T4)](#d12-training-step-perf-composition-torchcompile-rejected-on-t4)
 4. [Cross-Cutting Consequences](#4-cross-cutting-consequences)
 5. [Open Issues / Follow-Ups](#5-open-issues--follow-ups)
 6. [References](#6-references)
@@ -149,6 +152,8 @@ Zero-inflated targets get a `GatedHead` (BCE gate on `stat > 0` plus a value hea
 
 **Consequence.** Inference-time totals flow through `src/shared/aggregate_targets.py:predictions_to_fantasy_points` — changing scoring coefficients is a single-file edit. The per-position adjustment functions (`compute_qb_adjustment`, `compute_fumble_adjustment`, etc.) are retired for QB/RB/WR/TE; their effects (interception penalty, fumble penalty) are now direct targets (`interceptions`, `fumbles_lost`) that the aggregator prices in. DST flows through the same aggregator (10 raw stats plus a tiered PA/YA bonus lookup, commit `cc0c627`); K retains its own aggregation path — the 4 heads stay as raw counts and only the sign vector is applied at aggregation time.
 
+The serving layer turns this into a user-facing capability: as of PR #153 (`a533990`) the dashboard exposes a 3-pill PPR / Half-PPR / Standard toggle and caches three per-format prediction columns per model so users can switch without re-fetching. The `?scoring=` query parameter is honored on every endpoint and season-leader / chart / metric aggregations are re-derived from the same raw-stat predictions through the aggregator. The models themselves remain scoring-agnostic — only the aggregation step varies — so this was a pure serving-layer addition, no retraining.
+
 **References.** [src/shared/aggregate_targets.py](../src/shared/aggregate_targets.py) (aggregator + `TARGET_UNITS` + `POINT_EQUIVALENT_MULTIPLIER`), [src/config.py](../src/config.py) (`SCORING_PPR`, `SCORING_HALF_PPR`, `SCORING_STANDARD`), [src/shared/neural_net.py:38-145](../src/shared/neural_net.py) (`MultiHeadNet`, `aggregate_fn` plumbing), [src/shared/training.py](../src/shared/training.py) (`MultiTargetLoss`), per-position `compute_{pos}_targets` in `src/qb/targets.py`, `src/rb/targets.py`, `src/wr/targets.py`, `src/te/targets.py`, and `{POS}/{pos}_config.py` (target lists + loss weights + Huber deltas in raw-stat units). Consolidated in commit `99d7086`; raw-stat migration follows.
 
 ---
@@ -195,7 +200,7 @@ Zero-inflated targets get a `GatedHead` (BCE gate on `stat > 0` plus a value hea
 
 - **QB / RB / WR / TE** — outer attention over prior games; per-game row is the rolling-stat snapshot. Unchanged in spirit from the original skill-position design.
 - **DST** (commit `cc0c627`) — outer attention over prior games using a 14-stat per-game sequence (the 10 raw targets plus 4 raw opponent-context columns `opp_scoring`, `opp_fumbles`, `opp_interceptions`, `opp_qb_epa`, see [src/dst/config.py:194-211](../src/dst/config.py)). No gated fusion, no gated TD head.
-- **K** (commit `801b61a`) — **nested attention**: the outer attention is over prior games, but each game token is itself produced by an *inner* attention pool over up to `K_ATTN_MAX_KICKS_PER_GAME = 10` kicks within that game (with per-kick features like `kick_distance`, `fg_prob`, `is_q4`, `game_wind`, see [src/k/config.py:118-134](../src/k/config.py)). The inner pool summarizes per-kick conditions; the outer pool weights which prior games matter. This lets the model distinguish "3-for-3 from short range in a dome" from "3-for-3 in a blizzard from 50+" — a signal pure per-game rollups destroy.
+- **K** (commit `801b61a`) — **nested attention**: the outer attention is over prior games, but each game token is itself produced by an *inner* attention pool over up to `K_ATTN_MAX_KICKS_PER_GAME = 10` kicks within that game (with per-kick features like `kick_distance`, `fg_prob`, `is_q4`, `game_wind`, see [src/k/config.py:118-134](../src/k/config.py)). The inner pool summarizes per-kick conditions; the outer pool weights which prior games matter. This lets the model distinguish "3-for-3 from short range in a dome" from "3-for-3 in a blizzard from 50+" — a signal pure per-game rollups destroy. A subsequent refinement (PR #199, `dff43fb`) dropped the L1-rolling columns (`ATTN_L1_FEATURES`) that K had still been feeding into its attention static branch: once the inner per-kick attention pool was learning per-game aggregates directly, the L1 rollups were redundant signal, and keeping them violated the "no rolling features in the attention static channel" rule the other five positions already followed.
 
 **Rejected.** A full LSTM or Transformer was tried conceptually (see [docs/design_lstm_multihead.md](design_lstm_multihead.md)) but rejected as over-parameterized for this regime. Kept the design doc as an artifact of the consideration. An earlier version of this ADR rejected attention on K and DST — that decision was reversed once the input schemas were redesigned to give the attention branch something real to chew on (raw per-kick rows for K, raw defensive stats rather than pre-rolled windows for DST).
 
@@ -240,6 +245,8 @@ Zero-inflated targets get a `GatedHead` (BCE gate on `stat > 0` plus a value hea
 **Chosen: opt-in allowlist.** A reviewer can diff a PR and see exactly what features the model sees. Adding a feature is a deliberate act. The inconvenience (a config edit per experiment) is the point — it forces intentionality.
 
 **Extension: per-position attention-static allowlist.** When D4 grew to cover all six positions, the Ridge/base-NN allowlist turned out not to be enough. The attention branch already consumes temporal signal through its game-history channel, so feeding it the *same* rolling/EWMA/trend features again is both redundant and a leakage risk (the rolling features reach back farther than the attention window, so they silently smuggle older-season information past what's on the visible sequence). Landed in commit `2500ecc`: every position now defines a `{POS}_ATTN_STATIC_FEATURES` list that the pipeline consults when building the attention NN's static channel, distinct from the Ridge/base-NN `{POS}_INCLUDE_FEATURES`. Rolling, EWMA, and trend columns are explicitly kept out. Example: DST's attention static branch sees only 9 columns (`is_home`, `week`, `spread_line`, `total_line`, `rest_days`, `div_game`, `is_dome`, `prior_season_dst_pts_avg`, `prior_season_pts_allowed_avg`) — see [src/dst/config.py:218-228](../src/dst/config.py); K swaps its rolling features out for shift-1 "last-game" features ([src/k/config.py:140-152](../src/k/config.py)) because everything further back is in the inner kick sequence anyway.
+
+K was the lone exception until PR #199 (`dff43fb`): when the convention landed in `2500ecc`, K still carried a separate `ATTN_L1_FEATURES` block that pushed L1-rolling columns into the attention static channel. The nested per-kick attention (D4) was already learning the same per-game aggregates the L1 rollups encoded, so the columns were redundant signal — and they violated the rule the other five positions followed. Removing them made the convention uniform across all six positions; this is the kind of residue a cross-cutting refactor leaves behind, and the lesson is to audit every position's config for it rather than trusting the touched-files list (TODO archive entry on the K `ATTN_L1_FEATURES` violation).
 
 **Rejected.** Opt-out was the earlier pattern and was exactly how the feature-clipping bug and the schedule-features-at-inference bug slipped in. Allowlist refactor landed in commit `18170a6` alongside the gated TD change.
 
@@ -347,17 +354,71 @@ Net effect on a typical push: if the instance is already warm, training starts w
 
 ---
 
+### D11: Smoke-test gate + always-stable artifact (manifest v2)
+
+**Decision.** Every training run lands its new tarball under a versioned `history/{ts}-{sha7}/` key, then runs an in-process smoke test that loads the artifact and runs a deterministic zero-input predict against every head; only on success does the manifest's `stable` pointer advance to the new key. The manifest schema (v2, defined in [src/shared/model_sync.py:46-49](../src/shared/model_sync.py)) tracks `stable`, `current`, `previous`, and a newest-first `history[]` capped at `HISTORY_KEEP_N`, so any past-good artifact can be promoted back manually via [src/scripts/promote.py](../src/scripts/promote.py). ECS reads `stable` at boot, so a failed gate means new tasks keep loading the previous good model while the new (broken) tarball sits in `current` and `history/` for forensics. S3 bucket versioning is layered underneath as defense-in-depth.
+
+**Context.** D10's CI gate catches code regressions before they merge; it does not catch artifact regressions — a model that trains successfully but predicts NaN, or whose feature-column hash drifted past the scaler's, will pass pytest and then silently degrade the live dashboard. The weather/Vegas-missing-at-inference incident (TODO archive) is the canonical example: training-pipeline and serving-pipeline drift shipped past every test and only surfaced when users saw zeros in the dashboard. Prior to D11, any successful S3 upload silently became "live" to the next ECS task that booted. The CS 372 self-assessment also claims production safety; this decision is what backs that claim.
+
+**Options considered.**
+
+| Option | Safety | Operator cost | CI/CD fit |
+|---|---|---|---|
+| Always advance — newest upload is live | Low | None | Matches D10's trunk-based ratchet |
+| Manual promote step (operator approval before live) | High | Every push needs a human | Defeats D10 |
+| **Smoke-test gate + stable/current/previous/history (chosen)** | High | None on success; rollback is a `promote.py` invocation | Compatible with D10 — gate runs in the same CI job |
+| ECS canary deploy (split live traffic) | Very high | Needs traffic-splitting infra | Over-engineered for single-task ECS service |
+
+**Chosen rationale.** The smoke test is *non-fatal*: `current` always advances (so failures are visible in the manifest for post-mortem), but `stable` only moves on success. The frontend resolves the artifact pointer at boot from `stable`, so a failed gate means new ECS tasks keep loading the prior good model while a human investigates. PR #179 (`8c42e88`) closed the operational loop: after a successful train, the workflow now issues `aws ecs update-service --force-new-deployment` so the newly-promoted `stable` is actually consumed by a fresh task instead of staying invisible to the long-running one. The smoke test itself ([src/shared/smoke_test.py](../src/shared/smoke_test.py)) catches the four failure modes that matter at promotion time: pickle/torch.load deserialization errors after class-path drift, state-dict shape mismatches (feature-count drift between training and the runtime registry), scaler `feature_cols_hash` drift caught by `assert_scaler_matches`, and NaN/Inf predictions on benign input from a collapsed head.
+
+**Rejected.** Manual-promote breaks the trunk-based CI/CD ratchet from D10 — every push would need a human. Canary deploys need real traffic-splitting infrastructure absent on a single-task ECS service. Doing nothing and relying on tests proved insufficient (see Context).
+
+**Consequence.** Adds ~5 s per training run for the smoke pass. Introduces a two-channel signal — "did training succeed?" splits into `current` (always advances) and `stable` (conditional). Operator scripts must understand which pointer they're reading: model_sync clients consume `stable`; forensics tooling and the `promote.py` listing read `history[]` and `previous`. Trades "newest model always live" for "no NaN-emitting model ever live" — the weather/Vegas archive entry quantifies what the prior behavior cost. The 5-deep `history` plus S3 bucket versioning means even a "two consecutive bad ships" scenario (`current` and `previous` both broken) is recoverable: `promote.py --list` shows older `history[]` entries, `--to <key>` rewrites the manifest atomically, and the legacy `model.tar.gz` mirror is updated for any pre-manifest consumer.
+
+**References.** [src/shared/smoke_test.py](../src/shared/smoke_test.py) (smoke test entrypoint + `SmokeTestFailed`), [src/shared/model_sync.py](../src/shared/model_sync.py) (manifest v2 schema, `build_manifest`/`load_manifest`/`write_manifest`, `_sync_one` consumer with `stable`-preferred fallback), [src/batch/train.py](../src/batch/train.py) (upload → smoke → promote sequence), [src/scripts/promote.py](../src/scripts/promote.py) (operator rollback CLI), [src/shared/artifact_gc.py](../src/shared/artifact_gc.py) (history pruning), [.github/workflows/train-ec2.yml](../.github/workflows/train-ec2.yml) (ECS force-new-deployment after train). Commit arc: `1b20e9e` (versioned history / PR #104) → `e8bf2a7` (promote CLI / PR #122) → `c7fa2d7` (smoke-test gate + bucket versioning / PR #130) → `8c42e88` (ECS force-rollover / PR #179).
+
+---
+
+### D12: Training-step perf composition (torch.compile rejected on T4)
+
+**Decision.** Apply four cheap, orthogonal training-step optimizations on the EC2 training host — Feather-cached parquet reads, `DataLoader(num_workers=2, pin_memory=True)` on CUDA, `torch.backends.cudnn.benchmark = True`, and `optimizer.zero_grad(set_to_none=True)` — and emit phase-level timings as part of every benchmark JSON. *Do not* enable `torch.compile`: on T4 with this workload it costs +32% wall time and the wrapper is short-circuited at the call site.
+
+**Context.** A 2-minute training job × 6 positions × every commit to `main` puts wall-clock training time directly on the critical path between `git push` and serving (D7/D9). The four cheap optimizations are uncontroversial — they target distinct bottlenecks (disk parse, host→device copy, conv-kernel search, gradient-zero traffic) and compose linearly. `torch.compile` was the obvious "free win" candidate but the actual measurement on the EC2 g4dn (PR #189, `3167b56`) showed a consistent regression, and a parallel test of `LGBM_N_JOBS=-1` (PR #188) was unwittingly bundled with the compile regression in the same image, masking its signal entirely until both were unwound (PR #196).
+
+**Options considered.** Multiple perf knobs evaluated against the same EC2 g4dn baseline:
+
+| Knob | Wall-time delta | Why |
+|---|---|---|
+| Feather-cached parquet + async DataLoader + cuDNN benchmark + `set_to_none=True` (chosen, PR #183) | **−40% to −60%** depending on position | Disk parse amortized across positions; H→D copy overlapped with forward pass; cuDNN picks the best conv kernel per attention shape after warmup; no zero-write traffic on the gradient buffer |
+| Static-pad attention sequences — hold `build_game_history_arrays`'s fixed `[n, 17, game_dim]` tensors instead of stripping to variable-length lists for a custom collate (chosen, PR #200) | **−30%** on attention training (115.8 s → 81.2 s on RB) | Default PyTorch collate stacks fixed-shape tensors with zero overhead; masked positions contribute zero regardless, so math is equivalent. K's nested-attention path already used this pattern; PR #200 brought QB/RB/WR/TE/DST in line |
+| Disk-backed feature-engineering cache (`.cache/features/`, content-hashed) (chosen, PR #200) | **86×** on prepare_data for cache hits (8.6 s → 0.1 s on RB) | `_prepare_position_data` is deterministic given `(position, train_df, val_df, test_df, cfg)` but is called N_folds × N_trials × N_positions times during Optuna and across CLI re-runs. Bypass with `FF_FEATURE_CACHE_DISABLE=1`; metrics bit-identical across runs |
+| `torch.compile(model, dynamic=True)` on every NN forward | **+32%** | T4 (sm_75) has too few SMs to amortize the fused-kernel benefit at this batch size; variable-length history sequences cause Inductor to re-check guards each batch, drowning the gain |
+| LightGBM `n_jobs=-1` baked into the training image (PR #188) | "test confounded by `torch.compile`" | Reverted in PR #196 — never genuinely measured because the compile regression masked the signal. Needs a clean re-test now that `torch.compile` is off |
+
+**Chosen rationale.** Keep the four cheap wins; short-circuit `_maybe_compile` in [src/shared/pipeline.py:137-159](../src/shared/pipeline.py) so the path is dead code but the wrapper survives for a future hardware change (the docstring records the measurement and the conditions for re-enabling). LGBM threading is left as an open question — the default `LGBM_N_JOBS=1` is conservative but not currently regressed.
+
+**Rejected.** `torch.compile` on T4 for variable-length sequences — re-evaluate if/when the training host moves to `sm_86+` (A10 or larger, more SMs). Bundling parallel perf experiments into one image — every "perf win" must be measured independently so a co-resident regression doesn't mask the signal (this is the lesson from PRs #188/#189/#196).
+
+**Consequence.** Phase timings (`pipeline.nn_train`, `pipeline.attn_nn_train`, `pipeline.prepare_data`, `pipeline.ridge_tune`, etc.) are now part of every benchmark JSON ([benchmark_history/](../benchmark_history/)), making perf regressions visible position-by-position without an explicit perf-test job. This composes with the per-shard `detect` logic in [.github/workflows/train-ec2.yml](../.github/workflows/train-ec2.yml) so an unrelated regression on a non-changed position is still visible in the next run that touches it. The Feather cache adds one disk file per parquet under [src/batch/train.py](../src/batch/train.py)'s cache path — must be regenerated when a feature schema changes (the cache is invalidated by mtime, so re-running training after a parquet rewrite picks up the change automatically).
+
+**References.** [src/batch/train.py:87-132](../src/batch/train.py) (Feather cache with mtime invalidation), [src/shared/pipeline.py:130](../src/shared/pipeline.py) (`cudnn.benchmark` toggle), [src/shared/pipeline.py:137-159](../src/shared/pipeline.py) (`_maybe_compile` short-circuit + restore instructions), [src/shared/training.py:278-320](../src/shared/training.py) (`num_workers=_NUM_WORKERS, pin_memory=True` across all four `DataLoader` sites), [src/shared/training.py:394](../src/shared/training.py) (`zero_grad(set_to_none=True)`), [src/shared/feature_cache.py](../src/shared/feature_cache.py) (disk-backed feature-engineering cache with content-hashed keys; `FF_FEATURE_CACHE_DISABLE=1` bypass), [src/shared/models.py:30](../src/shared/models.py) (`_LGBM_N_JOBS` env-var-only opt-in, default `1`). Commit arc: `48ef419` (the four wins + phase timings / PR #183) → `4ffad1f` (Inductor `g++` install / PR #187) → `cb3c960` (LGBM bake / PR #188) → `3167b56` (compile short-circuit / PR #189) → `35f0a57` (LGBM bake revert / PR #196) → `349aa4a` (static-pad attention + feature-engineering cache / PR #200).
+
+---
+
 ## 4. Cross-Cutting Consequences
 
 **What becomes easier.**
 - *Parallel iteration per position.* A change to RB features affects only RB's training job, only RB's models, only RB's tests. D2 (multi-head), D6 (allowlist), and D7 (parallel Batch jobs) compose into position-independent evolution.
 - *Reproducible serving.* The Flask image is immutable and SHA-tagged (D10); models are baked in, not pulled at runtime. No "it worked yesterday" class of bugs.
 - *Audit trail for leakage.* The allowlist (D6) plus the temporal split (D1) plus the ±4σ clip (D5) means any new feature has to survive three independent checks before it affects training.
+- *Visibility into perf regressions.* Phase-level timings emitted under D12 make a slow-down at any pipeline stage visible in the next benchmark JSON without an explicit perf-test job.
+- *Bounded blast radius for a bad artifact.* D11's smoke-test gate + always-stable manifest pointer means a NaN-emitting or shape-mismatched model lands in `current`/`history` but never replaces the live `stable` pointer; rollback is a single `promote.py` invocation against the manifest, no S3 surgery required.
 
 **What becomes harder.**
 - *Six configuration surfaces instead of one.* Each position has its own config, targets, loss weights. A framework-level change (e.g., a new regularizer) needs propagation to six places. This is a deliberate trade (D2/D6) but real.
 - *Training-inference skew.* The Flask app must run the same preprocessing as the training pipeline, or models get zeros for features they were trained on. This happened once already (weather/Vegas features missing at inference, fixed after the fact — see [TODO.md](../TODO.md)).
 - *Two images to maintain.* D8 doubles the Dockerfile surface; a requirements bump in one does not automatically propagate to the other.
+- *Two-channel artifact pointer to reason about.* Under D11, "did training succeed?" splits into `current` (always advances) and `stable` (advances on smoke-pass only). Operator scripts and consumers must read the right pointer for their use case — model_sync clients want `stable`, forensics tooling wants `history[]`/`previous`.
 
 **What we'll need to revisit.**
 - K-position features use cross-season rolling windows (see [TODO.md](../TODO.md) "Open"). Technically a leakage source; currently justified by the specialist-role-stability argument, but worth re-measuring once the 2025 season completes.
@@ -420,3 +481,13 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 | `cc0c627` | Modeling | DST attention NN + migrate DST targets from 5 mixed-bucket heads to 10 raw stats (D2, D4, D5) |
 | `2500ecc` | Modeling | Per-position `{POS}_ATTN_STATIC_FEATURES` allowlist — rolling/EWMA/trend features blocked from the attention-NN static branch (D4, D6) |
 | `801b61a` | Modeling | K nested attention — outer over games + inner per-kick pool; attention now covers all six positions (D4) |
+| `c7fa2d7` | Infra | Smoke-test gate + manifest v2 (stable/current/previous + history[5]) + S3 bucket versioning (D11) |
+| `8c42e88` | Infra | ECS force-rollover after train so promoted artifacts get loaded (D11 closure) |
+| `a533990` | Serving | PPR / Half-PPR / Standard end-to-end scoring switch (D2 extension) |
+| `20cda09`, `668fa81` | Repo | CS 372 rubric reorganization; `src/{POS}/` → `src/{pos}/` rename + symbol prefix drop |
+| `48ef419` | Training | Feather cache + async DataLoader + cuDNN benchmark + phase timings (D12 wins) |
+| `3167b56` | Training | `torch.compile` short-circuit — +32% on T4 (D12 rejection) |
+| `0c66171` | Modeling | K/DST eval totals use signed/tiered aggregator (was reporting bogus `total_r2`) |
+| `dff43fb` | Modeling | Drop K `ATTN_L1_FEATURES` — K now matches DST/skill convention (D4, D6) |
+| `349aa4a` | Training | Static-pad attention (−30% attn train) + disk-backed feature-engineering cache (−86× on prepare_data hits) (D12) |
+| `056423b` | Serving | Benchmark History tab — per-PR rows fetched from S3 at boot, auto-updates without redeploy |
