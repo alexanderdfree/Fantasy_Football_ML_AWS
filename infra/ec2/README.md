@@ -2,7 +2,7 @@
 
 _Last verified: 2026-04-21._
 
-An on-demand `g4dn.xlarge` that runs `src/batch/train.py` on GPU, driven by `.github/workflows/train-ec2.yml`. Stays warm for 1h after each training run, then stops; CI wakes it on the next push (adds ~30-60s cold-start latency to the first push after idle).
+An on-demand `g4dn.xlarge` that runs `src/batch/train.py` on GPU, driven by `.github/workflows/train-ec2.yml`. Stays warm for 4h after each training run, then stops; CI wakes it on the next push (adds ~30-60s cold-start latency to the first push after idle).
 
 ## First-time setup
 
@@ -50,7 +50,7 @@ gh variable set BATCH_ACTIVE --body "false"
 
 ## Auto-shutdown
 
-`auto-shutdown.timer` is **enabled at bootstrap** and fires every 15 min. When the instance has been idle ≥ 1h (no `ff-train` activity recorded in `/opt/ff/logs/last-activity`) and no `/var/lock/ff-train.lock` flock is held, the timer issues `shutdown -h +1`. CI re-wakes the instance on the next push via `aws ec2 start-instances` + wait for `instance-running`.
+`auto-shutdown.timer` is **enabled at bootstrap** and fires every 15 min. When the instance has been idle ≥ 4h (no `ff-train` activity recorded in `/opt/ff/logs/last-activity`) and no `/var/lock/ff-train.lock` flock is held, the timer issues `shutdown -h +1`. CI re-wakes the instance on the next push via `aws ec2 start-instances` + wait for `instance-running`.
 
 Override `IDLE_HOURS` for a longer warm window:
 ```
@@ -58,7 +58,7 @@ aws ssm send-command --targets "Key=InstanceIds,Values=<id>" \
   --document-name AWS-RunShellScript \
   --parameters 'commands=[
     "mkdir -p /etc/systemd/system/ff-auto-shutdown.service.d",
-    "printf \"[Service]\\nEnvironment=IDLE_HOURS=4\\n\" > /etc/systemd/system/ff-auto-shutdown.service.d/override.conf",
+    "printf \"[Service]\\nEnvironment=IDLE_HOURS=8\\n\" > /etc/systemd/system/ff-auto-shutdown.service.d/override.conf",
     "systemctl daemon-reload"
   ]' --region us-east-1
 ```
