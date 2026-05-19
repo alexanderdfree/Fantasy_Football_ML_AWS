@@ -149,11 +149,19 @@ def _main_stubs(tmp_path, monkeypatch):
         lambda summaries, header, show_time: printed.extend(summaries),
     )
     appended: list[dict] = []
-    monkeypatch.setattr(
-        bb,
-        "append_to_history",
-        lambda path, entry: appended.append(entry),
-    )
+
+    def _stub_append(path, entry, **kwargs):
+        # Mirror the real signature: ``pr_number`` is recorded into the
+        # entry so tests can assert against it. Returns a dummy file path
+        # so the caller's downstream S3 upload helper has something to
+        # work with (it's env-gated and no-ops in tests).
+        out = dict(entry)
+        if kwargs.get("pr_number") is not None:
+            out["pr_number"] = int(kwargs["pr_number"])
+        appended.append(out)
+        return str(tmp_path / "history" / "fake.json")
+
+    monkeypatch.setattr(bb, "append_to_history", _stub_append)
     monkeypatch.setattr(bb, "get_git_hash", lambda: "abc1234")
 
     # RESULTS_FILE writes are fine — they go to cwd which we monkeypatch.chdir'd
@@ -215,7 +223,9 @@ def test_main_empty_metrics_early_returns(monkeypatch, tmp_path):
     monkeypatch.setattr(bb, "wait_for_jobs", lambda job_ids: {p: ("SUCCEEDED", 0) for p in job_ids})
 
     appended: list[dict] = []
-    monkeypatch.setattr(bb, "append_to_history", lambda p, e: appended.append(e))
+    monkeypatch.setattr(
+        bb, "append_to_history", lambda p, e, **kw: appended.append(e) or "/tmp/fake.json"
+    )
     monkeypatch.setattr(bb, "print_comparison_table", lambda *a, **k: None)
     monkeypatch.setattr(bb, "summarize_pipeline_result", lambda *a, **k: {})
 

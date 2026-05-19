@@ -41,7 +41,12 @@ def _run_filename(run_entry: dict) -> str:
     return stem.replace(":", "-") + ".json"
 
 
-def append_to_history(history_dir: str, run_entry: dict) -> str:
+def append_to_history(
+    history_dir: str,
+    run_entry: dict,
+    *,
+    pr_number: int | None = None,
+) -> str:
     """Record one run by writing a standalone JSON file under ``history_dir``.
 
     Each run lives in its own ``{run_id}.json`` file (with ``:`` sanitized to
@@ -52,8 +57,14 @@ def append_to_history(history_dir: str, run_entry: dict) -> str:
     ``print_history_comparison`` as ``exclude_path`` — that avoids inferring
     "the just-written run" from filename sort order, which is fragile under
     clock skew or mixed timezones.
+
+    ``pr_number`` (when supplied by CI) is recorded as a top-level field so
+    the serving UI can deep-link rows to GitHub. Old files without the field
+    are read as ``None`` — backward compatible.
     """
     os.makedirs(history_dir, exist_ok=True)
+    if pr_number is not None:
+        run_entry = {**run_entry, "pr_number": int(pr_number)}
     path = os.path.join(history_dir, _run_filename(run_entry))
     tmp = f"{path}.tmp"
     with open(tmp, "w") as f:

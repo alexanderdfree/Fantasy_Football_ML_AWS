@@ -36,6 +36,7 @@
         <button class="tab" data-view="model-performance">Model Performance</button>
         <button class="tab" data-view="model-architecture">Model Architecture</button>
         <button class="tab" data-view="wiki">Wiki</button>
+        <button class="tab" data-view="history">History</button>
     </nav>
 
     <!-- Loading Overlay -->
@@ -351,6 +352,39 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
             <div class="section-header">Features by Position</div>
             <div id="arch-feature-accordions">
                 <p class="arch-loading">Loading features…</p>
+            </div>
+        </section>
+
+        <!-- ============ HISTORY VIEW ============ -->
+        <section id="view-history" class="view">
+            <div class="approach-banner">
+                <div class="approach-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                        <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                </div>
+                <div>
+                    <div class="approach-title">Benchmark History</div>
+                    <div class="approach-desc">One row per CI training run, newest first. Each MAE cell lists every position trained in that run, on the position's raw-stat scale. PRs that only touch a subset of positions retrain just those.</div>
+                </div>
+            </div>
+            <div class="table-container">
+                <table id="history-table">
+                    <thead>
+                        <tr>
+                            <th class="col-history-pr">PR</th>
+                            <th class="col-history-ts">Timestamp (UTC)</th>
+                            <th class="col-history-mae ridge-col">Ridge MAE</th>
+                            <th class="col-history-mae nn-col">NN MAE</th>
+                            <th class="col-history-mae attn-nn-col">Attn NN MAE</th>
+                            <th class="col-history-mae lgbm-col">LGBM MAE</th>
+                            <th class="col-history-time">Training time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-body">
+                        <tr><td colspan="7" class="arch-loading">Loading benchmark history…</td></tr>
+                    </tbody>
+                </table>
             </div>
         </section>
 

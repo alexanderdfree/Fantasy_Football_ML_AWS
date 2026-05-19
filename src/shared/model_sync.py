@@ -268,6 +268,64 @@ def _download_file(s3_client, bucket: str, key: str, dest: Path) -> dict:
     return {"key": key, "bytes": len(data), "secs": round(time.time() - t0, 2)}
 
 
+def sync_benchmark_history_from_s3() -> dict | None:
+    """Download every JSON under ``s3://{bucket}/{prefix}/benchmark_history/``
+    into the local ``benchmark_history/`` directory.
+
+    Gated on ``FF_MODEL_S3_BUCKET`` like the other syncs — unset/empty makes
+    this a no-op so dev and CI tests don't try to hit S3. Fail-soft on an
+    empty/missing prefix (a fresh bucket with no benchmark uploads yet
+    shouldn't block boot); per-file failures DO raise so a partial sync
+    is visible. The ``benchmark_history/`` directory is excluded from the
+    Docker image (`.dockerignore`), so without this sync the History tab
+    sees no rows in prod.
+    """
+    bucket = os.environ.get(_ENV_BUCKET, "").strip()
+    if not bucket:
+        print(
+            f"[benchmark_sync] {_ENV_BUCKET} unset — skipping S3 sync, using on-disk benchmark_history."
+        )
+        return None
+
+    prefix = os.environ.get(_ENV_PREFIX, "models").strip("/")
+    s3_prefix = f"{prefix}/benchmark_history/"
+    root = _repo_root()
+    dest_dir = root / "benchmark_history"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    import boto3
+
+    s3 = boto3.client("s3")
+
+    jobs: list[tuple[str, Path]] = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=s3_prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith(".json"):
+                continue
+            jobs.append((key, dest_dir / Path(key).name))
+
+    if not jobs:
+        print(f"[benchmark_sync] no objects under s3://{bucket}/{s3_prefix}")
+        return {"total_secs": 0.0, "total_bytes": 0, "files": 0}
+
+    print(
+        f"[benchmark_sync] syncing {len(jobs)} files from s3://{bucket}/{s3_prefix} -> {dest_dir}"
+    )
+    t0 = time.time()
+    results: list[dict] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
+        futs = [pool.submit(_download_file, s3, bucket, key, dest) for key, dest in jobs]
+        for f in concurrent.futures.as_completed(futs):
+            results.append(f.result())
+    total = round(time.time() - t0, 2)
+    total_bytes = sum(r["bytes"] for r in results)
+    print(
+        f"[benchmark_sync] done in {total}s, {total_bytes / 1e3:.1f} KB across {len(results)} files"
+    )
+    return {"total_secs": total, "total_bytes": total_bytes, "files": len(results)}
+
+
 def sync_data_from_s3() -> dict | None:
     """Download inference data parquets from S3 in parallel.
 

@@ -830,3 +830,74 @@ def test_data_sync_raises_on_missing_split(monkeypatch, tmp_path):
     with mock.patch("boto3.client", return_value=fake_s3):
         with pytest.raises(ClientError, match="NoSuchKey"):
             model_sync.sync_data_from_s3()
+
+
+# ---------------------------------------------------------------------------
+# sync_benchmark_history_from_s3
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_benchmark_history_sync_noop_when_bucket_unset(monkeypatch, capsys):
+    monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
+    assert model_sync.sync_benchmark_history_from_s3() is None
+    assert "unset" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_benchmark_history_sync_empty_prefix_is_not_an_error(monkeypatch, tmp_path):
+    """A fresh bucket without any benchmark uploads shouldn't block boot."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    fake_s3 = _FakeS3(objects={})
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_benchmark_history_from_s3()
+    assert summary == {"total_secs": 0.0, "total_bytes": 0, "files": 0}
+
+
+@pytest.mark.unit
+def test_benchmark_history_sync_downloads_every_json(monkeypatch, tmp_path):
+    """All ``*.json`` under the prefix land in ``<root>/benchmark_history/``;
+    non-JSON keys are filtered out."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    objects = {
+        "models/benchmark_history/2026-05-01T10-00-00_abc.json": b'{"a": 1}',
+        "models/benchmark_history/2026-05-19T22-47-20_dff43fb.json": b'{"b": 2}',
+        # README-style key adjacent to the JSONs — must be skipped, not crash.
+        "models/benchmark_history/README.txt": b"ignore me",
+    }
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_benchmark_history_from_s3()
+
+    assert summary is not None
+    assert summary["files"] == 2
+    dest = tmp_path / "benchmark_history"
+    assert (dest / "2026-05-01T10-00-00_abc.json").read_bytes() == b'{"a": 1}'
+    assert (dest / "2026-05-19T22-47-20_dff43fb.json").read_bytes() == b'{"b": 2}'
+    assert not (dest / "README.txt").exists()
+
+
+@pytest.mark.unit
+def test_benchmark_history_sync_respects_custom_prefix(monkeypatch, tmp_path):
+    """``FF_MODEL_S3_PREFIX`` is honored so dev/staging buckets can carve
+    out their own namespace."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "nightly/v2")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    objects = {
+        # Under the custom prefix — should be pulled.
+        "nightly/v2/benchmark_history/x.json": b'{"x": true}',
+        # Under the default prefix — should be ignored when prefix is overridden.
+        "models/benchmark_history/y.json": b'{"y": true}',
+    }
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_benchmark_history_from_s3()
+    assert summary["files"] == 1
+    assert (tmp_path / "benchmark_history" / "x.json").exists()
+    assert not (tmp_path / "benchmark_history" / "y.json").exists()

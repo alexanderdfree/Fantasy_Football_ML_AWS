@@ -336,18 +336,50 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Append EC2 run to benchmark_history/
+        env:
+          # gh defaults to GITHUB_TOKEN; the PROTECTED_PUSH_TOKEN PAT used
+          # elsewhere is for `git push`, not API reads. Explicit here so a
+          # future addition of `gh ...` commands inherits the right token.
+          GH_TOKEN: ${{ github.token }}
+          # src/batch/benchmark.py uploads each new history JSON to
+          # s3://{FF_MODEL_S3_BUCKET}/{FF_MODEL_S3_PREFIX}/benchmark_history/
+          # so the serving container can pull it at boot via
+          # sync_benchmark_history_from_s3. The ECS task def hardcodes the
+          # same names; mirroring the values here keeps the producer and
+          # consumer in sync without a second config surface.
+          FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
+          FF_MODEL_S3_PREFIX: models
         run: |
           BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
           POSITIONS="${{ needs.detect.outputs.positions }}"
+          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+          # Resolve the PR number from the merge commit so the serving UI's
+          # History tab can deep-link rows to GitHub. Direct pushes to main
+          # and squash-merge edge cases return empty — accept that and fall
+          # back to the SHA link client-side. Non-fatal: stay defensive so a
+          # GitHub API blip doesn't abort the benchmark append.
+          PR_NUMBER=""
+          if [ -n "$HEAD_SHA" ]; then
+            PR_NUMBER=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" \
+              --jq '.[0].number // empty' 2>/dev/null || true)
+          fi
           # Rebase before appending so a concurrent push doesn't reject us later.
           git fetch origin "$BRANCH"
           git pull --rebase origin "$BRANCH"
+          PR_ARGS=()
+          if [ -n "$PR_NUMBER" ]; then
+            PR_ARGS=(--pr-number "$PR_NUMBER")
+            echo "Resolved PR #$PR_NUMBER for $HEAD_SHA"
+          else
+            echo "No PR resolved for $HEAD_SHA (direct push or workflow_dispatch)"
+          fi
           python -m src.batch.benchmark \
             --download-only \
             --backend ec2 \
             --instance-type "g4dn.xlarge (On-Demand)" \
             --positions $POSITIONS \
-            --note "EC2 auto-run (${GITHUB_SHA::7})"
+            --note "EC2 auto-run (${GITHUB_SHA::7})" \
+            "${PR_ARGS[@]}"
 
       - name: Commit and push benchmark_history/
         run: |
