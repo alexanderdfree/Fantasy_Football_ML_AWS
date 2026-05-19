@@ -51,7 +51,11 @@ from src.shared.artifact_integrity import (
     unwrap_state_dict,
 )
 from src.shared.feature_build import build_position_features, scale_and_clip
-from src.shared.model_sync import sync_data_from_s3, sync_models_from_s3
+from src.shared.model_sync import (
+    sync_benchmark_history_from_s3,
+    sync_data_from_s3,
+    sync_models_from_s3,
+)
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import (
     MultiHeadNet,
@@ -63,6 +67,7 @@ from src.shared.weather_features import WEATHER_FEATURES_ALL
 
 sync_data_from_s3()
 sync_models_from_s3()
+sync_benchmark_history_from_s3()
 
 app = Flask(__name__)
 
@@ -1578,6 +1583,86 @@ def api_wiki_page(slug):
     meta = WIKI_DOCS[slug]
     html = _render_wiki_doc(slug)
     return jsonify({"slug": slug, "name": meta["name"], "group": meta["group"], "html": html})
+
+
+_BENCHMARK_REPO_SLUG = "alexanderdfree/Fantasy_Football_ML_AWS"
+_BENCHMARK_MODELS = ("ridge", "nn", "attn_nn", "lgbm")
+
+
+def _benchmark_history_dir() -> str:
+    # Mirrors _render_wiki_doc's repo-root resolution: src/serving/app.py is
+    # two parents deep, so the Dockerfile-copied benchmark_history/ sits at
+    # <repo_root>/benchmark_history/ in both local dev and the container.
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    return os.path.join(repo_root, "benchmark_history")
+
+
+def _benchmark_row(entry: dict) -> dict:
+    """Project one benchmark_history JSON into the row payload the UI consumes.
+
+    For each model, returns the list of {position, mae} pills for every
+    position trained in that run that recorded a MAE for the model. Missing
+    MAEs are skipped rather than rendered as null pills — keeps the cell
+    clean when the run only trained a subset of positions.
+    """
+    results = entry.get("results") or []
+    pills = {m: [] for m in _BENCHMARK_MODELS}
+    total_elapsed = 0.0
+    for r in results:
+        pos = r.get("position")
+        if not pos:
+            continue
+        for m in _BENCHMARK_MODELS:
+            mae = _safe_num(r.get(f"{m}_mae"))
+            if mae is not None:
+                pills[m].append({"position": pos, "mae": round(mae, 3)})
+        elapsed = _safe_num(r.get("elapsed_sec"))
+        if elapsed is not None:
+            total_elapsed += elapsed
+    pr_number = entry.get("pr_number")
+    return {
+        "timestamp": entry.get("timestamp"),
+        "git_hash": entry.get("git_hash"),
+        "pr_number": int(pr_number) if isinstance(pr_number, int) else None,
+        "positions": [r.get("position") for r in results if r.get("position")],
+        "ridge": pills["ridge"],
+        "nn": pills["nn"],
+        "attn_nn": pills["attn_nn"],
+        "lgbm": pills["lgbm"],
+        "total_elapsed_sec": round(total_elapsed, 1),
+    }
+
+
+@app.route("/api/benchmark_history")
+def api_benchmark_history():
+    """Return per-run summary rows for the History tab, newest first.
+
+    Reads every top-level ``*.json`` under ``benchmark_history/``. Filesystem
+    is the source of truth — the container is kept fresh by
+    ``sync_benchmark_history_from_s3()`` at boot, which is itself triggered
+    on each training run by the post-train ``aws ecs update-service --force-
+    new-deployment`` in ``train-ec2.yml``.
+    """
+    import json as _json
+
+    history_dir = _benchmark_history_dir()
+    rows: list[dict] = []
+    if os.path.isdir(history_dir):
+        for fn in os.listdir(history_dir):
+            if not fn.endswith(".json"):
+                continue
+            path = os.path.join(history_dir, fn)
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path) as f:
+                    entry = _json.load(f)
+            except (OSError, ValueError):
+                # A malformed file shouldn't poison the whole tab.
+                continue
+            rows.append(_benchmark_row(entry))
+    rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
+    return jsonify({"repo_slug": _BENCHMARK_REPO_SLUG, "rows": rows})
 
 
 @app.route("/health")

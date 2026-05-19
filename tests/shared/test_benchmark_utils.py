@@ -141,6 +141,41 @@ def test_append_to_history_falls_back_to_timestamp_when_run_id_missing(tmp_path)
 
 
 @pytest.mark.unit
+def test_append_to_history_records_pr_number_when_provided(tmp_path):
+    """CI passes ``pr_number=<int>`` so the serving UI can deep-link rows
+    to the PR. The kwarg is additive: the original entry dict isn't mutated."""
+    history_dir = tmp_path / "history"
+    entry = {"run_id": "r1", "timestamp": "2026-05-19T22:47:20"}
+    append_to_history(str(history_dir), entry, pr_number=199)
+    written = json.loads((history_dir / "r1.json").read_text())
+    assert written["pr_number"] == 199
+    # Caller's dict not mutated — the kwarg should only show up in the file.
+    assert "pr_number" not in entry
+
+
+@pytest.mark.unit
+def test_append_to_history_omits_pr_number_when_none(tmp_path):
+    """Default (``pr_number=None``) preserves the legacy schema — no
+    ``pr_number`` key is written. Old readers must not see a null they
+    weren't expecting."""
+    history_dir = tmp_path / "history"
+    append_to_history(str(history_dir), {"run_id": "r1"})
+    written = json.loads((history_dir / "r1.json").read_text())
+    assert "pr_number" not in written
+
+
+@pytest.mark.unit
+def test_append_to_history_coerces_pr_number_to_int(tmp_path):
+    """gh api returns the number as a string in some shells; the writer
+    coerces so the JSON stays int-typed for the frontend."""
+    history_dir = tmp_path / "history"
+    append_to_history(str(history_dir), {"run_id": "r1"}, pr_number="42")
+    written = json.loads((history_dir / "r1.json").read_text())
+    assert written["pr_number"] == 42
+    assert isinstance(written["pr_number"], int)
+
+
+@pytest.mark.unit
 def test_append_to_history_serializes_sets_via_json_default(tmp_path):
     """``_json_default`` is wired in; sets become sorted lists in the JSON."""
     history_dir = tmp_path / "history"

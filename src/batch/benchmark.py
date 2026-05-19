@@ -101,6 +101,16 @@ def main():
         default="g4dn.xlarge (Spot)",
         help="Instance-type label recorded in benchmark_history/",
     )
+    parser.add_argument(
+        "--pr-number",
+        type=int,
+        default=None,
+        help=(
+            "Pull-request number associated with this run. CI fills this in "
+            "from `gh api commits/{sha}/pulls`; embedded as a top-level field "
+            "in the JSON so the serving UI can link rows to GitHub."
+        ),
+    )
     args = parser.parse_args()
 
     project_root = os.path.join(os.path.dirname(__file__), "..", "..")
@@ -160,7 +170,7 @@ def main():
 
     git_hash = get_git_hash()
     now = utc_now_iso()
-    append_to_history(
+    written_path = append_to_history(
         HISTORY_DIR,
         {
             "run_id": f"{now}_{git_hash}",
@@ -172,7 +182,25 @@ def main():
             "positions": [s["position"] for s in summaries],
             "results": summaries,
         },
+        pr_number=args.pr_number,
     )
+
+    # Mirror the new file to S3 so the serving container can pull it at boot
+    # via sync_benchmark_history_from_s3 — git auto-commit is preserved for
+    # auditability but is not on the inference data path. Env-gated to match
+    # the model/data sync pattern in src/shared/model_sync.py.
+    _maybe_upload_to_s3(written_path)
+
+
+def _maybe_upload_to_s3(local_path: str) -> None:
+    bucket = os.environ.get("FF_MODEL_S3_BUCKET", "").strip()
+    if not bucket:
+        return
+    prefix = os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/")
+    key = f"{prefix}/benchmark_history/{os.path.basename(local_path)}"
+    s3 = boto3.client("s3", region_name=AWS_REGION)
+    s3.upload_file(local_path, bucket, key)
+    print(f"Uploaded benchmark to s3://{bucket}/{key}")
 
 
 if __name__ == "__main__":

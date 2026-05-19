@@ -135,7 +135,7 @@ async function init() {
 // sub-page navigation (inside loadWikiPage) replaceState so intra-wiki link
 // clicks don't pile up history entries.
 // ---------------------------------------------------------------------------
-const TAB_VIEWS = new Set(["predictions", "standings", "model-performance", "model-architecture", "wiki"]);
+const TAB_VIEWS = new Set(["predictions", "standings", "model-performance", "model-architecture", "wiki", "history"]);
 
 function viewFromHash(hash) {
     if (!hash || hash === "#") return "predictions";
@@ -161,6 +161,7 @@ function activateTab(view) {
     else if (view === "standings") loadStandings();
     else if (view === "model-architecture") loadModelArchitecture();
     else if (view === "wiki") loadWiki();
+    else if (view === "history") loadHistory();
 }
 
 function setupNavTabs() {
@@ -1025,6 +1026,79 @@ async function loadWikiPage(slug, anchor = null) {
         else contentEl.scrollTop = 0;
     } else {
         contentEl.scrollTop = 0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Benchmark History
+//
+// Reads /api/benchmark_history — one row per training run, newest first. Each
+// MAE cell renders a list of per-position pills since a run may only retrain
+// a subset of positions (CI's `detect` job scopes by changed paths). PR
+// numbers come from a top-level field that CI writes when it can resolve the
+// merge commit to a PR; for runs where the lookup returned empty (manual
+// dispatches, force pushes) we fall back to a commit-SHA link.
+// ---------------------------------------------------------------------------
+function formatTrainingTime(seconds) {
+    if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return "--";
+    const total = Math.round(seconds);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function renderMaePills(pills) {
+    if (!Array.isArray(pills) || pills.length === 0) return '<span class="history-empty">—</span>';
+    return pills
+        .map(p => `<span class="history-pill"><span class="history-pill-pos">${escapeHtml(p.position)}</span> ${fmt(p.mae, 2)}</span>`)
+        .join("");
+}
+
+function renderHistoryIdCell(repoSlug, row) {
+    if (row.pr_number != null) {
+        const href = `https://github.com/${repoSlug}/pull/${row.pr_number}`;
+        return `<a class="history-link" href="${href}" target="_blank" rel="noopener">#${row.pr_number}</a>`;
+    }
+    if (row.git_hash) {
+        const href = `https://github.com/${repoSlug}/commit/${encodeURIComponent(row.git_hash)}`;
+        return `<a class="history-link" href="${href}" target="_blank" rel="noopener"><code>${escapeHtml(row.git_hash)}</code></a>`;
+    }
+    return "—";
+}
+
+function formatHistoryTimestamp(ts) {
+    if (!ts) return "--";
+    // Stored as "2026-05-19T22:47:20" (no tz marker, always UTC per
+    // utc_now_iso). Replace the T with a space and trim seconds for a
+    // compact display; keep minute resolution so same-PR reruns are
+    // distinguishable.
+    const match = String(ts).match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+    return match ? `${match[1]} ${match[2]}` : escapeHtml(String(ts));
+}
+
+async function loadHistory() {
+    const tbody = document.getElementById("history-body");
+    try {
+        const data = await fetchJSON("/api/benchmark_history");
+        const repoSlug = data.repo_slug || "";
+        if (!data.rows || data.rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="arch-loading">No benchmark runs yet.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = data.rows.map(row => `
+            <tr>
+                <td class="col-history-pr">${renderHistoryIdCell(repoSlug, row)}</td>
+                <td class="col-history-ts">${formatHistoryTimestamp(row.timestamp)}</td>
+                <td class="col-history-mae ridge-col">${renderMaePills(row.ridge)}</td>
+                <td class="col-history-mae nn-col">${renderMaePills(row.nn)}</td>
+                <td class="col-history-mae attn-nn-col">${renderMaePills(row.attn_nn)}</td>
+                <td class="col-history-mae lgbm-col">${renderMaePills(row.lgbm)}</td>
+                <td class="col-history-time">${formatTrainingTime(row.total_elapsed_sec)}</td>
+            </tr>
+        `).join("");
+    } catch (e) {
+        console.error("Failed to load benchmark history:", e);
+        tbody.innerHTML = '<tr><td colspan="7" class="error-message">Failed to load benchmark history.</td></tr>';
     }
 }
 
