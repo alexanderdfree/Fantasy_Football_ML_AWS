@@ -24,7 +24,13 @@ IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/ff-training:latest"
 # mounted at /opt/dlami/nvme. Trying to mkfs the raw device fails with
 # EBUSY, so bind-mount a subdirectory of that volume onto /opt/ff/scratch
 # instead. Preserves ephemeral-SSD speed without fighting DLAMI's layout.
-mkdir -p /opt/ff/scratch /opt/ff/logs /opt/ff/config
+#
+# /opt/ff/cache lives on the ROOT EBS volume, NOT instance store. The
+# feature-engineering cache (src/shared/feature_cache.py) is mounted there
+# so it survives the auto-shutdown stop/start cycle — instance store data
+# is wiped on stop, but EBS persists. ~200MB total across all positions,
+# trivial relative to the root volume.
+mkdir -p /opt/ff/scratch /opt/ff/logs /opt/ff/config /opt/ff/cache
 if mountpoint -q /opt/dlami/nvme && ! mountpoint -q /opt/ff/scratch; then
   mkdir -p /opt/dlami/nvme/ff-scratch
   grep -q " /opt/ff/scratch " /etc/fstab || \
@@ -32,7 +38,7 @@ if mountpoint -q /opt/dlami/nvme && ! mountpoint -q /opt/ff/scratch; then
   mount --bind /opt/dlami/nvme/ff-scratch /opt/ff/scratch
 fi
 chown -R ubuntu:ubuntu /opt/ff
-chmod 755 /opt/ff /opt/ff/scratch /opt/ff/logs /opt/ff/config
+chmod 755 /opt/ff /opt/ff/scratch /opt/ff/logs /opt/ff/config /opt/ff/cache
 
 # --- 2. Ensure Docker + SSM agent are enabled ---------------------------
 # SSM agent is guaranteed running — we're being invoked through it. DLAMI
@@ -126,6 +132,7 @@ docker run --rm --gpus all \\
   -v /opt/ff/scratch/input:/opt/ml/input/data/training \\
   -v /opt/ff/scratch/model:/opt/ml/model \\
   -v /opt/ff/scratch/raw:/opt/ml/code/data/raw \\
+  -v /opt/ff/cache:/opt/ml/code/.cache \\
   "\$IMAGE" --position "\$POS" --seed "\$SEED" 2>&1 \\
   | tee -a "/var/log/ff-train/\${POS}.log"
 echo "[timing] phase=docker_run seconds=\$((SECONDS - _t_run))"

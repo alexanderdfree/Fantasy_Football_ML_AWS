@@ -29,6 +29,7 @@ from src.features.engineer import (
 from src.models.baseline import SeasonAverageBaseline
 from src.models.elastic_net import ElasticNetModel
 from src.models.linear import RidgeModel
+from src.shared import feature_cache
 from src.shared.artifact_integrity import (
     wrap_state_dict,
     write_scaler_meta,
@@ -457,7 +458,7 @@ def _build_scheduler(optimizer, cfg, train_loader):
         raise ValueError(f"Unknown scheduler type: {sched_type}")
 
 
-def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
+def _prepare_position_data_uncached(position, cfg, train_df, val_df, test_df=None):
     """Filter to position, compute targets, add features, build arrays.
 
     Returns:
@@ -523,6 +524,27 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
         pos_val,
         pos_test,
         feature_cols,
+    )
+
+
+def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
+    """Cached wrapper around ``_prepare_position_data_uncached``.
+
+    The cache key is content-hashed on (position, train_df, val_df, test_df,
+    relevant cfg keys). Each CV fold's (train, val) is unique within a single
+    process, so the within-run benefit is from re-runs (Optuna trials, CLI
+    iteration) — but the disk cache means the second pipeline run on the same
+    data skips feature engineering entirely.
+
+    Bypass with ``FF_FEATURE_CACHE_DISABLE=1``.
+    """
+    return feature_cache.load_or_compute(
+        position,
+        train_df,
+        val_df,
+        test_df,
+        cfg,
+        lambda: _prepare_position_data_uncached(position, cfg, train_df, val_df, test_df),
     )
 
 
@@ -670,25 +692,20 @@ def _train_attention_nn(
 
     nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
 
-    # Convert history arrays to lists-of-arrays for the variable-length dataset
-    def _to_history_list(hist_arr, mask_arr):
-        """Convert padded [n, max_len, dim] to list of [actual_len, dim]."""
-        result = []
-        for i in range(len(hist_arr)):
-            seq_len = mask_arr[i].sum()
-            result.append(hist_arr[i, :seq_len])
-        return result
-
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
     if use_opp:
         train_loader, val_loader = make_history_with_opp_dataloaders(
             X_train_s,
-            _to_history_list(hist_train, mask_train),
-            _to_history_list(opp_hist_train, opp_mask_train),
+            hist_train,
+            mask_train,
+            opp_hist_train,
+            opp_mask_train,
             y_train_dict,
             X_val_s,
-            _to_history_list(hist_val, mask_val),
-            _to_history_list(opp_hist_val, opp_mask_val),
+            hist_val,
+            mask_val,
+            opp_hist_val,
+            opp_mask_val,
             y_val_dict,
             batch_size=attn_batch_size,
         )
@@ -696,10 +713,12 @@ def _train_attention_nn(
     else:
         train_loader, val_loader = make_history_dataloaders(
             X_train_s,
-            _to_history_list(hist_train, mask_train),
+            hist_train,
+            mask_train,
             y_train_dict,
             X_val_s,
-            _to_history_list(hist_val, mask_val),
+            hist_val,
+            mask_val,
             y_val_dict,
             batch_size=attn_batch_size,
         )

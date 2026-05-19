@@ -205,72 +205,69 @@ class MultiTargetDataset(Dataset):
 
 
 class MultiTargetHistoryDataset(Dataset):
-    """Dataset that returns static features + variable-length game history + targets."""
+    """Dataset returning static features + fixed-shape padded history + mask + targets.
 
-    def __init__(self, X_static: np.ndarray, X_history: list[np.ndarray], y_dict: dict):
+    History tensors arrive already padded to ``[n_samples, max_seq_len, game_dim]``
+    from ``build_game_history_arrays``. Storing them as a single fixed-shape tensor
+    (instead of a list of variable-length tensors that the collate function
+    re-pads per batch) lets the default PyTorch collate stack samples directly.
+    """
+
+    def __init__(
+        self,
+        X_static: np.ndarray,
+        X_history: np.ndarray,
+        history_mask: np.ndarray,
+        y_dict: dict,
+    ):
         """
         Args:
             X_static: [n_samples, static_dim] static feature array
-            X_history: list of n_samples arrays, each [seq_len_i, game_dim]
+            X_history: [n_samples, max_seq_len, game_dim] zero-padded history
+            history_mask: [n_samples, max_seq_len] bool mask (True = real game)
             y_dict: dict of target arrays
         """
         self.X_static = torch.FloatTensor(X_static)
-        self.histories = [torch.FloatTensor(h) for h in X_history]
+        self.X_history = torch.FloatTensor(X_history)
+        self.history_mask = torch.from_numpy(np.asarray(history_mask, dtype=bool))
         self.targets = {k: torch.FloatTensor(v) for k, v in y_dict.items()}
 
     def __len__(self):
         return len(self.X_static)
 
     def __getitem__(self, idx):
-        return self.X_static[idx], self.histories[idx], {k: v[idx] for k, v in self.targets.items()}
-
-
-def collate_with_history(batch):
-    """Custom collate that pads variable-length game histories within each batch."""
-    statics, histories, targets = zip(*batch, strict=False)
-    statics = torch.stack(statics)
-
-    # Pad histories to the longest sequence in this batch
-    game_dim = histories[0].size(-1) if histories[0].dim() > 0 and histories[0].size(0) > 0 else 0
-    max_len = max(h.size(0) for h in histories) if histories else 0
-    max_len = max(max_len, 1)  # at least 1 to avoid empty tensors
-
-    if game_dim == 0:
-        # Edge case: determine game_dim from any non-empty history
-        for h in histories:
-            if h.dim() > 0 and h.size(0) > 0:
-                game_dim = h.size(-1)
-                break
-
-    padded = torch.zeros(len(histories), max_len, game_dim)
-    masks = torch.zeros(len(histories), max_len, dtype=torch.bool)
-    for i, h in enumerate(histories):
-        seq_len = h.size(0) if h.dim() > 0 else 0
-        if seq_len > 0:
-            padded[i, :seq_len] = h
-            masks[i, :seq_len] = True
-
-    target_dict = {k: torch.stack([t[k] for t in targets]) for k in targets[0]}
-    return statics, padded, masks, target_dict
+        return (
+            self.X_static[idx],
+            self.X_history[idx],
+            self.history_mask[idx],
+            {k: v[idx] for k, v in self.targets.items()},
+        )
 
 
 def make_history_dataloaders(
     X_train_static,
     X_train_history,
+    train_history_mask,
     y_train_dict,
     X_val_static,
     X_val_history,
+    val_history_mask,
     y_val_dict,
     batch_size=256,
 ):
     """Create DataLoaders for attention model with game history.
 
+    All history tensors must be pre-padded to a uniform ``[n, max_seq_len, game_dim]``
+    shape so the default PyTorch collate can stack samples without per-batch padding.
+
     ``pin_memory=True`` is a no-op under CPU-only runs; on CUDA it allocates
     page-locked host tensors so the subsequent ``.to(device, non_blocking=True)``
     in the trainer can overlap the H2D copy with compute.
     """
-    train_ds = MultiTargetHistoryDataset(X_train_static, X_train_history, y_train_dict)
-    val_ds = MultiTargetHistoryDataset(X_val_static, X_val_history, y_val_dict)
+    train_ds = MultiTargetHistoryDataset(
+        X_train_static, X_train_history, train_history_mask, y_train_dict
+    )
+    val_ds = MultiTargetHistoryDataset(X_val_static, X_val_history, val_history_mask, y_val_dict)
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
@@ -279,7 +276,6 @@ def make_history_dataloaders(
         persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
         drop_last=True,
-        collate_fn=collate_with_history,
     )
     val_loader = DataLoader(
         val_ds,
@@ -288,7 +284,6 @@ def make_history_dataloaders(
         num_workers=_NUM_WORKERS,
         persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
-        collate_fn=collate_with_history,
     )
     return train_loader, val_loader
 
@@ -522,23 +517,28 @@ class MultiHeadHistoryTrainer(MultiHeadTrainer):
 class MultiTargetHistoryWithOppDataset(Dataset):
     """Dataset for the two-branch attention model.
 
-    Returns ``(X_static, player_history, opp_history, targets)`` per sample.
-    Both histories are variable-length; padding/masking is deferred to
-    :func:`collate_with_history_and_opp`.
+    Returns ``(X_static, player_history, hist_mask, opp_history, opp_mask, targets)``
+    per sample. Both histories arrive pre-padded to fixed shapes from
+    ``build_game_history_arrays`` / ``build_opp_defense_history_arrays`` so the
+    default PyTorch collate stacks samples directly.
     """
 
     def __init__(
         self,
         X_static: np.ndarray,
-        X_history: list[np.ndarray],
-        X_opp_history: list[np.ndarray],
+        X_history: np.ndarray,
+        history_mask: np.ndarray,
+        X_opp_history: np.ndarray,
+        opp_history_mask: np.ndarray,
         y_dict: dict,
     ):
         if len(X_opp_history) != len(X_static):
             raise ValueError(f"opp history len {len(X_opp_history)} != static len {len(X_static)}")
         self.X_static = torch.FloatTensor(X_static)
-        self.histories = [torch.FloatTensor(h) for h in X_history]
-        self.opp_histories = [torch.FloatTensor(h) for h in X_opp_history]
+        self.X_history = torch.FloatTensor(X_history)
+        self.history_mask = torch.from_numpy(np.asarray(history_mask, dtype=bool))
+        self.X_opp_history = torch.FloatTensor(X_opp_history)
+        self.opp_history_mask = torch.from_numpy(np.asarray(opp_history_mask, dtype=bool))
         self.targets = {k: torch.FloatTensor(v) for k, v in y_dict.items()}
 
     def __len__(self):
@@ -547,60 +547,49 @@ class MultiTargetHistoryWithOppDataset(Dataset):
     def __getitem__(self, idx):
         return (
             self.X_static[idx],
-            self.histories[idx],
-            self.opp_histories[idx],
+            self.X_history[idx],
+            self.history_mask[idx],
+            self.X_opp_history[idx],
+            self.opp_history_mask[idx],
             {k: v[idx] for k, v in self.targets.items()},
         )
-
-
-def _pad_variable_length_histories(
-    histories: tuple[torch.Tensor, ...],
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Collate helper: pad a batch of [seq_len_i, dim] tensors to [B, max, dim]."""
-    game_dim = 0
-    for h in histories:
-        if h.dim() > 0 and h.size(0) > 0:
-            game_dim = h.size(-1)
-            break
-    max_len = max((h.size(0) if h.dim() > 0 else 0) for h in histories) if histories else 0
-    max_len = max(max_len, 1)  # at least 1 to avoid empty tensors
-    padded = torch.zeros(len(histories), max_len, max(game_dim, 1))
-    mask = torch.zeros(len(histories), max_len, dtype=torch.bool)
-    for i, h in enumerate(histories):
-        seq_len = h.size(0) if h.dim() > 0 else 0
-        if seq_len > 0:
-            padded[i, :seq_len, : h.size(-1)] = h
-            mask[i, :seq_len] = True
-    return padded, mask
-
-
-def collate_with_history_and_opp(batch):
-    """Custom collate that pads both player and opponent histories per batch."""
-    statics, histories, opp_histories, targets = zip(*batch, strict=False)
-    statics = torch.stack(statics)
-    hist_padded, hist_mask = _pad_variable_length_histories(histories)
-    opp_padded, opp_mask = _pad_variable_length_histories(opp_histories)
-    target_dict = {k: torch.stack([t[k] for t in targets]) for k in targets[0]}
-    return statics, hist_padded, hist_mask, opp_padded, opp_mask, target_dict
 
 
 def make_history_with_opp_dataloaders(
     X_train_static,
     X_train_history,
+    train_history_mask,
     X_train_opp_history,
+    train_opp_history_mask,
     y_train_dict,
     X_val_static,
     X_val_history,
+    val_history_mask,
     X_val_opp_history,
+    val_opp_history_mask,
     y_val_dict,
     batch_size=256,
 ):
-    """Create DataLoaders for the two-branch attention model."""
+    """Create DataLoaders for the two-branch attention model.
+
+    All history tensors must be pre-padded to uniform shapes so the default
+    PyTorch collate can stack samples without per-batch padding.
+    """
     train_ds = MultiTargetHistoryWithOppDataset(
-        X_train_static, X_train_history, X_train_opp_history, y_train_dict
+        X_train_static,
+        X_train_history,
+        train_history_mask,
+        X_train_opp_history,
+        train_opp_history_mask,
+        y_train_dict,
     )
     val_ds = MultiTargetHistoryWithOppDataset(
-        X_val_static, X_val_history, X_val_opp_history, y_val_dict
+        X_val_static,
+        X_val_history,
+        val_history_mask,
+        X_val_opp_history,
+        val_opp_history_mask,
+        y_val_dict,
     )
     train_loader = DataLoader(
         train_ds,
@@ -610,7 +599,6 @@ def make_history_with_opp_dataloaders(
         persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
         drop_last=True,
-        collate_fn=collate_with_history_and_opp,
     )
     val_loader = DataLoader(
         val_ds,
@@ -619,7 +607,6 @@ def make_history_with_opp_dataloaders(
         num_workers=_NUM_WORKERS,
         persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
-        collate_fn=collate_with_history_and_opp,
     )
     return train_loader, val_loader
 
@@ -628,8 +615,8 @@ class MultiHeadHistoryWithOppTrainer(MultiHeadTrainer):
     """Training loop for the attention model with both player and opp history.
 
     Overrides ``_forward_batch`` for the 6-tuple
-    ``(static, hist, hist_mask, opp_hist, opp_mask, targets)`` produced by
-    :func:`collate_with_history_and_opp`.
+    ``(static, hist, hist_mask, opp_hist, opp_mask, targets)`` produced by the
+    default collate over :class:`MultiTargetHistoryWithOppDataset`.
     """
 
     def _forward_batch(self, batch) -> tuple[dict, dict]:

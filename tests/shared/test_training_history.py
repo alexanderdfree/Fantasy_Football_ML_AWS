@@ -1,4 +1,4 @@
-"""Tests for src.shared.training — history-based components (dataset, collation,
+"""Tests for src.shared.training — history-based components (dataset,
 dataloaders, trainer), plus loss-function and non-history dataloader coverage.
 """
 
@@ -14,8 +14,6 @@ from src.shared.training import (
     MultiTargetHistoryDataset,
     MultiTargetHistoryWithOppDataset,
     MultiTargetLoss,
-    collate_with_history,
-    collate_with_history_and_opp,
     make_dataloaders,
     make_history_dataloaders,
     make_history_with_opp_dataloaders,
@@ -23,6 +21,19 @@ from src.shared.training import (
 
 TARGETS = ["rushing_yards", "receiving_yards", "rushing_tds"]
 LOSS_WEIGHTS = {"rushing_yards": 1.0, "receiving_yards": 1.0, "rushing_tds": 1.0}
+
+
+def _make_padded_history(seq_lens, game_dim=3, max_seq_len=None):
+    """Helper: build (X_history, mask) from a list of real sequence lengths."""
+    n = len(seq_lens)
+    if max_seq_len is None:
+        max_seq_len = max(seq_lens)
+    X_h = np.zeros((n, max_seq_len, game_dim), dtype=np.float32)
+    mask = np.zeros((n, max_seq_len), dtype=bool)
+    for i, slen in enumerate(seq_lens):
+        X_h[i, :slen] = np.random.randn(slen, game_dim).astype(np.float32)
+        mask[i, :slen] = True
+    return X_h, mask
 
 
 # ---------------------------------------------------------------------------
@@ -34,81 +45,38 @@ LOSS_WEIGHTS = {"rushing_yards": 1.0, "receiving_yards": 1.0, "rushing_tds": 1.0
 class TestMultiTargetHistoryDataset:
     def test_length(self):
         X_s = np.random.randn(10, 5).astype(np.float32)
-        X_h = [np.random.randn(np.random.randint(1, 8), 3).astype(np.float32) for _ in range(10)]
+        X_h, mask = _make_padded_history([3] * 10, game_dim=3, max_seq_len=8)
         y = {"t1": np.random.randn(10).astype(np.float32)}
-        ds = MultiTargetHistoryDataset(X_s, X_h, y)
+        ds = MultiTargetHistoryDataset(X_s, X_h, mask, y)
         assert len(ds) == 10
 
-    def test_getitem_types(self):
+    def test_getitem_types_and_shapes(self):
         X_s = np.random.randn(5, 4).astype(np.float32)
-        X_h = [np.random.randn(3, 2).astype(np.float32) for _ in range(5)]
+        X_h, mask = _make_padded_history([3] * 5, game_dim=2, max_seq_len=8)
         y = {"t1": np.random.randn(5).astype(np.float32)}
-        ds = MultiTargetHistoryDataset(X_s, X_h, y)
-        static, history, targets = ds[0]
+        ds = MultiTargetHistoryDataset(X_s, X_h, mask, y)
+        static, history, sample_mask, targets = ds[0]
         assert isinstance(static, torch.Tensor)
         assert isinstance(history, torch.Tensor)
+        assert isinstance(sample_mask, torch.Tensor)
         assert isinstance(targets, dict)
         assert static.shape == (4,)
-        assert history.shape == (3, 2)
+        assert history.shape == (8, 2)  # max_seq_len × game_dim
+        assert sample_mask.shape == (8,)
+        assert sample_mask.dtype == torch.bool
+        # First 3 positions are real, rest are padding
+        assert sample_mask[:3].all()
+        assert not sample_mask[3:].any()
 
-    def test_variable_length_histories(self):
-        X_s = np.random.randn(3, 4).astype(np.float32)
-        X_h = [
-            np.random.randn(2, 3).astype(np.float32),
-            np.random.randn(5, 3).astype(np.float32),
-            np.random.randn(1, 3).astype(np.float32),
-        ]
-        y = {"t1": np.random.randn(3).astype(np.float32)}
-        ds = MultiTargetHistoryDataset(X_s, X_h, y)
-        _, h0, _ = ds[0]
-        _, h1, _ = ds[1]
-        assert h0.shape == (2, 3)
-        assert h1.shape == (5, 3)
-
-
-# ---------------------------------------------------------------------------
-# collate_with_history
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestCollateWithHistory:
-    def test_output_structure(self, history_batch_factory):
-        batch = history_batch_factory([3, 5, 2])
-        statics, padded, masks, targets = collate_with_history(batch)
-        assert isinstance(statics, torch.Tensor)
-        assert isinstance(padded, torch.Tensor)
-        assert isinstance(masks, torch.Tensor)
-        assert isinstance(targets, dict)
-
-    def test_padding_to_max_length(self, history_batch_factory):
-        batch = history_batch_factory([2, 5, 3])
-        statics, padded, masks, targets = collate_with_history(batch)
-        assert padded.shape == (3, 5, 3)  # max_len=5
-        assert masks.shape == (3, 5)
-
-    def test_mask_values(self, history_batch_factory):
-        batch = history_batch_factory([2, 5, 3])
-        _, _, masks, _ = collate_with_history(batch)
-        assert masks[0, :2].all()
-        assert not masks[0, 2:].any()
-        assert masks[1, :5].all()
-        assert masks[2, :3].all()
-        assert not masks[2, 3:].any()
-
-    def test_padded_values_are_zero(self, history_batch_factory):
-        batch = history_batch_factory([2, 5])
-        _, padded, _, _ = collate_with_history(batch)
-        # Sample 0 has 2 real games; positions 2-4 should be zeros
-        assert (padded[0, 2:] == 0).all()
-
-    def test_single_sample_batch(self, history_batch_factory):
-        batch = history_batch_factory([4])
-        statics, padded, masks, targets = collate_with_history(batch)
-        assert statics.shape == (1, 4)
-        assert padded.shape == (1, 4, 3)
-        assert masks.shape == (1, 4)
-        assert masks[0].all()
+    def test_padding_is_zero(self):
+        X_s = np.random.randn(2, 4).astype(np.float32)
+        X_h, mask = _make_padded_history([2, 5], game_dim=3, max_seq_len=5)
+        y = {"t1": np.random.randn(2).astype(np.float32)}
+        ds = MultiTargetHistoryDataset(X_s, X_h, mask, y)
+        _, h0, m0, _ = ds[0]
+        # Sample 0 has 2 real games; positions 2-4 are padding zeros
+        assert (h0[2:] == 0).all()
+        assert not m0[2:].any()
 
 
 # ---------------------------------------------------------------------------
@@ -119,31 +87,19 @@ class TestCollateWithHistory:
 @pytest.mark.unit
 class TestMakeHistoryDataloaders:
     def test_returns_two_loaders(self, history_data_factory):
-        X_s, X_h, y = history_data_factory(64)
-        X_vs, X_vh, yv = history_data_factory(16)
+        X_s, X_h, mask, y = history_data_factory(64)
+        X_vs, X_vh, vmask, yv = history_data_factory(16)
         train_loader, val_loader = make_history_dataloaders(
-            X_s,
-            X_h,
-            y,
-            X_vs,
-            X_vh,
-            yv,
-            batch_size=32,
+            X_s, X_h, mask, y, X_vs, X_vh, vmask, yv, batch_size=32
         )
         assert train_loader is not None
         assert val_loader is not None
 
     def test_batch_unpacks_correctly(self, history_data_factory):
-        X_s, X_h, y = history_data_factory(64)
-        X_vs, X_vh, yv = history_data_factory(16)
+        X_s, X_h, mask, y = history_data_factory(64)
+        X_vs, X_vh, vmask, yv = history_data_factory(16)
         train_loader, _ = make_history_dataloaders(
-            X_s,
-            X_h,
-            y,
-            X_vs,
-            X_vh,
-            yv,
-            batch_size=32,
+            X_s, X_h, mask, y, X_vs, X_vh, vmask, yv, batch_size=32
         )
         statics, padded, masks, targets = next(iter(train_loader))
         assert statics.dim() == 2
@@ -152,19 +108,24 @@ class TestMakeHistoryDataloaders:
         assert isinstance(targets, dict)
 
     def test_mask_dtype_is_bool(self, history_data_factory):
-        X_s, X_h, y = history_data_factory(64)
-        X_vs, X_vh, yv = history_data_factory(16)
+        X_s, X_h, mask, y = history_data_factory(64)
+        X_vs, X_vh, vmask, yv = history_data_factory(16)
         train_loader, _ = make_history_dataloaders(
-            X_s,
-            X_h,
-            y,
-            X_vs,
-            X_vh,
-            yv,
-            batch_size=32,
+            X_s, X_h, mask, y, X_vs, X_vh, vmask, yv, batch_size=32
         )
         _, _, masks, _ = next(iter(train_loader))
         assert masks.dtype == torch.bool
+
+    def test_batches_share_max_seq_len_across_loader(self, history_data_factory):
+        """Static padding: every batch has the same sequence length (max_seq_len),
+        not a batch-local max. This is what removes per-batch padding work."""
+        X_s, X_h, mask, y = history_data_factory(64, max_seq_len=8)
+        X_vs, X_vh, vmask, yv = history_data_factory(16, max_seq_len=8)
+        train_loader, _ = make_history_dataloaders(
+            X_s, X_h, mask, y, X_vs, X_vh, vmask, yv, batch_size=16
+        )
+        seq_lens = {batch[1].shape[1] for batch in train_loader}
+        assert seq_lens == {8}
 
 
 # ---------------------------------------------------------------------------
@@ -413,17 +374,11 @@ class TestMultiHeadHistoryTrainer:
         np.random.seed(42)
         torch.manual_seed(42)
 
-        X_ts, X_th, y_train = history_data_factory(64)
-        X_vs, X_vh, y_val = history_data_factory(16)
+        X_ts, X_th, tr_mask, y_train = history_data_factory(64)
+        X_vs, X_vh, v_mask, y_val = history_data_factory(16)
 
         train_loader, val_loader = make_history_dataloaders(
-            X_ts,
-            X_th,
-            y_train,
-            X_vs,
-            X_vh,
-            y_val,
-            batch_size=32,
+            X_ts, X_th, tr_mask, y_train, X_vs, X_vh, v_mask, y_val, batch_size=32
         )
 
         model = MultiHeadNetWithHistory(
@@ -505,10 +460,10 @@ class TestAttentionEntropyRegulariserWiring:
     def _build(self, history_data_factory, *, coeff: float):
         np.random.seed(0)
         torch.manual_seed(0)
-        X_ts, X_th, y_train = history_data_factory(32)
-        X_vs, X_vh, y_val = history_data_factory(16)
+        X_ts, X_th, tr_mask, y_train = history_data_factory(32)
+        X_vs, X_vh, v_mask, y_val = history_data_factory(16)
         train_loader, val_loader = make_history_dataloaders(
-            X_ts, X_th, y_train, X_vs, X_vh, y_val, batch_size=32
+            X_ts, X_th, tr_mask, y_train, X_vs, X_vh, v_mask, y_val, batch_size=32
         )
         model = MultiHeadNetWithHistory(
             static_dim=5,
@@ -574,7 +529,7 @@ class TestAttentionEntropyRegulariserWiring:
 
 
 # ---------------------------------------------------------------------------
-# Opp-history dataset / collate / trainer
+# Opp-history dataset / trainer
 # ---------------------------------------------------------------------------
 
 
@@ -582,55 +537,29 @@ class TestAttentionEntropyRegulariserWiring:
 class TestMultiTargetHistoryWithOppDataset:
     def test_length_and_item_tuple(self):
         X_s = np.random.randn(6, 4).astype(np.float32)
-        X_h = [np.random.randn(np.random.randint(1, 5), 3).astype(np.float32) for _ in range(6)]
-        X_o = [np.random.randn(np.random.randint(1, 7), 5).astype(np.float32) for _ in range(6)]
+        X_h, h_mask = _make_padded_history([3] * 6, game_dim=3, max_seq_len=5)
+        X_o, o_mask = _make_padded_history([4] * 6, game_dim=5, max_seq_len=7)
         y = {"t1": np.random.randn(6).astype(np.float32)}
-        ds = MultiTargetHistoryWithOppDataset(X_s, X_h, X_o, y)
+        ds = MultiTargetHistoryWithOppDataset(X_s, X_h, h_mask, X_o, o_mask, y)
         assert len(ds) == 6
-        s, h, o, t = ds[2]
+        s, h, hm, o, om, t = ds[2]
         assert s.shape == (4,)
-        assert h.dim() == 2 and h.size(-1) == 3
-        assert o.dim() == 2 and o.size(-1) == 5
+        assert h.shape == (5, 3)
+        assert hm.shape == (5,) and hm.dtype == torch.bool
+        assert o.shape == (7, 5)
+        assert om.shape == (7,) and om.dtype == torch.bool
         assert "t1" in t
 
     def test_length_mismatch_raises(self):
         with pytest.raises(ValueError, match="opp history len"):
             MultiTargetHistoryWithOppDataset(
                 np.zeros((4, 3), dtype=np.float32),
-                [np.zeros((1, 2), dtype=np.float32)] * 4,
-                [np.zeros((1, 2), dtype=np.float32)] * 3,  # wrong length
+                np.zeros((4, 5, 2), dtype=np.float32),
+                np.zeros((4, 5), dtype=bool),
+                np.zeros((3, 5, 2), dtype=np.float32),  # wrong length
+                np.zeros((3, 5), dtype=bool),
                 {"t1": np.zeros(4, dtype=np.float32)},
             )
-
-
-@pytest.mark.unit
-class TestCollateWithHistoryAndOpp:
-    def test_shapes_and_masks(self):
-        X_s = np.random.randn(4, 3).astype(np.float32)
-        X_h = [
-            np.random.randn(2, 5).astype(np.float32),
-            np.random.randn(3, 5).astype(np.float32),
-            np.random.randn(1, 5).astype(np.float32),
-            np.random.randn(4, 5).astype(np.float32),
-        ]
-        X_o = [
-            np.random.randn(3, 6).astype(np.float32),
-            np.random.randn(2, 6).astype(np.float32),
-            np.random.randn(5, 6).astype(np.float32),
-            np.random.randn(1, 6).astype(np.float32),
-        ]
-        y = {"t1": np.random.randn(4).astype(np.float32)}
-        ds = MultiTargetHistoryWithOppDataset(X_s, X_h, X_o, y)
-        batch = [ds[i] for i in range(4)]
-        s, h, hm, o, om, t = collate_with_history_and_opp(batch)
-        assert s.shape == (4, 3)
-        assert h.shape == (4, 4, 5)  # max player-seq = 4
-        assert hm.shape == (4, 4)
-        assert o.shape == (4, 5, 6)  # max opp-seq = 5
-        assert om.shape == (4, 5)
-        # Mask sums match the actual sequence lengths.
-        assert hm.sum(dim=1).tolist() == [2, 3, 1, 4]
-        assert om.sum(dim=1).tolist() == [3, 2, 5, 1]
 
 
 @pytest.mark.unit
@@ -672,13 +601,27 @@ class TestMultiHeadHistoryWithOppTrainer:
         """End-to-end: dataloader → ``trainer.train`` for one epoch runs
         without shape/device errors and reports finite losses."""
         torch.manual_seed(0)
+        np.random.seed(0)
         X_s = np.random.randn(32, 4).astype(np.float32)
-        X_h = [np.random.randn(np.random.randint(1, 5), 3).astype(np.float32) for _ in range(32)]
-        X_o = [np.random.randn(np.random.randint(1, 5), 5).astype(np.float32) for _ in range(32)]
+        seq_lens = np.random.randint(1, 5, size=32).tolist()
+        X_h, h_mask = _make_padded_history(seq_lens, game_dim=3, max_seq_len=5)
+        X_o, o_mask = _make_padded_history(seq_lens, game_dim=5, max_seq_len=5)
         y = {t: np.random.randn(32).astype(np.float32) for t in TARGETS}
 
         train_loader, val_loader = make_history_with_opp_dataloaders(
-            X_s, X_h, X_o, y, X_s, X_h, X_o, y, batch_size=8
+            X_s,
+            X_h,
+            h_mask,
+            X_o,
+            o_mask,
+            y,
+            X_s,
+            X_h,
+            h_mask,
+            X_o,
+            o_mask,
+            y,
+            batch_size=8,
         )
         model = MultiHeadNetWithHistory(
             static_dim=4,
