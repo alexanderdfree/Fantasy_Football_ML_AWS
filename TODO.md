@@ -2,7 +2,7 @@
 
 Tracking known issues and uncertainties in the project. Resolved issues are kept as an archive at the bottom — each entry includes the lesson learned, which has repeatedly been useful context for reviewers and future work.
 
-**Last reviewed: 2026-04-21.**
+**Last reviewed: 2026-05-19.**
 
 ---
 
@@ -48,6 +48,78 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 ## Archive (Fixed)
 
 Kept for the lessons-learned value — each entry captures a debug-to-root-cause cycle and a one-line takeaway that's been useful when modifying related code.
+
+### [FIXED] Attention sequences were stripped to variable-length lists then re-padded per batch
+- **Files:** `src/shared/pipeline.py` (dataset construction for QB/RB/WR/TE/DST attention paths), `src/shared/training.py` (custom collate removed in favor of default collate). PR #200 (`349aa4a`).
+- **What:** `build_game_history_arrays` already returned fixed `[n, 17, game_dim]` zero-padded tensors plus boolean masks. The pipeline then stripped them back to a Python list of variable-length tensors, and a custom collate re-padded each batch to its local max. The net cost was an extra Python-level transform on every batch (the default PyTorch collate stacks fixed-shape tensors with zero overhead) and a denser-than-needed padding scheme when local maxes happened to exceed 17.
+- **Fix:** Hold the fixed-shape tensors directly across QB/RB/WR/TE/DST (K's nested-attention path already used this pattern). Masked positions contribute zero to attention regardless of how many of them there are, so math is equivalent; only the per-batch RNG state shifts. Measured on a same-hardware stash comparison: `attn_nn_train` 115.8 s → 81.2 s on RB (~30% faster), per-target MAE within seed variance.
+- **Lesson:** When a downstream consumer already produces fixed-shape outputs, don't reshape them back into variable-length structures just because earlier code did so. The K path was the canonical example for the other five positions — D12's "compose orthogonal cheap wins" only works if you periodically look for inconsistencies across positions and align them.
+
+### [FIXED] `_prepare_position_data` re-ran feature engineering on every Optuna trial and CLI invocation
+- **Files:** `src/shared/feature_cache.py` (new), `src/shared/pipeline.py` (wraps `_prepare_position_data` with the cache). PR #200 (`349aa4a`).
+- **What:** `_prepare_position_data` is deterministic given `(position, train_df, val_df, test_df, cfg)` but was called N_folds × N_trials × N_positions times during Optuna and many times across CLI re-runs. The 8.6 s per call on RB was a real chunk of wall time, especially on local iteration loops.
+- **Fix:** New `src/shared/feature_cache.py` wraps the call with an in-memory LRU + parquet/pickle disk cache under `.cache/features/`, keyed on SHA-256 of DataFrame content hashes + relevant cfg keys. Verified: first RB run miss (prepare_data=8.6 s), second run disk hit (prepare_data=0.1 s, **86× faster**). All metrics bit-identical across runs. Bypass with `FF_FEATURE_CACHE_DISABLE=1` when the cache itself is suspect.
+- **Lesson:** A determinism check ("does this function produce the same output given the same input?") is the green light to memoize, but the key has to capture every input that varies. Content-hashing the DataFrames plus the relevant cfg subset is the safe key — hashing just the input paths or just `cfg` would silently return stale results when an upstream parquet rewrote.
+
+### [FIXED] K `ATTN_L1_FEATURES` violated the per-position attention-static convention
+- **Files:** `src/k/config.py` (`ATTN_L1_FEATURES` block removed).
+- **What:** When the per-position `{POS}_ATTN_STATIC_FEATURES` allowlist landed in commit `2500ecc` (PR #140), every position was supposed to keep rolling/EWMA/trend features *out* of the attention NN's static channel — they're already represented in the game-history sequence and double-feeding leaks older-season signal past the attention window. K was the lone holdout: it kept a separate `ATTN_L1_FEATURES` block that pushed L1-rolling columns back into the static branch, on the theory the inner per-kick attention pool needed help. Subsequent measurement (PR #199) showed the inner pool was already learning those aggregates directly, making the L1 block redundant signal and a soft-leak risk.
+- **Fix:** Dropped `ATTN_L1_FEATURES` from K's config; K now matches the QB/RB/WR/TE/DST pattern of no rolling features in the attention static channel.
+- **Lesson:** When a cross-cutting convention lands across positions, audit *every* position's config for residue — not just the obviously-affected ones. Six configuration surfaces (D6 cross-cutting consequence) means six places to look, and a rollback to "one position is an exception" is exactly the kind of drift the convention was meant to prevent.
+
+### [FIXED] LightGBM `n_jobs=-1` "perf win" test was confounded by a co-resident `torch.compile` regression
+- **Files:** `src/batch/Dockerfile.train` (`LGBM_N_JOBS=-1` env removed in PR #196), `src/shared/models.py:30` (`_LGBM_N_JOBS` reads env, defaults to `1`).
+- **What:** PR #188 (`cb3c960`) baked `LGBM_N_JOBS=-1` into the training image to try multi-core LightGBM on the EC2 g4dn. The benchmark didn't move, and the next commit (PR #189, `3167b56`) traced an unrelated +32% wall-time regression to `torch.compile` being enabled on T4. With both changes live in the same image, the LightGBM threading question was never genuinely measured — the compile regression masked any signal LightGBM might have shown.
+- **Fix:** PR #196 (`35f0a57`) reverted the `LGBM_N_JOBS=-1` bake, returning the image to env-var-only opt-in (default `1`). The torch.compile short-circuit lands separately under D12. LGBM threading is left as an open perf question to measure cleanly later.
+- **Lesson:** Don't ship two perf experiments in the same image. Every "perf win" must be isolated from co-resident regressions, or its signal is impossible to read. The auto-memory entry on "Check git log for SHA perf regressions" formalizes this — before crediting a perf result, search `git log` for nearby PRs that touched the same path.
+
+### [FIXED] `torch.compile` cost +32% wall time on T4 (sm_75) with variable-length history
+- **Files:** `src/shared/pipeline.py:137-159` (`_maybe_compile` short-circuited; wrapper survives for a future hardware change with restore instructions in the docstring).
+- **What:** On the EC2 g4dn (T4, sm_75), wrapping the multi-head attention NN with `torch.compile(model, dynamic=True)` produced a consistent +32% wall-time regression. Root causes: T4 has too few SMs to amortize the fused-kernel benefit at this batch size, and the variable-length history sequences (different number of prior games per player-week) trigger Inductor guard re-checks on every batch, drowning whatever speedup the fused kernels deliver.
+- **Fix:** Short-circuit `_maybe_compile` to a no-op, keeping the wrapper in place so a future move to `sm_86+` (A10 or larger, more SMs) can restore the call with one line. The docstring records the measurement, the conditions to re-evaluate, and the exact line to uncomment.
+- **Lesson:** `torch.compile` is not a "free win" on small/older GPUs with dynamic-shape inputs — measure on the actual training hardware before keeping it. The four other perf knobs that landed in the same PR series (Feather parquet cache, async DataLoader, cuDNN benchmark, `zero_grad(set_to_none=True)`) all paid off on the same machine, so the loss was specifically `torch.compile`, not the perf-bundle. Phase-level timings (D12) now make this kind of regression visible in the next benchmark JSON without an explicit perf test.
+
+### [FIXED] Train freshness check anchored on `now()` instead of train-start
+- **File:** `.github/workflows/train-ec2.yml` (PR #197, `1f5cd68`).
+- **What:** A workflow step that verified "all six positions produced a fresh tarball" computed its freshness threshold from `date -u +%s` *at check time*. Because the check ran after training completed, the threshold tightened as the job ran longer — a slow training run could fail its own freshness check by waiting for itself. The threshold needs to be anchored on when the training step *started*, not when the check runs.
+- **Fix:** Captured the train-start timestamp into an output and referenced it in the freshness check.
+- **Lesson:** Time-based freshness windows in CI must use the train-job start time as origin, not `now()`. Any computation that uses "current time" mid-workflow drifts in the wrong direction relative to the work it's validating.
+
+### [FIXED] Serving tab choice didn't survive a page refresh
+- **Files:** `src/serving/templates/`, JS tab-switch handler (PR #198, `d92362c`).
+- **What:** The dashboard's tab switcher (predictions / wiki / etc.) held active state in JS memory, so refreshing the page reset to the default tab. Deep links to a specific tab didn't work.
+- **Fix:** Mirror the active tab into `location.hash`; restore the tab from the hash on page load.
+- **Lesson:** When a single-page-app has multiple visible "modes," put the mode in the URL hash, not in JS memory. Cheap to add and gives you deep linking for free.
+
+### [FIXED] Wiki tables overflowed the page on narrow viewports
+- **Files:** `src/serving/templates/`, wiki-tab CSS (PR #194, `5b2d880`).
+- **What:** The Wiki tab (PR #138, `ce4543e`) renders repo markdown into the app. Markdown tables can be arbitrarily wide; without a container constraint they pushed the page layout past the viewport on narrow screens.
+- **Fix:** Wrap each markdown table in an `overflow-x: auto` container.
+- **Lesson:** When rendering external/user-provided markdown, native markdown→HTML doesn't constrain table width — wrap tables in a scrollable container at render time.
+
+### [FIXED] Multiple serving-path layout breakages after the `src/{POS}/` → `src/{pos}/` rename
+- **Files:** `src/serving/app.py` (`_repo_root`, `model_sync` path construction, `_attn_kwargs_static` keying). Fixed across PRs #155 (`5f7f8da`), #160 (`d7d86b5`), #164 (`f154ea8`), #171 (`795117e`).
+- **What:** PR #154 (`668fa81`) renamed `src/{POS}/` → `src/{pos}/` and dropped the `{pos}_` prefix from files and symbols across 175 files. The mechanical refactor was correct; what it missed was *dynamic* path/key construction in the serving layer — places where code built `src/{POS_UPPER}/outputs/...` paths by string-concatenating an uppercase position string, or built dict keys like `f"{POS}_ATTN_STATIC_FEATURES"` expecting the old prefix. Four follow-up PRs were needed to track all of them down (model_sync local layout, output directories, `_repo_root` after the file move, and the attn kwargs keying).
+- **Fix:** Each PR fixed one consumer; collectively they restored the serving path. The benchmark/pipeline path was untouched because it used the registry pattern, which had already been migrated to lowercase.
+- **Lesson:** A mechanical rename will still catch downstream consumers that build paths or keys *dynamically* (string concat, dict keys from `f"{POS}_"` templates). After a rename PR lands, do not declare it complete until a full local serving boot + smoke-test passes — `pytest` alone misses the runtime path-construction sites because the renaming made the static analysis green.
+
+### [FIXED] K attention scaler metadata was missing the full `attn_static_features` list
+- **Files:** `src/k/run_pipeline.py` and scaler save path (PR #145, `e01507b`).
+- **What:** K's attention NN scaler was being saved with a truncated `feature_cols` meta — only a subset of the actual `attn_static_features` it had been fit on. At inference, `assert_scaler_matches` (the canonical training/inference skew check) compared the truncated meta against the runtime feature list and either filtered columns or raised, depending on the runtime path. Either way the served K model was operating with a different feature set than the trained one.
+- **Fix:** Write the full `attn_static_features` list into the scaler meta so `assert_scaler_matches` sees the same set the scaler was actually fit on.
+- **Lesson:** Scaler metadata must always be written with the full feature list it was fit on. After a rename or schema change, rebuild the artifact rather than letting a stale meta file silently filter columns at inference. This is exactly the failure mode D11's smoke test now catches (`assert_scaler_matches` check inside `src/shared/smoke_test.py`).
+
+### [FIXED] K/DST evaluation totals reported a nonsense aggregate `total_r2`
+- **Files:** `src/shared/evaluation.py`, `src/shared/aggregate_targets.py` (PR #178, `0c66171`).
+- **What:** `compute_target_metrics` computed an aggregate "total" metric for each position by summing per-head predictions, but for K it did an unsigned sum (treating `fg_misses` and `xp_misses` as if they added to fantasy points instead of subtracting), and for DST it skipped the PA/YA tier lookup that converts `points_allowed`/`yards_allowed` into the bonus dollars. The reported K `total_r2` was `-1.65` against a fictitious unsigned-K-points unit space; DST's totals were correct in shape but wrong in scale. Per-target metrics (per-head MAE/R²) were always correct — only the aggregate metric was bogus, and only for K/DST.
+- **Fix:** Added a position-aware aggregator (`_k_predictions_to_fantasy_points` for K mirroring DST's pattern) and routed `compute_target_metrics` through `predictions_to_fantasy_points` for both K and DST. Per-target metrics unchanged; total metrics now match what `app.py` shows in the dashboard.
+- **Lesson:** Any aggregated metric must route through the same aggregator that serving uses (`predictions_to_fantasy_points`), or it doesn't measure what the dashboard shows. The eval table in README's "Evaluation" section now reports the corrected K/DST MAE — which is naturally higher (K MAE went from a fictitious 3.6 to a real 6.7) because the previous numbers existed in the wrong unit space.
+
+### [FIXED] Gunicorn `--preload` pre-warm broke ALB health checks during task replacement
+- **Files:** gunicorn launch config / Dockerfile CMD. Tried in PR #148 (`d69f427`), reverted in PR #149 (`8ff26be`).
+- **What:** To prevent 503s on ECS task replacement, PR #148 tried pre-warming the data + model caches at module import time under `gunicorn --preload`. Under `--preload`, the import happens *before* the worker binds its socket — so the ALB's TCP health check saw connection-refused for the entire pre-warm duration and marked the new task unhealthy before it could serve a single request. The intended fix (skip the 503 window) created an "unhealthy task" window that was strictly worse.
+- **Fix:** Reverted (`8ff26be`). The right place for pre-warm work is a `post_fork` hook or a background thread that fires *after* the worker binds its socket — that path hasn't been re-attempted yet.
+- **Lesson:** Under `gunicorn --preload`, module-import work runs before `bind()`. Anything slower than the ALB's TCP health-check timeout will produce a TCP-refused window that fails the deploy. Pre-warm in `post_fork` or a background thread, not at module import. (Captured in auto-memory as the "no module-level pre-warm under --preload" rule.)
 
 ### [FIXED] ECS `services-stable` waiter timed out under AZ rebalancing + grace-period drift
 - **Files:** `.github/workflows/deploy.yml:76-99` (rewritten to use `aws-actions/amazon-ecs-render-task-definition@v1` + `amazon-ecs-deploy-task-definition@v2` with `wait-for-minutes: 20`), `infra/aws/bootstrap.sh:318` (+`--availability-zone-rebalancing DISABLED` on create-service).

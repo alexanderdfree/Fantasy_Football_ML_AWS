@@ -88,26 +88,23 @@ Full training on GPU runs on EC2 via CI; see [docs/ec2_design.md](docs/ec2_desig
 
 ## Evaluation
 
-Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination), top-12 hit rate (agreement with the actual weekly top 12 at the position, PPR scoring). Numbers from [benchmark_results.json](benchmark_results.json).
-
-> The numbers below come from a benchmark snapshot taken before the K/DST attention-NN additions (commits `801b61a`, `cc0c627`) and the DST raw-stat migration. Re-run `python -m src.benchmarking.benchmark` to refresh against the current code; the K/DST attention cells will populate at that point.
+Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination), top-12 hit rate (agreement with the actual weekly top 12 at the position, PPR scoring). Numbers from [benchmark_history/2026-04-27T19-01-49_86fe9c0.json](benchmark_history/2026-04-27T19-01-49_86fe9c0.json) — the first full-positions EC2 run after the K nested attention (`801b61a`), DST raw-stat migration (`cc0c627`), RB feature audit cycle (PRs #190–#192), and the K/DST aggregate-metric fix (`0c66171`).
 
 | Position | Ridge MAE | NN MAE | Attn NN MAE | LGBM MAE | Best | R² (best) | Top-12 (best) |
 |---|---|---|---|---|---|---|---|
-| QB  | 6.471 | 6.303 | 6.360 | **6.209** | LightGBM     | 0.293  | 0.526 |
-| RB  | 4.358 | **4.169** | 4.245 | 4.191 | MultiHeadNet | 0.418  | 0.528 |
-| WR  | 4.439 | 4.218 | **4.185** | 4.233 | Attention NN | 0.359  | 0.377 |
-| TE  | 3.592 | 3.513 | **3.486** | 3.524 | Attention NN | 0.292  | 0.483 |
-| K   | **3.605** | 3.707 | —ᵃ | — | Ridge        | 0.067  | 0.495 |
-| DST | **3.826** | 3.875 | —ᵃ | — | Ridge        | 0.055  | 0.472 |
-
-ᵃ K/DST attention-NN cells are pending the next benchmark refresh (the snapshot in [benchmark_results.json](benchmark_results.json) pre-dates commits `801b61a` and `cc0c627`). The Ridge / NN columns above are still meaningful baselines for those positions.
+| QB  | 6.546 | 6.435 | 6.549 | **6.256** | LightGBM     | 0.269  | 0.548 |
+| RB  | 4.399 | 4.278 | 4.315 | **4.159** | LightGBM     | 0.417  | 0.512 |
+| WR  | 4.351 | 4.182 | **4.106** | 4.231 | Attention NN | 0.347  | 0.385 |
+| TE  | 3.546 | 3.494 | **3.444** | 3.517 | Attention NN | 0.299  | 0.496 |
+| K   | **6.668** | 7.133 | 7.298 | 7.188 | Ridge        | −1.565 | 0.431 |
+| DST | 5.212 | **5.162** | 5.346 | 5.274 | MultiHeadNet | 0.067  | 0.500 |
 
 **Takeaways:**
-- The neural nets win on skill positions (RB, WR, TE) where interaction and sequence structure matters. Attention pulls slightly ahead on WR/TE.
-- Ridge wins K and DST — the signal at those positions is too weak for a higher-capacity model to pay off.
-- LightGBM is the best model at QB, narrowly. It's within a rounding error of NN everywhere else.
-- Error analysis and per-target breakdown: [docs/expert_comparison.md](docs/expert_comparison.md) and the per-position NN/Ridge/LightGBM breakdowns in [benchmark_results.json](benchmark_results.json).
+- **LightGBM wins QB and RB.** It beats both NN families on the positions with the densest count-heavy targets (passing/rushing yards, TDs). The RB feature audit cycle (drop 14 redundant features, restore prior-season signals, add 3 orthogonal upstream aggregates) closed the gap between the audit-driven model variants — LightGBM is now the front-runner at RB by a small margin.
+- **Attention NN wins WR and TE.** Sequence + interaction structure pays off when the target is heavily reception-driven. The attention pool's positional encoding catches recent-game weighting that pure rolling features lose.
+- **K and DST report negative aggregate R².** This is the real signal, not a measurement bug: commit `0c66171` (PR #178) fixed the K/DST evaluation aggregator to use the same signed/tiered logic the serving layer uses, and the result is that all three model families struggle to beat predicting the per-player mean. K is the harder of the two — kickers genuinely have weak week-over-week signal at the available sample size. Ridge wins both, narrowly, by being the most boring predictor; the higher-capacity models overfit. This is consistent with the [docs/expert_comparison.md](docs/expert_comparison.md) finding that published expert projections also have low R² on these positions.
+- **Aggregate MAE rose for K and DST compared to the pre-`0c66171` table.** The earlier table reported K=3.6 and DST=3.8 against a partially-wrong unit space (unsigned sum for K, missing PA/YA tier lookup for DST). The corrected aggregator produces the real fantasy-point error: K MAE ≈ 6.7, DST MAE ≈ 5.2. The dashboard always showed correct values; only the eval-table aggregate was wrong.
+- Error analysis and per-target breakdown: [docs/expert_comparison.md](docs/expert_comparison.md) and the per-position breakdowns in the linked benchmark JSON.
 
 ## Repo Layout
 
@@ -212,6 +209,10 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 - Always-stable serving + smoke-test gate + S3 bucket versioning (PR #130, `c7fa2d7`)
 - Versioned history + manifest-driven rollback (PR #104, `1b20e9e`)
 - Operational rollback CLI [src/scripts/promote.py](src/scripts/promote.py) (PR #122, `e8bf2a7`)
+- ECS force-rollover after training so promoted artifacts get picked up by a fresh task (PR #179, `8c42e88`)
+- PPR / Half-PPR / Standard scoring switch wired end-to-end through the dashboard (PR #153, `a533990`)
+- Wiki tab renders repo markdown docs in-app (PR #138, `ce4543e`)
+- Benchmark History tab — per-PR rows fetched from S3 at boot, auto-updates after every training run without a redeploy (PR #201, `056423b`)
 - Slim arm64 serving image with runtime S3 model fetch (PR #83, `3243d72`)
 - 24/7 warm EC2 host eliminates 3–5 min Batch scale-up → sub-15-min push-to-serve
 
@@ -236,6 +237,11 @@ push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov ·
 - `uv` migration across CI (PR #51, `3c897d8`)
 - Per-component Codecov flags with 80% per-flag target (PR #78, `84b45b9`)
 - Position-level change detection — skip retrains for tests-only or docs-only PRs (PR #84, `b087189`)
+- Per-shard test scoping via `detect` job — only run shards whose code changed (PR #185, `8150689`)
+- Docs-only filter folded into `detect`; standalone `tests-skip.yml` retired (PR #186, `5737c67`)
+- Training-step perf composition: Feather parquet cache + async DataLoader + cuDNN benchmark + phase timings (PR #183, `48ef419`)
+- Static-pad attention sequences (−30% on attention training) + disk-backed feature-engineering cache (−86× on `prepare_data` hits) (PR #200, `349aa4a`)
+- `torch.compile` measured and rejected on T4 (+32% wall time on sm_75 + variable-length sequences) — wrapper kept on EC2 image but short-circuited (PR #189, `3167b56`)
 - Native `arm64` deploy runner + BuildKit cache (PR #83, `3243d72`)
 - Pytest sharding (PR #48, `40f49b2`) + xdist within shards (PR #57, `2f42867`)
 - Diagnostic workflows: RB TD-gate ablation (PR #97, `3e49419`) and LightGBM Optuna retune (PR #98, `b7fde11`)
