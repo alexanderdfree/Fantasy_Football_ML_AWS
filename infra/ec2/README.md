@@ -2,7 +2,7 @@
 
 _Last verified: 2026-04-21._
 
-A 24/7 `g4dn.xlarge` that runs `src/batch/train.py` on GPU with zero cold start, driven by `.github/workflows/train-ec2.yml`.
+An on-demand `g4dn.xlarge` that runs `src/batch/train.py` on GPU, driven by `.github/workflows/train-ec2.yml`. Stays warm for 1h after each training run, then stops; CI wakes it on the next push (adds ~30-60s cold-start latency to the first push after idle).
 
 ## First-time setup
 
@@ -48,25 +48,28 @@ gh variable set BATCH_ACTIVE --body "false"
 
 4. **CI end-to-end**: push any change matching the `train-ec2.yml` path filter; observe the workflow run, model freshness in S3, and logs in `/ff/training` CloudWatch log group.
 
-## Enable auto-shutdown (recommended after observing usage)
+## Auto-shutdown
 
-The idle-check timer is **installed but disabled**. Turn it on once you've watched traffic for a day:
+`auto-shutdown.timer` is **enabled at bootstrap** and fires every 15 min. When the instance has been idle ≥ 1h (no `ff-train` activity recorded in `/opt/ff/logs/last-activity`) and no `/var/lock/ff-train.lock` flock is held, the timer issues `shutdown -h +1`. CI re-wakes the instance on the next push via `aws ec2 start-instances` + wait for `instance-running`.
 
+Override `IDLE_HOURS` for a longer warm window:
 ```
 aws ssm send-command --targets "Key=InstanceIds,Values=<id>" \
   --document-name AWS-RunShellScript \
-  --parameters 'commands=["systemctl enable --now ff-auto-shutdown.timer"]' \
+  --parameters 'commands=[
+    "mkdir -p /etc/systemd/system/ff-auto-shutdown.service.d",
+    "printf \"[Service]\\nEnvironment=IDLE_HOURS=4\\n\" > /etc/systemd/system/ff-auto-shutdown.service.d/override.conf",
+    "systemctl daemon-reload"
+  ]' --region us-east-1
+```
+
+To disable temporarily (e.g. long-running ad-hoc job):
+```
+aws ssm send-command --targets "Key=InstanceIds,Values=<id>" \
+  --document-name AWS-RunShellScript \
+  --parameters 'commands=["systemctl disable --now ff-auto-shutdown.timer"]' \
   --region us-east-1
 ```
-
-Default threshold: 4h idle → `shutdown -h`. Override with `IDLE_HOURS`:
-```
-systemctl edit ff-auto-shutdown.service
-# add: [Service]
-#      Environment=IDLE_HOURS=8
-```
-
-CI auto-starts the instance on the next push (`aws ec2 start-instances` + wait for `instance-running`).
 
 ## Teardown
 

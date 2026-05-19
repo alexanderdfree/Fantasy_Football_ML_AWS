@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-IDLE_HOURS="${IDLE_HOURS:-4}"
+IDLE_HOURS="${IDLE_HOURS:-1}"
 ACTIVITY_FILE="/opt/ff/logs/last-activity"
 LOCK_FILE="/var/lock/ff-train.lock"
 
