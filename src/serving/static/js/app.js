@@ -98,7 +98,7 @@ async function init() {
     setupModelToggle();
     setupScoringToggle();
     setupWikiClickHandler();
-    setupWikiHashRouter();
+    applyInitialRoute();
 
     // Load weeks dropdown
     try {
@@ -129,22 +129,70 @@ async function init() {
 
 // ---------------------------------------------------------------------------
 // Navigation
+//
+// URL state mirrors the active tab so refresh, share-links, and the browser
+// back/forward buttons all behave as expected. Tab clicks pushState; wiki
+// sub-page navigation (inside loadWikiPage) replaceState so intra-wiki link
+// clicks don't pile up history entries.
 // ---------------------------------------------------------------------------
+const TAB_VIEWS = new Set(["predictions", "standings", "model-performance", "model-architecture", "wiki"]);
+
+function viewFromHash(hash) {
+    if (!hash || hash === "#") return "predictions";
+    if (hash.startsWith("#wiki:") || hash === "#wiki") return "wiki";
+    const v = hash.slice(1);
+    return TAB_VIEWS.has(v) ? v : "predictions";
+}
+
+function hashForView(view) {
+    if (view === "predictions") return "";
+    if (view === "wiki") return wikiCurrentSlug ? `#wiki:${wikiCurrentSlug}` : "#wiki";
+    return `#${view}`;
+}
+
+function activateTab(view) {
+    document.querySelectorAll(".nav-tabs .tab").forEach(t => {
+        t.classList.toggle("active", t.dataset.view === view);
+    });
+    document.querySelectorAll(".view").forEach(v => {
+        v.classList.toggle("active", v.id === `view-${view}`);
+    });
+    if (view === "model-performance") loadMetrics();
+    else if (view === "standings") loadStandings();
+    else if (view === "model-architecture") loadModelArchitecture();
+    else if (view === "wiki") loadWiki();
+}
+
 function setupNavTabs() {
     document.querySelectorAll(".nav-tabs .tab").forEach(tab => {
         tab.addEventListener("click", () => {
-            document.querySelectorAll(".nav-tabs .tab").forEach(t => t.classList.remove("active"));
-            tab.classList.add("active");
             const view = tab.dataset.view;
-            document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
-            document.getElementById(`view-${view}`).classList.add("active");
-
-            if (view === "model-performance") loadMetrics();
-            if (view === "standings") loadStandings();
-            if (view === "model-architecture") loadModelArchitecture();
-            if (view === "wiki") loadWiki();
+            // Push history BEFORE activating: loadWikiPage's cached-path
+            // replaceState runs synchronously inside activateTab() and would
+            // otherwise replace the previous tab's entry instead of letting
+            // us push a new one on top.
+            const newHash = hashForView(view);
+            if ((location.hash || "") !== newHash) {
+                history.pushState(null, "", location.pathname + location.search + newHash);
+            }
+            activateTab(view);
         });
     });
+    window.addEventListener("popstate", () => {
+        activateTab(viewFromHash(location.hash));
+    });
+}
+
+function applyInitialRoute() {
+    // Predictions is already `.active` in the HTML, so we only need to switch
+    // when the hash routes elsewhere. Normalize unknown hashes so a paste of
+    // /#bogus lands cleanly on /.
+    const view = viewFromHash(location.hash);
+    if (view !== "predictions") activateTab(view);
+    const expectedHash = hashForView(view);
+    if ((location.hash || "") !== expectedHash) {
+        history.replaceState(null, "", location.pathname + location.search + expectedHash);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1015,12 +1063,3 @@ function setupWikiClickHandler() {
     });
 }
 
-function setupWikiHashRouter() {
-    // If the page loads with a #wiki: hash, activate the wiki tab and route.
-    const fromHash = parseWikiHash(location.hash);
-    if (!fromHash) return;
-    const wikiTab = document.querySelector('.nav-tabs .tab[data-view="wiki"]');
-    if (wikiTab && !wikiTab.classList.contains("active")) {
-        wikiTab.click();
-    }
-}
