@@ -394,6 +394,11 @@ jobs:
           # and squash-merge edge cases return empty — accept that and fall
           # back to the SHA link client-side. Non-fatal: stay defensive so a
           # GitHub API blip doesn't abort the benchmark append.
+          #
+          # ``.[0]``: a commit can be referenced by multiple PRs (backport
+          # branches, cherry-picks). We take the first, which is the merge
+          # PR for this single-trunk repo's actual flow. Revisit if we
+          # ever start backporting.
           PR_NUMBER=""
           if [ -n "$HEAD_SHA" ]; then
             PR_NUMBER=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" \

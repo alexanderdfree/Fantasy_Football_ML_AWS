@@ -291,3 +291,57 @@ def test_main_reports_submit_exception(monkeypatch, tmp_path, capsys):
     # Both submits raised → wait_for_jobs gets an empty job_ids dict (no
     # jobs to poll). The exception was caught, not propagated.
     assert waited_for == [{}]
+
+
+# --------------------------------------------------------------------------
+# _maybe_upload_to_s3 — env-gated S3 mirror of each new benchmark JSON
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_maybe_upload_to_s3_noop_when_bucket_unset(monkeypatch, tmp_path):
+    """Without ``FF_MODEL_S3_BUCKET`` set, the helper must not call boto3 —
+    matches the ``sync_*`` env-gate pattern so local dev / CI tests don't
+    accidentally touch S3."""
+    import src.batch.benchmark as bb
+
+    monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
+    sentinel = mock.Mock(side_effect=AssertionError("boto3.client should NOT be called"))
+    with mock.patch("boto3.client", sentinel):
+        bb._maybe_upload_to_s3(str(tmp_path / "anything.json"))
+    sentinel.assert_not_called()
+
+
+@pytest.mark.unit
+def test_maybe_upload_to_s3_uploads_with_expected_key(monkeypatch, tmp_path, capsys):
+    """With env set, calls ``s3.upload_file(local, bucket, key)`` where
+    ``key = {prefix}/benchmark_history/{basename(local_path)}``."""
+    import src.batch.benchmark as bb
+
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "my-bucket")
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "models")
+    fake_s3 = mock.Mock()
+    with mock.patch("boto3.client", return_value=fake_s3) as boto_factory:
+        bb._maybe_upload_to_s3(str(tmp_path / "2026-05-19T22-47-20_dff43fb.json"))
+    boto_factory.assert_called_once_with("s3", region_name=bb.AWS_REGION)
+    fake_s3.upload_file.assert_called_once_with(
+        str(tmp_path / "2026-05-19T22-47-20_dff43fb.json"),
+        "my-bucket",
+        "models/benchmark_history/2026-05-19T22-47-20_dff43fb.json",
+    )
+    assert "s3://my-bucket/models/benchmark_history/" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_maybe_upload_to_s3_strips_prefix_slashes(monkeypatch, tmp_path):
+    """A trailing/leading slash on FF_MODEL_S3_PREFIX must not produce a
+    double-slash in the resulting S3 key (S3 treats // as literal segments)."""
+    import src.batch.benchmark as bb
+
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "my-bucket")
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "/nightly/v2/")
+    fake_s3 = mock.Mock()
+    with mock.patch("boto3.client", return_value=fake_s3):
+        bb._maybe_upload_to_s3(str(tmp_path / "x.json"))
+    args = fake_s3.upload_file.call_args.args
+    assert args[2] == "nightly/v2/benchmark_history/x.json"

@@ -1240,3 +1240,5 @@ body.model-lgbm .attn-nn-col { display: none; }
 .history-link { color: var(--accent); text-decoration: none; }
 .history-link:hover { text-decoration: underline; }
 .history-link code { font-size: 12px; }
+.history-link-disabled { color: var(--text-secondary); }
+.history-link-disabled code { font-size: 12px; }

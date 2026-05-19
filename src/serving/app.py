@@ -4,6 +4,7 @@ All predictions come from position-specific models (QB, RB, WR, TE, K, DST).
 No general cross-position model is used.
 """
 
+import json
 import os
 import re
 import sys
@@ -1585,8 +1586,20 @@ def api_wiki_page(slug):
     return jsonify({"slug": slug, "name": meta["name"], "group": meta["group"], "html": html})
 
 
-_BENCHMARK_REPO_SLUG = "alexanderdfree/Fantasy_Football_ML_AWS"
+# Env-overridable so a rename or fork doesn't silently break every History
+# row's GitHub link. Fallback is the canonical slug for the live deploy.
+_BENCHMARK_REPO_SLUG_DEFAULT = "alexanderdfree/Fantasy_Football_ML_AWS"
+_BENCHMARK_REPO_SLUG = (
+    os.environ.get("BENCHMARK_REPO_SLUG", "").strip() or _BENCHMARK_REPO_SLUG_DEFAULT
+)
 _BENCHMARK_MODELS = ("ridge", "nn", "attn_nn", "lgbm")
+
+# (mtime, rows) — invalidated whenever sync_benchmark_history_from_s3 (or a
+# manual write) touches benchmark_history/. Lock keeps two concurrent
+# /api/benchmark_history requests from re-parsing in parallel after an
+# invalidation. RLock is overkill (no nesting), Lock is sufficient.
+_BENCHMARK_HISTORY_CACHE: tuple[float, list[dict]] | None = None
+_BENCHMARK_HISTORY_LOCK = threading.Lock()
 
 
 def _benchmark_history_dir() -> str:
@@ -1633,6 +1646,43 @@ def _benchmark_row(entry: dict) -> dict:
     }
 
 
+def _load_benchmark_history_rows() -> list[dict]:
+    """Return the cached, projected, newest-first list of benchmark rows.
+
+    Cache key is the directory mtime: any file landing (S3 sync at boot,
+    manual write) bumps it and forces a reparse. Per-request, this is O(1)
+    in the steady state instead of O(N_files * parse). Returns ``[]`` if the
+    dir doesn't exist (fresh container before any sync has happened).
+    """
+    global _BENCHMARK_HISTORY_CACHE
+    history_dir = _benchmark_history_dir()
+    try:
+        mtime = os.path.getmtime(history_dir)
+    except OSError:
+        return []
+    with _BENCHMARK_HISTORY_LOCK:
+        cached = _BENCHMARK_HISTORY_CACHE
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        rows: list[dict] = []
+        for fn in os.listdir(history_dir):
+            if not fn.endswith(".json"):
+                continue
+            path = os.path.join(history_dir, fn)
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path) as f:
+                    entry = json.load(f)
+            except (OSError, ValueError):
+                # A malformed file shouldn't poison the whole tab.
+                continue
+            rows.append(_benchmark_row(entry))
+        rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
+        _BENCHMARK_HISTORY_CACHE = (mtime, rows)
+        return rows
+
+
 @app.route("/api/benchmark_history")
 def api_benchmark_history():
     """Return per-run summary rows for the History tab, newest first.
@@ -1643,26 +1693,7 @@ def api_benchmark_history():
     on each training run by the post-train ``aws ecs update-service --force-
     new-deployment`` in ``train-ec2.yml``.
     """
-    import json as _json
-
-    history_dir = _benchmark_history_dir()
-    rows: list[dict] = []
-    if os.path.isdir(history_dir):
-        for fn in os.listdir(history_dir):
-            if not fn.endswith(".json"):
-                continue
-            path = os.path.join(history_dir, fn)
-            if not os.path.isfile(path):
-                continue
-            try:
-                with open(path) as f:
-                    entry = _json.load(f)
-            except (OSError, ValueError):
-                # A malformed file shouldn't poison the whole tab.
-                continue
-            rows.append(_benchmark_row(entry))
-    rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
-    return jsonify({"repo_slug": _BENCHMARK_REPO_SLUG, "rows": rows})
+    return jsonify({"repo_slug": _BENCHMARK_REPO_SLUG, "rows": _load_benchmark_history_rows()})
 
 
 @app.route("/health")
