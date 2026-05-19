@@ -1055,12 +1055,18 @@ function renderMaePills(pills) {
 }
 
 function renderHistoryIdCell(repoSlug, row) {
+    // If the API didn't return a slug (test scenario, misconfigured env),
+    // skip the link and render the identifier as plain text rather than
+    // emitting a broken https:///pull/N URL that 404s on click.
+    const slug = (repoSlug || "").trim();
     if (row.pr_number != null) {
-        const href = `https://github.com/${repoSlug}/pull/${row.pr_number}`;
+        if (!slug) return `<span class="history-link-disabled">#${row.pr_number}</span>`;
+        const href = `https://github.com/${slug}/pull/${row.pr_number}`;
         return `<a class="history-link" href="${href}" target="_blank" rel="noopener">#${row.pr_number}</a>`;
     }
     if (row.git_hash) {
-        const href = `https://github.com/${repoSlug}/commit/${encodeURIComponent(row.git_hash)}`;
+        if (!slug) return `<span class="history-link-disabled"><code>${escapeHtml(row.git_hash)}</code></span>`;
+        const href = `https://github.com/${slug}/commit/${encodeURIComponent(row.git_hash)}`;
         return `<a class="history-link" href="${href}" target="_blank" rel="noopener"><code>${escapeHtml(row.git_hash)}</code></a>`;
     }
     return "—";

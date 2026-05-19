@@ -42,6 +42,10 @@ def history_client(app_module, tmp_path, monkeypatch):
     history_dir = tmp_path / "benchmark_history"
     history_dir.mkdir()
     monkeypatch.setattr(app_module, "_benchmark_history_dir", lambda: str(history_dir))
+    # Clear the mtime-keyed cache so a previous test's load doesn't shadow
+    # this one (cache is module-global; mtime usually differs across tmp
+    # dirs anyway but resetting is explicit and cheap).
+    monkeypatch.setattr(app_module, "_BENCHMARK_HISTORY_CACHE", None)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         yield c, history_dir
@@ -217,3 +221,62 @@ class TestRobustness:
         row = client.get("/api/benchmark_history").get_json()["rows"][0]
         assert row["ridge"] == [{"position": "QB", "mae": 4.1}]
         assert row["nn"] == []
+
+
+class TestCaching:
+    def test_repeat_calls_reuse_cache_until_dir_changes(self, history_client, monkeypatch):
+        """Two consecutive GETs over an unchanged dir must hit the cache —
+        no re-parse. We assert this by patching json.load to crash on the
+        second call; if the cache works, that load never happens."""
+        import src.serving.app as app_mod
+
+        client, history_dir = history_client
+        _write_run(
+            history_dir,
+            ts="2026-05-19T22:47:20",
+            sha="abc1234",
+            pr=199,
+            results=[{"position": "K", "ridge_mae": 6.5, "elapsed_sec": 80.0}],
+        )
+        # Warm the cache.
+        first = client.get("/api/benchmark_history").get_json()
+        assert len(first["rows"]) == 1
+
+        # Second call: poison json.load so any re-parse would explode.
+        def _boom(*args, **kwargs):
+            raise AssertionError("cache miss — json.load should not be called")
+
+        monkeypatch.setattr(app_mod.json, "load", _boom)
+        second = client.get("/api/benchmark_history").get_json()
+        assert second == first
+
+    def test_cache_invalidates_when_new_file_lands(self, history_client):
+        """A new file in the dir bumps the directory mtime, which is the
+        cache key — the next request reparses and returns the new row."""
+        import os
+        import time as _time
+
+        client, history_dir = history_client
+        _write_run(
+            history_dir,
+            ts="2026-05-01T10:00:00",
+            sha="aaa1111",
+            pr=180,
+            results=[{"position": "QB", "ridge_mae": 4.1, "elapsed_sec": 50.0}],
+        )
+        first = client.get("/api/benchmark_history").get_json()
+        assert {r["git_hash"] for r in first["rows"]} == {"aaa1111"}
+
+        # Ensure mtime granularity (HFS+/APFS can have second-level
+        # resolution); bump it explicitly so the cache key changes.
+        _time.sleep(0.01)
+        os.utime(history_dir, None)
+        _write_run(
+            history_dir,
+            ts="2026-05-19T22:47:20",
+            sha="bbb2222",
+            pr=199,
+            results=[{"position": "K", "ridge_mae": 6.5, "elapsed_sec": 80.0}],
+        )
+        second = client.get("/api/benchmark_history").get_json()
+        assert {r["git_hash"] for r in second["rows"]} == {"aaa1111", "bbb2222"}

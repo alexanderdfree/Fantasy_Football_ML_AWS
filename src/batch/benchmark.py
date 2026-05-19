@@ -193,6 +193,16 @@ def main():
 
 
 def _maybe_upload_to_s3(local_path: str) -> None:
+    """Mirror one benchmark JSON to S3 under ``{prefix}/benchmark_history/``.
+
+    Note on layout: the key sits under the same ``FF_MODEL_S3_PREFIX`` as
+    model tarballs (``s3://{bucket}/models/...``). That keeps producer and
+    consumer aligned to a single prefix env var, but it means a lifecycle
+    policy on ``models/*`` would silently expire benchmark history. If we
+    ever add such a policy, move benchmark uploads to a dedicated top-level
+    prefix (e.g. ``benchmark_history/``) and update sync_benchmark_history_
+    from_s3 in lockstep. Cheap to migrate while the history is small.
+    """
     bucket = os.environ.get("FF_MODEL_S3_BUCKET", "").strip()
     if not bucket:
         return
