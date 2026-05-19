@@ -122,7 +122,7 @@ Steps (train job, after `detect` scopes positions):
 7. `aws ssm send-command` with a single command wrapping a sequential `for POS in …; do /usr/local/bin/ff-train $POS $SEED; done` (T4 can't fit concurrent NN runs; one command ID keeps polling simple).
 8. Manual poll of `get-command-invocation` (30-min deadline — `aws ssm wait command-executed` caps at ~100 s and doesn't honor `AWS_MAX_ATTEMPTS`, so long runs would otherwise be mis-reported as failures).
 9. Stream stdout/stderr into the Actions log via `get-command-invocation --query` (`if: always()`).
-10. `aws s3api head-object` per position → summary table to `$GITHUB_STEP_SUMMARY`; fail if any artifact is missing or older than 20 min.
+10. `aws s3api head-object` per position → summary table to `$GITHUB_STEP_SUMMARY`; fail if any artifact is missing or was last modified more than 20 min before training started (anchoring on train start, not "now", so a long sequential run doesn't false-trip the first position's artifact).
 11. Write a per-run JSON file under `benchmark_history/` via `python -m src.batch.benchmark --download-only --backend ec2 --instance-type "g4dn.xlarge (On-Demand)" --positions $POSITIONS --note "EC2 auto-run (${sha::7})"`, then commit + push (retry-rebase up to 3×).
 
 Concurrency: `group: train-ec2, cancel-in-progress: true` — rapid-iteration pushes supersede in-flight runs.
