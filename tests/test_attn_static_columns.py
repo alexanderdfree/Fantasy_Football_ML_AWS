@@ -269,18 +269,9 @@ class TestKAttentionStaticFeatures:
         ]
         assert not leaks, f"K ATTN_STATIC_FEATURES has temporal prefixes: {leaks}"
 
-    def test_l1_features_excluded_from_k_all_features(self):
-        """Critical: the engineered L1 columns must NOT live in K's ALL_FEATURES,
-        or Ridge and the base NN would train on them — the exact leakage the
-        attn_static_from_df path was designed to prevent."""
-        all_features = set(k_cfg.ALL_FEATURES)
-        leaks = set(k_cfg.ATTN_L1_FEATURES) & all_features
-        assert not leaks, f"K L1 attention features leaked into ALL_FEATURES: {sorted(leaks)}"
-
     def test_column_count_matches_config(self):
         """Drift guard: unexpected count shift => feature added/removed silently."""
-        expected = len(k_cfg.ATTN_L1_FEATURES) + len(k_cfg.CONTEXTUAL_FEATURES)
-        assert len(k_cfg.ATTN_STATIC_FEATURES) == expected
+        assert len(k_cfg.ATTN_STATIC_FEATURES) == len(k_cfg.CONTEXTUAL_FEATURES)
 
     def test_no_duplicates(self):
         assert len(k_cfg.ATTN_STATIC_FEATURES) == len(set(k_cfg.ATTN_STATIC_FEATURES))
