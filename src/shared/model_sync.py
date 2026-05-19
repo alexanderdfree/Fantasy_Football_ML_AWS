@@ -276,9 +276,10 @@ def sync_benchmark_history_from_s3() -> dict | None:
     this a no-op so dev and CI tests don't try to hit S3. Fail-soft on an
     empty/missing prefix (a fresh bucket with no benchmark uploads yet
     shouldn't block boot); per-file failures DO raise so a partial sync
-    is visible. The ``benchmark_history/`` directory is excluded from the
-    Docker image (`.dockerignore`), so without this sync the History tab
-    sees no rows in prod.
+    is visible. The Docker image bundles the git-tracked floor of
+    ``benchmark_history/`` (see Dockerfile + .dockerignore), so this sync is
+    layering on any newer runs uploaded since the image was built — if it
+    no-ops, the History tab still renders the committed history.
     """
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
     if not bucket:
