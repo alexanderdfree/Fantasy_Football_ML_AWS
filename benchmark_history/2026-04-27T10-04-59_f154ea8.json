@@ -2,6 +2,7 @@
   "run_id": "2026-04-27T10:04:59_f154ea8",
   "timestamp": "2026-04-27T10:04:59",
   "git_hash": "f154ea8",
+  "pr_number": 164,
   "note": "EC2 auto-run (f154ea8)",
   "backend": "ec2",
   "instance_type": "g4dn.xlarge (On-Demand)",
