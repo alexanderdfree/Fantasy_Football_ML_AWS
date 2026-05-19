@@ -92,40 +92,9 @@ def compute_features(df: pd.DataFrame) -> None:
     pat_att_roll = _sum("pat_att", 5)
     df["xp_accuracy_L5"] = safe_divide(pat_made_roll, pat_att_roll)
 
-    # ---------------------------------------------------------------
-    # L1 (shift-1) equivalents — attention NN's static branch consumes
-    # these via ATTN_STATIC_FEATURES. They live in `df` but are NOT
-    # listed in ALL_FEATURES, so Ridge and the base NN never see them.
-    # Skip L1 versions of k_pts_trend (needs two windows) and k_pts_std
-    # (undefined at L1).
-    # ---------------------------------------------------------------
-    _shift = lambda col: df.groupby(grp)[col].shift(1).fillna(0)  # noqa: E731
-
-    df["fg_attempts_L1"] = _shift("fg_att")
-    df["pat_volume_L1"] = _shift("pat_att")
-    df["total_k_pts_L1"] = df.groupby(grp)["fantasy_points"].shift(1).fillna(0)
-    df["avg_fg_distance_L1"] = _shift("avg_fg_distance")
-    df["avg_fg_prob_L1"] = _shift("avg_fg_prob")
-
-    # Ratio-valued L1 features — previous game's made/attempts.
-    def _ratio_L1(num_col: str, den_col: str) -> pd.Series:
-        num = df.groupby(grp)[num_col].shift(1)
-        den = df.groupby(grp)[den_col].shift(1)
-        return safe_divide(num, den)
-
-    df["fg_accuracy_L1"] = _ratio_L1("fg_made", "fg_att")
-
-    # long_fg_rate_L1: last game's (40+ attempts) / (total attempts).
-    df["_long_fg_att_all"] = df["_long_fg_att"]
-    df["long_fg_rate_L1"] = _ratio_L1("_long_fg_att_all", "fg_att")
-
-    df["fg_pct_40plus_L1"] = _ratio_L1("long_fg_made", "long_fg_att")
-    df["q4_fg_rate_L1"] = _ratio_L1("q4_fg_made", "q4_fg_att")
-    df["xp_accuracy_L1"] = _ratio_L1("pat_made", "pat_att")
-
     # Clean up intermediate columns
     df.drop(
-        columns=["_k_total_pts", "_long_fg_att", "_long_fg_att_all"],
+        columns=["_k_total_pts", "_long_fg_att"],
         inplace=True,
         errors="ignore",
     )

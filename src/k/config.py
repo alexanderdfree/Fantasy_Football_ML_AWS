@@ -141,23 +141,7 @@ ATTN_KICK_STATS = [
     "is_home",
 ]
 
-# L1 (shift-1) rolling features. Engineered into the DataFrame by
-# compute_features but intentionally excluded from ALL_FEATURES — the
-# attention NN's static branch reads them directly via ATTN_STATIC_FEATURES
-# so Ridge and the base NN continue to train only on SPECIFIC_FEATURES.
-ATTN_L1_FEATURES = [
-    "fg_attempts_L1",
-    "fg_accuracy_L1",
-    "pat_volume_L1",
-    "total_k_pts_L1",
-    "long_fg_rate_L1",
-    "avg_fg_distance_L1",
-    "avg_fg_prob_L1",
-    "fg_pct_40plus_L1",
-    "q4_fg_rate_L1",
-    "xp_accuracy_L1",
-]
-ATTN_STATIC_FEATURES = ATTN_L1_FEATURES + CONTEXTUAL_FEATURES
+ATTN_STATIC_FEATURES = list(CONTEXTUAL_FEATURES)
 
 # === LightGBM ===
 TRAIN_LIGHTGBM = True

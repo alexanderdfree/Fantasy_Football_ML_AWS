@@ -98,13 +98,8 @@ def test_loss_weights_match_huber_deltas(pos: str):
 #   - QB/RB/WR/TE: ``INCLUDE_FEATURES`` is a dict-of-lists (categorical
 #     buckets). ``ATTN_STATIC_FEATURES`` is built by flattening selected
 #     buckets via ``ATTN_STATIC_CATEGORIES``. Subset relation must hold.
-#   - DST: ``ALL_FEATURES`` is a flat list. ``ATTN_STATIC_FEATURES`` is
+#   - DST/K: ``ALL_FEATURES`` is a flat list. ``ATTN_STATIC_FEATURES`` is
 #     enumerated directly. Subset relation must hold against ALL_FEATURES.
-#   - K: ``ATTN_STATIC_FEATURES`` *intentionally* includes ``ATTN_L1_FEATURES``
-#     that are excluded from ``ALL_FEATURES`` (so Ridge / base NN don't see
-#     them but the attention static branch does, via ``attn_static_from_df``).
-#     Skipped with explanation — the K invariant is enforced separately in
-#     tests/test_attn_static_columns.py.
 
 
 def _flatten_include_features(include_features) -> set[str]:
@@ -129,17 +124,6 @@ def test_attn_static_features_subset_of_include(pos: str):
     attn_static = getattr(cfg, "ATTN_STATIC_FEATURES", None)
     if attn_static is None:
         pytest.skip(f"{pos} has no ATTN_STATIC_FEATURES")
-
-    if pos == "K":
-        # K legitimately puts ATTN_L1_FEATURES outside ALL_FEATURES — the
-        # attn-static-from-df path reads them straight from the DataFrame.
-        # That's enforced in tests/test_attn_static_columns.py; no parity
-        # check makes sense here.
-        pytest.skip(
-            "K's ATTN_L1_FEATURES are intentionally excluded from ALL_FEATURES "
-            "(see src/k/config.py 'ATTN_L1_FEATURES' comment + "
-            "tests/test_attn_static_columns.py::TestKAttentionStaticFeatures)"
-        )
 
     if hasattr(cfg, "INCLUDE_FEATURES"):
         whitelist_name = "INCLUDE_FEATURES"
