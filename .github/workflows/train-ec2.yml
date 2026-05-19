@@ -209,6 +209,42 @@ jobs:
             --region "$AWS_REGION" \
             --query StandardOutputContent --output text
 
+      - name: Ensure feature-cache mount in ff-train
+        # user-data.sh only runs on first boot, so existing warm instances
+        # have the pre-feature-cache ff-train. Idempotently patch in the
+        # bind mount + cache dir so src/shared/feature_cache.py persists
+        # across stop/start cycles. ``/opt/ff/cache`` lives on the root EBS
+        # volume (NOT /opt/ff/scratch which is NVMe instance store wiped
+        # on stop), so the cache survives the auto-shutdown timer.
+        run: |
+          read -r -d '' SCRIPT <<'BASH' || true
+          set -eu
+          mkdir -p /opt/ff/cache
+          chown ubuntu:ubuntu /opt/ff/cache
+          if grep -q '/opt/ff/cache:/opt/ml/code/.cache' /usr/local/bin/ff-train; then
+            echo "ff-train already has feature-cache mount"
+          else
+            sed -i 's|-v /opt/ff/scratch/raw:/opt/ml/code/data/raw \\|-v /opt/ff/scratch/raw:/opt/ml/code/data/raw \\\n  -v /opt/ff/cache:/opt/ml/code/.cache \\|' /usr/local/bin/ff-train
+            grep -A1 'data/raw' /usr/local/bin/ff-train | head -3
+            echo "ff-train patched with feature-cache mount"
+          fi
+          BASH
+          PARAMS=$(jq -n --arg s "$SCRIPT" '{commands: [$s]}')
+          CMD_ID=$(aws ssm send-command \
+            --targets "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
+            --document-name AWS-RunShellScript \
+            --parameters "$PARAMS" \
+            --region "$AWS_REGION" --query Command.CommandId --output text)
+          aws ssm wait command-executed \
+            --command-id "$CMD_ID" \
+            --instance-id "${{ steps.inst.outputs.id }}" \
+            --region "$AWS_REGION"
+          aws ssm get-command-invocation \
+            --command-id "$CMD_ID" \
+            --instance-id "${{ steps.inst.outputs.id }}" \
+            --region "$AWS_REGION" \
+            --query StandardOutputContent --output text
+
       - name: Run training for all positions (sequential)
         id: train
         run: |

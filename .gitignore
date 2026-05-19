@@ -16,6 +16,9 @@ data/splits/
 # Hyperparameter tuning databases (Optuna)
 *.db
 
+# Feature-engineering disk cache (see src/shared/feature_cache.py)
+.cache/
+
 # Analysis output
 analysis_output/
 

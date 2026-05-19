@@ -319,55 +319,45 @@ TARGETS_RB_RAW = [
 
 
 @pytest.fixture
-def history_batch_factory():
-    """Factory producing a list of (static, history, targets) tuples.
-
-    Used by collate and dataloader tests. Function-scoped because the
-    returned tensors can be consumed/moved by callers.
-    """
-
-    def _make(seq_lens, static_dim=4, game_dim=3):
-        batch = []
-        for slen in seq_lens:
-            static = torch.randn(static_dim)
-            history = torch.randn(slen, game_dim)
-            targets = {"t1": torch.tensor(1.0)}
-            batch.append((static, history, targets))
-        return batch
-
-    return _make
-
-
-@pytest.fixture
 def history_data_factory():
-    """Factory producing synthetic (X_static, X_history, y_dict) training data.
+    """Factory producing synthetic (X_static, X_history, history_mask, y_dict).
+
+    ``X_history`` is a fixed-shape ``[n, max_seq_len, game_dim]`` zero-padded
+    array and ``history_mask`` is a ``[n, max_seq_len]`` bool mask, matching
+    the contract of ``build_game_history_arrays`` and the inputs that
+    ``MultiTargetHistoryDataset`` expects.
 
     Uses the global numpy RNG so callers can seed externally via
     ``np.random.seed(...)`` before invoking the factory.
     """
 
-    def _make(n, static_dim=5, game_dim=3, targets=TARGETS_DEFAULT):
+    def _make(n, static_dim=5, game_dim=3, max_seq_len=8, targets=TARGETS_DEFAULT):
         X_s = np.random.randn(n, static_dim).astype(np.float32)
-        X_h = [
-            np.random.randn(np.random.randint(1, 8), game_dim).astype(np.float32) for _ in range(n)
-        ]
+        X_h = np.zeros((n, max_seq_len, game_dim), dtype=np.float32)
+        mask = np.zeros((n, max_seq_len), dtype=bool)
+        for i in range(n):
+            slen = int(np.random.randint(1, max_seq_len + 1))
+            X_h[i, :slen] = np.random.randn(slen, game_dim).astype(np.float32)
+            mask[i, :slen] = True
         y = {t: np.random.randn(n).astype(np.float32) for t in targets}
         y["total"] = sum(y[t] for t in targets)
-        return X_s, X_h, y
+        return X_s, X_h, mask, y
 
     return _make
 
 
 @pytest.fixture
 def tiny_synthetic_raw(history_data_factory):
-    """Synthetic RB training triple with raw-stat targets (post-migration).
+    """Synthetic RB training tuple with raw-stat targets (post-migration).
 
     Wraps ``history_data_factory`` pre-configured with ``TARGETS_RB_RAW`` so
     shared tests that want the new target schema can take this fixture
     directly instead of threading the target list through every call.
     """
 
-    def _make(n, static_dim=5, game_dim=3):
-        return history_data_factory(n, static_dim, game_dim, targets=TARGETS_RB_RAW)
+    def _make(n, static_dim=5, game_dim=3, max_seq_len=8):
+        return history_data_factory(
+            n, static_dim, game_dim, max_seq_len=max_seq_len, targets=TARGETS_RB_RAW
+        )
 
     return _make

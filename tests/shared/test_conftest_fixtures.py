@@ -176,15 +176,18 @@ def test_frozen_rng_restores_pythonhashseed_after_test(monkeypatch):
 
 
 @pytest.mark.unit
-def test_tiny_synthetic_rb_raw_returns_static_history_y_tuple(tiny_synthetic_raw):
-    """Factory returns (X_static, X_history list, y_dict) in raw-stat shape."""
-    X_s, X_h, y = tiny_synthetic_raw(n=10, static_dim=4, game_dim=3)
+def test_tiny_synthetic_rb_raw_returns_padded_history_tuple(tiny_synthetic_raw):
+    """Factory returns (X_static, X_history, history_mask, y_dict) in raw-stat shape.
+
+    X_history is a fixed-shape ``[n, max_seq_len, game_dim]`` array (not a list)
+    to match the static-padding contract that ``MultiTargetHistoryDataset`` uses.
+    """
+    X_s, X_h, mask, y = tiny_synthetic_raw(n=10, static_dim=4, game_dim=3, max_seq_len=8)
     assert X_s.shape == (10, 4)
-    assert isinstance(X_h, list) and len(X_h) == 10
-    # Each history entry is a 2-D (T_i, game_dim) numpy array.
-    for hist in X_h:
-        assert hist.ndim == 2
-        assert hist.shape[1] == 3
+    assert X_h.shape == (10, 8, 3)
+    assert X_h.dtype == np.float32
+    assert mask.shape == (10, 8)
+    assert mask.dtype == bool
 
     # y_dict carries every raw-stat target + 'total'.
     expected_targets = {
