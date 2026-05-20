@@ -193,6 +193,11 @@ class PositionConfig:
     # === K-only ===
     seasons: list[int] | None = None
     min_games: int | None = None
+    # K's serving aggregator (app.py) uses ``target_signs`` to combine the four
+    # raw-count heads into fantasy points: positive for the scoring heads,
+    # negative for the miss penalties. Other positions use the shared
+    # ``predictions_to_fantasy_points`` aggregator instead and leave this None.
+    target_signs: dict[str, float] | None = None
 
     # === Pipeline orchestration metadata ===
     # These mirror the entries currently in src/shared/registry.py::_POSITION_META.

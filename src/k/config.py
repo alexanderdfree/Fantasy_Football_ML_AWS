@@ -277,6 +277,14 @@ POSITION_CONFIG = PositionConfig(
     lgbm_objective=LGBM_OBJECTIVE,
     seasons=SEASONS,
     min_games=MIN_GAMES,
+    # Sign vector applied by app.py's K aggregator (fantasy points = scoring
+    # heads minus miss penalties); mirrors the K branch in registry.py.
+    target_signs={
+        "fg_yard_points": 1.0,
+        "pat_points": 1.0,
+        "fg_misses": -1.0,
+        "xp_misses": -1.0,
+    },
     accepts_dataframes=False,
     cpu_only=True,
     has_cv_runner=False,
