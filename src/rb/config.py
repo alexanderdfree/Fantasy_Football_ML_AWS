@@ -357,14 +357,39 @@ ATTN_HISTORY_STATS = [
 # branch. The attention branch learns its own temporal representation from
 # ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
 # categories are intentionally excluded to avoid duplicating that signal.
+# ``defense`` is also excluded: OPP_ATTN_HISTORY_STATS feeds the opposing
+# defense's trailing form through a parallel attention branch, which makes
+# the L5 static aggregates redundant for the NN. (They stay in
+# INCLUDE_FEATURES["defense"] so Ridge / LightGBM still see them.) Mirrors
+# the same exclusion already in place for QB and WR.
 ATTN_STATIC_CATEGORIES = [
     "prior_season",
     "matchup",
-    "defense",
     "contextual",
     "weather_vegas",
 ]
 ATTN_STATIC_FEATURES = [c for cat in ATTN_STATIC_CATEGORIES for c in INCLUDE_FEATURES[cat]]
+
+# Per-game opponent-defense stats fed to the second attention branch. Mirror
+# the L5 static aggregates (opp_def_*_L5) but unrolled per game, so the NN
+# learns the trailing-form weighting itself instead of being handed a fixed
+# 5-game mean. Built by src.features.engineer.build_opp_defense_history_arrays.
+# RB-specific motivation: rushing yards are highly matchup-elastic against
+# the opposing run defense, and the fixed L5 aggregate forces one recency
+# curve for every player-week. The parallel branch lets attention learn its
+# own recency emphasis (e.g. weighting the most recent 3 games when a
+# defense just lost a starting DT) and decomposes the L5 sum back into its
+# component games so per-target queries can focus on the matchup signal each
+# stat actually cares about.
+OPP_ATTN_HISTORY_STATS = [
+    "def_sacks",
+    "def_pass_yds_allowed",
+    "def_pass_td_allowed",
+    "def_ints",
+    "def_rush_yds_allowed",
+    "def_pts_allowed",
+]
+OPP_ATTN_MAX_SEQ_LEN = 17
 # Hurdle gate on receptions + BCE gate on each TD head. Variant C from the
 # RB TD-gate ablation (src/tuning/ablate_rb_gate.py → run 24813558434):
 #
