@@ -48,6 +48,9 @@ COPY benchmark_history/ benchmark_history/
 # the slim image lean.
 COPY README.md SETUP.md ATTRIBUTION.md TODO.md ./
 COPY docs/ docs/
+
+# Gunicorn config — post_fork pre-warm hook (see file for the why).
+COPY gunicorn.conf.py ./
 COPY infra/ec2/README.md infra/ec2/
 COPY infra/aws/README.md infra/aws/
 
@@ -56,4 +59,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--preload", "--timeout", "120", "--access-logfile", "-", "src.serving.app:app"]
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "--bind", "0.0.0.0:8000", "--workers", "2", "--preload", "--timeout", "120", "--access-logfile", "-", "src.serving.app:app"]

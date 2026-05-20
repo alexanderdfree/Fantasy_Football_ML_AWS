@@ -55,7 +55,7 @@ def _minimal_results() -> pd.DataFrame:
 
 
 @pytest.fixture
-def degraded_mode_app(monkeypatch):
+def degraded_mode_app(monkeypatch, tmp_path):
     """Import ``app`` with a pre-populated minimal cache. Per-test monkeypatches
     of ``_apply_position_models`` control which positions succeed or fail.
     """
@@ -72,6 +72,10 @@ def degraded_mode_app(monkeypatch):
     # Prevent the real base-data loader from running if the early-return
     # check on base_loaded ever flips.
     monkeypatch.setattr(app_mod, "_load_base_data_locked", lambda: None)
+    # Redirect the serving disk cache to a per-test tmp dir so that
+    # _compute_metrics_locked's write doesn't leak into the repo's
+    # data/serving_cache/ and accidentally hydrate later tests.
+    monkeypatch.setattr(app_mod, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "serving_cache"))
     return app_mod
 
 
