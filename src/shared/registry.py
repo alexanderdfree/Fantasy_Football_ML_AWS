@@ -195,6 +195,7 @@ def get_inference_spec(pos: str) -> dict:
             "attn_max_seq_len": getattr(qb_cfg, "ATTN_MAX_SEQ_LEN", 17),
             "opp_attn_history_stats": list(getattr(qb_cfg, "OPP_ATTN_HISTORY_STATS", []) or []),
             "opp_attn_max_seq_len": getattr(qb_cfg, "OPP_ATTN_MAX_SEQ_LEN", 17),
+            "opp_attn_kind": getattr(qb_cfg, "OPP_ATTN_KIND", "defense"),
             "attn_nn_kwargs_static": _attn_kwargs_static(qb_cfg),
             "train_lightgbm": bool(getattr(qb_cfg, "TRAIN_LIGHTGBM", False)),
         }
@@ -242,6 +243,7 @@ def get_inference_spec(pos: str) -> dict:
             "attn_max_seq_len": getattr(rb_cfg, "ATTN_MAX_SEQ_LEN", 17),
             "opp_attn_history_stats": list(getattr(rb_cfg, "OPP_ATTN_HISTORY_STATS", []) or []),
             "opp_attn_max_seq_len": getattr(rb_cfg, "OPP_ATTN_MAX_SEQ_LEN", 17),
+            "opp_attn_kind": getattr(rb_cfg, "OPP_ATTN_KIND", "defense"),
             "attn_nn_kwargs_static": _attn_kwargs_static(rb_cfg),
             "train_lightgbm": bool(getattr(rb_cfg, "TRAIN_LIGHTGBM", False)),
         }
@@ -289,6 +291,7 @@ def get_inference_spec(pos: str) -> dict:
             "attn_max_seq_len": getattr(wr_cfg, "ATTN_MAX_SEQ_LEN", 17),
             "opp_attn_history_stats": list(getattr(wr_cfg, "OPP_ATTN_HISTORY_STATS", []) or []),
             "opp_attn_max_seq_len": getattr(wr_cfg, "OPP_ATTN_MAX_SEQ_LEN", 17),
+            "opp_attn_kind": getattr(wr_cfg, "OPP_ATTN_KIND", "defense"),
             "attn_nn_kwargs_static": _attn_kwargs_static(wr_cfg),
             "train_lightgbm": bool(getattr(wr_cfg, "TRAIN_LIGHTGBM", False)),
         }
@@ -336,6 +339,7 @@ def get_inference_spec(pos: str) -> dict:
             "attn_max_seq_len": getattr(te_cfg, "ATTN_MAX_SEQ_LEN", 17),
             "opp_attn_history_stats": list(getattr(te_cfg, "OPP_ATTN_HISTORY_STATS", []) or []),
             "opp_attn_max_seq_len": getattr(te_cfg, "OPP_ATTN_MAX_SEQ_LEN", 17),
+            "opp_attn_kind": getattr(te_cfg, "OPP_ATTN_KIND", "defense"),
             "attn_nn_kwargs_static": _attn_kwargs_static(te_cfg),
             "train_lightgbm": bool(getattr(te_cfg, "TRAIN_LIGHTGBM", False)),
         }
@@ -455,6 +459,9 @@ def get_inference_spec(pos: str) -> dict:
             "attn_history_stats": list(getattr(dst_cfg, "ATTN_HISTORY_STATS", []) or []),
             "attn_static_features": list(getattr(dst_cfg, "ATTN_STATIC_FEATURES", []) or []),
             "attn_max_seq_len": getattr(dst_cfg, "ATTN_MAX_SEQ_LEN", 17),
+            "opp_attn_history_stats": list(getattr(dst_cfg, "OPP_ATTN_HISTORY_STATS", []) or []),
+            "opp_attn_max_seq_len": getattr(dst_cfg, "OPP_ATTN_MAX_SEQ_LEN", 17),
+            "opp_attn_kind": getattr(dst_cfg, "OPP_ATTN_KIND", "defense"),
             "attn_nn_kwargs_static": _attn_kwargs_static(dst_cfg),
             "train_lightgbm": bool(getattr(dst_cfg, "TRAIN_LIGHTGBM", False)),
         }

@@ -74,6 +74,16 @@ class TestDSTFeatureContract:
         assert set(SPECIFIC_FEATURES).issubset(set(ALL_FEATURES))
         assert set(CONTEXTUAL_FEATURES).issubset(set(ALL_FEATURES))
 
+    def test_opp_attn_kind_is_offense(self):
+        """DST is the one position whose parallel opp branch attends over the
+        opposing OFFENSE (not defense). Drift guard against an accidental
+        flip in src/dst/config.py."""
+        from src.dst.config import OPP_ATTN_HISTORY_STATS, OPP_ATTN_KIND
+
+        assert OPP_ATTN_KIND == "offense"
+        # Every stat in the list is off_*-prefixed (catches a partial revert).
+        assert all(s.startswith("off_") for s in OPP_ATTN_HISTORY_STATS)
+
     def test_specific_features_populated_after_compute(self, tiny_dataset):
         """All rolling/EWMA/trend features land on the frame."""
         df = _build_fixture(tiny_dataset)

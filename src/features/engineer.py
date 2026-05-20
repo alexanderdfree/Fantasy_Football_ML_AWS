@@ -413,6 +413,124 @@ def build_opp_defense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     return def_stats[["opponent_team", "season", "week"] + OPP_DEFENSE_HISTORY_STATS]
 
 
+# === Opponent-Offense History Extraction (DST second attention branch) ===
+#
+# DST faces an *offense*, not a defense, so the parallel attention branch
+# for DST attends over the opposing OFFENSE's per-game trailing form (what
+# the upcoming opponent has done with the ball over their season). The
+# branch reuses `build_opp_defense_history_arrays` unchanged — that function
+# is already generic over its per-game frame and stat list. Only the
+# per-game builder differs. ``off_pts_scored`` mirrors ``def_pts_allowed``
+# in how it sources from the schedules cache.
+OPP_OFFENSE_HISTORY_STATS = [
+    "off_pass_yards",
+    "off_pass_tds",
+    "off_rush_yards",
+    "off_rush_tds",
+    "off_ints",
+    "off_fumbles_lost",
+    "off_pts_scored",
+]
+
+
+def build_opp_offense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate per-(opponent_team, season, week) offensive stats.
+
+    Semantic inverse of :func:`build_opp_defense_per_game_df`. Groups by
+    ``recent_team`` (the team whose offense produced the stats) and renames
+    that key to ``opponent_team`` so downstream history lookups — which key
+    on ``opponent_team`` — find the row for whoever a given DST is facing
+    that week. ``off_pts_scored`` is sourced from schedule scores (the
+    team's *own* score in that game), matching how ``def_pts_allowed`` is
+    sourced for the defense helper.
+
+    The caller is expected to pass an **all-position** DataFrame — the
+    passing, rushing, and turnover columns sum over every offensive
+    player, so a position-filtered frame (e.g. RB-only) would systematically
+    undercount.
+
+    Returns:
+        DataFrame with columns ``opponent_team, season, week`` + the seven
+        offensive stats in :data:`OPP_OFFENSE_HISTORY_STATS`.
+    """
+    required = {
+        "recent_team",
+        "season",
+        "week",
+        "passing_yards",
+        "passing_tds",
+        "rushing_yards",
+        "rushing_tds",
+        "interceptions",
+        "sack_fumbles_lost",
+        "rushing_fumbles_lost",
+        "receiving_fumbles_lost",
+    }
+    missing = required - set(df.columns)
+    if missing or df["recent_team"].isna().all():
+        return pd.DataFrame(columns=["opponent_team", "season", "week"] + OPP_OFFENSE_HISTORY_STATS)
+
+    # Combined fumbles_lost across sack / rushing / receiving sources — same
+    # combination DST's own `fumbles_lost` head uses.
+    work = df.copy()
+    work["_fumbles_lost"] = (
+        work["sack_fumbles_lost"].fillna(0)
+        + work["rushing_fumbles_lost"].fillna(0)
+        + work["receiving_fumbles_lost"].fillna(0)
+    )
+
+    off_stats = (
+        work.groupby(["recent_team", "season", "week"])
+        .agg(
+            off_pass_yards=("passing_yards", "sum"),
+            off_pass_tds=("passing_tds", "sum"),
+            off_rush_yards=("rushing_yards", "sum"),
+            off_rush_tds=("rushing_tds", "sum"),
+            off_ints=("interceptions", "sum"),
+            off_fumbles_lost=("_fumbles_lost", "sum"),
+        )
+        .reset_index()
+        .rename(columns={"recent_team": "opponent_team"})
+    )
+
+    # Points scored — sourced from schedule scores. Each schedule row
+    # contributes home_team -> home_score and away_team -> away_score.
+    schedules_path = f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    try:
+        schedules = pd.read_parquet(schedules_path)
+    except FileNotFoundError:
+        off_stats["off_pts_scored"] = 0.0
+        return off_stats[["opponent_team", "season", "week"] + OPP_OFFENSE_HISTORY_STATS]
+
+    schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
+    home_pts = schedules_reg[["season", "week", "home_team", "home_score"]].copy()
+    home_pts.columns = ["season", "week", "team", "off_pts_scored"]
+    away_pts = schedules_reg[["season", "week", "away_team", "away_score"]].copy()
+    away_pts.columns = ["season", "week", "team", "off_pts_scored"]
+    pts_scored = pd.concat([home_pts, away_pts], ignore_index=True).drop_duplicates(
+        subset=["season", "week", "team"]
+    )
+
+    off_stats = off_stats.merge(
+        pts_scored.rename(columns={"team": "opponent_team"}),
+        on=["opponent_team", "season", "week"],
+        how="left",
+    )
+    off_stats["off_pts_scored"] = off_stats["off_pts_scored"].fillna(0.0)
+
+    return off_stats[["opponent_team", "season", "week"] + OPP_OFFENSE_HISTORY_STATS]
+
+
+# Single source of truth for opp-history per-game builders. Both training
+# (``src.shared.pipeline``) and serving (``src.serving.app``) look up by
+# the same key, eliminating the per-callsite if/else surface flagged in
+# CLAUDE.md as a recurring training/inference drift source.
+OPP_ATTN_PER_GAME_BUILDERS = {
+    "defense": build_opp_defense_per_game_df,
+    "offense": build_opp_offense_per_game_df,
+}
+
+
 def build_opp_defense_history_arrays(
     df: pd.DataFrame,
     opp_def_per_game: pd.DataFrame,
