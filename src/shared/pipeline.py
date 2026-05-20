@@ -200,16 +200,17 @@ def _run_nn_training(
     """
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
-    # If the model has no GatedHead, hurdle_negbin is not supported (no value_mu
-    # / value_log_alpha emissions). Transparently downgrade those entries to
-    # huber so base NN / nested-attention paths run cleanly without requiring
-    # callers to maintain a parallel head_losses config.
+    # If the model has no GatedHead, hurdle families are not supported (no
+    # value_mu / value_log_alpha emissions). Transparently downgrade those
+    # entries to huber so base NN / nested-attention paths run cleanly without
+    # requiring callers to maintain a parallel head_losses config.
     from src.shared.neural_net import GatedHead  # local import avoids circular deps
 
     head_losses = cfg.get("head_losses")
     if head_losses and not any(isinstance(m, GatedHead) for m in model.modules()):
         head_losses = {
-            n: ("huber" if lt == "hurdle_negbin" else lt) for n, lt in head_losses.items()
+            n: ("huber" if lt in ("hurdle_negbin", "hurdle_poisson") else lt)
+            for n, lt in head_losses.items()
         }
 
     criterion = MultiTargetLoss(
