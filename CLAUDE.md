@@ -80,6 +80,7 @@ This repo is regularly worked from `.claude/worktrees/<name>` clones where the p
 - **"Is X on `main`?" / dead-link checks** must read `origin/main:<path>` via `git fetch origin main --quiet && git show origin/main:<path>` — never `cat <path>` in the worktree, which lags `main`.
 
 ## When making changes
+- **Open a PR, wait for green CI, then merge.** Push to a feature branch, open the PR with `gh pr create`, then `gh pr checks <N> --watch` until every check passes before running `gh pr merge <N> --squash`. Don't merge with red or pending checks; if a check fails, fix the underlying issue rather than bypassing with `--admin`. Exception: the `Run Tests` silent-stop bug noted in the CI section — run `pytest` locally and merge.
 - Respect the **TODO.md archive** — it encodes the project's accumulated "already tried" knowledge.
 - Update tests and fixtures when you change feature lists or targets (archive has multiple entries where this was missed).
 - Don't add error handling, fallbacks, or validation for cases that can't happen (see top-level CLAUDE-Code guidance on scope). One exception: network/data-source boundaries are real and should be defensive.
