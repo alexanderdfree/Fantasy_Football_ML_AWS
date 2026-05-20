@@ -203,6 +203,64 @@ def test_reconstruct_weekly_from_pbp_happy_path(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
+def test_reconstruct_weekly_from_pbp_xp_only_game_gets_venue(tmp_path, monkeypatch):
+    """A kicker who only attempted XPs (no FGs) in a game must still get
+    roof/surface populated — pulled from the XP plays' venue columns.
+
+    Regression guard: the original aggregation sourced venue only from FG
+    plays' groupby, leaving XP-only kicker-weeks with NaN roof/surface.
+    The signal-floor diagnostic flagged this as 55 NaN rows on the 2025
+    test set; this test prevents the FG-only sourcing from coming back.
+    """
+    import src.k.data as k_data
+
+    def _xp_only_pbp(seasons, downcast=True):
+        """Synthetic PBP where K01 has only XPs (no FGs)."""
+        yr = seasons[0]
+        rows = []
+        for i in range(3):
+            rows.append(
+                {
+                    "season": yr,
+                    "season_type": "REG",
+                    "week": 1,
+                    "posteam": "KC",
+                    "kicker_player_id": "K01",
+                    "kicker_player_name": "Kicker 1",
+                    "play_id": 2000 + i,
+                    "field_goal_attempt": 0,
+                    "extra_point_attempt": 1,
+                    "field_goal_result": None,
+                    "extra_point_result": "good",
+                    "kick_distance": 33,
+                    "score_differential": 0,
+                    "qtr": 2,
+                    "fg_prob": 0.99,
+                    "wind": 10.0,
+                    "temp": 65.0,
+                    "roof": "outdoors",
+                    "surface": "grass",
+                }
+            )
+        return pd.DataFrame(rows)
+
+    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _xp_only_pbp)
+    out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
+
+    k01 = out[out["player_id"] == "K01"].iloc[0]
+    assert k01["fg_att"] == 0  # confirms it's the XP-only branch
+    assert k01["pat_att"] == 3
+    # Venue must be populated from XP plays, not NaN.
+    assert k01["roof"] == "outdoors"
+    assert k01["surface"] == "grass"
+    assert k01["is_dome"] == 0
+    # recent_team and player_name must also come from XP plays (the FG groupby
+    # had no rows so they would default to NaN without the XP fallback).
+    assert k01["recent_team"] == "KC"
+    assert k01["player_name"] == "Kicker 1"
+
+
+@pytest.mark.unit
 def test_reconstruct_weekly_from_pbp_cache_hit(tmp_path, monkeypatch):
     """Pre-existing cache parquet with the current schema → no PBP call, just
     a load-and-return."""
@@ -539,13 +597,17 @@ def test_backfill_2025_pbp_columns_updates_in_place(monkeypatch):
         k_data.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
     )
 
-    # k_df: 2 kickers x 2 weeks in 2025 with everything NaN/None
+    # k_df: 2 kickers x 2 weeks in 2025 with everything NaN/None.
+    # recent_team is provided so the (season, week, recent_team) venue lookup
+    # populates roof/surface even for XP-only kicker-weeks (the FG-derived
+    # path keyed on (player_id, season, week) would otherwise leave them NaN).
     rows = []
-    for pid in ("K00", "K01"):
+    for pid, team in (("K00", "KC"), ("K01", "BUF")):
         for wk in (1, 2):
             rows.append(
                 {
                     "player_id": pid,
+                    "recent_team": team,
                     "season": 2025,
                     "week": wk,
                     "avg_fg_distance": float("nan"),
@@ -683,6 +745,150 @@ def test_load_kicker_data_includes_2025_weekly_branch(tmp_path, monkeypatch):
     assert 2025 in df["season"].values
     # 2025 weekly WR row must have been filtered out.
     assert (df["player_id"] != "WR01").all()
+
+
+@pytest.mark.unit
+def test_load_data_backfills_venue_for_xp_only_games(tmp_path, monkeypatch):
+    """XP-only kicker-weeks (no FG attempts) must still get roof/surface from
+    the schedules-merge fallback. Regression guard for the 55 NaN test rows
+    that the K signal-floor diagnostic flagged: XP-only games had NaN roof
+    because both the FG-aggregation path and the PBP-derived backfill key on
+    FG plays only.
+    """
+    import src.k.data as k_data
+    from src.config import SEASONS
+
+    monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(k_data, "SEASONS", [2024, 2025])
+    monkeypatch.setattr(k_data, "MIN_GAMES", 1)
+
+    def _no_network(*args, **kwargs):
+        raise AssertionError("import_pbp_data must not be called when the cache hits")
+
+    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
+
+    # 2024 PBP cache (one FG-attempted row).
+    pd.DataFrame([_kicker_pbp_cache_row("K00", 2024, 1)]).to_parquet(
+        tmp_path / "kicker_pbp_2024_2024.parquet"
+    )
+
+    # 2025 weekly with two kickers: K01 (FG + XP) and K02 (XP-only).
+    weekly_path = tmp_path / f"weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    pd.DataFrame(
+        {
+            "player_id": ["K01", "K02"],
+            "player_name": ["Kicker 01", "Kicker 02"],
+            "recent_team": ["KC", "BUF"],
+            "season": [2025, 2025],
+            "week": [1, 1],
+            "position": ["K", "K"],
+            "season_type": ["REG", "REG"],
+            "fg_att": [3.0, 0.0],
+            "fg_made": [2.0, 0.0],
+            "fg_missed": [1.0, 0.0],
+            "pat_att": [3.0, 4.0],
+            "pat_made": [3.0, 4.0],
+            "pat_missed": [0.0, 0.0],
+        }
+    ).to_parquet(weekly_path)
+
+    # Schedule parquet with roof/surface populated for both games.
+    sched_path = tmp_path / f"schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    pd.DataFrame(
+        {
+            "season": [2024, 2025, 2025],
+            "week": [1, 1, 1],
+            "home_team": ["KC", "KC", "BUF"],
+            "away_team": ["BUF", "DET", "MIA"],
+            "spread_line": [-3.0, -3.0, -3.0],
+            "total_line": [47.0, 47.0, 47.0],
+            "game_type": ["REG", "REG", "REG"],
+            "roof": ["outdoors", "dome", "outdoors"],
+            "surface": ["grass", "matrixturf", "a_turf"],
+        }
+    ).to_parquet(sched_path)
+
+    # Stub the 2025 PBP backfill — we want to prove the schedules fallback
+    # alone is sufficient to populate roof/surface for the XP-only kicker.
+    monkeypatch.setattr(k_data, "_backfill_2025_pbp_columns", lambda df, seasons: None)
+
+    df = k_data.load_data()
+    df_25 = df[df["season"] == 2025]
+    # Both 2025 kickers must have roof + surface populated (no NaN).
+    assert df_25["roof"].notna().all(), "XP-only kicker's roof was not backfilled"
+    assert df_25["surface"].notna().all(), "XP-only kicker's surface was not backfilled"
+    # is_dome must be derived from the backfilled roof.
+    k02_row = df_25[df_25["player_id"] == "K02"].iloc[0]
+    assert k02_row["roof"] == "outdoors"
+    assert k02_row["surface"] == "a_turf"
+    assert k02_row["is_dome"] == 0
+
+
+@pytest.mark.unit
+def test_load_data_treats_empty_string_surface_as_missing(tmp_path, monkeypatch):
+    """Surface from PBP is occasionally an empty string (e.g. 2025 KC@LAC wk 1).
+    The schedules fallback must replace those just like it replaces NaN.
+    """
+    import src.k.data as k_data
+    from src.config import SEASONS
+
+    monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(k_data, "SEASONS", [2024, 2025])
+    monkeypatch.setattr(k_data, "MIN_GAMES", 1)
+
+    def _no_network(*args, **kwargs):
+        raise AssertionError("import_pbp_data must not be called when the cache hits")
+
+    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
+
+    pd.DataFrame([_kicker_pbp_cache_row("K00", 2024, 1)]).to_parquet(
+        tmp_path / "kicker_pbp_2024_2024.parquet"
+    )
+
+    # 2025 weekly with surface="" (empty string from PBP).
+    weekly_path = tmp_path / f"weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    pd.DataFrame(
+        {
+            "player_id": ["K01"],
+            "player_name": ["Kicker 01"],
+            "recent_team": ["KC"],
+            "season": [2025],
+            "week": [1],
+            "position": ["K"],
+            "season_type": ["REG"],
+            "fg_att": [3.0],
+            "fg_made": [2.0],
+            "fg_missed": [1.0],
+            "pat_att": [3.0],
+            "pat_made": [3.0],
+            "pat_missed": [0.0],
+            "roof": ["dome"],
+            "surface": [""],  # empty-string surface — must be replaced
+        }
+    ).to_parquet(weekly_path)
+
+    sched_path = tmp_path / f"schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    pd.DataFrame(
+        {
+            "season": [2024, 2025],
+            "week": [1, 1],
+            "home_team": ["KC", "KC"],
+            "away_team": ["BUF", "BUF"],
+            "spread_line": [-3.0, -3.0],
+            "total_line": [47.0, 47.0],
+            "game_type": ["REG", "REG"],
+            "roof": ["outdoors", "dome"],
+            "surface": ["grass", "matrixturf"],
+        }
+    ).to_parquet(sched_path)
+
+    monkeypatch.setattr(k_data, "_backfill_2025_pbp_columns", lambda df, seasons: None)
+
+    df = k_data.load_data()
+    df_25 = df[df["season"] == 2025]
+    # surface must have been replaced from "" to the schedules value.
+    assert (df_25["surface"] != "").all()
+    assert df_25.iloc[0]["surface"] == "matrixturf"
 
 
 @pytest.mark.unit
