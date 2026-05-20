@@ -4,6 +4,7 @@
 
 ### Update history
 
+- **2026-05-20** — D13 (Spot fan-out via AWS Batch) added; overrides D7's warm-EC2 choice when `BATCH_ACTIVE=true`. The warm-EC2 path remains as a one-flag fallback. PRs #215 (infra), #216 (cold-start opts), #217 (train-batch workflow).
 - **2026-05-19** — D11 (smoke-test gate + always-stable manifest v2) and D12 (training-step perf composition; `torch.compile` measured and rejected on T4) added. D2 extended to note the user-facing PPR/Half-PPR/Standard scoring switch (PR #153). D4/D6 reconciled with K's `ATTN_L1_FEATURES` removal (PR #199) — K's attention static branch now matches the documented "no rolling features in the attention static channel" convention across all six positions.
 - **2026-04-21** — D2/D4/D6 reconciled with attention now running on all six positions (K nested per-kick + outer per-game; DST standard attention), DST target migration from 5 mixed-bucket heads to 10 raw stats, and the per-position `{POS}_ATTN_STATIC_FEATURES` allowlist that blocks rolling features from leaking into the attention branch.
 - **2026-04-19** — D7/D9 and §2 diagram reconciled with the EC2 training switch; the Batch path is preserved as standby (see [docs/batch_design.md](batch_design.md)).
@@ -25,6 +26,7 @@
    - [D10: Trunk-based CI/CD with test-gated deploys](#d10-trunk-based-cicd-with-test-gated-deploys)
    - [D11: Smoke-test gate + always-stable artifact (manifest v2)](#d11-smoke-test-gate--always-stable-artifact-manifest-v2)
    - [D12: Training-step perf composition (torch.compile rejected on T4)](#d12-training-step-perf-composition-torchcompile-rejected-on-t4)
+   - [D13: Spot fan-out via AWS Batch (overrides D7 when BATCH_ACTIVE=true)](#d13-spot-fan-out-via-aws-batch-overrides-d7-when-batch_activetrue)
 4. [Cross-Cutting Consequences](#4-cross-cutting-consequences)
 5. [Open Issues / Follow-Ups](#5-open-issues--follow-ups)
 6. [References](#6-references)
@@ -273,7 +275,9 @@ K was the lone exception until PR #199 (`dff43fb`): when the convention landed i
 
 The commit↔model relationship is now one-to-one: every merge to `main` produces a measured, logged training run. Under Batch, cold-starts dominated observability — the Actions log was mostly "waiting for compute environment."
 
-**Why Batch remains the standby path.** Batch is strictly better when training *dominates* wall time (long jobs) or when we genuinely want $0-idle with no manual stop semantics. For constant fine-tuning on a 2-minute job, the always-on-but-auto-stopped EC2 pattern dominates. We keep the Batch image pipeline live ([.github/workflows/batch-image.yml](../.github/workflows/batch-image.yml)) so switching back is one `BATCH_ACTIVE=true` away.
+**Why Batch remains the standby path.** Batch is strictly better when training *dominates* wall time (long jobs) or when we genuinely want $0-idle with no manual stop semantics. For constant fine-tuning on a 2-minute job, the always-on-but-auto-stopped EC2 pattern dominates *sequential* training. We keep the Batch image pipeline live ([.github/workflows/batch-image.yml](../.github/workflows/batch-image.yml)) so switching back is one `BATCH_ACTIVE=true` away.
+
+**Superseded by D13 when BATCH_ACTIVE=true.** D13 rebuts the "warm EC2 always wins" framing of this entry by observing that the warm-EC2 path is *sequential* across positions (one T4 can't fit six concurrent NN runs). Fanning out across six Spot g4dn.xlarge instances — one per position — replaces sum(per-position) with max(per-position) and amortizes the per-host cold-start across the parallelism. The choice between D7's warm-OD path and D13's Spot fan-out is now a one-variable flip; both paths remain runnable.
 
 **Rejected.** SageMaker (`eedacfc` → `57d52f9`): managed overhead without training-time dominance. Kubernetes (GKE/EKS): too much machinery for a single GPU job. Long-lived instance without auto-shutdown: leaves an expensive GPU running unused.
 
@@ -405,6 +409,36 @@ Net effect on a typical push: if the instance is already warm, training starts w
 
 ---
 
+### D13: Spot fan-out via AWS Batch (overrides D7 when BATCH_ACTIVE=true)
+
+**Decision.** When the repo variable `BATCH_ACTIVE=true`, push-to-`main` training fires [`.github/workflows/train-batch.yml`](../.github/workflows/train-batch.yml), which submits six Batch jobs in parallel (one per position) against the `ff-gpu-spot` Compute Environment ([infra/batch/](../infra/batch/)). Each job runs on its own Spot g4dn.xlarge — total wall-clock is `max(per-position)` ≈ 25–30 min for a full retrain. When `BATCH_ACTIVE != 'true'`, D7's warm-OD path remains active. Both workflows have a `workflow_dispatch` break-glass that bypasses the gate.
+
+**Context.** D7's "warm EC2 always wins" framing implicitly assumed *sequential* training: the warm host loops positions in a single SSM command because one T4 can't fit six concurrent NN runs ([docs/ec2_design.md:122](ec2_design.md)). That makes wall-clock `sum(per-position)` ≈ 120–156 min and means a `cancel-in-progress` is required to keep rapid pushes tractable — which means cancelled runs never reach their post-train benchmark commit and their results are lost.
+
+Fanning out across six Spot hosts changes both numbers: wall-clock collapses to `max(per-position)`, and parallel runs from rapid pushes can coexist (Batch queues at the AWS level when the 24-vCPU Spot quota is saturated) so every push contributes a `benchmark_history` record. Cold-start (60–90s with SOCI + pull-through cache, see below) is paid once per fresh Spot host instead of once per sequential position — parallelism amortizes it down to a small fraction of total time.
+
+**Options considered.**
+
+| Option | Wall-clock (full retrain) | Cost / run | Records every push? |
+|---|---|---|---|
+| Warm OD g4dn.xlarge, sequential (D7) | ~120–156 min | ~$1.10 (OD × ~2h) | No — `cancel-in-progress` drops cancelled runs |
+| Warm OD, 6× parallel SSM commands | OOM | n/a | n/a (rejected, T4 can't host six NN runs) |
+| Six Spot g4dn.xlarge, parallel (chosen for `BATCH_ACTIVE=true`) | ~25–30 min | ~$0.40 (Spot × ~30 min × 6) | Yes — no `concurrency:` gate; runs coexist |
+| Six On-Demand g4dn.xlarge, parallel | ~25–30 min | ~$1.60 (OD × ~30 min × 6) | Yes | (rejected on cost) |
+| ECS RunTask on Spot capacity provider | ~25–30 min | similar to Batch | Yes | (rejected — Batch scaffolding 80% built; ECS reinvents the wheel) |
+
+**Chosen rationale.** AWS Batch was the original architecture ([docs/batch_design.md](batch_design.md)) before the pivot to warm EC2 cited cold-start dominating a 2-min training job (D7). Two factors closed that gap: (a) the original cold-start blocker is partially mitigated by ECR pull-through cache + SOCI v2 lazy loading wired into [batch-image.yml](../.github/workflows/batch-image.yml) (~120s → ~60–90s); (b) more importantly, *parallelism dominates cold-start at six positions* — paying ~90s of cold-start once per Spot host while six positions train concurrently is much cheaper than paying ~0s of cold-start six times in sequence on one host. The Batch scaffolding (`src/batch/launch.py` with ThreadPoolExecutor + Spot-aware retry + `describe_jobs` polling) was 80% built before the EC2 pivot; this decision completes it.
+
+The 24-vCPU Spot quota in us-east-1 is sized exactly for six g4dn.xlarge (`maxVcpus=24` in [infra/batch/setup.sh](../infra/batch/setup.sh)). Concurrent local launches will queue at `RUNNABLE` rather than push over-quota — graceful degradation. Spot interruptions auto-retry up to 3 times via [src/batch/launch.py:55-63](../src/batch/launch.py)'s `Host EC2*` retry pattern; worst-case wall-clock for one chronically-interrupted position is ~90 min, bounded by the workflow's `timeout-minutes: 180`.
+
+**Rejected.** Keeping warm EC2 as the only path — the +120 min wall-clock penalty and the cancel-in-progress-induced loss of rapid-push benchmark records made it the wrong default once Spot fan-out became viable. Per-position CPU compute environment for K/DST — defers a useful optimization but doubles the provisioned infra surface for ~$0.005/run of compute savings; reconsider if the GPU compute ever becomes constrained. On-Demand fan-out — Spot is ~70% cheaper with bounded interruption-recovery cost.
+
+**Consequence.** `train-batch.yml` has no `concurrency:` block, so parallel runs from rapid pushes coexist; the warm-EC2 path keeps its `cancel-in-progress: true` because the T4-contention constraint that motivated it is still real on that path. The `BATCH_ACTIVE` repo variable becomes a single-toggle switch with bidirectional semantics: in addition to gating [batch-image.yml](../.github/workflows/batch-image.yml)'s job-definition re-registration (legacy semantics), it now selects which training workflow fires on `workflow_run`. `workflow_dispatch` bypasses both gates so either path can be smoke-tested independently of the flag. The Batch infrastructure is provisioned once via [infra/batch/setup.sh](../infra/batch/setup.sh) (idempotent, ~80 lines mirroring [infra/ec2/launch-instance.sh](../infra/ec2/launch-instance.sh)); the cold-start optimizations are wired into [batch-image.yml](../.github/workflows/batch-image.yml) as auto-detected (pull-through cache only used when the rule exists) and `continue-on-error` (SOCI publish step) so neither blocks regular CI.
+
+**References.** [docs/batch_design.md](batch_design.md) (now the active-path doc when `BATCH_ACTIVE=true`), [infra/batch/setup.sh](../infra/batch/setup.sh) + [infra/batch/README.md](../infra/batch/README.md) (provisioning), [src/batch/launch.py](../src/batch/launch.py) (`--positions`, `--skip-upload`, retry strategy), [src/batch/Dockerfile.train](../src/batch/Dockerfile.train) (`PULL_THROUGH_PREFIX` build-arg), [.github/workflows/batch-image.yml](../.github/workflows/batch-image.yml) (pull-through detection + SOCI publish), [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) (the CI workflow), [.github/workflows/train-ec2.yml](../.github/workflows/train-ec2.yml) (now gated on `vars.BATCH_ACTIVE != 'true'`). PR arc: #215 (infra/batch/), #216 (cold-start opts in batch-image.yml), #217 (train-batch workflow + EC2 gate + launch.py `--skip-upload`).
+
+---
+
 ## 4. Cross-Cutting Consequences
 
 **What becomes easier.**
@@ -491,3 +525,6 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 | `dff43fb` | Modeling | Drop K `ATTN_L1_FEATURES` — K now matches DST/skill convention (D4, D6) |
 | `349aa4a` | Training | Static-pad attention (−30% attn train) + disk-backed feature-engineering cache (−86× on prepare_data hits) (D12) |
 | `056423b` | Serving | Benchmark History tab — per-PR rows fetched from S3 at boot, auto-updates without redeploy |
+| PR #215 | Infra | `infra/batch/` provisioning scripts (CE/JQ/JD/IAM) for Spot fan-out (D13) |
+| PR #216 | Infra | `batch-image.yml` cold-start opts — ECR pull-through cache + SOCI v2 lazy-load (D13) |
+| PR #217 | Infra | `train-batch.yml` workflow + `train-ec2.yml` gate on `BATCH_ACTIVE` + `launch.py --skip-upload` (D13) |
