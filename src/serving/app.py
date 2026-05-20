@@ -4,6 +4,8 @@ All predictions come from position-specific models (QB, RB, WR, TE, K, DST).
 No general cross-position model is used.
 """
 
+import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -57,6 +59,8 @@ from src.shared.model_sync import (
     sync_benchmark_history_from_s3,
     sync_data_from_s3,
     sync_models_from_s3,
+    sync_predictions_cache_from_s3,
+    upload_predictions_cache_to_s3,
 )
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import (
@@ -70,6 +74,7 @@ from src.shared.weather_features import WEATHER_FEATURES_ALL
 sync_data_from_s3()
 sync_models_from_s3()
 sync_benchmark_history_from_s3()
+sync_predictions_cache_from_s3()
 
 app = Flask(__name__)
 
@@ -1079,11 +1084,170 @@ _MODEL_PRED_COLUMNS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Predictions disk cache
+# ---------------------------------------------------------------------------
+#
+# After the first _ensure_metrics() compute, the assembled results DataFrame
+# + metrics_by_format are persisted under data/serving_cache/ and uploaded
+# to S3 (best-effort). On a subsequent boot — typically a fresh ECS task
+# replacement — sync_predictions_cache_from_s3() pulls the files, and
+# _try_hydrate_from_disk() short-circuits the whole model-load + inference
+# path when the live model fingerprint matches the cached one. Fingerprint
+# mismatch (e.g. a fresh model retrain) falls back to recompute + re-upload.
+# See model_sync.py::sync_predictions_cache_from_s3 / upload_predictions_cache_to_s3.
+
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_PREDICTIONS_CACHE_DIR = os.path.join(_REPO_ROOT, "data", "serving_cache")
+_PREDICTIONS_PARQUET = "predictions.parquet"
+_METRICS_JSON = "metrics.json"
+_FINGERPRINT_JSON = "fingerprint.json"
+
+
+def _iter_fingerprint_paths():
+    """Yield absolute paths whose (size, mtime) define cache validity.
+
+    Walks each position's model dir and the base data splits. Any change to
+    a trained model or to the test split invalidates the cache automatically.
+    """
+    for pos in _ALL_POSITIONS:
+        model_dir = os.path.join(_REPO_ROOT, "src", pos.lower(), "outputs", "models")
+        if not os.path.isdir(model_dir):
+            continue
+        for dirpath, _, filenames in os.walk(model_dir):
+            for fname in filenames:
+                yield os.path.join(dirpath, fname)
+    splits_dir = os.path.join(_REPO_ROOT, "data", "splits")
+    for name in ("train.parquet", "val.parquet", "test.parquet"):
+        path = os.path.join(splits_dir, name)
+        if os.path.isfile(path):
+            yield path
+    raw_dir = os.path.join(_REPO_ROOT, "data", "raw")
+    if os.path.isdir(raw_dir):
+        for fname in os.listdir(raw_dir):
+            if fname.startswith("kicker_kicks_pbp_") and fname.endswith(".parquet"):
+                yield os.path.join(raw_dir, fname)
+
+
+def _compute_models_fingerprint():
+    """Return (sha256_hex, files_list) over the fingerprint paths."""
+    files = []
+    paths = sorted(_iter_fingerprint_paths())
+    h = hashlib.sha256()
+    for path in paths:
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        rel = os.path.relpath(path, _REPO_ROOT)
+        entry = {"path": rel, "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+        files.append(entry)
+        h.update(rel.encode("utf-8"))
+        h.update(b"\x00")
+        h.update(str(st.st_size).encode("ascii"))
+        h.update(b"\x00")
+        h.update(str(st.st_mtime_ns).encode("ascii"))
+        h.update(b"\x00")
+    return h.hexdigest(), files
+
+
+def _try_hydrate_from_disk():
+    """Populate ``_cache`` directly from data/serving_cache/ when the stored
+    fingerprint matches the live one. Caller must hold ``_cache_lock``.
+    Returns ``True`` on hit (caller can skip the heavy compute path).
+    """
+    parquet_path = os.path.join(_PREDICTIONS_CACHE_DIR, _PREDICTIONS_PARQUET)
+    metrics_path = os.path.join(_PREDICTIONS_CACHE_DIR, _METRICS_JSON)
+    fingerprint_path = os.path.join(_PREDICTIONS_CACHE_DIR, _FINGERPRINT_JSON)
+    if not (
+        os.path.isfile(parquet_path)
+        and os.path.isfile(metrics_path)
+        and os.path.isfile(fingerprint_path)
+    ):
+        return False
+    try:
+        with open(fingerprint_path) as f:
+            stored = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[predcache] fingerprint read failed: {e!r} — will recompute")
+        return False
+    live_sha, _ = _compute_models_fingerprint()
+    if stored.get("sha256") != live_sha:
+        print(
+            f"[predcache] fingerprint mismatch "
+            f"(cache={(stored.get('sha256') or '<none>')[:8]}, live={live_sha[:8]}) "
+            f"— will recompute"
+        )
+        return False
+    try:
+        results = pd.read_parquet(parquet_path)
+        with open(metrics_path) as f:
+            metrics_by_format = json.load(f)
+    except Exception as e:  # noqa: BLE001 — corrupt cache must not crash boot
+        print(f"[predcache] cache read failed: {e!r} — will recompute")
+        return False
+    _cache["results"] = results
+    _cache["metrics_by_format"] = metrics_by_format
+    _cache["metrics"] = metrics_by_format.get("ppr", {})
+    _cache["positions_loaded"] = set(_ALL_POSITIONS)
+    _cache["base_loaded"] = True
+    print(f"[predcache] hydrated from disk (sha={live_sha[:8]}, rows={len(results)})")
+    return True
+
+
+def _persist_cache_to_disk():
+    """Atomic write of predictions.parquet + metrics.json + fingerprint.json,
+    followed by a best-effort S3 upload. Caller must hold ``_cache_lock``.
+
+    Two concurrent workers' pre-warm threads can race on cold-container
+    first-boot: each computes, each writes its own temp file, ``os.replace``
+    is atomic per-file so the final state is one consistent triple (whichever
+    worker finished last for each file). Both workers then populate their
+    own in-memory ``_cache`` from the compute they already finished — no
+    cross-process re-read needed.
+    """
+    if "results" not in _cache or "metrics_by_format" not in _cache:
+        return
+    os.makedirs(_PREDICTIONS_CACHE_DIR, exist_ok=True)
+    sha, files = _compute_models_fingerprint()
+    parquet_path = os.path.join(_PREDICTIONS_CACHE_DIR, _PREDICTIONS_PARQUET)
+    metrics_path = os.path.join(_PREDICTIONS_CACHE_DIR, _METRICS_JSON)
+    fingerprint_path = os.path.join(_PREDICTIONS_CACHE_DIR, _FINGERPRINT_JSON)
+    # PID alone isn't enough — two pre-warm threads in the same worker would
+    # collide on the temp name; thread id makes the suffix unique per writer.
+    suffix = f"{os.getpid()}.{threading.get_ident()}.tmp"
+    parquet_tmp = f"{parquet_path}.{suffix}"
+    metrics_tmp = f"{metrics_path}.{suffix}"
+    fingerprint_tmp = f"{fingerprint_path}.{suffix}"
+    try:
+        _cache["results"].to_parquet(parquet_tmp, index=True)
+        with open(metrics_tmp, "w") as f:
+            json.dump(_cache["metrics_by_format"], f)
+        with open(fingerprint_tmp, "w") as f:
+            json.dump({"sha256": sha, "files": files}, f)
+        os.replace(parquet_tmp, parquet_path)
+        os.replace(metrics_tmp, metrics_path)
+        os.replace(fingerprint_tmp, fingerprint_path)
+    except Exception as e:  # noqa: BLE001 — persist must not break serving
+        print(f"[predcache] persist failed: {e!r} — serving continues from in-memory cache")
+        for tmp in (parquet_tmp, metrics_tmp, fingerprint_tmp):
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+        return
+    print(f"[predcache] wrote cache to {_PREDICTIONS_CACHE_DIR} (sha={sha[:8]})")
+    try:
+        upload_predictions_cache_to_s3()
+    except Exception as e:  # noqa: BLE001 — upload best-effort
+        print(f"[predcache] upload failed: {e!r}")
+
+
 def _ensure_metrics():
     if "metrics_by_format" in _cache:
         return
     with _cache_lock:
         if "metrics_by_format" in _cache:
+            return
+        if _try_hydrate_from_disk():
             return
         _ensure_all_positions_loaded()
         _compute_metrics_locked()
@@ -1128,6 +1292,7 @@ def _compute_metrics_locked():
         metrics_by_format[fmt] = per_format
     _cache["metrics_by_format"] = metrics_by_format
     _cache["metrics"] = metrics_by_format.get("ppr", {})
+    _persist_cache_to_disk()
     print("Ready!")
 
 

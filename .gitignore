@@ -7,6 +7,9 @@ __pycache__/
 data/raw/
 data/splits/
 
+# Serving prediction cache (see src/serving/app.py::_persist_cache_to_disk)
+data/serving_cache/
+
 # Model artifacts (all positions)
 **/outputs/models/
 **/outputs/figures/

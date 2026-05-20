@@ -306,15 +306,21 @@ def _scale_metrics(metrics: dict, multiplier: float) -> dict:
 
 
 @pytest.fixture
-def app_module(monkeypatch):
+def app_module(monkeypatch, tmp_path):
     """Import app.py with a clean `_cache` per test.
 
     monkeypatch restores the original `_cache` attribute at teardown, so
     cross-test contamination through the module-global cache is prevented.
+
+    Also redirects ``_PREDICTIONS_CACHE_DIR`` to a per-test ``tmp_path``
+    subdir so the serving disk cache (written by ``_compute_metrics_locked``
+    on the production path) can't leak into the repo's ``data/serving_cache/``
+    and accidentally hydrate later tests.
     """
     import src.serving.app as app_mod
 
     monkeypatch.setattr(app_mod, "_cache", {})
+    monkeypatch.setattr(app_mod, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "serving_cache"))
     return app_mod
 
 

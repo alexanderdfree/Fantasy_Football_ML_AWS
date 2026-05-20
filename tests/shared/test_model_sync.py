@@ -900,4 +900,214 @@ def test_benchmark_history_sync_respects_custom_prefix(monkeypatch, tmp_path):
         summary = model_sync.sync_benchmark_history_from_s3()
     assert summary["files"] == 1
     assert (tmp_path / "benchmark_history" / "x.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# sync_predictions_cache_from_s3 / upload_predictions_cache_to_s3
+# ---------------------------------------------------------------------------
+
+
+class _FakeS3WithPut(_FakeS3):
+    """Extends _FakeS3 with put_object so the upload tests can capture writes."""
+
+    def __init__(self, objects: dict[str, bytes]):
+        super().__init__(objects)
+        self.puts: dict[str, bytes] = {}
+
+    def put_object(self, Bucket: str, Key: str, Body: bytes, ContentType: str):  # noqa: N803
+        self.puts[Key] = Body
+        # Make subsequent get_object succeed on the same key — the round-trip
+        # tests rely on this.
+        self._objects[Key] = Body
+
+
+@pytest.mark.unit
+def test_predcache_sync_noop_when_bucket_unset(monkeypatch, capsys):
+    monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
+    assert model_sync.sync_predictions_cache_from_s3() is None
+    assert "unset" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_predcache_sync_downloads_all_three_files(monkeypatch, tmp_path):
+    """When all three cache files exist in S3, they land under
+    data/serving_cache/ ready for _try_hydrate_from_disk."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    objects = {
+        "models/predictions_cache/predictions.parquet": b"\x50\x41\x52\x31fakeparquet",
+        "models/predictions_cache/metrics.json": b'{"ppr": {}}',
+        "models/predictions_cache/fingerprint.json": b'{"sha256": "abc"}',
+    }
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_predictions_cache_from_s3()
+
+    assert summary is not None
+    assert summary["files"] == 3
+    dest = tmp_path / "data" / "serving_cache"
+    assert (dest / "predictions.parquet").read_bytes() == objects[
+        "models/predictions_cache/predictions.parquet"
+    ]
+    assert (dest / "metrics.json").read_bytes() == objects["models/predictions_cache/metrics.json"]
+    assert (dest / "fingerprint.json").read_bytes() == objects[
+        "models/predictions_cache/fingerprint.json"
+    ]
+
+
+@pytest.mark.unit
+def test_predcache_sync_cleans_up_partial_when_any_file_missing(monkeypatch, tmp_path):
+    """If even one of the three cache files is missing from S3, the consumer
+    fingerprint check would fail. Clean up the partial downloads so a stale
+    parquet can't be paired with a missing fingerprint to bypass invalidation.
+    """
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    objects = {
+        "models/predictions_cache/predictions.parquet": b"PAR1content",
+        "models/predictions_cache/metrics.json": b'{"ppr": {}}',
+        # fingerprint.json deliberately absent — simulates a freshly-seeded
+        # bucket or an interrupted prior upload.
+    }
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_predictions_cache_from_s3()
+
+    assert summary is not None
+    assert summary["files"] == 0
+    assert summary["missing"] == ["fingerprint.json"]
+    dest = tmp_path / "data" / "serving_cache"
+    # Partial downloads cleaned up — the directory might exist but should
+    # contain none of the cache files.
+    for name in ("predictions.parquet", "metrics.json", "fingerprint.json"):
+        assert not (dest / name).exists(), f"{name} should have been cleaned up"
+
+
+@pytest.mark.unit
+def test_predcache_sync_swallows_unexpected_s3_error(monkeypatch, tmp_path, capsys):
+    """Best-effort: a transient S3 failure (not NoSuchKey) must not crash
+    boot — the pre-warm thread will just recompute and re-upload.
+    """
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    class _AngryS3:
+        def get_object(self, Bucket, Key):  # noqa: N803
+            raise ClientError(
+                error_response={"Error": {"Code": "InternalError", "Message": "boom"}},
+                operation_name="GetObject",
+            )
+
+    with mock.patch("boto3.client", return_value=_AngryS3()):
+        # Must return without raising.
+        summary = model_sync.sync_predictions_cache_from_s3()
+    assert summary is not None
+    assert summary["files"] == 0
+    assert "FAILED" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_predcache_upload_noop_when_bucket_unset(monkeypatch):
+    monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
+    assert model_sync.upload_predictions_cache_to_s3() is None
+
+
+@pytest.mark.unit
+def test_predcache_upload_noop_when_any_local_file_missing(monkeypatch, tmp_path, capsys):
+    """If even one of the three files isn't on disk yet (e.g., _persist_cache_to_disk
+    bailed mid-write), don't upload a partial set — the next prewarm will
+    recompute + re-upload cleanly.
+    """
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    cache = tmp_path / "data" / "serving_cache"
+    cache.mkdir(parents=True)
+    # Only two of three present.
+    (cache / "predictions.parquet").write_bytes(b"PAR1x")
+    (cache / "metrics.json").write_bytes(b"{}")
+
+    with mock.patch("boto3.client") as boto_mock:
+        assert model_sync.upload_predictions_cache_to_s3() is None
+        boto_mock.assert_not_called()
+    assert "missing" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_predcache_upload_then_sync_round_trips(monkeypatch, tmp_path):
+    """End-to-end on the S3 side: write three files locally, upload, then
+    sync to a separate dest dir and check bytes match. Uses the upload's
+    own writes to populate the FakeS3 store.
+    """
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    cache = tmp_path / "data" / "serving_cache"
+    cache.mkdir(parents=True)
+    payloads = {
+        "predictions.parquet": b"PAR1xyz",
+        "metrics.json": b'{"ppr": {"Ridge": {}}}',
+        "fingerprint.json": b'{"sha256": "deadbeef"}',
+    }
+    for name, body in payloads.items():
+        (cache / name).write_bytes(body)
+
+    fake_s3 = _FakeS3WithPut({})
+    with mock.patch("boto3.client", return_value=fake_s3):
+        upload_summary = model_sync.upload_predictions_cache_to_s3()
+        assert upload_summary["files"] == 3
+        # Clear local cache to prove the sync re-downloads.
+        for name in payloads:
+            (cache / name).unlink()
+        sync_summary = model_sync.sync_predictions_cache_from_s3()
+
+    assert sync_summary is not None
+    assert sync_summary["files"] == 3
+    for name, body in payloads.items():
+        assert (cache / name).read_bytes() == body
+        assert fake_s3.puts[f"models/predictions_cache/{name}"] == body
+
+
+@pytest.mark.unit
+def test_predcache_upload_swallows_s3_error(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    cache = tmp_path / "data" / "serving_cache"
+    cache.mkdir(parents=True)
+    for name in ("predictions.parquet", "metrics.json", "fingerprint.json"):
+        (cache / name).write_bytes(b"x")
+
+    class _AngryS3:
+        def put_object(self, **_):
+            raise ClientError(
+                error_response={"Error": {"Code": "AccessDenied", "Message": "no"}},
+                operation_name="PutObject",
+            )
+
+    with mock.patch("boto3.client", return_value=_AngryS3()):
+        # Must return without raising; persist call site treats result as
+        # advisory only.
+        assert model_sync.upload_predictions_cache_to_s3() is None
+    assert "FAILED" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_predcache_respects_custom_prefix(monkeypatch, tmp_path):
+    """FF_MODEL_S3_PREFIX is honored end-to-end on both sync and upload paths."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "staging/v3")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    cache = tmp_path / "data" / "serving_cache"
+    cache.mkdir(parents=True)
+    for name in ("predictions.parquet", "metrics.json", "fingerprint.json"):
+        (cache / name).write_bytes(b"x")
+
+    fake_s3 = _FakeS3WithPut({})
+    with mock.patch("boto3.client", return_value=fake_s3):
+        model_sync.upload_predictions_cache_to_s3()
+    assert set(fake_s3.puts.keys()) == {
+        "staging/v3/predictions_cache/predictions.parquet",
+        "staging/v3/predictions_cache/metrics.json",
+        "staging/v3/predictions_cache/fingerprint.json",
+    }
     assert not (tmp_path / "benchmark_history" / "y.json").exists()

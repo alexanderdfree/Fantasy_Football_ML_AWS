@@ -24,6 +24,7 @@ Flask layer lives in ``app.py``.
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import io
 import json
 import os
@@ -368,3 +369,138 @@ def sync_data_from_s3() -> dict | None:
     total_bytes = sum(r["bytes"] for r in results)
     print(f"[data_sync] done in {total}s, {total_bytes / 1e6:.1f} MB across {len(results)} files")
     return {"total_secs": total, "total_bytes": total_bytes, "files": len(results)}
+
+
+# ---------------------------------------------------------------------------
+# Predictions cache (serving pre-warm)
+# ---------------------------------------------------------------------------
+#
+# The Flask app caches the assembled predictions DataFrame + metrics on disk
+# after the first ``_ensure_metrics()`` run. Uploading that cache to S3 lets
+# the next ECS task hydrate without recomputing — fingerprint mismatch on
+# the consumer side guards against serving stale predictions against
+# refreshed models. See app.py::_try_hydrate_from_disk and
+# _persist_cache_to_disk for the producer/consumer side.
+
+_PREDICTIONS_CACHE_DIR_REL = "data/serving_cache"
+_PREDICTIONS_CACHE_FILES = ("predictions.parquet", "metrics.json", "fingerprint.json")
+
+
+def sync_predictions_cache_from_s3() -> dict | None:
+    """Download the three serving-cache files from S3 into data/serving_cache/.
+
+    Missing keys are not errors: a freshly-seeded bucket has no cache until
+    the first container computes + uploads. Other S3 errors are logged and
+    swallowed — the worst case is the pre-warm thread recomputes and
+    re-uploads.
+
+    Gated on FF_MODEL_S3_BUCKET like every other sync. Unset/empty -> no-op.
+    """
+    bucket = os.environ.get(_ENV_BUCKET, "").strip()
+    if not bucket:
+        print(
+            f"[predcache_sync] {_ENV_BUCKET} unset — skipping S3 sync, "
+            f"using on-disk cache (if present)."
+        )
+        return None
+
+    prefix = os.environ.get(_ENV_PREFIX, "models").strip("/")
+    s3_prefix = f"{prefix}/predictions_cache"
+    root = _repo_root()
+    dest_dir = root / _PREDICTIONS_CACHE_DIR_REL
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    import boto3
+    from botocore.exceptions import ClientError
+
+    s3 = boto3.client("s3")
+
+    print(f"[predcache_sync] syncing s3://{bucket}/{s3_prefix}/ -> {dest_dir}")
+    t0 = time.time()
+    results: list[dict] = []
+    missing: list[str] = []
+    for name in _PREDICTIONS_CACHE_FILES:
+        key = f"{s3_prefix}/{name}"
+        dest = dest_dir / name
+        try:
+            r = _download_file(s3, bucket, key, dest)
+            results.append(r)
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in ("NoSuchKey", "404"):
+                missing.append(name)
+                continue
+            print(f"[predcache_sync] {name} FAILED: {e!r} — skipping (will recompute)")
+        except Exception as e:  # noqa: BLE001 — best-effort sync
+            print(f"[predcache_sync] {name} FAILED: {e!r} — skipping (will recompute)")
+
+    total = round(time.time() - t0, 2)
+    total_bytes = sum(r["bytes"] for r in results)
+    if missing:
+        # If any file is missing, the fingerprint check on the consumer side
+        # will fail anyway — clean up partial downloads so a stale parquet
+        # can't be paired with a missing fingerprint and accidentally hydrate.
+        for partial in results:
+            with contextlib.suppress(OSError):
+                (dest_dir / Path(partial["key"]).name).unlink(missing_ok=True)
+        print(
+            f"[predcache_sync] no cache available (missing: {missing}) "
+            f"— first request will compute + upload."
+        )
+        return {"total_secs": total, "total_bytes": 0, "files": 0, "missing": missing}
+    print(
+        f"[predcache_sync] done in {total}s, {total_bytes / 1e6:.1f} MB across {len(results)} files"
+    )
+    return {"total_secs": total, "total_bytes": total_bytes, "files": len(results)}
+
+
+def upload_predictions_cache_to_s3() -> dict | None:
+    """Upload the three serving-cache files from data/serving_cache/ to S3.
+
+    Best-effort: missing local files (cache wasn't written), unset env var,
+    or any S3 error all log and return rather than raising — the user-facing
+    request that triggered the compute has already succeeded.
+    """
+    bucket = os.environ.get(_ENV_BUCKET, "").strip()
+    if not bucket:
+        return None
+
+    prefix = os.environ.get(_ENV_PREFIX, "models").strip("/")
+    s3_prefix = f"{prefix}/predictions_cache"
+    root = _repo_root()
+    src_dir = root / _PREDICTIONS_CACHE_DIR_REL
+
+    missing = [n for n in _PREDICTIONS_CACHE_FILES if not (src_dir / n).is_file()]
+    if missing:
+        print(f"[predcache_upload] local files missing: {missing} — skipping upload")
+        return None
+
+    import boto3
+
+    s3 = boto3.client("s3")
+
+    t0 = time.time()
+    total_bytes = 0
+    try:
+        for name in _PREDICTIONS_CACHE_FILES:
+            src = src_dir / name
+            data = src.read_bytes()
+            content_type = (
+                "application/json" if name.endswith(".json") else "application/octet-stream"
+            )
+            s3.put_object(
+                Bucket=bucket,
+                Key=f"{s3_prefix}/{name}",
+                Body=data,
+                ContentType=content_type,
+            )
+            total_bytes += len(data)
+    except Exception as e:  # noqa: BLE001 — best-effort upload
+        print(f"[predcache_upload] FAILED: {e!r}")
+        return None
+    total = round(time.time() - t0, 2)
+    print(
+        f"[predcache_upload] done in {total}s, "
+        f"{total_bytes / 1e6:.1f} MB across {len(_PREDICTIONS_CACHE_FILES)} files"
+    )
+    return {"total_secs": total, "total_bytes": total_bytes, "files": len(_PREDICTIONS_CACHE_FILES)}
