@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
+from src.shared.team_box_score import merge_team_box_score_features
 from src.shared.weather_features import merge_schedule_features
 
 # Clip bounds applied after every ``StandardScaler`` op. Guards against
@@ -47,6 +48,12 @@ def build_position_features(
     # merged weather/Vegas columns.
     for label, df in zip(split_labels, dfs, strict=True):
         merge_schedule_features(df, label=label)
+        # Per-game team and opponent box-score columns. Used by the RB
+        # attention NN's history sequence so each historical token carries
+        # the realised game environment in addition to the player's own
+        # stats; other positions ignore the columns via their own
+        # ``ATTN_HISTORY_STATS`` whitelist.
+        merge_team_box_score_features(df, label=label)
 
     # Position-specific feature engineering + fill_nans. Both take three
     # splits; when test is None, pass an empty stub so the signatures line up.
