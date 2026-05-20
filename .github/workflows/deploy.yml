@@ -8,9 +8,13 @@ on:
     # src/models/, src/{POS}/, src/config.py, src/data/, src/training/,
     # src/evaluation/ — i.e. everything under src/ EXCEPT the training,
     # tuning, analysis, benchmarking, scripts, and tests subtrees. Negative
-    # patterns at the end refine the broad src/** include.
+    # patterns at the end refine the broad src/** include. ``docs/`` is
+    # bundled into the image (Dockerfile: ``COPY docs/ docs/``) and read at
+    # runtime by ``src.serving.app._render_wiki_doc`` to power the in-app
+    # wiki tab, so doc-only edits must redeploy too.
     paths:
       - "src/**"
+      - "docs/**"
       - "Dockerfile"
       - ".dockerignore"
       - "requirements.txt"
