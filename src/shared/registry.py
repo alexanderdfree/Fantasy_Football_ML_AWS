@@ -346,11 +346,11 @@ def get_inference_spec(pos: str) -> dict:
     if pos == "K":
         import src.k.config as k_cfg
         from src.k.config import (
+            ALL_FEATURES,
             NN_BACKBONE_LAYERS,
             NN_DROPOUT,
             NN_HEAD_HIDDEN,
             NN_NON_NEGATIVE_TARGETS,
-            SPECIFIC_FEATURES,
             TARGETS,
         )
         from src.k.data import filter_to_position
@@ -382,7 +382,13 @@ def get_inference_spec(pos: str) -> dict:
 
         return {
             "targets": TARGETS,
-            "specific_features": SPECIFIC_FEATURES,
+            # ALL_FEATURES (not just SPECIFIC_FEATURES): K's contextual
+            # block carries the PBP-derived ``game_wind`` / ``game_temp``
+            # columns that need train-mean fills, not the catch-all 0
+            # ``build_position_features`` would otherwise apply. Mirrors
+            # the same widening in ``src/k/run_pipeline.py`` to keep the
+            # training and inference paths in lockstep.
+            "specific_features": ALL_FEATURES,
             "filter_fn": filter_to_position,
             "compute_targets_fn": compute_targets,
             "add_features_fn": add_specific_features,
