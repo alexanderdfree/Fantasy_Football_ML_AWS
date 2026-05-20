@@ -1,6 +1,8 @@
 # ff-training EC2 trainer
 
-_Last verified: 2026-04-21._
+_Last verified: 2026-05-19._
+
+> **Status: rollback path.** Since 2026-05-20 the push-driven default is Batch + Spot fan-out ([infra/batch/](../batch/)). This warm-EC2 trainer stays provisioned indefinitely (~$8/mo of EBS while stopped); one flip — `gh variable set BATCH_ACTIVE --body "false"` — restores it on the next push to `main`.
 
 An on-demand `g4dn.xlarge` that runs `src/batch/train.py` on GPU, driven by `.github/workflows/train-ec2.yml`. Stays warm for 4h after each training run, then stops; CI wakes it on the next push (adds ~30-60s cold-start latency to the first push after idle).
 
@@ -18,7 +20,7 @@ On success it prints the instance ID and the `gh variable set` commands you need
 
 ```
 gh variable set EC2_TRAINER_INSTANCE_ID --body "i-xxxxxxxxxxxxxxxxx"
-gh variable set BATCH_ACTIVE --body "false"
+gh variable set BATCH_ACTIVE --body "false"   # → use this trainer; leave at "true" to keep Batch active
 ```
 
 ## Verification
@@ -104,6 +106,6 @@ aws ec2 delete-security-group --group-id <sg-id>
 
 Add AWS Budgets alerts at $100/mo and $300/mo on the `Project=fantasy-predictor` tag so a forgotten running instance isn't a surprise.
 
-## Why EC2, not Batch, is the active path
+## Why this path remains as a rollback
 
-See [`../../docs/ec2_design.md`](../../docs/ec2_design.md) — tl;dr: eliminate 3-5 min of scale-to-zero cold start so "push to main → fresh model" is sub-15-minute. Batch stays on standby (`docs/batch_design.md`) and is reactivated by flipping `BATCH_ACTIVE=true`.
+See [`../../docs/ec2_design.md`](../../docs/ec2_design.md) and D7 / D13 in [`../../docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) — tl;dr: this trainer was the active default from 2026-04-19 to 2026-05-19, designed to eliminate 3–5 min of scale-to-zero cold start so a single-position push-to-fresh-model cycle is sub-15-minute. The default flipped to Batch + Spot fan-out (`docs/batch_design.md`, D13) once measurements showed parallelism across six positions dominates per-position cold-start — wall-clock collapsed from ~120 min sequential to ~25–30 min parallel. Both paths remain provisioned; flipping `BATCH_ACTIVE=false` returns to this trainer with one command.

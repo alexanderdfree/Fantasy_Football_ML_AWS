@@ -39,12 +39,14 @@ nflverse API ─┐
                                └──────────────────────────────────────────┘
                                                 │
                                                 ▼
-                             ┌──────────────────────────────┐
-                             │ GPU training (BATCH_ACTIVE)  │◀── GitHub Actions
-                             │  true  → 6× Spot g4dn (Batch) │    push to main
-                             │  false → warm OD g4dn (SSM)   │
-                             │ Same Dockerfile.train; D7/D13│
-                             └──────────────────────────────┘
+                             ┌────────────────────────────────┐
+                             │ GPU training (BATCH_ACTIVE)    │◀── GitHub Actions
+                             │  true  → 6× Spot g4dn (Batch)  │    push to main
+                             │          (default; ~25–30 min) │
+                             │  false → warm OD g4dn (SSM)    │
+                             │          (rollback; ~120 min)  │
+                             │ Same Dockerfile.train; D13/D7  │
+                             └────────────────────────────────┘
                                                 │ model.tar.gz
                                                 ▼
                              ┌──────────────────────────────┐
@@ -79,7 +81,7 @@ pytest -m unit        # fast tests only
 
 Coverage is tracked on [Codecov](https://app.codecov.io/gh/alexanderdfree/Fantasy_Football_ML_AWS) with an **80% target per position and shared component** (see [codecov.yml](codecov.yml)). One-off diagnostic CLIs (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`) are excluded from the denominator — everything else gets pulled in.
 
-Full training on GPU runs on EC2 via CI; see [docs/ec2_design.md](docs/ec2_design.md) for the pipeline and [infra/ec2/README.md](infra/ec2/README.md) for operator notes.
+Full training on GPU runs in CI: by default a push to `main` fans out six Spot g4dn.xlarge instances via AWS Batch ([docs/batch_design.md](docs/batch_design.md), [infra/batch/README.md](infra/batch/README.md)). Setting `BATCH_ACTIVE=false` falls back to the warm-EC2 trainer ([docs/ec2_design.md](docs/ec2_design.md), [infra/ec2/README.md](infra/ec2/README.md)).
 
 ## Video Links
 
@@ -120,7 +122,7 @@ src/                                All Python source code
     pipeline.py                     Position-pipeline orchestrator
     registry.py                     Position runner dispatch
     weather_features.py             Vegas odds + weather joins
-  batch/                            Training orchestration (EC2 + Batch standby)
+  batch/                            Training orchestration (Batch active, EC2 rollback)
     launch.py                       Local submitter (uploads data, polls, pulls models)
     train.py                        In-container training entrypoint
     Dockerfile.train                Heavy CUDA/PyTorch training image
@@ -156,8 +158,8 @@ Tests live under the top-level `tests/` tree, mirroring the `src/` layout (`test
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — ADR-001, consolidated decision log
 - [docs/method_contracts.md](docs/method_contracts.md) — function signatures + data-layer contracts
-- [docs/ec2_design.md](docs/ec2_design.md) — active training infrastructure
-- [docs/batch_design.md](docs/batch_design.md) — standby training path (reactivated via `BATCH_ACTIVE=true`)
+- [docs/batch_design.md](docs/batch_design.md) — active training infrastructure (Batch + Spot fan-out, default since 2026-05-20)
+- [docs/ec2_design.md](docs/ec2_design.md) — rollback training path (reactivated via `BATCH_ACTIVE=false`)
 - [docs/expert_comparison.md](docs/expert_comparison.md) — error analysis
 - [docs/design_lstm_multihead.md](docs/design_lstm_multihead.md), [docs/design_xgboost_ensemble.md](docs/design_xgboost_ensemble.md), [docs/design_weather_and_odds.md](docs/design_weather_and_odds.md) — rejected-alternative design docs
 - [infra/ec2/README.md](infra/ec2/README.md), [infra/aws/README.md](infra/aws/README.md) — operator runbooks
@@ -177,14 +179,23 @@ Beyond the ML core, the project ships a production deploy at [alexfree.me](https
 ```
 GitHub Actions
    │ push to main
-   ├──▶ batch-image.yml ──▶ ECR (training image)
+   ├──▶ batch-image.yml ──▶ ECR (training image, ECR pull-through + SOCI v2)
    │                              │
    │                              ▼ workflow_run
-   │        ┌────────────────────────────────────────┐
-   │        │ EC2 g4dn.xlarge (warm T4 GPU host)     │
-   │        │   src.batch.train via SSM Run Command  │
-   │        │   per-position change detection        │
-   │        └────────────────────────────────────────┘
+   │        ┌──────────────────────────────────────────────┐
+   │        │ BATCH_ACTIVE=true (default):                 │
+   │        │   train-batch.yml → 6× g4dn.xlarge Spot      │
+   │        │     (one position per host, parallel)        │
+   │        │     src.batch.launch submits, polls, downloads│
+   │        │   ~25–30 min wall-clock                      │
+   │        │ ─────────────────────────────────────────────│
+   │        │ BATCH_ACTIVE=false (rollback):               │
+   │        │   train-ec2.yml → warm g4dn.xlarge OD via SSM│
+   │        │     (six positions sequential on one T4)     │
+   │        │   ~120 min wall-clock                        │
+   │        │ ─────────────────────────────────────────────│
+   │        │ Either path: per-position change detection   │
+   │        └──────────────────────────────────────────────┘
    │                              │ manifest + tar.gz
    │                              ▼
    │        ┌────────────────────────────────────────┐
@@ -198,7 +209,7 @@ GitHub Actions
 deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS ──▶ alexfree.me
 ```
 
-- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. When `true`, [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml) fans out across six g4dn.xlarge Spot instances via AWS Batch (one position per host, parallel; ~25–30 min wall-clock). When `false` or unset, [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
+- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six g4dn.xlarge Spot instances via AWS Batch (one position per host, parallel; ~25–30 min wall-clock, ~$0.40/run). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
 - **Artifact safety** — S3 manifest schema v2 tracks `stable` / `current` / `previous` plus a 5-version `history`. New artifacts must clear a smoke-test gate before being promoted to `stable`. [src/scripts/promote.py](src/scripts/promote.py) supports manual rollback to any history entry; bucket versioning is defense-in-depth.
 - **Serving** — ECS Fargate (arm64, 1 vCPU / 2 GB) sits behind an ALB with ACM-terminated HTTPS. The slim Flask image fetches models from S3 at boot rather than baking them in — keeps the image roughly 3× smaller and lets prod track new artifacts without a full redeploy.
 - **IAM** — the serving task role is scoped to `s3:GetObject` on `ff-predictor-training/models/*` only.
@@ -213,7 +224,7 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 - Wiki tab renders repo markdown docs in-app (PR #138, `ce4543e`)
 - Benchmark History tab — per-PR rows fetched from S3 at boot, auto-updates after every training run without a redeploy (PR #201, `056423b`)
 - Slim arm64 serving image with runtime S3 model fetch (PR #83, `3243d72`)
-- 24/7 warm EC2 host eliminates 3–5 min Batch scale-up → sub-15-min push-to-serve on the warm path (D7); parallel Spot fan-out wins on wall-clock when retraining all six positions (D13)
+- Parallel Spot fan-out across six g4dn.xlarge Spot instances collapses full-retrain wall-clock from sum(per-position) to max(per-position), ~25–30 min vs ~120 min (D13); the warm-EC2 rollback path (D7) eliminates 3–5 min Batch scale-up on the days a single-position iteration matters more than parallelism
 
 ### GitHub CI/CD
 

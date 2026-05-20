@@ -4,6 +4,7 @@
 
 ### Update history
 
+- **2026-05-20** — `BATCH_ACTIVE=true` flipped on as the push-driven default. D7/D9/§2 framings reconciled — Batch + Spot fan-out is now the active training path; the warm-EC2 implementation in D9 becomes the rollback path. `gh variable set BATCH_ACTIVE --body "false"` restores D7's warm-OD trainer on the next push.
 - **2026-05-20** — D14 (serving prediction-cache + `post_fork` pre-warm) added. Resolves the first-request cold-start window left over from the predecessor attempt in PRs #148/#149; pairs background pre-warm with a fingerprint-keyed disk + S3 cache so the *first* container after a deploy is also fast.
 - **2026-05-20** — D5 extended with `hurdle_poisson` loss family (zero-truncated Poisson on positives + BCE gate) as an available primitive alongside `hurdle_negbin`. RB sparse-count ablation (Variants D/E/Bf added to `src/tuning/ablate_rb_gate.py`) showed Variant E (hurdle_poisson on rushing_tds, receiving_tds, fumbles_lost) wins per-target MAE — count_sum 0.353 vs Ridge 0.369 — but regresses aggregate FP MAE +0.163 vs current Variant C. **Rejected for shipping**; primitive kept available for future use, current RB config unchanged.
 - **2026-05-20** — D13 (Spot fan-out via AWS Batch) added; overrides D7's warm-EC2 choice when `BATCH_ACTIVE=true`. The warm-EC2 path remains as a one-flag fallback. PRs #215 (infra), #216 (cold-start opts), #217 (train-batch workflow).
@@ -25,7 +26,7 @@
    - [D6: Explicit per-position feature allowlist](#d6-explicit-per-position-feature-allowlist)
    - [D7: EC2 warm instance over Batch/SageMaker for parallel training](#d7-ec2-warm-instance-over-batchsagemaker)
    - [D8: Two Docker images (slim Flask, heavy training)](#d8-two-docker-images)
-   - [D9: Warm training host (replaces Batch cold-start stack)](#d9-warm-training-host)
+   - [D9: Warm training host (rollback-path implementation)](#d9-warm-training-host)
    - [D10: Trunk-based CI/CD with test-gated deploys](#d10-trunk-based-cicd-with-test-gated-deploys)
    - [D11: Smoke-test gate + always-stable artifact (manifest v2)](#d11-smoke-test-gate--always-stable-artifact-manifest-v2)
    - [D12: Training-step perf composition (torch.compile rejected on T4)](#d12-training-step-perf-composition-torchcompile-rejected-on-t4)
@@ -78,20 +79,20 @@
                        Compared, not     │
                        ensembled ──────▶ │
                                          ▼
-         ┌─────────────────────┐   ┌────────────────────┐
-         │ EC2 g4dn (train)    │   │ Flask app (serve)  │
-         │ Dockerfile.train    │   │ Dockerfile (slim)  │
-         │ warm, 6 parallel    │   │ ECS, CPU-only      │
-         │ positions via SSM   │   │                    │
-         └─────────────────────┘   └────────────────────┘
+         ┌──────────────────────┐  ┌────────────────────┐
+         │ 6× g4dn Spot (Batch) │  │ Flask app (serve)  │
+         │ Dockerfile.train     │  │ Dockerfile (slim)  │
+         │ one position / host  │  │ ECS, CPU-only      │
+         │ ~25–30 min parallel  │  │                    │
+         └──────────────────────┘  └────────────────────┘
                     │                          ▲
                     │   model artifacts → S3 → │
                     └──────────────────────────┘
 ```
 
-> **Standby:** the AWS Batch + Spot path ([docs/batch_design.md](batch_design.md)) is fully kept and is reactivated by flipping the `BATCH_ACTIVE` repo variable. D7 explains the trade-off; D9 covers the warm-host implementation.
+> **Rollback path:** the warm-EC2 implementation ([docs/ec2_design.md](ec2_design.md)) stays provisioned and is reactivated by `gh variable set BATCH_ACTIVE --body "false"` on the next push. D13 explains why the active default flipped to Batch; D7/D9 cover the warm-EC2 fallback.
 
-A training run is triggered by a push to `main`, which invokes [`.github/workflows/train-ec2.yml`](../.github/workflows/train-ec2.yml): the workflow starts the warm g4dn.xlarge (if auto-shutdown stopped it), runs SSM commands to launch six per-position training containers, streams CloudWatch logs to the Actions job, and verifies fresh `model.tar.gz` artifacts landed in S3 per position. The Flask service is built separately and deployed to ECS on every push to `main`; it reads pre-baked models from S3 and serves projections through a dashboard.
+A training run is triggered by a push to `main`, which invokes [`.github/workflows/train-batch.yml`](../.github/workflows/train-batch.yml) (when `BATCH_ACTIVE=true`): the workflow submits six Batch jobs in parallel against the `ff-gpu-spot` Compute Environment — one per position on its own Spot g4dn.xlarge — blocks until they terminate, verifies fresh `model.tar.gz` artifacts landed in S3 per position, and commits a fresh `benchmark_history/{run_id}.json`. When `BATCH_ACTIVE != 'true'` the [warm-EC2 trainer](../.github/workflows/train-ec2.yml) fires instead and loops the six positions sequentially via SSM. The Flask service is built separately and deployed to ECS on every push to `main`; it reads pre-baked models from S3 and serves projections through a dashboard.
 
 ---
 
@@ -265,9 +266,11 @@ K was the lone exception until PR #199 (`dff43fb`): when the convention landed i
 
 ### D7: EC2 warm instance over Batch/SageMaker
 
+> **Status (2026-05-20):** superseded by [D13](#d13-spot-fan-out-via-aws-batch-overrides-d7-when-batch_activetrue) as the default. The warm-EC2 implementation in D9 remains the rollback path (`BATCH_ACTIVE=false`); this entry is kept verbatim as the historical decision so D13's trade-off discussion is readable. D13 explicitly addresses the "warm EC2 always wins" framing below — the gap closes once you count parallelism across six positions, not per-position cold-start in isolation.
+
 **Decision.** Train on a single warm EC2 g4dn.xlarge driven by CI. Six per-position training containers run in parallel on the instance via SSM commands, invoked by [.github/workflows/train-ec2.yml](../.github/workflows/train-ec2.yml). AWS Batch with Spot is kept as a standby path ([docs/batch_design.md](batch_design.md)), reactivated by setting `BATCH_ACTIVE=true`.
 
-**Context.** Per-position training takes ~2 minutes on a GPU. We went through three iterations: SageMaker first (commit `eedacfc`), then Batch + Spot (`57d52f9` → `ffb3119`), then the current warm-EC2 design ([docs/ec2_design.md](ec2_design.md), landed 2026-04-19). Each pivot was driven by the same realization: a 2-minute training job amplifies cold-start overhead, so eliminating it is worth more than the per-hour savings.
+**Context.** Per-position training takes ~2 minutes on a GPU. We went through three iterations: SageMaker first (commit `eedacfc`), then Batch + Spot (`57d52f9` → `ffb3119`), then the warm-EC2 design ([docs/ec2_design.md](ec2_design.md), landed 2026-04-19). Each pivot was driven by the same realization: a 2-minute training job amplifies cold-start overhead, so eliminating it is worth more than the per-hour savings. The follow-up (D13) measured that parallelism dominates cold-start once each position runs on its own host, which inverted the conclusion.
 
 **Options considered.**
 
@@ -294,7 +297,7 @@ The commit↔model relationship is now one-to-one: every merge to `main` produce
 
 ### D8: Two Docker images
 
-**Decision.** Build and deploy two separate Docker images: a slim `python:3.12-slim` image for the Flask inference service (~150 MB) and a `pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime` image for GPU training (~5–6 GB). The heavy image is consumed by the EC2 warm host today (D7) and by AWS Batch on the standby path.
+**Decision.** Build and deploy two separate Docker images: a slim `python:3.12-slim` image for the Flask inference service (~150 MB) and a `pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime` image for GPU training (~5–6 GB). The heavy image is consumed by AWS Batch on the active path (D13) and by the EC2 warm host on the D7 rollback path; both pull from the same ECR tag.
 
 **Context.** Inference runs CPU-only on ECS and does not need CUDA, `torch.cuda.*`, or the pytorch wheel's CUDA libs. Training needs all of them plus `nfl_data_py`, `lightgbm`, and the training scripts. A single image would either bloat inference (slow ECS deploys, higher cold-start) or strip training capability.
 
@@ -318,7 +321,9 @@ The training Dockerfile ([src/batch/Dockerfile.train](../src/batch/Dockerfile.tr
 
 ### D9: Warm training host
 
-**Decision.** Keep a single g4dn.xlarge EC2 instance warm with the training image already pulled and CUDA drivers loaded. Trigger per-push training from CI via SSM `RunCommand`, stream CloudWatch logs back to Actions, and stop the instance after 4 h of inactivity via a systemd timer. The earlier Batch cold-start stack (ECR pull-through + SOCI + aggressive `.dockerignore`) is kept in-repo for the standby path.
+> **Status (2026-05-20):** implementation for the **rollback path** under D7. The warm host stays provisioned and is reactivated by `gh variable set BATCH_ACTIVE --body "false"` on the next push. Idle cost is ~$8/mo (EBS only) while stopped. The active push-driven trainer is D13's Batch fan-out.
+
+**Decision.** Keep a single g4dn.xlarge EC2 instance warm with the training image already pulled and CUDA drivers loaded. Trigger per-push training from CI via SSM `RunCommand`, stream CloudWatch logs back to Actions, and stop the instance after 4 h of inactivity via a systemd timer. The Batch cold-start stack (ECR pull-through + SOCI + aggressive `.dockerignore`) is independently used by the active D13 path; it also helps the first EC2 image pull during user-data.
 
 **Context.** D7 picked the warm-host pattern; this decision is the implementation. The old Batch design had to fight cold-start (image pull, instance provisioning, Docker startup) because Batch intentionally scales to zero. For a 2-minute training job, every second spent warming up is overhead we pay on every run. Leaving a GPU idle at $0.53/hr is also unacceptable — so the design has to stop the instance when it's genuinely unused.
 
@@ -335,7 +340,7 @@ The training Dockerfile ([src/batch/Dockerfile.train](../src/batch/Dockerfile.tr
 
 Net effect on a typical push: if the instance is already warm, training starts within seconds; if it was idle and stopped, the first push eats ~25 s of start-up and every subsequent push that day is warm. The total wall-clock time from `git push` to six `model.tar.gz` in S3 is ~3–5 min, of which ~2 min is actual training.
 
-**Standby path — Batch cold-start stack.** The Batch design used three optimizations to minimize cold-start: ECR pull-through cache (~120 s → ~30 s pull), SOCI lazy loading (container starts before image fully pulled), and aggressive `.dockerignore` + explicit `COPY` in the training Dockerfile (~8 GB → ~5–6 GB image). Full tables in [docs/batch_design.md](batch_design.md). These stay in force on the Batch path and are independent of the EC2 choice — they also help the first EC2 image pull during user-data.
+**Batch cold-start stack (now on the active path).** The Batch design uses three optimizations to minimize cold-start: ECR pull-through cache (~120 s → ~30 s pull), SOCI lazy loading (container starts before image fully pulled), and aggressive `.dockerignore` + explicit `COPY` in the training Dockerfile (~8 GB → ~5–6 GB image). Full tables in [docs/batch_design.md](batch_design.md). These are independent of the EC2 choice — they also help the first EC2 image pull during user-data when the rollback path runs.
 
 **Rejected.** Dedicated-instance reserved-pricing: commits to 24/7 usage we don't need. Spot on EC2 with no auto-shutdown: interrupts mid-training. On-demand with no auto-shutdown: burns $0.53/hr through idle weekends. Lambda-backed GPU (not generally available at this size): no GPU, and would add a cold-start problem back.
 
@@ -476,7 +481,7 @@ The 24-vCPU Spot quota in us-east-1 is sized exactly for six g4dn.xlarge (`maxVc
 ## 4. Cross-Cutting Consequences
 
 **What becomes easier.**
-- *Parallel iteration per position.* A change to RB features affects only RB's training job, only RB's models, only RB's tests. D2 (multi-head), D6 (allowlist), and D7 (parallel Batch jobs) compose into position-independent evolution.
+- *Parallel iteration per position.* A change to RB features affects only RB's training job, only RB's models, only RB's tests. D2 (multi-head), D6 (allowlist), and D13 (parallel Batch jobs on the active path) compose into position-independent evolution.
 - *Reproducible serving.* The Flask image is immutable and SHA-tagged (D10); models are baked in, not pulled at runtime. No "it worked yesterday" class of bugs.
 - *Audit trail for leakage.* The allowlist (D6) plus the temporal split (D1) plus the ±4σ clip (D5) means any new feature has to survive three independent checks before it affects training.
 - *Visibility into perf regressions.* Phase-level timings emitted under D12 make a slow-down at any pipeline stage visible in the next benchmark JSON without an explicit perf-test job.
@@ -514,15 +519,15 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 - **Training:** [src/shared/training.py](../src/shared/training.py) (MultiTargetLoss, trainer, schedulers), [src/shared/pipeline.py](../src/shared/pipeline.py) (pipeline orchestrator).
 - **Per-position configs:** `src/qb/config.py`, `src/rb/config.py`, `src/wr/config.py`, `src/te/config.py`, `src/k/config.py`, `src/dst/config.py`.
 - **Serving:** [src/serving/app.py](../src/serving/app.py), [Dockerfile](../Dockerfile).
-- **Training infra (active, EC2):** [infra/ec2/](../infra/ec2/), [src/batch/train.py](../src/batch/train.py), [src/batch/Dockerfile.train](../src/batch/Dockerfile.train), [src/batch/build_and_push.sh](../src/batch/build_and_push.sh), [.github/workflows/train-ec2.yml](../.github/workflows/train-ec2.yml).
-- **Training infra (standby, Batch):** [src/batch/launch.py](../src/batch/launch.py), [.github/workflows/batch-image.yml](../.github/workflows/batch-image.yml).
+- **Training infra (active, Batch):** [infra/batch/](../infra/batch/), [src/batch/launch.py](../src/batch/launch.py), [src/batch/train.py](../src/batch/train.py), [src/batch/Dockerfile.train](../src/batch/Dockerfile.train), [src/batch/build_and_push.sh](../src/batch/build_and_push.sh), [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml), [.github/workflows/batch-image.yml](../.github/workflows/batch-image.yml).
+- **Training infra (rollback, EC2):** [infra/ec2/](../infra/ec2/), [.github/workflows/train-ec2.yml](../.github/workflows/train-ec2.yml). Reuses the same `src/batch/train.py` entrypoint and Dockerfile.
 - **CI:** [.github/workflows/tests.yml](../.github/workflows/tests.yml), [train-ec2.yml](../.github/workflows/train-ec2.yml), [batch-image.yml](../.github/workflows/batch-image.yml), [deploy.yml](../.github/workflows/deploy.yml).
 
 ### Related design docs
 
 - [docs/method_contracts.md](method_contracts.md) — function signatures + data-layer contracts.
-- [docs/ec2_design.md](ec2_design.md) — warm-host training design (authoritative for D7 active path + D9).
-- [docs/batch_design.md](batch_design.md) — Batch cold-start analysis, cost breakdown (authoritative for the D7 standby path).
+- [docs/batch_design.md](batch_design.md) — Batch + Spot fan-out design, cold-start optimizations, cost breakdown (authoritative for D13, the active push-driven path).
+- [docs/ec2_design.md](ec2_design.md) — warm-host training design (authoritative for the D7 / D9 rollback path).
 - [infra/aws/README.md](../infra/aws/README.md) — ECS + ALB + domain runbook (authoritative for D8 serving ops).
 - [infra/ec2/README.md](../infra/ec2/README.md) — EC2 warm-host runbook (authoritative for D9 ops).
 - [docs/design_weather_and_odds.md](design_weather_and_odds.md) — weather/Vegas feature rationale (folded into D6).
