@@ -240,6 +240,8 @@ def get_inference_spec(pos: str) -> dict:
             "attn_history_stats": list(getattr(rb_cfg, "ATTN_HISTORY_STATS", []) or []),
             "attn_static_features": list(getattr(rb_cfg, "ATTN_STATIC_FEATURES", []) or []),
             "attn_max_seq_len": getattr(rb_cfg, "ATTN_MAX_SEQ_LEN", 17),
+            "opp_attn_history_stats": list(getattr(rb_cfg, "OPP_ATTN_HISTORY_STATS", []) or []),
+            "opp_attn_max_seq_len": getattr(rb_cfg, "OPP_ATTN_MAX_SEQ_LEN", 17),
             "attn_nn_kwargs_static": _attn_kwargs_static(rb_cfg),
             "train_lightgbm": bool(getattr(rb_cfg, "TRAIN_LIGHTGBM", False)),
         }
