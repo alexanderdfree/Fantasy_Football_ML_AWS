@@ -204,12 +204,14 @@ def test_reconstruct_weekly_from_pbp_happy_path(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 def test_reconstruct_weekly_from_pbp_cache_hit(tmp_path, monkeypatch):
-    """Pre-existing cache parquet → no PBP call, just a load-and-return."""
+    """Pre-existing cache parquet with the current schema → no PBP call, just
+    a load-and-return."""
     import src.k.data as k_data
 
-    # Pre-write the cache file.
+    # Pre-write the cache file with the full current schema (required by the
+    # `_cached_pbp_is_current` guard added after the Apr-19 stale-cache bug).
     cache_path = tmp_path / "kicker_pbp_2021_2021.parquet"
-    pd.DataFrame({"player_id": ["K01"], "season": [2021], "week": [1]}).to_parquet(cache_path)
+    pd.DataFrame([_kicker_pbp_cache_row("K01", 2021, 1)]).to_parquet(cache_path)
 
     def _should_not_be_called(*args, **kwargs):
         raise AssertionError("import_pbp_data was called despite cache hit")
@@ -219,6 +221,37 @@ def test_reconstruct_weekly_from_pbp_cache_hit(tmp_path, monkeypatch):
     out = k_data.reconstruct_kicker_weekly_from_pbp([2021], cache_dir=str(tmp_path))
     assert len(out) == 1
     assert out.iloc[0]["player_id"] == "K01"
+
+
+@pytest.mark.unit
+def test_reconstruct_weekly_from_pbp_stale_cache_regenerates(tmp_path, monkeypatch, capsys):
+    """A cache parquet missing required columns (e.g. ``fg_yards_made`` added
+    after the cache was written) must be ignored and the PBP path re-run.
+
+    Regression guard for the Apr-19 stale-cache bug where the cache survived a
+    schema change and silently zeroed `fg_yard_points` for the entire training
+    range — collapsing K projections from 8-10 fpts down to ~3 fpts.
+    """
+    import src.k.data as k_data
+
+    # Pre-write a parquet that looks plausible but is missing fg_yards_made.
+    stale_cache = tmp_path / "kicker_pbp_2020_2020.parquet"
+    pd.DataFrame({"player_id": ["K01"], "season": [2020], "week": [1]}).to_parquet(stale_cache)
+
+    monkeypatch.setattr(
+        k_data.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
+    )
+
+    out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
+
+    # The PBP path ran — output reflects the synthetic frame's many rows, not
+    # the 1-row stale cache.
+    assert len(out) > 1
+    assert "fg_yards_made" in out.columns
+    # Log line surfaces the bad schema so future debugging is obvious.
+    captured = capsys.readouterr().out
+    assert "Stale cache" in captured
+    assert "fg_yards_made" in captured
 
 
 @pytest.mark.unit
@@ -388,6 +421,28 @@ def test_load_kicker_data_uses_pbp_cache(_cached_pbp):
     # Every row must have total_line + implied_team_total post fillna.
     assert df["total_line"].notna().all()
     assert df["implied_team_total"].notna().all()
+
+
+@pytest.mark.unit
+def test_compute_targets_fg_yard_points_non_zero_after_load(_cached_pbp):
+    """End-to-end guard: load_data() → compute_targets() must produce non-zero
+    `fg_yard_points` across the training data.
+
+    Regression guard for the Apr-19 stale-cache bug where the cache survived a
+    schema change. `fg_yards_made` came back as NaN, `compute_targets` ran
+    `fillna(0)`, and the model trained on all-zero `fg_yard_points` →
+    catastrophic generalization gap on 2025 test data (R² = -1.79).
+    """
+    from src.k.data import load_data
+    from src.k.targets import compute_targets
+
+    df = compute_targets(load_data())
+    # Fixture row ships with fg_yards_made=55.0 → fg_yard_points = 5.5 on
+    # every kicker-game; assert the column isn't silently zeroed.
+    assert (df["fg_yard_points"] > 0).mean() > 0.5, (
+        "fg_yard_points collapsed to zero — cache schema check likely broke "
+        "or compute_targets stopped reading fg_yards_made"
+    )
 
 
 @pytest.mark.unit
