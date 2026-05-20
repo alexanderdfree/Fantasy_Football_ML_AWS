@@ -39,6 +39,14 @@ _REQUIRED_PBP_COLUMNS = frozenset(
         "pat_missed",
         "avg_fg_distance",
         "avg_fg_prob",
+        # Sentinel for the XP-venue backfill that populates roof/surface for
+        # XP-only kicker-weeks. Caches written before this fix don't carry the
+        # column → schema check fails → cache rejected → regenerated with the
+        # post-fix logic. Keeps train (cache) in lockstep with test (live
+        # backfill in `_backfill_2025_pbp_columns` + `load_data` schedules
+        # fallback) so the model doesn't see a different distribution at
+        # train vs inference time.
+        "_xp_venue_backfilled",
     }
 )
 
@@ -156,6 +164,11 @@ def reconstruct_kicker_weekly_from_pbp(
             )
 
             # --- Extra points ---
+            # XP groupby pulls player_name/posteam/roof/surface alongside the
+            # XP counts so XP-only kicker-weeks (no FG attempts) still have
+            # those identity + venue fields populated after the outer join
+            # below — the FG groupby is the only other source and yields no
+            # row for XP-only games.
             xp = pbp[pbp["extra_point_attempt"] == 1].copy()
             xp["xp_made"] = (xp["extra_point_result"] == "good").astype(int)
             xp["xp_missed"] = (xp["extra_point_result"] != "good").astype(int)
@@ -166,14 +179,33 @@ def reconstruct_kicker_weekly_from_pbp(
                     pat_att=("xp_made", "count"),
                     pat_made=("xp_made", "sum"),
                     pat_missed=("xp_missed", "sum"),
+                    kicker_player_name_xp=("kicker_player_name", "first"),
+                    posteam_xp=("posteam", "first"),
+                    roof_xp=("roof", "first"),
+                    surface_xp=("surface", "first"),
                 )
                 .reset_index()
             )
 
-            # Merge FG + XP
+            # Merge FG + XP (outer so XP-only games survive).
             weekly_k = weekly_fg.merge(
                 weekly_xp, on=["kicker_player_id", "season", "week"], how="outer"
             )
+
+            # For XP-only games, FG columns are NaN — backfill identity + venue
+            # from the XP-side copies, then drop the auxiliary columns.
+            for col in ("kicker_player_name", "posteam", "roof", "surface"):
+                weekly_k[col] = weekly_k[col].fillna(weekly_k[f"{col}_xp"])
+                weekly_k.drop(columns=[f"{col}_xp"], inplace=True)
+
+            # Sentinel column for cache-version detection. Stale caches written
+            # before the XP-venue backfill landed don't have it, so the schema
+            # check (`_REQUIRED_PBP_COLUMNS`) rejects them and forces regen —
+            # otherwise the 589 historical XP-only games would keep their
+            # `is_dome=0` / `roof=NaN` defaults and the train distribution
+            # would diverge from the post-fix test backfill.
+            weekly_k["_xp_venue_backfilled"] = True
+
             all_weekly.append(weekly_k)
         except Exception as e:
             print(f"  WARNING: PBP weekly extraction failed for {yr} ({e}); skipping")
@@ -292,24 +324,41 @@ def load_data() -> pd.DataFrame:
     games_per_season = k_df.groupby(["player_id", "season"])["week"].transform("count")
     k_df = k_df[games_per_season >= MIN_GAMES].copy()
 
-    # --- Merge schedule info (is_home, Vegas lines) ---
+    # --- Merge schedule info (is_home, Vegas lines, venue fallback) ---
+    # roof/surface from the schedules parquet are folded into the same
+    # home/away → recent_team reshape so we get them via one merge. PBP
+    # already populates roof/surface for FG-attempt games; the schedules
+    # values backfill the XP-only kicker-weeks (and 2025 games not yet
+    # in the cached PBP). Schedules uses historical team codes (OAK/SD/STL)
+    # while PBP normalises to current codes; map back so the join still hits
+    # for pre-2017 rows.
     schedules = pd.read_parquet(
         f"{CACHE_DIR}/schedules_{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}.parquet"
     )
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
+    has_venue = {"roof", "surface"}.issubset(schedules_reg.columns)
+    venue_cols = ["roof", "surface"] if has_venue else []
+    base_cols = ["season", "week", "spread_line", "total_line"] + venue_cols
 
-    home = schedules_reg[["season", "week", "home_team", "spread_line", "total_line"]].copy()
-    home.columns = ["season", "week", "recent_team", "spread_line", "total_line"]
+    home = schedules_reg[base_cols + ["home_team"]].rename(columns={"home_team": "recent_team"})
     home["is_home"] = 1
     home["implied_team_total"] = (home["total_line"] - home["spread_line"]) / 2
 
-    away = schedules_reg[["season", "week", "away_team", "spread_line", "total_line"]].copy()
-    away.columns = ["season", "week", "recent_team", "spread_line", "total_line"]
+    away = schedules_reg[base_cols + ["away_team"]].rename(columns={"away_team": "recent_team"})
     away["is_home"] = 0
     away["implied_team_total"] = (away["total_line"] + away["spread_line"]) / 2
 
-    schedule_info = pd.concat([home, away], ignore_index=True)
-    schedule_info.drop(columns=["spread_line"], inplace=True)
+    schedule_info = pd.concat([home, away], ignore_index=True).drop(columns=["spread_line"])
+    # Suffix the venue cols so we don't overwrite PBP-populated values on rows
+    # where PBP already has them — we only want to fill where PBP is NaN/"".
+    if has_venue:
+        schedule_info = schedule_info.rename(
+            columns={"roof": "roof_sched", "surface": "surface_sched"}
+        )
+        # Apply team-code normalization shared with weather_features so
+        # pre-relocation OAK/SD/STL games still match modern LV/LAC/LA rows.
+        _team_remap = {"OAK": "LV", "SD": "LAC", "STL": "LA"}
+        schedule_info["recent_team"] = schedule_info["recent_team"].replace(_team_remap)
 
     k_df = k_df.merge(schedule_info, on=["recent_team", "season", "week"], how="left")
 
@@ -319,6 +368,27 @@ def load_data() -> pd.DataFrame:
         k_df[col] = k_df[col].fillna(median_val)
     if "is_home" not in k_df.columns or k_df["is_home"].isna().any():
         k_df["is_home"] = k_df["is_home"].fillna(0)
+
+    # Fold roof/surface from schedules into the existing columns wherever the
+    # PBP-derived value is NaN or "" — surface is occasionally an empty string
+    # in PBP for games nflverse hasn't fully populated (e.g. 2025 KC@LAC wk 1).
+    if has_venue:
+        for col in ("roof", "surface"):
+            sched_col = f"{col}_sched"
+            if sched_col not in k_df.columns:
+                continue
+            if k_df[col].dtype != object:
+                k_df[col] = k_df[col].astype(object)
+            empty_or_nan = k_df[col].isna() | (k_df[col] == "")
+            k_df.loc[empty_or_nan, col] = k_df.loc[empty_or_nan, sched_col]
+        k_df.drop(columns=["roof_sched", "surface_sched"], inplace=True)
+        # Re-derive is_dome where roof is now populated but is_dome was missed.
+        if "is_dome" not in k_df.columns:
+            k_df["is_dome"] = float("nan")
+        needs_redrv = k_df["is_dome"].isna() & k_df["roof"].notna()
+        k_df.loc[needs_redrv, "is_dome"] = (
+            k_df.loc[needs_redrv, "roof"].isin(["dome", "closed"]).astype(int)
+        )
 
     print(
         f"  Kicker data: {len(k_df)} rows, {k_df['player_id'].nunique()} kickers, "
@@ -354,9 +424,28 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
 
     try:
         all_weekly = []
+        all_game_venue = []
         for yr in seasons:
             pbp = nfl.import_pbp_data([yr], downcast=True)
             pbp = pbp[pbp["season_type"] == "REG"]
+
+            # Game-level venue/weather lookup keyed on (season, week, posteam).
+            # Sourced from any PBP row (not just FGs) so kickers in XP-only
+            # games still get roof/surface/wind/temp — fixes the 55 NaN test
+            # rows the signal-floor diagnostic surfaced (see TODO archive).
+            game_venue = (
+                pbp.dropna(subset=["posteam"])
+                .groupby(["season", "week", "posteam"])
+                .agg(
+                    game_wind=("wind", "first"),
+                    game_temp=("temp", "first"),
+                    roof=("roof", "first"),
+                    surface=("surface", "first"),
+                )
+                .reset_index()
+            )
+            game_venue["is_dome"] = game_venue["roof"].isin(["dome", "closed"]).astype(int)
+            all_game_venue.append(game_venue)
 
             fg = pbp[pbp["field_goal_attempt"] == 1].copy()
             d = fg["kick_distance"]
@@ -384,33 +473,52 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
                     q4_fg_made=("q4_made", "sum"),
                     long_fg_att=("is_long", "sum"),
                     long_fg_made=("long_made", "sum"),
-                    game_wind=("wind", "first"),
-                    game_temp=("temp", "first"),
-                    roof=("roof", "first"),
-                    surface=("surface", "first"),
                     fg_yards_made=("_fg_yards_made_flag", "sum"),
                 )
                 .reset_index()
             )
-            weekly_pbp["is_dome"] = weekly_pbp["roof"].isin(["dome", "closed"]).astype(int)
             weekly_pbp.rename(columns={"kicker_player_id": "player_id"}, inplace=True)
             all_weekly.append(weekly_pbp)
 
         pbp_all = pd.concat(all_weekly, ignore_index=True)
-        key = ["player_id", "season", "week"]
+        venue_all = pd.concat(all_game_venue, ignore_index=True)
+
         # roof/surface are initialized as float NaN upstream; cast to object so
         # DataFrame.update can write the string values pulled from PBP.
         for str_col in ("roof", "surface"):
             if k_df[str_col].dtype != object:
                 k_df[str_col] = k_df[str_col].astype(object)
+
+        # First pass: FG-derived columns keyed on (player_id, season, week).
+        fg_backfill_cols = [
+            c
+            for c in backfill_cols
+            if c not in ("game_wind", "game_temp", "roof", "surface", "is_dome")
+        ]
+        key = ["player_id", "season", "week"]
         # DataFrame.update aligns on index and overwrites non-NaN values from the source.
         # Wrap in try/finally so a failure inside update() can't leave k_df stuck
         # with the composite index (which would break downstream groupby calls).
         k_df.set_index(key, inplace=True)
         try:
-            k_df.update(pbp_all.set_index(key)[backfill_cols])
+            k_df.update(pbp_all.set_index(key)[fg_backfill_cols])
         finally:
             k_df.reset_index(inplace=True)
+
+        # Second pass: game-level venue/weather keyed on (season, week,
+        # recent_team). Independent of whether the kicker had FG attempts —
+        # so XP-only games get populated too. Skip if k_df doesn't carry
+        # recent_team (synthetic fixtures may omit it; production rows always
+        # have it from the weekly parquet).
+        if "recent_team" in k_df.columns:
+            venue_cols = ["game_wind", "game_temp", "roof", "surface", "is_dome"]
+            venue_lookup = venue_all.rename(columns={"posteam": "recent_team"})
+            venue_key = ["season", "week", "recent_team"]
+            k_df.set_index(venue_key, inplace=True)
+            try:
+                k_df.update(venue_lookup.set_index(venue_key)[venue_cols])
+            finally:
+                k_df.reset_index(inplace=True)
     except Exception as e:
         print(f"  WARNING: 2025 PBP backfill failed ({e}), PBP features will be NaN for 2025")
 
