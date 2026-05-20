@@ -43,6 +43,11 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **Files:** `src/rb/features.py:74`, `src/wr/features.py:58`, `src/te/features.py:51`
 - **What:** Team carry/target shares are computed within each split independently (`compute_team_*_totals` runs on each split's own data). A player's share could differ between train and test if their teammates are distributed differently across splits. By design (prevents leakage), but the share values won't be globally consistent.
 
+### [LOW] Unify the three `detect` jobs into one shared helper
+- **Files:** `.github/workflows/train-batch.yml` (detect), `.github/workflows/train-ec2.yml` (detect), `.github/workflows/tests.yml` (detect)
+- **What:** `train-batch.yml` and `train-ec2.yml` already share `src/scripts/scope_positions.py` (pinned by `tests/scripts/test_scope_positions.py`). `tests.yml`'s detect job has divergent semantics — docs/markdown stripping, a `shared` shard fallback, and a different global-trigger list (`conftest.py`, `pyproject.toml`, `tests/_pipeline_e2e_utils.py`, etc.) — so it still computes its scoping in inline bash.
+- **Why not now:** The tests detect mapping is genuinely different (it emits *shard names*, including a `shared` shard, and falls back to all-shards on uncertainty). Sharing one helper would need a config-driven mapping, not the train detect's hardcoded list. Worth doing once the train side's contract has bedded in, but no rush.
+
 ---
 
 ## Archive (Fixed)

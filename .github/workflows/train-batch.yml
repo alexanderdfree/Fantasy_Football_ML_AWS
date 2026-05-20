@@ -38,10 +38,10 @@ env:
 
 jobs:
   detect:
-    # Position-scoping is the same as train-ec2.yml — kept verbatim so a
-    # change in either workflow's scoping rules can be diffed against the
-    # other. workflow_dispatch honors the explicit input; workflow_run
-    # scopes via git diff on the merge commit.
+    # Position-scoping is shared with train-ec2.yml — the path → positions
+    # mapping lives in src/scripts/scope_positions.py and is contract-tested
+    # by tests/scripts/test_scope_positions.py. workflow_dispatch honors the
+    # explicit input; workflow_run scopes via git diff on the merge commit.
     runs-on: ubuntu-latest
     outputs:
       positions: ${{ steps.scope.outputs.positions }}
@@ -80,23 +80,10 @@ jobs:
           echo "Changed files:"
           printf '  %s\n' $files
 
-          model_files=$(printf '%s\n' "$files" | grep -vE '^tests/' || true)
-          echo "Model-relevant changed files:"
-          printf '  %s\n' $model_files
-
-          if printf '%s\n' "$model_files" | grep -qE '^src/(shared|batch|data|features|models|training|evaluation)/|^src/config\.py$|^requirements\.txt$'; then
-            echo "Global code changed → retraining all positions."
-            echo "positions=$ALL" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          positions=""
-          for p in $ALL; do
-            if printf '%s\n' "$model_files" | grep -qE "^src/${p,,}/"; then
-              positions="${positions:+$positions }$p"
-            fi
-          done
-
+          # Pure-stdlib helper, no pip install needed; ubuntu-latest ships
+          # python3. Empty stdout = nothing model-relevant changed → train
+          # job skipped by the `if:` gate below.
+          positions=$(printf '%s\n' "$files" | python3 -m src.scripts.scope_positions)
           if [ -z "$positions" ]; then
             echo "No model-relevant paths changed — skipping training."
           else

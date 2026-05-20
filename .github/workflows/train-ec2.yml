@@ -36,7 +36,10 @@ jobs:
     # Decide which positions to train so we don't burn GPU time on positions
     # whose code didn't change. workflow_dispatch honors the explicit input
     # (break-glass); workflow_run scopes via git diff on the merge commit.
-    # Keep the global-trigger list in sync with batch-image.yml's path filter.
+    # The path → positions mapping lives in src/scripts/scope_positions.py
+    # (shared with train-batch.yml) and is contract-tested by
+    # tests/scripts/test_scope_positions.py — keep that module in sync with
+    # batch-image.yml's path filter if you change the global-trigger list.
     runs-on: ubuntu-latest
     outputs:
       positions: ${{ steps.scope.outputs.positions }}
@@ -83,35 +86,10 @@ jobs:
           echo "Changed files:"
           printf '  %s\n' $files
 
-          # Strip the tests/ subtree before scoping. A PR that only edits
-          # tests/ does not affect model artifacts, so the global + per-position
-          # checks below operate on a tests-free view of the diff. `|| true`
-          # keeps the step alive when grep -v has nothing left to print.
-          model_files=$(printf '%s\n' "$files" | grep -vE '^tests/' || true)
-          echo "Model-relevant changed files:"
-          printf '  %s\n' $model_files
-
-          # Global triggers → retrain everything. Must match batch-image.yml's
-          # path filter; src/shared/, src/batch/, src/config.py, src/data/,
-          # src/features/, src/models/, src/training/, src/evaluation/ all
-          # change shared signal, so a touch anywhere there retrains all.
-          if printf '%s\n' "$model_files" | grep -qE '^src/(shared|batch|data|features|models|training|evaluation)/|^src/config\.py$|^requirements\.txt$'; then
-            echo "Global code changed → retraining all positions."
-            echo "positions=$ALL" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Per-position: any non-test change under src/{pos}/ retrains that
-          # position. Docs and markdown still trigger retraining (cheap);
-          # the narrower filter above is scoped to tests/ only. Position dirs
-          # are lowercase on disk; lowercase $p with ${p,,} for the path match.
-          positions=""
-          for p in $ALL; do
-            if printf '%s\n' "$model_files" | grep -qE "^src/${p,,}/"; then
-              positions="${positions:+$positions }$p"
-            fi
-          done
-
+          # Pure-stdlib helper, no pip install needed; ubuntu-latest ships
+          # python3. Empty stdout = nothing model-relevant changed → train
+          # job skipped by the `if:` gate below.
+          positions=$(printf '%s\n' "$files" | python3 -m src.scripts.scope_positions)
           if [ -z "$positions" ]; then
             echo "No model-relevant paths changed — skipping training."
           else
