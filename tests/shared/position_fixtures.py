@@ -17,6 +17,13 @@ and target list.
 registration (unit / integration / e2e / regression) that every
 position was repeating.
 
+``register_standard_fixtures(globals_dict, ...)`` installs the standard
+QB/RB/K/DST-style ``make_sim_df`` / ``make_test_df`` / ``make_tensors``
+/ ``make_splits`` / ``make_position_df`` fixtures (plus the optional
+``sim_df`` / ``test_df`` default-args shortcuts) into a position
+conftest's globals so each conftest collapses to its own
+position-specific scaffolding plus a one-liner.
+
 RNG choice
 ----------
 
@@ -35,6 +42,7 @@ from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 
 # ---------------------------------------------------------------------------
@@ -259,3 +267,128 @@ def make_position_df(
             }
         )
     return pd.DataFrame(data)
+
+
+# ---------------------------------------------------------------------------
+# register_standard_fixtures — installs QB/RB/K/DST-style fixture wrappers
+# into a position conftest's globals so each conftest only has to spell out
+# its position-specific scaffolding.
+# ---------------------------------------------------------------------------
+
+
+def register_standard_fixtures(
+    globals_dict: dict,
+    *,
+    scoring_scale: float,
+    id_prefix: str,
+    targets: Iterable[str],
+    stat_col: str,
+    rng_kind: str = "legacy",
+    default_n_weeks: int = 4,
+    default_n_players: int = 15,
+    install_default_shortcuts: bool = False,
+    ranking_fixture_name: str = "make_test_df",
+    ranking_default_fixture_name: str = "test_df",
+    sim_default_fixture_name: str = "sim_df",
+    position_df_fixture_name: str = "make_position_df",
+) -> None:
+    """Install the standard position fixtures into a conftest's globals.
+
+    Generates the QB/RB/K/DST-style ``make_sim_df``, ``make_test_df`` (or
+    ``make_ranking_df``), ``make_tensors``, ``make_splits``, ``make_position_df``
+    pytest fixtures bound to the given position's scoring scale, id prefix,
+    targets, and stat column. Each fixture is a session-scoped factory; pass
+    ``install_default_shortcuts=True`` to also install a session-scoped
+    ``sim_df`` / ``test_df`` that calls the factory with the standard defaults
+    (K and DST historically expose both forms).
+
+    Use ``ranking_fixture_name="make_ranking_df"`` for RB, whose original
+    conftest used that name instead of ``make_test_df``.
+    """
+    targets = list(targets)
+
+    @pytest.fixture(scope="session")
+    def make_sim_df():
+        def _make(n_weeks=default_n_weeks, n_players=default_n_players, seed: int = 42):
+            return make_sim_df_factory(
+                scoring_scale,
+                n_weeks,
+                n_players,
+                seed,
+                id_prefix=id_prefix,
+                rng_kind=rng_kind,
+            )
+
+        return _make
+
+    globals_dict["make_sim_df"] = make_sim_df
+
+    @pytest.fixture(scope="session")
+    def make_ranking_df_fixture():
+        def _make(n_weeks=default_n_weeks, n_players=default_n_players, seed: int = 42):
+            return make_test_df_factory(
+                scoring_scale,
+                n_weeks,
+                n_players,
+                seed,
+                id_prefix=id_prefix,
+                rng_kind=rng_kind,
+            )
+
+        return _make
+
+    globals_dict[ranking_fixture_name] = make_ranking_df_fixture
+
+    if install_default_shortcuts:
+
+        @pytest.fixture(scope="session")
+        def sim_df_default(make_sim_df):
+            return make_sim_df(n_weeks=default_n_weeks, n_players=default_n_players)
+
+        globals_dict[sim_default_fixture_name] = sim_df_default
+
+        @pytest.fixture(scope="session")
+        def ranking_df_default(request):
+            factory = request.getfixturevalue(ranking_fixture_name)
+            return factory(n_weeks=3, n_players=default_n_players)
+
+        globals_dict[ranking_default_fixture_name] = ranking_df_default
+
+    @pytest.fixture
+    def make_tensors():
+        def _make(n: int = 10, seed: int = 42):
+            return make_tensors_factory(targets, n=n, seed=seed)
+
+        return _make
+
+    globals_dict["make_tensors"] = make_tensors
+
+    @pytest.fixture(scope="session")
+    def make_splits():
+        return make_splits_factory
+
+    globals_dict["make_splits"] = make_splits
+
+    @pytest.fixture(scope="session")
+    def make_position_df_fx():
+        def _make(positions, has_pos_cols: bool = True):
+            return make_position_df_factory(
+                positions,
+                stat_col=stat_col,
+                has_pos_cols=has_pos_cols,
+            )
+
+        return _make
+
+    globals_dict[position_df_fixture_name] = make_position_df_fx
+
+
+# Aliases referenced by ``register_standard_fixtures``. They point at the
+# module-level factory functions defined above; the locals re-bind under
+# different names so the inner pytest fixtures don't accidentally shadow
+# the module-level names when they're closed over.
+make_sim_df_factory = make_sim_df
+make_test_df_factory = make_test_df
+make_tensors_factory = make_tensors
+make_splits_factory = make_splits
+make_position_df_factory = make_position_df

@@ -1,10 +1,10 @@
-"""Shared fixtures for K (Kicker) tests — thin wrappers over tests.shared.position_fixtures.
+"""Shared fixtures for K (Kicker) tests.
 
-Generic factories (``make_sim_df``, ``make_test_df``, ``make_tensors``,
-``make_splits``) come from ``tests/shared/position_fixtures.py``.  Only
-kicker-specific helpers remain: ``make_kicker_games`` (per-week stat
-frame for feature tests) and the tiny synthetic dataset used by E2E /
-regression tests.
+The standard make_sim_df / sim_df / make_test_df / test_df / make_tensors /
+make_splits fixtures get installed by ``register_standard_fixtures`` (see
+``tests/shared/position_fixtures.py``); only kicker-specific helpers remain
+here — ``make_kicker_games`` (per-week stat frame for feature tests) and
+the tiny synthetic dataset used by E2E / regression tests.
 """
 
 import numpy as np
@@ -13,19 +13,8 @@ import pytest
 
 from src.k.config import TARGETS
 from tests.shared.position_fixtures import (
-    make_sim_df as _make_sim_df,
-)
-from tests.shared.position_fixtures import (
-    make_splits as _make_splits,
-)
-from tests.shared.position_fixtures import (
-    make_tensors as _make_tensors,
-)
-from tests.shared.position_fixtures import (
-    make_test_df as _make_test_df,
-)
-from tests.shared.position_fixtures import (
     register_position_markers,
+    register_standard_fixtures,
 )
 
 # Kickers typically score 5-15 fantasy points per game; FG driven.
@@ -36,80 +25,15 @@ def pytest_configure(config):
     register_position_markers(config)
 
 
-# ---------------------------------------------------------------------------
-# Generic K fixtures — bound to K scale / prefix / targets
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def make_sim_df():
-    """Factory fixture: build a simulated kicker DataFrame.
-
-    Usage:
-        def test_foo(make_sim_df):
-            df = make_sim_df(n_weeks=3, n_players=15)
-    """
-
-    def _make(n_weeks: int, n_players: int, seed: int = 42):
-        return _make_sim_df(
-            SCORING_SCALE,
-            n_weeks,
-            n_players,
-            seed,
-            id_prefix="K",
-            rng_kind="default",
-        )
-
-    return _make
-
-
-@pytest.fixture(scope="session")
-def sim_df(make_sim_df):
-    """Default 4-week x 15-kicker simulation DataFrame."""
-    return make_sim_df(n_weeks=4, n_players=15)
-
-
-@pytest.fixture(scope="session")
-def make_test_df():
-    """Factory fixture: build a ranking-test DataFrame."""
-
-    def _make(n_weeks: int, n_players: int, seed: int = 42):
-        return _make_test_df(
-            SCORING_SCALE,
-            n_weeks,
-            n_players,
-            seed,
-            id_prefix="K",
-            rng_kind="default",
-        )
-
-    return _make
-
-
-@pytest.fixture(scope="session")
-def test_df(make_test_df):
-    """Default 3-week x 15-kicker test DataFrame for ranking tests."""
-    return make_test_df(n_weeks=3, n_players=15)
-
-
-@pytest.fixture
-def make_tensors():
-    """Factory fixture (function-scoped): fresh tensors per test to avoid mutation.
-
-    Tensor fixtures are function-scoped because backward() accumulates grads —
-    sharing would leak state across tests.
-    """
-
-    def _make(n: int = 10, seed: int = 42):
-        return _make_tensors(TARGETS, n=n, seed=seed)
-
-    return _make
-
-
-@pytest.fixture(scope="session")
-def make_splits():
-    """Factory fixture: build (train, val, test) DataFrames for NaN tests."""
-    return _make_splits
+register_standard_fixtures(
+    globals(),
+    scoring_scale=SCORING_SCALE,
+    id_prefix="K",
+    targets=TARGETS,
+    stat_col="passing_yards",  # K uses the default; not consumed by K tests
+    rng_kind="default",
+    install_default_shortcuts=True,
+)
 
 
 # ---------------------------------------------------------------------------
