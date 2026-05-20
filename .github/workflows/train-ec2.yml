@@ -121,13 +121,15 @@ jobs:
 
   train:
     needs: detect
-    # Gate: (a) detect found something to train, AND (b) the event is a
-    # manual dispatch or a successful upstream image build. Dispatches
-    # always satisfy (a) via the legacy fallback in detect.
+    # Gate: (a) detect found something to train; (b) either a manual dispatch
+    # (break-glass — bypasses BATCH_ACTIVE so the EC2 path can be tested even
+    # when Batch is active), or the upstream image build succeeded AND the
+    # Batch trainer is NOT the active path. Flipping BATCH_ACTIVE=true sends
+    # workflow_run training to train-batch.yml instead.
     if: >
       needs.detect.outputs.positions != '' &&
       (github.event_name == 'workflow_dispatch' ||
-       github.event.workflow_run.conclusion == 'success')
+       (vars.BATCH_ACTIVE != 'true' && github.event.workflow_run.conclusion == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -1,0 +1,276 @@
+name: Train on Batch (Spot)
+
+# Active training path when BATCH_ACTIVE=true. Fires after batch-image.yml
+# pushes a fresh image to ECR, then submits one Batch job per position to the
+# ff-gpu-spot Compute Environment. Each position trains in parallel on its own
+# Spot g4dn.xlarge. See docs/batch_design.md.
+#
+# When BATCH_ACTIVE != 'true' the gate on the `train` job below skips this
+# workflow on workflow_run; train-ec2.yml stays active. workflow_dispatch
+# always bypasses the gate as a smoke-test break-glass.
+
+on:
+  workflow_run:
+    workflows: ["Build & Push Batch Training Image"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      positions:
+        description: "Space-separated positions to train"
+        default: "QB RB WR TE K DST"
+      seed:
+        description: "Random seed"
+        default: "42"
+
+# Deliberately NO `concurrency:` block — Spot fan-out lets parallel runs from
+# rapid pushes coexist (Batch queues at the AWS level when the 24-vCPU quota
+# is saturated). Each run completes its post-train benchmark commit, so every
+# push contributes a benchmark_history/{run_id}.json record. The constrained
+# warm-EC2 path keeps its cancel-in-progress because one T4 can't run
+# concurrent jobs; that decision lives with the constrained path.
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: ff-predictor-training
+  ECS_CLUSTER: fantasy-cluster
+  ECS_SERVICE: fantasy-service
+
+jobs:
+  detect:
+    # Position-scoping is the same as train-ec2.yml — kept verbatim so a
+    # change in either workflow's scoping rules can be diffed against the
+    # other. workflow_dispatch honors the explicit input; workflow_run
+    # scopes via git diff on the merge commit.
+    runs-on: ubuntu-latest
+    outputs:
+      positions: ${{ steps.scope.outputs.positions }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_POSITIONS: ${{ github.event.inputs.positions }}
+        run: |
+          set -eu
+          ALL="QB RB WR TE K DST"
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ -n "$INPUT_POSITIONS" ]; then
+              echo "Dispatch override: $INPUT_POSITIONS"
+              echo "positions=$INPUT_POSITIONS" >> "$GITHUB_OUTPUT"
+            else
+              echo "Dispatch with empty input → all positions."
+              echo "positions=$ALL" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            echo "No parent commit — defaulting to all positions."
+            echo "positions=$ALL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          files=$(git diff --name-only HEAD^ HEAD)
+          echo "Changed files:"
+          printf '  %s\n' $files
+
+          model_files=$(printf '%s\n' "$files" | grep -vE '^tests/' || true)
+          echo "Model-relevant changed files:"
+          printf '  %s\n' $model_files
+
+          if printf '%s\n' "$model_files" | grep -qE '^src/(shared|batch|data|features|models|training|evaluation)/|^src/config\.py$|^requirements\.txt$'; then
+            echo "Global code changed → retraining all positions."
+            echo "positions=$ALL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          positions=""
+          for p in $ALL; do
+            if printf '%s\n' "$model_files" | grep -qE "^src/${p,,}/"; then
+              positions="${positions:+$positions }$p"
+            fi
+          done
+
+          if [ -z "$positions" ]; then
+            echo "No model-relevant paths changed — skipping training."
+          else
+            echo "Scoped retrain: $positions"
+          fi
+          echo "positions=$positions" >> "$GITHUB_OUTPUT"
+
+  train:
+    needs: detect
+    # Gate: (a) detect found something to train; (b) either a manual dispatch
+    # (smoke-test break-glass, bypasses BATCH_ACTIVE), or the upstream image
+    # build succeeded AND BATCH_ACTIVE=true.
+    if: >
+      needs.detect.outputs.positions != '' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (vars.BATCH_ACTIVE == 'true' && github.event.workflow_run.conclusion == 'success'))
+    runs-on: ubuntu-latest
+    # Worst case: attempts=3 Spot retries × 1800s per attempt = 90 min per
+    # chronically-interrupted position, parallel = 90 min + cold-start + post.
+    # 180 min ceiling keeps a hung run from spinning forever.
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Checkout repo
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          fetch-depth: 0
+          # Admin PAT so the later benchmark-history push bypasses main's
+          # required status checks (enforce_admins=false on classic protection).
+          token: ${{ secrets.PROTECTED_PUSH_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install launch + benchmark deps
+        # requirements-dev.txt mirrors train-ec2.yml — src/batch/benchmark.py's
+        # import chain pulls torch. src/batch/launch.py needs boto3, which is
+        # in requirements.txt.
+        run: pip install -r requirements-dev.txt
+
+      - name: Submit Batch jobs and wait
+        id: train
+        run: |
+          STARTED_AT=$(date +%s)
+          echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
+          POSITIONS="${{ needs.detect.outputs.positions }}"
+          SEED="${{ github.event.inputs.seed || '42' }}"
+          # launch.py blocks on wait_for_jobs(); returns 0 only if all
+          # positions reach SUCCEEDED. --skip-upload because CI has no local
+          # data/splits/*.parquet — the splits in s3://ff-predictor-training/data/
+          # are refreshed out-of-band by a developer running launch.py from a
+          # workstation.
+          python -m src.batch.launch \
+            --positions $POSITIONS \
+            --seed "$SEED" \
+            --skip-upload
+
+      - name: Verify model artifact freshness
+        # Anchor on when training STARTED, not "now" — Spot parallelism makes
+        # this less likely to false-trip than the sequential EC2 path, but
+        # the same logic protects against e.g. a chronically retrying job
+        # whose artifact predates this run.
+        run: |
+          POSITIONS="${{ needs.detect.outputs.positions }}"
+          train_started_at="${{ steps.train.outputs.started_at }}"
+          echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
+          fail=0
+          for POS in $POSITIONS; do
+            META=$(aws s3api head-object \
+              --bucket "$S3_BUCKET" \
+              --key "models/$POS/model.tar.gz" \
+              --region "$AWS_REGION" 2>/dev/null || echo '{}')
+            LM=$(echo "$META" | jq -r '.LastModified // empty')
+            SZ=$(echo "$META" | jq -r '.ContentLength // 0')
+            if [ -z "$LM" ]; then
+              echo "| $POS | MISSING | — | — |" >> "$GITHUB_STEP_SUMMARY"
+              fail=1
+              continue
+            fi
+            lm_ts=$(date -d "$LM" +%s)
+            age=$(( train_started_at - lm_ts ))
+            status="OK"
+            if [ "$age" -gt 1200 ]; then status="STALE (${age}s before train start)"; fail=1; fi
+            mb=$(awk "BEGIN{printf \"%.1f\", $SZ/1048576}")
+            echo "| $POS | $status | $LM | $mb |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit $fail
+
+      - name: Refresh ECS service to pick up new model artifacts
+        # Same flow as train-ec2.yml — force a rolling redeploy so the
+        # task's boot-time sync_models_from_s3 picks up the freshly promoted
+        # manifests. services-stable wait ensures a model-load regression
+        # surfaces here instead of silently serving NaN preds.
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --region "$AWS_REGION" \
+            --force-new-deployment \
+            --no-cli-pager > /dev/null
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region "$AWS_REGION"
+
+      - name: Append Batch run to benchmark_history/
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
+          FF_MODEL_S3_PREFIX: models
+        run: |
+          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
+          POSITIONS="${{ needs.detect.outputs.positions }}"
+          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+          PR_NUMBER=""
+          if [ -n "$HEAD_SHA" ]; then
+            PR_NUMBER=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" \
+              --jq '.[0].number // empty' 2>/dev/null || true)
+          fi
+          git fetch origin "$BRANCH"
+          git pull --rebase origin "$BRANCH"
+          PR_ARGS=()
+          if [ -n "$PR_NUMBER" ]; then
+            PR_ARGS=(--pr-number "$PR_NUMBER")
+            echo "Resolved PR #$PR_NUMBER for $HEAD_SHA"
+          else
+            echo "No PR resolved for $HEAD_SHA (direct push or workflow_dispatch)"
+          fi
+          python -m src.batch.benchmark \
+            --download-only \
+            --backend batch \
+            --instance-type "g4dn.xlarge (Spot)" \
+            --positions $POSITIONS \
+            --note "Batch Spot auto-run (${GITHUB_SHA::7})" \
+            "${PR_ARGS[@]}"
+
+      - name: Commit and push benchmark_history/
+        run: |
+          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add benchmark_history/
+          if git diff --cached --quiet -- benchmark_history/; then
+            echo "No history changes — skipping commit."
+            exit 0
+          fi
+          staged=$(git diff --cached --name-only)
+          unexpected=$(echo "$staged" | grep -v '^benchmark_history/' || true)
+          if [ -n "$unexpected" ]; then
+            echo "ERROR: unexpected staged paths (expected benchmark_history/ only):"
+            echo "$unexpected"
+            exit 1
+          fi
+          git commit -m "chore(ci): append Batch benchmark run ${GITHUB_SHA::7}"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:"refs/heads/$BRANCH"; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push attempt $attempt failed — rebasing and retrying"
+            git pull --rebase origin "$BRANCH"
+          done
+          echo "Push failed after 3 attempts"
+          exit 1

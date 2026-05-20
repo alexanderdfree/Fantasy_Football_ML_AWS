@@ -7,6 +7,7 @@ Usage:
     python src/batch/launch.py --dry-run               # print plan, touch nothing
     python src/batch/launch.py --wait-timeout 1800     # override 3h default
     python src/batch/launch.py --force-upload          # skip ETag dedup
+    python src/batch/launch.py --skip-upload           # assume S3 current (CI)
 
 Config (environment variables, all optional):
     FF_S3_BUCKET        (default: ff-predictor-training)
@@ -331,6 +332,14 @@ def main():
         action="store_true",
         help="Upload data splits even if S3 ETag matches the local file",
     )
+    parser.add_argument(
+        "--skip-upload",
+        action="store_true",
+        help=(
+            "Skip uploading data/splits/*.parquet (assume S3 already current). "
+            "Used by CI (train-batch.yml) where the runner has no local data."
+        ),
+    )
     args = parser.parse_args()
     wait = args.wait.lower() == "true"
     wait_timeout = args.wait_timeout if args.wait_timeout is not None else WAIT_TIMEOUT_SECONDS
@@ -343,9 +352,11 @@ def main():
     s3_client = boto3.client("s3", region_name=AWS_REGION)
     batch_client = boto3.client("batch", region_name=AWS_REGION)
 
-    # Upload data splits to S3 (skips unchanged files by default)
-    print("Uploading data splits to S3...")
-    upload_data(S3_BUCKET, s3_client=s3_client, force=args.force_upload)
+    if args.skip_upload:
+        print("Skipping data upload (--skip-upload); assuming S3 splits are current.\n")
+    else:
+        print("Uploading data splits to S3...")
+        upload_data(S3_BUCKET, s3_client=s3_client, force=args.force_upload)
 
     # Submit all positions in parallel
     print(f"Submitting {len(args.positions)} Batch jobs: {args.positions}")
