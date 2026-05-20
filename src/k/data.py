@@ -2,6 +2,7 @@ import os
 
 import nfl_data_py as nfl
 import pandas as pd
+import pyarrow.parquet as pq
 
 from src.config import CACHE_DIR
 from src.config import SEASONS as GLOBAL_SEASONS
@@ -10,6 +11,52 @@ from src.k.config import MIN_GAMES, SEASONS
 # ---------------------------------------------------------------------------
 # PBP-based kicker reconstruction (2015-2024)
 # ---------------------------------------------------------------------------
+
+# Columns the current aggregation produces that downstream targets/features
+# depend on. A cached parquet missing any of these was written by an older
+# code version and must be regenerated rather than silently fed forward —
+# `compute_targets` does `fillna(0)`, so a missing column turns into all-zero
+# targets without an exception (cf. the Apr-19 cache that zeroed
+# `fg_yard_points` for 2015-2024 and collapsed K projections to ~3 fpts).
+_REQUIRED_PBP_COLUMNS = frozenset(
+    {
+        "player_id",
+        "season",
+        "week",
+        "recent_team",
+        "fg_att",
+        "fg_made",
+        "fg_missed",
+        "fg_yards_made",
+        "fg_made_0_19",
+        "fg_made_20_29",
+        "fg_made_30_39",
+        "fg_made_40_49",
+        "fg_made_50_59",
+        "fg_made_60_",
+        "pat_att",
+        "pat_made",
+        "pat_missed",
+        "avg_fg_distance",
+        "avg_fg_prob",
+    }
+)
+
+
+def _cached_pbp_is_current(cache_path: str) -> bool:
+    """Return True only if the cached parquet at ``cache_path`` has every
+    column the current aggregation produces.
+
+    Reads just the parquet schema (no row data) so the check is cheap. A
+    False return signals the caller to ignore the cache and regenerate from
+    PBP.
+    """
+    schema_names = set(pq.read_schema(cache_path).names)
+    missing = _REQUIRED_PBP_COLUMNS - schema_names
+    if missing:
+        print(f"  Stale cache at {cache_path} missing {sorted(missing)}; regenerating")
+        return False
+    return True
 
 
 def reconstruct_kicker_weekly_from_pbp(
@@ -29,7 +76,7 @@ def reconstruct_kicker_weekly_from_pbp(
     if cache_dir is None:
         cache_dir = CACHE_DIR
     cache_path = f"{cache_dir}/kicker_pbp_{seasons[0]}_{seasons[-1]}.parquet"
-    if os.path.exists(cache_path):
+    if os.path.exists(cache_path) and _cached_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
 
     all_weekly = []
