@@ -264,6 +264,10 @@ NN_HEAD_HIDDEN_OVERRIDES = {"receptions": 64}
 # with zero-excess up to +0.13 — textbook hurdle fit. Gate BCE is added via
 # GATED_TARGETS below; the ZTNB NLL trains on positive samples only, scaled
 # by fraction-positive inside the batch.
+# Variant E (hurdle_poisson on TDs + fumbles_lost) was tested and rejected —
+# wins per-target MAE on all three count heads but regresses FP MAE +0.163
+# vs the current Variant C config. See TODO.md archive entry "RB sparse-count
+# hurdle_poisson ablation" and docs/ARCHITECTURE.md D-entry for evidence.
 HEAD_LOSSES = {
     "rushing_tds": "poisson_nll",
     "receiving_tds": "poisson_nll",
@@ -406,6 +410,12 @@ OPP_ATTN_MAX_SEQ_LEN = 17
 # PR #96 benchmark review, and variant C addresses it without giving up
 # the hurdle-NegBin reception win. ``head_losses`` stays as PR #96 shipped
 # — TDs on ``poisson_nll`` with BCE gate loss added via ``gated_targets``.
+#
+# Variants D (hurdle_poisson on TDs), E (D + fumbles_lost), and Bf (C + gate
+# on fumbles_lost) were re-tested on 2026-05-20 (run fdcba72_rb_td_gate.json)
+# under a new per-target-MAE decision rule. E wins per-target (CntSum 0.353
+# vs C's 0.487 and Ridge's 0.369) but regresses FP MAE by +0.163; held back
+# from shipping. See TODO.md archive for the full table and lesson.
 ATTN_GATED = True
 GATED_TARGETS = ["receptions", "rushing_tds", "receiving_tds"]
 ATTN_GATE_HIDDEN = 16

@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin")
+SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
 
 # DataLoader worker-process count. The default auto-detects: 2 workers on
 # CUDA so the GPU sees a prefetched batch N+1 while computing batch N, 0
@@ -53,6 +53,19 @@ def ztnb2_log_prob(y: torch.Tensor, mu: torch.Tensor, log_alpha: torch.Tensor) -
     return log_p - log_survival
 
 
+def ztp_log_prob(y: torch.Tensor, mu: torch.Tensor) -> torch.Tensor:
+    """Zero-truncated Poisson log-pmf. Only valid for ``y >= 1``.
+
+    ``log P(Y=k | Y>0, mu) = k*log(mu) - mu - lgamma(k+1) - log(1 - exp(-mu))``.
+    Mirrors ztnb2 but without the dispersion parameter — appropriate when
+    empirical var/mean ≈ 1 (e.g. RB rushing_tds ≈ 1.16, fumbles_lost ≈ 1.01).
+    """
+    mu = torch.clamp(mu, min=1e-10)
+    log_p = y * torch.log(mu) - mu - torch.lgamma(y + 1.0)
+    log_survival = torch.log1p(-torch.exp(-mu).clamp(max=1.0 - 1e-7))
+    return log_p - log_survival
+
+
 def hurdle_negbin_value_loss(preds: dict, targets: dict, name: str) -> torch.Tensor:
     """Zero-truncated NB-2 NLL on positive samples, scaled by fraction positive.
 
@@ -75,6 +88,24 @@ def hurdle_negbin_value_loss(preds: dict, targets: dict, name: str) -> torch.Ten
     return torch.zeros((), device=y.device, dtype=y.dtype)
 
 
+def hurdle_poisson_value_loss(preds: dict, targets: dict, name: str) -> torch.Tensor:
+    """Zero-truncated Poisson NLL on positives, scaled by fraction positive.
+
+    Mirrors ``hurdle_negbin_value_loss`` but uses ZTP (no dispersion). Gate
+    component (BCE on ``y > 0``) is added separately via
+    ``MultiTargetLoss.gated_targets``. Requires ``preds[f"{name}_value_mu"]``;
+    ``log_alpha`` is unused (GatedHead emits it regardless but ZTP ignores it).
+    """
+    y = targets[name]
+    mu = preds[f"{name}_value_mu"]
+    pos_mask = y > 0
+    if pos_mask.any():
+        ztp_nll = -ztp_log_prob(y[pos_mask], mu[pos_mask]).mean()
+        frac_pos = pos_mask.float().mean()
+        return frac_pos * ztp_nll
+    return torch.zeros((), device=y.device, dtype=y.dtype)
+
+
 class MultiTargetLoss(nn.Module):
     """Per-head dispatchable loss for a multi-head network.
 
@@ -89,6 +120,11 @@ class MultiTargetLoss(nn.Module):
         ``gated_targets`` mechanism. Requires the target's head to emit
         ``{name}_gate_logit``, ``{name}_value_mu``, and ``{name}_value_log_alpha``
         in the prediction dict — ``GatedHead`` does this.
+      - ``"hurdle_poisson"`` — same hurdle structure as ``hurdle_negbin`` but
+        with a zero-truncated Poisson value loss (no dispersion). Appropriate
+        when empirical var/mean ≈ 1 (TD heads, fumbles_lost). Consumes
+        ``{name}_value_mu`` and the gate logit; ``{name}_value_log_alpha`` is
+        emitted by ``GatedHead`` but ignored by this loss.
 
     ``poisson_targets`` is a back-compat shorthand accepted alongside
     ``head_losses``: each listed target is treated as if it had
@@ -97,7 +133,8 @@ class MultiTargetLoss(nn.Module):
     ``gated_targets`` is the list of target names whose heads emit a
     ``{name}_gate_logit`` key; they receive an additional
     ``gate_weight * BCE(gate_logit, (target > 0))`` component. Must be a
-    superset of the ``"hurdle_negbin"`` targets so the hurdle gate is trained.
+    superset of the hurdle targets (``"hurdle_negbin"`` / ``"hurdle_poisson"``)
+    so the hurdle gate is trained.
 
     Loss:
         sum(weight[t] * loss_fn[t](pred[t], target[t]) for t in targets)
@@ -133,22 +170,25 @@ class MultiTargetLoss(nn.Module):
                 f"Unsupported head_losses (supported: {SUPPORTED_HEAD_LOSSES}): {unknown}"
             )
 
-        # hurdle_negbin needs the gate pathway: preds must carry value_mu and
-        # value_log_alpha, which only GatedHead emits (enabled for targets in
-        # gated_targets). Catch the misconfiguration at construction time rather
-        # than crashing with a KeyError on the first batch.
-        hurdle_set = {n for n, lt in self.head_losses.items() if lt == "hurdle_negbin"}
+        # Hurdle families need the gate pathway: preds must carry value_mu
+        # (and value_log_alpha for NegBin), which only GatedHead emits (enabled
+        # for targets in gated_targets). Catch the misconfiguration at
+        # construction time rather than crashing with a KeyError on the first batch.
+        hurdle_set = {
+            n for n, lt in self.head_losses.items() if lt in ("hurdle_negbin", "hurdle_poisson")
+        }
         gated_set = set(self.gated_targets)
         missing_gates = hurdle_set - gated_set
         if missing_gates:
             raise ValueError(
-                f"head_losses='hurdle_negbin' requires the target to also be in "
-                f"gated_targets (so GatedHead emits value_mu / value_log_alpha). "
-                f"Missing from gated_targets: {sorted(missing_gates)}"
+                f"head_losses='hurdle_negbin' or 'hurdle_poisson' requires the "
+                f"target to also be in gated_targets (so GatedHead emits "
+                f"value_mu). Missing from gated_targets: {sorted(missing_gates)}"
             )
 
-        # ``hurdle_negbin`` needs the full preds dict (value_mu, value_log_alpha),
-        # so it's dispatched inline in ``forward`` rather than through loss_fns.
+        # Hurdle families need the full preds dict (value_mu, optionally
+        # value_log_alpha), so they're dispatched inline in ``forward`` rather
+        # than through loss_fns.
         self.loss_fns = nn.ModuleDict(
             {
                 name: (
@@ -168,6 +208,8 @@ class MultiTargetLoss(nn.Module):
             lt = self.head_losses[name]
             if lt == "hurdle_negbin":
                 loss = hurdle_negbin_value_loss(preds, targets, name)
+            elif lt == "hurdle_poisson":
+                loss = hurdle_poisson_value_loss(preds, targets, name)
             else:
                 loss = self.loss_fns[name](preds[name], targets[name])
             per_target_losses[name] = loss

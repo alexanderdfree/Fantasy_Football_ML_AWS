@@ -1,18 +1,28 @@
-"""Three-way ablation: RB TD head — Huber+gate vs Poisson(no gate) vs Poisson+gate.
+"""Multi-variant ablation: RB sparse-count head losses (TDs + fumbles_lost).
 
-Runs the RB pipeline three times with deep-copied config overrides, prints a
-side-by-side table of fantasy-point MAE + per-head TD MAE + gate AUC, and
-writes the run metadata as a standalone JSON file under
+Runs the RB pipeline with deep-copied config overrides, prints a side-by-side
+table of FP MAE + per-head MAE for rushing_tds / receiving_tds / fumbles_lost,
+and writes the run metadata as a standalone JSON file under
 ``benchmark_history/ablations/``.
 
-Decision rule (from the PR 2 plan): keep the gate on TDs only if variant A or
-C beats B by >= 0.05 pts/game on fantasy-point MAE. Otherwise land variant B
-permanently (which is what PR 2's RB config already does).
+Variants:
+    A   — Huber + gate on TDs (pre-PR-2 baseline, no fumble gate)
+    B   — Poisson NLL, no TD gate (PR #96 config)
+    C   — Poisson NLL + gate on TDs (current shipping)
+    D   — hurdle_poisson on both TDs (gate + ZTP positives-only value loss)
+    E   — D + hurdle_poisson on fumbles_lost (gate + ZTP on all three counts)
+    Bf  — current C config + BCE gate on fumbles_lost (Poisson NLL kept)
+
+Original decision rule (variants A/B/C): keep gate on TDs only if A or C beats
+B by >= 0.05 pt/game on fantasy-point MAE.
+
+New decision rule (variants D/E/Bf): pick lowest sum of per-target MAEs across
+{rushing_tds, receiving_tds, fumbles_lost}. FP MAE reported but not gating.
 
 Usage:
-    python -m src.tuning.ablate_rb_gate           # full three-way
+    python -m src.tuning.ablate_rb_gate           # all variants
     python -m src.tuning.ablate_rb_gate --seed 7  # override seed
-    python -m src.tuning.ablate_rb_gate --only B  # run one variant only
+    python -m src.tuning.ablate_rb_gate --only D  # run one variant only
 """
 
 from __future__ import annotations
@@ -84,10 +94,57 @@ def _apply_variant_c(cfg: dict) -> dict:
     return cfg
 
 
+def _apply_variant_d(cfg: dict) -> dict:
+    """Variant D: hurdle_poisson on both TDs. Architectural mirror of Ridge's
+    gated_ordinal — Stage-1 BCE gate + Stage-2 zero-truncated-Poisson value
+    loss trained on positives only. Empirical RB TD dispersion ≈ 1.06–1.16,
+    so ZTP is the right family (NegBin would burn capacity on alpha≈0)."""
+    cfg = copy.deepcopy(cfg)
+    cfg["head_losses"] = {
+        **cfg["head_losses"],
+        "rushing_tds": "hurdle_poisson",
+        "receiving_tds": "hurdle_poisson",
+    }
+    cfg["gated_targets"] = ["receptions", "rushing_tds", "receiving_tds"]
+    return cfg
+
+
+def _apply_variant_e(cfg: dict) -> dict:
+    """Variant E: D + hurdle_poisson on fumbles_lost. Empirical dispersion
+    ≈ 1.006 (essentially pure Poisson) but the zero rate is 0.948 — the
+    positives-only value loss should help the same way it should for TDs."""
+    cfg = _apply_variant_d(cfg)
+    cfg["head_losses"]["fumbles_lost"] = "hurdle_poisson"
+    cfg["gated_targets"] = [
+        "receptions",
+        "rushing_tds",
+        "receiving_tds",
+        "fumbles_lost",
+    ]
+    return cfg
+
+
+def _apply_variant_bf(cfg: dict) -> dict:
+    """Variant Bf: current shipping (C) + BCE gate on fumbles_lost, keeping
+    Poisson NLL on the value head. Isolates the gate-only contribution from
+    the positives-only-loss contribution that E provides."""
+    cfg = copy.deepcopy(cfg)
+    cfg["gated_targets"] = [
+        "receptions",
+        "rushing_tds",
+        "receiving_tds",
+        "fumbles_lost",
+    ]
+    return cfg
+
+
 VARIANTS = {
     "A": ("Huber + gate on TDs (pre-PR-2 baseline)", _apply_variant_a),
     "B": ("Poisson NLL, no TD gate (PR #96 config)", _apply_variant_b),
     "C": ("Poisson NLL + gate on TDs (current shipping)", _apply_variant_c),
+    "D": ("hurdle_poisson on both TDs", _apply_variant_d),
+    "E": ("hurdle_poisson on TDs + fumbles_lost", _apply_variant_e),
+    "Bf": ("C + BCE gate on fumbles_lost (Poisson kept)", _apply_variant_bf),
 }
 
 
@@ -117,7 +174,13 @@ def run_variant(variant: str, seed: int) -> dict:
         "fp_rmse": attn["total"]["rmse"],
         "rushing_tds_mae": attn["rushing_tds"]["mae"],
         "receiving_tds_mae": attn["receiving_tds"]["mae"],
+        "fumbles_lost_mae": attn["fumbles_lost"]["mae"],
         "receptions_mae": attn["receptions"]["mae"],
+        "rushing_yards_mae": attn["rushing_yards"]["mae"],
+        "receiving_yards_mae": attn["receiving_yards"]["mae"],
+        "count_target_mae_sum": (
+            attn["rushing_tds"]["mae"] + attn["receiving_tds"]["mae"] + attn["fumbles_lost"]["mae"]
+        ),
         # Gate diagnostics on the gated targets for this variant.
         "gate_aucs": {
             t: attn[t].get("gate_auc")
@@ -129,19 +192,20 @@ def run_variant(variant: str, seed: int) -> dict:
 
 
 def print_summary(rows: list[dict]) -> None:
-    print(f"\n{'=' * 72}")
-    print("RB TD-gate ablation — summary")
-    print(f"{'=' * 72}")
+    print(f"\n{'=' * 96}")
+    print("RB sparse-count head ablation — summary")
+    print(f"{'=' * 96}")
     print(
-        f"{'Var':<4}{'FP MAE':>10}{'FP RMSE':>10}{'Rush TD MAE':>14}"
-        f"{'Rec TD MAE':>14}{'Rec MAE':>10}"
+        f"{'Var':<4}{'FP MAE':>9}{'Rush TD':>10}{'Rec TD':>10}{'Fum lost':>10}"
+        f"{'CntSum':>9}{'Rec':>8}{'RushYd':>9}{'RecYd':>9}"
     )
-    print("-" * 62)
+    print("-" * 80)
     for r in rows:
         print(
-            f"{r['variant']:<4}{r['fp_mae']:>10.3f}{r['fp_rmse']:>10.3f}"
-            f"{r['rushing_tds_mae']:>14.3f}{r['receiving_tds_mae']:>14.3f}"
-            f"{r['receptions_mae']:>10.3f}"
+            f"{r['variant']:<4}{r['fp_mae']:>9.3f}{r['rushing_tds_mae']:>10.3f}"
+            f"{r['receiving_tds_mae']:>10.3f}{r['fumbles_lost_mae']:>10.3f}"
+            f"{r['count_target_mae_sum']:>9.3f}{r['receptions_mae']:>8.3f}"
+            f"{r['rushing_yards_mae']:>9.3f}{r['receiving_yards_mae']:>9.3f}"
         )
     if any(r["gate_aucs"] for r in rows):
         print("\nGate AUCs (attention NN only, gated targets only):")
@@ -153,7 +217,7 @@ def print_summary(rows: list[dict]) -> None:
                 )
                 print(f"  {r['variant']}: {auc_str}")
 
-    # Decision rule.
+    # Original A/B/C decision rule (preserved for back-compat).
     by_var = {r["variant"]: r for r in rows}
     if {"A", "B", "C"} <= set(by_var):
         a, b, c = by_var["A"]["fp_mae"], by_var["B"]["fp_mae"], by_var["C"]["fp_mae"]
@@ -161,9 +225,24 @@ def print_summary(rows: list[dict]) -> None:
         margin_c = b - c
         print(f"\nFP-MAE margin vs B (positive = gate helps): A={margin_a:+.3f}, C={margin_c:+.3f}")
         if max(margin_a, margin_c) >= 0.05:
-            print("Decision: keep a gate on TDs — exceeds 0.05 pt/game threshold.")
+            print("Original decision (A/B/C, FP MAE): keep gate on TDs.")
         else:
-            print("Decision: drop gate on TDs (variant B wins) — below 0.05 pt/game threshold.")
+            print("Original decision (A/B/C, FP MAE): drop gate on TDs.")
+
+    # New decision rule: lowest sum of per-target MAEs on count heads.
+    if len(rows) > 1:
+        ranked = sorted(rows, key=lambda r: r["count_target_mae_sum"])
+        winner = ranked[0]
+        print(
+            f"\nCount-target decision: variant {winner['variant']} wins on "
+            f"sum(rushing_tds + receiving_tds + fumbles_lost) MAE = "
+            f"{winner['count_target_mae_sum']:.4f} ({winner['label']})."
+        )
+        print("Ranking by count_target_mae_sum (lowest = best):")
+        for r in ranked:
+            print(
+                f"  {r['variant']:<4} sum={r['count_target_mae_sum']:.4f}  fp_mae={r['fp_mae']:.3f}"
+            )
 
 
 def _write_ablation(rows: list[dict]) -> None:

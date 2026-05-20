@@ -1,0 +1,122 @@
+{
+  "run_id": "2026-05-20T03:42:20_fdcba72_rb_td_gate",
+  "timestamp": "2026-05-20T03:42:20",
+  "git_hash": "fdcba72",
+  "kind": "ablation",
+  "name": "rb_td_gate",
+  "variants": [
+    {
+      "variant": "A",
+      "label": "Huber + gate on TDs (pre-PR-2 baseline)",
+      "seed": 42,
+      "fp_mae": 4.418174665783857,
+      "fp_rmse": 6.649853982747707,
+      "rushing_tds_mae": 0.27126234769821167,
+      "receiving_tds_mae": 0.08050039410591125,
+      "fumbles_lost_mae": 0.03712720796465874,
+      "receptions_mae": 1.0447996854782104,
+      "rushing_yards_mae": 18.779788970947266,
+      "receiving_yards_mae": 9.471646308898926,
+      "count_target_mae_sum": 0.38888994976878166,
+      "gate_aucs": {
+        "rushing_tds": 0.747162215671609,
+        "receiving_tds": 0.743187372036193
+      }
+    },
+    {
+      "variant": "B",
+      "label": "Poisson NLL, no TD gate (PR #96 config)",
+      "seed": 42,
+      "fp_mae": 4.329757147944434,
+      "fp_rmse": 6.494436051163317,
+      "rushing_tds_mae": 0.315873920917511,
+      "receiving_tds_mae": 0.10923593491315842,
+      "fumbles_lost_mae": 0.07568106055259705,
+      "receptions_mae": 0.9960606098175049,
+      "rushing_yards_mae": 18.526599884033203,
+      "receiving_yards_mae": 9.370906829833984,
+      "count_target_mae_sum": 0.5007909163832664,
+      "gate_aucs": {
+        "receptions": 0.7944234607707661
+      }
+    },
+    {
+      "variant": "Bf",
+      "label": "C + BCE gate on fumbles_lost (Poisson kept)",
+      "seed": 42,
+      "fp_mae": 4.304797579198837,
+      "fp_rmse": 6.485742423636853,
+      "rushing_tds_mae": 0.31449154019355774,
+      "receiving_tds_mae": 0.09909642487764359,
+      "fumbles_lost_mae": 0.07169155031442642,
+      "receptions_mae": 0.9934159517288208,
+      "rushing_yards_mae": 18.45954704284668,
+      "receiving_yards_mae": 9.403701782226562,
+      "count_target_mae_sum": 0.48527951538562775,
+      "gate_aucs": {
+        "rushing_tds": 0.7405431631640441,
+        "receiving_tds": 0.7059044977214187,
+        "receptions": 0.7915645631813296,
+        "fumbles_lost": 0.6943145925457991
+      }
+    },
+    {
+      "variant": "C",
+      "label": "Poisson NLL + gate on TDs (current shipping)",
+      "seed": 42,
+      "fp_mae": 4.315612699276564,
+      "fp_rmse": 6.501080458970791,
+      "rushing_tds_mae": 0.3049536645412445,
+      "receiving_tds_mae": 0.10765881091356277,
+      "fumbles_lost_mae": 0.07413029670715332,
+      "receptions_mae": 0.9944981336593628,
+      "rushing_yards_mae": 18.432506561279297,
+      "receiving_yards_mae": 9.342438697814941,
+      "count_target_mae_sum": 0.4867427721619606,
+      "gate_aucs": {
+        "rushing_tds": 0.736319484163648,
+        "receiving_tds": 0.7359619575985734,
+        "receptions": 0.793227391371104
+      }
+    },
+    {
+      "variant": "D",
+      "label": "hurdle_poisson on both TDs",
+      "seed": 42,
+      "fp_mae": 4.522459464733464,
+      "fp_rmse": 7.126081982403155,
+      "rushing_tds_mae": 0.25406700372695923,
+      "receiving_tds_mae": 0.0672898143529892,
+      "fumbles_lost_mae": 0.07361220568418503,
+      "receptions_mae": 0.9968084692955017,
+      "rushing_yards_mae": 18.826309204101562,
+      "receiving_yards_mae": 9.198741912841797,
+      "count_target_mae_sum": 0.39496902376413345,
+      "gate_aucs": {
+        "rushing_tds": 0.7456614408416071,
+        "receiving_tds": 0.7387424872861766,
+        "receptions": 0.8029018885306312
+      }
+    },
+    {
+      "variant": "E",
+      "label": "hurdle_poisson on TDs + fumbles_lost",
+      "seed": 42,
+      "fp_mae": 4.478654605478891,
+      "fp_rmse": 7.016667175344201,
+      "rushing_tds_mae": 0.24866636097431183,
+      "receiving_tds_mae": 0.06587228178977966,
+      "fumbles_lost_mae": 0.03886009752750397,
+      "receptions_mae": 0.9915271401405334,
+      "rushing_yards_mae": 18.60771942138672,
+      "receiving_yards_mae": 9.358665466308594,
+      "count_target_mae_sum": 0.35339874029159546,
+      "gate_aucs": {
+        "rushing_tds": 0.7472392098200537,
+        "receiving_tds": 0.7124760583845189,
+        "receptions": 0.7942545677875019,
+        "fumbles_lost": 0.7031269740998105
+      }
+    }
+  ]
+}
