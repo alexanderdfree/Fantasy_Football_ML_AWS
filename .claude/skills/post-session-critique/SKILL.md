@@ -27,7 +27,8 @@ A reflection under 200 words with these sections:
    - A markdown snippet to add/edit in [CLAUDE.md](CLAUDE.md), naming the section, OR
    - A draft memory file (frontmatter + body) following the conventions of the auto-memory system at `~/.claude/projects/<project-slug>/memory/` (the slug is auto-derived from the project's absolute path on each contributor's machine, so the exact directory differs per user). Use `feedback_*` for prompt-style corrections, `project_*` for state/context, `user_*` for user preferences. Include the one-line entry to add to that directory's `MEMORY.md`.
 
-Do **not** write the change yourself. Surface the proposal and let the user decide.
+- **Memory-entry proposals** — auto-write the file under `~/.claude/projects/<project-slug>/memory/` and update that directory's `MEMORY.md` index. Surface a one-line summary of what you wrote; no need to ask permission. The skill has already filtered for "worth capturing"; gating each write adds friction and discourages capture.
+- **CLAUDE.md edit proposals** — surface the diff in the conversation and let the user decide. They live in the project repo, need a commit/PR, and the user may want to tune wording before it lands in repo history.
 
 ## What to skip
 
