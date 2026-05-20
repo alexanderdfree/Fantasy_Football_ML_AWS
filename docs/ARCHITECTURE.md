@@ -1,6 +1,6 @@
 # ADR-001: Fantasy Football Predictor — Consolidated Architecture
 
-**Status:** Accepted · **Date:** 2026-04-16 · **Author:** Alex Free (CS 372)
+**Status:** Accepted · **Date:** 2026-04-16 · **Author:** Alex Free
 
 ### Update history
 
@@ -36,10 +36,10 @@
 **Problem.** Predict weekly fantasy football points for individual NFL players across six positions (QB, RB, WR, TE, K, DST) for the 2025 season, using 2012–2024 as training history. Primary output is a per-player point projection (regression); ranking metrics (top-12 hit rate, Spearman correlation) are derived from projections post-hoc.
 
 **Constraints.**
-- Solo CS 372 final project, ~2 weeks of execution time.
+- Solo personal project, ~2 weeks of initial execution.
 - Small-sample ML regime: after position filtering and ≥8-games-per-season minimum, roughly 200–600 player-seasons per position — orders of magnitude smaller than datasets most modern NN architectures assume.
 - Public data only — `nfl_data_py` ([nflverse](https://github.com/nflverse)) weekly stats, rosters, schedules, snap counts. Snap count coverage starts 2012, which bounds the training window.
-- Deliverables must hit 15 of 16 CS 372 ML rubric items for ~73 pts (see [instructions/DESIGN_DOC.md](../instructions/DESIGN_DOC.md)). Rubric item "Documented design decision with technical tradeoffs" is what this ADR satisfies.
+- Documenting design decisions with technical trade-offs is what this ADR satisfies.
 
 **Scope.**
 - In: per-player weekly projections, three scoring formats (Standard / Half-PPR / Full-PPR), a Flask dashboard for lookup, automated training on AWS Batch.
@@ -162,7 +162,7 @@ The serving layer turns this into a user-facing capability: as of PR #153 (`a533
 
 **Decision.** Train and report Ridge (L2 linear), multi-head NN, and LightGBM independently per position. Do not ensemble or stack.
 
-**Context.** The CS 372 rubric explicitly asks for "compared multiple model architectures quantitatively." Ensembling would dominate any single model's MAE, but it would also muddle the question the project is trying to answer.
+**Context.** A core goal is comparing multiple model architectures quantitatively. Ensembling would dominate any single model's MAE, but it would also muddle the question the project is trying to answer.
 
 **Options considered.**
 
@@ -358,7 +358,7 @@ Net effect on a typical push: if the instance is already warm, training starts w
 
 **Decision.** Every training run lands its new tarball under a versioned `history/{ts}-{sha7}/` key, then runs an in-process smoke test that loads the artifact and runs a deterministic zero-input predict against every head; only on success does the manifest's `stable` pointer advance to the new key. The manifest schema (v2, defined in [src/shared/model_sync.py:46-49](../src/shared/model_sync.py)) tracks `stable`, `current`, `previous`, and a newest-first `history[]` capped at `HISTORY_KEEP_N`, so any past-good artifact can be promoted back manually via [src/scripts/promote.py](../src/scripts/promote.py). ECS reads `stable` at boot, so a failed gate means new tasks keep loading the previous good model while the new (broken) tarball sits in `current` and `history/` for forensics. S3 bucket versioning is layered underneath as defense-in-depth.
 
-**Context.** D10's CI gate catches code regressions before they merge; it does not catch artifact regressions — a model that trains successfully but predicts NaN, or whose feature-column hash drifted past the scaler's, will pass pytest and then silently degrade the live dashboard. The weather/Vegas-missing-at-inference incident (TODO archive) is the canonical example: training-pipeline and serving-pipeline drift shipped past every test and only surfaced when users saw zeros in the dashboard. Prior to D11, any successful S3 upload silently became "live" to the next ECS task that booted. The CS 372 self-assessment also claims production safety; this decision is what backs that claim.
+**Context.** D10's CI gate catches code regressions before they merge; it does not catch artifact regressions — a model that trains successfully but predicts NaN, or whose feature-column hash drifted past the scaler's, will pass pytest and then silently degrade the live dashboard. The weather/Vegas-missing-at-inference incident (TODO archive) is the canonical example: training-pipeline and serving-pipeline drift shipped past every test and only surfaced when users saw zeros in the dashboard. Prior to D11, any successful S3 upload silently became "live" to the next ECS task that booted. Production safety is a core claim of the project; this decision is what backs it.
 
 **Options considered.**
 
@@ -452,7 +452,7 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 
 ### Related design docs
 
-- [instructions/DESIGN_DOC.md](../instructions/DESIGN_DOC.md) — rubric mapping + full repo walkthrough (authoritative for rubric-claimed items).
+- [docs/method_contracts.md](method_contracts.md) — function signatures + data-layer contracts.
 - [docs/ec2_design.md](ec2_design.md) — warm-host training design (authoritative for D7 active path + D9).
 - [docs/batch_design.md](batch_design.md) — Batch cold-start analysis, cost breakdown (authoritative for the D7 standby path).
 - [infra/aws/README.md](../infra/aws/README.md) — ECS + ALB + domain runbook (authoritative for D8 serving ops).
@@ -484,7 +484,7 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 | `c7fa2d7` | Infra | Smoke-test gate + manifest v2 (stable/current/previous + history[5]) + S3 bucket versioning (D11) |
 | `8c42e88` | Infra | ECS force-rollover after train so promoted artifacts get loaded (D11 closure) |
 | `a533990` | Serving | PPR / Half-PPR / Standard end-to-end scoring switch (D2 extension) |
-| `20cda09`, `668fa81` | Repo | CS 372 rubric reorganization; `src/{POS}/` → `src/{pos}/` rename + symbol prefix drop |
+| `20cda09`, `668fa81` | Repo | Layout reorganization; `src/{POS}/` → `src/{pos}/` rename + symbol prefix drop |
 | `48ef419` | Training | Feather cache + async DataLoader + cuDNN benchmark + phase timings (D12 wins) |
 | `3167b56` | Training | `torch.compile` short-circuit — +32% on T4 (D12 rejection) |
 | `0c66171` | Modeling | K/DST eval totals use signed/tiered aggregator (was reporting bogus `total_r2`) |

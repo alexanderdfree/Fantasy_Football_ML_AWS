@@ -38,17 +38,8 @@ Thumbs.db
 !ATTRIBUTION.md
 !TODO.md
 !docs/**/*.md
-!instructions/DESIGN_DOC.md
-!instructions/METHOD_CONTRACTS.md
-!instructions/SELF_ASSESSMENT_EVIDENCE.md
 !infra/ec2/README.md
 !infra/aws/README.md
-
-# instructions/ — non-MD assets (final-project handout HTML, .docx
-# self-assessment, .pdf rubric reference) don't belong in the runtime image.
-instructions/*.html
-instructions/*.docx
-instructions/*.pdf
 
 # Tests
 tests/
@@ -99,7 +90,7 @@ infra/**/*.timer
 # src.shared.model_sync.sync_data_from_s3 (keeps the image ~60 MB smaller).
 data/
 
-# Top-level submission-rubric directories that point into src/ — README files
+# Top-level directories that only contain README pointers into src/ — README files
 # only, no runtime artifacts.
 models/
 notebooks/

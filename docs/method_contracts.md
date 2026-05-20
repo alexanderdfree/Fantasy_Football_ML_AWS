@@ -1,6 +1,6 @@
 # Fantasy Football Predictor — Method Contracts & Wishlists
 
-Companion to `DESIGN_DOC.md`. This document specifies concrete function signatures, data schemas, and implementation contracts for every module.
+Function signatures, data schemas, and implementation contracts for every module.
 
 ---
 

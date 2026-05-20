@@ -415,20 +415,10 @@ WIKI_DOCS: dict[str, dict] = {
         "group": "Design History",
         "path": "docs/design_xgboost_ensemble.md",
     },
-    "design-doc": {
-        "name": "Design Document (rubric spec)",
-        "group": "Specification",
-        "path": "instructions/DESIGN_DOC.md",
-    },
     "method-contracts": {
         "name": "Method Contracts",
         "group": "Specification",
-        "path": "instructions/METHOD_CONTRACTS.md",
-    },
-    "self-assessment": {
-        "name": "Self-Assessment Evidence",
-        "group": "Specification",
-        "path": "instructions/SELF_ASSESSMENT_EVIDENCE.md",
+        "path": "docs/method_contracts.md",
     },
     "infra-ec2": {
         "name": "EC2 Infrastructure",
