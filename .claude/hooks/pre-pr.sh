@@ -157,4 +157,9 @@ if [ "$fail" -ne 0 ]; then
   exit 2
 fi
 
+# B3 nudge: deterministic checks alone don't catch scope drift ("agent did more
+# than I asked"). The pre-pr-judge skill spawns a worker subagent for that.
+# Belt-and-suspenders to the CLAUDE.md "When making changes" instruction.
+echo "pre-pr hook: deterministic checks passed. if pre-pr-judge has not run this session, invoke it before this PR opens (catches scope creep — see .claude/skills/pre-pr-judge/SKILL.md)." >&2
+
 exit 0

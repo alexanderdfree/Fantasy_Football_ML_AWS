@@ -63,6 +63,11 @@ def _kicker_pbp_cache_row(player_id: str, season: int, week: int, recent_team: s
         "pat_att": 3,
         "pat_made": 3,
         "pat_missed": 0,
+        # Sentinel proving this row was written by the post-XP-venue-backfill
+        # code path; the cache schema gate (`_REQUIRED_PBP_COLUMNS`) rejects
+        # parquets without it so stale caches regenerate. Test fixtures must
+        # include it to walk the cache-hit branch.
+        "_xp_venue_backfilled": True,
     }
 
 
@@ -310,6 +315,39 @@ def test_reconstruct_weekly_from_pbp_stale_cache_regenerates(tmp_path, monkeypat
     captured = capsys.readouterr().out
     assert "Stale cache" in captured
     assert "fg_yards_made" in captured
+
+
+@pytest.mark.unit
+def test_reconstruct_weekly_from_pbp_pre_xp_venue_cache_rejected(tmp_path, monkeypatch, capsys):
+    """A cache parquet from before the XP-venue backfill landed (lacks the
+    ``_xp_venue_backfilled`` sentinel column) must be regenerated so the
+    historical 589 XP-only kicker-weeks pick up roof/surface from XP plays.
+    Otherwise the train cache would diverge from the test-time
+    schedules-fallback backfill in `load_data` and create a train/test
+    distribution mismatch on `is_dome`.
+    """
+    import src.k.data as k_data
+
+    # Pre-write a cache that looks fully populated but predates the XP-venue
+    # fix — every required column except the sentinel.
+    stale_cache = tmp_path / "kicker_pbp_2020_2020.parquet"
+    cache_row = _kicker_pbp_cache_row("K01", 2020, 1)
+    del cache_row["_xp_venue_backfilled"]
+    pd.DataFrame([cache_row]).to_parquet(stale_cache)
+
+    monkeypatch.setattr(
+        k_data.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
+    )
+
+    out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
+
+    # The PBP path ran (multi-row synthetic output, not the 1-row cache).
+    assert len(out) > 1
+    # Regenerated cache now has the sentinel.
+    assert "_xp_venue_backfilled" in out.columns
+    captured = capsys.readouterr().out
+    assert "Stale cache" in captured
+    assert "_xp_venue_backfilled" in captured
 
 
 @pytest.mark.unit

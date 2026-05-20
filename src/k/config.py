@@ -167,7 +167,11 @@ CONFIG_TINY = {
     "ridge_cv_folds": 2,
     "cv_split_column": CV_SPLIT_COLUMN,
     "ridge_refine_points": 0,
-    "specific_features": SPECIFIC_FEATURES,
+    # ALL_FEATURES (specific + contextual), mirroring the production K config
+    # — the contextual block is what carries the PBP-derived
+    # ``game_wind`` / ``game_temp`` columns that the catch-all
+    # ``.fillna(0)`` would otherwise collapse to 0 (off the train scale).
+    "specific_features": ALL_FEATURES,
     "nn_backbone_layers": [8, 8],
     "nn_head_hidden": 4,
     "nn_dropout": 0.0,

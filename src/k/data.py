@@ -39,6 +39,14 @@ _REQUIRED_PBP_COLUMNS = frozenset(
         "pat_missed",
         "avg_fg_distance",
         "avg_fg_prob",
+        # Sentinel for the XP-venue backfill that populates roof/surface for
+        # XP-only kicker-weeks. Caches written before this fix don't carry the
+        # column → schema check fails → cache rejected → regenerated with the
+        # post-fix logic. Keeps train (cache) in lockstep with test (live
+        # backfill in `_backfill_2025_pbp_columns` + `load_data` schedules
+        # fallback) so the model doesn't see a different distribution at
+        # train vs inference time.
+        "_xp_venue_backfilled",
     }
 )
 
@@ -189,6 +197,14 @@ def reconstruct_kicker_weekly_from_pbp(
             for col in ("kicker_player_name", "posteam", "roof", "surface"):
                 weekly_k[col] = weekly_k[col].fillna(weekly_k[f"{col}_xp"])
                 weekly_k.drop(columns=[f"{col}_xp"], inplace=True)
+
+            # Sentinel column for cache-version detection. Stale caches written
+            # before the XP-venue backfill landed don't have it, so the schema
+            # check (`_REQUIRED_PBP_COLUMNS`) rejects them and forces regen —
+            # otherwise the 589 historical XP-only games would keep their
+            # `is_dome=0` / `roof=NaN` defaults and the train distribution
+            # would diverge from the post-fix test backfill.
+            weekly_k["_xp_venue_backfilled"] = True
 
             all_weekly.append(weekly_k)
         except Exception as e:
