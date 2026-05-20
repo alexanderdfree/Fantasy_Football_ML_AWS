@@ -133,7 +133,20 @@ def _smoke_attention(
         x_kicks = np.zeros((1, max_games, max_kicks, kick_dim), dtype=np.float32)
         outer_mask = np.ones((1, max_games), dtype=bool)
         inner_mask = np.ones((1, max_games, max_kicks), dtype=bool)
-        preds = attn_model.predict_numpy(X_static_scaled, x_kicks, outer_mask, inner_mask, device)
+        # When the nested config opts into per-game aggregates, the smoke
+        # forward needs a matching [1, max_games, game_dim] zero tensor.
+        game_history_stats = list(reg.get("attn_history_stats", []) or [])
+        x_game_history = None
+        if game_history_stats:
+            x_game_history = np.zeros((1, max_games, len(game_history_stats)), dtype=np.float32)
+        preds = attn_model.predict_numpy(
+            X_static_scaled,
+            x_kicks,
+            outer_mask,
+            inner_mask,
+            device,
+            X_game_history=x_game_history,
+        )
     else:
         history_stats = list(reg.get("attn_history_stats", []) or [])
         max_seq_len = reg.get("attn_max_seq_len", 17)

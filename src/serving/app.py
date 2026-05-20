@@ -716,6 +716,17 @@ def _apply_position_models(train, val, test, pos, results):
                     max_games=reg["attn_max_games"],
                     max_kicks_per_game=reg["attn_max_kicks_per_game"],
                 )
+                # Optional per-game aggregate branch: keep the outer sequence
+                # length aligned with the kick tensor (max_games) so the
+                # downstream concat matches train-time shape.
+                game_history_stats = reg.get("attn_history_stats")
+                game_hist_test = None
+                if game_history_stats:
+                    game_hist_test, _ = build_game_history_arrays(
+                        pos_test,
+                        history_stats=game_history_stats,
+                        max_seq_len=reg["attn_max_games"],
+                    )
                 attn_model = MultiHeadNetWithNestedHistory(
                     static_dim=len(attn_static_cols),
                     kick_dim=hist_test.shape[-1],
@@ -724,7 +735,12 @@ def _apply_position_models(train, val, test, pos, results):
                 ).to(device)
                 attn_model.load_state_dict(attn_state_dict)
                 attn_nn_preds = attn_model.predict_numpy(
-                    X_test_attn_scaled, hist_test, outer_test, inner_test, device
+                    X_test_attn_scaled,
+                    hist_test,
+                    outer_test,
+                    inner_test,
+                    device,
+                    X_game_history=game_hist_test,
                 )
             else:
                 hist_stats = [s for s in reg.get("attn_history_stats", []) if s in pos_test.columns]

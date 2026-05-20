@@ -158,10 +158,12 @@ def build_pipeline_config(
     if pos in ("RB", "DST"):
         cfg["attn_gated_fusion"] = pc.attn_gated_fusion
     # attn_history_stats / head_losses / attn_gated / gate_* — flat attention
-    # consumers only. K's nested attention path doesn't read them; its CONFIG
-    # historically omitted them.
-    if pos != "K":
+    # consumers only on the non-K side. K opts in to ``attn_history_stats`` via
+    # the nested+history branch (per-game aggregates feed alongside the inner
+    # kick pool); head_losses / attn_gated are still flat-only.
+    if pc.attn_history_stats:
         cfg["attn_history_stats"] = pc.attn_history_stats
+    if pos != "K":
         cfg["head_losses"] = pc.head_losses
         cfg["attn_gated"] = pc.attn_gated
     # attn_gate_hidden / attn_gate_weight only ride along on the skill positions

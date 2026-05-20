@@ -919,6 +919,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         self_attn_ffn_dim: int | None = None,
         self_attn_dropout: float = 0.0,
         condition_queries_on_static: bool = False,
+        game_dim: int = 0,
     ):
         super().__init__()
         self.target_names = target_names
@@ -927,6 +928,13 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         )
         self.d_model = d_model
         self.d_kick = d_kick
+        # Per-game aggregate stats fed alongside the inner-pool output. game_dim=0
+        # = no per-game history (legacy K behaviour). When >0, the forward
+        # concatenates [B, G, game_dim] with the inner-pool's [B, G, d_kick]
+        # before the game encoder, giving the outer attention access to
+        # pre-computed rolling aggregates (fg_att/fg_made/fg_yards_made/etc.)
+        # the inner kick pool can't recover from at-most-10-kicks-per-game.
+        self.game_dim = game_dim
         self.n_targets = len(target_names)
         # Opponent/context-conditioned queries. Outer (game) pool only — the
         # inner kick pool has no notion of matchup context.
@@ -960,8 +968,11 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         )
 
         # === Outer: game encoder + per-target attention pool ===
+        # When game_dim > 0 the encoder consumes [B, G, d_kick + game_dim] so
+        # the outer attention sees both the inner-pool's kick summary and the
+        # pre-computed per-game aggregates.
         self.game_encoder = _build_game_encoder(
-            in_dim=d_kick,
+            in_dim=d_kick + game_dim,
             d_model=d_model,
             encoder_hidden_dim=encoder_hidden_dim,
             use_swiglu=use_swiglu_encoder,
@@ -1022,6 +1033,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         x_kicks: torch.Tensor,
         outer_mask: torch.Tensor,
         inner_mask: torch.Tensor,
+        x_game_history: torch.Tensor | None = None,
     ) -> dict:
         """
         Args:
@@ -1029,6 +1041,9 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             x_kicks:    [B, G, K, kick_dim] — zero-padded kick features
             outer_mask: [B, G]              — True where real game
             inner_mask: [B, G, K]           — True where real kick
+            x_game_history: [B, G, game_dim] — zero-padded per-game aggregates,
+                required iff ``game_dim > 0`` (concatenated with the inner pool
+                output before the game encoder).
         """
         B, G, K, _ = x_kicks.shape
 
@@ -1038,6 +1053,10 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         flat_mask = inner_mask.reshape(B * G, K)
         per_game = self.inner_pool(flat, flat_mask)  # [B*G, d_kick] (single-target squeeze)
         per_game = per_game.reshape(B, G, self.d_kick)
+
+        # Splice per-game aggregates onto the inner-pool output when configured.
+        if self.game_dim > 0:
+            per_game = torch.cat([per_game, x_game_history], dim=-1)
 
         # Outer encode + attend
         encoded = self.game_encoder(per_game)  # [B, G, d_model]
@@ -1090,6 +1109,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         outer_mask: np.ndarray,
         inner_mask: np.ndarray,
         device: torch.device,
+        X_game_history: np.ndarray | None = None,
     ) -> dict:
         self.eval()
         with torch.no_grad():
@@ -1097,7 +1117,10 @@ class MultiHeadNetWithNestedHistory(nn.Module):
             k = torch.FloatTensor(X_kicks).to(device)
             om = torch.BoolTensor(outer_mask).to(device)
             im = torch.BoolTensor(inner_mask).to(device)
-            preds = self.forward(s, k, om, im)
+            gh = None
+            if X_game_history is not None:
+                gh = torch.FloatTensor(X_game_history).to(device)
+            preds = self.forward(s, k, om, im, x_game_history=gh)
             return {key: v.cpu().numpy() for key, v in preds.items()}
 
 
@@ -1190,11 +1213,15 @@ def build_multihead_net_with_nested_history(
     kick_dim: int,
     max_games: int,
     targets: list[str],
+    game_dim: int = 0,
 ) -> "MultiHeadNetWithNestedHistory":
     """Construct a MultiHeadNetWithNestedHistory from a training ``cfg`` dict.
 
     ``max_games`` is derived from the padded history tensor shape at the call
     site, not from ``cfg``, since it can differ between CV folds and holdout.
+    ``game_dim`` defaults to 0 (no per-game aggregate branch); set it to the
+    width of the per-game history tensor when ``attn_history_stats`` is
+    configured.
     """
     return MultiHeadNetWithNestedHistory(
         static_dim=static_dim,
@@ -1223,4 +1250,5 @@ def build_multihead_net_with_nested_history(
         self_attn_ffn_dim=cfg.get("attn_self_ffn_dim"),
         self_attn_dropout=cfg.get("attn_self_dropout", 0.0),
         condition_queries_on_static=cfg.get("attn_condition_queries_on_static", False),
+        game_dim=game_dim,
     )
