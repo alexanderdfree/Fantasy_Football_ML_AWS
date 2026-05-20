@@ -3,10 +3,10 @@
 _Last verified: 2026-05-19._
 
 Provisions an AWS Batch managed compute environment on Spot g4dn.xlarge so all
-six position pipelines train in parallel (one position per Spot instance). The
-active trainer is [train-batch.yml](../../.github/workflows/train-batch.yml)
-when the `BATCH_ACTIVE` repo variable is `true`; otherwise the warm-EC2 path
-([infra/ec2/](../ec2/)) handles training.
+six position pipelines train in parallel (one position per Spot instance). This
+is the **default push-driven trainer since 2026-05-20** — [train-batch.yml](../../.github/workflows/train-batch.yml)
+runs when the `BATCH_ACTIVE` repo variable is `true`; flipping it to `false`
+falls back to the warm-EC2 path ([infra/ec2/](../ec2/)).
 
 See [`docs/batch_design.md`](../../docs/batch_design.md) for the full design
 including cold-start optimizations (SOCI lazy loading + ECR pull-through
@@ -109,17 +109,17 @@ works, just with a slower first pull on each fresh Spot instance.
 
 ## Switch the active trainer
 
-Both training workflows guard on `vars.BATCH_ACTIVE`:
+Both training workflows guard on `vars.BATCH_ACTIVE`. The current default is `true`:
 
 | `BATCH_ACTIVE` | Active path |
 |---|---|
-| `false` (or unset) | [train-ec2.yml](../../.github/workflows/train-ec2.yml) — warm g4dn.xlarge OD |
-| `true` | [train-batch.yml](../../.github/workflows/train-batch.yml) — parallel Spot fanout |
+| `true` (default since 2026-05-20) | [train-batch.yml](../../.github/workflows/train-batch.yml) — parallel Spot fanout |
+| `false` (or unset) | [train-ec2.yml](../../.github/workflows/train-ec2.yml) — warm g4dn.xlarge OD (rollback) |
 
 Flip with one command:
 
 ```
-gh variable set BATCH_ACTIVE --body "true"   # → Batch
+gh variable set BATCH_ACTIVE --body "true"   # → Batch (active)
 gh variable set BATCH_ACTIVE --body "false"  # → EC2 rollback
 ```
 

@@ -6,7 +6,7 @@ Orientation file for Claude Code. Human-facing docs live elsewhere — this file
 - **[README.md](README.md)** — overview, architecture diagram, eval results.
 - **[SETUP.md](SETUP.md)** — install, first-time data pull, how to run everything locally. If you need a command, it's probably here.
 - **[TODO.md](TODO.md)** — open issues and a **Fixed archive** with root-cause + lesson for every non-trivial bug ever squashed. **Read this before proposing changes near anything it mentions** — most "obvious" fixes have been tried and the archive explains why they were wrong. **Update it as you ship**: move Open → Fixed archive (or add a fresh archive entry) using the existing `### [FIXED] Title` + **File(s)/What/Fix/Lesson** format.
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the project's ADR (decisions D1–D12 + a dated `Update history`), with rejected alternatives. **Living doc** — update it whenever a non-trivial change touches or adds an architectural decision (see "When making changes").
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the project's ADR (decisions D1–D14 + a dated `Update history`), with rejected alternatives. **Living doc** — update it whenever a non-trivial change touches or adds an architectural decision (see "When making changes").
 
 ## Project shape (six-position symmetry)
 Each of `src/qb/ src/rb/ src/wr/ src/te/ src/k/ src/dst/` follows the same template:
@@ -28,7 +28,7 @@ The rest of `src/` groups by purpose: `src/serving/` (Flask app + assets), `src/
 
 All six positions train an attention NN (DST landed via `cc0c627`, K via `801b61a`). There is no "skill-positions-only" carve-out anymore — if you're adding an NN-related knob, wire it through every position.
 
-**Adding a new position**: copy an existing folder under `src/`, rename files/constants, wire it into `src/batch/train.py` and `.github/workflows/train-ec2.yml`'s position list, add tests under `tests/{pos}/`.
+**Adding a new position**: copy an existing folder under `src/`, rename files/constants, wire it into `src/batch/train.py` and the position list in both `.github/workflows/train-batch.yml` (active path) and `.github/workflows/train-ec2.yml` (rollback path), add tests under `tests/{pos}/`.
 
 ## Conventions that bite if ignored
 
@@ -74,7 +74,7 @@ Commands live in [SETUP.md](SETUP.md). Shortcuts:
 ## CI & training
 
 - `tests.yml` — ruff + pytest on push/PR. Installs via `uv` (migrated in `3c897d8`) and shards pytest across `QB/RB/WR/TE/K/DST/shared` matrix jobs (per-position paths under `tests/{pos}/`; the `shared` shard runs `tests/` excluding the per-position dirs). Each shard uploads coverage to Codecov under a matching flag; the project target is **80% per component/flag** (see [codecov.yml](codecov.yml)). Diagnostic CLIs (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`) are excluded from the coverage denominator. If `Run Tests` silently stops firing on rapid force-push cadence (occasional GitHub Actions bug), run `pytest` locally and merge with `gh pr merge --squash`.
-- `batch-image.yml` → `train-batch.yml` OR `train-ec2.yml` — image build triggers training; which workflow fires is controlled by the `BATCH_ACTIVE` repo variable. `true` → parallel Spot fan-out via `train-batch.yml` (six g4dn.xlarge Spot instances, one per position, ~25–30 min wall-clock; see [docs/batch_design.md](docs/batch_design.md), D13). `false` (or unset) → warm-EC2 path via `train-ec2.yml` (~120 min sequential; see [docs/ec2_design.md](docs/ec2_design.md), D7/D9). `workflow_dispatch` on either workflow bypasses the gate (break-glass). Both paths use the same `detect` job (diff the merge commit, retrain only changed positions). AWS quotas: g4dn.xlarge OD = 4 vCPU (one instance, EC2 path); Spot G+VT = 24 vCPU (six instances, Batch path) — sized exactly for the fan-out.
+- `batch-image.yml` → `train-batch.yml` OR `train-ec2.yml` — image build triggers training; which workflow fires is controlled by the `BATCH_ACTIVE` repo variable, currently `true` (default since 2026-05-20). `true` → parallel Spot fan-out via `train-batch.yml` (six g4dn.xlarge Spot instances, one per position, ~25–30 min wall-clock; see [docs/batch_design.md](docs/batch_design.md), D13). `false` (rollback) → warm-EC2 path via `train-ec2.yml` (~120 min sequential; see [docs/ec2_design.md](docs/ec2_design.md), D7/D9). `workflow_dispatch` on either workflow bypasses the gate (break-glass). Both paths use the same `detect` job (diff the merge commit, retrain only changed positions). AWS quotas: g4dn.xlarge OD = 4 vCPU (one instance, EC2 path); Spot G+VT = 24 vCPU (six instances, Batch path) — sized exactly for the fan-out.
 - `deploy.yml` — ECS Flask deploy.
 
 AWS-side operational notes live in auto-memory (GPU quota, training path, CI anomaly) — Claude loads those automatically, so this file doesn't duplicate them.
