@@ -235,6 +235,16 @@ def sync_models_from_s3() -> dict | None:
     """Download+extract all six position tarballs in parallel, preferring
     the manifest-pointed ``current`` with automatic fallback to ``previous``.
 
+    Per-position failures are isolated: if at least one position syncs
+    successfully, the function logs the failures, records them in the
+    returned summary under ``failed_positions``, and returns normally. The
+    affected positions' lazy-load paths in ``src.serving.app`` will surface
+    a 500 only for requests touching those positions while the healthy ones
+    keep serving. If *every* position fails (S3 unreachable, bucket
+    misconfigured, etc.) the first per-position exception is re-raised so
+    a totally-useless container still fails loud at boot — preserving the
+    existing contract that callers have come to rely on.
+
     Returns a summary dict, or ``None`` if ``FF_MODEL_S3_BUCKET`` is unset/empty.
     """
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
@@ -251,13 +261,51 @@ def sync_models_from_s3() -> dict | None:
     print(f"[model_sync] syncing s3://{bucket}/{prefix}/{{POS}}/ -> {root}")
     t0 = time.time()
     results: list[dict] = []
+    failed: list[dict] = []
+    first_exc: BaseException | None = None
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(POSITIONS)) as pool:
-        futs = [pool.submit(_sync_one, s3, bucket, prefix, pos, root) for pos in POSITIONS]
-        for f in concurrent.futures.as_completed(futs):
-            results.append(f.result())
+        fut_to_pos = {
+            pool.submit(_sync_one, s3, bucket, prefix, pos, root): pos for pos in POSITIONS
+        }
+        for f in concurrent.futures.as_completed(fut_to_pos):
+            pos = fut_to_pos[f]
+            try:
+                results.append(f.result())
+            except Exception as e:
+                # Catch broadly: ``_sync_one`` raises ``RuntimeError`` when
+                # every manifest entry fails and ``ClientError`` when the
+                # legacy path 404s; anything else (network blip, boto bug)
+                # should still let the other 5 positions complete rather
+                # than collapse the whole boot. ``first_exc`` is preserved
+                # so an all-fail run still re-raises with a meaningful
+                # error class/message rather than a synthetic aggregate.
+                if first_exc is None:
+                    first_exc = e
+                print(f"[model_sync] FAILED for {pos}: {e!r}", flush=True)
+                failed.append({"pos": pos, "error": repr(e)})
     total = round(time.time() - t0, 2)
+
+    if not results:
+        # All positions failed — re-raise the first per-position exception
+        # so we preserve the existing "useless container should not start"
+        # contract (and the original exception class/message for callers).
+        assert first_exc is not None  # `failed` is non-empty here by construction.
+        raise first_exc
+
+    if failed:
+        failed_positions = [f["pos"] for f in failed]
+        print(
+            f"[model_sync] PARTIAL: {len(results)}/{len(POSITIONS)} positions synced; "
+            f"failed: {failed_positions}",
+            flush=True,
+        )
+
     print(f"[model_sync] done in {total}s: {results}")
-    return {"total_secs": total, "positions": results}
+    return {
+        "total_secs": total,
+        "positions": results,
+        "failed_positions": failed,
+    }
 
 
 def _download_file(s3_client, bucket: str, key: str, dest: Path) -> dict:

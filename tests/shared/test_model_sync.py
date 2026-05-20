@@ -469,6 +469,98 @@ def test_sync_one_raises_when_current_fails_and_previous_is_null(monkeypatch, tm
             model_sync.sync_models_from_s3()
 
 
+# --- Per-position failure isolation ---
+
+
+@pytest.mark.unit
+def test_sync_isolates_single_position_failure(monkeypatch, tmp_path, capsys):
+    """5 positions have working tarballs, 1 has manifest pointing at a broken
+    artifact with no previous. The single failure must NOT propagate — the
+    healthy 5 should sync successfully and the failure should be reported
+    via ``failed_positions`` in the summary so a partial sync starts the
+    container instead of taking the whole site down."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    healthy_tar = _make_tarball({"nn_scaler.pkl": b"HEALTHY"})
+    broken_pos = "RB"
+    objects: dict[str, bytes] = {}
+    for pos in model_sync.POSITIONS:
+        if pos == broken_pos:
+            cur_key = f"models/{pos}/history/cur-broken/model.tar.gz"
+            objects[cur_key] = b"not-gzip"
+            objects[f"models/{pos}/manifest.json"] = _manifest_bytes(current_key=cur_key)
+        else:
+            cur_key = f"models/{pos}/history/2026-04-23T00-00-00Z-aaa1234/model.tar.gz"
+            objects[cur_key] = healthy_tar
+            objects[f"models/{pos}/manifest.json"] = _manifest_bytes(current_key=cur_key)
+
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_models_from_s3()
+
+    assert summary is not None
+    synced = {r["pos"] for r in summary["positions"]}
+    assert synced == set(model_sync.POSITIONS) - {broken_pos}
+    assert len(summary["positions"]) == len(model_sync.POSITIONS) - 1
+    assert [f["pos"] for f in summary["failed_positions"]] == [broken_pos]
+    assert "all manifest entries failed" in summary["failed_positions"][0]["error"]
+
+    captured = capsys.readouterr().out
+    assert f"FAILED for {broken_pos}" in captured
+    assert "PARTIAL: 5/6" in captured
+
+
+@pytest.mark.unit
+def test_sync_summary_includes_empty_failed_positions_on_full_success(monkeypatch, tmp_path):
+    """When every position succeeds the summary still carries an empty
+    ``failed_positions`` list so observability code can read the field
+    unconditionally."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    tar = _make_tarball({"nn_scaler.pkl": b"OK"})
+    objects = _build_objects_for_all_positions(tar)
+
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_models_from_s3()
+
+    assert summary is not None
+    assert len(summary["positions"]) == len(model_sync.POSITIONS)
+    assert summary["failed_positions"] == []
+
+
+@pytest.mark.unit
+def test_sync_reraises_first_exception_when_every_position_fails(monkeypatch, tmp_path):
+    """When 0 positions sync the original exception class is re-raised
+    (not a synthetic aggregate), preserving the existing useful error
+    message and exception type for log inspection — the
+    ``test_sync_one_raises_when_*`` tests above lock in the message text
+    for the all-manifest-broken case; this one covers the mixed case where
+    different positions fail with different exception classes."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    # Half the positions have no manifest + no legacy key -> ClientError.
+    # Half have a manifest pointing at a broken artifact -> RuntimeError.
+    # All 6 fail; the first per-position exception (whichever finishes
+    # first under the thread pool) should be re-raised — its type must be
+    # one of the two we know ``_sync_one`` produces.
+    objects: dict[str, bytes] = {}
+    half = len(model_sync.POSITIONS) // 2
+    for pos in model_sync.POSITIONS[:half]:
+        cur_key = f"models/{pos}/history/cur-broken/model.tar.gz"
+        objects[cur_key] = b"not-gzip"
+        objects[f"models/{pos}/manifest.json"] = _manifest_bytes(current_key=cur_key)
+    # The other half intentionally has no manifest and no legacy key.
+
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        with pytest.raises((RuntimeError, ClientError)):
+            model_sync.sync_models_from_s3()
+
+
 # --- Manifest v2: stable-first fallback chain ---
 
 
