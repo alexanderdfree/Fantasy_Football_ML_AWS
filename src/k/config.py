@@ -1,3 +1,9 @@
+from src.shared.position_config import (
+    DEFAULT_ENET_L1_RATIOS,
+    PositionConfig,
+    alpha_grid,
+)
+
 # === K Seasons (post-PAT rule change: 2015+) ===
 SEASONS = list(range(2015, 2026))  # 2015-2025
 
@@ -43,14 +49,8 @@ ALL_FEATURES = SPECIFIC_FEATURES + CONTEXTUAL_FEATURES
 DROP_FEATURES = set()  # Not used; kickers bypass the general feature pipeline
 
 # === Ridge ===
-import numpy as np
-
-RIDGE_ALPHA_GRIDS = {
-    "fg_yard_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
-    "pat_points": [round(x, 4) for x in np.logspace(-1, 4, 15)],
-    "fg_misses": [round(x, 4) for x in np.logspace(-1, 4, 15)],
-    "xp_misses": [round(x, 4) for x in np.logspace(-1, 4, 15)],
-}
+_ALPHA_COUNTS = alpha_grid(-1, 4, 15)
+RIDGE_ALPHA_GRIDS = {t: _ALPHA_COUNTS for t in TARGETS}
 RIDGE_CV_FOLDS = 3
 CV_SPLIT_COLUMN = "season"
 RIDGE_REFINE_POINTS = 0
@@ -58,7 +58,7 @@ RIDGE_REFINE_POINTS = 0
 # === ElasticNet (optional parallel linear baseline, L1+L2) ===
 # Off by default. Reuses RIDGE_ALPHA_GRIDS and searches over ENET_L1_RATIOS.
 TRAIN_ELASTICNET = False
-ENET_L1_RATIOS = [0.3, 0.5, 0.7]
+ENET_L1_RATIOS = list(DEFAULT_ENET_L1_RATIOS)
 
 # === Neural Net (2015-2025 dataset: more data allows larger model) ===
 NN_BACKBONE_LAYERS = [64, 32]
@@ -211,3 +211,73 @@ CONFIG_TINY_ATTN = {
     "attn_batch_size": 32,
     "attn_patience": 1,
 }
+
+
+# === Bundled config object ===
+# Single source of truth for downstream consumers (registry / pipeline / serving).
+# K's attention is nested (per-kick inner pool + per-game outer attention), so
+# attn_max_seq_len stays None — the outer sequence length lives in attn_max_games.
+POSITION_CONFIG = PositionConfig(
+    name="K",
+    targets=TARGETS,
+    specific_features=SPECIFIC_FEATURES,
+    contextual_features=CONTEXTUAL_FEATURES,
+    all_features=ALL_FEATURES,
+    drop_features=DROP_FEATURES,
+    ridge_alpha_grids=RIDGE_ALPHA_GRIDS,
+    ridge_cv_folds=RIDGE_CV_FOLDS,
+    ridge_refine_points=RIDGE_REFINE_POINTS,
+    cv_split_column=CV_SPLIT_COLUMN,
+    train_elasticnet=TRAIN_ELASTICNET,
+    enet_l1_ratios=ENET_L1_RATIOS,
+    nn_backbone_layers=NN_BACKBONE_LAYERS,
+    nn_head_hidden=NN_HEAD_HIDDEN,
+    nn_dropout=NN_DROPOUT,
+    nn_non_negative_targets=NN_NON_NEGATIVE_TARGETS,
+    nn_lr=NN_LR,
+    nn_weight_decay=NN_WEIGHT_DECAY,
+    nn_epochs=NN_EPOCHS,
+    nn_batch_size=NN_BATCH_SIZE,
+    nn_patience=NN_PATIENCE,
+    head_losses=HEAD_LOSSES,
+    loss_weights=LOSS_WEIGHTS,
+    huber_deltas=HUBER_DELTAS,
+    scheduler_type=SCHEDULER_TYPE,
+    onecycle_max_lr=ONECYCLE_MAX_LR,
+    onecycle_pct_start=ONECYCLE_PCT_START,
+    train_attention_nn=TRAIN_ATTENTION_NN,
+    attn_d_model=ATTN_D_MODEL,
+    attn_n_heads=ATTN_N_HEADS,
+    attn_encoder_hidden_dim=ATTN_ENCODER_HIDDEN_DIM,
+    attn_max_seq_len=None,
+    attn_positional_encoding=ATTN_POSITIONAL_ENCODING,
+    attn_dropout=ATTN_DROPOUT,
+    attn_lr=ATTN_LR,
+    attn_weight_decay=ATTN_WEIGHT_DECAY,
+    attn_batch_size=ATTN_BATCH_SIZE,
+    attn_patience=ATTN_PATIENCE,
+    attn_static_features=ATTN_STATIC_FEATURES,
+    attn_project_kv=ATTN_PROJECT_KV,
+    attn_max_games=ATTN_MAX_GAMES,
+    attn_kick_dim=ATTN_KICK_DIM,
+    attn_max_kicks_per_game=ATTN_MAX_KICKS_PER_GAME,
+    attn_kick_stats=ATTN_KICK_STATS,
+    opp_attn_max_seq_len=None,
+    train_lightgbm=TRAIN_LIGHTGBM,
+    lgbm_n_estimators=LGBM_N_ESTIMATORS,
+    lgbm_learning_rate=LGBM_LEARNING_RATE,
+    lgbm_num_leaves=LGBM_NUM_LEAVES,
+    lgbm_max_depth=LGBM_MAX_DEPTH,
+    lgbm_subsample=LGBM_SUBSAMPLE,
+    lgbm_colsample_bytree=LGBM_COLSAMPLE_BYTREE,
+    lgbm_reg_lambda=LGBM_REG_LAMBDA,
+    lgbm_reg_alpha=LGBM_REG_ALPHA,
+    lgbm_min_child_samples=LGBM_MIN_CHILD_SAMPLES,
+    lgbm_min_split_gain=LGBM_MIN_SPLIT_GAIN,
+    lgbm_objective=LGBM_OBJECTIVE,
+    seasons=SEASONS,
+    min_games=MIN_GAMES,
+    accepts_dataframes=False,
+    cpu_only=True,
+    has_cv_runner=False,
+)
