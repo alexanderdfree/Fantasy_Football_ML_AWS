@@ -70,10 +70,31 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
+
+          # Cold-start opt 2c (docs/batch_design.md): when the operator has
+          # created the ECR pull-through cache rule for Docker Hub, route the
+          # PyTorch base image through it so subsequent Spot instances pull
+          # base layers from inside AWS instead of dockerhub. Auto-detect to
+          # keep this safe to merge regardless of whether the rule exists
+          # yet — first build without the rule just hits dockerhub directly.
+          PULL_THROUGH_ARG=""
+          RULE_COUNT=$(aws ecr describe-pull-through-cache-rules \
+            --ecr-repository-prefixes dockerhub \
+            --region "$AWS_REGION" \
+            --query 'length(pullThroughCacheRules)' \
+            --output text 2>/dev/null || echo 0)
+          if [ "$RULE_COUNT" != "0" ] && [ "$RULE_COUNT" != "None" ]; then
+            PULL_THROUGH_ARG="--build-arg=PULL_THROUGH_PREFIX=$ECR_REGISTRY/dockerhub/"
+            echo "Pull-through cache 'dockerhub' detected; base image routed through ECR."
+          else
+            echo "Pull-through cache not configured; base image pulls from dockerhub directly."
+          fi
+
           docker buildx build \
             --platform linux/amd64 \
             --provenance=false \
             --file src/batch/Dockerfile.train \
+            $PULL_THROUGH_ARG \
             --cache-from type=gha \
             --cache-from type=local,src=/tmp/.buildx-cache \
             --cache-to type=gha,mode=max \
@@ -89,6 +110,45 @@ jobs:
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Publish SOCI index for cold-start lazy-loading
+        # Cold-start opt 2a (docs/batch_design.md): SOCI v2 (Seekable OCI)
+        # lets Batch start the container before the full image is pulled.
+        # ECS picks up the SOCI index automatically when one exists in ECR
+        # alongside the image tag.
+        #
+        # continue-on-error because soci reads from containerd's content
+        # store and Docker on ubuntu-latest defaults to overlay2; the
+        # ctr-pull workaround can be finicky and this is a nice-to-have
+        # (the image works without the index, just slower cold-start).
+        # Tighten once this is observed working across runs.
+        continue-on-error: true
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+          SOCI_VERSION: "0.10.0"
+        run: |
+          set -euo pipefail
+
+          SOCI_TARBALL="soci-snapshotter-${SOCI_VERSION}-linux-amd64.tar.gz"
+          curl -sSL -o "/tmp/${SOCI_TARBALL}" \
+            "https://github.com/awslabs/soci-snapshotter/releases/download/v${SOCI_VERSION}/${SOCI_TARBALL}"
+          sudo tar -xzf "/tmp/${SOCI_TARBALL}" -C /usr/local/bin/ soci
+          sudo chmod +x /usr/local/bin/soci
+
+          # ubuntu-latest installs containerd as a Docker dep; systemd may
+          # not have started the service yet.
+          sudo systemctl start containerd || true
+
+          # soci reads from containerd's content store, not Docker's
+          # overlay store. Pull the freshly-pushed image back into
+          # containerd so soci can index it.
+          ECR_PASSWORD=$(aws ecr get-login-password --region "$AWS_REGION")
+          sudo ctr image pull --user "AWS:${ECR_PASSWORD}" "$IMAGE_URI"
+
+          sudo /usr/local/bin/soci create "$IMAGE_URI"
+          sudo /usr/local/bin/soci push --user "AWS:${ECR_PASSWORD}" "$IMAGE_URI"
+
+          echo "Published SOCI index for $IMAGE_URI"
 
       - name: Register new job definition revision
         # Gated behind BATCH_ACTIVE so Batch can ride on the image path while

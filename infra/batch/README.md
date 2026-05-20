@@ -55,13 +55,26 @@ aws ecr create-pull-through-cache-rule \
 ```
 
 After this, every CI build pulls the PyTorch base image from your ECR's local
-endpoints instead of Docker Hub. SOCI index publishing happens automatically in
-the same CI step (gated on the `soci` CLI install succeeding in the runner).
+endpoints instead of Docker Hub. The build step in
+[batch-image.yml](../../.github/workflows/batch-image.yml) auto-detects the
+cache rule and only sets `PULL_THROUGH_PREFIX` when it exists, so it's safe to
+merge this CI change before running `create-pull-through-cache-rule`.
 
-If your CI's GitHub Actions role doesn't already have
-`ecr:BatchImportUpstreamImage` on `repository/dockerhub/*`, the first build
-falls back to upstream Docker Hub (no failure, just slower). Add it to the
-CI role for repeat builds to hit the cache.
+The CI's AWS credentials (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` repo
+secrets) need these ECR permissions on `repository/dockerhub/*` for the first
+build to hydrate the cache from Docker Hub:
+
+```
+ecr:BatchImportUpstreamImage
+ecr:CreateRepository
+ecr:BatchCheckLayerAvailability
+ecr:GetDownloadUrlForLayer
+ecr:BatchGetImage
+```
+
+A SOCI index is also published alongside the image (cold-start opt 2a). The
+SOCI publish step is `continue-on-error: true` — if it fails, the image still
+works, just with a slower first pull on each fresh Spot instance.
 
 ## Verification
 
