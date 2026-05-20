@@ -1,22 +1,22 @@
 """Coverage tests for ``src/shared/registry.py``.
 
-The registry is a lazy dispatch table: each position has metadata in
-``_POSITION_META`` + a bespoke branch in ``get_inference_spec`` that wires
-up the position's filter/feature/target callables for app.py to consume
-at inference time. These tests exercise every lookup + every branch of
-``get_inference_spec`` so the serving path's model loading stays green.
+PR 3 of the consolidation series collapsed the six per-position branches in
+``get_inference_spec`` into a single generic dispatcher that reads from
+``POSITION_CONFIG``. The legacy ``_POSITION_META`` dict and the per-cfg-module
+``_attn_kwargs_static`` helper are gone; metadata now flows from the
+dataclass on each position's config module.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from src.shared.position_config import PositionConfig
 from src.shared.registry import (
     ALL_POSITIONS,
     CPU_ONLY_POSITIONS,
     INFERENCE_REGISTRY,
-    _attn_kwargs_static,
-    _meta,
+    _flat_attn_kwargs_static,
     accepts_dataframes,
     get_config,
     get_cv_runner,
@@ -26,7 +26,7 @@ from src.shared.registry import (
 )
 
 # --------------------------------------------------------------------------
-# Meta + lightweight lookups
+# Position metadata + lightweight lookups
 # --------------------------------------------------------------------------
 
 
@@ -40,21 +40,6 @@ def test_all_positions_match_expected_set():
 def test_cpu_only_positions_is_k_and_dst():
     """Only K and DST run on CPU in Batch; the rest need GPU."""
     assert {"K", "DST"} == CPU_ONLY_POSITIONS
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])
-def test_meta_returns_position_dict(pos):
-    m = _meta(pos)
-    assert m["runner_module"].endswith("run_pipeline")
-    assert m["runner_fn"] == "run"
-    assert m["config_var"] == "CONFIG"
-
-
-@pytest.mark.unit
-def test_meta_raises_on_unknown_position():
-    with pytest.raises(ValueError, match="Unknown position"):
-        _meta("FOO")
 
 
 @pytest.mark.unit
@@ -73,6 +58,12 @@ def test_standard_positions_accept_dataframes(pos):
 @pytest.mark.parametrize("pos", ["K", "DST"])
 def test_special_positions_do_not_accept_dataframes(pos):
     assert accepts_dataframes(pos) is False
+
+
+@pytest.mark.unit
+def test_is_cpu_only_raises_on_unknown_position():
+    with pytest.raises(ValueError, match="Unknown position"):
+        is_cpu_only("FOO")
 
 
 # --------------------------------------------------------------------------
@@ -111,7 +102,7 @@ def test_get_config_returns_dict(pos):
 
 
 # --------------------------------------------------------------------------
-# get_inference_spec — per-position branches
+# get_inference_spec — universal + position-specific shape
 # --------------------------------------------------------------------------
 
 
@@ -154,6 +145,12 @@ def test_get_inference_spec_k_has_nested_attention_and_target_signs():
 
 
 @pytest.mark.unit
+def test_get_inference_spec_dst_uses_offense_opp_attn_kind():
+    spec = get_inference_spec("DST")
+    assert spec["opp_attn_kind"] == "offense"
+
+
+@pytest.mark.unit
 def test_get_inference_spec_raises_on_unknown_position():
     with pytest.raises(ValueError, match="Unknown position"):
         get_inference_spec("ZZZ")
@@ -179,42 +176,51 @@ def test_inference_registry_contains_all_positions():
 
 
 # --------------------------------------------------------------------------
-# _attn_kwargs_static — helper used by get_inference_spec
+# _flat_attn_kwargs_static — helper used by get_inference_spec for the
+# five flat-attention positions (QB/RB/WR/TE/DST).
 # --------------------------------------------------------------------------
 
 
+def _make_pc(**overrides) -> PositionConfig:
+    """Build a minimal PositionConfig for kwargs-extraction tests."""
+    base = dict(
+        name="X",
+        targets=["a"],
+        specific_features=[],
+        ridge_alpha_grids={"a": [1.0]},
+        nn_backbone_layers=[8],
+        loss_weights={"a": 1.0},
+        head_losses={"a": "huber"},
+        huber_deltas={"a": 1.0},
+    )
+    base.update(overrides)
+    return PositionConfig(**base)
+
+
 @pytest.mark.unit
-def test_attn_kwargs_static_falls_back_to_defaults_for_missing_attrs():
-    """When a cfg module doesn't define an attr, the constructor default lands."""
-
-    class _EmptyCfg:
-        pass
-
-    kwargs = _attn_kwargs_static(_EmptyCfg())
-    assert kwargs["d_model"] == 32  # default
-    assert kwargs["n_attn_heads"] == 2  # default
-    assert kwargs["head_hidden"] == 32  # default
-    assert kwargs["dropout"] == 0.3  # default
+def test_flat_attn_kwargs_static_uses_dataclass_defaults():
+    kwargs = _flat_attn_kwargs_static(_make_pc())
+    assert kwargs["d_model"] == 32
+    assert kwargs["n_attn_heads"] == 2
+    assert kwargs["head_hidden"] == 32
     assert kwargs["gated_targets"] is None
 
 
 @pytest.mark.unit
-def test_attn_kwargs_static_populates_head_hidden_overrides_when_set():
-    """If ``NN_HEAD_HIDDEN_OVERRIDES`` is truthy it lands as a dict."""
-
-    class _Cfg:
-        NN_HEAD_HIDDEN_OVERRIDES = {"passing_yards": 8, "rushing_yards": 16}
-        NN_NON_NEGATIVE_TARGETS = {"passing_yards", "rushing_yards"}
-
-    kwargs = _attn_kwargs_static(_Cfg())
-    assert kwargs["head_hidden_overrides"] == {"passing_yards": 8, "rushing_yards": 16}
-    assert kwargs["non_negative_targets"] == {"passing_yards", "rushing_yards"}
+def test_flat_attn_kwargs_static_populates_head_hidden_overrides_when_set():
+    overrides = {"a": 8, "b": 16}
+    kwargs = _flat_attn_kwargs_static(_make_pc(nn_head_hidden_overrides=overrides))
+    assert kwargs["head_hidden_overrides"] == overrides
 
 
 @pytest.mark.unit
-def test_attn_kwargs_static_populates_gated_targets_when_set():
-    class _Cfg:
-        GATED_TARGETS = ["passing_tds", "rushing_tds"]
+def test_flat_attn_kwargs_static_populates_gated_targets_when_set():
+    kwargs = _flat_attn_kwargs_static(_make_pc(gated_targets=["a", "b"]))
+    assert kwargs["gated_targets"] == ["a", "b"]
 
-    kwargs = _attn_kwargs_static(_Cfg())
-    assert kwargs["gated_targets"] == ["passing_tds", "rushing_tds"]
+
+@pytest.mark.unit
+def test_flat_attn_kwargs_static_threads_non_negative_targets():
+    nn = {"a", "b"}
+    kwargs = _flat_attn_kwargs_static(_make_pc(nn_non_negative_targets=nn))
+    assert kwargs["non_negative_targets"] == nn
