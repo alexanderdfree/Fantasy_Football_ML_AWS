@@ -17,10 +17,145 @@ Project-root sys.path wiring and pytest-marker registration live in the root
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
+
+# ---------------------------------------------------------------------------
+# Synthetic schedule data — only patched in when the real parquet is absent.
+#
+# ``src/shared/weather_features._load_schedules`` reads
+# ``data/raw/schedules_2012_2025.parquet`` (a 28MB file fetched at CI runtime
+# via ``nfl_data_py``). Local checkouts and worktrees that haven't pulled the
+# raw data folder don't have it on disk, so the QB/RB/TE/WR e2e + CV pipeline
+# tests crash at the schedule-merge step.
+#
+# This fixture detects the missing file and monkeypatches ``_load_schedules``
+# (plus the module-level ``_schedule_cache``) to return a synthetic schedule
+# carrying the columns ``_build_team_schedule_lookup`` reads. When CI runs
+# and the real parquet exists, the fixture is a no-op — CI behaviour is
+# unchanged.
+# ---------------------------------------------------------------------------
+
+# Mirrors the team set on the real parquet so synthetic schedules can serve
+# every position's e2e/CV test regardless of which TEAMS subset it picks.
+_NFL_TEAMS: tuple[str, ...] = (
+    "ARI",
+    "ATL",
+    "BAL",
+    "BUF",
+    "CAR",
+    "CHI",
+    "CIN",
+    "CLE",
+    "DAL",
+    "DEN",
+    "DET",
+    "GB",
+    "HOU",
+    "IND",
+    "JAX",
+    "KC",
+    "LA",
+    "LAC",
+    "LV",
+    "MIA",
+    "MIN",
+    "NE",
+    "NO",
+    "NYG",
+    "NYJ",
+    "PHI",
+    "PIT",
+    "SEA",
+    "SF",
+    "TB",
+    "TEN",
+    "WAS",
+)
+
+
+def _build_synthetic_schedules() -> pd.DataFrame:
+    """Build a minimal full-season schedule frame for tests.
+
+    Covers every (season, week, team) combination 2012-2025 weeks 1-18 with
+    REG game_type, so `_build_team_schedule_lookup` always finds a match for
+    any synthetic player frame the e2e/CV tests generate.
+
+    Pairs teams sequentially into games (16 games per week with 32 teams).
+    Carries the 14 columns the schedule merge reads, with constant
+    weather/spread values that put the synthetic data well inside the real
+    distribution (spread ~0, total ~45, dome=false, grass surface, 65F/5mph,
+    7 days rest, non-divisional).
+    """
+    rows = []
+    teams = list(_NFL_TEAMS)
+    for season in range(2012, 2026):
+        for week in range(1, 19):  # NFL added week 18 in 2021; harmless for earlier seasons
+            # Pair teams (0,1), (2,3), ..., (30,31). Rotate the pairing per
+            # week so every team faces several opponents — the merge only
+            # cares about the (season, week, recent_team) key, but realistic
+            # rotation keeps the synthetic data closer to true distribution.
+            offset = week % len(teams)
+            rotated = teams[offset:] + teams[:offset]
+            for i in range(0, len(rotated), 2):
+                home = rotated[i]
+                away = rotated[i + 1]
+                rows.append(
+                    {
+                        "season": season,
+                        "week": week,
+                        "game_type": "REG",
+                        "home_team": home,
+                        "away_team": away,
+                        "spread_line": 0.0,
+                        "total_line": 45.0,
+                        "roof": "outdoors",
+                        "surface": "grass",
+                        "temp": 65.0,
+                        "wind": 5.0,
+                        "home_rest": 7,
+                        "away_rest": 7,
+                        "div_game": 0,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _patch_schedules_if_missing():
+    """Session-scoped autouse: stub ``_load_schedules`` when the parquet
+    isn't on disk.
+
+    Only fires when ``data/raw/schedules_2012_2025.parquet`` is absent —
+    CI ships with the real parquet and the fixture short-circuits, so the
+    production code path is unchanged on the CI runner.
+
+    Tests that already patch ``_load_schedules`` themselves (e.g. the unit
+    suite in ``tests/shared/test_weather_features.py``, the DST E2E
+    fixtures) layer their per-function or per-module patches on top of this
+    session patch — ``pytest.MonkeyPatch`` + ``unittest.mock.patch`` both
+    snapshot+restore correctly, so no cross-test leakage.
+    """
+    project_root = Path(__file__).resolve().parents[1]
+    parquet_path = project_root / "data" / "raw" / "schedules_2012_2025.parquet"
+    if parquet_path.exists():
+        # Real data is on disk — let the production loader run.
+        yield
+        return
+
+    synthetic = _build_synthetic_schedules()
+    mp = pytest.MonkeyPatch()
+    from src.shared import weather_features as _wf
+
+    mp.setattr(_wf, "_schedule_cache", synthetic)
+    mp.setattr(_wf, "_load_schedules", lambda: synthetic)
+    try:
+        yield
+    finally:
+        mp.undo()
 
 
 # ---------------------------------------------------------------------------
