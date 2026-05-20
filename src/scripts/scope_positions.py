@@ -20,6 +20,8 @@ output (script exits 0, no stdout) means the train job should be skipped.
 
 from __future__ import annotations
 
+import argparse
+import json
 import re
 import sys
 from collections.abc import Iterable
@@ -59,11 +61,69 @@ def compute_positions(changed_files: Iterable[str]) -> list[str]:
     return [pos for pos in ALL_POSITIONS if any(f.startswith(f"src/{pos.lower()}/") for f in files)]
 
 
+ALL_TEST_SHARDS: tuple[str, ...] = (*ALL_POSITIONS, "shared")
+
+_TEST_DOCS_REGEX = re.compile(r"\.md$|^docs/|^\.github/ISSUE_TEMPLATE/|^\.gitignore$|^LICENSE")
+_TEST_GLOBAL_REGEX = re.compile(
+    r"^src/(shared|data|features|models|training|evaluation)/"
+    r"|^src/(__init__|config)\.py$"
+    r"|^conftest\.py$"
+    r"|^tests/(conftest\.py|_pipeline_e2e_utils\.py|__init__\.py|fixtures/)"
+    r"|^pyproject\.toml$"
+    r"|^requirements.*\.txt$"
+    r"|^\.github/workflows/tests\.yml$"
+)
+_TEST_SHARED_REGEX = re.compile(
+    r"^src/(serving|batch|scripts|benchmarking|tuning|analysis)/"
+    r"|^tests/[^/]+\.py$"
+    r"|^tests/(batch|scripts|integration|shared)/"
+)
+_TEST_PER_POSITION_REGEX = {
+    pos: re.compile(rf"^(src/{pos.lower()}/|tests/{pos.lower()}/)") for pos in ALL_POSITIONS
+}
+
+
+def compute_test_shards(changed_files: Iterable[str]) -> list[str]:
+    """Return test matrix shards (positions + 'shared') given changed paths.
+
+    Rules (in order):
+      1. Strip docs/license-only paths. If nothing remains → [].
+      2. Any global trigger (shared code, infra, deps, test plumbing) → all 7.
+      3. Per-position: src/{pos}/ or tests/{pos}/ → that position.
+      4. Cross-cutting dirs (src/serving, src/batch, src/scripts, src/benchmarking,
+         src/tuning, src/analysis, top-level tests/*.py, tests/{batch,scripts,
+         integration,shared}/) → 'shared'.
+      5. Fallback: if no rule matched, run all 7 (conservative).
+    """
+    files = [f for f in changed_files if f]
+    non_docs = [f for f in files if not _TEST_DOCS_REGEX.search(f)]
+    if not non_docs:
+        return []
+    if any(_TEST_GLOBAL_REGEX.search(f) for f in non_docs):
+        return list(ALL_TEST_SHARDS)
+    shards: list[str] = [
+        pos
+        for pos, per_pos in _TEST_PER_POSITION_REGEX.items()
+        if any(per_pos.search(f) for f in non_docs)
+    ]
+    if any(_TEST_SHARED_REGEX.search(f) for f in non_docs):
+        shards.append("shared")
+    if not shards:
+        return list(ALL_TEST_SHARDS)
+    return shards
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["train", "test"], default="train")
+    args = parser.parse_args()
     files = [line.rstrip("\n") for line in sys.stdin if line.strip()]
-    positions = compute_positions(files)
-    if positions:
-        sys.stdout.write(" ".join(positions) + "\n")
+    if args.mode == "test":
+        sys.stdout.write(json.dumps(compute_test_shards(files)) + "\n")
+    else:
+        positions = compute_positions(files)
+        if positions:
+            sys.stdout.write(" ".join(positions) + "\n")
     return 0
 
 

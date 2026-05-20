@@ -267,3 +267,125 @@ class TestRegistryDriftGuard:
             "Update scope_positions.ALL_POSITIONS (and the detect jobs' "
             'fallback `ALL="..."` lists) to match.'
         )
+
+
+# --------------------------------------------------------------------------
+# compute_test_shards — tests.yml `detect` path → matrix shards
+# --------------------------------------------------------------------------
+
+
+ALL_SEVEN = list(scope_positions.ALL_TEST_SHARDS)
+
+
+class TestComputeTestShards:
+    @pytest.mark.parametrize(
+        "files",
+        [
+            ["README.md"],
+            ["docs/batch_design.md"],
+            [".gitignore"],
+            ["LICENSE"],
+            [".github/ISSUE_TEMPLATE/bug.md"],
+            ["README.md", "docs/batch_design.md", ".gitignore", "LICENSE"],
+        ],
+    )
+    def test_docs_only_returns_empty(self, files):
+        assert scope_positions.compute_test_shards(files) == []
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/shared/pipeline.py",
+            "src/data/loader.py",
+            "src/features/foo.py",
+            "src/models/foo.py",
+            "src/training/foo.py",
+            "src/evaluation/foo.py",
+            "src/__init__.py",
+            "src/config.py",
+            "conftest.py",
+            "tests/conftest.py",
+            "tests/_pipeline_e2e_utils.py",
+            "tests/__init__.py",
+            "tests/fixtures/snap.parquet",
+            "pyproject.toml",
+            "requirements.txt",
+            "requirements-dev.txt",
+            ".github/workflows/tests.yml",
+        ],
+    )
+    def test_global_path_fans_out_to_all_seven(self, path):
+        assert scope_positions.compute_test_shards([path]) == ALL_SEVEN
+
+    @pytest.mark.parametrize(
+        "pos",
+        ["QB", "RB", "WR", "TE", "K", "DST"],
+    )
+    def test_single_position_from_src(self, pos):
+        assert scope_positions.compute_test_shards([f"src/{pos.lower()}/features.py"]) == [pos]
+
+    @pytest.mark.parametrize(
+        "path,expected",
+        [
+            ("tests/qb/test_features.py", ["QB"]),
+            ("tests/rb/test_features.py", ["RB"]),
+            ("tests/wr/test_features.py", ["WR"]),
+            ("tests/te/test_features.py", ["TE"]),
+            ("tests/k/test_features.py", ["K"]),
+            ("tests/dst/test_run_pipeline.py", ["DST"]),
+        ],
+    )
+    def test_single_position_from_tests(self, path, expected):
+        assert scope_positions.compute_test_shards([path]) == expected
+
+    def test_multiple_positions_ordered(self):
+        assert scope_positions.compute_test_shards(
+            ["src/qb/features.py", "tests/wr/test_x.py"]
+        ) == ["QB", "WR"]
+
+    def test_position_order_matches_all_positions(self):
+        result = scope_positions.compute_test_shards(
+            ["src/dst/features.py", "src/qb/features.py", "src/k/features.py"]
+        )
+        assert result == ["QB", "K", "DST"]
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/serving/app.py",
+            "src/batch/launch.py",
+            "src/scripts/promote.py",
+            "src/benchmarking/benchmark.py",
+            "src/tuning/tune_lgbm.py",
+            "src/analysis/error_analysis.py",
+            "tests/batch/test_foo.py",
+            "tests/scripts/test_foo.py",
+            "tests/integration/test_foo.py",
+            "tests/shared/test_foo.py",
+            "tests/test_top_level.py",
+        ],
+    )
+    def test_shared_shard(self, path):
+        assert scope_positions.compute_test_shards([path]) == ["shared"]
+
+    def test_position_plus_shared(self):
+        assert scope_positions.compute_test_shards(
+            ["src/qb/features.py", "src/serving/app.py"]
+        ) == ["QB", "shared"]
+
+    def test_mixed_docs_and_code(self):
+        assert scope_positions.compute_test_shards(["README.md", "src/qb/features.py"]) == ["QB"]
+
+    @pytest.mark.parametrize(
+        "files",
+        [
+            [".github/workflows/deploy.yml"],
+            ["Dockerfile"],
+            ["unrelated/path/file.py"],
+        ],
+    )
+    def test_unmatched_falls_back_to_all_seven(self, files):
+        assert scope_positions.compute_test_shards(files) == ALL_SEVEN
+
+    def test_empty_input(self):
+        assert scope_positions.compute_test_shards([]) == []

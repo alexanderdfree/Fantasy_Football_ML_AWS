@@ -58,97 +58,18 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          set -eu
-
-          ALL='["QB","RB","WR","TE","K","DST","shared"]'
-
-          # Resolve the diff base. PRs diff against the PR base SHA (the
-          # merge target on main); pushes to main diff against HEAD~1.
           if [ "$EVENT" = "pull_request" ]; then
             BASE="$BASE_SHA"
           else
             BASE="HEAD~1"
           fi
-
           if ! git rev-parse --verify "$BASE" >/dev/null 2>&1; then
-            echo "Cannot resolve base ($BASE) — defaulting to all shards."
-            echo "shards=$ALL" >> "$GITHUB_OUTPUT"
+            echo 'shards=["QB","RB","WR","TE","K","DST","shared"]' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
           files=$(git diff --name-only "$BASE" HEAD)
-          echo "Changed files:"
-          printf '  %s\n' $files
-
-          # ---- Strip docs/markdown/license-only changes. ----
-          # If the diff contains only docs files, no test shard needs to
-          # run — emit an empty matrix and let `tests-pass` accept the
-          # `skipped` result. Patterns mirror the old tests-skip.yml
-          # paths filter, kept here as the single source of truth.
-          DOCS_REGEX='(\.md$|^docs/|^\.github/ISSUE_TEMPLATE/|^\.gitignore$|^LICENSE)'
-          non_docs=$(printf '%s\n' "$files" | grep -vE "$DOCS_REGEX" || true)
-          if [ -z "$non_docs" ]; then
-            echo "Only docs/markdown/license changed -> no shards needed."
-            echo "shards=[]" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # Subsequent regex checks operate on the docs-stripped view so
-          # a mixed PR (docs/ + src/qb/) scopes to QB without the docs
-          # files spuriously triggering anything.
-          files="$non_docs"
-
-          # ---- Global triggers — run all 7 shards. ----
-          # src/shared/                    -> imported by every position
-          # src/{data,features,models,training,evaluation}/ -> shared infra
-          # src/__init__.py | src/config.py
-          # conftest.py (root)             -> sys.path + marker registration
-          # tests/conftest.py              -> shared Flask + tiny-model fixtures
-          # tests/_pipeline_e2e_utils.py   -> imported by every position e2e
-          # tests/__init__.py | tests/fixtures/
-          # pyproject.toml                 -> ruff/pytest/coverage config
-          # requirements*.txt              -> dep changes affect every shard
-          # .github/workflows/tests.yml    -> the workflow itself
-          GLOBAL_REGEX='^(src/(shared|data|features|models|training|evaluation)/|src/(__init__|config)\.py$|conftest\.py$|tests/(conftest\.py|_pipeline_e2e_utils\.py|__init__\.py|fixtures/)|pyproject\.toml$|requirements.*\.txt$|\.github/workflows/tests\.yml$)'
-          if printf '%s\n' "$files" | grep -qE "$GLOBAL_REGEX"; then
-            echo "Global file changed -> running all 7 shards."
-            echo "shards=$ALL" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # ---- Per-position scoping. ----
-          shards=""
-          for pos in QB RB WR TE K DST; do
-            pos_lower=$(echo "$pos" | tr '[:upper:]' '[:lower:]')
-            if printf '%s\n' "$files" | grep -qE "^(src/${pos_lower}/|tests/${pos_lower}/)"; then
-              shards="${shards:+$shards,}\"$pos\""
-            fi
-          done
-
-          # ---- Shared shard. Runs whenever something the shared shard
-          # actually covers changes:
-          # - tests/*.py (root-level tests like test_app.py)
-          # - tests/{batch,scripts,integration,shared}/
-          # - src/{serving,batch,scripts,benchmarking,tuning,analysis}/
-          #   (these don't affect per-position pipelines but their tests
-          #   live in the shared shard).
-          SHARED_REGEX='^(src/(serving|batch|scripts|benchmarking|tuning|analysis)/|tests/[^/]+\.py$|tests/(batch|scripts|integration|shared)/)'
-          if printf '%s\n' "$files" | grep -qE "$SHARED_REGEX"; then
-            shards="${shards:+$shards,}\"shared\""
-          fi
-
-          if [ -z "$shards" ]; then
-            # The docs-strip step above already short-circuits pure-doc
-            # diffs, so reaching here means a non-doc path changed but
-            # didn't match any global / per-position / shared rule —
-            # e.g. another workflow file, infra/, etc. Default to all 7
-            # rather than silently skip a real change.
-            echo "No matching shards — defaulting to all 7 (conservative)."
-            echo "shards=$ALL" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "Scoped shards: [$shards]"
-          echo "shards=[$shards]" >> "$GITHUB_OUTPUT"
+          shards=$(printf '%s\n' "$files" | python3 -m src.scripts.scope_positions --mode test)
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
 
   test:
     needs: detect
