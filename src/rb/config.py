@@ -340,6 +340,14 @@ ATTN_PATIENCE = 35
 # fantasy_points signal still reaches Ridge / LightGBM / the base NN
 # through the rolling / prior_season / trend categories of
 # INCLUDE_FEATURES.
+#
+# Game-script context + team box score (last 12 columns) are per-historical-
+# game raw context — not rolling/EWMA/trend — so they belong on the history
+# tokens, not in ATTN_STATIC_FEATURES (which would violate D6). Without them
+# the attention encoder treats every historical game as if its environment
+# matched the prediction week, which is obviously wrong for RB usage (game
+# script drives carry / target split). team_points_scored + opp_team_points_scored
+# together encode in-game score margin, the dominant game-script signal.
 ATTN_HISTORY_STATS = [
     "rushing_yards",
     "receiving_yards",
@@ -356,6 +364,22 @@ ATTN_HISTORY_STATS = [
     "game_target_share",
     "game_carry_hhi",
     "game_target_hhi",
+    # Game-script context (already merged onto every player-week row by
+    # merge_schedule_features / _build_contextual_features).
+    "implied_team_total",
+    "implied_opp_total",
+    "is_home",
+    "days_rest",
+    # Team box score for that historical game (merged by
+    # src.shared.team_box_score.merge_team_box_score_features).
+    "team_pass_attempts",
+    "team_completions",
+    "team_passing_yards",
+    "team_rush_attempts",
+    "team_rushing_yards",
+    "team_points_scored",
+    "team_turnovers",
+    "opp_team_points_scored",
 ]
 # Categories of INCLUDE_FEATURES that flow into the attention NN's static
 # branch. The attention branch learns its own temporal representation from
