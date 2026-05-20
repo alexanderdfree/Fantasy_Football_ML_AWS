@@ -11,10 +11,20 @@ on:
     # patterns at the end refine the broad src/** include. ``docs/`` is
     # bundled into the image (Dockerfile: ``COPY docs/ docs/``) and read at
     # runtime by ``src.serving.app._render_wiki_doc`` to power the in-app
-    # wiki tab, so doc-only edits must redeploy too.
+    # wiki tab, so doc-only edits must redeploy too. The explicit per-file
+    # entries below (root wiki .md sources, infra READMEs, gunicorn config)
+    # mirror the non-``src/`` COPY lines in the Dockerfile — keep this list
+    # in sync when adding or removing Dockerfile COPY lines.
     paths:
       - "src/**"
       - "docs/**"
+      - "README.md"
+      - "SETUP.md"
+      - "ATTRIBUTION.md"
+      - "TODO.md"
+      - "infra/ec2/README.md"
+      - "infra/aws/README.md"
+      - "gunicorn.conf.py"
       - "Dockerfile"
       - ".dockerignore"
       - "requirements.txt"
