@@ -184,7 +184,9 @@ def test_inference_registry_contains_all_positions():
 def _make_pc(**overrides) -> PositionConfig:
     """Build a minimal PositionConfig for kwargs-extraction tests."""
     base = dict(
-        name="X",
+        # PR 6 added Position-enum validation on PositionConfig.name, so we
+        # piggyback on QB rather than an arbitrary placeholder string.
+        name="QB",
         targets=["a"],
         specific_features=[],
         ridge_alpha_grids={"a": [1.0]},

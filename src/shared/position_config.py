@@ -24,6 +24,8 @@ from typing import Any
 
 import numpy as np
 
+from src.shared.position import Position
+
 # ---------------------------------------------------------------------------
 # Shared constants and helpers used by per-position config files.
 # ---------------------------------------------------------------------------
@@ -205,3 +207,10 @@ class PositionConfig:
     accepts_dataframes: bool = True
     cpu_only: bool = False
     has_cv_runner: bool = False
+
+    def __post_init__(self) -> None:
+        # Validate ``name`` against the canonical Position enum so typos in a
+        # per-position ``POSITION_CONFIG = PositionConfig(name=...)`` call
+        # fail at import time with a clear error rather than landing in a
+        # downstream dict lookup as a silent miss.
+        Position(self.name)
