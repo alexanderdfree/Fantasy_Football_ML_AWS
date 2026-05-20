@@ -253,6 +253,16 @@ def _build_synthetic_dataset(
                 rushing_tds = rng.poisson(0.4 + 0.1 * skill)
                 receiving_tds = rng.poisson(0.1)
 
+                # Red-zone aggregates (PBP-derived in prod; synthetic here).
+                # Correlate with carries/targets so test_features assertions
+                # about non-degenerate distributions hold.
+                rz_carries = min(carries, rng.poisson(0.6 + 0.15 * skill))
+                in10_carries = min(rz_carries, rng.poisson(0.3))
+                in5_carries = min(in10_carries, rng.poisson(0.15))
+                rz_targets = min(targets, rng.poisson(0.3 + 0.05 * skill))
+                # Realistic share: 0-0.4 for a healthy starter.
+                rz_target_share = float(rng.uniform(0.0, 0.35))
+
                 fp = (
                     rushing_yards * 0.1
                     + receiving_yards * 0.1
@@ -321,6 +331,15 @@ def _build_synthetic_dataset(
                         "opp_def_ints_L5": 0.8,
                         "opp_def_rush_yds_allowed_L5": 120.0,
                         "opp_def_pts_allowed_L5": 22.0,
+                        # Red-zone PBP aggregates merged by src.data.loader.
+                        # Present so build_features's prior_season_*_redzone_*
+                        # aggregates and ATTN_HISTORY_STATS see non-zero signal
+                        # during E2E + regression runs.
+                        "redzone_carries": int(rz_carries),
+                        "redzone_targets": int(rz_targets),
+                        "inside10_carries": int(in10_carries),
+                        "inside5_carries": int(in5_carries),
+                        "redzone_target_share": rz_target_share,
                     }
                 )
     return pd.DataFrame(rows)

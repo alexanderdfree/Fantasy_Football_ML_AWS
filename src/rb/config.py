@@ -119,6 +119,16 @@ INCLUDE_FEATURES = {
         "prior_season_total_yards",
         "prior_season_games_played",
         "prior_season_mean_fumbles_lost",
+        # Red-zone usage carried into season S from S-1. Encodes goal-line
+        # opportunity (carries inside the 20 + targets inside the 20) which
+        # the volume-only aggregates above can't separate from open-field
+        # production. Sourced from PBP via src.data.redzone_pbp and merged
+        # onto every weekly row in src.data.loader. Motivation: RB attn-NN
+        # weak on sparse TD heads vs Ridge (TODO.md hurdle_poisson archive
+        # entry). Auto-flows into ATTN_STATIC_FEATURES via the prior_season
+        # category derivation below.
+        "prior_season_total_redzone_touches",
+        "prior_season_mean_redzone_touches_per_game",
     ],
     # All EWMA dropped (>0.98 corr with rolling means)
     "ewma": [],
@@ -380,6 +390,20 @@ ATTN_HISTORY_STATS = [
     "team_points_scored",
     "team_turnovers",
     "opp_team_points_scored",
+    # Per-game red-zone & goal-line touch counts. Sourced from PBP via
+    # src.data.redzone_pbp.reconstruct_redzone_from_pbp and merged onto each
+    # weekly row in src.data.loader. The 24 columns above can't separate a
+    # goal-line back from a between-the-tackles workhorse — both can run for
+    # 70 yards on 18 carries — but their TD output diverges by yardline_100
+    # distribution. Targets the rushing_tds (+0.080 MAE vs Ridge) and
+    # receiving_tds (+0.035) gaps the hurdle_poisson loss-family fix
+    # couldn't close without regressing aggregate FP MAE (see TODO.md
+    # "[TESTED, REJECTED] RB hurdle_poisson" archive entry).
+    "redzone_carries",
+    "redzone_targets",
+    "inside10_carries",
+    "inside5_carries",
+    "redzone_target_share",
 ]
 # Categories of INCLUDE_FEATURES that flow into the attention NN's static
 # branch. The attention branch learns its own temporal representation from
