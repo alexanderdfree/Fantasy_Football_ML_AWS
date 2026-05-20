@@ -1,8 +1,8 @@
 # AWS Batch Training Design Doc
 
-> **Status (2026-04-21): Standby path.** The active training path is EC2 warm-host ([docs/ec2_design.md](ec2_design.md)). Reactivate Batch by setting repo variable `BATCH_ACTIVE=true`.
+> **Status (2026-05-20): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g4dn.xlarge Spot instances, one position per host, ~25–30 min wall-clock vs the warm-EC2 path's ~120-min sequential loop. Cold-start mitigated by ECR pull-through cache + SOCI v2 lazy loading (PR #216). See [D13 in docs/ARCHITECTURE.md](ARCHITECTURE.md#d13-spot-fan-out-via-aws-batch-overrides-d7-when-batch_activetrue) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
 >
-> Image builds still track HEAD ([`.github/workflows/batch-image.yml`](../.github/workflows/batch-image.yml)) so reactivation is one repo-variable flip and a push — Batch resources ([`src/batch/launch.py`](../src/batch/launch.py), [`src/batch/train.py`](../src/batch/train.py), [`src/batch/Dockerfile.train`](../src/batch/Dockerfile.train)) remain in place.
+> Rollback: `gh variable set BATCH_ACTIVE --body "false"` returns push-driven training to the warm-EC2 path ([docs/ec2_design.md](ec2_design.md)) on the next push to `main`. Both paths remain provisioned.
 
 ## Problem
 

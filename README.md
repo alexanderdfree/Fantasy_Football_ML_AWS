@@ -40,10 +40,10 @@ nflverse API ─┐
                                                 │
                                                 ▼
                              ┌──────────────────────────────┐
-                             │ EC2 g4dn warm instance (train)│◀── GitHub Actions
-                             │   src/batch/train.py, 6      │     push to main
-                             │   parallel positions.        │
-                             │   AWS Batch is the standby.  │
+                             │ GPU training (BATCH_ACTIVE)  │◀── GitHub Actions
+                             │  true  → 6× Spot g4dn (Batch) │    push to main
+                             │  false → warm OD g4dn (SSM)   │
+                             │ Same Dockerfile.train; D7/D13│
                              └──────────────────────────────┘
                                                 │ model.tar.gz
                                                 ▼
@@ -198,11 +198,11 @@ GitHub Actions
 deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS ──▶ alexfree.me
 ```
 
-- **Training** — a warm `g4dn.xlarge` T4 GPU host is driven via SSM Run Command from [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml). A `detect` job diffs the merge commit and only retrains positions whose code actually changed; the instance auto-shuts down on idle to keep cost flat.
+- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. When `true`, [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml) fans out across six g4dn.xlarge Spot instances via AWS Batch (one position per host, parallel; ~25–30 min wall-clock). When `false` or unset, [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
 - **Artifact safety** — S3 manifest schema v2 tracks `stable` / `current` / `previous` plus a 5-version `history`. New artifacts must clear a smoke-test gate before being promoted to `stable`. [src/scripts/promote.py](src/scripts/promote.py) supports manual rollback to any history entry; bucket versioning is defense-in-depth.
 - **Serving** — ECS Fargate (arm64, 1 vCPU / 2 GB) sits behind an ALB with ACM-terminated HTTPS. The slim Flask image fetches models from S3 at boot rather than baking them in — keeps the image roughly 3× smaller and lets prod track new artifacts without a full redeploy.
 - **IAM** — the serving task role is scoped to `s3:GetObject` on `ff-predictor-training/models/*` only.
-- **Standby path** — the AWS Batch image is still built behind a `BATCH_ACTIVE` repo variable so the GPU layer can fail over without a code change.
+- **Rollback symmetry** — flipping `BATCH_ACTIVE` is a one-command operation either direction. Both training paths stay provisioned indefinitely; `workflow_dispatch` on either workflow bypasses the gate as a break-glass.
 
 **Notable enhancements**
 - Always-stable serving + smoke-test gate + S3 bucket versioning (PR #130, `c7fa2d7`)
@@ -213,22 +213,27 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 - Wiki tab renders repo markdown docs in-app (PR #138, `ce4543e`)
 - Benchmark History tab — per-PR rows fetched from S3 at boot, auto-updates after every training run without a redeploy (PR #201, `056423b`)
 - Slim arm64 serving image with runtime S3 model fetch (PR #83, `3243d72`)
-- 24/7 warm EC2 host eliminates 3–5 min Batch scale-up → sub-15-min push-to-serve
+- 24/7 warm EC2 host eliminates 3–5 min Batch scale-up → sub-15-min push-to-serve on the warm path (D7); parallel Spot fan-out wins on wall-clock when retraining all six positions (D13)
 
 ### GitHub CI/CD
 
 ```
 push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov · 80% target)
              │
-             ├──▶ batch-image.yml ──▶ train-ec2.yml ──▶ EC2 GPU host
-             │                                          (per-position retrain)
+             │                                            BATCH_ACTIVE=true
+             ├──▶ batch-image.yml ──┬─▶ train-batch.yml ──▶ 6× Spot g4dn (parallel)
+             │                      │                       (~25–30 min full retrain)
+             │                      │
+             │                      │                            BATCH_ACTIVE=false
+             │                      └─▶ train-ec2.yml ────────▶ warm OD g4dn (sequential)
+             │                                                  (~120 min full retrain)
              │
-             └──▶ deploy.yml ────────▶ ECR ──▶ ECS Fargate
+             └──▶ deploy.yml ─────────▶ ECR ──▶ ECS Fargate
 ```
 
-- Four production workflows ([tests.yml](.github/workflows/tests.yml), [batch-image.yml](.github/workflows/batch-image.yml), [train-ec2.yml](.github/workflows/train-ec2.yml), [deploy.yml](.github/workflows/deploy.yml)) plus two diagnostic ones ([ablate-rb-gate.yml](.github/workflows/ablate-rb-gate.yml), [retune-lgbm.yml](.github/workflows/retune-lgbm.yml)) for one-click experiments on the GPU host.
+- Five production workflows ([tests.yml](.github/workflows/tests.yml), [batch-image.yml](.github/workflows/batch-image.yml), [train-batch.yml](.github/workflows/train-batch.yml), [train-ec2.yml](.github/workflows/train-ec2.yml), [deploy.yml](.github/workflows/deploy.yml)) plus two diagnostic ones ([ablate-rb-gate.yml](.github/workflows/ablate-rb-gate.yml), [retune-lgbm.yml](.github/workflows/retune-lgbm.yml)) for one-click experiments on the GPU host.
 - **`tests.yml`** — 7-shard pytest matrix (QB / RB / WR / TE / K / DST / shared) with per-shard Codecov flags and an 80% per-component target enforced via [codecov.yml](codecov.yml). Within-shard parallelism via `pytest-xdist`.
-- **`batch-image.yml` → `train-ec2.yml`** — the image build is gated by path filters; the `detect` job in `train-ec2.yml` diffs `HEAD^..HEAD` and retrains *only* the positions whose code changed. Cross-cutting changes (`src/shared/`, `src/batch/`, shared `src/` modules, `requirements.txt`) retrain all six.
+- **`batch-image.yml` → `train-batch.yml` *or* `train-ec2.yml`** — the image build is gated by path filters and pushes to ECR with both an ECR pull-through-cache-routed base layer and a SOCI v2 index for fast Spot cold-start. The `detect` job (shared by both training workflows) diffs `HEAD^..HEAD` and retrains *only* the positions whose code changed; cross-cutting changes (`src/shared/`, `src/batch/`, shared `src/` modules, `requirements.txt`) retrain all six. `BATCH_ACTIVE` selects which training workflow fires; `workflow_dispatch` on either bypasses the gate.
 - **`deploy.yml`** — native `arm64` runner (no QEMU emulation), BuildKit cache persisted across runs, path-filtered to the serving surface so docs-only or test-only changes don't trigger a deploy.
 - All Python installs use `uv` for ~10× faster cold starts than pip.
 

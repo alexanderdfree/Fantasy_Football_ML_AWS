@@ -1,6 +1,8 @@
 # EC2 24/7 Training Design Doc
 
-_Last verified: 2026-04-21._
+_Last verified: 2026-05-20._
+
+> **Status: Active when `BATCH_ACTIVE != 'true'` (rollback path).** The push-to-`main` training default is now Spot fan-out via [docs/batch_design.md](batch_design.md) when `BATCH_ACTIVE=true`. This warm-EC2 path remains the fallback: one flip back (`gh variable set BATCH_ACTIVE --body "false"`) restores it on the next push. See [D13 in docs/ARCHITECTURE.md](ARCHITECTURE.md#d13-spot-fan-out-via-aws-batch-overrides-d7-when-batch_activetrue). The warm host stays provisioned indefinitely; idle cost is ~$8/mo of EBS while stopped.
 
 ## Problem
 
@@ -141,13 +143,14 @@ Detailed line items:
 
 See [`infra/ec2/README.md`](../infra/ec2/README.md).
 
-## Rollback
+## Rollback (now the default direction)
 
-Batch remains a drop-in fallback:
-1. Set repo variable `BATCH_ACTIVE=true` (re-enables job-definition registration in `batch-image.yml`).
-2. Run `python src/batch/launch.py` locally — Batch resources already provisioned; no infra work needed.
-3. Optional: disable `train-ec2.yml` by renaming or setting a repo variable guard.
+As of 2026-05-20 the symmetry inverted: Spot fan-out via Batch ([docs/batch_design.md](batch_design.md)) is the push-driven default when `BATCH_ACTIVE=true`. The warm-EC2 path is the rollback target.
+
+1. `gh variable set BATCH_ACTIVE --body "false"` — next push to `main` fires `train-ec2.yml`, skips `train-batch.yml`.
+2. The warm host is `aws ec2 start-instances`-ed by `train-ec2.yml` if currently stopped; no manual provisioning is needed because the EC2 infrastructure remains intact.
+3. `workflow_dispatch` on either workflow bypasses the gate, so an operator can break-glass test the inactive path without flipping the variable.
 
 ## Reactivating Batch image-sync
 
-`batch-image.yml` keeps building/pushing on every push to `main` regardless of which trainer is active — the EC2 trainer depends on the same image. Only the "Register new job definition revision" step is gated behind `BATCH_ACTIVE`, so re-syncing the job definition with HEAD is a one-flip operation.
+`batch-image.yml` keeps building/pushing on every push to `main` regardless of which trainer is active — both paths depend on the same image. The "Register new job definition revision" step (gated on `BATCH_ACTIVE=true`) re-points the job definition at the new image, so when the Spot path is active each push gets a fresh JD revision while the EC2 path silently reads from `:latest` via `docker pull` at SSM-command time.

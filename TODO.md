@@ -2,7 +2,7 @@
 
 Tracking known issues and uncertainties in the project. Resolved issues are kept as an archive at the bottom — each entry includes the lesson learned, which has repeatedly been useful context for reviewers and future work.
 
-**Last reviewed: 2026-05-19.**
+**Last reviewed: 2026-05-20.**
 
 ---
 
@@ -48,6 +48,12 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 ## Archive (Fixed)
 
 Kept for the lessons-learned value — each entry captures a debug-to-root-cause cycle and a one-line takeaway that's been useful when modifying related code.
+
+### [FIXED] Push-to-`main` training was sequential across positions; one T4 capped full retrain at ~120 min
+- **Files:** `.github/workflows/train-batch.yml` (new), `.github/workflows/train-ec2.yml` (gate added), `.github/workflows/batch-image.yml` (PULL_THROUGH_PREFIX + SOCI), `src/batch/launch.py` (`--skip-upload`), `infra/batch/setup.sh` + companion IAM JSONs + `infra/batch/README.md` + `infra/batch/teardown.sh`, plus updates to `docs/ARCHITECTURE.md` (D13), `docs/batch_design.md`, `docs/ec2_design.md`, `CLAUDE.md`. PRs #215, #216, #217.
+- **What:** D7's warm-OD g4dn.xlarge ran the six positions sequentially in a single SSM command (`for POS in $POSITIONS; do /usr/local/bin/ff-train $POS $SEED; done`), because one T4 can't host concurrent NN training jobs. Wall-clock for a full retrain was ~120–156 min, and the workflow's `concurrency: cancel-in-progress: true` meant rapid pushes dropped in-flight runs before they could write a benchmark record.
+- **Fix:** When `BATCH_ACTIVE=true`, push-driven training now fires `train-batch.yml` which calls `python -m src.batch.launch --positions $POSITIONS --seed $SEED --skip-upload`. `launch.py` submits six Batch jobs in parallel against the `ff-gpu-spot` Compute Environment (one g4dn.xlarge Spot per position) and blocks until all terminate. Wall-clock collapses to `max(per-position)` ≈ 25–30 min. Cold-start (~120s → ~60–90s on a fresh Spot host) is amortized by parallelism. `train-batch.yml` has no `concurrency:` block, so rapid pushes coexist and every push contributes a benchmark record. The warm-EC2 path remains as a one-flag rollback (`gh variable set BATCH_ACTIVE --body "false"`).
+- **Lesson:** When the per-instance GPU is the bottleneck, scaling vertically (warm OD) hits a hard ceiling that scaling horizontally (per-position Spot) doesn't. The Batch path was originally rejected (D7) because cold-start dominated a 2-minute training job, but that math implicitly assumed *sequential* training. Once each position trains on its own host, max(per-position) replaces sum(per-position) and the per-host cold-start cost is parallelism-amortized down to a small fraction of total time. Cold-start optimizations (pull-through cache, SOCI v2) close the remaining gap. Bonus: the cancel-in-progress workaround for T4 contention goes away when there's no contention, so every push records a benchmark.
 
 ### [FIXED] Attention sequences were stripped to variable-length lists then re-padded per batch
 - **Files:** `src/shared/pipeline.py` (dataset construction for QB/RB/WR/TE/DST attention paths), `src/shared/training.py` (custom collate removed in favor of default collate). PR #200 (`349aa4a`).

@@ -87,6 +87,11 @@ ruff format --check .
 
 Config is in `[tool.ruff]` in [pyproject.toml](pyproject.toml).
 
-## Train on EC2 (owner only)
+## Train in the cloud (owner only)
 
-Pushes to `main` trigger [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml), which starts the warm g4dn instance, runs all six position pipelines in parallel, and uploads model tarballs to S3. See [infra/ec2/README.md](infra/ec2/README.md) for manual start/stop/teardown and [docs/ec2_design.md](docs/ec2_design.md) for the full design. AWS Batch remains available as a standby path — see [docs/batch_design.md](docs/batch_design.md) for how to reactivate it.
+Pushes to `main` trigger one of two training workflows, selected by the `BATCH_ACTIVE` repo variable:
+
+- **`BATCH_ACTIVE=true`** → [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml): fans out six g4dn.xlarge Spot instances via AWS Batch (one position per host, parallel; ~25–30 min wall-clock). One-time provisioning via [infra/batch/setup.sh](infra/batch/setup.sh); operator runbook in [infra/batch/README.md](infra/batch/README.md); full design in [docs/batch_design.md](docs/batch_design.md).
+- **`BATCH_ACTIVE=false`** (or unset) → [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml): starts the warm g4dn.xlarge OD instance, runs the six position pipelines sequentially via SSM (~120 min wall-clock; one T4 can't fit concurrent NN runs). See [infra/ec2/README.md](infra/ec2/README.md) and [docs/ec2_design.md](docs/ec2_design.md).
+
+Flip with `gh variable set BATCH_ACTIVE --body "true"` or `--body "false"`. `workflow_dispatch` on either workflow bypasses the gate for smoke-testing the inactive path. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
