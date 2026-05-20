@@ -13,6 +13,7 @@ from src.config import (
     SHARE_WINDOWS,
     TREND_STATS,
 )
+from src.shared.weather_features import _load_schedules
 
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -641,8 +642,10 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
         df = df.drop_duplicates(subset=["player_id", "season", "week"], keep="first")
 
     # --- 2. Points allowed from schedule scores ---
-    schedules = pd.read_parquet(f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
-    schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
+    # Route via _load_schedules so the test autouse fixture (which patches
+    # _load_schedules when the parquet is absent) catches this read too.
+    # _load_schedules already filters to game_type == "REG".
+    schedules_reg = _load_schedules().copy()
 
     away_pts = schedules_reg[["season", "week", "away_team", "home_score"]].copy()
     away_pts.columns = ["season", "week", "team", "points_allowed"]
