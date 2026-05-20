@@ -25,6 +25,69 @@ from typing import Any
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.position_config import PositionConfig
 
+# ---------------------------------------------------------------------------
+# Pipeline config schema — required vs optional keys
+#
+# ``src/shared/pipeline.py::run_pipeline`` consumes a ``cfg`` dict with ~79
+# keys (mix of ``cfg["..."]`` required and ``cfg.get("...")`` optional). The
+# constants below document the contract so :func:`validate_pipeline_config`
+# can catch missing required keys at *construction* time (where the failure
+# points back at the caller's ``PositionConfig`` or override list) rather
+# than during training (where the trace points into ``pipeline.py``).
+# ---------------------------------------------------------------------------
+
+# Required cfg keys that ``run_pipeline`` accesses unconditionally via
+# ``cfg["..."]`` — missing these crashes deep inside the pipeline.
+REQUIRED_PIPELINE_CFG_KEYS: frozenset[str] = frozenset(
+    {
+        # Targets + callables
+        "targets",
+        "filter_fn",
+        "compute_targets_fn",
+        "get_feature_columns_fn",
+        # Ridge
+        "ridge_alpha_grids",
+        # Per-head loss family
+        "loss_weights",
+        "huber_deltas",
+        # Neural net
+        "nn_backbone_layers",
+        "nn_head_hidden",
+        "nn_dropout",
+        "nn_lr",
+        "nn_weight_decay",
+        "nn_epochs",
+        "nn_batch_size",
+        "nn_patience",
+        # Scheduler — the type field is always read; the variant-specific
+        # fields (cosine_t0 / onecycle_max_lr / etc.) are only required if
+        # the chosen scheduler_type uses them, so they stay optional below.
+        "scheduler_type",
+    }
+)
+
+
+class PipelineConfigError(ValueError):
+    """Raised by :func:`validate_pipeline_config` when required keys are missing."""
+
+
+def validate_pipeline_config(cfg: dict[str, Any], *, context: str = "") -> None:
+    """Assert every key in :data:`REQUIRED_PIPELINE_CFG_KEYS` is present.
+
+    Raises :class:`PipelineConfigError` with the full list of missing keys
+    in one shot, so callers see all of their mistakes at once instead of
+    fixing them one-at-a-time as pipeline.py crashes on each.
+    """
+    missing = sorted(REQUIRED_PIPELINE_CFG_KEYS - cfg.keys())
+    if missing:
+        context_str = f" for {context}" if context else ""
+        raise PipelineConfigError(
+            f"Pipeline config{context_str} missing required keys: {missing}. "
+            f"build_pipeline_config(pos, POSITION_CONFIG) is the canonical "
+            f"constructor; if you've built the dict by hand, mirror the "
+            f"REQUIRED_PIPELINE_CFG_KEYS set in src/shared/position_pipeline.py."
+        )
+
 
 # Standard import paths for the position-specific callables every position
 # module exposes. By convention each position module declares these symbols at
@@ -220,6 +283,12 @@ def build_pipeline_config(
 
     # === Caller overrides (e.g. K injects attn_history_builder_fn) ===
     cfg.update(overrides)
+
+    # === Schema validation ===
+    # Catch missing required keys at construction time. Optional keys (cosine_*,
+    # onecycle_*, ridge_pca_components, attn_*, etc.) intentionally bypass this
+    # — pipeline.py reads them via .get() with sensible defaults.
+    validate_pipeline_config(cfg, context=pos)
     return cfg
 
 
