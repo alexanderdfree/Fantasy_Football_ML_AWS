@@ -2,6 +2,13 @@
 
 Uses PBP-reconstructed kicker data from 2015-2025 (post-PAT rule change).
 Cross-season splits: train 2015-2023, val 2024, test 2025.
+
+K is one of two positions (with DST) that loads its own data inside ``run()``
+rather than receiving DataFrames from the shared splits. The
+``attn_history_builder_fn`` closure also has to be built at runtime because
+it captures the ``kicks_df`` produced by ``load_kicks(k_df)``. The factory
+provides the rest of the CONFIG dict; only the runtime-dependent
+``attn_history_builder_fn`` is injected here.
 """
 
 import functools
@@ -11,141 +18,20 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.k.config import (
-    ALL_FEATURES,
-    ATTN_BATCH_SIZE,
-    ATTN_D_MODEL,
-    ATTN_DROPOUT,
-    ATTN_ENCODER_HIDDEN_DIM,
-    ATTN_KICK_DIM,
     ATTN_KICK_STATS,
-    ATTN_LR,
     ATTN_MAX_GAMES,
     ATTN_MAX_KICKS_PER_GAME,
-    ATTN_N_HEADS,
-    ATTN_PATIENCE,
-    ATTN_POSITIONAL_ENCODING,
-    ATTN_PROJECT_KV,
-    ATTN_STATIC_FEATURES,
-    ATTN_WEIGHT_DECAY,
-    CV_SPLIT_COLUMN,
-    ENET_L1_RATIOS,
-    HUBER_DELTAS,
-    LGBM_COLSAMPLE_BYTREE,
-    LGBM_LEARNING_RATE,
-    LGBM_MAX_DEPTH,
-    LGBM_MIN_CHILD_SAMPLES,
-    LGBM_MIN_SPLIT_GAIN,
-    LGBM_N_ESTIMATORS,
-    LGBM_NUM_LEAVES,
-    LGBM_OBJECTIVE,
-    LGBM_REG_ALPHA,
-    LGBM_REG_LAMBDA,
-    LGBM_SUBSAMPLE,
-    LOSS_WEIGHTS,
-    NN_BACKBONE_LAYERS,
-    NN_BATCH_SIZE,
-    NN_DROPOUT,
-    NN_EPOCHS,
-    NN_HEAD_HIDDEN,
-    NN_LR,
-    NN_NON_NEGATIVE_TARGETS,
-    NN_PATIENCE,
-    NN_WEIGHT_DECAY,
-    ONECYCLE_MAX_LR,
-    ONECYCLE_PCT_START,
-    RIDGE_ALPHA_GRIDS,
-    RIDGE_CV_FOLDS,
-    RIDGE_REFINE_POINTS,
-    SCHEDULER_TYPE,
-    TARGETS,
-    TRAIN_ATTENTION_NN,
-    TRAIN_ELASTICNET,
-    TRAIN_LIGHTGBM,
+    POSITION_CONFIG,
 )
-from src.k.data import filter_to_position, load_data, load_kicks, season_split
-from src.k.features import (
-    add_specific_features,
-    build_nested_kick_history,
-    compute_features,
-    fill_nans,
-    get_feature_columns,
-)
+from src.k.data import load_data, load_kicks, season_split
+from src.k.features import build_nested_kick_history, compute_features
 from src.k.targets import compute_targets
 from src.shared.pipeline import run_pipeline
+from src.shared.position_pipeline import build_pipeline_config
 
-# attn_history_builder_fn is injected at runtime (closes over kicks_df).
-CONFIG = {
-    "targets": TARGETS,
-    "ridge_alpha_grids": RIDGE_ALPHA_GRIDS,
-    "ridge_cv_folds": RIDGE_CV_FOLDS,
-    "cv_split_column": CV_SPLIT_COLUMN,
-    "ridge_refine_points": RIDGE_REFINE_POINTS,
-    # ALL_FEATURES (specific + contextual), not just SPECIFIC_FEATURES: K's
-    # contextual block carries the PBP-derived ``game_wind`` / ``game_temp``
-    # columns which are NaN on test rows with missing weather data. Passing
-    # the broader list to ``fill_nans`` plugs those NaNs with train means;
-    # otherwise ``build_position_features``'s catch-all ``.fillna(0)`` would
-    # collapse them to 0 mph / 0°F and skew the test feature distribution
-    # off the train scale (~+0.12 Ridge test MAE pre-fix). Schedule-merge
-    # contextual columns (``implied_team_total``, ``is_home``, etc.) are
-    # already non-NaN by the time fill_nans runs, so widening the list is a
-    # no-op for them.
-    "specific_features": ALL_FEATURES,
-    "filter_fn": filter_to_position,
-    "compute_targets_fn": compute_targets,
-    "add_features_fn": add_specific_features,
-    "fill_nans_fn": fill_nans,
-    "get_feature_columns_fn": get_feature_columns,
-    "compute_adjustment_fn": None,
-    "nn_backbone_layers": NN_BACKBONE_LAYERS,
-    "nn_head_hidden": NN_HEAD_HIDDEN,
-    "nn_dropout": NN_DROPOUT,
-    "nn_head_hidden_overrides": None,
-    "nn_non_negative_targets": NN_NON_NEGATIVE_TARGETS,
-    "nn_lr": NN_LR,
-    "nn_weight_decay": NN_WEIGHT_DECAY,
-    "nn_epochs": NN_EPOCHS,
-    "nn_batch_size": NN_BATCH_SIZE,
-    "nn_patience": NN_PATIENCE,
-    "loss_weights": LOSS_WEIGHTS,
-    "huber_deltas": HUBER_DELTAS,
-    "scheduler_type": SCHEDULER_TYPE,
-    "onecycle_max_lr": ONECYCLE_MAX_LR,
-    "onecycle_pct_start": ONECYCLE_PCT_START,
-    # Attention NN (nested: inner pool per game, outer per-target attention).
-    "train_attention_nn": TRAIN_ATTENTION_NN,
-    "attn_history_structure": "nested",
-    "attn_static_from_df": True,
-    "attn_static_features": ATTN_STATIC_FEATURES,
-    "attn_d_model": ATTN_D_MODEL,
-    "attn_n_heads": ATTN_N_HEADS,
-    "attn_kick_dim": ATTN_KICK_DIM,
-    "attn_encoder_hidden_dim": ATTN_ENCODER_HIDDEN_DIM,
-    "attn_project_kv": ATTN_PROJECT_KV,
-    "attn_positional_encoding": ATTN_POSITIONAL_ENCODING,
-    # `attn_gated_fusion` intentionally omitted — the nested attention path
-    # (MultiHeadNetWithNestedHistory) does not consume it; setting it would
-    # be a silent no-op and invite config drift.
-    "attn_dropout": ATTN_DROPOUT,
-    "attn_lr": ATTN_LR,
-    "attn_weight_decay": ATTN_WEIGHT_DECAY,
-    "attn_batch_size": ATTN_BATCH_SIZE,
-    "attn_patience": ATTN_PATIENCE,
-    "train_elasticnet": TRAIN_ELASTICNET,
-    "enet_l1_ratios": ENET_L1_RATIOS,
-    "train_lightgbm": TRAIN_LIGHTGBM,
-    "lgbm_n_estimators": LGBM_N_ESTIMATORS,
-    "lgbm_learning_rate": LGBM_LEARNING_RATE,
-    "lgbm_num_leaves": LGBM_NUM_LEAVES,
-    "lgbm_max_depth": LGBM_MAX_DEPTH,
-    "lgbm_subsample": LGBM_SUBSAMPLE,
-    "lgbm_colsample_bytree": LGBM_COLSAMPLE_BYTREE,
-    "lgbm_reg_lambda": LGBM_REG_LAMBDA,
-    "lgbm_reg_alpha": LGBM_REG_ALPHA,
-    "lgbm_min_child_samples": LGBM_MIN_CHILD_SAMPLES,
-    "lgbm_min_split_gain": LGBM_MIN_SPLIT_GAIN,
-    "lgbm_objective": LGBM_OBJECTIVE,
-}
+# K's CONFIG omits the runtime-injected attn_history_builder_fn; run() fills
+# it in after kicks_df is loaded.
+CONFIG = build_pipeline_config("K", POSITION_CONFIG)
 
 
 def run(seed=42):
