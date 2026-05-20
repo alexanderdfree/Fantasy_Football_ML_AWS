@@ -56,6 +56,13 @@ Anything that runs inside the forward pass, loss, or an `aggregate_fn` callback 
 ### Don't commit data or large binaries
 Datasets (`*.parquet`, `*.csv`), model weights, and demo media (`.mov`/`.mp4`) never live in git. Training data loads via `nfl_data_py` at workflow runtime; demo videos go to YouTube and are linked from [README.md](README.md). For new CI data dependencies, fetch in the workflow step — do not stash a file in the repo to "make CI green."
 
+### Stop rules — things that have been tried and reverted
+These have all been attempted, shipped, and reverted. Re-proposing them costs a round-trip; don't.
+
+- **Shared-venv CI optimization** — reverted in PRs [#110](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/110) / [#111](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/111) (2026-04-23). Artifact download (~25s/shard) is slower than the warm `uv` install (~10s). Wall-clock is the metric, not compute.
+- **Module-level pre-warm under gunicorn `--preload`** — reverted in PRs [#148](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/148) / [#149](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/149) (2026-04-27). The bind happens *after* preload import; a slow pre-warm causes ALB TCP-refused → unhealthy. Use a `post_fork` hook or a background thread instead.
+- **Training models directly on `fantasy_points`** — cross-link to "Raw-stat targets" above. Re-introducing this regresses the ~1.9 pt/game double-count fix in TODO.md's archive.
+
 ## Running code
 
 Commands live in [SETUP.md](SETUP.md). Shortcuts:
