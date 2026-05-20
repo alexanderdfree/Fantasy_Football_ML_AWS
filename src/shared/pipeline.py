@@ -17,13 +17,20 @@ from sklearn.preprocessing import StandardScaler
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from src.config import MIN_GAMES_PER_SEASON, SPLITS_DIR, TRAIN_SEASONS, VAL_SEASONS
+from src.config import (
+    CACHE_DIR,
+    MIN_GAMES_PER_SEASON,
+    SEASONS,
+    SPLITS_DIR,
+    TRAIN_SEASONS,
+    VAL_SEASONS,
+)
 from src.data.split import expanding_window_folds
 from src.evaluation.metrics import compute_metrics
 from src.features.engineer import (
+    OPP_ATTN_PER_GAME_BUILDERS,
     build_game_history_arrays,
     build_opp_defense_history_arrays,
-    build_opp_defense_per_game_df,
     get_attn_static_columns,
 )
 from src.models.baseline import SeasonAverageBaseline
@@ -1170,30 +1177,40 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                 )
                 print(f"  History shape: {hist_train.shape} (game_dim={hist_train.shape[2]})")
 
-                # Optional second attention branch: opponent-defense game log.
-                # Aggregates per-(opp_team, season, week) from the PRE-FILTER
-                # all-position frames (sacks are QB-only, pass yards are QB-only,
-                # receiving stats are WR/TE/RB — a position-filtered frame would
-                # systematically undercount). Computed once per pipeline run.
+                # Optional second attention branch: opponent-side game log.
+                # Kind-based dispatch via OPP_ATTN_PER_GAME_BUILDERS — "defense"
+                # (QB/RB/WR/TE) aggregates over the all-position concat of
+                # train/val/test; "offense" (DST) loads the raw player-week
+                # cache because DST's train/val/test frames are team-level and
+                # lack the offensive columns the offense aggregation needs.
+                # Either way the downstream `build_opp_defense_history_arrays`
+                # call is reused unchanged — it's generic over the per-game
+                # frame and stat list.
                 opp_history_stats = cfg.get("opp_attn_history_stats")
                 opp_hist_train = opp_mask_train = None
                 opp_hist_val = opp_mask_val = None
                 opp_hist_test = opp_mask_test = None
                 if opp_history_stats:
                     opp_max_seq_len = cfg.get("opp_attn_max_seq_len", max_seq_len)
-                    all_pos = pd.concat([train_df, val_df, test_df], ignore_index=True)
-                    opp_def_per_game = build_opp_defense_per_game_df(all_pos)
+                    opp_attn_kind = cfg.get("opp_attn_kind", "defense")
+                    builder = OPP_ATTN_PER_GAME_BUILDERS[opp_attn_kind]
+                    if opp_attn_kind == "offense":
+                        weekly_cache_path = f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+                        opp_source_df = pd.read_parquet(weekly_cache_path)
+                    else:
+                        opp_source_df = pd.concat([train_df, val_df, test_df], ignore_index=True)
+                    opp_per_game = builder(opp_source_df)
                     opp_hist_train, opp_mask_train = build_opp_defense_history_arrays(
-                        pos_train, opp_def_per_game, opp_history_stats, opp_max_seq_len
+                        pos_train, opp_per_game, opp_history_stats, opp_max_seq_len
                     )
                     opp_hist_val, opp_mask_val = build_opp_defense_history_arrays(
-                        pos_val, opp_def_per_game, opp_history_stats, opp_max_seq_len
+                        pos_val, opp_per_game, opp_history_stats, opp_max_seq_len
                     )
                     opp_hist_test, opp_mask_test = build_opp_defense_history_arrays(
-                        pos_test, opp_def_per_game, opp_history_stats, opp_max_seq_len
+                        pos_test, opp_per_game, opp_history_stats, opp_max_seq_len
                     )
                     print(
-                        f"  Opp-defense history shape: {opp_hist_train.shape} "
+                        f"  Opp-{opp_attn_kind} history shape: {opp_hist_train.shape} "
                         f"(opp_dim={opp_hist_train.shape[2]})"
                     )
 

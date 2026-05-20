@@ -260,6 +260,31 @@ ATTN_STATIC_FEATURES = [
     "prior_season_pts_allowed_avg",
 ]
 
+# Per-game opp-OFFENSE stats fed to the second attention branch.
+# DST-specific motivation: DST faces an offense, not a defense, so the
+# parallel branch attends over the opposing offense's per-game trailing
+# form rather than its defense's. The existing `opp_scoring`/`opp_qb_epa`
+# entries in ATTN_HISTORY_STATS are point-in-time signals about what the
+# opp did *in the game vs this DST*; the parallel branch carries season-
+# form (what the opp has done across all of its games with leakage-
+# correct week filtering) — a complementary signal, so the per-game opp
+# columns stay in ATTN_HISTORY_STATS.
+# Built by src.features.engineer.build_opp_offense_per_game_df.
+OPP_ATTN_HISTORY_STATS = [
+    "off_pass_yards",
+    "off_pass_tds",
+    "off_rush_yards",
+    "off_rush_tds",
+    "off_ints",
+    "off_fumbles_lost",
+    "off_pts_scored",
+]
+OPP_ATTN_MAX_SEQ_LEN = 17
+# DST is the only position using "offense"; QB/RB/WR/TE default to "defense"
+# (their parallel branch attends over the opposing defense). The pipeline
+# and serving layers dispatch the per-game builder by this key.
+OPP_ATTN_KIND = "offense"
+
 # === LightGBM ===
 TRAIN_LIGHTGBM = True
 LGBM_N_ESTIMATORS = 300

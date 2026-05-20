@@ -39,13 +39,21 @@ import src.qb.config as qb_cfg
 import src.rb.config as rb_cfg
 import src.te.config as te_cfg
 import src.wr.config as wr_cfg
-from src.config import SCORING_HALF_PPR, SCORING_STANDARD, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
+from src.config import (
+    CACHE_DIR,
+    SCORING_HALF_PPR,
+    SCORING_STANDARD,
+    SEASONS,
+    TEST_SEASONS,
+    TRAIN_SEASONS,
+    VAL_SEASONS,
+)
 from src.data.loader import compute_fantasy_points
 from src.evaluation.metrics import compute_metrics, compute_positional_metrics
 from src.features.engineer import (
+    OPP_ATTN_PER_GAME_BUILDERS,
     build_game_history_arrays,
     build_opp_defense_history_arrays,
-    build_opp_defense_per_game_df,
     get_attn_static_columns,
 )
 from src.shared.aggregate_targets import predictions_to_fantasy_points
@@ -725,10 +733,12 @@ def _apply_position_models(train, val, test, pos, results):
                     pos_test, history_stats=hist_stats, max_seq_len=max_seq_len
                 )
 
-                # Optional opponent-defense attention branch — mirrors the
-                # pipeline: aggregate per-(opp_team, season, week) stats from
-                # the PRE-FILTER all-position frames, then build a padded
-                # sequence of the defense's prior games for each pos_test row.
+                # Optional opponent-side attention branch — kind-based
+                # dispatch mirrors the pipeline (src.shared.pipeline). "defense"
+                # (QB/RB/WR/TE) aggregates over the all-position concat;
+                # "offense" (DST) loads the raw player-week cache because
+                # DST's train/val/test frames are team-level and lack the
+                # offensive columns the offense aggregation needs.
                 # CLAUDE.md rule: keep training and inference feature paths
                 # byte-for-byte consistent.
                 opp_history_stats = reg.get("opp_attn_history_stats") or []
@@ -736,10 +746,16 @@ def _apply_position_models(train, val, test, pos, results):
                 opp_game_dim = None
                 if opp_history_stats:
                     opp_max_seq_len = reg.get("opp_attn_max_seq_len", max_seq_len)
-                    all_pos = pd.concat([train, val, test], ignore_index=True)
-                    opp_def_per_game = build_opp_defense_per_game_df(all_pos)
+                    opp_attn_kind = reg.get("opp_attn_kind", "defense")
+                    builder = OPP_ATTN_PER_GAME_BUILDERS[opp_attn_kind]
+                    if opp_attn_kind == "offense":
+                        weekly_cache_path = f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+                        opp_source_df = pd.read_parquet(weekly_cache_path)
+                    else:
+                        opp_source_df = pd.concat([train, val, test], ignore_index=True)
+                    opp_per_game = builder(opp_source_df)
                     opp_hist_test, opp_mask_test = build_opp_defense_history_arrays(
-                        pos_test, opp_def_per_game, opp_history_stats, opp_max_seq_len
+                        pos_test, opp_per_game, opp_history_stats, opp_max_seq_len
                     )
                     opp_game_dim = opp_hist_test.shape[2]
 

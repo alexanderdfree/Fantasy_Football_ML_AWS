@@ -83,6 +83,7 @@ def _config_fingerprint(cfg: dict) -> dict:
         "targets": list(cfg.get("targets") or []),
         "attn_history_stats": list(cfg.get("attn_history_stats") or []),
         "opp_attn_history_stats": list(cfg.get("opp_attn_history_stats") or []),
+        "opp_attn_kind": cfg.get("opp_attn_kind", "defense"),
         "attn_static_features": list(cfg.get("attn_static_features") or []),
     }
 
