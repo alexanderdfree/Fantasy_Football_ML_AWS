@@ -1,30 +1,29 @@
-"""Compare NFL.com weekly fantasy projections against our position models.
+"""Compute NFL.com's projection accuracy vs. actuals.
 
-NFL.com is treated as a reference baseline for the test season (2025 by default).
-For each position, we run the standard pipeline once, then for the same
-(player_id, season, week) cells compute MAE / RMSE / R² of:
+For each (player_id, season, week) cell where NFL.com has a projection AND
+nflverse has actual game stats, computes NFL.com's MAE / RMSE / R² on
+PPR-scored fantasy points (NFL.com's projected raw stats × our PPR aggregator
+vs. actual raw stats × the same aggregator -- apples-to-apples).
 
-  1. Our model's predicted fantasy points (PPR). Picks the lowest-MAE model
-     from {attn_nn, nn, ridge} that has metrics on the eval window;
-     ties broken by attn_nn -> nn -> ridge priority.
-  2. NFL.com's projected raw stats × our PPR scoring (apples-to-apples).
-  3. Reference: NFL.com's own ``PlayerWeekProjectedPts`` (their standard scoring).
-  4. Reference: ``SeasonAverageBaseline`` recomputed on the matched subset.
+This script does NOT train any models. Compare the numbers it prints to our
+model's MAE in ``docs/expert_comparison.md`` "Our Model Performance" table.
 
 Outputs:
-  analysis_output/nflcom_baseline_comparison.json -- full per-position breakout
-  stdout                                         -- pretty-printed comparison table
+  analysis_output/nflcom_baseline.json -- per-position metrics, per-season + pooled
+  stdout                              -- pretty-printed table
 
 Notes:
-  - DST is hard-skipped (hvpkod has no DST/Defense file in the upstream archive).
-  - K only gets a totals comparison (NFL.com's K projections are per-distance-
-    bucket FG attempts; doesn't decompose to our K raw-stat targets).
+  - DST is hard-skipped (no NFL.com DST projections in hvpkod's archive).
+  - K is totals-only: NFL.com's K projection is per-distance-bucket FG attempts
+    which doesn't decompose to our raw-stat targets, so we use NFL.com's own
+    ``nflcom_projected_pts`` (standard scoring, format-invariant for K) vs the
+    actual ``fantasy_points`` column from nflverse.
   - Scoring format is parameterized so callers can rerun under half-PPR /
     standard without changing code.
 
 Operator usage:
-  python -m src.analysis.analysis_nflcom_baseline                    # default 2025 test, PPR
-  python -m src.analysis.analysis_nflcom_baseline --positions QB RB
+  python -m src.analysis.analysis_nflcom_baseline                 # default = TEST_SEASONS, PPR
+  python -m src.analysis.analysis_nflcom_baseline --seasons 2024 2025
   python -m src.analysis.analysis_nflcom_baseline --scoring-format half_ppr
   python -m src.analysis.analysis_nflcom_baseline --force-refresh-nflcom
 """
@@ -43,90 +42,110 @@ import pandas as pd
 from src.config import TEST_SEASONS
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.evaluation.metrics import compute_metrics
-from src.models.baseline import SeasonAverageBaseline
 from src.shared.aggregate_targets import (
     POSITION_TARGET_MAP,
     TARGET_UNITS,
     predictions_to_fantasy_points,
 )
-from src.shared.registry import get_inference_spec, get_runner
 
-EVAL_SEASON_DEFAULT = TEST_SEASONS[0] if TEST_SEASONS else 2025
+EVAL_SEASONS_DEFAULT: tuple[int, ...] = tuple(TEST_SEASONS) if TEST_SEASONS else (2025,)
 TARGET_POSITIONS_DEFAULT: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
 SCORING_FORMAT_DEFAULT = "ppr"
 OUTPUT_DIR_DEFAULT = "analysis_output"
 
-# Positions where NFL.com cannot be projected per-target. K's projection schema
-# is per-distance-bucket FG attempts; DST has no upstream file at all.
+# Positions where NFL.com can't be decomposed per-target. K's projection
+# schema is per-distance-bucket FG attempts; DST has no upstream file at all.
 _TOTALS_ONLY_POSITIONS = {"K"}
 _SKIPPED_POSITIONS = {"DST"}
-_TIE_TOLERANCE_PTS = 0.01
+
+# nflverse stats_player_week parquets — one per season, covers all positions
+# including K (which nfl_data_py.import_weekly_data omits).
+_NFLVERSE_PLAYER_WEEK_URL = (
+    "https://github.com/nflverse/nflverse-data/releases/download/"
+    "stats_player/stats_player_week_{season}.parquet"
+)
+
+# Extra columns retained for K so we can compute actual K fantasy points
+# directly from raw stats (the parquet's ``fantasy_points`` column is offensive-
+# only and reports ~0 for kickers).
+_K_RAW_COLUMNS = ("fg_made_distance", "pat_made", "fg_missed", "pat_missed")
 
 
 # ---------- Internal helpers -------------------------------------------------
 
 
 def _json_default(o):
-    """Strict serializer for ``json.dump`` -- handles numpy scalars + arrays.
-
-    Replaces an earlier ``default=float`` which silently coerced *any* unknown
-    type via ``float(o)`` and could mask bugs (e.g. a stray list silently
-    becoming ``float([list])`` and dying far from the cause). This raises a
-    clear ``TypeError`` for anything we don't explicitly know how to serialize.
-    """
+    """Strict serializer for ``json.dump`` — handles numpy scalars + arrays."""
     if isinstance(o, np.ndarray):
         return o.tolist()
-    if isinstance(o, np.generic):  # np.int64, np.float64, np.bool_, ...
+    if isinstance(o, np.generic):
         return o.item()
     raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable: {o!r}")
 
 
-_MODEL_PRIORITY: tuple[tuple[str, str], ...] = (
-    ("attn_nn", "Attention NN"),
-    ("nn", "Multi-Head NN"),
-    ("ridge", "Ridge Multi-Target"),
-)
+def _load_actuals(seasons: Sequence[int]) -> pd.DataFrame:
+    """Fetch weekly actual stats for the requested seasons from nflverse.
 
-
-def _select_model_predictions(pipeline_result: dict, pos: str) -> tuple[dict, str]:
-    """Pick the best-available model's per-target preds.
-
-    Prefers the model with the lowest ``metrics["total"]["mae"]`` among those
-    present in ``per_target_preds``. Falls back to a fixed
-    attn_nn -> nn -> ridge priority order when metrics are missing or
-    unusable. K and DST never run attn_nn; they fall back automatically.
+    Reads one parquet per season directly from the nflverse stats_player_week
+    release. Covers QB/RB/WR/TE/K offensive + kicker stats from 2012+ (DST
+    actuals live in stats_team and are not used here — DST is skipped). The
+    rename step normalizes columns to match NFL.com's schema (``interceptions``
+    instead of ``passing_interceptions``).
     """
-    per_target_preds = pipeline_result["per_target_preds"]
+    seasons = sorted(set(int(s) for s in seasons))
+    if not seasons:
+        return pd.DataFrame()
 
-    candidates: list[tuple[float, int, str, str]] = []
-    for priority_idx, (model_key, model_label) in enumerate(_MODEL_PRIORITY):
-        if model_key not in per_target_preds:
-            continue
-        metrics = pipeline_result.get(f"{model_key}_metrics")
-        if not isinstance(metrics, dict):
-            continue
-        total = metrics.get("total")
-        if not isinstance(total, dict):
-            continue
-        mae = total.get("mae")
-        try:
-            mae_value = float(mae)
-        except (TypeError, ValueError):
-            continue
-        if np.isnan(mae_value):
-            continue
-        # Tuple sort: lowest MAE first, priority tie-broken by index (lower wins).
-        candidates.append((mae_value, priority_idx, model_key, model_label))
+    parts: list[pd.DataFrame] = []
+    for s in seasons:
+        df = pd.read_parquet(_NFLVERSE_PLAYER_WEEK_URL.format(season=s))
+        df = df.rename(
+            columns={
+                "team": "recent_team",
+                "passing_interceptions": "interceptions",
+            }
+        )
+        parts.append(df)
 
-    if candidates:
-        _, _, best_key, best_label = min(candidates)
-        return per_target_preds[best_key], best_label
+    out = pd.concat(parts, ignore_index=True)
+    # Derive a single ``fumbles_lost`` column from the three nflverse fumble
+    # subcolumns — matches ``src.data.loader.compute_fantasy_points``.
+    fumble_cols = ("sack_fumbles_lost", "rushing_fumbles_lost", "receiving_fumbles_lost")
+    out["fumbles_lost"] = sum(out[c].fillna(0) if c in out.columns else 0.0 for c in fumble_cols)
+    return out
 
-    # No usable metrics — fall back to fixed priority for whatever preds exist.
-    for model_key, model_label in _MODEL_PRIORITY:
-        if model_key in per_target_preds:
-            return per_target_preds[model_key], model_label
-    raise RuntimeError(f"No model predictions found in pipeline_result for {pos}")
+
+def _actuals_for_position(
+    actuals: pd.DataFrame, pos: str, eval_seasons: Sequence[int]
+) -> pd.DataFrame:
+    """Filter actuals to one position + season range, keep the cols we need."""
+    eval_set = set(int(s) for s in eval_seasons)
+    df = actuals[(actuals["position"] == pos) & (actuals["season"].isin(eval_set))].copy()
+    if df.empty:
+        return df
+    # Coerce raw-stat columns; missing columns (e.g. K's offensive stats)
+    # become zero rather than NaN so the aggregator doesn't choke.
+    for target in POSITION_TARGET_MAP.get(pos, {}):
+        if target not in df.columns:
+            df[target] = 0.0
+        else:
+            df[target] = df[target].fillna(0.0)
+    # K needs its raw kick stats kept around so we can compute actual K
+    # fantasy points (the precomputed ``fantasy_points`` column is offensive-
+    # only — kickers report ~0 there).
+    extra_cols: list[str] = []
+    if pos == "K":
+        for c in _K_RAW_COLUMNS:
+            if c in df.columns:
+                df[c] = df[c].fillna(0.0)
+            else:
+                df[c] = 0.0
+            extra_cols.append(c)
+    return df[
+        ["player_id", "season", "week", "position", "fantasy_points"]
+        + [t for t in POSITION_TARGET_MAP.get(pos, {})]
+        + extra_cols
+    ].reset_index(drop=True)
 
 
 def _project_nflcom_to_ppr(
@@ -135,10 +154,10 @@ def _project_nflcom_to_ppr(
     """Apply ``predictions_to_fantasy_points`` to NFL.com's projected raw stats.
 
     Returns a frame keyed by (player_id, season, week) with columns:
-      - nflcom_pred_total: the PPR-aggregated projection
+      - nflcom_pred_total: the PPR-aggregated projection (their raw stats × our scoring)
       - nflcom_pred_<target>: per-target projections (QB/RB/WR/TE only)
       - nflcom_projected_pts: NFL.com's own (standard-scoring) projection, kept
-        as a reference column for the ``nflcom_native`` metric.
+        as a reference for callers that want to compare native vs aggregated.
     """
     pos_df = nflcom_df[nflcom_df["position"] == pos].copy()
     pos_df = pos_df[pos_df["player_id"].notna()]
@@ -152,7 +171,6 @@ def _project_nflcom_to_ppr(
     )
 
     if pos in _TOTALS_ONLY_POSITIONS:
-        # K uses NFL.com's own projection as the head-to-head value.
         out["nflcom_pred_total"] = pos_df["nflcom_projected_pts"].to_numpy()
         return out
 
@@ -164,65 +182,44 @@ def _project_nflcom_to_ppr(
     return out
 
 
-def _attach_model_predictions(
-    test_df: pd.DataFrame,
-    model_preds: dict,
-    pos: str,
-    scoring_format: str = "ppr",
-) -> pd.DataFrame:
-    """Add ``model_pred_total`` (and per-target ``model_pred_<t>`` for skill positions)
-    columns to a copy of test_df. Position arrays are aligned with test_df row order
-    by construction (pipeline emits per-row predictions in test_df order)."""
-    out = test_df.copy().reset_index(drop=True)
-    if pos in POSITION_TARGET_MAP:  # QB/RB/WR/TE
-        out["model_pred_total"] = predictions_to_fantasy_points(pos, model_preds, scoring_format)
-        for t, vals in model_preds.items():
-            out[f"model_pred_{t}"] = np.asarray(vals)
-    elif pos == "DST":
-        # Routed via _dst_predictions_to_fantasy_points (uses tier lookups).
-        out["model_pred_total"] = predictions_to_fantasy_points(pos, model_preds)
-    else:
-        # K: aggregate via the per-position signed sum. K's penalty heads
-        # (fg_misses, xp_misses) carry positive raw values but contribute
-        # negatively to fantasy points; a plain sum would systematically
-        # overstate the projection. The canonical sign vector lives in the
-        # registry's inference spec so we use the same source of truth as the
-        # serving path.
-        out["model_pred_total"] = _aggregate_k_predictions(model_preds)
-    return out
+def _aggregate_actuals_to_ppr(actuals: pd.DataFrame, pos: str, scoring_format: str) -> np.ndarray:
+    """Re-score actuals through our aggregator so they're apples-to-apples
+    with the NFL.com projections.
 
-
-def _aggregate_k_predictions(preds: dict) -> np.ndarray:
-    """Apply K's signed-sum aggregator to a per-target prediction dict.
-
-    Mirrors ``src.k.targets.compute_targets`` and the registry's K
-    ``target_signs``: ``fantasy_points = fg_yard_points + pat_points
-    - fg_misses - xp_misses``. Falls back to a plain sum only if the
-    registry doesn't expose signs (defensive — shouldn't happen for K).
+    QB/RB/WR/TE: ``predictions_to_fantasy_points`` with the position's target map.
+    K: computed directly from raw FG/PAT stats per ``src.k.targets.compute_targets``
+       (``fg_made_distance × 0.1 + pat_made − fg_missed − pat_missed``). The
+       precomputed ``fantasy_points`` column on the parquet is offensive-only and
+       reads ~0 for kickers, so we can't use it.
     """
-    spec = get_inference_spec("K")
-    signs = spec.get("target_signs")
-    if not signs:
-        # Defensive fallback: treat every head as additive (matches old behavior).
-        return sum(np.asarray(v) for v in preds.values())
-    total = None
-    for target, sign in signs.items():
-        if target not in preds:
+    if pos == "K":
+        # Falls back to 0.0 columns from _actuals_for_position if the parquet
+        # is missing any of these (older seasons can have partial schema).
+        fg_yards = actuals["fg_made_distance"].to_numpy()
+        pat_made = actuals["pat_made"].to_numpy()
+        fg_missed = actuals["fg_missed"].to_numpy()
+        pat_missed = actuals["pat_missed"].to_numpy()
+        return fg_yards * 0.1 + pat_made - fg_missed - pat_missed
+    target_map = POSITION_TARGET_MAP[pos]
+    pred_dict = {t: actuals[t].to_numpy() for t in target_map}
+    return predictions_to_fantasy_points(pos, pred_dict, scoring_format)
+
+
+def _per_target_breakout(joined: pd.DataFrame, pos: str) -> dict:
+    if pos in _TOTALS_ONLY_POSITIONS or pos not in POSITION_TARGET_MAP:
+        return {}
+    out = {}
+    for t in POSITION_TARGET_MAP[pos]:
+        if t not in joined.columns or f"nflcom_pred_{t}" not in joined.columns:
             continue
-        contribution = np.asarray(preds[target]) * float(sign)
-        total = contribution if total is None else total + contribution
-    if total is None:
-        raise RuntimeError(
-            "K aggregation: model_preds had no overlap with target_signs keys; "
-            f"got {list(preds)} vs {list(signs)}"
-        )
-    return total
-
-
-def _decide_winner(model_mae: float, nflcom_mae: float) -> str:
-    if abs(model_mae - nflcom_mae) < _TIE_TOLERANCE_PTS:
-        return "tie"
-    return "model" if model_mae < nflcom_mae else "nflcom"
+        actual = joined[t].to_numpy()
+        nflcom_p = joined[f"nflcom_pred_{t}"].to_numpy()
+        out[t] = {
+            "mae": float(np.mean(np.abs(actual - nflcom_p))),
+            "rmse": float(np.sqrt(np.mean((actual - nflcom_p) ** 2))),
+            "unit": TARGET_UNITS.get(t, "pts"),
+        }
+    return out
 
 
 def _weekly_breakout(joined: pd.DataFrame) -> list[dict]:
@@ -235,182 +232,151 @@ def _weekly_breakout(joined: pd.DataFrame) -> list[dict]:
             {
                 "week": int(week),
                 "n": int(len(wk)),
-                "model_mae": float(np.mean(np.abs(wk["fantasy_points"] - wk["model_pred_total"]))),
-                "nflcom_ppr_mae": float(
-                    np.mean(np.abs(wk["fantasy_points"] - wk["nflcom_pred_total"]))
-                ),
+                "mae": float(np.mean(np.abs(wk["actual_pts"] - wk["nflcom_pred_total"]))),
             }
         )
     return weekly
 
 
-def _per_target_breakout(joined: pd.DataFrame, pos: str) -> dict:
-    if pos in _TOTALS_ONLY_POSITIONS or pos not in POSITION_TARGET_MAP:
-        return {}
-    out = {}
-    for t in POSITION_TARGET_MAP[pos]:
-        if t not in joined.columns:
-            continue
-        actual = joined[t].to_numpy()
-        model_p = joined[f"model_pred_{t}"].to_numpy()
-        nflcom_p = joined[f"nflcom_pred_{t}"].to_numpy()
-        out[t] = {
-            "model_mae": float(np.mean(np.abs(actual - model_p))),
-            "nflcom_mae": float(np.mean(np.abs(actual - nflcom_p))),
-            "unit": TARGET_UNITS.get(t, "pts"),
+def _compute_season_block(
+    pos: str,
+    nflcom_df: pd.DataFrame,
+    actuals_df: pd.DataFrame,
+    season: int,
+    scoring_format: str,
+) -> dict:
+    """Compute per-season metrics for one (position, season)."""
+    nflcom_season = nflcom_df[nflcom_df["season"] == season]
+    actuals_season = actuals_df[actuals_df["season"] == season]
+    if nflcom_season.empty or actuals_season.empty:
+        return {
+            "season": season,
+            "skipped": True,
+            "reason": "no NFL.com or no actuals rows for this season",
         }
-    return out
+
+    nflcom_pred = _project_nflcom_to_ppr(nflcom_season, pos, scoring_format)
+    if nflcom_pred.empty:
+        return {
+            "season": season,
+            "skipped": True,
+            "reason": f"no NFL.com projection rows for {pos}/{season}",
+        }
+
+    actuals_pos = _actuals_for_position(actuals_season, pos, [season])
+    if actuals_pos.empty:
+        return {
+            "season": season,
+            "skipped": True,
+            "reason": f"no actuals rows for {pos}/{season}",
+        }
+    actuals_pos["actual_pts"] = _aggregate_actuals_to_ppr(actuals_pos, pos, scoring_format)
+
+    joined = actuals_pos.merge(nflcom_pred, on=["player_id", "season", "week"], how="inner")
+    if joined.empty:
+        return {
+            "season": season,
+            "skipped": True,
+            "reason": f"no (player_id, season, week) overlap for {pos}/{season}",
+        }
+
+    metrics = compute_metrics(
+        joined["actual_pts"].to_numpy(), joined["nflcom_pred_total"].to_numpy()
+    )
+    return {
+        "season": int(season),
+        "n_matched": int(len(joined)),
+        "metrics": metrics,
+        "per_target": _per_target_breakout(joined, pos),
+        "weekly": _weekly_breakout(joined),
+        "_joined": joined,  # private — used by the pooled rollup, stripped before JSON
+    }
 
 
 def _compute_position_comparison(
     pos: str,
-    pipeline_result: dict,
     nflcom_df: pd.DataFrame,
-    eval_season: int,
+    actuals_df: pd.DataFrame,
+    eval_seasons: Sequence[int],
     scoring_format: str = "ppr",
 ) -> dict:
-    """Build the comparison dict for one position. See module docstring for shape."""
-    test_df = pipeline_result["test_df"]
-    test_df = test_df[test_df["season"] == eval_season].copy()
-    if test_df.empty:
-        return {
-            "position": pos,
-            "skipped": True,
-            "reason": f"No rows in test_df for season {eval_season}",
-        }
+    """Build the per-position block (per_season + pooled)."""
+    per_season: dict[str, dict] = {}
+    pooled_frames: list[pd.DataFrame] = []
+    for season in eval_seasons:
+        block = _compute_season_block(pos, nflcom_df, actuals_df, season, scoring_format)
+        joined = block.pop("_joined", None)
+        per_season[str(int(season))] = block
+        if joined is not None and not joined.empty:
+            pooled_frames.append(joined)
 
-    model_preds, model_label = _select_model_predictions(pipeline_result, pos)
-    # The pipeline emits per-target preds aligned with the full test_df it built.
-    # If we filter test_df by season we have to apply the same mask to preds —
-    # which is one-to-one only if the pipeline's test_df is exactly the eval window.
-    full_test = pipeline_result["test_df"].reset_index(drop=True)
-    # Tripwire: per-target preds MUST be aligned 1:1 with full_test row order.
-    # Today every position's filter_fn is a simple boolean mask, but a future
-    # K/DST refactor that introduces a sort/groupby could silently break this.
-    # Fail loud here rather than silently mis-attribute predictions to rows.
-    expected_n = len(full_test)
-    for target_name, vals in model_preds.items():
-        if len(vals) != expected_n:
-            raise RuntimeError(
-                f"{pos} pipeline emitted misaligned predictions: "
-                f"per_target_preds[{target_name!r}] has {len(vals)} rows but "
-                f"test_df has {expected_n}. Refusing to season-mask a "
-                "non-aligned array."
-            )
-    season_mask = (full_test["season"] == eval_season).to_numpy()
-    preds_filtered = {t: np.asarray(v)[season_mask] for t, v in model_preds.items()}
+    if not pooled_frames:
+        return {"position": pos, "per_season": per_season, "pooled": {"skipped": True}}
 
-    test_with_model = _attach_model_predictions(test_df, preds_filtered, pos, scoring_format)
-
-    nflcom_pred_df = _project_nflcom_to_ppr(nflcom_df, pos, scoring_format)
-    if nflcom_pred_df.empty:
-        return {
-            "position": pos,
-            "skipped": True,
-            "reason": f"No NFL.com projection rows for {pos} in season {eval_season}",
-        }
-
-    join_cols = ["player_id", "season", "week"]
-    joined = test_with_model.merge(nflcom_pred_df, on=join_cols, how="inner")
-    if joined.empty:
-        raise RuntimeError(
-            f"No (player_id, season, week) overlap between test_df and NFL.com "
-            f"projections for {pos}/{eval_season}. Check upstream URL or join keys."
-        )
-
-    fp_truth = joined["fantasy_points"].to_numpy()
-    metrics_model = compute_metrics(fp_truth, joined["model_pred_total"].to_numpy())
-    metrics_nflcom_ppr = compute_metrics(fp_truth, joined["nflcom_pred_total"].to_numpy())
-    metrics_nflcom_native = compute_metrics(fp_truth, joined["nflcom_projected_pts"].to_numpy())
-
-    # Recompute SeasonAverageBaseline on the matched subset for fair triangulation.
-    season_avg_preds = SeasonAverageBaseline().predict(joined)
-    metrics_season_avg = compute_metrics(fp_truth, season_avg_preds)
-
+    pooled = pd.concat(pooled_frames, ignore_index=True)
+    pooled_metrics = compute_metrics(
+        pooled["actual_pts"].to_numpy(), pooled["nflcom_pred_total"].to_numpy()
+    )
     return {
         "position": pos,
-        "eval_window": f"{eval_season}_test",
-        "scoring": scoring_format,
-        "n_test_total": int(len(test_df)),
-        "n_matched": int(len(joined)),
-        "match_rate": float(len(joined) / len(test_df)),
-        "model_label": model_label,
-        "metrics": {
-            "model": metrics_model,
-            "nflcom_ppr": metrics_nflcom_ppr,
-            "nflcom_native": metrics_nflcom_native,
-            "season_avg": metrics_season_avg,
+        "per_season": per_season,
+        "pooled": {
+            "n_matched": int(len(pooled)),
+            "metrics": pooled_metrics,
+            "per_target": _per_target_breakout(pooled, pos),
         },
-        "per_target": _per_target_breakout(joined, pos),
-        "weekly": _weekly_breakout(joined),
-        "who_won": _decide_winner(metrics_model["mae"], metrics_nflcom_ppr["mae"]),
     }
 
 
-def _compute_summary(per_pos_results: list[dict]) -> dict:
-    """Roll up per-position 'who_won' tags + headline numbers."""
-    who_won = {r["position"]: r.get("who_won", "n/a") for r in per_pos_results}
-    headlines = {}
+def _print_summary_table(per_pos_results: list[dict], eval_seasons: Sequence[int]) -> None:
+    season_label = "+".join(str(s) for s in eval_seasons)
+    print("\n" + "=" * 72)
+    print(f"NFL.com Projection Accuracy ({season_label})")
+    print("=" * 72)
+    print(f"{'Pos':<5} {'n':>6} {'MAE':>8} {'RMSE':>8} {'R²':>8}")
+    print("-" * 72)
     for r in per_pos_results:
-        if r.get("skipped"):
+        pos = r["position"]
+        pooled = r.get("pooled", {})
+        if pooled.get("skipped") or "metrics" not in pooled:
+            print(f"{pos:<5} {'(skipped)':<22} {pooled.get('reason', '')}")
             continue
-        headlines[r["position"]] = {
-            "model_mae": r["metrics"]["model"]["mae"],
-            "nflcom_ppr_mae": r["metrics"]["nflcom_ppr"]["mae"],
-            "season_avg_mae": r["metrics"]["season_avg"]["mae"],
-        }
-    return {"who_won": who_won, "headlines": headlines}
-
-
-def _print_comparison_table(per_pos_results: list[dict]) -> None:
-    print("\n" + "=" * 96)
-    print("NFL.com Baseline Comparison")
-    print("=" * 96)
-    print(
-        f"{'Pos':<5} {'Model':<22} {'Model MAE':>10} {'NFL.com MAE':>12} "
-        f"{'Season Avg':>11} {'Winner':>8} {'Match%':>8}"
-    )
-    print("-" * 96)
-    for r in per_pos_results:
-        if r.get("skipped"):
-            print(f"{r['position']:<5} {'(skipped)':<22} {r.get('reason', '')}")
-            continue
-        m = r["metrics"]
+        m = pooled["metrics"]
         print(
-            f"{r['position']:<5} {r['model_label']:<22} "
-            f"{m['model']['mae']:>10.3f} {m['nflcom_ppr']['mae']:>12.3f} "
-            f"{m['season_avg']['mae']:>11.3f} {r['who_won']:>8} "
-            f"{r['match_rate']:>7.1%}"
+            f"{pos:<5} {pooled['n_matched']:>6d} {m['mae']:>8.3f} {m['rmse']:>8.3f} {m['r2']:>8.3f}"
         )
-    print("=" * 96)
+    print("=" * 72)
 
 
 # ---------- Entry point ------------------------------------------------------
 
 
 def main(
-    eval_season: int = EVAL_SEASON_DEFAULT,
+    eval_seasons: Sequence[int] = EVAL_SEASONS_DEFAULT,
     scoring_format: str = SCORING_FORMAT_DEFAULT,
     positions: Sequence[str] = TARGET_POSITIONS_DEFAULT,
     output_dir: str = OUTPUT_DIR_DEFAULT,
     *,
     force_refresh_nflcom: bool = False,
-    pipeline_runner=None,
     nflcom_loader=None,
+    actuals_loader=None,
 ) -> dict:
-    """Run the comparison, print + write JSON, return the result dict.
+    """Run the NFL.com baseline analysis, print + write JSON, return the result.
 
-    ``pipeline_runner`` and ``nflcom_loader`` are injectable for tests; production
+    ``nflcom_loader`` and ``actuals_loader`` are injectable for tests; production
     callers should leave them at their defaults.
     """
-    if pipeline_runner is None:
-        pipeline_runner = get_runner
+    eval_seasons = tuple(int(s) for s in eval_seasons)
     if nflcom_loader is None:
         nflcom_loader = load_nflcom_with_gsis_id
+    if actuals_loader is None:
+        actuals_loader = _load_actuals
 
-    print(f"\nLoading NFL.com projections for season {eval_season}...")
-    nflcom_full = nflcom_loader(seasons=[eval_season], force_refresh=force_refresh_nflcom)
-    nflcom_eval = nflcom_full[nflcom_full["season"] == eval_season]
+    print(f"\nLoading NFL.com projections for seasons {list(eval_seasons)}...")
+    nflcom_full = nflcom_loader(seasons=list(eval_seasons), force_refresh=force_refresh_nflcom)
+
+    print(f"Loading actuals for seasons {list(eval_seasons)}...")
+    actuals_full = actuals_loader(list(eval_seasons))
 
     per_pos_results: list[dict] = []
     for pos in positions:
@@ -421,41 +387,45 @@ def main(
                     "position": pos,
                     "skipped": True,
                     "reason": "NFL.com has no DST projections in hvpkod/NFL-Data",
+                    "per_season": {},
+                    "pooled": {"skipped": True, "reason": "DST skipped"},
                 }
             )
             continue
-        runner = pipeline_runner(pos)
-        pipeline_result = runner()
         per_pos_results.append(
             _compute_position_comparison(
-                pos, pipeline_result, nflcom_eval, eval_season, scoring_format
+                pos, nflcom_full, actuals_full, eval_seasons, scoring_format
             )
         )
 
-    summary = _compute_summary(per_pos_results)
     result = {
         "generated_at": datetime.now(UTC).isoformat(),
-        "eval_window": f"{eval_season}_test",
+        "eval_seasons": list(eval_seasons),
         "scoring": scoring_format,
         "positions": {r["position"]: r for r in per_pos_results},
-        "summary": summary,
     }
 
     os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, "nflcom_baseline_comparison.json")
+    out_path = os.path.join(output_dir, "nflcom_baseline.json")
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2, default=_json_default)
     print(f"\nWrote {out_path}")
 
-    _print_comparison_table(per_pos_results)
+    _print_summary_table(per_pos_results, eval_seasons)
     return result
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Compare our position models against NFL.com weekly projections"
+        description="Compute NFL.com's projection accuracy vs actuals (no model retraining)"
     )
-    parser.add_argument("--eval-season", type=int, default=EVAL_SEASON_DEFAULT)
+    parser.add_argument(
+        "--seasons",
+        nargs="+",
+        type=int,
+        default=list(EVAL_SEASONS_DEFAULT),
+        help=f"Seasons to evaluate (default: TEST_SEASONS = {list(EVAL_SEASONS_DEFAULT)})",
+    )
     parser.add_argument(
         "--scoring-format",
         default=SCORING_FORMAT_DEFAULT,
@@ -467,7 +437,7 @@ def _parse_args() -> argparse.Namespace:
         default=list(TARGET_POSITIONS_DEFAULT),
         choices=list(TARGET_POSITIONS_DEFAULT),
         metavar="POS",
-        help="Positions to compare (default: all). DST is hard-skipped (no upstream data).",
+        help="Positions to evaluate (default: all). DST is hard-skipped.",
     )
     parser.add_argument("--output-dir", default=OUTPUT_DIR_DEFAULT)
     parser.add_argument("--force-refresh-nflcom", action="store_true")
@@ -477,7 +447,7 @@ def _parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = _parse_args()
     main(
-        eval_season=args.eval_season,
+        eval_seasons=tuple(args.seasons),
         scoring_format=args.scoring_format,
         positions=tuple(args.positions),
         output_dir=args.output_dir,

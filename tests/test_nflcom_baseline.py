@@ -1,8 +1,9 @@
 """Unit tests for src.analysis.analysis_nflcom_baseline.
 
-All tests construct synthetic frames; nothing hits the network or trains a real
-model. The analysis script's ``pipeline_runner`` and ``nflcom_loader`` injection
-points are used to substitute fakes.
+The script no longer trains models — it just pulls NFL.com projections + actuals
+from the web and scores both through our PPR aggregator. Tests construct
+synthetic NFL.com + actuals frames and inject them via the loader hooks; nothing
+hits the network.
 """
 
 from __future__ import annotations
@@ -22,79 +23,50 @@ pytestmark = pytest.mark.unit
 # ---------- Fixtures --------------------------------------------------------
 
 
-def _make_qb_test_df(n_weeks: int = 4) -> pd.DataFrame:
-    """Two QBs × n_weeks weeks. Targets and fantasy_points are consistent."""
+def _make_qb_actuals(*, seasons=(2025,), n_weeks: int = 4) -> pd.DataFrame:
+    """Two QBs × n_weeks weeks × n_seasons. Realistic raw stats + computed FP."""
     rng = np.random.default_rng(42)
     rows = []
-    for player_id in ("00-Q1", "00-Q2"):
-        for week in range(1, n_weeks + 1):
-            py = rng.uniform(180, 320)
-            ptd = rng.uniform(1.0, 3.0)
-            ints = rng.uniform(0.0, 1.5)
-            ry = rng.uniform(0.0, 50.0)
-            rtd = rng.uniform(0.0, 0.6)
-            fum_lost = rng.uniform(0.0, 0.4)
-            fp = (
-                py * SCORING_PPR["passing_yards"]
-                + ptd * SCORING_PPR["passing_tds"]
-                + ints * SCORING_PPR["interceptions"]
-                + ry * SCORING_PPR["rushing_yards"]
-                + rtd * SCORING_PPR["rushing_tds"]
-                + fum_lost * SCORING_PPR["fumbles_lost"]
-            )
-            rows.append(
-                {
-                    "player_id": player_id,
-                    "season": 2025,
-                    "week": week,
-                    "position": "QB",
-                    "passing_yards": py,
-                    "passing_tds": ptd,
-                    "interceptions": ints,
-                    "rushing_yards": ry,
-                    "rushing_tds": rtd,
-                    "fumbles_lost": fum_lost,
-                    "fantasy_points": fp,
-                }
-            )
+    for season in seasons:
+        for player_id in ("00-Q1", "00-Q2"):
+            for week in range(1, n_weeks + 1):
+                py = rng.uniform(180, 320)
+                ptd = rng.uniform(1.0, 3.0)
+                ints = rng.uniform(0.0, 1.5)
+                ry = rng.uniform(0.0, 50.0)
+                rtd = rng.uniform(0.0, 0.6)
+                fum_lost = rng.uniform(0.0, 0.4)
+                fp = (
+                    py * SCORING_PPR["passing_yards"]
+                    + ptd * SCORING_PPR["passing_tds"]
+                    + ints * SCORING_PPR["interceptions"]
+                    + ry * SCORING_PPR["rushing_yards"]
+                    + rtd * SCORING_PPR["rushing_tds"]
+                    + fum_lost * SCORING_PPR["fumbles_lost"]
+                )
+                rows.append(
+                    {
+                        "player_id": player_id,
+                        "season": int(season),
+                        "week": week,
+                        "position": "QB",
+                        "passing_yards": py,
+                        "passing_tds": ptd,
+                        "interceptions": ints,
+                        "rushing_yards": ry,
+                        "rushing_tds": rtd,
+                        "fumbles_lost": fum_lost,
+                        "fantasy_points": fp,
+                    }
+                )
     return pd.DataFrame(rows)
 
 
-def _make_pipeline_result(test_df: pd.DataFrame, *, perfect: bool = False) -> dict:
-    """Return a pipeline_result dict matching the real shape.
-
-    With ``perfect=True``, model preds equal actuals → MAE should be 0.
-    Otherwise add small noise.
-    """
-    targets = (
-        "passing_yards",
-        "passing_tds",
-        "interceptions",
-        "rushing_yards",
-        "rushing_tds",
-        "fumbles_lost",
-    )
-    rng = np.random.default_rng(0)
-    preds = {}
-    for t in targets:
-        truth = test_df[t].to_numpy()
-        preds[t] = truth.copy() if perfect else truth + rng.normal(0, 0.05, len(truth))
-    per_target = {"ridge": preds, "nn": preds, "attn_nn": preds}
-    return {
-        "test_df": test_df,
-        "per_target_preds": per_target,
-        "ridge_metrics": {"total": {"mae": 0.0}},
-        "nn_metrics": {"total": {"mae": 0.0}},
-        "attn_nn_metrics": {"total": {"mae": 0.0}},
-    }
-
-
-def _make_nflcom_df_for_qb(test_df: pd.DataFrame, *, perfect: bool = False) -> pd.DataFrame:
-    """Build a NFL.com-shaped frame keyed by (player_id, season, week, position) so
-    that ``_project_nflcom_to_ppr`` can run."""
+def _make_nflcom_for_qb(actuals: pd.DataFrame, *, perfect: bool = False) -> pd.DataFrame:
+    """Build an NFL.com-shaped frame keyed by (player_id, season, week, position)."""
     rng = np.random.default_rng(7)
     out_rows = []
-    for _, row in test_df.iterrows():
+    for _, row in actuals.iterrows():
         if perfect:
             scaled = {
                 t: row[t]
@@ -122,9 +94,8 @@ def _make_nflcom_df_for_qb(test_df: pd.DataFrame, *, perfect: bool = False) -> p
                 "season": int(row["season"]),
                 "week": int(row["week"]),
                 "position": "QB",
-                "nflcom_projected_pts": 18.0,  # arbitrary native-scoring reference
+                "nflcom_projected_pts": 18.0,
                 **scaled,
-                # Fill the offensive-stat columns the loader writes for all positions.
                 "receiving_yards": 0.0,
                 "receiving_tds": 0.0,
                 "receptions": 0.0,
@@ -133,152 +104,11 @@ def _make_nflcom_df_for_qb(test_df: pd.DataFrame, *, perfect: bool = False) -> p
     return pd.DataFrame(out_rows)
 
 
-# ---------- Pure-function tests ---------------------------------------------
-
-
-def test_select_model_predictions_picks_lowest_mae():
-    """When all three models are available with metrics, pick the lowest-MAE one
-    rather than the first in priority order."""
-    pipeline_result = {
-        "per_target_preds": {
-            "ridge": {"x": np.zeros(2)},
-            "nn": {"x": np.ones(2)},
-            "attn_nn": {"x": np.full(2, 7.0)},
-        },
-        "attn_nn_metrics": {"total": {"mae": 5.0}},  # worst
-        "nn_metrics": {"total": {"mae": 4.5}},  # best
-        "ridge_metrics": {"total": {"mae": 4.7}},
-    }
-    preds, label = ab._select_model_predictions(pipeline_result, "QB")
-    assert label == "Multi-Head NN"
-    np.testing.assert_array_equal(preds["x"], np.ones(2))
-
-
-def test_select_model_predictions_attn_wins_when_lowest_mae():
-    pipeline_result = {
-        "per_target_preds": {
-            "ridge": {"x": np.zeros(2)},
-            "nn": {"x": np.ones(2)},
-            "attn_nn": {"x": np.full(2, 7.0)},
-        },
-        "attn_nn_metrics": {"total": {"mae": 4.0}},  # best
-        "nn_metrics": {"total": {"mae": 4.5}},
-        "ridge_metrics": {"total": {"mae": 4.7}},
-    }
-    preds, label = ab._select_model_predictions(pipeline_result, "QB")
-    assert label == "Attention NN"
-    np.testing.assert_array_equal(preds["x"], np.full(2, 7.0))
-
-
-def test_select_model_predictions_tie_resolved_by_priority():
-    """When two models tie on MAE, fall back to priority order (attn > nn > ridge)."""
-    pipeline_result = {
-        "per_target_preds": {
-            "ridge": {"x": np.zeros(2)},
-            "nn": {"x": np.ones(2)},
-            "attn_nn": {"x": np.full(2, 7.0)},
-        },
-        "attn_nn_metrics": {"total": {"mae": 4.5}},
-        "nn_metrics": {"total": {"mae": 4.5}},
-        "ridge_metrics": {"total": {"mae": 4.5}},
-    }
-    preds, label = ab._select_model_predictions(pipeline_result, "QB")
-    assert label == "Attention NN"
-
-
-def test_select_model_predictions_falls_back_to_nn_when_no_metrics():
-    """Metrics dicts entirely missing — use priority order on whatever preds exist."""
-    pipeline_result = {
-        "per_target_preds": {"ridge": {"x": np.zeros(2)}, "nn": {"x": np.ones(2)}},
-    }
-    preds, label = ab._select_model_predictions(pipeline_result, "K")
-    assert label == "Multi-Head NN"
-
-
-def test_select_model_predictions_falls_back_to_ridge():
-    pipeline_result = {"per_target_preds": {"ridge": {"x": np.zeros(2)}}}
-    preds, label = ab._select_model_predictions(pipeline_result, "QB")
-    assert label == "Ridge Multi-Target"
-
-
-def test_select_model_predictions_skips_nan_mae():
-    """A model with NaN MAE shouldn't win even if it's first in priority."""
-    pipeline_result = {
-        "per_target_preds": {
-            "nn": {"x": np.ones(2)},
-            "ridge": {"x": np.zeros(2)},
-        },
-        "nn_metrics": {"total": {"mae": float("nan")}},
-        "ridge_metrics": {"total": {"mae": 5.0}},
-    }
-    preds, label = ab._select_model_predictions(pipeline_result, "QB")
-    assert label == "Ridge Multi-Target"
-
-
-def test_select_model_predictions_raises_when_empty():
-    with pytest.raises(RuntimeError, match="No model predictions"):
-        ab._select_model_predictions({"per_target_preds": {}}, "QB")
-
-
-def test_aggregate_k_predictions_uses_signed_sum():
-    """K's penalty heads must subtract: total = fg_yard_points + pat_points
-    - fg_misses - xp_misses."""
-    preds = {
-        "fg_yard_points": np.array([6.0, 9.0]),
-        "pat_points": np.array([3.0, 2.0]),
-        "fg_misses": np.array([1.0, 0.0]),
-        "xp_misses": np.array([0.0, 1.0]),
-    }
-    out = ab._aggregate_k_predictions(preds)
-    # row 0: 6 + 3 - 1 - 0 = 8
-    # row 1: 9 + 2 - 0 - 1 = 10
-    np.testing.assert_array_almost_equal(out, [8.0, 10.0])
-
-
-def test_aggregate_k_predictions_subset_of_targets_works():
-    """If a model only emits some heads, aggregator should still work on the subset."""
-    preds = {
-        "fg_yard_points": np.array([5.0]),
-        "pat_points": np.array([2.0]),
-        # no fg_misses / xp_misses
-    }
-    out = ab._aggregate_k_predictions(preds)
-    np.testing.assert_array_almost_equal(out, [7.0])
-
-
-def test_attach_model_predictions_k_aggregator(monkeypatch):
-    """End-to-end: _attach_model_predictions for K must use the signed sum."""
-    test_df = pd.DataFrame(
-        {
-            "player_id": ["00-K1", "00-K2"],
-            "season": [2025, 2025],
-            "week": [1, 1],
-            "position": ["K", "K"],
-            "fantasy_points": [8.0, 10.0],
-        }
-    )
-    preds = {
-        "fg_yard_points": np.array([6.0, 9.0]),
-        "pat_points": np.array([3.0, 2.0]),
-        "fg_misses": np.array([1.0, 0.0]),
-        "xp_misses": np.array([0.0, 1.0]),
-    }
-    out = ab._attach_model_predictions(test_df, preds, "K", scoring_format="ppr")
-    np.testing.assert_array_almost_equal(out["model_pred_total"].to_numpy(), [8.0, 10.0])
-
-
-def test_decide_winner():
-    assert ab._decide_winner(5.0, 5.0) == "tie"
-    assert ab._decide_winner(5.0, 5.005) == "tie"  # within tolerance
-    assert ab._decide_winner(4.9, 5.1) == "model"
-    assert ab._decide_winner(5.2, 5.0) == "nflcom"
-
-
 # ---------- Aggregation tests ------------------------------------------------
 
 
 def test_project_nflcom_to_ppr_qb_uses_scoring_dict():
-    """NFL.com row with known stats should yield exactly SCORING_PPR-weighted total."""
+    """NFL.com QB row with known stats should yield exactly SCORING_PPR-weighted total."""
     df = pd.DataFrame(
         [
             {
@@ -309,12 +139,11 @@ def test_project_nflcom_to_ppr_qb_uses_scoring_dict():
         + 0.2 * SCORING_PPR["fumbles_lost"]
     )
     assert out["nflcom_pred_total"].iloc[0] == pytest.approx(expected)
-    # Native projection passed through.
     assert out["nflcom_projected_pts"].iloc[0] == pytest.approx(22.0)
 
 
 def test_project_nflcom_to_ppr_rb_ppr_vs_standard_propagates():
-    """Verify scoring_format reaches the aggregator: 5 receptions worth +5 in PPR, 0 in standard."""
+    """Verify scoring_format reaches the aggregator: 5 receptions = +5 PPR, 0 standard."""
     df = pd.DataFrame(
         [
             {
@@ -337,7 +166,6 @@ def test_project_nflcom_to_ppr_rb_ppr_vs_standard_propagates():
     )
     ppr = ab._project_nflcom_to_ppr(df, "RB", scoring_format="ppr")
     std = ab._project_nflcom_to_ppr(df, "RB", scoring_format="standard")
-    # PPR: 80*0.1 + 5*1 = 13; Standard: 80*0.1 + 5*0 = 8
     assert ppr["nflcom_pred_total"].iloc[0] == pytest.approx(
         80 * SCORING_PPR["receiving_yards"] + 5 * SCORING_PPR["receptions"]
     )
@@ -347,7 +175,7 @@ def test_project_nflcom_to_ppr_rb_ppr_vs_standard_propagates():
 
 
 def test_project_nflcom_to_ppr_drops_unmatched():
-    """Rows with player_id NaN are dropped — they can't be joined to test_df."""
+    """Rows with player_id NaN are dropped — they can't be joined."""
     df = pd.DataFrame(
         [
             {
@@ -382,7 +210,6 @@ def test_project_nflcom_to_ppr_k_uses_native_pts():
                 "week": 1,
                 "position": "K",
                 "nflcom_projected_pts": 8.5,
-                # K rows from the loader have all offensive cols filled with 0.
                 "passing_yards": 0.0,
                 "passing_tds": 0.0,
                 "interceptions": 0.0,
@@ -397,31 +224,26 @@ def test_project_nflcom_to_ppr_k_uses_native_pts():
     )
     out = ab._project_nflcom_to_ppr(df, "K")
     assert out["nflcom_pred_total"].iloc[0] == pytest.approx(8.5)
-    # No per-target columns for K.
     assert not any(c.startswith("nflcom_pred_") and c != "nflcom_pred_total" for c in out.columns)
 
 
 # ---------- Position-comparison tests ---------------------------------------
 
 
-def test_compute_position_comparison_perfect_model_zero_mae():
-    test_df = _make_qb_test_df(n_weeks=3)
-    pipeline_result = _make_pipeline_result(test_df, perfect=True)
-    nflcom = _make_nflcom_df_for_qb(test_df, perfect=False)
+def test_compute_position_comparison_perfect_nflcom_zero_mae():
+    """When NFL.com's projections == actuals, MAE = 0."""
+    actuals = _make_qb_actuals(seasons=(2025,), n_weeks=3)
+    nflcom = _make_nflcom_for_qb(actuals, perfect=True)
 
     result = ab._compute_position_comparison(
-        "QB", pipeline_result, nflcom, eval_season=2025, scoring_format="ppr"
+        "QB", nflcom, actuals, eval_seasons=(2025,), scoring_format="ppr"
     )
     assert result["position"] == "QB"
-    assert result["model_label"] == "Attention NN"
-    assert result["match_rate"] == pytest.approx(1.0)
-    # Model is perfect → MAE = 0.
-    assert result["metrics"]["model"]["mae"] == pytest.approx(0.0, abs=1e-9)
-    # NFL.com is noisy → MAE > 0.
-    assert result["metrics"]["nflcom_ppr"]["mae"] > 0
-    assert result["who_won"] == "model"
-    # Per-target: all 6 QB targets present.
-    assert set(result["per_target"].keys()) == {
+    assert "2025" in result["per_season"]
+    pooled = result["pooled"]
+    assert pooled["metrics"]["mae"] == pytest.approx(0.0, abs=1e-9)
+    # Per-target breakout populated for QB.
+    assert set(pooled["per_target"].keys()) == {
         "passing_yards",
         "passing_tds",
         "interceptions",
@@ -429,115 +251,164 @@ def test_compute_position_comparison_perfect_model_zero_mae():
         "rushing_tds",
         "fumbles_lost",
     }
-    # Weekly: 3 entries.
-    assert len(result["weekly"]) == 3
 
 
-def test_compute_position_comparison_match_rate_partial():
-    """Test_df has 2 players × 3 weeks; NFL.com only has player 1."""
-    test_df = _make_qb_test_df(n_weeks=3)
-    pipeline_result = _make_pipeline_result(test_df, perfect=True)
-    full_nflcom = _make_nflcom_df_for_qb(test_df, perfect=True)
-    partial_nflcom = full_nflcom[full_nflcom["player_id"] == "00-Q1"].copy()
-
+def test_compute_position_comparison_noisy_nflcom_positive_mae():
+    actuals = _make_qb_actuals(seasons=(2025,), n_weeks=4)
+    nflcom = _make_nflcom_for_qb(actuals, perfect=False)
     result = ab._compute_position_comparison(
-        "QB", pipeline_result, partial_nflcom, eval_season=2025
+        "QB", nflcom, actuals, eval_seasons=(2025,), scoring_format="ppr"
     )
-    # Only 3/6 rows match.
-    assert result["n_test_total"] == 6
-    assert result["n_matched"] == 3
-    assert result["match_rate"] == pytest.approx(0.5)
+    assert result["pooled"]["metrics"]["mae"] > 0
 
 
-def test_compute_position_comparison_per_target_only_skill_positions():
-    test_df = _make_qb_test_df(n_weeks=2)
-    pipeline_result = _make_pipeline_result(test_df, perfect=True)
-    nflcom = _make_nflcom_df_for_qb(test_df, perfect=True)
-
-    qb_result = ab._compute_position_comparison("QB", pipeline_result, nflcom, eval_season=2025)
-    assert qb_result["per_target"]  # non-empty
-
-
-def test_compute_position_comparison_raises_on_empty_join():
-    test_df = _make_qb_test_df(n_weeks=2)
-    pipeline_result = _make_pipeline_result(test_df, perfect=True)
-    # NFL.com frame for a different season — no overlap.
-    nflcom = _make_nflcom_df_for_qb(test_df, perfect=True)
+def test_compute_position_comparison_skipped_when_no_overlap():
+    """Actuals in 2025, NFL.com in 2024 → per-season block reports skipped."""
+    actuals = _make_qb_actuals(seasons=(2025,), n_weeks=2)
+    nflcom = _make_nflcom_for_qb(actuals, perfect=True)
     nflcom["season"] = 2024
 
-    with pytest.raises(RuntimeError, match="No .* overlap"):
-        ab._compute_position_comparison("QB", pipeline_result, nflcom, eval_season=2025)
+    result = ab._compute_position_comparison(
+        "QB", nflcom, actuals, eval_seasons=(2025,), scoring_format="ppr"
+    )
+    block = result["per_season"]["2025"]
+    assert block.get("skipped") is True
+    assert result["pooled"]["skipped"] is True
 
 
-def test_compute_position_comparison_skipped_when_test_df_empty():
-    test_df = _make_qb_test_df(n_weeks=2)
-    test_df["season"] = 2024  # no rows for 2025 eval
-    pipeline_result = _make_pipeline_result(test_df, perfect=True)
-    nflcom = _make_nflcom_df_for_qb(test_df, perfect=True)
-    nflcom["season"] = 2025
+def test_compute_position_comparison_multi_season_pools_correctly():
+    """Two seasons: pooled n_matched = sum(per_season n_matched), pooled MAE matches
+    a freshly-computed MAE on the concatenated error vectors (NOT the average)."""
+    actuals_24 = _make_qb_actuals(seasons=(2024,), n_weeks=3)
+    actuals_25 = _make_qb_actuals(seasons=(2025,), n_weeks=2)
+    actuals = pd.concat([actuals_24, actuals_25], ignore_index=True)
+    nflcom = _make_nflcom_for_qb(actuals, perfect=False)
 
-    result = ab._compute_position_comparison("QB", pipeline_result, nflcom, eval_season=2025)
-    assert result.get("skipped") is True
+    result = ab._compute_position_comparison(
+        "QB", nflcom, actuals, eval_seasons=(2024, 2025), scoring_format="ppr"
+    )
+
+    assert "2024" in result["per_season"]
+    assert "2025" in result["per_season"]
+    per_season_n = sum(result["per_season"][str(s)]["n_matched"] for s in (2024, 2025))
+    assert result["pooled"]["n_matched"] == per_season_n
+
+    # Pooled MAE != arithmetic mean of per-season MAEs when sample counts
+    # differ, so verify pooled matches a from-scratch recomputation.
+    nflcom_pred = ab._project_nflcom_to_ppr(nflcom, "QB", "ppr")
+    actuals_q = ab._actuals_for_position(actuals, "QB", [2024, 2025])
+    actuals_q["actual_pts"] = ab._aggregate_actuals_to_ppr(actuals_q, "QB", "ppr")
+    joined = actuals_q.merge(nflcom_pred, on=["player_id", "season", "week"], how="inner")
+    expected_mae = float(np.mean(np.abs(joined["actual_pts"] - joined["nflcom_pred_total"])))
+    assert result["pooled"]["metrics"]["mae"] == pytest.approx(expected_mae)
+
+
+def test_aggregate_actuals_to_ppr_qb_matches_scoring_dict():
+    """For QB, _aggregate_actuals_to_ppr should reproduce the same PPR fp the fixture
+    computed manually."""
+    actuals = _make_qb_actuals(seasons=(2025,), n_weeks=1)
+    actuals_q = ab._actuals_for_position(actuals, "QB", [2025])
+    fp_ours = ab._aggregate_actuals_to_ppr(actuals_q, "QB", "ppr")
+    np.testing.assert_array_almost_equal(fp_ours, actuals_q["fantasy_points"].to_numpy())
+
+
+def test_aggregate_actuals_to_ppr_k_computes_from_raw_stats():
+    """K actuals: fg_made_distance * 0.1 + pat_made - fg_missed - pat_missed.
+    Matches src.k.targets.compute_targets's formula."""
+    df = pd.DataFrame(
+        [
+            # 3 FGs totaling 100 yards (10 pts), 2 PAT (2 pts), 0 missed = 12.0
+            {
+                "fg_made_distance": 100.0,
+                "pat_made": 2.0,
+                "fg_missed": 0.0,
+                "pat_missed": 0.0,
+            },
+            # 1 FG 50 yards (5 pts), 0 PAT, 1 FG miss, 1 XP miss = 5 - 1 - 1 = 3.0
+            {
+                "fg_made_distance": 50.0,
+                "pat_made": 0.0,
+                "fg_missed": 1.0,
+                "pat_missed": 1.0,
+            },
+        ]
+    )
+    out = ab._aggregate_actuals_to_ppr(df, "K", "ppr")
+    np.testing.assert_array_almost_equal(out, [12.0, 3.0])
 
 
 # ---------- main() smoke test -----------------------------------------------
 
 
 def test_main_writes_json_and_handles_dst_skip(tmp_path):
-    test_df = _make_qb_test_df(n_weeks=3)
-    pipeline_result = _make_pipeline_result(test_df, perfect=True)
-    nflcom_full = _make_nflcom_df_for_qb(test_df, perfect=False)
+    actuals = _make_qb_actuals(seasons=(2025,), n_weeks=3)
+    nflcom = _make_nflcom_for_qb(actuals, perfect=False)
 
-    def fake_runner(pos):
-        # Same fake pipeline for every position; only QB is exercised here.
-        def _run():
-            return pipeline_result
+    def fake_nflcom_loader(seasons, force_refresh=False):
+        return nflcom
 
-        return _run
-
-    def fake_loader(seasons, force_refresh=False):
-        return nflcom_full
+    def fake_actuals_loader(seasons):
+        return actuals
 
     output_dir = tmp_path / "analysis_output"
     result = ab.main(
-        eval_season=2025,
+        eval_seasons=(2025,),
         scoring_format="ppr",
         positions=("QB", "DST"),
         output_dir=str(output_dir),
-        pipeline_runner=fake_runner,
-        nflcom_loader=fake_loader,
+        nflcom_loader=fake_nflcom_loader,
+        actuals_loader=fake_actuals_loader,
     )
     assert "QB" in result["positions"]
     assert "DST" in result["positions"]
     assert result["positions"]["DST"]["skipped"] is True
-    assert "summary" in result and "headlines" in result["summary"]
-    # JSON written and re-readable.
-    json_path = output_dir / "nflcom_baseline_comparison.json"
+    assert result["positions"]["QB"]["pooled"]["metrics"]["mae"] > 0
+
+    json_path = output_dir / "nflcom_baseline.json"
     assert json_path.exists()
     on_disk = json.loads(json_path.read_text())
-    assert on_disk["eval_window"] == "2025_test"
+    assert on_disk["eval_seasons"] == [2025]
     assert on_disk["scoring"] == "ppr"
 
 
 def test_main_passes_force_refresh_through(tmp_path):
-    test_df = _make_qb_test_df(n_weeks=2)
-    pipeline_result = _make_pipeline_result(test_df, perfect=True)
-    nflcom_full = _make_nflcom_df_for_qb(test_df, perfect=False)
+    actuals = _make_qb_actuals(seasons=(2025,), n_weeks=2)
+    nflcom = _make_nflcom_for_qb(actuals, perfect=False)
     seen = {}
 
-    def fake_runner(pos):
-        return lambda: pipeline_result
-
-    def fake_loader(seasons, force_refresh=False):
+    def fake_nflcom_loader(seasons, force_refresh=False):
         seen["force_refresh"] = force_refresh
-        return nflcom_full
+        return nflcom
+
+    def fake_actuals_loader(seasons):
+        return actuals
 
     ab.main(
-        eval_season=2025,
+        eval_seasons=(2025,),
         positions=("QB",),
         output_dir=str(tmp_path),
-        pipeline_runner=fake_runner,
-        nflcom_loader=fake_loader,
+        nflcom_loader=fake_nflcom_loader,
+        actuals_loader=fake_actuals_loader,
         force_refresh_nflcom=True,
     )
     assert seen["force_refresh"] is True
+
+
+def test_main_multi_season_run_writes_both_seasons(tmp_path):
+    """main() invoked with two seasons should populate per_season for both."""
+    a24 = _make_qb_actuals(seasons=(2024,), n_weeks=2)
+    a25 = _make_qb_actuals(seasons=(2025,), n_weeks=2)
+    actuals = pd.concat([a24, a25], ignore_index=True)
+    nflcom = _make_nflcom_for_qb(actuals, perfect=False)
+
+    result = ab.main(
+        eval_seasons=(2024, 2025),
+        positions=("QB",),
+        output_dir=str(tmp_path),
+        nflcom_loader=lambda seasons, force_refresh=False: nflcom,
+        actuals_loader=lambda seasons: actuals,
+    )
+    qb_per_season = result["positions"]["QB"]["per_season"]
+    assert set(qb_per_season.keys()) == {"2024", "2025"}
+    assert qb_per_season["2024"]["n_matched"] > 0
+    assert qb_per_season["2025"]["n_matched"] > 0
