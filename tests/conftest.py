@@ -85,10 +85,11 @@ def _build_synthetic_schedules() -> pd.DataFrame:
     any synthetic player frame the e2e/CV tests generate.
 
     Pairs teams sequentially into games (16 games per week with 32 teams).
-    Carries the 14 columns the schedule merge reads, with constant
-    weather/spread values that put the synthetic data well inside the real
-    distribution (spread ~0, total ~45, dome=false, grass surface, 65F/5mph,
-    7 days rest, non-divisional).
+    Carries the schedule columns read by ``_build_team_schedule_lookup``
+    (weather/Vegas merge) plus ``home_score``/``away_score`` for
+    ``_build_defense_matchup_features`` (points-allowed L5). Constant values
+    sit well inside the real distribution (spread ~0, total ~45, dome=false,
+    grass surface, 65F/5mph, 7 days rest, non-divisional, 21-point games).
     """
     rows = []
     teams = list(_NFL_TEAMS)
@@ -110,6 +111,8 @@ def _build_synthetic_schedules() -> pd.DataFrame:
                         "game_type": "REG",
                         "home_team": home,
                         "away_team": away,
+                        "home_score": 21,
+                        "away_score": 21,
                         "spread_line": 0.0,
                         "total_line": 45.0,
                         "roof": "outdoors",
