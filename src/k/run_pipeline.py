@@ -11,6 +11,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.k.config import (
+    ALL_FEATURES,
     ATTN_BATCH_SIZE,
     ATTN_D_MODEL,
     ATTN_DROPOUT,
@@ -56,7 +57,6 @@ from src.k.config import (
     RIDGE_CV_FOLDS,
     RIDGE_REFINE_POINTS,
     SCHEDULER_TYPE,
-    SPECIFIC_FEATURES,
     TARGETS,
     TRAIN_ATTENTION_NN,
     TRAIN_ELASTICNET,
@@ -80,7 +80,17 @@ CONFIG = {
     "ridge_cv_folds": RIDGE_CV_FOLDS,
     "cv_split_column": CV_SPLIT_COLUMN,
     "ridge_refine_points": RIDGE_REFINE_POINTS,
-    "specific_features": SPECIFIC_FEATURES,
+    # ALL_FEATURES (specific + contextual), not just SPECIFIC_FEATURES: K's
+    # contextual block carries the PBP-derived ``game_wind`` / ``game_temp``
+    # columns which are NaN on test rows with missing weather data. Passing
+    # the broader list to ``fill_nans`` plugs those NaNs with train means;
+    # otherwise ``build_position_features``'s catch-all ``.fillna(0)`` would
+    # collapse them to 0 mph / 0°F and skew the test feature distribution
+    # off the train scale (~+0.12 Ridge test MAE pre-fix). Schedule-merge
+    # contextual columns (``implied_team_total``, ``is_home``, etc.) are
+    # already non-NaN by the time fill_nans runs, so widening the list is a
+    # no-op for them.
+    "specific_features": ALL_FEATURES,
     "filter_fn": filter_to_position,
     "compute_targets_fn": compute_targets,
     "add_features_fn": add_specific_features,
