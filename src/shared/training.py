@@ -678,11 +678,6 @@ class MultiTargetNestedKickDataset(Dataset):
 
     Unlike MultiTargetHistoryDataset the nested arrays are pre-padded to fixed
     shape `[G, K, kick_dim]` so the default collate works — no custom collation.
-
-    Optional ``X_history`` adds a pre-padded `[G, game_dim]` per-game aggregate
-    tensor; when present the dataset yields a 6-tuple instead of a 5-tuple and
-    ``MultiHeadNestedHistoryTrainer`` dispatches on the length to pick the
-    right model forward signature.
     """
 
     def __init__(
@@ -692,35 +687,23 @@ class MultiTargetNestedKickDataset(Dataset):
         outer_mask: np.ndarray,
         inner_mask: np.ndarray,
         y_dict: dict,
-        X_history: np.ndarray | None = None,
     ):
         self.X_static = torch.FloatTensor(X_static)
         self.X_kicks = torch.FloatTensor(X_kicks)
         self.outer_mask = torch.from_numpy(np.asarray(outer_mask, dtype=bool))
         self.inner_mask = torch.from_numpy(np.asarray(inner_mask, dtype=bool))
-        self.X_history = None if X_history is None else torch.FloatTensor(X_history)
         self.targets = {k: torch.FloatTensor(v) for k, v in y_dict.items()}
 
     def __len__(self):
         return len(self.X_static)
 
     def __getitem__(self, idx):
-        targets = {k: v[idx] for k, v in self.targets.items()}
-        if self.X_history is None:
-            return (
-                self.X_static[idx],
-                self.X_kicks[idx],
-                self.outer_mask[idx],
-                self.inner_mask[idx],
-                targets,
-            )
         return (
             self.X_static[idx],
             self.X_kicks[idx],
             self.outer_mask[idx],
             self.inner_mask[idx],
-            self.X_history[idx],
-            targets,
+            {k: v[idx] for k, v in self.targets.items()},
         )
 
 
@@ -736,25 +719,13 @@ def make_nested_kick_dataloaders(
     val_inner_mask,
     y_val_dict,
     batch_size=256,
-    X_train_history=None,
-    X_val_history=None,
 ):
     """Build train/val DataLoaders for the nested-history attention model."""
     train_ds = MultiTargetNestedKickDataset(
-        X_train_static,
-        X_train_kicks,
-        train_outer_mask,
-        train_inner_mask,
-        y_train_dict,
-        X_history=X_train_history,
+        X_train_static, X_train_kicks, train_outer_mask, train_inner_mask, y_train_dict
     )
     val_ds = MultiTargetNestedKickDataset(
-        X_val_static,
-        X_val_kicks,
-        val_outer_mask,
-        val_inner_mask,
-        y_val_dict,
-        X_history=X_val_history,
+        X_val_static, X_val_kicks, val_outer_mask, val_inner_mask, y_val_dict
     )
     train_loader = DataLoader(
         train_ds,
@@ -779,25 +750,18 @@ def make_nested_kick_dataloaders(
 class MultiHeadNestedHistoryTrainer(MultiHeadTrainer):
     """Training loop for the nested-attention model.
 
-    Dispatches on tuple length: the 5-tuple (static, kicks, outer_mask,
-    inner_mask, targets) is the legacy K path (no per-game aggregates); the
-    6-tuple inserts ``x_game_history`` between ``inner_mask`` and ``targets``
-    and feeds it through to the model as ``x_game_history``.
+    Overrides _forward_batch to handle the 5-tuple (static, kicks, outer_mask,
+    inner_mask, targets) batch format.
     """
 
     def _forward_batch(self, batch) -> tuple[dict, dict]:
-        if len(batch) == 5:
-            X_static, X_kicks, outer_mask, inner_mask, y_batch = batch
-            X_history = None
-        else:
-            X_static, X_kicks, outer_mask, inner_mask, X_history, y_batch = batch
-            X_history = X_history.to(self.device, non_blocking=True)
+        X_static, X_kicks, outer_mask, inner_mask, y_batch = batch
         X_static = X_static.to(self.device, non_blocking=True)
         X_kicks = X_kicks.to(self.device, non_blocking=True)
         outer_mask = outer_mask.to(self.device, non_blocking=True)
         inner_mask = inner_mask.to(self.device, non_blocking=True)
         y_batch = {k: v.to(self.device, non_blocking=True) for k, v in y_batch.items()}
-        preds = self.model(X_static, X_kicks, outer_mask, inner_mask, x_game_history=X_history)
+        preds = self.model(X_static, X_kicks, outer_mask, inner_mask)
         return preds, y_batch
 
 

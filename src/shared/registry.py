@@ -110,9 +110,6 @@ def _nested_attn_kwargs_static(pc: PositionConfig) -> dict:
     """``MultiHeadNetWithNestedHistory`` (K) takes a different shape — inner
     per-kick attention is parametrised by ``d_kick`` and the outer per-target
     attention by ``d_model`` / ``max_games`` instead of ``max_seq_len``.
-
-    ``game_dim`` flows from the length of ``attn_history_stats``: 0 = legacy
-    nested-only path, >0 = per-game aggregates fed alongside the inner pool.
     """
     return dict(
         backbone_layers=list(pc.nn_backbone_layers),
@@ -127,7 +124,6 @@ def _nested_attn_kwargs_static(pc: PositionConfig) -> dict:
         max_games=pc.attn_max_games,
         attn_dropout=pc.attn_dropout,
         encoder_hidden_dim=pc.attn_encoder_hidden_dim,
-        game_dim=len(pc.attn_history_stats),
     )
 
 
@@ -202,7 +198,6 @@ def get_inference_spec(pos: str) -> dict:
         spec["attn_kick_stats"] = list(pc.attn_kick_stats)
         spec["attn_max_games"] = pc.attn_max_games
         spec["attn_max_kicks_per_game"] = pc.attn_max_kicks_per_game
-        spec["attn_history_stats"] = list(pc.attn_history_stats)
         spec["attn_nn_kwargs_static"] = _nested_attn_kwargs_static(pc)
     else:
         # Flat-attention positions share the same shape — including DST, whose

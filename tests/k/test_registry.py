@@ -107,16 +107,7 @@ class TestKAttentionRegistryWiring:
         hist = np.zeros((B, G, K, kick_dim), dtype=np.float32)
         outer = np.ones((B, G), dtype=bool)
         inner = np.ones((B, G, K), dtype=bool)
-        # When the registry opts into per-game aggregates, predict_numpy
-        # expects a matching [B, G, game_dim] tensor; otherwise the kwarg stays
-        # None and the model behaves as the legacy nested-only K did.
-        game_history_stats = reg.get("attn_history_stats") or []
-        game_hist = None
-        if game_history_stats:
-            game_hist = np.zeros((B, G, len(game_history_stats)), dtype=np.float32)
-        preds = model.predict_numpy(
-            X, hist, outer, inner, torch.device("cpu"), X_game_history=game_hist
-        )
+        preds = model.predict_numpy(X, hist, outer, inner, torch.device("cpu"))
         for t in targets:
             assert t in preds
             assert preds[t].shape == (B,)
