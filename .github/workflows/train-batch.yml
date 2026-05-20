@@ -185,24 +185,15 @@ jobs:
           done
           exit $fail
 
-      - name: Refresh ECS service to pick up new model artifacts
-        # Same flow as train-ec2.yml — force a rolling redeploy so the
-        # task's boot-time sync_models_from_s3 picks up the freshly promoted
-        # manifests. services-stable wait ensures a model-load regression
-        # surfaces here instead of silently serving NaN preds.
-        run: |
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --region "$AWS_REGION" \
-            --force-new-deployment \
-            --no-cli-pager > /dev/null
-          aws ecs wait services-stable \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --region "$AWS_REGION"
-
       - name: Append Batch run to benchmark_history/
+        # MUST run before "Refresh ECS service" — the benchmark append also
+        # mirrors the JSON to s3://{bucket}/models/benchmark_history/ (see
+        # src/batch/benchmark.py::_maybe_upload_to_s3). The new ECS task's
+        # boot-time sync_benchmark_history_from_s3 reads that prefix, and the
+        # in-container result is cached for the task's lifetime (cache key is
+        # the dir mtime, which never bumps post-boot). Refreshing ECS before
+        # the new JSON exists in S3 means the History tab won't show this run
+        # until the next training run rolls the service.
         env:
           GH_TOKEN: ${{ github.token }}
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
@@ -232,6 +223,25 @@ jobs:
             --positions $POSITIONS \
             --note "Batch Spot auto-run (${GITHUB_SHA::7})" \
             "${PR_ARGS[@]}"
+
+      - name: Refresh ECS service to pick up new model + benchmark artifacts
+        # Same flow as train-ec2.yml — force a rolling redeploy so the
+        # task's boot-time sync_models_from_s3 picks up the freshly promoted
+        # manifests AND sync_benchmark_history_from_s3 picks up the JSON
+        # uploaded by the previous step. services-stable wait ensures a
+        # model-load regression surfaces here instead of silently serving
+        # NaN preds.
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --region "$AWS_REGION" \
+            --force-new-deployment \
+            --no-cli-pager > /dev/null
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region "$AWS_REGION"
 
       - name: Commit and push benchmark_history/
         run: |
