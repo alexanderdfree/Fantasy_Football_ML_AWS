@@ -1,11 +1,13 @@
-"""Shared fixtures for RB tests — thin wrappers over tests.shared.position_fixtures.
+"""Shared fixtures for RB tests.
 
-Generic factories (``make_sim_df``, ``make_ranking_df``, ``make_tensors``,
-``make_splits``, ``make_position_df``) now come from
-``tests/shared/position_fixtures.py``.  Only RB-specific helpers remain
-here: the multi-week player-games frame, single-row target row, fumble
-DataFrame, synthetic pipeline dataset for E2E/regression tests, and the
-Ridge training data factory.
+The standard make_sim_df / sim_df_default / make_ranking_df / make_tensors /
+make_splits / make_position_df fixtures get installed by
+``register_standard_fixtures`` (see ``tests/shared/position_fixtures.py``);
+RB historically calls its ranking-df factory ``make_ranking_df`` and the
+sim-df shortcut ``sim_df_default``, so we pass those names through.
+RB-specific helpers (multi-week player-games frame, single-row target row,
+fumble DataFrame, synthetic pipeline dataset, Ridge training data factory)
+stay here.
 """
 
 from __future__ import annotations
@@ -16,22 +18,8 @@ import pytest
 
 from src.rb.config import TARGETS
 from tests.shared.position_fixtures import (
-    make_position_df as _make_position_df,
-)
-from tests.shared.position_fixtures import (
-    make_sim_df as _make_sim_df,
-)
-from tests.shared.position_fixtures import (
-    make_splits as _make_splits,
-)
-from tests.shared.position_fixtures import (
-    make_tensors as _make_tensors,
-)
-from tests.shared.position_fixtures import (
-    make_test_df as _make_ranking_df_shared,
-)
-from tests.shared.position_fixtures import (
     register_position_markers,
+    register_standard_fixtures,
 )
 
 # RB scoring scale: ~20 fantasy points typical.
@@ -42,52 +30,17 @@ def pytest_configure(config):
     register_position_markers(config)
 
 
-# ---------------------------------------------------------------------------
-# Generic simulation / ranking / tensor / split fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def make_sim_df():
-    def _make(n_weeks: int, n_players: int, seed: int = 42):
-        return _make_sim_df(SCORING_SCALE, n_weeks, n_players, seed, id_prefix="P")
-
-    return _make
-
-
-@pytest.fixture(scope="session")
-def sim_df_default(make_sim_df):
-    """Standard 4-week x 15-player RB-scale sim DataFrame."""
-    return make_sim_df(n_weeks=4, n_players=15)
-
-
-@pytest.fixture(scope="session")
-def make_ranking_df():
-    def _make(n_weeks: int, n_players: int, seed: int = 42):
-        return _make_ranking_df_shared(SCORING_SCALE, n_weeks, n_players, seed, id_prefix="P")
-
-    return _make
-
-
-@pytest.fixture(scope="session")
-def make_tensors():
-    def _make(n: int = 10, seed: int = 42):
-        return _make_tensors(TARGETS, n=n, seed=seed)
-
-    return _make
-
-
-@pytest.fixture(scope="session")
-def make_splits():
-    return _make_splits
-
-
-@pytest.fixture(scope="session")
-def make_position_df():
-    def _make(positions, has_pos_cols: bool = True):
-        return _make_position_df(positions, stat_col="rushing_yards", has_pos_cols=has_pos_cols)
-
-    return _make
+register_standard_fixtures(
+    globals(),
+    scoring_scale=SCORING_SCALE,
+    id_prefix="P",
+    targets=TARGETS,
+    stat_col="rushing_yards",
+    rng_kind="legacy",
+    install_default_shortcuts=True,
+    ranking_fixture_name="make_ranking_df",
+    sim_default_fixture_name="sim_df_default",
+)
 
 
 # ---------------------------------------------------------------------------

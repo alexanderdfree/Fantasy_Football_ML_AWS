@@ -1,10 +1,11 @@
-"""Shared fixtures for DST tests — thin wrappers over tests.shared.position_fixtures.
+"""Shared fixtures for DST tests.
 
-Generic factories come from ``tests/shared/position_fixtures.py``; this
-conftest binds them to the DST scale (~15 fantasy pts), targets, and
-team-level ``player_id`` convention, and keeps DST-specific helpers for
-single-row target rows, multi-week team frames, and the tiny synthetic
-pipeline dataset used by E2E / regression tests.
+The standard make_sim_df / make_test_df / make_tensors / make_splits fixtures
+get installed by ``register_standard_fixtures`` (see
+``tests/shared/position_fixtures.py``); DST is team-level so ``id_prefix``
+is ``"TEAM"`` (each ``player_id`` is a team code). DST-specific helpers
+for single-row target rows, multi-week team frames, and the tiny synthetic
+pipeline dataset stay here.
 """
 
 from __future__ import annotations
@@ -15,19 +16,8 @@ import pytest
 
 from src.dst.config import TARGETS
 from tests.shared.position_fixtures import (
-    make_sim_df as _make_sim_df,
-)
-from tests.shared.position_fixtures import (
-    make_splits as _make_splits,
-)
-from tests.shared.position_fixtures import (
-    make_tensors as _make_tensors,
-)
-from tests.shared.position_fixtures import (
-    make_test_df as _make_test_df,
-)
-from tests.shared.position_fixtures import (
     register_position_markers,
+    register_standard_fixtures,
 )
 
 # DST scoring scale: team defenses typically score 5-15 fantasy pts/week.
@@ -38,67 +28,14 @@ def pytest_configure(config):
     register_position_markers(config)
 
 
-# ---------------------------------------------------------------------------
-# Generic DST fixtures — DST scale, team-level ``TEAM`` prefix
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def make_sim_df():
-    """Factory: team-level weekly simulation DataFrame for backtest tests.
-
-    DST is team-level — ``player_id`` holds the team code (``TEAM1`` ..).
-    Fantasy-point scale is 5-15 per week (team-level D/ST scoring), not
-    the 20+ range that applies to QB/RB/WR.
-    """
-
-    def _factory(n_weeks: int = 4, n_players: int = 15, seed: int = 42):
-        return _make_sim_df(
-            SCORING_SCALE,
-            n_weeks,
-            n_players,
-            seed,
-            id_prefix="TEAM",
-        )
-
-    return _factory
-
-
-@pytest.fixture(scope="session")
-def make_test_df():
-    """Factory: player-level ranking DataFrame for compute_ranking_metrics tests."""
-
-    def _factory(n_weeks: int = 3, n_players: int = 15, seed: int = 42):
-        return _make_test_df(
-            SCORING_SCALE,
-            n_weeks,
-            n_players,
-            seed,
-            id_prefix="TEAM",
-        )
-
-    return _factory
-
-
-@pytest.fixture(scope="session")
-def make_tensors():
-    """Factory: per-target torch tensors for MultiTargetLoss tests.
-
-    Defaults to ``seed=None`` — same as the original DST fixture — so
-    callers don't perturb torch's global RNG state unless they ask for
-    determinism explicitly.
-    """
-
-    def _factory(n: int = 10, seed: int | None = None):
-        return _make_tensors(TARGETS, n=n, seed=seed)
-
-    return _factory
-
-
-@pytest.fixture(scope="session")
-def make_splits():
-    """Factory: (train, val, test) single-column DataFrames for NaN-fill tests."""
-    return _make_splits
+register_standard_fixtures(
+    globals(),
+    scoring_scale=SCORING_SCALE,
+    id_prefix="TEAM",
+    targets=TARGETS,
+    stat_col="passing_yards",  # DST tests don't use make_position_df
+    rng_kind="legacy",
+)
 
 
 # ---------------------------------------------------------------------------
