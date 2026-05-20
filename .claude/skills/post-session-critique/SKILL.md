@@ -25,14 +25,14 @@ A reflection under 200 words with these sections:
 2. **What was missing** — what would have changed your behavior earlier? A new rule in CLAUDE.md? A memory entry? An example in an existing section?
 3. **Proposed change** — a concrete diff. Either:
    - A markdown snippet to add/edit in [CLAUDE.md](CLAUDE.md), naming the section, OR
-   - A draft memory file (frontmatter + body) following the conventions at `/Users/alex/.claude/projects/-Users-alex-compsci372-Final-Project/memory/` — `feedback_*` for prompt-style corrections, `project_*` for state/context, `user_*` for user preferences. Include the one-line entry that would be added to `MEMORY.md`.
+   - A draft memory file (frontmatter + body) following the conventions of the auto-memory system at `~/.claude/projects/<project-slug>/memory/` (the slug is auto-derived from the project's absolute path on each contributor's machine, so the exact directory differs per user). Use `feedback_*` for prompt-style corrections, `project_*` for state/context, `user_*` for user preferences. Include the one-line entry to add to that directory's `MEMORY.md`.
 
 Do **not** write the change yourself. Surface the proposal and let the user decide.
 
 ## What to skip
 
 - Generic observations ("could have been clearer", "more examples would help").
-- Things already documented — `Read` [CLAUDE.md](CLAUDE.md) and `/Users/alex/.claude/projects/-Users-alex-compsci372-Final-Project/memory/MEMORY.md` first to check for duplicates.
+- Things already documented — `Read` [CLAUDE.md](CLAUDE.md) and the project's auto-memory `MEMORY.md` (at `~/.claude/projects/<slug>/memory/MEMORY.md`) first to check for duplicates.
 - Code-level lessons that belong in TODO.md's Fixed archive — those go through the normal PR workflow, not here.
 
 ## Format example

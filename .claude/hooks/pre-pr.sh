@@ -62,9 +62,22 @@ else
 fi
 
 # --- B2: metric-regression gate ---
-# Derive affected positions from changed files vs origin/main.
-changed=$(git diff --name-only origin/main...HEAD 2>/dev/null || true)
-if [ -z "$changed" ]; then
+# Derive affected positions from committed branch changes. Pick the best
+# available base ref (origin/main → main → origin/master → master) and
+# diff via merge-base so committed work is detected, not just uncommitted.
+base=""
+for ref in origin/main main origin/master master; do
+  if git rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
+    if base=$(git merge-base "$ref" HEAD 2>/dev/null) && [ -n "$base" ]; then
+      break
+    fi
+    base=""
+  fi
+done
+if [ -n "$base" ]; then
+  changed=$(git diff --name-only "$base" HEAD 2>/dev/null || true)
+else
+  # No upstream ref found — fall back to uncommitted changes only.
   changed=$(git diff --name-only HEAD 2>/dev/null || true)
 fi
 
@@ -104,7 +117,7 @@ if [ -n "$positions" ]; then
   ref_ts=0
   for pf in "${pipeline_files[@]}"; do
     [ -f "$pf" ] || continue
-    t=$(stat -f %m "$pf" 2>/dev/null || echo 0)
+    t=$(stat -f %m "$pf" 2>/dev/null || stat -c %Y "$pf" 2>/dev/null || echo 0)
     if [ "$t" -gt "$ref_ts" ]; then ref_ts="$t"; fi
   done
 
@@ -113,7 +126,7 @@ if [ -n "$positions" ]; then
     found=0
     for bf in benchmark_history/*.json; do
       [ -f "$bf" ] || continue
-      bts=$(stat -f %m "$bf" 2>/dev/null || echo 0)
+      bts=$(stat -f %m "$bf" 2>/dev/null || stat -c %Y "$bf" 2>/dev/null || echo 0)
       if [ "$bts" -gt "$ref_ts" ]; then
         if /usr/bin/jq -e --arg p "$pos" '.positions | index($p)' "$bf" >/dev/null 2>&1; then
           found=1
