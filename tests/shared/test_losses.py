@@ -3,13 +3,15 @@
 import numpy as np
 import pytest
 import torch
-from scipy.stats import nbinom
+from scipy.stats import nbinom, poisson
 
 from src.shared.training import (
     MultiTargetLoss,
     hurdle_negbin_value_loss,
+    hurdle_poisson_value_loss,
     negbin2_log_prob,
     ztnb2_log_prob,
+    ztp_log_prob,
 )
 
 
@@ -123,6 +125,76 @@ class TestHurdleNegBinValueLoss:
 
 
 @pytest.mark.unit
+class TestZTPLogProb:
+    """Zero-truncated Poisson = Poisson conditioned on y>=1. Verify
+    log P = log P_Pois - log(1 - P_Pois(0))."""
+
+    @pytest.mark.parametrize("mu,k", [(0.5, 1), (1.0, 2), (3.0, 5), (10.0, 12)])
+    def test_matches_scipy_poisson(self, mu, k):
+        log_p_k = poisson.logpmf(k, mu=mu)
+        log_p_zero = poisson.logpmf(0, mu=mu)
+        expected = log_p_k - np.log(1.0 - np.exp(log_p_zero))
+
+        got = ztp_log_prob(torch.tensor(float(k)), torch.tensor(float(mu))).item()
+        assert np.isclose(got, expected, atol=1e-5), (
+            f"mu={mu}, k={k}: got {got}, expected {expected}"
+        )
+
+    def test_normalizes_to_one(self):
+        """Sum over all k>=1 of P_ZTP should equal 1."""
+        mu = torch.tensor(2.0)
+        total = 0.0
+        for k in range(1, 200):
+            total += float(torch.exp(ztp_log_prob(torch.tensor(float(k)), mu)))
+        assert abs(total - 1.0) < 1e-4
+
+
+@pytest.mark.unit
+class TestHurdlePoissonValueLoss:
+    def test_skips_zero_only_batch(self):
+        """All-zero batch should produce zero value loss (ZTP undefined at y=0)."""
+        preds = {"y_value_mu": torch.tensor([1.0, 2.0, 3.0])}
+        targets = {"y": torch.tensor([0.0, 0.0, 0.0])}
+        loss = hurdle_poisson_value_loss(preds, targets, "y")
+        assert loss.item() == 0.0
+
+    def test_positive_loss_when_positives_exist(self):
+        """Mixed batch should produce non-zero loss scaled by fraction positive."""
+        preds = {"y_value_mu": torch.tensor([2.0, 2.0, 2.0, 2.0])}
+        targets = {"y": torch.tensor([0.0, 3.0, 0.0, 1.0])}
+        loss = hurdle_poisson_value_loss(preds, targets, "y")
+        assert loss.item() > 0
+
+    def test_scales_by_fraction_positive(self):
+        """Adding zero-rows to a batch with the same positives halves frac_pos
+        and so halves the value loss."""
+        preds_short = {"y_value_mu": torch.tensor([2.0, 2.0])}
+        targets_short = {"y": torch.tensor([1.0, 3.0])}  # frac_pos = 1.0
+        loss_short = hurdle_poisson_value_loss(preds_short, targets_short, "y").item()
+
+        preds_long = {"y_value_mu": torch.tensor([2.0, 2.0, 2.0, 2.0])}
+        targets_long = {"y": torch.tensor([1.0, 3.0, 0.0, 0.0])}  # frac_pos = 0.5
+        loss_long = hurdle_poisson_value_loss(preds_long, targets_long, "y").item()
+
+        assert abs(loss_long - 0.5 * loss_short) < 1e-5
+
+    def test_ignores_log_alpha(self):
+        """log_alpha emission from GatedHead must be ignored (no NegBin term)."""
+        preds_a = {
+            "y_value_mu": torch.tensor([2.0, 2.0]),
+            "y_value_log_alpha": torch.tensor([0.0, 0.0]),
+        }
+        preds_b = {
+            "y_value_mu": torch.tensor([2.0, 2.0]),
+            "y_value_log_alpha": torch.tensor([5.0, -3.0]),  # wildly different
+        }
+        targets = {"y": torch.tensor([1.0, 2.0])}
+        la = hurdle_poisson_value_loss(preds_a, targets, "y").item()
+        lb = hurdle_poisson_value_loss(preds_b, targets, "y").item()
+        assert la == pytest.approx(lb)
+
+
+@pytest.mark.unit
 class TestMultiTargetLossDispatch:
     def test_rejects_unsupported_loss(self):
         with pytest.raises(ValueError, match="Unsupported head_losses"):
@@ -168,3 +240,37 @@ class TestMultiTargetLossDispatch:
         la, _ = loss_fn(preds_a, targets)
         lb, _ = loss_fn(preds_b, targets)
         assert la.item() != pytest.approx(lb.item())
+
+    def test_hurdle_poisson_dispatches_and_zeros_on_all_zero_batch(self):
+        """End-to-end: head_losses={'y':'hurdle_poisson'} routes through the
+        new path; an all-zero target batch yields zero value loss but still
+        emits the BCE gate contribution (component key present)."""
+        preds = {
+            "y": torch.tensor([0.1, 0.1, 0.1]),
+            "y_gate_logit": torch.tensor([-2.0, -2.0, -2.0]),
+            "y_value_mu": torch.tensor([1.0, 2.0, 3.0]),
+            "y_value_log_alpha": torch.tensor([0.0, 0.0, 0.0]),
+        }
+        targets = {"y": torch.tensor([0.0, 0.0, 0.0])}
+        loss_fn = MultiTargetLoss(
+            target_names=["y"],
+            loss_weights={"y": 1.0},
+            head_losses={"y": "hurdle_poisson"},
+            gated_targets=["y"],
+        )
+        combined, comps = loss_fn(preds, targets)
+        # Value loss is 0 (no positives); gate BCE is non-zero (targets are
+        # all 0, gate predicts low prob, so BCE is small but positive).
+        assert comps["loss_y"] == 0.0
+        assert "loss_gate_y" in comps and comps["loss_gate_y"] > 0
+        assert combined.item() == pytest.approx(comps["loss_gate_y"])
+
+    def test_hurdle_poisson_requires_gated_target(self):
+        """Misconfiguration: hurdle_poisson without gate membership raises."""
+        with pytest.raises(ValueError, match="hurdle_poisson"):
+            MultiTargetLoss(
+                target_names=["y"],
+                loss_weights={"y": 1.0},
+                head_losses={"y": "hurdle_poisson"},
+                gated_targets=[],
+            )
