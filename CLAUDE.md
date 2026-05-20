@@ -5,8 +5,8 @@ Orientation file for Claude Code. Human-facing docs live elsewhere — this file
 ## Orient yourself first
 - **[README.md](README.md)** — overview, architecture diagram, eval results.
 - **[SETUP.md](SETUP.md)** — install, first-time data pull, how to run everything locally. If you need a command, it's probably here.
-- **[TODO.md](TODO.md)** — open issues and a **Fixed archive** with root-cause + lesson for every non-trivial bug ever squashed. **Read this before proposing changes near anything it mentions** — most "obvious" fixes have been tried and the archive explains why they were wrong.
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — design decisions with rejected alternatives.
+- **[TODO.md](TODO.md)** — open issues and a **Fixed archive** with root-cause + lesson for every non-trivial bug ever squashed. **Read this before proposing changes near anything it mentions** — most "obvious" fixes have been tried and the archive explains why they were wrong. **Update it as you ship**: move Open → Fixed archive (or add a fresh archive entry) using the existing `### [FIXED] Title` + **File(s)/What/Fix/Lesson** format.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the project's ADR (decisions D1–D12 + a dated `Update history`), with rejected alternatives. **Living doc** — update it whenever a non-trivial change touches or adds an architectural decision (see "When making changes").
 
 ## Project shape (six-position symmetry)
 Each of `src/qb/ src/rb/ src/wr/ src/te/ src/k/ src/dst/` follows the same template:
@@ -82,6 +82,10 @@ This repo is regularly worked from `.claude/worktrees/<name>` clones where the p
 ## When making changes
 - **Open a PR, wait for green CI, then merge.** Push to a feature branch, open the PR with `gh pr create`, then `gh pr checks <N> --watch` until every check passes before running `gh pr merge <N> --squash`. Don't merge with red or pending checks; if a check fails, fix the underlying issue rather than bypassing with `--admin`. Exception: the `Run Tests` silent-stop bug noted in the CI section — run `pytest` locally and merge.
 - Respect the **TODO.md archive** — it encodes the project's accumulated "already tried" knowledge.
+- **Update the ADR + decision log alongside non-trivial changes.**
+  - **ADR ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):** if your change touches an existing decision (D1–D12) or introduces a new one of similar weight, update the affected D-entry's `Decision`/`Context`/`Chosen`/`Rejected`/`References`/`Consequence` fields, add a line to the `Update history` block at the top (date + one-line summary + commit/PR), and link the commit or PR under `References`. Superseding a decision? Mark the old D-entry as superseded and add a new D-entry — don't rewrite the original.
+  - **Decision log ([TODO.md](TODO.md)):** for non-trivial bug fixes, move the corresponding `Open` entry into the `Fixed archive` using the existing `### [FIXED] Title` + **File(s)** (paths + commit SHA) / **What** / **Fix** / **Lesson** format. If the bug wasn't tracked, add a fresh archive entry anyway — that's the project's "already tried" knowledge.
+  - **Skip both** for truly trivial changes (typos, formatting, lockfile bumps, comment-only tweaks). When in doubt, lean toward writing the entry — a thin archive is the failure mode, not over-documentation.
 - Update tests and fixtures when you change feature lists or targets (archive has multiple entries where this was missed).
 - Don't add error handling, fallbacks, or validation for cases that can't happen (see top-level CLAUDE-Code guidance on scope). One exception: network/data-source boundaries are real and should be defensive.
 - **For NN/feature/loss/target changes, run the actual pipeline before merging.** `pytest -m unit` and CI tests don't catch metric regressions. Run `python -m src.{pos}.run_pipeline` on the affected position and diff `benchmark_history/` output against the prior run. The K refactor regression and the QB metrics-label bug both shipped because tests passed without the pipeline being run.
