@@ -15,9 +15,10 @@ import importlib
 from functools import cache
 
 from src.shared.aggregate_targets import aggregate_fn_for
+from src.shared.position import Position
 from src.shared.position_config import PositionConfig
 
-ALL_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
+ALL_POSITIONS = Position.values()
 
 
 @cache

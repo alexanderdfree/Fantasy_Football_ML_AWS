@@ -14,6 +14,7 @@ import torch
 
 from src.config import SCORING_HALF_PPR, SCORING_PPR, SCORING_STANDARD
 from src.dst.targets import _PTS_ALLOWED_TIERS, _YDS_ALLOWED_TIERS
+from src.shared.position import Position
 
 _SCORING_BY_FORMAT = {
     "standard": SCORING_STANDARD,
@@ -29,7 +30,7 @@ _SCORING_BY_FORMAT = {
 # Their target sets are tracked in ``K_TARGETS`` / ``DST_TARGETS`` below so
 # ``infer_position`` can route them.
 POSITION_TARGET_MAP = {
-    "QB": {
+    Position.QB.value: {
         "passing_yards": "passing_yards",
         "rushing_yards": "rushing_yards",
         "passing_tds": "passing_tds",
@@ -37,7 +38,7 @@ POSITION_TARGET_MAP = {
         "interceptions": "interceptions",
         "fumbles_lost": "fumbles_lost",
     },
-    "RB": {
+    Position.RB.value: {
         "rushing_tds": "rushing_tds",
         "receiving_tds": "receiving_tds",
         "rushing_yards": "rushing_yards",
@@ -45,19 +46,26 @@ POSITION_TARGET_MAP = {
         "receptions": "receptions",
         "fumbles_lost": "fumbles_lost",
     },
-    "WR": {
+    Position.WR.value: {
         "receiving_tds": "receiving_tds",
         "receiving_yards": "receiving_yards",
         "receptions": "receptions",
         "fumbles_lost": "fumbles_lost",
     },
-    "TE": {
+    Position.TE.value: {
         "receiving_tds": "receiving_tds",
         "receiving_yards": "receiving_yards",
         "receptions": "receptions",
         "fumbles_lost": "fumbles_lost",
     },
 }
+
+# Import-time guard: every key in POSITION_TARGET_MAP must be a valid Position.
+# Catches typos in this map (and in any future position additions) before any
+# downstream consumer hits a KeyError mid-inference.
+for _pos_key in POSITION_TARGET_MAP:
+    Position(_pos_key)  # raises ValueError if _pos_key isn't a Position value
+del _pos_key
 
 # K and DST target sets — used by ``infer_position`` to route them to their
 # bespoke aggregators instead of the standard linear ``target * weight`` path.

@@ -268,6 +268,19 @@ class TestRegistryDriftGuard:
             'fallback `ALL="..."` lists) to match.'
         )
 
+    def test_all_positions_matches_position_enum(self):
+        """``Position`` enum is the canonical source of truth; this guard
+        pins ``scope_positions.ALL_POSITIONS`` to its value set so adding,
+        removing, or renaming a position has to touch the enum first."""
+        from src.shared.position import Position
+
+        assert tuple(p.value for p in Position) == scope_positions.ALL_POSITIONS, (
+            "src.shared.position.Position members and "
+            "src.scripts.scope_positions.ALL_POSITIONS have drifted. "
+            "Update the Position enum first; scope_positions stays "
+            "dep-free for the CI detect job."
+        )
+
 
 # --------------------------------------------------------------------------
 # compute_test_shards — tests.yml `detect` path → matrix shards
