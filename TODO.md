@@ -21,7 +21,7 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 
 ### [LOW] `_cache` dict grows without eviction
 - **File:** `app.py:63`
-- **What:** `_get_data()` caches results in a module-level dict (serialized by `_cache_lock` since #31). The cache is never cleared. Not a real problem for a class project (server restarts frequently), but worth noting.
+- **What:** `_get_data()` caches results in a module-level dict (serialized by `_cache_lock` since #31). The cache is never cleared. Not a real problem in practice (server restarts frequently), but worth noting.
 
 ### [LOW] `drop_last=True` silently discards training samples
 - **File:** `src/shared/training.py:167, 196, 449`

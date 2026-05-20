@@ -44,11 +44,10 @@ COPY benchmark_history/ benchmark_history/
 
 # Markdown source files served by the in-app Wiki tab (/api/wiki/<slug>).
 # Only the .md files in src/serving/app.py:WIKI_DOCS — non-MD files in
-# instructions/ and infra/*/ (shell scripts, JSON policies, .docx, .html)
-# are intentionally excluded to keep the slim image lean.
+# infra/*/ (shell scripts, JSON policies) are intentionally excluded to keep
+# the slim image lean.
 COPY README.md SETUP.md ATTRIBUTION.md TODO.md ./
 COPY docs/ docs/
-COPY instructions/DESIGN_DOC.md instructions/METHOD_CONTRACTS.md instructions/SELF_ASSESSMENT_EVIDENCE.md instructions/
 COPY infra/ec2/README.md infra/ec2/
 COPY infra/aws/README.md infra/aws/
 

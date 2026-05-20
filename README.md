@@ -2,7 +2,7 @@
 
 A per-position machine learning system that predicts weekly NFL fantasy points for QBs, RBs, WRs, TEs, Kickers, and D/STs — comparing a Ridge baseline, a custom PyTorch multi-head neural network (with an attention variant at every position), and LightGBM across the 2012–2025 seasons. Served as a Flask dashboard at [alexfree.me](https://alexfree.me).
 
-CS 372 (Duke, Spring 2026) final project. Solo.
+Personal project. Solo, ongoing.
 
 ## What it Does
 
@@ -108,7 +108,7 @@ Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy po
 
 ## Repo Layout
 
-The repository follows the CS 372 submission rubric: top-level `src/` (all source code), `data/`, `models/`, `notebooks/`, `videos/`, and `docs/` directories alongside the required `README.md` / `SETUP.md` / `ATTRIBUTION.md`.
+The repository is organized with top-level `src/` (all source code), `data/`, `models/`, `notebooks/`, `videos/`, and `docs/` directories alongside `README.md` / `SETUP.md` / `ATTRIBUTION.md`.
 
 ```
 src/                                All Python source code
@@ -145,7 +145,6 @@ videos/                             Demo recording + technical walkthrough YouTu
 docs/                               ARCHITECTURE (ADR-001), design docs, runbooks
 infra/ec2/                          Active training host (warm g4dn.xlarge)
 infra/aws/                          ECS/ALB serving stack
-instructions/                       CS 372 handout + rubric-mapping design doc
 tests/                              Top-level integration / e2e tests
 Dockerfile                          Slim image for ECS serving (root for build context)
 conftest.py                         pytest project-root sys.path bootstrap
@@ -156,7 +155,7 @@ Tests live under the top-level `tests/` tree, mirroring the `src/` layout (`test
 ## Deeper Reading
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — ADR-001, consolidated decision log
-- [instructions/DESIGN_DOC.md](instructions/DESIGN_DOC.md) — rubric mapping and module specifications
+- [docs/method_contracts.md](docs/method_contracts.md) — function signatures + data-layer contracts
 - [docs/ec2_design.md](docs/ec2_design.md) — active training infrastructure
 - [docs/batch_design.md](docs/batch_design.md) — standby training path (reactivated via `BATCH_ACTIVE=true`)
 - [docs/expert_comparison.md](docs/expert_comparison.md) — error analysis
@@ -167,11 +166,11 @@ Tests live under the top-level `tests/` tree, mirroring the `src/` layout (`test
 
 ## Individual Contributions
 
-This project was completed individually (no partner) — claiming the 10-pt solo project rubric item.
+This project was built individually (no partner).
 
 ## Full-Stack Engineering
 
-Beyond the ML rubric core, the project ships a production deploy at [alexfree.me](https://alexfree.me), GPU training on AWS, and CI/CD that gates every push. Operator runbooks are linked above in **Deeper Reading** — this section summarizes the architecture and the meaningful enhancements that landed along the way.
+Beyond the ML core, the project ships a production deploy at [alexfree.me](https://alexfree.me), GPU training on AWS, and CI/CD that gates every push. Operator runbooks are linked above in **Deeper Reading** — this section summarizes the architecture and the meaningful enhancements that landed along the way.
 
 ### AWS Infrastructure
 

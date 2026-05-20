@@ -18,7 +18,7 @@ Canonical version pins live in [requirements.txt](requirements.txt) (serving), [
 | Library | Version | Used for | Why this one |
 |---|---|---|---|
 | PyTorch | 2.11.0 | `MultiHeadNet`, attention branch, training loop | Needed a framework flexible enough for per-head output constraints and a learned-query attention pool on variable-length history ([src/shared/neural_net.py](src/shared/neural_net.py)). CUDA 12.6 runtime base image on EC2 training ([src/batch/Dockerfile.train](src/batch/Dockerfile.train)); CPU-only wheel for local dev and CI. |
-| scikit-learn | 1.8.0 | Ridge baseline, `StandardScaler`, metrics | Standard, well-tested; the Ridge baseline's interpretability is a rubric deliverable. |
+| scikit-learn | 1.8.0 | Ridge baseline, `StandardScaler`, metrics | Standard, well-tested; the Ridge baseline provides an interpretable comparison point. |
 | LightGBM | 4.6.0 | Gradient-boosted baseline | Fast to train on the ~300-row-per-position regime, and provides a third architecture class for the comparison ([src/shared/models.py](src/shared/models.py)). |
 | Flask + gunicorn | 3.1.3 / 25.3.0 | Serving dashboard | Matches the CPU-only ECS deploy target; gunicorn for multi-worker WSGI ([src/serving/app.py](src/serving/app.py), [Dockerfile](Dockerfile)). |
 | boto3 | 1.42.89 | S3 + SSM calls in training orchestration | Required by AWS SDK; used in [src/batch/launch.py](src/batch/launch.py) and [src/batch/train.py](src/batch/train.py). |
@@ -64,7 +64,6 @@ Concrete examples documented in [TODO.md](TODO.md) under the "Fixed" archive —
 ### What Alex kept ownership of
 
 - **Design decisions**: target decomposition per position, feature allowlist per position, the EC2-vs-Batch trade-off, when to add attention, when to *not* ensemble. Rationale lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-- **Rubric mapping and claim choices** in [instructions/DESIGN_DOC.md](instructions/DESIGN_DOC.md).
 - **Error analysis and evaluation framing** — deciding what the comparison is actually trying to answer, and how to report it.
 - **All code review, debug-to-root-cause work, and the final say on any change that lands.**
 

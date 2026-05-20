@@ -51,7 +51,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system --break-system-packages --no-deps nfl_data_py==0.3.3 && \
     (pip check || echo "pip check: nfl_data_py wants old numpy/pandas; not imported at training time")
 
-# All Python source lives under src/ after the rubric-driven src/ migration.
+# All Python source lives under src/ after the layout migration.
 # .dockerignore handles the coarse exclusions (Flask UI, scratch scripts,
 # tests); src/ is the only Python copy needed. tune_lgbm.py is at
 # src/tuning/tune_lgbm.py and ships with the rest of src/ — retune-lgbm.yml
