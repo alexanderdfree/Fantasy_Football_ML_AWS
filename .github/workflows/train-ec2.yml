@@ -328,30 +328,15 @@ jobs:
           done
           exit $fail
 
-      - name: Refresh ECS service to pick up new model artifacts
-        # Boot-time sync_models_from_s3 / sync_data_from_s3 only run when an
-        # ECS task starts, so freshly promoted stable pointers in S3 are
-        # invisible to the running task until something restarts it. Forcing
-        # a rolling redeploy here pulls the same image and re-runs both
-        # syncs at boot. Idempotent — if no stables advanced this run, the
-        # new task picks up the same artifacts. ``services-stable`` waits
-        # for the new task to reach RUNNING and the old to drain, so a
-        # task that fails to load the new artifacts surfaces here instead
-        # of silently serving NaN preds. See artifact_gc.py for the
-        # parallel: only smoke-passed artifacts ever become stable.
-        run: |
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --region "$AWS_REGION" \
-            --force-new-deployment \
-            --no-cli-pager > /dev/null
-          aws ecs wait services-stable \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --region "$AWS_REGION"
-
       - name: Append EC2 run to benchmark_history/
+        # MUST run before "Refresh ECS service" — the benchmark append also
+        # mirrors the JSON to s3://{bucket}/models/benchmark_history/ (see
+        # src/batch/benchmark.py::_maybe_upload_to_s3). The new ECS task's
+        # boot-time sync_benchmark_history_from_s3 reads that prefix, and
+        # the in-container result is cached for the task's lifetime (cache
+        # key is the dir mtime, which never bumps post-boot). Refreshing
+        # ECS before the new JSON exists in S3 means the History tab won't
+        # show this run until the next training run rolls the service.
         env:
           # gh defaults to GITHUB_TOKEN; the PROTECTED_PUSH_TOKEN PAT used
           # elsewhere is for `git push`, not API reads. Explicit here so a
@@ -401,6 +386,31 @@ jobs:
             --positions $POSITIONS \
             --note "EC2 auto-run (${GITHUB_SHA::7})" \
             "${PR_ARGS[@]}"
+
+      - name: Refresh ECS service to pick up new model + benchmark artifacts
+        # Boot-time sync_models_from_s3 / sync_data_from_s3 only run when an
+        # ECS task starts, so freshly promoted stable pointers in S3 are
+        # invisible to the running task until something restarts it. Forcing
+        # a rolling redeploy here pulls the same image and re-runs both
+        # syncs at boot (including sync_benchmark_history_from_s3, which
+        # depends on the previous step's S3 upload of the new JSON).
+        # Idempotent — if no stables advanced this run, the new task picks
+        # up the same artifacts. ``services-stable`` waits for the new task
+        # to reach RUNNING and the old to drain, so a task that fails to
+        # load the new artifacts surfaces here instead of silently serving
+        # NaN preds. See artifact_gc.py for the parallel: only smoke-passed
+        # artifacts ever become stable.
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --region "$AWS_REGION" \
+            --force-new-deployment \
+            --no-cli-pager > /dev/null
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region "$AWS_REGION"
 
       - name: Commit and push benchmark_history/
         run: |
