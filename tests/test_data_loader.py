@@ -193,6 +193,24 @@ def _mock_all_nfl_helpers(monkeypatch):
             }
         )
 
+    # Empty-but-typed PBP frame so reconstruct_redzone_from_pbp (newly invoked
+    # by load_raw_data) doesn't hit the network. Aggregator references these
+    # columns by name; an empty frame with the right schema yields an empty
+    # red-zone result, which the loader gracefully treats as "all zeros".
+    def _fake_pbp(seasons, downcast=True):
+        return pd.DataFrame(
+            {
+                "season": pd.Series([], dtype="int64"),
+                "season_type": pd.Series([], dtype="object"),
+                "week": pd.Series([], dtype="int64"),
+                "posteam": pd.Series([], dtype="object"),
+                "rusher_player_id": pd.Series([], dtype="object"),
+                "receiver_player_id": pd.Series([], dtype="object"),
+                "pass_attempt": pd.Series([], dtype="int64"),
+                "yardline_100": pd.Series([], dtype="float64"),
+            }
+        )
+
     monkeypatch.setattr(loader.nfl, "import_weekly_data", _fake_weekly)
     monkeypatch.setattr(loader.nfl, "import_seasonal_rosters", _fake_rosters)
     monkeypatch.setattr(loader.nfl, "import_schedules", _fake_schedules)
@@ -200,6 +218,11 @@ def _mock_all_nfl_helpers(monkeypatch):
     monkeypatch.setattr(loader.nfl, "import_ids", _fake_ids)
     monkeypatch.setattr(loader.nfl, "import_injuries", _fake_injuries)
     monkeypatch.setattr(loader.nfl, "import_depth_charts", _fake_depth_charts)
+    # reconstruct_redzone_from_pbp lives in src.data.redzone_pbp and pulls
+    # nfl_data_py via its own module-level binding, so stub it there too.
+    import src.data.redzone_pbp as redzone_pbp
+
+    monkeypatch.setattr(redzone_pbp.nfl, "import_pbp_data", _fake_pbp)
 
 
 @pytest.mark.unit
@@ -288,6 +311,11 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
         "import_depth_charts",
     ):
         monkeypatch.setattr(loader.nfl, name, _make_boom(name))
+    # import_pbp_data fires from src.data.redzone_pbp; stub it to scream too
+    # so the cache short-circuit covers the new red-zone fetch path.
+    import src.data.redzone_pbp as redzone_pbp
+
+    monkeypatch.setattr(redzone_pbp.nfl, "import_pbp_data", _make_boom("import_pbp_data"))
     # import_ids is called inside the snap-merge try/except; it's ok for it to fire.
     ids_calls: list[None] = []
 
@@ -357,6 +385,22 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
         ),
     ]:
         df.to_parquet(tmp_path / f"{name}_{seasons[0]}_{seasons[-1]}.parquet")
+
+    # Pre-write the red-zone PBP cache with the full required schema so the
+    # cache short-circuit fires and import_pbp_data isn't called.
+    pd.DataFrame(
+        {
+            "player_id": ["P00"],
+            "season": [2022],
+            "week": [1],
+            "recent_team": ["KC"],
+            "redzone_carries": [0],
+            "redzone_targets": [0],
+            "inside10_carries": [0],
+            "inside5_carries": [0],
+            "redzone_target_share": [0.0],
+        }
+    ).to_parquet(tmp_path / f"redzone_pbp_{seasons[0]}_{seasons[-1]}.parquet")
 
     out = loader.load_raw_data(seasons, cache_dir=str(tmp_path))
     # Enrichment columns still land from the merge path.

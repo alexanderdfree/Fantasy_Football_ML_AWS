@@ -123,6 +123,44 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     prior_extra["season"] = prior_extra["season"] + 1
     df = df.merge(prior_extra, on=["player_id", "season"], how="left")
 
+    # Prior-season red-zone touch volume + rate. Sourced from per-game PBP
+    # aggregates merged onto each weekly row by
+    # src.data.redzone_pbp.reconstruct_redzone_from_pbp via src.data.loader.
+    # ``prior_season_total_touchdowns`` above encodes score-converting
+    # *outcome*; the red-zone aggregates encode the *opportunity* that
+    # outcome is consistent with, separating "high TD propensity because the
+    # scheme keeps feeding him goal-line work" from "got lucky on rate."
+    # Motivation: the RB attention-NN loses to Ridge on sparse TD heads
+    # (rushing_tds +0.080 MAE, receiving_tds +0.035) and has no red-zone
+    # signal in ATTN_HISTORY_STATS pre-task; the hurdle_poisson architectural
+    # fix was rejected for regressing aggregate FP MAE
+    # (see TODO.md "[TESTED, REJECTED] RB hurdle_poisson on sparse-count heads").
+    rz_carries = _col_or_zero("redzone_carries")
+    rz_targets = _col_or_zero("redzone_targets")
+    prior_rz = (
+        pd.DataFrame(
+            {
+                "player_id": df["player_id"],
+                "season": df["season"],
+                "_rz_touches": rz_carries + rz_targets,
+            }
+        )
+        .groupby(["player_id", "season"])
+        .agg(prior_season_total_redzone_touches=("_rz_touches", "sum"))
+        .reset_index()
+    )
+    prior_rz["season"] = prior_rz["season"] + 1
+    df = df.merge(prior_rz, on=["player_id", "season"], how="left")
+    # Per-game rate: derived after the merge so it composes
+    # ``prior_season_total_redzone_touches`` with the just-merged
+    # ``prior_season_games_played``. Guard the divisor so rookies (0 prior
+    # games) get 0, not NaN/inf — matches the loader's fillna(0) convention
+    # for missing red-zone columns.
+    games = df["prior_season_games_played"].where(df["prior_season_games_played"] > 0)
+    df["prior_season_mean_redzone_touches_per_game"] = (
+        df["prior_season_total_redzone_touches"] / games
+    ).fillna(0.0)
+
     # --- EWMA Features (14) ---
     ewma_cols: dict[str, pd.Series] = {}
     for stat in EWMA_STATS:

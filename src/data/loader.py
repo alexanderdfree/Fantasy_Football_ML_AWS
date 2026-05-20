@@ -12,6 +12,15 @@ from src.config import (
     SCORING_STANDARD,
     SEASONS,
 )
+from src.data.redzone_pbp import reconstruct_redzone_from_pbp
+
+_REDZONE_COLUMNS = [
+    "redzone_carries",
+    "redzone_targets",
+    "inside10_carries",
+    "inside5_carries",
+    "redzone_target_share",
+]
 
 
 def load_team_week_stats(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.DataFrame:
@@ -143,19 +152,27 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
         depth.to_parquet(depth_path)
         return depth
 
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    def _fetch_redzone():
+        # Schema-gated cache lives inside reconstruct_redzone_from_pbp; the
+        # cache_path is derived from CACHE_DIR + seasons range, so this call
+        # short-circuits to a parquet read on warm cache.
+        return reconstruct_redzone_from_pbp(seasons, cache_dir=cache_dir)
+
+    with ThreadPoolExecutor(max_workers=7) as pool:
         weekly_f = pool.submit(_fetch_weekly)
         rosters_f = pool.submit(_fetch_rosters)
         schedules_f = pool.submit(_fetch_schedules)
         snap_counts_f = pool.submit(_fetch_snap_counts)
         injuries_f = pool.submit(_fetch_injuries)
         depth_f = pool.submit(_fetch_depth)
+        redzone_f = pool.submit(_fetch_redzone)
         weekly = weekly_f.result()
         rosters = rosters_f.result()
         schedules = schedules_f.result()
         snap_counts = snap_counts_f.result()
         injuries = injuries_f.result()
         depth = depth_f.result()
+        redzone = redzone_f.result()
 
     # --- Merge rosters for position override ---
     roster_pos = rosters[["player_id", "season", "position"]].drop_duplicates(
@@ -244,6 +261,26 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
     )
     weekly.drop(columns=["gsis_id"], errors="ignore", inplace=True)
     weekly["depth_chart_rank"] = weekly["depth_chart_rank"].fillna(3).clip(upper=3)
+
+    # --- Merge red-zone PBP aggregates ---
+    # Per-game red-zone touch counts feed the attention NN's history sequence
+    # (added to ATTN_HISTORY_STATS per-position). Targets the RB attention-NN
+    # weakness on sparse TD heads (rushing_tds +0.080 MAE vs Ridge) where the
+    # model has no upstream red-zone-usage signal to learn TD propensity from.
+    # Merged for all positions, not just RB — QB/WR/TE can wire these into
+    # their own ATTN_HISTORY_STATS as one-line follow-ups.
+    # Players with no PBP red-zone activity (or seasons before PBP rows
+    # carry the player) get 0, not NaN.
+    if not redzone.empty:
+        weekly = weekly.merge(
+            redzone,
+            on=["player_id", "season", "week", "recent_team"],
+            how="left",
+        )
+    for col in _REDZONE_COLUMNS:
+        if col not in weekly.columns:
+            weekly[col] = 0.0
+        weekly[col] = weekly[col].fillna(0.0)
 
     # Store schedules for later use
     weekly.attrs["schedules"] = schedules

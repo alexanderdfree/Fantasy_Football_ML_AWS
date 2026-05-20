@@ -266,6 +266,20 @@ def test_load_raw_data_uses_cache_and_returns_fixture_schema(
             "formation": "object",
             "depth_team": "object",
         },
+        # Red-zone PBP cache (schema-gated by src.data.redzone_pbp). An empty
+        # frame with the full required schema short-circuits the loader so
+        # nfl.import_pbp_data isn't hit during the contract test.
+        f"redzone_pbp_{suffix}": {
+            "player_id": "object",
+            "season": "int32",
+            "week": "int32",
+            "recent_team": "object",
+            "redzone_carries": "int32",
+            "redzone_targets": "int32",
+            "inside10_carries": "int32",
+            "inside5_carries": "int32",
+            "redzone_target_share": "float64",
+        },
     }
     for stem, columns in cache_shapes.items():
         _empty_frame(columns).to_parquet(cache_dir / f"{stem}.parquet")
@@ -346,6 +360,20 @@ def test_nflverse_github_fallback_schema_matches_primary_path(
             "week": "int32",
             "formation": "object",
             "depth_team": "object",
+        },
+        # Red-zone PBP cache (schema-gated by src.data.redzone_pbp). An empty
+        # frame with the full required schema short-circuits the loader so
+        # nfl.import_pbp_data isn't hit during the contract test.
+        f"redzone_pbp_{suffix}": {
+            "player_id": "object",
+            "season": "int32",
+            "week": "int32",
+            "recent_team": "object",
+            "redzone_carries": "int32",
+            "redzone_targets": "int32",
+            "inside10_carries": "int32",
+            "inside5_carries": "int32",
+            "redzone_target_share": "float64",
         },
     }
     for stem, columns in cache_shapes.items():
