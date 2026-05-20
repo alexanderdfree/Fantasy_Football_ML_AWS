@@ -141,6 +141,42 @@ ATTN_KICK_STATS = [
     "is_home",
 ]
 
+# Per-game aggregate stats fed alongside the inner-pool output. The inner
+# pool sees raw per-kick records (capped at 10 kicks per game) so it can't
+# recover full-game volume signal like total fg_att, total fg_made, or
+# game-level fg_yards_made. ATTN_HISTORY_STATS hands those aggregates to the
+# outer attention directly, mirroring the role they play for the flat
+# positions (QB/RB/WR/TE/DST) where the same list feeds the only attention
+# branch. Game-level context (is_home, is_dome, implied_team_total,
+# game_wind) is included here too so the attention pool can learn
+# environment-dependent recency weighting on its own — these columns are
+# rows-vary-per-game so they belong on the history tokens, not the static
+# whitelist (CLAUDE.md "Attention static-feature whitelist").
+ATTN_HISTORY_STATS = [
+    # FG / PAT volume + accuracy.
+    "fg_att",
+    "fg_made",
+    "pat_att",
+    "pat_made",
+    "fg_yards_made",
+    # Distance / difficulty.
+    "avg_fg_distance",
+    "long_fg_att",
+    "long_fg_made",
+    # Situational accuracy.
+    "q4_fg_att",
+    "q4_fg_made",
+    # Per-game fantasy total (carries the signed scoring sum the four target
+    # heads decompose into; included for the attention to learn its own
+    # recency weighting on it).
+    "fantasy_points",
+    # Game-level context — varies per game and not in the static whitelist.
+    "is_home",
+    "is_dome",
+    "implied_team_total",
+    "game_wind",
+]
+
 ATTN_STATIC_FEATURES = list(CONTEXTUAL_FEATURES)
 
 # === LightGBM ===
@@ -199,6 +235,7 @@ CONFIG_TINY_ATTN = {
     "attn_history_structure": "nested",
     "attn_static_from_df": True,
     "attn_static_features": ATTN_STATIC_FEATURES,
+    "attn_history_stats": ATTN_HISTORY_STATS,
     "attn_d_model": 8,
     "attn_n_heads": 1,
     "attn_kick_dim": 4,
@@ -257,6 +294,7 @@ POSITION_CONFIG = PositionConfig(
     attn_batch_size=ATTN_BATCH_SIZE,
     attn_patience=ATTN_PATIENCE,
     attn_static_features=ATTN_STATIC_FEATURES,
+    attn_history_stats=ATTN_HISTORY_STATS,
     attn_project_kv=ATTN_PROJECT_KV,
     attn_max_games=ATTN_MAX_GAMES,
     attn_kick_dim=ATTN_KICK_DIM,

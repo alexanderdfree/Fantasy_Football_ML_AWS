@@ -803,6 +803,9 @@ def _train_nested_attention_nn(
     cfg,
     targets,
     seed,
+    game_hist_train=None,
+    game_hist_val=None,
+    game_hist_test=None,
 ):
     """Train a MultiHeadNetWithNestedHistory on pre-padded nested history.
 
@@ -810,6 +813,11 @@ def _train_nested_attention_nn(
     and inner masks. No whitelist filter here: when attn_static_from_df=True
     the caller has already rebuilt X from the DataFrame using
     cfg['attn_static_features'].
+
+    The optional ``game_hist_*`` arrays carry pre-computed per-game
+    aggregates (``ATTN_HISTORY_STATS``) aligned to the same outer game order
+    as the nested kick tensor; when provided they are concatenated with the
+    inner-pool output before the outer attention.
     """
     seed_everything(seed)
     nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
@@ -827,7 +835,11 @@ def _train_nested_attention_nn(
         inner_val,
         y_val_dict,
         batch_size=attn_batch_size,
+        X_train_history=game_hist_train,
+        X_val_history=game_hist_val,
     )
+
+    game_dim = 0 if game_hist_train is None else game_hist_train.shape[-1]
 
     device = _nn_device()
     model = build_multihead_net_with_nested_history(
@@ -836,6 +848,7 @@ def _train_nested_attention_nn(
         kick_dim=hist_train.shape[-1],
         max_games=hist_train.shape[1],
         targets=targets,
+        game_dim=game_dim,
     ).to(device)
 
     history = _run_nn_training(
@@ -850,8 +863,12 @@ def _train_nested_attention_nn(
         patience=cfg.get("attn_patience", cfg["nn_patience"]),
     )
 
-    val_preds = model.predict_numpy(X_val_s, hist_val, outer_val, inner_val, device)
-    test_preds = model.predict_numpy(X_test_s, hist_test, outer_test, inner_test, device)
+    val_preds = model.predict_numpy(
+        X_val_s, hist_val, outer_val, inner_val, device, X_game_history=game_hist_val
+    )
+    test_preds = model.predict_numpy(
+        X_test_s, hist_test, outer_test, inner_test, device, X_game_history=game_hist_test
+    )
     metrics = compute_target_metrics(y_test_dict, test_preds, targets)
 
     return model, nn_scaler, val_preds, test_preds, metrics, history
@@ -1134,6 +1151,36 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                     f"max_kicks={hist_train.shape[2]}, "
                     f"kick_dim={hist_train.shape[3]})"
                 )
+
+                # Optional per-game aggregate branch ("ATTN_HISTORY_STATS"
+                # for the nested path). Built with the same
+                # build_game_history_arrays helper the flat positions use, but
+                # capped to the nested model's max_games so the outer
+                # sequence length matches the kick tensor.
+                game_history_stats = cfg.get("attn_history_stats")
+                game_hist_train = game_hist_val = game_hist_test = None
+                if game_history_stats:
+                    nested_max_games = hist_train.shape[1]
+                    game_hist_train, _ = build_game_history_arrays(
+                        pos_train,
+                        history_stats=game_history_stats,
+                        max_seq_len=nested_max_games,
+                    )
+                    game_hist_val, _ = build_game_history_arrays(
+                        pos_val,
+                        history_stats=game_history_stats,
+                        max_seq_len=nested_max_games,
+                    )
+                    game_hist_test, _ = build_game_history_arrays(
+                        pos_test,
+                        history_stats=game_history_stats,
+                        max_seq_len=nested_max_games,
+                    )
+                    print(
+                        f"  Per-game history shape: {game_hist_train.shape} "
+                        f"(game_dim={game_hist_train.shape[-1]})"
+                    )
+
                 (
                     attn_model,
                     attn_nn_scaler,
@@ -1161,6 +1208,9 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                     cfg,
                     targets,
                     seed,
+                    game_hist_train=game_hist_train,
+                    game_hist_val=game_hist_val,
+                    game_hist_test=game_hist_test,
                 )
             else:
                 history_stats = cfg.get("attn_history_stats", None)
