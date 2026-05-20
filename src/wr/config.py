@@ -1,3 +1,12 @@
+from src.shared.position_config import (
+    DEFAULT_ENET_L1_RATIOS,
+    DEFAULT_OPP_ATTN_MAX_SEQ_LEN,
+    DEFAULT_OPP_DEF_HISTORY_STATS,
+    PositionConfig,
+    alpha_grid,
+    derive_attn_static_features,
+)
+
 # === WR Target Decomposition ===
 # Raw-stat targets (see src/shared/aggregate_targets.py). Fantasy points are
 # aggregated from these predictions via predictions_to_fantasy_points.
@@ -85,18 +94,19 @@ INCLUDE_FEATURES = {
 }
 
 # === Ridge ===
-import numpy as np
-
 # PCR: 30 components. Benchmark showed -0.094 MAE vs no-PCA baseline (4.507 → 4.413).
 # PCA removes collinear directions the alpha grid can't fully address.
 RIDGE_PCA_COMPONENTS = 30
 # Alpha grids sized to each target's dynamic range: yards use a wider high-alpha
 # tail; count-style targets (TDs, receptions, fumbles) stay in the standard band.
+_ALPHA_COUNTS = alpha_grid(-1, 4, 15)
+_ALPHA_RECEPTIONS = alpha_grid(-2, 3, 15)
+
 RIDGE_ALPHA_GRIDS = {
-    "receiving_tds": [round(x, 4) for x in np.logspace(-1, 4, 15)],
-    "receiving_yards": [round(x, 4) for x in np.logspace(-1, 4, 15)],
-    "receptions": [round(x, 4) for x in np.logspace(-2, 3, 15)],
-    "fumbles_lost": [round(x, 4) for x in np.logspace(-1, 4, 15)],
+    "receiving_tds": _ALPHA_COUNTS,
+    "receiving_yards": _ALPHA_COUNTS,
+    "receptions": _ALPHA_RECEPTIONS,
+    "fumbles_lost": _ALPHA_COUNTS,
 }
 
 # === ElasticNet (optional parallel linear baseline, L1+L2) ===
@@ -104,7 +114,7 @@ RIDGE_ALPHA_GRIDS = {
 # Skips PCA regardless of RIDGE_PCA_COMPONENTS — L1 sparsity on a rotated
 # basis zeros components, not original features.
 TRAIN_ELASTICNET = False
-ENET_L1_RATIOS = [0.3, 0.5, 0.7]
+ENET_L1_RATIOS = list(DEFAULT_ENET_L1_RATIOS)
 
 # === Neural Net ===
 # 2012+ dataset: widened from [96] to [128] to exploit largest training set.
@@ -179,21 +189,14 @@ ATTN_STATIC_CATEGORIES = [
     "contextual",
     "weather_vegas",
 ]
-ATTN_STATIC_FEATURES = [c for cat in ATTN_STATIC_CATEGORIES for c in INCLUDE_FEATURES[cat]]
+ATTN_STATIC_FEATURES = derive_attn_static_features(INCLUDE_FEATURES, ATTN_STATIC_CATEGORIES)
 
 # Per-game opponent-defense stats fed to the second attention branch. Mirror
 # the L5 static aggregates (opp_def_*_L5) but unrolled per game, so the NN
 # learns the trailing-form weighting itself instead of being handed a fixed
 # 5-game mean. Built by src.features.engineer.build_opp_defense_history_arrays.
-OPP_ATTN_HISTORY_STATS = [
-    "def_sacks",
-    "def_pass_yds_allowed",
-    "def_pass_td_allowed",
-    "def_ints",
-    "def_rush_yds_allowed",
-    "def_pts_allowed",
-]
-OPP_ATTN_MAX_SEQ_LEN = 17
+OPP_ATTN_HISTORY_STATS = list(DEFAULT_OPP_DEF_HISTORY_STATS)
+OPP_ATTN_MAX_SEQ_LEN = DEFAULT_OPP_ATTN_MAX_SEQ_LEN
 # Hurdle gate on receptions + BCE gate on receiving_tds. Matches the
 # "Variant C" config for RB (see src/rb/config.py for the ablation table).
 # WR doesn't have its own ablation, but the mechanism is target-agnostic:
@@ -274,3 +277,64 @@ CONFIG_TINY = {
     "train_attention_nn": False,
     "train_lightgbm": False,
 }
+
+
+# === Bundled config object ===
+# Single source of truth for downstream consumers (registry / pipeline / serving).
+POSITION_CONFIG = PositionConfig(
+    name="WR",
+    targets=TARGETS,
+    specific_features=SPECIFIC_FEATURES,
+    include_features=INCLUDE_FEATURES,
+    ridge_alpha_grids=RIDGE_ALPHA_GRIDS,
+    ridge_pca_components=RIDGE_PCA_COMPONENTS,
+    train_elasticnet=TRAIN_ELASTICNET,
+    enet_l1_ratios=ENET_L1_RATIOS,
+    nn_backbone_layers=NN_BACKBONE_LAYERS,
+    nn_head_hidden=NN_HEAD_HIDDEN,
+    nn_dropout=NN_DROPOUT,
+    nn_non_negative_targets=NN_NON_NEGATIVE_TARGETS,
+    nn_lr=NN_LR,
+    nn_weight_decay=NN_WEIGHT_DECAY,
+    nn_epochs=NN_EPOCHS,
+    nn_batch_size=NN_BATCH_SIZE,
+    nn_patience=NN_PATIENCE,
+    nn_head_hidden_overrides=NN_HEAD_HIDDEN_OVERRIDES,
+    head_losses=HEAD_LOSSES,
+    loss_weights=LOSS_WEIGHTS,
+    huber_deltas=HUBER_DELTAS,
+    gated_targets=GATED_TARGETS,
+    scheduler_type=SCHEDULER_TYPE,
+    cosine_t0=COSINE_T0,
+    cosine_t_mult=COSINE_T_MULT,
+    cosine_eta_min=COSINE_ETA_MIN,
+    train_attention_nn=TRAIN_ATTENTION_NN,
+    attn_d_model=ATTN_D_MODEL,
+    attn_n_heads=ATTN_N_HEADS,
+    attn_encoder_hidden_dim=ATTN_ENCODER_HIDDEN_DIM,
+    attn_max_seq_len=ATTN_MAX_SEQ_LEN,
+    attn_positional_encoding=ATTN_POSITIONAL_ENCODING,
+    attn_dropout=ATTN_DROPOUT,
+    attn_history_stats=ATTN_HISTORY_STATS,
+    attn_static_features=ATTN_STATIC_FEATURES,
+    attn_gated=ATTN_GATED,
+    attn_gate_hidden=ATTN_GATE_HIDDEN,
+    attn_gate_weight=ATTN_GATE_WEIGHT,
+    opp_attn_history_stats=OPP_ATTN_HISTORY_STATS,
+    opp_attn_max_seq_len=OPP_ATTN_MAX_SEQ_LEN,
+    train_lightgbm=TRAIN_LIGHTGBM,
+    lgbm_n_estimators=LGBM_N_ESTIMATORS,
+    lgbm_learning_rate=LGBM_LEARNING_RATE,
+    lgbm_num_leaves=LGBM_NUM_LEAVES,
+    lgbm_max_depth=LGBM_MAX_DEPTH,
+    lgbm_subsample=LGBM_SUBSAMPLE,
+    lgbm_colsample_bytree=LGBM_COLSAMPLE_BYTREE,
+    lgbm_reg_lambda=LGBM_REG_LAMBDA,
+    lgbm_reg_alpha=LGBM_REG_ALPHA,
+    lgbm_min_child_samples=LGBM_MIN_CHILD_SAMPLES,
+    lgbm_min_split_gain=LGBM_MIN_SPLIT_GAIN,
+    lgbm_objective=LGBM_OBJECTIVE,
+    accepts_dataframes=True,
+    cpu_only=False,
+    has_cv_runner=True,
+)

@@ -1,4 +1,8 @@
-import numpy as np
+from src.shared.position_config import (
+    DEFAULT_ENET_L1_RATIOS,
+    PositionConfig,
+    alpha_grid,
+)
 
 # === DST Raw-Stat Targets ===
 # Predict the 10 raw NFL stats that make up a D/ST's fantasy-point score.
@@ -86,9 +90,9 @@ RIDGE_PCA_COMPONENTS = 20  # features → 20 components; removes collinear dimen
 #   because their means are <0.1 — weak L2 produces unstable fits.
 #   Regular counts (sacks, ints, fum_rec, FF) use a standard grid.
 #   Raw PA/YA span 0-55 / 0-600 and tolerate stronger L2.
-_ALPHA_SPARSE = [round(x, 4) for x in np.logspace(0, 4, 15)]
-_ALPHA_STANDARD = [round(x, 4) for x in np.logspace(-1, 3.5, 20)]
-_ALPHA_RAW_SCALE = [round(x, 4) for x in np.logspace(-1, 5, 20)]
+_ALPHA_SPARSE = alpha_grid(0, 4, 15)
+_ALPHA_STANDARD = alpha_grid(-1, 3.5, 20)
+_ALPHA_RAW_SCALE = alpha_grid(-1, 5, 20)
 
 RIDGE_ALPHA_GRIDS = {
     "def_sacks": _ALPHA_STANDARD,
@@ -108,7 +112,7 @@ RIDGE_ALPHA_GRIDS = {
 # Skips PCA regardless of RIDGE_PCA_COMPONENTS — L1 sparsity on a rotated
 # basis zeros components, not original features.
 TRAIN_ELASTICNET = False
-ENET_L1_RATIOS = [0.3, 0.5, 0.7]
+ENET_L1_RATIOS = list(DEFAULT_ENET_L1_RATIOS)
 
 # === Neural Net ===
 NN_BACKBONE_LAYERS = [128, 64]  # Wider backbone for many features
@@ -331,3 +335,78 @@ CONFIG_TINY = {
     "ridge_refine_points": 0,
     "nn_log_every": 100,  # suppress per-epoch prints during tests
 }
+
+
+# === Bundled config object ===
+# Single source of truth for downstream consumers (registry / pipeline / serving).
+# DST has 10 raw-stat heads, no GATED_TARGETS, OPP_ATTN_KIND="offense" (it
+# attends over opposing offenses, not defenses), and uses POISSON_TARGETS for
+# the four very-rare counts (def_safeties, def_tds, def_blocked_kicks,
+# special_teams_tds) — their loss weights diverge from the 2.0/δ rule per the
+# LOSS_WEIGHTS comments above.
+POSITION_CONFIG = PositionConfig(
+    name="DST",
+    targets=TARGETS,
+    specific_features=SPECIFIC_FEATURES,
+    contextual_features=CONTEXTUAL_FEATURES,
+    all_features=ALL_FEATURES,
+    drop_features=DROP_FEATURES,
+    ridge_alpha_grids=RIDGE_ALPHA_GRIDS,
+    ridge_pca_components=RIDGE_PCA_COMPONENTS,
+    train_elasticnet=TRAIN_ELASTICNET,
+    enet_l1_ratios=ENET_L1_RATIOS,
+    nn_backbone_layers=NN_BACKBONE_LAYERS,
+    nn_head_hidden=NN_HEAD_HIDDEN,
+    nn_dropout=NN_DROPOUT,
+    nn_non_negative_targets=NN_NON_NEGATIVE_TARGETS,
+    nn_lr=NN_LR,
+    nn_weight_decay=NN_WEIGHT_DECAY,
+    nn_epochs=NN_EPOCHS,
+    nn_batch_size=NN_BATCH_SIZE,
+    nn_patience=NN_PATIENCE,
+    nn_head_hidden_overrides=NN_HEAD_HIDDEN_OVERRIDES,
+    head_losses=HEAD_LOSSES,
+    loss_weights=LOSS_WEIGHTS,
+    huber_deltas=HUBER_DELTAS,
+    poisson_targets=POISSON_TARGETS,
+    scheduler_type=SCHEDULER_TYPE,
+    cosine_t0=COSINE_T0,
+    cosine_t_mult=COSINE_T_MULT,
+    cosine_eta_min=COSINE_ETA_MIN,
+    train_attention_nn=TRAIN_ATTENTION_NN,
+    attn_d_model=ATTN_D_MODEL,
+    attn_n_heads=ATTN_N_HEADS,
+    attn_encoder_hidden_dim=ATTN_ENCODER_HIDDEN_DIM,
+    attn_max_seq_len=ATTN_MAX_SEQ_LEN,
+    attn_positional_encoding=ATTN_POSITIONAL_ENCODING,
+    attn_dropout=ATTN_DROPOUT,
+    attn_lr=ATTN_LR,
+    attn_weight_decay=ATTN_WEIGHT_DECAY,
+    attn_batch_size=ATTN_BATCH_SIZE,
+    attn_patience=ATTN_PATIENCE,
+    attn_history_stats=ATTN_HISTORY_STATS,
+    attn_static_features=ATTN_STATIC_FEATURES,
+    attn_project_kv=ATTN_PROJECT_KV,
+    attn_gated_fusion=ATTN_GATED_FUSION,
+    attn_gated=ATTN_GATED,
+    attn_gate_hidden=ATTN_GATE_HIDDEN,
+    attn_gate_weight=ATTN_GATE_WEIGHT,
+    opp_attn_history_stats=OPP_ATTN_HISTORY_STATS,
+    opp_attn_max_seq_len=OPP_ATTN_MAX_SEQ_LEN,
+    opp_attn_kind=OPP_ATTN_KIND,
+    train_lightgbm=TRAIN_LIGHTGBM,
+    lgbm_n_estimators=LGBM_N_ESTIMATORS,
+    lgbm_learning_rate=LGBM_LEARNING_RATE,
+    lgbm_num_leaves=LGBM_NUM_LEAVES,
+    lgbm_max_depth=LGBM_MAX_DEPTH,
+    lgbm_subsample=LGBM_SUBSAMPLE,
+    lgbm_colsample_bytree=LGBM_COLSAMPLE_BYTREE,
+    lgbm_reg_lambda=LGBM_REG_LAMBDA,
+    lgbm_reg_alpha=LGBM_REG_ALPHA,
+    lgbm_min_child_samples=LGBM_MIN_CHILD_SAMPLES,
+    lgbm_min_split_gain=LGBM_MIN_SPLIT_GAIN,
+    lgbm_objective=LGBM_OBJECTIVE,
+    accepts_dataframes=False,
+    cpu_only=True,
+    has_cv_runner=False,
+)
