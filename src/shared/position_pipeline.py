@@ -162,6 +162,7 @@ def build_pipeline_config(
         "nn_epochs": pc.nn_epochs,
         "nn_batch_size": pc.nn_batch_size,
         "nn_patience": pc.nn_patience,
+        "nn_use_amp": pc.nn_use_amp,
         # === Attention ===
         "train_attention_nn": pc.train_attention_nn,
         "attn_d_model": pc.attn_d_model,

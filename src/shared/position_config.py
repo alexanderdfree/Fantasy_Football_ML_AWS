@@ -143,6 +143,11 @@ class PositionConfig:
     nn_batch_size: int = 128
     nn_patience: int = 30
     nn_head_hidden_overrides: dict[str, int] = field(default_factory=dict)
+    # BF16 autocast on the NN forward + loss path (both base and attention
+    # branches). True by default so every position picks it up on T4; flip to
+    # False per-position if a benchmark diff shows a per-target MAE regression
+    # beyond the project's ±2% tolerance. No-op on non-CUDA devices.
+    nn_use_amp: bool = True
 
     # === Per-head loss families ===
     head_losses: dict[str, str] = field(default_factory=dict)
