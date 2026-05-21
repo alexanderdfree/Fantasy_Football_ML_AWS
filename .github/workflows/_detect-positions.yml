@@ -68,8 +68,15 @@ jobs:
           # in the body, so the tag survives the merge and lands in HEAD's
           # commit message. Trust contract — CI cannot verify the assertion,
           # the author owns correctness.
-          if git log -1 --format=%B HEAD | grep -qF '[docs-only]'; then
-            echo "[docs-only] detected in HEAD commit message — skipping training."
+          #
+          # Subject-line scan only — the awk filter keeps line 1 (squash-merge
+          # subject) and any `* `-prefixed line (constituent commit subject)
+          # and drops prose body lines. Previous flat-grep version false-
+          # positived on commits that *described* the [docs-only] mechanism
+          # (e.g. perf PR #293 / e802a47 got skipped because a constituent
+          # CI commit's body wrote "the [docs-only] opt-in now also clears…").
+          if git log -1 --format=%B HEAD | awk 'NR==1 || /^\* /' | grep -qF '[docs-only]'; then
+            echo "[docs-only] detected in HEAD subject line — skipping training."
             echo "positions=" >> "$GITHUB_OUTPUT"
             exit 0
           fi

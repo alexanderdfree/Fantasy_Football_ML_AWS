@@ -74,7 +74,7 @@ jobs:
             echo 'shards=["QB","RB","WR","TE","K","DST","shared"]' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Opt-in: any commit in BASE..HEAD whose message contains
+          # Opt-in: any commit in BASE..HEAD whose subject line contains
           # `[docs-only]` signals the author asserts the diff has no
           # behavioural impact (comment / docstring / import-reorder only).
           # The default detect logic treats those as substantive because
@@ -83,7 +83,23 @@ jobs:
           # test fan-out is skipped. `tests-pass` below treats
           # `test=skipped` as success. Trust contract — CI cannot verify
           # the assertion, the author owns correctness.
-          if git log --format=%B "$BASE..HEAD" | grep -qF '[docs-only]'; then
+          #
+          # Per-commit subject-line scan only — the awk filter keeps line 1
+          # and any `* `-prefixed bullet (squash-merge constituent subjects)
+          # and drops prose body lines. Previous flat-grep against the whole
+          # %B range false-positived on commits that *described* the
+          # [docs-only] mechanism in prose. Iterating per-commit (rather than
+          # cat'ing the whole range into one stream) prevents a body line of
+          # commit N+1 looking like a subject of commit N due to lack of
+          # separators in `git log --format=%B`.
+          docs_only=false
+          for sha in $(git log --format=%H "$BASE..HEAD"); do
+            if git log -1 --format=%B "$sha" | awk 'NR==1 || /^\* /' | grep -qF '[docs-only]'; then
+              docs_only=true
+              break
+            fi
+          done
+          if [ "$docs_only" = "true" ]; then
             echo 'shards=[]' >> "$GITHUB_OUTPUT"
             exit 0
           fi

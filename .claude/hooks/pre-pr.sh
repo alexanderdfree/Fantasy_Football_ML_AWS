@@ -23,6 +23,24 @@ cd "$CLAUDE_PROJECT_DIR"
 # from environmental flakes (xdist races, miniforge3 vs .venv) on PRs that don't need
 # pytest. Skip if no upstream ref can be resolved — better to run the gate than
 # silently skip on a fresh repo.
+
+# Subject-line scan only — keep awk to line 1 + `* `-prefixed bullets (squash-merge
+# constituent subjects). Flat grep against full %B false-positived on commits that
+# *described* the [docs-only] mechanism in prose body text. Per-commit iteration
+# (rather than catting the whole range into one stream) prevents a body line of
+# commit N+1 looking like a subject of commit N due to lack of separators in
+# `git log --format=%B`.
+docs_only_in_range() {
+  local range="$1"
+  local sha
+  for sha in $(git log --format=%H "$range" 2>/dev/null); do
+    if git log -1 --format=%B "$sha" 2>/dev/null | awk 'NR==1 || /^\* /' | grep -qF '[docs-only]'; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 docs_only_base=""
 for ref in origin/main main origin/master master; do
   if git rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
@@ -32,9 +50,8 @@ for ref in origin/main main origin/master master; do
     docs_only_base=""
   fi
 done
-if [ -n "$docs_only_base" ] && \
-   git log --format=%B "$docs_only_base..HEAD" 2>/dev/null | grep -qF '[docs-only]'; then
-  echo "pre-pr hook: [docs-only] detected in BASE..HEAD commit history — skipping ruff/pytest/benchmark gates" >&2
+if [ -n "$docs_only_base" ] && docs_only_in_range "$docs_only_base..HEAD"; then
+  echo "pre-pr hook: [docs-only] detected in BASE..HEAD commit subject lines — skipping ruff/pytest/benchmark gates" >&2
   exit 0
 fi
 
@@ -201,14 +218,15 @@ fi
 # file changes still require *that* position's evidence — handled by the
 # ``positions`` loop unchanged.
 
-# [docs-only] opt-in: any commit in base..HEAD whose message contains the
-# `[docs-only]` literal signals the author asserts the diff has no
+# [docs-only] opt-in: any commit in base..HEAD whose subject line contains
+# the `[docs-only]` literal signals the author asserts the diff has no
 # behavioural impact (comment/docstring/import-reorder only). Skips the B2
 # benchmark freshness gate. Mirrors `.github/workflows/tests.yml`'s
 # detect-job opt-in (same tag, same trust contract). The hook cannot
-# verify the assertion — author owns correctness.
+# verify the assertion — author owns correctness. Subject-line scan via
+# the `docs_only_in_range` helper defined near top of file.
 if [ -n "$base" ] && { [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; } && \
-   git log --format=%B "$base..HEAD" 2>/dev/null | grep -qF '[docs-only]'; then
+   docs_only_in_range "$base..HEAD"; then
   positions=""
   shared_changed=0
 fi
