@@ -49,6 +49,14 @@ Every position predicts raw NFL stats (yards, TDs, receptions, etc.). Fantasy po
 ### Feature whitelist is explicit, not inferred
 `INCLUDE_FEATURES` in each `src/{pos}/config.py` is an opt-in list. New columns must be added explicitly — the training code will *not* pick them up automatically. This prevents silent feature leakage. When you add a feature, update both the feature-engineering file *and* the include dict, then update the test fixture (`tests/conftest.py` or `tests/{pos}/conftest.py`).
 
+### `CONFIG_TINY` is the test fixture, not production
+Each `src/{pos}/config.py` exports **two** config shapes that look identical at a glance and have opposite values for the same toggle:
+
+- `CONFIG_TINY = {...}` — a small dict literal near the module top with shrunken `nn_epochs`, no LightGBM, attention often disabled. Used by `tests/{pos}/` for fast unit runs. Dict-literal syntax (`"train_lightgbm": False`).
+- `POSITION_CONFIG = PositionConfig(...)` — the production config object consumed by AWS Batch via `build_pipeline_config(pos, POSITION_CONFIG)` in `run_pipeline.py`. Kwarg syntax (`train_lightgbm=True`).
+
+`grep "train_lightgbm" src/k/config.py` returns **both** entries with opposite booleans. When checking what production actually runs, always read `POSITION_CONFIG` (kwarg form, lower in the file) — never the dict-literal form.
+
 ### Attention static-feature whitelist is separate per position
 The attention NN's static branch reads a *second*, smaller allowlist: `ATTN_STATIC_FEATURES` (commit `2500ecc`). It is defined per position (QB/RB/WR/TE derive it from an `ATTN_STATIC_CATEGORIES` subset of `INCLUDE_FEATURES`; DST/K enumerate it directly) and deliberately excludes rolling/ewma/trend columns so the attention branch doesn't double-count signal it already learns from `ATTN_HISTORY_STATS`. Adding a feature to `INCLUDE_FEATURES` does **not** feed it into attention — add it to `ATTN_STATIC_FEATURES` too if that's what you want.
 
