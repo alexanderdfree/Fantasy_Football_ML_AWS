@@ -216,9 +216,32 @@ def test_build_train_matrix_loads_synthetic_splits(tmp_path, monkeypatch):
                         # test doesn't need data/raw/schedules_2012_2025.parquet
                         # on disk (matches the pattern in test_feature_build.py).
                         "_schedule_merged": True,
+                        # When merge_schedule_features short-circuits, the
+                        # weather/Vegas cols it would otherwise produce don't
+                        # get added — pre-populate them so QB's include_features
+                        # whitelist is satisfied (build_position_features now
+                        # raises KeyError on any missing whitelist col).
+                        "implied_team_total": 24.0,
+                        "implied_opp_total": 21.0,
+                        "is_dome": 0,
+                        "is_divisional": 0,
+                        "temp_adjusted": 65.0,
+                        "wind_adjusted": 0.0,
                     }
                 )
     df = pd.DataFrame(rows)
+    # Run the same build_features step that refresh-splits.yml runs in
+    # production so the parquet has every engineered col QB's
+    # include_features whitelist references. Without this, the new
+    # fail-loud contract in build_position_features raises KeyError on
+    # the missing engineered cols (which is the right behaviour — the
+    # 8c46b59 regression went undetected precisely because the prior
+    # silent-zero-fill made this kind of synthetic-without-engineering
+    # data path "work" by accident).
+    from src.features.engineer import build_features
+
+    df = build_features(df)
+
     splits_dir = tmp_path / "splits"
     splits_dir.mkdir()
     df.to_parquet(splits_dir / "train.parquet")

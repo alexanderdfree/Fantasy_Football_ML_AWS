@@ -69,21 +69,24 @@ def build_position_features(
             pos_train, pos_val, empty, cfg["specific_features"]
         )
 
-    # Backfill any whitelist columns the pipeline didn't produce. One concat
-    # per df avoids pandas' fragmented-DataFrame PerformanceWarning.
+    # Whitelist columns the pipeline didn't produce mean either build_features
+    # never ran (the regression behind PR fixing 8c46b59 — refresh-splits.yml
+    # was missing the build_features() call, so 150 cols were absent and
+    # silently zero-filled, masking a real metric regression) or that an
+    # add_features_fn / merge step failed to materialise an expected column.
+    # Either way, training on constant-zero columns produces undetectable
+    # silent drift; fail loudly instead. Mirrors the same fail-loud contract
+    # build_game_history_arrays adopted in c06568a.
     dfs = [pos_train, pos_val] + ([pos_test] if pos_test is not None else [])
     missing = [c for c in feature_cols if c not in pos_train.columns]
     if missing:
-        print(f"  WARNING: {len(missing)} feature columns missing, filling with 0")
-        filled = [
-            pd.concat([df, pd.DataFrame(0.0, index=df.index, columns=missing)], axis=1)
-            for df in dfs
-        ]
-        pos_train = filled[0]
-        pos_val = filled[1]
-        if pos_test is not None:
-            pos_test = filled[2]
-        dfs = filled
+        raise KeyError(
+            f"build_position_features: {len(missing)} whitelisted feature "
+            f"columns are missing from pos_train. This usually means "
+            f"build_features() was not run on the upstream splits parquet, "
+            f"or an add_features_fn / merge step failed to produce expected "
+            f"columns. Missing: {missing}"
+        )
 
     for df in dfs:
         df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)

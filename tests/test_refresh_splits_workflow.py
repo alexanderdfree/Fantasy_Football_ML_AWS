@@ -123,3 +123,81 @@ def test_ecs_kick_targets_correct_cluster_and_service():
         f"ECS_SERVICE must be 'fantasy-service' (matches train-batch.yml / "
         f"deploy.yml); got: {env.get('ECS_SERVICE')!r}"
     )
+
+
+def test_regen_step_calls_build_features():
+    """The ``Regenerate splits from nflverse + PBP`` step MUST call
+    ``build_features`` between ``preprocess`` and ``temporal_split``.
+    Origin: 8c46b59 (2026-05-21) trained on parquets missing 150 engineered
+    cols because this step was ``preprocess(load_raw_data())`` →
+    ``temporal_split`` with no ``build_features`` step in between. The
+    ``build_position_features`` backfill silently zero-filled the missing
+    cols. See TODO.md "[FIXED] refresh-splits.yml never called build_features"."""
+    steps = _refresh_job_steps()
+    regen_steps = [s for s in steps if s.get("name") == "Regenerate splits from nflverse + PBP"]
+    assert len(regen_steps) == 1, (
+        f"expected exactly 1 'Regenerate splits from nflverse + PBP' step, found {len(regen_steps)}"
+    )
+    run_body = regen_steps[0].get("run", "") or ""
+    assert "from src.features.engineer import build_features" in run_body, (
+        "Regenerate step must import build_features."
+    )
+    assert "build_features(" in run_body, (
+        "Regenerate step must call build_features() between preprocess() "
+        "and temporal_split() — otherwise the ~150 engineered cols are "
+        "absent from the parquet and the pipeline trains on constant zeros."
+    )
+
+
+def test_verify_step_gates_s3_upload():
+    """A ``Verify engineered columns present`` step MUST run between the
+    regen and the S3 upload. Catches the 8c46b59 regression if a future
+    edit drops the build_features call again — the upload won't go through
+    if the column set is wrong."""
+    names = _step_names()
+    assert "Verify engineered columns present" in names, (
+        "missing 'Verify engineered columns present' step — without it the "
+        "regen-then-upload contract has no column-presence gate."
+    )
+    verify_idx = names.index("Verify engineered columns present")
+    upload_idx = names.index("Upload to S3 with force")
+    regen_idx = names.index("Regenerate splits from nflverse + PBP")
+    assert regen_idx < verify_idx < upload_idx, (
+        f"verify step must sit between regen (idx {regen_idx}) and upload "
+        f"(idx {upload_idx}); got verify at idx {verify_idx}."
+    )
+
+
+def test_build_position_features_raises_on_missing_whitelist_cols():
+    """``build_position_features`` must raise ``KeyError`` when feature_cols
+    references a column that the upstream pipeline didn't produce. Pre-fix
+    behaviour silently back-filled the missing cols with constant zero and
+    logged a print-statement warning, which is exactly how the 8c46b59
+    regression went undetected in the Batch logs.
+
+    This test bypasses the position-specific ``add_features_fn`` /
+    ``fill_nans_fn`` to assert the contract directly on the broader
+    whitelist back-fill block in ``src/shared/feature_build.py``.
+    """
+    import pandas as pd
+
+    from src.shared.feature_build import build_position_features
+
+    df = pd.DataFrame(
+        {
+            "season": [2024] * 4,
+            "week": [1, 2, 3, 4],
+            "recent_team": ["KC"] * 4,
+            "player_id": ["pX"] * 4,
+            "opponent_team": ["BUF"] * 4,
+        }
+    )
+    feature_cols = ["should_have_been_engineered_by_build_features"]
+    cfg = {
+        "add_features_fn": lambda a, b, c: (a, b, c),
+        "fill_nans_fn": lambda a, b, c, _cols: (a, b, c),
+        "specific_features": [],
+    }
+
+    with pytest.raises(KeyError, match="whitelisted feature columns are missing"):
+        build_position_features(df.copy(), df.copy(), df.copy(), cfg, feature_cols)

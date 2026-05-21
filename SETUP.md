@@ -34,15 +34,16 @@ pip install -r requirements-dev.txt
 
 ## First-time data pull and split
 
-`src.data.loader.load_raw_data()` caches the nflverse pulls to `data/raw/`. `src.data.split.temporal_split()` writes `train.parquet`, `val.parquet`, `test.parquet` under `data/splits/`. The app and benchmark both read from `data/splits/`, so these must exist before anything else runs.
+`src.data.loader.load_raw_data()` caches the nflverse pulls to `data/raw/`. `src.features.engineer.build_features()` materialises the ~150 engineered columns (rolling_*, ewma_*, trend_*, prior_season_*, opp_*, contextual, position one-hots) every position's `include_features` whitelist references — without this step every engineered column ends up constant-zero via the silent backfill that used to live in `src/shared/feature_build.py` (now raises `KeyError`). `src.data.split.temporal_split()` writes `train.parquet`, `val.parquet`, `test.parquet` under `data/splits/`. The app and benchmark both read from `data/splits/`, so these must exist before anything else runs.
 
 ```bash
 python - <<'PY'
 from src.data.loader import load_raw_data
 from src.data.preprocessing import preprocess
+from src.features.engineer import build_features
 from src.data.split import temporal_split
 
-df = preprocess(load_raw_data())
+df = build_features(preprocess(load_raw_data()))
 temporal_split(df)           # writes data/splits/{train,val,test}.parquet
 PY
 ```

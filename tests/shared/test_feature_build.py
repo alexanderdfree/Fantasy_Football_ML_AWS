@@ -112,16 +112,19 @@ class TestBuildPositionFeatures:
         assert pos_test is None
         assert "feat_a" in pos_train.columns
 
-    def test_missing_columns_are_backfilled_with_zero(self):
-        # _make_cfg creates "feat_a" but not "feat_missing"; the helper should
-        # backfill the missing column with 0.0 across all splits.
+    def test_missing_columns_raise_keyerror(self):
+        # Pre-fix behaviour was to silently backfill missing whitelist cols
+        # with 0.0 — that masked the 8c46b59 regression (refresh-splits.yml
+        # not calling build_features() shipped a parquet missing 150 cols,
+        # and every Batch job's training silently zero-filled them with only
+        # a buried print warning). build_position_features now raises
+        # KeyError so a missing-col regression fails loudly at training
+        # time instead.
         cfg = _make_cfg(["feat_a"])
-        pos_train, pos_val, pos_test = build_position_features(
-            _minimal_df(3), _minimal_df(2), _minimal_df(2), cfg, ["feat_a", "feat_missing"]
-        )
-        assert (pos_train["feat_missing"] == 0.0).all()
-        assert (pos_val["feat_missing"] == 0.0).all()
-        assert (pos_test["feat_missing"] == 0.0).all()
+        with pytest.raises(KeyError, match="whitelisted feature columns are missing"):
+            build_position_features(
+                _minimal_df(3), _minimal_df(2), _minimal_df(2), cfg, ["feat_a", "feat_missing"]
+            )
 
     def test_inf_and_nan_replaced_with_zero_in_feature_cols(self):
         def _add(train, val, test):
