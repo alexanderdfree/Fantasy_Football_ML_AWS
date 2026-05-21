@@ -77,6 +77,15 @@ _ROLLING_STATS = [
 ]
 
 _INCLUDE_FEATURES = {
+    # L5 rolling means/stds/maxes are excluded from the ``rolling`` category
+    # by design: every L5 ``mean``/``std``/``max`` lands at r=0.96-0.98 with
+    # the matching L3/L8 variants (and ``carry_share_L5`` r=0.984 with the L3
+    # equivalent — see the multicollinearity audit at
+    # analysis_output/rb_feature_audit.json and docs/rb_feature_history.md).
+    # Keeping only L3+L8 spans the short / mid horizon without inflating the
+    # condition number. ``rolling_min_fantasy_points_L5`` survives because the
+    # ``min`` aggregate is decorrelated from mean/std/max (it tracks worst-case
+    # rather than central tendency) and adds floor signal the others miss.
     "rolling": [
         col
         for stat in _ROLLING_STATS
@@ -167,20 +176,20 @@ ATTN_STATIC_CATEGORIES = DEFAULT_ATTN_STATIC_CATEGORIES
 
 
 # === Tiny config for end-to-end smoke tests ===
-# Shrunk copy of the production config: 1 epoch, 2-layer x 8-unit backbone,
-# attention and LightGBM disabled to keep the E2E smoke under 20s.
-# Keeps every behavior toggle identical to CONFIG so test coverage
-# exercises the same code paths.
+# Shrunk overrides layered on top of ``build_pipeline_config("RB",
+# POSITION_CONFIG)`` by ``tests/_pipeline_e2e_utils.py::build_tiny_config``.
+# The generic NN/scheduler knobs (``nn_backbone_layers``, ``nn_head_hidden``,
+# ``nn_epochs``, ``nn_batch_size``, ``nn_patience``, etc.) live in
+# ``tests/_pipeline_e2e_utils.py::_TINY_OVERRIDES`` so they're shared across
+# every position — duplicating them here would risk drift if a future tightening
+# of the test budget bumps one and not the other. Only the RB-specific shrinks
+# (per-target Ridge alpha grids, equalized loss weights, Huber deltas) stay
+# here.
 CONFIG_TINY = {
     "targets": _TARGETS,
     "ridge_alpha_grids": {t: [1.0] for t in _TARGETS},
     "loss_weights": {t: 1.0 for t in _TARGETS},
     "huber_deltas": {"rushing_yards": 15.0, "receiving_yards": 15.0},
-    "nn_backbone_layers": [8, 8],
-    "nn_head_hidden": 4,
-    "nn_epochs": 1,
-    "nn_batch_size": 64,
-    "nn_patience": 1,
 }
 
 
@@ -350,6 +359,17 @@ POSITION_CONFIG = PositionConfig(
     lgbm_min_split_gain=0.315457,
     lgbm_objective="huber",
     # === RB-only TD model variants ===
+    # Production uses ``td_model_type="gated_ordinal"`` below — only
+    # ``gated_ordinal_targets`` is read by ``_rb_classification_targets`` in
+    # ``src/shared/position_pipeline.py``. ``two_stage_targets`` and
+    # ``ordinal_targets`` are kept (rather than deleted) for three reasons:
+    #   1. ``src/tuning/ablate_rb_gate.py`` flips ``td_model_type`` to compare
+    #      ridge / two-stage / ordinal / gated-ordinal side by side.
+    #   2. ``tests/rb/test_models.py`` reads ``POSITION_CONFIG.ordinal_targets``
+    #      directly (``test_uses_config_from_rb_ordinal_targets``).
+    #   3. Future ablations should not have to re-derive the hyperparameters.
+    # Drift risk: a model-only change here that doesn't run the ablation will
+    # leave the dormant blocks stale relative to ``gated_ordinal_targets``.
     # Two-stage zero-inflated TD models: both rushing_tds and receiving_tds.
     two_stage_targets={
         "rushing_tds": {"clf_C": 0.001, "ridge_alpha": 0.01, "threshold": 0.5},
@@ -382,3 +402,21 @@ POSITION_CONFIG = PositionConfig(
     cpu_only=False,
     has_cv_runner=True,
 )
+
+
+# === td_model_type validation ===
+# The TD-model dispatcher in ``src/shared/position_pipeline.py``
+# (``_rb_classification_targets`` / ``_rb_two_stage_targets``) falls through
+# to an empty dict when ``td_model_type`` doesn't match any of the recognised
+# variants. That fall-through silently degrades the model to plain ridge on
+# the TD targets — a typo like ``gated_oridinal`` produces no warning at
+# import time and is only detectable by inspecting the per-target backtest
+# breakdown. Re-validate at module import so the typo raises immediately.
+_VALID_TD_MODEL_TYPES = frozenset({"ridge", "two_stage", "ordinal", "gated_ordinal"})
+if POSITION_CONFIG.td_model_type not in _VALID_TD_MODEL_TYPES:
+    raise ValueError(
+        f"src.rb.config: td_model_type={POSITION_CONFIG.td_model_type!r} is not one of "
+        f"{sorted(_VALID_TD_MODEL_TYPES)}. The dispatcher in src/shared/position_pipeline.py "
+        f"silently degrades to plain ridge on unknown variants; re-check for typos "
+        f"(e.g. 'gated_oridinal' -> 'gated_ordinal')."
+    )

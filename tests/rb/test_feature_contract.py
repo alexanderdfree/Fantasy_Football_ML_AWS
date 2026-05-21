@@ -155,6 +155,46 @@ class TestFeatureColumnContract:
         leaks = set(SPECIFIC_FEATURES) & set(static_cols)
         assert not leaks, f"RB specific features leaked into attention static: {sorted(leaks)}"
 
+    def test_redzone_pbp_stats_stay_in_history_not_static(self):
+        """Red-zone PBP per-game counts feed attention via ATTN_HISTORY_STATS
+        only — promoting them to ATTN_STATIC_FEATURES would double-count
+        the goal-line signal the design relies on. Locks in PR #235's
+        architecture (red-zone stats are temporal, not static).
+
+        See ``src/rb/config.py`` attn_history_stats trailer (``redzone_carries``,
+        ``redzone_targets``, ``inside10_carries``, ``inside5_carries``,
+        ``redzone_target_share``) — they appear in the 17-game sequence,
+        not in the static branch's whitelist.
+        """
+        redzone_pbp_stats = {
+            "redzone_carries",
+            "redzone_targets",
+            "inside10_carries",
+            "inside5_carries",
+            "redzone_target_share",
+        }
+        history_stats = set(POSITION_CONFIG.attn_history_stats)
+        missing_from_history = redzone_pbp_stats - history_stats
+        assert not missing_from_history, (
+            f"RB red-zone PBP stats dropped from attn_history_stats: {sorted(missing_from_history)}"
+        )
+        # Each red-zone PBP stat is a per-game raw count materialised by
+        # ``src.data.redzone_pbp.reconstruct_redzone_from_pbp``; the static
+        # branch is deliberately non-temporal, so these names must not appear
+        # there. Check both the configured static-feature list and the
+        # resolved column list emitted by ``get_attn_static_columns``.
+        configured_static = set(ATTN_STATIC_FEATURES)
+        resolved_static = set(get_attn_static_columns(get_feature_columns(), ATTN_STATIC_FEATURES))
+        leak_configured = redzone_pbp_stats & configured_static
+        leak_resolved = redzone_pbp_stats & resolved_static
+        assert not leak_configured, (
+            f"RB red-zone PBP stats leaked into attn_static_features: {sorted(leak_configured)}"
+        )
+        assert not leak_resolved, (
+            f"RB red-zone PBP stats resolved into the attention static "
+            f"feature set: {sorted(leak_resolved)}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Dtype contract

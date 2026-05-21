@@ -1,7 +1,11 @@
-"""RB error stratification analysis.
+"""RB error stratification analysis (operator-only CLI).
 
 Runs the RB pipeline, then slices prediction errors by game context,
-player usage, opponent quality, and scoring patterns.
+player usage, opponent quality, and scoring patterns. The full pipeline
+runs on every invocation, so this module is gated behind
+``if __name__ == "__main__"`` — importing it must NOT fire ``main()`` or
+the pipeline. There is no CI hook and no automated test coverage; this is
+an ad-hoc diagnostic for human operators.
 
 Usage:
     python -m src.rb.analyze_errors

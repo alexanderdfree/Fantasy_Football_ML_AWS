@@ -24,9 +24,6 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
       - fumbles_lost = sack_fumbles_lost + rushing_fumbles_lost +
         receiving_fumbles_lost
 
-    Also adds ``fantasy_points_check`` (aggregator-computed PPR points) for
-    the sanity-check warning below.
-
     Args:
         df: DataFrame filtered to RB rows only, with raw stat columns available.
     """
@@ -42,16 +39,19 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     # Sanity check: aggregator reproduces the RB slice of fantasy_points (PPR).
     # The full fantasy_points column carries passing terms that RBs don't
-    # predict, so we back those out before comparing.
+    # predict, so we back those out before comparing. The aggregator output
+    # stays as a local variable (matching QB's compute_targets) rather than
+    # a phantom DataFrame column — downstream code only consumes the named
+    # targets above.
     preds = {t: df[t].to_numpy() for t in POSITION_CONFIG.targets}
-    df["fantasy_points_check"] = predictions_to_fantasy_points("RB", preds, "ppr")
+    fantasy_points_check = predictions_to_fantasy_points("RB", preds, "ppr")
 
     passing_component = (
         df["passing_yards"].fillna(0) * 0.04
         + df["passing_tds"].fillna(0) * 4
         + df["interceptions"].fillna(0) * -2
     )
-    discrepancy = (df["fantasy_points"] - df["fantasy_points_check"] - passing_component).abs()
+    discrepancy = (df["fantasy_points"] - fantasy_points_check - passing_component).abs()
     if (discrepancy > 0.01).any():
         n_bad = int((discrepancy > 0.01).sum())
         print(f"WARNING: {n_bad} rows have target decomposition discrepancy > 0.01 pts")
