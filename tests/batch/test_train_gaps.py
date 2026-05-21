@@ -187,19 +187,35 @@ def test_validate_remote_tarball_raises_when_nn_weights_missing():
 
 
 @pytest.mark.unit
-def test_run_rb_gate_ablation_runs_three_variants(monkeypatch, capsys):
-    """Every variant (A/B/C) runs, decision-table lines print, and the
-    "keep a gate" branch fires because margin_a is set large enough."""
+def test_run_rb_gate_ablation_runs_all_variants(monkeypatch, capsys):
+    """Post-M5 the container path delegates to ``src.tuning.ablate_rb_gate``'s
+    six-variant ``VARIANTS`` dict (A/B/C/D/E/Bf) and its ``print_summary``.
+    This test asserts every variant fires and the A/B/C original-decision
+    branch ("keep gate on TDs") still prints when variant A wins big.
+    """
     from src.batch import train as t
+    from src.tuning import ablate_rb_gate
 
-    # Three call log, each returning a canned attn_nn_metrics dict.
+    n_variants = len(ablate_rb_gate.VARIANTS)
+    # Canned per-variant FP MAE: variants A through Bf (sorted order). A wins
+    # by 0.3 vs B → triggers original-decision "keep gate" branch.
+    sorted_variants = sorted(ablate_rb_gate.VARIANTS)
+    fp_mae_by_variant = {
+        sorted_variants[0]: 4.10,  # variant A in sorted order
+        **{v: 4.40 for v in sorted_variants[1:]},  # everyone else at 4.40
+    }
+    # Forcibly override B/C to ensure original-decision branch reads B=4.4, C=4.35
+    fp_mae_by_variant["B"] = 4.40
+    fp_mae_by_variant["C"] = 4.35
+
     calls: list[dict] = []
 
     def _canned_run_rb_pipeline(train_df, val_df, test_df, seed, config):
         variant_idx = len(calls)
-        calls.append({"variant_idx": variant_idx, "seed": seed})
-        # Variant A (idx 0) wins by 0.2 pts → triggers "keep a gate" message.
-        fp_mae = [4.1, 4.4, 4.35][variant_idx]
+        # Sorted order so test maps deterministically across runs.
+        variant = sorted_variants[variant_idx]
+        calls.append({"variant": variant, "seed": seed})
+        fp_mae = fp_mae_by_variant[variant]
         return {
             "attn_nn_metrics": {
                 "total": {"mae": fp_mae, "rmse": fp_mae * 1.3, "r2": 0.3},
@@ -212,7 +228,6 @@ def test_run_rb_gate_ablation_runs_three_variants(monkeypatch, capsys):
             }
         }
 
-    # Patch the module-level import the ablation function does inside.
     monkeypatch.setattr("src.rb.run_pipeline.run", _canned_run_rb_pipeline, raising=False)
 
     import pandas as pd
@@ -220,21 +235,23 @@ def test_run_rb_gate_ablation_runs_three_variants(monkeypatch, capsys):
     dummy_df = pd.DataFrame({"x": [1]})
     t._run_rb_gate_ablation(dummy_df, dummy_df, dummy_df, seed=42)
 
-    assert len(calls) == 3  # three variants
+    assert len(calls) == n_variants
     out = capsys.readouterr().out
-    # Decision-table header + per-variant rows.
-    assert "RB TD-gate ablation — summary" in out
-    assert "Gate AUCs" in out  # gate_aucs rows present
-    # Variant A wins big (4.1 vs B 4.4) → margin_a = 0.3 → keep gate.
-    assert "keep a gate on TDs" in out
+    # Header from ablate_rb_gate.print_summary.
+    assert "RB sparse-count head ablation — summary" in out
+    assert "Gate AUCs" in out
+    # Variant A wins big (4.10 vs B 4.40 → margin 0.30 ≥ 0.05) → "keep gate".
+    assert "keep gate on TDs" in out
+    # New-rule ranking line always prints when >1 row.
+    assert "Count-target decision: variant" in out
 
 
 @pytest.mark.unit
 def test_run_rb_gate_ablation_drop_gate_when_margins_are_tiny(monkeypatch, capsys):
-    """When the max FP-MAE margin vs variant B is below the 0.05 pt/game
-    threshold, the decision must be 'drop gate' (variant B wins) — not
-    'keep'. All three variants here return identical fp_mae → margin = 0,
-    so the threshold is unambiguously not met."""
+    """When every variant returns the same fp_mae, the original-decision
+    branch ("Original decision (A/B/C, FP MAE)") should pick "drop gate"
+    because margin_a == margin_c == 0 < 0.05 threshold.
+    """
     from src.batch import train as t
 
     def _canned(train_df, val_df, test_df, seed, config):
@@ -258,7 +275,7 @@ def test_run_rb_gate_ablation_drop_gate_when_margins_are_tiny(monkeypatch, capsy
     # Decision must be drop, NOT keep — the inverse must not appear or the
     # threshold logic flipped.
     assert "drop gate on TDs" in out
-    assert "keep a gate on TDs" not in out
+    assert "keep gate on TDs" not in out
     # Margin lines confirm we're on the "below threshold" side: A and C both
     # exactly 0.000 vs B → max margin 0.000 < 0.05 threshold.
     assert "A=+0.000" in out
@@ -267,7 +284,11 @@ def test_run_rb_gate_ablation_drop_gate_when_margins_are_tiny(monkeypatch, capsy
 
 @pytest.mark.unit
 def test_run_rb_gate_ablation_raises_if_attn_metrics_missing(monkeypatch):
-    """Pipeline result without attn_nn_metrics → explicit RuntimeError."""
+    """Pipeline result without attn_nn_metrics → explicit RuntimeError.
+
+    The post-M5 error message comes from ``ablate_rb_gate.run_variant``'s
+    parent helper rather than the deleted local fork.
+    """
     from src.batch import train as t
 
     monkeypatch.setattr(
@@ -277,7 +298,7 @@ def test_run_rb_gate_ablation_raises_if_attn_metrics_missing(monkeypatch):
     )
     import pandas as pd
 
-    with pytest.raises(RuntimeError, match="attn_nn_metrics missing"):
+    with pytest.raises(RuntimeError, match="could not find attn_nn_metrics"):
         t._run_rb_gate_ablation(pd.DataFrame({"x": [1]}), pd.DataFrame(), pd.DataFrame(), seed=1)
 
 

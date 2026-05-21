@@ -528,125 +528,62 @@ def _replace_model_dir_contents(src: str, dst: str) -> None:
 
 
 def _run_rb_gate_ablation(train_df, val_df, test_df, seed: int) -> None:
-    """Three-way ablation on RB TD heads: Huber+gate vs Poisson+no-gate vs
-    Poisson+gate. Prints a decision table; skips S3 upload.
+    """Container-side RB TD-head ablation runner.
 
-    Mirrors ``src/tuning/ablate_rb_gate.py`` but runs inside the container so
-    the downloaded splits are reused across variants (cuts ~30s × 3 of repeated
-    data-prep). The shipping RB config (variant B) ships Poisson+no-gate;
-    this function answers whether that was the right call by comparing
-    fantasy-point MAE and per-target TD MAE across the three variants.
+    Delegates to ``src.tuning.ablate_rb_gate.VARIANTS`` and ``print_summary``
+    so this path stays in sync with the operator-CLI version (running
+    ``python -m src.tuning.ablate_rb_gate`` locally). Previously this
+    function carried a hand-rolled fork that knew only 3 variants (A/B/C)
+    with the old ">=0.05 pt/game keep-gate" rule, while ``ablate_rb_gate``
+    grew to 6 variants (A/B/C/D/E/Bf) and a "lowest count-target MAE sum"
+    decision rule. Two sources of truth shipped from one workflow trigger.
+
+    The dataframes are passed through to avoid the ~30s/variant re-download
+    that ``run(seed=...)`` would trigger inside the container.
     """
-    import copy
-
     from src.rb.run_pipeline import CONFIG, run
-
-    def _variant_a(cfg: dict) -> dict:
-        """Pre-PR-2 baseline: Huber + gate on both TD heads."""
-        cfg = copy.deepcopy(cfg)
-        cfg["head_losses"] = {
-            "rushing_tds": "huber",
-            "receiving_tds": "huber",
-            "rushing_yards": "huber",
-            "receiving_yards": "huber",
-            "receptions": "huber",
-            "fumbles_lost": "huber",
-        }
-        cfg["gated_targets"] = ["rushing_tds", "receiving_tds"]
-        cfg["loss_weights"] = {
-            "rushing_tds": 4.0,
-            "receiving_tds": 4.0,
-            "rushing_yards": 0.133,
-            "receiving_yards": 0.133,
-            "receptions": 1.0,
-            "fumbles_lost": 4.0,
-        }
-        cfg["huber_deltas"] = {
-            "rushing_tds": 0.5,
-            "receiving_tds": 0.5,
-            "rushing_yards": 15.0,
-            "receiving_yards": 15.0,
-            "receptions": 2.0,
-            "fumbles_lost": 0.5,
-        }
-        cfg["nn_head_hidden_overrides"] = {"rushing_tds": 64, "receiving_tds": 64}
-        return cfg
-
-    def _variant_b(cfg: dict) -> dict:
-        """Pre-TD-gate-restoration (PR #96 shipping): Poisson NLL on TDs with
-        no gate on them. Explicitly forces ``gated_targets=["receptions"]`` so
-        this variant stays meaningful even as the live CONFIG's list evolves."""
-        cfg = copy.deepcopy(cfg)
-        cfg["gated_targets"] = ["receptions"]
-        return cfg
-
-    def _variant_c(cfg: dict) -> dict:
-        """Current shipping: Poisson NLL on TDs + BCE gate on each TD head on top
-        of the reception hurdle."""
-        cfg = copy.deepcopy(cfg)
-        cfg["gated_targets"] = ["receptions", "rushing_tds", "receiving_tds"]
-        return cfg
-
-    variants = [
-        ("A", "Huber + gate on TDs (pre-PR-2 baseline)", _variant_a),
-        ("B", "Poisson NLL, no TD gate (PR #96 config)", _variant_b),
-        ("C", "Poisson NLL + gate on TDs (current shipping)", _variant_c),
-    ]
+    from src.tuning.ablate_rb_gate import VARIANTS, print_summary
 
     rows: list[dict] = []
-    for name, label, fn in variants:
-        print(f"\n{'=' * 72}\nVariant {name}: {label}\n{'=' * 72}", flush=True)
+    for variant in sorted(VARIANTS):
+        label, fn = VARIANTS[variant]
+        print(f"\n{'=' * 72}")
+        print(f"Variant {variant}: {label}")
+        print(f"{'=' * 72}", flush=True)
         result = run(train_df, val_df, test_df, seed=seed, config=fn(CONFIG))
-        attn = result.get("attn_nn_metrics")
+        attn = result.get("attn_nn_metrics") or result.get("metrics", {}).get("attn_nn")
         if attn is None:
-            raise RuntimeError(f"Variant {name}: attn_nn_metrics missing from pipeline result")
-        row = {
-            "variant": name,
-            "label": label,
-            "fp_mae": attn["total"]["mae"],
-            "fp_rmse": attn["total"]["rmse"],
-            "rushing_tds_mae": attn["rushing_tds"]["mae"],
-            "receiving_tds_mae": attn["receiving_tds"]["mae"],
-            "receptions_mae": attn["receptions"]["mae"],
-            "gate_aucs": {
-                t: attn[t].get("gate_auc")
-                for t in attn
-                if isinstance(attn.get(t), dict) and "gate_auc" in attn[t]
-            },
-        }
-        rows.append(row)
-
-    print(f"\n{'=' * 72}\nRB TD-gate ablation — summary\n{'=' * 72}")
-    print(
-        f"{'Var':<4}{'FP MAE':>10}{'FP RMSE':>10}{'Rush TD MAE':>14}"
-        f"{'Rec TD MAE':>14}{'Rec MAE':>10}"
-    )
-    print("-" * 62)
-    for r in rows:
-        print(
-            f"{r['variant']:<4}{r['fp_mae']:>10.3f}{r['fp_rmse']:>10.3f}"
-            f"{r['rushing_tds_mae']:>14.3f}{r['receiving_tds_mae']:>14.3f}"
-            f"{r['receptions_mae']:>10.3f}"
+            raise RuntimeError(
+                f"Variant {variant}: could not find attn_nn_metrics in result keys "
+                f"{sorted(result.keys())}"
+            )
+        rows.append(
+            {
+                "variant": variant,
+                "label": label,
+                "seed": seed,
+                "fp_mae": attn["total"]["mae"],
+                "fp_rmse": attn["total"]["rmse"],
+                "rushing_tds_mae": attn["rushing_tds"]["mae"],
+                "receiving_tds_mae": attn["receiving_tds"]["mae"],
+                "fumbles_lost_mae": attn["fumbles_lost"]["mae"],
+                "receptions_mae": attn["receptions"]["mae"],
+                "rushing_yards_mae": attn["rushing_yards"]["mae"],
+                "receiving_yards_mae": attn["receiving_yards"]["mae"],
+                "count_target_mae_sum": (
+                    attn["rushing_tds"]["mae"]
+                    + attn["receiving_tds"]["mae"]
+                    + attn["fumbles_lost"]["mae"]
+                ),
+                "gate_aucs": {
+                    t: attn[t].get("gate_auc")
+                    for t in attn
+                    if isinstance(attn.get(t), dict) and "gate_auc" in attn[t]
+                },
+            }
         )
-    if any(r["gate_aucs"] for r in rows):
-        print("\nGate AUCs (attention NN, gated targets only):")
-        for r in rows:
-            if r["gate_aucs"]:
-                auc_str = ", ".join(
-                    f"{t}={auc:.3f}" if auc is not None else f"{t}=n/a"
-                    for t, auc in r["gate_aucs"].items()
-                )
-                print(f"  {r['variant']}: {auc_str}")
 
-    by_var = {r["variant"]: r for r in rows}
-    a, b, c = by_var["A"]["fp_mae"], by_var["B"]["fp_mae"], by_var["C"]["fp_mae"]
-    margin_a = b - a
-    margin_c = b - c
-    print(f"\nFP-MAE margin vs B (positive = gate helps): A={margin_a:+.3f}, C={margin_c:+.3f}")
-    if max(margin_a, margin_c) >= 0.05:
-        print("Decision: keep a gate on TDs — exceeds 0.05 pt/game threshold.")
-    else:
-        print("Decision: drop gate on TDs (variant B wins) — below 0.05 pt/game threshold.")
+    print_summary(rows)
 
 
 def main():

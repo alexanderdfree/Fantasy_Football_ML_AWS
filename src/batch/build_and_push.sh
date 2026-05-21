@@ -50,7 +50,7 @@ echo "==> docker build"
 docker build \
   --platform linux/amd64 \
   --build-arg PULL_THROUGH_PREFIX="$PULL_THROUGH_PREFIX" \
-  -f batch/Dockerfile.train \
+  -f src/batch/Dockerfile.train \
   -t "$IMAGE_URI" \
   .
 

@@ -422,10 +422,18 @@ def main():
 
     succeeded = [pos for pos, (status, _) in results.items() if status == "SUCCEEDED"]
     failed = [pos for pos, (status, _) in results.items() if status == "FAILED"]
+    timed_out = [pos for pos, (status, _) in results.items() if status == "TIMED_OUT"]
     stopped_at_by_pos = {pos: stopped_at for pos, (_, stopped_at) in results.items()}
 
     if failed:
         print(f"\nFailed positions: {failed}")
+    if timed_out:
+        # TIMED_OUT lands here when `wait_for_jobs` hits the wall-clock cap
+        # before Batch reports a terminal state — the job may still be
+        # running; failing it from this view prevents downstream artifact
+        # downloads but lets the operator decide whether to wait, cancel,
+        # or rerun.
+        print(f"\nTimed-out positions: {timed_out}")
     if succeeded:
         print(f"\nSucceeded: {succeeded}")
         print("Downloading model artifacts...")

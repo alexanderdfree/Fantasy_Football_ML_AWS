@@ -27,8 +27,18 @@ jobs:
       - uses: actions/checkout@v6
         with:
           # workflow_run: the merged SHA on main. workflow_dispatch: the
-          # ref we were dispatched on. fetch-depth: 2 is the minimum to
-          # resolve HEAD^ for git diff.
+          # ref we were dispatched on.
+          #
+          # fetch-depth: 2 is the minimum to resolve ``HEAD^`` for ``git
+          # diff HEAD^ HEAD`` (the workflow_run path below). It is also
+          # safe for workflow_dispatch: that branch returns early at
+          # ``echo positions=$ALL`` before ever touching git history, so
+          # the dispatch flow never needs more than HEAD itself. Were a
+          # future refactor to reorder the dispatch handling below the
+          # diff, the existing ``if ! git rev-parse --verify HEAD^`` guard
+          # at line ~86 would fall through to the "default to all
+          # positions" branch rather than crashing — bump this to 0 (full
+          # clone) only if a future change actually needs deeper history.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 2
           # The detect job only reads the diff and shells out to a pure-stdlib

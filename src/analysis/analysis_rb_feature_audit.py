@@ -37,13 +37,17 @@ import sys
 import warnings
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-from scipy.stats import spearmanr
-from sklearn.decomposition import PCA
-from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import StandardScaler
+import matplotlib
+
+matplotlib.use("Agg")  # headless-safe; this script writes PNGs, no GUI needed
+
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from scipy.stats import spearmanr  # noqa: E402
+from sklearn.decomposition import PCA  # noqa: E402
+from sklearn.linear_model import LinearRegression  # noqa: E402
+from sklearn.preprocessing import StandardScaler  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
