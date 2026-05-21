@@ -335,9 +335,10 @@ def build_game_history_arrays(
         raise KeyError(
             f"build_game_history_arrays: history_stats columns missing from df: "
             f"{missing}. Likely cause: data/splits/*.parquet was generated before "
-            f"these columns were added to a position's ATTN_HISTORY_STATS — "
-            f"trigger refresh-splits.yml (or regenerate via the SETUP.md data-pull "
-            f"snippet and re-upload to S3) so the splits include the new columns."
+            f"these columns were added to a position's per-game attention "
+            f"history list — trigger refresh-splits.yml (or regenerate via the "
+            f"SETUP.md data-pull snippet and re-upload to S3) so the splits "
+            f"include the new columns."
         )
     game_dim = len(history_stats)
 
