@@ -6,3 +6,4 @@ pytest-timeout>=2.0
 pytest-cov>=4.0
 pytest-xdist>=3.6
 ruff==0.15.0
+optuna==4.8.0  # src/tuning/tune_lgbm.py + tune_nn.py + tests/tuning/ — matches src/batch/requirements.txt

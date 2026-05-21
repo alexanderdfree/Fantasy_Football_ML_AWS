@@ -233,6 +233,21 @@ def _run_nn_training(
         head_losses=head_losses,
         **(loss_kwargs or {}),
     )
+    # Optuna pruning hook from src/tuning/tune_nn.py. Sourced from cfg so the
+    # run() / run_pipeline() signatures stay untouched. Gated on attention
+    # trainer kinds because the tuner targets attention NN — without this gate
+    # the callback would also fire for the regular MultiHeadNet phase that
+    # runs first in the pipeline, mingling two unrelated loss trajectories
+    # and breaking the pruner's monotonicity assumption.
+    _ATTENTION_TRAINERS = (
+        "MultiHeadHistoryTrainer",
+        "MultiHeadHistoryWithOppTrainer",
+        "MultiHeadNestedHistoryTrainer",
+    )
+    cfg_epoch_cb = (
+        cfg.get("epoch_callback") if trainer_cls.__name__ in _ATTENTION_TRAINERS else None
+    )
+
     trainer = trainer_cls(
         model=model,
         optimizer=optimizer,
@@ -243,6 +258,7 @@ def _run_nn_training(
         patience=patience,
         scheduler_per_batch=scheduler_per_batch,
         log_every=_resolve_nn_log_every(cfg),
+        epoch_callback=cfg_epoch_cb,
     )
     return trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 
@@ -1587,6 +1603,12 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     if attn_nn_metrics is not None:
         result["attn_nn_metrics"] = attn_nn_metrics
         result["attn_nn_ranking"] = attn_nn_ranking
+        # Per-epoch attention training curves (dict of "val_loss" / "train_loss"
+        # / "val_mae_{t}" / "val_loss_{t}" lists). Exposed for src/tuning/
+        # tune_nn.py — the tuner uses min(history["val_loss"]) as the Optuna
+        # trial objective so the search optimizes against val, not the leakage-
+        # prone test metrics above.
+        result["attn_history"] = attn_history
     if lgbm_metrics is not None:
         result["lgbm_metrics"] = lgbm_metrics
         result["lgbm_ranking"] = lgbm_ranking
