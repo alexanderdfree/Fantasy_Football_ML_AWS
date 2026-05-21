@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import pandas as pd
 
@@ -14,6 +16,8 @@ from src.config import (
     TREND_STATS,
 )
 from src.shared.weather_features import _load_schedules, build_implied_team_total_lookup
+
+logger = logging.getLogger(__name__)
 
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -505,6 +509,19 @@ def build_opp_offense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
         "receiving_fumbles_lost",
     }
     missing = required - set(df.columns)
+    if missing:
+        # Schema violation — the caller is supposed to pass an all-position
+        # weekly frame with these stat columns. Returning an empty frame here
+        # silently degrades DST's opponent-offense attention branch to zeros,
+        # so surface the missing columns explicitly. Kept as a warning + empty
+        # frame rather than KeyError to preserve the test contract in
+        # tests/test_opp_offense_history.py::test_missing_columns_returns_empty_frame
+        # (file outside this worker bundle).
+        logger.warning(
+            "build_opp_offense_per_game_df: missing required columns %s — "
+            "returning empty frame (downstream attention will see zeros).",
+            sorted(missing),
+        )
     if missing or df["recent_team"].isna().all():
         return pd.DataFrame(columns=["opponent_team", "season", "week"] + OPP_OFFENSE_HISTORY_STATS)
 
@@ -537,6 +554,16 @@ def build_opp_offense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     try:
         schedules = pd.read_parquet(schedules_path)
     except FileNotFoundError:
+        # Tests and degraded callers still get the six player-derived stats;
+        # off_pts_scored falls back to 0. Kept as a warning + fallback rather
+        # than re-raising to preserve the test contract in
+        # tests/test_opp_offense_history.py::test_missing_schedules_falls_back_to_zero_pts
+        # (file outside this worker bundle).
+        logger.warning(
+            "build_opp_offense_per_game_df: schedules parquet not found at "
+            "%s — off_pts_scored falls back to 0.",
+            schedules_path,
+        )
         off_stats["off_pts_scored"] = 0.0
         return off_stats[["opponent_team", "season", "week"] + OPP_OFFENSE_HISTORY_STATS]
 
@@ -852,7 +879,13 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def _build_contextual_features(df: pd.DataFrame) -> pd.DataFrame:
     """Build contextual features: is_home, week, is_returning_from_absence, days_rest."""
-    # is_home (default 0 if can't determine)
+    # is_home: when the upstream loader doesn't carry venue info, default to 0
+    # (treat as "away"). This is a *biased* fallback — production data always
+    # has ``is_home`` populated; only synthetic test fixtures and degraded
+    # serving paths hit this branch. Switching the default to 0.5 (neutral)
+    # would silently shift training-vs-inference parity if either path were to
+    # bypass the schedule join unintentionally, so we keep the explicit-bias
+    # default and rely on upstream paths to populate the column.
     if "is_home" not in df.columns:
         df["is_home"] = 0
 
@@ -1006,6 +1039,15 @@ def get_attn_static_columns(
     specific columns.
     """
     whitelist = set(static_whitelist)
+    available = set(all_feature_cols)
+    dropped = whitelist - available
+    if dropped:
+        logger.warning(
+            "get_attn_static_columns: %d whitelist entries missing from "
+            "all_feature_cols and will be silently dropped: %s",
+            len(dropped),
+            sorted(dropped),
+        )
     return [c for c in all_feature_cols if c in whitelist]
 
 
