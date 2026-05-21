@@ -801,10 +801,14 @@ def test_model_architecture_error_handler_returns_json_500(client, monkeypatch):
     monkeypatch.setattr(app_mod, "_position_arch_payload", _boom)
     resp = client.get("/api/model_architecture")
     # Why: the strategy doc requires structured JSON for /api/* errors so the
-    # SPA can surface the message instead of rendering Flask's HTML 500 page.
+    # SPA can surface a message instead of rendering Flask's HTML 500 page.
+    # The body MUST be a fixed generic string (CodeQL py/stack-trace-exposure);
+    # echoing str(e) would leak filesystem paths / config / library internals.
     assert resp.status_code == 500
     assert resp.is_json
-    assert "arch payload exploded" in resp.get_json()["error"]
+    body = resp.get_json()
+    assert "error" in body
+    assert "arch payload exploded" not in body["error"]
 
 
 @pytest.mark.integration

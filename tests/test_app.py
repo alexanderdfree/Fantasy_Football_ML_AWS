@@ -328,13 +328,14 @@ class TestGracefulDegradation:
     errors as structured JSON, not as raw HTML tracebacks.
 
     app.py's `handle_api_error` catches every exception on `/api/*` routes and
-    returns `{"error": str(e)}, 500` — this is the documented failure mode
-    (the strategy doc names 503 as the target for a future refactor, but the
-    current code uses 500; we assert whatever the app actually does).
+    returns `{"error": "Internal server error"}, 500` — a fixed generic
+    message, NOT `str(e)`. Echoing exception text leaked filesystem paths /
+    config / library internals (CodeQL py/stack-trace-exposure). Full
+    traceback is still logged server-side via `traceback.print_exc()`.
     """
 
     def test_predictions_surfaces_load_failure_as_json(self, client, app_module, monkeypatch):
-        """When `_get_data()` raises, /api/predictions returns a JSON error payload."""
+        """When `_get_data()` raises, /api/predictions returns a JSON 500."""
 
         def _boom(*_args, **_kwargs):
             raise RuntimeError("simulated model load failure")
@@ -346,7 +347,8 @@ class TestGracefulDegradation:
         assert r.is_json, f"Expected JSON error body, got {r.content_type}"
         body = r.get_json()
         assert "error" in body
-        assert "simulated model load failure" in body["error"]
+        # Generic message — exception text MUST NOT leak to the client.
+        assert "simulated model load failure" not in body["error"]
         # The handler returns 500 for /api/ routes today
         assert r.status_code == 500
 

@@ -227,8 +227,11 @@ def _records_to_player_rows(df, scoring="ppr"):
 def handle_api_error(e):
     """Return JSON errors for /api/ routes, default HTML for others."""
     if request.path.startswith("/api/"):
+        # Log the full traceback server-side; never echo exception text to the
+        # client. str(e) on a Python exception can leak filesystem paths,
+        # config values, or library internals (CodeQL py/stack-trace-exposure).
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal server error"}), 500
     raise e
 
 
@@ -1981,9 +1984,10 @@ def api_model_architecture():
                 "positions": positions,
             }
         )
-    except Exception as e:
+    except Exception:
+        # Log server-side; don't leak str(e) to caller (py/stack-trace-exposure).
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route("/api/wiki/index")
@@ -2157,4 +2161,9 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5050, use_reloader=False)
+    # Production runs under gunicorn (see Dockerfile CMD); this branch is the
+    # local dev entrypoint. Debug defaults off — set FLASK_DEBUG=1 for the
+    # Werkzeug debugger locally. Bound to 127.0.0.1 so the debugger console is
+    # never reachable off-box even when enabled.
+    debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
+    app.run(debug=debug, host="127.0.0.1", port=5050, use_reloader=False)
