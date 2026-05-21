@@ -205,6 +205,13 @@ jobs:
           }'
           TIMEOUT='{"attemptDurationSeconds": 1800}'
 
+          # NN_DATALOADER_NUM_WORKERS=3 is set at the job-definition level so
+          # every Batch run inherits it (src/shared/training.py reads it; on
+          # g4dn.xlarge with 4 vCPU, 3 prefetch workers keep the GPU fed for
+          # attention training while leaving one core for the CPU branch
+          # overlapped via the ThreadPoolExecutor introduced in 00c6d10).
+          # Per-submission containerOverrides in src/batch/launch.py still
+          # append/override on top of this.
           jq --arg image "$IMAGE_URI" \
              --argjson retry "$RETRY_STRATEGY" \
              --argjson timeout "$TIMEOUT" '
@@ -212,7 +219,14 @@ jobs:
             {
               jobDefinitionName: $d.jobDefinitionName,
               type: $d.type,
-              containerProperties: ($d.containerProperties | .image = $image),
+              containerProperties: (
+                $d.containerProperties
+                | .image = $image
+                | .environment = (
+                    ((.environment // []) | map(select(.name != "NN_DATALOADER_NUM_WORKERS")))
+                    + [{name: "NN_DATALOADER_NUM_WORKERS", value: "3"}]
+                  )
+              ),
               retryStrategy: $retry,
               timeout: $timeout,
               platformCapabilities: ($d.platformCapabilities // []),
