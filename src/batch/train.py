@@ -815,12 +815,6 @@ def main():
         finally:
             _stop_nvidia_smi_sidecar(gpu_sidecar)
 
-    # Copy the sidecar CSV into model_dir so it tars up alongside
-    # benchmark_metrics.json. Cheap (~15 KB for a 2-min run) and means a single
-    # tarball download exposes both training metrics and GPU utilisation.
-    if os.path.exists(gpu_profile_csv):
-        shutil.copy2(gpu_profile_csv, os.path.join(model_dir, f"gpu_profile_{pos}.csv"))
-
     # Copy model artifacts to output dir FIRST so a later metrics write cannot
     # be clobbered by a same-named file under src_model_dir.
     src_model_dir = os.path.join(pos.lower(), "outputs", "models")
@@ -830,6 +824,15 @@ def main():
             _replace_model_dir_contents(src_model_dir, model_dir)
     else:
         print(f"WARNING: No model directory found at {src_model_dir}")
+
+    # Copy the sidecar CSV into model_dir so it tars up alongside
+    # benchmark_metrics.json. MUST come AFTER _replace_model_dir_contents —
+    # that helper wipes model_dir before copytree, so a copy placed earlier
+    # gets deleted before upload (K job at 06:50Z lost its CSV this way).
+    # Cheap (~15 KB for a 2-min run); the single tarball download exposes both
+    # training metrics and GPU utilisation.
+    if os.path.exists(gpu_profile_csv):
+        shutil.copy2(gpu_profile_csv, os.path.join(model_dir, f"gpu_profile_{pos}.csv"))
 
     # Save benchmark metrics as JSON (after artifacts so it can't be overwritten).
     # upload_artifacts() requires benchmark_metrics.json, so this must come
