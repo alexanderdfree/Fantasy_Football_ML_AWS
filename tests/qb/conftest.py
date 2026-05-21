@@ -6,6 +6,9 @@ QB historically refers to the position-df factory as ``make_df`` rather than
 ``make_position_df``, so we pass the name through ``position_df_fixture_name``.
 """
 
+import pandas as pd
+import pytest
+
 from src.qb.config import POSITION_CONFIG
 from tests.shared.position_fixtures import (
     register_position_markers,
@@ -28,3 +31,46 @@ register_standard_fixtures(
     stat_col="passing_yards",
     position_df_fixture_name="make_df",
 )
+
+
+def _build_qb_row(**overrides) -> pd.DataFrame:
+    """Single-row QB DataFrame with sensible defaults; fantasy_points auto-computed."""
+    defaults = {
+        "passing_yards": 250,
+        "rushing_yards": 20,
+        "receiving_yards": 0,
+        "receptions": 0,
+        "passing_tds": 2,
+        "rushing_tds": 0,
+        "receiving_tds": 0,
+        "interceptions": 1,
+        "sack_fumbles_lost": 0,
+        "rushing_fumbles_lost": 0,
+        "receiving_fumbles_lost": 0,
+        "fantasy_points": 0.0,
+    }
+    defaults.update(overrides)
+    if "fantasy_points" not in overrides:
+        fp = (
+            defaults["passing_yards"] * 0.04
+            + defaults["rushing_yards"] * 0.1
+            + defaults["receiving_yards"] * 0.1
+            + defaults["receptions"] * 1.0
+            + defaults["passing_tds"] * 4
+            + (defaults["rushing_tds"] + defaults["receiving_tds"]) * 6
+            + defaults["interceptions"] * -2
+            + (
+                defaults["sack_fumbles_lost"]
+                + defaults["rushing_fumbles_lost"]
+                + defaults["receiving_fumbles_lost"]
+            )
+            * -2
+        )
+        defaults["fantasy_points"] = fp
+    return pd.DataFrame([defaults])
+
+
+@pytest.fixture(scope="session")
+def make_qb_row():
+    """Factory for single-row QB target inputs."""
+    return _build_qb_row

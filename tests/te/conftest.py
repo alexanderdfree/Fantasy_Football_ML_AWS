@@ -44,8 +44,42 @@ register_standard_fixtures(
 
 
 # ---------------------------------------------------------------------------
-# TE-specific: tiny synthetic dataset for E2E + regression tests
+# TE-specific: target-row factory and tiny synthetic dataset for E2E + regression
 # ---------------------------------------------------------------------------
+
+
+def _build_te_row(**overrides) -> pd.DataFrame:
+    """Single-row TE DataFrame with sensible defaults; fantasy_points auto-computed."""
+    from src.config import SCORING_PPR
+    from src.data.loader import compute_fantasy_points
+
+    defaults = {
+        "receiving_yards": 55,
+        "rushing_yards": 0,
+        "receptions": 4,
+        "targets": 6,
+        "receiving_tds": 1,
+        "rushing_tds": 0,
+        "sack_fumbles_lost": 0,
+        "rushing_fumbles_lost": 0,
+        "receiving_fumbles_lost": 0,
+        "passing_yards": 0,
+        "passing_tds": 0,
+        "interceptions": 0,
+        "fantasy_points": 0.0,
+    }
+    defaults.update(overrides)
+    if "fantasy_points" not in overrides:
+        defaults["fantasy_points"] = float(
+            compute_fantasy_points(pd.DataFrame([defaults]), SCORING_PPR).iloc[0]
+        )
+    return pd.DataFrame([defaults])
+
+
+@pytest.fixture(scope="session")
+def make_te_row():
+    """Factory for single-row TE target inputs."""
+    return _build_te_row
 
 
 @pytest.fixture(scope="session")
