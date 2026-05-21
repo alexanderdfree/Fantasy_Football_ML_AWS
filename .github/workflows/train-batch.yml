@@ -67,27 +67,48 @@ jobs:
     uses: ./.github/workflows/_detect-positions.yml
 
   dedup_check:
-    # Workflow-level concurrency serializes same-SHA runs. By the time a
-    # queued duplicate runs this job, the first run has either succeeded
-    # (this sets skip=true → train short-circuits) or failed (skip=false →
-    # train retries). Manual workflow_dispatch bypasses dedup because
-    # operators dispatch deliberately. Even on the first run for a fresh
-    # SHA the API call is ~3 s — cheap enough that the always-on overhead
-    # is invisible compared to the ~15 min train job it potentially saves.
+    # GitHub Actions fires workflow_run.completed multiple times per
+    # upstream completion (observed 2–3 deliveries per merge). The
+    # workflow-level concurrency group serializes same-SHA runs, then
+    # this job short-circuits subsequent duplicates by checking an S3
+    # success marker that the train job writes only on real train
+    # success. Manual workflow_dispatch bypasses dedup because operators
+    # dispatch deliberately. S3 HEAD is ~200 ms — invisible compared to
+    # the ~15 min train job it potentially saves.
+    #
+    # S3 marker (not the prior `gh run list --commit "$HEAD_SHA"` query):
+    # GitHub Actions exposes TWO different head_sha values on a
+    # workflow_run-triggered run — the event-payload
+    # `workflow_run.head_sha` (stable, = the SHA the upstream image was
+    # built FROM) and the run-LEVEL head_sha (= current main HEAD when
+    # the downstream run was queued). `gh run list --commit` filters by
+    # the latter, but the dedup query passed the former, so on rapid
+    # back-to-back merges the two diverged for the same run and dedup
+    # false-skipped genuine trains (PR #309 on 2026-05-21, deduped
+    # against PR #307's run #69 whose run-level head_sha had raced to
+    # 04ef622). The S3 marker is keyed by workflow_run.head_sha — the
+    # same identifier used by the working job-def-revisions/${HEAD_SHA}.txt
+    # pattern below — so writer and reader can't drift. The marker is
+    # written by the train job ONLY after artifact-freshness passes, so
+    # it also fixes the prior bug where a positions=empty run that
+    # skipped train was treated as a "successful train" by dedup.
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.check.outputs.skip }}
     permissions:
       contents: read
-      actions: read
     steps:
+      - name: Configure AWS credentials
+        if: github.event_name == 'workflow_run'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
       - id: check
         env:
-          GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          RUN_ID: ${{ github.run_id }}
-          REPO: ${{ github.repository }}
         run: |
           set -eu
           if [ "$EVENT_NAME" != "workflow_run" ]; then
@@ -95,29 +116,14 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # --commit filters server-side, so the --limit cap is now "up to N
-          # runs for THIS SHA" (effectively unbounded — a SHA realistically
-          # only fires 2-3 duplicates) rather than "up to N total successes
-          # across all SHAs" (where 20+ unrelated successes could mask Run 1).
-          # `|| echo "0"` defaults to "no prior found → proceed" if the gh
-          # API call fails transiently — better to over-run (one unnecessary
-          # re-train) than under-train (silent skip due to network blip,
-          # because `needs: dedup_check` would otherwise cascade to a train-
-          # job skip if this job exits non-zero under set -eu).
-          PRIOR=$(gh run list \
-            --repo "$REPO" \
-            --workflow=train-batch.yml \
-            --commit "$HEAD_SHA" \
-            --status=success \
-            --limit=20 \
-            --json databaseId \
-            --jq "[.[] | select((.databaseId | tostring) != \"$RUN_ID\")] | length" \
-            2>/dev/null || echo "0")
-          if [ "${PRIOR:-0}" -gt 0 ]; then
-            echo "Found $PRIOR prior successful train-batch run(s) for $HEAD_SHA — short-circuiting."
+          if aws s3api head-object \
+               --bucket "$S3_BUCKET" \
+               --key "train-success-markers/${HEAD_SHA}.txt" \
+               --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Found prior train-success marker for $HEAD_SHA — short-circuiting."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No prior successful runs for $HEAD_SHA — proceeding."
+            echo "No prior marker for $HEAD_SHA — proceeding."
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -261,6 +267,27 @@ jobs:
             echo "| $POS | $status | $LM | $mb |" >> "$GITHUB_STEP_SUMMARY"
           done
           exit $fail
+
+      - name: Write train-success marker for dedup
+        # Atomic dedup marker for the next workflow_run.completed delivery
+        # of the same upstream image build (GitHub fires 2–3 per upstream
+        # completion). Keyed by workflow_run.head_sha to match the
+        # job-def-revisions/ convention below — same identifier on both
+        # writer and reader prevents the run-level vs workflow_run
+        # head_sha drift that false-skipped PR #309 on 2026-05-21.
+        # Placed AFTER freshness verification so we only mark genuine
+        # train successes, never positions=empty no-ops; BEFORE benchmark
+        # commit so a transient git-push failure on benchmark_history/
+        # still leaves the marker (re-runs hit the benchmark-only path,
+        # not a full retrain).
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          printf '%s\n' "${GITHUB_RUN_ID}" | aws s3 cp - \
+            "s3://${S3_BUCKET}/train-success-markers/${HEAD_SHA}.txt" \
+            --region "$AWS_REGION" \
+            --no-cli-pager
 
       - name: Append Batch run to benchmark_history/
         # MUST run before "Refresh ECS service" — the benchmark append also
