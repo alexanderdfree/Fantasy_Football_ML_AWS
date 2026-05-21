@@ -13,7 +13,11 @@ from src.config import (
     SHARE_WINDOWS,
     TREND_STATS,
 )
-from src.shared.weather_features import _load_schedules, build_implied_team_total_lookup
+from src.shared.weather_features import (
+    _TEAM_CODE_NORMALIZATION,
+    _load_schedules,
+    build_implied_team_total_lookup,
+)
 
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -78,9 +82,19 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     #    the *combined* total (rather than separate rushing/receiving sums)
     #    avoids re-introducing the prior_season_*_rushing_yards redundancy
     #    PR #190 found with prior_season_*_carries.
-    #  * prior_season_games_played: count of S-1 game rows. Lets Ridge / the
-    #    base NN convert per-game means (mean_carries, mean_targets, etc.)
-    #    to season totals — closes the volume gap for non-TD components.
+    #  * prior_season_games_played: count of S-1 game rows that *survived
+    #    preprocess* — i.e. games the player was active for and accumulated
+    #    measurable stats in. Despite the name, this is **not** the schedule's
+    #    games-played count: byes, suspensions, IR weeks, and inactive
+    #    games are all excluded by the upstream preprocess filter. A 16-game
+    #    season with a 3-game IR stint reads as 13, not 16. The semantic is
+    #    "games active". Treated as a feature it still gives Ridge / the base
+    #    NN the volume normaliser they need (per-game means × games → season
+    #    totals), and the discrepancy is small for the cohort that drives
+    #    fantasy decisions (top-60 RBs/WRs typically miss 0–3 games). Sourcing
+    #    from schedule would require an extra join with debatable benefit;
+    #    keeping the active-games proxy and documenting the semantic is the
+    #    lower-risk option per audit-318 (W.SHARED-ENG, medium).
     #  * prior_season_mean_fumbles_lost: per-game fumble rate. Negative-FP
     #    component currently absent from every prior_season aggregate. Mean
     #    rather than total because rates compose better with the existing
@@ -433,6 +447,14 @@ def build_opp_defense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
         return def_stats[["opponent_team", "season", "week"] + OPP_DEFENSE_HISTORY_STATS]
 
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
+    # Normalize historical team codes (OAK→LV, SD→LAC, STL→LA) so the join
+    # finds rows for relocated franchises in their pre-relocation seasons.
+    # Mirrors _build_team_schedule_lookup / build_implied_team_total_lookup
+    # in src.shared.weather_features. Without this, def_pts_allowed for a
+    # team like OAK in 2017–2019 silently fills with 0 because the schedule
+    # already uses "LV" while the player frame still carries "OAK".
+    schedules_reg["away_team"] = schedules_reg["away_team"].replace(_TEAM_CODE_NORMALIZATION)
+    schedules_reg["home_team"] = schedules_reg["home_team"].replace(_TEAM_CODE_NORMALIZATION)
     away_pts = schedules_reg[["season", "week", "away_team", "home_score"]].copy()
     away_pts.columns = ["season", "week", "team", "def_pts_allowed"]
     home_pts = schedules_reg[["season", "week", "home_team", "away_score"]].copy()
@@ -541,6 +563,12 @@ def build_opp_offense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
         return off_stats[["opponent_team", "season", "week"] + OPP_OFFENSE_HISTORY_STATS]
 
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
+    # Normalize historical team codes (OAK→LV, SD→LAC, STL→LA) — mirror of the
+    # def-side normalization in build_opp_defense_per_game_df. Without it,
+    # off_pts_scored for relocated franchises in pre-relocation seasons
+    # silently fills with 0 because the schedule already uses the new code.
+    schedules_reg["home_team"] = schedules_reg["home_team"].replace(_TEAM_CODE_NORMALIZATION)
+    schedules_reg["away_team"] = schedules_reg["away_team"].replace(_TEAM_CODE_NORMALIZATION)
     home_pts = schedules_reg[["season", "week", "home_team", "home_score"]].copy()
     home_pts.columns = ["season", "week", "team", "off_pts_scored"]
     away_pts = schedules_reg[["season", "week", "away_team", "away_score"]].copy()
@@ -803,6 +831,13 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     # _load_schedules already filters to game_type == "REG".
     schedules_reg = _load_schedules().copy()
 
+    # Normalize historical team codes (OAK→LV, SD→LAC, STL→LA) so the join
+    # against opponent_team matches for relocated franchises in their
+    # pre-relocation seasons. Mirrors build_opp_defense_per_game_df's
+    # normalization. Without this, opp_def_pts_allowed_L5 for a team like
+    # OAK in 2017–2019 silently fills with 0.
+    schedules_reg["away_team"] = schedules_reg["away_team"].replace(_TEAM_CODE_NORMALIZATION)
+    schedules_reg["home_team"] = schedules_reg["home_team"].replace(_TEAM_CODE_NORMALIZATION)
     away_pts = schedules_reg[["season", "week", "away_team", "home_score"]].copy()
     away_pts.columns = ["season", "week", "team", "points_allowed"]
     home_pts = schedules_reg[["season", "week", "home_team", "away_score"]].copy()
