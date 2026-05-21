@@ -40,6 +40,16 @@ jobs:
   # main requires those checks to pass before a PR can merge, so we trust
   # the merged SHA here and go straight to building the image.
   build-and-push:
+    # Honor the [docs-only] tag from tests.yml's detect job convention. Path
+    # filters above already skip pure .md PRs, but a [docs-only]-tagged PR
+    # that touches .py files (e.g. a docstring fix, ruff I001 import
+    # reorder) would otherwise still rebuild the image and cascade into
+    # train-batch.yml. Squash merges carry constituent commit messages in
+    # the body, so the tag survives the merge and lands in
+    # head_commit.message. workflow_dispatch has no head_commit; contains()
+    # returns false on null → workflow runs (correct, manual dispatch is
+    # operator-driven and should always build).
+    if: "!contains(github.event.head_commit.message, '[docs-only]')"
     runs-on: ubuntu-latest
     permissions:
       contents: read

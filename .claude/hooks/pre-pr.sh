@@ -16,6 +16,28 @@ fi
 
 cd "$CLAUDE_PROJECT_DIR"
 
+# --- Early bail: [docs-only] tag opts out of B1 (ruff/pytest) AND B2 (benchmark).
+# Mirrors tests.yml's detect job convention and batch-image.yml / _detect-positions.yml
+# tag-respect. CI's tests-pass already short-circuits on the same tag. Trust contract:
+# the author asserts the change is non-behavioral; CI does not verify. Saves the gate
+# from environmental flakes (xdist races, miniforge3 vs .venv) on PRs that don't need
+# pytest. Skip if no upstream ref can be resolved — better to run the gate than
+# silently skip on a fresh repo.
+docs_only_base=""
+for ref in origin/main main origin/master master; do
+  if git rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
+    if docs_only_base=$(git merge-base "$ref" HEAD 2>/dev/null) && [ -n "$docs_only_base" ]; then
+      break
+    fi
+    docs_only_base=""
+  fi
+done
+if [ -n "$docs_only_base" ] && \
+   git log --format=%B "$docs_only_base..HEAD" 2>/dev/null | grep -qF '[docs-only]'; then
+  echo "pre-pr hook: [docs-only] detected in BASE..HEAD commit history — skipping ruff/pytest/benchmark gates" >&2
+  exit 0
+fi
+
 # Locate tools: prefer project venv, fall back to PATH.
 if [ -x ".venv/bin/ruff" ]; then
   ruff=".venv/bin/ruff"
