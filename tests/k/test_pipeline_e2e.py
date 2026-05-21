@@ -147,3 +147,67 @@ def test_pipeline_bit_identical_across_seeded_runs(pipeline_run, pipeline_run_re
                 p2[key],
                 err_msg=f"{model_name} {key} differs across seeded runs",
             )
+
+
+# ---------------------------------------------------------------------------
+# Regression test: H1 — K's aggregate_fn must subtract miss penalties.
+#
+# Before the fix, ``build_pipeline_config`` skipped ``cfg["aggregate_fn"]`` for
+# K, and ``_total(preds)`` in ``src/shared/pipeline.py`` fell back to
+# ``sum(preds[t] for t in targets)`` — which added ``fg_misses`` and
+# ``xp_misses`` as positive, inflating every K ``pred_*_total`` column,
+# corrupting ``compute_ranking_metrics``, and corrupting the K row of
+# ``benchmark_history/{run_id}.json``. Serving was unaffected (already
+# applied ``target_signs`` directly).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_build_pipeline_config_registers_k_aggregate_fn():
+    """``build_pipeline_config('K', POSITION_CONFIG)`` must populate
+    ``cfg['aggregate_fn']`` with a callable that subtracts ``fg_misses``
+    and ``xp_misses`` (matching K's ``target_signs = [+1, +1, -1, -1]``).
+
+    Without this, ``_total(preds)`` falls back to ``sum(preds[t] for t in
+    targets)`` and silently adds miss penalties as positive — inflating
+    every K ``pred_*_total`` column.
+    """
+    from src.k.config import POSITION_CONFIG
+    from src.shared.position_pipeline import build_pipeline_config
+
+    cfg = build_pipeline_config("K", POSITION_CONFIG)
+    assert "aggregate_fn" in cfg, (
+        "K is missing cfg['aggregate_fn']; _total(preds) will fall back to "
+        "sum() and add miss penalties as positive (H1 regression)."
+    )
+
+    preds = {
+        "fg_yard_points": np.array([10.0, 6.0, 3.0]),
+        "pat_points": np.array([2.0, 1.0, 4.0]),
+        "fg_misses": np.array([1.0, 0.0, 2.0]),
+        "xp_misses": np.array([0.0, 1.0, 1.0]),
+    }
+    expected = (
+        preds["fg_yard_points"] + preds["pat_points"] - preds["fg_misses"] - preds["xp_misses"]
+    )
+    actual = cfg["aggregate_fn"](preds)
+    np.testing.assert_array_equal(
+        actual,
+        expected,
+        err_msg=(
+            "K aggregate_fn must apply target_signs [+1, +1, -1, -1]; "
+            "got naive-sum behaviour instead."
+        ),
+    )
+
+    # And confirm the sign vector actually matters: the buggy fallback would
+    # return the naive sum, which is strictly larger here (misses are >= 0).
+    naive_sum = sum(preds[t] for t in ("fg_yard_points", "pat_points", "fg_misses", "xp_misses"))
+    assert np.all(actual <= naive_sum), (
+        "Sanity guard: the correct aggregator must produce totals <= naive sum "
+        "when miss counts are non-negative."
+    )
+    assert np.any(actual < naive_sum), (
+        "Sanity guard: at least one synthetic row should have non-zero misses "
+        "so the test actually exercises the sign flip."
+    )
