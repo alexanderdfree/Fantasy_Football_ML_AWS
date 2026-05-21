@@ -33,6 +33,11 @@ on:
     # only edited a hyperparameter / docstring / comment costs ~1-2 min of
     # CI (checkout + uv install + footer read), not the full ~10 min regen.
     #
+    # Skill-position configs only (QB/RB/WR/TE) — K and DST have their own
+    # data paths (src/k/data.py, src/dst/data.py) that don't touch
+    # data/splits/, so their config edits are out of scope for this
+    # workflow. The smart-skip step below mirrors the same scoping.
+    #
     # The path list intentionally excludes ``src/features/`` — engineer.py
     # builds features FROM the split parquet, it doesn't change what the
     # parquet's column set looks like.
@@ -41,8 +46,6 @@ on:
       - "src/rb/config.py"
       - "src/wr/config.py"
       - "src/te/config.py"
-      - "src/k/config.py"
-      - "src/dst/config.py"
       - "src/data/**"
       # Self-edit trigger: a path-filter change in this file takes effect on
       # its own merge, no separate manual dispatch needed.
@@ -131,9 +134,18 @@ jobs:
         #   ``include_features`` cols are zero-filled by ``feature_build.py``
         #   (warned, not raised), so they don't gate training.
         #
-        # Fall-through-on-error: if the S3 schema read fails (bucket empty,
-        # IAM hiccup, parquet corrupt), set skip=false and let the regen run
-        # — that's the safer default.
+        # Fall-through-on-error scope: only S3 / parquet read failures
+        # (bucket empty, IAM hiccup, parquet corrupt) are caught below and
+        # set skip=false to let the regen run. An upstream failure — a
+        # malformed position config that raises on import, e.g. — propagates
+        # and fails the workflow loudly. That's the right asymmetry: bad
+        # configs should never silently fall through to a regen.
+        #
+        # Only ``data/val.parquet`` is sampled. train/val/test are
+        # partitions of the same preprocessed frame in ``temporal_split``
+        # ([src/data/split.py](src/data/split.py)) so their column sets are
+        # identical by construction; reading one is sufficient and val is
+        # the smallest.
         env:
           AWS_S3_KEY: "data/val.parquet"
         run: |
@@ -142,6 +154,7 @@ jobs:
           import os
           import sys
 
+          import pyarrow as pa
           import pyarrow.parquet as pq
           from pyarrow import fs
 
@@ -158,7 +171,9 @@ jobs:
           key = os.environ["AWS_S3_KEY"]
           try:
               schema = pq.read_schema(f"{bucket}/{key}", filesystem=s3)
-          except Exception as e:  # noqa: BLE001 — fall through and regen on any error.
+          except (pa.ArrowInvalid, OSError) as e:
+              # S3 connectivity / parquet corruption only — see step comment
+              # for why a malformed config is intentionally NOT caught here.
               print(f"S3 schema read failed: {e!r} — will regen")
               with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                   f.write("skip=false\n")
