@@ -1048,9 +1048,18 @@ function formatTrainingTime(seconds) {
 }
 
 function renderMaePills(pills) {
+    // The API now always emits six pills per cell (one per position), with
+    // mae=null where that position-model pair didn't train (partial runs,
+    // [docs-only] sentinel files). Empty-array path remains for defensive
+    // robustness against pre-update cached payloads and legacy fixtures.
     if (!Array.isArray(pills) || pills.length === 0) return '<span class="history-empty">—</span>';
     return pills
-        .map(p => `<span class="history-pill"><span class="history-pill-pos">${escapeHtml(p.position)}</span> ${fmt(p.mae, 2)}</span>`)
+        .map(p => {
+            const value = p.mae == null
+                ? '<span class="history-pill-skip">--</span>'
+                : fmt(p.mae, 2);
+            return `<span class="history-pill"><span class="history-pill-pos">${escapeHtml(p.position)}</span> ${value}</span>`;
+        })
         .join("");
 }
 

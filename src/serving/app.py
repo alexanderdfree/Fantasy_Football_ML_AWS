@@ -2199,6 +2199,11 @@ def _resolve_repo_slug(env_value: str | None) -> str:
 
 _BENCHMARK_REPO_SLUG = _resolve_repo_slug(os.environ.get("BENCHMARK_REPO_SLUG"))
 _BENCHMARK_MODELS = ("ridge", "nn", "attn_nn", "lgbm")
+# Canonical position order for History-tab MAE cells. Every cell renders six
+# pills in this sequence; positions absent from a run's ``results`` array
+# produce ``mae=None`` pills that the frontend renders as ``--``. The order
+# mirrors the rest of the UI (POSITION_INFO iteration in /api/position_details).
+_BENCHMARK_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
 # (mtime, rows) — invalidated whenever sync_benchmark_history_from_s3 (or a
 # manual write) touches benchmark_history/. Lock keeps two concurrent
@@ -2219,22 +2224,24 @@ def _benchmark_history_dir() -> str:
 def _benchmark_row(entry: dict) -> dict:
     """Project one benchmark_history JSON into the row payload the UI consumes.
 
-    For each model, returns the list of {position, mae} pills for every
-    position trained in that run that recorded a MAE for the model. Missing
-    MAEs are skipped rather than rendered as null pills — keeps the cell
-    clean when the run only trained a subset of positions.
+    Each model's pill list always has six entries in ``_BENCHMARK_POSITIONS``
+    order. A pair (position, model) whose MAE is missing from ``results``
+    (untrained position on a partial run, sentinel file for a [docs-only]
+    commit, or NaN scrubbed by ``_safe_num``) carries ``mae=None``; the
+    frontend renders those as ``--``. ``training_skipped`` is true when the
+    file is a no-train sentinel (``results=[]`` or an explicit flag from the
+    CI sentinel workflow) so the UI can style the row distinctively if it
+    wants.
     """
     results = entry.get("results") or []
+    by_pos = {r.get("position"): r for r in results if r.get("position")}
     pills = {m: [] for m in _BENCHMARK_MODELS}
     total_elapsed = 0.0
-    for r in results:
-        pos = r.get("position")
-        if not pos:
-            continue
+    for pos in _BENCHMARK_POSITIONS:
+        r = by_pos.get(pos, {})
         for m in _BENCHMARK_MODELS:
             mae = _safe_num(r.get(f"{m}_mae"))
-            if mae is not None:
-                pills[m].append({"position": pos, "mae": round(mae, 3)})
+            pills[m].append({"position": pos, "mae": round(mae, 3) if mae is not None else None})
         elapsed = _safe_num(r.get("elapsed_sec"))
         if elapsed is not None:
             total_elapsed += elapsed
@@ -2243,6 +2250,7 @@ def _benchmark_row(entry: dict) -> dict:
         "timestamp": entry.get("timestamp"),
         "git_hash": entry.get("git_hash"),
         "pr_number": int(pr_number) if isinstance(pr_number, int) else None,
+        "training_skipped": bool(entry.get("training_skipped")) or len(by_pos) == 0,
         "positions": [r.get("position") for r in results if r.get("position")],
         "ridge": pills["ridge"],
         "nn": pills["nn"],

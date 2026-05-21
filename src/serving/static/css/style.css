@@ -1236,6 +1236,7 @@ body.model-lgbm .attn-nn-col { display: none; }
     color: var(--text-secondary);
     letter-spacing: 0.5px;
 }
+.history-pill-skip { color: var(--text-secondary); }
 .history-empty { color: var(--text-secondary); }
 .history-link { color: var(--accent); text-decoration: none; }
 .history-link:hover { text-decoration: underline; }
