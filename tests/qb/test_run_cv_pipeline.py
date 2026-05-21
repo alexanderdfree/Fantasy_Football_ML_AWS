@@ -42,12 +42,24 @@ def synthetic_cv_splits():
     2023, 2024]`` so each fold trains on the prior seasons (≥ 2012) and
     validates on a single later season. We supply seasons 2012-2024 in
     full_df and 2025 as the holdout test.
+
+    ``build_features`` is applied on the full concatenated frame before
+    splitting — same rationale as in ``test_pipeline_e2e.synthetic_splits``:
+    ``build_position_features`` now raises ``KeyError`` on missing
+    rolling/ewma/trend/prior_season/opp cols rather than zero-filling.
     """
-    full_df = pd.concat(
-        [_generate_season(s, seed=300 + (s - 2012)) for s in range(2012, 2025)],
+    from src.features.engineer import build_features
+
+    all_df = pd.concat(
+        [
+            *(_generate_season(s, seed=300 + (s - 2012)) for s in range(2012, 2025)),
+            _generate_season(2025, seed=400),
+        ],
         ignore_index=True,
     )
-    test_df = _generate_season(2025, seed=400)
+    all_df = build_features(all_df)
+    full_df = all_df[all_df["season"] <= 2024].copy()
+    test_df = all_df[all_df["season"] == 2025].copy()
     return full_df, test_df
 
 
