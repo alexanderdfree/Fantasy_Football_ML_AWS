@@ -43,7 +43,53 @@ tar -xzf "/tmp/${SOCI_TARBALL}" -C /usr/local/bin/ soci soci-snapshotter-grpc
 chmod +x /usr/local/bin/soci /usr/local/bin/soci-snapshotter-grpc
 rm -f "/tmp/${SOCI_TARBALL}"
 
-# --- 2. Register snapshotter as containerd proxy plugin ------------------
+# --- 2. Snapshotter systemd unit -----------------------------------------
+# Mirrors the canonical soci-snapshotter.service from
+# https://github.com/awslabs/soci-snapshotter/blob/v0.13.0/soci-snapshotter.service
+#
+# Ordering: soci-snapshotter is a containerd PROXY PLUGIN — containerd
+# resolves proxy plugins at startup by connecting to the configured socket.
+# If containerd starts before the snapshotter socket exists, the plugin is
+# marked unavailable and containerd falls back to overlayfs (silent
+# regression of the entire Option B win). Hence Before=containerd.service.
+# ecs.service is transitively After=containerd.service on AL2, so we don't
+# need an explicit Before=ecs.service.
+cat > /etc/systemd/system/soci-snapshotter.service <<'UNIT'
+[Unit]
+Description=SOCI snapshotter
+Documentation=https://github.com/awslabs/soci-snapshotter
+After=network.target
+Before=containerd.service
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/soci-snapshotter-grpc
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now soci-snapshotter
+
+# Wait for the snapshotter socket BEFORE we restart containerd. If
+# containerd starts without the socket present, the proxy plugin loads as
+# "unavailable" for the rest of the boot — image pulls silently fall back
+# to overlayfs and we lose the Option B win without any error signal.
+for i in $(seq 1 60); do
+  [ -S /run/soci-snapshotter-grpc/soci-snapshotter-grpc.sock ] && break
+  sleep 1
+done
+if [ ! -S /run/soci-snapshotter-grpc/soci-snapshotter-grpc.sock ]; then
+  echo "ERROR: soci-snapshotter socket never appeared after 60s" >&2
+  echo "  /var/log/soci-userdata.log has the bootstrap trace" >&2
+  echo "  journalctl -u soci-snapshotter for daemon logs" >&2
+  exit 1
+fi
+
+# --- 3. Register snapshotter as containerd proxy plugin ------------------
 # Append the [proxy_plugins.soci] stanza to /etc/containerd/config.toml.
 # ECS-optimized AL2 ships a default config; if it's missing or empty,
 # generate one with `containerd config default`. Idempotent: grep guards
@@ -62,50 +108,13 @@ if ! grep -q '\[proxy_plugins.soci\]' /etc/containerd/config.toml; then
 TOML
 fi
 
-# Restart containerd so the plugin is registered. ecs.service is ordered
-# After=containerd.service on AL2, so restarting containerd here cascades
-# to a clean state before ecs.service starts.
+# Restart containerd AFTER the snapshotter socket is up and the config
+# references it. containerd discovers proxy plugins at startup by
+# connecting to the socket — the snapshotter MUST be running first.
+# ecs.service is After=containerd.service on AL2 (and cloud-init.target
+# blocks ecs.service until userdata completes), so this cascades into a
+# clean ECS-agent claim with the soci snapshotter ready.
 systemctl restart containerd
 
-# --- 3. Snapshotter systemd unit -----------------------------------------
-# After=containerd.service  — wait for containerd socket
-# Before=ecs.service        — block ECS agent until snapshotter is up so
-#                              the first image pull doesn't race to full-pull
-cat > /etc/systemd/system/soci-snapshotter.service <<'UNIT'
-[Unit]
-Description=SOCI snapshotter
-After=containerd.service
-Wants=containerd.service
-Before=ecs.service
-
-[Service]
-Type=notify
-ExecStart=/usr/local/bin/soci-snapshotter-grpc
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-systemctl daemon-reload
-systemctl enable --now soci-snapshotter
-
-# --- 4. Socket-wait belt-and-suspenders ----------------------------------
-# `Before=ecs.service` should be sufficient, but cloud-init userdata
-# ordering vs. ecs.service is occasionally flaky on AL2 — block userdata
-# completion until the snapshotter socket exists. ecs.service can't start
-# until userdata finishes (cloud-init.target ordering), so this guarantees
-# the first image pull uses SOCI.
-for i in $(seq 1 60); do
-  if [ -S /run/soci-snapshotter-grpc/soci-snapshotter-grpc.sock ]; then
-    echo "=== soci bootstrap complete ($(date -Iseconds)) ==="
-    exit 0
-  fi
-  sleep 1
-done
-
-echo "ERROR: soci-snapshotter socket never appeared after 60s" >&2
-echo "  /var/log/soci-userdata.log has the bootstrap trace" >&2
-echo "  journalctl -u soci-snapshotter for daemon logs" >&2
-exit 1
+echo "=== soci bootstrap complete ($(date -Iseconds)) ==="
+exit 0
