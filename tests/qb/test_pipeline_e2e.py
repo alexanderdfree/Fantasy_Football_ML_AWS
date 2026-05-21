@@ -101,33 +101,16 @@ def _generate_season(season, seed, n_players=25, n_weeks=17):
 def _tiny_config():
     """Shrunk copy of CONFIG for E2E smoke.
 
-    Changes from the production config:
-      - 1-layer 8-unit NN backbone, 4-unit heads
-      - 1 epoch, batch_size=16, patience=1
-      - Attention NN and LightGBM disabled (cover those in unit tests)
-      - Ridge CV reduced to 2 folds, 0 refine points
+    Thin wrapper around ``tests._pipeline_e2e_utils.build_tiny_config('QB')``
+    so this file and ``tests/qb/test_run_cv_pipeline.py`` (which re-imports
+    this helper) stay aligned with the canonical tiny-config shape. The
+    previous local override (2-layer ``[8]`` backbone, batch_size=16,
+    cosine_t_mult=1) diverged from the shared spec by a hair; consolidating
+    here removes "two definitions of tiny QB config".
     """
-    from src.qb.run_pipeline import CONFIG
+    from tests._pipeline_e2e_utils import build_tiny_config
 
-    cfg = dict(CONFIG)
-    cfg.update(
-        {
-            "nn_backbone_layers": [8],
-            "nn_head_hidden": 4,
-            "nn_dropout": 0.0,
-            "nn_epochs": 1,
-            "nn_batch_size": 16,
-            "nn_patience": 1,
-            "train_attention_nn": False,
-            "train_lightgbm": False,
-            "ridge_cv_folds": 2,
-            "ridge_refine_points": 0,
-            "cosine_t0": 1,
-            "cosine_t_mult": 1,
-            "cosine_eta_min": 1e-5,
-        }
-    )
-    return cfg
+    return build_tiny_config("QB")
 
 
 @pytest.fixture(scope="module")

@@ -12,38 +12,44 @@ see whether rolling features were polluted by non-QB usage.
 Usage:
     python -m src.qb.diagnose_outliers
 
-Writes:
-    analysis_output/qb_outlier_diagnostic.md
-    analysis_output/qb_outlier_diagnostic.json
+Writes a timestamped subdirectory under ``analysis_output/`` so repeated runs
+don't overwrite each other:
+    analysis_output/qb_outlier_diagnostic_<UTC-timestamp>/qb_outlier_diagnostic.md
+    analysis_output/qb_outlier_diagnostic_<UTC-timestamp>/qb_outlier_diagnostic.json
 """
 
 import json
 import os
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.preprocessing import StandardScaler
 
 from src.config import SPLITS_DIR
 from src.qb.run_pipeline import CONFIG
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import RidgeMultiTarget
-from src.shared.neural_net import build_multihead_net
 from src.shared.pipeline import (
-    _build_scheduler,
     _prepare_position_data,
     _read_split,
+    _train_nn,
     _tune_ridge_alphas_cv,
 )
-from src.shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
-from src.shared.utils import seed_everything
 
-OUTPUT_DIR = "analysis_output"
+# OUTPUT_DIR is versioned at import time with a UTC timestamp so two runs
+# (different seeds, different upstream commits, etc.) don't clobber each
+# other's diagnostic markdown. Override via env ``QB_OUTLIER_OUTPUT_DIR``
+# for ad-hoc local sessions.
+_RUN_STAMP = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+OUTPUT_DIR = os.environ.get(
+    "QB_OUTLIER_OUTPUT_DIR",
+    f"analysis_output/qb_outlier_diagnostic_{_RUN_STAMP}",
+)
 MD_PATH = f"{OUTPUT_DIR}/qb_outlier_diagnostic.md"
 JSON_PATH = f"{OUTPUT_DIR}/qb_outlier_diagnostic.json"
 
@@ -79,9 +85,17 @@ def _load_splits():
 
 
 def _train_models(seed=42):
-    """Replicate the relevant portion of run_pipeline: Ridge + NN only."""
-    seed_everything(seed)
+    """Replicate the relevant portion of run_pipeline: Ridge + NN only.
 
+    The NN branch delegates to ``src.shared.pipeline._train_nn`` so the
+    diagnostic always trains the same model the production pipeline does —
+    same scaler, same head losses (Poisson NLL for QB TD/INT/fumble heads),
+    same scheduler, same trainer. Previously this file reimplemented the
+    optimizer / scheduler / loss / trainer stack and silently re-cast the
+    Poisson NLL heads to Huber by omitting ``head_losses`` from
+    ``MultiTargetLoss``, so the IG attributions were against a *different*
+    model than the one the user actually saw outlier predictions from.
+    """
     train_df, val_df, test_df = _load_splits()
 
     (
@@ -114,39 +128,23 @@ def _train_models(seed=42):
     ridge_model.fit(X_train, y_train_dict)
     ridge_preds = ridge_model.predict(X_test)
 
-    # --- NN ---
-    nn_scaler = StandardScaler()
-    X_train_s = scale_and_clip(nn_scaler, X_train, fit=True)
-    X_val_s = scale_and_clip(nn_scaler, X_val)
+    # --- NN (delegated to the shared training routine) ---
+    nn_model, nn_scaler, _val_preds, nn_preds, _nn_metrics, _history = _train_nn(
+        "QB",
+        X_train,
+        X_val,
+        X_test,
+        y_train_dict,
+        y_val_dict,
+        y_test_dict,
+        cfg,
+        targets,
+        seed,
+    )
+    # The IG step backprops through ``nn_model``; pull its device once so
+    # downstream tensors land on the right one without a second lookup.
+    device = next(nn_model.parameters()).device
     X_test_s = scale_and_clip(nn_scaler, X_test)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    nn_model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
-    optimizer = torch.optim.AdamW(
-        nn_model.parameters(), lr=cfg["nn_lr"], weight_decay=cfg["nn_weight_decay"]
-    )
-    criterion = MultiTargetLoss(
-        target_names=targets,
-        loss_weights=cfg["loss_weights"],
-        huber_deltas=cfg["huber_deltas"],
-    )
-    train_loader, val_loader = make_dataloaders(
-        X_train_s, y_train_dict, X_val_s, y_val_dict, batch_size=cfg["nn_batch_size"]
-    )
-    scheduler, sched_per_batch = _build_scheduler(optimizer, cfg, train_loader)
-    trainer = MultiHeadTrainer(
-        model=nn_model,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        criterion=criterion,
-        device=device,
-        target_names=targets,
-        patience=cfg["nn_patience"],
-        scheduler_per_batch=sched_per_batch,
-        log_every=25,
-    )
-    trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
-    nn_preds = nn_model.predict_numpy(X_test_s, device)
 
     return {
         "feature_cols": feature_cols,

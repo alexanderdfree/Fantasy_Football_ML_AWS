@@ -47,6 +47,10 @@ def test_main_default_invokes_run_pipeline(monkeypatch):
     assert len(calls) == 1
     assert calls[0]["position"] == "QB"
     assert "targets" in calls[0]["cfg"]
+    # ``seed`` travels as the trailing positional arg (matches the sibling
+    # ``test_run_qb_pipeline_function_passes_through`` contract). The
+    # __main__ block hard-codes seed=42 when --seed is not passed.
+    assert calls[0]["args"][-1] == 42
 
 
 @pytest.mark.unit
@@ -76,7 +80,7 @@ def test_main_cv_routes_to_run_cv_pipeline(monkeypatch):
 def test_run_qb_pipeline_function_passes_through(monkeypatch):
     """The module-level wrapper is a thin pass-through — cover it explicitly.
 
-    ``run.py`` did ``from src.shared.pipeline import run_pipeline``
+    ``run_pipeline.py`` did ``from src.shared.pipeline import run_pipeline``
     at import time, so by now the name ``run_pipeline`` inside that module
     is bound to the original function. Patch the module attribute directly
     rather than ``src.shared.pipeline.run_pipeline``.

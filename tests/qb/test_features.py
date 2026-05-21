@@ -115,13 +115,21 @@ install_parameterized_features(
             "passing_yards_yac_rate": {"passing_yards": 0, "passing_yards_after_catch": 0},
         },
         zero_input_features={
+            # When attempts=0 AND sacks=0, dropbacks=attempts+sacks=0 too,
+            # so sack_rate_L3, passing_epa_per_dropback_L3, and
+            # sack_damage_per_dropback_L3 (all dropback-denominated) are
+            # also part of the 0/0 division contract — the zero-input
+            # override below already zeros both ``attempts`` and ``sacks``.
             "attempts": [
                 "completion_pct_L3",
                 "yards_per_attempt_L3",
                 "td_rate_L3",
                 "int_rate_L3",
+                "sack_rate_L3",
                 "deep_ball_rate_L3",
                 "pass_first_down_rate_L3",
+                "passing_epa_per_dropback_L3",
+                "sack_damage_per_dropback_L3",
             ],
             "carries": ["rushing_epa_per_carry_L3", "rush_first_down_rate_L3"],
             "passing_yards_yac_rate": ["yac_rate_L3"],
