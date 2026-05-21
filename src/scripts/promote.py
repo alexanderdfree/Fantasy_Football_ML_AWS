@@ -6,8 +6,7 @@ Part A (PR #104) introduced automatic ``current → previous`` fallback in
 is the escape hatch for the "two consecutive bad ships" case documented in
 #104: both ``current`` and ``previous`` broken, but an older entry in
 ``history[]`` is still good. Operator picks one, script atomically promotes
-it via a new manifest.json put, and mirrors the legacy ``model.tar.gz`` so
-pre-manifest consumers see the same bytes.
+it via a new manifest.json put.
 
 Usage:
     python -m src.scripts.promote --position WR --list
@@ -34,7 +33,6 @@ if str(_REPO_ROOT) not in sys.path:
 
 from src.shared.model_sync import (  # noqa: E402
     MANIFEST_SCHEMA_VERSION,
-    legacy_model_key,
     load_manifest,
     manifest_key,
     write_manifest,
@@ -154,10 +152,11 @@ def promote(
     """Promote ``target_key`` to ``current`` for ``position``. Returns the
     new manifest dict (whether or not it was actually written).
 
-    On success, writes the new ``manifest.json`` and copies the target bytes
-    into the legacy ``{prefix}/{POS}/model.tar.gz`` mirror so pre-manifest
-    consumers see the same artifact. A dry-run returns the computed manifest
-    without touching S3.
+    On success, writes the new ``manifest.json`` only — the legacy
+    ``{prefix}/{POS}/model.tar.gz`` mirror is no longer maintained (removed
+    in the parallel-train-batch race fix; see PR #282). All consumers
+    (serving, ``benchmark.py``) read the manifest. A dry-run returns the
+    computed manifest without touching S3.
     """
     old = load_manifest(s3_client, bucket, prefix, position)
     if old is None:
@@ -170,12 +169,6 @@ def promote(
     if dry_run:
         return new
     write_manifest(s3_client, bucket, prefix, position, new)
-    legacy_k = legacy_model_key(prefix, position)
-    s3_client.copy_object(
-        Bucket=bucket,
-        Key=legacy_k,
-        CopySource={"Bucket": bucket, "Key": target_key},
-    )
     return new
 
 
@@ -236,10 +229,6 @@ def main(argv: list[str] | None = None) -> int:
             old_cur_key = latest["previous"]["key"]
         print(f"Promoted {args.position}: current → {args.to}")
         print(f"  previous now: {old_cur_key}")
-        print(
-            f"  legacy mirror updated: "
-            f"s3://{args.bucket}/{legacy_model_key(args.prefix, args.position)}"
-        )
         return 0
     except PromotionError as e:
         print(f"ERROR: {e}", file=sys.stderr)

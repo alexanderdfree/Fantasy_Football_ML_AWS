@@ -158,6 +158,64 @@ def test_download_metrics_falls_through_to_stable_on_current_failure(tmp_path, m
 
 
 # --------------------------------------------------------------------------
+# find_git_sha_divergence — coherency check
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_find_git_sha_divergence_empty_when_no_expected():
+    """No expected SHA (workflow_dispatch / local) → skip the check entirely."""
+    import src.batch.benchmark as bb
+
+    all_metrics = {"QB": {"git_sha": "abc1234deadbeef"}, "RB": {"git_sha": "ffffeee0000aaaa"}}
+    assert bb.find_git_sha_divergence(all_metrics, None) == []
+    assert bb.find_git_sha_divergence(all_metrics, "") == []
+
+
+@pytest.mark.unit
+def test_find_git_sha_divergence_coherent_all_match():
+    """Every position's git_sha matches expected → no divergence."""
+    import src.batch.benchmark as bb
+
+    expected = "abc1234"
+    all_metrics = {
+        "QB": {"git_sha": "abc1234deadbeef"},
+        "RB": {"git_sha": "abc1234ffffeeed"},  # same 7-char prefix
+    }
+    assert bb.find_git_sha_divergence(all_metrics, expected) == []
+
+
+@pytest.mark.unit
+def test_find_git_sha_divergence_flags_diverged_positions():
+    """A position whose recorded SHA disagrees with the run's expected SHA
+    surfaces as (pos, recorded_short_sha)."""
+    import src.batch.benchmark as bb
+
+    expected = "abc1234"
+    all_metrics = {
+        "QB": {"git_sha": "abc1234deadbeef"},
+        "RB": {"git_sha": "fff5678cafe"},  # ≠ expected
+        "WR": {"git_sha": "abc1234aaaaaaa"},
+    }
+    diverged = bb.find_git_sha_divergence(all_metrics, expected)
+    assert diverged == [("RB", "fff5678")]
+
+
+@pytest.mark.unit
+def test_find_git_sha_divergence_skips_positions_without_sha():
+    """Positions whose metrics lack ``git_sha`` (pre-PR artifacts) are
+    silently skipped — absence is not divergence."""
+    import src.batch.benchmark as bb
+
+    expected = "abc1234"
+    all_metrics = {
+        "QB": {"git_sha": "abc1234deadbeef"},
+        "RB": {},  # no git_sha — pre-PR artifact
+    }
+    assert bb.find_git_sha_divergence(all_metrics, expected) == []
+
+
+# --------------------------------------------------------------------------
 # main — drive both --download-only and the full launch path
 # --------------------------------------------------------------------------
 

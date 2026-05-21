@@ -150,7 +150,12 @@ def _extract_csv_from_tarball(tar_bytes: bytes, position: str, dest_path: str) -
 
 
 def _download_from_s3(positions: list[str], bucket: str) -> list[tuple[str, str]]:
-    """Download the latest legacy model.tar.gz per position; extract its CSV.
+    """Download each position's current model.tar.gz from S3 and extract its CSV.
+
+    Resolves the artifact key via ``models/{POS}/manifest.json`` (same path
+    serving and ``benchmark.py`` use). The legacy ``models/{POS}/model.tar.gz``
+    mirror was removed in the parallel-train-batch race fix and is no longer
+    updated by the producer, so reading it would yield stale data.
 
     Returns a list of (position, csv_path) pairs for positions whose tarball
     contained the profile CSV. Positions trained before the sidecar landed are
@@ -158,14 +163,22 @@ def _download_from_s3(positions: list[str], bucket: str) -> list[tuple[str, str]
     """
     import boto3
 
-    from src.shared.model_sync import legacy_model_key
+    from src.shared.model_sync import load_manifest
 
     s3 = boto3.client("s3")
     s3_prefix = os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/")
     tmpdir = tempfile.mkdtemp(prefix="gpu-profile-")
     pairs: list[tuple[str, str]] = []
     for pos in positions:
-        key = legacy_model_key(s3_prefix, pos)
+        manifest = load_manifest(s3, bucket, s3_prefix, pos)
+        if manifest is None:
+            print(f"  [s3] {pos}: no manifest — skipping")
+            continue
+        entry = manifest.get("current") or manifest.get("stable") or manifest.get("previous")
+        if not entry or not entry.get("key"):
+            print(f"  [s3] {pos}: manifest has no resolvable artifact entry — skipping")
+            continue
+        key = entry["key"]
         print(f"[s3] s3://{bucket}/{key}")
         body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
         dest = os.path.join(tmpdir, f"gpu_profile_{pos}.csv")

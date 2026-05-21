@@ -4,9 +4,9 @@ Opt-in via FF_MODEL_S3_BUCKET env var. Unset/empty -> no-op (dev, tests).
 
 ``sync_models_from_s3`` reads each position's ``manifest.json`` and prefers
 the smoke-test-validated ``stable`` artifact, falling back to ``current``
-then ``previous`` only when ``stable`` is missing or fails to load. For
-pre-manifest buckets it falls back to the legacy
-``s3://{bucket}/{prefix}/{POS}/model.tar.gz`` key (migration compat).
+then ``previous`` only when ``stable`` is missing or fails to load. The
+legacy ``models/{POS}/model.tar.gz`` mirror is gone (removed in the
+parallel-train-batch race fix); manifest absence in production now raises.
 See ``src/shared/artifact_gc.py`` for retention; ``stable`` is exempted from GC.
 
 ``sync_data_from_s3`` pulls the splits + raw weekly parquets that inference
@@ -66,10 +66,6 @@ def _repo_root() -> Path:
 
 def manifest_key(prefix: str, pos: str) -> str:
     return f"{prefix}/{pos}/manifest.json"
-
-
-def legacy_model_key(prefix: str, pos: str) -> str:
-    return f"{prefix}/{pos}/model.tar.gz"
 
 
 def history_prefix(prefix: str, pos: str) -> str:

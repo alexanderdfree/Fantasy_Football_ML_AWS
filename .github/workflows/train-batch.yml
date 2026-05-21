@@ -125,6 +125,13 @@ jobs:
           # launch.py treats empty as "no revision" and falls back to name-only
           # resolution (current behavior).
           FF_JOB_DEFINITION_REVISION: ${{ steps.revision.outputs.revision }}
+          # The SHA the image being trained was built from. Threads through
+          # launch.py → containerOverrides → train.py → benchmark_metrics.json,
+          # so benchmark.py can warn when any position's recorded SHA diverges
+          # from the run's expected SHA. Empty under workflow_dispatch (no
+          # upstream image build); benchmark.py treats empty as "skip the
+          # coherency check."
+          FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
