@@ -20,7 +20,7 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **Why not flipped:** Needs a wall-clock benchmark on the tuning host to confirm a win, and the value must be coordinated with the LGBM tree-learning `n_jobs=-1` (set on Linux in `src/shared/models.py:_LGBM_N_JOBS`) to avoid oversubscribing a 4-vCPU box. On EC2 g4dn picking `--n-jobs=2` (with LGBM at `-1`) is the obvious starting point; `--n-jobs=-1` will fight the per-trial tree-learning threads.
 
 ### [LOW] `_cache` dict grows without eviction
-- **File:** `app.py:63`
+- **File:** `src/serving/app.py:87` (`_cache = {}`)
 - **What:** `_get_data()` caches results in a module-level dict (serialized by `_cache_lock` since #31). The cache is never cleared. Not a real problem in practice (server restarts frequently), but worth noting.
 
 ### [LOW] `drop_last=True` silently discards training samples
@@ -36,7 +36,7 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **What:** Pattern like `(a / b).fillna(0)` followed by `df.loc[b == 0, col] = 0` is redundant — fillna already handled the division-by-zero case. Not wrong, just noisy.
 
 ### [UNCERTAIN] K/DST index collision in `_get_data()`
-- **File:** `app.py:593-606`
+- **File:** `src/serving/app.py:1079-1092`
 - **What:** K/DST test rows are appended to `results` with `offset = results.index.max() + 1`. Assumes the general test data has a well-behaved index. If the general test parquet has gaps, K/DST indices could collide. Probably safe in practice since parquet preserves sequential indices.
 
 ### [UNCERTAIN] Team share features computed per-split

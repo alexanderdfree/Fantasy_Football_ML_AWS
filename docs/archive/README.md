@@ -1,6 +1,6 @@
 # docs/archive/
 
-Pre-decision design docs preserved for provenance. The accepted decisions live in [../ARCHITECTURE.md](../ARCHITECTURE.md) (ADR-001, D1–D14).
+Pre-decision design docs preserved for provenance. The accepted decisions live in [../ARCHITECTURE.md](../ARCHITECTURE.md) (ADR-001, D1–D15).
 
 Do not update these — they are frozen at the point each was folded into the ADR.
 

@@ -42,10 +42,11 @@ src/batch/launch.py ─────────────> S3: s3://ff-trainin
                                            │
 src/batch/launch.py <──────────────────────┘
   polls describe_jobs() for status   S3: s3://ff-training/models/
-  downloads model artifacts             rb/model.tar.gz
-  extracts to src/rb/outputs/models/    wr/model.tar.gz
-             src/wr/outputs/models/     ...
-             ...
+  resolves rb/manifest.json -> rb/    rb/manifest.json
+    history/{ts}-{sha7}/model.tar.gz  rb/history/{ts}-{sha7}/model.tar.gz
+  downloads + extracts to             wr/manifest.json
+    src/rb/outputs/models/            wr/history/{ts}-{sha7}/model.tar.gz
+    src/wr/outputs/models/            ...
 ```
 
 ### Data Staging
@@ -64,13 +65,16 @@ src/batch/
   benchmark.py          ← Batch-side benchmark runner (downloads metrics from S3)
   Dockerfile.train      ← GPU training image
   Dockerfile.train.dockerignore
+  build_and_push.sh     ← ECR login + buildx + SOCI index publish
   requirements.txt      ← container-only deps (no torch — base image provides it)
-  tests/
-    __init__.py
-    conftest.py
-    test_launch.py
-    test_train.py
-    ...
+
+tests/batch/            ← Batch tests live under the top-level tests/ tree
+  __init__.py
+  test_launch.py
+  test_launch_main.py
+  test_train.py
+  test_train_smoke.py
+  ...
 
 src/benchmarking/benchmark.py ← Local multi-position benchmark runner (separate from src/batch/benchmark.py).
 ```
@@ -90,7 +94,7 @@ src/benchmarking/benchmark.py ← Local multi-position benchmark runner (separat
 ### Dockerfile
 
 ```dockerfile
-FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-runtime
+FROM pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
 
 WORKDIR /opt/ml/code
 

@@ -27,7 +27,7 @@ GITHUB ACTIONS (push to main)                AWS
   train-ec2.yml (workflow_run after image built)
     detect job
     └─ git diff HEAD^ HEAD → scope positions
-         (src/{shared,batch,data,features,models,training,evaluation}/
+         (src/{shared,batch,data,features}/
           or src/config.py or requirements.txt → all 6;
           otherwise only the src/{POS}/ dirs that changed)
 
@@ -46,7 +46,9 @@ GITHUB ACTIONS (push to main)                AWS
     │                                   │    python -m src.batch.train
     │                                   │      --position $POS
     │                                   │      (reads s3://ff-predictor-training/data/)
-    │                                   │      (writes s3://…/models/$POS/model.tar.gz)
+    │                                   │      (writes manifest.json + sharded
+    │                                   │       history/{ts}-{sha7}/model.tar.gz
+    │                                   │       under s3://…/models/$POS/)
     │                                   └─ date > /opt/ff/logs/last-activity
     │
     ├─ manual poll get-command-invocation (30-min deadline)
@@ -74,7 +76,7 @@ infra/ec2/
 
 ## Data Flow
 
-Same as Batch. Training container reads `s3://ff-predictor-training/data/{train,val,test}.parquet`, writes `s3://ff-predictor-training/models/{POS}/model.tar.gz`. S3 remains source of truth; instance store (`/opt/ff/scratch`) is ephemeral scratch bind-mounted into the container.
+Same as Batch. Training container reads `s3://ff-predictor-training/data/{train,val,test}.parquet`, writes `s3://ff-predictor-training/models/{POS}/manifest.json` plus a versioned `s3://ff-predictor-training/models/{POS}/history/{ts}-{sha7}/model.tar.gz` (the legacy `models/{POS}/model.tar.gz` mirror is no longer written — consumers resolve the current artifact via the manifest). S3 remains source of truth; instance store (`/opt/ff/scratch`) is ephemeral scratch bind-mounted into the container.
 
 ## Training Container
 
