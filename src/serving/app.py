@@ -1102,8 +1102,10 @@ def _load_base_data_locked():
 
     # Initialize per-model, per-format prediction columns. ridge/nn default to
     # 0.0 (every row gets a value once the position loads); attn_nn/lgbm default
-    # to NaN so K/DST rows — which have no attn_nn/lgbm models — are correctly
-    # excluded from overall MAE in _compute_metrics_locked.
+    # to NaN so any rows whose model failed to load are correctly excluded from
+    # overall MAE in _compute_metrics_locked (every position trains both attn_nn
+    # and lgbm in production, but per-model load failures NaN those preds — see
+    # _apply_position_models).
     for fmt in _VALID_SCORING:
         results[_pred_col("ridge", fmt)] = 0.0
         results[_pred_col("nn", fmt)] = 0.0
