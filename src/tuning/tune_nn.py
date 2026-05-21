@@ -24,9 +24,6 @@ capture. Differences vs the LightGBM tuner:
 
 Out of scope (v1)
 -----------------
-* **K and DST**: their `run()` signatures take only `seed=` (they build their
-  own data internally). Adding `config=` to those entry points is a 2-line
-  follow-up; until then the tuner rejects K/DST with a clear error.
 * **Loss-config search** (`head_losses`, `loss_weights`, `huber_deltas`,
   `gated_targets`): per CLAUDE.md, `LOSS_WEIGHTS ≈ 2.0 / HUBER_DELTAS` is a
   coupling, not two independent axes. Searching deltas + deriving weights also
@@ -118,13 +115,6 @@ def _ensure_data_from_s3() -> None:
         print("[tune_nn] data/raw/ already populated")
 
 
-# Positions whose `run()` signature currently lacks a `config=` kwarg. Until
-# that's added, the tuner can't pass override cfgs to them and so we refuse
-# to start a study. K and DST also build their data internally, which makes
-# the bypass-`run()` workaround invasive — better to fix it once in a follow-
-# up than to special-case here.
-_UNSUPPORTED_POSITIONS = {"K", "DST"}
-
 # Default trial count chosen with NN wall-clock in mind: a single attention
 # trial takes 5–10 min locally, so 15 trials ≈ 1.5–2.5 hr per position on a
 # laptop. Bump to 30 on a Batch g4dn.xlarge where each trial is 1–2 min.
@@ -133,8 +123,12 @@ _DEFAULT_N_TRIALS = 15
 # HyperbandPruner: `min_resource` is the minimum epoch count a trial must
 # complete before it's eligible for pruning. We pick 8 to give the trial a
 # chance to escape its lr-warmup transient before being judged. `reduction
-# _factor=3` is Optuna's default; `max_resource="auto"` infers from the
-# longest trial seen so far.
+# _factor=3` is Optuna's default. `max_resource` is pinned to the cfg's
+# ``nn_epochs`` per study (instead of Optuna's `"auto"`) so an early-
+# stopped trial 1 can't establish a too-low rung ladder that prunes every
+# later trial at the wrong epoch — `"auto"` infers from completed trials,
+# which silently underestimates when ``trainer.train`` exits at ``patience``
+# rather than the configured epoch ceiling.
 _HYPERBAND_MIN_RESOURCE = 8
 _HYPERBAND_REDUCTION_FACTOR = 3
 
@@ -422,7 +416,7 @@ def main():
     parser.add_argument(
         "positions",
         nargs="+",
-        help="Positions to tune (QB, RB, WR, TE). K and DST are not yet supported.",
+        help="Positions to tune (QB, RB, WR, TE, K, DST).",
     )
     parser.add_argument(
         "--n-trials",
@@ -463,13 +457,6 @@ def main():
     args = parser.parse_args()
 
     positions = [p.upper() for p in args.positions]
-    bad = [p for p in positions if p in _UNSUPPORTED_POSITIONS]
-    if bad:
-        raise SystemExit(
-            f"tune_nn: positions {bad} are not supported in v1 (their run() takes "
-            f"only seed=, no config=). Tune QB/RB/WR/TE; K/DST support lands in a "
-            f"follow-up that adds config= to their run() signatures."
-        )
 
     if not args.print_best:
         _ensure_data_from_s3()
@@ -523,7 +510,10 @@ def main():
             pruner=HyperbandPruner(
                 min_resource=_HYPERBAND_MIN_RESOURCE,
                 reduction_factor=_HYPERBAND_REDUCTION_FACTOR,
-                max_resource="auto",
+                # Pin to the cfg's epoch ceiling so an early-stopped trial 1
+                # can't establish a too-low rung ladder for the rest of the
+                # search (see _HYPERBAND_MIN_RESOURCE comment).
+                max_resource=int(base_cfg["nn_epochs"]),
             ),
         )
 

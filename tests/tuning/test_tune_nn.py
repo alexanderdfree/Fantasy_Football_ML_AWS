@@ -199,29 +199,17 @@ def test_trial_to_params_resolves_backbone_idx_to_preset():
 
 
 # ---------------------------------------------------------------------------
-# CLI guard
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("pos", ["K", "DST"])
-def test_main_rejects_unsupported_positions(monkeypatch, pos):
-    """K and DST must be rejected with a clear error until their run()
-    signatures accept config=."""
-    monkeypatch.setattr("sys.argv", ["tune_nn", pos])
-    with pytest.raises(SystemExit) as excinfo:
-        tune_nn.main()
-    assert pos in str(excinfo.value)
-
-
-# ---------------------------------------------------------------------------
 # Objective end-to-end (no real training — runner is stubbed)
 # ---------------------------------------------------------------------------
 
 
-def test_objective_returns_min_of_captured_val_losses(monkeypatch):
+@pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])
+def test_objective_returns_min_of_captured_val_losses(monkeypatch, pos):
     """Stub get_runner so it invokes the epoch_callback with a known
     trajectory; verify the objective returns min(losses) without touching
-    real data."""
+    real data. Parametrized across all six positions to confirm K/DST went
+    from rejected (pre-PR-3) to first-class once their run() signatures
+    grew a config= kwarg."""
 
     def fake_runner(seed, config):
         cb = config.get("epoch_callback")
@@ -234,10 +222,10 @@ def test_objective_returns_min_of_captured_val_losses(monkeypatch):
         return {"attn_history": {"val_loss": [5.0]}}
 
     base_cfg = {"train_attention_nn": True}
-    monkeypatch.setattr(tune_nn, "get_runner", lambda pos: fake_runner)
+    monkeypatch.setattr(tune_nn, "get_runner", lambda _pos: fake_runner)
 
     study = optuna.create_study(direction="minimize")
-    objective = tune_nn._make_objective("QB", base_cfg, seed=42)
+    objective = tune_nn._make_objective(pos, base_cfg, seed=42)
     study.optimize(objective, n_trials=1)
 
     assert study.best_value == pytest.approx(0.6)

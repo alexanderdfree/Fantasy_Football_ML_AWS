@@ -29,7 +29,13 @@ from src.shared.position_pipeline import build_pipeline_config
 CONFIG = build_pipeline_config("K", POSITION_CONFIG)
 
 
-def run(seed=42):
+def run(seed=42, config=None):
+    """Run the K pipeline. ``config`` lets callers (e.g. ``src/tuning/tune_nn.py``)
+    pass an overridden cfg dict per trial; we still inject the runtime-only
+    ``attn_history_builder_fn`` closure on top because it captures ``kicks_df``
+    loaded inside this function and can't be pre-baked into the static
+    ``CONFIG`` dict.
+    """
     # --- Load and prepare kicker data ---
     print("Loading kicker data...")
     k_df = load_data()
@@ -61,7 +67,11 @@ def run(seed=42):
         max_kicks_per_game=POSITION_CONFIG.attn_max_kicks_per_game,
     )
 
-    cfg = dict(CONFIG)
+    # Shallow-copy the caller's config (or CONFIG default) so we can inject the
+    # runtime builder without mutating the source dict — the tuner reuses the
+    # same base_cfg across trials and would crash on the second trial if we
+    # mutated it in place.
+    cfg = dict(config if config is not None else CONFIG)
     cfg["attn_history_builder_fn"] = kick_history_builder
 
     return run_pipeline("K", cfg, train_df, val_df, test_df, seed)

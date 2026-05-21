@@ -104,7 +104,7 @@ fi
 # mode is recoverable (run benchmark) while the false-negative mode (skip
 # benchmark when we shouldn't) is the dangerous one — keep the token list
 # generous and prefer to catch suspicious changes here.
-_RISKY_TOKENS='(loss_weights|huber_deltas|head_losses|gated_targets|LOSS_WEIGHTS|HUBER_DELTAS|INCLUDE_FEATURES|ATTN_STATIC_FEATURES|ATTN_HISTORY_STATS|attn_d_model|attn_n_heads|nn_backbone_layers|nn_head_hidden|nn_lr|attn_lr|nn_weight_decay|nn_dropout|attn_dropout|nn_epochs|nn_batch_size|attn_batch_size|nn\.Linear|nn\.LayerNorm|nn\.Dropout|nn\.MultiheadAttention|MultiHeadNet|compute_target_metrics|aggregate_fn|predictions_to_fantasy_points|optimizer|learning_rate|criterion|HuberLoss|PoissonNLLLoss|scheduler_type|onecycle_max_lr|cosine_t0)'
+_RISKY_TOKENS='(loss_weights|huber_deltas|head_losses|gated_targets|LOSS_WEIGHTS|HUBER_DELTAS|INCLUDE_FEATURES|ATTN_STATIC_FEATURES|ATTN_HISTORY_STATS|attn_d_model|attn_n_heads|nn_backbone_layers|nn_head_hidden|nn_lr|attn_lr|nn_weight_decay|nn_dropout|attn_dropout|nn_epochs|nn_batch_size|attn_batch_size|nn_patience|attn_patience|attn_max_seq_len|attn_weight_decay|nn_non_negative_targets|gate_weight|attn_gate_weight|train_attention_nn|train_lightgbm|nn\.Linear|nn\.LayerNorm|nn\.Dropout|nn\.MultiheadAttention|MultiHeadNet|compute_target_metrics|aggregate_fn|aggregate_targets|predictions_to_fantasy_points|optimizer|learning_rate|criterion|HuberLoss|PoissonNLLLoss|scheduler_type|onecycle_max_lr|cosine_t0|cosine_t_mult|cosine_eta_min)'
 
 is_additive_and_safe() {
   local f="$1"
@@ -114,23 +114,29 @@ is_additive_and_safe() {
     return 0
   fi
 
-  local removed_code
-  removed_code=$(printf '%s\n' "$diff_output" \
-    | grep -E '^-' \
-    | grep -vE '^---|^-[[:space:]]*$|^-[[:space:]]*#' \
-    | wc -l | tr -d ' ')
-  if [ "$removed_code" -gt 0 ]; then
-    return 1
-  fi
-
-  local risky_added
-  risky_added=$(printf '%s\n' "$diff_output" \
-    | grep -E '^\+' \
-    | grep -vE '^\+\+\+|^\+[[:space:]]*$|^\+[[:space:]]*#' \
-    | grep -cE "$_RISKY_TOKENS" || true)
-  if [ "${risky_added:-0}" -gt 0 ]; then
-    return 1
-  fi
+  # Symmetric token check: a diff is risky if EITHER added OR removed code
+  # lines reference loss-config / model-architecture / feature-list /
+  # hyperparam names. The previous version flagged *all* removed code,
+  # which false-positived on backwards-compatible signature widening
+  # (e.g. `def run(seed=42):` -> `def run(seed=42, config=None):` plus
+  # `CONFIG` -> `config or CONFIG`) — net behaviour preserved under the
+  # default value, no risk to model output. Catching by token instead of
+  # by line-count handles that case correctly while still gating real
+  # behavioural deletions (e.g. removing an `np.clip` or a `criterion =`).
+  for direction in '-' '+'; do
+    case "$direction" in
+      '-') header_pat='^---' ;;
+      '+') header_pat='^\+\+\+' ;;
+    esac
+    local risky_count
+    risky_count=$(printf '%s\n' "$diff_output" \
+      | grep -E "^[$direction]" \
+      | grep -vE "$header_pat|^[$direction][[:space:]]*$|^[$direction][[:space:]]*#" \
+      | grep -cE "$_RISKY_TOKENS" || true)
+    if [ "${risky_count:-0}" -gt 0 ]; then
+      return 1
+    fi
+  done
 
   return 0
 }

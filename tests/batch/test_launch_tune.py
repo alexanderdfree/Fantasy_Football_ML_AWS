@@ -69,14 +69,29 @@ def test_submit_tune_job_omits_timeout_when_none():
     assert cmd[cmd.index("--n-trials") + 1] == "15"
 
 
-@pytest.mark.parametrize("bad_pos", ["K", "DST", "k", "Dst"])
-def test_cli_rejects_unsupported_positions(monkeypatch, bad_pos):
-    """K and DST must be rejected at the CLI boundary (argparse choices),
-    mirroring tune_nn's _UNSUPPORTED_POSITIONS guard so the Batch submission
-    can't waste a Spot job."""
-    monkeypatch.setattr("sys.argv", ["launch_tune", "--positions", bad_pos])
+def test_cli_rejects_unknown_position_name(monkeypatch):
+    """argparse ``choices`` pins ``--positions`` to ``SUPPORTED_POSITIONS`` so
+    a typo'd position fails locally instead of submitting a Spot job that
+    will eventually fail on ``get_config()``. All six real positions are now
+    supported; only nonsense names should be rejected."""
+    monkeypatch.setattr("sys.argv", ["launch_tune", "--positions", "FOO"])
     with pytest.raises(SystemExit):
         launch_tune.main()
+
+
+@pytest.mark.parametrize("pos", list(launch_tune.SUPPORTED_POSITIONS))
+def test_submit_tune_job_works_for_all_supported_positions(pos):
+    """Every position in SUPPORTED_POSITIONS — including the K/DST additions
+    in PR 3 — must round-trip through submit_tune_job without special-casing.
+    Catches a regression if a future PR adds a position-type carve-out
+    inside submit_tune_job."""
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": f"fake-{pos.lower()}"}
+    returned_pos, job_id = launch_tune.submit_tune_job(pos, n_trials=5, batch_client=batch)
+    assert returned_pos == pos
+    assert job_id == f"fake-{pos.lower()}"
+    cmd = batch.submit_job.call_args.kwargs["containerOverrides"]["command"]
+    assert cmd[:6] == ["--position", pos, "--mode", "tune", "--seed", "42"]
 
 
 def test_dry_run_does_not_call_aws(monkeypatch, capsys):

@@ -706,12 +706,6 @@ def main():
         # job fails fast instead of running half a pipeline.
         if args.ablation or args.sweep or args.dry_run:
             parser.error("--mode=tune is mutually exclusive with --ablation/--sweep/--dry-run")
-        if pos in ("K", "DST"):
-            parser.error(
-                "--mode=tune does not support K/DST yet (their run() takes "
-                "only seed=, no config=; tune_nn rejects them with the same "
-                "error). Add config= to those runners first."
-            )
         # Forward to src.tuning.tune_nn's CLI. We replace sys.argv rather than
         # constructing the parser dance — keeps tune_nn's behaviour identical
         # whether the operator runs it directly or through this dispatcher.
