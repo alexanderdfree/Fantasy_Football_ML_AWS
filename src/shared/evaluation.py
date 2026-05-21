@@ -5,13 +5,25 @@ import warnings
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-from src.evaluation.metrics import compute_metrics
 from src.shared.aggregate_targets import (
     TARGET_UNITS,
     infer_position,
     predictions_to_fantasy_points,
 )
+
+
+def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+    # r2_score emits UndefinedMetricWarning when n<2; tiny e2e smoke tests can
+    # hit that path via single-sample per-target slices, so skip it explicitly.
+    y_true_arr = np.asarray(y_true)
+    r2 = r2_score(y_true, y_pred) if y_true_arr.size >= 2 else float("nan")
+    return {
+        "mae": mean_absolute_error(y_true, y_pred),
+        "rmse": np.sqrt(mean_squared_error(y_true, y_pred)),
+        "r2": r2,
+    }
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
@@ -216,8 +228,32 @@ def compute_ranking_metrics(
     }
 
 
-def print_comparison_table(results: dict, position: str, target_names: list[str]) -> None:
-    """Pretty-print comparison of all models for a position."""
+def print_comparison_table(
+    results: dict,
+    position: str | None = None,
+    target_names: list[str] | None = None,
+) -> None:
+    """Pretty-print model comparison.
+
+    Two modes, picked by whether ``position`` is supplied:
+    - ``position is None``: generic table of ``{model_name: {mae, rmse, r2}}``,
+      used by simple smoke runs / single-target callers (previously the
+      ``src/evaluation/metrics.py`` helper).
+    - ``position`` set: position-aware table with ``total``, per-target MAE,
+      and optional gated-head diagnostics. ``target_names`` is required here.
+    """
+    if position is None:
+        # Generic single-table form: results is {model_name: {mae, rmse, r2}}.
+        print("\n" + "=" * 60)
+        print(f"{'Model':<25} {'MAE':>8} {'RMSE':>8} {'R2':>8}")
+        print("-" * 52)
+        for model_name, metrics in results.items():
+            print(
+                f"{model_name:<25} {metrics['mae']:>8.3f} {metrics['rmse']:>8.3f} {metrics['r2']:>8.3f}"
+            )
+        print("=" * 60)
+        return
+
     print("\n" + "=" * 80)
     print(f"{position} Model Comparison -- Total Fantasy Points")
     print("=" * 80)

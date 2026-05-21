@@ -1,14 +1,17 @@
 """Coverage tests for ``src/shared/evaluation.py``.
 
-Exercises the gate-metric diagnostics (``_sigmoid``, ``_gate_metrics``,
+Exercises ``compute_metrics`` (happy path + single-sample R² guard), the
+gate-metric diagnostics (``_sigmoid``, ``_gate_metrics``,
 ``build_gate_info``), the gate-info-enabled branch of
 ``compute_target_metrics``, the standalone fantasy-points MAE helper,
-ranking metrics (happy path + empty frame), the gated-entries table in
-``print_comparison_table``, and ``plot_pred_vs_actual`` at both single
-and multi-target shapes.
+ranking metrics (happy path + empty frame), both branches of
+``print_comparison_table`` (generic single-table + position-aware), and
+``plot_pred_vs_actual`` at both single and multi-target shapes.
 """
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 import pandas as pd
@@ -20,11 +23,39 @@ from src.shared.evaluation import (
     _sigmoid,
     build_gate_info,
     compute_fantasy_points_mae,
+    compute_metrics,
     compute_ranking_metrics,
     compute_target_metrics,
     plot_pred_vs_actual,
     print_comparison_table,
 )
+
+# --------------------------------------------------------------------------
+# compute_metrics
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_compute_metrics_happy_path():
+    y_true = np.array([1.0, 2.0, 3.0, 4.0])
+    y_pred = np.array([1.1, 1.9, 3.2, 3.8])
+    m = compute_metrics(y_true, y_pred)
+    assert math.isclose(m["mae"], 0.15, abs_tol=1e-9)
+    assert m["rmse"] > 0
+    # Why: predictions deviate from truth by ≤0.2 on a [1, 4] range — variance
+    # of residuals is ~0.025, variance of truth is 1.25 → R² = 1 - 0.025/1.25
+    # = 0.98. The 0.9 floor is a wide tolerance band that catches a sign
+    # flip or normalization regression without wedging on float noise.
+    assert m["r2"] > 0.9
+
+
+@pytest.mark.unit
+def test_compute_metrics_single_sample_returns_nan_r2():
+    """When size < 2, r2_score would raise; we short-circuit to NaN."""
+    m = compute_metrics(np.array([5.0]), np.array([4.5]))
+    assert math.isclose(m["mae"], 0.5)
+    assert math.isnan(m["r2"])
+
 
 # --------------------------------------------------------------------------
 # _sigmoid / _gate_metrics / build_gate_info
@@ -380,6 +411,21 @@ def test_compute_ranking_metrics_constant_predictions_nan_spearman(capsys):
 # --------------------------------------------------------------------------
 # print_comparison_table
 # --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_print_comparison_table_generic_no_position(capsys):
+    """``position=None`` → generic single-table form (flat model→{mae,rmse,r2})."""
+    results = {
+        "Ridge": {"mae": 5.5, "rmse": 7.1, "r2": 0.32},
+        "NN": {"mae": 5.1, "rmse": 6.9, "r2": 0.37},
+    }
+    print_comparison_table(results)
+    out = capsys.readouterr().out
+    assert "Ridge" in out
+    assert "NN" in out
+    assert "MAE" in out
+    assert "R2" in out
 
 
 @pytest.mark.unit

@@ -41,12 +41,12 @@ import pandas as pd
 
 from src.config import TEST_SEASONS
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
-from src.evaluation.metrics import compute_metrics
 from src.shared.aggregate_targets import (
     POSITION_TARGET_MAP,
     TARGET_UNITS,
     predictions_to_fantasy_points,
 )
+from src.shared.evaluation import compute_metrics
 
 EVAL_SEASONS_DEFAULT: tuple[int, ...] = tuple(TEST_SEASONS) if TEST_SEASONS else (2025,)
 TARGET_POSITIONS_DEFAULT: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
