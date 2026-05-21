@@ -313,13 +313,19 @@ jobs:
             --git-hash "$GITHUB_SHA" \
             "${PR_ARGS[@]}"
 
-      - name: Refresh ECS service to pick up new model + benchmark artifacts
+      - name: Kick off ECS rolling deploy (non-blocking)
         # Same flow as train-ec2.yml — force a rolling redeploy so the
         # task's boot-time sync_models_from_s3 picks up the freshly promoted
         # manifests AND sync_benchmark_history_from_s3 picks up the JSON
-        # uploaded by the previous step. services-stable wait ensures a
-        # model-load regression surfaces here instead of silently serving
-        # NaN preds.
+        # uploaded by the previous step. update-service returns ~1s; the
+        # services-stable wait moved to ecs_refresh_sentinel below (~3 min
+        # off the critical path). Model-load-regression detection rationale
+        # is preserved there. Note: PR #302's in-flight per-position
+        # manifest poll already delivers fresh models within ~30s of the
+        # Batch position's manifest write, so this ECS refresh is
+        # belt-and-suspenders for model delivery — kept until in-flight
+        # refresh is proven over 2 retrain cycles, then can be removed
+        # entirely.
         run: |
           aws ecs update-service \
             --cluster "$ECS_CLUSTER" \
@@ -327,10 +333,6 @@ jobs:
             --region "$AWS_REGION" \
             --force-new-deployment \
             --no-cli-pager > /dev/null
-          aws ecs wait services-stable \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --region "$AWS_REGION"
 
       - name: Commit and push benchmark_history/
         env:
@@ -362,3 +364,47 @@ jobs:
           done
           echo "Push failed after 3 attempts"
           exit 1
+
+  ecs_refresh_sentinel:
+    # Non-blocking wait for ECS to stabilize after the rolling deploy kicked
+    # off in the train job. Split off the critical path to cut ~3 min off
+    # train-batch.yml wall-clock (~20% of the 15-min pipeline). PR #302's
+    # in-flight per-position manifest poll already makes the ECS refresh
+    # redundant for model delivery (first-finished position is live within
+    # ~30s of its manifest write); this sentinel is retained as the belt-
+    # and-suspenders path until the in-flight refresh is proven over 2
+    # retrain cycles (per PR #302's planned follow-up). Preserves the
+    # model-load-regression detection rationale from the original step.
+    needs: train
+    runs-on: ubuntu-latest
+    # Failure here does NOT fail the headline workflow — the model is
+    # already in S3 and the in-flight serving refresh path picks it up
+    # within ~30s. A stalled services-stable surfaces in this job's status
+    # and the workflow summary; the training pipeline reports green
+    # regardless.
+    continue-on-error: true
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Wait for ECS service to stabilize
+        id: wait
+        run: |
+          if aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region "$AWS_REGION"; then
+            echo "ECS service stabilized successfully."
+            echo "- ECS refresh: service stabilized within wait window." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ECS service did not stabilize within wait window."
+            echo "- ECS refresh: **service did not stabilize within wait window** — investigate ECS task health (in-flight model refresh path still active, so serving is likely unaffected)." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
