@@ -150,7 +150,54 @@ aws logs put-retention-policy \
   --retention-in-days 7 \
   --region "$REGION"
 
-# --- 10. Compute Environment --------------------------------------------
+# --- 10. Launch Template (SOCI snapshotter userdata) --------------------
+# The ECS-optimized AL2 AMI Batch picks for ff-gpu-spot does NOT run
+# soci-snapshotter-grpc by default. Without it, SOCI indexes published
+# to ECR by .github/workflows/batch-image.yml are silently ignored —
+# every fresh Spot host pays ~122s full image pull instead of ~5–10s
+# lazy-load. The launch template's userdata installs the snapshotter
+# pre-boot. See infra/batch/userdata.sh + docs/batch_design.md §2a.
+LAUNCH_TEMPLATE_NAME="ff-batch-lt"
+USERDATA_PATH="$SCRIPT_DIR/userdata.sh"
+if [ ! -f "$USERDATA_PATH" ]; then
+  log "ERROR: $USERDATA_PATH missing — required for SOCI activation."
+  exit 1
+fi
+EXPECTED_USERDATA_B64=$(base64 < "$USERDATA_PATH" | tr -d '\n')
+
+if ! aws ec2 describe-launch-templates \
+     --launch-template-names "$LAUNCH_TEMPLATE_NAME" \
+     --region "$REGION" >/dev/null 2>&1; then
+  log "Creating launch template $LAUNCH_TEMPLATE_NAME with SOCI userdata..."
+  aws ec2 create-launch-template \
+    --launch-template-name "$LAUNCH_TEMPLATE_NAME" \
+    --launch-template-data "{\"UserData\":\"${EXPECTED_USERDATA_B64}\"}" \
+    --region "$REGION" \
+    --query 'LaunchTemplate.LaunchTemplateId' \
+    --output text
+else
+  # Publish a new version only when userdata.sh content actually drifted.
+  # CE references $Latest so a new version is picked up next provisioning.
+  CURRENT_USERDATA_B64=$(aws ec2 describe-launch-template-versions \
+    --launch-template-name "$LAUNCH_TEMPLATE_NAME" \
+    --versions '$Latest' \
+    --region "$REGION" \
+    --query 'LaunchTemplateVersions[0].LaunchTemplateData.UserData' \
+    --output text 2>/dev/null || echo "")
+  if [ "$CURRENT_USERDATA_B64" != "$EXPECTED_USERDATA_B64" ]; then
+    log "userdata.sh changed since last version; publishing new launch template version..."
+    aws ec2 create-launch-template-version \
+      --launch-template-name "$LAUNCH_TEMPLATE_NAME" \
+      --launch-template-data "{\"UserData\":\"${EXPECTED_USERDATA_B64}\"}" \
+      --region "$REGION" \
+      --query 'LaunchTemplateVersion.VersionNumber' \
+      --output text
+  else
+    log "Launch template $LAUNCH_TEMPLATE_NAME up to date."
+  fi
+fi
+
+# --- 11. Compute Environment --------------------------------------------
 CE_STATUS=$(aws batch describe-compute-environments \
   --compute-environments "$COMPUTE_ENV" \
   --region "$REGION" \
@@ -172,7 +219,11 @@ if [ "$CE_STATUS" = "None" ] || [ -z "$CE_STATUS" ] || [ "$CE_STATUS" = "null" ]
       \"instanceTypes\": [\"g4dn.xlarge\"],
       \"subnets\": [$SUBNETS_JSON],
       \"securityGroupIds\": [\"$SG_ID\"],
-      \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\"
+      \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\",
+      \"launchTemplate\": {
+        \"launchTemplateName\": \"$LAUNCH_TEMPLATE_NAME\",
+        \"version\": \"\$Latest\"
+      }
     }" \
     --region "$REGION"
   log "Waiting for CE to reach VALID..."
@@ -199,9 +250,68 @@ if [ "$CE_STATUS" = "None" ] || [ -z "$CE_STATUS" ] || [ "$CE_STATUS" = "null" ]
   done
 else
   log "Compute Environment $COMPUTE_ENV already exists (status: $CE_STATUS)"
+  # Live-account migration: attach the launch template if the CE was
+  # provisioned before Option B landed. update-compute-environment with
+  # --compute-resources requires the CE to be DISABLED first; cycle
+  # state DISABLED → UPDATE → ENABLED, polling VALID between steps.
+  # CE has minvCpus=0 so no in-flight instances are disrupted — the next
+  # provisioning picks up the new launch template.
+  CURRENT_LT=$(aws batch describe-compute-environments \
+    --compute-environments "$COMPUTE_ENV" \
+    --region "$REGION" \
+    --query 'computeEnvironments[0].computeResources.launchTemplate.launchTemplateName' \
+    --output text 2>/dev/null || echo "None")
+  if [ "$CURRENT_LT" != "$LAUNCH_TEMPLATE_NAME" ]; then
+    log "Attaching launch template $LAUNCH_TEMPLATE_NAME to existing CE (current: $CURRENT_LT)..."
+    log "  step 1/3: DISABLE"
+    aws batch update-compute-environment \
+      --compute-environment "$COMPUTE_ENV" \
+      --state DISABLED \
+      --region "$REGION" >/dev/null
+    for i in $(seq 1 30); do
+      STATUS=$(aws batch describe-compute-environments \
+        --compute-environments "$COMPUTE_ENV" \
+        --region "$REGION" \
+        --query 'computeEnvironments[0].status' \
+        --output text)
+      [ "$STATUS" = "VALID" ] && break
+      sleep 5
+    done
+    log "  step 2/3: UPDATE launchTemplate"
+    aws batch update-compute-environment \
+      --compute-environment "$COMPUTE_ENV" \
+      --compute-resources "{\"launchTemplate\": {\"launchTemplateName\": \"$LAUNCH_TEMPLATE_NAME\", \"version\": \"\$Latest\"}}" \
+      --region "$REGION" >/dev/null
+    for i in $(seq 1 30); do
+      STATUS=$(aws batch describe-compute-environments \
+        --compute-environments "$COMPUTE_ENV" \
+        --region "$REGION" \
+        --query 'computeEnvironments[0].status' \
+        --output text)
+      [ "$STATUS" = "VALID" ] && break
+      sleep 5
+    done
+    log "  step 3/3: ENABLE"
+    aws batch update-compute-environment \
+      --compute-environment "$COMPUTE_ENV" \
+      --state ENABLED \
+      --region "$REGION" >/dev/null
+    for i in $(seq 1 30); do
+      STATUS=$(aws batch describe-compute-environments \
+        --compute-environments "$COMPUTE_ENV" \
+        --region "$REGION" \
+        --query 'computeEnvironments[0].status' \
+        --output text)
+      [ "$STATUS" = "VALID" ] && break
+      sleep 5
+    done
+    log "CE launch template reconciled — next Spot host gets SOCI userdata."
+  else
+    log "CE already references launch template $LAUNCH_TEMPLATE_NAME."
+  fi
 fi
 
-# --- 11. Job Queue ------------------------------------------------------
+# --- 12. Job Queue ------------------------------------------------------
 JQ_STATUS=$(aws batch describe-job-queues \
   --job-queues "$JOB_QUEUE" \
   --region "$REGION" \
@@ -232,7 +342,7 @@ else
   log "Job Queue $JOB_QUEUE already exists (status: $JQ_STATUS)"
 fi
 
-# --- 12. Job Definition (register rev 1 against :latest) ----------------
+# --- 13. Job Definition (register rev 1 against :latest) ----------------
 # Solves the chicken-and-egg with batch-image.yml: its re-registration step
 # reads the previous revision; without a seed revision, jq breaks. Once
 # rev 1 exists, every push registers a fresh revision and launch.py picks
