@@ -253,10 +253,6 @@ class GatedHead(nn.Module):
         return expected, gate_logit, mu, log_alpha
 
 
-# Back-compat alias — older callers still import this name.
-GatedTDHead = GatedHead
-
-
 class MultiHeadNet(nn.Module):
     """Multi-head neural network for position-agnostic raw-stat prediction.
 
