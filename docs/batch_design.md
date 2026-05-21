@@ -417,10 +417,26 @@ to `0.13.0`). The `ff-gpu-spot` Compute Environment uses the
 ([infra/batch/userdata.sh](../infra/batch/userdata.sh)) installs
 `soci-snapshotter-grpc` v0.13.0 on the AL2 host pre-boot, registers it
 as a containerd proxy plugin, and starts it as a systemd unit ordered
-`Before=ecs.service`. A 60-second socket-wait loop at the end of
-userdata ensures the snapshotter is ready before cloud-init completes
-(and therefore before `ecs.service` begins claiming images), so the
-first image pull on a fresh Spot host streams lazily via SOCI.
+`Before=ecs.service`. Two gates guard the bootstrap:
+
+1. **Socket-wait** (after `systemctl enable --now soci-snapshotter`,
+   before the `/etc/containerd/config.toml` edit) — verifies the
+   snapshotter daemon is up and its socket exists before containerd is
+   asked to load it as a proxy plugin.
+2. **Plugin-status-wait** (after `systemctl restart containerd`) —
+   polls `ctr plugin ls` until the soci snapshotter row reports
+   `STATUS=ok`. Closes a race where `systemctl restart` returns on
+   containerd's `Type=notify` READY signal (daemon socket open) but
+   proxy plugin discovery is still in progress; the ECS agent
+   (correctly After=cloud-final.service) can otherwise issue its first
+   pull during the discovery window, fall back to overlayfs, and stay
+   in fallback for the rest of the boot. SOCI [issue #190](https://github.com/awslabs/soci-snapshotter/issues/190)
+   documents the silent-fallback failure mode. Live evidence motivating
+   this gate: post-PR #295 production data showed a 4/5 success ratio
+   (1/5 hosts measured 131 s full pull instead of 1–2 s lazy-load).
+
+Both gates exit cloud-init with code 1 on timeout, marking the
+instance unhealthy in the CE rather than serving overlayfs pulls.
 
 Baseline 2026-05-20 cold-start was ~258 s (snapshotter inactive,
 ~122 s full image pull). Expected post-Option-B cold-start is ~135 s

@@ -116,5 +116,43 @@ fi
 # clean ECS-agent claim with the soci snapshotter ready.
 systemctl restart containerd
 
+# --- 4. Wait for the soci proxy plugin to actually load in containerd ----
+# `systemctl restart` above returns when containerd's `Type=notify` READY
+# signal fires — i.e. when the daemon socket opens, NOT when proxy plugins
+# have finished discovery. If userdata exits during the discovery window,
+# ecs.service starts, claims a task, and issues the first image pull
+# before the soci plugin is registered. The pull silently falls back to
+# overlayfs (full ~122s pull) for the rest of the boot — SOCI lazy-load
+# never engages. See SOCI snapshotter issue #190: the fallback is
+# transparent, no error surfaces. Confirmed by post-PR #295 production
+# data: 4/5 fresh Spot hosts measured ~1-2s SOCI pulls, 1/5 measured 131s
+# (overlayfs) — the only difference being whether containerd's plugin
+# discovery completed before ECS agent's first pull request.
+#
+# Close the race: poll `ctr plugin ls` until the soci snapshotter row
+# reports STATUS=`ok` (exact match — `grep -qx ok`, since "blocked" /
+# "not ok" / "error" would substring-match "ok"). 60s cap mirrors the
+# socket-wait above; proxy plugin discovery is normally sub-second, so
+# this is generous belt-and-suspenders. Each `ctr` call is bounded by
+# --timeout 3s so a wedged containerd can't hang the entire userdata.
+PLUGIN_OK=""
+for i in $(seq 1 60); do
+  if ctr --timeout 3s plugin ls 2>/dev/null \
+       | awk '/^io\.containerd\.snapshotter\.v1[[:space:]]+soci[[:space:]]/ {print $NF}' \
+       | grep -qx "ok"; then
+    PLUGIN_OK="yes"
+    break
+  fi
+  sleep 1
+done
+if [ -z "$PLUGIN_OK" ]; then
+  echo "ERROR: containerd soci proxy plugin not 'ok' after 60s post-restart" >&2
+  echo "  ctr plugin ls output (head):" >&2
+  ctr plugin ls 2>&1 | head -30 >&2
+  echo "  journalctl -u containerd --since '60 seconds ago' --no-pager (tail):" >&2
+  journalctl -u containerd --since '60 seconds ago' --no-pager 2>&1 | tail -20 >&2
+  exit 1
+fi
+
 echo "=== soci bootstrap complete ($(date -Iseconds)) ==="
 exit 0
