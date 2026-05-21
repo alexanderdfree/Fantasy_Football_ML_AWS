@@ -41,6 +41,25 @@ def test_tier_bonuses_numpy_and_torch_agree():
 
 
 @pytest.mark.unit
+def test_tier_bonuses_ya_numpy_and_torch_agree():
+    """torch + numpy parity for the YA tier path.
+
+    Yards-allowed tiers span a different boundary set than PA: pick inputs
+    that land in several different tiers (including boundary values) so the
+    bucketize/digitize edge-inclusion convention is exercised on both sides.
+    """
+    from src.shared.aggregate_targets import _YA_BONUSES, _YA_BOUNDARIES
+
+    values_np = np.array([0.0, 99.0, 100.0, 350.0, 450.0, 600.0], dtype=np.float64)
+    values_t = torch.tensor(values_np.tolist(), dtype=torch.float32)
+
+    out_np = _tier_bonuses(values_np, _YA_BOUNDARIES, _YA_BONUSES)
+    out_t = _tier_bonuses(values_t, _YA_BOUNDARIES, _YA_BONUSES)
+
+    np.testing.assert_allclose(np.asarray(out_t), out_np)
+
+
+@pytest.mark.unit
 def test_aggregation_with_torch_inputs():
     """DST predictions as torch tensors return a torch tensor of the same shape."""
     n = 4

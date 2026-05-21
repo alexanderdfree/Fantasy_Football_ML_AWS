@@ -204,7 +204,7 @@ def _run_nn_training(
 ) -> dict:
     """Build optimizer / scheduler / loss / trainer, run ``trainer.train``.
 
-    Centralises the three bodies that previously rebuilt this stack inline
+    Centralises the four bodies that previously rebuilt this stack inline
     (``_train_nn``, ``_train_attention_nn``, ``_train_nested_attention_nn``,
     and ``run_cv_pipeline``'s per-fold loop). Callers construct the model,
     loaders, and trainer *class* — everything between that and the trained
@@ -614,7 +614,6 @@ def build_train_matrix(position: str, cfg: dict) -> tuple[np.ndarray, dict, list
 
 
 def _train_nn(
-    position,
     X_train,
     X_val,
     X_test,
@@ -652,15 +651,13 @@ def _train_nn(
         patience=cfg["nn_patience"],
     )
 
-    val_preds = model.predict_numpy(X_val_s, device)
     test_preds = model.predict_numpy(X_test_s, device)
     metrics = compute_target_metrics(y_test_dict, test_preds, targets)
 
-    return model, nn_scaler, val_preds, test_preds, metrics, history
+    return model, nn_scaler, test_preds, metrics, history
 
 
 def _train_attention_nn(
-    position,
     X_train,
     X_val,
     X_test,
@@ -776,14 +773,6 @@ def _train_attention_nn(
     )
 
     if use_opp:
-        val_preds = model.predict_numpy(
-            X_val_s,
-            hist_val,
-            mask_val,
-            device,
-            X_opp_history=opp_hist_val,
-            opp_history_mask=opp_mask_val,
-        )
         test_preds = model.predict_numpy(
             X_test_s,
             hist_test,
@@ -793,16 +782,14 @@ def _train_attention_nn(
             opp_history_mask=opp_mask_test,
         )
     else:
-        val_preds = model.predict_numpy(X_val_s, hist_val, mask_val, device)
         test_preds = model.predict_numpy(X_test_s, hist_test, mask_test, device)
     gate_info = build_gate_info(test_preds, cfg.get("gated_targets") or [])
     metrics = compute_target_metrics(y_test_dict, test_preds, targets, gate_info=gate_info)
 
-    return model, nn_scaler, val_preds, test_preds, metrics, history
+    return model, nn_scaler, test_preds, metrics, history
 
 
 def _train_nested_attention_nn(
-    position,
     X_train,
     X_val,
     X_test,
@@ -881,21 +868,18 @@ def _train_nested_attention_nn(
         patience=cfg.get("attn_patience", cfg["nn_patience"]),
     )
 
-    val_preds = model.predict_numpy(
-        X_val_s, hist_val, outer_val, inner_val, device, X_game_history=game_hist_val
-    )
     test_preds = model.predict_numpy(
         X_test_s, hist_test, outer_test, inner_test, device, X_game_history=game_hist_test
     )
     metrics = compute_target_metrics(y_test_dict, test_preds, targets)
 
-    return model, nn_scaler, val_preds, test_preds, metrics, history
+    return model, nn_scaler, test_preds, metrics, history
 
 
 def _train_lightgbm(
     X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg, targets, feature_cols, seed
 ):
-    """Train a LightGBM multi-target model. Returns (model, val_preds, test_preds, metrics)."""
+    """Train a LightGBM multi-target model. Returns (model, test_preds, metrics)."""
     model = LightGBMMultiTarget(
         target_names=targets,
         n_estimators=cfg.get("lgbm_n_estimators", 500),
@@ -913,10 +897,9 @@ def _train_lightgbm(
     )
     model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
 
-    val_preds = model.predict(X_val)
     test_preds = model.predict(X_test)
     metrics = compute_target_metrics(y_test_dict, test_preds, targets)
-    return model, val_preds, test_preds, metrics
+    return model, test_preds, metrics
 
 
 def _train_elasticnet(
@@ -955,7 +938,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     """Run the full position model pipeline.
 
     Args:
-        position: Position abbreviation (e.g. "QB", "RB", "WR", "TE")
+        position: Position abbreviation (e.g. "QB", "RB", "WR", "TE", "K", "DST")
         cfg: Dict with keys:
             # Targets & features
             targets: list[str]
@@ -981,7 +964,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             loss_weights: dict[str, float]
             huber_deltas: dict[str, float]
             # Scheduler
-            scheduler_type: str  ("onecycle" | "cosine_warm_restarts")
+            scheduler_type: str  ("onecycle" | "cosine_warm_restarts" | "plateau")
             + scheduler-specific keys (onecycle_max_lr, etc.)
     """
     seed_everything(seed)
@@ -1092,10 +1075,11 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         enet_metrics = None
         if cfg.get("train_elasticnet", False):
             print(f"\n=== {pos} ElasticNet Multi-Target (CV alpha + l1_ratio) ===")
-            enet_tune_grids = {
-                t: cfg.get("enet_alpha_grids", cfg["ridge_alpha_grids"])[t]
-                for t in ridge_tune_targets
-            }
+            # ElasticNet shares the ridge alpha grid — no position currently
+            # declares a separate ``enet_alpha_grids`` (the field isn't on
+            # ``PositionConfig``). The previous silent fallback masked typos in
+            # any future grid override; require the ridge grid explicitly.
+            enet_tune_grids = {t: cfg["ridge_alpha_grids"][t] for t in ridge_tune_targets}
             enet_l1_ratios = cfg.get("enet_l1_ratios", [0.3, 0.5, 0.7])
             with timed("elasticnet_tune", store=phase_seconds):
                 enet_best = (
@@ -1131,14 +1115,13 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                 print(f"  WARNING: ElasticNet did not converge for: {non_converged}")
 
         # --- LightGBM Multi-Target (conditional) ---
-        lgbm_val_preds = None
         lgbm_test_preds = None
         lgbm_metrics = None
         lgbm_model = None
         if cfg.get("train_lightgbm", False):
             print(f"\n=== {pos} LightGBM Multi-Target ===")
             with timed("lgbm_train", store=phase_seconds):
-                lgbm_model, lgbm_val_preds, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
+                lgbm_model, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
                     X_train,
                     X_val,
                     X_test,
@@ -1167,8 +1150,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         # --- Multi-head NN ---
         print(f"\n=== {pos} Multi-Head Neural Net ===")
         with timed("nn_train", store=phase_seconds):
-            model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
-                position,
+            model, nn_scaler, nn_test_preds, nn_metrics, history = _train_nn(
                 X_train,
                 X_val,
                 X_test,
@@ -1181,7 +1163,6 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             )
 
         # --- Attention NN (game history as variable-length sequences) ---
-        attn_nn_val_preds = None
         attn_nn_test_preds = None
         attn_nn_metrics = None
         attn_model = None
@@ -1249,12 +1230,10 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                     (
                         attn_model,
                         attn_nn_scaler,
-                        attn_nn_val_preds,
                         attn_nn_test_preds,
                         attn_nn_metrics,
                         attn_history,
                     ) = _train_nested_attention_nn(
-                        position,
                         X_attn_train,
                         X_attn_val,
                         X_attn_test,
@@ -1337,12 +1316,10 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                     (
                         attn_model,
                         attn_nn_scaler,
-                        attn_nn_val_preds,
                         attn_nn_test_preds,
                         attn_nn_metrics,
                         attn_history,
                     ) = _train_attention_nn(
-                        position,
                         X_attn_train,
                         X_attn_val,
                         X_attn_test,
@@ -1841,8 +1818,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
 
     # NN
     print(f"\n=== {pos} Multi-Head NN (Final Holdout) ===")
-    model, nn_scaler, nn_val_preds, nn_test_preds, nn_metrics, history = _train_nn(
-        position,
+    model, nn_scaler, nn_test_preds, nn_metrics, history = _train_nn(
         X_train,
         X_val,
         X_test,
@@ -1860,7 +1836,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     lgbm_model = None
     if cfg.get("train_lightgbm", False):
         print(f"\n=== {pos} LightGBM Multi-Target (Final Holdout) ===")
-        lgbm_model, _, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
+        lgbm_model, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
             X_train,
             X_val,
             X_test,

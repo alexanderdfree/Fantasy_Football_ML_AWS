@@ -162,9 +162,7 @@ def _tier_bonuses(values, boundaries: list[int], bonuses: list[int]):
     tie values (e.g. pts_allowed=35 → tier [35, 999] → bonus -4).
 
     Note: this is piecewise-constant, so it has zero gradient w.r.t. the tier
-    input — PA/YA head updates come entirely from the per-target Huber loss,
-    not the aux-total loss. The aux-total gate only works because the linear
-    portion (def_sacks*1 + ...) has a live gradient.
+    input — PA/YA head updates come entirely from the per-target Huber loss.
     """
     if isinstance(values, torch.Tensor):
         b = torch.tensor(boundaries, dtype=values.dtype, device=values.device)
