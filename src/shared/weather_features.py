@@ -136,8 +136,19 @@ def merge_schedule_features(df: pd.DataFrame, label: str | None = None) -> pd.Da
     """
     if "_schedule_merged" in df.columns:
         return df
-    # Drop any stale placeholders so the merge produces fresh values
-    for col in WEATHER_FEATURES_ALL + ["implied_total_x_dome"]:
+    # Drop any stale placeholders so the merge produces fresh values.
+    # ``spread_line`` and ``div_game`` are NOT in ``WEATHER_FEATURES_ALL`` (they
+    # remain as bare-named feature columns), but DST materializes them on
+    # every row from the schedule. Without dropping them here they survive
+    # into the ``df.merge(lookup, ...)`` below, pandas suffix-renames the
+    # collision to ``spread_line_x`` / ``_y`` (and ``div_game_x`` / ``_y``),
+    # the bare-name merge-back loop silently skips them, and the cleanup
+    # loop drops them — so both columns end up zeroed by the catch-all
+    # backfill in ``build_position_features``. Dropping them up front lets
+    # the merge produce them cleanly as bare names so the merge-back below
+    # populates them. See TODO.md "DST spread_line/div_game zeroed by
+    # merge_schedule_features".
+    for col in WEATHER_FEATURES_ALL + ["implied_total_x_dome", "spread_line", "div_game"]:
         if col in df.columns:
             df.drop(columns=[col], inplace=True)
 
@@ -211,16 +222,18 @@ def merge_schedule_features(df: pd.DataFrame, label: str | None = None) -> pd.Da
     if "is_home_sched" in df.columns:
         df["is_home"] = df["is_home_sched"].fillna(0).astype(int)
 
-    # Clean up intermediate merge columns
+    # Clean up intermediate merge columns. ``spread_line`` and ``div_game``
+    # are intentionally NOT dropped: DST carries them as bare-named feature
+    # columns and the schedule merge above is what populates them. Stripping
+    # them here would silently zero both features (DST trained for months
+    # with ``spread_line == 0`` and ``div_game == 0`` because of this drop).
     for col in [
-        "spread_line",
         "roof",
         "surface",
         "temp",
         "wind",
         "team_rest",
         "opp_rest",
-        "div_game",
         "is_home_sched",
     ]:
         if col in df.columns:
