@@ -450,11 +450,32 @@ class TestWaitForJobs:
 
 
 class TestDownloadArtifacts:
+    """Manifest-based artifact download.
+
+    download_artifacts walks ``current → stable → previous`` from
+    ``models/{POS}/manifest.json`` (see src/batch/launch.py:download_artifacts).
+    The legacy ``models/{POS}/model.tar.gz`` mirror was removed in the
+    parallel-train-batch race fix.
+    """
+
+    @staticmethod
+    def _make_manifest_body(history_key: str) -> "mock.MagicMock":
+        """Build a get_object response whose Body.read() returns manifest JSON."""
+        import json
+
+        body = mock.MagicMock()
+        body.read.return_value = json.dumps(
+            {
+                "current": {"key": history_key, "sha7": "deadbee", "bytes": 1024},
+                "stable": None,
+                "previous": None,
+            }
+        ).encode("utf-8")
+        return {"Body": body}
+
     def test_download_extracts_to_correct_dir(self, tmp_path, monkeypatch, capsys):
-        from src.batch import launch
         from src.batch.launch import S3_BUCKET, download_artifacts
 
-        # Create a fake tar.gz
         staging = tmp_path / "staging"
         staging.mkdir()
         (staging / "ridge_model.pkl").write_text("fake")
@@ -463,7 +484,9 @@ class TestDownloadArtifacts:
         with tarfile.open(str(tar_path), "w:gz") as tar:
             tar.add(str(staging / "ridge_model.pkl"), arcname="ridge_model.pkl")
 
+        history_key = "models/RB/history/20260520-123456-deadbee/model.tar.gz"
         mock_s3 = mock.MagicMock()
+        mock_s3.get_object.return_value = self._make_manifest_body(history_key)
         # Fresh artifact (LastModified after stoppedAt)
         mock_s3.head_object.return_value = {
             "LastModified": datetime.datetime(2023, 11, 14, 22, 13, 30, tzinfo=datetime.UTC),
@@ -482,7 +505,7 @@ class TestDownloadArtifacts:
         mock_s3.download_file.assert_called_once()
         call_args = mock_s3.download_file.call_args.args
         assert call_args[0] == S3_BUCKET
-        assert call_args[1] == "models/RB/model.tar.gz"
+        assert call_args[1] == history_key
 
     def test_warns_on_stale_artifact(self, tmp_path, monkeypatch, capsys):
         """If LastModified < stoppedAt, download_artifacts should print a WARNING."""
@@ -495,7 +518,9 @@ class TestDownloadArtifacts:
         with tarfile.open(str(tar_path), "w:gz") as tar:
             tar.add(str(staging / "x.pkl"), arcname="x.pkl")
 
+        history_key = "models/RB/history/20230101-000000-cafebab/model.tar.gz"
         mock_s3 = mock.MagicMock()
+        mock_s3.get_object.return_value = self._make_manifest_body(history_key)
         # Remote LastModified is a day before job stoppedAt
         old_modified = datetime.datetime(2023, 1, 1, tzinfo=datetime.UTC)
         mock_s3.head_object.return_value = {"LastModified": old_modified}
@@ -517,15 +542,16 @@ class TestDownloadArtifacts:
         assert "stale" in captured.out.lower()
 
     def test_skip_when_no_object(self, tmp_path, monkeypatch, capsys):
+        """Missing manifest (NoSuchKey on get_object) → per-position skip without raising."""
         from src.batch.launch import download_artifacts
 
         mock_s3 = mock.MagicMock()
-        mock_s3.head_object.side_effect = ClientError({"Error": {"Code": "404"}}, "HeadObject")
+        mock_s3.get_object.side_effect = ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
 
         monkeypatch.chdir(tmp_path)
         download_artifacts(["RB"], s3_client=mock_s3)
         mock_s3.download_file.assert_not_called()
-        assert "No artifacts" in capsys.readouterr().out
+        assert "No manifest" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
