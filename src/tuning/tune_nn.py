@@ -123,8 +123,12 @@ _DEFAULT_N_TRIALS = 15
 # HyperbandPruner: `min_resource` is the minimum epoch count a trial must
 # complete before it's eligible for pruning. We pick 8 to give the trial a
 # chance to escape its lr-warmup transient before being judged. `reduction
-# _factor=3` is Optuna's default; `max_resource="auto"` infers from the
-# longest trial seen so far.
+# _factor=3` is Optuna's default. `max_resource` is pinned to the cfg's
+# ``nn_epochs`` per study (instead of Optuna's `"auto"`) so an early-
+# stopped trial 1 can't establish a too-low rung ladder that prunes every
+# later trial at the wrong epoch — `"auto"` infers from completed trials,
+# which silently underestimates when ``trainer.train`` exits at ``patience``
+# rather than the configured epoch ceiling.
 _HYPERBAND_MIN_RESOURCE = 8
 _HYPERBAND_REDUCTION_FACTOR = 3
 
@@ -506,7 +510,10 @@ def main():
             pruner=HyperbandPruner(
                 min_resource=_HYPERBAND_MIN_RESOURCE,
                 reduction_factor=_HYPERBAND_REDUCTION_FACTOR,
-                max_resource="auto",
+                # Pin to the cfg's epoch ceiling so an early-stopped trial 1
+                # can't establish a too-low rung ladder for the rest of the
+                # search (see _HYPERBAND_MIN_RESOURCE comment).
+                max_resource=int(base_cfg["nn_epochs"]),
             ),
         )
 

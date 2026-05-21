@@ -55,7 +55,12 @@ def test_run_forwards_caller_config_with_builder_injection():
     # Runtime closure was injected on top.
     assert "attn_history_builder_fn" in forwarded_cfg
     # Caller's dict must not have been mutated (tuner reuses base_cfg across
-    # trials and would crash on trial 2 if we mutated in place).
+    # trials and would crash on trial 2 if we mutated in place). NOTE: this
+    # is a top-level non-mutation check, sufficient because K's runner only
+    # injects ONE top-level key (`attn_history_builder_fn`) and never edits
+    # nested cfg dicts. Deep-mutation safety for nested cfg values relies on
+    # `src/tuning/tune_nn.py::_make_objective`'s `copy.deepcopy(base_cfg)`
+    # before each trial; the runner is not the gate for that contract.
     assert "attn_history_builder_fn" not in caller_cfg
 
 

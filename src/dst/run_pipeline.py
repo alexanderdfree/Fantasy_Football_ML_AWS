@@ -50,7 +50,17 @@ def run(seed=42, config=None):
     test_df = dst_df[dst_df["season"].isin(TEST_SEASONS)].copy()
     print(f"  Split sizes: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
 
-    return run_pipeline("DST", config or CONFIG, train_df, val_df, test_df, seed)
+    # Explicit None check (not ``config or CONFIG``) so an empty dict ``{}``
+    # falls through to the caller's intent rather than silently reverting to
+    # CONFIG — matches K's pattern in src/k/run_pipeline.py.
+    return run_pipeline(
+        "DST",
+        config if config is not None else CONFIG,
+        train_df,
+        val_df,
+        test_df,
+        seed,
+    )
 
 
 if __name__ == "__main__":
