@@ -44,6 +44,50 @@ register_standard_fixtures(
 # ---------------------------------------------------------------------------
 
 
+def _build_wr_row(**overrides) -> pd.DataFrame:
+    """Single-row WR DataFrame with sensible defaults; fantasy_points auto-computed."""
+    defaults = {
+        "receiving_yards": 80,
+        "rushing_yards": 0,
+        "receptions": 6,
+        "targets": 8,
+        "receiving_tds": 1,
+        "rushing_tds": 0,
+        "sack_fumbles_lost": 0,
+        "rushing_fumbles_lost": 0,
+        "receiving_fumbles_lost": 0,
+        "passing_yards": 0,
+        "passing_tds": 0,
+        "interceptions": 0,
+        "fantasy_points": 0.0,
+    }
+    defaults.update(overrides)
+    if "fantasy_points" not in overrides:
+        fp = (
+            defaults["receiving_yards"] * 0.1
+            + defaults["receptions"] * 1.0  # PPR
+            + defaults["rushing_yards"] * 0.1
+            + (defaults["receiving_tds"] + defaults["rushing_tds"]) * 6
+            + (
+                defaults["sack_fumbles_lost"]
+                + defaults["rushing_fumbles_lost"]
+                + defaults["receiving_fumbles_lost"]
+            )
+            * -2
+            + defaults["passing_yards"] * 0.04
+            + defaults["passing_tds"] * 4
+            + defaults["interceptions"] * -2
+        )
+        defaults["fantasy_points"] = fp
+    return pd.DataFrame([defaults])
+
+
+@pytest.fixture(scope="session")
+def make_wr_row():
+    """Factory for single-row WR target inputs."""
+    return _build_wr_row
+
+
 @pytest.fixture(scope="session")
 def wr_player_games_factory():
     """Factory for multi-week WR game DataFrames used by feature-compute tests."""

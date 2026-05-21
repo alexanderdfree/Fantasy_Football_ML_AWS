@@ -41,6 +41,24 @@ register_standard_fixtures(
 # ---------------------------------------------------------------------------
 
 
+def _build_k_row(**overrides) -> pd.DataFrame:
+    """Single-row kicker DataFrame with sensible defaults."""
+    defaults = {
+        "fg_yards_made": 0,
+        "fg_missed": 0,
+        "pat_made": 3,
+        "pat_missed": 0,
+    }
+    defaults.update(overrides)
+    return pd.DataFrame([defaults])
+
+
+@pytest.fixture(scope="session")
+def make_k_row():
+    """Factory for single-row K target inputs."""
+    return _build_k_row
+
+
 def _build_games(
     player_id: str = "K1",
     n_weeks: int = 6,

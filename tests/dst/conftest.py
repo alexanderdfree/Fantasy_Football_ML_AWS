@@ -43,32 +43,28 @@ register_standard_fixtures(
 # ---------------------------------------------------------------------------
 
 
+def _build_dst_row(**overrides) -> pd.DataFrame:
+    """Single-row DST DataFrame with sensible defaults; safe to mutate in-test."""
+    row = {
+        "def_sacks": 3,
+        "def_ints": 1,
+        "def_fumble_rec": 1,
+        "def_fumbles_forced": 1,
+        "def_blocked_kicks": 0,
+        "points_allowed": 17,
+        "yards_allowed": 330,
+        "special_teams_tds": 0,
+        "def_tds": 0,
+        "def_safeties": 0,
+    }
+    row.update(overrides)
+    return pd.DataFrame([row])
+
+
 @pytest.fixture(scope="session")
 def make_df():
-    """Factory: build a single-row DST DataFrame with sensible defaults.
-
-    Mirrors the old ``_make_row`` helper from test_dst_targets.py.
-    Any keyword argument overrides the default for that field.  Returns
-    a fresh DataFrame per call — safe to mutate in-test.
-    """
-
-    def _factory(**overrides) -> pd.DataFrame:
-        row = {
-            "def_sacks": 3,
-            "def_ints": 1,
-            "def_fumble_rec": 1,
-            "def_fumbles_forced": 1,
-            "def_blocked_kicks": 0,
-            "points_allowed": 17,
-            "yards_allowed": 330,
-            "special_teams_tds": 0,
-            "def_tds": 0,
-            "def_safeties": 0,
-        }
-        row.update(overrides)
-        return pd.DataFrame([row])
-
-    return _factory
+    """Factory: build a single-row DST DataFrame with sensible defaults."""
+    return _build_dst_row
 
 
 @pytest.fixture(scope="session")
