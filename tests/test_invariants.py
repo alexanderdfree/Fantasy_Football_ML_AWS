@@ -162,18 +162,25 @@ def test_attn_static_features_subset_of_include(pos: str):
 # ---------------------------------------------------------------------------
 # Why: the config-level subset check (invariant 2) only verifies the whitelist
 # names — it can't catch H2-class bugs where a column is in the config but
-# silently zeroed by ``merge_schedule_features`` / ``build_position_features``
-# at runtime (H2: DST ``spread_line`` / ``div_game`` were dropped by the schedule
-# merge and then back-filled with 0 by the catch-all backfill, so they survived
-# the config check but reached the model as constant zeros).
+# zeroed by ``merge_schedule_features`` at runtime (H2: DST ``spread_line`` /
+# ``div_game`` were dropped by the schedule merge, then re-introduced as
+# zero-fills by ``merge_schedule_features``'s own fillna(0) on the merge-back
+# loop — so they survived the config check but reached the model as
+# constant zeros).
+#
+# ``build_position_features`` itself no longer silently back-fills missing
+# whitelist cols — it now raises ``KeyError``. So the (a) presence check
+# below mainly guards against an internal contract bug; the (b) std() > 0
+# check still catches H2-class zeroing introduced by individual merge or
+# add_features steps that produce the column but with no variance.
 #
 # This runtime invariant runs ``build_position_features`` against tiny real
 # splits per position and asserts every ``attn_static_feature`` column (a)
 # exists in the engineered DataFrame and (b) has ``std() > 0`` (i.e. carries
-# real signal, not a back-filled zero column). A per-position allowlist absorbs
-# columns that are legitimately near-constant on the tiny-fixture slice (e.g.
-# prior-season aggregates that are zero for first-season rows) so the test
-# doesn't flag known-tiny-fixture artifacts.
+# real signal). A per-position allowlist absorbs columns that are legitimately
+# near-constant on the tiny-fixture slice (e.g. prior-season aggregates that
+# are zero for first-season rows) so the test doesn't flag known-tiny-fixture
+# artifacts.
 
 # Cross-position allowlist of attn_static_features columns that are legitimately
 # constant on the tiny-fixture slice from ``load_tiny_splits``. Keys are
@@ -232,10 +239,10 @@ def test_attn_static_features_survive_build_position_features(pos: str, tmp_path
     assert attn_static, f"{pos}.POSITION_CONFIG.attn_static_features is empty"
 
     # (a) Every attn_static column must be present on the engineered training
-    # DataFrame. ``build_position_features``'s catch-all back-fill plants a
-    # constant 0 for missing whitelist columns and prints a WARNING, but the
-    # back-filled column DOES appear in ``pos_train.columns`` — so this check
-    # alone doesn't fire on H2; the std() check below is the real signal.
+    # DataFrame. ``build_position_features`` now raises ``KeyError`` on
+    # missing whitelist cols, so reaching this assert with a missing col
+    # would indicate the col is in ``attn_static_features`` but not in the
+    # broader ``include_features`` set — a config bug, not a data bug.
     missing = [c for c in attn_static if c not in pos_train.columns]
     assert not missing, (
         f"{pos}: attn_static_features columns absent from engineered DataFrame "

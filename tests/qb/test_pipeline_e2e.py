@@ -121,13 +121,28 @@ def synthetic_splits():
     (data/raw/schedules_2012_2025.parquet) and to give the pipeline's
     expanding-window Ridge CV tuning enough unique seasons to build
     non-empty folds. val=2023 and test=2024 remain single-season.
+
+    ``build_features`` is applied on the full concatenated frame before
+    splitting — mirrors what ``refresh-splits.yml`` does in production
+    (``load_raw_data`` → ``preprocess`` → ``build_features`` →
+    ``temporal_split``). Without this, ``build_position_features`` raises
+    ``KeyError`` because the raw synthetic frames don't carry the rolling/
+    ewma/trend/prior_season/opp engineered cols QB's whitelist references.
     """
-    train = pd.concat(
-        [_generate_season(season, seed=100 + (season - 2012)) for season in range(2012, 2023)],
+    from src.features.engineer import build_features
+
+    full = pd.concat(
+        [
+            *(_generate_season(season, seed=100 + (season - 2012)) for season in range(2012, 2023)),
+            _generate_season(2023, seed=200),
+            _generate_season(2024, seed=201),
+        ],
         ignore_index=True,
     )
-    val = _generate_season(2023, seed=200)
-    test = _generate_season(2024, seed=201)
+    full = build_features(full)
+    train = full[full["season"] < 2023].copy()
+    val = full[full["season"] == 2023].copy()
+    test = full[full["season"] == 2024].copy()
     return train, val, test
 
 

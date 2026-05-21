@@ -247,6 +247,19 @@ def _build_synthetic_dataset(
                         "passing_yards": 0,
                         "passing_tds": 0,
                         "interceptions": 0,
+                        # Raw passing-side stat cols build_features and its
+                        # opp-defense aggregator reference. RBs don't throw or
+                        # get sacked — zero is the realistic constant — but
+                        # the columns must be present or build_features
+                        # raises ``KeyError: 'Column not found: <name>'``.
+                        "attempts": 0,
+                        "completions": 0,
+                        "sacks": 0,
+                        "sack_yards": 0,
+                        "passing_air_yards": 0,
+                        "passing_yards_after_catch": 0,
+                        "passing_first_downs": 0,
+                        "passing_epa": 0.0,
                         "rushing_epa": rng.normal(0.0, 0.5) * carries,
                         "rushing_first_downs": int(carries * 0.25),
                         "receiving_first_downs": int(receptions * 0.4),
@@ -316,8 +329,45 @@ def synthetic_splits(synthetic_dataset):
     config) — within one training season this gives ~17 distinct week labels
     so expanding-window folds still work. Keeping training to one season
     sticks to the coordinator's "2 seasons x 17 weeks" recipe.
+
+    ``build_features`` runs on the full dataset before splitting so the
+    rolling / ewma / trend / prior_season / opp_def cols RB's whitelist
+    references are populated — without this, ``build_position_features``
+    raises ``KeyError`` (it used to silently zero-fill missing whitelist
+    cols, which masked the 8c46b59 metric regression in production). The
+    pre-baked engineered cols in ``_build_synthetic_dataset`` that
+    ``build_features`` would re-compute are dropped first so the concat
+    doesn't produce duplicate column labels.
     """
-    df = synthetic_dataset
+    from src.features.engineer import build_features
+
+    # Cols pre-baked by ``_build_synthetic_dataset`` that ``build_features``
+    # also produces. Dropping them up front prevents pandas-concat from
+    # creating duplicate column labels (which would break later
+    # ``df[col]`` indexing).
+    conflict_cols = [
+        "target_share_L3",
+        "air_yards_share",
+        "is_home",
+        "days_rest",
+        "trend_fantasy_points",
+        "trend_targets",
+        "trend_carries",
+        "trend_snap_pct",
+        "opp_rush_pts_allowed_to_pos",
+        "opp_recv_pts_allowed_to_pos",
+        "opp_def_sacks_L5",
+        "opp_def_pass_yds_allowed_L5",
+        "opp_def_pass_td_allowed_L5",
+        "opp_def_ints_L5",
+        "opp_def_rush_yds_allowed_L5",
+        "opp_def_pts_allowed_L5",
+    ]
+    df = synthetic_dataset.drop(
+        columns=[c for c in conflict_cols if c in synthetic_dataset.columns]
+    )
+    df = build_features(df)
+
     seasons = sorted(df["season"].unique())
     train = df[df["season"] == seasons[0]].copy()
     held = df[df["season"] == seasons[-1]].copy()
