@@ -401,24 +401,39 @@ class MultiHeadTrainer:
         self.best_val_metric = float("inf")
         self.best_model_state = None
         self.epochs_without_improvement = 0
-        # BF16 autocast on the forward + loss path. T4 (sm_75) has BF16 tensor-
-        # core paths since CUDA 11.x; using BF16 (not FP16) preserves the FP32
-        # exponent range so no GradScaler is needed and the count-head NLL/
-        # Huber losses keep numerical headroom. Optimizer step stays in FP32
-        # via the parameter master copies. Forced off on non-CUDA devices
-        # (MPS/CPU) so local dev runs and CI tests are byte-identical to the
-        # FP32 path.
+        # FP16 autocast + GradScaler on the forward + loss path. Replaces a
+        # previous BF16 attempt (PR #293) that hung on T4 — T4 (sm_75/Turing)
+        # has no native BF16 Tensor Cores (added in Ampere sm_80), so BF16
+        # ops either fell back to FP32 or hit a software-emulation path that
+        # wedged training. T4 *does* have native FP16 Tensor Cores
+        # (~65 TFLOPS vs ~8 FP32), so FP16 is the canonical Turing AMP
+        # recipe.
+        #
+        # GradScaler handles FP16 gradient underflow by multiplying the loss
+        # by a dynamic scale factor (default starts at 2^16) before
+        # backward, then unscaling before the optimizer step; it auto-
+        # adjusts on inf/NaN detection. The small-mean Poisson NLL / Huber
+        # heads (DST def_safeties ~0.05, def_tds ~0.07) sit comfortably
+        # above FP16's smallest normalized value (~6e-5); GradScaler covers
+        # the gradient-side underflow concern.
+        #
+        # Forced off on non-CUDA devices (MPS/CPU) so local dev runs and CI
+        # tests are byte-identical to the FP32 path; GradScaler enabled=
+        # short-circuits when AMP is off so the .scale/.step/.update calls
+        # are no-ops.
         self._use_amp = bool(use_amp) and getattr(device, "type", None) == "cuda"
+        self._scaler = torch.amp.GradScaler("cuda", enabled=self._use_amp)
 
     def _autocast(self):
-        """Return the BF16 autocast context when AMP is active, else nullcontext.
+        """Return the FP16 autocast context when AMP is active, else nullcontext.
 
         Wrapped around forward + criterion so matmul / linear / attention ops
-        downcast to BF16; the optimizer step and gradient update happen
-        outside the context so master copies stay in FP32.
+        downcast to FP16 on T4 Tensor Cores; the optimizer step and gradient
+        update happen outside the context so master copies stay in FP32 and
+        GradScaler can rescale gradients between backward() and step().
         """
         if self._use_amp:
-            return torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+            return torch.amp.autocast(device_type="cuda", dtype=torch.float16)
         return contextlib.nullcontext()
 
     def _forward_batch(self, batch) -> tuple[dict, dict]:
@@ -475,9 +490,20 @@ class MultiHeadTrainer:
                         entropy_term = entropy_fn()
                         if entropy_term is not None:
                             loss = loss + entropy_term
-                loss.backward()
+                # FP16 AMP path uses GradScaler to keep gradients in
+                # representable range. When AMP is off (CPU / MPS / use_amp=False)
+                # GradScaler is constructed with enabled=False and these
+                # scaler.* methods are pass-through no-ops — the path is
+                # bit-identical to the original loss.backward() + optimizer.step().
+                #
+                # scaler.unscale_() must run BEFORE clip_grad_norm_ so the
+                # clip threshold (max_norm=1.0) is applied to real-scale
+                # gradients, not the loss-scaled magnitudes.
+                self._scaler.scale(loss).backward()
+                self._scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                self.optimizer.step()
+                self._scaler.step(self.optimizer)
+                self._scaler.update()
                 if self.scheduler_per_batch:
                     self.scheduler.step()
 
