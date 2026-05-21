@@ -101,8 +101,12 @@ def _flat_attn_kwargs_static(pc: PositionConfig) -> dict:
     )
     if pc.nn_head_hidden_overrides:
         kwargs["head_hidden_overrides"] = dict(pc.nn_head_hidden_overrides)
-    if pc.nn_non_negative_targets is not None:
-        kwargs["non_negative_targets"] = set(pc.nn_non_negative_targets)
+    # ``nn_non_negative_targets`` is ``field(default_factory=set)`` on
+    # :class:`PositionConfig` — never ``None``. All six positions set it
+    # explicitly to ``set(_TARGETS)`` (clamp every head). Plumb unconditionally;
+    # an empty set would mean "no head is clamped", which is the intended
+    # escape hatch for a future signed-output head.
+    kwargs["non_negative_targets"] = set(pc.nn_non_negative_targets)
     return kwargs
 
 
