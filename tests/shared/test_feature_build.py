@@ -83,12 +83,22 @@ def _minimal_df(n: int = 3) -> pd.DataFrame:
     # Schedule merge expects season/week/recent_team; merge_schedule_features
     # short-circuits if _schedule_merged is already present, so set that flag
     # to isolate these tests from the real lookup.
+    #
+    # Same sentinel pattern for merge_team_box_score_features — it loads
+    # data/raw/team_stats_2012_2025.parquet via load_team_week_stats, and
+    # under pytest-xdist the concurrent reads occasionally surface as
+    # ``pyarrow.lib.ArrowInvalid: Could not open Parquet input source
+    # '<Buffer>'`` (CI shared shard failures on PR #337 and PR #349).
+    # ``_team_box_score_merged: True`` short-circuits at
+    # src/shared/team_box_score.py:186-187 so these unit tests never
+    # touch the parquet.
     return pd.DataFrame(
         {
             "season": np.full(n, 2024),
             "week": np.arange(1, n + 1),
             "recent_team": ["KC"] * n,
             "_schedule_merged": True,
+            "_team_box_score_merged": True,
         }
     )
 
