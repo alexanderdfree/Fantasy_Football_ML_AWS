@@ -252,6 +252,28 @@ def test_refresh_position_reaps_stale_staging_dirs(env_bucket, fake_root):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("bad_pos", ["", "../../etc", "INVALID", None, 42, "qb/../wr"])
+def test_refresh_position_invalid_pos_returns_unchanged_etag(bad_pos):
+    """The allowlist guard at the top of refresh_position must reject anything
+    that isn't a known position, returning (last_etag, False) so the poller's
+    state doesn't get corrupted and no filesystem operations fire. This is
+    the defense the CodeQL path-injection alert wanted; the test pins it."""
+    new_etag, did_refresh = model_sync.refresh_position(bad_pos, last_etag='"sentinel"')
+    assert new_etag == '"sentinel"'
+    assert did_refresh is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad_pos", ["", "../../etc", "INVALID", None, 42, "qb/../wr"])
+def test_refresh_sentinel_mtime_invalid_pos_returns_zero(bad_pos):
+    """refresh_sentinel_mtime must return 0.0 (the 'no refresh pending'
+    sentinel) for any pos outside the POSITIONS allowlist, without touching
+    the filesystem. Defends against accidental path traversal via the
+    `pos.lower()` used in the path construction."""
+    assert model_sync.refresh_sentinel_mtime(bad_pos) == 0.0
+
+
+@pytest.mark.unit
 def test_refresh_sentinel_mtime_returns_zero_when_absent(monkeypatch, tmp_path):
     """refresh_sentinel_mtime is the public read-side of the poller's touch.
     Returns 0.0 when the sentinel doesn't exist so the serving fast-path

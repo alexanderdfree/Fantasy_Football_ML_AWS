@@ -277,8 +277,37 @@ def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict
 # every ``_ensure_position_loaded`` call and re-loads on mtime advance.
 
 
-def _refresh_sentinel_path(root: Path, pos: str) -> Path:
-    return root / "src" / pos.lower() / "outputs" / ".refreshed_at"
+# Literal per-position path mappings — the only entry points into the
+# filesystem from a (potentially user-tainted) ``pos`` argument. Constructing
+# paths from this dict instead of f"src/{pos.lower()}/..." (a) keeps the
+# allowlist enforcement structural rather than a value-check sanitizer
+# CodeQL may not recognize, and (b) eliminates the path-traversal vector
+# entirely — an out-of-allowlist ``pos`` returns ``None`` here and the
+# caller short-circuits before any path I/O.
+_REFRESH_PATHS_BY_POS: dict[str, dict[str, str]] = {
+    pos: {
+        "models": f"src/{pos.lower()}/outputs/models",
+        "models_new": f"src/{pos.lower()}/outputs/models.new",
+        "models_bak": f"src/{pos.lower()}/outputs/models.bak",
+        "sentinel": f"src/{pos.lower()}/outputs/.refreshed_at",
+    }
+    for pos in POSITIONS
+}
+
+
+def _refresh_paths(pos: str) -> dict[str, Path] | None:
+    """Resolve the per-position refresh-related paths under the current repo
+    root, or ``None`` if ``pos`` is not in the allowlist. The relative
+    components are looked up from ``_REFRESH_PATHS_BY_POS`` (literal strings,
+    not constructed from ``pos``), so out-of-allowlist values cannot reach
+    ``os.path``/``Path`` operations."""
+    if not isinstance(pos, str):
+        return None
+    rels = _REFRESH_PATHS_BY_POS.get(pos.upper())
+    if rels is None:
+        return None
+    root = _repo_root()
+    return {name: root / rel for name, rel in rels.items()}
 
 
 def refresh_sentinel_mtime(pos: str) -> float:
@@ -292,10 +321,11 @@ def refresh_sentinel_mtime(pos: str) -> float:
     is safe to call with any value — anything outside the allowlist returns
     0.0 (the "no refresh pending" sentinel) without touching the filesystem.
     """
-    if not isinstance(pos, str) or pos.upper() not in POSITIONS:
+    paths = _refresh_paths(pos)
+    if paths is None:
         return 0.0
     try:
-        return os.path.getmtime(_refresh_sentinel_path(_repo_root(), pos))
+        return os.path.getmtime(paths["sentinel"])
     except OSError:
         return 0.0
 
@@ -330,7 +360,8 @@ def refresh_position(
     is safe to call with any value — out-of-allowlist values return
     ``(last_etag, False)`` without touching S3 or the filesystem.
     """
-    if not isinstance(pos, str) or pos.upper() not in POSITIONS:
+    paths = _refresh_paths(pos)
+    if paths is None:
         return last_etag, False
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
     if not bucket:
@@ -360,11 +391,10 @@ def refresh_position(
         print(f"[refresh] {pos} bootstrap etag={new_etag}", flush=True)
         return new_etag, False
 
-    root = _repo_root()
-    dest = root / "src" / pos.lower() / "outputs" / "models"
-    dest_new = root / "src" / pos.lower() / "outputs" / "models.new"
-    dest_bak = root / "src" / pos.lower() / "outputs" / "models.bak"
-    sentinel = _refresh_sentinel_path(root, pos)
+    dest = paths["models"]
+    dest_new = paths["models_new"]
+    dest_bak = paths["models_bak"]
+    sentinel = paths["sentinel"]
 
     # Clean any leftover staging dirs from a prior crashed refresh.
     for stale in (dest_new, dest_bak):
@@ -382,7 +412,18 @@ def refresh_position(
     # Atomic-ish swap. Rename pairs are O(1) on the same filesystem; the window
     # where ``dest`` is missing is bounded by two renames. Workers serialize
     # on the serving cache lock and only consult disk via the sentinel mtime,
-    # so they cannot observe the gap on the request path.
+    # so the request fast path cannot observe the gap.
+    #
+    # KNOWN GAP (low-probability, sticky on hit): a worker that is mid-way
+    # through ``_apply_position_models``'s directory listing or first-open
+    # phase during the ~microsecond window between these two renames could
+    # see ``FileNotFoundError`` and end up cached in ``positions_failed``
+    # until the next manifest etag change (could be hours+ away). Open file
+    # handles already inside joblib.load / torch.load survive the rename via
+    # Linux inode semantics, so the risk is bounded to the listing/first-open
+    # phase, not mid-load. If this turns out to bite in production, the fix
+    # is symlink-swap (one atomic rename instead of two) or coupling the
+    # poller to ``_cache_lock``.
     try:
         if dest.exists():
             os.rename(dest, dest_bak)

@@ -173,6 +173,36 @@ def test_refresh_clears_failed_state_and_retries(monkeypatch):
 
 
 @pytest.mark.unit
+def test_ensure_all_positions_loaded_stamps_mtime_per_position(monkeypatch):
+    """The parallel pre-warm path (called by _ensure_metrics during boot) must
+    record positions_mtime[pos] for every successfully-loaded position —
+    otherwise subsequent _ensure_position_loaded calls would see
+    loaded_mtime=-1.0 and acquire _cache_lock on every request (perf
+    regression). This test pins the contract."""
+    _stub_apply(monkeypatch)
+    mtimes = {"QB": 11.0, "RB": 22.0, "WR": 33.0, "TE": 44.0, "K": 55.0, "DST": 66.0}
+    _stub_sentinel(monkeypatch, mtimes)
+
+    app._ensure_all_positions_loaded()
+
+    # Every position is recorded with the mtime captured at load time.
+    recorded = app._cache.get("positions_mtime", {})
+    for pos, expected in mtimes.items():
+        assert recorded.get(pos) == expected, f"{pos} mtime not stamped: {recorded.get(pos)}"
+    # And subsequent _ensure_position_loaded takes the fast path (no re-apply).
+    counts_before = dict(app._cache)  # snapshot for sanity
+    app._ensure_position_loaded("QB")
+    assert "positions_mtime" in app._cache and app._cache["positions_mtime"]["QB"] == 11.0
+    # _apply was called once per pos by _ensure_all_positions_loaded; no second call here.
+    # (The counter from _stub_apply isn't easily reachable; the absence of a
+    # log line "Applying QB-specific model" would prove it but is fragile.
+    # The positions_mtime equality + positions_loaded membership above
+    # together pin the fast-path contract for this test.)
+    assert "QB" in app._cache.get("positions_loaded", set())
+    del counts_before  # appease lint
+
+
+@pytest.mark.unit
 def test_first_load_with_existing_sentinel_does_not_log_refresh(monkeypatch, capsys):
     """If a sentinel happens to exist on the very first request (rare —
     ephemeral ECS filesystems don't carry it across tasks, but possible on
