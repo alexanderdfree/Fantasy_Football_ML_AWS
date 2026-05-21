@@ -292,10 +292,26 @@ class _GPUResidentBatcher:
         if self._n == 0:
             return
         if self._shuffle:
-            # Uses the global torch RNG state, same as DataLoader's default
-            # RandomSampler when constructed with ``generator=None``. Seeded
-            # runs reproduce on the same device path.
-            perm = torch.randperm(self._n, device=self._device)
+            # Draw the permutation from the CPU global RNG (``torch.default_generator``),
+            # then H2D copy to the batcher's device. CPU and CUDA have *independent*
+            # default generators in PyTorch — ``torch.manual_seed(N)`` seeds both, but
+            # ``torch.cuda.manual_seed_all(N)`` seeds a separate stream that produces
+            # a different sequence at the same seed. The old ``DataLoader(shuffle=True)``
+            # path that this class replaces (and the CPU/MPS fallback path below in
+            # ``make_*_dataloaders``) consumes the CPU stream via ``RandomSampler``;
+            # generating the permutation on ``device='cuda'`` here would silently
+            # diverge from that, giving a different per-epoch batch order at the same
+            # global seed and shifting the SGD trajectory away from the CPU/MPS path.
+            #
+            # The H2D copy is N int64s (~160 KB for N≈20k) per epoch — negligible vs
+            # the ~100s of NN forward/backward per epoch, and orders of magnitude
+            # smaller than the DataLoader IPC + H2D copies PR #309 removed. Not
+            # bit-identical to ``RandomSampler`` (which constructs a transient
+            # ``torch.Generator`` per ``__iter__`` and consumes one int64 from the
+            # global RNG as its seed), but the contract — "draw from CPU RNG so the
+            # same global seed maps to the same batch order across CPU/MPS/CUDA hosts
+            # that share this code path" — now holds.
+            perm = torch.randperm(self._n).to(self._device)
         else:
             perm = torch.arange(self._n, device=self._device)
         last = (self._n // self._batch_size) * self._batch_size if self._drop_last else self._n
