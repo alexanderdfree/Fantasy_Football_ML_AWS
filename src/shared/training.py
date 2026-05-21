@@ -1,6 +1,7 @@
 """Generic training infrastructure: loss, dataset, dataloaders, and trainer."""
 
 import os
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -409,6 +410,8 @@ class MultiHeadTrainer:
             for k in [
                 "train_loss",
                 "val_loss",
+                "epoch_sec",
+                "peak_mem_gb",
                 *[f"val_loss_{t}" for t in self.target_names],
                 *[f"val_mae_{t}" for t in self.target_names],
             ]
@@ -418,8 +421,12 @@ class MultiHeadTrainer:
         # the selection criterion.
         loss_weights = getattr(self.criterion, "loss_weights", None) or {}
         weight_sum = sum(loss_weights.get(t, 1.0) for t in self.target_names) or 1.0
+        _cuda = torch.cuda.is_available() and self.device.type == "cuda"
 
         for epoch in range(n_epochs):
+            if _cuda:
+                torch.cuda.reset_peak_memory_stats(self.device)
+            _epoch_t0 = time.perf_counter()
             # --- Training pass ---
             self.model.train()
             epoch_train_loss = 0.0
@@ -488,6 +495,13 @@ class MultiHeadTrainer:
                 y_true_all = np.concatenate(all_targets[k])
                 history[f"val_mae_{k}"].append(np.mean(np.abs(y_pred_all - y_true_all)))
 
+            if _cuda:
+                torch.cuda.synchronize(self.device)
+            _epoch_sec = time.perf_counter() - _epoch_t0
+            _peak_mem_gb = torch.cuda.max_memory_allocated(self.device) / 1024**3 if _cuda else 0.0
+            history["epoch_sec"].append(_epoch_sec)
+            history["peak_mem_gb"].append(_peak_mem_gb)
+
             # --- LR Scheduler ---
             if not self.scheduler_per_batch:
                 if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -527,6 +541,7 @@ class MultiHeadTrainer:
                     f"Train: {avg_train_loss:.4f} | "
                     f"Val: {avg_val_loss:.4f} | "
                     f"MAE wtd: {val_mae_weighted:.3f} | "
+                    f"epoch_sec={_epoch_sec:.2f} peak_mem_gb={_peak_mem_gb:.3f} | "
                     f"{target_maes}"
                 )
         else:

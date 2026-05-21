@@ -18,6 +18,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -139,6 +140,49 @@ def _read_parquet_cached(parquet_path: str) -> "pd.DataFrame":
             with contextlib.suppress(OSError):
                 os.remove(tmp_path)
     return df
+
+
+def _start_nvidia_smi_sidecar(csv_path: str) -> subprocess.Popen | None:
+    """Start a background nvidia-smi sampler writing GPU stats to ``csv_path``.
+
+    No-op when CUDA isn't visible to torch (CPU-only positions, dev box without
+    NVIDIA driver, --dry-run). Returns the Popen handle so the caller can
+    terminate it; returns None when sampling was skipped so the caller's
+    finally-block stop call is also a no-op.
+    """
+    if not torch.cuda.is_available():
+        return None
+    cmd = [
+        "nvidia-smi",
+        "--query-gpu=timestamp,utilization.gpu,utilization.memory,memory.used,memory.free,temperature.gpu,power.draw",
+        "--format=csv,nounits",
+        "-lms",
+        "500",
+    ]
+    # The file handle has to outlive this function — the Popen child writes to
+    # it until terminate(). _stop_nvidia_smi_sidecar() closes it transitively
+    # by killing the writer; the OS reclaims the descriptor on process exit.
+    f = open(csv_path, "w")  # noqa: SIM115
+    try:
+        proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        f.close()
+        print("[gpu-profile] nvidia-smi not on PATH; skipping sidecar")
+        return None
+    print(f"[gpu-profile] sampling to {csv_path} (pid={proc.pid})")
+    return proc
+
+
+def _stop_nvidia_smi_sidecar(proc: subprocess.Popen | None) -> None:
+    if proc is None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=2)
+    print(f"[gpu-profile] sidecar pid={proc.pid} stopped")
 
 
 def _assert_gpu(position: str):
@@ -617,11 +661,20 @@ def main():
         "'rb-gate' requires --position RB; runs the three-way TD-gate "
         "ablation and prints the decision table. Skips S3 upload.",
     )
+    parser.add_argument(
+        "--sweep",
+        action="store_true",
+        help="Run the WR attention NN batch-size sweep (see "
+        "src.scripts.batch_size_sweep). Requires --position WR. Downloads "
+        "splits from S3 then delegates to run_sweep(); skips S3 upload.",
+    )
     args = parser.parse_args()
 
     pos = args.position
     if args.ablation == "rb-gate" and pos != "RB":
         parser.error("--ablation rb-gate requires --position RB")
+    if args.sweep and pos != "WR":
+        parser.error("--sweep requires --position WR")
 
     # Print build fingerprint so stale container images are immediately obvious.
     _fingerprint_file = os.path.join(os.path.dirname(__file__), "train.py")
@@ -667,6 +720,8 @@ def main():
     with _timed("sync_raw_data", store=phase_seconds):
         sync_raw_data(s3_bucket)
 
+    gpu_profile_csv = f"/tmp/gpu_profile_{pos}.csv"
+
     if accepts_dataframes(pos):
         # Download train/val/test splits from S3 into the container
         with _timed("download_data", store=phase_seconds):
@@ -684,12 +739,39 @@ def main():
                 _run_rb_gate_ablation(train_df, val_df, test_df, seed=args.seed)
             print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
             return
-        with _timed("run_pipeline", store=phase_seconds):
-            result = run_fn(train_df, val_df, test_df, seed=args.seed)
+        if args.sweep:
+            # Sweep runs the WR pipeline N times with attn_batch_size overrides
+            # and prints a wall-clock table. No S3 artifact upload — diagnostic.
+            from src.scripts.batch_size_sweep import run_sweep
+
+            sweep_sidecar = _start_nvidia_smi_sidecar(gpu_profile_csv)
+            try:
+                with _timed("run_sweep", store=phase_seconds):
+                    run_sweep(train_df, val_df, test_df, seed=args.seed)
+            finally:
+                _stop_nvidia_smi_sidecar(sweep_sidecar)
+            print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
+            return
+        gpu_sidecar = _start_nvidia_smi_sidecar(gpu_profile_csv)
+        try:
+            with _timed("run_pipeline", store=phase_seconds):
+                result = run_fn(train_df, val_df, test_df, seed=args.seed)
+        finally:
+            _stop_nvidia_smi_sidecar(gpu_sidecar)
     else:
         # K/DST: self-contained data loading
-        with _timed("run_pipeline", store=phase_seconds):
-            result = run_fn(seed=args.seed)
+        gpu_sidecar = _start_nvidia_smi_sidecar(gpu_profile_csv)
+        try:
+            with _timed("run_pipeline", store=phase_seconds):
+                result = run_fn(seed=args.seed)
+        finally:
+            _stop_nvidia_smi_sidecar(gpu_sidecar)
+
+    # Copy the sidecar CSV into model_dir so it tars up alongside
+    # benchmark_metrics.json. Cheap (~15 KB for a 2-min run) and means a single
+    # tarball download exposes both training metrics and GPU utilisation.
+    if os.path.exists(gpu_profile_csv):
+        shutil.copy2(gpu_profile_csv, os.path.join(model_dir, f"gpu_profile_{pos}.csv"))
 
     # Copy model artifacts to output dir FIRST so a later metrics write cannot
     # be clobbered by a same-named file under src_model_dir.

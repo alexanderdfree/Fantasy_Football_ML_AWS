@@ -183,6 +183,7 @@ All 6 positions submitted in parallel via ThreadPoolExecutor. `wait_for_jobs()` 
 | Job status | `aws batch describe-jobs --jobs JOB_ID` |
 | All jobs at a glance | `aws batch list-jobs --job-queue ff-training-queue --job-status RUNNING` |
 | Benchmark metrics | Downloaded as `benchmark_metrics.json` in model artifacts |
+| GPU utilisation | Packed into the tarball as `gpu_profile_{POS}.csv` (500ms nvidia-smi samples around `run_pipeline`); summarize with `python -m src.scripts.analyze_gpu_profile --s3 --positions QB RB WR TE K DST` |
 | Historical logs | CloudWatch > Log Groups > `/aws/batch/job` |
 
 Terminal stdout and `benchmark_metrics.json` provide sufficient
