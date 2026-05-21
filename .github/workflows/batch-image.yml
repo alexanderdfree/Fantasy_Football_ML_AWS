@@ -236,13 +236,36 @@ jobs:
           }'
           TIMEOUT='{"attemptDurationSeconds": 1800}'
 
-          # NN_DATALOADER_NUM_WORKERS=3 is set at the job-definition level so
-          # every Batch run inherits it (src/shared/training.py reads it; on
-          # g4dn.xlarge with 4 vCPU, 3 prefetch workers keep the GPU fed for
-          # attention training while leaving one core for the CPU branch
-          # overlapped via the ThreadPoolExecutor introduced in 00c6d10).
-          # Per-submission containerOverrides in src/batch/launch.py still
-          # append/override on top of this.
+          # Two clusters of env vars are pinned at the job-definition level so
+          # every Batch run inherits them (per-submission containerOverrides in
+          # src/batch/launch.py still append/override on top of these).
+          #
+          # 1. NN_DATALOADER_NUM_WORKERS=3 — src/shared/training.py reads it; on
+          #    g4dn.xlarge with 4 vCPU, 3 prefetch workers keep the GPU fed for
+          #    attention training while leaving one core for the CPU branch
+          #    overlapped via the ThreadPoolExecutor introduced in 00c6d10.
+          #
+          # 2. OMP_NUM_THREADS=1 / MKL_NUM_THREADS=1 / OPENBLAS_NUM_THREADS=1 /
+          #    NUMEXPR_NUM_THREADS=1 — cap BLAS-via-OMP threads to 1 *per
+          #    process*, not per Batch host. Required because:
+          #      • src/shared/pipeline.py:_tune_ridge_alphas_cv runs alphas
+          #        through joblib.Parallel(n_jobs=-1, prefer="threads") — 4
+          #        threads on a 4-vCPU box.
+          #      • Each sklearn Ridge solve delegates the normal-equation
+          #        solve to BLAS, which defaults to OMP_NUM_THREADS=nproc=4.
+          #      • 4 joblib threads × 4 BLAS threads each + 3 DataLoader
+          #        worker subprocesses + main GPU thread = ~19 thread slots
+          #        on 4 cores. The CPU branch hangs in OpenBLAS under that
+          #        ~5x oversubscription on Linux.
+          #    PR #293 (BF16 autocast) masked this by hanging the GPU branch
+          #    first, so CPU branch had the cores to itself. PR #301 fixed the
+          #    BF16 hang → CPU and GPU branches now actually overlap, exposing
+          #    the BLAS oversubscription as a ridge_tune wedge that wasted ~25
+          #    min/Batch run before this fix. Single-threaded BLAS + 4 joblib
+          #    threads = exact 4-core fan-out, no overcommit. Verified on T4
+          #    in a single DST job with these caps: ridge_tune=6.1s,
+          #    attn_nn_train=87.8s (better than PR #293's 110s target),
+          #    total=225s. With no caps DST hung indefinitely in ridge_tune.
           jq --arg image "$IMAGE_URI" \
              --argjson retry "$RETRY_STRATEGY" \
              --argjson timeout "$TIMEOUT" '
@@ -254,8 +277,20 @@ jobs:
                 $d.containerProperties
                 | .image = $image
                 | .environment = (
-                    ((.environment // []) | map(select(.name != "NN_DATALOADER_NUM_WORKERS")))
-                    + [{name: "NN_DATALOADER_NUM_WORKERS", value: "3"}]
+                    ((.environment // []) | map(select(
+                      .name != "NN_DATALOADER_NUM_WORKERS"
+                      and .name != "OMP_NUM_THREADS"
+                      and .name != "MKL_NUM_THREADS"
+                      and .name != "OPENBLAS_NUM_THREADS"
+                      and .name != "NUMEXPR_NUM_THREADS"
+                    )))
+                    + [
+                        {name: "NN_DATALOADER_NUM_WORKERS", value: "3"},
+                        {name: "OMP_NUM_THREADS", value: "1"},
+                        {name: "MKL_NUM_THREADS", value: "1"},
+                        {name: "OPENBLAS_NUM_THREADS", value: "1"},
+                        {name: "NUMEXPR_NUM_THREADS", value: "1"}
+                      ]
                   )
               ),
               retryStrategy: $retry,
