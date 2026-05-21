@@ -1,8 +1,8 @@
 """End-to-end RB position model pipeline.
 
 The TD-model variant (ridge / two_stage / ordinal / gated_ordinal) is selected
-by ``TD_MODEL_TYPE`` in :mod:`src.rb.config`; the factory translates it into the
-``two_stage_targets`` / ``classification_targets`` cfg keys.
+by ``td_model_type`` on ``POSITION_CONFIG`` in :mod:`src.rb.config`; the factory
+translates it into the ``two_stage_targets`` / ``classification_targets`` cfg keys.
 """
 
 import os

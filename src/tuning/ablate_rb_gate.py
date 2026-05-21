@@ -265,7 +265,7 @@ def main() -> None:
     parser.add_argument(
         "--only",
         choices=sorted(VARIANTS),
-        help="Run a single variant (default: run all three)",
+        help="Run a single variant (default: run all variants)",
     )
     parser.add_argument(
         "--no-history",

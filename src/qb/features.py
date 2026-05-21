@@ -15,14 +15,14 @@ def get_feature_columns() -> list[str]:
 
 
 def add_specific_features(train_df, val_df, test_df):
-    """Add QB-specific engineered features (see SPECIFIC_FEATURES) to each split."""
+    """Add QB-specific engineered features (see ``POSITION_CONFIG.specific_features``) to each split."""
     for df in [train_df, val_df, test_df]:
         _compute_features(df)
     return train_df, val_df, test_df
 
 
 def _compute_features(df: pd.DataFrame) -> None:
-    """Compute all QB-specific features (see SPECIFIC_FEATURES) in-place."""
+    """Compute all QB-specific features (see ``POSITION_CONFIG.specific_features``) in-place."""
     df.sort_values(["player_id", "season", "week"], inplace=True)
 
     grp = ["player_id", "season"]

@@ -289,8 +289,8 @@ def main() -> int:
     print(f"\n{'=' * 72}")
     print(
         "K, DST: features pre-computed on dedicated kicker/team datasets, not "
-        "on these splits. Run their pipelines (run.py / "
-        "run.py) to inspect their feature distributions."
+        "on these splits. Run their pipelines (python -m src.k.run_pipeline / "
+        "python -m src.dst.run_pipeline) to inspect their feature distributions."
     )
     print(f"{'=' * 72}\n")
     return 0
