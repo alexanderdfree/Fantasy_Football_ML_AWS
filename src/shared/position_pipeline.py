@@ -259,10 +259,11 @@ def build_pipeline_config(
     if pos != "QB":
         cfg["lgbm_max_depth"] = pc.lgbm_max_depth
 
-    # === Aggregator (everyone except K uses the shared fantasy-point
-    # aggregator at training/eval time) ===
-    if pos != "K":
-        cfg["aggregate_fn"] = aggregate_fn_for(pos)
+    # === Aggregator (used at training/eval time to compute fantasy-point
+    # totals from raw-stat predictions; K's aggregator subtracts miss
+    # penalties via ``target_signs`` so we route through it just like
+    # other positions) ===
+    cfg["aggregate_fn"] = aggregate_fn_for(pos)
 
     # === K/DST shared: explicit None for the adjustment slot ===
     if pos in ("K", "DST"):
