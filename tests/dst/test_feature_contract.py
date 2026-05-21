@@ -17,8 +17,10 @@ Notes specific to DST:
   for symmetry with the player-level positions).  We still exercise it to
   pin the identity behaviour.
 * Prior-season features require >=2 seasons of history — for first-season
-  teams, some NaNs are acceptable.  We set a generous NaN ceiling per
-  feature to avoid flakes while still catching "broke the merge" bugs.
+  teams, some NaNs are acceptable.  These columns live in CONTEXTUAL_FEATURES
+  (not SPECIFIC_FEATURES) and are exercised by
+  ``test_prior_season_features_present_after_compute`` rather than the
+  zero-NaN ceiling that covers SPECIFIC_FEATURES.
 """
 
 import numpy as np
@@ -38,10 +40,10 @@ from src.dst.features import (
 )
 from src.dst.targets import compute_targets
 
-# Prior-season features are NaN for the earliest season (no prior history).
-# The NaN-ceiling test raises the threshold for these columns to account
-# for that; all other DST-specific features come out of .fillna(0) inside
-# compute_features and should have zero NaNs.
+# Prior-season feature names — referenced by
+# ``test_prior_season_features_present_after_compute`` to assert the merge
+# populates them for seasons >= 2.  They live in CONTEXTUAL_FEATURES (not
+# SPECIFIC_FEATURES) so the zero-NaN ceiling loop does NOT iterate them.
 _PRIOR_SEASON_COLS = {
     "prior_season_dst_pts_avg",
     "prior_season_pts_allowed_avg",
@@ -104,14 +106,13 @@ class TestDSTFeatureContract:
     def test_specific_features_finite_and_within_nan_ceiling(self, tiny_dataset):
         """Rolling/EWMA features must be finite and respect NaN ceilings.
 
-        Prior-season features are allowed NaN for the earliest season
-        (no prior history) — their ceiling is raised to account for that.
-        All other features come out of .fillna(0) inside compute_features
-        and should have zero NaNs.
+        Every column in SPECIFIC_FEATURES comes out of ``.fillna(0)`` inside
+        ``compute_features`` and must have zero NaNs.  Prior-season features
+        (which can legitimately be NaN for the earliest season) live in
+        CONTEXTUAL_FEATURES and are not iterated here — they're covered by
+        ``test_prior_season_features_present_after_compute`` below.
         """
         df = _build_fixture(tiny_dataset)
-        first_season = df["season"].min()
-        first_season_frac = (df["season"] == first_season).mean()
 
         for col in SPECIFIC_FEATURES:
             series = df[col]
@@ -119,15 +120,9 @@ class TestDSTFeatureContract:
             assert not np.isinf(series.astype(float)).any(), (
                 f"'{col}' contains +/-inf — indicates unguarded division"
             )
-            # NaN ceiling — prior-season features exempted for the earliest season
+            # SPECIFIC_FEATURES are all .fillna(0)-emitted; ceiling is 0.
             nan_frac = series.isna().mean()
-            if col in _PRIOR_SEASON_COLS:
-                ceiling = first_season_frac + 0.01  # +1 % slack for rounding
-            else:
-                ceiling = 0.0
-            assert nan_frac <= ceiling, (
-                f"'{col}' NaN fraction {nan_frac:.3f} exceeds ceiling {ceiling:.3f}"
-            )
+            assert nan_frac <= 0.0, f"'{col}' NaN fraction {nan_frac:.3f} exceeds ceiling 0.0"
 
     def test_prior_season_features_present_after_compute(self, tiny_dataset):
         """Prior-season features should be emitted for all seasons >= second."""

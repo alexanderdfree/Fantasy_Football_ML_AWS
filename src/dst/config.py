@@ -153,7 +153,8 @@ POSITION_CONFIG = PositionConfig(
         "points_allowed": alpha_grid(-1, 5, 20),
         "yards_allowed": alpha_grid(-1, 5, 20),
     },
-    # features → 20 components; removes collinear dimensions.
+    # 38 features (21 specific + 17 contextual) → 20 PCA components;
+    # removes collinear dimensions before Ridge fit.
     ridge_pca_components=20,
     train_elasticnet=False,
     enet_l1_ratios=list(DEFAULT_ENET_L1_RATIOS),

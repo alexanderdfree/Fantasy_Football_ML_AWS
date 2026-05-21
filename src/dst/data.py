@@ -97,15 +97,18 @@ def build_data() -> pd.DataFrame:
     # Sacks forced = opponent QBs/players sacks suffered
     # INTs forced = opponent QBs interceptions thrown
     # Fumble recoveries = opponent fumbles lost
-    weekly_copy = weekly.copy()
-    weekly_copy["_total_fumbles_lost"] = (
-        weekly_copy["sack_fumbles_lost"].fillna(0)
-        + weekly_copy["rushing_fumbles_lost"].fillna(0)
-        + weekly_copy["receiving_fumbles_lost"].fillna(0)
+    #
+    # ``weekly`` is local to ``build_data`` (loaded from parquet above), so we
+    # add the two scratch columns in-place instead of copying the full frame —
+    # the helper is ``weekly``-internal, no external caller observes it.
+    weekly["_total_fumbles_lost"] = (
+        weekly["sack_fumbles_lost"].fillna(0)
+        + weekly["rushing_fumbles_lost"].fillna(0)
+        + weekly["receiving_fumbles_lost"].fillna(0)
     )
 
     def_from_offense = (
-        weekly_copy.groupby(["opponent_team", "season", "week"])
+        weekly.groupby(["opponent_team", "season", "week"])
         .agg(
             def_sacks=("sacks", "sum"),
             def_ints=("interceptions", "sum"),
@@ -164,11 +167,9 @@ def build_data() -> pd.DataFrame:
     team_scoring = pd.concat([home_scoring, away_scoring], ignore_index=True)
 
     # 7b. Team turnovers committed (as offense) — how turnover-prone is this team?
-    weekly_copy["_total_turnovers"] = weekly_copy["_total_fumbles_lost"] + weekly_copy[
-        "interceptions"
-    ].fillna(0)
+    weekly["_total_turnovers"] = weekly["_total_fumbles_lost"] + weekly["interceptions"].fillna(0)
     team_turnovers = (
-        weekly_copy.groupby(["recent_team", "season", "week"])
+        weekly.groupby(["recent_team", "season", "week"])
         .agg(
             team_turnovers=("_total_turnovers", "sum"),
             team_fumbles=("_total_fumbles_lost", "sum"),
@@ -187,7 +188,7 @@ def build_data() -> pd.DataFrame:
 
     # 7c. Team sacks allowed (as offense) — how vulnerable is this OL?
     team_sacks_allowed = (
-        weekly_copy.groupby(["recent_team", "season", "week"])
+        weekly.groupby(["recent_team", "season", "week"])
         .agg(
             team_sacks_allowed=("sacks", "sum"),
         )
@@ -198,7 +199,7 @@ def build_data() -> pd.DataFrame:
     # 7d. Opposing QB quality — isolate quarterback-level signal from team noise.
     #     EPA captures efficiency, INT/sack rates predict D/ST scoring components
     #     directly, and rush yards flag mobile QBs who suppress sack production.
-    qb_weekly = weekly_copy[weekly_copy["position"] == "QB"].copy()
+    qb_weekly = weekly[weekly["position"] == "QB"].copy()
     qb_team = (
         qb_weekly.groupby(["recent_team", "season", "week"])
         .agg(

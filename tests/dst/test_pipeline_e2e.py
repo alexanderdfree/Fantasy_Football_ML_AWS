@@ -36,12 +36,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.config import SEASONS
 from src.dst.config import CONFIG_TINY, POSITION_CONFIG
 
 ATTN_HISTORY_STATS = POSITION_CONFIG.attn_history_stats
 ATTN_STATIC_FEATURES = POSITION_CONFIG.attn_static_features
 HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+OPP_ATTN_HISTORY_STATS = POSITION_CONFIG.opp_attn_history_stats
+OPP_ATTN_KIND = POSITION_CONFIG.opp_attn_kind
+OPP_ATTN_MAX_SEQ_LEN = POSITION_CONFIG.opp_attn_max_seq_len
 POISSON_TARGETS = POSITION_CONFIG.poisson_targets
 RIDGE_ALPHA_GRIDS = POSITION_CONFIG.ridge_alpha_grids
 SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
@@ -56,7 +60,11 @@ from src.dst.features import (
 from src.dst.targets import compute_targets
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_pipeline
-from tests.dst.conftest import _build_tiny_dataset
+from tests.dst.conftest import (
+    _build_synthetic_full_schedules,
+    _build_synthetic_player_weekly,
+    _build_tiny_dataset,
+)
 
 
 def _build_synthetic_schedules(df: pd.DataFrame) -> pd.DataFrame:
@@ -294,3 +302,99 @@ class TestDSTPipelineE2E:
         for t in TARGETS:
             assert attn_preds[t].shape == (n_test,)
             assert np.isfinite(attn_preds[t]).all(), f"Attention NN.{t} contains NaN/inf"
+
+
+# ---------------------------------------------------------------------------
+# Opp-OFFENSE attention branch — M12
+#
+# DST is the only position whose parallel attention branch attends over the
+# opposing OFFENSE (``opp_attn_kind="offense"``). The shared pipeline reads
+# ``data/raw/weekly_<SEASONS[0]>_<SEASONS[-1]>.parquet`` directly to build
+# this branch's per-game frame (DST splits are team-level and lack the
+# offensive columns). We materialize a synthetic weekly + schedules parquet
+# into ``tmp_path/data/raw/`` so the chdir'd run_pipeline can find them.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def tiny_cwd_with_offense_cache(tmp_path_factory, tiny_dataset):
+    """Like ``tiny_cwd`` but ALSO writes synthetic weekly + schedules
+    parquets into ``tmp_path/data/raw/``. Required by the opp-OFFENSE branch
+    which reads those files directly (no in-memory monkeypatch hook)."""
+    mp = pytest.MonkeyPatch()
+    tmp_path = tmp_path_factory.mktemp("dst_e2e_opp_off")
+    mp.chdir(tmp_path)
+    os.makedirs(tmp_path / "dst" / "outputs" / "models", exist_ok=True)
+    os.makedirs(tmp_path / "dst" / "outputs" / "figures", exist_ok=True)
+
+    # Materialize the cache parquets the pipeline reads at the production paths.
+    raw_dir = tmp_path / "data" / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    weekly_df = _build_synthetic_player_weekly(tiny_dataset, seed=42)
+    full_schedules_df = _build_synthetic_full_schedules(tiny_dataset)
+    weekly_df.to_parquet(raw_dir / f"weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet")
+    full_schedules_df.to_parquet(raw_dir / f"schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
+
+    # Same in-memory schedule stub as the standard fixture — keeps the
+    # weather/Vegas merge fast and bypasses the parquet path for callers
+    # that already cache it.
+    synthetic_sched = _build_synthetic_schedules(tiny_dataset)
+    from src.shared import weather_features as _wf
+
+    mp.setattr(_wf, "_schedule_cache", synthetic_sched)
+    mp.setattr(_wf, "_load_schedules", lambda: synthetic_sched)
+    try:
+        yield tmp_path
+    finally:
+        mp.undo()
+
+
+@pytest.mark.e2e
+@pytest.mark.timeout(60)
+class TestDSTOppOffenseAttentionE2E:
+    """M12: wire the opp-OFFENSE attention branch through ``run_pipeline``.
+
+    The contract-only test ``test_opp_attn_kind_is_offense`` (see
+    tests/dst/test_feature_contract.py) checks the config says ``"offense"``,
+    but until now no test materialized the off_* columns and exercised the
+    branch end-to-end. This class closes that gap.
+    """
+
+    def test_opp_offense_attention_branch_completes(self, tiny_cwd_with_offense_cache):
+        """run_pipeline must complete when ``opp_attn_kind="offense"`` is on.
+
+        Asserts the attention NN produces finite per-target predictions and
+        that ``attn_nn_metrics`` lands in the result dict (so the branch
+        actually ran rather than being silently skipped)."""
+        train, val, test = _build_tiny_splits(seed=42)
+        cfg = _make_dst_tiny_cfg()
+        # Base attention knobs (mirror the existing single-branch smoke test)
+        cfg["train_attention_nn"] = True
+        cfg["attn_history_stats"] = ATTN_HISTORY_STATS
+        cfg["attn_static_features"] = ATTN_STATIC_FEATURES
+        cfg["attn_max_seq_len"] = 17
+        cfg["attn_d_model"] = 8
+        cfg["attn_n_heads"] = 2
+        cfg["attn_encoder_hidden_dim"] = 8
+        cfg["attn_positional_encoding"] = True
+        cfg["attn_gated_fusion"] = False
+        cfg["attn_gated"] = False
+        cfg["attn_dropout"] = 0.0
+        cfg["aggregate_fn"] = aggregate_fn_for("DST")
+        # M12: enable the second branch — opp-OFFENSE per-game history.
+        cfg["opp_attn_history_stats"] = OPP_ATTN_HISTORY_STATS
+        cfg["opp_attn_max_seq_len"] = OPP_ATTN_MAX_SEQ_LEN
+        cfg["opp_attn_kind"] = OPP_ATTN_KIND
+
+        result = run_pipeline("DST", cfg, train, val, test, seed=42)
+
+        assert "attn_nn_metrics" in result, (
+            "Opp-offense branch did not run — attn_nn_metrics missing from result"
+        )
+        attn_preds = result["per_target_preds"]["attn_nn"]
+        n_test = len(result["test_df"])
+        for t in TARGETS:
+            assert attn_preds[t].shape == (n_test,)
+            assert np.isfinite(attn_preds[t]).all(), (
+                f"Opp-OFFENSE attention NN.{t} contains NaN/inf"
+            )
