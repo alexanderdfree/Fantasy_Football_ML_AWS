@@ -181,7 +181,7 @@ for f in $changed; do
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos K; fi ;;
     src/dst/config.py|src/dst/features.py|src/dst/targets.py|src/dst/run_pipeline.py)
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos DST; fi ;;
-    src/shared/pipeline.py|src/shared/models.py|src/shared/neural_net.py|src/shared/aggregate_targets.py|src/shared/training.py|src/shared/evaluation.py|src/shared/backtest.py)
+    src/shared/pipeline.py|src/shared/models.py|src/shared/neural_net.py|src/shared/aggregate_targets.py|src/shared/training.py|src/shared/evaluation.py|src/shared/backtest.py|src/shared/position_config.py|src/shared/position_pipeline.py)
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else shared_changed=1; fi ;;
   esac
 done
@@ -217,10 +217,14 @@ if [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; then
   positions=$(printf '%s\n' $positions | sort -u | tr '\n' ' ')
 
   # Reference mtime: newest mtime among any pipeline-affecting file in the tree.
+  # Keep this list in sync with the shared-files arm of the case-statement
+  # above — any path that can trigger ``shared_changed=1`` must also be in
+  # ref_ts so its mtime invalidates stale benchmarks.
   pipeline_files=(
     src/shared/pipeline.py src/shared/models.py src/shared/neural_net.py
     src/shared/aggregate_targets.py src/shared/training.py
     src/shared/evaluation.py src/shared/backtest.py
+    src/shared/position_config.py src/shared/position_pipeline.py
   )
   for p in qb rb wr te k dst; do
     for s in config features targets run_pipeline; do
