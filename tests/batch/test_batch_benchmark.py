@@ -41,20 +41,41 @@ def _make_tarfile_with_metrics(tmp_path, payload: dict | None) -> str:
     return str(tar_path)
 
 
+def _fake_manifest(pos: str, current_key: str | None = None, stable_key: str | None = None):
+    """Build a fake manifest with the slots populated for testing."""
+    base_key = current_key or f"models/{pos}/history/2026-05-21T05-00-00Z-abc1234/model.tar.gz"
+    manifest = {
+        "schema_version": 2,
+        "current": {"key": base_key, "sha7": "abc1234", "bytes": 1000, "uploaded_at": "now"},
+    }
+    if stable_key is not None:
+        manifest["stable"] = {
+            "key": stable_key,
+            "sha7": "def5678",
+            "bytes": 999,
+            "uploaded_at": "earlier",
+        }
+    return manifest
+
+
 @pytest.mark.unit
 def test_download_metrics_happy_path(tmp_path, monkeypatch):
-    """Good tar → metrics dict keyed by position."""
+    """Manifest's ``current`` resolves → tar fetched from history key → metrics dict."""
     import src.batch.benchmark as bb
 
     tar_path = _make_tarfile_with_metrics(tmp_path, {"position": "QB", "mae": 6.2})
 
     class _FakeS3:
         def download_file(self, bucket, key, dest):
-            # Copy our pre-built tar to wherever NamedTemporaryFile landed.
+            # Confirm the manifest's history key (NOT the legacy mirror) is what
+            # gets requested — the whole point of Layer B is to stop reading
+            # ``models/{POS}/model.tar.gz``.
+            assert key == "models/QB/history/2026-05-21T05-00-00Z-abc1234/model.tar.gz"
             with open(tar_path, "rb") as src, open(dest, "wb") as dst:
                 dst.write(src.read())
 
     monkeypatch.setattr(bb.boto3, "client", lambda *a, **k: _FakeS3())
+    monkeypatch.setattr(bb, "load_manifest", lambda s3, bucket, prefix, pos: _fake_manifest(pos))
 
     result = bb.download_metrics(["QB"])
     assert result == {"QB": {"position": "QB", "mae": 6.2}}
@@ -62,7 +83,7 @@ def test_download_metrics_happy_path(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 def test_download_metrics_missing_metrics_file(tmp_path, monkeypatch):
-    """tar without benchmark_metrics.json → position omitted (KeyError branch)."""
+    """Manifest resolves but tar has no benchmark_metrics.json → position omitted."""
     import src.batch.benchmark as bb
 
     tar_path = _make_tarfile_with_metrics(tmp_path, None)
@@ -73,6 +94,7 @@ def test_download_metrics_missing_metrics_file(tmp_path, monkeypatch):
                 dst.write(src.read())
 
     monkeypatch.setattr(bb.boto3, "client", lambda *a, **k: _FakeS3())
+    monkeypatch.setattr(bb, "load_manifest", lambda s3, bucket, prefix, pos: _fake_manifest(pos))
 
     result = bb.download_metrics(["RB"])
     assert result == {}  # no metrics → nothing in the dict
@@ -80,7 +102,7 @@ def test_download_metrics_missing_metrics_file(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 def test_download_metrics_s3_error_swallowed(monkeypatch):
-    """S3 download exception → ``no artifacts found`` branch returns None."""
+    """``current`` download throws and no fallback → position omitted (not raised)."""
     import src.batch.benchmark as bb
 
     class _FakeS3:
@@ -88,9 +110,51 @@ def test_download_metrics_s3_error_swallowed(monkeypatch):
             raise RuntimeError("NoSuchKey")
 
     monkeypatch.setattr(bb.boto3, "client", lambda *a, **k: _FakeS3())
+    monkeypatch.setattr(bb, "load_manifest", lambda s3, bucket, prefix, pos: _fake_manifest(pos))
 
     result = bb.download_metrics(["WR"])
     assert result == {}
+
+
+@pytest.mark.unit
+def test_download_metrics_absent_manifest_returns_none(monkeypatch):
+    """No manifest at all → position omitted with a WARNING (not silently
+    fallen back to the legacy key)."""
+    import src.batch.benchmark as bb
+
+    monkeypatch.setattr(bb.boto3, "client", lambda *a, **k: object())
+    monkeypatch.setattr(bb, "load_manifest", lambda *a, **k: None)
+
+    result = bb.download_metrics(["WR"])
+    assert result == {}
+
+
+@pytest.mark.unit
+def test_download_metrics_falls_through_to_stable_on_current_failure(tmp_path, monkeypatch):
+    """``current`` download fails → falls through to ``stable``."""
+    import src.batch.benchmark as bb
+
+    tar_path = _make_tarfile_with_metrics(tmp_path, {"position": "TE", "mae": 3.5})
+    current_key = "models/TE/history/2026-05-21T06-00-00Z-bad9999/model.tar.gz"
+    stable_key = "models/TE/history/2026-05-21T05-30-00Z-good777/model.tar.gz"
+
+    class _FakeS3:
+        def download_file(self, bucket, key, dest):
+            if key == current_key:
+                raise RuntimeError("simulated current-key failure")
+            assert key == stable_key
+            with open(tar_path, "rb") as src, open(dest, "wb") as dst:
+                dst.write(src.read())
+
+    monkeypatch.setattr(bb.boto3, "client", lambda *a, **k: _FakeS3())
+    monkeypatch.setattr(
+        bb,
+        "load_manifest",
+        lambda *a, **k: _fake_manifest("TE", current_key=current_key, stable_key=stable_key),
+    )
+
+    result = bb.download_metrics(["TE"])
+    assert result == {"TE": {"position": "TE", "mae": 3.5}}
 
 
 # --------------------------------------------------------------------------
