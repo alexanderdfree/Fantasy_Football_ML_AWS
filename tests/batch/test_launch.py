@@ -98,6 +98,55 @@ class TestEnvVarOverrides:
             assert mod.JOB_DEFINITION_CPU == "cpu-def"
         self._reload()
 
+    def test_job_definition_revision_optional(self):
+        # Unset (empty) -> None: launch.py falls back to bare name resolution,
+        # which is current behavior — safe for workflow_dispatch break-glass.
+        with mock.patch.dict(os.environ, {"FF_JOB_DEFINITION_REVISION": ""}):
+            mod = self._reload()
+            assert mod.JOB_DEFINITION_REVISION is None
+        # Set -> str: train-batch.yml passes this from the S3-stashed revision
+        # file so submissions pin to the exact revision the image build registered.
+        with mock.patch.dict(os.environ, {"FF_JOB_DEFINITION_REVISION": "42"}):
+            mod = self._reload()
+            assert mod.JOB_DEFINITION_REVISION == "42"
+        self._reload()
+
+    def test_job_definition_for_appends_revision_when_set(self):
+        with mock.patch.dict(
+            os.environ,
+            {"FF_JOB_DEFINITION": "ff-training-job", "FF_JOB_DEFINITION_REVISION": "17"},
+        ):
+            mod = self._reload()
+            assert mod._job_definition_for("QB") == "ff-training-job:17"
+        self._reload()
+
+    def test_job_definition_for_no_revision_returns_bare_name(self):
+        with mock.patch.dict(
+            os.environ,
+            {"FF_JOB_DEFINITION": "ff-training-job", "FF_JOB_DEFINITION_REVISION": ""},
+        ):
+            mod = self._reload()
+            assert mod._job_definition_for("QB") == "ff-training-job"
+        self._reload()
+
+    def test_job_definition_for_appends_revision_to_cpu_def(self):
+        # CPU-only positions on a CPU def still get the revision pin —
+        # batch-image.yml registers one revision per image, both GPU and CPU
+        # job definitions point at the same image, so they share the revision.
+        with mock.patch.dict(
+            os.environ,
+            {
+                "FF_JOB_DEFINITION": "ff-training-job",
+                "FF_JOB_DEFINITION_CPU": "ff-training-job-cpu",
+                "FF_JOB_DEFINITION_REVISION": "9",
+            },
+        ):
+            mod = self._reload()
+            assert mod._job_definition_for("K") == "ff-training-job-cpu:9"
+            assert mod._job_definition_for("DST") == "ff-training-job-cpu:9"
+            assert mod._job_definition_for("QB") == "ff-training-job:9"
+        self._reload()
+
     def test_wait_timeout_override(self):
         with mock.patch.dict(os.environ, {"FF_WAIT_TIMEOUT": "600"}):
             mod = self._reload()

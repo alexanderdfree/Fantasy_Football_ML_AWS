@@ -40,6 +40,16 @@ JOB_DEFINITION = os.environ.get("FF_JOB_DEFINITION", "ff-training-job")
 # the default GPU definition so we don't waste g4dn Spot-hours on Ridge/LGBM.
 # Set to an empty string to leave unset — we treat empty as "not configured".
 JOB_DEFINITION_CPU = os.environ.get("FF_JOB_DEFINITION_CPU", "") or None
+# Pin job submissions to a specific job-definition revision. batch-image.yml
+# registers a new revision each time it pushes an image and stashes the
+# revision number at s3://ff-predictor-training/job-def-revisions/{sha}.txt;
+# train-batch.yml resolves that file and exports the value here. Without this
+# pinning, AWS Batch resolves bare job-definition names to the latest active
+# revision at submission time, so two concurrent train-batch runs (image A
+# and image B, both registered in the same window) end up submitting jobs
+# against the same revision — the latest one — which means a workflow run
+# triggered by image A can silently train image B's code.
+JOB_DEFINITION_REVISION = os.environ.get("FF_JOB_DEFINITION_REVISION", "") or None
 
 from src.shared.registry import ALL_POSITIONS, CPU_ONLY_POSITIONS  # noqa: E402
 
@@ -144,10 +154,19 @@ def _job_definition_for(position: str) -> str:
     CPU-only positions use JOB_DEFINITION_CPU if it's configured; otherwise
     they fall back to the default (GPU) definition so this is safe to deploy
     before the CPU infra exists.
+
+    When FF_JOB_DEFINITION_REVISION is set, append ``:N`` to pin the
+    submission to that revision; otherwise Batch resolves the bare name to
+    the latest active revision (see JOB_DEFINITION_REVISION docstring).
     """
-    if position in CPU_ONLY_POSITIONS and JOB_DEFINITION_CPU:
-        return JOB_DEFINITION_CPU
-    return JOB_DEFINITION
+    base = (
+        JOB_DEFINITION_CPU
+        if position in CPU_ONLY_POSITIONS and JOB_DEFINITION_CPU
+        else JOB_DEFINITION
+    )
+    if JOB_DEFINITION_REVISION:
+        return f"{base}:{JOB_DEFINITION_REVISION}"
+    return base
 
 
 def submit_job(position, seed=42, batch_client=None):
