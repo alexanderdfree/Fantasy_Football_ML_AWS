@@ -473,7 +473,12 @@ class MultiHeadTrainer:
             _epoch_t0 = time.perf_counter()
             # --- Training pass ---
             self.model.train()
-            epoch_train_loss = 0.0
+            # FP32 GPU-resident accumulator avoids a per-batch
+            # cudaStreamSynchronize from ``loss.item()``. We cast to FP32 on
+            # accumulation (PR #301 made ``loss`` FP16 under AMP) to preserve
+            # precision over many batches. Single sync at end of epoch via
+            # ``.item()`` below.
+            epoch_train_loss = torch.zeros((), device=self.device, dtype=torch.float32)
             n_train_batches = 0
 
             for batch in train_loader:
@@ -507,17 +512,26 @@ class MultiHeadTrainer:
                 if self.scheduler_per_batch:
                     self.scheduler.step()
 
-                epoch_train_loss += loss.item()
+                # ``loss.detach().float()`` keeps the accumulator on-GPU and
+                # in FP32; no host sync per batch (cf. ``loss.item()``).
+                epoch_train_loss = epoch_train_loss + loss.detach().float()
                 n_train_batches += 1
 
-            avg_train_loss = epoch_train_loss / n_train_batches
+            # Single end-of-epoch sync (forces accumulator off-GPU).
+            avg_train_loss = (epoch_train_loss / n_train_batches).item()
             history["train_loss"].append(avg_train_loss)
 
             # --- Validation pass ---
             self.model.eval()
             all_preds = {k: [] for k in self.target_names}
             all_targets = {k: [] for k in self.target_names}
-            epoch_val_loss = 0.0
+            # FP32 GPU-resident accumulator: see train-pass comment above.
+            epoch_val_loss = torch.zeros((), device=self.device, dtype=torch.float32)
+            # ``val_components_accum`` holds Python floats because the loss-fn
+            # constructs ``components`` via ``.item()`` (see L220, L229).
+            # Those per-batch syncs are inside the loss fn, outside this loop,
+            # and the plan leaves them alone — we just preserve the existing
+            # Python-float accumulation here.
             val_components_accum = {}
             n_val_batches = 0
 
@@ -527,19 +541,21 @@ class MultiHeadTrainer:
                         preds, y_batch = self._forward_batch(batch)
                         loss, components = self.criterion(preds, y_batch)
 
-                    epoch_val_loss += loss.item()
+                    epoch_val_loss = epoch_val_loss + loss.detach().float()
                     for k in components:
                         val_components_accum[k] = val_components_accum.get(k, 0) + components[k]
                     n_val_batches += 1
 
                     for k in self.target_names:
-                        # ``.float()`` upcasts BF16 preds to FP32 so ``numpy()``
-                        # can serialize them (NumPy has no native BF16 dtype).
-                        # No-op when AMP is off.
-                        all_preds[k].append(preds[k].float().cpu().numpy())
-                        all_targets[k].append(y_batch[k].cpu().numpy())
+                        # Defer device→host transfer to one ``torch.cat(...)``
+                        # per target at end of epoch (see below). Detach to
+                        # drop autograd refs; ``.float()`` upcasts FP16 preds
+                        # so the eventual ``numpy()`` round-trip is FP32.
+                        all_preds[k].append(preds[k].detach().float())
+                        all_targets[k].append(y_batch[k].detach())
 
-            avg_val_loss = epoch_val_loss / n_val_batches
+            # Single end-of-epoch sync (forces accumulator off-GPU).
+            avg_val_loss = (epoch_val_loss / n_val_batches).item()
             history["val_loss"].append(avg_val_loss)
 
             if self.epoch_callback is not None:
@@ -554,19 +570,24 @@ class MultiHeadTrainer:
                     val_components_accum.get(f"loss_{t}", 0) / n_val_batches
                 )
 
-            # Per-target MAE
+            # Per-target MAE — single GPU→CPU transfer per target per epoch
+            # (was per-batch). ``all_preds[k]`` / ``all_targets[k]`` are lists
+            # of GPU tensors accumulated above; ``torch.cat`` stays on-device
+            # and the trailing ``.cpu().numpy()`` is the only host transfer.
             for k in self.target_names:
-                y_pred_all = np.concatenate(all_preds[k])
-                y_true_all = np.concatenate(all_targets[k])
+                y_pred_all = torch.cat(all_preds[k]).cpu().numpy()
+                y_true_all = torch.cat(all_targets[k]).cpu().numpy()
                 history[f"val_mae_{k}"].append(np.mean(np.abs(y_pred_all - y_true_all)))
 
-            # Per-epoch wall-clock is a host-side measurement; loss.item() /
-            # .cpu().numpy() above already force CUDA→host syncs implicitly, so
-            # _epoch_sec captures the correct end-of-epoch boundary. Explicit
-            # torch.cuda.synchronize() here was hanging on Batch g4dn instances
-            # (suspected interaction with PR #267's ThreadPoolExecutor overlap
-            # and the nvidia-smi sidecar's NVML polling); not needed for the
-            # investigation's accuracy.
+            # Per-epoch wall-clock is a host-side measurement; the
+            # ``.item()`` on the loss accumulators and the ``.cpu().numpy()``
+            # for MAE above are the only end-of-epoch syncs and they
+            # implicitly bound the GPU work, so _epoch_sec captures the
+            # correct boundary. Explicit torch.cuda.synchronize() here was
+            # hanging on Batch g4dn instances (suspected interaction with
+            # PR #267's ThreadPoolExecutor overlap and the nvidia-smi
+            # sidecar's NVML polling); not needed for the investigation's
+            # accuracy.
             _epoch_sec = time.perf_counter() - _epoch_t0
             _peak_mem_gb = torch.cuda.max_memory_allocated(self.device) / 1024**3 if _cuda else 0.0
             history["epoch_sec"].append(_epoch_sec)
