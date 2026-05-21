@@ -210,14 +210,22 @@ def merge_team_box_score_features(df: pd.DataFrame, label: str | None = None) ->
         values = df_merged[col].fillna(0.0).to_numpy()
         df[col] = values
 
-    n_missing = (
+    team_missing = (
         df_merged[TEAM_BOX_SCORE_FEATURES[0]].isna().sum()
         if TEAM_BOX_SCORE_FEATURES[0] in df_merged.columns
         else 0
     )
-    if n_missing > 0:
+    opp_missing = (
+        df_merged[OPP_BOX_SCORE_FEATURES[0]].isna().sum()
+        if OPP_BOX_SCORE_FEATURES[0] in df_merged.columns
+        else 0
+    )
+    if team_missing > 0 or opp_missing > 0:
         tag = f" [{label}]" if label else ""
-        print(f"  WARNING:{tag} {n_missing} rows have no team box-score match (filled with 0)")
+        print(
+            f"  WARNING:{tag} {team_missing} rows have no team box-score match "
+            f"and {opp_missing} rows have no opponent box-score match (filled with 0)"
+        )
 
     df["_team_box_score_merged"] = True
     return df

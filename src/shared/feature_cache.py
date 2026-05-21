@@ -46,18 +46,22 @@ def _df_fingerprint(df: pd.DataFrame | None) -> dict:
     """Content fingerprint for a DataFrame.
 
     Uses ``pd.util.hash_pandas_object`` which is vectorised and fast (~50ms on
-    30K rows). The sum across rows is content-sensitive — any value or row
-    change flips it. Shape + columns guard against collisions for trivially
-    different frames.
+    30K rows). The per-row hashes are then concatenated and SHA-256'd so the
+    digest is *order-sensitive* — two frames with the same rows in different
+    order produce distinct fingerprints. The earlier ``.sum()`` reduction was
+    commutative and would silently collide on shuffles or non-deterministic
+    groupby outputs. Shape + columns are tracked separately to flag trivially
+    different frames before the hash is even computed.
     """
     if df is None:
         return {"none": True}
     if len(df) == 0:
         return {"empty": True, "cols": list(df.columns)}
+    row_hashes = pd.util.hash_pandas_object(df, index=False).values
     return {
         "rows": int(df.shape[0]),
         "cols": list(df.columns),
-        "hash": int(pd.util.hash_pandas_object(df, index=False).values.sum()),
+        "hash": hashlib.sha256(row_hashes.tobytes()).hexdigest()[:16],
     }
 
 
@@ -68,6 +72,13 @@ def _config_fingerprint(cfg: dict) -> dict:
     compute_targets_fn, get_feature_columns_fn, add_features_fn, fill_nans_fn,
     specific_features) plus the attention-history stats lists that downstream
     callers read. Function objects are fingerprinted by qualname.
+
+    ``attn_static_features`` is deliberately *not* included: it parameterises
+    the neural-net static branch's column projection downstream of the cached
+    output and is not consumed by ``_prepare_position_data_uncached``. Including
+    it would force cache misses on Optuna sweeps that vary only the attention
+    static-feature list — the cached engineered frame is bit-identical across
+    those trials.
     """
 
     def _fn_name(v):
@@ -84,7 +95,6 @@ def _config_fingerprint(cfg: dict) -> dict:
         "attn_history_stats": list(cfg.get("attn_history_stats") or []),
         "opp_attn_history_stats": list(cfg.get("opp_attn_history_stats") or []),
         "opp_attn_kind": cfg.get("opp_attn_kind", "defense"),
-        "attn_static_features": list(cfg.get("attn_static_features") or []),
     }
 
 
