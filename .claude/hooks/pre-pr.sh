@@ -100,6 +100,16 @@ if [ "$shared_changed" -eq 1 ]; then
   positions="$positions QB RB WR TE K DST"
 fi
 
+# [docs-only] opt-in: any commit in base..HEAD whose message contains the
+# `[docs-only]` literal signals the author asserts the diff has no
+# behavioural impact (comment/docstring/import-reorder only). Skips the B2
+# benchmark freshness gate. Mirrors `.github/workflows/tests.yml`'s
+# detect-job opt-in (same tag, same trust contract). The hook cannot
+# verify the assertion — author owns correctness.
+if [ -n "$base" ] && [ -n "$positions" ] && git log --format=%B "$base..HEAD" 2>/dev/null | grep -qF '[docs-only]'; then
+  positions=""
+fi
+
 if [ -n "$positions" ]; then
   positions=$(printf '%s\n' $positions | sort -u | tr '\n' ' ')
 
