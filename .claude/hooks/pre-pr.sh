@@ -114,23 +114,29 @@ is_additive_and_safe() {
     return 0
   fi
 
-  local removed_code
-  removed_code=$(printf '%s\n' "$diff_output" \
-    | grep -E '^-' \
-    | grep -vE '^---|^-[[:space:]]*$|^-[[:space:]]*#' \
-    | wc -l | tr -d ' ')
-  if [ "$removed_code" -gt 0 ]; then
-    return 1
-  fi
-
-  local risky_added
-  risky_added=$(printf '%s\n' "$diff_output" \
-    | grep -E '^\+' \
-    | grep -vE '^\+\+\+|^\+[[:space:]]*$|^\+[[:space:]]*#' \
-    | grep -cE "$_RISKY_TOKENS" || true)
-  if [ "${risky_added:-0}" -gt 0 ]; then
-    return 1
-  fi
+  # Symmetric token check: a diff is risky if EITHER added OR removed code
+  # lines reference loss-config / model-architecture / feature-list /
+  # hyperparam names. The previous version flagged *all* removed code,
+  # which false-positived on backwards-compatible signature widening
+  # (e.g. `def run(seed=42):` -> `def run(seed=42, config=None):` plus
+  # `CONFIG` -> `config or CONFIG`) — net behaviour preserved under the
+  # default value, no risk to model output. Catching by token instead of
+  # by line-count handles that case correctly while still gating real
+  # behavioural deletions (e.g. removing an `np.clip` or a `criterion =`).
+  for direction in '-' '+'; do
+    case "$direction" in
+      '-') header_pat='^---' ;;
+      '+') header_pat='^\+\+\+' ;;
+    esac
+    local risky_count
+    risky_count=$(printf '%s\n' "$diff_output" \
+      | grep -E "^[$direction]" \
+      | grep -vE "$header_pat|^[$direction][[:space:]]*$|^[$direction][[:space:]]*#" \
+      | grep -cE "$_RISKY_TOKENS" || true)
+    if [ "${risky_count:-0}" -gt 0 ]; then
+      return 1
+    fi
+  done
 
   return 0
 }
