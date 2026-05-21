@@ -717,6 +717,15 @@ def _apply_position_models(train, val, test, pos, results):
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)
     pos_index = pos_test.index
     errors = _cache.setdefault("position_load_errors", {})
+    # Drop stale entries for this position before re-trying. Per-model failures
+    # below write ``{pos}_{model_type}`` keys (e.g. ``"QB_ridge"``); without
+    # this clear, a previous attempt's keys would linger after a successful
+    # refresh and keep ``/health`` reporting "degraded" indefinitely — which
+    # used to latch the ALB target to 503 and trigger ECS replacement (see
+    # alexfree.me, 2026-05-21 12:16 UTC). Match the key-parsing rule in
+    # ``_degraded_positions``: bare ``pos`` OR ``{pos}_*``.
+    for stale_key in [k for k in errors if k == pos or k.startswith(f"{pos}_")]:
+        errors.pop(stale_key, None)
 
     def _combine_total(preds: dict, fmt: str = "ppr") -> np.ndarray:
         # QB/RB/WR/TE/DST go through predictions_to_fantasy_points which knows
@@ -2154,9 +2163,46 @@ def api_benchmark_history():
 
 @app.route("/health")
 def health():
-    errors = _cache.get("position_load_errors")
+    """Liveness probe for ALB + ECS.
+
+    Returns 503 only when the task cannot serve anything (zero positions
+    loaded). Partial degradation — a position failed to load entirely, or
+    one of a position's sub-models (ridge/nn/attn_nn/lgbm) is broken —
+    returns 200 with ``status="degraded"`` and the full error map in the
+    body. The ``/api/predictions`` contract already serves these tasks (the
+    frontend renders a ``degraded_positions`` banner and the remaining
+    positions' predictions are real), so killing the task here would just
+    burn it for no gain.
+
+    Why 200 instead of 503 in the degraded case: ALB HC interval=10s,
+    unhealthy_threshold=3 ⇒ a latched-503 ``/health`` deregisters the
+    target in ~30s. With a single transient S3 model-refresh failure
+    poisoning ``position_load_errors``, the task got recycled even though
+    it was still serving five other positions cleanly. We've already lived
+    through this (alexfree.me, 2026-05-21 12:16 UTC, ~60s ALB 5xx window).
+    """
+    loaded = _cache.get("positions_loaded") or set()
+    errors = _cache.get("position_load_errors") or {}
+    if not loaded:
+        # Hard failure: nothing is serving. Return 503 so ALB rotates us
+        # out — this is genuinely unhealthy and a fresh task is the right
+        # response. ``_ensure_all_positions_loaded`` already raises at boot
+        # when every position fails, so reaching here usually means we got
+        # past boot but every position later transitioned to ``failed``.
+        return jsonify(
+            {
+                "status": "unhealthy",
+                "position_load_errors": errors,
+            }
+        ), 503
     if errors:
-        return jsonify({"status": "degraded", "position_load_errors": errors}), 503
+        return jsonify(
+            {
+                "status": "degraded",
+                "positions_loaded": sorted(loaded),
+                "position_load_errors": errors,
+            }
+        ), 200
     return jsonify({"status": "ok"})
 
 

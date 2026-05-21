@@ -478,19 +478,75 @@ def test_categorize_features_buckets_known_prefixes():
 
 
 @pytest.mark.integration
-def test_health_route_degraded_when_load_errors_present(monkeypatch):
-    """/health returns 503 + degraded status when _cache has position_load_errors."""
+def test_health_route_degraded_returns_200_when_some_positions_loaded(monkeypatch):
+    """/health returns 200 + ``status="degraded"`` when at least one position
+    is loaded, even if ``position_load_errors`` has per-model entries.
+
+    Returning 503 here would deregister the ALB target (interval=10s,
+    unhealthy_threshold=3 ⇒ ~30s) and ECS would replace the task — but the
+    task is still serving five of six positions cleanly. ``/api/predictions``
+    already returns 200 + ``degraded_positions`` banner for this exact state;
+    ``/health`` must agree. The alexfree.me 2026-05-21 12:16 UTC outage was
+    caused by the previous over-eager 503-on-any-error contract.
+    """
     import src.serving.app as app_mod
 
     app_mod._cache.clear()
-    app_mod._cache["position_load_errors"] = {"QB_ridge": "missing artifact"}
+    app_mod._cache["positions_loaded"] = {"QB", "RB", "WR", "TE", "K"}
+    app_mod._cache["position_load_errors"] = {"DST_ridge": "missing artifact"}
+    app_mod.app.config["TESTING"] = True
+    with app_mod.app.test_client() as client:
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["status"] == "degraded"
+        assert "DST_ridge" in body["position_load_errors"]
+        assert set(body["positions_loaded"]) == {"QB", "RB", "WR", "TE", "K"}
+
+
+@pytest.mark.integration
+def test_health_route_503_when_no_positions_loaded(monkeypatch):
+    """/health returns 503 only when ``positions_loaded`` is empty — the genuine
+    "cannot serve anything" state. ALB rotates us out and ECS replaces the
+    task; that's the right response when the task truly has nothing to offer.
+    """
+    import src.serving.app as app_mod
+
+    app_mod._cache.clear()
+    app_mod._cache["positions_loaded"] = set()
+    app_mod._cache["position_load_errors"] = {
+        "QB": "boom",
+        "RB": "boom",
+        "WR": "boom",
+        "TE": "boom",
+        "K": "boom",
+        "DST": "boom",
+    }
     app_mod.app.config["TESTING"] = True
     with app_mod.app.test_client() as client:
         resp = client.get("/health")
         assert resp.status_code == 503
         body = resp.get_json()
-        assert body["status"] == "degraded"
-        assert "QB_ridge" in body["position_load_errors"]
+        assert body["status"] == "unhealthy"
+        assert "QB" in body["position_load_errors"]
+
+
+@pytest.mark.integration
+def test_health_route_ok_when_no_errors(monkeypatch):
+    """/health returns 200 + ``status="ok"`` (no degraded body) when there are
+    no recorded errors and at least one position is loaded — the steady-state
+    happy path."""
+    import src.serving.app as app_mod
+
+    app_mod._cache.clear()
+    app_mod._cache["positions_loaded"] = {"QB", "RB", "WR", "TE", "K", "DST"}
+    # Explicitly no position_load_errors key.
+    app_mod.app.config["TESTING"] = True
+    with app_mod.app.test_client() as client:
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body == {"status": "ok"}
 
 
 @pytest.mark.integration
@@ -559,3 +615,69 @@ def test_apply_position_models_ridge_load_failure_records_and_nan_fills(_mocked_
     # NN still ran and wrote its predictions — Ridge's failure isn't allowed to
     # cascade and take the other models with it.
     assert results["nn_pred"].notna().all()
+
+
+@pytest.mark.integration
+def test_apply_position_models_clears_stale_errors_for_this_position(_mocked_app, monkeypatch):
+    """A successful ``_apply_position_models`` call must clear any pre-existing
+    ``position_load_errors`` entries for this position — both the bare ``{pos}``
+    key (from the outer ``_ensure_position_loaded`` catch) and the per-model
+    ``{pos}_{model_type}`` keys (from the inner per-model try/excepts).
+
+    Without this clear, a transient S3 model-load failure poisons the error
+    map permanently. The bug latched ``/health`` to "degraded" forever, which
+    on the old 503-on-any-error contract recycled the ECS task every ~30s.
+    Other positions' error entries MUST be left alone — we're only touching
+    this position's slate.
+    """
+    import src.serving.app as app_mod
+
+    # Minimal registry stub: same pattern as the ridge-failure test above,
+    # keeps the registry-driven feature build cheap and deterministic.
+    monkeypatch.setattr(
+        app_mod,
+        "POSITION_REGISTRY",
+        type(
+            "_R",
+            (),
+            {
+                "__getitem__": lambda self, k: {
+                    "targets": ["passing_yards"],
+                    "specific_features": [],
+                    "filter_fn": lambda df: df,
+                    "compute_targets_fn": lambda df: df,
+                    "add_features_fn": lambda tr, va, te: (tr, va, te),
+                    "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
+                    "get_feature_columns_fn": lambda: ["f0"],
+                    "model_dir": "missing",
+                    "nn_file": "missing.pt",
+                    "nn_kwargs": {},
+                    "train_attention_nn": False,
+                    "train_lightgbm": False,
+                    "aggregate_fn": lambda preds: preds["passing_yards"],
+                },
+                "__contains__": lambda self, k: True,
+            },
+        )(),
+    )
+
+    # Pre-populate with stale entries for QB AND an unrelated position.
+    _mocked_app._cache.clear()
+    _mocked_app._cache["position_load_errors"] = {
+        "QB": "previous full-failure (cleared)",
+        "QB_ridge": "previous ridge failure (cleared)",
+        "QB_nn": "previous nn failure (cleared)",
+        "RB_lgbm": "unrelated — must survive",
+    }
+
+    results = _make_results_frame(n=4)
+    df = _make_df(n=4)
+    _mocked_app._apply_position_models(df, df, df, "QB", results)
+
+    errors_after = _mocked_app._cache.get("position_load_errors", {})
+    # All QB entries are gone — both bare key and per-model keys.
+    assert "QB" not in errors_after
+    assert "QB_ridge" not in errors_after
+    assert "QB_nn" not in errors_after
+    # Other positions' entries untouched.
+    assert errors_after.get("RB_lgbm") == "unrelated — must survive"
