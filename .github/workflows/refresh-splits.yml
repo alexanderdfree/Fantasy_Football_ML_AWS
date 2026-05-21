@@ -202,11 +202,28 @@ jobs:
               | set(OPP_BOX_SCORE_FEATURES)
           )
 
+          # Per-position cols computed by ``add_features_fn`` but
+          # categorised in ``include_features`` under a non-"specific"
+          # bucket — RB intentionally puts ``prior_season_mean_catch_rate``
+          # / ``prior_season_mean_yards_per_carry`` under "prior_season"
+          # (they're prior-season aggregates) but they're built at
+          # training time by ``src/rb/features.py::_compute_features``,
+          # not by ``build_features``. Without this carve-out the verify
+          # step false-positive-failed the 2026-05-21 refresh-splits run
+          # on PR #337 — the parquet was correct; the gate was wrong.
+          runtime_added_per_pos = {
+              "RB": {
+                  "prior_season_mean_catch_rate",
+                  "prior_season_mean_yards_per_carry",
+              },
+          }
+
           missing_by_pos = {}
           for pos, cfg in [("QB", QB_CFG), ("RB", RB_CFG), ("WR", WR_CFG), ("TE", TE_CFG)]:
               want = set(flatten_include_features(cfg.include_features))
               want -= runtime_added
               want -= set(cfg.specific_features or [])
+              want -= runtime_added_per_pos.get(pos, set())
               missing = sorted(want - have)
               if missing:
                   missing_by_pos[pos] = missing
