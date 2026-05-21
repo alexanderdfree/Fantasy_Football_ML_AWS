@@ -416,17 +416,17 @@ WIKI_DOCS: dict[str, dict] = {
     "design-lstm-multihead": {
         "name": "LSTM Multi-Head Proposal",
         "group": "Design History",
-        "path": "docs/design_lstm_multihead.md",
+        "path": "docs/archive/design_lstm_multihead.md",
     },
     "design-weather-and-odds": {
         "name": "Weather & Odds Features",
         "group": "Design History",
-        "path": "docs/design_weather_and_odds.md",
+        "path": "docs/archive/design_weather_and_odds.md",
     },
     "design-xgboost-ensemble": {
         "name": "XGBoost Ensemble (rejected)",
         "group": "Design History",
-        "path": "docs/design_xgboost_ensemble.md",
+        "path": "docs/archive/design_xgboost_ensemble.md",
     },
     "method-contracts": {
         "name": "Method Contracts",

@@ -218,9 +218,9 @@ The serving layer turns this into a user-facing capability: as of PR #153 (`a533
 - **DST** (commit `cc0c627`) — outer attention over prior games using a 14-stat per-game sequence (the 10 raw targets plus 4 raw opponent-context columns `opp_scoring`, `opp_fumbles`, `opp_interceptions`, `opp_qb_epa`, see [src/dst/config.py:194-211](../src/dst/config.py)). No gated fusion, no gated TD head.
 - **K** (commit `801b61a`) — **nested attention**: the outer attention is over prior games, but each game token is itself produced by an *inner* attention pool over up to `K_ATTN_MAX_KICKS_PER_GAME = 10` kicks within that game (with per-kick features like `kick_distance`, `fg_prob`, `is_q4`, `game_wind`, see [src/k/config.py:118-134](../src/k/config.py)). The inner pool summarizes per-kick conditions; the outer pool weights which prior games matter. This lets the model distinguish "3-for-3 from short range in a dome" from "3-for-3 in a blizzard from 50+" — a signal pure per-game rollups destroy. A subsequent refinement (PR #199, `dff43fb`) dropped the L1-rolling columns (`ATTN_L1_FEATURES`) that K had still been feeding into its attention static branch: once the inner per-kick attention pool was learning per-game aggregates directly, the L1 rollups were redundant signal, and keeping them violated the "no rolling features in the attention static channel" rule the other five positions already followed.
 
-**Rejected.** A full LSTM or Transformer was tried conceptually (see [docs/design_lstm_multihead.md](design_lstm_multihead.md)) but rejected as over-parameterized for this regime. Kept the design doc as an artifact of the consideration. An earlier version of this ADR rejected attention on K and DST — that decision was reversed once the input schemas were redesigned to give the attention branch something real to chew on (raw per-kick rows for K, raw defensive stats rather than pre-rolled windows for DST).
+**Rejected.** A full LSTM or Transformer was tried conceptually (see [docs/archive/design_lstm_multihead.md](archive/design_lstm_multihead.md)) but rejected as over-parameterized for this regime. Kept the design doc as an artifact of the consideration. An earlier version of this ADR rejected attention on K and DST — that decision was reversed once the input schemas were redesigned to give the attention branch something real to chew on (raw per-kick rows for K, raw defensive stats rather than pre-rolled windows for DST).
 
-**References.** [src/shared/neural_net.py](../src/shared/neural_net.py) — `GatedTDHead` (L9), `AttentionPool` (L122), `MultiHeadNetWithHistory` (L202, outer-only attention used by QB/RB/WR/TE/DST), `MultiHeadNetWithNestedHistory` (L431, inner-kick ⊕ outer-game attention used by K); [src/k/config.py:102-152](../src/k/config.py) (nested attention, per-kick stats, static allowlist); [src/dst/config.py:169-228](../src/dst/config.py) (DST attention + history stats + static allowlist); [docs/design_lstm_multihead.md](design_lstm_multihead.md). Evolved across commits `b31bdf7` → `c399c12` → `99d7086` → `cc0c627` (DST attention + raw-stat targets) → `801b61a` (K nested attention).
+**References.** [src/shared/neural_net.py](../src/shared/neural_net.py) — `GatedTDHead` (L9), `AttentionPool` (L122), `MultiHeadNetWithHistory` (L202, outer-only attention used by QB/RB/WR/TE/DST), `MultiHeadNetWithNestedHistory` (L431, inner-kick ⊕ outer-game attention used by K); [src/k/config.py:102-152](../src/k/config.py) (nested attention, per-kick stats, static allowlist); [src/dst/config.py:169-228](../src/dst/config.py) (DST attention + history stats + static allowlist); [docs/archive/design_lstm_multihead.md](archive/design_lstm_multihead.md). Evolved across commits `b31bdf7` → `c399c12` → `99d7086` → `cc0c627` (DST attention + raw-stat targets) → `801b61a` (K nested attention).
 
 ---
 
@@ -269,7 +269,7 @@ K was the lone exception until PR #199 (`dff43fb`): when the convention landed i
 
 **Rejected.** Opt-out was the earlier pattern and was exactly how the feature-clipping bug and the schedule-features-at-inference bug slipped in. Allowlist refactor landed in commit `18170a6` alongside the gated TD change.
 
-**References.** [src/qb/config.py](../src/qb/config.py) (`QB_INCLUDE_FEATURES`, `QB_ATTN_STATIC_FEATURES`), [src/te/config.py](../src/te/config.py), [src/dst/config.py:218-228](../src/dst/config.py), [src/k/config.py:140-152](../src/k/config.py), [src/shared/pipeline.py](../src/shared/pipeline.py). Weather/Vegas features (from [docs/design_weather_and_odds.md](design_weather_and_odds.md)) are opted in per-position through the same mechanism.
+**References.** [src/qb/config.py](../src/qb/config.py) (`QB_INCLUDE_FEATURES`, `QB_ATTN_STATIC_FEATURES`), [src/te/config.py](../src/te/config.py), [src/dst/config.py:218-228](../src/dst/config.py), [src/k/config.py:140-152](../src/k/config.py), [src/shared/pipeline.py](../src/shared/pipeline.py). Weather/Vegas features (from [docs/archive/design_weather_and_odds.md](archive/design_weather_and_odds.md)) are opted in per-position through the same mechanism.
 
 ---
 
@@ -539,9 +539,9 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 - [docs/ec2_design.md](ec2_design.md) — warm-host training design (authoritative for the D7 / D9 rollback path).
 - [infra/aws/README.md](../infra/aws/README.md) — ECS + ALB + domain runbook (authoritative for D8 serving ops).
 - [infra/ec2/README.md](../infra/ec2/README.md) — EC2 warm-host runbook (authoritative for D9 ops).
-- [docs/design_weather_and_odds.md](design_weather_and_odds.md) — weather/Vegas feature rationale (folded into D6).
-- [docs/design_lstm_multihead.md](design_lstm_multihead.md) — LSTM exploration, kept as artifact of the rejection under D4.
-- [docs/design_xgboost_ensemble.md](design_xgboost_ensemble.md) — ensembling consideration, rejected under D3.
+- [docs/archive/design_weather_and_odds.md](archive/design_weather_and_odds.md) — weather/Vegas feature rationale (folded into D6).
+- [docs/archive/design_lstm_multihead.md](archive/design_lstm_multihead.md) — LSTM exploration, kept as artifact of the rejection under D4.
+- [docs/archive/design_xgboost_ensemble.md](archive/design_xgboost_ensemble.md) — ensembling consideration, rejected under D3.
 - [docs/expert_comparison.md](expert_comparison.md) — benchmark against published projections (evaluation evidence).
 - [TODO.md](../TODO.md) — issue log (fixed + open).
 

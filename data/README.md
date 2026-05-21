@@ -12,4 +12,4 @@ Project data files. NFL stats are sourced at runtime from [nflverse](https://git
 ## Data sources
 
 - **nflverse** — player stats, rosters, schedules, snap counts. 2012–2025 seasons. MIT-licensed.
-- **Vegas implied team totals + weather snapshots** — see [docs/design_weather_and_odds.md](../docs/design_weather_and_odds.md) for sourcing and join semantics.
+- **Vegas implied team totals + weather snapshots** — see [docs/archive/design_weather_and_odds.md](../docs/archive/design_weather_and_odds.md) for sourcing and join semantics.

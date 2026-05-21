@@ -85,8 +85,7 @@ Full training on GPU runs in CI: by default a push to `main` fans out six Spot g
 
 ## Video Links
 
-- Demo video — non-technical (3–5 min): [videos/DemoRecording.mov](videos/DemoRecording.mov)
-- Technical walkthrough (hosted on YouTube — file too large for the repo): https://youtu.be/eyuTnk3qLk8
+- Technical walkthrough (YouTube): https://youtu.be/eyuTnk3qLk8
 
 ## Evaluation
 
@@ -110,7 +109,7 @@ Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy po
 
 ## Repo Layout
 
-The repository is organized with top-level `src/` (all source code), `data/`, `models/`, `notebooks/`, `videos/`, and `docs/` directories alongside `README.md` / `SETUP.md` / `ATTRIBUTION.md`.
+The repository is organized with top-level `src/` (all source code), `data/`, `models/`, `notebooks/`, and `docs/` directories alongside `README.md` / `SETUP.md` / `ATTRIBUTION.md`.
 
 ```
 src/                                All Python source code
@@ -143,7 +142,6 @@ src/                                All Python source code
 data/README.md                      Pointer to nflverse loaders + gitignored caches
 models/README.md                    Pointer to per-position artifact dirs + S3 layout
 notebooks/README.md                 Project doesn't use notebooks; analysis lives in src/analysis/
-videos/                             Demo recording + technical walkthrough YouTube link
 docs/                               ARCHITECTURE (ADR-001), design docs, runbooks
 infra/ec2/                          Active training host (warm g4dn.xlarge)
 infra/aws/                          ECS/ALB serving stack
@@ -161,7 +159,7 @@ Tests live under the top-level `tests/` tree, mirroring the `src/` layout (`test
 - [docs/batch_design.md](docs/batch_design.md) — active training infrastructure (Batch + Spot fan-out, default since 2026-05-20)
 - [docs/ec2_design.md](docs/ec2_design.md) — rollback training path (reactivated via `BATCH_ACTIVE=false`)
 - [docs/expert_comparison.md](docs/expert_comparison.md) — error analysis
-- [docs/design_lstm_multihead.md](docs/design_lstm_multihead.md), [docs/design_xgboost_ensemble.md](docs/design_xgboost_ensemble.md), [docs/design_weather_and_odds.md](docs/design_weather_and_odds.md) — rejected-alternative design docs
+- [docs/archive/](docs/archive/) — historical design docs folded into ADR-001 (LSTM proposal, XGBoost ensemble, weather/Vegas features)
 - [infra/ec2/README.md](infra/ec2/README.md), [infra/aws/README.md](infra/aws/README.md) — operator runbooks
 - [TODO.md](TODO.md) — issue log, open items, and a "Fixed" archive that doubles as a lessons-learned catalog
 - [ATTRIBUTION.md](ATTRIBUTION.md) — data, libraries, and AI tool usage
