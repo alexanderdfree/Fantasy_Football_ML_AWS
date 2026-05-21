@@ -7,6 +7,7 @@ direct-import e2e tests, the latter by the attention-static whitelist test.
 """
 
 from src.shared.position_config import (
+    DEFAULT_ATTN_STATIC_CATEGORIES,
     DEFAULT_ENET_L1_RATIOS,
     DEFAULT_OPP_DEF_HISTORY_STATS,
     PositionConfig,
@@ -162,12 +163,7 @@ _INCLUDE_FEATURES = {
     "specific": _SPECIFIC_FEATURES,
 }
 
-ATTN_STATIC_CATEGORIES = [
-    "prior_season",
-    "matchup",
-    "contextual",
-    "weather_vegas",
-]
+ATTN_STATIC_CATEGORIES = DEFAULT_ATTN_STATIC_CATEGORIES
 
 
 # === Tiny config for end-to-end smoke tests ===

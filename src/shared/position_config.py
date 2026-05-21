@@ -55,6 +55,22 @@ DEFAULT_OPP_DEF_HISTORY_STATS: list[str] = [
 DEFAULT_OPP_ATTN_MAX_SEQ_LEN: int = 17
 DEFAULT_ENET_L1_RATIOS: tuple[float, ...] = (0.3, 0.5, 0.7)
 
+# Default INCLUDE_FEATURES category whitelist for the attention NN's static
+# branch on QB / RB / WR / TE. Rolling / ewma / trend / share / specific
+# categories are intentionally excluded — the attention branch learns its own
+# temporal representation from ATTN_HISTORY_STATS, so double-feeding leaks
+# signal. ``defense`` is excluded because the parallel opp-defense attention
+# branch already feeds those aggregates per-game. K and DST use different /
+# explicit allowlists (no INCLUDE_FEATURES category structure), so they don't
+# read this default. Re-exported at module level on each skill-position config
+# so tests/test_attn_static_columns.py can read ``cfg.ATTN_STATIC_CATEGORIES``.
+DEFAULT_ATTN_STATIC_CATEGORIES: list[str] = [
+    "prior_season",
+    "matchup",
+    "contextual",
+    "weather_vegas",
+]
+
 
 def derive_attn_static_features(
     include_features: dict[str, list[str]],

@@ -7,6 +7,7 @@ direct-import e2e tests, the latter by the attention-static whitelist test.
 """
 
 from src.shared.position_config import (
+    DEFAULT_ATTN_STATIC_CATEGORIES,
     DEFAULT_ENET_L1_RATIOS,
     DEFAULT_OPP_DEF_HISTORY_STATS,
     PositionConfig,
@@ -94,12 +95,7 @@ _INCLUDE_FEATURES = {
     "specific": _SPECIFIC_FEATURES,
 }
 
-ATTN_STATIC_CATEGORIES = [
-    "prior_season",
-    "matchup",
-    "contextual",
-    "weather_vegas",
-]
+ATTN_STATIC_CATEGORIES = DEFAULT_ATTN_STATIC_CATEGORIES
 
 # Tiny config for E2E smoke tests. Shrunk hyperparameters; keeps full
 # pipeline orchestration under 20s on CPU. Used by tests/wr/test_pipeline_e2e.py.
