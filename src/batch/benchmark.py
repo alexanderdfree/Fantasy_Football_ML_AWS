@@ -38,33 +38,77 @@ from src.shared.benchmark_utils import (
     summarize_pipeline_result,
     utc_now_iso,
 )
+from src.shared.model_sync import load_manifest
 
 RESULTS_FILE = "benchmark_results.json"
 HISTORY_DIR = "benchmark_history"
 
+# Same default as src/batch/train.py — the producer side writes manifest +
+# history keys under ``${S3_PREFIX}/${POS}/...``; env override stays available
+# for any future bucket-layout migration.
+S3_PREFIX = os.environ.get("FF_MODEL_S3_PREFIX", "models")
+
 
 def download_metrics(positions):
-    """Download benchmark_metrics.json from each position's model artifacts."""
+    """Download benchmark_metrics.json from each position's model artifacts.
+
+    Resolves the per-position artifact via ``models/{POS}/manifest.json`` rather
+    than the legacy ``models/{POS}/model.tar.gz`` mirror. Two parallel
+    train-batch runs writing the same position's legacy key were last-write-
+    wins; the manifest's ``current`` entry is an atomic single-PUT promotion
+    paired with a versioned ``models/{POS}/history/{ts}-{sha7}/model.tar.gz``
+    key, so each consumer reads exactly the artifact the producer's manifest
+    write committed to.
+
+    Falls through ``current`` -> ``stable`` -> ``previous`` (the same chain
+    src/shared/model_sync.py uses on the serving side). Manifest-absent and
+    "all entries failed" both surface a per-position WARNING and skip that
+    position in the aggregated output rather than raising — one bad position
+    shouldn't kill a six-position benchmark roll-up. The crucial thing is
+    that we no longer silently fall back to the legacy ``model.tar.gz`` key,
+    which was the source of the cross-run pollution this layer fixes.
+    """
     s3 = boto3.client("s3", region_name=AWS_REGION)
 
     def _fetch_one(pos):
-        s3_key = f"models/{pos}/model.tar.gz"
-        with tempfile.NamedTemporaryFile(suffix=".tar.gz") as tmp:
-            print(f"[{pos}] Downloading s3://{S3_BUCKET}/{s3_key} ...")
-            try:
-                s3.download_file(S3_BUCKET, s3_key, tmp.name)
-            except Exception as e:
-                print(f"[{pos}] No artifacts found: {e}")
-                return pos, None
-            with tarfile.open(tmp.name, "r:gz") as tar:
+        manifest = load_manifest(s3, S3_BUCKET, S3_PREFIX, pos)
+        if manifest is None:
+            # Treated as soft error here (returns None metrics, lets the rest
+            # of the aggregation proceed) rather than raising — the caller
+            # already prints a per-position WARNING when metrics are missing,
+            # and one stale position shouldn't kill a six-position aggregation.
+            print(
+                f"[{pos}] WARNING: no manifest at s3://{S3_BUCKET}/{S3_PREFIX}/{pos}/manifest.json"
+            )
+            return pos, None
+
+        # Resolve in priority order; serving uses the same chain in
+        # src/shared/model_sync.py::_sync_one.
+        tried = []
+        for label in ("current", "stable", "previous"):
+            entry = manifest.get(label)
+            if not entry or not entry.get("key"):
+                continue
+            s3_key = entry["key"]
+            tried.append((label, s3_key))
+            with tempfile.NamedTemporaryFile(suffix=".tar.gz") as tmp:
+                print(f"[{pos}] Downloading s3://{S3_BUCKET}/{s3_key} (source={label}) ...")
                 try:
-                    member = tar.getmember("benchmark_metrics.json")
-                    f = tar.extractfile(member)
-                    print(f"[{pos}] Metrics loaded")
-                    return pos, json.loads(f.read())
-                except KeyError:
-                    print(f"[{pos}] WARNING: benchmark_metrics.json not found in artifacts")
-                    return pos, None
+                    s3.download_file(S3_BUCKET, s3_key, tmp.name)
+                except Exception as e:
+                    print(f"[{pos}] {label} download FAILED: {e!r} — falling through")
+                    continue
+                try:
+                    with tarfile.open(tmp.name, "r:gz") as tar:
+                        member = tar.getmember("benchmark_metrics.json")
+                        f = tar.extractfile(member)
+                        print(f"[{pos}] Metrics loaded (source={label})")
+                        return pos, json.loads(f.read())
+                except (KeyError, tarfile.TarError) as e:
+                    print(f"[{pos}] {label} tarball unreadable: {e!r} — falling through")
+                    continue
+        print(f"[{pos}] WARNING: all manifest entries failed to yield metrics. tried={tried!r}")
+        return pos, None
 
     all_metrics = {}
     with ThreadPoolExecutor(max_workers=max(1, len(positions))) as pool:
