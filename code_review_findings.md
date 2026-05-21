@@ -3,6 +3,7 @@
 **Original audit:** 2026-05-20 · `claude/admiring-rubin-87b3cd` · `bd80ba1`
 **Re-verified at:** 2026-05-20 HEAD of `claude/kind-kare-bd547f` (19 commits ahead, PRs #259, #262, #263, #264, #267, #268, #270, #271 merged since)
 **Wave 1 shipped:** 2026-05-21 — H1 ([#287](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/287)) and H2 ([#290](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/290)) merged.
+**Re-verified again:** 2026-05-21 (HEAD `c8a2c91`, 8 PRs landed since prior re-verify: #287, #290, #292–#298) — **0 additional false positives or already-fixed**; all 113 persisting findings still hold at HEAD. Tier A + Tier B + Tier C consolidation PRs follow.
 
 ## Summary
 
@@ -365,6 +366,8 @@ The original audit reported zero false positives. Re-verification at HEAD of `cl
 | L-S2 | `LastWeekBaseline` has zero callers | ALREADY FIXED — `src/models/` directory deleted by [#263](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/263). |
 | L-S4 | Legacy `Trainer` + `make_dataloaders` only used by tests | ALREADY FIXED — `src/training/` directory deleted by [#264](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/264). |
 | L-E2 | `print_comparison_table` has zero production callers | FALSE POSITIVE — has production callers at [src/shared/pipeline.py:1408](src/shared/pipeline.py:1408), [:1861](src/shared/pipeline.py:1861) (PR #262 merged eval modules but kept the function in use). |
+
+**Re-verification 2026-05-21 (HEAD `c8a2c91`, post #287–#298)** — three parallel `Explore` agents re-checked all 113 persisting findings (17 MEDIUM + 96 LOW). **0 new false positives, 0 new already-fixed.** None of the new PRs (#287/#290 fixed H1/H2 — already credited above; #292/#293/#294/#295/#297/#298 touched orthogonal infra) modified the cited code sites for the unfixed findings.
 
 ## Out of scope
 
