@@ -839,7 +839,7 @@ def print_comparison_table(
     """
 ```
 
-### 5.2 `src/evaluation/backtest.py`
+### 5.2 `src/shared/backtest.py`
 
 #### `run_weekly_simulation(test_df, pred_columns, true_col="fantasy_points") -> dict`
 
@@ -987,12 +987,13 @@ FIGURES_DIR = "outputs/figures"
 MODELS_DIR = "outputs/models"
 ```
 
-**Position-specific configs** are in `{POS}/{pos}_config.py` and override the global defaults.
-Each position config defines:
-- Target decomposition (`{POS}_TARGETS`)
-- Position-specific features (`{POS}_SPECIFIC_FEATURES`)
-- Features to drop (`{POS}_DROP_FEATURES`)
+**Position-specific configs** are in `src/{pos}/config.py` and override the global defaults. Each module exports a single `POSITION_CONFIG = PositionConfig(...)` dataclass instance (defined in [src/shared/position_config.py](../src/shared/position_config.py)) that bundles every per-position knob via named fields, replacing the older `{POS}_TARGETS` / `{POS}_SPECIFIC_FEATURES` / `{POS}_DROP_FEATURES` module-level constants. Each `POSITION_CONFIG` sets:
+- Target decomposition (`targets`)
+- Position-specific features (`specific_features`) plus the full `include_features` allowlist
+- Features to drop (`drop_features`)
 - Ridge alpha grids per target
 - NN architecture (backbone, head hidden, dropout, learning rate, etc.)
 - Loss weights and Huber deltas per target
 - LR scheduler type and parameters
+
+A second `CONFIG_TINY` dict literal at the top of each file is the test-only fixture (shrunken epochs, attention often disabled) — it is **not** consumed in production; AWS Batch builds the runtime config via `build_pipeline_config(pos, POSITION_CONFIG)` in `run_pipeline.py`.

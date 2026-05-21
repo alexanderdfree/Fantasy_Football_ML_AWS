@@ -168,7 +168,12 @@ def load_raw_data(
         redzone_f = pool.submit(_fetch_redzone)
         weekly = weekly_f.result()
         rosters = rosters_f.result()
-        schedules = schedules_f.result()
+        # _fetch_schedules() is called for its parquet side-effect (downstream
+        # consumers read schedules_{min}_{max}.parquet directly — see
+        # src/k/data.py::load_data and src/shared/weather_features.py::_load_schedules).
+        # The returned frame is intentionally discarded; .result() is invoked so
+        # any fetch exception propagates instead of being silently swallowed.
+        schedules_f.result()
         snap_counts = snap_counts_f.result()
         injuries = injuries_f.result()
         depth = depth_f.result()
@@ -281,9 +286,6 @@ def load_raw_data(
         if col not in weekly.columns:
             weekly[col] = 0.0
         weekly[col] = weekly[col].fillna(0.0)
-
-    # Store schedules for later use
-    weekly.attrs["schedules"] = schedules
 
     return weekly
 

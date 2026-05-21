@@ -12,7 +12,8 @@ Usage:
     # Directory of CSVs (one per position)
     python -m src.scripts.analyze_gpu_profile --csv-dir /tmp/profiles/
 
-    # Download each position's latest model.tar.gz from S3 and extract
+    # Resolve each position's latest artifact via models/{POS}/manifest.json
+    # (stable → current → previous) and extract the embedded gpu_profile_{POS}.csv
     python -m src.scripts.analyze_gpu_profile --s3 \
         --positions QB RB WR TE K DST \
         --s3-bucket ff-predictor-training

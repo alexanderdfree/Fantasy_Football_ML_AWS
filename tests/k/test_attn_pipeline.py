@@ -3,7 +3,8 @@
 Runs the shared pipeline with CONFIG_TINY_ATTN + synthetic per-kick data,
 asserts the attention branch produces finite predictions, and verifies that
 Ridge + base NN metrics are bit-identical to a non-attention run (proves the
-L1 rolling features don't leak into the non-attention code path).
+attention history features (``attn_history_stats``, ``attn_kick_stats``,
+``attn_static_features``) don't leak into the non-attention code path).
 """
 
 import functools
@@ -138,8 +139,9 @@ def test_ridge_and_base_nn_bit_identical_across_attention_toggle(
 ):
     """Critical: toggling attention on/off must not perturb Ridge or base NN.
 
-    If the L1 features leaked into Ridge/base NN feature_cols (the exact bug
-    the attn_static_from_df path is designed to prevent), this would fail.
+    If the attention history features leaked into Ridge/base NN feature_cols
+    (the exact bug the attn_static_from_df path is designed to prevent), this
+    would fail.
     """
     attn_test = attn_pipeline_run["test_df"]
     base_test = base_pipeline_run["test_df"]
@@ -152,7 +154,7 @@ def test_ridge_and_base_nn_bit_identical_across_attention_toggle(
                 base_test[col].to_numpy(),
                 err_msg=(
                     f"{col} differs between attention-on and attention-off runs — "
-                    f"L1 features or the attention code path leaked into the base "
-                    f"Ridge/NN predictions."
+                    f"attention history features or the attention code path leaked "
+                    f"into the base Ridge/NN predictions."
                 ),
             )

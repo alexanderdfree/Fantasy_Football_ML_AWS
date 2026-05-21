@@ -177,10 +177,8 @@ def main():
 
     # Target dicts
     y_train_dict = {t: pos_train[t].values for t in TARGETS}
-    y_val_dict = {t: pos_val[t].values for t in TARGETS}
     y_test_dict = {t: pos_test[t].values for t in TARGETS}
     y_train_dict["total"] = sum(pos_train[t].values for t in TARGETS)
-    y_val_dict["total"] = sum(pos_val[t].values for t in TARGETS)
     y_test_dict["total"] = sum(pos_test[t].values for t in TARGETS)
 
     print(f"Train: {len(pos_train)}, Val: {len(pos_val)}, Test: {len(pos_test)}")

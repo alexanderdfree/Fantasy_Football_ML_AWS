@@ -216,8 +216,14 @@ POSITION_CONFIG = PositionConfig(
     cosine_t_mult=2,
     cosine_eta_min=1e-5,
     # === Attention NN (game history variant) ===
-    # Copies RB's attention shape (the most advanced position model);
-    # no gating per design. The attention branch learns its own temporal
+    # Shares RB's attention architecture (d_model=32, n_heads=2, encoder
+    # hidden=32) but trains with a smaller, slower-moving optimizer setup:
+    # attn_lr=3e-4 (~3x lower than RB's 1e-3), attn_weight_decay=3e-4 (~6x
+    # higher than RB's 5e-5), attn_batch_size=128 (half of RB's 256). DST
+    # has far fewer rows than RB (32 teams x ~17 weeks vs every RB-game),
+    # so the heavier regularization + smaller batch + gentler step size
+    # are deliberate to avoid overfitting on the smaller sample. No gating
+    # per design. The attention branch learns its own temporal
     # representation from per-game defensive + opponent history, so
     # rolling/EWMA/trend features are stripped from its static input.
     train_attention_nn=True,

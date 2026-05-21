@@ -5,7 +5,7 @@ dataset keyed to the post-migration target list and asserts the three
 properties the reviewer flagged as load-bearing:
 
 * **Baseline check** — each trained model beats the season-average baseline.
-* **Ridge-vs-LGBM bound** — LightGBM MAE must be at most ``1.10 x Ridge MAE``
+* **Ridge-vs-LGBM bound** — LightGBM MAE must be at most ``1.50 x Ridge MAE``
   so tree-based regressions don't silently lose to the linear baseline.
 * **NN-vs-LGBM bound** — NN MAE must be within ``+/-25%`` of LightGBM so
   regressions in the NN training loop surface before the full pipeline run.

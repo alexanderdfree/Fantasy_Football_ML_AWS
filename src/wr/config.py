@@ -8,7 +8,6 @@ direct-import e2e tests, the latter by the attention-static whitelist test.
 
 from src.shared.position_config import (
     DEFAULT_ATTN_STATIC_CATEGORIES,
-    DEFAULT_ENET_L1_RATIOS,
     DEFAULT_OPP_DEF_HISTORY_STATS,
     PositionConfig,
     alpha_grid,
@@ -151,13 +150,13 @@ POSITION_CONFIG = PositionConfig(
     # can't fully address.
     ridge_pca_components=30,
     train_elasticnet=False,
-    enet_l1_ratios=list(DEFAULT_ENET_L1_RATIOS),
     # 2012+ dataset: widened from [96] to [128] to exploit the largest
     # training set. Most data → most capacity with the least overfit risk.
     nn_backbone_layers=[128],
     nn_head_hidden=32,
     # Larger head for the hurdle-NegBin reception head (two value outputs).
-    # receiving_tds moved to Poisson NLL so no extra capacity needed.
+    # receiving_tds uses Poisson NLL (head_losses) plus a BCE gate via
+    # gated_targets — both heads use the standard hidden size.
     nn_head_hidden_overrides={"receptions": 64},
     nn_dropout=0.20,
     nn_non_negative_targets=set(_TARGETS),

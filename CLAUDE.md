@@ -6,7 +6,7 @@ Orientation file for Claude Code. Human-facing docs live elsewhere — this file
 - **[README.md](README.md)** — overview, architecture diagram, eval results.
 - **[SETUP.md](SETUP.md)** — install, first-time data pull, how to run everything locally. If you need a command, it's probably here.
 - **[TODO.md](TODO.md)** — open issues and a **Fixed archive** with root-cause + lesson for every non-trivial bug ever squashed. **Read this before proposing changes near anything it mentions** — most "obvious" fixes have been tried and the archive explains why they were wrong. **Update it as you ship**: move Open → Fixed archive (or add a fresh archive entry) using the existing `### [FIXED] Title` + **File(s)/What/Fix/Lesson** format.
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the project's ADR (decisions D1–D14 + a dated `Update history`), with rejected alternatives. **Living doc** — update it whenever a non-trivial change touches or adds an architectural decision (see "When making changes").
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the project's ADR (decisions D1–D15 + a dated `Update history`), with rejected alternatives. **Living doc** — update it whenever a non-trivial change touches or adds an architectural decision (see "When making changes").
 
 ## Project shape (six-position symmetry)
 Each of `src/qb/ src/rb/ src/wr/ src/te/ src/k/ src/dst/` follows the same template:
@@ -37,7 +37,7 @@ The rest of `src/` groups by purpose:
 
 All six positions train an attention NN (DST landed via `cc0c627`, K via `801b61a`). There is no "skill-positions-only" carve-out anymore — if you're adding an NN-related knob, wire it through every position.
 
-**Adding a new position**: copy an existing folder under `src/`, rename files/constants, wire it into `src/batch/train.py` and the position list in `.github/workflows/_detect-positions.yml` (shared by `train-batch.yml` (active path) and `train-ec2.yml` (rollback path)), add tests under `tests/{pos}/`.
+**Adding a new position**: copy an existing folder under `src/`, rename files/constants, wire it into `src/batch/train.py` and the position list in `.github/workflows/_detect-positions.yml` (shared by `train-batch.yml` (active path) and `train-ec2.yml` (rollback path)). Also update [src/scripts/scope_positions.py](src/scripts/scope_positions.py) — the canonical path → positions mapping (contract-tested by [tests/scripts/test_scope_positions.py](tests/scripts/test_scope_positions.py)) used by both training workflows' `detect` job. Add tests under `tests/{pos}/`.
 
 ## Conventions that bite if ignored
 
@@ -45,7 +45,7 @@ All six positions train an attention NN (DST landed via `cc0c627`, K via `801b61
 Every position predicts raw NFL stats (yards, TDs, receptions, etc.). Fantasy points are computed *after* prediction via `src.shared.aggregate_targets.predictions_to_fantasy_points(pos, preds)`. If you find yourself training a model directly on `fantasy_points`, stop — you'll break scoring-format flexibility and regress the ~1.9 pt/game double-count fix documented in TODO.md's archive.
 
 ### Feature whitelist is explicit, not inferred
-`INCLUDE_FEATURES` in each `src/{pos}/config.py` is an opt-in list. New columns must be added explicitly — the training code will *not* pick them up automatically. This prevents silent feature leakage. When you add a feature, update both the feature-engineering file *and* the include dict, then update the test fixture (`tests/conftest.py` or `tests/{pos}/conftest.py`).
+`POSITION_CONFIG.include_features` in each `src/{pos}/config.py` (a kwarg on the `PositionConfig` dataclass, typically backed by a module-level `_INCLUDE_FEATURES` dict) is an opt-in list. New columns must be added explicitly — the training code will *not* pick them up automatically. This prevents silent feature leakage. When you add a feature, update both the feature-engineering file *and* the include dict, then update the test fixture (`tests/conftest.py` or `tests/{pos}/conftest.py`).
 
 ### `CONFIG_TINY` is the test fixture, not production
 Each `src/{pos}/config.py` exports **two** config shapes that look identical at a glance and have opposite values for the same toggle:
@@ -56,7 +56,7 @@ Each `src/{pos}/config.py` exports **two** config shapes that look identical at 
 `grep "train_lightgbm" src/k/config.py` returns **both** entries with opposite booleans. When checking what production actually runs, always read `POSITION_CONFIG` (kwarg form, lower in the file) — never the dict-literal form.
 
 ### Attention static-feature whitelist is separate per position
-The attention NN's static branch reads a *second*, smaller allowlist: `ATTN_STATIC_FEATURES` (commit `2500ecc`). It is defined per position (QB/RB/WR/TE derive it from an `ATTN_STATIC_CATEGORIES` subset of `INCLUDE_FEATURES`; DST/K enumerate it directly). The static branch is **deliberately non-temporal**.
+The attention NN's static branch reads a *second*, smaller allowlist: `POSITION_CONFIG.attn_static_features` (commit `2500ecc`), a kwarg on the per-position `PositionConfig` dataclass. It is defined per position (QB/RB/WR/TE derive it from an `ATTN_STATIC_CATEGORIES` subset of `_INCLUDE_FEATURES`; DST/K enumerate it directly). The static branch is **deliberately non-temporal**.
 
 **Never propose adding rolling / ewma / trend / L3 / L5 / L8 (or any windowed) features to `ATTN_STATIC_FEATURES`.** Temporal signal already feeds the NN through `ATTN_HISTORY_STATS` via the per-game attention sequence. Mixing windowed features into the static branch re-creates the double-counting this design exists to prevent. If you see attention NN losing to ridge/LightGBM on some target and you're tempted to "promote the rolling stats LGBM uses" into the static branch — stop. That's the wrong reach. The architectures differ, not the input availability: LGBM consumes rolling stats as flat columns split by trees; the attention NN consumes the *same underlying signal* as a 17-game sequence through attention. Eligible reaches for closing such a gap:
 
@@ -127,7 +127,7 @@ This repo is regularly worked from `.claude/worktrees/<name>` clones where the p
   `lint` + `detect` still run as cheap sanity gates. [deploy.yml](.github/workflows/deploy.yml) is **not** gated by the tag — its `paths:` filter on `docs/**` + `README.md` + wiki sources is the correct gate (docs changes are rendered by `src.serving.app._render_wiki_doc` in the in-app wiki tab, so they need redeploy to land on alexfree.me). Trust contract — CI cannot verify the assertion, the author owns correctness. Don't reach for the tag to bypass a flaky test; if `[docs-only]` is wrong, the next substantive PR's CI will surface the regression with no signal about which commit introduced it.
 - Respect the **TODO.md archive** — it encodes the project's accumulated "already tried" knowledge.
 - **Update the ADR + decision log alongside non-trivial changes.**
-  - **ADR ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):** if your change touches an existing decision (D1–D13) or introduces a new one of similar weight, update the affected D-entry's `Decision`/`Context`/`Chosen`/`Rejected`/`References`/`Consequence` fields, add a line to the `Update history` block at the top (date + one-line summary + commit/PR), and link the commit or PR under `References`. Superseding a decision? Mark the old D-entry as superseded and add a new D-entry — don't rewrite the original.
+  - **ADR ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)):** if your change touches an existing decision (D1–D15) or introduces a new one of similar weight, update the affected D-entry's `Decision`/`Context`/`Chosen`/`Rejected`/`References`/`Consequence` fields, add a line to the `Update history` block at the top (date + one-line summary + commit/PR), and link the commit or PR under `References`. Superseding a decision? Mark the old D-entry as superseded and add a new D-entry — don't rewrite the original.
   - **Decision log ([TODO.md](TODO.md)):** for non-trivial bug fixes, move the corresponding `Open` entry into the `Fixed archive` using the existing `### [FIXED] Title` + **File(s)** (paths + commit SHA) / **What** / **Fix** / **Lesson** format. If the bug wasn't tracked, add a fresh archive entry anyway — that's the project's "already tried" knowledge.
   - **Skip both** for truly trivial changes (typos, formatting, lockfile bumps, comment-only tweaks). When in doubt, lean toward writing the entry — a thin archive is the failure mode, not over-documentation.
 - Update tests and fixtures when you change feature lists or targets (archive has multiple entries where this was missed).
