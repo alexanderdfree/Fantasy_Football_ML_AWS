@@ -210,7 +210,7 @@ POSITION_CONFIG = PositionConfig(
         "fumbles_lost": alpha_grid(-1, 4, 15),
     },
     # PCR: 80 components retains 99.8% variance, drops condition number from
-    # 1.8e8 (after is_home removal) to 49.8. Both yard targets improve ~0.002 MAE.
+    # 1.8e8 to 49.8. Both yard targets improve ~0.002 MAE.
     ridge_pca_components=80,
     train_elasticnet=False,
     enet_l1_ratios=list(DEFAULT_ENET_L1_RATIOS),
@@ -292,8 +292,11 @@ POSITION_CONFIG = PositionConfig(
     # Per-game stats fed into the attention sequence. fantasy_points
     # intentionally excluded — its scoring components are already in the
     # sequence. Game-script context + team box score are per-historical-
-    # game raw context (not rolling/EWMA/trend) so they belong on the
-    # history tokens, not in attn_static_features.
+    # game raw context (not rolling/EWMA/trend); the per-game values land
+    # on the history tokens here, while the *current-game* counterparts
+    # (is_home, days_rest, implied_team_total, implied_opp_total) flow
+    # into attn_static_features via the `contextual` / `weather_vegas`
+    # INCLUDE_FEATURES categories.
     attn_history_stats=[
         "rushing_yards",
         "receiving_yards",
