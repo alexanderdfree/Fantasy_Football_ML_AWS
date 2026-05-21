@@ -805,7 +805,16 @@ class LightGBMMultiTarget:
             else:
                 model.fit(X_train, y_train_dict[name])
 
-    def predict(self, X):
+    def predict(self, X, non_negative_targets: set[str] | None = None):
+        """Return per-target predictions, clamping the non-negative subset to >= 0.
+
+        ``non_negative_targets`` mirrors the kwarg on ``RidgeMultiTarget.predict``
+        / ``ElasticNetMultiTarget.predict``. Default ``None`` preserves the
+        long-standing behavior of clamping every target (kicker miss counts,
+        DST sacks, etc. can't physically be negative). Pass an explicit set
+        to opt a position with a signed head (e.g. a future bonus that can
+        go negative) out of the blanket clamp without flipping it globally.
+        """
         # Always wrap X in a DataFrame with whatever names fit saw so sklearn
         # doesn't warn. lightgbm auto-assigns "Column_i" names during a numpy
         # fit, so pull those when the user didn't supply feature_names.
@@ -816,7 +825,13 @@ class LightGBMMultiTarget:
         else:
             first = next(iter(self._models.values()))
             X_in = pd.DataFrame(X, columns=getattr(first, "feature_names_in_", None))
-        preds = {name: np.maximum(model.predict(X_in), 0) for name, model in self._models.items()}
+        clamp_set = set(self.target_names) if non_negative_targets is None else non_negative_targets
+        preds = {}
+        for name, model in self._models.items():
+            pred = model.predict(X_in)
+            if name in clamp_set:
+                pred = np.maximum(pred, 0)
+            preds[name] = pred
         return preds
 
     def get_feature_importance(self, feature_names):
