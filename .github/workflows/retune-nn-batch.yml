@@ -27,7 +27,7 @@ on:
         default: ""
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
 
 permissions:

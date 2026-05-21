@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-REGION="us-east-1"
+REGION="${AWS_REGION:-us-east-1}"
 COMPUTE_ENV="ff-gpu-spot"
 JOB_QUEUE="ff-training-queue"
 JOB_DEF="ff-training-job"

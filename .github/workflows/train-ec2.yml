@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
   # Same cluster/service deploy.yml targets — used by the post-train ECS
   # rollover step so freshly promoted stable model artifacts get picked

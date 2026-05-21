@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-REGION="us-east-1"
+REGION="${AWS_REGION:-us-east-1}"
 BUCKET="ff-predictor-training"
 INFRA_PREFIX="infra/ec2"
 INSTANCE_TYPE="g4dn.xlarge"
@@ -76,10 +76,13 @@ for p in \
 done
 
 log "Putting inline policy ff-training-workload..."
+POLICY_FILE="$(mktemp)"
+sed -e "s|__REGION__|$REGION|g" "$SCRIPT_DIR/iam-instance-policy.json" > "$POLICY_FILE"
 aws iam put-role-policy \
   --role-name "$ROLE_NAME" \
   --policy-name ff-training-workload \
-  --policy-document "file://$SCRIPT_DIR/iam-instance-policy.json"
+  --policy-document "file://$POLICY_FILE"
+rm -f "$POLICY_FILE"
 
 if ! aws iam get-instance-profile --instance-profile-name "$PROFILE_NAME" >/dev/null 2>&1; then
   log "Creating instance profile $PROFILE_NAME..."
@@ -157,13 +160,15 @@ if [ "$EXISTING_ID" != "None" ] && [ -n "$EXISTING_ID" ]; then
   INSTANCE_ID="$EXISTING_ID"
 else
   log "Launching $INSTANCE_TYPE..."
+  USER_DATA_FILE="$(mktemp)"
+  sed -e "s|__REGION__|$REGION|g" "$SCRIPT_DIR/user-data.sh" > "$USER_DATA_FILE"
   INSTANCE_ID=$(aws ec2 run-instances \
     --image-id "$AMI_ID" \
     --instance-type "$INSTANCE_TYPE" \
     --key-name "$KEY_NAME" \
     --security-group-ids "$SG_ID" \
     --iam-instance-profile "Name=$PROFILE_NAME" \
-    --user-data "file://$SCRIPT_DIR/user-data.sh" \
+    --user-data "file://$USER_DATA_FILE" \
     --metadata-options "HttpTokens=required,HttpPutResponseHopLimit=2,HttpEndpoint=enabled" \
     --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=100,VolumeType=gp3,Encrypted=true,DeleteOnTermination=true}' \
     --disable-api-termination \
@@ -171,6 +176,7 @@ else
       "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=Project,Value=fantasy-predictor},{Key=Role,Value=trainer},{Key=ManagedBy,Value=infra-ec2}]" \
     --region "$REGION" \
     --query 'Instances[0].InstanceId' --output text)
+  rm -f "$USER_DATA_FILE"
   log "Launched: $INSTANCE_ID"
 fi
 

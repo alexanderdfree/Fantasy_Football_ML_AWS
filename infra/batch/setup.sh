@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-REGION="us-east-1"
+REGION="${AWS_REGION:-us-east-1}"
 BUCKET="ff-predictor-training"
 COMPUTE_ENV="ff-gpu-spot"
 JOB_QUEUE="ff-training-queue"
@@ -77,10 +77,13 @@ if ! aws iam get-role --role-name "$JOB_ROLE" >/dev/null 2>&1; then
     --description "ff-training Batch job role (S3, ECR pull, CW Logs)"
 fi
 log "Putting inline policy ff-batch-workload..."
+POLICY_FILE="$(mktemp)"
+sed -e "s|__REGION__|$REGION|g" "$SCRIPT_DIR/iam-job-policy.json" > "$POLICY_FILE"
 aws iam put-role-policy \
   --role-name "$JOB_ROLE" \
   --policy-name ff-batch-workload \
-  --policy-document "file://$SCRIPT_DIR/iam-job-policy.json"
+  --policy-document "file://$POLICY_FILE"
+rm -f "$POLICY_FILE"
 
 # --- 4. ecsInstanceRole (Spot EC2 instance role) ------------------------
 # Some accounts have this auto-created by Batch console; new accounts don't.
