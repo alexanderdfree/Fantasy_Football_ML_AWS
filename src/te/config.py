@@ -50,6 +50,11 @@ _INCLUDE_FEATURES = {
     ],
     "ewma": [],
     "trend": ["trend_targets", "trend_carries", "trend_snap_pct"],
+    # Inherited from WR's share block — kept both L3 and L5 here without a
+    # TE-specific collinearity audit. RB dropped target_share_L5 / carry_share_L5
+    # / carry_share_L3 after measuring r > 0.96 with their L3 / team-share
+    # counterparts (see src/rb/config.py share-block comment). May revisit
+    # once a TE audit is run.
     "share": [
         "target_share_L3",
         "target_share_L5",

@@ -5,10 +5,11 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+# Keep src.te.config import before src.shared.* (matches QB/RB convention).
+from src.te.config import POSITION_CONFIG  # noqa: I001
 from src.shared.pipeline import run_pipeline
 from src.shared.position_pipeline import build_pipeline_config
 from src.shared.run_pipeline_factory import cli_main
-from src.te.config import POSITION_CONFIG
 
 CONFIG = build_pipeline_config("TE", POSITION_CONFIG)
 

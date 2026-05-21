@@ -83,6 +83,44 @@ def make_te_row():
 
 
 @pytest.fixture(scope="session")
+def te_player_games_factory():
+    """Factory for multi-week TE game DataFrames used by feature-compute tests."""
+
+    def _make(
+        player_id: str = "T1",
+        season: int = 2023,
+        n_weeks: int = 5,
+        receptions: int = 4,
+        targets: int = 6,
+        receiving_yards: int = 55,
+        receiving_air_yards: int = 70,
+        receiving_yards_after_catch: int = 20,
+        receiving_epa: float = 1.5,
+        receiving_first_downs: int = 3,
+        receiving_tds: int = 1,
+        recent_team: str = "KC",
+    ) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "player_id": [player_id] * n_weeks,
+                "season": [season] * n_weeks,
+                "week": list(range(1, n_weeks + 1)),
+                "receptions": [receptions] * n_weeks,
+                "targets": [targets] * n_weeks,
+                "receiving_yards": [receiving_yards] * n_weeks,
+                "receiving_air_yards": [receiving_air_yards] * n_weeks,
+                "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
+                "receiving_epa": [receiving_epa] * n_weeks,
+                "receiving_first_downs": [receiving_first_downs] * n_weeks,
+                "receiving_tds": [receiving_tds] * n_weeks,
+                "recent_team": [recent_team] * n_weeks,
+            }
+        )
+
+    return _make
+
+
+@pytest.fixture(scope="session")
 def tiny_splits():
     """Build tiny synthetic TE-only train/val/test splits for E2E/regression tests.
 

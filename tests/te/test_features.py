@@ -109,42 +109,45 @@ install_parameterized_features(
 class TestComputeTERates:
     """TE-specific per-rate computation and team-target-share tests."""
 
-    def test_yards_per_reception_computation(self):
-        df = _make_player_games(n_weeks=5, receptions=4, receiving_yards=48)
+    def test_yards_per_reception_computation(self, te_player_games_factory):
+        df = te_player_games_factory(n_weeks=5, receptions=4, receiving_yards=48)
         _compute_features(df)
         week3 = df[df["week"] == 3]
         # 96 / 8 = 12.0
         assert pytest.approx(week3["yards_per_reception_L3"].iloc[0], abs=0.01) == 12.0
 
-    def test_reception_rate_computation(self):
-        df = _make_player_games(n_weeks=5, receptions=4, targets=6)
+    def test_reception_rate_computation(self, te_player_games_factory):
+        df = te_player_games_factory(n_weeks=5, receptions=4, targets=6)
         _compute_features(df)
         week3 = df[df["week"] == 3]
         assert pytest.approx(week3["reception_rate_L3"].iloc[0], abs=0.01) == 4 / 6
 
-    def test_td_rate_per_target_computation(self):
+    def test_td_rate_per_target_computation(self, te_player_games_factory):
         """TE-specific td_rate_per_target_L3."""
-        df = _make_player_games(n_weeks=5, receiving_tds=1, targets=6)
+        df = te_player_games_factory(n_weeks=5, receiving_tds=1, targets=6)
         _compute_features(df)
         week3 = df[df["week"] == 3]
         # 2 / 12 = 0.1667
         assert pytest.approx(week3["td_rate_per_target_L3"].iloc[0], abs=0.01) == 1 / 6
 
-    def test_team_target_share_single_player(self):
-        df = _make_player_games(n_weeks=5, targets=6, recent_team="KC")
+    def test_team_target_share_single_player(self, te_player_games_factory):
+        """Solo TE on team should have target share close to 1.0."""
+        df = te_player_games_factory(n_weeks=5, targets=6, recent_team="KC")
         _compute_features(df)
         later = df[df["week"] >= 3]
         shares = later["team_te_target_share_L3"].dropna()
-        assert len(shares) > 0, "no non-NaN shares produced"
+        # Why: rolling-3 share is defined from week 3 onward (3 weeks >= 3 in a 5-week run)
+        assert len(shares) == 3
+        # Why: solo TE -> share == 1.0; 1.01 ceiling absorbs float rounding
         assert (shares <= 1.01).all()
 
-    def test_team_target_share_two_players(self):
+    def test_team_target_share_two_players(self, te_player_games_factory):
         """Two TEs on team split target share."""
-        p1 = _make_player_games("T1", n_weeks=5, targets=5, recent_team="KC")
-        p2 = _make_player_games("T2", n_weeks=5, targets=5, recent_team="KC")
+        p1 = te_player_games_factory("T1", n_weeks=5, targets=5, recent_team="KC")
+        p2 = te_player_games_factory("T2", n_weeks=5, targets=5, recent_team="KC")
         df = pd.concat([p1, p2], ignore_index=True)
         _compute_features(df)
         later = df[(df["week"] >= 3) & (df["player_id"] == "T1")]
         shares = later["team_te_target_share_L3"].dropna()
-        assert len(shares) > 0, "no non-NaN shares produced"
+        assert len(shares) == 3
         assert all(0.4 <= s <= 0.6 for s in shares)
