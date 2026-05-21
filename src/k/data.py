@@ -38,6 +38,19 @@ _REQUIRED_PBP_COLUMNS = frozenset(
         "fg_made_40_49",
         "fg_made_50_59",
         "fg_made_60_",
+        # Missed-distance buckets and PBP-only situational aggregates produced
+        # by ``reconstruct_kicker_weekly_from_pbp``. Listed explicitly so a
+        # cache written before any one of these columns was added gets
+        # regenerated rather than silently fed forward with the column
+        # missing — same stale-cache trap that motivated the rest of this
+        # allowlist (cf. the Apr-19 cache that zeroed ``fg_yard_points``).
+        "fg_missed_40_49",
+        "fg_missed_50_59",
+        "fg_missed_60_",
+        "q4_fg_att",
+        "q4_fg_made",
+        "long_fg_att",
+        "long_fg_made",
         "pat_att",
         "pat_made",
         "pat_missed",
