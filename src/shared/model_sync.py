@@ -287,7 +287,13 @@ def refresh_sentinel_mtime(pos: str) -> float:
     — consumed by ``src.serving.app._ensure_position_loaded`` to detect that
     the on-disk model for ``pos`` has been swapped since the last in-memory
     load, triggering a re-load on the next request.
+
+    ``pos`` is validated against the ``POSITIONS`` allowlist so this function
+    is safe to call with any value — anything outside the allowlist returns
+    0.0 (the "no refresh pending" sentinel) without touching the filesystem.
     """
+    if not isinstance(pos, str) or pos.upper() not in POSITIONS:
+        return 0.0
     try:
         return os.path.getmtime(_refresh_sentinel_path(_repo_root(), pos))
     except OSError:
@@ -319,7 +325,13 @@ def refresh_position(
     so the next poll retries. The live ``models/`` directory is left intact;
     the worst case is the new model stays in S3 unused for one more poll
     interval.
+
+    ``pos`` is validated against the ``POSITIONS`` allowlist so this function
+    is safe to call with any value — out-of-allowlist values return
+    ``(last_etag, False)`` without touching S3 or the filesystem.
     """
+    if not isinstance(pos, str) or pos.upper() not in POSITIONS:
+        return last_etag, False
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
     if not bucket:
         return None, False
