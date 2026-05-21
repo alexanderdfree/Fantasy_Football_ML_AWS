@@ -22,6 +22,7 @@ Config (environment variables, all optional):
 import argparse
 import hashlib
 import os
+import sys
 import tarfile
 import tempfile
 import time
@@ -162,15 +163,19 @@ def _job_definition_for(position: str) -> str:
     before the CPU infra exists.
 
     When FF_JOB_DEFINITION_REVISION is set, append ``:N`` to pin the
-    submission to that revision; otherwise Batch resolves the bare name to
-    the latest active revision (see JOB_DEFINITION_REVISION docstring).
+    submission to that revision — but only when the resolved job-def is the
+    GPU one. ``batch-image.yml`` registers a new revision against
+    ``$JOB_DEFINITION`` (the GPU def) only; the CPU def has no matching
+    revision number, so appending the GPU's revision to a CPU submission
+    would silently target a non-existent revision and fall back to the
+    bare-name (latest) resolution AWS Batch performs on no-match. Latent
+    today (no CPU Spot path is wired up), but pinning would silently fail
+    the moment one is — so guard explicitly here, not "we'll catch it
+    when the CPU path lands".
     """
-    base = (
-        JOB_DEFINITION_CPU
-        if position in CPU_ONLY_POSITIONS and JOB_DEFINITION_CPU
-        else JOB_DEFINITION
-    )
-    if JOB_DEFINITION_REVISION:
+    use_cpu = position in CPU_ONLY_POSITIONS and JOB_DEFINITION_CPU
+    base = JOB_DEFINITION_CPU if use_cpu else JOB_DEFINITION
+    if JOB_DEFINITION_REVISION and not use_cpu:
         return f"{base}:{JOB_DEFINITION_REVISION}"
     return base
 
@@ -440,6 +445,18 @@ def main():
         download_artifacts(succeeded, stopped_at_by_pos=stopped_at_by_pos, s3_client=s3_client)
 
     print("\nAll done.")
+
+    # train-batch.yml's step comment claims "launch.py blocks on
+    # wait_for_jobs(); returns 0 only if all positions reach SUCCEEDED" —
+    # but the previous code always exited 0, so a position that FAILED or
+    # TIMED_OUT was reported on stdout and then silently lost. The "Verify
+    # model artifact freshness" step that follows catches MISSING
+    # manifests but not the case where a stale prior-run artifact happens
+    # to satisfy the freshness window. Exit non-zero so the workflow's
+    # post-step actually surfaces failed positions; succeeded artifacts
+    # have already been downloaded above for forensics.
+    if failed or timed_out:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
