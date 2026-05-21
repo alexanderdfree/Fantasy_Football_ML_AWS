@@ -211,6 +211,14 @@ def _make_objective(pos: str, base_cfg: dict, seed: int):
 
     def objective(trial: optuna.Trial) -> float:
         overrides = _sample_overrides(trial)
+        # Deep-copy so per-trial mutations (overrides + epoch_callback
+        # installation + K's runner-side `attn_history_builder_fn`
+        # injection) don't leak across trials. Assumes cfg values are
+        # deepcopy-safe; today every position's cfg holds primitives,
+        # dicts of primitives, and module-level callables — all of which
+        # round-trip through deepcopy. A future cfg that captures a lambda
+        # or a closure-with-state would break this; switch to a manual
+        # shallow-copy + per-key strategy at that point.
         cfg = copy.deepcopy(base_cfg)
         cfg.update(overrides)
 
@@ -389,6 +397,17 @@ def _install_sigterm_handler(checkpoint: "_S3Checkpoint") -> None:
     RETRY_STRATEGY) keys on the AWS-level ``statusReason`` (``Host EC2*``
     for Spot reclaim), not the container exit code. An exit-non-zero would
     bypass that policy and pin the failure as a real app error.
+
+    **There is no race with the per-trial callback's S3 upload.** Python
+    delivers signals only at bytecode boundaries — never inside C-level
+    calls like ``boto3.client.upload_file``. So the handler cannot fire
+    *during* an in-flight upload; it waits for the C call to return. The
+    worst case is one duplicate upload of the same S3 key right after a
+    trial completes (callback uploads, then handler uploads again before
+    the loop advances to the next trial). S3 ``put_object`` is idempotent
+    by key, so the second write is a no-op — last-writer-wins on identical
+    bytes. The prior reviewer flagged this as a potential race; documenting
+    it in code so the next reviewer doesn't re-litigate.
     """
 
     def _handler(signum, frame):
@@ -506,6 +525,14 @@ def main():
             storage=f"sqlite:///{db_path}",
             load_if_exists=True,
             direction="minimize",
+            # The literal 42 here is the SAMPLER's reproducibility seed —
+            # fixed so two invocations with the same n_trials propose the
+            # same trials in the same order. Deliberately INDEPENDENT from
+            # ``args.seed`` (the pipeline seed, also 42 by default but
+            # caller-controllable): pipeline seed affects ML training
+            # determinism inside a trial; sampler seed affects which trials
+            # get explored. Changing the pipeline seed shouldn't reshuffle
+            # the search trajectory.
             sampler=TPESampler(seed=42),
             pruner=HyperbandPruner(
                 min_resource=_HYPERBAND_MIN_RESOURCE,

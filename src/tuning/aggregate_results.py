@@ -73,11 +73,21 @@ def _collect_local_files(local_dir: str, positions: list[str]) -> list[str]:
 
 def _merge_results(paths: list[str]) -> dict:
     """Merge per-position results dicts into one. Later files win on duplicates
-    (shouldn't happen — each file is one position by construction)."""
+    (shouldn't happen — each file is one position by construction).
+
+    Malformed inputs (truncated S3 download, partial write, list-instead-of-
+    dict shape) are warned about and skipped rather than aborting the whole
+    aggregator. One Spot failure mid-upload shouldn't block the rest of the
+    positions' results from making it into the merged JSON / GITHUB_STEP_SUMMARY.
+    """
     merged: dict = {}
     for path in paths:
-        with open(path) as f:
-            data = json.load(f)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"[aggregate] WARNING: skipping {path}: invalid JSON ({e})")
+            continue
         if not isinstance(data, dict):
             print(f"[aggregate] WARNING: skipping {path}: top-level is not a dict")
             continue

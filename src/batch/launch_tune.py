@@ -58,9 +58,15 @@ from src.batch.launch import (  # noqa: E402
 # Spot job that will fail on ``get_config()``.
 SUPPORTED_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
-# Default Optuna trial budget per position. Same default as the local
-# ``src/tuning/tune_nn.py`` CLI. On g4dn.xlarge each trial is 1–2 min, so
-# 30 trials ≈ 30–60 min per position, well under the 3h wait timeout.
+# Default Optuna trial budget per position. On g4dn.xlarge each trial is
+# 1–2 min, so 30 trials ≈ 30–60 min per position — well under the 3h wait
+# timeout. **Intentionally diverges** from ``src/tuning/tune_nn.py``'s
+# ``_DEFAULT_N_TRIALS = 15``: that one is the local-laptop default (each
+# trial 5–10 min on CPU, so 15 trials caps at ~2.5 hr); this one is the
+# Batch-GPU default. Both module-default paths are safe because the
+# retune-nn-batch.yml workflow ALWAYS forwards ``--n-trials``, so the
+# divergence only matters for someone invoking ``launch_tune`` locally
+# without that flag — which is the right ceiling for the Batch context.
 DEFAULT_N_TRIALS = 30
 
 
@@ -100,9 +106,12 @@ def submit_tune_job(
     response = batch.submit_job(
         jobName=f"ff-tune-{position.lower()}-{timestamp}-{suffix}",
         jobQueue=JOB_QUEUE,
-        # Always GPU job def for tune — attention training is GPU-bound, the
-        # ``cpu_only`` carve-out from launch.py doesn't apply (K/DST aren't
-        # in SUPPORTED_POSITIONS anyway).
+        # Always GPU job def for tune. Attention training is GPU-bound for
+        # every position, including K's nested attention and DST's two-
+        # branch attention — launch.py's ``cpu_only`` CPU-job-def carve-out
+        # for K/DST applies only to the training path (which falls back to
+        # Ridge/LGBM for those positions when an NN isn't trained); tuning
+        # always trains the attention NN.
         jobDefinition=JOB_DEFINITION,
         retryStrategy=RETRY_STRATEGY,
         containerOverrides={
