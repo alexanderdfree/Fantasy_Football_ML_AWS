@@ -50,7 +50,17 @@ Every position predicts raw NFL stats (yards, TDs, receptions, etc.). Fantasy po
 `INCLUDE_FEATURES` in each `src/{pos}/config.py` is an opt-in list. New columns must be added explicitly — the training code will *not* pick them up automatically. This prevents silent feature leakage. When you add a feature, update both the feature-engineering file *and* the include dict, then update the test fixture (`tests/conftest.py` or `tests/{pos}/conftest.py`).
 
 ### Attention static-feature whitelist is separate per position
-The attention NN's static branch reads a *second*, smaller allowlist: `ATTN_STATIC_FEATURES` (commit `2500ecc`). It is defined per position (QB/RB/WR/TE derive it from an `ATTN_STATIC_CATEGORIES` subset of `INCLUDE_FEATURES`; DST/K enumerate it directly) and deliberately excludes rolling/ewma/trend columns so the attention branch doesn't double-count signal it already learns from `ATTN_HISTORY_STATS`. Adding a feature to `INCLUDE_FEATURES` does **not** feed it into attention — add it to `ATTN_STATIC_FEATURES` too if that's what you want.
+The attention NN's static branch reads a *second*, smaller allowlist: `ATTN_STATIC_FEATURES` (commit `2500ecc`). It is defined per position (QB/RB/WR/TE derive it from an `ATTN_STATIC_CATEGORIES` subset of `INCLUDE_FEATURES`; DST/K enumerate it directly). The static branch is **deliberately non-temporal**.
+
+**Never propose adding rolling / ewma / trend / L3 / L5 / L8 (or any windowed) features to `ATTN_STATIC_FEATURES`.** Temporal signal already feeds the NN through `ATTN_HISTORY_STATS` via the per-game attention sequence. Mixing windowed features into the static branch re-creates the double-counting this design exists to prevent. If you see attention NN losing to ridge/LightGBM on some target and you're tempted to "promote the rolling stats LGBM uses" into the static branch — stop. That's the wrong reach. The architectures differ, not the input availability: LGBM consumes rolling stats as flat columns split by trees; the attention NN consumes the *same underlying signal* as a 17-game sequence through attention. Eligible reaches for closing such a gap:
+
+1. Add **non-temporal** features to `ATTN_STATIC_FEATURES` — prior-season aggregates, matchup, contextual, weather/Vegas, role/depth, season-to-date rates, interactions.
+2. Add new **per-game** stats to `ATTN_HISTORY_STATS` — red-zone splits, share-style measures, game-script not already in the 17-game sequence.
+3. Retune the loss head — Huber δ + matching `LOSS_WEIGHTS = 2.0 / δ` (see next section).
+4. Change a head's parametric form — gated/two-stage for sparse counts (but note `hurdle_poisson` was tried and reverted for RB sparse counts in PR [#219](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/219)).
+5. NN architecture — `d_model`, `n_heads`, dropout. Larger has been tried and regressed on 15K-sample positions; verify against benchmark before merging.
+
+Adding a feature to `INCLUDE_FEATURES` does **not** feed it into attention — add it to `ATTN_STATIC_FEATURES` (if non-temporal) or `ATTN_HISTORY_STATS` (if per-game) too if that's what you want.
 
 ### Loss weights are tuned inverse-to-Huber-delta
 `LOSS_WEIGHTS` ≈ `2.0 / HUBER_DELTAS[target]`. The rationale is baked into QB's config comment ([src/qb/config.py](src/qb/config.py)): without this rebalance, yards targets (δ=15–25) dominated count heads (δ=0.5) ~2500× per sample and the count heads collapsed to the mean. If you retune a Huber delta, re-derive the matching loss weight — don't change one without the other.
@@ -73,6 +83,7 @@ These have all been attempted, shipped, and reverted. Re-proposing them costs a 
 - **Shared-venv CI optimization** — reverted in PRs [#110](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/110) / [#111](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/111) (2026-04-23). Artifact download (~25s/shard) is slower than the warm `uv` install (~10s). Wall-clock is the metric, not compute.
 - **Module-level pre-warm under gunicorn `--preload`** — reverted in PRs [#148](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/148) / [#149](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/149) (2026-04-27). The bind happens *after* preload import; a slow pre-warm causes ALB TCP-refused → unhealthy. Use a `post_fork` hook or a background thread instead.
 - **Training models directly on `fantasy_points`** — cross-link to "Raw-stat targets" above. Re-introducing this regresses the ~1.9 pt/game double-count fix in TODO.md's archive.
+- **Promoting rolling / L3 / L5 / L8 / ewma / trend features into `ATTN_STATIC_FEATURES`** — cross-link to "Attention static-feature whitelist" above. The static branch is deliberately non-temporal; temporal signal already feeds attention through `ATTN_HISTORY_STATS`. Do not pitch this as a way to "close the gap to LightGBM" — the input availability is not the gap; the architecture is.
 
 ## Running code
 
