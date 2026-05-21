@@ -73,6 +73,8 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
+  ECS_CLUSTER: fantasy-cluster
+  ECS_SERVICE: fantasy-service
   # Mirrors tests.yml / train-batch.yml — uv otherwise refuses to fall
   # through the PyTorch CPU index for transitive deps that exist on multiple
   # registries (e.g. `requests`).
@@ -178,6 +180,35 @@ jobs:
       - name: Confirm S3 objects updated
         run: |
           aws s3 ls "s3://${S3_BUCKET}/data/" --region "${AWS_REGION}"
+
+      - name: Kick off ECS rolling deploy (non-blocking)
+        # Force the ECS service to roll new tasks so they re-sync the fresh
+        # ``data/splits/*.parquet`` we just uploaded. The serving container's
+        # in-flight refresh poller only watches model manifests, NOT the
+        # splits parquet — without this step, running tasks keep their
+        # boot-time local copy of the splits and any new attn_history_stats
+        # col added since their boot will produce a state_dict shape
+        # mismatch on the next model swap (the trained model has the new
+        # cols; the running task's ``pos_test.columns`` doesn't, and the
+        # serving's ``_apply_position_models`` silently filters the col
+        # list before instantiating the inference model — postmortem in
+        # this PR's body and in ``tests/test_refresh_splits_workflow.py``).
+        #
+        # Non-blocking: ``update-service`` returns ~1s. The actual rolling
+        # deploy proceeds asynchronously via ECS; we do NOT wait on
+        # ``services-stable`` here because (a) PR #302's in-flight model
+        # refresh + new tasks' boot-time split sync close the loop, and
+        # (b) ``ecs_refresh_sentinel`` was deliberately retired in PR #330
+        # for the same reason. Failure to call this is the bug; failure of
+        # this step is surfaced via the workflow status.
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --region "$AWS_REGION" \
+            --force-new-deployment \
+            --no-cli-pager > /dev/null
+          echo "Kicked off ECS rolling deploy on $ECS_CLUSTER/$ECS_SERVICE."
 
       - name: Trigger train-batch.yml
         # Optional chain — if the operator wants the full
