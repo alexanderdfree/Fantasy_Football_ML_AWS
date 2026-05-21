@@ -1,6 +1,6 @@
 # AWS Batch Training Design Doc
 
-> **Status (2026-05-21): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g4dn.xlarge Spot instances, one position per host. **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself) and ~3 min for "Refresh ECS service" after ALB target-group tuning (was ~8 min before), for ~15 min total train-batch.yml wall-clock**, vs. the warm-EC2 path's ~120-min sequential loop. The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate, and the ALB tuning shaved another ~5 min off the rolling redeploy. Cold-start mitigated by ECR pull-through cache + SOCI v2 lazy loading (PR #216). See [D13 in docs/ARCHITECTURE.md](ARCHITECTURE.md#d13-spot-fan-out-via-aws-batch-overrides-d7-when-batch_activetrue) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
+> **Status (2026-05-21): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g4dn.xlarge Spot instances, one position per host. **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself) and ~3 min for "Refresh ECS service" after ALB target-group tuning (was ~8 min before), for ~15 min total train-batch.yml wall-clock**, vs. the warm-EC2 path's ~120-min sequential loop. The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate, and the ALB tuning shaved another ~5 min off the rolling redeploy. Cold-start partial mitigation: SOCI v2 indexes published by PR #216 (snapshotter currently inactive on the default Batch AMI so the indexes are unused — see §2a); image kept ~5–6 GB via aggressive `.dockerignore` + explicit `COPY`. Measured 2026-05-20 cold-start ~258 s vs the original ~60–90 s design target; realistic floor with snapshotter active is ~135 s. See [D13 in docs/ARCHITECTURE.md](ARCHITECTURE.md#d13-spot-fan-out-via-aws-batch-overrides-d7-when-batch_activetrue) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
 >
 > Rollback: `gh variable set BATCH_ACTIVE --body "false"` returns push-driven training to the warm-EC2 path ([docs/ec2_design.md](ec2_design.md)) on the next push to `main`. Both paths remain provisioned.
 
@@ -403,14 +403,34 @@ region pulls the base layers from ECR's local endpoints instead of Docker Hub.
 
 ### 2a. SOCI (Seekable OCI) lazy loading
 
-SOCI v2 is enabled by default on all ECS accounts (and AWS Batch uses ECS
-under the hood). Publishing a SOCI index alongside the image in ECR lets the
-container start executing before the full image is pulled — essential files
-stream first, the rest loads in the background.
+SOCI v2 lazy-loading lets a container start executing before its full
+image is pulled — essential files stream first, the rest loads in the
+background. It requires both a SOCI index in ECR alongside the image
+**and** the `soci-snapshotter-grpc` plugin active on the ECS host's
+containerd.
 
-One-time developer setup: install the `soci` CLI from
+This project publishes the index (see [batch-image.yml](../.github/workflows/batch-image.yml)'s
+`Publish SOCI index` step) and 18+ indexes are present in the
+`ff-training` ECR repo. However, **the default ECS-optimized AL2 AMI
+that Batch picks for the Spot CE does not run the snapshotter** —
+measured 2026-05-20 on `ami-03dd7084ddd63d5d0` (ECS agent 1.102.2,
+Docker 25.0.14), image pull stays at ~122 s (full pull), so the indexes
+are currently unused. The publish step is left in place because it's
+cheap and a no-op without the snapshotter; once the CE pins a launch
+template with the snapshotter configured, the indexes become
+immediately consumable.
+
+To activate the snapshotter on the Spot fleet, either:
+
+- pin a **Bottlerocket** GPU AMI via a launch template on the CE
+  (`soci-snapshotter-grpc` is default on recent versions), or
+- add a launch template with **userdata** that installs
+  `soci-snapshotter-grpc`, writes the snapshotter stanza into
+  `/etc/containerd/config.toml`, and restarts containerd before the ECS
+  agent claims the instance.
+
+One-time developer setup for local builds: install the `soci` CLI from
 [soci-snapshotter releases](https://github.com/awslabs/soci-snapshotter/releases).
-No Batch or ECS configuration changes are required.
 
 ### Build & push
 
@@ -428,9 +448,23 @@ image, and then (if `soci` is present) creates and pushes the SOCI index
 next to the image tag. If `soci` isn't installed, the script warns and
 exits cleanly — image still works, cold starts just aren't accelerated.
 
-### Expected impact
+### Measured impact (2026-05-20)
 
-Pull phase of a cold Batch job startup: ~120 s → ~20–40 s. Combined with the
-existing ~30–60 s of boot + data load, total Batch startup lands at ~60–90 s
-on the current `g4dn.xlarge`.
+Cold-start on the active Batch path (six g4dn.xlarge Spot, default
+ECS-AL2 AMI without the SOCI snapshotter), live ECS `describe-tasks` +
+Batch `describe-jobs` data across the latest workflow_run:
+
+| Phase | Time | Notes |
+|---|---|---|
+| Spot fulfillment + EC2 boot + ECS agent register + Batch claim | ~120 s | Floor for fresh Spot `g4dn.xlarge`; unaffected by SOCI |
+| Image pull (containerd, full pull) | **~122 s** | Snapshotter inactive — index in ECR ignored; would drop to ~5–10 s with SOCI active |
+| Container start + `ENTRYPOINT` | ~10 s | At floor |
+| **Total cold-start** | **~258 s** | Outlier case: ~365 s when Spot for the sixth instance takes ~6 min instead of ~2 min |
+
+The original design target of ~60–90 s assumed both (a) the snapshotter
+was active and (b) instance provisioning was ~30 s; both were
+optimistic. The realistic floor with SOCI active on the same instance
+type is ~135 s (120 s provisioning + ~5 s lazy-start + 10 s container
+start). Activating the snapshotter (see options in §2a) is the single
+largest unrealized win on this path (~115 s saved per job).
 
