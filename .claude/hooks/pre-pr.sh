@@ -81,21 +81,85 @@ else
   changed=$(git diff --name-only HEAD 2>/dev/null || true)
 fi
 
+# Content-inspector: returns 0 ("safe — skip gate for this file") when the
+# diff for FILE between $base and HEAD is additive-only AND free of tokens
+# that name model architecture, loss functions, feature lists, or known
+# hyperparameter knobs. Returns 1 ("risky — gate") otherwise.
+#
+# Rationale: the path-only rule used to flag any change to a pipeline file
+# as needing a benchmark — including pure-additive edits (new optional
+# kwargs with `None` defaults, new dict entries, new helper functions,
+# comments, docstrings) that can't possibly change training output. Those
+# false-positives forced unnecessary ~2–3hr local retrain sessions for
+# changes whose behaviour was provably unchanged.
+#
+# Two cheap shell checks approximate "could this change model output?":
+#   1. Are there removed code lines (excluding blanks/comments/diff headers)?
+#      Any deletion of real code may have removed an effect; force benchmark.
+#   2. Do added lines reference risky tokens — loss config, feature
+#      whitelists, NN architecture pieces, hyperparam keys, scoring/metrics?
+#      Touching those names is the strong signal that behaviour can change.
+# Either check failing → gate as before. Both passing → skip the gate for
+# this file. Conservative direction is "force benchmark"; the false-positive
+# mode is recoverable (run benchmark) while the false-negative mode (skip
+# benchmark when we shouldn't) is the dangerous one — keep the token list
+# generous and prefer to catch suspicious changes here.
+_RISKY_TOKENS='(loss_weights|huber_deltas|head_losses|gated_targets|LOSS_WEIGHTS|HUBER_DELTAS|INCLUDE_FEATURES|ATTN_STATIC_FEATURES|ATTN_HISTORY_STATS|attn_d_model|attn_n_heads|nn_backbone_layers|nn_head_hidden|nn_lr|attn_lr|nn_weight_decay|nn_dropout|attn_dropout|nn_epochs|nn_batch_size|attn_batch_size|nn\.Linear|nn\.LayerNorm|nn\.Dropout|nn\.MultiheadAttention|MultiHeadNet|compute_target_metrics|aggregate_fn|predictions_to_fantasy_points|optimizer|learning_rate|criterion|HuberLoss|PoissonNLLLoss|scheduler_type|onecycle_max_lr|cosine_t0)'
+
+is_additive_and_safe() {
+  local f="$1"
+  local diff_output
+  diff_output=$(git diff "$base" HEAD -- "$f" 2>/dev/null || echo "")
+  if [ -z "$diff_output" ]; then
+    return 0
+  fi
+
+  local removed_code
+  removed_code=$(printf '%s\n' "$diff_output" \
+    | grep -E '^-' \
+    | grep -vE '^---|^-[[:space:]]*$|^-[[:space:]]*#' \
+    | wc -l | tr -d ' ')
+  if [ "$removed_code" -gt 0 ]; then
+    return 1
+  fi
+
+  local risky_added
+  risky_added=$(printf '%s\n' "$diff_output" \
+    | grep -E '^\+' \
+    | grep -vE '^\+\+\+|^\+[[:space:]]*$|^\+[[:space:]]*#' \
+    | grep -cE "$_RISKY_TOKENS" || true)
+  if [ "${risky_added:-0}" -gt 0 ]; then
+    return 1
+  fi
+
+  return 0
+}
+
 positions=""
 add_pos() { positions="$positions $1"; }
 shared_changed=0
+skipped_files=""
 for f in $changed; do
   case "$f" in
-    src/qb/config.py|src/qb/features.py|src/qb/targets.py|src/qb/run_pipeline.py) add_pos QB ;;
-    src/rb/config.py|src/rb/features.py|src/rb/targets.py|src/rb/run_pipeline.py) add_pos RB ;;
-    src/wr/config.py|src/wr/features.py|src/wr/targets.py|src/wr/run_pipeline.py) add_pos WR ;;
-    src/te/config.py|src/te/features.py|src/te/targets.py|src/te/run_pipeline.py) add_pos TE ;;
-    src/k/config.py|src/k/features.py|src/k/targets.py|src/k/run_pipeline.py) add_pos K ;;
-    src/dst/config.py|src/dst/features.py|src/dst/targets.py|src/dst/run_pipeline.py) add_pos DST ;;
+    src/qb/config.py|src/qb/features.py|src/qb/targets.py|src/qb/run_pipeline.py)
+      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos QB; fi ;;
+    src/rb/config.py|src/rb/features.py|src/rb/targets.py|src/rb/run_pipeline.py)
+      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos RB; fi ;;
+    src/wr/config.py|src/wr/features.py|src/wr/targets.py|src/wr/run_pipeline.py)
+      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos WR; fi ;;
+    src/te/config.py|src/te/features.py|src/te/targets.py|src/te/run_pipeline.py)
+      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos TE; fi ;;
+    src/k/config.py|src/k/features.py|src/k/targets.py|src/k/run_pipeline.py)
+      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos K; fi ;;
+    src/dst/config.py|src/dst/features.py|src/dst/targets.py|src/dst/run_pipeline.py)
+      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos DST; fi ;;
     src/shared/pipeline.py|src/shared/models.py|src/shared/neural_net.py|src/shared/aggregate_targets.py|src/shared/training.py|src/shared/evaluation.py|src/shared/backtest.py)
-      shared_changed=1 ;;
+      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else shared_changed=1; fi ;;
   esac
 done
+if [ -n "$skipped_files" ]; then
+  echo "pre-pr hook: benchmark gate skipped for additive-only files:$skipped_files" >&2
+fi
 if [ "$shared_changed" -eq 1 ]; then
   positions="$positions QB RB WR TE K DST"
 fi

@@ -378,6 +378,7 @@ class MultiHeadTrainer:
         patience=15,
         scheduler_per_batch=False,
         log_every=10,
+        epoch_callback=None,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -388,6 +389,13 @@ class MultiHeadTrainer:
         self.patience = patience
         self.scheduler_per_batch = scheduler_per_batch
         self.log_every = log_every
+        # Optional ``fn(epoch: int, avg_val_loss: float) -> None`` invoked once
+        # per epoch right after ``avg_val_loss`` is computed. Used by
+        # ``src/tuning/tune_nn.py`` to feed Optuna's pruner the trial's val
+        # trajectory; if the callback raises (e.g. ``optuna.TrialPruned``) the
+        # exception propagates and stops training. Default ``None`` keeps the
+        # base behaviour for every other caller.
+        self.epoch_callback = epoch_callback
         self.best_val_metric = float("inf")
         self.best_model_state = None
         self.epochs_without_improvement = 0
@@ -482,6 +490,12 @@ class MultiHeadTrainer:
 
             avg_val_loss = epoch_val_loss / n_val_batches
             history["val_loss"].append(avg_val_loss)
+
+            if self.epoch_callback is not None:
+                # Raises (e.g. optuna.TrialPruned) propagate up to whoever
+                # called trainer.train() — that is the intended control flow
+                # for tuner-driven pruning. Do NOT swallow.
+                self.epoch_callback(epoch, avg_val_loss)
 
             # Per-target val losses
             for t in self.target_names:

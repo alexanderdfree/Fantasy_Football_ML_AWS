@@ -16,8 +16,9 @@ data/serving_cache/
 *.pkl
 *.pt
 
-# Hyperparameter tuning databases (Optuna)
+# Hyperparameter tuning databases (Optuna) + per-run results JSON
 *.db
+tune_*_results.json
 
 # Feature-engineering disk cache (see src/shared/feature_cache.py)
 .cache/
