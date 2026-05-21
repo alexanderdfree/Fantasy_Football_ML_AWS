@@ -21,6 +21,13 @@ env:
   # pytorch CPU index hosts older numpy/etc; fall through to PyPI like pip does.
   UV_INDEX_STRATEGY: unsafe-best-match
 
+# Default GITHUB_TOKEN to read-only at the workflow level. None of the jobs in
+# this file push commits, comment on PRs, or otherwise mutate repo state —
+# they only check out source, install deps, and run tests. Explicit minimum
+# satisfies CodeQL's actions/missing-workflow-permissions rule.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
