@@ -31,6 +31,13 @@ jobs:
           # resolve HEAD^ for git diff.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 2
+          # The detect job only reads the diff and shells out to a pure-stdlib
+          # python helper — never pushes commits, opens PRs, or otherwise calls
+          # the GitHub API. Drop the auth token from the checked-out repo so
+          # nothing in this job (or a future addition) can accidentally exfil
+          # GITHUB_TOKEN via an actions/cache poisoning or similar. Closes
+          # CodeQL actions/untrusted-checkout/medium.
+          persist-credentials: false
 
       - id: scope
         env:

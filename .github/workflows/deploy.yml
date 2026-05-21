@@ -47,6 +47,13 @@ env:
   ECS_SERVICE: fantasy-service
   TASK_FAMILY: fantasy-predictor
 
+# Read-only GITHUB_TOKEN — the deploy job authenticates to AWS via secrets
+# (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY), not via OIDC, so no
+# ``id-token: write`` is needed. The only repo-side action is ``actions/checkout``.
+# Explicit minimum satisfies CodeQL's actions/missing-workflow-permissions rule.
+permissions:
+  contents: read
+
 jobs:
   # Tests run in tests.yml (matrix across positions). Branch protection on
   # main requires those checks to pass before a PR can merge, so we trust
