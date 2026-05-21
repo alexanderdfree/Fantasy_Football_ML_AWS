@@ -280,27 +280,6 @@ jobs:
           done
           exit $fail
 
-      - name: Write train-success marker for dedup
-        # Atomic dedup marker for the next workflow_run.completed delivery
-        # of the same upstream image build (GitHub fires 2–3 per upstream
-        # completion). Keyed by workflow_run.head_sha to match the
-        # job-def-revisions/ convention below — same identifier on both
-        # writer and reader prevents the run-level vs workflow_run
-        # head_sha drift that false-skipped PR #309 on 2026-05-21.
-        # Placed AFTER freshness verification so we only mark genuine
-        # train successes, never positions=empty no-ops; BEFORE benchmark
-        # commit so a transient git-push failure on benchmark_history/
-        # still leaves the marker (re-runs hit the benchmark-only path,
-        # not a full retrain).
-        if: github.event_name != 'workflow_dispatch'
-        env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          printf '%s\n' "${GITHUB_RUN_ID}" | aws s3 cp - \
-            "s3://${S3_BUCKET}/train-success-markers/${HEAD_SHA}.txt" \
-            --region "$AWS_REGION" \
-            --no-cli-pager
-
       - name: Append Batch run to benchmark_history/
         # MUST run before "Refresh ECS service" — the benchmark append also
         # mirrors the JSON to s3://{bucket}/models/benchmark_history/ (see
@@ -403,6 +382,36 @@ jobs:
           done
           echo "Push failed after 3 attempts"
           exit 1
+
+      - name: Write train-success marker for dedup
+        # Atomic dedup marker for the next workflow_run.completed delivery
+        # of the same upstream image build (GitHub fires 2–3 per upstream
+        # completion). Keyed by workflow_run.head_sha to match the
+        # job-def-revisions/ convention below — same identifier on both
+        # writer and reader prevents the run-level vs workflow_run
+        # head_sha drift that false-skipped PR #309 on 2026-05-21.
+        #
+        # Placed AFTER both freshness verification AND the benchmark commit
+        # push. The implicit ``if: success()`` on each step means a failure
+        # in any earlier step (artifact freshness, benchmark append, git
+        # push) skips the marker — re-runs then go through the full train
+        # path rather than short-circuiting on a partial-success marker.
+        # Trade-off: a transient push failure on benchmark_history/ now
+        # causes a full retrain on the next workflow_run.completed delivery
+        # (~15 min), where the previous ordering would have skipped that
+        # retrain via the already-written marker. The retrain is the safer
+        # failure mode — it guarantees benchmark/marker consistency
+        # (S3 marker present ⇒ benchmark already on main) and avoids the
+        # orphan-benchmark state where the marker says "trained" but the
+        # benchmark never landed.
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          printf '%s\n' "${GITHUB_RUN_ID}" | aws s3 cp - \
+            "s3://${S3_BUCKET}/train-success-markers/${HEAD_SHA}.txt" \
+            --region "$AWS_REGION" \
+            --no-cli-pager
 
   ecs_refresh_sentinel:
     # Non-blocking wait for ECS to stabilize after the rolling deploy kicked

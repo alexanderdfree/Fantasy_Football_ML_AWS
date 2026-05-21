@@ -26,6 +26,15 @@ on:
       - "!**/*.md"
   workflow_dispatch: {}
 
+# Default GITHUB_TOKEN to read-only at the workflow level. Mirrors the
+# hardening M4 applied to tests.yml and _detect-positions.yml. Individual
+# jobs that need extra scopes (e.g. contents: read for checkout) re-declare
+# explicit minimums below; no job in this file pushes commits, opens PRs,
+# or otherwise mutates repo state. Explicit minimum satisfies CodeQL's
+# actions/missing-workflow-permissions rule.
+permissions:
+  contents: read
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY: ff-training

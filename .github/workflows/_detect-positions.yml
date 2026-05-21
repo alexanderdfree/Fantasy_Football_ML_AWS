@@ -29,16 +29,17 @@ jobs:
           # workflow_run: the merged SHA on main. workflow_dispatch: the
           # ref we were dispatched on.
           #
-          # fetch-depth: 2 is the minimum to resolve ``HEAD^`` for ``git
-          # diff HEAD^ HEAD`` (the workflow_run path below). It is also
-          # safe for workflow_dispatch: that branch returns early at
+          # fetch-depth: 2 is the minimum to resolve ``HEAD^`` for both
+          # the [docs-only] commit-subject walk and ``git diff HEAD^ HEAD``
+          # (the workflow_run paths below). It is also safe for
+          # workflow_dispatch: that branch returns early at
           # ``echo positions=$ALL`` before ever touching git history, so
           # the dispatch flow never needs more than HEAD itself. Were a
           # future refactor to reorder the dispatch handling below the
-          # diff, the existing ``if ! git rev-parse --verify HEAD^`` guard
-          # at line ~86 would fall through to the "default to all
-          # positions" branch rather than crashing — bump this to 0 (full
-          # clone) only if a future change actually needs deeper history.
+          # diff, the ``if ! git rev-parse --verify HEAD^`` guard further
+          # down would fall through to the "default to all positions"
+          # branch rather than crashing — bump this to 0 (full clone)
+          # only if a future change actually needs deeper history.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 2
           # The detect job only reads the diff and shells out to a pure-stdlib
@@ -71,31 +72,47 @@ jobs:
             exit 0
           fi
 
-          # Opt-in: HEAD message containing `[docs-only]` signals the author
-          # asserts the diff has no behavioural impact (comment / docstring /
-          # import-reorder only) and skip training. Mirrors tests.yml's detect
-          # job convention; squash merges carry constituent commit messages
-          # in the body, so the tag survives the merge and lands in HEAD's
-          # commit message. Trust contract — CI cannot verify the assertion,
-          # the author owns correctness.
-          #
-          # Subject-line scan only — the awk filter keeps line 1 (squash-merge
-          # subject) and any `* `-prefixed line (constituent commit subject)
-          # and drops prose body lines. Previous flat-grep version false-
-          # positived on commits that *described* the [docs-only] mechanism
-          # (e.g. perf PR #293 / e802a47 got skipped because a constituent
-          # CI commit's body wrote "the [docs-only] opt-in now also clears…").
-          if git log -1 --format=%B HEAD | awk 'NR==1 || /^\* /' | grep -qF '[docs-only]'; then
-            echo "[docs-only] detected in HEAD subject line — skipping training."
-            echo "positions=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           # workflow_run: diff the merged commit against its first parent.
           # Defensive: on a degenerate repo with no parent, default to all.
+          # Resolve HEAD^ up front so both the [docs-only] walk (below) and
+          # the diff (further down) can use it as the base.
           if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
             echo "No parent commit — defaulting to all positions."
             echo "positions=$ALL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Opt-in: any commit in HEAD^..HEAD whose subject line contains
+          # `[docs-only]` signals the author asserts the diff has no
+          # behavioural impact (comment / docstring / import-reorder only)
+          # and skips training. Mirrors tests.yml's detect job and
+          # pre-pr.sh — same trust contract: CI cannot verify the assertion,
+          # the author owns correctness.
+          #
+          # Per-commit subject-line scan — the awk filter keeps line 1 (the
+          # commit subject) and any `* `-prefixed line (squash-merge
+          # constituent subject) and drops prose body lines. Previous flat
+          # grep against the full %B false-positived on commits that
+          # *described* the [docs-only] mechanism in prose body text
+          # (e.g. perf PR #293 / e802a47 got skipped because a constituent
+          # CI commit's body wrote "the [docs-only] opt-in now also clears…").
+          # Iterating per-commit (rather than cat'ing the whole range into
+          # one stream) also prevents a body line of commit N+1 looking like
+          # a subject of commit N due to lack of separators in
+          # `git log --format=%B`. The range walk (vs HEAD-only) matters for
+          # non-squash merges and direct multi-commit pushes to main, where
+          # the [docs-only] tag may live in a constituent commit subject
+          # rather than the merge commit itself.
+          docs_only=false
+          for sha in $(git log --format=%H HEAD^..HEAD); do
+            if git log -1 --format=%B "$sha" | awk 'NR==1 || /^\* /' | grep -qF '[docs-only]'; then
+              docs_only=true
+              break
+            fi
+          done
+          if [ "$docs_only" = "true" ]; then
+            echo "[docs-only] detected in HEAD^..HEAD subject line(s) — skipping training."
+            echo "positions=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 

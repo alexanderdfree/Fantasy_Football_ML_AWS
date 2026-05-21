@@ -184,6 +184,15 @@ positions=""
 add_pos() { positions="$positions $1"; }
 shared_changed=0
 skipped_files=""
+# Shared bucket: any file under src/shared/, src/data/, src/features/, or
+# top-level src/config.py. Mirrors src/scripts/scope_positions.py::_GLOBAL_REGEX
+# (minus src/batch/ and requirements.txt — Batch/ECS infra and dep pins are
+# scope_positions' "retrain all positions on next image" trigger but don't
+# affect the local model code being benchmarked, so the freshness gate skips
+# them). Glob `src/shared/*.py` instead of an enumerated list catches new
+# shared helpers added without a corresponding pre-pr.sh update — the prior
+# enumerated list missed e.g. feature_build.py, feature_cache.py, registry.py,
+# position.py, position_data.py, run_pipeline_factory.py.
 for f in $changed; do
   case "$f" in
     src/qb/config.py|src/qb/features.py|src/qb/targets.py|src/qb/run_pipeline.py)
@@ -198,7 +207,7 @@ for f in $changed; do
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos K; fi ;;
     src/dst/config.py|src/dst/features.py|src/dst/targets.py|src/dst/run_pipeline.py)
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos DST; fi ;;
-    src/shared/pipeline.py|src/shared/models.py|src/shared/neural_net.py|src/shared/aggregate_targets.py|src/shared/training.py|src/shared/evaluation.py|src/shared/backtest.py|src/shared/position_config.py|src/shared/position_pipeline.py)
+    src/shared/*.py|src/data/*.py|src/features/*.py|src/config.py)
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else shared_changed=1; fi ;;
   esac
 done
@@ -234,16 +243,16 @@ fi
 if [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; then
   positions=$(printf '%s\n' $positions | sort -u | tr '\n' ' ')
 
-  # Reference mtime: newest mtime among any pipeline-affecting file in the tree.
-  # Keep this list in sync with the shared-files arm of the case-statement
-  # above — any path that can trigger ``shared_changed=1`` must also be in
-  # ref_ts so its mtime invalidates stale benchmarks.
-  pipeline_files=(
-    src/shared/pipeline.py src/shared/models.py src/shared/neural_net.py
-    src/shared/aggregate_targets.py src/shared/training.py
-    src/shared/evaluation.py src/shared/backtest.py
-    src/shared/position_config.py src/shared/position_pipeline.py
-  )
+  # Reference mtime: newest mtime among any pipeline-affecting file in the
+  # tree. Mirrors the shared-files arm of the case-statement above — any path
+  # that can trigger ``shared_changed=1`` must contribute to ref_ts so its
+  # mtime invalidates stale benchmarks. Glob the dirs (vs an enumerated list)
+  # to stay in sync as helpers are added; the case-glob above uses the same
+  # globs, so the two stay aligned without manual list maintenance.
+  pipeline_files=()
+  for pf in src/shared/*.py src/data/*.py src/features/*.py src/config.py; do
+    [ -f "$pf" ] && pipeline_files+=("$pf")
+  done
   for p in qb rb wr te k dst; do
     for s in config features targets run_pipeline; do
       pipeline_files+=("src/$p/$s.py")
