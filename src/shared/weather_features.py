@@ -5,6 +5,8 @@ Used by the Weather NN — an exact copy of each position's NN except with
 these additional features appended to the input.
 """
 
+import threading
+
 import numpy as np
 import pandas as pd
 
@@ -36,8 +38,11 @@ WEATHER_DROPS_BY_POSITION = {
     "TE": {"is_grass", "temp_adjusted", "wind_adjusted", "implied_total_x_wind"},
 }
 
-# Module-level cache for schedule data
+# Module-level cache for schedule data. Lock guards concurrent first-read
+# races (parallel CV folds / threaded callers) — mirrors the precedent in
+# ``feature_cache._lru_lock``.
 _schedule_cache = None
+_schedule_cache_lock = threading.Lock()
 
 # Map franchise relocations back to their current abbreviations. Player data
 # uses the current team codes throughout, but the historical schedule still
@@ -52,16 +57,73 @@ _TEAM_CODE_NORMALIZATION = {"OAK": "LV", "SD": "LAC", "STL": "LA"}
 
 
 def _load_schedules() -> pd.DataFrame:
-    """Load and cache schedule data from the raw parquet."""
+    """Load and cache schedule data from the raw parquet.
+
+    Double-checked locking: fast path (already-populated cache) bypasses the
+    lock; cold path takes the lock once to serialise the parquet read so
+    parallel CV folds don't all read the same file from disk.
+    """
     global _schedule_cache
     if _schedule_cache is not None:
         return _schedule_cache
 
-    path = f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
-    schedules = pd.read_parquet(path)
-    schedules = schedules[schedules["game_type"] == "REG"].copy()
-    _schedule_cache = schedules
-    return schedules
+    with _schedule_cache_lock:
+        if _schedule_cache is not None:
+            return _schedule_cache
+        path = f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+        schedules = pd.read_parquet(path)
+        schedules = schedules[schedules["game_type"] == "REG"].copy()
+        _schedule_cache = schedules
+        return schedules
+
+
+def build_implied_team_total_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
+    """Reshape a schedule frame into a ``(season, week, recent_team)`` keyed
+    lookup of ``implied_team_total``.
+
+    Single source of truth for the implied-total formula — ``spread_line`` is
+    from the home perspective, so the home team's implied total is
+    ``(total_line - spread_line) / 2`` and the away team's is
+    ``(total_line + spread_line) / 2``. Both ``merge_schedule_features`` (full
+    weather merge, downstream of ``_build_team_schedule_lookup``) and
+    ``src.features.engineer._build_defense_matchup_features`` (the tests' direct
+    ``build_features`` path, without the wider weather merge) consume this
+    helper so the per-team value can't drift between code paths.
+
+    Only requires ``home_team``, ``away_team``, ``spread_line``, ``total_line``
+    in the input — kept minimal so callers using stripped-down schedule frames
+    (the autouse fake schedules in ``tests/test_feature_leakage.py``) work
+    without enrichment.
+    """
+    sched = schedules[
+        ["season", "week", "home_team", "away_team", "spread_line", "total_line"]
+    ].copy()
+    sched["home_team"] = sched["home_team"].replace(_TEAM_CODE_NORMALIZATION)
+    sched["away_team"] = sched["away_team"].replace(_TEAM_CODE_NORMALIZATION)
+
+    # spread_line is from home perspective (negative = home favored).
+    home_total = (sched["total_line"] - sched["spread_line"]) / 2
+    away_total = (sched["total_line"] + sched["spread_line"]) / 2
+
+    home = pd.DataFrame(
+        {
+            "season": sched["season"],
+            "week": sched["week"],
+            "recent_team": sched["home_team"],
+            "implied_team_total": home_total,
+        }
+    )
+    away = pd.DataFrame(
+        {
+            "season": sched["season"],
+            "week": sched["week"],
+            "recent_team": sched["away_team"],
+            "implied_team_total": away_total,
+        }
+    )
+    return pd.concat([home, away], ignore_index=True).drop_duplicates(
+        subset=["season", "week", "recent_team"]
+    )
 
 
 def _build_team_schedule_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
@@ -148,7 +210,7 @@ def merge_schedule_features(df: pd.DataFrame, label: str | None = None) -> pd.Da
     # the merge produce them cleanly as bare names so the merge-back below
     # populates them. See TODO.md "DST spread_line/div_game zeroed by
     # merge_schedule_features".
-    for col in WEATHER_FEATURES_ALL + ["implied_total_x_dome", "spread_line", "div_game"]:
+    for col in WEATHER_FEATURES_ALL + ["spread_line", "div_game"]:
         if col in df.columns:
             df.drop(columns=[col], inplace=True)
 

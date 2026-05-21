@@ -897,14 +897,40 @@ def test_data_sync_downloads_splits_and_raw(monkeypatch, tmp_path):
 
 
 @pytest.mark.unit
-def test_data_sync_raises_on_missing_split(monkeypatch, tmp_path):
+def test_data_sync_isolates_per_file_failures(monkeypatch, tmp_path, capsys):
+    """M17: a missing split (or any individual download failure) no longer
+    kills the whole sync. The container boots, the failed key is listed in
+    the returned summary's ``failed`` field, and any feature build that
+    needs the missing file surfaces the error per-position via
+    ``_apply_position_models``'s outer try/except.
+
+    Previously this raised ClientError(NoSuchKey) and gunicorn --preload
+    aborted boot, taking down the whole site for one missing parquet.
+    """
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
 
-    fake_s3 = _FakeS3(objects={"data/raw/weekly_2012_2025.parquet": b"x"})
+    # Only one of the three splits is present; val and test will 404.
+    fake_s3 = _FakeS3(
+        objects={
+            "data/train.parquet": b"TRAIN",
+            "data/raw/weekly_2012_2025.parquet": b"WEEKLY",
+        }
+    )
     with mock.patch("boto3.client", return_value=fake_s3):
-        with pytest.raises(ClientError, match="NoSuchKey"):
-            model_sync.sync_data_from_s3()
+        summary = model_sync.sync_data_from_s3()
+    assert summary is not None
+    # train + weekly succeeded; val + test failed.
+    assert summary["files"] == 2
+    failed_keys = sorted(item["key"] for item in summary["failed"])
+    assert failed_keys == ["data/test.parquet", "data/val.parquet"]
+    # Successful downloads landed on disk.
+    assert (tmp_path / "data" / "splits" / "train.parquet").read_bytes() == b"TRAIN"
+    # Failed-file paths weren't created.
+    assert not (tmp_path / "data" / "splits" / "val.parquet").exists()
+    assert not (tmp_path / "data" / "splits" / "test.parquet").exists()
+    # Operator-visible log line.
+    assert "PARTIAL" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -928,7 +954,7 @@ def test_benchmark_history_sync_empty_prefix_is_not_an_error(monkeypatch, tmp_pa
     fake_s3 = _FakeS3(objects={})
     with mock.patch("boto3.client", return_value=fake_s3):
         summary = model_sync.sync_benchmark_history_from_s3()
-    assert summary == {"total_secs": 0.0, "total_bytes": 0, "files": 0}
+    assert summary == {"total_secs": 0.0, "total_bytes": 0, "files": 0, "failed": []}
 
 
 @pytest.mark.unit
@@ -975,6 +1001,54 @@ def test_benchmark_history_sync_respects_custom_prefix(monkeypatch, tmp_path):
         summary = model_sync.sync_benchmark_history_from_s3()
     assert summary["files"] == 1
     assert (tmp_path / "benchmark_history" / "x.json").exists()
+
+
+@pytest.mark.unit
+def test_benchmark_history_sync_isolates_per_file_failures(monkeypatch, tmp_path, capsys):
+    """M17: a single broken JSON download no longer kills the whole sync.
+    The container still boots and the History tab renders the files that
+    did make it through (plus the git-tracked floor bundled in the image)."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    # Two listed objects; the second throws on GET.
+    angry_key = "models/benchmark_history/broken.json"
+    good_key = "models/benchmark_history/good.json"
+    good_bytes = b'{"ok": true}'
+
+    class _SometimesAngryS3:
+        def __init__(self):
+            self._objects = {good_key: good_bytes, angry_key: b"unreachable"}
+
+        def get_paginator(self, _name):
+            class _Paginator:
+                def paginate(self, **_):
+                    yield {
+                        "Contents": [
+                            {"Key": good_key},
+                            {"Key": angry_key},
+                        ]
+                    }
+
+            return _Paginator()
+
+        def get_object(self, Bucket, Key):  # noqa: N803
+            if Key == angry_key:
+                raise ClientError(
+                    error_response={"Error": {"Code": "InternalError", "Message": "boom"}},
+                    operation_name="GetObject",
+                )
+            return {"Body": io.BytesIO(self._objects[Key])}
+
+    with mock.patch("boto3.client", return_value=_SometimesAngryS3()):
+        summary = model_sync.sync_benchmark_history_from_s3()
+    assert summary is not None
+    assert summary["files"] == 1
+    assert [item["key"] for item in summary["failed"]] == [angry_key]
+    # Good file landed; broken file didn't.
+    assert (tmp_path / "benchmark_history" / "good.json").read_bytes() == good_bytes
+    assert not (tmp_path / "benchmark_history" / "broken.json").exists()
+    assert "PARTIAL" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -1080,7 +1154,51 @@ def test_predcache_sync_swallows_unexpected_s3_error(monkeypatch, tmp_path, caps
         summary = model_sync.sync_predictions_cache_from_s3()
     assert summary is not None
     assert summary["files"] == 0
+    # Every file failed with a non-404 error; the new ``failed`` key surfaces
+    # this so an operator can distinguish a cold bucket (missing) from an
+    # S3 permissions/network issue (failed).
+    assert sorted(summary.get("failed", [])) == sorted(model_sync._PREDICTIONS_CACHE_FILES)
     assert "FAILED" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_predcache_sync_cleans_up_partial_on_mixed_success_and_error(monkeypatch, tmp_path):
+    """If two files download fine but one hits a non-404 ClientError, the
+    consumer-side fingerprint check would still fail — clean up the partial
+    downloads so a stale parquet can't be paired with a fresh fingerprint
+    from a later boot. This complements the all-404 cleanup test above.
+    """
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    fingerprint_key = "models/predictions_cache/fingerprint.json"
+
+    class _PartiallyAngryS3:
+        def __init__(self):
+            self._objects = {
+                "models/predictions_cache/predictions.parquet": b"PAR1content",
+                "models/predictions_cache/metrics.json": b'{"ppr": {}}',
+                # fingerprint.json present in S3 but throws on GET.
+            }
+
+        def get_object(self, Bucket, Key):  # noqa: N803
+            if Key == fingerprint_key:
+                raise ClientError(
+                    error_response={"Error": {"Code": "InternalError", "Message": "boom"}},
+                    operation_name="GetObject",
+                )
+            return {"Body": io.BytesIO(self._objects[Key])}
+
+    with mock.patch("boto3.client", return_value=_PartiallyAngryS3()):
+        summary = model_sync.sync_predictions_cache_from_s3()
+
+    assert summary is not None
+    assert summary["files"] == 0
+    assert summary.get("failed") == ["fingerprint.json"]
+    # Cleanup must fire even when only non-404 errors were the trigger.
+    dest = tmp_path / "data" / "serving_cache"
+    for name in model_sync._PREDICTIONS_CACHE_FILES:
+        assert not (dest / name).exists(), f"{name} should have been cleaned up"
 
 
 @pytest.mark.unit
@@ -1185,4 +1303,8 @@ def test_predcache_respects_custom_prefix(monkeypatch, tmp_path):
         "staging/v3/predictions_cache/metrics.json",
         "staging/v3/predictions_cache/fingerprint.json",
     }
-    assert not (tmp_path / "benchmark_history" / "y.json").exists()
+    # Every uploaded key sits under the configured staging/v3 prefix — no key
+    # accidentally falls back to the default ``models/`` prefix or escapes to
+    # an unrelated path. This is the actual contract under test.
+    assert all(key.startswith("staging/v3/predictions_cache/") for key in fake_s3.puts)
+    assert not any(key.startswith("models/") for key in fake_s3.puts)

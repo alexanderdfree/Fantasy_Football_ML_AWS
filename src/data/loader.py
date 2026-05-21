@@ -12,18 +12,16 @@ from src.config import (
     SCORING_STANDARD,
     SEASONS,
 )
-from src.data.redzone_pbp import reconstruct_redzone_from_pbp
+from src.data.redzone_pbp import RZ_PBP_FEATURE_COLUMNS, reconstruct_redzone_from_pbp
 
-_REDZONE_COLUMNS = [
-    "redzone_carries",
-    "redzone_targets",
-    "inside10_carries",
-    "inside5_carries",
-    "redzone_target_share",
-]
+# Re-export the redzone_pbp feature list as a list (for ``not in df.columns``
+# loops below). Single source of truth lives in ``redzone_pbp.RZ_PBP_FEATURE_COLUMNS``.
+_REDZONE_COLUMNS = list(RZ_PBP_FEATURE_COLUMNS)
 
 
-def load_team_week_stats(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.DataFrame:
+def load_team_week_stats(
+    seasons: list[int] | None = None, cache_dir: str = CACHE_DIR
+) -> pd.DataFrame:
     """Load NFL team-week stats from nflverse release parquets.
 
     Returns one row per (team, season, week) with full historical defensive
@@ -64,7 +62,9 @@ def load_team_week_stats(seasons: list[int] = None, cache_dir: str = CACHE_DIR) 
     return df
 
 
-def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.DataFrame:
+def load_raw_data(
+    seasons: list[int] | None = None, cache_dir: str = CACHE_DIR
+) -> pd.DataFrame:
     """Load and merge NFL weekly data, rosters, snap counts, and schedules.
 
     The six independent network/parquet fetches (weekly, rosters, schedules,
@@ -288,7 +288,7 @@ def load_raw_data(seasons: list[int] = None, cache_dir: str = CACHE_DIR) -> pd.D
     return weekly
 
 
-def compute_fantasy_points(df: pd.DataFrame, scoring: dict = None) -> pd.Series:
+def compute_fantasy_points(df: pd.DataFrame, scoring: dict | None = None) -> pd.Series:
     """Compute fantasy points from raw stat columns for a given scoring dict."""
     if scoring is None:
         scoring = SCORING

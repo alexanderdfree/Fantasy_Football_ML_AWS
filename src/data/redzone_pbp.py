@@ -24,23 +24,28 @@ import pyarrow.parquet as pq
 
 from src.config import CACHE_DIR
 
+# Feature columns the current implementation produces (excluding the four
+# ``player_id``/``season``/``week``/``recent_team`` merge keys). Single
+# source of truth for both the schema-gate below and ``src/data/loader.py``'s
+# zero-backfill so adding a sixth column here doesn't require a coordinated
+# edit in two places — silent drift between the two lists used to risk a
+# new aggregation surviving the merge but missing the backfill, leaving NaN
+# rows that look identical to "player did not appear in PBP".
+RZ_PBP_FEATURE_COLUMNS: tuple[str, ...] = (
+    "redzone_carries",
+    "redzone_targets",
+    "inside10_carries",
+    "inside5_carries",
+    "redzone_target_share",
+)
+
 # Per-game aggregate columns the current implementation produces. A cached
 # parquet missing any of these was written by an older code version and must
 # be regenerated rather than served — downstream merges left-join then
 # fillna(0), so a missing column would silently zero the feature across the
 # entire training range (same bug class as the K fg_yards_made incident).
 _REQUIRED_RZ_PBP_COLUMNS = frozenset(
-    {
-        "player_id",
-        "season",
-        "week",
-        "recent_team",
-        "redzone_carries",
-        "redzone_targets",
-        "inside10_carries",
-        "inside5_carries",
-        "redzone_target_share",
-    }
+    ("player_id", "season", "week", "recent_team") + RZ_PBP_FEATURE_COLUMNS
 )
 
 
@@ -75,7 +80,14 @@ def _aggregate_one_season(pbp: pd.DataFrame) -> pd.DataFrame:
     The receiving filter requires ``pass_attempt == 1`` so designed runs from
     shotgun (with a ``receiver_player_id`` field set by the parser) don't
     leak into the target count.
+
+    Regular-season-only filter applied defensively. The public caller in
+    this module already filters before delegating; the redundant guard here
+    keeps the invariant local so direct/ad-hoc callers (notebooks, REPL)
+    can't accidentally fold playoff plays into the per-game aggregates.
     """
+    if "season_type" in pbp.columns:
+        pbp = pbp[pbp["season_type"] == "REG"]
     in_rz = pbp["yardline_100"] <= 20
 
     # --- Rushing-side aggregates ---

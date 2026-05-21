@@ -7,12 +7,13 @@ import pyarrow.parquet as pq
 from src.config import CACHE_DIR
 from src.config import SEASONS as GLOBAL_SEASONS
 from src.k.config import POSITION_CONFIG
+from src.shared.weather_features import _TEAM_CODE_NORMALIZATION
 
 SEASONS = POSITION_CONFIG.seasons
 MIN_GAMES = POSITION_CONFIG.min_games
 
 # ---------------------------------------------------------------------------
-# PBP-based kicker reconstruction (2015-2024)
+# PBP-based kicker reconstruction (≤ 2024; lower bound comes from ``SEASONS``)
 # ---------------------------------------------------------------------------
 
 # Columns the current aggregation produces that downstream targets/features
@@ -121,8 +122,6 @@ def reconstruct_kicker_weekly_from_pbp(
             fg["fg_missed_50_59"] = ((d >= 50) & (d < 60) & missed).astype(int)
             fg["fg_missed_60_"] = ((d >= 60) & missed).astype(int)
             # PBP-only situational flags
-            fg["is_clutch"] = (fg["score_differential"].abs() <= 7).astype(int)
-            fg["clutch_made"] = (fg["is_clutch"] & fg["fg_made_flag"]).astype(int)
             fg["is_q4"] = (fg["qtr"] >= 4).astype(int)
             fg["q4_made"] = (fg["is_q4"] & fg["fg_made_flag"]).astype(int)
             fg["is_long"] = (d >= 40).astype(int)
@@ -149,10 +148,7 @@ def reconstruct_kicker_weekly_from_pbp(
                     fg_yards_made=("_fg_yards_made_flag", "sum"),
                     # PBP-derived aggregates
                     avg_fg_distance=("kick_distance", "mean"),
-                    max_fg_distance=("kick_distance", "max"),
                     avg_fg_prob=("fg_prob", "mean"),
-                    clutch_fg_att=("is_clutch", "sum"),
-                    clutch_fg_made=("clutch_made", "sum"),
                     q4_fg_att=("is_q4", "sum"),
                     q4_fg_made=("q4_made", "sum"),
                     long_fg_att=("is_long", "sum"),
@@ -283,7 +279,10 @@ def reconstruct_kicker_weekly_from_pbp(
 
 
 def load_data() -> pd.DataFrame:
-    """Load kicker data combining PBP reconstruction (2015-2024) + weekly (2025).
+    """Load kicker data combining PBP reconstruction (≤ 2024) + weekly (≥ 2025).
+
+    The lower bound on the PBP arm comes from ``SEASONS`` (which starts at
+    2015 per the post-PAT-rule-change cutoff).
 
     Merges schedule info for Vegas lines and home/away.
     """
@@ -292,7 +291,7 @@ def load_data() -> pd.DataFrame:
 
     parts = []
 
-    # --- PBP-reconstructed data (2015-2024) ---
+    # --- PBP-reconstructed data (≤ 2024 lower-bounded by SEASONS) ---
     if pbp_seasons:
         print("Reconstructing kicker weekly stats from PBP...")
         pbp_df = reconstruct_kicker_weekly_from_pbp(pbp_seasons)
@@ -312,10 +311,7 @@ def load_data() -> pd.DataFrame:
         # Add PBP-derived columns with NaN (will be filled later)
         for col in [
             "avg_fg_distance",
-            "max_fg_distance",
             "avg_fg_prob",
-            "clutch_fg_att",
-            "clutch_fg_made",
             "q4_fg_att",
             "q4_fg_made",
             "long_fg_att",
@@ -337,9 +333,12 @@ def load_data() -> pd.DataFrame:
     if weekly_seasons:
         _backfill_2025_pbp_columns(k_df, weekly_seasons)
 
-    # Apply min-games filter
-    games_per_season = k_df.groupby(["player_id", "season"])["week"].transform("count")
-    k_df = k_df[games_per_season >= MIN_GAMES].copy()
+    # NOTE: the per-(player_id, season) ``MIN_GAMES`` filter is applied
+    # **train-only** inside ``season_split`` (mirroring the shared pipeline's
+    # train-only filter for other positions at
+    # ``src/shared/pipeline.py``::``MIN_GAMES_PER_SEASON``). Applying it here
+    # would drop val/test rows that the other positions keep — asymmetric and
+    # underestimates real-world generalization.
 
     # --- Merge schedule info (is_home, Vegas lines, venue fallback) ---
     # roof/surface from the schedules parquet are folded into the same
@@ -374,8 +373,9 @@ def load_data() -> pd.DataFrame:
         )
         # Apply team-code normalization shared with weather_features so
         # pre-relocation OAK/SD/STL games still match modern LV/LAC/LA rows.
-        _team_remap = {"OAK": "LV", "SD": "LAC", "STL": "LA"}
-        schedule_info["recent_team"] = schedule_info["recent_team"].replace(_team_remap)
+        schedule_info["recent_team"] = schedule_info["recent_team"].replace(
+            _TEAM_CODE_NORMALIZATION
+        )
 
     k_df = k_df.merge(schedule_info, on=["recent_team", "season", "week"], how="left")
 
@@ -407,6 +407,14 @@ def load_data() -> pd.DataFrame:
             k_df.loc[needs_redrv, "roof"].isin(["dome", "closed"]).astype(int)
         )
 
+    # Sentinel so the downstream shared ``merge_schedule_features`` (called by
+    # both training pipeline and serving) becomes a no-op for K — K does its
+    # own schedule merge with kicker-specific roof/surface fallback handling,
+    # and the shared merge would otherwise re-populate is_dome/total_line/
+    # implied_team_total with values that are already present (silent overwrite
+    # of equivalent data, but wasted work + drift risk).
+    k_df["_schedule_merged"] = True
+
     print(
         f"  Kicker data: {len(k_df)} rows, {k_df['player_id'].nunique()} kickers, "
         f"seasons {int(k_df['season'].min())}-{int(k_df['season'].max())}"
@@ -423,10 +431,7 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
 
     backfill_cols = [
         "avg_fg_distance",
-        "max_fg_distance",
         "avg_fg_prob",
-        "clutch_fg_att",
-        "clutch_fg_made",
         "q4_fg_att",
         "q4_fg_made",
         "long_fg_att",
@@ -471,8 +476,6 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
             fg = pbp[pbp["field_goal_attempt"] == 1].copy()
             d = fg["kick_distance"]
             fg["fg_made_flag"] = (fg["field_goal_result"] == "made").astype(int)
-            fg["is_clutch"] = (fg["score_differential"].abs() <= 7).astype(int)
-            fg["clutch_made"] = (fg["is_clutch"] & fg["fg_made_flag"]).astype(int)
             fg["is_q4"] = (fg["qtr"] >= 4).astype(int)
             fg["q4_made"] = (fg["is_q4"] & fg["fg_made_flag"]).astype(int)
             fg["is_long"] = (d >= 40).astype(int)
@@ -486,10 +489,7 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
                 fg.groupby(["kicker_player_id", "season", "week"])
                 .agg(
                     avg_fg_distance=("kick_distance", "mean"),
-                    max_fg_distance=("kick_distance", "max"),
                     avg_fg_prob=("fg_prob", "mean"),
-                    clutch_fg_att=("is_clutch", "sum"),
-                    clutch_fg_made=("clutch_made", "sum"),
                     q4_fg_att=("is_q4", "sum"),
                     q4_fg_made=("q4_made", "sum"),
                     long_fg_att=("is_long", "sum"),
@@ -559,6 +559,28 @@ _KICKS_SCHEMA = [
     "game_wind",
 ]
 
+# Columns the current per-kick aggregation produces that downstream consumers
+# rely on. ``play_id`` in particular gates the deterministic most-recent
+# truncation in ``build_nested_kick_history`` — a cache written before that
+# column was added would silently fall back to insertion-order sorting.
+_REQUIRED_KICK_PBP_COLUMNS = frozenset(_KICKS_SCHEMA)
+
+
+def _cached_kick_pbp_is_current(cache_path: str) -> bool:
+    """Return True only if the cached per-kick parquet has every column the
+    current aggregation produces.
+
+    Mirrors ``_cached_pbp_is_current`` for the weekly cache: reads just the
+    parquet schema (no row data) so the check is cheap. A False return signals
+    the caller to ignore the cache and regenerate from PBP.
+    """
+    schema_names = set(pq.read_schema(cache_path).names)
+    missing = _REQUIRED_KICK_PBP_COLUMNS - schema_names
+    if missing:
+        print(f"  Stale kick cache at {cache_path} missing {sorted(missing)}; regenerating")
+        return False
+    return True
+
 
 def reconstruct_kicker_kicks_from_pbp(
     seasons: list[int],
@@ -580,7 +602,7 @@ def reconstruct_kicker_kicks_from_pbp(
         return pd.DataFrame(columns=_KICKS_SCHEMA)
 
     cache_path = f"{cache_dir}/kicker_kicks_pbp_{seasons[0]}_{seasons[-1]}.parquet"
-    if os.path.exists(cache_path):
+    if os.path.exists(cache_path) and _cached_kick_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
 
     all_kicks = []
@@ -680,13 +702,30 @@ def season_split(k_df: pd.DataFrame) -> tuple:
     """Split kicker data by season (cross-season, matching other positions).
 
     Train: 2015-2023, Val: 2024, Test: 2025
+
+    Applies the ``MIN_GAMES`` per-(player_id, season) filter to **train
+    only**, mirroring the shared pipeline's train-only ``MIN_GAMES_PER_SEASON``
+    filter at ``src/shared/pipeline.py:508``. Val/test rows are kept
+    regardless of season-game-count so K's holdout distribution matches the
+    other positions.
     """
     train = k_df[k_df["season"] <= 2023].copy()
     val = k_df[k_df["season"] == 2024].copy()
     test = k_df[k_df["season"] == 2025].copy()
 
+    # Train-only MIN_GAMES filter: regress on starters with enough sample for
+    # rolling features to stabilize, but evaluate on every active kicker.
+    train_games = train.groupby(["player_id", "season"])["week"].transform("count")
+    train = train[train_games >= MIN_GAMES].copy()
+
     print("K cross-season split:")
-    print(f"  Train: {int(train['season'].min())}-{int(train['season'].max())} ({len(train)} rows)")
+    if len(train) > 0:
+        print(
+            f"  Train: {int(train['season'].min())}-{int(train['season'].max())} "
+            f"({len(train)} rows)"
+        )
+    else:
+        print("  Train: (empty)")
     print(f"  Val:   2024 ({len(val)} rows)")
     print(f"  Test:  2025 ({len(test)} rows)")
 

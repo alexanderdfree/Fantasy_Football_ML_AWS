@@ -468,10 +468,14 @@ def test_history_comparison_no_exclude_path_includes_all_files(tmp_path, capsys)
         ("2026-03-01T12-00-00_a.json", "aaa1111", "first"),
         ("2026-04-01T12-00-00_b.json", "bbb2222", "second"),
     ]:
+        # File names use ``-`` as the time separator (filesystem-safe), but the
+        # JSON ``timestamp`` field stores standard ISO with ``:`` separators
+        # (matches what utc_now_iso() writes). Convert the time portion only.
+        iso_ts = f"{ts[:10]}T{ts[11:19].replace('-', ':')}"
         (history_dir / ts).write_text(
             json.dumps(
                 {
-                    "timestamp": ts[:19].replace("-", "T", 0),
+                    "timestamp": iso_ts,
                     "git_hash": h,
                     "note": note,
                     "results": [{"position": "QB", "ridge_mae": 5.0, "nn_mae": 4.5}],

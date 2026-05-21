@@ -95,6 +95,25 @@ def test_required_keys_set_is_non_empty() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "missing_key",
+    ["specific_features", "add_features_fn", "fill_nans_fn"],
+)
+def test_validate_pipeline_config_catches_feature_build_required_keys(
+    missing_key: str,
+) -> None:
+    """M9: ``src/shared/feature_build.py`` reads these three keys via ``cfg["..."]``
+    (not ``.get``); they MUST be in :data:`REQUIRED_PIPELINE_CFG_KEYS` so the
+    validator surfaces a missing one at *build* time instead of crashing inside
+    ``build_position_features``.
+    """
+    cfg = {key: object() for key in REQUIRED_PIPELINE_CFG_KEYS}
+    cfg.pop(missing_key)
+    with pytest.raises(PipelineConfigError, match=missing_key):
+        validate_pipeline_config(cfg)
+
+
+@pytest.mark.unit
 def test_build_pipeline_config_with_minimal_position_config() -> None:
     """A hand-built PositionConfig should produce a buildable cfg too —
     but only if it sets enough fields. This pins the contract for anyone

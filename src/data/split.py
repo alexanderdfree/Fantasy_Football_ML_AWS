@@ -7,9 +7,9 @@ from src.config import CV_VAL_SEASONS, SPLITS_DIR, TEST_SEASONS, TRAIN_SEASONS, 
 
 def temporal_split(
     df: pd.DataFrame,
-    train_seasons: list[int] = None,
-    val_seasons: list[int] = None,
-    test_seasons: list[int] = None,
+    train_seasons: list[int] | None = None,
+    val_seasons: list[int] | None = None,
+    test_seasons: list[int] | None = None,
 ) -> tuple:
     """Split data by season into train/val/test sets."""
     if train_seasons is None:
@@ -47,7 +47,7 @@ def temporal_split(
 
 def expanding_window_folds(
     df: pd.DataFrame,
-    val_seasons: list[int] = None,
+    val_seasons: list[int] | None = None,
     min_train_season: int = 2012,
 ) -> list[tuple]:
     """Generate expanding-window CV folds.

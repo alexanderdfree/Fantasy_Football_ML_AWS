@@ -13,7 +13,7 @@ from src.config import (
     SHARE_WINDOWS,
     TREND_STATS,
 )
-from src.shared.weather_features import _load_schedules
+from src.shared.weather_features import _load_schedules, build_implied_team_total_lookup
 
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -827,19 +827,14 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     df.drop(columns=["team"], errors="ignore", inplace=True)
 
     # --- 3. Implied team total from Vegas lines ---
-    home_impl = schedules_reg[["season", "week", "home_team", "spread_line", "total_line"]].copy()
-    home_impl["implied_team_total"] = (home_impl["total_line"] - home_impl["spread_line"]) / 2
-    home_impl = home_impl[["season", "week", "home_team", "implied_team_total"]]
-    home_impl.columns = ["season", "week", "recent_team", "implied_team_total"]
-
-    away_impl = schedules_reg[["season", "week", "away_team", "spread_line", "total_line"]].copy()
-    away_impl["implied_team_total"] = (away_impl["total_line"] + away_impl["spread_line"]) / 2
-    away_impl = away_impl[["season", "week", "away_team", "implied_team_total"]]
-    away_impl.columns = ["season", "week", "recent_team", "implied_team_total"]
-
-    impl_lookup = pd.concat([home_impl, away_impl], ignore_index=True).drop_duplicates(
-        subset=["season", "week", "recent_team"]
-    )
+    # Single source of truth for the formula lives in
+    # ``src.shared.weather_features.build_implied_team_total_lookup``; both
+    # this path (tests that call ``build_features`` directly) and the
+    # production schedule merge (``merge_schedule_features`` → its
+    # ``_build_team_schedule_lookup`` inlines the same formula on the
+    # enriched lookup) share that helper so the per-team value can't drift
+    # between code paths.
+    impl_lookup = build_implied_team_total_lookup(schedules_reg)
 
     if "implied_team_total" in df.columns:
         df.drop(columns=["implied_team_total"], inplace=True)

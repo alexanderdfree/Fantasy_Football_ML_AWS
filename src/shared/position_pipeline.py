@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 from src.shared.aggregate_targets import aggregate_fn_for
+from src.shared.position import Position
 from src.shared.position_config import PositionConfig
 
 # ---------------------------------------------------------------------------
@@ -42,8 +43,11 @@ REQUIRED_PIPELINE_CFG_KEYS: frozenset[str] = frozenset(
     {
         # Targets + callables
         "targets",
+        "specific_features",
         "filter_fn",
         "compute_targets_fn",
+        "add_features_fn",
+        "fill_nans_fn",
         "get_feature_columns_fn",
         # Ridge
         "ridge_alpha_grids",
@@ -142,7 +146,7 @@ def build_pipeline_config(
         # so ``fill_nans`` train-mean-fills the PBP-derived ``game_wind`` /
         # ``game_temp`` columns. For everyone else ``specific_features``
         # already isolates the position-specific block.
-        "specific_features": (pc.all_features if pos == "K" else pc.specific_features),
+        "specific_features": (pc.all_features if pos == Position.K else pc.specific_features),
         # === Ridge ===
         "ridge_alpha_grids": pc.ridge_alpha_grids,
         # === Per-position callables ===
@@ -207,33 +211,35 @@ def build_pipeline_config(
     if pc.attn_max_seq_len is not None:
         cfg["attn_max_seq_len"] = pc.attn_max_seq_len
     # The four attention training-loop knobs (lr, weight_decay, batch_size,
-    # patience) get plumbed through whenever the position trains attention —
-    # WR/TE leave them at defaults and aren't included historically.
-    if pos in ("QB", "RB", "K", "DST"):
-        cfg["attn_lr"] = pc.attn_lr
-        cfg["attn_weight_decay"] = pc.attn_weight_decay
-        cfg["attn_batch_size"] = pc.attn_batch_size
-        cfg["attn_patience"] = pc.attn_patience
+    # patience) plumb through for every position that trains attention. WR/TE
+    # were historically excluded; PR adding L-WR6 wired them in so a
+    # ``PositionConfig.attn_patience=20`` change takes effect.
+    cfg["attn_lr"] = pc.attn_lr
+    cfg["attn_weight_decay"] = pc.attn_weight_decay
+    cfg["attn_batch_size"] = pc.attn_batch_size
+    cfg["attn_patience"] = pc.attn_patience
     # attn_project_kv is plumbed by RB/K/DST (matches original CONFIG dicts);
     # the skill positions skip it because their flat attention path defaults False.
-    if pos in ("RB", "K", "DST"):
+    if pos in (Position.RB, Position.K, Position.DST):
         cfg["attn_project_kv"] = pc.attn_project_kv
     # attn_gated_fusion plumbed by RB/DST; K's nested path doesn't consume it.
-    if pos in ("RB", "DST"):
+    if pos in (Position.RB, Position.DST):
         cfg["attn_gated_fusion"] = pc.attn_gated_fusion
-    # attn_history_stats / head_losses / attn_gated / gate_* — flat attention
-    # consumers only on the non-K side. K opts in to ``attn_history_stats`` via
-    # the nested+history branch (per-game aggregates feed alongside the inner
-    # kick pool); head_losses / attn_gated are still flat-only.
+    # attn_history_stats / attn_gated / gate_* — flat attention consumers only
+    # on the non-K side. K opts in to ``attn_history_stats`` via the
+    # nested+history branch (per-game aggregates feed alongside the inner
+    # kick pool); attn_gated is still flat-only. ``head_losses`` is plumbed
+    # universally now (L-K4) — K's all-huber declaration is a no-op vs the
+    # default but keeps the contract consistent with the other positions.
     if pc.attn_history_stats:
         cfg["attn_history_stats"] = pc.attn_history_stats
-    if pos != "K":
-        cfg["head_losses"] = pc.head_losses
+    cfg["head_losses"] = pc.head_losses
+    if pos != Position.K:
         cfg["attn_gated"] = pc.attn_gated
     # attn_gate_hidden / attn_gate_weight only ride along on the skill positions
     # whose ATTN_GATED can be True (RB/WR/TE) plus QB which sets them to False
     # but historically plumbed them. K and DST omit the pair.
-    if pos in ("QB", "RB", "WR", "TE"):
+    if pos in (Position.QB, Position.RB, Position.WR, Position.TE):
         cfg["attn_gate_hidden"] = pc.attn_gate_hidden
         cfg["attn_gate_weight"] = pc.attn_gate_weight
     if pc.gated_targets:
@@ -257,7 +263,7 @@ def build_pipeline_config(
         cfg["cv_split_column"] = pc.cv_split_column
 
     # === LGBM max_depth (omitted for QB) ===
-    if pos != "QB":
+    if pos != Position.QB:
         cfg["lgbm_max_depth"] = pc.lgbm_max_depth
 
     # === Aggregator (used at training/eval time to compute fantasy-point
@@ -266,22 +272,18 @@ def build_pipeline_config(
     # other positions) ===
     cfg["aggregate_fn"] = aggregate_fn_for(pos)
 
-    # === K/DST shared: explicit None for the adjustment slot ===
-    if pos in ("K", "DST"):
-        cfg["compute_adjustment_fn"] = None
-
     # === K-only: nested attention structure flags ===
-    if pos == "K":
+    if pos == Position.K:
         cfg["attn_history_structure"] = "nested"
         cfg["attn_static_from_df"] = True
         cfg["attn_kick_dim"] = pc.attn_kick_dim
 
     # === DST-only: very-rare-count Poisson targets ===
-    if pos == "DST":
+    if pos == Position.DST:
         cfg["poisson_targets"] = pc.poisson_targets
 
     # === RB-only: TD model variants ===
-    if pos == "RB":
+    if pos == Position.RB:
         cfg["two_stage_targets"] = _rb_two_stage_targets(pc)
         cfg["classification_targets"] = _rb_classification_targets(pc)
 
