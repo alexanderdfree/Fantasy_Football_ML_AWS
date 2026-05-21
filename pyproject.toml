@@ -50,7 +50,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**"                = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
-"tests/**"                   = ["E501", "F401", "F811", "E402", "SIM105", "SIM108", "SIM117"]
 "conftest.py"                = ["E402"]
 "src/*/config.py"            = ["E402"]
 "src/scripts/**/*.py"        = ["E402"]

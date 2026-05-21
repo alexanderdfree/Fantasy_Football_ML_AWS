@@ -6,6 +6,7 @@ are exposed. Private helper variables stay scoped to construction.
 """
 
 from src.shared.position_config import (
+    DEFAULT_ATTN_STATIC_CATEGORIES,
     DEFAULT_ENET_L1_RATIOS,
     DEFAULT_OPP_DEF_HISTORY_STATS,
     PositionConfig,
@@ -107,20 +108,7 @@ _INCLUDE_FEATURES = {
     ],
 }
 
-# Categories that flow into the attention NN's static branch. Rolling /
-# ewma / trend / share / specific categories are intentionally excluded:
-# the attention branch learns its own temporal representation from
-# ``attn_history_stats`` so double-feeding leaks signal. ``defense`` is
-# excluded because OPP_ATTN_HISTORY_STATS feeds opposing-defense form
-# through a parallel attention branch; the L5 aggregates would be
-# redundant. Exposed at the module level so the per-position whitelist
-# test in tests/test_attn_static_columns.py can read it.
-ATTN_STATIC_CATEGORIES = [
-    "prior_season",
-    "matchup",
-    "contextual",
-    "weather_vegas",
-]
+ATTN_STATIC_CATEGORIES = DEFAULT_ATTN_STATIC_CATEGORIES
 
 
 # Single source of truth for downstream consumers (registry / pipeline / serving).
