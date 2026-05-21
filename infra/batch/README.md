@@ -93,6 +93,25 @@ as a systemd unit ordered `Before=ecs.service`. First image pull on a
 fresh Spot host streams lazily via SOCI instead of doing a full ~122 s
 pull.
 
+**Two-gate bootstrap (see [userdata.sh](userdata.sh) steps 3 + 4)**:
+
+1. **Socket-wait** (after `systemctl enable --now soci-snapshotter`) —
+   verifies the snapshotter daemon is up before containerd is asked to
+   load it as a proxy plugin.
+2. **Plugin-status-wait** (after `systemctl restart containerd`) —
+   polls `ctr plugin ls` until the soci row reports `STATUS=ok`. Closes
+   a race where `systemctl restart` returns on containerd's `Type=notify`
+   READY signal (daemon socket open) but proxy-plugin discovery is still
+   in progress — without this gate, ECS agent claims a task during the
+   discovery window and the first pull silently falls back to overlayfs
+   (SOCI [#190](https://github.com/awslabs/soci-snapshotter/issues/190)
+   documents the silent-fallback issue).
+
+Both gates exit cloud-init with code 1 on 60s timeout → instance marked
+unhealthy in the CE; Batch's `Host EC2*` retry catches the next host
+rather than letting a single broken host serve overlayfs pulls
+indefinitely.
+
 **SOCI_VERSION discipline**: the version pin MUST stay aligned between
 [userdata.sh](userdata.sh) (host snapshotter) and
 [batch-image.yml](../../.github/workflows/batch-image.yml) (index
@@ -149,10 +168,25 @@ The CE's `minvCpus=0` means there are no in-flight instances to disrupt
      --region us-east-1 \
      --query 'tasks[0].[pullStartedAt,pullStoppedAt]'
    ```
-   Expect: pull window ~5–10 s (down from ~122 s baseline 2026-05-20). Anything
+   Expect: pull window **~1–2 s** (down from ~122 s baseline 2026-05-20). Anything
    over ~30 s means SOCI didn't activate on that host — run "Rollback SOCI launch
    template" below and inspect `/var/log/soci-userdata.log` on the failing host
-   via `aws ssm start-session --target <ec2InstanceId>`.
+   via `aws ssm start-session --target <ec2InstanceId>` (requires
+   `AmazonSSMManagedInstanceCore` on `ecsInstanceRole`, not attached by default).
+
+6. **Host-side plugin status** (when SSM is available on the host): the
+   userdata.sh step-4 gate that prevents the race documented in §"SOCI
+   snapshotter" can be re-checked at any time via:
+   ```
+   ctr plugin ls id==soci
+   ```
+   Expect (column STATUS = `ok`):
+   ```
+   TYPE                                  ID    PLATFORMS    STATUS
+   io.containerd.snapshotter.v1          soci  linux/amd64  ok
+   ```
+   `STATUS != ok` on a live host = SOCI silently inactive; cycle the
+   instance (Tier-1 rollback or just terminate to let Batch replace it).
 
 ## Rollback SOCI launch template
 
