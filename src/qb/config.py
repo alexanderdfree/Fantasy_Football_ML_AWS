@@ -191,7 +191,7 @@ POSITION_CONFIG = PositionConfig(
     attn_lr=1e-3,
     attn_weight_decay=5e-5,
     attn_batch_size=256,
-    attn_patience=35,
+    attn_patience=20,
     attn_history_stats=[
         "passing_yards",
         "rushing_yards",

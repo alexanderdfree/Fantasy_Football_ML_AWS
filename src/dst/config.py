@@ -229,7 +229,7 @@ POSITION_CONFIG = PositionConfig(
     attn_lr=3e-4,
     attn_weight_decay=3e-4,
     attn_batch_size=128,
-    attn_patience=35,
+    attn_patience=20,
     # Per-game stats fed into the attention sequence. The 10 raw target
     # stats plus 4 opponent-side per-game values (not rolling) so attention
     # can weigh recent games against recent opponent strength. Derived

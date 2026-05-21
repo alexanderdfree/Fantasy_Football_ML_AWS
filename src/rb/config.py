@@ -279,7 +279,7 @@ POSITION_CONFIG = PositionConfig(
     attn_lr=1e-3,
     attn_weight_decay=5e-5,
     attn_batch_size=256,
-    attn_patience=35,
+    attn_patience=20,
     # Per-game stats fed into the attention sequence. fantasy_points
     # intentionally excluded — its scoring components are already in the
     # sequence. Game-script context + team box score are per-historical-

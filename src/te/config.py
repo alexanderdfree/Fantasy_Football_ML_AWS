@@ -177,6 +177,7 @@ POSITION_CONFIG = PositionConfig(
     attn_max_seq_len=17,
     attn_positional_encoding=True,
     attn_dropout=0.0,
+    attn_patience=20,
     attn_history_stats=[
         "receiving_yards",
         "rushing_yards",
