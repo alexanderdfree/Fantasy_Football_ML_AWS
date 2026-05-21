@@ -12,50 +12,11 @@ import pandas as pd
 import pytest
 
 from src.rb.features import _compute_features, fill_nans
+from tests.rb.conftest import _build_player_games
 from tests.shared.parameterized_features import (
     PositionFeatureSpec,
     install_parameterized_features,
 )
-
-
-def _make_player_games(
-    player_id="P1",
-    season=2023,
-    n_weeks=5,
-    carries=10,
-    targets=5,
-    receptions=3,
-    rushing_yards=50,
-    receiving_yards=30,
-    rushing_epa=2.0,
-    rushing_first_downs=2,
-    receiving_first_downs=1,
-    receiving_yards_after_catch=15,
-    receiving_epa=1.5,
-    receiving_air_yards=20,
-    recent_team="KC",
-):
-    """Build a multi-week single-player DataFrame matching RB feature inputs."""
-    return pd.DataFrame(
-        {
-            "player_id": [player_id] * n_weeks,
-            "season": [season] * n_weeks,
-            "week": list(range(1, n_weeks + 1)),
-            "carries": [carries] * n_weeks,
-            "targets": [targets] * n_weeks,
-            "receptions": [receptions] * n_weeks,
-            "rushing_yards": [rushing_yards] * n_weeks,
-            "receiving_yards": [receiving_yards] * n_weeks,
-            "rushing_epa": [rushing_epa] * n_weeks,
-            "rushing_first_downs": [rushing_first_downs] * n_weeks,
-            "receiving_first_downs": [receiving_first_downs] * n_weeks,
-            "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
-            "receiving_epa": [receiving_epa] * n_weeks,
-            "receiving_air_yards": [receiving_air_yards] * n_weeks,
-            "recent_team": [recent_team] * n_weeks,
-        }
-    )
-
 
 FEATURE_COLS = [
     "yards_per_carry_L3",
@@ -78,7 +39,7 @@ install_parameterized_features(
         compute_features=_compute_features,
         fill_nans=fill_nans,
         feature_cols=FEATURE_COLS,
-        make_player_games=_make_player_games,
+        make_player_games=_build_player_games,
         first_week_check_features=("yards_per_carry_L3", "reception_rate_L3"),
         zero_input_overrides={
             "carries": {"carries": 0, "rushing_yards": 0},

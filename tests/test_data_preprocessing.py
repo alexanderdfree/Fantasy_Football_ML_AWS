@@ -81,12 +81,14 @@ def test_preprocess_filters_to_regular_season_when_column_present():
 
 
 @pytest.mark.unit
-def test_preprocess_skips_season_type_filter_when_column_absent():
-    """No ``season_type`` → no filter (older datasets)."""
+def test_preprocess_asserts_when_season_type_column_absent():
+    """Missing ``season_type`` is a malformed-frame signal — preprocess() must
+    fail loudly so the upstream loader bug surfaces immediately rather than
+    silently keeping playoff rows."""
     df = pd.DataFrame([_base_row()])
     df = df.drop(columns=["season_type"])
-    out = preprocess(df)
-    assert len(out) == 1
+    with pytest.raises(AssertionError, match="season_type"):
+        preprocess(df)
 
 
 # --------------------------------------------------------------------------

@@ -185,6 +185,14 @@ POSITION_CONFIG = PositionConfig(
     attn_max_seq_len=17,
     attn_positional_encoding=True,
     attn_dropout=0.0,
+    # Explicit attention-NN optimizer/batch knobs — mirrors RB. Without these,
+    # src/shared/pipeline.py falls back to nn_lr / nn_weight_decay / nn_batch_size
+    # via cfg.get(...) at lines 766-767 + 718, which is correct today but silent:
+    # a future bump of nn_* would drag the attn NN along uninspected. These
+    # values match what the fallback currently yields (preserves behaviour).
+    attn_lr=5e-4,
+    attn_weight_decay=3e-4,
+    attn_batch_size=128,
     attn_patience=20,
     attn_history_stats=[
         "receiving_yards",

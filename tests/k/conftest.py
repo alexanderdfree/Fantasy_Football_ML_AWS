@@ -309,6 +309,11 @@ def _build_tiny_kicks(weekly_df: pd.DataFrame, seed: int = 123) -> pd.DataFrame:
     distances/probabilities consistent with the aggregate stats. Kept simple —
     exact bucket alignment isn't required for unit tests, just enough structural
     fidelity that the attention pipeline can consume it.
+
+    Each kick carries a synthetic per-game ``play_id`` increment so the
+    production code path that branches on ``'play_id' in kicks_df.columns``
+    (see ``src/k/features.py::build_nested_kick_history``) is exercised
+    rather than silently falling back to insertion-order sorting.
     """
     rng = np.random.default_rng(seed)
     kicks: list[dict] = []
@@ -318,6 +323,11 @@ def _build_tiny_kicks(weekly_df: pd.DataFrame, seed: int = 123) -> pd.DataFrame:
         week = row["week"]
         game_wind = float(row.get("game_wind", 0) or 0)
         is_home = int(row.get("is_home", 0) or 0)
+        # Per-game play counter so kicks within a single (pid, season, week)
+        # have a monotonically increasing play_id — matches PBP's stable
+        # per-play sequence number used by ``build_nested_kick_history`` for
+        # deterministic most-recent truncation.
+        play_id_counter = 0
 
         fg_att = int(row.get("fg_att", 0) or 0)
         fg_made = int(row.get("fg_made", 0) or 0)
@@ -332,6 +342,7 @@ def _build_tiny_kicks(weekly_df: pd.DataFrame, seed: int = 123) -> pd.DataFrame:
                     "player_id": pid,
                     "season": season,
                     "week": week,
+                    "play_id": play_id_counter,
                     "is_fg": 1,
                     "is_xp": 0,
                     "kick_distance": distance,
@@ -343,6 +354,7 @@ def _build_tiny_kicks(weekly_df: pd.DataFrame, seed: int = 123) -> pd.DataFrame:
                     "is_home": is_home,
                 }
             )
+            play_id_counter += 1
 
         pat_att = int(row.get("pat_att", 0) or 0)
         pat_made = int(row.get("pat_made", 0) or 0)
@@ -356,6 +368,7 @@ def _build_tiny_kicks(weekly_df: pd.DataFrame, seed: int = 123) -> pd.DataFrame:
                     "player_id": pid,
                     "season": season,
                     "week": week,
+                    "play_id": play_id_counter,
                     "is_fg": 0,
                     "is_xp": 1,
                     "kick_distance": 0.0,
@@ -367,6 +380,7 @@ def _build_tiny_kicks(weekly_df: pd.DataFrame, seed: int = 123) -> pd.DataFrame:
                     "is_home": is_home,
                 }
             )
+            play_id_counter += 1
     return pd.DataFrame(kicks)
 
 

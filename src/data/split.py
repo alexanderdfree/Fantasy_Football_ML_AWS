@@ -20,9 +20,16 @@ def temporal_split(
         test_seasons = TEST_SEASONS
 
     # Drop playoff rows — fantasy leagues end with the regular season, and
-    # the schedule lookup used for Vegas/weather features only covers REG games.
-    if "season_type" in df.columns:
-        df = df[df["season_type"] == "REG"].copy()
+    # the schedule lookup used for Vegas/weather features only covers REG
+    # games. ``season_type`` is part of the nflverse weekly schema and so is
+    # guaranteed present by ``src/data/loader.py``; fail loudly on absence
+    # instead of silently keeping playoff rows.
+    assert "season_type" in df.columns, (
+        "temporal_split() requires 'season_type'; upstream loader "
+        "(src/data/loader.py) must emit it. Absent column would silently "
+        "include POST rows in train/val/test."
+    )
+    df = df[df["season_type"] == "REG"].copy()
 
     train_df = df[df["season"].isin(train_seasons)].copy()
     val_df = df[df["season"].isin(val_seasons)].copy()

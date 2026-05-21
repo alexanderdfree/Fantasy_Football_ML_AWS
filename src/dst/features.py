@@ -15,6 +15,9 @@ def compute_features(df: pd.DataFrame) -> None:
     Must be called on the FULL dataset (before splitting) so that rolling
     windows and prior-season features have complete history.
     """
+    assert "fantasy_points" in df.columns, (
+        "DST compute_features requires compute_targets to have run first"
+    )
     df.sort_values(["team", "season", "week"], inplace=True)
 
     # Pre-compute D/ST fantasy points for rolling features.  We use the

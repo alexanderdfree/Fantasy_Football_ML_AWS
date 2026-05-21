@@ -18,32 +18,39 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.k.config import CONFIG_TINY
-from src.k.data import filter_to_position
-from src.k.features import (
-    add_specific_features,
-    compute_features,
-    fill_nans,
-    get_feature_columns,
-)
+from src.k.config import CONFIG_TINY, POSITION_CONFIG
+from src.k.features import compute_features
 from src.k.targets import compute_targets
 from src.shared.pipeline import run_pipeline
+from src.shared.position_pipeline import build_pipeline_config
 
 
 def _build_e2e_config() -> dict:
-    """Complete the CONFIG_TINY dict with the callables run_pipeline needs."""
-    cfg = dict(CONFIG_TINY)
-    cfg.update(
-        {
-            "filter_fn": filter_to_position,
-            "compute_targets_fn": compute_targets,
-            "add_features_fn": add_specific_features,
-            "fill_nans_fn": fill_nans,
-            "get_feature_columns_fn": get_feature_columns,
-            "compute_adjustment_fn": None,
-        }
+    """Build the e2e cfg dict via ``build_pipeline_config``.
+
+    Routes through ``build_pipeline_config("K", POSITION_CONFIG, ...)`` so
+    the test exercises the same factory the production runner
+    (``src/k/run_pipeline.py``) uses to assemble its CONFIG. Previously the
+    test bypassed the factory by reading ``CONFIG_TINY`` directly + appending
+    the per-position callables manually, which left PR #287's K-specific
+    ``aggregate_fn`` injection (the fix that subtracts ``fg_misses`` /
+    ``xp_misses`` from ``_total(preds)``) uncovered at the integration level.
+
+    The shrunken ``CONFIG_TINY`` knobs (1-epoch NN, 2x8 backbone, single-alpha
+    ridge grid, no LightGBM) are layered as overrides so the test still fits
+    the <20s CPU budget. ``train_attention_nn`` is forced False explicitly —
+    ``POSITION_CONFIG`` has it True (production trains nested attention) but
+    the e2e fixture doesn't inject the runtime ``attn_history_builder_fn``
+    closure that nested attention requires. ``compute_adjustment_fn`` is
+    forced None matching K/DST convention in ``tests/_pipeline_e2e_utils.py``.
+    """
+    return build_pipeline_config(
+        "K",
+        POSITION_CONFIG,
+        **CONFIG_TINY,
+        train_attention_nn=False,
+        compute_adjustment_fn=None,
     )
-    return cfg
 
 
 @pytest.fixture(scope="module")

@@ -1,8 +1,8 @@
 """Coverage tests for ``src/data/split.py``.
 
-Exercises ``temporal_split`` (with + without season_type filter, custom
-bucket overrides, parquet write) and ``expanding_window_folds`` (default
-val-season list + custom override).
+Exercises ``temporal_split`` (REG-only filter + assertion on absent
+``season_type`` column, custom bucket overrides, parquet write) and
+``expanding_window_folds`` (default val-season list + custom override).
 """
 
 from __future__ import annotations
@@ -17,12 +17,23 @@ from src.data.split import expanding_window_folds, temporal_split
 def _sample_df():
     """Tiny multi-season frame used by both temporal_split and CV-fold tests.
 
-    Does NOT carry a ``season_type`` column — that branch is exercised by a
-    dedicated fixture below (the filter is `df[df["season_type"] == "REG"]`,
-    so mixing REG + NaN kills every row).
+    Carries ``season_type='REG'`` on every row — temporal_split now asserts
+    the column's presence (nflverse always emits it; absence indicates a
+    malformed upstream frame). Tests that need to exercise the missing-column
+    branch use ``_sample_df_no_season_type`` below.
     """
     rows = []
     for season in [2020, 2021, 2022, 2023, 2024, 2025]:
+        for wk in range(1, 4):
+            rows.append({"season": season, "week": wk, "player_id": f"P{wk}", "season_type": "REG"})
+    return pd.DataFrame(rows)
+
+
+@pytest.fixture()
+def _sample_df_no_season_type():
+    """Frame without ``season_type`` — exercises the AssertionError branch."""
+    rows = []
+    for season in [2020, 2021]:
         for wk in range(1, 4):
             rows.append({"season": season, "week": wk, "player_id": f"P{wk}"})
     return pd.DataFrame(rows)
@@ -89,6 +100,20 @@ def test_temporal_split_drops_postseason_rows(tmp_path, monkeypatch, _sample_df_
     # POST rows were in 2024 — val shouldn't include them.
     assert (val["season_type"] != "POST").all()
     assert (val["week"] < 19).all()  # weeks 19-21 were POST
+
+
+@pytest.mark.unit
+def test_temporal_split_asserts_when_season_type_column_absent(
+    tmp_path, monkeypatch, _sample_df_no_season_type
+):
+    """Missing ``season_type`` is a malformed-frame signal — temporal_split
+    must fail loudly so the upstream loader bug surfaces immediately rather
+    than silently including playoff rows in the splits."""
+    import src.data.split as s
+
+    monkeypatch.setattr(s, "SPLITS_DIR", str(tmp_path))
+    with pytest.raises(AssertionError, match="season_type"):
+        temporal_split(_sample_df_no_season_type)
 
 
 @pytest.mark.unit
