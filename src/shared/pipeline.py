@@ -259,6 +259,7 @@ def _run_nn_training(
         scheduler_per_batch=scheduler_per_batch,
         log_every=_resolve_nn_log_every(cfg),
         epoch_callback=cfg_epoch_cb,
+        use_amp=cfg.get("nn_use_amp", False),
     )
     return trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
 

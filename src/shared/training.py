@@ -1,5 +1,6 @@
 """Generic training infrastructure: loss, dataset, dataloaders, and trainer."""
 
+import contextlib
 import os
 import time
 
@@ -379,6 +380,7 @@ class MultiHeadTrainer:
         scheduler_per_batch=False,
         log_every=10,
         epoch_callback=None,
+        use_amp=False,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -399,6 +401,25 @@ class MultiHeadTrainer:
         self.best_val_metric = float("inf")
         self.best_model_state = None
         self.epochs_without_improvement = 0
+        # BF16 autocast on the forward + loss path. T4 (sm_75) has BF16 tensor-
+        # core paths since CUDA 11.x; using BF16 (not FP16) preserves the FP32
+        # exponent range so no GradScaler is needed and the count-head NLL/
+        # Huber losses keep numerical headroom. Optimizer step stays in FP32
+        # via the parameter master copies. Forced off on non-CUDA devices
+        # (MPS/CPU) so local dev runs and CI tests are byte-identical to the
+        # FP32 path.
+        self._use_amp = bool(use_amp) and getattr(device, "type", None) == "cuda"
+
+    def _autocast(self):
+        """Return the BF16 autocast context when AMP is active, else nullcontext.
+
+        Wrapped around forward + criterion so matmul / linear / attention ops
+        downcast to BF16; the optimizer step and gradient update happen
+        outside the context so master copies stay in FP32.
+        """
+        if self._use_amp:
+            return torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+        return contextlib.nullcontext()
 
     def _forward_batch(self, batch) -> tuple[dict, dict]:
         """Unpack a DataLoader batch, move to device, and run the forward pass.
@@ -441,19 +462,19 @@ class MultiHeadTrainer:
             n_train_batches = 0
 
             for batch in train_loader:
-                preds, y_batch = self._forward_batch(batch)
-
                 self.optimizer.zero_grad(set_to_none=True)
-                loss, _ = self.criterion(preds, y_batch)
-                # Attention entropy regulariser: additive term that models can
-                # optionally expose via ``attention_entropy_loss``. Returns
-                # ``None`` when the feature is off so the hot path is a single
-                # attribute check.
-                entropy_fn = getattr(self.model, "attention_entropy_loss", None)
-                if entropy_fn is not None:
-                    entropy_term = entropy_fn()
-                    if entropy_term is not None:
-                        loss = loss + entropy_term
+                with self._autocast():
+                    preds, y_batch = self._forward_batch(batch)
+                    loss, _ = self.criterion(preds, y_batch)
+                    # Attention entropy regulariser: additive term that models
+                    # can optionally expose via ``attention_entropy_loss``.
+                    # Returns ``None`` when the feature is off so the hot path
+                    # is a single attribute check.
+                    entropy_fn = getattr(self.model, "attention_entropy_loss", None)
+                    if entropy_fn is not None:
+                        entropy_term = entropy_fn()
+                        if entropy_term is not None:
+                            loss = loss + entropy_term
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
@@ -476,8 +497,9 @@ class MultiHeadTrainer:
 
             with torch.no_grad():
                 for batch in val_loader:
-                    preds, y_batch = self._forward_batch(batch)
-                    loss, components = self.criterion(preds, y_batch)
+                    with self._autocast():
+                        preds, y_batch = self._forward_batch(batch)
+                        loss, components = self.criterion(preds, y_batch)
 
                     epoch_val_loss += loss.item()
                     for k in components:
@@ -485,7 +507,10 @@ class MultiHeadTrainer:
                     n_val_batches += 1
 
                     for k in self.target_names:
-                        all_preds[k].append(preds[k].cpu().numpy())
+                        # ``.float()`` upcasts BF16 preds to FP32 so ``numpy()``
+                        # can serialize them (NumPy has no native BF16 dtype).
+                        # No-op when AMP is off.
+                        all_preds[k].append(preds[k].float().cpu().numpy())
                         all_targets[k].append(y_batch[k].cpu().numpy())
 
             avg_val_loss = epoch_val_loss / n_val_batches
