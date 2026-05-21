@@ -94,6 +94,9 @@ class TestRowShape:
         assert rows[1]["timestamp"] == "2026-04-01T12:00:00"
 
     def test_mae_pills_carry_position_and_value(self, history_client):
+        """Partial run (K-only): six pills per model in canonical order; the
+        untrained positions carry ``mae=None`` so the frontend can render
+        them as ``--``."""
         client, history_dir = history_client
         _write_run(
             history_dir,
@@ -112,13 +115,44 @@ class TestRowShape:
             ],
         )
         row = client.get("/api/benchmark_history").get_json()["rows"][0]
-        assert row["ridge"] == [{"position": "K", "mae": 6.668}]
-        assert row["nn"] == [{"position": "K", "mae": 7.133}]
-        assert row["attn_nn"] == [{"position": "K", "mae": 7.12}]
-        assert row["lgbm"] == [{"position": "K", "mae": 7.188}]
+        assert row["ridge"] == [
+            {"position": "QB", "mae": None},
+            {"position": "RB", "mae": None},
+            {"position": "WR", "mae": None},
+            {"position": "TE", "mae": None},
+            {"position": "K", "mae": 6.668},
+            {"position": "DST", "mae": None},
+        ]
+        assert row["nn"] == [
+            {"position": "QB", "mae": None},
+            {"position": "RB", "mae": None},
+            {"position": "WR", "mae": None},
+            {"position": "TE", "mae": None},
+            {"position": "K", "mae": 7.133},
+            {"position": "DST", "mae": None},
+        ]
+        assert row["attn_nn"] == [
+            {"position": "QB", "mae": None},
+            {"position": "RB", "mae": None},
+            {"position": "WR", "mae": None},
+            {"position": "TE", "mae": None},
+            {"position": "K", "mae": 7.12},
+            {"position": "DST", "mae": None},
+        ]
+        assert row["lgbm"] == [
+            {"position": "QB", "mae": None},
+            {"position": "RB", "mae": None},
+            {"position": "WR", "mae": None},
+            {"position": "TE", "mae": None},
+            {"position": "K", "mae": 7.188},
+            {"position": "DST", "mae": None},
+        ]
         assert row["total_elapsed_sec"] == 84.0
+        assert row["training_skipped"] is False
 
     def test_multi_position_run_stacks_pills(self, history_client):
+        """Partial QB+RB run: trained positions carry their numeric MAEs,
+        the other four positions are emitted as ``mae=None`` placeholders."""
         client, history_dir = history_client
         _write_run(
             history_dir,
@@ -134,14 +168,20 @@ class TestRowShape:
         assert row["ridge"] == [
             {"position": "QB", "mae": 4.1},
             {"position": "RB", "mae": 5.2},
+            {"position": "WR", "mae": None},
+            {"position": "TE", "mae": None},
+            {"position": "K", "mae": None},
+            {"position": "DST", "mae": None},
         ]
         assert row["positions"] == ["QB", "RB"]
         assert row["total_elapsed_sec"] == 120.0
+        assert row["training_skipped"] is False
 
-    def test_missing_model_mae_skipped_not_nulled(self, history_client):
-        """K and DST runs historically had no attn_nn/lgbm MAE — those pills
-        should simply be absent from the cell, not rendered as null entries
-        that the frontend has to filter."""
+    def test_missing_model_mae_rendered_as_null(self, history_client):
+        """K and DST runs historically had no attn_nn/lgbm MAE; modern partial
+        runs only train one position. Either way, every (position, model) pair
+        absent from ``results`` surfaces as ``mae=None`` so the frontend can
+        render ``--`` uniformly."""
         client, history_dir = history_client
         _write_run(
             history_dir,
@@ -151,10 +191,86 @@ class TestRowShape:
             results=[{"position": "K", "ridge_mae": 6.5, "elapsed_sec": 80.0}],
         )
         row = client.get("/api/benchmark_history").get_json()["rows"][0]
-        assert row["ridge"] == [{"position": "K", "mae": 6.5}]
-        assert row["nn"] == []
-        assert row["attn_nn"] == []
-        assert row["lgbm"] == []
+        # Ridge: K has data, the other five positions are nulled.
+        assert row["ridge"] == [
+            {"position": "QB", "mae": None},
+            {"position": "RB", "mae": None},
+            {"position": "WR", "mae": None},
+            {"position": "TE", "mae": None},
+            {"position": "K", "mae": 6.5},
+            {"position": "DST", "mae": None},
+        ]
+        # NN / Attn NN / LGBM had no MAE at all for K (old-format file) — every
+        # pill across all six positions is None.
+        for model in ("nn", "attn_nn", "lgbm"):
+            assert row[model] == [
+                {"position": "QB", "mae": None},
+                {"position": "RB", "mae": None},
+                {"position": "WR", "mae": None},
+                {"position": "TE", "mae": None},
+                {"position": "K", "mae": None},
+                {"position": "DST", "mae": None},
+            ], f"unexpected {model} pills: {row[model]!r}"
+
+
+class TestSkippedTraining:
+    """Sentinel JSON files written by ``.github/workflows/skip-sentinel.yml``
+    for [docs-only] or no-model-relevant-path commits. The shape is empty
+    ``results`` plus a top-level ``training_skipped: true`` flag, and the row
+    should surface as six all-null pills across every model."""
+
+    def test_skipped_training_entry_renders_all_null(self, history_client):
+        client, history_dir = history_client
+        ts = "2026-05-21T18:00:00"
+        sha = "abcdef0"
+        path = history_dir / f"{ts.replace(':', '-')}_{sha}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "run_id": f"{ts}_{sha}",
+                    "timestamp": ts,
+                    "git_hash": sha,
+                    "note": "Training skipped — docs-only commit",
+                    "results": [],
+                    "positions": [],
+                    "training_skipped": True,
+                    "pr_number": 999,
+                }
+            )
+        )
+        row = client.get("/api/benchmark_history").get_json()["rows"][0]
+        assert row["training_skipped"] is True
+        assert row["positions"] == []
+        for model in ("ridge", "nn", "attn_nn", "lgbm"):
+            assert row[model] == [
+                {"position": "QB", "mae": None},
+                {"position": "RB", "mae": None},
+                {"position": "WR", "mae": None},
+                {"position": "TE", "mae": None},
+                {"position": "K", "mae": None},
+                {"position": "DST", "mae": None},
+            ], f"unexpected {model} pills: {row[model]!r}"
+        assert row["total_elapsed_sec"] == 0.0
+
+    def test_empty_results_without_flag_still_marked_skipped(self, history_client):
+        """Older sentinel files (or any file with empty results) should be
+        flagged as skipped even without the explicit ``training_skipped`` key,
+        so the UI can rely on a single field rather than two."""
+        client, history_dir = history_client
+        ts = "2026-05-21T18:30:00"
+        sha = "deadbee"
+        path = history_dir / f"{ts.replace(':', '-')}_{sha}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "timestamp": ts,
+                    "git_hash": sha,
+                    "results": [],
+                }
+            )
+        )
+        row = client.get("/api/benchmark_history").get_json()["rows"][0]
+        assert row["training_skipped"] is True
 
 
 class TestPrFallback:
@@ -206,7 +322,9 @@ class TestRobustness:
 
     def test_nan_mae_is_filtered_safely(self, history_client):
         """``float('nan')`` from a malformed pipeline result shouldn't end
-        up in the JSON (browsers reject NaN). _safe_num drops it."""
+        up in the JSON (browsers reject NaN). _safe_num converts to None,
+        which the row payload surfaces as a ``mae=None`` pill so the
+        frontend renders ``--``."""
         client, history_dir = history_client
         path = history_dir / "2026-05-01T10-00-00_abc.json"
         path.write_text(
@@ -219,8 +337,13 @@ class TestRobustness:
             )
         )
         row = client.get("/api/benchmark_history").get_json()["rows"][0]
-        assert row["ridge"] == [{"position": "QB", "mae": 4.1}]
-        assert row["nn"] == []
+        # QB ridge has a numeric MAE; QB nn is null (input had None); the
+        # other five positions are null across every model.
+        assert row["ridge"][0] == {"position": "QB", "mae": 4.1}
+        assert row["nn"][0] == {"position": "QB", "mae": None}
+        # Spot-check one of the untrained positions to confirm padding.
+        assert row["ridge"][5] == {"position": "DST", "mae": None}
+        assert row["nn"][5] == {"position": "DST", "mae": None}
 
 
 class TestRepoSlugResolution:

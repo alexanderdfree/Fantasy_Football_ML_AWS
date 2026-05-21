@@ -1,0 +1,180 @@
+name: Skip-training sentinel
+
+# Writes a placeholder benchmark_history/*.json for commits on main that
+# don't trigger training. Without this, [docs-only] PRs and pure-docs PRs
+# (README.md, docs/**) appear nowhere in the History tab — the train-batch
+# pipeline writes a JSON for every training run, but no workflow currently
+# writes one for non-training commits. The sentinel file has empty
+# ``results`` and ``training_skipped: true``; src/serving/app.py's
+# _benchmark_row pads it to six all-null pills, which the frontend renders
+# as a row of "--".
+#
+# Triggers on push: branches: [main] (not workflow_run) so it fires on every
+# main push, including pure-docs PRs that never touch src/** and therefore
+# never trigger batch-image.yml. The `detect.outputs.positions == ''` gate
+# from the shared detect workflow decides whether the SHA represents a
+# skip — this matches the gate train-batch.yml uses to decide NOT to train,
+# so the two workflows are mutually exclusive by construction.
+#
+# paths-ignore on benchmark_history/** stops self-loops: train-batch.yml
+# pushes ``chore(ci): append Batch benchmark run …`` commits that only touch
+# benchmark_history/, and this workflow's own pushes touch only
+# benchmark_history/ too. GitHub Actions skips the push when ALL paths
+# match paths-ignore, so neither auto-commit re-triggers the sentinel.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "benchmark_history/**"
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  S3_BUCKET: ff-predictor-training
+
+jobs:
+  detect:
+    # Reuses the same detect logic as train-batch.yml / train-ec2.yml. A
+    # SHA that returns positions=='' here will never have a real training
+    # run for the same SHA, and vice versa — the determinism of the detect
+    # script is what makes the sentinel and training paths mutually
+    # exclusive.
+    uses: ./.github/workflows/_detect-positions.yml
+
+  sentinel:
+    needs: detect
+    if: needs.detect.outputs.positions == ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          # Admin PAT bypasses main's required status checks for the
+          # benchmark-history push, matching the convention train-batch.yml
+          # uses for its ``chore(ci): append Batch benchmark run`` commits.
+          token: ${{ secrets.PROTECTED_PUSH_TOKEN }}
+
+      - name: Resolve PR number
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          pr=""
+          if [ -n "$HEAD_SHA" ]; then
+            pr=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" \
+              --jq '.[0].number // empty' 2>/dev/null || true)
+          fi
+          echo "number=${pr}" >> "$GITHUB_OUTPUT"
+          if [ -n "$pr" ]; then
+            echo "Resolved PR #${pr} for $HEAD_SHA"
+          else
+            echo "No PR resolved for $HEAD_SHA (direct push or workflow_dispatch)"
+          fi
+
+      - name: Write sentinel JSON
+        id: write
+        env:
+          # Indirected through env per CodeQL actions/code-injection hardening:
+          # ${{ }} expressions interpolated directly into run: shell are flagged
+          # even when the values look benign. Keeping the env mapping mirrors
+          # train-batch.yml's Append step.
+          HEAD_SHA: ${{ github.sha }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -eu
+          ts=$(python3 -c "import datetime; print(datetime.datetime.now(datetime.UTC).replace(tzinfo=None).isoformat(timespec='seconds'))")
+          sha=${HEAD_SHA:0:7}
+          fn_ts=${ts//:/-}
+          mkdir -p benchmark_history
+          path="benchmark_history/${fn_ts}_${sha}.json"
+          python3 - "$ts" "$sha" "${PR_NUMBER}" "$path" <<'PY'
+          import json, sys
+          ts, sha, pr, path = sys.argv[1:]
+          out = {
+              "run_id": f"{ts}_{sha}",
+              "timestamp": ts,
+              "git_hash": sha,
+              "note": "Training skipped — docs-only or no model-relevant paths changed",
+              "results": [],
+              "positions": [],
+              "training_skipped": True,
+          }
+          if pr:
+              out["pr_number"] = int(pr)
+          # Atomic-rename pattern, mirroring src/shared/benchmark_utils.py
+          # append_to_history. _load_benchmark_history_rows's cache is keyed
+          # by directory mtime, which an atomic rename bumps; in-place edits
+          # would not.
+          tmp = path + ".tmp"
+          with open(tmp, "w") as f:
+              json.dump(out, f, indent=2)
+          import os
+          os.replace(tmp, path)
+          print(f"Wrote {path}")
+          PY
+          echo "path=${path}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push benchmark_history/
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add benchmark_history/
+          if git diff --cached --quiet -- benchmark_history/; then
+            echo "No history changes — nothing to commit."
+            exit 0
+          fi
+          staged=$(git diff --cached --name-only)
+          unexpected=$(echo "$staged" | grep -v '^benchmark_history/' || true)
+          if [ -n "$unexpected" ]; then
+            echo "ERROR: unexpected staged paths (expected benchmark_history/ only):"
+            echo "$unexpected"
+            exit 1
+          fi
+          git commit -m "chore(ci): mark ${GITHUB_SHA::7} as training-skipped"
+          # Retry with rebase on contention — mirrors train-batch.yml's
+          # ``Commit and push`` step. Two skip-sentinel runs cannot both
+          # fire for the same SHA (push events are not duplicated like
+          # workflow_run), but a concurrent main push (operator hotfix)
+          # could still rebase under us.
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:refs/heads/$BRANCH"; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push attempt $attempt failed — rebasing and retrying"
+            git pull --rebase origin "$BRANCH"
+          done
+          echo "Push failed after 3 attempts"
+          exit 1
+
+      - name: Configure AWS credentials
+        # Pinned SHA matches train-batch.yml's pin (aws-actions/configure-
+        # aws-credentials v4 tip as of 2026-05-21). Bump in lockstep.
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Mirror sentinel JSON to S3
+        # Matches src/batch/benchmark.py::_maybe_upload_to_s3 layout
+        # (s3://{bucket}/models/benchmark_history/...). The serving
+        # container's sync_benchmark_history_from_s3() reads this prefix at
+        # boot and after each ECS rolling deploy, so the sentinel row shows
+        # up in the History tab on the next deploy.
+        env:
+          SENTINEL_PATH: ${{ steps.write.outputs.path }}
+        run: |
+          set -eu
+          aws s3 cp "$SENTINEL_PATH" \
+            "s3://${S3_BUCKET}/models/benchmark_history/$(basename "$SENTINEL_PATH")"
