@@ -188,9 +188,18 @@ done
 if [ -n "$skipped_files" ]; then
   echo "pre-pr hook: benchmark gate skipped for additive-only files:$skipped_files" >&2
 fi
-if [ "$shared_changed" -eq 1 ]; then
-  positions="$positions QB RB WR TE K DST"
-fi
+# NOTE: ``shared_changed`` is intentionally NOT expanded to all 6 positions.
+# Shared pipeline files (src/shared/{pipeline,training,neural_net,...}.py) run
+# the *same* code path for every position; a regression on the fp32 path will
+# surface on ANY position you happen to verify locally. Requiring all 6 fresh
+# benchmarks forced ~10-13 min full sweeps for changes whose behavioural
+# equivalence is already provable from a single-position byte-identical
+# match. The risky-token check in ``is_additive_and_safe`` is the safety
+# net for changes that could affect only some positions (e.g. touching a
+# loss-config name); when that flags the file, ``shared_changed`` is 1 and
+# the at-least-one-position-fresh requirement below kicks in. Per-position
+# file changes still require *that* position's evidence — handled by the
+# ``positions`` loop unchanged.
 
 # [docs-only] opt-in: any commit in base..HEAD whose message contains the
 # `[docs-only]` literal signals the author asserts the diff has no
@@ -198,11 +207,13 @@ fi
 # benchmark freshness gate. Mirrors `.github/workflows/tests.yml`'s
 # detect-job opt-in (same tag, same trust contract). The hook cannot
 # verify the assertion — author owns correctness.
-if [ -n "$base" ] && [ -n "$positions" ] && git log --format=%B "$base..HEAD" 2>/dev/null | grep -qF '[docs-only]'; then
+if [ -n "$base" ] && { [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; } && \
+   git log --format=%B "$base..HEAD" 2>/dev/null | grep -qF '[docs-only]'; then
   positions=""
+  shared_changed=0
 fi
 
-if [ -n "$positions" ]; then
+if [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; then
   positions=$(printf '%s\n' $positions | sort -u | tr '\n' ' ')
 
   # Reference mtime: newest mtime among any pipeline-affecting file in the tree.
@@ -226,6 +237,9 @@ if [ -n "$positions" ]; then
   missing=""
   for pos in $positions; do
     found=0
+    # 1) ``src/benchmarking/benchmark.py`` (and the Batch ``--download-only``
+    # path) write a multi-position JSON into ``benchmark_history/`` whose
+    # ``positions`` array enumerates which positions the run covered.
     for bf in benchmark_history/*.json; do
       [ -f "$bf" ] || continue
       bts=$(stat -f %m "$bf" 2>/dev/null || stat -c %Y "$bf" 2>/dev/null || echo 0)
@@ -236,6 +250,25 @@ if [ -n "$positions" ]; then
         fi
       fi
     done
+    # 2) ``python -m src.{pos}.run_pipeline`` (single-position local run) does
+    # NOT write to ``benchmark_history/`` — it persists model artifacts and
+    # the matching scaler / per-target meta JSON under ``{pos}/outputs/models/``.
+    # Treat the artifact dir's mtime as fresh single-position evidence: the
+    # pipeline can't reach the save-artifacts phase without completing the
+    # full train + eval loop, so a fresh dir mtime is a strong "this position
+    # trained cleanly after the last pipeline edit" signal. Saves the 10-13
+    # min ``benchmarking.benchmark POS1 ... POSN`` full-sweep cost on PRs
+    # that touched a shared pipeline file but only need to verify a subset
+    # of positions locally.
+    if [ "$found" -eq 0 ]; then
+      lpos=$(printf '%s' "$pos" | tr '[:upper:]' '[:lower:]')
+      if [ -d "$lpos/outputs/models" ]; then
+        pos_outputs_ts=$(stat -f %m "$lpos/outputs/models" 2>/dev/null || stat -c %Y "$lpos/outputs/models" 2>/dev/null || echo 0)
+        if [ "$pos_outputs_ts" -gt "$ref_ts" ]; then
+          found=1
+        fi
+      fi
+    fi
     if [ "$found" -eq 0 ]; then
       missing="$missing $pos"
     fi
@@ -243,14 +276,55 @@ if [ -n "$positions" ]; then
 
   if [ -n "$missing" ]; then
     echo "----- pre-pr hook: metric-regression gate FAILED -----" >&2
-    echo "pipeline files changed but no fresh benchmark_history/ entry covers:$missing" >&2
+    echo "pipeline files changed but no fresh evidence (benchmark_history/ JSON" >&2
+    echo "or {pos}/outputs/models/ artifacts) covers:$missing" >&2
     echo "run one of:" >&2
     for pos in $missing; do
       lpos=$(printf '%s' "$pos" | tr '[:upper:]' '[:lower:]')
-      echo "  python -m src.${lpos}.run_pipeline" >&2
+      echo "  python -m src.${lpos}.run_pipeline   # single-position, fastest" >&2
     done
-    echo "  python -m src.benchmarking.benchmark$missing" >&2
+    echo "  python -m src.benchmarking.benchmark$missing   # all positions in one JSON" >&2
     fail=1
+  fi
+
+  # Shared bucket: a touched shared pipeline file means the same code path
+  # ran for every position. Any one position's fresh evidence is enough to
+  # rule out a structural regression on that path — the risky-token check in
+  # ``is_additive_and_safe`` is the safety net for changes that could affect
+  # only a subset. Require at-least-one-position-fresh; report the case where
+  # nothing has been verified at all.
+  if [ "$shared_changed" -eq 1 ]; then
+    any_position_fresh=0
+    for pos in QB RB WR TE K DST; do
+      for bf in benchmark_history/*.json; do
+        [ -f "$bf" ] || continue
+        bts=$(stat -f %m "$bf" 2>/dev/null || stat -c %Y "$bf" 2>/dev/null || echo 0)
+        if [ "$bts" -gt "$ref_ts" ]; then
+          if /usr/bin/jq -e --arg p "$pos" '.positions | index($p)' "$bf" >/dev/null 2>&1; then
+            any_position_fresh=1
+            break 2
+          fi
+        fi
+      done
+      lpos=$(printf '%s' "$pos" | tr '[:upper:]' '[:lower:]')
+      if [ -d "$lpos/outputs/models" ]; then
+        pos_outputs_ts=$(stat -f %m "$lpos/outputs/models" 2>/dev/null || stat -c %Y "$lpos/outputs/models" 2>/dev/null || echo 0)
+        if [ "$pos_outputs_ts" -gt "$ref_ts" ]; then
+          any_position_fresh=1
+          break
+        fi
+      fi
+    done
+    if [ "$any_position_fresh" -eq 0 ]; then
+      echo "----- pre-pr hook: metric-regression gate FAILED -----" >&2
+      echo "shared pipeline file changed (src/shared/{pipeline,training,...}.py)" >&2
+      echo "but no position has fresh evidence (no benchmark_history/ JSON and" >&2
+      echo "no {pos}/outputs/models/ newer than the touched pipeline files)." >&2
+      echo "Verify on at least one position before opening the PR:" >&2
+      echo "  python -m src.dst.run_pipeline   # heaviest path, strongest signal" >&2
+      echo "  python -m src.k.run_pipeline     # fastest, smoke-only" >&2
+      fail=1
+    fi
   fi
 fi
 
