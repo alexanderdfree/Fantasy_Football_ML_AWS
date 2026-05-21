@@ -74,14 +74,20 @@ def test_trial_to_params_drops_use_max_depth_flag():
     assert "use_max_depth" not in cleaned
 
 
-def test_print_best_handles_missing_study(capsys, monkeypatch):
+def test_print_best_handles_missing_study(capsys, monkeypatch, tmp_path):
     """``main --print-best <POS>`` for an unknown position should print a
     soft error instead of crashing — the per-position loop continues so a
     follow-up position with a valid study still prints.
 
     Skip ``_ensure_data_from_s3`` so the test doesn't reach for boto3.
+    ``chdir`` to ``tmp_path`` so the relative ``sqlite:///tune_lgbm_qb.db``
+    storage path resolves to an empty tmp dir rather than the project root
+    (which may carry a real tuning study from a prior interactive
+    ``tune_lgbm.py`` run — that file would make this test see real trial
+    data and fail the "no saved study" assertion).
     """
     monkeypatch.setattr(tune_lgbm, "_ensure_data_from_s3", lambda: None)
+    monkeypatch.chdir(tmp_path)
     with patch("sys.argv", ["tune_lgbm.py", "QB", "--print-best"]):
         tune_lgbm.main()
     out = capsys.readouterr().out
