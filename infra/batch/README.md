@@ -100,8 +100,9 @@ works, just with a slower first pull on each fresh Spot instance.
      --positions QB RB WR TE K DST --seed 42
    ```
    All six should reach RUNNING simultaneously (six g4dn.xlarge instances,
-   exactly saturating the 24 vCPU Spot quota). Total wall-clock should be
-   ~25–30 min — the slowest position dominates, not the sum.
+   exactly saturating the 24 vCPU Spot quota). Total wall-clock for the
+   "Submit Batch jobs and wait" step measured ~10 min on 2026-05-21
+   — the slowest position dominates, not the sum.
 
 4. **End-to-end CI:** `gh workflow run train-batch.yml -f positions=K -f seed=42`
    should run the detect → launch → freshness → benchmark commit → ECS refresh
@@ -128,8 +129,10 @@ stopped in parallel — flipping back is instant.
 
 ## Cost
 
-Spot g4dn.xlarge in us-east-1: ~$0.16/hr × 6 positions × ~25 min ≈ **~$0.40 per
-full retrain**. Single-position retrains scale down linearly. At zero capacity
+Spot g4dn.xlarge in us-east-1: ~$0.16/hr × 6 positions × ~10 min ≈ **~$0.16 per
+full retrain** (measured 2026-05-21; cost dropped from the original ~$0.40 est.
+as per-position training came in ~2 min not ~5). Single-position retrains scale
+down linearly. At zero capacity
 when idle, the CE has no standing cost. CloudWatch logs and ECR storage are
 free-tier territory for this volume.
 

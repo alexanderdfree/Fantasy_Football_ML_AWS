@@ -65,10 +65,6 @@ from src.shared.artifact_integrity import (
 from src.shared.evaluation import compute_metrics
 from src.shared.feature_build import build_position_features, scale_and_clip
 from src.shared.model_sync import (
-    sync_benchmark_history_from_s3,
-    sync_data_from_s3,
-    sync_models_from_s3,
-    sync_predictions_cache_from_s3,
     upload_predictions_cache_to_s3,
 )
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
@@ -80,10 +76,10 @@ from src.shared.neural_net import (
 from src.shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
 from src.shared.weather_features import WEATHER_FEATURES_ALL
 
-sync_data_from_s3()
-sync_models_from_s3()
-sync_benchmark_history_from_s3()
-sync_predictions_cache_from_s3()
+# Boot-time S3 sync lives in gunicorn.conf.py::on_starting (master-level,
+# before --preload import) so this module has no import-time side effects.
+# See that hook for the rationale; cross-link kept here so future readers
+# don't reach for the simpler-looking module-level call.
 
 app = Flask(__name__)
 

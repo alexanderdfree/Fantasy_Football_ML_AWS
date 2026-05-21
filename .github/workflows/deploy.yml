@@ -131,6 +131,45 @@ jobs:
           container-name: fantasy-predictor
           image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
 
+      # Tune the ALB target group so each rolling deploy isn't held up by
+      # AWS defaults that were built for stateful long-poll services. Idempotent —
+      # no-op when already set. Runs *before* the deploy so the about-to-drain
+      # task uses the shorter deregistration delay.
+      #
+      #   - deregistration_delay.timeout_seconds = 30   (default 300)
+      #     Old-task drain. Flask request p99 is <1s; 30s is generous and saves
+      #     ~270s per rolling redeploy.
+      #   - HealthyThresholdCount         = 2          (default 5)
+      #   - HealthCheckIntervalSeconds    = 10         (default 30)
+      #     Mark a fresh task healthy after ~20s instead of 5×30s=150s, saving
+      #     ~130s on the new-task half of the rollout.
+      #
+      # Target-group ARN is discovered from the service so this stays in sync
+      # with whatever target group the service is actually attached to.
+      - name: Tune ALB target group for fast rolling deploys
+        run: |
+          TG_ARN=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --region "$AWS_REGION" \
+            --query 'services[0].loadBalancers[0].targetGroupArn' \
+            --output text)
+          if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
+            echo "ERROR: could not resolve target group for $ECS_SERVICE"
+            exit 1
+          fi
+          echo "Tuning target group: $TG_ARN"
+          aws elbv2 modify-target-group-attributes \
+            --target-group-arn "$TG_ARN" \
+            --region "$AWS_REGION" \
+            --attributes Key=deregistration_delay.timeout_seconds,Value=30 \
+            --no-cli-pager > /dev/null
+          aws elbv2 modify-target-group \
+            --target-group-arn "$TG_ARN" \
+            --region "$AWS_REGION" \
+            --healthy-threshold-count 2 \
+            --health-check-interval-seconds 10 \
+            --no-cli-pager > /dev/null
+
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
