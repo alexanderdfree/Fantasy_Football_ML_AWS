@@ -1,8 +1,13 @@
 """QB hyperparameters bundled in a single :class:`PositionConfig`.
 
 Downstream consumers (training pipeline, serving, tests) read from the
-exported ``POSITION_CONFIG`` exclusively; no module-level UPPERCASE constants
-are exposed. Private helper variables stay scoped to construction.
+exported ``POSITION_CONFIG`` exclusively. ``CONFIG_TINY`` and
+``ATTN_STATIC_CATEGORIES`` remain at module level — the former is picked up
+by ``tests/_pipeline_e2e_utils.build_tiny_config('QB')`` (and by
+``src/shared/run_pipeline_factory.py``'s ``--tiny`` CLI path) via a
+``getattr(config_mod, "CONFIG_TINY", None)`` lookup; the latter by the
+attention-static whitelist test. Private helper variables stay scoped to
+construction.
 """
 
 from src.shared.position_config import (
@@ -109,6 +114,40 @@ _INCLUDE_FEATURES = {
 }
 
 ATTN_STATIC_CATEGORIES = DEFAULT_ATTN_STATIC_CATEGORIES
+
+
+# === Tiny config for end-to-end smoke tests ===
+# Shrunk overrides layered on top of ``build_pipeline_config("QB",
+# POSITION_CONFIG)`` by ``tests/_pipeline_e2e_utils.py::build_tiny_config``.
+# The generic NN/scheduler knobs (``nn_backbone_layers``, ``nn_head_hidden``,
+# ``nn_epochs``, ``nn_batch_size``, ``nn_patience``, etc.) live in
+# ``tests/_pipeline_e2e_utils.py::_TINY_OVERRIDES`` so they're shared across
+# every position. Only the QB-specific shrinks stay here:
+#   * per-target Ridge alpha grids collapsed to one alpha,
+#   * loss weights mirroring the production 2.0/delta rebalance on Huber
+#     heads + 1.0 on Poisson NLL heads (without these the count heads
+#     collapse to mean under yards-dominated gradients — see
+#     ``loss_weights`` comment lower in this file),
+#   * Huber deltas matching production so the test exercises the same
+#     loss-head shape as the real run.
+# Attention + LightGBM disabled (they're already disabled by ``_TINY_OVERRIDES``
+# but spelling them here makes the override explicit when reading config_tiny
+# in isolation).
+CONFIG_TINY = {
+    "targets": _TARGETS,
+    "ridge_alpha_grids": {t: [1.0] for t in _TARGETS},
+    "loss_weights": {
+        "passing_yards": 0.08,  # 2.0 / 25 (Huber)
+        "rushing_yards": 0.133,  # 2.0 / 15 (Huber)
+        "passing_tds": 1.0,  # Poisson NLL
+        "rushing_tds": 1.0,  # Poisson NLL
+        "interceptions": 1.0,  # Poisson NLL
+        "fumbles_lost": 1.0,  # Poisson NLL
+    },
+    "huber_deltas": {"passing_yards": 25.0, "rushing_yards": 15.0},
+    "train_attention_nn": False,
+    "train_lightgbm": False,
+}
 
 
 # Single source of truth for downstream consumers (registry / pipeline / serving).
