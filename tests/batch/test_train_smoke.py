@@ -209,7 +209,7 @@ def test_smoke_fail_first_run_leaves_stable_null(mock_smoke, mock_boto, tmp_path
 @mock.patch("src.batch.train.run_smoke_test")
 def test_smoke_fail_does_not_block_upload_completion(mock_smoke, mock_boto, tmp_path):
     """A smoke-test failure must NOT abort upload_artifacts — the artifact
-    still lands in history/ and the legacy mirror still updates. We only
+    still lands in history/ and the manifest still gets written. We only
     gate the ``stable`` pointer advance."""
     from src.batch.train import upload_artifacts
 
@@ -224,11 +224,12 @@ def test_smoke_fail_does_not_block_upload_completion(mock_smoke, mock_boto, tmp_
     # No exception expected.
     upload_artifacts("my-bucket", "RB", str(d))
 
-    # All three writes still happened: history key, manifest, legacy mirror.
+    # Both producer writes still happened: history key + manifest. The legacy
+    # mirror is no longer written (Layer C of the race fix).
     history_keys = [k for k in fake_s3.objects if k.startswith("models/RB/history/")]
     assert len(history_keys) == 1
     assert "models/RB/manifest.json" in fake_s3.objects
-    assert "models/RB/model.tar.gz" in fake_s3.objects
+    assert "models/RB/model.tar.gz" not in fake_s3.objects
 
 
 @mock.patch("src.batch.train.boto3.client")

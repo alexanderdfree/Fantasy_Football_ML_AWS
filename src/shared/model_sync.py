@@ -177,19 +177,24 @@ def _try_key(s3_client, bucket: str, key: str, dest: Path) -> dict:
 def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict:
     """Sync one position with manifest-driven fallback.
 
-    Order: manifest.stable → manifest.current → manifest.previous → legacy
-    ``model.tar.gz`` (only when manifest is absent; a manifest-present-but-
-    all-entries-broken state is a real bug, not something to paper over with
-    a stale legacy copy). The frontend prefers ``stable`` because that's the
-    last artifact a smoke test confirmed actually loads + predicts; serving
-    ``current`` means stable was missing or unreadable, which is page-worthy.
+    Order: manifest.stable → manifest.current → manifest.previous. There is
+    no legacy ``model.tar.gz`` fallback anymore — the producer
+    (``src/batch/train.py::upload_artifacts``) stopped writing that key; every
+    production-trained position has a manifest after the schema-v2 migration.
+    A manifest-absent state in production is a real bug (the producer
+    crashed before the atomic manifest put, or someone hand-deleted the
+    manifest); fall back through the chain only, then raise loud.
+
+    The frontend prefers ``stable`` because that's the last artifact a smoke
+    test confirmed actually loads + predicts; serving ``current`` means
+    stable was missing or unreadable, which is page-worthy.
 
     A v1-shaped manifest (no ``stable`` slot) reads as ``stable=None`` and
     falls through to ``current`` automatically — that's the migration window.
 
     Each fall-through is logged with the grep-able tag
-    ``source=stable|current|previous|legacy`` so on-call can tell from
-    CloudWatch which artifact tier we ended up on.
+    ``source=stable|current|previous`` so on-call can tell from CloudWatch
+    which artifact tier we ended up on.
     """
     from botocore.exceptions import ClientError
 
@@ -202,10 +207,20 @@ def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict
     manifest = load_manifest(s3_client, bucket, prefix, pos)
 
     if manifest is None:
-        # Pre-migration buckets, first boot after the producer change.
-        r = _try_key(s3_client, bucket, legacy_model_key(prefix, pos), dest)
-        print(f"[model_sync] {pos}: source=legacy ({r['key']})", flush=True)
-        return {"pos": pos, "source": "legacy", **r}
+        # Pre-migration buckets are no longer expected. Pre-schema-v2 buckets
+        # would have hit the legacy ``model.tar.gz`` fallback we removed; any
+        # production bucket past that migration has a manifest for every
+        # trained position. Raise rather than silently serving a stale local
+        # copy (or, worse, a stale legacy key that may have been overwritten
+        # by a parallel run from a different image).
+        raise RuntimeError(
+            f"[model_sync] {pos}: no manifest at "
+            f"s3://{bucket}/{manifest_key(prefix, pos)}. "
+            "Producer (src/batch/train.py::upload_artifacts) writes the manifest "
+            "as its atomic promotion step; absence means the producer crashed "
+            "before that step or the object was hand-deleted. Refusing to fall "
+            "back to legacy mirror — that's the race source layer C eliminated."
+        )
 
     tried: list[tuple[str, str, str]] = []
     for label in ("stable", "current", "previous"):

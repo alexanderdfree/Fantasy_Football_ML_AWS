@@ -34,7 +34,6 @@ import torch
 from src.shared.artifact_gc import prune as _gc_prune
 from src.shared.model_sync import (
     build_manifest,
-    legacy_model_key,
     load_manifest,
     manifest_key,
     new_history_key,
@@ -340,7 +339,7 @@ def _try_smoke_test(position: str, model_dir: str) -> bool:
 
 def upload_artifacts(s3_bucket, position, model_dir):
     """Tar, upload to a versioned history key, validate, smoke-test, atomically
-    promote, then mirror to the legacy key for pre-manifest consumers.
+    promote the manifest.
 
     Order (each step raises on failure unless noted):
       1. Structural check of ``model_dir`` (fast-fail before S3 round-trips).
@@ -354,9 +353,15 @@ def upload_artifacts(s3_bucket, position, model_dir):
          and ``stable`` advanced iff smoke test passed — **this write is the
          atomic promotion**. Any earlier raise leaves the old manifest in
          place and the site keeps serving the previous good artifact.
-      8. Overwrite legacy ``model.tar.gz`` mirror (pre-manifest compat).
-      9. Best-effort retention prune (failure is non-fatal). The artifact
+      8. Best-effort retention prune (failure is non-fatal). The artifact
          pointed to by ``stable`` is exempted from pruning.
+
+    Note: the legacy ``models/{POS}/model.tar.gz`` mirror is no longer written
+    here. Two parallel train-batch runs writing the same legacy key were
+    last-write-wins; the manifest's atomic single-PUT promotion is the only
+    artifact pointer needed. Consumers — serving via
+    ``src.shared.model_sync._sync_one`` and CI benchmark aggregation via
+    ``src.batch.benchmark.download_metrics`` — both read the manifest now.
     """
     if not os.path.isdir(model_dir):
         raise RuntimeError(
@@ -412,14 +417,6 @@ def upload_artifacts(s3_bucket, position, model_dir):
         )
         write_manifest(s3, s3_bucket, s3_prefix, position, new_manifest)
         print(f"Promoted s3://{s3_bucket}/{manifest_key(s3_prefix, position)}")
-
-        # Legacy mirror goes LAST — pre-manifest consumers see the same bytes
-        # as the freshly-promoted current. Written last so a failure between
-        # steps 6 and 7 leaves the site on the (working) new current with a
-        # stale legacy; the other direction would be worse.
-        legacy_k = legacy_model_key(s3_prefix, position)
-        s3.upload_file(tmp_path, s3_bucket, legacy_k)
-        print(f"Updated legacy mirror s3://{s3_bucket}/{legacy_k}")
 
         try:
             deleted = _gc_prune(s3, s3_bucket, s3_prefix, position, new_manifest)
