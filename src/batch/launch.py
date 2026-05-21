@@ -281,21 +281,66 @@ def wait_for_jobs(job_ids, timeout_seconds=None, batch_client=None):
 def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
     """Download model artifacts from S3 back to local position dirs.
 
+    Resolves the per-position artifact via ``models/{POS}/manifest.json`` rather
+    than the legacy ``models/{POS}/model.tar.gz`` mirror, which was removed in
+    the parallel-train-batch race fix (two concurrent runs writing the same
+    legacy key were last-write-wins). Walks ``current → stable → previous``,
+    matching the ``src/batch/benchmark.py::download_metrics`` chain so a
+    post-train ``launch.py`` invocation pulls the same artifact CI just
+    benchmarked.
+
     If stopped_at_by_pos is provided (position -> ms-epoch stoppedAt), warn
-    loudly when the S3 object's LastModified is older than the job finish —
-    that means we're pulling a stale artifact from a prior run.
+    loudly when the resolved entry's S3 LastModified is older than the job
+    finish — that means we're pulling a stale artifact from a prior run.
+
+    Missing manifest and "all entries failed" both surface a per-position
+    skip rather than raising, preserving the original "one bad position
+    shouldn't kill a six-position download" behaviour.
     """
+    from src.shared.model_sync import load_manifest
+
     s3 = s3_client or boto3.client("s3", region_name=AWS_REGION)
     stopped_at_by_pos = stopped_at_by_pos or {}
+    s3_prefix = os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/")
 
     for pos in positions:
-        s3_key = f"models/{pos}/model.tar.gz"
         local_model_dir = os.path.join(pos.lower(), "outputs", "models")
         os.makedirs(local_model_dir, exist_ok=True)
 
-        # Stale-artifact guard: compare remote LastModified to job stoppedAt.
         try:
-            head = s3.head_object(Bucket=S3_BUCKET, Key=s3_key)
+            manifest = load_manifest(s3, S3_BUCKET, s3_prefix, pos)
+        except ClientError as e:
+            print(f"[{pos}] manifest fetch failed: {e!r} — skipping")
+            continue
+        if manifest is None:
+            print(
+                f"[{pos}] No manifest at s3://{S3_BUCKET}/{s3_prefix}/{pos}/manifest.json, skipping"
+            )
+            continue
+
+        # Resolve in priority order — same chain as benchmark.download_metrics
+        # so the artifact a post-train launch.py pulls matches what CI just
+        # benchmarked. Skip entries with no resolvable key.
+        tried: list[tuple[str, str, str]] = []
+        extracted = False
+        for label in ("current", "stable", "previous"):
+            entry = manifest.get(label)
+            if not entry or not entry.get("key"):
+                continue
+            s3_key = entry["key"]
+
+            # Stale-artifact guard: compare remote LastModified to job stoppedAt.
+            try:
+                head = s3.head_object(Bucket=S3_BUCKET, Key=s3_key)
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code")
+                if code in ("404", "NoSuchKey", "NotFound"):
+                    tried.append((label, s3_key, "missing"))
+                    print(
+                        f"[{pos}] {label} key s3://{S3_BUCKET}/{s3_key} missing — falling through"
+                    )
+                    continue
+                raise
             remote_modified = head.get("LastModified")  # datetime, tz-aware
             stopped_at_ms = stopped_at_by_pos.get(pos)
             if remote_modified is not None and stopped_at_ms:
@@ -307,19 +352,23 @@ def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
                         f"({remote_modified.isoformat()}) is older than job "
                         f"stoppedAt ({stopped_at_s}). Artifact may be stale."
                     )
-        except ClientError as e:
-            code = e.response.get("Error", {}).get("Code")
-            if code in ("404", "NoSuchKey", "NotFound"):
-                print(f"[{pos}] No artifacts at s3://{S3_BUCKET}/{s3_key}, skipping")
-                continue
-            raise
 
-        with tempfile.NamedTemporaryFile(suffix=".tar.gz") as tmp:
-            print(f"[{pos}] Downloading s3://{S3_BUCKET}/{s3_key} ...")
-            s3.download_file(S3_BUCKET, s3_key, tmp.name)
-            with tarfile.open(tmp.name, "r:gz") as tar:
-                tar.extractall(local_model_dir, filter="data")
-            print(f"[{pos}] Extracted to {local_model_dir}/")
+            with tempfile.NamedTemporaryFile(suffix=".tar.gz") as tmp:
+                print(f"[{pos}] Downloading s3://{S3_BUCKET}/{s3_key} (source={label}) ...")
+                try:
+                    s3.download_file(S3_BUCKET, s3_key, tmp.name)
+                    with tarfile.open(tmp.name, "r:gz") as tar:
+                        tar.extractall(local_model_dir, filter="data")
+                except (ClientError, tarfile.TarError, OSError) as e:
+                    tried.append((label, s3_key, repr(e)))
+                    print(f"[{pos}] {label} download/extract failed: {e!r} — falling through")
+                    continue
+            print(f"[{pos}] Extracted to {local_model_dir}/ (source={label})")
+            extracted = True
+            break
+
+        if not extracted:
+            print(f"[{pos}] WARNING: all manifest entries failed; tried={tried!r}")
 
 
 def _print_plan(positions, seed):
