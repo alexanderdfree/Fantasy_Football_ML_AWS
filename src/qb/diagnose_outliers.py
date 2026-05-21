@@ -129,8 +129,7 @@ def _train_models(seed=42):
     ridge_preds = ridge_model.predict(X_test)
 
     # --- NN (delegated to the shared training routine) ---
-    nn_model, nn_scaler, _val_preds, nn_preds, _nn_metrics, _history = _train_nn(
-        "QB",
+    nn_model, nn_scaler, nn_preds, _nn_metrics, _history = _train_nn(
         X_train,
         X_val,
         X_test,
