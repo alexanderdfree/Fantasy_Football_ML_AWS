@@ -1,21 +1,20 @@
+"""WR data helpers — thin wrappers around shared position helpers."""
+
 import pandas as pd
+
+from src.shared.position_data import compute_team_position_totals
+from src.shared.position_data import filter_to_position as _filter_to_position
+
+_TEAM_WR_AGGREGATIONS = {
+    "team_wr_targets": ("targets", "sum"),
+}
 
 
 def filter_to_position(df: pd.DataFrame) -> pd.DataFrame:
     """Filter featured DataFrame to WR rows only."""
-    wr_df = df[df["position"] == "WR"].copy()
-    pos_cols = ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]
-    wr_df.drop(columns=[c for c in pos_cols if c in wr_df.columns], inplace=True)
-    return wr_df
+    return _filter_to_position(df, "WR")
 
 
 def compute_team_wr_totals(full_wr_df: pd.DataFrame) -> pd.DataFrame:
-    """Compute team-level WR totals for share features."""
-    team_wr_totals = (
-        full_wr_df.groupby(["recent_team", "season", "week"])
-        .agg(
-            team_wr_targets=("targets", "sum"),
-        )
-        .reset_index()
-    )
-    return team_wr_totals
+    """Compute team-level WR totals (targets) for share features."""
+    return compute_team_position_totals(full_wr_df, _TEAM_WR_AGGREGATIONS)
