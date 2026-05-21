@@ -239,8 +239,10 @@ def test_load_raw_data_fresh_fetch_old_seasons_only(tmp_path, monkeypatch):
     assert "practice_status" in df.columns
     assert "game_status" in df.columns
     assert "depth_chart_rank" in df.columns
-    # Schedules attached as attrs metadata.
-    assert "schedules" in df.attrs
+    # Every parquet cache exists. Schedules are persisted to disk for
+    # downstream consumers (src/k/data.py::load_data,
+    # src/shared/weather_features.py::_load_schedules) — not attached via
+    # df.attrs, which doesn't survive to_parquet.
     # Every parquet cache exists.
     for name in ("weekly", "rosters", "schedules", "snap_counts", "injuries", "depth_charts"):
         assert (tmp_path / f"{name}_2022_2023.parquet").exists()
