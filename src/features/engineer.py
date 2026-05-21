@@ -6,7 +6,6 @@ from src.config import (
     EWMA_SPANS,
     EWMA_STATS,
     OPP_ROLLING_WINDOW,
-    ROLL_AGGS,
     ROLL_STATS,
     ROLLING_WINDOWS,
     SEASONS,
@@ -702,8 +701,6 @@ def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
         def_pts.rename(
             columns={
                 "opp_pts_allowed_to_pos": "opp_fantasy_pts_allowed_to_pos",
-                "opp_rush_pts_allowed_to_pos": "opp_rush_pts_allowed_to_pos",
-                "opp_recv_pts_allowed_to_pos": "opp_recv_pts_allowed_to_pos",
             },
             inplace=True,
         )
@@ -881,89 +878,6 @@ def _build_contextual_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def get_feature_columns() -> list[str]:
-    """Dynamically generate the ordered list of all feature column names."""
-    cols = []
-
-    # Rolling features
-    for stat in ROLL_STATS:
-        for window in ROLLING_WINDOWS:
-            for agg in ROLL_AGGS:
-                cols.append(f"rolling_{agg}_{stat}_L{window}")
-            if stat == "fantasy_points":
-                cols.append(f"rolling_min_{stat}_L{window}")
-
-    # Prior-season summary
-    for stat in ROLL_STATS:
-        for agg in ROLL_AGGS:
-            cols.append(f"prior_season_{agg}_{stat}")
-
-    # EWMA
-    for stat in EWMA_STATS:
-        for span in EWMA_SPANS:
-            cols.append(f"ewma_{stat}_L{span}")
-
-    # Trend
-    for stat in TREND_STATS:
-        cols.append(f"trend_{stat}")
-
-    # Share
-    for window in SHARE_WINDOWS:
-        cols.append(f"target_share_L{window}")
-        cols.append(f"carry_share_L{window}")
-    cols += ["snap_pct", "air_yards_share"]
-
-    # Matchup
-    cols += [
-        "opp_fantasy_pts_allowed_to_pos",
-        "opp_rush_pts_allowed_to_pos",
-        "opp_recv_pts_allowed_to_pos",
-        "opp_def_rank_vs_pos",
-    ]
-
-    # Defense matchup (detailed)
-    cols += [
-        "opp_def_sacks_L5",
-        "opp_def_pass_yds_allowed_L5",
-        "opp_def_pass_td_allowed_L5",
-        "opp_def_ints_L5",
-        "opp_def_rush_yds_allowed_L5",
-        "opp_def_pts_allowed_L5",
-    ]
-
-    # Contextual
-    cols += [
-        "is_home",
-        "week",
-        "is_returning_from_absence",
-        "days_rest",
-        "practice_status",
-        "game_status",
-        "depth_chart_rank",
-    ]
-
-    # Weather, venue, and Vegas implied-odds features
-    # (merged from schedule data in pipeline; per-position drops in *_config.py)
-    cols += [
-        "implied_team_total",
-        "implied_opp_total",
-        "total_line",
-        "is_dome",
-        "is_grass",
-        "temp_adjusted",
-        "wind_adjusted",
-        "is_divisional",
-        "days_rest_improved",
-        "rest_advantage",
-        "implied_total_x_wind",
-    ]
-
-    # Position encoding
-    cols += ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]
-
-    return cols
-
-
 # ── Whitelist-based feature selection ────────────────────────────────────────
 INCLUDE_CATEGORY_ORDER = [
     "rolling",
@@ -1007,31 +921,3 @@ def get_attn_static_columns(
     """
     whitelist = set(static_whitelist)
     return [c for c in all_feature_cols if c in whitelist]
-
-
-def fill_nans_safe(train_df, val_df, test_df, feature_cols) -> tuple:
-    """Fill NaNs using ONLY training set statistics. Called AFTER temporal_split()."""
-    # Step 1: Player-level means from training set
-    player_feature_means = train_df.groupby("player_id")[feature_cols].mean()
-    for split_df in [train_df, val_df, test_df]:
-        for col in feature_cols:
-            mask = split_df[col].isna()
-            if mask.any():
-                split_df.loc[mask, col] = split_df.loc[mask, "player_id"].map(
-                    player_feature_means[col]
-                )
-
-    # Step 2: Position-level mean from TRAINING SET ONLY
-    pos_means = train_df.groupby("position")[feature_cols].mean()
-    for split_df in [train_df, val_df, test_df]:
-        for col in feature_cols:
-            for pos in ["QB", "RB", "WR", "TE"]:
-                mask = (split_df[col].isna()) & (split_df["position"] == pos)
-                if mask.any() and pos in pos_means.index:
-                    split_df.loc[mask, col] = pos_means.loc[pos, col]
-
-    # Step 3: Zero fill remaining
-    for split_df in [train_df, val_df, test_df]:
-        split_df[feature_cols] = split_df[feature_cols].fillna(0)
-
-    return train_df, val_df, test_df
