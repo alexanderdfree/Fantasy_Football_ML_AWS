@@ -91,6 +91,21 @@ _cache = {}
 # results DataFrame. Reentrant because _ensure_metrics nests into
 # _ensure_position_loaded.
 _cache_lock = threading.RLock()
+# Wiki page caching uses its own lock so a slow first-hit ``_ensure_metrics``
+# (model loads, feature build) doesn't serialize wiki-tab GETs behind it.
+# Wiki entries live in the SAME ``_cache`` dict (keyed by ("wiki", slug))
+# because the existing module-global cache structure is shared; only the
+# locking discipline diverges. Plain ``threading.Lock`` is sufficient — the
+# wiki cache path doesn't nest into other cache helpers, so the RLock
+# reentrancy that ``_cache_lock`` requires is overkill here.
+#
+# See L-SS4 in code_review_findings.md for the original analysis (one
+# RLock serializing two unrelated cache disciplines).
+_wiki_cache_lock = threading.Lock()
+# Benchmark-history cache (see ``_load_benchmark_history_rows``) is a third
+# discipline because its invalidation is mtime-driven rather than write-driven
+# and the cache structure is a tuple, not a dict slot. Documented at
+# ``_BENCHMARK_HISTORY_LOCK`` near the rendering helpers.
 
 
 def _safe_num(v):
@@ -564,9 +579,17 @@ def _wiki_rewrite_href(href: str, doc_path: str) -> str:
 
 
 def _render_wiki_doc(slug: str) -> str:
-    """Return cached, rendered HTML for the doc at WIKI_DOCS[slug]."""
+    """Return cached, rendered HTML for the doc at WIKI_DOCS[slug].
+
+    Uses ``_wiki_cache_lock`` (separate from ``_cache_lock``) so a wiki GET
+    can never serialize behind a slow ``_ensure_metrics`` model-load. Cache
+    entries still live in the shared ``_cache`` dict, but writes go through
+    a dedicated lock — safe because no other code path mutates the
+    ``("wiki", slug)`` keys, and Python dict insert/get for distinct keys
+    is atomic at the bytecode level.
+    """
     cache_key = ("wiki", slug)
-    with _cache_lock:
+    with _wiki_cache_lock:
         cached = _cache.get(cache_key)
         if cached is not None:
             return cached
@@ -600,7 +623,7 @@ def _render_wiki_doc(slug: str) -> str:
         protocols=_WIKI_ALLOWED_PROTOCOLS,
         strip=True,
     )
-    with _cache_lock:
+    with _wiki_cache_lock:
         _cache[cache_key] = html
     return html
 
@@ -675,9 +698,12 @@ def _apply_position_models(train, val, test, pos, results):
         pos_train, pos_val, pos_test, reg, feature_cols
     )
 
-    # DST still applies a post-hoc adjustment (defensive TDs + safeties); K now
-    # encodes its miss penalties as signed raw-value heads (see target_signs).
-    # QB/RB/WR/TE aggregate raw-stat preds via reg["aggregate_fn"].
+    # No position currently uses a post-hoc adjustment: K encodes miss penalties
+    # as signed raw-value heads (see ``target_signs``) and QB/RB/WR/TE/DST all
+    # aggregate raw-stat preds via ``reg["aggregate_fn"]``. The
+    # ``compute_adjustment_fn`` slot is plumbed through the registry (set
+    # explicitly to ``None`` for K + DST in ``src/shared/registry.py``) so a
+    # future position that needs one can opt in without touching this code.
     adj_values = None
     if reg.get("compute_adjustment_fn") is not None:
         adj = reg["compute_adjustment_fn"](pos_test)
@@ -1125,6 +1151,21 @@ def _ensure_position_loaded(pos):
             return  # cached hard-failure — don't retry every request
     with _cache_lock:
         if "splits" not in _cache:
+            # ``_ensure_base_data`` ran above; if "splits" is still missing
+            # something is wrong with the load (e.g. parquet read failed and
+            # the base-loaded path was force-set elsewhere). Previously this
+            # silently early-returned and the position cached as failed-with-
+            # no-explanation. Log loudly so the failure surfaces in container
+            # logs + register an error so /health and /api/predictions
+            # degraded_positions reflect the state.
+            err_msg = (
+                f"_ensure_position_loaded({pos}) called but _cache has no "
+                f"'splits' entry — _ensure_base_data did not populate the "
+                f"per-position split index. Marking {pos} as failed."
+            )
+            print(f"[app] {err_msg}", flush=True)
+            _cache.setdefault("positions_failed", set()).add(pos)
+            _cache.setdefault("position_load_errors", {})[pos] = err_msg
             return
         # Re-stat under the lock so we make the refresh decision against the
         # current filesystem state, not a possibly-stale snapshot from the
@@ -1280,8 +1321,22 @@ _FINGERPRINT_JSON = "fingerprint.json"
 def _iter_fingerprint_paths():
     """Yield absolute paths whose (size, mtime) define cache validity.
 
-    Walks each position's model dir and the base data splits. Any change to
-    a trained model or to the test split invalidates the cache automatically.
+    Walks each position's model dir, the base data splits, and every
+    ``data/raw/*.parquet`` file. Any change to a trained model, a split, or
+    a raw cache invalidates the predictions cache automatically.
+
+    Why widen to all of ``data/raw/`` rather than just the kicker PBP cache:
+    ``sync_data_from_s3`` pulls every ``data/raw/*.parquet`` at boot, and
+    serving inference reads many of them at request time
+    (``weekly_*.parquet``, ``schedules_*.parquet``,
+    ``team_stats_*.parquet``, ``injuries_*.parquet``,
+    ``depth_charts_*.parquet``, ``snap_counts_*.parquet``,
+    ``rosters_*.parquet`` — via ``build_position_features`` for weather /
+    Vegas / depth-chart features). A refreshed weekly cache without a
+    fingerprint bump would let a new container hydrate stale predictions
+    paired against newer raw data. The kicker PBP file is the only one
+    that affects K's own feature build directly, but every position picks
+    up weather/Vegas/etc. from the shared raws.
     """
     for pos in _ALL_POSITIONS:
         model_dir = os.path.join(_REPO_ROOT, "src", pos.lower(), "outputs", "models")
@@ -1297,8 +1352,8 @@ def _iter_fingerprint_paths():
             yield path
     raw_dir = os.path.join(_REPO_ROOT, "data", "raw")
     if os.path.isdir(raw_dir):
-        for fname in os.listdir(raw_dir):
-            if fname.startswith("kicker_kicks_pbp_") and fname.endswith(".parquet"):
+        for fname in sorted(os.listdir(raw_dir)):
+            if fname.endswith(".parquet"):
                 yield os.path.join(raw_dir, fname)
 
 
@@ -1328,6 +1383,13 @@ def _try_hydrate_from_disk():
     """Populate ``_cache`` directly from data/serving_cache/ when the stored
     fingerprint matches the live one. Caller must hold ``_cache_lock``.
     Returns ``True`` on hit (caller can skip the heavy compute path).
+
+    Restores ``position_details`` (per-target MAE for ``/api/position_details``)
+    and ``position_load_errors`` (for ``/health`` + degraded_positions) when
+    they're present in the cache. Older caches written before M16 lacked these
+    keys; we fall through gracefully — the endpoints already handle missing
+    keys defensively, the next recompute populates them, and the next persist
+    writes the full payload.
     """
     parquet_path = os.path.join(_PREDICTIONS_CACHE_DIR, _PREDICTIONS_PARQUET)
     metrics_path = os.path.join(_PREDICTIONS_CACHE_DIR, _METRICS_JSON)
@@ -1355,16 +1417,42 @@ def _try_hydrate_from_disk():
     try:
         results = pd.read_parquet(parquet_path)
         with open(metrics_path) as f:
-            metrics_by_format = json.load(f)
+            metrics_payload = json.load(f)
     except Exception as e:  # noqa: BLE001 — corrupt cache must not crash boot
         print(f"[predcache] cache read failed: {e!r} — will recompute")
         return False
+    # metrics.json schema:
+    #   Old (pre-M16): the bare metrics_by_format dict ({"ppr": {...}, ...}).
+    #   New (M16+): a wrapper {"metrics_by_format": {...},
+    #                          "position_details": {...},
+    #                          "position_load_errors": {...}}.
+    # Detect by presence of the wrapper key to stay compatible with caches
+    # written by older containers in the S3 bucket.
+    if isinstance(metrics_payload, dict) and "metrics_by_format" in metrics_payload:
+        metrics_by_format = metrics_payload["metrics_by_format"]
+        position_details = metrics_payload.get("position_details") or {}
+        position_load_errors = metrics_payload.get("position_load_errors") or {}
+    else:
+        # Legacy bare-dict format — no position_details / position_load_errors
+        # to restore. Endpoints already tolerate missing keys.
+        metrics_by_format = metrics_payload
+        position_details = {}
+        position_load_errors = {}
     _cache["results"] = results
     _cache["metrics_by_format"] = metrics_by_format
     _cache["metrics"] = metrics_by_format.get("ppr", {})
     _cache["positions_loaded"] = set(_ALL_POSITIONS)
     _cache["base_loaded"] = True
-    print(f"[predcache] hydrated from disk (sha={live_sha[:8]}, rows={len(results)})")
+    if position_details:
+        _cache["position_details"] = position_details
+    if position_load_errors:
+        _cache["position_load_errors"] = position_load_errors
+    print(
+        f"[predcache] hydrated from disk "
+        f"(sha={live_sha[:8]}, rows={len(results)}, "
+        f"position_details={len(position_details)}, "
+        f"errors={len(position_load_errors)})"
+    )
     return True
 
 
@@ -1392,10 +1480,21 @@ def _persist_cache_to_disk():
     parquet_tmp = f"{parquet_path}.{suffix}"
     metrics_tmp = f"{metrics_path}.{suffix}"
     fingerprint_tmp = f"{fingerprint_path}.{suffix}"
+    # M16: persist position_details + position_load_errors so hydrate restores
+    # them on the next boot. Folded into metrics.json (rather than a separate
+    # file) to keep the artifact triple {parquet, json, json} unchanged — the
+    # S3 sync helper iterates _PREDICTIONS_CACHE_FILES, so adding a new file
+    # would require touching model_sync.py. _try_hydrate_from_disk reads
+    # either schema transparently.
+    metrics_payload = {
+        "metrics_by_format": _cache["metrics_by_format"],
+        "position_details": _cache.get("position_details", {}),
+        "position_load_errors": _cache.get("position_load_errors", {}),
+    }
     try:
         _cache["results"].to_parquet(parquet_tmp, index=True)
         with open(metrics_tmp, "w") as f:
-            json.dump(_cache["metrics_by_format"], f)
+            json.dump(metrics_payload, f)
         with open(fingerprint_tmp, "w") as f:
             json.dump({"sha256": sha, "files": files}, f)
         os.replace(parquet_tmp, parquet_path)

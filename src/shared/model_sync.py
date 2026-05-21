@@ -59,10 +59,12 @@ HISTORY_KEEP_N = 5
 
 
 def _repo_root() -> Path:
-    # __file__ is at <repo>/src/shared/model_sync.py — three parents up.
-    # ``parent.parent`` returned <repo>/src/ before, so the data sync silently
-    # wrote splits/raw under src/data/ instead of <repo>/data/ where the Flask
-    # app reads them (CWD = /app in the container).
+    # __file__ is at <repo>/src/shared/model_sync.py. Walk THREE ``.parent``
+    # hops (model_sync.py → shared/ → src/ → <repo>/) to reach the repo root,
+    # which is where the Flask app expects data/ and benchmark_history/ to
+    # live (CWD = /app in the container). An earlier version walked only two
+    # hops and silently wrote splits/raw under src/data/ instead of
+    # <repo>/data/, breaking inference at boot.
     return Path(__file__).resolve().parent.parent.parent
 
 
@@ -573,11 +575,16 @@ def sync_benchmark_history_from_s3() -> dict | None:
     Gated on ``FF_MODEL_S3_BUCKET`` like the other syncs — unset/empty makes
     this a no-op so dev and CI tests don't try to hit S3. Fail-soft on an
     empty/missing prefix (a fresh bucket with no benchmark uploads yet
-    shouldn't block boot); per-file failures DO raise so a partial sync
-    is visible. The Docker image bundles the git-tracked floor of
-    ``benchmark_history/`` (see Dockerfile + .dockerignore), so this sync is
-    layering on any newer runs uploaded since the image was built — if it
-    no-ops, the History tab still renders the committed history.
+    shouldn't block boot).
+
+    Per-file failures are isolated (M17): a single broken JSON no longer
+    kills the whole sync. The container still boots and serves; failed
+    files are listed in the returned summary under ``failed`` so an
+    operator can grep container logs for them. The Docker image bundles
+    the git-tracked floor of ``benchmark_history/`` (see Dockerfile +
+    .dockerignore), so this sync is layering on any newer runs uploaded
+    since the image was built — if every download fails, the History tab
+    still renders the committed history.
     """
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
     if not bucket:
@@ -606,23 +613,40 @@ def sync_benchmark_history_from_s3() -> dict | None:
 
     if not jobs:
         print(f"[benchmark_sync] no objects under s3://{bucket}/{s3_prefix}")
-        return {"total_secs": 0.0, "total_bytes": 0, "files": 0}
+        return {"total_secs": 0.0, "total_bytes": 0, "files": 0, "failed": []}
 
     print(
         f"[benchmark_sync] syncing {len(jobs)} files from s3://{bucket}/{s3_prefix} -> {dest_dir}"
     )
     t0 = time.time()
     results: list[dict] = []
+    failed: list[dict] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
-        futs = [pool.submit(_download_file, s3, bucket, key, dest) for key, dest in jobs]
-        for f in concurrent.futures.as_completed(futs):
-            results.append(f.result())
+        fut_to_key = {pool.submit(_download_file, s3, bucket, key, dest): key for key, dest in jobs}
+        for f in concurrent.futures.as_completed(fut_to_key):
+            key = fut_to_key[f]
+            try:
+                results.append(f.result())
+            except Exception as e:  # noqa: BLE001 — per-file isolation
+                print(f"[benchmark_sync] FAILED for {key}: {e!r}", flush=True)
+                failed.append({"key": key, "error": repr(e)})
     total = round(time.time() - t0, 2)
     total_bytes = sum(r["bytes"] for r in results)
+    if failed:
+        print(
+            f"[benchmark_sync] PARTIAL: {len(results)}/{len(jobs)} files synced; "
+            f"failed: {[f['key'] for f in failed]}",
+            flush=True,
+        )
     print(
         f"[benchmark_sync] done in {total}s, {total_bytes / 1e3:.1f} KB across {len(results)} files"
     )
-    return {"total_secs": total, "total_bytes": total_bytes, "files": len(results)}
+    return {
+        "total_secs": total,
+        "total_bytes": total_bytes,
+        "files": len(results),
+        "failed": failed,
+    }
 
 
 def sync_data_from_s3() -> dict | None:
@@ -630,7 +654,18 @@ def sync_data_from_s3() -> dict | None:
 
     Pulls s3://{bucket}/data/{train,val,test}.parquet into data/splits/ and
     every data/raw/*.parquet except the 2023-only duplicates already covered
-    by the 2012-2025 range files. Returns a summary dict, or None if
+    by the 2012-2025 range files.
+
+    Per-file failures are isolated (M17): a single broken parquet no longer
+    kills the whole sync — the container still boots, the failed file is
+    listed in the returned summary under ``failed``, and any feature build
+    that touches the missing file surfaces the error per-position via
+    ``_apply_position_models``'s outer try/except. A position whose raw
+    dependency went missing degrades to per-model NaNs while the rest of
+    the site keeps serving (preserving the divergence with
+    ``sync_models_from_s3``'s pattern; see PR #236).
+
+    Returns a summary dict (now including ``failed``), or None if
     FF_MODEL_S3_BUCKET is unset/empty.
     """
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
@@ -658,14 +693,31 @@ def sync_data_from_s3() -> dict | None:
     print(f"[data_sync] syncing {len(jobs)} files from s3://{bucket}/data/ -> {root / 'data'}")
     t0 = time.time()
     results: list[dict] = []
+    failed: list[dict] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
-        futs = [pool.submit(_download_file, s3, bucket, key, dest) for key, dest in jobs]
-        for f in concurrent.futures.as_completed(futs):
-            results.append(f.result())
+        fut_to_key = {pool.submit(_download_file, s3, bucket, key, dest): key for key, dest in jobs}
+        for f in concurrent.futures.as_completed(fut_to_key):
+            key = fut_to_key[f]
+            try:
+                results.append(f.result())
+            except Exception as e:  # noqa: BLE001 — per-file isolation
+                print(f"[data_sync] FAILED for {key}: {e!r}", flush=True)
+                failed.append({"key": key, "error": repr(e)})
     total = round(time.time() - t0, 2)
     total_bytes = sum(r["bytes"] for r in results)
+    if failed:
+        print(
+            f"[data_sync] PARTIAL: {len(results)}/{len(jobs)} files synced; "
+            f"failed: {[f['key'] for f in failed]}",
+            flush=True,
+        )
     print(f"[data_sync] done in {total}s, {total_bytes / 1e6:.1f} MB across {len(results)} files")
-    return {"total_secs": total, "total_bytes": total_bytes, "files": len(results)}
+    return {
+        "total_secs": total,
+        "total_bytes": total_bytes,
+        "files": len(results),
+        "failed": failed,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -716,6 +768,7 @@ def sync_predictions_cache_from_s3() -> dict | None:
     t0 = time.time()
     results: list[dict] = []
     missing: list[str] = []
+    failed: list[str] = []
     for name in _PREDICTIONS_CACHE_FILES:
         key = f"{s3_prefix}/{name}"
         dest = dest_dir / name
@@ -727,24 +780,45 @@ def sync_predictions_cache_from_s3() -> dict | None:
             if code in ("NoSuchKey", "404"):
                 missing.append(name)
                 continue
+            failed.append(name)
             print(f"[predcache_sync] {name} FAILED: {e!r} — skipping (will recompute)")
         except Exception as e:  # noqa: BLE001 — best-effort sync
+            failed.append(name)
             print(f"[predcache_sync] {name} FAILED: {e!r} — skipping (will recompute)")
 
     total = round(time.time() - t0, 2)
     total_bytes = sum(r["bytes"] for r in results)
-    if missing:
-        # If any file is missing, the fingerprint check on the consumer side
-        # will fail anyway — clean up partial downloads so a stale parquet
-        # can't be paired with a missing fingerprint and accidentally hydrate.
+    # ANY incomplete sync (missing OR failed for non-404 reasons) leaves the
+    # cache in a state where the consumer-side fingerprint check will fail,
+    # but a stale parquet from a prior boot could still mistakenly be paired
+    # with a fresh fingerprint.json from this run. Clean up partial downloads
+    # in both cases so hydrate either finds all three files coherently or
+    # nothing.
+    if missing or failed:
         for partial in results:
             with contextlib.suppress(OSError):
                 (dest_dir / Path(partial["key"]).name).unlink(missing_ok=True)
-        print(
-            f"[predcache_sync] no cache available (missing: {missing}) "
-            f"— first request will compute + upload."
-        )
-        return {"total_secs": total, "total_bytes": 0, "files": 0, "missing": missing}
+        # Keep the original log shape when only 404s fired (no behavioural
+        # change for the steady-state "fresh bucket" path) — surface the
+        # failed-with-error case separately so operators can distinguish a
+        # cold bucket from an S3 permissions/network issue.
+        if failed:
+            print(
+                f"[predcache_sync] partial sync (missing={missing}, failed={failed}) "
+                f"— cleaned partial downloads; first request will compute + upload."
+            )
+        else:
+            print(
+                f"[predcache_sync] no cache available (missing: {missing}) "
+                f"— first request will compute + upload."
+            )
+        return {
+            "total_secs": total,
+            "total_bytes": 0,
+            "files": 0,
+            "missing": missing,
+            "failed": failed,
+        }
     print(
         f"[predcache_sync] done in {total}s, {total_bytes / 1e6:.1f} MB across {len(results)} files"
     )

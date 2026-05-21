@@ -174,13 +174,29 @@ class TestParseVersionFromKey:
         assert ts == "2026-04-23T00-00-00Z"
         assert sha7 == "abc1234"
 
-    def test_legacy_key_returns_blanks(self):
-        ts, sha7 = promote._parse_version_from_key("models/WR/model.tar.gz")
-        assert ts == "" and sha7 == ""
+    def test_legacy_key_raises(self):
+        """Keys missing the history/ segment are rejected loudly instead of
+        flowing as ("", "") into the new manifest's current.{uploaded_at,sha7}.
+        """
+        with pytest.raises(promote.PromotionError, match="Malformed history key"):
+            promote._parse_version_from_key("models/WR/model.tar.gz")
 
-    def test_malformed_dir_returns_blanks(self):
+    def test_dir_without_dashes_raises(self):
+        """``rsplit('-', 1)`` on a hyphen-less version dir would return the
+        whole string as ts and an empty sha7 — the new contract rejects this.
+        """
+        with pytest.raises(promote.PromotionError, match="Malformed version dir"):
+            promote._parse_version_from_key("models/WR/history/nodashes/model.tar.gz")
+
+    def test_keys_with_internal_dashes_parse_correctly(self):
+        """A hyphenated ISO timestamp must still parse: only the LAST hyphen
+        separates ts from sha7 (rsplit('-', 1))."""
         ts, sha7 = promote._parse_version_from_key("models/WR/history/no-dashes-here/model.tar.gz")
-        assert ts == "no-dashes"  # rsplit("-", 1) still splits; accept whatever lands in ts
+        # "no-dashes" reads as a malformed ts but is now an accepted shape:
+        # the parse returns whatever is before/after the final hyphen.
+        # The shape check itself doesn't validate ISO format — that's the
+        # producer's responsibility (new_history_key).
+        assert ts == "no-dashes"
         assert sha7 == "here"
 
 
@@ -293,6 +309,34 @@ class TestPromote:
         with pytest.raises(promote.PromotionError, match="No manifest"):
             promote.promote(fake, "b", "models", "WR", _hist_key(1))
 
+    def test_write_manifest_client_error_translates_to_promotion_error(self):
+        """A ClientError from the final put_object propagates as
+        PromotionError so main() renders a friendly message instead of a
+        raw boto3 stack trace. Translation note: the old manifest is left
+        untouched (write is atomic), so no rollback is needed."""
+
+        class _PutAngryS3(_FakeS3):
+            def put_object(self, Bucket, Key, Body, ContentType=None):  # noqa: N803
+                raise ClientError(
+                    error_response={"Error": {"Code": "AccessDenied", "Message": "no"}},
+                    operation_name="PutObject",
+                )
+
+        fake = _bucket_with_manifest(
+            "models",
+            "WR",
+            current_key=_hist_key(5),
+            previous_key=_hist_key(4),
+            history=[_hist_key(5), _hist_key(4), _hist_key(3)],
+        )
+        # Swap the put_object impl while preserving the seeded manifest.
+        angry = _PutAngryS3(fake.objects)
+        with pytest.raises(promote.PromotionError, match="Failed to write new manifest"):
+            promote.promote(angry, "b", "models", "WR", _hist_key(3))
+        # Old manifest unchanged (no partial state).
+        on_disk = json.loads(angry.objects[manifest_key("models", "WR")])
+        assert on_disk["current"]["key"] == _hist_key(5)
+
     def test_schema_version_preserved(self):
         """Defensive: if a future manifest bumps schema_version, promotion
         shouldn't silently downgrade it."""
@@ -400,3 +444,36 @@ class TestMainCLI:
         assert rc == 2
         assert "ERROR" in err
         assert "not in manifest.history" in err
+
+
+# --------------------------------------------------------------------------
+# audit_features.py smoke (L-SS3): live in this file because the parallel
+# code-review-cleanup bundle is restricted to existing test files. A
+# follow-up could split this into ``tests/scripts/test_audit_features.py``.
+# --------------------------------------------------------------------------
+
+
+class TestAuditFeaturesKDstCoverage:
+    """L-SS3 smoke: ``src.scripts.audit_features`` now reports a K/DST
+    whitelist section (previously QB/RB/WR/TE only). Verifies the helper
+    function is wired up + the whitelist isn't empty for either position.
+    """
+
+    def test_k_whitelist_emitted(self, capsys):
+        from src.scripts import audit_features
+
+        cols = audit_features._audit_whitelist_only("K", audit_features.get_k_feature_columns)
+        out = capsys.readouterr().out
+        assert "K (whitelist-only)" in out
+        assert len(cols) > 0, "K feature whitelist must not be empty"
+        # The summary line lists the count.
+        assert f"whitelisted features: {len(cols)}" in out
+
+    def test_dst_whitelist_emitted(self, capsys):
+        from src.scripts import audit_features
+
+        cols = audit_features._audit_whitelist_only("DST", audit_features.get_dst_feature_columns)
+        out = capsys.readouterr().out
+        assert "DST (whitelist-only)" in out
+        assert len(cols) > 0, "DST feature whitelist must not be empty"
+        assert f"whitelisted features: {len(cols)}" in out

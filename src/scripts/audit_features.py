@@ -10,10 +10,15 @@ non-determinism surface-area count on the raw depth-chart cache (the share
 of player-week groups with >1 row, which the previous ``agg('last')`` was
 non-deterministic over).
 
-K and DST features are pre-computed on dedicated team/kicker datasets rather
-than the splits, so this script reports on them only at the depth-chart /
-share-of-rows level — running their full pipelines is out of scope for a
-read-only audit.
+K and DST features are computed on dedicated kicker/team datasets, not the
+weekly splits this script reads — running their full pipelines requires the
+nflverse PBP fetch and is out of scope for a read-only audit. To stay useful
+for those two positions, the script prints their declared feature whitelists
+(``get_feature_columns()``) so a future contributor can spot drift between
+the whitelist and the per-position config without booting a full training
+job. This is intentionally lightweight; distribution stats per K/DST feature
+would require ``src.k.data.load_data`` / ``src.dst.data.build_data`` and
+network access.
 
 Usage::
 
@@ -33,6 +38,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.dst.features import (  # noqa: E402
+    get_feature_columns as get_dst_feature_columns,
+)
+from src.k.features import (  # noqa: E402
+    get_feature_columns as get_k_feature_columns,
+)
 from src.qb.data import filter_to_position as filter_to_qb  # noqa: E402
 from src.qb.features import (  # noqa: E402
     add_specific_features as add_qb_specific_features,
@@ -168,6 +179,32 @@ def _audit_position(
     return summary
 
 
+def _audit_whitelist_only(name: str, get_cols_fn) -> list[str]:
+    """Lightweight section for positions whose features come from dedicated
+    datasets (K, DST) rather than ``data/splits/train.parquet``.
+
+    Prints the declared whitelist + count so a future contributor can spot
+    drift between ``get_feature_columns()`` and the per-position config. Does
+    NOT compute distribution stats (those need ``src.{pos}.data.load_data`` /
+    ``build_data`` and the nflverse network fetch). Returns the whitelist so
+    callers (e.g. a smoke test) can assert on what was emitted.
+    """
+    print(f"\n{'=' * 72}\n{name} (whitelist-only)\n{'=' * 72}")
+    cols = list(get_cols_fn())
+    print(f"  whitelisted features: {len(cols)}")
+    print(
+        "  (distribution stats omitted — features computed on dedicated "
+        f"{'kicker' if name == 'K' else 'team-game'} dataset; "
+        f"run `python -m src.{name.lower()}.run_pipeline` for full inspection)"
+    )
+    if cols:
+        # First 20 visible inline; rest truncated to keep the audit readable.
+        preview = ", ".join(cols[:20])
+        suffix = f" ... (+{len(cols) - 20} more)" if len(cols) > 20 else ""
+        print(f"  features: {preview}{suffix}")
+    return cols
+
+
 def _audit_depth_chart(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
@@ -284,15 +321,16 @@ def main() -> int:
     _audit_position("WR", filter_to_wr, add_wr_specific_features, get_wr_feature_columns, train_df)
     _audit_position("TE", filter_to_te, add_te_specific_features, get_te_feature_columns, train_df)
 
+    # K and DST whitelist-only sections (see L-SS3): full pipelines need
+    # network access and would change this from a read-only audit into a
+    # mini training job. The whitelist surface drift detection is the
+    # actionable signal here.
+    _audit_whitelist_only("K", get_k_feature_columns)
+    _audit_whitelist_only("DST", get_dst_feature_columns)
+
     _audit_depth_chart(train_df, val_df, test_df, args.raw_dir)
 
-    print(f"\n{'=' * 72}")
-    print(
-        "K, DST: features pre-computed on dedicated kicker/team datasets, not "
-        "on these splits. Run their pipelines (python -m src.k.run_pipeline / "
-        "python -m src.dst.run_pipeline) to inspect their feature distributions."
-    )
-    print(f"{'=' * 72}\n")
+    print(f"\n{'=' * 72}\n")
     return 0
 
 

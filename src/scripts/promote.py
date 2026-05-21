@@ -75,15 +75,39 @@ def _parse_version_from_key(target_key: str) -> tuple[str, str]:
     shape ``{prefix}/{POS}/history/{ts}-{sha7}/model.tar.gz`` — the dir name
     before the filename is the only sha7 source we have post-facto (we can't
     recompute it without re-downloading the tarball).
+
+    Raises ``PromotionError`` if ``target_key`` doesn't match the expected
+    shape. Previously this swallowed malformed keys and returned ``("", "")``
+    or other garbage (e.g. ``("no-dashes", "here")`` for a key with a single
+    hyphen in the version dir), which then flowed into the new manifest's
+    ``current.uploaded_at`` / ``current.sha7`` fields silently. Failing
+    loudly keeps the rollback contract honest: the operator promotes a
+    real version or sees an error explaining why their input was rejected.
     """
     parts = target_key.split("/")
     # Expected: [..., "history", "{ts}-{sha7}", "model.tar.gz"]
     if len(parts) < 3 or parts[-1] != "model.tar.gz" or parts[-3] != "history":
-        return "", ""
+        raise PromotionError(
+            f"Malformed history key: {target_key!r}. Expected shape "
+            f"'{{prefix}}/{{POS}}/history/{{ts}}-{{sha7}}/model.tar.gz' "
+            f"(use --list to see valid entries)."
+        )
     version_dir = parts[-2]
+    # The ts portion itself contains hyphens (ISO date), so we need at least
+    # one hyphen separating ts from sha7 AND a recognizable ts prefix. Use
+    # rsplit so a hyphenated ts doesn't confuse the parse: only the LAST
+    # ``-`` separates ts from sha7. Reject keys whose version dir has no
+    # hyphen at all (no sha7 present) or whose sha7 portion is empty.
     if "-" not in version_dir:
-        return "", ""
+        raise PromotionError(
+            f"Malformed version dir in {target_key!r}: expected '<ts>-<sha7>', got {version_dir!r}."
+        )
     uploaded_at, sha7 = version_dir.rsplit("-", 1)
+    if not uploaded_at or not sha7:
+        raise PromotionError(
+            f"Empty ts or sha7 in version dir of {target_key!r}: "
+            f"got ts={uploaded_at!r} sha7={sha7!r}."
+        )
     return uploaded_at, sha7
 
 
@@ -157,7 +181,17 @@ def promote(
     in the parallel-train-batch race fix; see PR #282). All consumers
     (serving, ``benchmark.py``) read the manifest. A dry-run returns the
     computed manifest without touching S3.
+
+    A ``ClientError`` from ``write_manifest`` is translated to
+    ``PromotionError`` so ``main()`` can render a human-friendly error
+    instead of a raw boto3 stack trace. The pre-write steps
+    (``load_manifest``, ``build_promotion_manifest``) already raise
+    ``PromotionError`` on their own failure modes, so the manifest is
+    either fully written or fully untouched — no partial state to
+    clean up.
     """
+    from botocore.exceptions import ClientError
+
     old = load_manifest(s3_client, bucket, prefix, position)
     if old is None:
         raise PromotionError(
@@ -168,7 +202,15 @@ def promote(
     new = build_promotion_manifest(old, target_key, bucket, s3_client)
     if dry_run:
         return new
-    write_manifest(s3_client, bucket, prefix, position, new)
+    try:
+        write_manifest(s3_client, bucket, prefix, position, new)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "?")
+        raise PromotionError(
+            f"Failed to write new manifest to s3://{bucket}/"
+            f"{manifest_key(prefix, position)}: [{code}] {e!s}. "
+            f"The old manifest is still in place; safe to retry."
+        ) from e
     return new
 
 
