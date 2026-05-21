@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.shared.pipeline import run_pipeline
 from src.shared.position_pipeline import build_pipeline_config
+from src.shared.run_pipeline_factory import cli_main
 from src.te.config import POSITION_CONFIG
 
 CONFIG = build_pipeline_config("TE", POSITION_CONFIG)
@@ -17,19 +18,8 @@ def run(train_df=None, val_df=None, test_df=None, seed=42, config=None):
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--tiny",
-        action="store_true",
-        help="Use shrunk smoke-test config (from tests/_pipeline_e2e_utils)",
+    cli_main(
+        position_name="TE",
+        default_config=CONFIG,
+        run_fn=run,
     )
-    args = parser.parse_args()
-    if args.tiny:
-        from tests._pipeline_e2e_utils import build_tiny_config
-
-        config = build_tiny_config("TE")
-    else:
-        config = CONFIG
-    run(config=config)
