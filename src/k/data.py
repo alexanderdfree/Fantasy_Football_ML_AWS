@@ -222,7 +222,11 @@ def reconstruct_kicker_weekly_from_pbp(
 
     result = pd.concat(all_weekly, ignore_index=True)
 
-    # Fill NaN for kicker-weeks with only FGs or only XPs
+    # Fill NaN for kicker-weeks with only FGs or only XPs.
+    # game_temp / game_wind are excluded: they're game-level weather, not
+    # per-kick stats, and nfl_data_py reports NaN for ~100% of dome games.
+    # The dome rewrite below sets them to (65, 0) explicitly; outdoor NaN is
+    # left for the downstream fill_nans_with_train_means handler.
     for col in result.columns:
         if col not in [
             "kicker_player_id",
@@ -232,6 +236,8 @@ def reconstruct_kicker_weekly_from_pbp(
             "week",
             "roof",
             "surface",
+            "game_temp",
+            "game_wind",
         ]:
             result[col] = result[col].fillna(0)
 
@@ -249,6 +255,14 @@ def reconstruct_kicker_weekly_from_pbp(
 
     # Derive venue features
     result["is_dome"] = result["roof"].isin(["dome", "closed"]).astype(int)
+    # Mirror the canonical temp_adjusted/wind_adjusted dome handling in
+    # src/shared/weather_features.py: dome games are 65 F / 0 mph regardless
+    # of whether nfl_data_py recorded raw weather. Without this, the blanket
+    # fillna above used to map dome NaN -> 0 F, which confounds dome games
+    # with extreme-cold outdoor games.
+    dome_mask = result["is_dome"] == 1
+    result.loc[dome_mask, "game_temp"] = 65.0
+    result.loc[dome_mask, "game_wind"] = 0.0
 
     if skipped_seasons:
         # Don't poison the combined cache key with a partial result — the next
@@ -448,6 +462,10 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
                 .reset_index()
             )
             game_venue["is_dome"] = game_venue["roof"].isin(["dome", "closed"]).astype(int)
+            # Mirror reconstruct_kicker_weekly_from_pbp: dome -> (65 F, 0 mph).
+            dome_mask = game_venue["is_dome"] == 1
+            game_venue.loc[dome_mask, "game_temp"] = 65.0
+            game_venue.loc[dome_mask, "game_wind"] = 0.0
             all_game_venue.append(game_venue)
 
             fg = pbp[pbp["field_goal_attempt"] == 1].copy()
