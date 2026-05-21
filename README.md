@@ -42,7 +42,7 @@ nflverse API ─┐
                              ┌────────────────────────────────┐
                              │ GPU training (BATCH_ACTIVE)    │◀── GitHub Actions
                              │  true  → 6× Spot g4dn (Batch)  │    push to main
-                             │          (default; ~25–30 min) │
+                             │          (default; ~15 min)    │
                              │  false → warm OD g4dn (SSM)    │
                              │          (rollback; ~120 min)  │
                              │ Same Dockerfile.train; D13/D7  │
@@ -71,7 +71,7 @@ python -m src.benchmarking.benchmark
 # Benchmark one position
 python -m src.benchmarking.benchmark RB
 
-# Serve the dashboard locally → http://localhost:5000
+# Serve the dashboard locally → http://localhost:5050
 python -m src.serving.app
 
 # Run the test suite
@@ -97,7 +97,7 @@ Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy po
 | RB  | 4.399 | 4.278 | 4.315 | **4.159** | LightGBM     | 0.417  | 0.512 |
 | WR  | 4.351 | 4.182 | **4.106** | 4.231 | Attention NN | 0.347  | 0.385 |
 | TE  | 3.546 | 3.494 | **3.444** | 3.517 | Attention NN | 0.299  | 0.496 |
-| K   | **6.668** | 7.133 | 7.298 | 7.188 | Ridge        | −1.565 | 0.431 |
+| K   | 4.079 | 4.128 | 4.132 | **4.061** | LightGBM     | −0.013 | 0.431 |
 | DST | 5.212 | **5.162** | 5.346 | 5.274 | MultiHeadNet | 0.067  | 0.500 |
 
 **Takeaways:**
@@ -113,14 +113,15 @@ The repository is organized with top-level `src/` (all source code), `data/`, `m
 
 ```
 src/                                All Python source code
-  QB/ RB/ WR/ TE/ K/ DST/           Per-position configs, features, targets, runners, tests
+  qb/ rb/ wr/ te/ k/ dst/           Per-position configs, features, targets, runners
   shared/                           Cross-position infrastructure
     neural_net.py                   MultiHeadNet, AttentionPool, GatedTDHead
-    models.py                       RidgeMultiTarget, LightGBMMultiTarget
+    models.py                       RidgeMultiTarget, LightGBMMultiTarget, baselines
     training.py                     MultiTargetLoss, trainer, schedulers
     pipeline.py                     Position-pipeline orchestrator
-    registry.py                     Position runner dispatch
-    weather_features.py             Vegas odds + weather joins
+    aggregate_targets.py            Raw-stat → fantasy-point scoring
+    evaluation.py                   compute_metrics + position-aware aggregation
+    backtest.py                     Walk-forward backtest harness
   batch/                            Training orchestration (Batch active, EC2 rollback)
     launch.py                       Local submitter (uploads data, polls, pulls models)
     train.py                        In-container training entrypoint
@@ -129,23 +130,21 @@ src/                                All Python source code
     app.py                          Flask dashboard + /api/predictions + /api/wiki
     static/, templates/             Frontend assets
   benchmarking/benchmark.py         Multi-position Ridge/NN/Attn/LGBM comparison
-  tuning/                           Optuna LGBM tuner, RB-gate tuner, ablation runner
+  tuning/                           Optuna LGBM tuner, NN tuner, RB-gate ablation
   analysis/                         Post-hoc data + model analysis scripts
-  scripts/                          Operator CLIs (artifact promote, feature audit)
+  scripts/                          Operator CLIs (artifact promote, scope positions)
   config.py                         Shared seasons, scoring, rolling windows
-  data/                             loader, split, preprocessing
-  features/engineer.py              Feature engineering
-  models/                           SeasonAverageBaseline, LastWeekBaseline, RidgeModel
-  training/trainer.py               Single-head Trainer
-  evaluation/                       metrics, backtest
+  data/                             loader, nflcom_loader, preprocessing, redzone_pbp, split
+  features/engineer.py              Feature engineering coordinator
 
 data/README.md                      Pointer to nflverse loaders + gitignored caches
 models/README.md                    Pointer to per-position artifact dirs + S3 layout
 notebooks/README.md                 Project doesn't use notebooks; analysis lives in src/analysis/
 docs/                               ARCHITECTURE (ADR-001), design docs, runbooks
-infra/ec2/                          Active training host (warm g4dn.xlarge)
+infra/ec2/                          Rollback training host (warm g4dn.xlarge)
+infra/batch/                        Active training stack (AWS Batch + Spot)
 infra/aws/                          ECS/ALB serving stack
-tests/                              Top-level integration / e2e tests
+tests/                              Per-position + shared test trees
 Dockerfile                          Slim image for ECS serving (root for build context)
 conftest.py                         pytest project-root sys.path bootstrap
 ```
@@ -185,7 +184,7 @@ GitHub Actions
    │        │   train-batch.yml → 6× g4dn.xlarge Spot      │
    │        │     (one position per host, parallel)        │
    │        │     src.batch.launch submits, polls, downloads│
-   │        │   ~25–30 min wall-clock                      │
+   │        │   ~15 min wall-clock                         │
    │        │ ─────────────────────────────────────────────│
    │        │ BATCH_ACTIVE=false (rollback):               │
    │        │   train-ec2.yml → warm g4dn.xlarge OD via SSM│
@@ -207,7 +206,7 @@ GitHub Actions
 deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS ──▶ alexfree.me
 ```
 
-- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six g4dn.xlarge Spot instances via AWS Batch (one position per host, parallel; ~25–30 min wall-clock, ~$0.40/run). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
+- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six g4dn.xlarge Spot instances via AWS Batch (one position per host, parallel; ~15 min wall-clock, ~$0.40/run). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
 - **Artifact safety** — S3 manifest schema v2 tracks `stable` / `current` / `previous` plus a 5-version `history`. New artifacts must clear a smoke-test gate before being promoted to `stable`. [src/scripts/promote.py](src/scripts/promote.py) supports manual rollback to any history entry; bucket versioning is defense-in-depth.
 - **Serving** — ECS Fargate (arm64, 1 vCPU / 2 GB) sits behind an ALB with ACM-terminated HTTPS. The slim Flask image fetches models from S3 at boot rather than baking them in — keeps the image roughly 3× smaller and lets prod track new artifacts without a full redeploy.
 - **IAM** — the serving task role is scoped to `s3:GetObject` on `ff-predictor-training/models/*` only.
@@ -222,7 +221,7 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 - Wiki tab renders repo markdown docs in-app (PR #138, `ce4543e`)
 - Benchmark History tab — per-PR rows fetched from S3 at boot, auto-updates after every training run without a redeploy (PR #201, `056423b`)
 - Slim arm64 serving image with runtime S3 model fetch (PR #83, `3243d72`)
-- Parallel Spot fan-out across six g4dn.xlarge Spot instances collapses full-retrain wall-clock from sum(per-position) to max(per-position), ~25–30 min vs ~120 min (D13); the warm-EC2 rollback path (D7) eliminates 3–5 min Batch scale-up on the days a single-position iteration matters more than parallelism
+- Parallel Spot fan-out across six g4dn.xlarge Spot instances collapses full-retrain wall-clock from sum(per-position) to max(per-position), ~15 min vs ~120 min (D13); the warm-EC2 rollback path (D7) eliminates 3–5 min Batch scale-up on the days a single-position iteration matters more than parallelism
 
 ### GitHub CI/CD
 
@@ -231,7 +230,7 @@ push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov ·
              │
              │                                            BATCH_ACTIVE=true
              ├──▶ batch-image.yml ──┬─▶ train-batch.yml ──▶ 6× Spot g4dn (parallel)
-             │                      │                       (~25–30 min full retrain)
+             │                      │                       (~15 min full retrain)
              │                      │
              │                      │                            BATCH_ACTIVE=false
              │                      └─▶ train-ec2.yml ────────▶ warm OD g4dn (sequential)
@@ -240,7 +239,7 @@ push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov ·
              └──▶ deploy.yml ─────────▶ ECR ──▶ ECS Fargate
 ```
 
-- Five production workflows ([tests.yml](.github/workflows/tests.yml), [batch-image.yml](.github/workflows/batch-image.yml), [train-batch.yml](.github/workflows/train-batch.yml), [train-ec2.yml](.github/workflows/train-ec2.yml), [deploy.yml](.github/workflows/deploy.yml)) plus two diagnostic ones ([ablate-rb-gate.yml](.github/workflows/ablate-rb-gate.yml), [retune-lgbm.yml](.github/workflows/retune-lgbm.yml)) for one-click experiments on the GPU host.
+- Five production workflows ([tests.yml](.github/workflows/tests.yml), [batch-image.yml](.github/workflows/batch-image.yml), [train-batch.yml](.github/workflows/train-batch.yml), [train-ec2.yml](.github/workflows/train-ec2.yml), [deploy.yml](.github/workflows/deploy.yml)) plus three diagnostic ones ([ablate-rb-gate.yml](.github/workflows/ablate-rb-gate.yml), [retune-lgbm.yml](.github/workflows/retune-lgbm.yml), [retune-nn-batch.yml](.github/workflows/retune-nn-batch.yml)) for one-click experiments on the GPU host.
 - **`tests.yml`** — 7-shard pytest matrix (QB / RB / WR / TE / K / DST / shared) with per-shard Codecov flags and an 80% per-component target enforced via [codecov.yml](codecov.yml). Within-shard parallelism via `pytest-xdist`.
 - **`batch-image.yml` → `train-batch.yml` *or* `train-ec2.yml`** — the image build is gated by path filters and pushes to ECR with both an ECR pull-through-cache-routed base layer and a SOCI v2 index for fast Spot cold-start. The `detect` job (shared by both training workflows) diffs `HEAD^..HEAD` and retrains *only* the positions whose code changed; cross-cutting changes (`src/shared/`, `src/batch/`, shared `src/` modules, `requirements.txt`) retrain all six. `BATCH_ACTIVE` selects which training workflow fires; `workflow_dispatch` on either bypasses the gate.
 - **`deploy.yml`** — native `arm64` runner (no QEMU emulation), BuildKit cache persisted across runs, path-filtered to the serving surface so docs-only or test-only changes don't trigger a deploy.
