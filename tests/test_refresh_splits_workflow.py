@@ -168,6 +168,37 @@ def test_verify_step_gates_s3_upload():
     )
 
 
+def test_verify_step_carves_out_rb_runtime_computed_cols():
+    """The verify step's ``runtime_added_per_pos`` map MUST exclude RB's
+    ``prior_season_mean_catch_rate`` and ``prior_season_mean_yards_per_carry``.
+    Both cols live under ``_INCLUDE_FEATURES["prior_season"]`` in
+    [src/rb/config.py](../src/rb/config.py) for semantic reasons but are
+    actually computed at training time by
+    [src/rb/features.py](../src/rb/features.py)'s ``_compute_features``,
+    not by ``build_features`` — so they will never be in the parquet,
+    and without the carve-out the verify step false-positive-fails every
+    refresh-splits run (regression observed on the 2026-05-21 run of
+    PR #337's squash-merge commit ``6e82c2a``)."""
+    steps = _refresh_job_steps()
+    verify_steps = [s for s in steps if s.get("name") == "Verify engineered columns present"]
+    assert len(verify_steps) == 1, (
+        f"expected exactly 1 'Verify engineered columns present' step, found {len(verify_steps)}"
+    )
+    run_body = verify_steps[0].get("run", "") or ""
+    assert "runtime_added_per_pos" in run_body, (
+        "verify step is missing the runtime_added_per_pos exception map; "
+        "without it, RB will false-positive-fail on prior_season_mean_catch_rate "
+        "and prior_season_mean_yards_per_carry (computed at training time, "
+        "not in the parquet)."
+    )
+    for col in ("prior_season_mean_catch_rate", "prior_season_mean_yards_per_carry"):
+        assert col in run_body, (
+            f"verify step is missing RB carve-out for {col!r} — see "
+            f"src/rb/features.py::_compute_features which builds it at "
+            f"training time, not in src/features/engineer.py::build_features."
+        )
+
+
 def test_build_position_features_raises_on_missing_whitelist_cols():
     """``build_position_features`` must raise ``KeyError`` when feature_cols
     references a column that the upstream pipeline didn't produce. Pre-fix
