@@ -22,12 +22,11 @@ src/{pos}/
 
 Tests for each position live under `tests/{pos}/`.
 
-Shared plumbing is in [src/shared/](src/shared/): `pipeline.py` (train/eval loop), `models.py` (multi-target wrappers: `RidgeMultiTarget`, `ElasticNetMultiTarget`, `LightGBMMultiTarget`, plus `TwoStageRidge` and the gated TD heads), `neural_net.py` (attention), `aggregate_targets.py` (raw-stat → fantasy-point scoring), `training.py`, `evaluation.py`, `backtest.py`.
+Shared plumbing is in [src/shared/](src/shared/): `pipeline.py` (train/eval loop), `models.py` (single-target building blocks `RidgeModel` / `ElasticNetModel` / `SeasonAverageBaseline` / `LastWeekBaseline` plus the multi-target wrappers `RidgeMultiTarget`, `ElasticNetMultiTarget`, `LightGBMMultiTarget`, plus `TwoStageRidge` and the gated TD heads), `neural_net.py` (attention), `aggregate_targets.py` (raw-stat → fantasy-point scoring), `training.py`, `evaluation.py`, `backtest.py`. The root-level `models/` directory is a separate placeholder for trained-model artifacts that load from S3 — different beast.
 
 The rest of `src/` groups by purpose:
 - `src/data/` — cross-position data loading + temporal split (per-position `data.py` files wrap these): `loader.py`, `nflcom_loader.py`, `preprocessing.py`, `redzone_pbp.py`, `split.py`.
 - `src/features/engineer.py` — cross-position feature engineering coordinator.
-- `src/models/` — **single-target** model classes (`RidgeModel`, `ElasticNetModel`, `SeasonAverageBaseline`, `LastWeekBaseline`). These are the building blocks; `src/shared/models.py` wraps them into multi-target versions. Don't confuse this with the root-level `models/` directory (placeholder for trained-model artifacts that load from S3).
 - `src/shared/evaluation.py` — position-aware visualization/aggregation layer plus the `compute_metrics(y_true, y_pred)` helper used by backtest and pipeline.
 - `src/serving/` — Flask app + assets.
 - `src/batch/` — training orchestration (AWS Batch path).

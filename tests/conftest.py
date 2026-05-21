@@ -387,7 +387,7 @@ def tiny_qb_model(tmp_path_factory):
         target_dir.mkdir(exist_ok=True)
         ridge = Ridge(alpha=1.0)
         ridge.fit(X, y)
-        # Mirror src/models/linear.py RidgeModel save format (scaler + model)
+        # Mirror src/shared/models.py RidgeModel save format (scaler + model)
         scaler = StandardScaler()
         scaler.fit(X)
         joblib.dump(scaler, str(target_dir / "scaler.pkl"))

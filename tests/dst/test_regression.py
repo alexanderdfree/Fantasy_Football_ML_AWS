@@ -42,11 +42,10 @@ NN_NON_NEGATIVE_TARGETS = POSITION_CONFIG.nn_non_negative_targets
 TARGETS = POSITION_CONFIG.targets
 from src.dst.features import compute_features
 from src.dst.targets import compute_targets
-from src.models.baseline import SeasonAverageBaseline
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.evaluation import compute_metrics
 from src.shared.feature_build import scale_and_clip
-from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
+from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget, SeasonAverageBaseline
 from src.shared.neural_net import MultiHeadNet
 from src.shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
 

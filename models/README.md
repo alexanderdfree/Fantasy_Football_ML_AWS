@@ -11,9 +11,8 @@ Trained model artifacts (Ridge / MultiHeadNet / Attention NN / LightGBM, one per
 
 ## Model class implementations
 
-- [src/shared/models.py](../src/shared/models.py) — `RidgeMultiTarget`, `LightGBMMultiTarget`, `ElasticNetMultiTarget`, `TwoStageRidge`
+- [src/shared/models.py](../src/shared/models.py) — `RidgeMultiTarget`, `LightGBMMultiTarget`, `ElasticNetMultiTarget`, `TwoStageRidge`, plus the single-target building blocks (`RidgeModel`, `ElasticNetModel`, `SeasonAverageBaseline`, `LastWeekBaseline`)
 - [src/shared/neural_net.py](../src/shared/neural_net.py) — `MultiHeadNet`, `AttentionPool`, `GatedTDHead`
-- [src/models/](../src/models/) — `SeasonAverageBaseline`, `LastWeekBaseline`, `RidgeModel`, `ElasticNetModel`
 
 ## Model configurations
 

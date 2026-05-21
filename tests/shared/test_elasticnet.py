@@ -5,8 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from src.models.elastic_net import ElasticNetModel
-from src.shared.models import ElasticNetMultiTarget
+from src.shared.models import ElasticNetModel, ElasticNetMultiTarget
 
 TARGETS = ["rushing_yards", "receiving_yards", "rushing_tds"]
 

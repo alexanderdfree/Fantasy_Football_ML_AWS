@@ -5,9 +5,9 @@ on:
     branches: [main]
     # Only redeploy Flask when the serving surface actually changes. The
     # serving image imports src/serving/, src/shared/, src/features/,
-    # src/models/, src/{POS}/, src/config.py, src/data/ — i.e. everything
-    # under src/ EXCEPT the tuning, analysis, benchmarking, scripts, and
-    # tests subtrees. Negative patterns at the end refine the broad src/**
+    # src/{POS}/, src/config.py, src/data/ — i.e. everything under src/
+    # EXCEPT the tuning, analysis, benchmarking, scripts, and tests
+    # subtrees. Negative patterns at the end refine the broad src/**
     # include. ``docs/`` is bundled into the image (Dockerfile:
     # ``COPY docs/ docs/``) and read at runtime by
     # ``src.serving.app._render_wiki_doc`` to power the in-app wiki tab, so

@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.models.baseline import LastWeekBaseline, SeasonAverageBaseline
+from src.shared.models import LastWeekBaseline, SeasonAverageBaseline
 
 
 def _build_shuffled_df() -> pd.DataFrame:
