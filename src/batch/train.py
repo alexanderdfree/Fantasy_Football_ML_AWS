@@ -434,7 +434,17 @@ def upload_artifacts(s3_bucket, position, model_dir):
 
 def _extract_metrics(position, result):
     """Extract JSON-serializable benchmark metrics from pipeline result."""
-    metrics = {"position": position}
+    metrics: dict = {"position": position}
+
+    # Stamp the image's commit SHA into the per-position artifact. launch.py
+    # forwards FF_TRAIN_GIT_SHA from train-batch.yml; benchmark.py reads each
+    # position's recorded SHA and warns when they diverge inside a single
+    # train-batch roll-up (the lingering "two parallel runs hit the same
+    # position's manifest in flight" race that Layer A's revision pinning
+    # closes at submit time but can still surface if jobs interleave).
+    git_sha = os.environ.get("FF_TRAIN_GIT_SHA", "").strip()
+    if git_sha:
+        metrics["git_sha"] = git_sha
 
     for model_key in ["ridge", "nn", "attn_nn", "lgbm"]:
         m_key = f"{model_key}_metrics"

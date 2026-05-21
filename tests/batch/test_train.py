@@ -609,6 +609,25 @@ class TestMetricExtraction:
         assert "nn_metrics" not in metrics
         assert "attn_nn_metrics" not in metrics
 
+    def test_stamps_git_sha_when_env_set(self, monkeypatch):
+        """FF_TRAIN_GIT_SHA env var (passed by launch.py via containerOverrides)
+        lands in benchmark_metrics.json so benchmark.py can verify per-position
+        SHA coherency in the aggregation step."""
+        from src.batch.train import _extract_metrics
+
+        monkeypatch.setenv("FF_TRAIN_GIT_SHA", "abcdef1234567890")
+        metrics = _extract_metrics("QB", {"ridge_metrics": {"total": {"mae": 6.0}}})
+        assert metrics["git_sha"] == "abcdef1234567890"
+
+    def test_git_sha_absent_when_env_unset(self, monkeypatch):
+        """Empty FF_TRAIN_GIT_SHA → no git_sha key (workflow_dispatch / local
+        runs); benchmark.py's coherency check skips for runs without it."""
+        from src.batch.train import _extract_metrics
+
+        monkeypatch.setenv("FF_TRAIN_GIT_SHA", "")
+        metrics = _extract_metrics("QB", {"ridge_metrics": {"total": {"mae": 6.0}}})
+        assert "git_sha" not in metrics
+
 
 # ---------------------------------------------------------------------------
 # Artifact copy logic

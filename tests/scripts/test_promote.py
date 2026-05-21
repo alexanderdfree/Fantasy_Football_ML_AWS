@@ -16,7 +16,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.scripts import promote  # noqa: E402
 from src.shared.model_sync import (  # noqa: E402
-    legacy_model_key,
     manifest_key,
 )
 
@@ -193,7 +192,8 @@ class TestParseVersionFromKey:
 class TestPromote:
     def test_happy_path_promotes_history_entry(self):
         """current=A, previous=B, history=[A, B, C]; promote --to C
-        → current=C, previous=A, history unchanged. Legacy mirror copied."""
+        → current=C, previous=A, history unchanged. Only the manifest is
+        written — the legacy mirror copy was removed in the race fix."""
         fake = _bucket_with_manifest(
             "models",
             "WR",
@@ -213,8 +213,8 @@ class TestPromote:
         on_disk = json.loads(fake.objects[manifest_key("models", "WR")])
         assert on_disk == new
 
-        # Legacy mirror bytes == target's bytes.
-        assert fake.objects[legacy_model_key("models", "WR")] == fake.objects[target]
+        # Legacy mirror is NOT touched — consumers all read the manifest now.
+        assert "models/WR/model.tar.gz" not in fake.objects
 
     def test_rejects_key_not_in_history(self):
         fake = _bucket_with_manifest(
@@ -231,8 +231,6 @@ class TestPromote:
         # Manifest must be untouched.
         on_disk = json.loads(fake.objects[manifest_key("models", "WR")])
         assert on_disk["current"]["key"] == _hist_key(5)  # no change
-        # Legacy mirror was NOT overwritten.
-        assert legacy_model_key("models", "WR") not in fake.objects
 
     def test_rejects_key_present_in_history_but_missing_in_s3(self):
         """Defensive: if GC deleted a tracked key (shouldn't happen, but it
@@ -252,7 +250,7 @@ class TestPromote:
         # Manifest unchanged, legacy not created.
         on_disk = json.loads(fake.objects[manifest_key("models", "WR")])
         assert on_disk["current"]["key"] == _hist_key(5)
-        assert legacy_model_key("models", "WR") not in fake.objects
+        assert "models/WR/model.tar.gz" not in fake.objects
 
     def test_dry_run_does_not_write(self):
         fake = _bucket_with_manifest(
@@ -272,7 +270,7 @@ class TestPromote:
         # Manifest bytes still the original.
         assert fake.objects[manifest_key("models", "WR")] == orig_manifest_bytes
         # No legacy mirror was created in dry-run.
-        assert legacy_model_key("models", "WR") not in fake.objects
+        assert "models/WR/model.tar.gz" not in fake.objects
 
     def test_promote_with_no_previous(self):
         """Starting from a fresh bucket where previous=None, promoting still
@@ -291,7 +289,7 @@ class TestPromote:
     def test_raises_when_no_manifest_exists(self):
         """Fresh bucket with only a legacy model.tar.gz (pre-migration) and
         no manifest — promotion has nothing to rewrite; fail clearly."""
-        fake = _FakeS3(objects={legacy_model_key("models", "WR"): b"legacy"})
+        fake = _FakeS3(objects={"models/WR/model.tar.gz": b"legacy"})
         with pytest.raises(promote.PromotionError, match="No manifest"):
             promote.promote(fake, "b", "models", "WR", _hist_key(1))
 

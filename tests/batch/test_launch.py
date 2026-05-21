@@ -291,6 +291,41 @@ class TestSubmitJob:
         overrides = call_kwargs["containerOverrides"]
         assert overrides["command"] == ["--position", "WR", "--seed", "99"]
 
+    def test_submit_forwards_train_git_sha_when_set(self):
+        """FF_TRAIN_GIT_SHA is appended to the container environment so
+        train.py can stamp it into benchmark_metrics.json."""
+        with mock.patch.dict(os.environ, {"FF_TRAIN_GIT_SHA": "deadbeefcafebabe"}):
+            import importlib
+
+            import src.batch.launch as mod
+
+            mod = importlib.reload(mod)
+            mock_batch = mock.MagicMock()
+            mock_batch.submit_job.return_value = {"jobId": "x"}
+            mod.submit_job("QB", seed=42, batch_client=mock_batch)
+            env_vars = mock_batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+            sha_entry = next((e for e in env_vars if e["name"] == "FF_TRAIN_GIT_SHA"), None)
+            assert sha_entry == {"name": "FF_TRAIN_GIT_SHA", "value": "deadbeefcafebabe"}
+        # Reset module-level constants for downstream tests.
+        importlib.reload(__import__("src.batch.launch", fromlist=[""]))
+
+    def test_submit_omits_train_git_sha_when_unset(self):
+        """Empty FF_TRAIN_GIT_SHA (workflow_dispatch / local) → no env entry,
+        so train.py's ``metrics["git_sha"]`` stays absent and benchmark.py's
+        coherency check skips."""
+        import importlib
+
+        with mock.patch.dict(os.environ, {"FF_TRAIN_GIT_SHA": ""}):
+            import src.batch.launch as mod
+
+            mod = importlib.reload(mod)
+            mock_batch = mock.MagicMock()
+            mock_batch.submit_job.return_value = {"jobId": "x"}
+            mod.submit_job("QB", seed=42, batch_client=mock_batch)
+            env_vars = mock_batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+            assert not any(e["name"] == "FF_TRAIN_GIT_SHA" for e in env_vars)
+        importlib.reload(__import__("src.batch.launch", fromlist=[""]))
+
     def test_job_names_are_unique_within_same_second(self):
         """Two rapid submissions must not collide on job name."""
         from src.batch.launch import submit_job

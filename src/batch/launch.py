@@ -50,6 +50,12 @@ JOB_DEFINITION_CPU = os.environ.get("FF_JOB_DEFINITION_CPU", "") or None
 # against the same revision — the latest one — which means a workflow run
 # triggered by image A can silently train image B's code.
 JOB_DEFINITION_REVISION = os.environ.get("FF_JOB_DEFINITION_REVISION", "") or None
+# Thread the image's commit SHA through to the containers so train.py can
+# stamp it into benchmark_metrics.json. benchmark.py uses it to verify all
+# six positions in a run reflect the same image (catches the lingering
+# manifest-write race when two train-batch runs land in quick succession,
+# even after Layer A pins the job-def revision). Empty -> not passed.
+TRAIN_GIT_SHA = os.environ.get("FF_TRAIN_GIT_SHA", "") or None
 
 from src.shared.registry import ALL_POSITIONS, CPU_ONLY_POSITIONS  # noqa: E402
 
@@ -177,6 +183,15 @@ def submit_job(position, seed=42, batch_client=None):
     timestamp = int(time.time())
     suffix = uuid.uuid4().hex[:6]
     job_definition = _job_definition_for(position)
+    environment = [
+        {"name": "S3_BUCKET", "value": S3_BUCKET},
+        {"name": "S3_DATA_PREFIX", "value": "data"},
+        {"name": "LOG_EVERY", "value": "1"},
+    ]
+    if TRAIN_GIT_SHA:
+        # Stamped into benchmark_metrics.json by train.py; benchmark.py uses
+        # it to surface per-position SHA divergence across a single run.
+        environment.append({"name": "FF_TRAIN_GIT_SHA", "value": TRAIN_GIT_SHA})
     response = batch.submit_job(
         jobName=f"ff-{position.lower()}-{timestamp}-{suffix}",
         jobQueue=JOB_QUEUE,
@@ -184,11 +199,7 @@ def submit_job(position, seed=42, batch_client=None):
         retryStrategy=RETRY_STRATEGY,
         containerOverrides={
             "command": ["--position", position, "--seed", str(seed)],
-            "environment": [
-                {"name": "S3_BUCKET", "value": S3_BUCKET},
-                {"name": "S3_DATA_PREFIX", "value": "data"},
-                {"name": "LOG_EVERY", "value": "1"},
-            ],
+            "environment": environment,
         },
     )
     job_id = response["jobId"]

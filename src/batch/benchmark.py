@@ -118,6 +118,26 @@ def download_metrics(positions):
     return all_metrics
 
 
+def find_git_sha_divergence(all_metrics: dict, expected_sha: str | None) -> list[tuple[str, str]]:
+    """Return (pos, recorded_sha_short) pairs whose ``git_sha`` (stamped by
+    src/batch/train.py from FF_TRAIN_GIT_SHA) doesn't match ``expected_sha``.
+
+    Empty when ``expected_sha`` is falsy (workflow_dispatch / local) or when
+    every position with a recorded SHA matches. Positions without a recorded
+    SHA (pre-PR-281 artifacts, or jobs where the env var wasn't forwarded)
+    are skipped rather than flagged — silence here just means "no positive
+    coherency signal," not "divergence detected."
+    """
+    if not expected_sha:
+        return []
+    expected_short = expected_sha[:7]
+    return [
+        (pos, (metrics.get("git_sha") or "")[:7])
+        for pos, metrics in all_metrics.items()
+        if metrics.get("git_sha") and (metrics.get("git_sha") or "")[:7] != expected_short
+    ]
+
+
 def main():
     parser = argparse.ArgumentParser(description="AWS Batch benchmark")
     parser.add_argument(
@@ -208,6 +228,26 @@ def main():
     if not all_metrics:
         print("No metrics found. Exiting.")
         return
+
+    # Per-position git_sha coherency check (see find_git_sha_divergence for
+    # rationale). Defense-in-depth against the lingering manifest-write race
+    # after Layer A's job-def revision pinning.
+    expected_sha = ((args.git_hash or get_git_hash() or "")[:7]) or None
+    diverged = find_git_sha_divergence(all_metrics, expected_sha)
+    if diverged:
+        print(f"\nWARNING: git_sha divergence across positions (expected {expected_sha}):")
+        for pos, recorded in diverged:
+            print(f"  {pos}: trained image at {recorded}")
+        print(
+            "  Investigate whether two train-batch.yml runs overlapped on "
+            "this run's S3 writes. The model artifacts are still each "
+            "internally consistent (Layer A guarantees per-job image pinning), "
+            "but the run is heterogeneous and shouldn't be compared as a unit."
+        )
+    elif expected_sha:
+        with_sha = [p for p, m in all_metrics.items() if m.get("git_sha")]
+        if with_sha:
+            print(f"\ngit_sha coherent at {expected_sha} across {len(with_sha)} positions")
 
     # Build summaries
     summaries = []
