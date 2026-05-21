@@ -323,8 +323,20 @@ def build_game_history_arrays(
     """
     if history_stats is None:
         history_stats = GAME_HISTORY_STATS
-    # Only use stats that exist in the DataFrame
-    history_stats = [s for s in history_stats if s in df.columns]
+    # Fail loud on missing cols (was: silent filter). Silent-filter let a
+    # config addition to attn_history_stats train with the wrong game_dim,
+    # surfacing only at smoke-test time as a state_dict shape mismatch
+    # (PR #235's redzone cols, RB stable pinned ~24 h).
+    missing = [s for s in history_stats if s not in df.columns]
+    if missing:
+        raise KeyError(
+            f"build_game_history_arrays: attn_history_stats columns missing "
+            f"from df: {missing}. Likely cause: data/splits/*.parquet was "
+            f"generated before these columns were added to a position's "
+            f"attn_history_stats — trigger refresh-splits.yml (or regenerate "
+            f"via the SETUP.md data-pull snippet and re-upload to S3) so the "
+            f"splits include the new columns."
+        )
     game_dim = len(history_stats)
 
     n = len(df)
