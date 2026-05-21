@@ -1,31 +1,42 @@
 # Code Review Findings
 
-**Date:** 2026-05-20 · **Branch:** `claude/admiring-rubin-87b3cd` · **Commit:** `bd80ba1`
+**Original audit:** 2026-05-20 · `claude/admiring-rubin-87b3cd` · `bd80ba1`
+**Re-verified at:** 2026-05-20 HEAD of `claude/kind-kare-bd547f` (19 commits ahead, PRs #259, #262, #263, #264, #267, #268, #270, #271 merged since)
+**Wave 1 shipped:** 2026-05-21 — H1 ([#287](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/287)) and H2 ([#290](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/290)) merged.
 
 ## Summary
 
-- **133 findings reported** by 13 parallel Opus 4.7 1M worker agents · 11 inline style fixes applied
-- **3 HIGH severity** (real bugs, two with production user-facing impact)
-- **~18 MEDIUM severity** (test gaps, drift, latent bugs, dead code with footgun shape)
-- **~112 LOW severity** (doc-rot, minor inconsistencies, dead-code, style)
+- **133 findings originally reported** · **9 false positives / already-fixed pruned on re-verification** · **2 HIGH shipped 2026-05-21** · **~122 persisting**
+- **0 HIGH severity persisting** — H1 fixed ([#287](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/287)), H2 fixed ([#290](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/290)), H3 was already fixed at re-verification
+- **17 MEDIUM severity** — was 18, M14 pruned
+- **~105 LOW severity** — was 112, L-WR9, L-TE1, L-TE5, L-DST5, L-S2, L-S4, L-E2 pruned
 
-### Highest-severity teasers
-1. **K aggregate_fn skipped in `build_pipeline_config`** → K's training-time ranking metrics, baseline comparison, and `benchmark_history/*.json` numbers are wrong (sums `fg_misses + xp_misses` as positive instead of subtracting). Serving is unaffected (uses `target_signs`).
-2. **DST `spread_line` and `div_game` silently zeroed at both training and serving** by a name-collision in `merge_schedule_features`. Catch-all backfill prints `WARNING: 2 feature columns missing, filling with 0` then trains a model that never sees point spreads or divisional-game signal.
-3. **Module-level S3 syncs in `src/serving/app.py` run before `bind()` under `gunicorn --preload`** — the exact ALB-unhealthy pattern that `gunicorn.conf.py:1-19` explicitly forbids and that PRs [#148](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/148)/[#149](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/149) reverted. Latent risk: tolerable today only because S3 is fast.
+### Re-verification deltas
+- **H3 (gunicorn `--preload` S3 syncs)** → ALREADY FIXED: syncs moved to `gunicorn.conf.py::on_starting`.
+- **M14 (`LOSS_WEIGHTS ≈ 2.0/HUBER_DELTAS` invariant test missing)** → FALSE POSITIVE: `test_loss_weights_match_huber_deltas` exists at [tests/test_invariants.py:46](tests/test_invariants.py:46).
+- **L-WR9, L-TE1, L-TE5, L-DST5** → FALSE POSITIVE on close reading (comments scope-correct or not stale as claimed).
+- **L-S2 (LastWeekBaseline dead)** → ALREADY FIXED: `src/models/` deleted by PR #263.
+- **L-S4 (legacy Trainer dead)** → ALREADY FIXED: `src/training/` deleted by PR #264.
+- **L-E2 (`print_comparison_table` no callers)** → FALSE POSITIVE: has production callers at [src/shared/pipeline.py:1408](src/shared/pipeline.py:1408), [:1861](src/shared/pipeline.py:1861).
+
+### Wave 1 shipped (2026-05-21)
+1. **H1** → FIXED in [#287](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/287) (`2eb4f43`). Removed the `if pos != "K"` guard so K's `aggregate_fn` is now plumbed through `build_pipeline_config`. Local benchmark: K ranking metrics improved across the board — `ridge_top12` 0.468→0.505, `nn_top12` 0.477→0.523, `attn_nn_top12` 0.403→0.514, `lgbm_top12` 0.449→0.468. Pre-fix the ranking was sorting kickers by "more misses = more points". TODO.md archive entry added.
+2. **H2** → FIXED in [#290](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/290) (`6618243`). Chose Option B (architectural fix in `src/shared/weather_features.py`): added `spread_line`/`div_game` to the upfront drop list and removed them from the cleanup-drop loop. New regression test in `tests/shared/test_weather_features.py` asserts both columns survive with `std() > 0` and `unique() ⊇ {0, 1}`. Local benchmark: DST Attn NN total MAE 5.288→5.113 (-0.175), `points_allowed` Attn NN MAE now 7.342 (beats NN 7.657). TODO.md archive entry added.
 
 ---
 
 ## High severity
 
-### H1. K aggregate_fn skipped → training-time totals add miss penalties as positive [VERIFIED]
+> **Both H1 and H2 shipped on 2026-05-21.** Original descriptions preserved below for historical record; see "Wave 1 shipped" above for fix details and metric deltas.
+
+### H1. K aggregate_fn skipped → training-time totals add miss penalties as positive [FIXED — [#287](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/287) `2eb4f43`]
 - **File:** [src/shared/position_pipeline.py:262-265](src/shared/position_pipeline.py:262)
 - **Type:** bug
 - **Description:** `build_pipeline_config` only sets `cfg["aggregate_fn"]` when `pos != "K"`. In [src/shared/pipeline.py:1337-1338](src/shared/pipeline.py:1337) the `_total(preds)` helper falls back to `sum(preds[t] for t in targets)` when no aggregator is registered. K's four targets are `[fg_yard_points, pat_points, fg_misses, xp_misses]` with `target_signs` `[+1, +1, -1, -1]` ([src/k/config.py:222-227](src/k/config.py:222)). The naive sum **adds** `fg_misses` and `xp_misses` instead of subtracting them, inflating every K `pred_*_total`. Corrupts `pred_baseline`, all `pred_*_total` columns (pipeline.py:1341-1347, 1365, 1374, 1383), `compute_ranking_metrics` ranking output, the weekly backtest summary, and the `benchmark_history/{run_id}.json` K row. **Serving is unaffected** — `src/serving/app.py:599-600` already uses `target_signs`. The shared `_k_predictions_to_fantasy_points` aggregator in `src/shared/aggregate_targets.py:205` already exists and `aggregate_fn_for("K")` would route through it — only the `if pos != "K"` skip prevents it.
 - **Same root cause in CV path:** [src/shared/pipeline.py:1789-1792](src/shared/pipeline.py:1789) mirrors the bug. K has `has_cv_runner=False` so currently dormant, but fixing the factory fixes both for free.
 - **Recommended fix:** remove `if pos != "K"` at position_pipeline.py:264 (or delete that line so the conditional sets unconditionally). Add a regression test in `tests/k/test_pipeline_e2e.py` that asserts `pred_nn_total[i] ≈ fg_yard_points + pat_points - fg_misses - xp_misses`.
 
-### H2. DST `spread_line` and `div_game` silently zeroed by `merge_schedule_features` [VERIFIED]
+### H2. DST `spread_line` and `div_game` silently zeroed by `merge_schedule_features` [FIXED — [#290](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/290) `6618243`]
 - **File:** [src/shared/weather_features.py:140-227](src/shared/weather_features.py:140) interacting with [src/dst/data.py:340-360](src/dst/data.py:340) and [src/dst/config.py:65,77,266,269](src/dst/config.py:65) (DST's `_ALL_FEATURES` and `attn_static_features` both include these).
 - **Type:** bug (training/inference drift class; both paths affected)
 - **Description:**
@@ -38,13 +49,6 @@
 - **Impact:** DST trains and serves with `spread_line = 0` and `div_game = 0` for every row. Two genuinely-predictive features (point spread, divisional-game flag) are dead. `is_divisional` is recomputed correctly from the original `div_game` BEFORE the cleanup (line 186), so that one survives.
 - **Why no test catches it:** [tests/test_invariants.py:115-143](tests/test_invariants.py:115) asserts `attn_static_features ⊆ all_features` (config consistency), not that values survive the pipeline (see Finding M3).
 - **Recommended fix:** Either drop `spread_line` and `div_game` from DST's `data.py` so they get populated cleanly from the schedule merge, or add them to the `merge_cols` AND keep them out of the cleanup-drop loop. Add a runtime invariant test that runs DST through `build_position_features` and asserts `spread_line.std() > 0` and `div_game.unique() ⊇ {0, 1}`.
-
-### H3. Module-level S3 syncs in `src/serving/app.py` run before `bind()` under `--preload` [VERIFIED]
-- **File:** [src/serving/app.py:82-85](src/serving/app.py:82) + [Dockerfile:62](Dockerfile:62) + [gunicorn.conf.py:1-19](gunicorn.conf.py:1) (rule)
-- **Type:** drift / unfinished refactor
-- **Description:** Four module-level calls execute at import: `sync_data_from_s3()`, `sync_models_from_s3()`, `sync_benchmark_history_from_s3()`, `sync_predictions_cache_from_s3()`. Dockerfile invokes gunicorn with `--preload`. `gunicorn.conf.py:3-6` says verbatim: *"Module-level pre-warm under `--preload` is forbidden — the import runs before `bind()` so a slow warm caused the ALB to see TCP-refused and mark the task unhealthy (PRs #148/#149)."* This is the exact pattern. `gunicorn.conf.py` correctly relocates the *model* warm into a `post_fork` thread but never relocated the four S3 syncs.
-- **Why it doesn't bite today:** The PRs #148/#149 incident was the model warm (significantly heavier than four S3 downloads). The S3 syncs presumably stay under the ALB threshold in practice — but this is empirical, not enforced, and a CodeQL/runtime regression that slows any single sync (e.g. a `_iter_paginate` retry storm) would re-trigger the failure mode.
-- **Recommended fix:** Move the four `sync_*_from_s3()` calls into the `post_fork` warm path (they're already idempotent). Or, if the team has measured them as fast enough, change `gunicorn.conf.py`'s blanket "forbidden" to a measured budget and document the four allowed module-level syncs.
 
 ---
 
@@ -133,12 +137,6 @@
 - **Description:** `_build_tiny_config` reads fields directly off `POSITION_CONFIG` and hardcodes `"two_stage_targets": {}` and `"classification_targets": pc.gated_ordinal_targets`, bypassing `_rb_classification_targets`/`_rb_two_stage_targets`. Any new field added to `build_pipeline_config` is silently absent from this e2e until manually added. The factory was introduced specifically to centralize this assembly.
 - **Recommended fix:** Replace `_build_tiny_config` with a call to `build_pipeline_config("RB", POSITION_CONFIG, overrides=_TINY_OVERRIDES)`, matching the QB pattern.
 
-### M14. No invariant test for `LOSS_WEIGHTS ≈ 2.0 / HUBER_DELTAS[t]` coupling [VERIFIED]
-- **Files:** all of `tests/{qb,rb,wr,te,k,dst}/`
-- **Type:** test-gap
-- **Description:** CLAUDE.md elevates `LOSS_WEIGHTS ≈ 2.0 / HUBER_DELTAS[target]` to a load-bearing invariant. RB's config encodes this for yards heads but no test enforces the relation. Bumping `huber_deltas["rushing_yards"]` to 20 without updating the loss weight would only surface in a production benchmark.
-- **Recommended fix:** Add a single shared test that iterates all six positions and asserts `LOSS_WEIGHTS[t] == pytest.approx(2.0 / HUBER_DELTAS[t])` for every target with `head_losses[t] == "huber"` (skipping Poisson/hurdle heads where the rebalance doesn't apply).
-
 ### M15. Predictions cache fingerprint misses every raw data file except kicker PBP [VERIFIED]
 - **File:** [src/serving/app.py:1145-1161](src/serving/app.py:1145)
 - **Type:** bug (latent — depends on operational refresh cadence)
@@ -200,14 +198,11 @@
 - **L-WR6.** [src/shared/position_pipeline.py:211-215](src/shared/position_pipeline.py:211) — `attn_lr`/`attn_weight_decay`/`attn_batch_size`/`attn_patience` only plumbed for `pos in ("QB", "RB", "K", "DST")` — WR/TE silently fall back to `nn_*` defaults. PositionConfig `attn_patience=35` change would have no effect for WR. [VERIFIED]
 - **L-WR7.** [src/wr/targets.py:42-47](src/wr/targets.py:42) — `compute_targets` decomposition check uses hardcoded scoring literals (0.1, 6, 0.04, 4, -2) instead of `src.config` constants. QB has the same pattern. Will silently disagree if scoring constants change. [VERIFIED]
 - **L-WR8.** [tests/wr/test_feature_contract.py:48-49](tests/wr/test_feature_contract.py:48) — `air_yards_per_target_L3`/`yac_per_reception_L3` contract floor `-5.0` is looser than the actual constraint (ratio of non-negatives). [VERIFIED]
-- **L-WR9.** [src/wr/config.py:159-161, 168-170](src/wr/config.py:159) — head_losses comments mix "current state" and "what changed", obscuring intent. [VERIFIED]
 
 #### TE
-- **L-TE1.** [src/te/config.py:143-145](src/te/config.py:143) — `nn_head_hidden_overrides` comment includes a stale `receiving_tds` clause copied from WR. [VERIFIED]
 - **L-TE2.** [src/te/config.py:53-60](src/te/config.py:53) — TE keeps both `target_share_L3` and `target_share_L5` (and `carry_share_L3`/`_L5`) while RB dropped these as collinear. Either TE has been audited separately (needs comment) or just inherited WR's list. [VERIFIED]
 - **L-TE3.** [tests/te/test_pipeline_e2e.py:38-65](tests/te/test_pipeline_e2e.py:38) + [tests/te/conftest.py:51-152](tests/te/conftest.py:51) — TE's E2E uses fully-synthetic splits while WR/QB/RB slice real engineered parquets. Drift in `build_features` for TE-specific upstream merges won't be caught. [VERIFIED]
 - **L-TE4.** [src/te/data.py:13-15](src/te/data.py:13) — docstring lacks the "must be called AFTER build_features()/temporal_split()" ordering note that RB's has. [VERIFIED]
-- **L-TE5.** [src/te/config.py:41-47](src/te/config.py:41) — the `if w != 5 or stat == "snap_pct"` filter is uncommented while QB/WR have the explanatory note about L5 collinearity. [VERIFIED]
 - **L-TE6.** [tests/te/test_features.py:133-150](tests/te/test_features.py:133) — `test_team_target_share_single_player` weakened from WR's `len(shares) == 3` to TE's `len(shares) > 0`. [VERIFIED]
 - **L-TE7.** [tests/te/test_features.py:21-50](tests/te/test_features.py:21) — defines `_make_player_games` as module-level helper while WR/QB exposes it as a session-scoped fixture. [VERIFIED]
 - **L-TE8.** [src/te/run_pipeline.py:8-11](src/te/run_pipeline.py:8) — imports `src.shared.*` before `src.te.config` (WR same); QB/RB import `src.{pos}.config` first. Cosmetic. [VERIFIED]
@@ -230,7 +225,6 @@
 - **L-DST2 (overlaps M12).** Opp-OFFENSE attention not exercised E2E.
 - **L-DST3.** [tests/dst/test_feature_contract.py:124-127](tests/dst/test_feature_contract.py:124) — `_PRIOR_SEASON_COLS` exemption is unreachable; the columns live in `_CONTEXTUAL_FEATURES` but the test loops only `SPECIFIC_FEATURES`. [VERIFIED]
 - **L-DST4.** [tests/dst/conftest.py:118-127](tests/dst/conftest.py:118) — `make_team_games` fixture hand-codes the linear scoring; will silently desync from `compute_targets` if linear coefficients change. [VERIFIED]
-- **L-DST5.** [tests/dst/test_pipeline_e2e.py:93](tests/dst/test_pipeline_e2e.py:93) — `is_dome` quirk comment doesn't match actual behavior (`merge_schedule_features` re-derives `is_dome` from `roof`). [VERIFIED]
 - **L-DST6.** [src/dst/targets.py:26-41](src/dst/targets.py:26) — `_pts_allowed_to_bonus` raises `ValueError` on NaN input. Safe today because callers `fillna` first, but the helper is exported. [VERIFIED]
 - **L-DST7.** [src/dst/data.py:100-105](src/dst/data.py:100) — `weekly_copy = weekly.copy()` is a full DataFrame copy when only two scratch columns are needed. Minor perf nit. [VERIFIED]
 - **L-DST8.** [src/dst/config.py:156-157](src/dst/config.py:156) — `ridge_pca_components=20` comment "5 features → 20 components" is truncated and unclear; actual input is 38 features. [VERIFIED]
@@ -240,9 +234,7 @@
 
 #### Shared infrastructure
 - **L-S1.** [src/shared/models.py:350-352, 464-466](src/shared/models.py:350) — `RidgeMultiTarget.predict_total` / `ElasticNetMultiTarget.predict_total` return unweighted raw-stat sums (yards + TDs + receptions, all summed as if commensurate). No production callers; only `tests/*/test_models.py` exercise it as "the total". A future caller using this for ranking would regress the `~1.9 pt/game double-count fix` documented in TODO.md. [VERIFIED]
-- **L-S2.** [src/models/baseline.py:39-51](src/models/baseline.py:39) — `LastWeekBaseline` is exported, tested, and documented but has zero production callers under `src/`. [VERIFIED]
 - **L-S3.** [src/shared/aggregate_targets.py:165-167](src/shared/aggregate_targets.py:165) — `_tier_bonuses` docstring references an "aux-total loss" / "aux-total gate" architectural concept that does not exist in code (`grep -rn aux_total src/` returns only this docstring). [VERIFIED]
-- **L-S4.** [src/training/trainer.py:7-128](src/training/trainer.py:7) — legacy `Trainer` + `make_dataloaders` are only imported by `tests/test_training_trainer.py`. Production uses `src/shared/training.py::MultiHeadTrainer`. Pure test-driven survivor. [VERIFIED]
 - **L-S5.** [src/shared/models.py:263-285](src/shared/models.py:263) — `GatedOrdinalTDClassifier.save` rewrites the meta file that `ordinal_.save` already wrote; `load` doesn't restore the gate's `_class_values_cfg`/`_ordinal_alpha`. Works today (not consulted at predict-time) but fragile. [VERIFIED]
 - **L-S6.** [tests/test_aggregate_targets_branches.py:24-40](tests/test_aggregate_targets_branches.py:24) — `_tier_bonuses` torch-vs-numpy parity test only covers the PA path, not the YA path. [VERIFIED]
 - **L-S7.** [src/shared/neural_net.py:715-729](src/shared/neural_net.py:715) — `MultiHeadNetWithHistory.gated_targets` is stored regardless of `gated`, but only consulted when `gated=True`. Misconfigured `cfg` with `attn_gated=False, gated_targets=["rushing_tds"]` silently builds plain heads. [VERIFIED]
@@ -274,11 +266,10 @@
 
 #### Evaluation / registry
 - **L-E1.** [tests/shared/test_model_sync.py:1205](tests/shared/test_model_sync.py:1205) — `test_predcache_respects_custom_prefix` ends with `assert not (tmp_path / "benchmark_history" / "y.json").exists()` — copy-paste from another test, vacuous. [VERIFIED]
-- **L-E2.** [src/evaluation/metrics.py:32-41](src/evaluation/metrics.py:32) — `print_comparison_table` has zero production callers (only `tests/test_evaluation_metrics.py:85`). Two richer same-named functions exist in `src/shared/evaluation.py` and `src/shared/benchmark_utils.py`. [VERIFIED]
 - **L-E3.** [tests/shared/test_benchmark_utils.py:474](tests/shared/test_benchmark_utils.py:474) — `ts[:19].replace("-", "T", 0)` is a no-op (third arg `0` means "replace 0 occurrences"). [VERIFIED]
 - **L-E4.** [src/shared/model_sync.py:60](src/shared/model_sync.py:60) — `_repo_root` docstring ambiguous ("three parents up"). [VERIFIED]
 - **L-E5.** [src/shared/model_sync.py:476-498](src/shared/model_sync.py:476) — `sync_predictions_cache_from_s3` cleanup only runs when `missing` (NoSuchKey/404) is non-empty. Different ClientError class → no cleanup, no log. [VERIFIED]
-- **L-E6.** [src/evaluation/metrics.py:13](src/evaluation/metrics.py:13) — `np.sqrt(mean_squared_error(...))` could use sklearn 1.4+'s `root_mean_squared_error`. Pure style. [VERIFIED]
+- **L-E6.** [src/shared/evaluation.py](src/shared/evaluation.py) (after PR #262 merge) — `np.sqrt(mean_squared_error(...))` could use sklearn 1.4+'s `root_mean_squared_error`. Pure style. [VERIFIED]
 
 #### Serving / scripts
 - **L-SS1.** [src/scripts/promote.py:172-179](src/scripts/promote.py:172) — manifest written before legacy mirror copy; partial failure leaves inconsistent intermediate state with no clean error logging (raw `ClientError` propagates uncaught). [VERIFIED]
@@ -321,7 +312,7 @@
 | `test_run_cv_pipeline.py` exists for positions with `has_cv_runner=True` | ✅ | ❌ L-WR3 | ❌ L-WR3 | n/a | n/a | n/a |
 | E2E test uses real engineered parquets | ✅ | ✅ | ✅ | ❌ L-TE3 (synthetic only) | n/a | ❌ (synthetic only — same shape) |
 | `head_losses` correctly plumbed to cfg | ✅ | ✅ | ✅ | ✅ | ❌ L-K4 (declared but not plumbed) | ✅ |
-| `aggregate_fn` plumbed to cfg | ✅ | ✅ | ✅ | ✅ | ❌ **H1** (skipped) | ✅ |
+| `aggregate_fn` plumbed to cfg | ✅ | ✅ | ✅ | ✅ | ✅ (H1 fixed [#287](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/287)) | ✅ |
 
 Legend: ✅ uniform · ⚠️ documented divergence · ❌ undocumented gap or bug
 
@@ -359,9 +350,21 @@ Audit with: `git diff main..HEAD --stat` from this worktree.
 - Each finding was verified by the orchestrator reading the cited code at the cited line and confirming the worker's claim. High-severity findings (H1-H3) were verified end-to-end with reproducer traces. The `nn_non_negative_targets` finding (M1) was cross-confirmed by three independent workers.
 - Findings cross-link to overlapping ones via short refs (e.g. `(overlaps M7)`).
 
-## False positives
+## False positives (from re-verification 2026-05-20)
 
-None. Every reported finding was verified against the cited line; no worker claim was rejected.
+The original audit reported zero false positives. Re-verification at HEAD of `claude/kind-kare-bd547f` (19 commits ahead) by 8 parallel agents pruned 9 entries:
+
+| ID | Original claim | Re-verification |
+|----|----------------|-----------------|
+| H3 | Module-level S3 syncs run before `bind()` under `--preload` | ALREADY FIXED — syncs now live in `gunicorn.conf.py::on_starting` (master-level, pre-import). `app.py` lines 79-82 explicitly document this. |
+| M14 | No invariant test for `LOSS_WEIGHTS ≈ 2.0/HUBER_DELTAS[t]` | FALSE POSITIVE — `test_loss_weights_match_huber_deltas` exists at [tests/test_invariants.py:46-91](tests/test_invariants.py:46). |
+| L-WR9 | `head_losses` comments mix "current state" and "what changed" | FALSE POSITIVE — comment is a clear, accurate statement of current state. |
+| L-TE1 | `nn_head_hidden_overrides` comment has stale WR `receiving_tds` clause | FALSE POSITIVE — comment is about TE; the `receiving_tds` note correctly describes TE's own head. |
+| L-TE5 | L5 collinearity filter is uncommented (inconsistent with QB/WR) | FALSE POSITIVE — pattern + silence is consistent with QB/RB; not a TE-specific inconsistency. |
+| L-DST5 | `is_dome` quirk comment doesn't match actual behavior | FALSE POSITIVE — comment is scope-correct (describes the test fixture, not DST's broader handling). |
+| L-S2 | `LastWeekBaseline` has zero callers | ALREADY FIXED — `src/models/` directory deleted by [#263](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/263). |
+| L-S4 | Legacy `Trainer` + `make_dataloaders` only used by tests | ALREADY FIXED — `src/training/` directory deleted by [#264](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/264). |
+| L-E2 | `print_comparison_table` has zero production callers | FALSE POSITIVE — has production callers at [src/shared/pipeline.py:1408](src/shared/pipeline.py:1408), [:1861](src/shared/pipeline.py:1861) (PR #262 merged eval modules but kept the function in use). |
 
 ## Out of scope
 
@@ -369,3 +372,99 @@ None. Every reported finding was verified against the cited line; no worker clai
 - No changes to `.github/workflows/`, `Dockerfile*`, `requirements.txt`, `pyproject.toml`, `CLAUDE.md`, `TODO.md`, `docs/ARCHITECTURE.md` — those are documented as separate-PR territory.
 - No benchmark or training run was triggered.
 - No new tests written.
+
+---
+
+## Remediation plan
+
+Grouped into 4 waves. Each PR is **bounded**, **independent of siblings in its wave**, and writeable in one focused sub-agent session. PRs across waves are sequenced where they touch the same file or share infra.
+
+Touch-point conflict map (sequence these):
+- **H1, M5, M9** all touch `src/shared/position_pipeline.py` — H1 first (small targeted line), then M5/M9 (orthogonal edits).
+- **H2, M2** both touch `src/shared/weather_features.py` — H2 first, M2 layers on top.
+- **M16, M17** both touch `src/serving/app.py` + `src/shared/model_sync.py` — keep in same wave; rebase the second.
+- **F-WR, B5** both touch `src/wr/` files but different files (`config.py` vs `benchmark_ridge_variants.py`) — safe in parallel.
+- **L-K2 (overlaps M2)** and **L-K7 (overlaps M2)** — fixed by M2.
+- **L-DST2 (overlaps M12)** — fixed by M12.
+
+### Wave 1 — HIGH severity (2 PRs, sequential within wave) — ✅ SHIPPED 2026-05-21
+
+| PR | Findings | Status | Touches |
+|----|----------|--------|---------|
+| **W1.1** | H1 | ✅ Shipped in [#287](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/287) (`2eb4f43`). Removed `if pos != "K"` guard. Local K benchmark: all four ranking metrics improved (`attn_nn_top12` 0.403→0.514 was the largest). | src/shared/position_pipeline.py, tests/k/test_pipeline_e2e.py, TODO.md |
+| **W1.2** | H2 | ✅ Shipped in [#290](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/290) (`6618243`). Picked Option B — added `spread_line`/`div_game` to upfront drop and removed from cleanup-drop in `merge_schedule_features`. Local DST benchmark: Attn NN total MAE 5.288→5.113 (-0.175). | src/shared/weather_features.py, tests/shared/test_weather_features.py, TODO.md |
+
+### Wave 2 — MEDIUM bugs + drift (10 PRs, parallel)
+
+| PR | Findings | Scope | Touches |
+|----|----------|-------|---------|
+| **W2.1** | M1 | Pick (a) or (b) from the M1 entry. Recommended: (a) `field(default_factory=set)` → `default=None`, type `set[str] \| None`, drop the explicit `set(_TARGETS)` in all 6 configs, restore CLAUDE.md claim. | src/shared/position_config.py, src/shared/registry.py, src/{6 positions}/config.py, CLAUDE.md |
+| **W2.2** | M2 | Set `df["_schedule_merged"] = True` at end of K's `load_data` schedule merge. Verify shared merge becomes a no-op for K. Resolves L-K7 and L-K2 by extension. | src/k/data.py |
+| **W2.3** | M5 | Route `src/batch/train.py::_run_rb_gate_ablation` to call `src/tuning/ablate_rb_gate.py`'s VARIANTS + decision logic; delete the in-train.py copy. | src/batch/train.py |
+| **W2.4** | M6 | Update `_format_config_lines` in `src/tuning/tune_lgbm.py` to emit lowercase kwarg form matching `build_position_config()`. Drop or rewrite `PR 3b` reference in `retune-lgbm.yml:204`. | src/tuning/tune_lgbm.py, .github/workflows/retune-lgbm.yml |
+| **W2.5** | M7 | Mirror weekly-cache pattern: add `_cached_kick_pbp_is_current` validating schema (incl. `play_id`) and mtime vs upstream parquets. | src/k/data.py |
+| **W2.6** | M8 | One-line fix: `-f batch/Dockerfile.train` → `-f src/batch/Dockerfile.train`. | src/batch/build_and_push.sh |
+| **W2.7** | M9 | Add `specific_features`, `add_features_fn`, `fill_nans_fn` to `REQUIRED_PIPELINE_CFG_KEYS`. Add tests omitting each from a hand-built cfg. | src/shared/position_pipeline.py, tests/test_invariants.py (or new) |
+| **W2.8** | M13 | Replace `tests/rb/test_pipeline_e2e.py::_build_tiny_config` with `build_pipeline_config("RB", POSITION_CONFIG, overrides=_TINY_OVERRIDES)`. | tests/rb/test_pipeline_e2e.py |
+| **W2.9** | M16 | Persist `position_details` + `position_load_errors` alongside `metrics.json` (or fold into same file). Restore in `_try_hydrate_from_disk`. | src/serving/app.py |
+| **W2.10** | M18 | Replace `recv_fl`/`rush_fl`/`td_pts` header literals with `TARGETS` iteration; print all 4 MAE columns (include `fumbles_lost`). | src/wr/benchmark_ridge_variants.py |
+
+### Wave 3 — MEDIUM CI/test gaps + serving (4 PRs, parallel)
+
+| PR | Findings | Scope | Touches |
+|----|----------|-------|---------|
+| **W3.1** | M3 + M11 | Add runtime invariant test: parametrize over all 6 positions, run `build_position_features` against tiny real data, assert every `attn_static_feature` column exists with `.std() > 0` for non-constant. Plus: add `@pytest.mark.parametrize("pos", ["QB","RB","WR","TE","K","DST"])` smoke test that loads each real `POSITION_CONFIG`, materializes a tiny dataset, runs `run_smoke_test(pos)`. | tests/test_invariants.py, tests/shared/test_smoke_test.py |
+| **W3.2** | M4 | Apply `env:` indirection pattern + top-level `permissions: contents: read` to `retune-lgbm.yml` and `ablate-rb-gate.yml` (same pattern PR #258 used). | .github/workflows/retune-lgbm.yml, ablate-rb-gate.yml |
+| **W3.3** | M10 + M12 | (a) Add nested-attn smoke test that uses K's real `POSITION_CONFIG` and tiny synthetic dataset including kick PBP, asserting `_smoke_attention` returns without exception. (b) Extend synthetic DST fixture to materialize `off_pass_yards`, `off_rush_yards`, `off_pts_scored`, etc., and add an opp-offense-branch E2E case. | tests/shared/test_smoke_test.py, tests/dst/conftest.py, tests/dst/test_pipeline_e2e.py |
+| **W3.4** | M15 + M17 | Either widen `_iter_fingerprint_paths` to all `data/raw/*.parquet`, or document raw-refresh-with-retrain coupling in docstring. Extend per-file isolation to `sync_data_from_s3` and `sync_benchmark_history_from_s3` (or document the divergence). | src/serving/app.py, src/shared/model_sync.py |
+
+### Wave 4 — LOW cleanups by area (11 PRs, parallel)
+
+These are independent file groups. Each worker takes one row, makes mechanical edits, and opens one bundled PR.
+
+| PR | Findings (count) | Topic | Touches |
+|----|-----------------|-------|---------|
+| **W4.QB** | L-QB1–L-QB8 (8) | Diagnostic loop, contract weakness, docstring drift | src/qb/{data.py, diagnose_outliers.py}, tests/qb/* |
+| **W4.RB** | L-RB1–L-RB10 (10) | Phantom debug column, defaulting, mutation, dead config | src/rb/{config.py, features.py, run_pipeline.py, targets.py, analyze_errors.py}, tests/rb/* |
+| **W4.WR** | L-WR1–L-WR8 (8) | Benchmark/config drift, duplicated factories, attn plumbing gap | src/wr/{config.py, benchmark_ridge_variants.py, targets.py}, tests/wr/*, src/shared/position_pipeline.py (for L-WR6 — coordinate with W4.TE) |
+| **W4.TE** | L-TE2, L-TE3, L-TE4, L-TE6, L-TE7, L-TE8 (6) | Collinearity audit comment, weak test, fixture style, import order | src/te/{config.py, data.py, run_pipeline.py}, tests/te/* |
+| **W4.K** | L-K1, L-K3, L-K4, L-K5, L-K6, L-K8, L-K9, L-K10, L-K11 (9) | Mislabeled comment, dead computed cols, head_losses plumbing, dup constant, asymmetric filter | src/k/{config.py, data.py}, tests/k/*, src/shared/position_pipeline.py (for L-K4 — coordinate with W4.WR) |
+| **W4.DST** | L-DST1, L-DST3, L-DST4, L-DST6, L-DST7, L-DST8, L-DST9 (7) | Stale comments, unreachable exemption, NaN guard, perf nit | src/dst/{data.py, targets.py, config.py}, src/serving/app.py (for L-DST1), tests/dst/* |
+| **W4.SHARED-A** | L-S1, L-S3, L-S5, L-S6, L-S7, L-S8, L-S9, L-S10 (8) | Models cleanup: unused params, env-at-import, dead docstrings, save/load asymmetry | src/shared/models.py, src/shared/aggregate_targets.py, src/shared/neural_net.py, src/shared/pipeline.py, tests/test_aggregate_targets_branches.py |
+| **W4.SHARED-B** | L-S11, L-S12, L-S13, L-S14, L-S15, L-S16, L-S17, L-S18, L-S19, L-S20 (10) | Pipeline cleanup: unused vars, Position StrEnum adoption, dead cfg keys, src→tests import | src/shared/{pipeline.py, position_pipeline.py, run_pipeline_factory.py, smoke_test.py}, tests/shared/conftest.py |
+| **W4.DATA** | L-D1–L-D10 (10) | Dead code, duplicated lists, fingerprint footguns, threading | src/features/engineer.py, src/shared/{weather_features.py, feature_cache.py, team_box_score.py}, src/data/{loader.py, split.py, redzone_pbp.py} |
+| **W4.EVAL-SERV** | L-E1, L-E3, L-E4, L-E5, L-E6, L-SS1, L-SS2, L-SS3, L-SS4, L-SS5 (10) | Vacuous tests, ambiguous docstring, error-class breadth, cache discipline | tests/shared/{test_model_sync.py, test_benchmark_utils.py}, src/shared/{model_sync.py, evaluation.py}, src/scripts/{promote.py, audit_features.py}, src/serving/app.py |
+| **W4.BATCH-CI** | L-B1–L-B10 (10) | UnboundLocalError, TIMED_OUT summary gap, GUI backend, dead analysis, version pin sources | src/tuning/tune_lgbm.py, src/batch/{launch.py, benchmark.py}, src/analysis/*, pyproject.toml + src/batch/requirements.txt, .github/workflows/_detect-positions.yml |
+
+### Parallelization recipe
+
+```
+Wave 1 (SHIPPED 2026-05-21 — sequential, both touch metric-impacting code):
+  W1.1 (#287) → W1.2 (#290)  [K-only and DST-only benchmark re-runs done before each merge]
+
+Wave 2 (10 parallel sub-agents, no shared files within wave):
+  W2.1 || W2.2 || W2.3 || W2.4 || W2.5 || W2.6 || W2.7 || W2.8 || W2.9 || W2.10
+
+Wave 3 (4 parallel sub-agents, watch shared touches):
+  W3.1 || W3.2 || W3.3 || W3.4
+
+Wave 4 (11 parallel sub-agents, one per area):
+  W4.QB || W4.RB || W4.WR || W4.TE || W4.K || W4.DST
+  || W4.SHARED-A || W4.SHARED-B || W4.DATA || W4.EVAL-SERV || W4.BATCH-CI
+```
+
+### Per-agent contract (from CLAUDE.md "Sub-agent contract")
+
+Each worker must:
+1. Read the cited finding + surrounding code.
+2. Make the change.
+3. Run `pytest -m unit` + ruff locally.
+4. For NN/feature/loss/target changes (W1.1, W1.2, anything in `src/{pos}/features.py` / `src/shared/pipeline.py`), run `python -m src.{pos}.run_pipeline` and diff `benchmark_history/` against prior run.
+5. Commit, push the branch, open the PR with `gh pr create`.
+6. Verify `gh pr list` shows the PR before reporting completion.
+
+### Suggested skip / defer
+
+- **W4.WR L-WR1** (benchmark vs. production `is_home` divergence) and **W4.K L-K1** (mislabeled comment) — single-line comment fixes, OK to bundle inline with the more substantive PRs in their area.
+- **W4.BATCH-CI L-B9** (3 pin sources) — needs a design decision (consolidate via pip-compile? sync via Makefile?). Defer until owner picks an approach.
+- **W4.SHARED-B L-S17** (eager module-top-level `CONFIG = build_pipeline_config(...)`) — non-trivial refactor; defer behind W1 + W2 to stabilize the factory first.
