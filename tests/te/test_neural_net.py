@@ -185,7 +185,11 @@ class TestMultiHeadNet:
             assert not torch.isnan(out[key]).any()
 
     def test_head_hidden_overrides(self):
-        """TE config uses head_hidden_overrides on receiving_tds."""
+        """head_hidden_overrides routes a per-target hidden dim to the named head.
+
+        (Production TE config overrides ``receptions``; this test exercises the
+        mechanism with ``receiving_tds`` as the override target.)
+        """
         model = MultiHeadNet(
             input_dim=10,
             target_names=TARGETS,
