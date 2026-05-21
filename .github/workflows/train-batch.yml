@@ -38,58 +38,10 @@ env:
 
 jobs:
   detect:
-    # Position-scoping is shared with train-ec2.yml — the path → positions
-    # mapping lives in src/scripts/scope_positions.py and is contract-tested
-    # by tests/scripts/test_scope_positions.py. workflow_dispatch honors the
-    # explicit input; workflow_run scopes via git diff on the merge commit.
-    runs-on: ubuntu-latest
-    outputs:
-      positions: ${{ steps.scope.outputs.positions }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          fetch-depth: 2
-
-      - id: scope
-        env:
-          EVENT: ${{ github.event_name }}
-          INPUT_POSITIONS: ${{ github.event.inputs.positions }}
-        run: |
-          set -eu
-          ALL="QB RB WR TE K DST"
-
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            if [ -n "$INPUT_POSITIONS" ]; then
-              echo "Dispatch override: $INPUT_POSITIONS"
-              echo "positions=$INPUT_POSITIONS" >> "$GITHUB_OUTPUT"
-            else
-              echo "Dispatch with empty input → all positions."
-              echo "positions=$ALL" >> "$GITHUB_OUTPUT"
-            fi
-            exit 0
-          fi
-
-          if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-            echo "No parent commit — defaulting to all positions."
-            echo "positions=$ALL" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          files=$(git diff --name-only HEAD^ HEAD)
-          echo "Changed files:"
-          printf '  %s\n' $files
-
-          # Pure-stdlib helper, no pip install needed; ubuntu-latest ships
-          # python3. Empty stdout = nothing model-relevant changed → train
-          # job skipped by the `if:` gate below.
-          positions=$(printf '%s\n' "$files" | python3 -m src.scripts.scope_positions)
-          if [ -z "$positions" ]; then
-            echo "No model-relevant paths changed — skipping training."
-          else
-            echo "Scoped retrain: $positions"
-          fi
-          echo "positions=$positions" >> "$GITHUB_OUTPUT"
+    # Shared with train-ec2.yml via _detect-positions.yml. See that file for
+    # the path → positions logic; src/scripts/scope_positions.py is the
+    # contract-tested mapping.
+    uses: ./.github/workflows/_detect-positions.yml
 
   train:
     needs: detect

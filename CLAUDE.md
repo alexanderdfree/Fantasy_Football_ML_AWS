@@ -39,7 +39,7 @@ The rest of `src/` groups by purpose:
 
 All six positions train an attention NN (DST landed via `cc0c627`, K via `801b61a`). There is no "skill-positions-only" carve-out anymore — if you're adding an NN-related knob, wire it through every position.
 
-**Adding a new position**: copy an existing folder under `src/`, rename files/constants, wire it into `src/batch/train.py` and the position list in both `.github/workflows/train-batch.yml` (active path) and `.github/workflows/train-ec2.yml` (rollback path), add tests under `tests/{pos}/`.
+**Adding a new position**: copy an existing folder under `src/`, rename files/constants, wire it into `src/batch/train.py` and the position list in `.github/workflows/_detect-positions.yml` (shared by `train-batch.yml` (active path) and `train-ec2.yml` (rollback path)), add tests under `tests/{pos}/`.
 
 ## Conventions that bite if ignored
 
