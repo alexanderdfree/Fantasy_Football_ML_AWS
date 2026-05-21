@@ -325,16 +325,26 @@ def _build_flat_attn_artifact_dir(
     return model_dir
 
 
-def _build_nested_attn_artifact_dir(tmp_path: Path) -> Path:
+def _build_nested_attn_artifact_dir(tmp_path: Path, *, with_game_history: bool = False) -> Path:
     """Base artifact dir + attention scaler/checkpoint for the nested-history
-    (MultiHeadNetWithNestedHistory) path, mirroring the K spec."""
+    (MultiHeadNetWithNestedHistory) path, mirroring the K spec.
+
+    When ``with_game_history`` is True, the underlying model is built with
+    ``game_dim=len(_FAKE_ATTN_HISTORY_STATS)`` so the outer game encoder
+    consumes both the inner-kick-pool output and the per-game aggregates —
+    this exercises the ``if game_history_stats:`` branch in
+    ``_smoke_attention`` (src/shared/smoke_test.py:138-141) that K's real
+    config triggers via ``attn_history_stats=_ATTN_HISTORY_STATS``.
+    """
     model_dir = _build_fake_artifact_dir(tmp_path)
     static_cols = list(_FAKE_ATTN_STATIC_FEATURES)
     targets = list(_FAKE_TARGETS)
+    game_dim = len(_FAKE_ATTN_HISTORY_STATS) if with_game_history else 0
     model = MultiHeadNetWithNestedHistory(
         static_dim=len(static_cols),
         kick_dim=len(_FAKE_ATTN_KICK_STATS),
         target_names=targets,
+        game_dim=game_dim,
         **_FAKE_ATTN_NESTED_KWARGS,
     )
     _write_attn_artifact(
@@ -370,14 +380,24 @@ def _fake_flat_attn_reg(model_dir: Path, *, with_opp: bool = False) -> dict:
     return reg
 
 
-def _fake_nested_attn_reg(model_dir: Path) -> dict:
+def _fake_nested_attn_reg(model_dir: Path, *, with_game_history: bool = False) -> dict:
     """Registry entry for the nested-history (K-style) attention path.
 
     ``attn_static_from_df=True`` so ``_resolve_attn_static_cols`` exercises the
     short-circuit branch that reads ``attn_static_features`` straight off
     the registry instead of intersecting with the feature column list.
+
+    When ``with_game_history=True``, the registry populates
+    ``attn_history_stats`` so ``_smoke_attention`` builds the
+    ``x_game_history`` tensor — exercising the per-game-aggregates branch K's
+    real config triggers in production (``src/k/config.py`` sets
+    ``attn_history_stats=_ATTN_HISTORY_STATS``). The model artifact must be
+    built with a matching non-zero ``game_dim``.
     """
     reg = _fake_reg(model_dir)
+    nested_kwargs = dict(_FAKE_ATTN_NESTED_KWARGS)
+    if with_game_history:
+        nested_kwargs["game_dim"] = len(_FAKE_ATTN_HISTORY_STATS)
     reg.update(
         {
             "train_attention_nn": True,
@@ -388,9 +408,11 @@ def _fake_nested_attn_reg(model_dir: Path) -> dict:
             "attn_kick_stats": list(_FAKE_ATTN_KICK_STATS),
             "attn_max_games": _FAKE_ATTN_MAX_GAMES,
             "attn_max_kicks_per_game": _FAKE_ATTN_MAX_KICKS_PER_GAME,
-            "attn_nn_kwargs_static": dict(_FAKE_ATTN_NESTED_KWARGS),
+            "attn_nn_kwargs_static": nested_kwargs,
         }
     )
+    if with_game_history:
+        reg["attn_history_stats"] = list(_FAKE_ATTN_HISTORY_STATS)
     return reg
 
 
@@ -483,3 +505,168 @@ def test_run_smoke_test_raises_on_attention_missing_target_head(
 
     with pytest.raises(SmokeTestFailed, match="missing target heads"):
         run_smoke_test("TST", model_dir)
+
+
+@pytest.mark.unit
+def test_run_smoke_test_passes_with_nested_attention_and_game_history(tmp_path, patch_registry):
+    """Happy path: K-style nested-history attention NN built with
+    ``game_dim>0`` and a registry that populates ``attn_history_stats``.
+    Exercises the ``if game_history_stats:`` branch of ``_smoke_attention``
+    (``src/shared/smoke_test.py:138-141``) — the per-game-aggregates tensor
+    construction K's real ``POSITION_CONFIG`` triggers in production via
+    ``attn_history_stats=_ATTN_HISTORY_STATS``.
+
+    Without this test the branch never executes under unit CI even though
+    every production K artifact uses it; a regression in the
+    ``x_game_history`` tensor shape would slip through to
+    ``src/batch/train.py``'s post-upload smoke and only surface at promotion.
+    """
+    model_dir = _build_nested_attn_artifact_dir(tmp_path, with_game_history=True)
+    patch_registry("TST", _fake_nested_attn_reg(model_dir, with_game_history=True))
+
+    assert run_smoke_test("TST", model_dir) is None
+
+
+# ---------------------------------------------------------------------------
+# Parametrized smoke test against real POSITION_CONFIGs.
+#
+# Every test above patches the registry with a synthetic ``"TST"`` config and
+# hand-built ``_fake_*_reg(...)`` dicts. That covers the load+predict code
+# paths inside ``run_smoke_test`` itself but leaves the contract between
+# ``src.shared.registry.get_inference_spec`` and ``run_smoke_test`` untested —
+# a change that breaks the contract (renaming ``attn_nn_kwargs_static``,
+# adding a key only K provides, etc.) would land green here and only fire
+# at promotion time in ``src/batch/train.py``.
+#
+# This parametrized test wires the REAL ``get_inference_spec(pos)`` for each
+# of QB/RB/WR/TE/K/DST and materializes a tiny artifact directory matching
+# that spec's actual feature/target/attention shapes. It then patches
+# INFERENCE_REGISTRY with the real spec (re-pointed at the tmp model_dir)
+# and asserts ``run_smoke_test`` completes — covering Ridge + base NN +
+# attention (flat for skill positions + DST, nested for K) + LightGBM.
+# ---------------------------------------------------------------------------
+
+
+_REAL_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
+
+
+def _build_real_artifacts(spec: dict, model_dir: Path) -> None:
+    """Materialize a complete artifact directory matching ``spec``'s shapes.
+
+    Produces:
+      * Ridge per-target subdirectories via ``RidgeMultiTarget.fit + save``
+      * NN base scaler + meta + checkpoint shaped by ``spec['nn_kwargs']``
+      * Attention scaler + meta + checkpoint shaped by
+        ``spec['attn_nn_kwargs_static']`` (flat for non-K, nested for K)
+      * LightGBM per-target pkls under ``model_dir/lightgbm/``
+
+    The synthetic data is tiny (64 rows) — model.fit just exists so the
+    on-disk shape is well-formed; the actual smoke test runs against a
+    one-row zero input so quality of the fit is irrelevant.
+    """
+    from src.features.engineer import get_attn_static_columns
+    from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
+
+    targets = list(spec["targets"])
+    feature_cols = list(spec["get_feature_columns_fn"]())
+    n_features = len(feature_cols)
+
+    rng = np.random.default_rng(2026)
+    X = rng.normal(size=(64, n_features)).astype(np.float64)
+    y = {t: rng.normal(size=64).astype(np.float64) for t in targets}
+
+    # Ridge — RidgeMultiTarget's default constructor makes plain RidgeModels;
+    # the smoke test's loader reconstructs from on-disk meta so we don't need
+    # to mirror two-stage / gated-ordinal configurations exactly.
+    ridge = RidgeMultiTarget(target_names=targets)
+    ridge.fit(X, y)
+    ridge.save(str(model_dir))
+
+    # NN base
+    scaler = StandardScaler().fit(X)
+    joblib.dump(scaler, model_dir / "nn_scaler.pkl")
+    write_scaler_meta(model_dir / "nn_scaler_meta.json", feature_cols, targets)
+
+    nn_kwargs = dict(spec["nn_kwargs"])
+    nn = MultiHeadNet(input_dim=n_features, target_names=targets, **nn_kwargs)
+    nn_ckpt = wrap_state_dict(nn.state_dict(), feature_cols, targets)
+    torch.save(nn_ckpt, model_dir / spec["nn_file"])
+
+    # Attention NN — flat (most positions) or nested (K). The attention static
+    # column list is what ``_resolve_attn_static_cols`` will produce at smoke
+    # time (the registry knows which path applies via ``attn_static_from_df``).
+    if spec.get("attn_static_from_df", False):
+        attn_static_cols = list(spec["attn_static_features"])
+    else:
+        attn_static_cols = get_attn_static_columns(feature_cols, spec["attn_static_features"])
+    n_static = len(attn_static_cols)
+    X_static = rng.normal(size=(64, n_static)).astype(np.float64)
+    attn_scaler = StandardScaler().fit(X_static)
+    joblib.dump(attn_scaler, model_dir / "attention_nn_scaler.pkl")
+    write_scaler_meta(model_dir / "attention_nn_scaler_meta.json", attn_static_cols, targets)
+
+    attn_kwargs = dict(spec["attn_nn_kwargs_static"])
+    if spec.get("attn_history_structure") == "nested":
+        kick_dim = len(spec["attn_kick_stats"])
+        attn_nn = MultiHeadNetWithNestedHistory(
+            static_dim=n_static,
+            kick_dim=kick_dim,
+            target_names=targets,
+            **attn_kwargs,
+        )
+    else:
+        history_stats = list(spec.get("attn_history_stats", []) or [])
+        opp_history_stats = list(spec.get("opp_attn_history_stats", []) or [])
+        opp_game_dim = len(opp_history_stats) if opp_history_stats else None
+        attn_nn = MultiHeadNetWithHistory(
+            static_dim=n_static,
+            game_dim=len(history_stats),
+            target_names=targets,
+            opp_game_dim=opp_game_dim,
+            **attn_kwargs,
+        )
+    attn_ckpt = wrap_state_dict(attn_nn.state_dict(), attn_static_cols, targets)
+    torch.save(attn_ckpt, model_dir / spec["attn_nn_file"])
+
+    # LightGBM — every real position has train_lightgbm=True.
+    lgbm = LightGBMMultiTarget(target_names=targets)
+    lgbm.fit(X, y)
+    lgbm.save(str(model_dir))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("pos", _REAL_POSITIONS)
+def test_run_smoke_test_passes_with_real_position_config(pos, tmp_path, patch_registry):
+    """Smoke test against the REAL ``POSITION_CONFIG`` for every position.
+
+    Materializes a tiny artifact directory matching the shape advertised by
+    ``src.shared.registry.get_inference_spec(pos)``, repoints the registry
+    entry's ``model_dir`` at the tmp dir, and runs ``run_smoke_test(pos)``.
+    Asserts no exception — i.e. the contract between
+    ``get_inference_spec`` and ``run_smoke_test`` holds for every
+    production position.
+
+    Why this matters: every other test in this file uses a synthetic
+    ``"TST"`` registry. None exercise the ``get_inference_spec`` → smoke
+    handshake for QB/RB/WR/TE/K/DST. A change that renames a registry key
+    or adds a position-specific field (K's nested attention spec, DST's
+    offense-side opp-attn branch) would land green in the synthetic suite
+    and only blow up at promotion-time inside ``src/batch/train.py``.
+    """
+    from src.shared.registry import get_inference_spec
+
+    spec = get_inference_spec(pos)
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+
+    _build_real_artifacts(spec, model_dir)
+
+    # Patch the registry with the real spec, only changing model_dir to the
+    # materialized tmp dir. Keep every other key (attn_kwargs, targets,
+    # feature columns, attn_static_features, etc.) intact so the test
+    # exercises the genuine contract.
+    real_reg = dict(spec)
+    real_reg["model_dir"] = str(model_dir)
+    patch_registry(pos, real_reg)
+
+    assert run_smoke_test(pos, model_dir) is None
