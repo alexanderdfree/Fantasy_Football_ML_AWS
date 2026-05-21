@@ -1,0 +1,178 @@
+name: Refresh data splits in S3
+
+# One-off / on-demand workflow that regenerates ``data/splits/{train,val,test}.parquet``
+# from nflverse + PBP and uploads the result to s3://ff-predictor-training/data/.
+#
+# Expected cadence: a handful of times per quarter — after a config change
+# that adds new columns to a position's INCLUDE_FEATURES or attn_history_stats
+# (so the splits parquet doesn't drift behind the code). Not gated on a
+# schedule because the cost (~5–10 min of nflverse + PBP pull) doesn't
+# amortize over a daily refresh.
+#
+# Origin: PR #235 (2026-05-20) added 5 redzone per-game cols to RB's
+# attn_history_stats; the splits parquet wasn't refreshed; every subsequent
+# RB Batch job failed smoke_test with a state_dict shape mismatch and
+# manifest.stable stayed pinned at the May 20 artifact for ~24 h. This
+# workflow plus PR #328's build_game_history_arrays fail-loud guard close
+# the loop: a config-change PR can run this workflow to ship the matching
+# splits, then trigger a retrain.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kick_off_train:
+        description: "Trigger train-batch.yml after upload"
+        type: boolean
+        default: false
+
+concurrency:
+  # Same-ref dispatches serialize so two operators can't race each other into
+  # a half-uploaded S3 state; different refs (rare) get independent runs.
+  group: refresh-splits-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  S3_BUCKET: ff-predictor-training
+  # Mirrors tests.yml / train-batch.yml — uv otherwise refuses to fall
+  # through the PyTorch CPU index for transitive deps that exist on multiple
+  # registries (e.g. `requests`).
+  UV_INDEX_STRATEGY: unsafe-best-match
+
+permissions:
+  contents: read
+  # ``actions: write`` is needed only for the optional ``kick_off_train``
+  # step's ``gh workflow run train-batch.yml`` call. Scoped to this workflow.
+  actions: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
+      # major version comment. SHA = astral-sh/setup-uv v6.8.0.
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements*.txt"
+
+      - name: Install dependencies
+        run: uv pip install --system -r requirements.txt
+
+      - name: Install nfl_data_py (no-deps, matches Dockerfile)
+        # Same pattern as tests.yml. Skips nfl_data_py's transitive deps
+        # which conflict with the pinned numpy / pyarrow / pandas in
+        # requirements.txt.
+        run: uv pip install --system --no-deps nfl_data_py==0.3.3
+
+      # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
+      # major version comment. SHA = aws-actions/configure-aws-credentials v4
+      # tip as of 2026-05-21.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Regenerate splits from nflverse + PBP
+        # ``load_raw_data`` pulls weekly stats / rosters / schedules / snap
+        # counts / injuries / depth charts / PBP for SEASONS via nfl_data_py,
+        # caches to ``data/raw/``, and merges the redzone PBP aggregates onto
+        # the weekly frame. ``preprocess`` does the standard cleanup;
+        # ``temporal_split`` writes ``data/splits/{train,val,test}.parquet``
+        # with the chronological train/val/test boundaries from
+        # ``src.config``.
+        run: |
+          mkdir -p data/raw data/splits
+          python - <<'PY'
+          from src.data.loader import load_raw_data
+          from src.data.preprocessing import preprocess
+          from src.data.split import temporal_split
+
+          df = preprocess(load_raw_data())
+          temporal_split(df)
+          PY
+
+      - name: Verify PR #235 columns are present
+        # Fail loud if temporal_split produced a parquet that's missing the
+        # columns this workflow exists to ship. Without this, an upstream
+        # nflverse outage or a missed merge of new feature columns could
+        # silently upload broken splits to S3 and pin every position's
+        # stable to its last-good artifact (the same failure mode this
+        # workflow exists to clear).
+        run: |
+          python - <<'PY'
+          import pyarrow.parquet as pq
+
+          required = [
+              "redzone_carries",
+              "redzone_targets",
+              "inside10_carries",
+              "inside5_carries",
+              "redzone_target_share",
+              "prior_season_total_redzone_touches",
+              "prior_season_mean_redzone_touches_per_game",
+          ]
+          for split in ("train", "val", "test"):
+              cols = pq.read_schema(f"data/splits/{split}.parquet").names
+              missing = [c for c in required if c not in cols]
+              assert not missing, f"{split}.parquet missing: {missing}"
+              print(f"OK {split}: {len(cols)} cols, all 7 PR #235 cols present")
+          PY
+
+      - name: Upload to S3 with force
+        # ``force=True`` skips the per-file ETag-vs-MD5 short-circuit in
+        # ``upload_data`` so we always overwrite the existing S3 objects
+        # — the regenerated parquet typically differs from the last upload
+        # in row count + content even when the column list is unchanged,
+        # so the ETag would be different in any case; force is the safer
+        # default for an explicit refresh.
+        run: |
+          python - <<'PY'
+          import os
+
+          import boto3
+
+          from src.batch.launch import upload_data
+
+          s3 = boto3.client("s3", region_name=os.environ["AWS_REGION"])
+          upload_data(os.environ["S3_BUCKET"], s3_client=s3, force=True)
+          PY
+
+      - name: Confirm S3 objects updated
+        run: |
+          aws s3 ls "s3://${S3_BUCKET}/data/" --region "${AWS_REGION}"
+
+      - name: Trigger train-batch.yml
+        # Optional chain — if the operator wants the full
+        # regen-splits-then-retrain flow in one click, this dispatches the
+        # training workflow on the same ref. Otherwise skip and the operator
+        # can trigger it manually after inspecting the upload.
+        if: ${{ inputs.kick_off_train }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run train-batch.yml --ref "${GITHUB_REF}"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Refresh splits run"
+            echo ""
+            echo "- Bucket: \`s3://${S3_BUCKET}/data/\`"
+            echo "- Region: \`${AWS_REGION}\`"
+            echo "- kick_off_train: \`${{ inputs.kick_off_train }}\`"
+            echo ""
+            echo "Next: watch the next RB Batch job's \`smoke_test\` log line — a"
+            echo "PASS advances \`models/RB/manifest.json\`'s \`stable\` pointer and the"
+            echo "in-flight refresh poller swaps the fresh RB model on every running"
+            echo "serving task within ~30s of the manifest write."
+          } >> "$GITHUB_STEP_SUMMARY"
