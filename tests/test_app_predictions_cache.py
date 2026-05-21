@@ -1,7 +1,9 @@
 """Unit tests for the serving prediction-cache layer in ``src/serving/app.py``.
 
 Covers:
-- ``_compute_models_fingerprint`` reflects mtime + size changes.
+- ``_compute_models_fingerprint`` reflects content + size changes (NOT mtime —
+  that was the original design but caused systematic cache misses across ECS
+  task replacements; see ``_compute_models_fingerprint`` docstring).
 - ``_persist_cache_to_disk`` + ``_try_hydrate_from_disk`` round-trip the
   results DataFrame and metrics dict.
 - ``_try_hydrate_from_disk`` returns False on fingerprint mismatch or
@@ -124,20 +126,45 @@ def fingerprint_files(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_fingerprint_changes_on_model_mtime_bump(fingerprint_files):
+def test_fingerprint_stable_across_mtime_bump_when_content_unchanged(fingerprint_files):
+    """Fingerprint must be content-driven, not mtime-driven. boto3's
+    ``download_file`` stamps the destination with the *download* time, so
+    every fresh ECS task saw a different fingerprint and missed the cache
+    on boot — see ``_compute_models_fingerprint`` docstring for the
+    full reasoning. This test pins the new contract: mtime change with
+    identical content must NOT change the fingerprint.
+    """
     import src.serving.app as app_mod
 
     sha1, files1 = app_mod._compute_models_fingerprint()
     assert isinstance(sha1, str) and len(sha1) == 64
     assert len(files1) == 3
 
-    # Bump mtime on one file (size unchanged).
+    # Bump mtime on one file (size + content unchanged).
     target = fingerprint_files[1]
     new_mtime = os.stat(target).st_mtime + 10.0
     os.utime(target, (new_mtime, new_mtime))
 
     sha2, _ = app_mod._compute_models_fingerprint()
-    assert sha2 != sha1, "fingerprint must change when a model file's mtime changes"
+    assert sha2 == sha1, "fingerprint must NOT change when only mtime changes (content-hash bug)"
+
+
+def test_fingerprint_changes_on_content_change(fingerprint_files):
+    """Modifying the head bytes of a fingerprint input MUST change the
+    fingerprint — the content-hash sampling reads the first 64 KB, and every
+    file in the fingerprint set is much shorter than that, so any byte
+    change in the file is fully visible to the hash.
+    """
+    import src.serving.app as app_mod
+
+    sha1, _ = app_mod._compute_models_fingerprint()
+    # Mutate content (same length so size doesn't carry the signal).
+    target = Path(fingerprint_files[1])
+    original = target.read_bytes()
+    target.write_bytes(b"X" * len(original))
+
+    sha2, _ = app_mod._compute_models_fingerprint()
+    assert sha2 != sha1, "fingerprint must change when file content changes"
 
 
 def test_fingerprint_changes_on_size_change(fingerprint_files):

@@ -91,6 +91,16 @@ _cache = {}
 # results DataFrame. Reentrant because _ensure_metrics nests into
 # _ensure_position_loaded.
 _cache_lock = threading.RLock()
+# ``_apply_position_models`` writes per-position prediction columns into the
+# shared ``_cache["results"]`` DataFrame. Even when row indices are disjoint
+# across positions (QB rows vs RB rows, etc.), pandas' BlockManager is not
+# thread-safe for concurrent ``.loc[]`` writes — the internal column-block
+# representation is shared across columns, and two writers can corrupt block
+# state mid-update. The parallel pre-warm path in ``_ensure_all_positions_loaded``
+# spawns one worker per position; without this lock those workers race on the
+# DataFrame's internals. Plain ``threading.Lock`` is correct here (no
+# reentrancy needed — the write block doesn't call back into itself).
+_results_write_lock = threading.Lock()
 # Wiki page caching uses its own lock so a slow first-hit ``_ensure_metrics``
 # (model loads, feature build) doesn't serialize wiki-tab GETs behind it.
 # Wiki entries live in the SAME ``_cache`` dict (keyed by ("wiki", slug))
@@ -703,7 +713,7 @@ def _apply_position_models(train, val, test, pos, results):
 
     # No position currently uses a post-hoc adjustment: K encodes miss penalties
     # as signed raw-value heads (see ``target_signs``) and QB/RB/WR/TE/DST all
-    # aggregate raw-stat preds via ``reg["aggregate_fn"]``. The
+    # aggregate raw-stat preds via ``predictions_to_fantasy_points``. The
     # ``compute_adjustment_fn`` slot is plumbed through the registry (set
     # explicitly to ``None`` for K + DST in ``src/shared/registry.py``) so a
     # future position that needs one can opt in without touching this code.
@@ -711,7 +721,9 @@ def _apply_position_models(train, val, test, pos, results):
     if reg.get("compute_adjustment_fn") is not None:
         adj = reg["compute_adjustment_fn"](pos_test)
         adj_values = adj.values
-    aggregate_fn = reg.get("aggregate_fn")
+    # ``target_signs`` is set only for K — it acts as the dispatch discriminator
+    # for ``_combine_total`` below. (The registry's ``aggregate_fn`` slot is no
+    # longer consumed here; see W.SHARED-PIPE for the registry-side cleanup.)
     target_signs = reg.get("target_signs")
 
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)
@@ -728,20 +740,24 @@ def _apply_position_models(train, val, test, pos, results):
         errors.pop(stale_key, None)
 
     def _combine_total(preds: dict, fmt: str = "ppr") -> np.ndarray:
+        # K — sign-vectored sum, no reception target, format-invariant.
+        if target_signs is not None:
+            total = sum(preds[t] * target_signs.get(t, 1.0) for t in targets)
+            if adj_values is not None:
+                total = total + adj_values
+            return total
+        # If a future position registers ``compute_adjustment_fn`` but doesn't
+        # plug into ``POSITION_TARGET_MAP``/``predictions_to_fantasy_points``
+        # yet, the adjustment slot keeps working via a plain raw-stat sum.
+        # No prod position hits this branch today.
+        if adj_values is not None:
+            total = sum(preds[t] for t in targets)
+            return total + adj_values
         # QB/RB/WR/TE/DST go through predictions_to_fantasy_points which knows
         # the per-format reception weight; QB/DST values happen to be format-
         # invariant by construction (no reception target / DST tier-mapped
         # aggregator) so the three calls return identical numbers there.
-        if aggregate_fn is not None:
-            return predictions_to_fantasy_points(pos, preds, scoring_format=fmt)
-        # K — sign-vectored sum, no reception target, format-invariant.
-        if target_signs is not None:
-            total = sum(preds[t] * target_signs.get(t, 1.0) for t in targets)
-        else:
-            total = sum(preds[t] for t in targets)
-        if adj_values is not None:
-            total = total + adj_values
-        return total
+        return predictions_to_fantasy_points(pos, preds, scoring_format=fmt)
 
     def _per_format_totals(preds):
         """Return {fmt: total_array} for a single model's preds dict."""
@@ -963,22 +979,36 @@ def _apply_position_models(train, val, test, pos, results):
     # initializes the per-format columns to 0.0 / NaN in _load_base_data_locked).
     # We write three format-specific columns per model AND the legacy unsuffixed
     # column (a PPR alias) so existing fixtures / tests keep working.
+    #
+    # Local-then-merge semantics: the per-model totals dicts above
+    # (``ridge_totals``, ``nn_totals``, ``attn_nn_totals``, ``lgbm_totals``)
+    # are computed independently into local variables by the inference branches
+    # above. Here we merge them into the shared ``results`` DataFrame under
+    # ``_results_write_lock`` — even though the parallel pre-warm path writes
+    # disjoint row indices per position, pandas' BlockManager is not
+    # thread-safe for concurrent ``.loc[]`` writes (see lock comment near the
+    # module top). The lock acquisition is contended only in pre-warm; the
+    # per-request path through ``_ensure_position_loaded`` already holds
+    # ``_cache_lock`` so this is uncontended there.
     model_totals_pairs = (
         ("ridge", ridge_totals),
         ("nn", nn_totals),
         ("attn_nn", attn_nn_totals),
         ("lgbm", lgbm_totals),
     )
-    for prefix, totals in model_totals_pairs:
-        legacy_col = f"{prefix}_pred"
-        if totals is not None:
-            for fmt, arr in totals.items():
-                results.loc[pos_index, _pred_col(prefix, fmt)] = np.round(arr, 2).astype(np.float32)
-            results.loc[pos_index, legacy_col] = np.round(totals["ppr"], 2).astype(np.float32)
-        else:
-            for fmt in _VALID_SCORING:
-                results.loc[pos_index, _pred_col(prefix, fmt)] = np.nan
-            results.loc[pos_index, legacy_col] = np.nan
+    with _results_write_lock:
+        for prefix, totals in model_totals_pairs:
+            legacy_col = f"{prefix}_pred"
+            if totals is not None:
+                for fmt, arr in totals.items():
+                    results.loc[pos_index, _pred_col(prefix, fmt)] = np.round(arr, 2).astype(
+                        np.float32
+                    )
+                results.loc[pos_index, legacy_col] = np.round(totals["ppr"], 2).astype(np.float32)
+            else:
+                for fmt in _VALID_SCORING:
+                    results.loc[pos_index, _pred_col(prefix, fmt)] = np.nan
+                results.loc[pos_index, legacy_col] = np.nan
 
     # Cache per-target metrics for /api/position_details. Per-target MAEs are
     # raw-stat (yards / TDs / receptions count) and so are format-invariant —
@@ -1085,7 +1115,14 @@ def _load_base_data_locked():
     keep_cols = [c for c in keep_cols if c in test.columns]
     results = test[keep_cols].copy()
 
-    for pos_test_df in [k_test, dst_test]:
+    # K/DST test frames need their index aligned to ``results``' offset so the
+    # per-position writes in ``_apply_position_models`` land on the right rows.
+    # ``.copy()`` first — mutating ``.index`` in place would persist into the
+    # cached splits dict in a way that surprises any future caller expecting
+    # the original index; explicit reindexed copies make the contract local.
+    k_test_reindexed = None
+    dst_test_reindexed = None
+    for pos_label, pos_test_df in (("k", k_test), ("dst", dst_test)):
         offset = results.index.max() + 1
         pos_rows = pd.DataFrame(index=range(offset, offset + len(pos_test_df)))
         for col in keep_cols:
@@ -1097,8 +1134,17 @@ def _load_base_data_locked():
                 pos_rows[col] = ""
             else:
                 pos_rows[col] = np.nan
+        pos_test_df = pos_test_df.copy()
         pos_test_df.index = pos_rows.index
+        if pos_label == "k":
+            k_test_reindexed = pos_test_df
+        else:
+            dst_test_reindexed = pos_test_df
         results = pd.concat([results, pos_rows])
+    # Replace local refs so cached splits below carry the reindexed copies, not
+    # the original frames (whose index would no longer match the results rows).
+    k_test = k_test_reindexed
+    dst_test = dst_test_reindexed
 
     # Initialize per-model, per-format prediction columns. ridge/nn default to
     # 0.0 (every row gets a value once the position loads); attn_nn/lgbm default
@@ -1156,13 +1202,19 @@ def _ensure_position_loaded(pos):
     _ensure_base_data()
     sentinel_mtime = refresh_sentinel_mtime(pos)
     loaded_mtime = _cache.get("positions_mtime", {}).get(pos, -1.0)
+    failed_at = _cache.get("positions_failed_mtime", {}).get(pos, -1.0)
     # Fast path: take the no-lock early return only when the sentinel hasn't
-    # advanced beyond what we already loaded.
-    if sentinel_mtime <= loaded_mtime:
-        if pos in _cache.get("positions_loaded", ()):
-            return
-        if pos in _cache.get("positions_failed", ()):
-            return  # cached hard-failure — don't retry every request
+    # advanced beyond what we already loaded (or beyond what failed last time —
+    # ``positions_failed_mtime`` records the sentinel value at the failure so
+    # the next sentinel touch can retry. See the failure path below for where
+    # the mtime gets stamped).
+    if sentinel_mtime <= loaded_mtime and pos in _cache.get("positions_loaded", ()):
+        return
+    if pos in _cache.get("positions_failed", ()) and sentinel_mtime <= failed_at:
+        # Cached hard-failure at this sentinel value — don't retry every
+        # request. A subsequent sentinel advance breaks out of this branch
+        # and the slow path below invalidates the failed state.
+        return
     with _cache_lock:
         if "splits" not in _cache:
             # ``_ensure_base_data`` ran above; if "splits" is still missing
@@ -1179,6 +1231,7 @@ def _ensure_position_loaded(pos):
             )
             print(f"[app] {err_msg}", flush=True)
             _cache.setdefault("positions_failed", set()).add(pos)
+            _cache.setdefault("positions_failed_mtime", {})[pos] = sentinel_mtime
             _cache.setdefault("position_load_errors", {})[pos] = err_msg
             return
         # Re-stat under the lock so we make the refresh decision against the
@@ -1186,15 +1239,22 @@ def _ensure_position_loaded(pos):
         # fast-path check.
         sentinel_mtime = refresh_sentinel_mtime(pos)
         loaded_mtime = _cache.get("positions_mtime", {}).get(pos, -1.0)
-        if sentinel_mtime > loaded_mtime and loaded_mtime != -1.0:
+        failed_at = _cache.get("positions_failed_mtime", {}).get(pos, -1.0)
+        loaded_advance = sentinel_mtime > loaded_mtime and loaded_mtime != -1.0
+        failed_advance = pos in _cache.get("positions_failed", set()) and sentinel_mtime > failed_at
+        if loaded_advance or failed_advance:
             # In-flight refresh detected: drop cached state for this position
             # so the upcoming _apply_position_models writes against the new
             # on-disk model. metrics_by_format aggregates across positions so
-            # it must be invalidated whenever ANY position re-loads.
+            # it must be invalidated whenever ANY position re-loads — and the
+            # persisted disk cache (predictions.parquet / metrics.json /
+            # fingerprint.json) must go too, else _try_hydrate_from_disk would
+            # restore the stale aggregate on the next container boot.
             _cache.get("positions_loaded", set()).discard(pos)
             _cache.get("positions_failed", set()).discard(pos)
+            _cache.get("positions_failed_mtime", {}).pop(pos, None)
             _cache.get("position_load_errors", {}).pop(pos, None)
-            _cache.pop("metrics_by_format", None)
+            _invalidate_metrics_cache(reason=f"in-flight-refresh:{pos}")
             print(f"[{pos}] in-flight refresh detected (sentinel mtime advanced) — re-loading")
         if pos in _cache.get("positions_loaded", set()):
             return
@@ -1202,24 +1262,26 @@ def _ensure_position_loaded(pos):
             return
         train, val, test = _cache["splits"][pos]
         print(f"Applying {pos}-specific model...")
-        # Stamp positions_mtime BEFORE _apply so a failure path doesn't leave
-        # the mtime unset — otherwise loaded_mtime would stay at -1.0 forever
-        # and a later sentinel advance couldn't be detected to retry the
-        # failed position with the freshly refreshed model.
-        _cache.setdefault("positions_mtime", {})[pos] = sentinel_mtime
         try:
             _apply_position_models(train, val, test, pos, _cache["results"])
         except Exception as e:
             # Anything that slips past the inner per-model try/excepts —
             # typically data-loading or feature-building failures that affect
-            # the whole position. Cache so we don't retry on every request,
-            # and leave the pred columns untouched (still the default init
-            # values from _load_base_data_locked).
+            # the whole position. Record the sentinel value at failure under
+            # ``positions_failed_mtime`` so we don't spam-retry every request,
+            # but a later sentinel advance (a newly synced model) still
+            # triggers a retry.
             traceback.print_exc()
             _cache.setdefault("positions_failed", set()).add(pos)
+            _cache.setdefault("positions_failed_mtime", {})[pos] = sentinel_mtime
             _cache.setdefault("position_load_errors", {})[pos] = repr(e)
             print(f"[app] {pos} fully failed: {e!r} — serving degraded")
             return
+        # Stamp positions_mtime AFTER _apply succeeds so a transient failure
+        # doesn't leave a misleading "loaded at sentinel X" entry. Successful
+        # loads record the sentinel value they were taken against — the
+        # invalidation check above uses this to detect refresh advances.
+        _cache.setdefault("positions_mtime", {})[pos] = sentinel_mtime
         _cache["positions_loaded"].add(pos)
 
 
@@ -1253,6 +1315,7 @@ def _ensure_all_positions_loaded():
     failed = _cache.setdefault("positions_failed", set())
     errors = _cache.setdefault("position_load_errors", {})
     mtimes = _cache.setdefault("positions_mtime", {})
+    failed_mtimes = _cache.setdefault("positions_failed_mtime", {})
     pending = [p for p in _ALL_POSITIONS if p not in loaded and p not in failed]
 
     def _load_one(pos):
@@ -1277,6 +1340,13 @@ def _ensure_all_positions_loaded():
                 else:
                     traceback.print_exception(type(err), err, err.__traceback__)
                     failed.add(pos)
+                    # Stamp failed_mtimes so a subsequent sentinel touch
+                    # (refresh poller swapping in a new model) is detected as
+                    # an advance and triggers a retry via
+                    # ``_ensure_position_loaded``'s slow path. Without this,
+                    # pre-warm failures stayed at ``loaded_mtime=-1.0`` forever
+                    # and never retried on a refresh.
+                    failed_mtimes[pos] = sentinel_mtime
                     errors[pos] = repr(err)
                     print(f"[app] {pos} fully failed: {err!r} — serving degraded")
 
@@ -1371,8 +1441,25 @@ def _iter_fingerprint_paths():
                 yield os.path.join(raw_dir, fname)
 
 
+_FINGERPRINT_CONTENT_BYTES = 64 * 1024  # 64 KB head-sample per file
+
+
 def _compute_models_fingerprint():
-    """Return (sha256_hex, files_list) over the fingerprint paths."""
+    """Return (sha256_hex, files_list) over the fingerprint paths.
+
+    Previously this combined ``(size, mtime_ns)`` per file. Mtime was the
+    sensitive bit: ECS task replacement re-syncs the model dir from S3, and
+    boto3's ``download_file`` stamps the local file with the *download* time,
+    not the upload time on S3 — so every fresh container saw a different
+    fingerprint and missed the cache on boot even when the content was
+    byte-identical. We now hash ``(size, head-bytes)`` instead, where
+    head-bytes is the first 64 KB of each file's content. That's enough
+    collision resistance for our use case (every model retrain rewrites
+    weights at the start of the joblib pickle / torch state dict; even tiny
+    config changes shift those leading bytes), and reading 64 KB per file
+    keeps the boot-time fingerprint compute fast (~50ish files in the
+    aggregate, <5 ms on local SSD).
+    """
     files = []
     paths = sorted(_iter_fingerprint_paths())
     h = hashlib.sha256()
@@ -1381,14 +1468,23 @@ def _compute_models_fingerprint():
             st = os.stat(path)
         except OSError:
             continue
+        try:
+            with open(path, "rb") as f:
+                head_bytes = f.read(_FINGERPRINT_CONTENT_BYTES)
+        except OSError:
+            # File disappeared between stat and open — same handling as the
+            # stat OSError above (skip this entry; differing fingerprint will
+            # naturally invalidate the cache).
+            continue
+        content_hash = hashlib.sha256(head_bytes).hexdigest()
         rel = os.path.relpath(path, _REPO_ROOT)
-        entry = {"path": rel, "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+        entry = {"path": rel, "size": st.st_size, "content_hash": content_hash}
         files.append(entry)
         h.update(rel.encode("utf-8"))
         h.update(b"\x00")
         h.update(str(st.st_size).encode("ascii"))
         h.update(b"\x00")
-        h.update(str(st.st_mtime_ns).encode("ascii"))
+        h.update(content_hash.encode("ascii"))
         h.update(b"\x00")
     return h.hexdigest(), files
 
@@ -1456,6 +1552,15 @@ def _try_hydrate_from_disk():
     _cache["metrics_by_format"] = metrics_by_format
     _cache["metrics"] = metrics_by_format.get("ppr", {})
     _cache["positions_loaded"] = set(_ALL_POSITIONS)
+    # Seed positions_mtime from the current on-disk sentinel for each position.
+    # Without this seed, ``_ensure_position_loaded``'s in-flight refresh path
+    # is dead on hydrated containers: ``loaded_mtime`` defaults to -1.0, the
+    # invalidation condition ``sentinel > loaded_mtime AND loaded_mtime != -1.0``
+    # never fires, and a post-hydration model refresh wouldn't trigger a reload.
+    # Reading the sentinel here records "we hydrated against whatever model is
+    # currently on disk" — any subsequent poller-driven advance will be detected.
+    hydrated_mtimes = {pos: refresh_sentinel_mtime(pos) for pos in _ALL_POSITIONS}
+    _cache["positions_mtime"] = hydrated_mtimes
     _cache["base_loaded"] = True
     if position_details:
         _cache["position_details"] = position_details
@@ -1528,15 +1633,52 @@ def _persist_cache_to_disk():
 
 
 def _ensure_metrics():
-    if "metrics_by_format" in _cache:
+    if "metrics_by_format" in _cache and not _any_position_sentinel_advanced():
         return
     with _cache_lock:
-        if "metrics_by_format" in _cache:
+        if "metrics_by_format" in _cache and not _any_position_sentinel_advanced():
             return
+        # A sentinel advanced under us — drop the cached aggregate so it
+        # rebuilds against the freshly-loaded per-position predictions. The
+        # per-position invalidation in ``_ensure_position_loaded`` already
+        # discards ``metrics_by_format`` when one position re-loads, but
+        # ``_ensure_metrics`` can also be hit *before* a per-position re-load
+        # (e.g. /api/metrics with all positions still marked loaded against
+        # stale mtimes), so the sentinel sweep here is the second line of
+        # defense.
+        if "metrics_by_format" in _cache:
+            _invalidate_metrics_cache(reason="sentinel-advance")
         if _try_hydrate_from_disk():
             return
         _ensure_all_positions_loaded()
         _compute_metrics_locked()
+
+
+def _any_position_sentinel_advanced() -> bool:
+    """True iff any loaded position's on-disk sentinel mtime is greater than
+    the value recorded when we last loaded that position. Used as the second
+    line of defense for ``_ensure_metrics`` — see comment there.
+    """
+    stored = _cache.get("positions_mtime", {})
+    loaded = _cache.get("positions_loaded", set())
+    return any(refresh_sentinel_mtime(pos) > stored.get(pos, -1.0) for pos in loaded)
+
+
+def _invalidate_metrics_cache(*, reason: str) -> None:
+    """Pop the in-memory ``metrics_by_format`` and delete the persisted
+    artifacts on disk. The disk files would otherwise survive an in-memory
+    invalidation — and ``_try_hydrate_from_disk`` could then re-hydrate them
+    on the next boot, restoring the same stale metrics we just invalidated.
+    (S3 cleanup is out of scope here; the next ``_persist_cache_to_disk``
+    call after recompute will overwrite the S3 object with fresh content.)
+    """
+    _cache.pop("metrics_by_format", None)
+    _cache.pop("metrics", None)
+    for name in (_PREDICTIONS_PARQUET, _METRICS_JSON, _FINGERPRINT_JSON):
+        path = os.path.join(_PREDICTIONS_CACHE_DIR, name)
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+    print(f"[predcache] invalidated in-memory + on-disk cache ({reason})")
 
 
 def _compute_metrics_locked():

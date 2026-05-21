@@ -14,7 +14,6 @@ small lazy importer.
 import importlib
 from functools import cache
 
-from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.position import Position
 from src.shared.position_config import PositionConfig
 
@@ -211,7 +210,14 @@ def get_inference_spec(pos: str) -> dict:
     else:
         # Flat-attention positions share the same shape — including DST, whose
         # offense-side opp-attn branch is selected by ``opp_attn_kind``.
-        spec["aggregate_fn"] = aggregate_fn_for(pos)
+        # ``aggregate_fn`` is set to ``None`` here: app.py's ``_combine_total``
+        # only consults this key via ``is not None`` to gate between the
+        # ``predictions_to_fantasy_points`` path (QB/RB/WR/TE/DST) and the
+        # ``target_signs`` path (K), so a sentinel is all that's needed. The
+        # callable used to be bound to ``aggregate_fn_for(pos)`` but was never
+        # invoked — see audit-318 (W.SHARED-PIPE finding 1).
+        # TODO: wire up if a future caller needs the bound callable.
+        spec["aggregate_fn"] = None
         spec["attn_history_stats"] = list(pc.attn_history_stats)
         spec["attn_max_seq_len"] = pc.attn_max_seq_len or 17
         spec["opp_attn_history_stats"] = list(pc.opp_attn_history_stats)

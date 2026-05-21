@@ -159,12 +159,18 @@ def test_main_failed_jobs_branch(monkeypatch, capsys):
 
     monkeypatch.setattr(lm, "download_artifacts", _download)
     monkeypatch.setattr("sys.argv", ["launch.py", "--positions", "QB", "RB"])
-    lm.main()
+    # main() now exits non-zero when any position is FAILED / TIMED_OUT so CI
+    # surfaces the regression instead of silently passing; train-batch.yml's
+    # post-step comment claims the workflow blocks on non-success.
+    with pytest.raises(SystemExit) as exc:
+        lm.main()
+    assert exc.value.code == 1
 
     out = capsys.readouterr().out
     assert "Failed positions" in out
     assert "QB" in out
-    # Download was called but only for succeeded positions (RB).
+    # Download was called but only for succeeded positions (RB) — side effects
+    # before the exit still fire.
     assert calls == [{"download": ["RB"]}]
 
 

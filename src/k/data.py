@@ -378,16 +378,18 @@ def load_data() -> pd.DataFrame:
     away["implied_team_total"] = (away["total_line"] + away["spread_line"]) / 2
 
     schedule_info = pd.concat([home, away], ignore_index=True).drop(columns=["spread_line"])
+    # Apply team-code normalization shared with weather_features so pre-relocation
+    # OAK/SD/STL games still match modern LV/LAC/LAR rows. Hoisted out of the
+    # ``if has_venue:`` branch — schedules use historical codes regardless of
+    # whether roof/surface are present, so the schedule merge below
+    # (``is_home`` + Vegas lines) misses for all pre-2017 OAK/SD/STL games
+    # without this normalisation, not just the venue-fallback pass.
+    schedule_info["recent_team"] = schedule_info["recent_team"].replace(_TEAM_CODE_NORMALIZATION)
     # Suffix the venue cols so we don't overwrite PBP-populated values on rows
     # where PBP already has them — we only want to fill where PBP is NaN/"".
     if has_venue:
         schedule_info = schedule_info.rename(
             columns={"roof": "roof_sched", "surface": "surface_sched"}
-        )
-        # Apply team-code normalization shared with weather_features so
-        # pre-relocation OAK/SD/STL games still match modern LV/LAC/LA rows.
-        schedule_info["recent_team"] = schedule_info["recent_team"].replace(
-            _TEAM_CODE_NORMALIZATION
         )
 
     k_df = k_df.merge(schedule_info, on=["recent_team", "season", "week"], how="left")
@@ -629,6 +631,18 @@ def reconstruct_kicker_kicks_from_pbp(
             pbp = pbp[pbp["season_type"] == "REG"]
 
             fg_rows = pbp[pbp["field_goal_attempt"] == 1]
+            # Per-kick dome-aware wind: mirror the weekly builder
+            # (``reconstruct_kicker_weekly_from_pbp``) which sets dome games to
+            # 0 mph explicitly and leaves outdoor-missing as NaN for the
+            # downstream attention input layer to handle. The previous
+            # ``wind.fillna(0)`` conflated outdoor-missing with dome — a true
+            # 30 mph outdoor game with a missing nfl_data_py weather row would
+            # have looked identical to a Mercedes-Benz Stadium kick.
+            # NaN propagates to ``build_nested_kick_history`` where
+            # ``np.nan_to_num`` zeros it out as a last-resort default; the
+            # weekly builder's matching convention is at lines 222-238 / 252-261.
+            fg_is_dome = fg_rows["roof"].isin(("dome", "closed"))
+            fg_wind = fg_rows["wind"].where(~fg_is_dome, 0.0)
             fg_kicks = pd.DataFrame(
                 {
                     "player_id": fg_rows["kicker_player_id"],
@@ -642,11 +656,13 @@ def reconstruct_kicker_kicks_from_pbp(
                     "fg_prob": fg_rows["fg_prob"].fillna(0).astype(float),
                     "is_q4": (fg_rows["qtr"] >= 4).astype(int),
                     "score_diff": fg_rows["score_differential"].fillna(0).astype(float),
-                    "game_wind": fg_rows["wind"].fillna(0).astype(float),
+                    "game_wind": fg_wind.astype(float),
                 }
             )
 
             xp_rows = pbp[pbp["extra_point_attempt"] == 1]
+            xp_is_dome = xp_rows["roof"].isin(("dome", "closed"))
+            xp_wind = xp_rows["wind"].where(~xp_is_dome, 0.0)
             xp_kicks = pd.DataFrame(
                 {
                     "player_id": xp_rows["kicker_player_id"],
@@ -660,7 +676,7 @@ def reconstruct_kicker_kicks_from_pbp(
                     "fg_prob": 0.0,
                     "is_q4": (xp_rows["qtr"] >= 4).astype(int),
                     "score_diff": xp_rows["score_differential"].fillna(0).astype(float),
-                    "game_wind": xp_rows["wind"].fillna(0).astype(float),
+                    "game_wind": xp_wind.astype(float),
                 }
             )
 

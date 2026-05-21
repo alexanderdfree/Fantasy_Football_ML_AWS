@@ -129,10 +129,13 @@ class TestEnvVarOverrides:
             assert mod._job_definition_for("QB") == "ff-training-job"
         self._reload()
 
-    def test_job_definition_for_appends_revision_to_cpu_def(self):
-        # CPU-only positions on a CPU def still get the revision pin —
-        # batch-image.yml registers one revision per image, both GPU and CPU
-        # job definitions point at the same image, so they share the revision.
+    def test_job_definition_for_no_revision_for_cpu_def(self):
+        # Revision pin only applies to the GPU job-def. batch-image.yml's
+        # register-job-definition step targets $JOB_DEFINITION (GPU only); the
+        # CPU job-def is registered out-of-band and its revisions don't move in
+        # lock-step with the GPU one. Appending the GPU revision to the CPU job
+        # name produces an invalid reference. K/DST submissions on the CPU def
+        # therefore use the bare name; the GPU positions still get pinned.
         with mock.patch.dict(
             os.environ,
             {
@@ -142,8 +145,8 @@ class TestEnvVarOverrides:
             },
         ):
             mod = self._reload()
-            assert mod._job_definition_for("K") == "ff-training-job-cpu:9"
-            assert mod._job_definition_for("DST") == "ff-training-job-cpu:9"
+            assert mod._job_definition_for("K") == "ff-training-job-cpu"
+            assert mod._job_definition_for("DST") == "ff-training-job-cpu"
             assert mod._job_definition_for("QB") == "ff-training-job:9"
         self._reload()
 

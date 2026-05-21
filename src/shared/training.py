@@ -1,7 +1,6 @@
 """Generic training infrastructure: loss, dataset, dataloaders, and trainer."""
 
 import contextlib
-import os
 import time
 
 import matplotlib.pyplot as plt
@@ -13,19 +12,15 @@ from torch.utils.data import DataLoader, Dataset
 
 SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
 
-# DataLoader worker-process count. The default auto-detects: 2 workers on
-# CUDA so the GPU sees a prefetched batch N+1 while computing batch N, 0
-# workers on CPU/MPS where prefetching gives no benefit and ``spawn``-context
-# worker startup adds hundreds of ms per loader on macOS dev boxes.
-# ``NN_DATALOADER_NUM_WORKERS`` overrides the default in either direction
-# (e.g. set to 4 on a host with more vCPU, or 0 to debug a fork issue).
-_NUM_WORKERS = int(
-    os.environ.get(
-        "NN_DATALOADER_NUM_WORKERS",
-        "2" if torch.cuda.is_available() else "0",
-    )
-)
-_PERSISTENT_WORKERS = _NUM_WORKERS > 0
+# DataLoader worker count is fixed at 0 (the PyTorch default). PR #309's
+# GPU-resident batcher path takes over on CUDA hosts, so DataLoader is only
+# reached on CPU/MPS, where prefetching gives no benefit and ``spawn``-context
+# worker startup adds hundreds of ms per loader on macOS dev boxes. The
+# previous ``NN_DATALOADER_NUM_WORKERS`` env var (with a CUDA-conditional
+# default) was load-bearing only on the CUDA DataLoader path that PR #309
+# obsoleted; the Batch job-definition still sets ``NN_DATALOADER_NUM_WORKERS=3``
+# in batch-image.yml but it is now a no-op the orchestrator can clear at
+# leisure.
 
 
 def negbin2_log_prob(y: torch.Tensor, mu: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
@@ -203,7 +198,19 @@ class MultiTargetLoss(nn.Module):
             }
         )
 
-    def forward(self, preds: dict, targets: dict) -> tuple:
+    def _compute_loss_components(self, preds: dict, targets: dict) -> tuple:
+        """Internal: compute combined loss + per-target tensor components.
+
+        Returns ``(combined, components)`` where ``components`` values are
+        on-device scalar tensors (not Python floats). This is the form the
+        trainer's val branch accumulates to avoid per-batch GPU→CPU sync via
+        ``.item()`` (PR #305 removed the train-branch sync; this is the
+        remaining val-branch piece).
+
+        ``forward`` calls this and ``.item()``s each component for backward
+        compatibility with callers that expect float values
+        (``tests/{te,dst}/test_training.py::test_components_are_scalars``).
+        """
         per_target_losses = {}
         combined = torch.tensor(0.0, device=next(iter(preds.values())).device)
         for name in self.target_names:
@@ -217,7 +224,7 @@ class MultiTargetLoss(nn.Module):
             per_target_losses[name] = loss
             combined = combined + self.loss_weights[name] * loss
 
-        components = {f"loss_{name}": loss.item() for name, loss in per_target_losses.items()}
+        components = {f"loss_{name}": loss for name, loss in per_target_losses.items()}
 
         for gated_name in self.gated_targets:
             gate_key = f"{gated_name}_gate_logit"
@@ -226,9 +233,18 @@ class MultiTargetLoss(nn.Module):
                     preds[gate_key], (targets[gated_name] > 0).float()
                 )
                 combined = combined + self.gate_weight * gate_loss
-                components[f"loss_gate_{gated_name}"] = gate_loss.item()
+                components[f"loss_gate_{gated_name}"] = gate_loss
 
-        components["loss_combined"] = combined.item()
+        components["loss_combined"] = combined
+        return combined, components
+
+    def forward(self, preds: dict, targets: dict) -> tuple:
+        combined, tensor_components = self._compute_loss_components(preds, targets)
+        # Preserve the historical float-valued ``components`` contract that
+        # ``tests/{te,dst}/test_training.py::test_components_are_scalars``
+        # depends on. The val branch in ``MultiHeadTrainer.train`` calls
+        # ``_compute_loss_components`` directly to keep tensors on-device.
+        components = {k: v.item() for k, v in tensor_components.items()}
         return combined, components
 
 
@@ -449,8 +465,6 @@ def make_history_dataloaders(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=_NUM_WORKERS,
-        persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
         drop_last=True,
     )
@@ -458,8 +472,6 @@ def make_history_dataloaders(
         val_ds,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=_NUM_WORKERS,
-        persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
     )
     return train_loader, val_loader
@@ -510,8 +522,6 @@ def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
         train_ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=_NUM_WORKERS,
-        persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
         drop_last=True,
     )
@@ -519,8 +529,6 @@ def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
         val_ds,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=_NUM_WORKERS,
-        persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
     )
     return train_loader, val_loader
@@ -672,9 +680,23 @@ class MultiHeadTrainer:
                 self._scaler.scale(loss).backward()
                 self._scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                # GradScaler.step skips ``optimizer.step()`` when inf/NaN
+                # gradients are detected (and ``update()`` halves the scale).
+                # Advancing a per-batch scheduler (OneCycleLR) on a skipped
+                # step burns LR-schedule budget on noise: the schedule
+                # silently drifts ahead of the actual optimizer-step count,
+                # eroding the planned warmup and cooldown. Guard the
+                # scheduler advance on ``scaler.get_scale()`` staying constant
+                # — a strict decrease across ``step``+``update`` is GradScaler's
+                # "I skipped + backed off" signal. With AMP disabled (CPU/MPS,
+                # ``use_amp=False``) ``get_scale()`` is constant at 1.0 so the
+                # branch always advances the scheduler — bit-identical to the
+                # pre-guard behaviour.
+                scale_before = self._scaler.get_scale()
                 self._scaler.step(self.optimizer)
                 self._scaler.update()
-                if self.scheduler_per_batch:
+                scheduler_stepped = self._scaler.get_scale() >= scale_before
+                if self.scheduler_per_batch and scheduler_stepped:
                     self.scheduler.step()
 
                 # ``loss.detach().float()`` keeps the accumulator on-GPU and
@@ -682,8 +704,16 @@ class MultiHeadTrainer:
                 epoch_train_loss = epoch_train_loss + loss.detach().float()
                 n_train_batches += 1
 
-            # Single end-of-epoch sync (forces accumulator off-GPU).
-            avg_train_loss = (epoch_train_loss / n_train_batches).item()
+            # Single end-of-epoch sync (forces accumulator off-GPU). Guard
+            # against ``n_train_batches == 0`` — possible on tiny datasets
+            # where ``len(train_loader) * batch_size < drop_last_threshold``
+            # produces an empty iterator (the GPU-resident batcher's
+            # ``drop_last=True`` floors to 0 when ``n < batch_size``). Without
+            # the guard, ``0 / 0`` produces NaN, which silently corrupts the
+            # history dict and the downstream early-stop comparison.
+            avg_train_loss = (
+                (epoch_train_loss / n_train_batches).item() if n_train_batches > 0 else 0.0
+            )
             history["train_loss"].append(avg_train_loss)
 
             # --- Validation pass ---
@@ -692,23 +722,28 @@ class MultiHeadTrainer:
             all_targets = {k: [] for k in self.target_names}
             # FP32 GPU-resident accumulator: see train-pass comment above.
             epoch_val_loss = torch.zeros((), device=self.device, dtype=torch.float32)
-            # ``val_components_accum`` holds Python floats because the loss-fn
-            # constructs ``components`` via ``.item()`` (see L220, L229).
-            # Those per-batch syncs are inside the loss fn, outside this loop,
-            # and the plan leaves them alone — we just preserve the existing
-            # Python-float accumulation here.
-            val_components_accum = {}
+            # Per-target tensor accumulators (on-device, FP32) so we can mirror
+            # the train branch's "single end-of-epoch sync" pattern. PR #305
+            # explicitly left the val per-batch ``.item()`` syncs in place; this
+            # commit completes the migration by calling
+            # ``MultiTargetLoss._compute_loss_components`` (tensor-valued
+            # components) instead of ``forward`` (float-valued).
+            val_components_accum: dict[str, torch.Tensor] = {}
             n_val_batches = 0
 
             with torch.no_grad():
                 for batch in val_loader:
                     with self._autocast():
                         preds, y_batch = self._forward_batch(batch)
-                        loss, components = self.criterion(preds, y_batch)
+                        loss, components = self.criterion._compute_loss_components(preds, y_batch)
 
                     epoch_val_loss = epoch_val_loss + loss.detach().float()
-                    for k in components:
-                        val_components_accum[k] = val_components_accum.get(k, 0) + components[k]
+                    for k, v in components.items():
+                        if k not in val_components_accum:
+                            val_components_accum[k] = torch.zeros(
+                                (), device=self.device, dtype=torch.float32
+                            )
+                        val_components_accum[k] = val_components_accum[k] + v.detach().float()
                     n_val_batches += 1
 
                     for k in self.target_names:
@@ -719,8 +754,10 @@ class MultiHeadTrainer:
                         all_preds[k].append(preds[k].detach().float())
                         all_targets[k].append(y_batch[k].detach())
 
-            # Single end-of-epoch sync (forces accumulator off-GPU).
-            avg_val_loss = (epoch_val_loss / n_val_batches).item()
+            # Single end-of-epoch sync (forces accumulator off-GPU). Guard
+            # against ``n_val_batches == 0`` — same rationale as the train
+            # NaN guard above.
+            avg_val_loss = (epoch_val_loss / n_val_batches).item() if n_val_batches > 0 else 0.0
             history["val_loss"].append(avg_val_loss)
 
             if self.epoch_callback is not None:
@@ -729,20 +766,32 @@ class MultiHeadTrainer:
                 # for tuner-driven pruning. Do NOT swallow.
                 self.epoch_callback(epoch, avg_val_loss)
 
-            # Per-target val losses
+            # Per-target val losses — single host sync per target per epoch
+            # (was per-batch via ``.item()`` inside ``MultiTargetLoss.forward``).
             for t in self.target_names:
-                history[f"val_loss_{t}"].append(
-                    val_components_accum.get(f"loss_{t}", 0) / n_val_batches
-                )
+                key = f"loss_{t}"
+                if key in val_components_accum and n_val_batches > 0:
+                    history[f"val_loss_{t}"].append(
+                        (val_components_accum[key] / n_val_batches).item()
+                    )
+                else:
+                    history[f"val_loss_{t}"].append(0.0)
 
             # Per-target MAE — single GPU→CPU transfer per target per epoch
             # (was per-batch). ``all_preds[k]`` / ``all_targets[k]`` are lists
             # of GPU tensors accumulated above; ``torch.cat`` stays on-device
             # and the trailing ``.cpu().numpy()`` is the only host transfer.
+            # Same empty-batch guard as the loss accumulators above:
+            # ``torch.cat([])`` raises, and a NaN feeds into the early-stop
+            # comparison as ``inf < float('inf')`` = False, silently disabling
+            # the early-stop reset and the best-checkpoint save.
             for k in self.target_names:
-                y_pred_all = torch.cat(all_preds[k]).cpu().numpy()
-                y_true_all = torch.cat(all_targets[k]).cpu().numpy()
-                history[f"val_mae_{k}"].append(np.mean(np.abs(y_pred_all - y_true_all)))
+                if n_val_batches > 0:
+                    y_pred_all = torch.cat(all_preds[k]).cpu().numpy()
+                    y_true_all = torch.cat(all_targets[k]).cpu().numpy()
+                    history[f"val_mae_{k}"].append(np.mean(np.abs(y_pred_all - y_true_all)))
+                else:
+                    history[f"val_mae_{k}"].append(float("inf"))
 
             # Per-epoch wall-clock is a host-side measurement; the
             # ``.item()`` on the loss accumulators and the ``.cpu().numpy()``
@@ -949,8 +998,6 @@ def make_history_with_opp_dataloaders(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=_NUM_WORKERS,
-        persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
         drop_last=True,
     )
@@ -958,8 +1005,6 @@ def make_history_with_opp_dataloaders(
         val_ds,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=_NUM_WORKERS,
-        persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
     )
     return train_loader, val_loader
@@ -1120,8 +1165,6 @@ def make_nested_kick_dataloaders(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=_NUM_WORKERS,
-        persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
         drop_last=True,
     )
@@ -1129,8 +1172,6 @@ def make_nested_kick_dataloaders(
         val_ds,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=_NUM_WORKERS,
-        persistent_workers=_PERSISTENT_WORKERS,
         pin_memory=True,
     )
     return train_loader, val_loader

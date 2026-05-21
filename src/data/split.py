@@ -3,6 +3,7 @@ import os
 import pandas as pd
 
 from src.config import CV_VAL_SEASONS, SPLITS_DIR, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
+from src.data.preprocessing import impute_snap_pct
 
 
 def temporal_split(
@@ -11,7 +12,14 @@ def temporal_split(
     val_seasons: list[int] | None = None,
     test_seasons: list[int] | None = None,
 ) -> tuple:
-    """Split data by season into train/val/test sets."""
+    """Split data by season into train/val/test sets.
+
+    ``snap_pct`` (if present) is imputed POST-SPLIT using train-only
+    medians per ``(position, week)`` — val/test rows are filled with the
+    train-only statistic to avoid leaking holdout distribution back into
+    the model's imputation. Empty ``(position, week)`` groups fall back
+    to 0, matching the pre-split behaviour.
+    """
     if train_seasons is None:
         train_seasons = TRAIN_SEASONS
     if val_seasons is None:
@@ -40,6 +48,16 @@ def temporal_split(
     assert len(all_seasons) == len(train_seasons) + len(val_seasons) + len(test_seasons), (
         "Season overlap detected between splits"
     )
+
+    # Split-aware snap_pct imputation: fit medians on train only, apply to
+    # all three splits. Prevents val/test snap_pct distribution leaking into
+    # train-row imputation (the pre-split groupby-transform did the opposite
+    # — every split influenced every other split's medians, a subtle
+    # cross-fold leak that biased the model's reaction to NaN snap_pct
+    # toward holdout-era patterns).
+    train_df = impute_snap_pct(train_df, fit_on=train_df)
+    val_df = impute_snap_pct(val_df, fit_on=train_df)
+    test_df = impute_snap_pct(test_df, fit_on=train_df)
 
     print(f"Split sizes: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
 
