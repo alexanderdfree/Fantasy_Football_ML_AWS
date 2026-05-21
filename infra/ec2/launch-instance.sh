@@ -160,13 +160,15 @@ if [ "$EXISTING_ID" != "None" ] && [ -n "$EXISTING_ID" ]; then
   INSTANCE_ID="$EXISTING_ID"
 else
   log "Launching $INSTANCE_TYPE..."
+  USER_DATA_FILE="$(mktemp)"
+  sed -e "s|__REGION__|$REGION|g" "$SCRIPT_DIR/user-data.sh" > "$USER_DATA_FILE"
   INSTANCE_ID=$(aws ec2 run-instances \
     --image-id "$AMI_ID" \
     --instance-type "$INSTANCE_TYPE" \
     --key-name "$KEY_NAME" \
     --security-group-ids "$SG_ID" \
     --iam-instance-profile "Name=$PROFILE_NAME" \
-    --user-data "file://$SCRIPT_DIR/user-data.sh" \
+    --user-data "file://$USER_DATA_FILE" \
     --metadata-options "HttpTokens=required,HttpPutResponseHopLimit=2,HttpEndpoint=enabled" \
     --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=100,VolumeType=gp3,Encrypted=true,DeleteOnTermination=true}' \
     --disable-api-termination \
@@ -174,6 +176,7 @@ else
       "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=Project,Value=fantasy-predictor},{Key=Role,Value=trainer},{Key=ManagedBy,Value=infra-ec2}]" \
     --region "$REGION" \
     --query 'Instances[0].InstanceId' --output text)
+  rm -f "$USER_DATA_FILE"
   log "Launched: $INSTANCE_ID"
 fi
 
