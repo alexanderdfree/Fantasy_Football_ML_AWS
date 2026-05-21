@@ -15,6 +15,9 @@ on:
         description: "Space-separated list of positions to train; empty means skip."
         value: ${{ jobs.detect.outputs.positions }}
 
+permissions:
+  contents: read
+
 jobs:
   detect:
     runs-on: ubuntu-latest
