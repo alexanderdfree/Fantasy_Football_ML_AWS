@@ -11,12 +11,12 @@ that one is bound to the training command shape. ``submit_tune_job`` below
 is the tuning analog.
 
 Usage:
-    python -m src.batch.launch_tune                                  # all 6 positions
-    python -m src.batch.launch_tune --positions QB RB                # subset
-    python -m src.batch.launch_tune --n-trials 30                    # default
-    python -m src.batch.launch_tune --positions QB --n-trials 5      # smoke test
-    python -m src.batch.launch_tune --wait false                     # fire and forget
-    python -m src.batch.launch_tune --dry-run                        # print plan, touch nothing
+    python -m src.tuning.launch_tune                                  # all 6 positions
+    python -m src.tuning.launch_tune --positions QB RB                # subset
+    python -m src.tuning.launch_tune --n-trials 30                    # default
+    python -m src.tuning.launch_tune --positions QB --n-trials 5      # smoke test
+    python -m src.tuning.launch_tune --wait false                     # fire and forget
+    python -m src.tuning.launch_tune --dry-run                        # print plan, touch nothing
 
 Config (env vars, all optional — same names as ``launch.py``):
     FF_S3_BUCKET        (default: ff-predictor-training)

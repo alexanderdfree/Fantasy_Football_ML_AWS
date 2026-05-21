@@ -36,8 +36,18 @@ ALL_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
 # Paths whose changes invalidate every position's model artifact. Matches the
 # bash regex that used to live in both workflows. Anchored at start-of-path
 # so a same-named substring deeper in the tree doesn't spuriously match.
+#
+# Note the negative lookahead inside the ``src/batch/`` clause: files whose
+# name contains ``tune`` or ``ablate`` (e.g. a misplaced ``launch_tune.py``
+# or ``tune_lgbm.py`` or ``ablate_*.py``) are EXCLUDED, because that family
+# of files is tuning/ablation infrastructure that fans out via the
+# ``retune-nn-batch.yml`` workflow — touching them must not retrain
+# production models. New tuner/ablation files should live in
+# ``src/tuning/``, which isn't in this regex at all; the lookahead is
+# belt-and-suspenders against a future ``src/batch/`` placement.
 _GLOBAL_REGEX = re.compile(
-    r"^src/(shared|batch|data|features)/"
+    r"^src/(shared|data|features)/"
+    r"|^src/batch/(?!.*(?:tune|ablate))"
     r"|^src/config\.py$"
     r"|^requirements\.txt$"
 )

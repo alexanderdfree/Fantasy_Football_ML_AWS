@@ -123,7 +123,7 @@ jobs:
             ARGS="$ARGS --timeout $TIMEOUT_SECONDS"
           fi
           echo "launch_tune args: $ARGS"
-          python -m src.batch.launch_tune $ARGS
+          python -m src.tuning.launch_tune $ARGS
 
   aggregate:
     needs: [parse, submit]

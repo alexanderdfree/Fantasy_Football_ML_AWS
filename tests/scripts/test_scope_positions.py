@@ -77,6 +77,7 @@ class TestGlobalTriggers:
             "src/shared/team_box_score.py",  # the e62807e trigger
             "src/batch/launch.py",
             "src/batch/train.py",
+            "src/batch/benchmark.py",
             "src/data/loader.py",
             "src/features/foo.py",
             "src/config.py",
@@ -156,6 +157,7 @@ class TestNonTrainingSrcDirs:
             "src/serving/app.py",
             "src/benchmarking/benchmark.py",
             "src/tuning/tune_lgbm.py",
+            "src/tuning/launch_tune.py",  # moved from src/batch/ — see PR #280 retrospective
             "src/analysis/error_analysis.py",
         ],
     )
@@ -164,6 +166,67 @@ class TestNonTrainingSrcDirs:
         # (serving, scripts, post-hoc analysis). The train detect job
         # correctly excludes them — verify the script does too.
         assert scope_positions.compute_positions([path]) == []
+
+
+# --------------------------------------------------------------------------
+# src/batch/ tune/ablate carve-out — hardening against the PR #280 regression
+# --------------------------------------------------------------------------
+
+
+class TestSrcBatchTuneAblateExcluded:
+    """Files inside ``src/batch/`` whose name contains ``tune`` or ``ablate``
+    are tuning/ablation infrastructure. They must NOT trigger a retrain.
+
+    PR #280 (``chore(tuning): address second-round review nits``) touched
+    ``src/batch/launch_tune.py`` and triggered a full 6-position retrain on
+    AWS Batch — a wasteful false positive that motivated this carve-out and
+    the file move to ``src/tuning/launch_tune.py``. The lookahead inside
+    the regex (`(?!.*(?:tune|ablate))`) is belt-and-suspenders against a
+    future file accidentally placed back under ``src/batch/``.
+    """
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/batch/launch_tune.py",  # original PR #280 file (now moved)
+            "src/batch/tune_lgbm.py",  # hypothetical future move
+            "src/batch/retune_helper.py",  # any tune-named helper
+            "src/batch/ablate_thing.py",  # ablation studies
+            "src/batch/sub/tune_thing.py",  # nested
+        ],
+    )
+    def test_src_batch_tune_named_files_excluded(self, path):
+        assert scope_positions.compute_positions([path]) == []
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/batch/train.py",
+            "src/batch/launch.py",
+            "src/batch/benchmark.py",
+            "src/batch/__init__.py",
+            # "turnaround" contains "tur..." but NOT "tune" as a substring —
+            # confirms the regex doesn't false-match on similar-looking names.
+            "src/batch/turnaround.py",
+        ],
+    )
+    def test_src_batch_real_training_still_triggers(self, path):
+        assert scope_positions.compute_positions([path]) == ALL_SIX
+
+    def test_mixed_tune_and_train_triggers(self):
+        # A diff that touches both a tuning file AND a real training file
+        # in src/batch/ must still retrain all six — the training change is
+        # what matters; the tuning file is just along for the ride.
+        assert (
+            scope_positions.compute_positions(["src/batch/launch_tune.py", "src/batch/train.py"])
+            == ALL_SIX
+        )
+
+    def test_tune_file_alone_no_retrain(self):
+        # Sanity: the literal PR #280 scope (just src/batch/launch_tune.py
+        # before the file move) would produce an empty list under the new
+        # regex. Documents the regression.
+        assert scope_positions.compute_positions(["src/batch/launch_tune.py"]) == []
 
 
 # --------------------------------------------------------------------------

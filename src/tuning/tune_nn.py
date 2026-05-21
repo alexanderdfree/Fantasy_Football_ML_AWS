@@ -41,7 +41,7 @@ Out of scope (v1)
 
 Batch follow-up
 ---------------
-`src/batch/launch_tune.py` and `.github/workflows/retune-nn-batch.yml` will
+`src/tuning/launch_tune.py` and `.github/workflows/retune-nn-batch.yml` will
 fan out one Spot g4dn.xlarge per position (matching `train-batch.yml`). The
 container dispatches to this script via a new `--mode=tune` flag added to
 `src/batch/train.py` — the Batch job's `command` becomes:
