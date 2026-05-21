@@ -144,8 +144,11 @@ POSITION_CONFIG = PositionConfig(
     # 2012+ dataset: relaxed regularization.
     nn_backbone_layers=[96, 48],
     nn_head_hidden=24,
-    # Tighter override on the hurdle-NegBin reception head (smaller than RB/WR).
-    # receiving_tds moved to plain Poisson NLL.
+    # Larger head for the hurdle-NegBin reception head (two value outputs:
+    # mu + log_alpha) — the +32 buys it capacity to fit both parameters.
+    # Sized smaller than RB/WR (64) because TE receptions are lower-volume
+    # and the smaller backbone (nn_head_hidden=24) keeps the head/backbone
+    # ratio in line.
     nn_head_hidden_overrides={"receptions": 32},
     nn_dropout=0.30,
     nn_non_negative_targets=set(_TARGETS),
