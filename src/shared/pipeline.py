@@ -32,9 +32,6 @@ from src.features.engineer import (
     build_opp_defense_history_arrays,
     get_attn_static_columns,
 )
-from src.models.baseline import SeasonAverageBaseline
-from src.models.elastic_net import ElasticNetModel
-from src.models.linear import RidgeModel
 from src.shared import feature_cache
 from src.shared.artifact_integrity import (
     wrap_state_dict,
@@ -50,7 +47,14 @@ from src.shared.evaluation import (
     print_comparison_table,
 )
 from src.shared.feature_build import build_position_features, scale_and_clip
-from src.shared.models import ElasticNetMultiTarget, LightGBMMultiTarget, RidgeMultiTarget
+from src.shared.models import (
+    ElasticNetModel,
+    ElasticNetMultiTarget,
+    LightGBMMultiTarget,
+    RidgeModel,
+    RidgeMultiTarget,
+    SeasonAverageBaseline,
+)
 from src.shared.neural_net import (
     build_multihead_net,
     build_multihead_net_with_history,

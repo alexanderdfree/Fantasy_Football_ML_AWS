@@ -1,19 +1,26 @@
-"""Generic multi-target models for any position (Ridge, Ordinal, LightGBM)."""
+"""Generic multi-target models for any position (Ridge, Ordinal, LightGBM).
+
+Single-target building blocks (``RidgeModel``, ``ElasticNetModel``,
+``SeasonAverageBaseline``, ``LastWeekBaseline``) used to live in
+``src/models/``; they've been inlined here so the only "models" module is
+this one. The multi-target wrappers below loop the per-target classes;
+``src/shared/pipeline.py`` also imports ``RidgeModel`` /
+``ElasticNetModel`` directly for its per-fold CV evaluators.
+"""
 
 import json
 import os
 import shutil
+import warnings
 
 import joblib
 import lightgbm as lgb
 import mord
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.linear_model import ElasticNet, LogisticRegression, Ridge
 from sklearn.preprocessing import StandardScaler
-
-from src.models.elastic_net import ElasticNetModel
-from src.models.linear import RidgeModel
 
 # LightGBM thread count for tree learning. Default ``1`` (single-threaded).
 # Override via ``LGBM_N_JOBS`` env var — typically set to ``-1`` only on the
@@ -28,6 +35,214 @@ from src.models.linear import RidgeModel
 #     blows past 40s. PR #180's first attempt at platform-default ``-1``
 #     reproduced this — see commit message for the budget assertion.
 _LGBM_N_JOBS = int(os.environ.get("LGBM_N_JOBS", "1"))
+
+
+# ---------------------------------------------------------------------------
+# Single-target building blocks
+#
+# Loop-friendly wrappers around a single sklearn estimator. The multi-target
+# classes below loop one per target; ``src/shared/pipeline.py`` also uses
+# ``RidgeModel`` / ``ElasticNetModel`` directly inside the per-fold CV
+# evaluators (``_eval_alpha_cv``, ``_eval_enet_cv``). Baselines are pure
+# DataFrame transforms — no per-feature fit needed.
+# ---------------------------------------------------------------------------
+
+
+class RidgeModel:
+    def __init__(self, alpha: float = 1.0, pca_n_components: int | None = None):
+        self.scaler = StandardScaler()
+        self.model = Ridge(alpha=alpha)
+        self.pca_n_components = pca_n_components
+        self.pca = None
+
+    def fit(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
+        X_scaled = self.scaler.fit_transform(X_train)
+        if self.pca_n_components:
+            from sklearn.decomposition import PCA
+
+            self.pca = PCA(n_components=self.pca_n_components)
+            X_scaled = self.pca.fit_transform(X_scaled)
+        else:
+            # Re-fit with no PCA: drop any stale PCA from a prior load/fit so
+            # predict() doesn't apply a transform trained on different data.
+            self.pca = None
+        self.model.fit(X_scaled, y_train)
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        X_scaled = self.scaler.transform(X)
+        if self.pca is not None:
+            X_scaled = self.pca.transform(X_scaled)
+        return self.model.predict(X_scaled)
+
+    def get_feature_importance(self, feature_names: list[str]) -> pd.Series:
+        if self.pca is not None:
+            # Map PCA coefficients back to original features via loadings
+            original_coefs = self.pca.components_.T @ self.model.coef_
+            importance = pd.Series(np.abs(original_coefs), index=feature_names).sort_values(
+                ascending=False
+            )
+        else:
+            importance = pd.Series(np.abs(self.model.coef_), index=feature_names).sort_values(
+                ascending=False
+            )
+        return importance
+
+    def save(self, model_dir: str = "outputs/models") -> None:
+        os.makedirs(model_dir, exist_ok=True)
+        joblib.dump(self.scaler, f"{model_dir}/scaler.pkl")
+        joblib.dump(self.model, f"{model_dir}/ridge_model.pkl")
+        pca_path = f"{model_dir}/pca.pkl"
+        if self.pca is not None:
+            joblib.dump(self.pca, pca_path)
+        elif os.path.exists(pca_path):
+            # A prior run saved a PCA here; this run doesn't use one. Remove
+            # it so load() won't resurrect a stale PCA with mismatched shape.
+            os.remove(pca_path)
+        meta = {
+            "alpha": float(self.model.alpha),
+            "pca_n_components": self.pca_n_components,
+        }
+        with open(f"{model_dir}/meta.json", "w") as f:
+            json.dump(meta, f)
+
+    def load(self, model_dir: str = "outputs/models") -> None:
+        self.scaler = joblib.load(f"{model_dir}/scaler.pkl")
+        self.model = joblib.load(f"{model_dir}/ridge_model.pkl")
+        pca_path = f"{model_dir}/pca.pkl"
+        if os.path.exists(pca_path):
+            self.pca = joblib.load(pca_path)
+        else:
+            # No PCA on disk for this run; clear any stale PCA left on self
+            # from a previous load, otherwise predict() would apply the old
+            # transform to freshly-loaded scaler output.
+            self.pca = None
+
+
+class ElasticNetModel:
+    """ElasticNet linear model (L1 + L2).
+
+    Mirrors RidgeModel's fit/predict/save/load interface but intentionally
+    omits the PCA branch: L1's coordinate-wise sparsity is incompatible with
+    PCA's rotated basis (zeroing components != zeroing features). Persists a
+    sidecar meta.json with ``{alpha, l1_ratio, converged, n_iter}`` so a
+    reviewer can tell whether the CV-selected hyperparameters converged.
+    """
+
+    def __init__(
+        self,
+        alpha: float = 1.0,
+        l1_ratio: float = 0.5,
+        max_iter: int = 5000,
+        tol: float = 1e-4,
+    ):
+        self.alpha = alpha
+        self.l1_ratio = l1_ratio
+        self.scaler = StandardScaler()
+        self.model = ElasticNet(
+            alpha=alpha,
+            l1_ratio=l1_ratio,
+            max_iter=max_iter,
+            tol=tol,
+            random_state=0,
+        )
+        self.converged = True
+        self.n_iter = 0
+
+    def fit(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
+        X_scaled = self.scaler.fit_transform(X_train)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ConvergenceWarning)
+            self.model.fit(X_scaled, y_train)
+        self.converged = not any(issubclass(w.category, ConvergenceWarning) for w in caught)
+        n_iter_attr = getattr(self.model, "n_iter_", None)
+        # sklearn reports n_iter_ as a scalar for single-output ElasticNet.
+        if isinstance(n_iter_attr, np.ndarray):
+            self.n_iter = int(n_iter_attr.max())
+        elif n_iter_attr is not None:
+            self.n_iter = int(n_iter_attr)
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return self.model.predict(self.scaler.transform(X))
+
+    def get_feature_importance(self, feature_names: list[str]) -> pd.Series:
+        return pd.Series(np.abs(self.model.coef_), index=feature_names).sort_values(ascending=False)
+
+    def save(self, model_dir: str = "outputs/models") -> None:
+        os.makedirs(model_dir, exist_ok=True)
+        joblib.dump(self.scaler, f"{model_dir}/scaler.pkl")
+        joblib.dump(self.model, f"{model_dir}/elasticnet_model.pkl")
+        meta = {
+            "alpha": float(self.alpha),
+            "l1_ratio": float(self.l1_ratio),
+            "converged": bool(self.converged),
+            "n_iter": int(self.n_iter),
+        }
+        with open(f"{model_dir}/meta.json", "w") as f:
+            json.dump(meta, f)
+
+    def load(self, model_dir: str = "outputs/models") -> None:
+        self.scaler = joblib.load(f"{model_dir}/scaler.pkl")
+        self.model = joblib.load(f"{model_dir}/elasticnet_model.pkl")
+        meta_path = f"{model_dir}/meta.json"
+        if os.path.exists(meta_path):
+            with open(meta_path) as f:
+                meta = json.load(f)
+            self.alpha = meta.get("alpha", self.model.alpha)
+            self.l1_ratio = meta.get("l1_ratio", self.model.l1_ratio)
+            self.converged = meta.get("converged", True)
+            self.n_iter = meta.get("n_iter", 0)
+        else:
+            self.alpha = self.model.alpha
+            self.l1_ratio = self.model.l1_ratio
+
+
+def _baseline_workframe(df: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "player_id": df["player_id"].to_numpy(),
+            "season": df["season"].to_numpy(),
+            "week": df["week"].to_numpy(),
+            "fantasy_points": df["fantasy_points"].to_numpy(),
+            "_pos": np.arange(len(df)),
+        }
+    ).sort_values(["player_id", "season", "week"], kind="stable")
+
+
+def _baseline_scatter_back(preds_sorted: pd.Series, positions: np.ndarray) -> np.ndarray:
+    out = np.empty(positions.shape[0], dtype=np.float64)
+    out[positions] = preds_sorted.to_numpy()
+    return out
+
+
+class SeasonAverageBaseline:
+    """Predict each player's expanding season-to-date average fantasy points.
+
+    Sort is handled internally; predictions are returned in the caller's row order.
+    """
+
+    def predict(self, df: pd.DataFrame) -> np.ndarray:
+        work = _baseline_workframe(df)
+        preds = (
+            work.groupby(["player_id", "season"])["fantasy_points"]
+            .transform(lambda x: x.shift(1).expanding().mean())
+            .fillna(0)
+        )
+        return _baseline_scatter_back(preds, work["_pos"].to_numpy())
+
+
+class LastWeekBaseline:
+    """Predict each player scored the same as last week.
+
+    Sort is handled internally; predictions are returned in the caller's row order.
+    """
+
+    def predict(self, df: pd.DataFrame) -> np.ndarray:
+        work = _baseline_workframe(df)
+        grouped = work.groupby(["player_id", "season"])["fantasy_points"]
+        shifted = grouped.shift(1)
+        season_avg = grouped.transform(lambda x: x.shift(1).expanding().mean())
+        preds = shifted.fillna(season_avg).fillna(0)
+        return _baseline_scatter_back(preds, work["_pos"].to_numpy())
 
 
 class TwoStageRidge:

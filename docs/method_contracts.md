@@ -596,7 +596,7 @@ def fill_nans_safe(train_df, val_df, test_df, feature_cols):
 
 ## 3. Models
 
-### 3.1 `src/models/baseline.py`
+### 3.1 Baselines (in `src/shared/models.py`)
 
 #### `class SeasonAverageBaseline`
 

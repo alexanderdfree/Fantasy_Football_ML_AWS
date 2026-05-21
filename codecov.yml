@@ -71,7 +71,7 @@ flag_management:
     - name: DST
       paths: [src/dst/]
     - name: shared
-      paths: [src/shared/, src/config.py, src/data/, src/features/, src/models/, src/serving/, src/batch/]
+      paths: [src/shared/, src/config.py, src/data/, src/features/, src/serving/, src/batch/]
 
 component_management:
   default_rules:

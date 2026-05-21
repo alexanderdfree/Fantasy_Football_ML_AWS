@@ -139,7 +139,7 @@ def tiny_model_artifact(tmp_path_factory) -> Path:
     Returns the directory where ``scaler.pkl`` and ``ridge_model.pkl`` live
     (the same layout ``RidgeModel.save()`` writes).
     """
-    from src.models.linear import RidgeModel
+    from src.shared.models import RidgeModel
 
     rng = np.random.default_rng(42)
     X = rng.normal(size=(128, 6)).astype(np.float64)

@@ -97,7 +97,7 @@ def test_tiny_model_artifact_writes_ridge_and_scaler(tiny_model_artifact):
 @pytest.mark.unit
 def test_tiny_model_artifact_round_trip_via_RidgeModel_load(tiny_model_artifact):
     """Loaded model produces finite predictions on a fresh feature matrix."""
-    from src.models.linear import RidgeModel
+    from src.shared.models import RidgeModel
 
     model = RidgeModel(alpha=1.0)
     model.load(model_dir=str(tiny_model_artifact))

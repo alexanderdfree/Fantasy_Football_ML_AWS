@@ -524,7 +524,7 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 ### Source files by subsystem
 
 - **Data & features:** [src/data/loader.py](../src/data/loader.py), [src/data/split.py](../src/data/split.py), [src/data/preprocessing.py](../src/data/preprocessing.py), [src/features/engineer.py](../src/features/engineer.py), [src/shared/weather_features.py](../src/shared/weather_features.py).
-- **Models:** [src/shared/models.py](../src/shared/models.py) (Ridge, LightGBM, ordinal, two-stage), [src/shared/neural_net.py](../src/shared/neural_net.py) (MultiHeadNet, attention, gated TD head), [src/models/baseline.py](../src/models/baseline.py).
+- **Models:** [src/shared/models.py](../src/shared/models.py) (Ridge, LightGBM, ordinal, two-stage, baselines), [src/shared/neural_net.py](../src/shared/neural_net.py) (MultiHeadNet, attention, gated TD head).
 - **Training:** [src/shared/training.py](../src/shared/training.py) (MultiTargetLoss, trainer, schedulers), [src/shared/pipeline.py](../src/shared/pipeline.py) (pipeline orchestrator).
 - **Per-position configs:** `src/qb/config.py`, `src/rb/config.py`, `src/wr/config.py`, `src/te/config.py`, `src/k/config.py`, `src/dst/config.py`.
 - **Serving:** [src/serving/app.py](../src/serving/app.py), [Dockerfile](../Dockerfile).
