@@ -65,6 +65,7 @@ from src.shared.artifact_integrity import (
 from src.shared.evaluation import compute_metrics
 from src.shared.feature_build import build_position_features, scale_and_clip
 from src.shared.model_sync import (
+    refresh_sentinel_mtime,
     upload_predictions_cache_to_s3,
 )
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
@@ -1102,21 +1103,55 @@ def _ensure_position_loaded(pos):
     An outer ``try/except`` here catches unrecoverable setup failures
     (feature build, parquet read) and marks the position as fully failed
     so the other five still serve.
+
+    In-flight refresh: the gunicorn refresh poller (see
+    ``src.shared.model_sync.start_refresh_poller``) touches
+    ``src/{pos.lower()}/outputs/.refreshed_at`` after atomically swapping in a
+    new model tarball. We stat that sentinel on every call and compare its
+    mtime to the value we recorded at the last successful load — when the
+    sentinel advances, we invalidate this position's cache state and re-load
+    from disk on the next request. Inert when the sentinel doesn't exist
+    (dev, CI, before the first refresh).
     """
     _ensure_base_data()
-    if pos in _cache.get("positions_loaded", ()):
-        return
-    if pos in _cache.get("positions_failed", ()):
-        return  # cached hard-failure — don't retry every request
+    sentinel_mtime = refresh_sentinel_mtime(pos)
+    loaded_mtime = _cache.get("positions_mtime", {}).get(pos, -1.0)
+    # Fast path: take the no-lock early return only when the sentinel hasn't
+    # advanced beyond what we already loaded.
+    if sentinel_mtime <= loaded_mtime:
+        if pos in _cache.get("positions_loaded", ()):
+            return
+        if pos in _cache.get("positions_failed", ()):
+            return  # cached hard-failure — don't retry every request
     with _cache_lock:
         if "splits" not in _cache:
             return
-        if pos in _cache["positions_loaded"]:
+        # Re-stat under the lock so we make the refresh decision against the
+        # current filesystem state, not a possibly-stale snapshot from the
+        # fast-path check.
+        sentinel_mtime = refresh_sentinel_mtime(pos)
+        loaded_mtime = _cache.get("positions_mtime", {}).get(pos, -1.0)
+        if sentinel_mtime > loaded_mtime and loaded_mtime != -1.0:
+            # In-flight refresh detected: drop cached state for this position
+            # so the upcoming _apply_position_models writes against the new
+            # on-disk model. metrics_by_format aggregates across positions so
+            # it must be invalidated whenever ANY position re-loads.
+            _cache.get("positions_loaded", set()).discard(pos)
+            _cache.get("positions_failed", set()).discard(pos)
+            _cache.get("position_load_errors", {}).pop(pos, None)
+            _cache.pop("metrics_by_format", None)
+            print(f"[{pos}] in-flight refresh detected (sentinel mtime advanced) — re-loading")
+        if pos in _cache.get("positions_loaded", set()):
             return
         if pos in _cache.get("positions_failed", set()):
             return
         train, val, test = _cache["splits"][pos]
         print(f"Applying {pos}-specific model...")
+        # Stamp positions_mtime BEFORE _apply so a failure path doesn't leave
+        # the mtime unset — otherwise loaded_mtime would stay at -1.0 forever
+        # and a later sentinel advance couldn't be detected to retry the
+        # failed position with the freshly refreshed model.
+        _cache.setdefault("positions_mtime", {})[pos] = sentinel_mtime
         try:
             _apply_position_models(train, val, test, pos, _cache["results"])
         except Exception as e:
@@ -1162,22 +1197,28 @@ def _ensure_all_positions_loaded():
     loaded = _cache.setdefault("positions_loaded", set())
     failed = _cache.setdefault("positions_failed", set())
     errors = _cache.setdefault("position_load_errors", {})
+    mtimes = _cache.setdefault("positions_mtime", {})
     pending = [p for p in _ALL_POSITIONS if p not in loaded and p not in failed]
 
     def _load_one(pos):
+        # Snapshot the sentinel mtime BEFORE loading so a poller refresh that
+        # races with us produces sentinel > stored on the next request, and
+        # _ensure_position_loaded re-loads against the new on-disk model.
+        sentinel_mtime = refresh_sentinel_mtime(pos)
         try:
             train, val, test = splits[pos]
             print(f"Applying {pos}-specific model...")
             _apply_position_models(train, val, test, pos, _cache["results"])
-            return pos, None
+            return pos, sentinel_mtime, None
         except Exception as e:
-            return pos, e
+            return pos, sentinel_mtime, e
 
     if pending:
         with ThreadPoolExecutor(max_workers=len(pending)) as pool:
-            for pos, err in pool.map(_load_one, pending):
+            for pos, sentinel_mtime, err in pool.map(_load_one, pending):
                 if err is None:
                     loaded.add(pos)
+                    mtimes[pos] = sentinel_mtime
                 else:
                     traceback.print_exception(type(err), err, err.__traceback__)
                     failed.add(pos)
