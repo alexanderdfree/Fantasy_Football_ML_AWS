@@ -1,6 +1,6 @@
 # ff-training AWS Batch + Spot
 
-_Last verified: 2026-05-19._
+_Last verified: 2026-05-20._
 
 Provisions an AWS Batch managed compute environment on Spot g4dn.xlarge so all
 six position pipelines train in parallel (one position per Spot instance). This
@@ -43,8 +43,17 @@ The script creates:
 ## Cold-start optimization (recommended)
 
 The cold-start tax (image pull on a fresh Spot instance) is the original reason
-this project moved off Batch. Two AWS-side optimizations bring it down from
-~120s to ~60–90s; both are wired into [batch-image.yml](../../.github/workflows/batch-image.yml).
+this project moved off Batch. Two AWS-side optimizations were planned to bring
+cold-start from ~120s pull to ~60–90s total; both are wired into
+[batch-image.yml](../../.github/workflows/batch-image.yml). **Measured
+2026-05-20: ~258 s total cold-start (~120 s Spot+boot + ~122 s full image pull
++ ~10 s container start)** — the SOCI snapshotter is not active on the default
+Batch AMI, so the SOCI indexes in ECR are ignored. See
+[docs/batch_design.md §2a](../../docs/batch_design.md) for activation options
+(pin a Bottlerocket GPU AMI, or pin AL2 + userdata install of
+`soci-snapshotter-grpc`). The pull-through cache rule below is independently
+useful at GHA build time.
+
 **Run the pull-through cache rule creation once after `setup.sh`:**
 
 ```
@@ -74,7 +83,11 @@ ecr:BatchGetImage
 
 A SOCI index is also published alongside the image (cold-start opt 2a). The
 SOCI publish step is `continue-on-error: true` — if it fails, the image still
-works, just with a slower first pull on each fresh Spot instance.
+works, just with a slower first pull on each fresh Spot instance. **As of
+2026-05-20 the index is published successfully but unused at runtime** —
+the default Batch AMI doesn't run `soci-snapshotter-grpc`; see
+[docs/batch_design.md §2a](../../docs/batch_design.md) for the snapshotter
+activation paths.
 
 ## Verification
 
@@ -165,4 +178,7 @@ manually if you want a complete wipe.
 See [`docs/batch_design.md`](../../docs/batch_design.md). Short version: warm
 EC2 forced sequential training because one T4 can't host six concurrent NN
 jobs; Spot fanout gives each position its own T4, parallelizing the workload.
-Cold-start (the original blocker) is mitigated by SOCI + ECR pull-through.
+Cold-start (the original blocker) is partially mitigated — SOCI indexes are
+published but the snapshotter is not active on the default AMI, so measured
+2026-05-20 cold-start is ~258 s vs the ~60–90 s design target. See
+[docs/batch_design.md §2a](../../docs/batch_design.md) for activation paths.
