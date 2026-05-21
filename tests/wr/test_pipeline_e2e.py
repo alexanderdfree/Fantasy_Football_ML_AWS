@@ -52,13 +52,21 @@ def _build_tiny_cfg() -> dict:
 
 def _load_tiny_splits(
     n_players: int = 50,
-    train_seasons=(2022, 2023),
+    train_seasons=(2020, 2021, 2022, 2023),
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Slice the real engineered parquets to a tiny deterministic subset.
 
     Uses real pre-engineered data because run_pipeline expects 100+ upstream
     feature columns that would be impractical to synthesize. Deterministic
     because we pick the ``n_players`` with the most games (stable ordering).
+
+    The default train_seasons spans 4 seasons (2020-2023) so the slice
+    includes rows whose ``prior_season_*`` aggregate features were filled
+    from earlier seasons that are also present — earlier 2-season slices
+    skipped the prior-season aggregate path because the earliest sliced
+    season had no in-slice predecessor; rookies / first-season-in-data
+    rows still got default fills but the populated-prior branch never
+    fired on training rows. Widening to 4 seasons exercises both.
     """
     train = pd.read_parquet(SPLITS_DIR / "train.parquet")
     wr_train_all = train[train["position"] == "WR"]

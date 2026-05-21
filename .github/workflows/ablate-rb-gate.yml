@@ -26,6 +26,9 @@ concurrency:
   group: ec2-diagnostic
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY: ff-training
@@ -95,8 +98,13 @@ jobs:
 
       - name: Run ablation via docker
         id: ablate
+        # ``env:`` indirection rather than direct ``${{ github.event.inputs.* }}``
+        # interpolation into shell — matches PR #258's hardening pattern for
+        # the train workflows.
+        env:
+          INPUT_SEED: ${{ github.event.inputs.seed }}
         run: |
-          SEED="${{ github.event.inputs.seed || '42' }}"
+          SEED="${INPUT_SEED:-42}"
           IMAGE="${{ steps.img.outputs.uri }}"
           # Compose the docker run with the same env + mounts ff-train uses
           # (see infra/ec2/user-data.sh). SSM's AWS-RunShellScript runs via

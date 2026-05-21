@@ -16,39 +16,9 @@ from tests.shared.parameterized_features import (
     PositionFeatureSpec,
     install_parameterized_features,
 )
+from tests.wr.conftest import make_wr_player_games
 
 SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
-
-
-def _make_player_games(
-    player_id: str = "W1",
-    season: int = 2023,
-    n_weeks: int = 5,
-    receptions: int = 5,
-    targets: int = 8,
-    receiving_yards: int = 70,
-    receiving_air_yards: int = 100,
-    receiving_yards_after_catch: int = 30,
-    receiving_epa: float = 2.0,
-    receiving_first_downs: int = 3,
-    recent_team: str = "KC",
-) -> pd.DataFrame:
-    """Build a multi-week single-player DataFrame matching WR feature inputs."""
-    return pd.DataFrame(
-        {
-            "player_id": [player_id] * n_weeks,
-            "season": [season] * n_weeks,
-            "week": list(range(1, n_weeks + 1)),
-            "receptions": [receptions] * n_weeks,
-            "targets": [targets] * n_weeks,
-            "receiving_yards": [receiving_yards] * n_weeks,
-            "receiving_air_yards": [receiving_air_yards] * n_weeks,
-            "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
-            "receiving_epa": [receiving_epa] * n_weeks,
-            "receiving_first_downs": [receiving_first_downs] * n_weeks,
-            "recent_team": [recent_team] * n_weeks,
-        }
-    )
 
 
 install_parameterized_features(
@@ -58,7 +28,7 @@ install_parameterized_features(
         compute_features=_compute_features,
         fill_nans=fill_nans,
         feature_cols=SPECIFIC_FEATURES,
-        make_player_games=_make_player_games,
+        make_player_games=make_wr_player_games,
         first_week_check_features=("yards_per_reception_L3", "reception_rate_L3"),
         zero_input_overrides={
             "targets": {

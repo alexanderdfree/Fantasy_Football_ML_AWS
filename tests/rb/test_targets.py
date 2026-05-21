@@ -11,6 +11,7 @@ import pytest
 
 from src.rb.config import POSITION_CONFIG
 from src.rb.targets import compute_targets
+from src.shared.aggregate_targets import predictions_to_fantasy_points
 from tests.rb.conftest import _build_row as _make_row
 from tests.shared.parameterized_targets import (
     PositionTargetSpec,
@@ -67,7 +68,13 @@ install_parameterized_targets(
 @pytest.mark.unit
 class TestComputeRBTargets:
     def test_aggregator_matches_fantasy_points_check(self, make_rb_row):
-        """fantasy_points_check (via aggregator) matches manual raw-stat scoring (PPR)."""
+        """RB aggregator output matches manual raw-stat scoring (PPR).
+
+        ``compute_targets`` keeps the aggregator value as a local variable
+        (used only for the decomposition-discrepancy warning), so the test
+        re-runs the same aggregator call on the row's raw-stat targets to
+        confirm bit-equality with manual scoring.
+        """
         df = make_rb_row(
             rushing_yards=80,
             receiving_yards=40,
@@ -77,8 +84,10 @@ class TestComputeRBTargets:
             rushing_fumbles_lost=1,
         )
         result = compute_targets(df)
+        preds = {t: result[t].to_numpy() for t in POSITION_CONFIG.targets}
+        aggregator_value = predictions_to_fantasy_points("RB", preds, "ppr")
         expected = 80 * 0.1 + 40 * 0.1 + 4 * 1.0 + 1 * 6 + 0 * 6 + 1 * -2
-        assert pytest.approx(result["fantasy_points_check"].iloc[0]) == expected
+        assert pytest.approx(aggregator_value[0]) == expected
 
     def test_nflverse_ppr_mismatch_warning(self, make_rb_row, capsys):
         """If `fantasy_points_ppr` (nflverse) drifts from `fantasy_points` by

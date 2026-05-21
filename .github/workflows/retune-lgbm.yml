@@ -32,6 +32,9 @@ concurrency:
   group: ec2-diagnostic
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY: ff-training
@@ -91,10 +94,19 @@ jobs:
 
       - name: Run Optuna retune via docker
         id: tune
+        # ``env:`` indirection rather than direct ``${{ github.event.inputs.* }}``
+        # interpolation into shell — matches the hardening pattern PR #258
+        # applied to the train workflows. The inputs land as proper shell
+        # variables here instead of being string-spliced into the script
+        # source by GitHub Actions.
+        env:
+          INPUT_POSITIONS: ${{ github.event.inputs.positions }}
+          INPUT_N_TRIALS: ${{ github.event.inputs.n_trials }}
+          INPUT_TIMEOUT_SEC: ${{ github.event.inputs.timeout_sec }}
         run: |
-          POSITIONS="${{ github.event.inputs.positions || 'QB RB WR TE' }}"
-          N_TRIALS="${{ github.event.inputs.n_trials || '50' }}"
-          TIMEOUT_SEC="${{ github.event.inputs.timeout_sec || '0' }}"
+          POSITIONS="${INPUT_POSITIONS:-QB RB WR TE}"
+          N_TRIALS="${INPUT_N_TRIALS:-50}"
+          TIMEOUT_SEC="${INPUT_TIMEOUT_SEC:-0}"
           IMAGE="${{ steps.img.outputs.uri }}"
           TIMEOUT_ARG=""
           if [ "$TIMEOUT_SEC" != "0" ]; then
@@ -201,8 +213,10 @@ jobs:
         if: success()
         run: |
           # src.tuning.tune_lgbm uploads the structured best-params JSON here.
-          # PR 3b consumes this file to write the new {POS}_LGBM_* constants
-          # into the position configs.
+          # Operators paste the lowercase `lgbm_*=...` lines emitted by
+          # ``_format_config_lines`` into the affected position's
+          # ``build_position_config(...)`` call in src/{pos.lower()}/config.py.
+          # (No auto-rewrite step exists; manual paste is the current flow.)
           aws s3 cp s3://ff-predictor-training/tune_lgbm/tune_lgbm_results.json \
             tune_lgbm_results.json --region "$AWS_REGION"
           echo "== tune_lgbm_results.json =="

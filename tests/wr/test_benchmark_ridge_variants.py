@@ -80,15 +80,17 @@ def test_run_variant_builds_metrics_dict(monkeypatch):
     n = 20
     rng = np.random.default_rng(0)
     feature_cols = ["f0", "f1", "f2"]
+    # ``_run_variant`` reads X_train["season"] for CV grouping (the redundant
+    # ``pos_train`` parameter was dropped — X_train doubles as the season
+    # source), so the fake frame includes a ``season`` column.
     X_train = pd.DataFrame(rng.normal(size=(n, 3)), columns=feature_cols)
+    X_train["season"] = rng.integers(2020, 2024, n)
     X_test = pd.DataFrame(rng.normal(size=(n, 3)), columns=feature_cols)
 
     y_train_dict = {t: rng.normal(size=n) for t in TARGETS}
     y_test_dict = {t: rng.normal(size=n) for t in TARGETS}
     y_train_dict["total"] = sum(y_train_dict[t] for t in TARGETS)
     y_test_dict["total"] = sum(y_test_dict[t] for t in TARGETS)
-
-    pos_train = pd.DataFrame({"season": rng.integers(2020, 2024, n)})
 
     result = bench._run_variant(
         "test-variant",
@@ -97,7 +99,6 @@ def test_run_variant_builds_metrics_dict(monkeypatch):
         X_test,
         y_train_dict,
         y_test_dict,
-        pos_train,
         pca_n=None,
     )
     assert result["name"] == "test-variant"
@@ -125,9 +126,9 @@ def _stub_main(monkeypatch, tmp_path):
     n = 30
 
     # Features that both the fake frame and get_feature_columns() agree on.
-    # ``is_home`` is in ``EXTRA_DROPS`` so main's aggressive-cols branch will
-    # drop it, exercising that code path.
-    feature_cols = ["is_home", "season", "week"]
+    # ``rolling_mean_snap_pct_L5`` is in ``EXTRA_DROPS`` so main's aggressive-
+    # cols branch will drop it, exercising that code path.
+    feature_cols = ["rolling_mean_snap_pct_L5", "season", "week"]
 
     def _fake_frame():
         feats = {
@@ -136,7 +137,7 @@ def _stub_main(monkeypatch, tmp_path):
             "season": rng.integers(2020, 2024, n).astype(np.float32),
             "week": rng.integers(1, 18, n).astype(np.float32),
             "recent_team": ["KC"] * n,
-            "is_home": rng.integers(0, 2, n).astype(np.float32),
+            "rolling_mean_snap_pct_L5": rng.uniform(0, 1, n).astype(np.float32),
         }
         for col in bench.SPECIFIC_FEATURES:
             feats[col] = rng.normal(size=n)
@@ -171,7 +172,7 @@ def _stub_main(monkeypatch, tmp_path):
 
     # _run_variant is the inner loop — return canned metrics so main() just
     # drives the aggregation + printing.
-    def _canned(name, cols, X_train, X_test, y_train, y_test, pos_train, pca_n=None):
+    def _canned(name, cols, X_train, X_test, y_train, y_test, pca_n=None):
         mae_by_pca = {None: 3.0, 30: 2.7, 50: 2.8, 80: 2.85}.get(pca_n, 3.0)
         metrics = {}
         for t in TARGETS:

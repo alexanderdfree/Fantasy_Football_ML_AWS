@@ -21,10 +21,12 @@ def add_specific_features(
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
 ) -> tuple:
-    """Add 14 RB-specific engineered features to each split.
+    """Add the RB-specific engineered features to each split.
 
-    Features are computed independently per split to prevent leakage.
-    Team RB totals are computed from each split's own data.
+    Emits 19 columns per split via :func:`_compute_features` (see its
+    docstring for the breakdown). Features are computed independently per
+    split to prevent leakage. Team RB totals are computed from each split's
+    own data.
     """
     # Career carries: cumulative across all seasons, shifted to prevent leakage.
     # Must combine splits to capture cross-season history (e.g., 2024 val needs 2018-2023 carries).
@@ -46,8 +48,33 @@ def add_specific_features(
 
 
 def _compute_features(df: pd.DataFrame) -> None:
-    """Compute all 14 RB-specific features in-place."""
-    df.sort_values(["player_id", "season", "week"], inplace=True)
+    """Add the RB-specific engineered features to ``df`` in place.
+
+    Emits 19 columns total: 13 of the 14 entries in ``_SPECIFIC_FEATURES``
+    (``career_carries`` is computed earlier by ``add_specific_features``),
+    plus 4 game-level helpers (``game_carry_share``, ``game_target_share``,
+    ``game_carry_hhi``, ``game_target_hhi``) consumed by
+    ``ATTN_HISTORY_STATS``, plus 2 prior-season rates
+    (``prior_season_mean_catch_rate``, ``prior_season_mean_yards_per_carry``)
+    that restore the residual signal lost when PR #190 dropped the receptions
+    / rushing_yards aggregates.
+
+    Side-effect contract: per-group rolling aggregates require chronological
+    row order, so the function physically reorders ``df`` by
+    ``(player_id, season, week)`` via column-wise reassignment (no
+    ``sort_values(..., inplace=True)``) before computing features. Callers
+    that needed the original row order should pass a copy.
+    """
+    # Sort by player/season/week so the per-group rolling aggregates downstream
+    # operate on chronologically ordered rows. We drop ``inplace=True`` (which
+    # pandas now discourages under CoW) by building a sorted copy and writing
+    # its values back column-by-column. Row labels are realigned at the end so
+    # ``df.index`` reflects the sorted order — same as the previous in-place
+    # mutator left the frame.
+    df_sorted = df.sort_values(["player_id", "season", "week"])
+    for col in df_sorted.columns:
+        df[col] = df_sorted[col].values
+    df.index = df_sorted.index
 
     grp = ["player_id", "season"]
 
@@ -161,14 +188,23 @@ def _compute_features(df: pd.DataFrame) -> None:
     # computing the rate. Below that, the rate is NaN and fill_nans (called
     # downstream) substitutes the train mean.
     _min_per_game_volume = 0.5
-    if "prior_season_mean_receptions" in df.columns:
+    # Guard the denominator columns the same way we guard the numerator
+    # columns above — both pairs are produced as a group by
+    # ``src.features.engineer.build_features`` so they normally appear
+    # together, but a future refactor that drops only ``_targets`` or
+    # ``_carries`` from ``ROLL_STATS`` would otherwise raise ``KeyError``
+    # here instead of skipping the derived rate gracefully.
+    if "prior_season_mean_receptions" in df.columns and "prior_season_mean_targets" in df.columns:
         catch_rate = safe_divide(
             df["prior_season_mean_receptions"], df["prior_season_mean_targets"]
         )
         df["prior_season_mean_catch_rate"] = catch_rate.where(
             df["prior_season_mean_targets"] >= _min_per_game_volume
         )
-    if "prior_season_mean_rushing_yards" in df.columns:
+    if (
+        "prior_season_mean_rushing_yards" in df.columns
+        and "prior_season_mean_carries" in df.columns
+    ):
         ypc = safe_divide(df["prior_season_mean_rushing_yards"], df["prior_season_mean_carries"])
         df["prior_season_mean_yards_per_carry"] = ypc.where(
             df["prior_season_mean_carries"] >= _min_per_game_volume

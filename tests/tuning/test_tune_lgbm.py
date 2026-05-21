@@ -1,0 +1,88 @@
+"""Smoke tests for src/tuning/tune_lgbm.py.
+
+Cover the cheap-but-load-bearing pieces of the module so a future rename or
+refactor doesn't silently break the on-EC2 retune flow:
+
+  * the module imports without dragging in optuna data prep / boto3 init,
+  * ``main()`` accepts ``--print-best`` for unknown positions without
+    crashing (the argparse boundary is the cheapest integration point),
+  * ``_format_config_lines`` emits the lowercase ``lgbm_*=...`` kwarg form
+    that ``build_position_config()`` consumes (regression guard for M6).
+"""
+
+from __future__ import annotations
+
+import argparse
+from unittest.mock import patch
+
+import pytest
+
+from src.tuning import tune_lgbm
+
+pytestmark = pytest.mark.unit
+
+
+def test_module_imports_cleanly():
+    """Module-level imports succeed without env vars or S3 contact."""
+    assert hasattr(tune_lgbm, "main")
+    assert hasattr(tune_lgbm, "_format_config_lines")
+    assert hasattr(tune_lgbm, "_prepare_cv_folds")
+
+
+def test_format_config_lines_emits_lowercase_kwarg_form():
+    """Regression guard for M6: output must match build_position_config kwargs.
+
+    Pre-M6 the helper emitted uppercase ``{POS}_LGBM_*`` constants targeting
+    a config-file layout that never shipped. The factory currently consumes
+    lowercase ``lgbm_*`` kwargs; any drift here breaks the manual-paste flow
+    documented in retune-lgbm.yml.
+    """
+    best = {
+        "n_estimators": 1500,
+        "learning_rate": 0.05,
+        "num_leaves": 31,
+        "objective": "huber",
+    }
+    out = tune_lgbm._format_config_lines("QB", best)
+    # Lowercase form, comma-terminated for direct paste.
+    assert "lgbm_n_estimators=1500," in out
+    assert "lgbm_num_leaves=31," in out
+    assert 'lgbm_objective="huber",' in out
+    # Float formatting uses %g (no trailing zero noise).
+    assert "lgbm_learning_rate=0.05," in out
+    # No uppercase constants left over.
+    assert "QB_LGBM_" not in out
+    assert "N_ESTIMATORS" not in out
+
+
+def test_format_config_lines_skips_missing_params():
+    """Params not present in best_params should be silently omitted."""
+    out = tune_lgbm._format_config_lines("RB", {"n_estimators": 800})
+    assert "lgbm_n_estimators=800," in out
+    # max_depth not supplied → not in output
+    assert "lgbm_max_depth" not in out
+
+
+def test_trial_to_params_drops_use_max_depth_flag():
+    """``use_max_depth=False`` should collapse to ``max_depth=-1`` (LGBM no-cap)."""
+    fake_trial = argparse.Namespace(
+        params={"use_max_depth": False, "n_estimators": 500, "max_depth": 7}
+    )
+    cleaned = tune_lgbm._trial_to_params(fake_trial)
+    assert cleaned["max_depth"] == -1
+    assert cleaned["n_estimators"] == 500
+    assert "use_max_depth" not in cleaned
+
+
+def test_print_best_handles_missing_study(capsys, monkeypatch):
+    """``main --print-best <POS>`` for an unknown position should print a
+    soft error instead of crashing — the per-position loop continues so a
+    follow-up position with a valid study still prints.
+
+    Skip ``_ensure_data_from_s3`` so the test doesn't reach for boto3.
+    """
+    monkeypatch.setattr(tune_lgbm, "_ensure_data_from_s3", lambda: None)
+    with patch("sys.argv", ["tune_lgbm.py", "QB", "--print-best"]):
+        tune_lgbm.main()
+    out = capsys.readouterr().out
+    assert "No saved study for QB" in out

@@ -58,16 +58,13 @@ Usage::
 
     python -m src.analysis.analysis_k_feature_audit [--corr-threshold 0.85]
 
-# Audit run 2026-05-20 on 4af6a9d (K MAE baseline 4.079 Ridge / 4.128 NN /
-# 4.132 Attn / 4.061 LGBM): no drops warranted. Condition number 8.33
-# (well-conditioned, vs. RB pre-PCA 1.8e8); highest VIF 8.49 on
-# total_k_pts_L3 (< the 10 "bad" threshold); highest |Pearson| 0.778 for
-# (fg_attempts_L3, total_k_pts_L3) (< the 0.85 flag threshold). All 13
-# pre-registered "by-construction" pairs are below |r|=0.78 — the
-# feature set is not collinear. Headline diagnosis: K's MAE floor and
-# negative R² across all models reflect low signal (top |corr| with
-# fg_yards_made is only 0.157 for is_home), not variance inflation from
-# redundant features. Script ships as a diagnostic; no config changes.
+# Last run: 2026-05-20 (4af6a9d). Numbers from any individual run rot as the
+# feature set and dataset evolve — re-run the script to refresh, don't trust
+# any specific cond / VIF / |Pearson| value quoted in source comments. The
+# 2026-05-20 run found no drops warranted (cond well below the 1e4 suspect
+# threshold; max VIF and max |Pearson| both below the flag thresholds);
+# headline diagnosis was that K's MAE floor reflects low signal, not
+# variance inflation. Confirm by re-running rather than reading.
 """
 
 from __future__ import annotations
@@ -78,12 +75,16 @@ import sys
 import warnings
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-from scipy.stats import spearmanr
-from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import StandardScaler
+import matplotlib
+
+matplotlib.use("Agg")  # headless-safe; this script writes PNGs, no GUI needed
+
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from scipy.stats import spearmanr  # noqa: E402
+from sklearn.linear_model import LinearRegression  # noqa: E402
+from sklearn.preprocessing import StandardScaler  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:

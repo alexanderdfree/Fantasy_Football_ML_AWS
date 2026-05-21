@@ -15,6 +15,7 @@ import pandas as pd
 import pytest
 
 from src.dst.config import POSITION_CONFIG
+from src.dst.targets import compute_targets
 from tests.shared.position_fixtures import (
     register_position_markers,
     register_standard_fixtures,
@@ -43,8 +44,61 @@ register_standard_fixtures(
 # ---------------------------------------------------------------------------
 
 
+# Whitelist of keys ``_build_dst_row`` accepts as overrides.  Spans the 10 raw
+# targets, the contextual + per-game opp columns the DST pipeline reads, and
+# a few identifier columns the tests stamp in.  Reject anything outside this
+# set so typos (``def_sax``, ``points_alllowed``) surface immediately instead
+# of silently materializing a phantom column.
+_DST_ROW_OVERRIDE_KEYS = frozenset(
+    {
+        # Identifiers
+        "team",
+        "season",
+        "week",
+        "opponent_team",
+        # 10 raw-stat targets
+        *POSITION_CONFIG.targets,
+        # Contextual / schedule columns
+        "is_home",
+        "is_dome",
+        "div_game",
+        "rest_days",
+        "spread_line",
+        "total_line",
+        # Per-game opp columns (attention history sequence)
+        *POSITION_CONFIG.attn_history_stats,
+        # Rolling opp summaries (contextual_features)
+        "opp_scoring_L3",
+        "opp_scoring_L5",
+        "opp_turnovers_L5",
+        "opp_sacks_allowed_L5",
+        "opp_qb_epa_L5",
+        "opp_qb_int_rate_L5",
+        "opp_qb_sack_rate_L5",
+        "opp_qb_rush_yds_L5",
+        # Prior-season aggregates
+        "prior_season_dst_pts_avg",
+        "prior_season_pts_allowed_avg",
+        # Computed downstream by compute_targets / compute_features — listed
+        # so a test that wants to pre-set them can do so without surprise.
+        "fantasy_points",
+    }
+)
+
+
 def _build_dst_row(**overrides) -> pd.DataFrame:
-    """Single-row DST DataFrame with sensible defaults; safe to mutate in-test."""
+    """Single-row DST DataFrame with sensible defaults; safe to mutate in-test.
+
+    Override keys are validated against :data:`_DST_ROW_OVERRIDE_KEYS` so
+    typos like ``def_sax=3`` raise instead of silently adding a phantom
+    column.  Add new keys to the whitelist when extending DST's schema.
+    """
+    unknown = set(overrides) - _DST_ROW_OVERRIDE_KEYS
+    if unknown:
+        raise TypeError(
+            f"_build_dst_row: unknown override key(s) {sorted(unknown)}. "
+            f"Add to _DST_ROW_OVERRIDE_KEYS if intentional."
+        )
     row = {
         "def_sacks": 3,
         "def_ints": 1,
@@ -72,9 +126,10 @@ def make_team_games():
     """Factory: multi-week DST DataFrame for one team.
 
     ``compute_features`` reads the raw-stat columns + ``fantasy_points``
-    for rolling aggregates. ``fantasy_points`` is populated with a placeholder
-    linear sum (no PA/YA tier bonus) since the tests that use this fixture
-    care about rolling windows, not exact tier scoring.
+    for rolling aggregates.  ``fantasy_points`` is produced by calling
+    ``compute_targets`` so the column stays in lockstep with the production
+    scoring formula (linear + PA/YA tier bonuses) — if the formula changes,
+    this fixture follows automatically instead of silently desyncing.
     """
 
     def _factory(
@@ -109,19 +164,11 @@ def make_team_games():
                 "special_teams_tds": [special_teams_tds] * n_weeks,
             }
         )
-        # Placeholder fantasy_points (linear-only) — real tier scoring happens
-        # in compute_targets. This column feeds rolling-feature windows.
-        df["fantasy_points"] = (
-            df["def_sacks"]
-            + df["def_ints"] * 2
-            + df["def_fumble_rec"] * 2
-            + df["def_fumbles_forced"]
-            + df["def_safeties"] * 2
-            + df["def_tds"] * 6
-            + df["special_teams_tds"] * 6
-            + df["def_blocked_kicks"] * 2
-        )
-        return df
+        # Real scoring: delegate to compute_targets so this fixture stays in
+        # sync with the production formula (linear + PA/YA tier bonuses).
+        # ``compute_targets`` returns a fresh DataFrame with ``fantasy_points``
+        # populated; we use that as the canonical column.
+        return compute_targets(df)
 
     return _factory
 
@@ -247,3 +294,146 @@ def _build_tiny_dataset(seed: int = 42) -> pd.DataFrame:
     df["headshot_url"] = ""
     df = df.sort_values(["team", "season", "week"]).reset_index(drop=True)
     return df
+
+
+# ---------------------------------------------------------------------------
+# Synthetic player-week + schedules — feeds the DST opp-OFFENSE attention
+# branch, which reads ``data/raw/weekly_<seasons>.parquet`` and
+# ``data/raw/schedules_<seasons>.parquet`` directly (not via the train/val/test
+# splits). M12 covers wiring those branches through ``run_pipeline``.
+# ---------------------------------------------------------------------------
+
+
+def _build_synthetic_player_weekly(team_df: pd.DataFrame, seed: int = 42) -> pd.DataFrame:
+    """Build a synthetic player-week DataFrame derived from ``team_df``.
+
+    ``build_opp_offense_per_game_df`` groups by ``recent_team`` over all
+    offensive players, so the player-week frame needs at least the columns
+    that helper sums: ``passing_yards, passing_tds, rushing_yards,
+    rushing_tds, interceptions, sack_fumbles_lost, rushing_fumbles_lost,
+    receiving_fumbles_lost`` + the keying columns ``recent_team, season,
+    week``.
+
+    One QB + one RB row per (team, season, week) is enough — the sum across
+    those two players produces the off_pass_*/off_rush_*/off_ints/
+    off_fumbles_lost columns.
+    """
+    rng = np.random.RandomState(seed)
+    rows = []
+    for _, r in team_df.iterrows():
+        # QB row carries the passing line + interceptions + sack fumbles
+        rows.append(
+            {
+                "player_id": f"{r['team']}_QB",
+                "player_display_name": f"{r['team']} QB",
+                "player_name": f"{r['team']} QB",
+                "position": "QB",
+                "recent_team": r["team"],
+                "opponent_team": r["opponent_team"],
+                "season": int(r["season"]),
+                "week": int(r["week"]),
+                "passing_yards": float(max(0, rng.normal(240, 60))),
+                "passing_tds": int(rng.poisson(1.5)),
+                "rushing_yards": float(max(0, rng.normal(15, 10))),
+                "rushing_tds": int(rng.binomial(1, 0.05)),
+                "interceptions": int(rng.poisson(0.8)),
+                "sack_fumbles_lost": int(rng.binomial(1, 0.06)),
+                "rushing_fumbles_lost": int(rng.binomial(1, 0.03)),
+                "receiving_fumbles_lost": 0,
+                "attempts": int(rng.randint(20, 40)),
+                "sacks": int(rng.poisson(2.0)),
+                "passing_epa": float(rng.normal(0, 3)),
+                "special_teams_tds": 0,
+            }
+        )
+        # RB row contributes the rushing line + receiving fumbles
+        rows.append(
+            {
+                "player_id": f"{r['team']}_RB",
+                "player_display_name": f"{r['team']} RB",
+                "player_name": f"{r['team']} RB",
+                "position": "RB",
+                "recent_team": r["team"],
+                "opponent_team": r["opponent_team"],
+                "season": int(r["season"]),
+                "week": int(r["week"]),
+                "passing_yards": 0.0,
+                "passing_tds": 0,
+                "rushing_yards": float(max(0, rng.normal(90, 30))),
+                "rushing_tds": int(rng.poisson(0.7)),
+                "interceptions": 0,
+                "sack_fumbles_lost": 0,
+                "rushing_fumbles_lost": int(rng.binomial(1, 0.04)),
+                "receiving_fumbles_lost": int(rng.binomial(1, 0.02)),
+                "attempts": 0,
+                "sacks": 0,
+                "passing_epa": 0.0,
+                "special_teams_tds": 0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _build_synthetic_full_schedules(team_df: pd.DataFrame) -> pd.DataFrame:
+    """Schedules parquet shaped for the production loader.
+
+    Differs from ``_build_synthetic_schedules`` in test_pipeline_e2e.py: that
+    helper produces a slimmed frame used for the in-memory
+    ``_load_schedules`` stub.  This one is written to ``data/raw/`` so the
+    parquet loader inside ``build_opp_offense_per_game_df`` (and
+    ``_load_schedules``'s parquet fallback) finds the columns they need.
+    """
+    home = team_df[team_df["is_home"] == 1][
+        [
+            "season",
+            "week",
+            "team",
+            "opponent_team",
+            "spread_line",
+            "total_line",
+            "rest_days",
+            "div_game",
+            "is_dome",
+            "points_allowed",
+        ]
+    ].rename(
+        columns={
+            "team": "home_team",
+            "opponent_team": "away_team",
+            "rest_days": "home_rest",
+            "points_allowed": "away_score",
+        }
+    )
+    home["home_score"] = (
+        (home["away_score"] + (home["spread_line"] * -1).clip(-30, 30))
+        .round()
+        .astype(int)
+        .clip(lower=0)
+    )
+    away_rest = team_df[team_df["is_home"] == 0][["season", "week", "team", "rest_days"]].rename(
+        columns={"team": "away_team", "rest_days": "away_rest"}
+    )
+    sched = home.merge(away_rest, on=["season", "week", "away_team"], how="left")
+    sched["away_rest"] = sched["away_rest"].fillna(7).astype(int)
+    sched["home_rest"] = sched["home_rest"].astype(int)
+    sched["game_type"] = "REG"
+    sched["roof"] = "outdoors"
+    sched["surface"] = "grass"
+    sched["temp"] = 65.0
+    sched["wind"] = 5.0
+    sched = sched.drop_duplicates(subset=["season", "week", "home_team", "away_team"])
+    return sched.reset_index(drop=True)
+
+
+@pytest.fixture(scope="session")
+def synthetic_player_weekly(tiny_dataset):
+    """Player-week frame derived from ``tiny_dataset``. Session-scoped so
+    repeated tests don't repeatedly synthesize the same rows."""
+    return _build_synthetic_player_weekly(tiny_dataset, seed=42)
+
+
+@pytest.fixture(scope="session")
+def synthetic_full_schedules(tiny_dataset):
+    """Schedules frame derived from ``tiny_dataset`` with the full column set
+    the on-disk loader expects (home_score, away_score, game_type, roof, ...)."""
+    return _build_synthetic_full_schedules(tiny_dataset)

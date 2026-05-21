@@ -22,61 +22,33 @@ import pytest
 import torch
 
 from src.rb.config import POSITION_CONFIG
-from src.rb.data import filter_to_position
-from src.rb.features import add_specific_features, fill_nans, get_feature_columns
-from src.rb.targets import compute_targets
+from src.shared.position_pipeline import build_pipeline_config
+from tests._pipeline_e2e_utils import _TINY_OVERRIDES
 
 
 def _build_tiny_config() -> dict:
-    """Shrunk CONFIG for the E2E smoke."""
-    pc = POSITION_CONFIG
-    return {
-        "targets": pc.targets,
-        "ridge_alpha_grids": pc.ridge_alpha_grids,
-        "two_stage_targets": {},
-        "classification_targets": pc.gated_ordinal_targets,
-        "ridge_pca_components": pc.ridge_pca_components,
-        "ridge_cv_folds": 2,
-        "ridge_refine_points": 0,
-        "cv_split_column": "week",
-        "specific_features": pc.specific_features,
-        "filter_fn": filter_to_position,
-        "compute_targets_fn": compute_targets,
-        "add_features_fn": add_specific_features,
-        "fill_nans_fn": fill_nans,
-        "get_feature_columns_fn": get_feature_columns,
-        "nn_backbone_layers": [8, 8],
-        "nn_head_hidden": 4,
-        "nn_dropout": pc.nn_dropout,
-        "nn_head_hidden_overrides": None,
-        "nn_lr": pc.nn_lr,
-        "nn_weight_decay": pc.nn_weight_decay,
-        "nn_epochs": 1,
-        "nn_batch_size": 64,
-        "nn_patience": 1,
-        "nn_log_every": 1,
-        "loss_weights": pc.loss_weights,
-        "huber_deltas": pc.huber_deltas,
-        "scheduler_type": pc.scheduler_type,
-        "cosine_t0": pc.cosine_t0,
-        "cosine_t_mult": pc.cosine_t_mult,
-        "cosine_eta_min": pc.cosine_eta_min,
-        "train_attention_nn": False,
-        "attn_d_model": pc.attn_d_model,
-        "attn_n_heads": pc.attn_n_heads,
-        "attn_max_seq_len": pc.attn_max_seq_len,
-        "attn_history_stats": pc.attn_history_stats,
-        "attn_project_kv": pc.attn_project_kv,
-        "attn_positional_encoding": pc.attn_positional_encoding,
-        "attn_gated_fusion": pc.attn_gated_fusion,
-        "attn_dropout": pc.attn_dropout,
-        "attn_gated": pc.attn_gated,
-        "attn_gate_hidden": pc.attn_gate_hidden,
-        "attn_gate_weight": pc.attn_gate_weight,
-        "gated_targets": pc.gated_targets,
-        "head_losses": pc.head_losses,
-        "train_lightgbm": False,
-    }
+    """Shrunk CONFIG for the E2E smoke.
+
+    Routes through ``build_pipeline_config("RB", POSITION_CONFIG, ...)`` so
+    every cfg field the runtime pipeline consumes — including the RB-only
+    ``two_stage_targets`` / ``classification_targets`` keys assembled by
+    ``_rb_two_stage_targets`` / ``_rb_classification_targets`` — comes
+    from the same factory the production runner exercises. The legacy
+    hand-rolled dict drifted as new cfg keys were added (it bypassed
+    ``build_pipeline_config`` and missed e.g. ``aggregate_fn``,
+    ``nn_non_negative_targets``); matching the QB pattern fixes that.
+
+    The shared ``_TINY_OVERRIDES`` (in ``tests/_pipeline_e2e_utils.py``)
+    layers the shrunken NN/scheduler/ridge knobs on top, so the E2E budget
+    stays under 20s. ``cv_split_column="week"`` is forced because the
+    synthetic RB dataset only spans two seasons.
+    """
+    return build_pipeline_config(
+        "RB",
+        POSITION_CONFIG,
+        **_TINY_OVERRIDES,
+        cv_split_column="week",
+    )
 
 
 def _find_data_raw_dir() -> str:

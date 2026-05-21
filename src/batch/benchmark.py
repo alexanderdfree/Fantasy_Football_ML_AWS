@@ -27,6 +27,7 @@ from src.batch.launch import (
     ALL_POSITIONS,
     AWS_REGION,
     S3_BUCKET,
+    WAIT_TIMEOUT_SECONDS,
     submit_job,
     upload_data,
     wait_for_jobs,
@@ -150,6 +151,15 @@ def main():
     parser.add_argument("--note", default="", help="Describe what changed")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(
+        "--wait-timeout",
+        type=int,
+        default=None,
+        help=(
+            f"Override wait-for-jobs timeout in seconds "
+            f"(default: {WAIT_TIMEOUT_SECONDS}, matching src/batch/launch.py)."
+        ),
+    )
+    parser.add_argument(
         "--download-only",
         action="store_true",
         help="Skip launching jobs; download metrics from latest artifacts",
@@ -213,7 +223,14 @@ def main():
                     print(f"[{pos}] FAILED to submit: {e}")
 
         # Wait for completion. wait_for_jobs now returns (status, stopped_at_ms).
-        results = wait_for_jobs(job_ids)
+        # Forward ``--wait-timeout`` only when the operator passed an explicit
+        # override — leaving the default-None case as a bare ``wait_for_jobs(
+        # job_ids)`` call preserves the historical signature for tests that
+        # stub the function with a single-arg lambda.
+        if args.wait_timeout is not None:
+            results = wait_for_jobs(job_ids, timeout_seconds=args.wait_timeout)
+        else:
+            results = wait_for_jobs(job_ids)
         total_elapsed = time.time() - total_t0
         print(f"\nAll jobs completed in {total_elapsed:.0f}s wall time")
 

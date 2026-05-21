@@ -1,5 +1,10 @@
 """DST rare-event dispersion diagnostic.
 
+Operator-only CLI — no import callers anywhere in src/ or tests/, used
+strictly via ``python -m src.analysis.analysis_dst_rare_dispersion`` when
+re-evaluating the DST sparse-target loss-head families. Referenced in
+``notebooks/README.md`` alongside the other ``analysis_*`` scripts.
+
 Decides the right loss function for the 4 very-rare DST targets:
     def_safeties, def_tds, def_blocked_kicks, special_teams_tds
 

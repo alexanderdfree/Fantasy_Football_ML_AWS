@@ -124,6 +124,12 @@ def _prepare_cv_folds(pos, cfg):
         folds = expanding_window_folds(full_df)
     targets = cfg["targets"]
 
+    # Hoist outside the loop so an empty `folds` list (no expanding-window
+    # splits resolved) doesn't raise UnboundLocalError when the summary print
+    # below dereferences feature_cols. Each fold prepared inside the loop
+    # overwrites this with its own feature_cols (the per-fold value is the
+    # one actually saved in folds_data and consumed by _make_objective).
+    feature_cols: list[str] = []
     folds_data = []
     for _fold_idx, fold_train_df, fold_val_df in folds:
         (X_train, X_val, _, y_train_dict, y_val_dict, _, _, _, _, feature_cols) = (
@@ -327,32 +333,43 @@ def _run_comparison(pos, cfg, best_params):
 
 
 def _format_config_lines(pos, best_params):
-    """Format tuned params as config file constants."""
-    prefix = pos.upper()
-    param_map = {
-        "n_estimators": "N_ESTIMATORS",
-        "learning_rate": "LEARNING_RATE",
-        "num_leaves": "NUM_LEAVES",
-        "max_depth": "MAX_DEPTH",
-        "subsample": "SUBSAMPLE",
-        "colsample_bytree": "COLSAMPLE_BYTREE",
-        "reg_lambda": "REG_LAMBDA",
-        "reg_alpha": "REG_ALPHA",
-        "min_child_samples": "MIN_CHILD_SAMPLES",
-        "min_split_gain": "MIN_SPLIT_GAIN",
-        "objective": "OBJECTIVE",
-    }
+    """Format tuned params as ``build_position_config()`` kwargs.
 
-    lines = [f"# Tuned LightGBM params for {pos} — paste into {pos}/{pos.lower()}_config.py:"]
-    for param, const_suffix in param_map.items():
+    Emits the lowercase ``lgbm_*`` keyword form (e.g. ``lgbm_n_estimators=1500``)
+    that ``src/{pos.lower()}/config.py``'s ``POSITION_CONFIG = build_position_config(...)``
+    call accepts. Earlier revisions emitted uppercase ``{POS}_LGBM_*`` constants
+    targeting a config-file layout that no longer exists — those constants have
+    never been referenced anywhere in src/.
+    """
+    # All LightGBM kwargs accepted by build_position_config that this script
+    # tunes. Keep ordered for readable pasting.
+    param_keys = [
+        "n_estimators",
+        "learning_rate",
+        "num_leaves",
+        "max_depth",
+        "subsample",
+        "colsample_bytree",
+        "reg_lambda",
+        "reg_alpha",
+        "min_child_samples",
+        "min_split_gain",
+        "objective",
+    ]
+
+    lines = [
+        f"# Tuned LightGBM params for {pos} — paste into "
+        f"src/{pos.lower()}/config.py's build_position_config(...) call:"
+    ]
+    for param in param_keys:
         if param in best_params:
             val = best_params[param]
             if isinstance(val, str):
-                lines.append(f'{prefix}_LGBM_{const_suffix} = "{val}"')
+                lines.append(f'lgbm_{param}="{val}",')
             elif isinstance(val, float):
-                lines.append(f"{prefix}_LGBM_{const_suffix} = {val:.6g}")
+                lines.append(f"lgbm_{param}={val:.6g},")
             else:
-                lines.append(f"{prefix}_LGBM_{const_suffix} = {val}")
+                lines.append(f"lgbm_{param}={val},")
     return "\n".join(lines)
 
 
@@ -483,8 +500,10 @@ def main():
         print(f"\nResults saved to {results_path}")
 
         # Upload to S3 + echo as a delimited stdout block so the results
-        # survive a --rm container. The retune workflow greps between markers
-        # to extract structured params for PR 3b.
+        # survive a --rm container. The retune workflow downloads the JSON
+        # from S3; operators paste the lowercase ``lgbm_*=...`` lines emitted
+        # by ``_format_config_lines`` into the position's
+        # ``build_position_config(...)`` call (no auto-rewrite step exists).
         bucket = os.environ.get("S3_BUCKET")
         if bucket:
             import boto3

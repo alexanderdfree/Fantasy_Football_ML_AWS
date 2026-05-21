@@ -1,3 +1,5 @@
+import math
+
 import pandas as pd
 
 # Standard D/ST points-allowed tiers
@@ -24,7 +26,18 @@ _YDS_ALLOWED_TIERS = [
 
 
 def _pts_allowed_to_bonus(pts: float) -> float:
-    """Convert points allowed to fantasy bonus using standard tiers."""
+    """Convert points allowed to fantasy bonus using standard tiers.
+
+    Callers in ``compute_targets`` ``fillna`` before invoking this helper,
+    but since the helper is module-public we surface a clear error on NaN
+    instead of letting ``int(nan)`` raise the opaque ``ValueError("cannot
+    convert float NaN to integer")``.
+    """
+    if isinstance(pts, float) and math.isnan(pts):
+        raise ValueError(
+            "_pts_allowed_to_bonus received NaN — caller must fillna before "
+            "invoking (compute_targets does this; bare callers must too)."
+        )
     pts = int(pts)
     for lo, hi, bonus in _PTS_ALLOWED_TIERS:
         if lo <= pts <= hi:
@@ -33,7 +46,15 @@ def _pts_allowed_to_bonus(pts: float) -> float:
 
 
 def _yds_allowed_to_bonus(ya: float) -> float:
-    """Convert yards allowed to fantasy bonus using Yahoo-style tiers."""
+    """Convert yards allowed to fantasy bonus using Yahoo-style tiers.
+
+    NaN-guarded for the same reason as :func:`_pts_allowed_to_bonus`.
+    """
+    if isinstance(ya, float) and math.isnan(ya):
+        raise ValueError(
+            "_yds_allowed_to_bonus received NaN — caller must fillna before "
+            "invoking (compute_targets does this; bare callers must too)."
+        )
     ya = int(ya)
     for lo, hi, bonus in _YDS_ALLOWED_TIERS:
         if lo <= ya <= hi:

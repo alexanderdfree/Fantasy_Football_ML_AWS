@@ -48,11 +48,15 @@ import json
 import sys
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-from sklearn.linear_model import Ridge
-from sklearn.preprocessing import StandardScaler
+import matplotlib
+
+matplotlib.use("Agg")  # headless-safe; this script writes PNGs, no GUI needed
+
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from sklearn.linear_model import Ridge  # noqa: E402
+from sklearn.preprocessing import StandardScaler  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -71,10 +75,25 @@ OUT_DIR = PROJECT_ROOT / "analysis_output"
 OUT_JSON = OUT_DIR / "k_signal_floor.json"
 OUT_PNG = OUT_DIR / "k_signal_floor_segments.png"
 
-BENCHMARK_PATH = PROJECT_ROOT / "benchmark_history" / "2026-05-20T06-39-23_4af6a9d.json"
-# Hard-coded fallback if the benchmark JSON is missing (e.g. CI shard without
-# the file). Matches the post-mortem in this script's docstring.
+BENCHMARK_DIR = PROJECT_ROOT / "benchmark_history"
+# Hard-coded fallback if no benchmark JSON can be located (e.g. CI shard
+# without the directory). Snapshot of the 2026-05-20 K benchmark; matches
+# the post-mortem in this script's docstring.
 BENCHMARK_FALLBACK = {"ridge": 4.079, "nn": 4.128, "attn": 4.132, "lgbm": 4.061}
+
+
+def _latest_benchmark_path() -> Path | None:
+    """Return the most recently modified ``benchmark_history/*.json`` file.
+
+    Filenames carry an ISO-8601 prefix so lexicographic ordering also yields
+    chronological order, but mtime is more robust to filename schema drift.
+    Returns ``None`` if the directory doesn't exist or holds no JSON files.
+    """
+    if not BENCHMARK_DIR.is_dir():
+        return None
+    candidates = sorted(BENCHMARK_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+    return candidates[-1] if candidates else None
+
 
 # Recommendation gap thresholds (test MAE units = fantasy points).
 GAP_PROCEED = 0.15
@@ -499,11 +518,11 @@ def _print_segments(segments: dict) -> None:
 # ── Benchmark JSON loader ────────────────────────────────────────────────
 
 
-def _load_benchmark_mae(path: Path) -> dict[str, float]:
+def _load_benchmark_mae(path: Path | None) -> dict[str, float]:
     """Return the K MAE numbers from a benchmark_history JSON. Falls back to
-    the hard-coded values from the docstring if the file is missing.
+    the hard-coded values from the docstring if ``path`` is None or missing.
     """
-    if not path.exists():
+    if path is None or not path.exists():
         return dict(BENCHMARK_FALLBACK)
     try:
         d = json.loads(path.read_text())
@@ -530,7 +549,19 @@ def main() -> int:
         action="store_true",
         help="Skip the LGBM refit (saves ~10s during script iteration)",
     )
+    parser.add_argument(
+        "--benchmark-path",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a benchmark_history JSON file to compare against. "
+            "Defaults to the most recently modified file under "
+            "benchmark_history/; falls back to the script's hardcoded "
+            "2026-05-20 K snapshot if no benchmark JSON is found."
+        ),
+    )
     args = parser.parse_args()
+    benchmark_path = args.benchmark_path or _latest_benchmark_path()
 
     # ── Load + materialise features ────────────────────────────────────────
     try:
@@ -636,7 +667,7 @@ def main() -> int:
     else:
         in_script["lgbm"] = {"val_mae": None, "test_mae": None, "note": "skipped (--quick)"}
 
-    benchmark = _load_benchmark_mae(BENCHMARK_PATH)
+    benchmark = _load_benchmark_mae(benchmark_path)
     _print_models(in_script, benchmark)
 
     # Sanity vs production Ridge — must be in the ballpark or the diagnostic
@@ -721,9 +752,9 @@ def main() -> int:
         "models_in_script": in_script,
         "models_from_benchmark": {
             **{k: float(v) for k, v in benchmark.items()},
-            "source": str(BENCHMARK_PATH.relative_to(PROJECT_ROOT))
-            if BENCHMARK_PATH.exists()
-            else "fallback (file missing)",
+            "source": str(benchmark_path.relative_to(PROJECT_ROOT))
+            if benchmark_path is not None and benchmark_path.exists()
+            else "fallback (no benchmark_history/*.json found)",
         },
         "segments": segments,
         "flagged_segments": flagged,

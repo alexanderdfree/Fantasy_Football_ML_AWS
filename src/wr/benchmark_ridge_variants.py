@@ -36,8 +36,6 @@ TARGETS = POSITION_CONFIG.targets
 
 # ── Aggressive feature drops (on top of INCLUDE_FEATURES whitelist) ────────
 EXTRA_DROPS = {
-    # Zero variance
-    "is_home",
     # snap_pct L5 rolling — missed in L5 cleanup, r=0.993 with L8
     "rolling_mean_snap_pct_L5",
     "rolling_std_snap_pct_L5",
@@ -84,10 +82,15 @@ def _run_variant(
     X_test,
     y_train_dict,
     y_test_dict,
-    pos_train,
     pca_n=None,
 ):
-    """Train + evaluate a single Ridge variant. Returns metrics dict."""
+    """Train + evaluate a single Ridge variant. Returns metrics dict.
+
+    ``X_train`` doubles as the CV-grouping source for ``season`` (the
+    benchmark's train DataFrame already carries the season column the
+    expanding-window splitter needs); we don't accept a separate
+    ``pos_train`` to avoid the prior `pos_train` aliased-twice footgun.
+    """
     t0 = time.time()
 
     # Select features
@@ -96,11 +99,11 @@ def _run_variant(
 
     cond = _condition_number(Xi_train)
 
-    # Tune alphas
+    # Tune alphas — season grouping comes from X_train directly.
     best_alphas = _tune_ridge_alphas_cv(
         Xi_train,
         y_train_dict,
-        pos_train["season"].values,
+        X_train["season"].values,
         targets=TARGETS,
         alpha_grids=RIDGE_ALPHA_GRIDS,
         n_cv_folds=4,
@@ -218,7 +221,6 @@ def main():
             pos_test,
             y_train_dict,
             y_test_dict,
-            pos_train,
             pca_n=pca_n,
         )
         results.append(r)
@@ -229,16 +231,22 @@ def main():
         )
 
     # ── Comparison table ─────────────────────────────────────────────────────
-    print(f"\n\n{'=' * 110}")
-    print("  WR RIDGE VARIANT COMPARISON")
-    print(f"{'=' * 110}")
+    # Per-target columns iterate ``TARGETS`` so all four raw stats (incl.
+    # ``fumbles_lost``) render; pre-2024 versions hardcoded three stale
+    # fantasy-points-era column labels (recv_fl/rush_fl/td_pts) whose data
+    # rows actually printed receiving_tds/receiving_yards/receptions MAEs.
+    target_header = " ".join(f"{t[:8]:>8}" for t in TARGETS)
     header = (
         f"{'Variant':<28} {'Feats':>5} {'PCA':>4} {'Cond#':>10} "
         f"{'Total MAE':>10} {'Total R2':>9} "
-        f"{'recv_fl':>8} {'rush_fl':>8} {'td_pts':>8} {'Time':>6}"
+        f"{target_header} {'Time':>6}"
     )
+    table_width = len(header)
+    print(f"\n\n{'=' * table_width}")
+    print("  WR RIDGE VARIANT COMPARISON")
+    print(f"{'=' * table_width}")
     print(header)
-    print("-" * 110)
+    print("-" * table_width)
 
     baseline_mae = results[0]["metrics"]["total"]["mae"]
     for r in results:
@@ -247,14 +255,14 @@ def main():
         cond_str = f"{r['cond_number']:.1e}" if r["cond_number"] < 1e15 else "inf"
         delta = m["total"]["mae"] - baseline_mae
         delta_str = f"({delta:+.3f})" if r["name"] != "1. baseline" else ""
+        target_cells = " ".join(f"{m[t]['mae']:>8.3f}" for t in TARGETS)
         print(
             f"{r['name']:<28} {r['n_features']:>5} {pca_str:>4} {cond_str:>10} "
             f"{m['total']['mae']:>10.3f}{delta_str:>8} {m['total']['r2']:>6.3f} "
-            f"{m['receiving_tds']['mae']:>8.3f} {m['receiving_yards']['mae']:>8.3f} "
-            f"{m['receptions']['mae']:>8.3f} {r['elapsed']:>5.1f}s"
+            f"{target_cells} {r['elapsed']:>5.1f}s"
         )
 
-    print(f"{'=' * 110}")
+    print(f"{'=' * table_width}")
 
     # Per-target R2 table
     print(f"\n{'=' * 80}")
