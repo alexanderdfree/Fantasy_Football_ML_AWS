@@ -61,6 +61,19 @@ jobs:
             exit 0
           fi
 
+          # Opt-in: HEAD message containing `[docs-only]` signals the author
+          # asserts the diff has no behavioural impact (comment / docstring /
+          # import-reorder only) and skip training. Mirrors tests.yml's detect
+          # job convention; squash merges carry constituent commit messages
+          # in the body, so the tag survives the merge and lands in HEAD's
+          # commit message. Trust contract — CI cannot verify the assertion,
+          # the author owns correctness.
+          if git log -1 --format=%B HEAD | grep -qF '[docs-only]'; then
+            echo "[docs-only] detected in HEAD commit message — skipping training."
+            echo "positions=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # workflow_run: diff the merged commit against its first parent.
           # Defensive: on a degenerate repo with no parent, default to all.
           if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
