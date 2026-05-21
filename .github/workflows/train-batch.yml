@@ -86,13 +86,24 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # --commit filters server-side, so the --limit cap is now "up to N
+          # runs for THIS SHA" (effectively unbounded — a SHA realistically
+          # only fires 2-3 duplicates) rather than "up to N total successes
+          # across all SHAs" (where 20+ unrelated successes could mask Run 1).
+          # `|| echo "0"` defaults to "no prior found → proceed" if the gh
+          # API call fails transiently — better to over-run (one unnecessary
+          # re-train) than under-train (silent skip due to network blip,
+          # because `needs: dedup_check` would otherwise cascade to a train-
+          # job skip if this job exits non-zero under set -eu).
           PRIOR=$(gh run list \
             --repo "$REPO" \
             --workflow=train-batch.yml \
+            --commit "$HEAD_SHA" \
             --status=success \
             --limit=20 \
-            --json databaseId,headSha \
-            --jq "[.[] | select(.headSha == \"$HEAD_SHA\" and (.databaseId | tostring) != \"$RUN_ID\")] | length")
+            --json databaseId \
+            --jq "[.[] | select((.databaseId | tostring) != \"$RUN_ID\")] | length" \
+            2>/dev/null || echo "0")
           if [ "${PRIOR:-0}" -gt 0 ]; then
             echo "Found $PRIOR prior successful train-batch run(s) for $HEAD_SHA — short-circuiting."
             echo "skip=true" >> "$GITHUB_OUTPUT"
