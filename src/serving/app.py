@@ -50,7 +50,6 @@ from src.config import (
     VAL_SEASONS,
 )
 from src.data.loader import compute_fantasy_points
-from src.evaluation.metrics import compute_metrics, compute_positional_metrics
 from src.features.engineer import (
     OPP_ATTN_PER_GAME_BUILDERS,
     build_game_history_arrays,
@@ -63,6 +62,7 @@ from src.shared.artifact_integrity import (
     read_scaler_meta,
     unwrap_state_dict,
 )
+from src.shared.evaluation import compute_metrics
 from src.shared.feature_build import build_position_features, scale_and_clip
 from src.shared.model_sync import (
     sync_benchmark_history_from_s3,
@@ -1417,13 +1417,19 @@ def _compute_metrics_locked():
             y_avail = actual_values[available_mask]
             preds_avail = pred_series.values[available_mask]
             overall = compute_metrics(y_avail, preds_avail)
-            pos_df = results.loc[available_mask, ["position"]].copy()
-            pos_df["pred"] = preds_avail
-            pos_df["actual"] = y_avail
-            pos_metrics = compute_positional_metrics(pos_df, "pred", "actual")
+            positions_avail = results.loc[available_mask, "position"].values
+            by_position = []
+            for pos in _ALL_POSITIONS:
+                pos_mask = positions_avail == pos
+                if not pos_mask.any():
+                    continue
+                pm = compute_metrics(y_avail[pos_mask], preds_avail[pos_mask])
+                pm["position"] = pos
+                pm["n_samples"] = int(pos_mask.sum())
+                by_position.append(pm)
             per_format[name] = {
                 "overall": {k: round(v, 4) for k, v in overall.items()},
-                "by_position": pos_metrics.to_dict(orient="records"),
+                "by_position": by_position,
             }
         metrics_by_format[fmt] = per_format
     _cache["metrics_by_format"] = metrics_by_format

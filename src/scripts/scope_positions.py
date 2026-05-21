@@ -37,7 +37,7 @@ ALL_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
 # bash regex that used to live in both workflows. Anchored at start-of-path
 # so a same-named substring deeper in the tree doesn't spuriously match.
 _GLOBAL_REGEX = re.compile(
-    r"^src/(shared|batch|data|features|models|evaluation)/"
+    r"^src/(shared|batch|data|features|models)/"
     r"|^src/config\.py$"
     r"|^requirements\.txt$"
 )
@@ -49,8 +49,8 @@ def compute_positions(changed_files: Iterable[str]) -> list[str]:
     - ``tests/`` paths are stripped first — test-only changes don't change
       model artifacts, so they never trigger retraining.
     - Any "global" path (``src/shared/``, ``src/batch/``, ``src/data/``,
-      ``src/features/``, ``src/models/``, ``src/evaluation/``,
-      ``src/config.py``, ``requirements.txt``) returns all six positions.
+      ``src/features/``, ``src/models/``, ``src/config.py``,
+      ``requirements.txt``) returns all six positions.
       Shared code affects everyone.
     - Otherwise, return the positions whose per-position dir ``src/{pos}/``
       was touched. Empty list = no model-relevant change.
@@ -65,7 +65,7 @@ ALL_TEST_SHARDS: tuple[str, ...] = (*ALL_POSITIONS, "shared")
 
 _TEST_DOCS_REGEX = re.compile(r"\.md$|^docs/|^\.github/ISSUE_TEMPLATE/|^\.gitignore$|^LICENSE")
 _TEST_GLOBAL_REGEX = re.compile(
-    r"^src/(shared|data|features|models|evaluation)/"
+    r"^src/(shared|data|features|models)/"
     r"|^src/(__init__|config)\.py$"
     r"|^conftest\.py$"
     r"|^tests/(conftest\.py|_pipeline_e2e_utils\.py|__init__\.py|fixtures/)"

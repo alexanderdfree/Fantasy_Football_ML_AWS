@@ -26,7 +26,6 @@ from src.config import (
     VAL_SEASONS,
 )
 from src.data.split import expanding_window_folds
-from src.evaluation.metrics import compute_metrics
 from src.features.engineer import (
     OPP_ATTN_PER_GAME_BUILDERS,
     build_game_history_arrays,
@@ -44,6 +43,7 @@ from src.shared.artifact_integrity import (
 from src.shared.backtest import plot_weekly_accuracy, run_weekly_simulation
 from src.shared.evaluation import (
     build_gate_info,
+    compute_metrics,
     compute_ranking_metrics,
     compute_target_metrics,
     plot_pred_vs_actual,

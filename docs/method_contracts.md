@@ -802,7 +802,7 @@ def plot_training_curves(history, target_names, save_path):
 
 ## 5. Evaluation
 
-### 5.1 `src/evaluation/metrics.py`
+### 5.1 `src/shared/evaluation.py`
 
 #### `compute_metrics(y_true, y_pred) -> dict`
 
@@ -815,35 +815,28 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     }
 ```
 
-#### `compute_positional_metrics(df, pred_col, true_col) -> pd.DataFrame`
+(Per-position aggregation is no longer a standalone helper — it's inlined into
+`src/serving/app.py::_compute_metrics_locked`, which loops `POSITIONS` and
+calls `compute_metrics` directly. The old `compute_positional_metrics(df, …)`
+helper was deleted to avoid an intermediate DataFrame round-trip.)
+
+#### `print_comparison_table(results, position=None, target_names=None) -> None`
 
 ```python
-def compute_positional_metrics(df, pred_col, true_col) -> pd.DataFrame:
-    """Returns DataFrame with columns: position, mae, rmse, r2, n_samples"""
-    results = []
-    for pos in ["QB", "RB", "WR", "TE", "K", "DST"]:
-        mask = df["position"] == pos
-        metrics = compute_metrics(df.loc[mask, true_col], df.loc[mask, pred_col])
-        metrics["position"] = pos
-        metrics["n_samples"] = mask.sum()
-        results.append(metrics)
-    return pd.DataFrame(results)
-```
+def print_comparison_table(
+    results: dict,
+    position: str | None = None,
+    target_names: list[str] | None = None,
+) -> None:
+    """Pretty-print model comparison. Two modes, gated on ``position``:
 
-#### `print_comparison_table(results: dict) -> None`
-
-```python
-def print_comparison_table(results: dict) -> None:
+    - ``position is None`` (generic): ``results = {model_name: {mae, rmse, r2}}``
+      → single table of model-vs-model metrics. Replaces the former
+      ``src/evaluation/metrics.py`` helper.
+    - ``position`` set (position-aware): ``results = {model_name: {...}}`` with
+      per-target MAE plus optional gated-head diagnostics. ``target_names``
+      is required.
     """
-    results = {
-        "Season Average": {"mae": ..., "rmse": ..., "r2": ...},
-        "Last Week":      {"mae": ..., "rmse": ..., "r2": ...},
-        "Ridge":          {"mae": ..., "rmse": ..., "r2": ...},
-        "Neural Net":     {"mae": ..., "rmse": ..., "r2": ...},
-    }
-    Prints formatted comparison table to console.
-    """
-    pass
 ```
 
 ### 5.2 `src/evaluation/backtest.py`

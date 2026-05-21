@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from src.evaluation.metrics import compute_metrics
+from src.shared.evaluation import compute_metrics
 
 
 def run_weekly_simulation(

@@ -18,7 +18,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
 from src.config import MIN_GAMES_PER_SEASON, SPLITS_DIR
-from src.evaluation.metrics import compute_metrics
+from src.shared.evaluation import compute_metrics
 from src.shared.models import RidgeMultiTarget
 from src.shared.pipeline import _tune_ridge_alphas_cv
 from src.wr.config import POSITION_CONFIG
