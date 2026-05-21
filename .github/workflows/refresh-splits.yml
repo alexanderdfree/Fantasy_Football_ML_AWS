@@ -89,9 +89,9 @@ jobs:
         # the weekly frame. ``preprocess`` does the standard cleanup;
         # ``temporal_split`` writes ``data/splits/{train,val,test}.parquet``
         # with the chronological train/val/test boundaries from
-        # ``src.config``.
+        # ``src.config``. Both ``data/raw/`` and ``data/splits/`` are created
+        # by the producers (load_raw_data + temporal_split), so no pre-mkdir.
         run: |
-          mkdir -p data/raw data/splits
           python - <<'PY'
           from src.data.loader import load_raw_data
           from src.data.preprocessing import preprocess
@@ -101,31 +101,61 @@ jobs:
           temporal_split(df)
           PY
 
-      - name: Verify PR #235 columns are present
-        # Fail loud if temporal_split produced a parquet that's missing the
-        # columns this workflow exists to ship. Without this, an upstream
-        # nflverse outage or a missed merge of new feature columns could
-        # silently upload broken splits to S3 and pin every position's
-        # stable to its last-good artifact (the same failure mode this
-        # workflow exists to clear).
+      - name: Upload regenerated splits as workflow artifact
+        # Forensic insurance: if a downstream step (verify, upload to S3,
+        # train dispatch) fails, the operator can download the parquet
+        # directly from the workflow run instead of re-running the ~10 min
+        # nflverse + PBP pull. ``if: success() || failure()`` runs on both
+        # the happy path and any earlier-step failure but skips on user
+        # cancellation, which is the right behaviour: cancellation usually
+        # means the operator killed the run on purpose.
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-splits
+          path: data/splits/*.parquet
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Verify required columns are present
+        # Fail loud if temporal_split produced a parquet that's missing any
+        # column the current configs reference. Catches both the immediate
+        # PR #235 case (5 new attn_history_stats + 2 new INCLUDE_FEATURES on
+        # RB) and any future drift from a config addition that didn't ship a
+        # splits regen. Derived dynamically — never edit this step when a
+        # config adds a new column.
         run: |
           python - <<'PY'
+          import importlib
+
           import pyarrow.parquet as pq
 
-          required = [
-              "redzone_carries",
-              "redzone_targets",
-              "inside10_carries",
-              "inside5_carries",
-              "redzone_target_share",
-              "prior_season_total_redzone_touches",
-              "prior_season_mean_redzone_touches_per_game",
-          ]
+          from src.config import POSITIONS
+
+          # attn_history_stats is the hard requirement (PR #328's guard
+          # raises on missing cols). INCLUDE_FEATURES is the soft requirement
+          # (feature_build.py zero-fills missing cols), but a regen that
+          # drops one is still a bug worth catching here — the trained model
+          # would have zero signal for the column instead of the real value.
+          required: set[str] = set()
+          for pos in POSITIONS:
+              cfg = importlib.import_module(f"src.{pos.lower()}.config").POSITION_CONFIG
+              required.update(cfg.attn_history_stats)
+              for category_cols in cfg.include_features.values():
+                  required.update(category_cols)
+
           for split in ("train", "val", "test"):
-              cols = pq.read_schema(f"data/splits/{split}.parquet").names
-              missing = [c for c in required if c not in cols]
-              assert not missing, f"{split}.parquet missing: {missing}"
-              print(f"OK {split}: {len(cols)} cols, all 7 PR #235 cols present")
+              cols = set(pq.read_schema(f"data/splits/{split}.parquet").names)
+              missing = sorted(required - cols)
+              assert not missing, (
+                  f"{split}.parquet missing {len(missing)} required col(s) "
+                  f"from POSITION_CONFIG.attn_history_stats / include_features: "
+                  f"{missing}"
+              )
+              print(
+                  f"OK {split}: {len(cols)} cols, all {len(required)} "
+                  f"required cols present"
+              )
           PY
 
       - name: Upload to S3 with force
@@ -154,12 +184,17 @@ jobs:
       - name: Trigger train-batch.yml
         # Optional chain — if the operator wants the full
         # regen-splits-then-retrain flow in one click, this dispatches the
-        # training workflow on the same ref. Otherwise skip and the operator
-        # can trigger it manually after inspecting the upload.
+        # training workflow. Always dispatched against ``main`` rather than
+        # ``${GITHUB_REF}`` — if an operator ever runs refresh-splits.yml
+        # from a feature branch, propagating that ref would resolve
+        # train-batch.yml from the branch (possibly a stale copy with
+        # different inputs / job-def) instead of the production file on
+        # main. The splits we just uploaded affect every position equally,
+        # so the train-batch.yml on main is always the right target.
         if: ${{ inputs.kick_off_train }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run train-batch.yml --ref "${GITHUB_REF}"
+        run: gh workflow run train-batch.yml --ref main
 
       - name: Summary
         if: always()
@@ -171,8 +206,10 @@ jobs:
             echo "- Region: \`${AWS_REGION}\`"
             echo "- kick_off_train: \`${{ inputs.kick_off_train }}\`"
             echo ""
-            echo "Next: watch the next RB Batch job's \`smoke_test\` log line — a"
-            echo "PASS advances \`models/RB/manifest.json\`'s \`stable\` pointer and the"
-            echo "in-flight refresh poller swaps the fresh RB model on every running"
-            echo "serving task within ~30s of the manifest write."
+            echo "Next: for each position whose config change motivated this"
+            echo "refresh, watch the next per-position Batch job's"
+            echo "\`smoke_test\` log line — a PASS advances that position's"
+            echo "\`models/{POS}/manifest.json\`'s \`stable\` pointer, and the"
+            echo "in-flight refresh poller swaps the fresh artifact on every"
+            echo "running serving task within ~30s of the manifest write."
           } >> "$GITHUB_STEP_SUMMARY"
