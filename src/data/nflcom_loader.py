@@ -108,7 +108,19 @@ _ALL_TARGET_COLUMNS = {
 
 # Historical -> canonical NFL team-abbr mapping. Both NFL.com and nflverse have
 # historically inconsistent codes; canonicalize one side so the join works.
-_TEAM_CANONICAL = {
+#
+# This is the **canonical project-wide team-code normalization map**. Other
+# bundles (W.SHARED-WEATHER, W.SHARED-ENG) should import ``TEAM_CODE_MAP``
+# or call ``normalize_team_code(code)`` instead of maintaining their own
+# parallel dictionaries.
+#
+# Note: this map uses ``"STL": "LAR"`` (NFL.com-style canonical). The
+# nflverse schedule release historically uses ``"LA"`` for the Rams in some
+# years instead of ``"LAR"``. Callers joining against nflverse schedules
+# may need to chain a ``{"LA": "LAR"}`` (already included) or
+# ``{"LAR": "LA"}`` extension depending on join direction; see
+# ``src/shared/weather_features.py`` for one such adapter.
+TEAM_CODE_MAP: dict[str, str] = {
     "OAK": "LV",
     "SD": "LAC",
     "STL": "LAR",
@@ -117,6 +129,46 @@ _TEAM_CANONICAL = {
     "JAC": "JAX",
     "LA": "LAR",
 }
+# Back-compat alias for the original private name.
+_TEAM_CANONICAL = TEAM_CODE_MAP
+
+
+def normalize_team_code(code: str | None) -> str:
+    """Map a historical NFL team code to its current canonical abbreviation.
+
+    Canonical project-wide helper for team-code normalization — importable
+    from ``src.data.nflcom_loader`` by any bundle that needs to align
+    franchise codes across data sources (NFL.com projections, nflverse
+    schedules/PBP, internal stats). Examples:
+
+        >>> normalize_team_code("OAK")
+        'LV'
+        >>> normalize_team_code("STL")
+        'LAR'
+        >>> normalize_team_code("@OAK")  # NFL.com prefixes opponent for away games
+        'LV'
+        >>> normalize_team_code(None)
+        ''
+
+    Parameters
+    ----------
+    code : str | None
+        The raw team code. ``None`` / NaN / empty string returns ``""``.
+        A leading ``"@"`` (NFL.com away-game prefix) is stripped.
+        Unknown codes pass through unchanged (after upper-case + strip).
+
+    Returns
+    -------
+    str
+        The canonical NFL team abbreviation, or ``""`` for missing input.
+    """
+    if code is None or (isinstance(code, float) and pd.isna(code)):
+        return ""
+    s = str(code).strip().upper()
+    # NFL.com sometimes prefixes opponent with '@' for away games — strip.
+    s = s.lstrip("@")
+    return TEAM_CODE_MAP.get(s, s)
+
 
 # Hand-curated overrides for names where normalization isn't enough. Populate
 # this from the top-5 unmatched-names log after the first end-to-end run if
@@ -155,13 +207,14 @@ def normalize_player_name(name: str | None) -> str:
 
 
 def _team_abbr_normalize(team: str | None) -> str:
-    """Map historical NFL team codes to current canonical (OAK->LV, STL->LAR, ...)."""
-    if team is None or (isinstance(team, float) and pd.isna(team)):
-        return ""
-    s = str(team).strip().upper()
-    # NFL.com sometimes prefixes opponent with '@' for away games — strip.
-    s = s.lstrip("@")
-    return _TEAM_CANONICAL.get(s, s)
+    """Back-compat alias for :func:`normalize_team_code`.
+
+    Kept so callers within this module keep working without churn; new
+    callers (including cross-bundle imports) should use
+    :func:`normalize_team_code` directly — it's the canonical project-wide
+    helper.
+    """
+    return normalize_team_code(team)
 
 
 def _projection_url(year: int, week: int, position: str) -> str:

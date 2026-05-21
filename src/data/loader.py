@@ -189,6 +189,19 @@ def load_raw_data(
     try:
         ids = nfl.import_ids()
         pfr_to_gsis = ids[["pfr_id", "gsis_id"]].dropna().drop_duplicates()
+        # Subset-dedup on pfr_id before merging — the full-row drop_duplicates
+        # above only collapses identical (pfr_id, gsis_id) pairs. If a single
+        # pfr_id maps to multiple distinct gsis_ids in the ID release (rare
+        # ID-system churn or data-entry collisions), the snap-count merge below
+        # would fan out and multiply each player-week row. Keep "first" — the
+        # downstream consequence of dropping a real cross-reference is one
+        # player-week with NaN snap_pct (gracefully filled by the
+        # position-week median imputation), strictly better than silently
+        # double-counting.
+        pfr_to_gsis = pfr_to_gsis.drop_duplicates(subset=["pfr_id"], keep="first")
+        assert pfr_to_gsis["pfr_id"].is_unique, (
+            "pfr_to_gsis must be unique on pfr_id after subset-dedup"
+        )
         snap_counts = snap_counts.merge(
             pfr_to_gsis, left_on="pfr_player_id", right_on="pfr_id", how="left"
         )
@@ -260,7 +273,16 @@ def load_raw_data(
         how="left",
     )
     weekly.drop(columns=["gsis_id"], errors="ignore", inplace=True)
-    weekly["depth_chart_rank"] = weekly["depth_chart_rank"].fillna(3).clip(upper=3)
+    # Sentinel: depth-chart-absent rows get -1 (clearly out-of-band — legitimate
+    # depth ranks are 1+). Previously these were filled with 3 (third string),
+    # which conflated "no data" with "third-string player" and biased every
+    # downstream feature that uses depth_chart_rank to treat unknown players
+    # as buried on the depth chart. The clip upper bound is loosened to 10 so
+    # legitimate deeper ranks survive intact; depth chart rows beyond 10 are
+    # exceedingly rare (and almost certainly noise) so they still get capped.
+    # NOTE: downstream features may interpret -1 as "missing" — that
+    # remediation is a follow-up (no consumer code is updated in this commit).
+    weekly["depth_chart_rank"] = weekly["depth_chart_rank"].fillna(-1).clip(lower=-1, upper=10)
 
     # --- Merge red-zone PBP aggregates ---
     # Per-game red-zone touch counts feed the attention NN's history sequence
