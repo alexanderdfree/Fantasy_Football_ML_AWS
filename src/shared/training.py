@@ -495,8 +495,13 @@ class MultiHeadTrainer:
                 y_true_all = np.concatenate(all_targets[k])
                 history[f"val_mae_{k}"].append(np.mean(np.abs(y_pred_all - y_true_all)))
 
-            if _cuda:
-                torch.cuda.synchronize(self.device)
+            # Per-epoch wall-clock is a host-side measurement; loss.item() /
+            # .cpu().numpy() above already force CUDA→host syncs implicitly, so
+            # _epoch_sec captures the correct end-of-epoch boundary. Explicit
+            # torch.cuda.synchronize() here was hanging on Batch g4dn instances
+            # (suspected interaction with PR #267's ThreadPoolExecutor overlap
+            # and the nvidia-smi sidecar's NVML polling); not needed for the
+            # investigation's accuracy.
             _epoch_sec = time.perf_counter() - _epoch_t0
             _peak_mem_gb = torch.cuda.max_memory_allocated(self.device) / 1024**3 if _cuda else 0.0
             history["epoch_sec"].append(_epoch_sec)
