@@ -64,6 +64,7 @@ import argparse
 import copy
 import json
 import os
+import signal
 import sys
 import time
 
@@ -73,7 +74,49 @@ import optuna
 from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
 
+from src.config import SPLITS_DIR
 from src.shared.registry import get_config, get_runner
+
+
+def _ensure_data_from_s3() -> None:
+    """Bootstrap data/splits/ + data/raw/ from S3 when ``S3_BUCKET`` is set
+    and the local files are missing. Mirrors ``src/tuning/tune_lgbm.py::
+    _ensure_data_from_s3`` so the Batch container needs no extra plumbing —
+    just set ``S3_BUCKET`` and (optionally) ``S3_DATA_PREFIX`` in the job
+    environment, same convention as the training path.
+
+    No-op locally without ``S3_BUCKET``; the local CLI form expects the
+    parquets already on disk (either via the worktree symlink pattern in
+    [[feedback_worktree_data_symlink]] or a real local pull).
+    """
+    bucket = os.environ.get("S3_BUCKET")
+    if not bucket:
+        return
+    prefix = os.environ.get("S3_DATA_PREFIX", "data")
+
+    # Local import — boto3 is only needed for the S3 path, which is gated on
+    # S3_BUCKET. Lets ``--print-best`` and the local CLI run on machines
+    # without boto3 or full src/batch/train deps.
+    from src.batch.train import download_data, sync_raw_data
+
+    splits_needed = not all(
+        os.path.exists(os.path.join(SPLITS_DIR, f))
+        for f in ("train.parquet", "val.parquet", "test.parquet")
+    )
+    if splits_needed:
+        print(f"[tune_nn] Downloading splits from s3://{bucket}/{prefix}/ to {SPLITS_DIR}/")
+        download_data(bucket, prefix, SPLITS_DIR)
+    else:
+        print(f"[tune_nn] Splits already present at {SPLITS_DIR}/")
+
+    if not os.path.isdir("data/raw") or not any(
+        f.endswith(".parquet") for f in os.listdir("data/raw")
+    ):
+        print(f"[tune_nn] Syncing data/raw/ from s3://{bucket}/data/raw/")
+        sync_raw_data(bucket)
+    else:
+        print("[tune_nn] data/raw/ already populated")
+
 
 # Positions whose `run()` signature currently lacks a `config=` kwarg. Until
 # that's added, the tuner can't pass override cfgs to them and so we refuse
@@ -277,6 +320,97 @@ def _trial_to_params(trial: optuna.trial.FrozenTrial) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# S3 checkpoint (Spot resilience)
+# ---------------------------------------------------------------------------
+
+
+class _S3Checkpoint:
+    """Round-trip the Optuna SQLite study DB to S3 so a Spot interruption
+    can be resumed on Batch's retry.
+
+    Layout: ``s3://{bucket}/tune_nn/{pos}/study.db`` (+ ``results.json``
+    after the run completes). On startup we pull the DB if it exists;
+    Optuna's ``load_if_exists=True`` then picks up every trial already
+    completed and the next attempt only runs ``n_trials - already_done``
+    more. After each trial completes (Optuna callback) we re-upload the DB
+    so the worst case (immediate Spot reclaim) loses at most one in-flight
+    trial. A SIGTERM handler does the same on graceful shutdown — Spot
+    gives a 2-minute warning that Batch propagates to the container.
+    """
+
+    def __init__(self, bucket: str, pos: str, db_path: str):
+        # Local import — boto3 is only required when --checkpoint-s3 is set,
+        # so the local CLI form runs without it.
+        import boto3
+
+        self.bucket = bucket
+        self.pos = pos
+        self.db_path = db_path
+        self.s3 = boto3.client("s3")
+        self.key_prefix = f"tune_nn/{pos.lower()}"
+
+    def _study_key(self) -> str:
+        return f"{self.key_prefix}/study.db"
+
+    def _results_key(self) -> str:
+        return f"{self.key_prefix}/results.json"
+
+    def download_study_db(self) -> None:
+        """Pull the prior study.db from S3 if present so the next study.optimize()
+        resumes from the previous attempt's last-completed trial."""
+        from botocore.exceptions import ClientError
+
+        key = self._study_key()
+        try:
+            self.s3.download_file(self.bucket, key, self.db_path)
+            print(f"[checkpoint] resumed from s3://{self.bucket}/{key}")
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                print(f"[checkpoint] no prior study at s3://{self.bucket}/{key}; starting fresh")
+                return
+            raise
+
+    def upload_study_db(self) -> None:
+        if not os.path.exists(self.db_path):
+            return
+        key = self._study_key()
+        self.s3.upload_file(self.db_path, self.bucket, key)
+        print(f"[checkpoint] uploaded s3://{self.bucket}/{key}")
+
+    def upload_results(self, results_path: str) -> None:
+        if not os.path.exists(results_path):
+            return
+        key = self._results_key()
+        self.s3.upload_file(results_path, self.bucket, key)
+        print(f"[checkpoint] uploaded s3://{self.bucket}/{key}")
+
+
+def _install_sigterm_handler(checkpoint: "_S3Checkpoint") -> None:
+    """Trap SIGTERM (Spot 2-minute warning is delivered as SIGTERM by Batch)
+    and upload the study DB before exiting so the next attempt resumes from
+    the last-completed trial.
+
+    Exits 0 because Batch's retry policy (see src/batch/launch.py's
+    RETRY_STRATEGY) keys on the AWS-level ``statusReason`` (``Host EC2*``
+    for Spot reclaim), not the container exit code. An exit-non-zero would
+    bypass that policy and pin the failure as a real app error.
+    """
+
+    def _handler(signum, frame):
+        print("[checkpoint] SIGTERM received — uploading study DB and exiting")
+        try:
+            checkpoint.upload_study_db()
+        except Exception as e:
+            # Never mask the shutdown with a checkpoint failure — log loudly
+            # but exit anyway. Spot is about to kill us regardless.
+            print(f"[checkpoint] WARNING: final upload failed: {e!r}")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handler)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -313,6 +447,19 @@ def main():
         action="store_true",
         help="Load existing studies and print best params without running new trials.",
     )
+    parser.add_argument(
+        "--checkpoint-s3",
+        action="store_true",
+        help=(
+            "Batch/Spot mode: round-trip the SQLite study DB to "
+            "s3://$S3_BUCKET/tune_nn/{pos}/study.db so a Spot interruption "
+            "can be resumed on Batch's retry. On startup we pull the DB if it "
+            "exists; after each trial completes we re-upload it; a SIGTERM "
+            "handler does a final upload before exit. Requires S3_BUCKET in "
+            "the env (matches the convention used by src/tuning/tune_lgbm.py "
+            "and src/batch/train.py)."
+        ),
+    )
     args = parser.parse_args()
 
     positions = [p.upper() for p in args.positions]
@@ -323,6 +470,9 @@ def main():
             f"only seed=, no config=). Tune QB/RB/WR/TE; K/DST support lands in a "
             f"follow-up that adds config= to their run() signatures."
         )
+
+    if not args.print_best:
+        _ensure_data_from_s3()
 
     all_results: dict[str, dict] = {}
 
@@ -351,6 +501,18 @@ def main():
             )
             continue
 
+        checkpoint: _S3Checkpoint | None = None
+        if args.checkpoint_s3:
+            bucket = os.environ.get("S3_BUCKET")
+            if not bucket:
+                raise SystemExit(
+                    "--checkpoint-s3 requires the S3_BUCKET environment variable "
+                    "(matches src/batch/train.py + src/tuning/tune_lgbm.py)."
+                )
+            checkpoint = _S3Checkpoint(bucket, pos, db_path)
+            checkpoint.download_study_db()
+            _install_sigterm_handler(checkpoint)
+
         t0 = time.time()
         study = optuna.create_study(
             study_name=study_name,
@@ -365,19 +527,37 @@ def main():
             ),
         )
 
+        completed = sum(1 for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE)
+        remaining = max(0, args.n_trials - completed)
+
         objective = _make_objective(pos, base_cfg, args.seed)
+        callbacks = []
+        if checkpoint is not None:
+            # Optuna invokes callbacks after every trial regardless of state
+            # (complete / pruned / failed). Upload after each so the worst-case
+            # Spot reclaim loses at most the in-flight trial. Bind `checkpoint`
+            # via default-arg so the closure isn't fragile to the outer
+            # `for pos` reassignment (caught by ruff B023).
+            callbacks.append(lambda study, trial, ck=checkpoint: ck.upload_study_db())
 
         print(f"\n{'=' * 70}")
-        print(f"  Tuning {pos} attention NN — up to {args.n_trials} trials")
+        print(
+            f"  Tuning {pos} attention NN — {completed}/{args.n_trials} done, "
+            f"running {remaining} more"
+        )
         print(f"{'=' * 70}")
 
-        study.optimize(
-            objective,
-            n_trials=args.n_trials,
-            timeout=args.timeout,
-            show_progress_bar=True,
-            n_jobs=1,  # NN trials are GPU/CPU-bound; parallel trials would oversubscribe.
-        )
+        if remaining > 0:
+            study.optimize(
+                objective,
+                n_trials=remaining,
+                timeout=args.timeout,
+                show_progress_bar=True,
+                n_jobs=1,  # NN trials are GPU/CPU-bound; parallel trials would oversubscribe.
+                callbacks=callbacks,
+            )
+        else:
+            print(f"[{pos}] all {args.n_trials} trials already completed; skipping optimize()")
 
         elapsed = time.time() - t0
         best = _trial_to_params(study.best_trial)
@@ -392,6 +572,18 @@ def main():
             "n_trials": len(study.trials),
             "elapsed_seconds": round(elapsed, 1),
         }
+
+        if checkpoint is not None:
+            # Per-position results JSON consumed by src/tuning/aggregate_results.py
+            # in the Batch fan-out workflow (each Spot job is one position, so the
+            # cross-position merge happens in the aggregate step). Also push the
+            # study DB one last time so the final trial's state survives even if
+            # the per-trial callback didn't fire on the last trial.
+            per_pos_path = f"tune_nn_{pos.lower()}_results.json"
+            with open(per_pos_path, "w") as f:
+                json.dump({pos: all_results[pos]}, f, indent=2, default=str)
+            checkpoint.upload_results(per_pos_path)
+            checkpoint.upload_study_db()
 
     if all_results:
         results_path = "tune_nn_results.json"

@@ -1,0 +1,164 @@
+name: Retune NN on Batch (Spot)
+
+# Manually-triggered Optuna sweep of the attention-NN hyperparameters across
+# QB / RB / WR / TE. Mirrors train-batch.yml's per-position fan-out — one
+# Spot g4dn.xlarge per position via AWS Batch, saturating the 24-vCPU Spot
+# G+VT quota (4 vCPU × 4 positions = 16 vCPU; 4 spare for any concurrent
+# training/inference jobs). NN training is GPU-bound; running multiple
+# trials on the same GPU would oversubscribe, so each container does
+# Optuna n_jobs=1.
+#
+# K and DST are not in the matrix yet: their run() takes only seed=, no
+# config=, so tune_nn can't override cfg per trial. Adding config= to those
+# runners is a 2-line follow-up; until then SUPPORTED_POSITIONS in
+# src/batch/launch_tune.py rejects them at submit time.
+#
+# NO ECS refresh, NO benchmark_history commit: tuning produces config
+# *recommendations* (printed as paste-ready QB_ATTN_* / QB_NN_* constants),
+# not model artifacts. Operators hand-paste winning params into the
+# affected src/{pos}/config.py and let the normal training path produce
+# the actual model on the next push.
+
+on:
+  workflow_dispatch:
+    inputs:
+      positions:
+        description: "Space-separated positions to tune (subset of QB RB WR TE)"
+        default: "QB RB WR TE"
+      n_trials:
+        description: "Optuna trials per position"
+        default: "30"
+      timeout_seconds:
+        description: "Per-position wall-clock cap in seconds (blank = no cap; Batch wait timeout still applies)"
+        default: ""
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: ff-predictor-training
+
+permissions:
+  contents: read
+
+jobs:
+  parse:
+    # Tiny job: split the space-delimited input into a JSON array the matrix
+    # job below can consume. Also re-exports the raw string for the aggregator
+    # job (which calls aggregate_results.py with --positions $POSITIONS).
+    runs-on: ubuntu-latest
+    outputs:
+      positions: ${{ steps.parse.outputs.positions }}
+      matrix: ${{ steps.parse.outputs.matrix }}
+    steps:
+      - id: parse
+        env:
+          POS_INPUT: ${{ github.event.inputs.positions }}
+        run: |
+          set -eu
+          # Trim, collapse whitespace, reject empty input early.
+          POS_LIST=$(printf '%s' "$POS_INPUT" | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
+          if [ -z "$POS_LIST" ]; then
+            echo "positions input is empty" >&2
+            exit 1
+          fi
+          MATRIX=$(printf '%s\n' "$POS_LIST" | jq -Rc 'split(" ") | map(select(length > 0))')
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "positions=$POS_LIST" >> "$GITHUB_OUTPUT"
+          echo "Parsed positions: $POS_LIST"
+          echo "Matrix JSON:      $MATRIX"
+
+  submit:
+    needs: parse
+    runs-on: ubuntu-latest
+    strategy:
+      # Independent positions — one Spot failure shouldn't cancel the rest.
+      # The aggregator runs unconditionally and collates what made it to S3.
+      fail-fast: false
+      matrix:
+        position: ${{ fromJson(needs.parse.outputs.matrix) }}
+    # 30 trials × ~2 min/trial on g4dn.xlarge ≈ 60 min; Spot retries can
+    # bring per-position wall-clock to ~3 hr worst case. 4 hr ceiling
+    # catches a stuck job before it pins the runner indefinitely.
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install launch deps
+        # boto3 is the only runtime dep launch_tune.py needs — everything
+        # else (the Batch job's container deps) lives in the ECR image.
+        run: pip install boto3
+
+      - name: Submit + wait for tune job (${{ matrix.position }})
+        env:
+          POS: ${{ matrix.position }}
+          N_TRIALS: ${{ github.event.inputs.n_trials }}
+          TIMEOUT_SECONDS: ${{ github.event.inputs.timeout_seconds }}
+        run: |
+          set -eu
+          ARGS="--positions $POS --n-trials $N_TRIALS"
+          if [ -n "$TIMEOUT_SECONDS" ]; then
+            ARGS="$ARGS --timeout $TIMEOUT_SECONDS"
+          fi
+          echo "launch_tune args: $ARGS"
+          python -m src.batch.launch_tune $ARGS
+
+  aggregate:
+    needs: [parse, submit]
+    runs-on: ubuntu-latest
+    # always(): aggregate even if some positions failed, so the operator
+    # can still see the winners from the rest. The aggregator skips missing
+    # per-position files with a warning instead of erroring.
+    if: always() && needs.parse.result == 'success'
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install aggregator deps
+        run: pip install boto3
+
+      - name: Aggregate per-position results from S3
+        env:
+          POSITIONS: ${{ needs.parse.outputs.positions }}
+        run: |
+          set -eu
+          mkdir -p tune_results
+          python -m src.tuning.aggregate_results \
+            --positions $POSITIONS \
+            --bucket "$S3_BUCKET" \
+            --local-dir ./tune_results \
+            --output tune_nn_results.json \
+            --summary-output "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload merged results JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: tune_nn_results
+          path: tune_nn_results.json
+          if-no-files-found: warn
