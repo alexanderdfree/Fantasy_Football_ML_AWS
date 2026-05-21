@@ -717,6 +717,15 @@ def _apply_position_models(train, val, test, pos, results):
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)
     pos_index = pos_test.index
     errors = _cache.setdefault("position_load_errors", {})
+    # Drop stale entries for this position before re-trying. Per-model failures
+    # below write ``{pos}_{model_type}`` keys (e.g. ``"QB_ridge"``); without
+    # this clear, a previous attempt's keys would linger after a successful
+    # refresh and keep ``/health`` reporting "degraded" indefinitely — which
+    # used to latch the ALB target to 503 and trigger ECS replacement (see
+    # alexfree.me, 2026-05-21 12:16 UTC). Match the key-parsing rule in
+    # ``_degraded_positions``: bare ``pos`` OR ``{pos}_*``.
+    for stale_key in [k for k in errors if k == pos or k.startswith(f"{pos}_")]:
+        errors.pop(stale_key, None)
 
     def _combine_total(preds: dict, fmt: str = "ppr") -> np.ndarray:
         # QB/RB/WR/TE/DST go through predictions_to_fantasy_points which knows
@@ -2154,9 +2163,56 @@ def api_benchmark_history():
 
 @app.route("/health")
 def health():
-    errors = _cache.get("position_load_errors")
+    """Liveness probe for ALB + ECS.
+
+    Three return shapes, matched on the joint state of ``positions_loaded``
+    and ``position_load_errors``:
+
+    - **200 ``{"status": "ok"}``** — happy path. Either steady state (every
+      position loaded, no errors) OR cold-start before any load attempt
+      (both maps empty). Cold start is treated as "alive but not yet
+      ready"; the `post_fork` pre-warm thread populates ``positions_loaded``
+      within ~30 s and ``/api/predictions`` would lazy-load on first hit
+      either way.
+    - **200 ``{"status": "degraded", ...}``** — at least one position is
+      loaded AND ``position_load_errors`` is non-empty. The frontend
+      renders a ``degraded_positions`` banner and the loaded positions'
+      predictions are real, so the task is still useful. ``/api/predictions``
+      already returns 200 + ``degraded_positions`` for this exact state —
+      ``/health`` must agree, otherwise ALB recycles a still-serving task.
+    - **503 ``{"status": "unhealthy", ...}``** — we have affirmatively
+      failed: ``position_load_errors`` is non-empty AND no position is
+      loaded (every attempt failed). ALB rotates us out; ECS replaces the
+      task.
+
+    Why no "503 when empty everything": that would 503 the ~30 s cold-start
+    window before pre-warm completes (interval=10s × unhealthy_threshold=3
+    ⇒ ALB deregisters before warmup finishes), killing every fresh task.
+    The combined "errors AND nothing loaded" predicate distinguishes "we
+    haven't tried yet" from "we tried and failed."
+
+    Why 200 in the degraded case: a single transient S3 model-refresh
+    failure used to poison ``position_load_errors`` and latch ``/health``
+    to 503, recycling a task that was still serving five of six positions
+    cleanly (alexfree.me, 2026-05-21 12:16 UTC, ~60 s ALB 5xx window).
+    """
+    loaded = _cache.get("positions_loaded") or set()
+    errors = _cache.get("position_load_errors") or {}
+    if errors and not loaded:
+        return jsonify(
+            {
+                "status": "unhealthy",
+                "position_load_errors": errors,
+            }
+        ), 503
     if errors:
-        return jsonify({"status": "degraded", "position_load_errors": errors}), 503
+        return jsonify(
+            {
+                "status": "degraded",
+                "positions_loaded": sorted(loaded),
+                "position_load_errors": errors,
+            }
+        ), 200
     return jsonify({"status": "ok"})
 
 
