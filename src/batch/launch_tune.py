@@ -11,7 +11,7 @@ that one is bound to the training command shape. ``submit_tune_job`` below
 is the tuning analog.
 
 Usage:
-    python -m src.batch.launch_tune                                  # all 4 supported positions
+    python -m src.batch.launch_tune                                  # all 6 positions
     python -m src.batch.launch_tune --positions QB RB                # subset
     python -m src.batch.launch_tune --n-trials 30                    # default
     python -m src.batch.launch_tune --positions QB --n-trials 5      # smoke test
@@ -25,9 +25,10 @@ Config (env vars, all optional — same names as ``launch.py``):
     FF_WAIT_TIMEOUT     (default: 10800, i.e. 3h — bumped via --wait-timeout
                          since NN tuning can run ~30 trials × ~2 min/trial)
 
-K and DST are not yet supported (their ``run()`` lacks a ``config=`` kwarg
-that tune_nn needs to override the cfg per trial). The CLI rejects them
-with the same error message as ``src/tuning/tune_nn.py``'s CLI guard.
+All six positions are now supported — K/DST were added once their ``run()``
+signatures accepted a ``config=`` kwarg. The 24-vCPU Spot quota tolerates
+six concurrent g4dn.xlarge jobs exactly; concurrent local launches will
+queue at ``RUNNABLE`` instead of pushing over-quota.
 """
 
 import argparse
@@ -52,11 +53,10 @@ from src.batch.launch import (  # noqa: E402
     wait_for_jobs,
 )
 
-# K and DST: their ``run()`` signatures take only ``seed=`` (no ``config=``)
-# so the tuner can't override cfg per trial. Reject up front rather than
-# wasting a Spot job and seeing the tuner error. Matches the guard in
-# ``src/tuning/tune_nn.py``.
-SUPPORTED_POSITIONS = ("QB", "RB", "WR", "TE")
+# All six positions now have ``run(config=...)``; argparse choices still pin
+# the input to known names so a typo fails locally instead of submitting a
+# Spot job that will fail on ``get_config()``.
+SUPPORTED_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
 # Default Optuna trial budget per position. Same default as the local
 # ``src/tuning/tune_nn.py`` CLI. On g4dn.xlarge each trial is 1–2 min, so

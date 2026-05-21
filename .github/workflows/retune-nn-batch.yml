@@ -1,17 +1,11 @@
 name: Retune NN on Batch (Spot)
 
 # Manually-triggered Optuna sweep of the attention-NN hyperparameters across
-# QB / RB / WR / TE. Mirrors train-batch.yml's per-position fan-out — one
+# all six positions. Mirrors train-batch.yml's per-position fan-out — one
 # Spot g4dn.xlarge per position via AWS Batch, saturating the 24-vCPU Spot
-# G+VT quota (4 vCPU × 4 positions = 16 vCPU; 4 spare for any concurrent
-# training/inference jobs). NN training is GPU-bound; running multiple
-# trials on the same GPU would oversubscribe, so each container does
-# Optuna n_jobs=1.
-#
-# K and DST are not in the matrix yet: their run() takes only seed=, no
-# config=, so tune_nn can't override cfg per trial. Adding config= to those
-# runners is a 2-line follow-up; until then SUPPORTED_POSITIONS in
-# src/batch/launch_tune.py rejects them at submit time.
+# G+VT quota (4 vCPU × 6 positions = 24 vCPU). NN training is GPU-bound;
+# running multiple trials on the same GPU would oversubscribe, so each
+# container does Optuna n_jobs=1.
 #
 # NO ECS refresh, NO benchmark_history commit: tuning produces config
 # *recommendations* (printed as paste-ready QB_ATTN_* / QB_NN_* constants),
@@ -23,8 +17,8 @@ on:
   workflow_dispatch:
     inputs:
       positions:
-        description: "Space-separated positions to tune (subset of QB RB WR TE)"
-        default: "QB RB WR TE"
+        description: "Space-separated positions to tune (subset of QB RB WR TE K DST)"
+        default: "QB RB WR TE K DST"
       n_trials:
         description: "Optuna trials per position"
         default: "30"

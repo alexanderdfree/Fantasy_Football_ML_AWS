@@ -25,7 +25,12 @@ from src.shared.position_pipeline import build_pipeline_config
 CONFIG = build_pipeline_config("DST", POSITION_CONFIG)
 
 
-def run(seed=42):
+def run(seed=42, config=None):
+    """Run the DST pipeline. ``config`` lets callers (e.g.
+    ``src/tuning/tune_nn.py``) pass an overridden cfg dict per trial; mirrors
+    the RB/QB/WR/TE shape. Defaults to the module-level ``CONFIG`` when
+    omitted, preserving the existing caller contract.
+    """
     # --- Build team-level D/ST data ---
     print("Building D/ST team-level data...")
     dst_df = build_data()
@@ -45,7 +50,7 @@ def run(seed=42):
     test_df = dst_df[dst_df["season"].isin(TEST_SEASONS)].copy()
     print(f"  Split sizes: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
 
-    return run_pipeline("DST", CONFIG, train_df, val_df, test_df, seed)
+    return run_pipeline("DST", config or CONFIG, train_df, val_df, test_df, seed)
 
 
 if __name__ == "__main__":

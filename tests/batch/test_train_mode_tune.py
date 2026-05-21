@@ -95,15 +95,27 @@ def test_mode_tune_rejects_conflicting_flags(monkeypatch, conflicting):
 
 
 @pytest.mark.parametrize("pos", ["K", "DST"])
-def test_mode_tune_rejects_k_and_dst(monkeypatch, pos):
-    """K and DST need their run() signature extended with config= before tune
-    mode can support them; reject up front."""
+def test_mode_tune_accepts_k_and_dst(monkeypatch, pos):
+    """K and DST gained ``run(config=...)`` in PR 3, so the --mode=tune
+    dispatch must accept them and forward through to tune_nn.main()."""
     monkeypatch.setattr(
         "sys.argv",
-        ["train", "--position", pos, "--mode", "tune"],
+        ["train", "--position", pos, "--mode", "tune", "--n-trials", "5"],
     )
-    with pytest.raises(SystemExit):
+    with patch("src.batch.train._assert_gpu"), patch("src.tuning.tune_nn.main") as mock_tune_main:
         train.main()
+    mock_tune_main.assert_called_once_with()
+    import sys as _sys
+
+    assert _sys.argv == [
+        "tune_nn",
+        pos,
+        "--checkpoint-s3",
+        "--seed",
+        "42",
+        "--n-trials",
+        "5",
+    ]
 
 
 def test_mode_train_dry_run_skips_tune_dispatch(monkeypatch):
