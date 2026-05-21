@@ -59,12 +59,22 @@ _SYNTHETIC_COLUMNS = [
     "is_home",
 ]
 
+# Carve-out: K and DST are intentionally excluded. The fixture's schema is
+# the player-level weekly box-score (passing_yards / rushing_yards / receptions
+# / etc.); K's stats live in a kicker-specific schema (fg_made / fg_att with
+# per-kick distance bins) and DST is team-level (def_sacks / def_ints /
+# points_allowed). Tests covering those positions should build their own
+# fixture against ``src.k.data`` / ``src.dst.data`` instead.
 _POSITIONS = ("QB", "RB", "WR", "TE")
 _TEAMS = ("KC", "SF", "BUF", "PHI", "DAL", "GB", "MIA", "CIN")
 
 
 def _build_tiny_synthetic_games(seed: int = 42) -> pd.DataFrame:
-    """Generate 50 players x 2 seasons x 17 weeks of deterministic weekly records."""
+    """Generate 50 players x 2 seasons x 17 weeks of deterministic weekly records.
+
+    Player-level schema only — see the ``_POSITIONS`` comment above for why
+    K/DST are excluded.
+    """
     rng = np.random.default_rng(seed)
     n_players = 50
     seasons = (2022, 2023)
@@ -123,7 +133,12 @@ def _build_tiny_synthetic_games(seed: int = 42) -> pd.DataFrame:
 
 @pytest.fixture(scope="session")
 def tiny_synthetic_games() -> pd.DataFrame:
-    """Session-scoped 50x2x17 synthetic weekly game DataFrame (seed=42)."""
+    """Session-scoped 50x2x17 synthetic weekly game DataFrame (seed=42).
+
+    Player-level positions only (QB/RB/WR/TE). K and DST are deliberately
+    excluded — see the ``_POSITIONS`` comment in this module for the schema
+    rationale.
+    """
     return _build_tiny_synthetic_games(seed=42)
 
 

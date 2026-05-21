@@ -585,7 +585,16 @@ class MultiHeadNetWithHistory(nn.Module):
             set(target_names) if non_negative_targets is None else non_negative_targets
         )
         self.gated = gated
-        self.gated_targets = list(gated_targets) if gated_targets else []
+        # Only store the per-target gated allowlist when the model is actually
+        # built with gated heads. If a caller passes ``gated_targets`` without
+        # ``gated=True`` the heads silently fall back to plain MLPs — surface
+        # that here so a misconfigured cfg fails loudly instead.
+        if gated_targets and not gated:
+            raise ValueError(
+                "gated_targets is non-empty but gated=False; either set "
+                "gated=True or drop gated_targets from the config"
+            )
+        self.gated_targets = list(gated_targets) if (gated and gated_targets) else []
         self.d_model = d_model
         self.n_targets = len(target_names)
         # Opponent/context-conditioned queries. When enabled, the forward

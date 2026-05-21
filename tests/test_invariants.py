@@ -157,6 +157,113 @@ def test_attn_static_features_subset_of_include(pos: str):
 
 
 # ---------------------------------------------------------------------------
+# Invariant 2b: ATTN_STATIC_FEATURES survive build_position_features at runtime
+# with non-degenerate variance.
+# ---------------------------------------------------------------------------
+# Why: the config-level subset check (invariant 2) only verifies the whitelist
+# names — it can't catch H2-class bugs where a column is in the config but
+# silently zeroed by ``merge_schedule_features`` / ``build_position_features``
+# at runtime (H2: DST ``spread_line`` / ``div_game`` were dropped by the schedule
+# merge and then back-filled with 0 by the catch-all backfill, so they survived
+# the config check but reached the model as constant zeros).
+#
+# This runtime invariant runs ``build_position_features`` against tiny real
+# splits per position and asserts every ``attn_static_feature`` column (a)
+# exists in the engineered DataFrame and (b) has ``std() > 0`` (i.e. carries
+# real signal, not a back-filled zero column). A per-position allowlist absorbs
+# columns that are legitimately near-constant on the tiny-fixture slice (e.g.
+# prior-season aggregates that are zero for first-season rows) so the test
+# doesn't flag known-tiny-fixture artifacts.
+
+# Cross-position allowlist of attn_static_features columns that are legitimately
+# constant on the tiny-fixture slice from ``load_tiny_splits``. Keys are
+# position codes; values are sets of column names known to have ``std() == 0``
+# in the tiny synthetic dataset because of fixture truncation (e.g. RB
+# prior-season redzone aggregates rely on the season-before history, which is
+# absent for the earliest tiny-fixture season).
+_TINY_FIXTURE_CONSTANT_ALLOWLIST: dict[str, set[str]] = {
+    "RB": {
+        "prior_season_total_redzone_touches",
+        "prior_season_mean_redzone_touches_per_game",
+    },
+}
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("pos", ALL_POSITIONS)
+def test_attn_static_features_survive_build_position_features(pos: str, tmp_path):
+    """Runtime invariant — every ``attn_static_feature`` column must exist on
+    the engineered DataFrame and carry non-zero variance after
+    ``build_position_features`` runs against tiny real data.
+
+    Catches the H2 failure class: a column listed in
+    ``POSITION_CONFIG.attn_static_features`` that is silently dropped or
+    back-filled with a constant zero by ``merge_schedule_features`` /
+    ``build_position_features``. The config-level subset check (invariant 2)
+    cannot detect this — both ``spread_line`` and ``div_game`` were in DST's
+    config when H2 fired.
+    """
+    splits_root = Path(__file__).resolve().parent.parent / "data" / "splits"
+    # The K / DST loaders rebuild their per-position dataset from raw caches;
+    # the player-position loaders slice ``data/splits/*.parquet``. Either way,
+    # require_splits is the canonical gate (DST/K still read raw caches under
+    # ``data/`` that the local-setup data pull also populates).
+    from tests._skip_helpers import require_splits
+
+    require_splits(splits_root)
+
+    from src.shared.feature_build import build_position_features
+    from tests._pipeline_e2e_utils import build_tiny_config, load_tiny_splits
+
+    train, val, test = load_tiny_splits(pos)
+    cfg = build_tiny_config(pos)
+
+    pos_train = cfg["compute_targets_fn"](train.copy())
+    pos_val = cfg["compute_targets_fn"](val.copy())
+    pos_test = cfg["compute_targets_fn"](test.copy())
+
+    feature_cols = cfg["get_feature_columns_fn"]()
+    pos_train, _pos_val, _pos_test = build_position_features(
+        pos_train, pos_val, pos_test, cfg, feature_cols
+    )
+
+    pc = _config(pos).POSITION_CONFIG
+    attn_static = list(pc.attn_static_features)
+    assert attn_static, f"{pos}.POSITION_CONFIG.attn_static_features is empty"
+
+    # (a) Every attn_static column must be present on the engineered training
+    # DataFrame. ``build_position_features``'s catch-all back-fill plants a
+    # constant 0 for missing whitelist columns and prints a WARNING, but the
+    # back-filled column DOES appear in ``pos_train.columns`` — so this check
+    # alone doesn't fire on H2; the std() check below is the real signal.
+    missing = [c for c in attn_static if c not in pos_train.columns]
+    assert not missing, (
+        f"{pos}: attn_static_features columns absent from engineered DataFrame "
+        f"after build_position_features: {missing}. Either feature engineering "
+        f"failed to produce them or the column name in attn_static_features is wrong."
+    )
+
+    # (b) Every attn_static column must carry non-zero variance, except those
+    # in the per-position allowlist for known tiny-fixture artifacts.
+    allowed_constant = _TINY_FIXTURE_CONSTANT_ALLOWLIST.get(pos, set())
+    zero_std: list[str] = []
+    for col in attn_static:
+        if col in allowed_constant:
+            continue
+        if float(pos_train[col].std()) == 0.0:
+            zero_std.append(col)
+
+    assert not zero_std, (
+        f"{pos}: attn_static_features columns reach the model with std()==0 — "
+        f"these were silently zeroed by the feature pipeline (likely the "
+        f"build_position_features catch-all back-fill, see H2 archive). "
+        f"Either fix feature engineering to populate them or extend "
+        f"_TINY_FIXTURE_CONSTANT_ALLOWLIST['{pos}'] if the constancy is a "
+        f"legitimate artifact of the tiny fixture slice. Zero-std columns: {zero_std}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Invariant 3: every direct ``MultiHeadNet(...)`` call site passes
 # ``non_negative_targets=`` (or ``**kwargs`` that includes it).
 # ---------------------------------------------------------------------------

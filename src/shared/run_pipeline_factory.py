@@ -2,7 +2,7 @@
 
 The ``if __name__ == "__main__"`` block of QB/RB/WR/TE is otherwise identical
 boilerplate: build an ``argparse`` parser with ``--tiny`` (and ``--cv`` for the
-three that support it), swap in ``build_tiny_config(pos)`` when ``--tiny`` is
+three that support it), swap in ``_build_tiny_config(pos)`` when ``--tiny`` is
 passed, then dispatch to ``run`` or ``run_cv``. Centralising it here keeps each
 position's ``run_pipeline.py`` to just the imports + ``CONFIG`` + ``run``
 (and optionally ``run_cv``).
@@ -22,8 +22,69 @@ it never calls ``src.shared.pipeline`` itself.
 from __future__ import annotations
 
 import argparse
+import importlib
 from collections.abc import Callable
 from typing import Any
+
+# Tiny-config overrides shared with ``tests/_pipeline_e2e_utils``. Duplicated
+# here so the factory's ``--tiny`` path doesn't take a ``src/`` → ``tests/``
+# import (the only one in the repo until that import was dropped). The test
+# helper remains the canonical source for E2E fixtures; this copy only powers
+# the operator-facing ``--tiny`` CLI flag, which never reaches the test path.
+_TINY_OVERRIDES: dict[str, Any] = {
+    "nn_backbone_layers": [8, 8],
+    "nn_head_hidden": 4,
+    "nn_dropout": 0.0,
+    "nn_head_hidden_overrides": None,
+    "nn_lr": 1e-3,
+    "nn_weight_decay": 0.0,
+    "nn_epochs": 1,
+    "nn_batch_size": 64,
+    "nn_patience": 1,
+    "nn_log_every": 100,
+    "scheduler_type": "cosine_warm_restarts",
+    "cosine_t0": 1,
+    "cosine_t_mult": 2,
+    "cosine_eta_min": 1e-5,
+    "ridge_cv_folds": 2,
+    "ridge_refine_points": 0,
+    "ridge_pca_components": None,
+    "train_attention_nn": False,
+    "train_lightgbm": False,
+}
+
+_ALL_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
+
+
+def _build_tiny_config(position: str) -> dict:
+    """Return a shrunk run_pipeline config for the given position.
+
+    Mirrors ``tests._pipeline_e2e_utils.build_tiny_config`` — kept inline so the
+    ``--tiny`` CLI path does not need to import from ``tests/``. Both copies
+    delegate to ``build_pipeline_config`` so they exercise the same production
+    callables / POSITION_CONFIG-derived fields.
+    """
+    from src.shared.position_pipeline import build_pipeline_config
+
+    position = position.upper()
+    if position not in _ALL_POSITIONS:
+        raise ValueError(f"Unknown position {position!r}")
+
+    config_mod = importlib.import_module(f"src.{position.lower()}.config")
+    cfg = build_pipeline_config(position, config_mod.POSITION_CONFIG)
+    cfg.update(_TINY_OVERRIDES)
+
+    if "ridge_alpha_grids" in cfg:
+        cfg["ridge_alpha_grids"] = {t: [1.0, 10.0] for t in cfg.get("targets", [])}
+
+    cfg_tiny = getattr(config_mod, "CONFIG_TINY", None)
+    if cfg_tiny is not None:
+        cfg.update(cfg_tiny)
+
+    if position in ("K", "DST"):
+        cfg.setdefault("compute_adjustment_fn", None)
+
+    return cfg
 
 
 def cli_main(
@@ -53,15 +114,10 @@ def cli_main(
     parser.add_argument(
         "--tiny",
         action="store_true",
-        help="Use shrunk smoke-test config (from tests/_pipeline_e2e_utils)",
+        help="Use shrunk smoke-test config",
     )
     args = parser.parse_args()
-    if args.tiny:
-        from tests._pipeline_e2e_utils import build_tiny_config
-
-        config = build_tiny_config(position_name)
-    else:
-        config = default_config
+    config = _build_tiny_config(position_name) if args.tiny else default_config
     if run_cv_fn is not None and args.cv:
         run_cv_fn(config=config)
     else:

@@ -120,6 +120,17 @@ def _smoke_attention(
 
     structure = reg.get("attn_history_structure", "flat")
     if structure == "nested":
+        # Contract: nested attention is K's path (per-kick sequences inside
+        # per-game sequences). K declares ``attn_static_from_df=True`` (its
+        # L1 static features live outside the cross-position whitelist) and
+        # sets ``attn_max_kicks_per_game`` for the inner-pool shape. A future
+        # nested position must opt into at least one of those — otherwise the
+        # smoke test has no contract for what it's loading.
+        if not (reg.get("attn_static_from_df", False) or reg.get("attn_max_kicks_per_game")):
+            raise SmokeTestFailed(
+                f"{pos}: nested attention registry must set "
+                "attn_static_from_df=True or attn_max_kicks_per_game (neither found)"
+            )
         kick_dim = len(reg.get("attn_kick_stats", []))
         max_games = reg.get("attn_max_games", 17)
         max_kicks = reg.get("attn_max_kicks_per_game", 10)

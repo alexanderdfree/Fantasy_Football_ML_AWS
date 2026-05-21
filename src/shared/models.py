@@ -22,6 +22,7 @@ from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import ElasticNet, LogisticRegression, Ridge
 from sklearn.preprocessing import StandardScaler
 
+
 # LightGBM thread count for tree learning. Default ``1`` (single-threaded).
 # Override via ``LGBM_N_JOBS`` env var — typically set to ``-1`` only on the
 # EC2 training host where data is large enough that LGBM's tree-learning
@@ -34,7 +35,12 @@ from sklearn.preprocessing import StandardScaler
 #     pool in ``src/shared/pipeline.py``) and the per-position E2E test budget
 #     blows past 40s. PR #180's first attempt at platform-default ``-1``
 #     reproduced this — see commit message for the budget assertion.
-_LGBM_N_JOBS = int(os.environ.get("LGBM_N_JOBS", "1"))
+#
+# Read lazily so ad-hoc Jupyter / benchmark sessions that ``os.environ[
+# "LGBM_N_JOBS"] = "..."`` *after* importing this module still pick up the
+# override — module-import-time reads would freeze the value at first import.
+def _lgbm_n_jobs() -> int:
+    return int(os.environ.get("LGBM_N_JOBS", "1"))
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +492,10 @@ class GatedOrdinalTDClassifier:
         meta["gated"] = True
         meta["clf_C"] = self.clf_C
         meta["threshold"] = self.threshold
+        # Persist the gate's own constructor-time config so load() can round-trip
+        # them. ``_class_values_cfg`` may be a list or "auto"; both JSON-safe.
+        meta["class_values_cfg"] = self._class_values_cfg
+        meta["ordinal_alpha"] = self._ordinal_alpha
         with open(meta_path, "w") as f:
             json.dump(meta, f)
 
@@ -498,6 +508,11 @@ class GatedOrdinalTDClassifier:
             meta = json.load(f)
         self.clf_C = meta.get("clf_C", 0.001)
         self.threshold = meta.get("threshold", 0.5)
+        # Round-trip the gate's constructor-time config. Older artifacts won't
+        # have these keys; fall back to constructor defaults so legacy meta
+        # still loads cleanly.
+        self._class_values_cfg = meta.get("class_values_cfg", self._class_values_cfg)
+        self._ordinal_alpha = meta.get("ordinal_alpha", self._ordinal_alpha)
 
 
 class RidgeMultiTarget:
@@ -761,7 +776,7 @@ class LightGBMMultiTarget:
             min_split_gain=min_split_gain,
             objective=objective,
             random_state=seed,
-            n_jobs=_LGBM_N_JOBS,
+            n_jobs=_lgbm_n_jobs(),
             verbosity=-1,
         )
         self._models = {name: lgb.LGBMRegressor(**self._params) for name in target_names}
@@ -776,8 +791,10 @@ class LightGBMMultiTarget:
             X_train = pd.DataFrame(X_train, columns=feature_names)
             if X_val is not None:
                 X_val = pd.DataFrame(X_val, columns=feature_names)
+        # Callbacks are stateless across heads — hoist out of the loop so we
+        # don't re-allocate ``early_stopping`` + ``log_evaluation`` per target.
+        callbacks = [lgb.early_stopping(30, verbose=False), lgb.log_evaluation(0)]
         for name, model in self._models.items():
-            callbacks = [lgb.early_stopping(30, verbose=False), lgb.log_evaluation(0)]
             if X_val is not None and y_val_dict is not None:
                 model.fit(
                     X_train,
@@ -785,7 +802,6 @@ class LightGBMMultiTarget:
                     eval_set=[(X_val, y_val_dict[name])],
                     callbacks=callbacks,
                 )
-                print(f"  {name}: best_iteration={model.best_iteration_}")
             else:
                 model.fit(X_train, y_train_dict[name])
 

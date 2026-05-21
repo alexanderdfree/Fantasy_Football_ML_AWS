@@ -11,7 +11,12 @@ _TEAM_TE_AGGREGATIONS = {
 
 
 def filter_to_position(df: pd.DataFrame) -> pd.DataFrame:
-    """Filter featured DataFrame to TE rows only."""
+    """Filter featured DataFrame to TE rows only.
+
+    Must be called AFTER build_features() and AFTER temporal_split()
+    so all team-level and opponent-level features are correctly computed
+    from the full-position dataset.
+    """
     return _filter_to_position(df, "TE")
 
 
