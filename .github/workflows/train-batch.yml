@@ -36,6 +36,9 @@ env:
   ECS_CLUSTER: fantasy-cluster
   ECS_SERVICE: fantasy-service
 
+permissions:
+  contents: read
+
 jobs:
   detect:
     # Shared with train-ec2.yml via _detect-positions.yml. See that file for
@@ -90,10 +93,11 @@ jobs:
 
       - name: Submit Batch jobs and wait
         id: train
+        env:
+          POSITIONS: ${{ needs.detect.outputs.positions }}
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
-          POSITIONS="${{ needs.detect.outputs.positions }}"
           SEED="${{ github.event.inputs.seed || '42' }}"
           # launch.py blocks on wait_for_jobs(); returns 0 only if all
           # positions reach SUCCEEDED. --skip-upload because CI has no local
@@ -110,8 +114,9 @@ jobs:
         # this less likely to false-trip than the sequential EC2 path, but
         # the same logic protects against e.g. a chronically retrying job
         # whose artifact predates this run.
+        env:
+          POSITIONS: ${{ needs.detect.outputs.positions }}
         run: |
-          POSITIONS="${{ needs.detect.outputs.positions }}"
           train_started_at="${{ steps.train.outputs.started_at }}"
           echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
           echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
@@ -150,9 +155,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
           FF_MODEL_S3_PREFIX: models
+          POSITIONS: ${{ needs.detect.outputs.positions }}
         run: |
           BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
-          POSITIONS="${{ needs.detect.outputs.positions }}"
           HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
           PR_NUMBER=""
           if [ -n "$HEAD_SHA" ]; then

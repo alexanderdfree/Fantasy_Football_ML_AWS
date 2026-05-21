@@ -31,6 +31,9 @@ env:
   ECS_CLUSTER: fantasy-cluster
   ECS_SERVICE: fantasy-service
 
+permissions:
+  contents: read
+
 jobs:
   detect:
     # Shared with train-batch.yml via _detect-positions.yml. See that file
@@ -168,10 +171,11 @@ jobs:
 
       - name: Run training for all positions (sequential)
         id: train
+        env:
+          POSITIONS: ${{ needs.detect.outputs.positions }}
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
-          POSITIONS="${{ needs.detect.outputs.positions }}"
           SEED="${{ github.event.inputs.seed || '42' }}"
           # Sequential loop inside a single SSM command so we get one command
           # ID to poll. Parallel runs would OOM the single T4.
@@ -239,11 +243,12 @@ jobs:
             --output json
 
       - name: Verify model artifact freshness
+        env:
+          POSITIONS: ${{ needs.detect.outputs.positions }}
         run: |
           # Anchor on when training STARTED, not "now": a long sequential
           # run would otherwise trip the threshold on early positions'
           # artifacts that aged past 1200s while later positions trained.
-          POSITIONS="${{ needs.detect.outputs.positions }}"
           train_started_at="${{ steps.train.outputs.started_at }}"
           echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
           echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
@@ -291,9 +296,9 @@ jobs:
           # consumer in sync without a second config surface.
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
           FF_MODEL_S3_PREFIX: models
+          POSITIONS: ${{ needs.detect.outputs.positions }}
         run: |
           BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
-          POSITIONS="${{ needs.detect.outputs.positions }}"
           HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
           # Resolve the PR number from the merge commit so the serving UI's
           # History tab can deep-link rows to GitHub. Direct pushes to main
