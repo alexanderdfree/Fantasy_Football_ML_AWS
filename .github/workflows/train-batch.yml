@@ -248,9 +248,13 @@ jobs:
           echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
           fail=0
           for POS in $POSITIONS; do
+            # Anchor on manifest.json — it's the atomic last write of
+            # src.batch.train.upload_artifacts. The legacy models/{POS}/model.tar.gz
+            # mirror was removed by the parallel-Batch race fix (commits
+            # f65bcbe + be56b0d); checking it would trip STALE on every run.
             META=$(aws s3api head-object \
               --bucket "$S3_BUCKET" \
-              --key "models/$POS/model.tar.gz" \
+              --key "models/$POS/manifest.json" \
               --region "$AWS_REGION" 2>/dev/null || echo '{}')
             LM=$(echo "$META" | jq -r '.LastModified // empty')
             SZ=$(echo "$META" | jq -r '.ContentLength // 0')
