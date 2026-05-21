@@ -15,6 +15,7 @@ import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
+import bleach
 import markdown
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -452,24 +453,117 @@ _WIKI_PATH_TO_SLUG = {os.path.normpath(d["path"]): slug for slug, d in WIKI_DOCS
 
 _WIKI_HREF_RE = re.compile(r'href="([^"]+)"')
 
+# Repo-relative links that resolve to a real file but aren't in WIKI_DOCS
+# (e.g. `[shared/aggregate_targets.py](../shared/aggregate_targets.py)` from
+# inside docs/ARCHITECTURE.md) get rewritten to a GitHub blob URL so clicking
+# them in-app shows the source on github.com instead of a Flask 404.
+_WIKI_GITHUB_BLOB_BASE = "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/blob/main/"
+
+# Schemes a sanitizer would normally block; we neutralize them at the rewriter
+# level too so a malicious or careless `[link](javascript:...)` in committed
+# markdown can't survive into the rendered HTML even if the bleach allowlist
+# regresses. data:/vbscript: are included for the same defense-in-depth reason.
+_WIKI_DANGEROUS_SCHEMES = ("javascript:", "data:", "vbscript:")
+
+# bleach allowlist for rendered wiki HTML. Permits the markup that
+# python-markdown produces (headings, lists, tables, fenced code, blockquotes,
+# inline emphasis) plus `id` attributes — the toc extension adds `id` to every
+# heading and same-doc TOC links rely on those anchors. `class` is allowed so
+# python-markdown's `codehilite` extension (and any future syntax-highlight
+# wiring) renders correctly. Disallowed tags like <script>, <iframe>, <style>,
+# <object>, <embed>, <form>, <input>, and <meta> are stripped.
+_WIKI_ALLOWED_TAGS = frozenset(
+    {
+        "a",
+        "abbr",
+        "b",
+        "blockquote",
+        "br",
+        "cite",
+        "code",
+        "dd",
+        "details",
+        "div",
+        "dl",
+        "dt",
+        "em",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "i",
+        "img",
+        "kbd",
+        "li",
+        "mark",
+        "ol",
+        "p",
+        "pre",
+        "q",
+        "s",
+        "samp",
+        "span",
+        "strong",
+        "sub",
+        "summary",
+        "sup",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "tr",
+        "u",
+        "ul",
+        "var",
+    }
+)
+_WIKI_ALLOWED_ATTRS = {
+    "*": ["id", "class"],
+    "a": ["href", "title", "target", "rel"],
+    "img": ["src", "alt", "title", "width", "height"],
+    "th": ["colspan", "rowspan", "align", "scope"],
+    "td": ["colspan", "rowspan", "align"],
+    "abbr": ["title"],
+}
+_WIKI_ALLOWED_PROTOCOLS = frozenset({"http", "https", "mailto"})
+
 
 def _wiki_rewrite_href(href: str, doc_path: str) -> str:
-    """Rewrite an intra-wiki markdown link to a `#wiki:slug[:anchor]` anchor.
+    """Rewrite a markdown link inside a wiki doc to a safe in-app or GitHub URL.
 
-    Leaves alone: empty hrefs, pure anchors (`#section`), absolute URLs (`http(s)://`),
-    `mailto:`, and any path that doesn't resolve to a registered wiki doc.
+    Outcomes:
+    - Empty / pure anchor (`#section`) → unchanged (handled client-side).
+    - Absolute URL (`http(s)://...`) or `mailto:` → unchanged.
+    - Dangerous scheme (`javascript:`, `data:`, `vbscript:`) → neutralized to
+      `#` so the link is inert (bleach also strips these as defense in depth).
+    - Relative path that resolves to a registered wiki doc → `#wiki:slug[:anchor]`.
+    - Relative path that doesn't resolve to a wiki doc but points at a real
+      repo file → GitHub blob URL so the link still works (opens externally
+      via the JS click handler).
+    - Anything else relative → unchanged.
     """
     if not href or href.startswith("#") or "://" in href or href.startswith("mailto:"):
         return href
+    if href.lower().startswith(_WIKI_DANGEROUS_SCHEMES):
+        return "#"
     target, _, anchor = href.partition("#")
     if not target:
         return href
     doc_dir = os.path.dirname(doc_path)
     resolved = os.path.normpath(os.path.join(doc_dir, target))
     target_slug = _WIKI_PATH_TO_SLUG.get(resolved)
-    if not target_slug:
-        return href
-    return f"#wiki:{target_slug}:{anchor}" if anchor else f"#wiki:{target_slug}"
+    if target_slug:
+        return f"#wiki:{target_slug}:{anchor}" if anchor else f"#wiki:{target_slug}"
+    # Path resolved into the parent directory (e.g. ../etc/passwd) — refuse it.
+    if resolved.startswith(".."):
+        return "#"
+    blob_url = _WIKI_GITHUB_BLOB_BASE + resolved.replace(os.sep, "/")
+    return f"{blob_url}#{anchor}" if anchor else blob_url
 
 
 def _render_wiki_doc(slug: str) -> str:
@@ -498,6 +592,16 @@ def _render_wiki_doc(slug: str) -> str:
     html = _WIKI_HREF_RE.sub(
         lambda m: f'href="{_wiki_rewrite_href(m.group(1), doc_path)}"',
         html,
+    )
+    # Defense in depth: even though committed markdown is author-controlled,
+    # strip raw <script>/<iframe>/event-handler attrs/non-http(s)-mailto URLs
+    # so an inadvertent bad link in a doc can't execute in a viewer's browser.
+    html = bleach.clean(
+        html,
+        tags=_WIKI_ALLOWED_TAGS,
+        attributes=_WIKI_ALLOWED_ATTRS,
+        protocols=_WIKI_ALLOWED_PROTOCOLS,
+        strip=True,
     )
     with _cache_lock:
         _cache[cache_key] = html
