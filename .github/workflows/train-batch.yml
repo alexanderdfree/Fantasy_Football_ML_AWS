@@ -46,6 +46,15 @@ env:
   S3_BUCKET: ff-predictor-training
   ECS_CLUSTER: fantasy-cluster
   ECS_SERVICE: fantasy-service
+  # Required for `uv pip install -r requirements-dev.txt` to resolve transitive
+  # deps that exist on multiple indexes (e.g. `requests`, found on PyTorch CPU
+  # index but at a different version than the one resolved by other deps —
+  # without unsafe-best-match, uv refuses to look past the first index and
+  # fails dependency resolution). Matches tests.yml line 22's setting.
+  # Caught 2026-05-21 when PR #301's train-batch run failed at deps install
+  # with "no version of requests==2.33.0" — same code path that's been
+  # working for tests.yml since migration but silently absent here.
+  UV_INDEX_STRATEGY: unsafe-best-match
 
 permissions:
   contents: read
