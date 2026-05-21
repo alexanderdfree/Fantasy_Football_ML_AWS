@@ -158,3 +158,51 @@ def test_ridge_and_base_nn_bit_identical_across_attention_toggle(
                     f"into the base Ridge/NN predictions."
                 ),
             )
+
+
+# ---------------------------------------------------------------------------
+# Tuner-shape skip path — Ridge/ENet/LGBM/base NN all gated off, attention only
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def tuner_shape_pipeline_run(prepared_splits, tiny_kicks, outputs_dir):
+    """Pipeline run matching what src/tuning/tune_nn.py does per Optuna trial:
+    only the attention NN trains. Ridge / ElasticNet / LightGBM / base NN are
+    gated off via cfg, which triggers the short-circuit early return in
+    run_pipeline that skips comparison / ranking / backtest / save artifacts.
+    """
+    train, val, test = prepared_splits
+    cfg = _attn_config(tiny_kicks)
+    cfg["train_ridge"] = False
+    cfg["train_elasticnet"] = False
+    cfg["train_lightgbm"] = False
+    cfg["train_base_nn"] = False
+    return run_pipeline("K", cfg, train.copy(), val.copy(), test.copy(), seed=42)
+
+
+@pytest.mark.e2e
+def test_tuner_shape_returns_attn_history_and_skips_other_models(tuner_shape_pipeline_run):
+    """src/tuning/tune_nn.py reads result["attn_history"]["val_loss"] for its
+    Optuna objective. With the four skip gates set, the pipeline short-circuits
+    after the CPU/GPU join; this asserts the minimal result still surfaces
+    attn_history and that Ridge / base NN metrics are None.
+    """
+    result = tuner_shape_pipeline_run
+
+    # Short-circuit fired: downstream artifacts not in the result.
+    assert "test_df" not in result, "short-circuit did not fire — downstream ran"
+    assert "sim_results" not in result, "short-circuit did not fire — backtest ran"
+    assert "per_target_preds" not in result
+
+    # Skipped models report None.
+    assert result["ridge_metrics"] is None
+    assert result["nn_metrics"] is None
+    assert "elasticnet_metrics" not in result
+    assert "lgbm_metrics" not in result
+
+    # Attention NN ran — what the tuner objective reads.
+    assert "attn_history" in result
+    val_losses = result["attn_history"]["val_loss"]
+    assert len(val_losses) > 0
+    assert all(np.isfinite(v) for v in val_losses)

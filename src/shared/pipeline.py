@@ -1033,41 +1033,45 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     def _cpu_branch():
         # --- Ridge multi-target with per-target alpha tuning ---
-        print(f"\n=== {pos} Ridge Multi-Target (Per-Target CV Tuning) ===")
-        with timed("ridge_tune", store=phase_seconds):
-            best_alphas = (
-                _tune_ridge_alphas_cv(
-                    X_train,
-                    y_train_dict,
-                    pos_train[cv_col].values,
-                    targets=ridge_tune_targets,
-                    alpha_grids=ridge_tune_grids,
-                    n_cv_folds=cfg.get("ridge_cv_folds", 4),
-                    refine_points=cfg.get("ridge_refine_points", 5),
-                    pca_n_components=pca_n,
+        ridge_model = None
+        ridge_test_preds = None
+        ridge_metrics = None
+        if cfg.get("train_ridge", True):
+            print(f"\n=== {pos} Ridge Multi-Target (Per-Target CV Tuning) ===")
+            with timed("ridge_tune", store=phase_seconds):
+                best_alphas = (
+                    _tune_ridge_alphas_cv(
+                        X_train,
+                        y_train_dict,
+                        pos_train[cv_col].values,
+                        targets=ridge_tune_targets,
+                        alpha_grids=ridge_tune_grids,
+                        n_cv_folds=cfg.get("ridge_cv_folds", 4),
+                        refine_points=cfg.get("ridge_refine_points", 5),
+                        pca_n_components=pca_n,
+                    )
+                    if ridge_tune_targets
+                    else {}
                 )
-                if ridge_tune_targets
-                else {}
-            )
-        if two_stage_targets:
-            print(f"  Two-stage targets: {list(two_stage_targets.keys())}")
-        if classification_targets:
-            print(f"  Ordinal classification targets: {list(classification_targets.keys())}")
-        if pca_n:
-            print(f"  PCR: {pca_n} components")
-        ridge_non_neg = cfg.get("nn_non_negative_targets")
-        with timed("ridge_fit", store=phase_seconds):
-            ridge_model = RidgeMultiTarget(
-                target_names=targets,
-                alpha=best_alphas,
-                two_stage_targets=two_stage_targets,
-                classification_targets=classification_targets,
-                pca_n_components=pca_n,
-                non_negative_targets=ridge_non_neg,
-            )
-            ridge_model.fit(X_train, y_train_dict)
-            ridge_test_preds = ridge_model.predict(X_test)
-            ridge_metrics = compute_target_metrics(y_test_dict, ridge_test_preds, targets)
+            if two_stage_targets:
+                print(f"  Two-stage targets: {list(two_stage_targets.keys())}")
+            if classification_targets:
+                print(f"  Ordinal classification targets: {list(classification_targets.keys())}")
+            if pca_n:
+                print(f"  PCR: {pca_n} components")
+            ridge_non_neg = cfg.get("nn_non_negative_targets")
+            with timed("ridge_fit", store=phase_seconds):
+                ridge_model = RidgeMultiTarget(
+                    target_names=targets,
+                    alpha=best_alphas,
+                    two_stage_targets=two_stage_targets,
+                    classification_targets=classification_targets,
+                    pca_n_components=pca_n,
+                    non_negative_targets=ridge_non_neg,
+                )
+                ridge_model.fit(X_train, y_train_dict)
+                ridge_test_preds = ridge_model.predict(X_test)
+                ridge_metrics = compute_target_metrics(y_test_dict, ridge_test_preds, targets)
 
         # --- ElasticNet (optional parallel linear baseline with L1+L2) ---
         enet_model = None
@@ -1148,19 +1152,25 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     def _gpu_branch():
         # --- Multi-head NN ---
-        print(f"\n=== {pos} Multi-Head Neural Net ===")
-        with timed("nn_train", store=phase_seconds):
-            model, nn_scaler, nn_test_preds, nn_metrics, history = _train_nn(
-                X_train,
-                X_val,
-                X_test,
-                y_train_dict,
-                y_val_dict,
-                y_test_dict,
-                cfg,
-                targets,
-                seed,
-            )
+        model = None
+        nn_scaler = None
+        nn_test_preds = None
+        nn_metrics = None
+        history = None
+        if cfg.get("train_base_nn", True):
+            print(f"\n=== {pos} Multi-Head Neural Net ===")
+            with timed("nn_train", store=phase_seconds):
+                model, nn_scaler, nn_test_preds, nn_metrics, history = _train_nn(
+                    X_train,
+                    X_val,
+                    X_test,
+                    y_train_dict,
+                    y_val_dict,
+                    y_test_dict,
+                    cfg,
+                    targets,
+                    seed,
+                )
 
         # --- Attention NN (game history as variable-length sequences) ---
         attn_nn_test_preds = None
@@ -1386,6 +1396,27 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     attn_nn_metrics = gpu_results["attn_nn_metrics"]
     attn_history = gpu_results["attn_history"]
     attn_feature_cols = gpu_results["attn_feature_cols"]
+
+    # Tuning short-circuit: Ridge / base NN skipped (set by src/tuning/tune_nn.py
+    # per-trial cfg, since the Optuna objective only reads attn_history.val_loss).
+    # Everything below — comparison table, prediction attachment, ranking,
+    # backtest, save_artifacts, figures — requires ridge_test_preds and
+    # nn_test_preds. Bail out with a minimal result instead of guarding each
+    # consumer. Production never hits this branch (gates default True).
+    if ridge_test_preds is None or nn_test_preds is None:
+        result = {
+            "ridge_metrics": ridge_metrics,
+            "nn_metrics": nn_metrics,
+            "phase_seconds": phase_seconds,
+        }
+        if attn_nn_metrics is not None:
+            result["attn_nn_metrics"] = attn_nn_metrics
+            result["attn_history"] = attn_history
+        if enet_metrics is not None:
+            result["elasticnet_metrics"] = enet_metrics
+        if lgbm_metrics is not None:
+            result["lgbm_metrics"] = lgbm_metrics
+        return result
 
     # --- Comparison ---
     comparison = {

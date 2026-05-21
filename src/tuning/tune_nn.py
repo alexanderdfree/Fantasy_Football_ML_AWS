@@ -115,9 +115,12 @@ def _ensure_data_from_s3() -> None:
         print("[tune_nn] data/raw/ already populated")
 
 
-# Default trial count chosen with NN wall-clock in mind: a single attention
-# trial takes 5–10 min locally, so 15 trials ≈ 1.5–2.5 hr per position on a
-# laptop. Bump to 30 on a Batch g4dn.xlarge where each trial is 1–2 min.
+# 15 trials per position is a laptop-friendly default; bump to 30 on Batch
+# g4dn.xlarge. Per-trial cost dropped substantially after 2026-05-21 from the
+# FP16 / sync-removal / GPU-resident-dataset wave and from skipping Ridge /
+# LGBM / base NN inside trials (see _make_objective below); the original
+# "5–10 min locally, 1–2 min on Batch" design figures are stale — remeasure
+# rather than relying on them.
 _DEFAULT_N_TRIALS = 15
 
 # HyperbandPruner: `min_resource` is the minimum epoch count a trial must
@@ -221,6 +224,17 @@ def _make_objective(pos: str, base_cfg: dict, seed: int):
         # shallow-copy + per-key strategy at that point.
         cfg = copy.deepcopy(base_cfg)
         cfg.update(overrides)
+
+        # The objective only reads result["attn_history"]["val_loss"] (below),
+        # so Ridge / ElasticNet / LightGBM / base NN are wasted compute per
+        # trial. Disabling them drops trial wall-clock substantially and frees
+        # the CPU branch, which is what makes n_jobs > 1 in study.optimize
+        # viable on the 4 vCPU g4dn.xlarge. Attention NN is independent of
+        # the other branches (it builds its own scaler; no stacking).
+        cfg["train_ridge"] = False
+        cfg["train_elasticnet"] = False
+        cfg["train_lightgbm"] = False
+        cfg["train_base_nn"] = False
 
         captured: list[float] = []
 
@@ -570,7 +584,13 @@ def main():
                 n_trials=remaining,
                 timeout=args.timeout,
                 show_progress_bar=True,
-                n_jobs=1,  # NN trials are GPU/CPU-bound; parallel trials would oversubscribe.
+                # Two concurrent trials fit comfortably: each trial is now
+                # attention-NN-only (Ridge / base NN / LGBM skipped via the
+                # cfg overrides in _make_objective), so the CPU branch is
+                # idle and the T4's 16 GB easily holds two small attention
+                # models. Above 2 risks CPU-side contention from FE / data
+                # loading; revisit once measured.
+                n_jobs=2,
                 callbacks=callbacks,
             )
         else:

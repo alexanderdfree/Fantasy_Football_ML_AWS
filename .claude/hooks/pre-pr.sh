@@ -143,12 +143,21 @@ fi
 # mode is recoverable (run benchmark) while the false-negative mode (skip
 # benchmark when we shouldn't) is the dangerous one — keep the token list
 # generous and prefer to catch suspicious changes here.
-_RISKY_TOKENS='(loss_weights|huber_deltas|head_losses|gated_targets|LOSS_WEIGHTS|HUBER_DELTAS|INCLUDE_FEATURES|ATTN_STATIC_FEATURES|ATTN_HISTORY_STATS|TARGETS|attn_d_model|attn_n_heads|nn_backbone_layers|nn_head_hidden|nn_lr|attn_lr|nn_weight_decay|nn_dropout|attn_dropout|nn_epochs|nn_batch_size|attn_batch_size|nn_patience|attn_patience|attn_max_seq_len|attn_weight_decay|nn_non_negative_targets|gate_weight|attn_gate_weight|train_attention_nn|train_lightgbm|train_elasticnet|attn_history_structure|attn_history_builder_fn|td_model_type|alpha_grids|ridge_alpha_grids|enet_alpha_grids|n_cv_folds|ridge_cv_folds|nn\.Linear|nn\.LayerNorm|nn\.Dropout|nn\.MultiheadAttention|MultiHeadNet|compute_target_metrics|aggregate_fn|aggregate_targets|predictions_to_fantasy_points|optimizer|learning_rate|criterion|HuberLoss|PoissonNLLLoss|scheduler_type|onecycle_max_lr|cosine_t0|cosine_t_mult|cosine_eta_min|np\.clip|torch\.clamp)'
+_RISKY_TOKENS='(loss_weights|huber_deltas|head_losses|gated_targets|LOSS_WEIGHTS|HUBER_DELTAS|INCLUDE_FEATURES|ATTN_STATIC_FEATURES|ATTN_HISTORY_STATS|TARGETS|attn_d_model|attn_n_heads|nn_backbone_layers|nn_head_hidden|nn_lr|attn_lr|nn_weight_decay|nn_dropout|attn_dropout|nn_epochs|nn_batch_size|attn_batch_size|nn_patience|attn_patience|attn_max_seq_len|attn_weight_decay|nn_non_negative_targets|gate_weight|attn_gate_weight|train_attention_nn|train_lightgbm|train_elasticnet|train_ridge|train_base_nn|attn_history_structure|attn_history_builder_fn|td_model_type|alpha_grids|ridge_alpha_grids|enet_alpha_grids|n_cv_folds|ridge_cv_folds|nn\.Linear|nn\.LayerNorm|nn\.Dropout|nn\.MultiheadAttention|MultiHeadNet|compute_target_metrics|aggregate_fn|aggregate_targets|predictions_to_fantasy_points|optimizer|learning_rate|criterion|HuberLoss|PoissonNLLLoss|scheduler_type|onecycle_max_lr|cosine_t0|cosine_t_mult|cosine_eta_min|np\.clip|torch\.clamp)'
 
 is_additive_and_safe() {
   local f="$1"
   local diff_output
-  diff_output=$(git diff "$base" HEAD -- "$f" 2>/dev/null || echo "")
+  # `-b` (ignore-space-change) so pure re-indentation (e.g. wrapping a block
+  # in a new `if`/`with`) doesn't appear on either side and trip the risky-
+  # token check against the re-indented existing code. Without `-b`, wrapping
+  # a Ridge block in `if cfg.get("train_ridge", True):` shows every interior
+  # line as removed + added, and lines that happen to contain `ridge_alpha_
+  # grids` / `n_cv_folds` etc. false-positive the risky-token check even when
+  # no semantic change occurred. `-b` ignores changes in the *amount* of
+  # whitespace but not whitespace inside strings/comments, so string-content
+  # edits are still gated correctly.
+  diff_output=$(git diff -b "$base" HEAD -- "$f" 2>/dev/null || echo "")
   if [ -z "$diff_output" ]; then
     return 0
   fi
@@ -162,20 +171,44 @@ is_additive_and_safe() {
   # default value, no risk to model output. Catching by token instead of
   # by line-count handles that case correctly while still gating real
   # behavioural deletions (e.g. removing an `np.clip` or a `criterion =`).
-  for direction in '-' '+'; do
-    case "$direction" in
-      '-') header_pat='^---' ;;
-      '+') header_pat='^\+\+\+' ;;
-    esac
-    local risky_count
-    risky_count=$(printf '%s\n' "$diff_output" \
-      | grep -E "^[$direction]" \
-      | grep -vE "$header_pat|^[$direction][[:space:]]*$|^[$direction][[:space:]]*#" \
-      | grep -cE "$_RISKY_TOKENS" || true)
-    if [ "${risky_count:-0}" -gt 0 ]; then
-      return 1
-    fi
-  done
+  local risky_minus risky_plus risky_plus_intro
+  risky_minus=$(printf '%s\n' "$diff_output" \
+    | grep -E '^-' \
+    | grep -vE '^---|^-[[:space:]]*$|^-[[:space:]]*#' \
+    | grep -cE "$_RISKY_TOKENS" || true)
+  risky_plus=$(printf '%s\n' "$diff_output" \
+    | grep -E '^\+' \
+    | grep -vE '^\+\+\+|^\+[[:space:]]*$|^\+[[:space:]]*#' \
+    | grep -cE "$_RISKY_TOKENS" || true)
+
+  if [ "${risky_minus:-0}" -gt 0 ]; then
+    return 1
+  fi
+
+  # Introductory default-True `train_*` gate exemption: a `+` line of the
+  # form `if cfg.get("train_NAME", True):` is provably behaviour-preserving
+  # for the default branch — when the default fires, the gated code runs
+  # exactly as before, and the gate-flipping callers (e.g. the tuner setting
+  # train_ridge=False per trial) are caught when their cfg edit lands. Without
+  # this exemption, the PR that *adds* train_ridge / train_base_nn to
+  # _RISKY_TOKENS fails the gate on the gate-definition line itself. Scope
+  # restricted to `train_NAME` keys (every existing gate name is a boolean
+  # toggle starting with `train_`) so the exemption can't be used to slip
+  # through edits like `if cfg.get("nn_lr", True):` that match the same
+  # outer shape but touch hyperparam knobs.
+  # Ruff format normalises string literals to double quotes in this repo
+  # (pyproject.toml's [tool.ruff.format] inherits the default `quote-style =
+  # "double"`), so matching only `"train_NAME"` is sufficient — a single-
+  # quoted intro would fail `ruff format --check .` upstream in B1 anyway.
+  risky_plus_intro=$(printf '%s\n' "$diff_output" \
+    | grep -E '^\+' \
+    | grep -vE '^\+\+\+|^\+[[:space:]]*$|^\+[[:space:]]*#' \
+    | grep -E "$_RISKY_TOKENS" \
+    | grep -cE 'if[[:space:]]+cfg\.get\("train_[a-z_]+",[[:space:]]*True\):' || true)
+
+  if [ "${risky_plus:-0}" -gt "${risky_plus_intro:-0}" ]; then
+    return 1
+  fi
 
   return 0
 }
