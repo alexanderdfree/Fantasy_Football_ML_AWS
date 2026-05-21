@@ -46,12 +46,28 @@ jobs:
       - id: parse
         env:
           POS_INPUT: ${{ github.event.inputs.positions }}
+          N_TRIALS: ${{ github.event.inputs.n_trials }}
         run: |
           set -eu
           # Trim, collapse whitespace, reject empty input early.
           POS_LIST=$(printf '%s' "$POS_INPUT" | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
           if [ -z "$POS_LIST" ]; then
             echo "positions input is empty" >&2
+            exit 1
+          fi
+          # Cost-ceiling sanity guard: 6 positions × 100 trials × ~2 min × g4dn
+          # Spot ≈ ~$4 / run, which is fine. >100 trials/position usually means
+          # an operator typo (e.g. "3000" instead of "30"); fail the workflow
+          # before submitting six Spot jobs that would burn the budget. Bypass
+          # by raising this ceiling consciously in a PR if you ever need a
+          # bigger sweep.
+          if ! [[ "$N_TRIALS" =~ ^[0-9]+$ ]]; then
+            echo "n_trials must be a positive integer, got: $N_TRIALS" >&2
+            exit 1
+          fi
+          if [ "$N_TRIALS" -gt 100 ]; then
+            echo "n_trials=$N_TRIALS exceeds the 100-trials-per-position ceiling" >&2
+            echo "(probable operator typo; bump the ceiling in this workflow if you really want it)" >&2
             exit 1
           fi
           MATRIX=$(printf '%s\n' "$POS_LIST" | jq -Rc 'split(" ") | map(select(length > 0))')
@@ -143,6 +159,11 @@ jobs:
         run: |
           set -eu
           mkdir -p tune_results
+          # $POSITIONS is intentionally unquoted — argparse `nargs="+"` needs
+          # the values as separate argv entries (e.g. "QB" "RB" "WR"), and
+          # the parse step already trimmed/normalised whitespace + rejected
+          # empty input. Quoting would pass the whole space-delimited string
+          # as a single argv entry and trip choices validation.
           python -m src.tuning.aggregate_results \
             --positions $POSITIONS \
             --bucket "$S3_BUCKET" \

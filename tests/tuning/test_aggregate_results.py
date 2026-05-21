@@ -58,6 +58,21 @@ def test_merge_results_skips_non_dict_payloads(tmp_path, capsys):
     assert "skipping" in capsys.readouterr().out
 
 
+def test_merge_results_skips_truncated_json(tmp_path, capsys):
+    """Truncated S3 upload yields invalid JSON. The aggregator must warn +
+    skip rather than aborting the whole step — one Spot failure shouldn't
+    block the rest of the positions' results."""
+    bad = tmp_path / "tune_nn_qb_results.json"
+    bad.write_text('{"QB": {"best_val_loss": 100.5, "best_par')  # truncated mid-key
+    good = _write_pos_result(tmp_path, "RB", 80.0, 24, 2, 0.001)
+    merged = aggregate_results._merge_results([str(bad), good])
+    assert "QB" not in merged
+    assert "RB" in merged
+    out = capsys.readouterr().out
+    assert "invalid JSON" in out
+    assert "tune_nn_qb_results.json" in out
+
+
 def test_format_markdown_summary_includes_each_position():
     merged = {
         "QB": {
