@@ -34,10 +34,10 @@ ctx="PR opened. Run this post-create workflow now, in order:
 5. If any architectural findings were surfaced in step 3: stop here. Summarize each one in one line for the user and DO NOT merge. The user decides whether to address them.
 
 6. Otherwise, auto-merge:
-   a. Resolve the PR number with \`gh pr view --json number\`.
+   a. Resolve the PR number with \`gh pr view --json number\` and the branch name with \`git branch --show-current\`. Hold onto both before the merge step in case the worktree HEAD changes.
    b. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry the merge or use \`--admin\`. (Exception: the documented \`Run Tests\` silent-stop anomaly — see CLAUDE.md's CI section; fall back to local \`pytest\` + manual \`gh pr merge --admin\` only if the user confirms.)
    c. Merge: \`gh pr merge <N> --squash\`. Do NOT use \`--delete-branch\` — it fails in worktrees (see CLAUDE.md's worktree section).
-   d. Delete the remote branch: \`git push origin --delete <branch-name>\`. Resolve the branch name from \`git branch --show-current\` before the merge step in case the worktree HEAD changes.
+   d. Delete the remote branch: \`git push origin --delete <branch-name>\`.
 
 7. End-of-turn summary: report what was applied (one line for the commit), what (if anything) was surfaced for user judgment, and whether the PR was merged.
 
