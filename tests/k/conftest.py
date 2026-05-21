@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.k.config import TARGETS
+from src.k.config import POSITION_CONFIG
 from tests.shared.position_fixtures import (
     register_position_markers,
     register_standard_fixtures,
@@ -29,7 +29,7 @@ register_standard_fixtures(
     globals(),
     scoring_scale=SCORING_SCALE,
     id_prefix="K",
-    targets=TARGETS,
+    targets=POSITION_CONFIG.targets,
     stat_col="passing_yards",  # K uses the default; not consumed by K tests
     rng_kind="default",
     install_default_shortcuts=True,

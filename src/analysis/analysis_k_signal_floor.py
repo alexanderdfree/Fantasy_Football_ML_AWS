@@ -58,7 +58,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.k.config import ALL_FEATURES, TARGETS  # noqa: E402
+from src.k.config import POSITION_CONFIG  # noqa: E402
+
+ALL_FEATURES = POSITION_CONFIG.all_features
+TARGETS = POSITION_CONFIG.targets
 from src.k.data import load_data, season_split  # noqa: E402
 from src.k.features import compute_features  # noqa: E402
 from src.k.targets import compute_targets  # noqa: E402

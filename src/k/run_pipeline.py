@@ -17,12 +17,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.k.config import (
-    ATTN_KICK_STATS,
-    ATTN_MAX_GAMES,
-    ATTN_MAX_KICKS_PER_GAME,
-    POSITION_CONFIG,
-)
+from src.k.config import POSITION_CONFIG
 from src.k.data import load_data, load_kicks, season_split
 from src.k.features import build_nested_kick_history, compute_features
 from src.k.targets import compute_targets
@@ -61,9 +56,9 @@ def run(seed=42):
     kick_history_builder = functools.partial(
         build_nested_kick_history,
         kicks_df=kicks_df,
-        kick_stats=ATTN_KICK_STATS,
-        max_games=ATTN_MAX_GAMES,
-        max_kicks_per_game=ATTN_MAX_KICKS_PER_GAME,
+        kick_stats=POSITION_CONFIG.attn_kick_stats,
+        max_games=POSITION_CONFIG.attn_max_games,
+        max_kicks_per_game=POSITION_CONFIG.attn_max_kicks_per_game,
     )
 
     cfg = dict(CONFIG)

@@ -5,7 +5,9 @@ import pytest
 import torch
 
 from src.shared.neural_net import MultiHeadNet
-from src.wr.config import TARGETS
+from src.wr.config import POSITION_CONFIG
+
+TARGETS = POSITION_CONFIG.targets
 
 
 @pytest.mark.unit

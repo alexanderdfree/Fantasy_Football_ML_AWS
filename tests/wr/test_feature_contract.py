@@ -20,7 +20,11 @@ import pandas as pd
 import pytest
 
 from src.features.engineer import get_attn_static_columns
-from src.wr.config import ATTN_STATIC_FEATURES, INCLUDE_FEATURES, SPECIFIC_FEATURES
+from src.wr.config import POSITION_CONFIG
+
+ATTN_STATIC_FEATURES = POSITION_CONFIG.attn_static_features
+INCLUDE_FEATURES = POSITION_CONFIG.include_features
+SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
 from src.wr.features import (
     _compute_features,
     add_specific_features,

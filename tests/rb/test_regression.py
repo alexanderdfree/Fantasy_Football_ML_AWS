@@ -21,7 +21,10 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.rb.config import LOSS_WEIGHTS, TARGETS
+from src.rb.config import POSITION_CONFIG
+
+LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+TARGETS = POSITION_CONFIG.targets
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet

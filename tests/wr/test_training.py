@@ -11,28 +11,31 @@ from src.shared.training import (
     MultiTargetLoss,
     make_dataloaders,
 )
-from src.wr.config import LOSS_WEIGHTS, TARGETS
+from src.wr.config import POSITION_CONFIG
+
+LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+TARGETS = POSITION_CONFIG.targets
 
 
 @pytest.mark.unit
 class TestMultiTargetLoss:
-    def test_output_types(self, wr_nn_tensors):
+    def test_output_types(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
-        preds, targets = wr_nn_tensors
+        preds, targets = make_tensors()
         combined, components = loss_fn(preds, targets)
         assert isinstance(combined, torch.Tensor)
         assert isinstance(components, dict)
 
-    def test_component_keys(self, wr_nn_tensors):
+    def test_component_keys(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
-        preds, targets = wr_nn_tensors
+        preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
         expected = {f"loss_{t}" for t in TARGETS} | {"loss_combined"}
         assert set(components.keys()) == expected
 
-    def test_components_are_scalars(self, wr_nn_tensors):
+    def test_components_are_scalars(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
-        preds, targets = wr_nn_tensors
+        preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
         for key, val in components.items():
             assert isinstance(val, float), f"{key} is not a float"
@@ -48,8 +51,8 @@ class TestMultiTargetLoss:
         combined, _ = loss_fn(targets, targets)
         assert pytest.approx(combined.item(), abs=1e-6) == 0.0
 
-    def test_weights_affect_loss(self, wr_nn_tensors):
-        preds, targets = wr_nn_tensors
+    def test_weights_affect_loss(self, make_tensors):
+        preds, targets = make_tensors()
         loss_equal = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights={t: 1.0 for t in TARGETS},
@@ -64,9 +67,9 @@ class TestMultiTargetLoss:
         c2, _ = loss_heavy(preds, targets)
         assert c1.item() != c2.item()
 
-    def test_combined_loss_is_positive(self, wr_nn_tensors):
+    def test_combined_loss_is_positive(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
-        preds, targets = wr_nn_tensors
+        preds, targets = make_tensors()
         combined, _ = loss_fn(preds, targets)
         assert combined.item() >= 0
 

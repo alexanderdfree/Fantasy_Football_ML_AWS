@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.k.config import ALL_FEATURES
+from src.k.config import POSITION_CONFIG
 from src.shared.feature_build import (
     fill_nans_with_train_means,
     rolling_agg,
@@ -11,7 +11,7 @@ from src.shared.feature_build import (
 
 def get_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the K model."""
-    return list(ALL_FEATURES)
+    return list(POSITION_CONFIG.all_features)
 
 
 def compute_features(df: pd.DataFrame) -> None:

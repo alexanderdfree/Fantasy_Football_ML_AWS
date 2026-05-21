@@ -25,11 +25,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.dst.config import (
-    ALL_FEATURES,
-    CONTEXTUAL_FEATURES,
-    SPECIFIC_FEATURES,
-)
+from src.dst.config import POSITION_CONFIG
+
+ALL_FEATURES = POSITION_CONFIG.all_features
+CONTEXTUAL_FEATURES = POSITION_CONFIG.contextual_features
+SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
 from src.dst.features import (
     add_specific_features,
     compute_features,
@@ -78,11 +78,11 @@ class TestDSTFeatureContract:
         """DST is the one position whose parallel opp branch attends over the
         opposing OFFENSE (not defense). Drift guard against an accidental
         flip in src/dst/config.py."""
-        from src.dst.config import OPP_ATTN_HISTORY_STATS, OPP_ATTN_KIND
+        from src.dst.config import POSITION_CONFIG
 
-        assert OPP_ATTN_KIND == "offense"
+        assert POSITION_CONFIG.opp_attn_kind == "offense"
         # Every stat in the list is off_*-prefixed (catches a partial revert).
-        assert all(s.startswith("off_") for s in OPP_ATTN_HISTORY_STATS)
+        assert all(s.startswith("off_") for s in POSITION_CONFIG.opp_attn_history_stats)
 
     def test_specific_features_populated_after_compute(self, tiny_dataset):
         """All rolling/EWMA/trend features land on the frame."""

@@ -1,12 +1,15 @@
 """Shared per-position configuration schema.
 
-Each ``src/{pos}/config.py`` defines its hyperparameters as module-level
-constants (``TARGETS``, ``NN_BACKBONE_LAYERS``, ``ATTN_HISTORY_STATS``, ...)
-*and* bundles them into a single ``POSITION_CONFIG: PositionConfig`` instance
-at the bottom of the file. The module-level constants stay the public API for
-existing imports (``from src.qb.config import TARGETS``); the dataclass is the
-new structural source of truth that registry/pipeline/serving code can read
-generically without naming every constant explicitly.
+Each ``src/{pos}/config.py`` exports exactly one ``POSITION_CONFIG:
+PositionConfig`` instance with every hyperparameter inlined into the
+constructor call. Downstream consumers (training pipeline, serving, tests)
+read attributes off ``POSITION_CONFIG`` — there are no module-level
+UPPERCASE constants mirroring the dataclass fields.
+
+The two narrow exceptions kept at module level are ``CONFIG_TINY`` /
+``CONFIG_TINY_ATTN`` (e2e tests import them by name) and
+``ATTN_STATIC_CATEGORIES`` (the attention-static whitelist test reads it
+on QB/RB/WR/TE to confirm the category list excludes rolling buckets).
 
 Field defaults capture the most-common value across the six positions, so
 each position config only has to spell out where it deviates. Adding a new
@@ -84,10 +87,9 @@ class PositionConfig:
     positions, so each ``PositionConfig(...)`` call only spells out where
     that position deviates from the consensus.
 
-    Attribute names mirror the upper-cased module-level constants in each
-    position's ``config.py`` (e.g. ``targets`` ↔ ``TARGETS``,
-    ``attn_d_model`` ↔ ``ATTN_D_MODEL``) so a future refactor can swap call
-    sites between the two forms mechanically.
+    Snake-case attribute names mirror the dataclass field names directly
+    (``targets``, ``nn_backbone_layers``, ``attn_d_model``, ...); the old
+    UPPER_CASE module-level constants have been retired.
     """
 
     # === Identity ===
@@ -202,8 +204,8 @@ class PositionConfig:
     target_signs: dict[str, float] | None = None
 
     # === Pipeline orchestration metadata ===
-    # These mirror the entries currently in src/shared/registry.py::_POSITION_META.
-    # PR 3 will migrate the registry to read from here instead of the duplicate dict.
+    # Read by src/shared/registry.py to decide which runner / inference
+    # contract to use; PR #244 migrated the registry to read from here.
     accepts_dataframes: bool = True
     cpu_only: bool = False
     has_cv_runner: bool = False

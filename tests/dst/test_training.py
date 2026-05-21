@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 import torch
 
-from src.dst.config import LOSS_WEIGHTS, POISSON_TARGETS, TARGETS
+from src.dst.config import POSITION_CONFIG
+
+LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+POISSON_TARGETS = POSITION_CONFIG.poisson_targets
+TARGETS = POSITION_CONFIG.targets
 from src.shared.neural_net import MultiHeadNet
 from src.shared.training import (
     MultiHeadTrainer,

@@ -1,12 +1,12 @@
 import pandas as pd
 
-from src.dst.config import ALL_FEATURES
+from src.dst.config import POSITION_CONFIG
 from src.shared.feature_build import fill_nans_with_train_means, rolling_agg
 
 
 def get_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the DST model."""
-    return list(ALL_FEATURES)
+    return list(POSITION_CONFIG.all_features)
 
 
 def compute_features(df: pd.DataFrame) -> None:

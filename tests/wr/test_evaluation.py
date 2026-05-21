@@ -7,7 +7,9 @@ import pandas as pd
 import pytest
 
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
-from src.wr.config import TARGETS
+from src.wr.config import POSITION_CONFIG
+
+TARGETS = POSITION_CONFIG.targets
 
 
 @pytest.mark.unit
@@ -58,31 +60,31 @@ class TestComputeTargetMetrics:
 
 @pytest.mark.unit
 class TestComputeRankingMetrics:
-    def test_basic_structure(self, wr_test_df):
-        result = compute_ranking_metrics(wr_test_df, "pred_total", "fantasy_points", top_k=5)
+    def test_basic_structure(self, test_df):
+        result = compute_ranking_metrics(test_df, "pred_total", "fantasy_points", top_k=5)
         assert "weekly" in result
         assert "season_avg_hit_rate" in result
         assert "season_avg_spearman" in result
 
-    def test_weekly_count_matches(self, wr_test_df_factory):
-        df = wr_test_df_factory(n_weeks=4, n_players=15)
+    def test_weekly_count_matches(self, make_test_df):
+        df = make_test_df(n_weeks=4, n_players=15)
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=12)
         assert len(result["weekly"]) == 4
 
-    def test_hit_rate_bounds(self, wr_test_df_factory):
-        df = wr_test_df_factory(n_weeks=2, n_players=20)
+    def test_hit_rate_bounds(self, make_test_df):
+        df = make_test_df(n_weeks=2, n_players=20)
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=10)
         for week_result in result["weekly"]:
             assert 0.0 <= week_result["top_k_hit_rate"] <= 1.0
 
-    def test_perfect_predictions_hit_rate(self, wr_test_df_factory):
-        df = wr_test_df_factory(n_weeks=1, n_players=15)
+    def test_perfect_predictions_hit_rate(self, make_test_df):
+        df = make_test_df(n_weeks=1, n_players=15)
         df["pred_total"] = df["fantasy_points"]
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=12)
         assert pytest.approx(result["weekly"][0]["top_k_hit_rate"]) == 1.0
 
-    def test_spearman_on_perfect_prediction(self, wr_test_df_factory):
-        df = wr_test_df_factory(n_weeks=1, n_players=20)
+    def test_spearman_on_perfect_prediction(self, make_test_df):
+        df = make_test_df(n_weeks=1, n_players=20)
         df["pred_total"] = df["fantasy_points"]
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=10)
         assert pytest.approx(result["weekly"][0]["spearman"], abs=0.01) == 1.0
@@ -119,8 +121,8 @@ class TestComputeRankingMetrics:
         assert len(result["weekly"]) == 0
         assert result["season_avg_hit_rate"] == 0.0
 
-    def test_single_week(self, wr_test_df_factory):
-        df = wr_test_df_factory(n_weeks=1, n_players=15)
+    def test_single_week(self, make_test_df):
+        df = make_test_df(n_weeks=1, n_players=15)
         result = compute_ranking_metrics(df, "pred_total", "fantasy_points", top_k=12)
         assert len(result["weekly"]) == 1
         assert result["season_avg_hit_rate"] == result["weekly"][0]["top_k_hit_rate"]

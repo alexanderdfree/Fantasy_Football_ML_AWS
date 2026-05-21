@@ -12,30 +12,30 @@ from src.wr.data import compute_team_wr_totals, filter_to_position
 
 @pytest.mark.unit
 class TestFilterToWR:
-    def test_filters_only_wr_rows(self, wr_position_df_factory):
-        df = wr_position_df_factory(["QB", "RB", "WR", "WR", "TE"])
+    def test_filters_only_wr_rows(self, make_position_df):
+        df = make_position_df(["QB", "RB", "WR", "WR", "TE"])
         result = filter_to_position(df)
         assert len(result) == 2
         assert (result["position"] == "WR").all()
 
-    def test_drops_position_encoding_columns(self, wr_position_df_factory):
-        df = wr_position_df_factory(["WR", "WR"])
+    def test_drops_position_encoding_columns(self, make_position_df):
+        df = make_position_df(["WR", "WR"])
         result = filter_to_position(df)
         for col in ["pos_QB", "pos_RB", "pos_WR", "pos_TE"]:
             assert col not in result.columns
 
-    def test_keeps_non_position_columns(self, wr_position_df_factory):
-        df = wr_position_df_factory(["WR"])
+    def test_keeps_non_position_columns(self, make_position_df):
+        df = make_position_df(["WR"])
         result = filter_to_position(df)
         assert "receiving_yards" in result.columns
 
-    def test_no_position_encoding_columns(self, wr_position_df_factory):
-        df = wr_position_df_factory(["WR", "QB"], has_pos_cols=False)
+    def test_no_position_encoding_columns(self, make_position_df):
+        df = make_position_df(["WR", "QB"], has_pos_cols=False)
         result = filter_to_position(df)
         assert len(result) == 1
 
-    def test_empty_result_when_no_wrs(self, wr_position_df_factory):
-        df = wr_position_df_factory(["QB", "RB", "TE"])
+    def test_empty_result_when_no_wrs(self, make_position_df):
+        df = make_position_df(["QB", "RB", "TE"])
         result = filter_to_position(df)
         assert len(result) == 0
         assert isinstance(result, pd.DataFrame)
@@ -45,8 +45,8 @@ class TestFilterToWR:
         result = filter_to_position(df)
         assert len(result) == 0
 
-    def test_does_not_mutate_original(self, wr_position_df_factory):
-        df = wr_position_df_factory(["WR", "QB"])
+    def test_does_not_mutate_original(self, make_position_df):
+        df = make_position_df(["WR", "QB"])
         original_cols = list(df.columns)
         _ = filter_to_position(df)
         assert list(df.columns) == original_cols

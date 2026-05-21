@@ -108,13 +108,17 @@ _EXPECTED_SKILL_STATIC = {
 # guard — if the count changes unexpectedly (feature added / renamed), the
 # test fails loudly and you re-check on purpose instead of silently
 # retraining on a different feature set.
-_EXPECTED_COUNTS = {pos: len(cfg.ATTN_STATIC_FEATURES) for pos, (cfg, _) in _POSITION_CFG.items()}
+_EXPECTED_COUNTS = {
+    pos: len(cfg.POSITION_CONFIG.attn_static_features) for pos, (cfg, _) in _POSITION_CFG.items()
+}
 
 
 def _static_cols(pos: str) -> list[str]:
     """Resolve the attention static column set for ``pos`` from the config."""
     cfg, features = _POSITION_CFG[pos]
-    return get_attn_static_columns(features.get_feature_columns(), cfg.ATTN_STATIC_FEATURES)
+    return get_attn_static_columns(
+        features.get_feature_columns(), cfg.POSITION_CONFIG.attn_static_features
+    )
 
 
 @pytest.mark.unit
@@ -158,7 +162,7 @@ class TestAttnStaticWhitelistExcludesSpecific:
     def test_specific_excluded(self):
         """Every SPECIFIC feature is a rolling/ewma/trend aggregate; none
         should appear in the attention static set."""
-        leaks = set(_static_cols("DST")) & set(dst_cfg.SPECIFIC_FEATURES)
+        leaks = set(_static_cols("DST")) & set(dst_cfg.POSITION_CONFIG.specific_features)
         assert not leaks, f"SPECIFIC features leaked into attention static: {sorted(leaks)}"
 
 
@@ -258,25 +262,27 @@ _FORBIDDEN_STATIC_COLS = {
 @pytest.mark.unit
 class TestKAttentionStaticFeatures:
     def test_no_l3_l5_features_in_static_set(self):
-        leaks = set(k_cfg.ATTN_STATIC_FEATURES) & _FORBIDDEN_STATIC_COLS
-        assert not leaks, f"K ATTN_STATIC_FEATURES contains L3/L5 rolling features: {sorted(leaks)}"
+        leaks = set(k_cfg.POSITION_CONFIG.attn_static_features) & _FORBIDDEN_STATIC_COLS
+        assert not leaks, f"K attn_static_features contains L3/L5 rolling features: {sorted(leaks)}"
 
     def test_no_rolling_or_share_prefixes(self):
         leaks = [
             c
-            for c in k_cfg.ATTN_STATIC_FEATURES
+            for c in k_cfg.POSITION_CONFIG.attn_static_features
             if c.startswith("rolling_") or c.startswith("ewma_") or c.startswith("trend_")
         ]
-        assert not leaks, f"K ATTN_STATIC_FEATURES has temporal prefixes: {leaks}"
+        assert not leaks, f"K attn_static_features has temporal prefixes: {leaks}"
 
     def test_column_count_matches_config(self):
         """Drift guard: unexpected count shift => feature added/removed silently."""
-        assert len(k_cfg.ATTN_STATIC_FEATURES) == len(k_cfg.CONTEXTUAL_FEATURES)
+        pc = k_cfg.POSITION_CONFIG
+        assert len(pc.attn_static_features) == len(pc.contextual_features)
 
     def test_no_duplicates(self):
-        assert len(k_cfg.ATTN_STATIC_FEATURES) == len(set(k_cfg.ATTN_STATIC_FEATURES))
+        statics = k_cfg.POSITION_CONFIG.attn_static_features
+        assert len(statics) == len(set(statics))
 
     def test_contextual_features_present(self):
-        got = set(k_cfg.ATTN_STATIC_FEATURES)
+        got = set(k_cfg.POSITION_CONFIG.attn_static_features)
         for col in ("is_home", "implied_team_total", "total_line", "game_wind"):
-            assert col in got, f"K ATTN_STATIC_FEATURES missing {col}"
+            assert col in got, f"K attn_static_features missing {col}"

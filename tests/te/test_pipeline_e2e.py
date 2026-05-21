@@ -25,7 +25,9 @@ import numpy as np
 import pytest
 
 from src.shared.pipeline import run_pipeline
-from src.te.config import CONFIG_TINY, TARGETS
+from src.te.config import CONFIG_TINY, POSITION_CONFIG
+
+TARGETS = POSITION_CONFIG.targets
 from src.te.data import filter_to_position
 from src.te.features import (
     add_specific_features,

@@ -23,7 +23,10 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.qb.config import LOSS_WEIGHTS, TARGETS
+from src.qb.config import POSITION_CONFIG
+
+LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+TARGETS = POSITION_CONFIG.targets
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet

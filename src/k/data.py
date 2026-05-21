@@ -6,7 +6,10 @@ import pyarrow.parquet as pq
 
 from src.config import CACHE_DIR
 from src.config import SEASONS as GLOBAL_SEASONS
-from src.k.config import MIN_GAMES, SEASONS
+from src.k.config import POSITION_CONFIG
+
+SEASONS = POSITION_CONFIG.seasons
+MIN_GAMES = POSITION_CONFIG.min_games
 
 # ---------------------------------------------------------------------------
 # PBP-based kicker reconstruction (2015-2024)

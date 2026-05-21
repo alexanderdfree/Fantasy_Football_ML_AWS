@@ -6,9 +6,7 @@ This project does not use Jupyter notebooks. Exploratory data analysis and model
 
 Cross-cutting analysis scripts ([src/analysis/](../src/analysis/)):
 - [analysis_dst_rare_dispersion.py](../src/analysis/analysis_dst_rare_dispersion.py) — DST rare-event dispersion analysis (sacks/safeties/blocked kicks distributional shape)
-- [analysis_rb_feature_signal.py](../src/analysis/analysis_rb_feature_signal.py) — RB feature-signal audit (which engineered features actually predict each target)
 - [analysis_shap_lgbm.py](../src/analysis/analysis_shap_lgbm.py) — SHAP value attribution for LightGBM models
-- [analysis_weather_vegas_correlation.py](../src/analysis/analysis_weather_vegas_correlation.py) — weather/Vegas-feature correlation with fantasy outcomes
 
 Per-position diagnostic CLIs:
 - [src/qb/diagnose_outliers.py](../src/qb/diagnose_outliers.py) — week-level outlier diagnostics for QB predictions

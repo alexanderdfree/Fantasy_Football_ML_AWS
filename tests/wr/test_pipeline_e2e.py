@@ -22,7 +22,9 @@ import pytest
 
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_pipeline
-from src.wr.config import CONFIG_TINY, TARGETS
+from src.wr.config import CONFIG_TINY, POSITION_CONFIG
+
+TARGETS = POSITION_CONFIG.targets
 from src.wr.data import filter_to_position
 from src.wr.features import add_specific_features, fill_nans, get_feature_columns
 from src.wr.targets import compute_targets

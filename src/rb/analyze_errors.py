@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.rb.config import TARGETS
+from src.rb.config import POSITION_CONFIG
 from src.rb.run_pipeline import run
 from src.shared.error_analysis import (
     add_stratification_columns,
@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--no-plots", action="store_true", help="Skip figure generation")
     args = parser.parse_args()
 
-    targets = TARGETS
+    targets = POSITION_CONFIG.targets
 
     # Run pipeline to get test DataFrame with predictions
     print("Running RB pipeline...")

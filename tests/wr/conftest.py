@@ -1,31 +1,20 @@
-"""Shared fixtures for WR tests — thin wrappers over tests.shared.position_fixtures.
+"""Shared fixtures for WR tests — installs the standard position fixtures
+bound to WR's scoring scale and target list. Generic factories live in
+``tests/shared/position_fixtures.py``.
 
-Generic factories are imported from ``tests.shared.position_fixtures``;
-this conftest binds them to the WR scoring scale (~20) and targets, and
-keeps the WR-specific ``wr_player_games_factory`` feature-input builder.
+WR matches the QB/RB/K/DST pattern: the generic ``register_standard_fixtures``
+helper installs ``make_sim_df`` / ``make_test_df`` / ``make_tensors`` /
+``make_splits`` / ``make_position_df`` (plus default shortcuts ``sim_df`` /
+``test_df``). Only the WR-specific ``wr_player_games_factory`` stays here.
 """
 
 import pandas as pd
 import pytest
 
-from src.wr.config import TARGETS
-from tests.shared.position_fixtures import (
-    make_position_df as _make_position_df,
-)
-from tests.shared.position_fixtures import (
-    make_sim_df as _make_sim_df,
-)
-from tests.shared.position_fixtures import (
-    make_splits as _make_splits,
-)
-from tests.shared.position_fixtures import (
-    make_tensors as _make_tensors,
-)
-from tests.shared.position_fixtures import (
-    make_test_df as _make_test_df,
-)
+from src.wr.config import POSITION_CONFIG
 from tests.shared.position_fixtures import (
     register_position_markers,
+    register_standard_fixtures,
 )
 
 # WR fantasy points typically land in the 0-20 PPR range.
@@ -39,87 +28,15 @@ def pytest_configure(config):
     )
 
 
-# ---------------------------------------------------------------------------
-# Generic WR fixtures (WR scale, WR prefix, default_rng for backwards-compat)
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def wr_sim_df_factory():
-    """Factory producing a WR-scale simulation DataFrame for backtest tests."""
-
-    def _make(n_weeks: int = 4, n_players: int = 15, seed: int = 42):
-        return _make_sim_df(
-            SCORING_SCALE,
-            n_weeks,
-            n_players,
-            seed,
-            id_prefix="WR",
-            rng_kind="default",
-        )
-
-    return _make
-
-
-@pytest.fixture
-def wr_sim_df(wr_sim_df_factory):
-    """Default WR simulation DataFrame (4 weeks x 15 players, seed=42)."""
-    return wr_sim_df_factory()
-
-
-@pytest.fixture(scope="session")
-def wr_test_df_factory():
-    """Factory producing WR ranking test DataFrames."""
-
-    def _make(n_weeks: int = 3, n_players: int = 15, seed: int = 42):
-        return _make_test_df(
-            SCORING_SCALE,
-            n_weeks,
-            n_players,
-            seed,
-            id_prefix="WR",
-            rng_kind="default",
-        )
-
-    return _make
-
-
-@pytest.fixture
-def wr_test_df(wr_test_df_factory):
-    """Default WR test DataFrame (3 weeks x 15 players, seed=42)."""
-    return wr_test_df_factory()
-
-
-@pytest.fixture(scope="session")
-def wr_nn_tensors_factory():
-    """Factory producing (preds, targets) tensor dicts for MultiTargetLoss tests."""
-
-    def _make(n: int = 10, seed: int = 42):
-        return _make_tensors(TARGETS, n=n, seed=seed)
-
-    return _make
-
-
-@pytest.fixture
-def wr_nn_tensors(wr_nn_tensors_factory):
-    """Default WR (preds, targets) pair (n=10, seed=42)."""
-    return wr_nn_tensors_factory()
-
-
-@pytest.fixture(scope="session")
-def wr_nan_splits_factory():
-    """Factory producing (train, val, test) DataFrames for fill_nans tests."""
-    return _make_splits
-
-
-@pytest.fixture(scope="session")
-def wr_position_df_factory():
-    """Factory for DataFrames used by filter_to_position tests (position + pos_* cols)."""
-
-    def _make(positions, has_pos_cols: bool = True):
-        return _make_position_df(positions, stat_col="receiving_yards", has_pos_cols=has_pos_cols)
-
-    return _make
+register_standard_fixtures(
+    globals(),
+    scoring_scale=SCORING_SCALE,
+    id_prefix="WR",
+    targets=POSITION_CONFIG.targets,
+    stat_col="receiving_yards",
+    rng_kind="default",
+    install_default_shortcuts=True,
+)
 
 
 # ---------------------------------------------------------------------------

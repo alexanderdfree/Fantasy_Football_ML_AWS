@@ -49,17 +49,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.rb.config import (  # noqa: E402
-    ATTN_HISTORY_STATS,
-    ATTN_STATIC_CATEGORIES,
-    INCLUDE_FEATURES,
-    RIDGE_PCA_COMPONENTS,
-    SPECIFIC_FEATURES,
-    TARGETS,
-)
+from src.rb.config import ATTN_STATIC_CATEGORIES, POSITION_CONFIG  # noqa: E402
 from src.rb.data import filter_to_position  # noqa: E402
 from src.rb.features import add_specific_features, get_feature_columns  # noqa: E402
 from src.shared.weather_features import merge_schedule_features  # noqa: E402
+
+ATTN_HISTORY_STATS = POSITION_CONFIG.attn_history_stats
+INCLUDE_FEATURES = POSITION_CONFIG.include_features
+RIDGE_PCA_COMPONENTS = POSITION_CONFIG.ridge_pca_components
+SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
+TARGETS = POSITION_CONFIG.targets
 
 OUT_DIR = PROJECT_ROOT / "analysis_output"
 OUT_JSON = OUT_DIR / "rb_feature_audit.json"

@@ -21,40 +21,7 @@ import numpy as np
 import pytest
 import torch
 
-from src.rb.config import (
-    ATTN_D_MODEL,
-    ATTN_DROPOUT,
-    ATTN_GATE_HIDDEN,
-    ATTN_GATE_WEIGHT,
-    ATTN_GATED,
-    ATTN_GATED_FUSION,
-    ATTN_HISTORY_STATS,
-    ATTN_MAX_SEQ_LEN,
-    ATTN_N_HEADS,
-    ATTN_POSITIONAL_ENCODING,
-    ATTN_PROJECT_KV,
-    COSINE_ETA_MIN,
-    COSINE_T0,
-    COSINE_T_MULT,
-    GATED_ORDINAL_TARGETS,
-    GATED_TARGETS,
-    HEAD_LOSSES,
-    HUBER_DELTAS,
-    LOSS_WEIGHTS,
-    NN_BACKBONE_LAYERS_TINY,
-    NN_BATCH_SIZE_TINY,
-    NN_DROPOUT,
-    NN_EPOCHS_TINY,
-    NN_HEAD_HIDDEN_TINY,
-    NN_LR,
-    NN_PATIENCE_TINY,
-    NN_WEIGHT_DECAY,
-    RIDGE_ALPHA_GRIDS,
-    RIDGE_PCA_COMPONENTS,
-    SCHEDULER_TYPE,
-    SPECIFIC_FEATURES,
-    TARGETS,
-)
+from src.rb.config import POSITION_CONFIG
 from src.rb.data import filter_to_position
 from src.rb.features import add_specific_features, fill_nans, get_feature_columns
 from src.rb.targets import compute_targets
@@ -62,51 +29,52 @@ from src.rb.targets import compute_targets
 
 def _build_tiny_config() -> dict:
     """Shrunk CONFIG for the E2E smoke."""
+    pc = POSITION_CONFIG
     return {
-        "targets": TARGETS,
-        "ridge_alpha_grids": RIDGE_ALPHA_GRIDS,
+        "targets": pc.targets,
+        "ridge_alpha_grids": pc.ridge_alpha_grids,
         "two_stage_targets": {},
-        "classification_targets": GATED_ORDINAL_TARGETS,
-        "ridge_pca_components": RIDGE_PCA_COMPONENTS,
+        "classification_targets": pc.gated_ordinal_targets,
+        "ridge_pca_components": pc.ridge_pca_components,
         "ridge_cv_folds": 2,
         "ridge_refine_points": 0,
         "cv_split_column": "week",
-        "specific_features": SPECIFIC_FEATURES,
+        "specific_features": pc.specific_features,
         "filter_fn": filter_to_position,
         "compute_targets_fn": compute_targets,
         "add_features_fn": add_specific_features,
         "fill_nans_fn": fill_nans,
         "get_feature_columns_fn": get_feature_columns,
-        "nn_backbone_layers": NN_BACKBONE_LAYERS_TINY,
-        "nn_head_hidden": NN_HEAD_HIDDEN_TINY,
-        "nn_dropout": NN_DROPOUT,
+        "nn_backbone_layers": [8, 8],
+        "nn_head_hidden": 4,
+        "nn_dropout": pc.nn_dropout,
         "nn_head_hidden_overrides": None,
-        "nn_lr": NN_LR,
-        "nn_weight_decay": NN_WEIGHT_DECAY,
-        "nn_epochs": NN_EPOCHS_TINY,
-        "nn_batch_size": NN_BATCH_SIZE_TINY,
-        "nn_patience": NN_PATIENCE_TINY,
+        "nn_lr": pc.nn_lr,
+        "nn_weight_decay": pc.nn_weight_decay,
+        "nn_epochs": 1,
+        "nn_batch_size": 64,
+        "nn_patience": 1,
         "nn_log_every": 1,
-        "loss_weights": LOSS_WEIGHTS,
-        "huber_deltas": HUBER_DELTAS,
-        "scheduler_type": SCHEDULER_TYPE,
-        "cosine_t0": COSINE_T0,
-        "cosine_t_mult": COSINE_T_MULT,
-        "cosine_eta_min": COSINE_ETA_MIN,
+        "loss_weights": pc.loss_weights,
+        "huber_deltas": pc.huber_deltas,
+        "scheduler_type": pc.scheduler_type,
+        "cosine_t0": pc.cosine_t0,
+        "cosine_t_mult": pc.cosine_t_mult,
+        "cosine_eta_min": pc.cosine_eta_min,
         "train_attention_nn": False,
-        "attn_d_model": ATTN_D_MODEL,
-        "attn_n_heads": ATTN_N_HEADS,
-        "attn_max_seq_len": ATTN_MAX_SEQ_LEN,
-        "attn_history_stats": ATTN_HISTORY_STATS,
-        "attn_project_kv": ATTN_PROJECT_KV,
-        "attn_positional_encoding": ATTN_POSITIONAL_ENCODING,
-        "attn_gated_fusion": ATTN_GATED_FUSION,
-        "attn_dropout": ATTN_DROPOUT,
-        "attn_gated": ATTN_GATED,
-        "attn_gate_hidden": ATTN_GATE_HIDDEN,
-        "attn_gate_weight": ATTN_GATE_WEIGHT,
-        "gated_targets": GATED_TARGETS,
-        "head_losses": HEAD_LOSSES,
+        "attn_d_model": pc.attn_d_model,
+        "attn_n_heads": pc.attn_n_heads,
+        "attn_max_seq_len": pc.attn_max_seq_len,
+        "attn_history_stats": pc.attn_history_stats,
+        "attn_project_kv": pc.attn_project_kv,
+        "attn_positional_encoding": pc.attn_positional_encoding,
+        "attn_gated_fusion": pc.attn_gated_fusion,
+        "attn_dropout": pc.attn_dropout,
+        "attn_gated": pc.attn_gated,
+        "attn_gate_hidden": pc.attn_gate_hidden,
+        "attn_gate_weight": pc.attn_gate_weight,
+        "gated_targets": pc.gated_targets,
+        "head_losses": pc.head_losses,
         "train_lightgbm": False,
     }
 
@@ -193,12 +161,12 @@ def test_pipeline_runs_to_completion(pipeline_run):
     preds = result["per_target_preds"]
     for model_name in ("ridge", "nn"):
         assert model_name in preds, f"{model_name} missing from per_target_preds"
-        for target in TARGETS:
+        for target in POSITION_CONFIG.targets:
             vec = preds[model_name][target]
             assert vec.ndim == 1
             assert np.isfinite(vec).all(), f"{model_name}/{target} has non-finite predictions"
 
-    n_test = preds["ridge"][TARGETS[0]].shape[0]
+    n_test = preds["ridge"][POSITION_CONFIG.targets[0]].shape[0]
     assert n_test > 0
 
 
@@ -214,14 +182,14 @@ def test_pipeline_bit_identical_same_seed(pipeline_run, pipeline_run_repeat):
     preds_a = pipeline_run["per_target_preds"]
     preds_b = pipeline_run_repeat["per_target_preds"]
 
-    for target in TARGETS:
+    for target in POSITION_CONFIG.targets:
         np.testing.assert_array_equal(
             preds_a["ridge"][target],
             preds_b["ridge"][target],
             err_msg=f"Ridge predictions drifted for {target}",
         )
 
-    for target in TARGETS:
+    for target in POSITION_CONFIG.targets:
         a = torch.from_numpy(preds_a["nn"][target])
         b = torch.from_numpy(preds_b["nn"][target])
         torch.testing.assert_close(a, b, atol=0.0, rtol=0.0)

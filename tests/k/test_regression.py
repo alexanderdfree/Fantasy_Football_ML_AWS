@@ -17,7 +17,11 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.k.config import HUBER_DELTAS, LOSS_WEIGHTS, TARGETS
+from src.k.config import POSITION_CONFIG
+
+HUBER_DELTAS = POSITION_CONFIG.huber_deltas
+LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+TARGETS = POSITION_CONFIG.targets
 from src.k.features import compute_features, get_feature_columns
 from src.k.targets import compute_targets
 from src.shared.feature_build import scale_and_clip

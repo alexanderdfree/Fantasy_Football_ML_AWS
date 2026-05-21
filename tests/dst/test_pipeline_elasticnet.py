@@ -19,15 +19,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.dst.config import (
-    CONFIG_TINY,
-    HUBER_DELTAS,
-    LOSS_WEIGHTS,
-    POISSON_TARGETS,
-    RIDGE_ALPHA_GRIDS,
-    SPECIFIC_FEATURES,
-    TARGETS,
-)
+from src.dst.config import CONFIG_TINY, POSITION_CONFIG
+
+HUBER_DELTAS = POSITION_CONFIG.huber_deltas
+LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+POISSON_TARGETS = POSITION_CONFIG.poisson_targets
+RIDGE_ALPHA_GRIDS = POSITION_CONFIG.ridge_alpha_grids
+SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
+TARGETS = POSITION_CONFIG.targets
 from src.dst.data import filter_to_position
 from src.dst.features import (
     add_specific_features,

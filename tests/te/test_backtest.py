@@ -9,9 +9,9 @@ from src.shared.backtest import run_weekly_simulation
 
 @pytest.mark.unit
 class TestRunWeeklySimulation:
-    def test_basic_structure(self, te_sim_df):
+    def test_basic_structure(self, sim_df):
         result = run_weekly_simulation(
-            te_sim_df,
+            sim_df,
             pred_columns={"Ridge": "pred_ridge", "NN": "pred_nn"},
             true_col="fantasy_points",
             top_k=12,
@@ -20,8 +20,8 @@ class TestRunWeeklySimulation:
         assert "weekly_ranking" in result
         assert "season_summary" in result
 
-    def test_weekly_metrics_per_model(self, te_sim_df_factory):
-        df = te_sim_df_factory(n_weeks=3)
+    def test_weekly_metrics_per_model(self, make_sim_df):
+        df = make_sim_df(n_weeks=3)
         result = run_weekly_simulation(
             df,
             pred_columns={"Ridge": "pred_ridge"},
@@ -30,9 +30,9 @@ class TestRunWeeklySimulation:
         assert "Ridge" in result["weekly_metrics"]
         assert len(result["weekly_metrics"]["Ridge"]) == 3
 
-    def test_season_summary_keys(self, te_sim_df):
+    def test_season_summary_keys(self, sim_df):
         result = run_weekly_simulation(
-            te_sim_df,
+            sim_df,
             pred_columns={"Ridge": "pred_ridge"},
             true_col="fantasy_points",
         )
@@ -56,17 +56,17 @@ class TestRunWeeklySimulation:
         assert len(result["weekly_ranking"]["M"]) == 0
         assert len(result["weekly_metrics"]["M"]) == 1
 
-    def test_multiple_models(self, te_sim_df):
+    def test_multiple_models(self, sim_df):
         result = run_weekly_simulation(
-            te_sim_df,
+            sim_df,
             pred_columns={"Ridge": "pred_ridge", "NN": "pred_nn"},
             true_col="fantasy_points",
         )
         assert "Ridge" in result["season_summary"]
         assert "NN" in result["season_summary"]
 
-    def test_perfect_predictions(self, te_sim_df_factory):
-        df = te_sim_df_factory(n_weeks=2, n_players=15)
+    def test_perfect_predictions(self, make_sim_df):
+        df = make_sim_df(n_weeks=2, n_players=15)
         df["pred_perfect"] = df["fantasy_points"]
         result = run_weekly_simulation(
             df,
@@ -87,8 +87,8 @@ class TestRunWeeklySimulation:
         )
         assert np.isnan(result["season_summary"]["Empty"]["mae"])
 
-    def test_single_week(self, te_sim_df_factory):
-        df = te_sim_df_factory(n_weeks=1, n_players=15)
+    def test_single_week(self, make_sim_df):
+        df = make_sim_df(n_weeks=1, n_players=15)
         result = run_weekly_simulation(
             df,
             pred_columns={"Ridge": "pred_ridge"},
@@ -98,8 +98,8 @@ class TestRunWeeklySimulation:
         assert len(result["weekly_metrics"]["Ridge"]) == 1
         assert len(result["weekly_ranking"]["Ridge"]) == 1
 
-    def test_top_k_larger_than_players(self, te_sim_df_factory):
-        df = te_sim_df_factory(n_weeks=2, n_players=15)
+    def test_top_k_larger_than_players(self, make_sim_df):
+        df = make_sim_df(n_weeks=2, n_players=15)
         result = run_weekly_simulation(
             df,
             pred_columns={"Ridge": "pred_ridge"},
@@ -108,15 +108,15 @@ class TestRunWeeklySimulation:
         )
         assert len(result["weekly_ranking"]["Ridge"]) == 0
 
-    def test_determinism(self, te_sim_df_factory):
+    def test_determinism(self, make_sim_df):
         """Same seed -> bit-identical simulation outputs.
 
         Guards against nondeterminism creeping into `run_weekly_simulation`
         (e.g., from a future change introducing `set`-based iteration order
         into per-week metrics).
         """
-        df1 = te_sim_df_factory(n_weeks=3, n_players=15, seed=42)
-        df2 = te_sim_df_factory(n_weeks=3, n_players=15, seed=42)
+        df1 = make_sim_df(n_weeks=3, n_players=15, seed=42)
+        df2 = make_sim_df(n_weeks=3, n_players=15, seed=42)
 
         result1 = run_weekly_simulation(
             df1,

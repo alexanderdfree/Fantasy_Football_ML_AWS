@@ -157,25 +157,25 @@ class TestComputeTEFeatures:
 
 @pytest.mark.unit
 class TestFillTENans:
-    def test_fills_nan_with_train_mean(self, te_splits_factory):
-        train, val, test = te_splits_factory([1.0, 2.0, 3.0], [np.nan], [np.nan])
+    def test_fills_nan_with_train_mean(self, make_splits):
+        train, val, test = make_splits([1.0, 2.0, 3.0], [np.nan], [np.nan])
         train, val, test = fill_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 2.0
         assert pytest.approx(test["feat1"].iloc[0]) == 2.0
 
-    def test_replaces_inf_with_train_mean(self, te_splits_factory):
-        train, val, test = te_splits_factory([1.0, 3.0], [np.inf], [-np.inf])
+    def test_replaces_inf_with_train_mean(self, make_splits):
+        train, val, test = make_splits([1.0, 3.0], [np.inf], [-np.inf])
         train, val, test = fill_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 2.0
         assert pytest.approx(test["feat1"].iloc[0]) == 2.0
 
-    def test_train_inf_replaced_before_mean(self, te_splits_factory):
-        train, val, test = te_splits_factory([1.0, np.inf, 3.0], [np.nan], [np.nan])
+    def test_train_inf_replaced_before_mean(self, make_splits):
+        train, val, test = make_splits([1.0, np.inf, 3.0], [np.nan], [np.nan])
         train, val, test = fill_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 2.0
 
-    def test_no_nans_unchanged(self, te_splits_factory):
-        train, val, test = te_splits_factory([1.0, 2.0], [3.0], [4.0])
+    def test_no_nans_unchanged(self, make_splits):
+        train, val, test = make_splits([1.0, 2.0], [3.0], [4.0])
         train, val, test = fill_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 3.0
         assert pytest.approx(test["feat1"].iloc[0]) == 4.0

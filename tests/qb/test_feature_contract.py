@@ -15,7 +15,11 @@ import pandas as pd
 import pytest
 
 from src.features.engineer import get_attn_static_columns
-from src.qb.config import ATTN_STATIC_FEATURES, INCLUDE_FEATURES, SPECIFIC_FEATURES
+from src.qb.config import POSITION_CONFIG
+
+ATTN_STATIC_FEATURES = POSITION_CONFIG.attn_static_features
+INCLUDE_FEATURES = POSITION_CONFIG.include_features
+SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
 from src.qb.features import add_specific_features, get_feature_columns
 
 # Per-feature NaN ceilings — the QB pipeline uses .fillna(0) so output NaN

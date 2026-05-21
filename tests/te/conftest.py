@@ -1,8 +1,12 @@
-"""Shared fixtures for TE tests — thin wrappers over tests.shared.position_fixtures.
+"""Shared fixtures for TE tests — installs the standard position fixtures
+bound to TE's scoring scale and target list. Generic factories live in
+``tests/shared/position_fixtures.py``.
 
-Generic factories are imported from ``tests.shared.position_fixtures``;
-this conftest binds them to the TE scoring scale (~15) and targets, and
-keeps the TE-specific tiny-splits fixture used by E2E and regression tests.
+TE matches the QB/RB/K/DST pattern: the generic ``register_standard_fixtures``
+helper installs ``make_sim_df`` / ``make_test_df`` / ``make_tensors`` /
+``make_splits`` / ``make_position_df`` (plus default shortcuts ``sim_df`` /
+``test_df``). Only the TE-specific tiny synthetic dataset used by E2E and
+regression tests stays here.
 """
 
 from __future__ import annotations
@@ -11,24 +15,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.te.config import TARGETS
-from tests.shared.position_fixtures import (
-    make_position_df as _make_position_df,
-)
-from tests.shared.position_fixtures import (
-    make_sim_df as _make_sim_df,
-)
-from tests.shared.position_fixtures import (
-    make_splits as _make_splits,
-)
-from tests.shared.position_fixtures import (
-    make_tensors as _make_tensors,
-)
-from tests.shared.position_fixtures import (
-    make_test_df as _make_test_df,
-)
+from src.te.config import POSITION_CONFIG
 from tests.shared.position_fixtures import (
     register_position_markers,
+    register_standard_fixtures,
 )
 
 # TE fantasy points typically span 0-15 (lower than WRs).
@@ -42,87 +32,15 @@ def pytest_configure(config):
     )
 
 
-# ---------------------------------------------------------------------------
-# Generic TE fixtures — bind shared factories to TE scale / prefix / targets
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def te_sim_df_factory():
-    """Factory for synthetic weekly-simulation DataFrames with TE scoring."""
-
-    def _factory(n_weeks: int = 4, n_players: int = 15, seed: int = 42):
-        return _make_sim_df(
-            SCORING_SCALE,
-            n_weeks,
-            n_players,
-            seed,
-            id_prefix="TE",
-            rng_kind="default",
-        )
-
-    return _factory
-
-
-@pytest.fixture()
-def te_sim_df(te_sim_df_factory):
-    """Default-size weekly-simulation DataFrame (4 weeks x 15 players)."""
-    return te_sim_df_factory()
-
-
-@pytest.fixture(scope="session")
-def te_test_df_factory():
-    """Factory for synthetic ranking-metrics DataFrames with TE scoring scale."""
-
-    def _factory(n_weeks: int = 3, n_players: int = 15, seed: int = 42):
-        return _make_test_df(
-            SCORING_SCALE,
-            n_weeks,
-            n_players,
-            seed,
-            id_prefix="TE",
-            rng_kind="default",
-        )
-
-    return _factory
-
-
-@pytest.fixture()
-def te_test_df(te_test_df_factory):
-    """Default-size ranking-metrics DataFrame (3 weeks x 15 players)."""
-    return te_test_df_factory()
-
-
-@pytest.fixture(scope="session")
-def te_tensor_factory():
-    """Factory for random TE (preds, targets) tensor dicts used by loss tests."""
-
-    def _factory(n: int = 10, seed: int = 42):
-        return _make_tensors(TARGETS, n=n, seed=seed)
-
-    return _factory
-
-
-@pytest.fixture()
-def te_tensors(te_tensor_factory):
-    """Default-size TE tensor dicts (n=10)."""
-    return te_tensor_factory()
-
-
-@pytest.fixture(scope="session")
-def te_splits_factory():
-    """Factory for (train, val, test) DataFrames used by fill_nans tests."""
-    return _make_splits
-
-
-@pytest.fixture(scope="session")
-def te_position_df_factory():
-    """Factory for position-encoded DataFrames used by filter_to_position tests."""
-
-    def _factory(positions, has_pos_cols: bool = True):
-        return _make_position_df(positions, stat_col="receiving_yards", has_pos_cols=has_pos_cols)
-
-    return _factory
+register_standard_fixtures(
+    globals(),
+    scoring_scale=SCORING_SCALE,
+    id_prefix="TE",
+    targets=POSITION_CONFIG.targets,
+    stat_col="receiving_yards",
+    rng_kind="default",
+    install_default_shortcuts=True,
+)
 
 
 # ---------------------------------------------------------------------------

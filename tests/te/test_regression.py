@@ -28,12 +28,11 @@ from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
-from src.te.config import (
-    CONFIG_TINY,
-    LGBM_MIN_CHILD_SAMPLES,
-    LGBM_NUM_LEAVES,
-    TARGETS,
-)
+from src.te.config import CONFIG_TINY, POSITION_CONFIG
+
+LGBM_MIN_CHILD_SAMPLES = POSITION_CONFIG.lgbm_min_child_samples
+LGBM_NUM_LEAVES = POSITION_CONFIG.lgbm_num_leaves
+TARGETS = POSITION_CONFIG.targets
 from src.te.data import filter_to_position
 from src.te.features import (
     add_specific_features,

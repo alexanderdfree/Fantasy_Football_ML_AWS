@@ -6,7 +6,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.rb.config import TARGETS
+from src.rb.config import POSITION_CONFIG
+
+TARGETS = POSITION_CONFIG.targets
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
 
 # ---------------------------------------------------------------------------

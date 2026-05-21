@@ -3,10 +3,13 @@
 Consolidates three pieces of glue that both test files need:
 
 1. ``build_tiny_config(position)`` — assemble a shrunk pipeline config
-   (1 epoch, 2-layer x 8-unit NN, no attention/LightGBM) from the
-   position's real config module. If the position exposes a
-   ``{POS}_CONFIG_TINY`` symbol we splice it onto the callables; otherwise
-   we shrink the full production config inline.
+   (1 epoch, 2-layer x 8-unit NN, no attention/LightGBM) by feeding the
+   position's ``POSITION_CONFIG`` through ``build_pipeline_config``, then
+   layering ``_TINY_OVERRIDES`` and the per-position ``CONFIG_TINY``
+   (if exposed in ``src/{pos}/config.py``) on top. Resolves the
+   data/features/targets callables via :func:`build_position_callables`
+   so a new position only needs to expose ``POSITION_CONFIG`` plus the
+   standard symbols to get a tiny config for free.
 
 2. ``load_tiny_splits(position)`` — return ``(train, val, test)`` frames
    sized for a <20s pipeline round-trip. For player-level positions (QB,
@@ -25,6 +28,7 @@ Ensures project root is on ``sys.path`` so tests run from any cwd.
 
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 from pathlib import Path
@@ -71,202 +75,47 @@ _TINY_OVERRIDES: dict[str, Any] = {
 }
 
 
-def _qb_tiny() -> dict:
-    from src.qb.run_pipeline import CONFIG
-
-    return _shrink(CONFIG)
-
-
-def _rb_tiny() -> dict:
-    from src.rb.run_pipeline import CONFIG
-
-    return _shrink(CONFIG)
-
-
-def _wr_tiny() -> dict:
-    """WR config — prefer CONFIG_TINY if present, else shrink CONFIG.
-
-    WR (like QB/RB/TE) no longer uses a ``compute_adjustment_fn`` — the fumble
-    penalty is now a direct target priced by ``src/shared/aggregate_targets.py``
-    per docs/ARCHITECTURE.md. Only K and DST still wire an adjustment function.
-    """
-    from src.wr.data import filter_to_position
-    from src.wr.features import (
-        add_specific_features,
-        fill_nans,
-        get_feature_columns,
-    )
-    from src.wr.targets import compute_targets
-
-    callables = {
-        "filter_fn": filter_to_position,
-        "compute_targets_fn": compute_targets,
-        "add_features_fn": add_specific_features,
-        "fill_nans_fn": fill_nans,
-        "get_feature_columns_fn": get_feature_columns,
-    }
-    try:
-        from src.wr.config import CONFIG_TINY
-
-        cfg = dict(CONFIG_TINY)
-    except ImportError:
-        from src.wr.run_pipeline import CONFIG
-
-        cfg = _shrink(CONFIG)
-    cfg.update(callables)
-    return cfg
-
-
-def _te_tiny() -> dict:
-    """TE config — use CONFIG_TINY if exposed, else shrink CONFIG inline."""
-    from src.te.data import filter_to_position
-    from src.te.features import (
-        add_specific_features,
-        fill_nans,
-        get_feature_columns,
-    )
-    from src.te.targets import compute_targets
-
-    callables = {
-        "filter_fn": filter_to_position,
-        "compute_targets_fn": compute_targets,
-        "add_features_fn": add_specific_features,
-        "fill_nans_fn": fill_nans,
-        "get_feature_columns_fn": get_feature_columns,
-    }
-    try:
-        from src.te.config import CONFIG_TINY
-
-        cfg = dict(CONFIG_TINY)
-    except ImportError:
-        from src.te.run_pipeline import CONFIG
-
-        cfg = _shrink(CONFIG)
-    cfg.update(callables)
-    return cfg
-
-
-def _k_tiny() -> dict:
-    """K config — use CONFIG_TINY if exposed, else build a shrunk cfg from src/k/config.py."""
-    from src.k.data import filter_to_position
-    from src.k.features import (
-        add_specific_features,
-        fill_nans,
-        get_feature_columns,
-    )
-    from src.k.targets import compute_targets
-
-    try:
-        from src.k.config import CONFIG_TINY
-
-        cfg = dict(CONFIG_TINY)
-    except ImportError:
-        # Build a fresh tiny config from the exported config module constants.
-        from src.k.config import (
-            CV_SPLIT_COLUMN,
-            HUBER_DELTAS,
-            LOSS_WEIGHTS,
-            SPECIFIC_FEATURES,
-            TARGETS,
-        )
-
-        cfg = {
-            "targets": TARGETS,
-            "specific_features": SPECIFIC_FEATURES,
-            "loss_weights": LOSS_WEIGHTS,
-            "huber_deltas": HUBER_DELTAS,
-            "cv_split_column": CV_SPLIT_COLUMN,
-            "ridge_alpha_grids": {t: [1.0, 10.0] for t in TARGETS},
-        }
-        cfg.update(_TINY_OVERRIDES)
-
-    cfg.update(
-        {
-            "filter_fn": filter_to_position,
-            "compute_targets_fn": compute_targets,
-            "add_features_fn": add_specific_features,
-            "fill_nans_fn": fill_nans,
-            "get_feature_columns_fn": get_feature_columns,
-            "compute_adjustment_fn": None,
-        }
-    )
-    return cfg
-
-
-def _dst_tiny() -> dict:
-    """DST config — use CONFIG_TINY if exposed, else build a shrunk cfg inline."""
-    from src.dst.config import (
-        HUBER_DELTAS,
-        LOSS_WEIGHTS,
-        SPECIFIC_FEATURES,
-        TARGETS,
-    )
-    from src.dst.data import filter_to_position
-    from src.dst.features import (
-        add_specific_features,
-        fill_nans,
-        get_feature_columns,
-    )
-    from src.dst.targets import compute_targets
-
-    cfg = {
-        "targets": TARGETS,
-        "ridge_alpha_grids": {t: [1.0, 10.0] for t in TARGETS},
-        "specific_features": SPECIFIC_FEATURES,
-        "loss_weights": LOSS_WEIGHTS,
-        "huber_deltas": HUBER_DELTAS,
-        "filter_fn": filter_to_position,
-        "compute_targets_fn": compute_targets,
-        "add_features_fn": add_specific_features,
-        "fill_nans_fn": fill_nans,
-        "get_feature_columns_fn": get_feature_columns,
-        "compute_adjustment_fn": None,
-    }
-    cfg.update(_TINY_OVERRIDES)
-
-    try:
-        from src.dst.config import CONFIG_TINY
-
-        cfg.update(CONFIG_TINY)
-    except ImportError:
-        # CONFIG_TINY not exposed; the generic tiny overrides above suffice.
-        pass
-    return cfg
-
-
-_TINY_BUILDERS = {
-    "QB": _qb_tiny,
-    "RB": _rb_tiny,
-    "WR": _wr_tiny,
-    "TE": _te_tiny,
-    "K": _k_tiny,
-    "DST": _dst_tiny,
-}
-
-
-def _shrink(base_cfg: dict) -> dict:
-    """Return a copy of ``base_cfg`` with tiny NN/scheduler/ridge overrides.
-
-    Preserves the position-specific callables and feature schema; only the
-    training hyperparameters get squashed. Used for positions whose config
-    module does not (yet) expose a ``_CONFIG_TINY`` variant.
-    """
-    cfg = dict(base_cfg)
-    cfg.update(_TINY_OVERRIDES)
-    # Force a compact, deterministic ridge grid so per-target CV tuning is fast.
-    if "ridge_alpha_grids" in cfg:
-        cfg["ridge_alpha_grids"] = {
-            t: [1.0, 10.0] for t in cfg.get("targets", cfg["ridge_alpha_grids"])
-        }
-    return cfg
-
-
 def build_tiny_config(position: str) -> dict:
-    """Return a shrunk run_pipeline config for the given position."""
+    """Return a shrunk run_pipeline config for the given position.
+
+    Pipeline:
+
+    1. Start from the position's full CONFIG via
+       :func:`src.shared.position_pipeline.build_pipeline_config` — this is
+       the same code path ``src/{pos}/run_pipeline.py::CONFIG`` exercises,
+       so callables and POSITION_CONFIG-derived fields are all populated.
+    2. Apply ``_TINY_OVERRIDES`` to shrink the heavy NN/scheduler/ridge knobs.
+    3. If the position's config module exposes a ``CONFIG_TINY`` dict, merge
+       it last so its values override the generic overrides (e.g. WR/TE/K's
+       single-alpha ridge grids); otherwise compact the ridge grid to two
+       alphas via the legacy ``_shrink`` behaviour.
+    4. K and DST add an explicit ``compute_adjustment_fn=None`` (historical
+       contract — both positions never wired an adjustment function and the
+       slot is read unconditionally).
+    """
+    from src.shared.position_pipeline import build_pipeline_config
+
     position = position.upper()
-    if position not in _TINY_BUILDERS:
+    if position not in ALL_POSITIONS:
         raise ValueError(f"Unknown position {position!r}")
-    return _TINY_BUILDERS[position]()
+
+    config_mod = importlib.import_module(f"src.{position.lower()}.config")
+    cfg = build_pipeline_config(position, config_mod.POSITION_CONFIG)
+
+    cfg.update(_TINY_OVERRIDES)
+
+    # Compact ridge grid for speed — CONFIG_TINY can re-override below.
+    if "ridge_alpha_grids" in cfg:
+        cfg["ridge_alpha_grids"] = {t: [1.0, 10.0] for t in cfg.get("targets", [])}
+
+    cfg_tiny = getattr(config_mod, "CONFIG_TINY", None)
+    if cfg_tiny is not None:
+        cfg.update(cfg_tiny)
+
+    if position in ("K", "DST"):
+        cfg.setdefault("compute_adjustment_fn", None)
+
+    return cfg
 
 
 # ---------------------------------------------------------------------------
