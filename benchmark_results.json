@@ -119,17 +119,17 @@
     },
     "lgbm_top12": 0.537,
     "phase_seconds": {
-      "prepare_data": 3.7,
+      "prepare_data": 0.1,
       "ridge_tune": 1.3,
       "ridge_fit": 0.0,
-      "nn_train": 20.4,
-      "attn_nn_train": 49.2,
-      "lgbm_train": 2.4,
+      "nn_train": 21.6,
+      "attn_nn_train": 60.2,
+      "lgbm_train": 2.1,
       "backtest": 0.2,
       "save_artifacts": 0.0,
-      "figures": 3.7
+      "figures": 1.8
     },
-    "elapsed_sec": 84.2
+    "elapsed_sec": 90.1
   },
   {
     "position": "RB",
@@ -251,17 +251,17 @@
     },
     "lgbm_top12": 0.477,
     "phase_seconds": {
-      "prepare_data": 8.6,
-      "ridge_tune": 1.4,
-      "ridge_fit": 0.5,
-      "nn_train": 21.0,
-      "attn_nn_train": 116.5,
-      "lgbm_train": 10.7,
+      "prepare_data": 0.2,
+      "ridge_tune": 1.7,
+      "ridge_fit": 0.6,
+      "nn_train": 19.3,
+      "attn_nn_train": 134.6,
+      "lgbm_train": 11.2,
       "backtest": 0.2,
       "save_artifacts": 0.1,
-      "figures": 1.7
+      "figures": 1.9
     },
-    "elapsed_sec": 161.0
+    "elapsed_sec": 170.2
   },
   {
     "position": "WR",
@@ -351,17 +351,17 @@
     },
     "lgbm_top12": 0.375,
     "phase_seconds": {
-      "prepare_data": 6.2,
-      "ridge_tune": 1.7,
+      "prepare_data": 0.2,
+      "ridge_tune": 2.1,
       "ridge_fit": 0.1,
-      "nn_train": 10.9,
-      "attn_nn_train": 80.8,
-      "lgbm_train": 10.8,
+      "nn_train": 13.3,
+      "attn_nn_train": 95.8,
+      "lgbm_train": 10.7,
       "backtest": 0.2,
       "save_artifacts": 0.1,
-      "figures": 1.4
+      "figures": 1.3
     },
-    "elapsed_sec": 112.4
+    "elapsed_sec": 124.1
   },
   {
     "position": "TE",
@@ -451,17 +451,17 @@
     },
     "lgbm_top12": 0.486,
     "phase_seconds": {
-      "prepare_data": 3.6,
-      "ridge_tune": 1.2,
+      "prepare_data": 0.1,
+      "ridge_tune": 1.3,
       "ridge_fit": 0.0,
-      "nn_train": 15.9,
-      "attn_nn_train": 54.1,
-      "lgbm_train": 3.8,
+      "nn_train": 16.3,
+      "attn_nn_train": 60.7,
+      "lgbm_train": 4.1,
       "backtest": 0.2,
       "save_artifacts": 0.1,
-      "figures": 1.5
+      "figures": 1.4
     },
-    "elapsed_sec": 80.8
+    "elapsed_sec": 84.5
   },
   {
     "position": "K",
@@ -551,17 +551,17 @@
     },
     "lgbm_top12": 0.458,
     "phase_seconds": {
-      "prepare_data": 0.1,
+      "prepare_data": 0.0,
       "ridge_tune": 0.2,
       "ridge_fit": 0.0,
-      "nn_train": 9.4,
-      "attn_nn_train": 32.0,
+      "nn_train": 10.2,
+      "attn_nn_train": 31.8,
       "lgbm_train": 0.3,
       "backtest": 0.2,
       "save_artifacts": 0.0,
-      "figures": 1.4
+      "figures": 1.2
     },
-    "elapsed_sec": 64.7
+    "elapsed_sec": 70.8
   },
   {
     "position": "DST",
@@ -747,16 +747,16 @@
     },
     "lgbm_top12": 0.463,
     "phase_seconds": {
-      "prepare_data": 0.1,
-      "ridge_tune": 1.6,
+      "prepare_data": 0.0,
+      "ridge_tune": 1.8,
       "ridge_fit": 0.0,
-      "nn_train": 22.8,
-      "attn_nn_train": 84.6,
-      "lgbm_train": 1.4,
+      "nn_train": 22.9,
+      "attn_nn_train": 75.0,
+      "lgbm_train": 1.2,
       "backtest": 0.2,
       "save_artifacts": 0.1,
-      "figures": 3.1
+      "figures": 2.4
     },
-    "elapsed_sec": 119.2
+    "elapsed_sec": 108.9
   }
 ]
