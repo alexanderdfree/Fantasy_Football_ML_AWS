@@ -247,6 +247,19 @@ def _build_synthetic_dataset(
                         "passing_yards": 0,
                         "passing_tds": 0,
                         "interceptions": 0,
+                        # Raw passing-side stat cols build_features and its
+                        # opp-defense aggregator reference. RBs don't throw or
+                        # get sacked — zero is the realistic constant — but
+                        # the columns must be present or build_features
+                        # raises ``KeyError: 'Column not found: <name>'``.
+                        "attempts": 0,
+                        "completions": 0,
+                        "sacks": 0,
+                        "sack_yards": 0,
+                        "passing_air_yards": 0,
+                        "passing_yards_after_catch": 0,
+                        "passing_first_downs": 0,
+                        "passing_epa": 0.0,
                         "rushing_epa": rng.normal(0.0, 0.5) * carries,
                         "rushing_first_downs": int(carries * 0.25),
                         "receiving_first_downs": int(receptions * 0.4),
