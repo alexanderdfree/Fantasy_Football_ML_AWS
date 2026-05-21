@@ -219,7 +219,7 @@ aws batch create-compute-environment \
   --state ENABLED \
   --compute-resources '{
     "type": "SPOT",
-    "allocationStrategy": "SPOT_CAPACITY_OPTIMIZED",
+    "allocationStrategy": "SPOT_PRICE_CAPACITY_OPTIMIZED",
     "minvCpus": 0,
     "maxvCpus": 24,
     "instanceTypes": ["g4dn.xlarge"],
@@ -233,7 +233,7 @@ aws batch create-compute-environment \
 - `type=SPOT` — 70% cheaper than on-demand
 - `minvCpus=0` — scales to zero when idle (no cost)
 - `maxvCpus=24` — up to 6 concurrent g4dn.xlarge (4 vCPUs each)
-- `allocationStrategy=SPOT_CAPACITY_OPTIMIZED` — best Spot availability
+- `allocationStrategy=SPOT_PRICE_CAPACITY_OPTIMIZED` — AWS-recommended strategy that weighs *both* capacity (lowest current reclaim risk) and Spot price. Strict superset of `SPOT_CAPACITY_OPTIMIZED`: same reclaim-avoidance behaviour plus price awareness
 
 ### Job Queue
 
@@ -269,13 +269,23 @@ aws batch register-job-definition \
     }
   }' \
   --timeout '{"attemptDurationSeconds": 1800}' \
-  --retry-strategy '{"attempts": 1}'
+  --retry-strategy '{
+    "attempts": 3,
+    "evaluateOnExit": [
+      {"onStatusReason": "Host EC2*", "action": "RETRY"},
+      {"onReason": "CannotPullContainerError*", "action": "RETRY"},
+      {"onReason": "*", "action": "EXIT"}
+    ]
+  }'
 ```
 
 - `vcpus=4, memory=15000` — matches g4dn.xlarge (4 vCPU, 16 GB RAM)
 - `resourceRequirements: GPU=1` — ensures GPU scheduling
-- `timeout: 1800` — 30-minute max
+- `timeout: 1800` — 30-minute max **per attempt** (wall-clock cap)
+- `retry-strategy` — up to 3 attempts; `evaluateOnExit` retries only on Spot reclaim (`Host EC2*`) or transient ECR pull errors. Anything else (`onReason: "*"`) is treated as a genuine app failure and fails immediately so app crashes don't loop. With the 30-min per-attempt cap, worst-case wall-clock is bounded at 90 min per position.
 - `command` not set here — overridden per-job via `containerOverrides`
+
+**Two layers of retry strategy — keep them in sync.** The job definition above is the fallback for any submitter (e.g. a manual `aws batch submit-job`), but production training goes through [src/batch/launch.py](../src/batch/launch.py), which passes its own `retryStrategy={...}` to `submit_job()` — that per-submission override wins for those jobs. The job definition's retry strategy is hardcoded in [.github/workflows/batch-image.yml](../.github/workflows/batch-image.yml)'s registration step (the workflow file is the source of truth — `infra/batch/setup.sh` is only the seed for brand-new accounts, since `setup.sh` is idempotent and the workflow re-registers on every image push). All three locations — launch.py, the workflow, and setup.sh — must stay in sync.
 
 ### Build and Push Image
 

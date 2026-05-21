@@ -52,13 +52,20 @@ POLL_INTERVAL_SECONDS = 30
 WAIT_TIMEOUT_SECONDS = int(os.environ.get("FF_WAIT_TIMEOUT", 3 * 60 * 60))
 TERMINAL_STATES = {"SUCCEEDED", "FAILED"}
 
-# Retry Spot reclaims automatically; don't retry deterministic app failures.
+# Retry Spot reclaims and transient ECR pull errors; don't retry deterministic
+# app failures. Mirrored as the job-definition fallback in
+# infra/batch/setup.sh + .github/workflows/batch-image.yml so submitters that
+# bypass this launcher (manual `aws batch submit-job`, future tools) get the
+# same protection — keep all three in sync.
 RETRY_STRATEGY = {
     "attempts": 3,
     "evaluateOnExit": [
-        # Spot interruption: host terminated by EC2 -> retry
+        # Spot interruption: host terminated by EC2 -> retry on a fresh pool
+        # (SPOT_PRICE_CAPACITY_OPTIMIZED picks one with low current reclaim risk).
         {"onStatusReason": "Host EC2*", "action": "RETRY"},
-        # Anything else: exit immediately so we see the real error
+        # ECR pull blip / pull-through-cache miss: transient, retry.
+        {"onReason": "CannotPullContainerError*", "action": "RETRY"},
+        # Anything else: exit immediately so we see the real error.
         {"onReason": "*", "action": "EXIT"},
     ],
 }

@@ -17,6 +17,11 @@ on:
       - "src/**"
       - "requirements.txt"
       - ".github/workflows/batch-image.yml"
+      # infra/batch/** is included so retry strategy / timeout edits in
+      # setup.sh propagate to the deployed job definition on next merge —
+      # the registration step below pins canonical values, so setup.sh
+      # alone never updates a live account.
+      - "infra/batch/**"
       - "!**/tests/**"
       - "!**/*.md"
   workflow_dispatch: {}
@@ -167,14 +172,35 @@ jobs:
             --max-results 1 \
             --region "$AWS_REGION" > current.json
 
-          jq --arg image "$IMAGE_URI" '
+          # retryStrategy + timeout are HARDCODED here, not carried forward
+          # from the existing definition. This file is the source of truth;
+          # any change here propagates on the next image push. Keep these
+          # values in sync with infra/batch/setup.sh (the seed for brand-new
+          # accounts only — once a definition exists, this workflow owns it).
+          # Mirrors src/batch/launch.py's per-submission RETRY_STRATEGY so
+          # all paths into this job definition (launch.py, manual aws batch
+          # submit-job, future tools) see the same retry behaviour. Update
+          # all three together.
+          RETRY_STRATEGY='{
+            "attempts": 3,
+            "evaluateOnExit": [
+              {"onStatusReason": "Host EC2*", "action": "RETRY"},
+              {"onReason": "CannotPullContainerError*", "action": "RETRY"},
+              {"onReason": "*", "action": "EXIT"}
+            ]
+          }'
+          TIMEOUT='{"attemptDurationSeconds": 1800}'
+
+          jq --arg image "$IMAGE_URI" \
+             --argjson retry "$RETRY_STRATEGY" \
+             --argjson timeout "$TIMEOUT" '
             .jobDefinitions[0] as $d |
             {
               jobDefinitionName: $d.jobDefinitionName,
               type: $d.type,
               containerProperties: ($d.containerProperties | .image = $image),
-              retryStrategy: ($d.retryStrategy // empty),
-              timeout: ($d.timeout // empty),
+              retryStrategy: $retry,
+              timeout: $timeout,
               platformCapabilities: ($d.platformCapabilities // []),
               propagateTags: ($d.propagateTags // false),
               tags: ($d.tags // {})
