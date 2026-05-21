@@ -54,6 +54,40 @@ def test_build_game_history_arrays_error_message_lists_missing_and_points_at_reg
     message = str(exc.value)
     assert "redzone_carries" in message
     assert "refresh-splits" in message or "SETUP.md" in message
+    # ``attn_history_stats`` (the PositionConfig field name) must appear so an
+    # operator who greps for the config field lands on this error.
+    assert "attn_history_stats" in message
+
+
+@pytest.mark.unit
+def test_build_game_history_arrays_empty_df_with_missing_cols_raises():
+    """The missing-cols check runs BEFORE the ``n == 0`` early return, so an
+    empty DataFrame whose schema doesn't include the requested stats still
+    raises rather than silently returning zero arrays. Locks in the (correct)
+    new semantics: a configuration error doesn't get hidden by an empty
+    split."""
+    df = pd.DataFrame()  # no rows, no columns
+    with pytest.raises(KeyError, match=r"attn_history_stats columns missing"):
+        build_game_history_arrays(
+            df,
+            history_stats=["rushing_yards"],
+            max_seq_len=4,
+        )
+
+
+@pytest.mark.unit
+def test_build_game_history_arrays_empty_df_with_cols_returns_zero_shape():
+    """Empty rows but required columns present → returns zero-shaped arrays.
+    Distinguishes the legitimate empty-split case from the misconfiguration
+    case in the previous test."""
+    df = pd.DataFrame({"player_id": [], "season": [], "week": [], "rushing_yards": []})
+    X_history, mask = build_game_history_arrays(
+        df,
+        history_stats=["rushing_yards"],
+        max_seq_len=4,
+    )
+    assert X_history.shape == (0, 4, 1)
+    assert mask.shape == (0, 4)
 
 
 @pytest.mark.unit
