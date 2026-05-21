@@ -23,6 +23,7 @@ import pytest
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_pipeline
 from src.wr.config import CONFIG_TINY, POSITION_CONFIG
+from tests._skip_helpers import require_splits
 
 TARGETS = POSITION_CONFIG.targets
 from src.wr.data import filter_to_position
@@ -94,9 +95,7 @@ def tiny_splits():
     synthesize them because run_pipeline expects 100+ engineered
     upstream feature columns.
     """
-    splits_dir = SPLITS_DIR
-    if not (splits_dir / "train.parquet").exists():
-        pytest.skip(f"engineered splits absent at {splits_dir} (run data pull — see SETUP.md)")
+    require_splits(SPLITS_DIR)
     return _load_tiny_splits()
 
 

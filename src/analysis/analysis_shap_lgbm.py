@@ -33,7 +33,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from src.shared.models import LightGBMMultiTarget  # noqa: E402
-from src.shared.pipeline import build_train_matrix  # noqa: E402
+
+# build_train_matrix is lazy-imported in _run_shap_for_position so this module
+# stays torch-free at import time. src.shared.pipeline pulls torch via the
+# training stack; the SHAP integration test subprocesses this module and would
+# segfault on macOS once torch is loaded before SHAP. Tests monkeypatch this
+# module-level attribute to bypass the lazy import entirely.
+build_train_matrix = None
 
 
 def _load_position_config(pos: str) -> dict:
@@ -96,7 +102,10 @@ def _run_shap_for_position(
     model.load(f"{model_dir}/models")
 
     print("  Rebuilding train matrix...")
-    X_train, _, feature_cols = build_train_matrix(pos, cfg)
+    btm_fn = build_train_matrix
+    if btm_fn is None:
+        from src.shared.pipeline import build_train_matrix as btm_fn  # noqa: F811
+    X_train, _, feature_cols = btm_fn(pos, cfg)
     background = _sample_background(X_train, background_samples, seed)
     X_bg_df = pd.DataFrame(background, columns=feature_cols)
     print(f"  Background: {background.shape[0]} rows x {background.shape[1]} features")

@@ -51,13 +51,18 @@ def test_loss_weights_match_huber_deltas(pos: str):
     Non-Huber heads (Poisson NLL, hurdle-NegBin) have no Huber delta and use
     weight 1.0 by convention — they're skipped here.
     """
-    cfg = _config(pos)
-    lw = getattr(cfg, "LOSS_WEIGHTS", None)
-    hd = getattr(cfg, "HUBER_DELTAS", None)
-    if lw is None or hd is None:
-        pytest.skip(f"{pos} has no LOSS_WEIGHTS or HUBER_DELTAS")
+    # Read from POSITION_CONFIG (per-position config classes don't export
+    # UPPERCASE module-level constants — see e.g. src/qb/config.py header).
+    pc = _config(pos).POSITION_CONFIG
+    lw = pc.loss_weights
+    hd = pc.huber_deltas
+    head_losses = pc.head_losses
 
-    head_losses = getattr(cfg, "HEAD_LOSSES", None)
+    assert lw, (
+        f"{pos}.POSITION_CONFIG.loss_weights is empty — every position trains "
+        f"a NN with weighted per-target losses (CLAUDE.md 'Loss weights are "
+        f"tuned inverse-to-Huber-delta')."
+    )
 
     bad: list[tuple[str, float, float, float]] = []
     for t, weight in lw.items():
@@ -65,11 +70,11 @@ def test_loss_weights_match_huber_deltas(pos: str):
         # hurdle-NegBin / etc.) — the 2.0/delta rule only applies to Huber.
         if t not in hd:
             continue
-        # Belt-and-suspenders: if HEAD_LOSSES is set and explicitly marks
-        # this head as non-Huber, skip it. (HUBER_DELTAS shouldn't list a
+        # Belt-and-suspenders: if head_losses is set and explicitly marks
+        # this head as non-Huber, skip it. (huber_deltas shouldn't list a
         # non-Huber target, but the per-head loss family is the source of
         # truth.)
-        if head_losses is not None and head_losses.get(t, "huber") != "huber":
+        if head_losses and head_losses.get(t, "huber") != "huber":
             continue
         delta = hd[t]
         product = weight * delta
@@ -122,8 +127,12 @@ def test_attn_static_features_subset_of_include(pos: str):
     """
     pc = _config(pos).POSITION_CONFIG
     attn_static = pc.attn_static_features
-    if not attn_static:
-        pytest.skip(f"{pos} has no attn_static_features")
+    assert attn_static, (
+        f"{pos}.POSITION_CONFIG.attn_static_features is empty — every position "
+        f"trains the attention NN and must populate the static branch "
+        f"whitelist (CLAUDE.md 'Attention static-feature whitelist is "
+        f"separate per position')."
+    )
 
     if pc.include_features:
         whitelist_name = "include_features"
@@ -132,7 +141,11 @@ def test_attn_static_features_subset_of_include(pos: str):
         whitelist_name = "all_features"
         whitelist = set(pc.all_features)
     else:
-        pytest.skip(f"{pos} has no include_features or all_features")
+        raise AssertionError(
+            f"{pos}.POSITION_CONFIG has neither include_features nor "
+            f"all_features — one of them must be populated (CLAUDE.md "
+            f"'Feature whitelist is explicit, not inferred')."
+        )
 
     missing = sorted(set(attn_static) - whitelist)
     assert not missing, (
