@@ -23,12 +23,23 @@ on:
         description: "Random seed"
         default: "42"
 
-# Deliberately NO `concurrency:` block — Spot fan-out lets parallel runs from
-# rapid pushes coexist (Batch queues at the AWS level when the 24-vCPU quota
-# is saturated). Each run completes its post-train benchmark commit, so every
-# push contributes a benchmark_history/{run_id}.json record. The constrained
-# warm-EC2 path keeps its cancel-in-progress because one T4 can't run
-# concurrent jobs; that decision lives with the constrained path.
+concurrency:
+  # Group keyed by the SHA the upstream image was built from (workflow_run)
+  # or the dispatch ref (workflow_dispatch). Different SHAs preserve the
+  # Spot fan-out + cross-PR parallelism the original no-concurrency comment
+  # intended; same-SHA duplicates serialize. GitHub Actions fires
+  # workflow_run.completed multiple times per upstream completion (observed
+  # 2–3 deliveries per merge on the 2026-05-21 sweep) — without this group,
+  # every duplicate burned ~15 min of CI on a run whose only possible outcome
+  # was a no-op against the prior run's submitted Batch jobs. cancel-in-progress
+  # is false because the first run may already be mid-submit when the
+  # duplicate fires; canceling could orphan Batch jobs at the AWS layer. The
+  # `dedup_check` job below short-circuits the queued duplicate so it spends
+  # ~1 min on detect/dedup-API-call rather than the full ~15 min. The
+  # constrained warm-EC2 path keeps its own `train-ec2` cancel-in-progress
+  # group; that decision lives with the constrained path.
+  group: train-batch-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
 
 env:
   AWS_REGION: us-east-1
@@ -46,15 +57,73 @@ jobs:
     # contract-tested mapping.
     uses: ./.github/workflows/_detect-positions.yml
 
+  dedup_check:
+    # Workflow-level concurrency serializes same-SHA runs. By the time a
+    # queued duplicate runs this job, the first run has either succeeded
+    # (this sets skip=true → train short-circuits) or failed (skip=false →
+    # train retries). Manual workflow_dispatch bypasses dedup because
+    # operators dispatch deliberately. Even on the first run for a fresh
+    # SHA the API call is ~3 s — cheap enough that the always-on overhead
+    # is invisible compared to the ~15 min train job it potentially saves.
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          if [ "$EVENT_NAME" != "workflow_run" ]; then
+            echo "Event $EVENT_NAME bypasses dedup (manual dispatch always runs)."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # --commit filters server-side, so the --limit cap is now "up to N
+          # runs for THIS SHA" (effectively unbounded — a SHA realistically
+          # only fires 2-3 duplicates) rather than "up to N total successes
+          # across all SHAs" (where 20+ unrelated successes could mask Run 1).
+          # `|| echo "0"` defaults to "no prior found → proceed" if the gh
+          # API call fails transiently — better to over-run (one unnecessary
+          # re-train) than under-train (silent skip due to network blip,
+          # because `needs: dedup_check` would otherwise cascade to a train-
+          # job skip if this job exits non-zero under set -eu).
+          PRIOR=$(gh run list \
+            --repo "$REPO" \
+            --workflow=train-batch.yml \
+            --commit "$HEAD_SHA" \
+            --status=success \
+            --limit=20 \
+            --json databaseId \
+            --jq "[.[] | select((.databaseId | tostring) != \"$RUN_ID\")] | length" \
+            2>/dev/null || echo "0")
+          if [ "${PRIOR:-0}" -gt 0 ]; then
+            echo "Found $PRIOR prior successful train-batch run(s) for $HEAD_SHA — short-circuiting."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No prior successful runs for $HEAD_SHA — proceeding."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   train:
-    needs: detect
+    needs: [detect, dedup_check]
     # Gate: (a) detect found something to train; (b) either a manual dispatch
     # (smoke-test break-glass, bypasses BATCH_ACTIVE), or the upstream image
-    # build succeeded AND BATCH_ACTIVE=true.
+    # build succeeded AND BATCH_ACTIVE=true AND no prior successful run for
+    # this SHA (dedup short-circuit on duplicate workflow_run fires).
     if: >
       needs.detect.outputs.positions != '' &&
       (github.event_name == 'workflow_dispatch' ||
-       (vars.BATCH_ACTIVE == 'true' && github.event.workflow_run.conclusion == 'success'))
+       (vars.BATCH_ACTIVE == 'true' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        needs.dedup_check.outputs.skip != 'true'))
     runs-on: ubuntu-latest
     # Worst case: attempts=3 Spot retries × 1800s per attempt = 90 min per
     # chronically-interrupted position, parallel = 90 min + cold-start + post.

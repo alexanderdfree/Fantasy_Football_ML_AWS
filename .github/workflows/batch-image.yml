@@ -36,20 +36,51 @@ env:
   S3_BUCKET: ff-predictor-training
 
 jobs:
+  check-docs-only:
+    # Subject-line scan for the [docs-only] tag — line 1 of the merge commit
+    # plus any `* `-prefixed bullet (squash-merge constituent subjects). The
+    # previous flat `contains()` check matched prose mentions in commit
+    # bodies, causing both the PR that ADDED the [docs-only] feature
+    # (6d0490e2 — its title contains the literal `[docs-only]`) and a perf
+    # PR that DESCRIBED the feature in a constituent CI commit's body
+    # (e802a47 / PR #293) to skip their own image rebuilds. Moved from a
+    # workflow-expression `if:` to a shell-backed leading job because
+    # workflow expressions don't support regex or awk. workflow_dispatch
+    # bypasses the check (operator-driven re-build).
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_SHA: ${{ github.event.head_commit.id }}
+        run: |
+          set -eu
+          if [ "$EVENT_NAME" != "push" ]; then
+            echo "Event $EVENT_NAME bypasses [docs-only] check (manual dispatch always builds)."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git log -1 --format=%B "$MERGE_SHA" | awk 'NR==1 || /^\* /' | grep -qF '[docs-only]'; then
+            echo "[docs-only] detected in subject line of $MERGE_SHA — skipping image rebuild."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Tests run in tests.yml (matrix across positions). Branch protection on
   # main requires those checks to pass before a PR can merge, so we trust
   # the merged SHA here and go straight to building the image.
   build-and-push:
-    # Honor the [docs-only] tag from tests.yml's detect job convention. Path
-    # filters above already skip pure .md PRs, but a [docs-only]-tagged PR
-    # that touches .py files (e.g. a docstring fix, ruff I001 import
-    # reorder) would otherwise still rebuild the image and cascade into
-    # train-batch.yml. Squash merges carry constituent commit messages in
-    # the body, so the tag survives the merge and lands in
-    # head_commit.message. workflow_dispatch has no head_commit; contains()
-    # returns false on null → workflow runs (correct, manual dispatch is
-    # operator-driven and should always build).
-    if: "!contains(github.event.head_commit.message, '[docs-only]')"
+    needs: check-docs-only
+    if: needs.check-docs-only.outputs.skip != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
