@@ -733,11 +733,36 @@ def test_wiki_rewrite_href_passes_through_external_and_anchor(href):
 
 
 @pytest.mark.integration
-def test_wiki_rewrite_href_unknown_target_passes_through():
-    """A relative path that doesn't resolve to a registered wiki doc is returned unchanged."""
+def test_wiki_rewrite_href_unknown_target_rewrites_to_github_blob():
+    """A relative path that doesn't resolve to a registered wiki doc but is a
+    plausible repo file → GitHub blob URL so the link still works (opens
+    externally via the JS click handler) instead of returning a Flask 404."""
     import src.serving.app as app_mod
 
-    assert app_mod._wiki_rewrite_href("nonexistent.md", "docs/ARCHITECTURE.md") == "nonexistent.md"
+    assert app_mod._wiki_rewrite_href("nonexistent.md", "docs/ARCHITECTURE.md") == (
+        "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/blob/main/docs/nonexistent.md"
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "href", ["javascript:alert(1)", "data:text/html,<script>x</script>", "vbscript:msgbox"]
+)
+def test_wiki_rewrite_href_neutralizes_dangerous_schemes(href):
+    """Dangerous URL schemes are neutralized to '#' so a careless `[link](javascript:...)`
+    in committed markdown can't survive into the rendered HTML."""
+    import src.serving.app as app_mod
+
+    assert app_mod._wiki_rewrite_href(href, "docs/ARCHITECTURE.md") == "#"
+
+
+@pytest.mark.integration
+def test_wiki_rewrite_href_refuses_parent_directory_escape():
+    """A relative path that resolves outside the repo root (e.g. ../../etc/passwd)
+    is refused to '#' rather than rewritten into a GitHub blob URL."""
+    import src.serving.app as app_mod
+
+    assert app_mod._wiki_rewrite_href("../../etc/passwd", "docs/ARCHITECTURE.md") == "#"
 
 
 @pytest.mark.integration
