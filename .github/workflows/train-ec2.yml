@@ -297,9 +297,15 @@ jobs:
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
           FF_MODEL_S3_PREFIX: models
           POSITIONS: ${{ needs.detect.outputs.positions }}
+          # Branch + head SHA come from a workflow_run trigger whose payload
+          # is attacker-controllable (e.g. a fork that happens to share a
+          # branch name). CodeQL flags any direct ${{ }} interpolation into a
+          # ``run:`` block as a code-injection vector even when the upstream
+          # path filters look safe; routing through env vars makes the value
+          # a normal shell variable that downstream commands can quote.
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
-          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
           # Resolve the PR number from the merge commit so the serving UI's
           # History tab can deep-link rows to GitHub. Direct pushes to main
           # and squash-merge edge cases return empty — accept that and fall
@@ -363,8 +369,10 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Commit and push benchmark_history/
+        env:
+          # Same env-indirection rationale as the previous step.
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
         run: |
-          BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add benchmark_history/
