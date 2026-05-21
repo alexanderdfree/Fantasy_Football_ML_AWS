@@ -267,7 +267,14 @@ if [ "$JD_NAME" = "None" ] || [ -z "$JD_NAME" ] || [ "$JD_NAME" = "null" ]; then
       }
     }" \
     --timeout '{"attemptDurationSeconds": 1800}' \
-    --retry-strategy '{"attempts": 1}' \
+    --retry-strategy '{
+      "attempts": 3,
+      "evaluateOnExit": [
+        {"onStatusReason": "Host EC2*", "action": "RETRY"},
+        {"onReason": "CannotPullContainerError*", "action": "RETRY"},
+        {"onReason": "*", "action": "EXIT"}
+      ]
+    }' \
     --region "$REGION"
 else
   log "Job Definition $JOB_DEF already exists; CI will re-register on next push."
