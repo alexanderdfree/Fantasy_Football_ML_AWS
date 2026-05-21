@@ -46,7 +46,7 @@ from src.shared.registry import ALL_POSITIONS, CPU_ONLY_POSITIONS  # noqa: E402
 AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 BATCH_LOG_GROUP = "/aws/batch/job"
 
-POLL_INTERVAL_SECONDS = 30
+POLL_INTERVAL_SECONDS = 10
 # Hard cap so a stuck RUNNABLE job (Spot capacity, bad IAM, etc.) can't pin
 # this script forever. ~3h is generous for a 6-position GPU sweep.
 WAIT_TIMEOUT_SECONDS = int(os.environ.get("FF_WAIT_TIMEOUT", 3 * 60 * 60))

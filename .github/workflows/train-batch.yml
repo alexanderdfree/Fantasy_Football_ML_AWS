@@ -83,13 +83,18 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-          cache: "pip"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements*.txt"
 
       - name: Install launch + benchmark deps
         # requirements-dev.txt mirrors train-ec2.yml — src/batch/benchmark.py's
         # import chain pulls torch. src/batch/launch.py needs boto3, which is
         # in requirements.txt.
-        run: pip install -r requirements-dev.txt
+        run: uv pip install --system -r requirements-dev.txt
 
       - name: Submit Batch jobs and wait
         id: train
