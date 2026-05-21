@@ -144,35 +144,6 @@ def test_sync_noop_when_bucket_blank(monkeypatch):
 
 
 @pytest.mark.unit
-def test_sync_extracts_all_positions_via_legacy_fallback(monkeypatch, tmp_path):
-    """Pre-migration bucket: no manifest.json, just legacy model.tar.gz per
-    position. _sync_one must fall through to the legacy key and report
-    source=legacy."""
-    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
-    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
-
-    objects = {
-        f"models/{pos}/model.tar.gz": _make_tarball(
-            {f"{pos.lower()}_marker.pkl": b"payload-" + pos.encode()}
-        )
-        for pos in model_sync.POSITIONS
-    }
-    fake_s3 = _FakeS3(objects)
-    with mock.patch("boto3.client", return_value=fake_s3):
-        summary = model_sync.sync_models_from_s3()
-
-    assert summary is not None
-    assert {r["pos"] for r in summary["positions"]} == set(model_sync.POSITIONS)
-    assert {r["source"] for r in summary["positions"]} == {"legacy"}
-    for pos in model_sync.POSITIONS:
-        extracted = (
-            tmp_path / "src" / pos.lower() / "outputs" / "models" / f"{pos.lower()}_marker.pkl"
-        )
-        assert extracted.is_file()
-        assert extracted.read_bytes() == b"payload-" + pos.encode()
-
-
-@pytest.mark.unit
 def test_repo_root_resolves_to_actual_repo_root():
     """Contract: ``_repo_root()`` must return the directory the deployed Flask
     app's CWD resolves to (``/app`` in the container), not a subdirectory.
@@ -229,15 +200,20 @@ def test_sync_one_dest_string_path_matches_registry_model_dir(monkeypatch, tmp_p
     # for prepending ``src/`` so the dest matches the registry's
     # ``src/{pos}/outputs/models`` model_dir.
     fake_tar = _make_tarball({"sentinel": b"x"})
-    fake_s3 = _FakeS3({f"models/{pos}/model.tar.gz": fake_tar for pos in model_sync.POSITIONS})
+    # Use the manifest path — Layer C of the race fix removed the legacy
+    # fallback, so an absent manifest raises. The dest-string computation is
+    # identical regardless of which manifest tier the sync resolves through.
+    objects: dict[str, bytes] = {}
+    for pos in model_sync.POSITIONS:
+        history_key = f"models/{pos}/history/2026-04-23T00-00-00Z-aaa1234/model.tar.gz"
+        objects[history_key] = fake_tar
+        objects[f"models/{pos}/manifest.json"] = _manifest_bytes(current_key=history_key)
+    fake_s3 = _FakeS3(objects)
 
     from src.shared.registry import get_inference_spec
 
     for pos in model_sync.POSITIONS:
         fake_extract.current_pos = pos
-        # Drive the legacy-path branch directly so we don't depend on the
-        # manifest fixture — the dest computation is the same on every
-        # branch.
         model_sync._sync_one(fake_s3, "test-bucket", "models", pos, tmp_path)
 
     for pos in model_sync.POSITIONS:
@@ -254,35 +230,42 @@ def test_sync_one_dest_string_path_matches_registry_model_dir(monkeypatch, tmp_p
 
 @pytest.mark.unit
 def test_sync_honors_custom_prefix(monkeypatch, tmp_path):
+    """Custom FF_MODEL_S3_PREFIX threads through both the manifest probe and
+    the resolved history-key fetch — ``nightly/v2/{POS}/manifest.json`` and
+    the manifest's ``nightly/v2/{POS}/history/.../model.tar.gz`` both."""
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setenv("FF_MODEL_S3_PREFIX", "nightly/v2")
     monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
 
-    objects = {
-        f"nightly/v2/{pos}/model.tar.gz": _make_tarball({"file.pkl": b"x"})
-        for pos in model_sync.POSITIONS
-    }
+    tar = _make_tarball({"file.pkl": b"x"})
+    objects: dict[str, bytes] = {}
+    history_keys: dict[str, str] = {}
+    for pos in model_sync.POSITIONS:
+        key = f"nightly/v2/{pos}/history/2026-04-23T00-00-00Z-aaa1234/model.tar.gz"
+        history_keys[pos] = key
+        objects[key] = tar
+        objects[f"nightly/v2/{pos}/manifest.json"] = _manifest_bytes(current_key=key)
     fake_s3 = _FakeS3(objects)
     with mock.patch("boto3.client", return_value=fake_s3):
         model_sync.sync_models_from_s3()
 
-    # Every POS must have probed its manifest before falling back to legacy,
-    # and the legacy fetch must also use the custom prefix.
     keys_called = {key for _, key in fake_s3.calls}
     for pos in model_sync.POSITIONS:
         assert f"nightly/v2/{pos}/manifest.json" in keys_called
-        assert f"nightly/v2/{pos}/model.tar.gz" in keys_called
+        assert history_keys[pos] in keys_called
 
 
 @pytest.mark.unit
-def test_sync_raises_on_missing_key(monkeypatch, tmp_path):
-    """No manifest AND no legacy key → ClientError escapes the legacy path."""
+def test_sync_raises_on_missing_manifest(monkeypatch, tmp_path):
+    """Layer C: no manifest at all → loud RuntimeError. Previously this fell
+    through to the legacy ``model.tar.gz`` key and only raised on ClientError
+    if the legacy was also missing. Now manifest-absence itself is the bug."""
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
 
     fake_s3 = _FakeS3(objects={})
     with mock.patch("boto3.client", return_value=fake_s3):
-        with pytest.raises(ClientError, match="NoSuchKey"):
+        with pytest.raises(RuntimeError, match="no manifest"):
             model_sync.sync_models_from_s3()
 
 

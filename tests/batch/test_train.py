@@ -394,8 +394,9 @@ class TestDownloadIfStale:
 class TestUploadArtifacts:
     """upload_artifacts ships to ``models/{POS}/history/{ts}-{sha}/model.tar.gz``,
     structurally validates the uploaded bytes, then atomically promotes via a
-    manifest.json write. Legacy ``model.tar.gz`` is mirrored last for consumers
-    running pre-manifest code. See the docstring on upload_artifacts."""
+    manifest.json write. The legacy ``models/{POS}/model.tar.gz`` mirror was
+    removed in Layer C of the parallel-train-batch race fix — see the
+    docstring on upload_artifacts."""
 
     @mock.patch("src.batch.train.boto3.client")
     def test_uploads_versioned_key_and_writes_manifest(self, mock_boto_client, tmp_path):
@@ -426,40 +427,11 @@ class TestUploadArtifacts:
         # test fails → ``stable`` stays unset on this first upload.
         assert manifest["stable"] is None
 
-        # Legacy mirror was written too (pre-manifest consumer compat).
-        assert "models/RB/model.tar.gz" in fake_s3.objects
-        # All three tarball bytes agree — otherwise pre-manifest consumers
-        # would see different bytes than manifest-aware consumers.
-        assert fake_s3.objects[history_key] == fake_s3.objects["models/RB/model.tar.gz"]
-
-    @mock.patch("src.batch.train.boto3.client")
-    def test_legacy_mirror_upload_happens_after_manifest_write(self, mock_boto_client, tmp_path):
-        """Ordering invariant: the manifest put MUST be committed before the
-        legacy mirror upload. A crash between the two leaves consumers on the
-        freshly-promoted current; the reverse would briefly expose new bytes
-        to old consumers without manifest-aware fallback being available."""
-        from src.batch.train import upload_artifacts
-
-        fake_s3 = _FakeS3Producer()
-        mock_boto_client.return_value = fake_s3
-
-        d = tmp_path / "model"
-        d.mkdir()
-        _write_fake_model_dir(d, "RB")
-
-        upload_artifacts("my-bucket", "RB", str(d))
-
-        manifest_idx = next(
-            i for i, (_, k) in enumerate(fake_s3.ops) if k == "models/RB/manifest.json"
-        )
-        legacy_idx = next(
-            i
-            for i, (op, k) in enumerate(fake_s3.ops)
-            if op == "upload_file" and k == "models/RB/model.tar.gz"
-        )
-        assert manifest_idx < legacy_idx, (
-            f"manifest put must precede legacy mirror, got ops: {fake_s3.ops}"
-        )
+        # Legacy mirror is NOT written — Layer C removed the producer-side
+        # legacy ``models/{POS}/model.tar.gz`` upload. Two parallel train-batch
+        # runs writing the same legacy key were last-write-wins; the manifest
+        # is the only artifact pointer now.
+        assert "models/RB/model.tar.gz" not in fake_s3.objects
 
     @mock.patch("src.batch.train.boto3.client")
     def test_validation_rejects_missing_required_file(self, mock_boto_client, tmp_path):
