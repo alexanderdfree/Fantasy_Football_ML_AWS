@@ -163,7 +163,24 @@ if [ ! -f "$USERDATA_PATH" ]; then
   log "ERROR: $USERDATA_PATH missing — required for SOCI activation."
   exit 1
 fi
-EXPECTED_USERDATA_B64=$(base64 < "$USERDATA_PATH" | tr -d '\n')
+
+# AWS Batch requires launch-template UserData to be in MIME multipart
+# archive format — plain bash UserData causes the CE to go INVALID with
+# "CLIENT_ERROR - Launch Template UserData is not MIME multipart format".
+# Batch concatenates its own boot script as another MIME part at launch
+# time, so the user-supplied script must be a parseable MIME envelope.
+# See https://docs.aws.amazon.com/batch/latest/userguide/launch-templates.html
+USERDATA_BOUNDARY="==BATCH-USERDATA-BOUNDARY=="
+EXPECTED_USERDATA_B64=$(
+  {
+    printf 'MIME-Version: 1.0\n'
+    printf 'Content-Type: multipart/mixed; boundary="%s"\n\n' "$USERDATA_BOUNDARY"
+    printf -- '--%s\n' "$USERDATA_BOUNDARY"
+    printf 'Content-Type: text/x-shellscript; charset="us-ascii"\n\n'
+    cat "$USERDATA_PATH"
+    printf '\n--%s--\n' "$USERDATA_BOUNDARY"
+  } | base64 | tr -d '\n'
+)
 
 if ! aws ec2 describe-launch-templates \
      --launch-template-names "$LAUNCH_TEMPLATE_NAME" \
