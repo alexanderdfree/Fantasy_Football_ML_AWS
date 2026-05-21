@@ -379,12 +379,16 @@ jobs:
           else
             echo "No PR resolved for $HEAD_SHA (direct push or workflow_dispatch)"
           fi
+          # ``--git-hash $GITHUB_SHA``: pin the recorded SHA to the image
+          # SHA, not the workspace HEAD. Mirrors train-batch.yml; see the
+          # TODO.md "Benchmark git_hash" archive entry for the failure mode.
           python -m src.batch.benchmark \
             --download-only \
             --backend ec2 \
             --instance-type "g4dn.xlarge (On-Demand)" \
             --positions $POSITIONS \
             --note "EC2 auto-run (${GITHUB_SHA::7})" \
+            --git-hash "$GITHUB_SHA" \
             "${PR_ARGS[@]}"
 
       - name: Refresh ECS service to pick up new model + benchmark artifacts

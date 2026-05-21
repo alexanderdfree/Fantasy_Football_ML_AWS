@@ -216,12 +216,18 @@ jobs:
           else
             echo "No PR resolved for $HEAD_SHA (direct push or workflow_dispatch)"
           fi
+          # ``--git-hash $GITHUB_SHA``: pin the recorded SHA to the image
+          # SHA, not the workspace HEAD — the ``git pull --rebase`` above
+          # can advance the workspace past the image-build SHA when PRs
+          # land mid-run. See TODO.md "Benchmark git_hash recorded the
+          # wrong SHA on rapid back-to-back merges" archive entry.
           python -m src.batch.benchmark \
             --download-only \
             --backend batch \
             --instance-type "g4dn.xlarge (Spot)" \
             --positions $POSITIONS \
             --note "Batch Spot auto-run (${GITHUB_SHA::7})" \
+            --git-hash "$GITHUB_SHA" \
             "${PR_ARGS[@]}"
 
       - name: Refresh ECS service to pick up new model + benchmark artifacts
