@@ -668,6 +668,31 @@ def main():
         "src.scripts.batch_size_sweep). Requires --position WR. Downloads "
         "splits from S3 then delegates to run_sweep(); skips S3 upload.",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["train", "tune"],
+        default="train",
+        help=(
+            "Dispatch mode. 'train' (default) is the existing per-position "
+            "training path with S3 artifact upload. 'tune' delegates to "
+            "src.tuning.tune_nn for Optuna NN hyperparameter search; consumes "
+            "--n-trials/--timeout and forwards --checkpoint-s3 so the SQLite "
+            "study DB round-trips to s3://$S3_BUCKET/tune_nn/{pos}/. Mutually "
+            "exclusive with --ablation/--sweep/--dry-run."
+        ),
+    )
+    parser.add_argument(
+        "--n-trials",
+        type=int,
+        default=None,
+        help="(--mode=tune only) Number of Optuna trials per position.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help="(--mode=tune only) Per-position wall-clock cap in seconds.",
+    )
     args = parser.parse_args()
 
     pos = args.position
@@ -675,6 +700,38 @@ def main():
         parser.error("--ablation rb-gate requires --position RB")
     if args.sweep and pos != "WR":
         parser.error("--sweep requires --position WR")
+    if args.mode == "tune":
+        # Tune mode runs Optuna over the attention NN — no artifact upload, no
+        # ablation, no sweep. Reject conflicting flags up front so the Batch
+        # job fails fast instead of running half a pipeline.
+        if args.ablation or args.sweep or args.dry_run:
+            parser.error("--mode=tune is mutually exclusive with --ablation/--sweep/--dry-run")
+        if pos in ("K", "DST"):
+            parser.error(
+                "--mode=tune does not support K/DST yet (their run() takes "
+                "only seed=, no config=; tune_nn rejects them with the same "
+                "error). Add config= to those runners first."
+            )
+        # Forward to src.tuning.tune_nn's CLI. We replace sys.argv rather than
+        # constructing the parser dance — keeps tune_nn's behaviour identical
+        # whether the operator runs it directly or through this dispatcher.
+        # --checkpoint-s3 is always on because Batch runs are Spot-resilient.
+        from src.tuning import tune_nn
+
+        tune_argv = ["tune_nn", pos, "--checkpoint-s3", "--seed", str(args.seed)]
+        if args.n_trials is not None:
+            tune_argv += ["--n-trials", str(args.n_trials)]
+        if args.timeout is not None:
+            tune_argv += ["--timeout", str(args.timeout)]
+        # _assert_gpu and seed_everything below are training-path setup; tune
+        # mode handles its own seeding inside tune_nn.main(). But REQUIRE_GPU
+        # still matters — attention training is the bulk of each trial. Run
+        # _assert_gpu here so a misconfigured GPU job fails before Optuna
+        # spends 10 minutes per CPU-bound trial.
+        _assert_gpu(pos)
+        sys.argv = tune_argv
+        tune_nn.main()
+        return
 
     # Print build fingerprint so stale container images are immediately obvious.
     _fingerprint_file = os.path.join(os.path.dirname(__file__), "train.py")
