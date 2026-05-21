@@ -66,7 +66,11 @@ _ATTN_HISTORY_STATS = [
     # Per-game fantasy total (signed scoring sum from the four target
     # heads; attention learns its own recency weighting on it).
     "fantasy_points",
-    # Game-level context — varies per game and not in the static whitelist.
+    # Game-level context — these ALSO appear in the static whitelist (via
+    # ``_CONTEXTUAL_FEATURES`` → ``attn_static_features`` below), feeding
+    # the attention NN through both branches. The static branch provides
+    # the current-game value; the per-game history branch lets attention
+    # condition recency weighting on the recent-game weather/venue trend.
     "is_home",
     "is_dome",
     "implied_team_total",
@@ -139,12 +143,20 @@ CONFIG_TINY_ATTN = {
     "attn_weight_decay": 0.0,
     "attn_batch_size": 32,
     "attn_patience": 1,
+    # Explicit nested-attention sequence caps — historically relied on the
+    # builder closure's fallback defaults, fragile if
+    # ``MultiHeadNetWithNestedHistory`` ever required them from cfg.
+    "attn_max_games": 17,
+    "attn_max_kicks_per_game": 10,
 }
 
 
 # Single source of truth for downstream consumers (registry / pipeline / serving).
 # K's attention is nested (per-kick inner pool + per-game outer attention), so
 # attn_max_seq_len stays None — the outer sequence length lives in attn_max_games.
+# The consuming gate at ``src/shared/position_pipeline.py`` (search
+# "attn_max_seq_len") skips plumbing this key when it's None; this is the
+# only position that intentionally relies on that branch.
 POSITION_CONFIG = PositionConfig(
     name="K",
     targets=_TARGETS,

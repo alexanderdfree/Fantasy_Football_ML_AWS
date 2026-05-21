@@ -415,10 +415,7 @@ def test_backfill_2025_pbp_dome_games_get_65f_0_wind(monkeypatch):
                 "season": 2025,
                 "week": 1,
                 "avg_fg_distance": float("nan"),
-                "max_fg_distance": float("nan"),
                 "avg_fg_prob": float("nan"),
-                "clutch_fg_att": float("nan"),
-                "clutch_fg_made": float("nan"),
                 "q4_fg_att": float("nan"),
                 "q4_fg_made": float("nan"),
                 "long_fg_att": float("nan"),
@@ -573,11 +570,29 @@ def test_reconstruct_kicks_from_pbp_happy_path(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 def test_reconstruct_kicks_from_pbp_cache_hit(tmp_path, monkeypatch):
+    """Cache-hit path: a parquet whose schema covers every column the current
+    aggregation produces is returned as-is without invoking nflverse.
+    """
     import src.k.data as k_data
 
     cache_path = tmp_path / "kicker_kicks_pbp_2022_2022.parquet"
+    # Schema must cover ``_KICKS_SCHEMA`` so ``_cached_kick_pbp_is_current``
+    # accepts the cache and the function takes the cache-hit branch.
     pd.DataFrame(
-        {"player_id": ["K01"], "season": [2022], "week": [1], "is_fg": [1], "is_xp": [0]}
+        {
+            "player_id": ["K01"],
+            "season": [2022],
+            "week": [1],
+            "play_id": [101],
+            "is_fg": [1],
+            "is_xp": [0],
+            "kick_distance": [35.0],
+            "kick_made": [1],
+            "fg_prob": [0.85],
+            "is_q4": [0],
+            "score_diff": [-3.0],
+            "game_wind": [5.0],
+        }
     ).to_parquet(cache_path)
 
     def _should_not_be_called(*a, **k):
@@ -586,6 +601,36 @@ def test_reconstruct_kicks_from_pbp_cache_hit(tmp_path, monkeypatch):
     monkeypatch.setattr(k_data.nfl, "import_pbp_data", _should_not_be_called)
     out = k_data.reconstruct_kicker_kicks_from_pbp([2022], cache_dir=str(tmp_path))
     assert len(out) == 1
+
+
+@pytest.mark.unit
+def test_reconstruct_kicks_from_pbp_stale_cache_regenerates(tmp_path, monkeypatch, capsys):
+    """Cache parquet missing required schema columns (e.g. ``play_id`` added
+    after the cache was written) is rejected and PBP re-aggregated.
+
+    Mirrors the weekly-cache regression guard but for the per-kick cache —
+    a stale per-kick cache would silently break the deterministic
+    most-recent kick truncation that ``build_nested_kick_history`` relies on.
+    """
+    import src.k.data as k_data
+
+    cache_path = tmp_path / "kicker_kicks_pbp_2022_2022.parquet"
+    # Old-style cache: only the first few columns from a pre-``play_id`` version.
+    pd.DataFrame(
+        {"player_id": ["K01"], "season": [2022], "week": [1], "is_fg": [1], "is_xp": [0]}
+    ).to_parquet(cache_path)
+
+    # PBP call must fire (cache is stale).
+    called = {"n": 0}
+
+    def _stub_pbp(seasons, downcast=True):
+        called["n"] += 1
+        raise RuntimeError("synthetic boom — we just need to know PBP was tried")
+
+    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _stub_pbp)
+    _ = k_data.reconstruct_kicker_kicks_from_pbp([2022], cache_dir=str(tmp_path))
+    assert called["n"] == 1
+    assert "Stale kick cache" in capsys.readouterr().out
 
 
 @pytest.mark.unit
@@ -757,19 +802,33 @@ def test_filter_to_k_is_identity():
 
 @pytest.mark.unit
 def test_kicker_season_split_splits_by_year(capsys):
-    from src.k.data import season_split
+    """Train rows for a (player_id, season) below ``MIN_GAMES`` are dropped
+    (train-only filter, mirroring other positions). Val/test rows are kept
+    regardless of season-game-count."""
+    from src.k.data import MIN_GAMES, season_split
 
-    df = pd.DataFrame(
-        {
-            "player_id": ["K1"] * 6,
-            "season": [2022, 2023, 2024, 2025, 2023, 2025],
-            "week": [1, 1, 1, 1, 2, 2],
-        }
-    )
+    # K1: enough games per train season to survive the MIN_GAMES filter.
+    # K2: too few games in train (will be dropped from train) but kept in val/test.
+    rows = []
+    for wk in range(1, MIN_GAMES + 2):  # >= MIN_GAMES weeks for K1 in 2022 and 2023
+        rows.append({"player_id": "K1", "season": 2022, "week": wk})
+        rows.append({"player_id": "K1", "season": 2023, "week": wk})
+    rows += [
+        {"player_id": "K1", "season": 2024, "week": 1},
+        {"player_id": "K1", "season": 2025, "week": 1},
+        {"player_id": "K2", "season": 2023, "week": 1},  # below MIN_GAMES → dropped
+        {"player_id": "K2", "season": 2024, "week": 1},  # val: kept
+        {"player_id": "K2", "season": 2025, "week": 1},  # test: kept
+    ]
+    df = pd.DataFrame(rows)
     train, val, test = season_split(df)
     assert set(train["season"].unique()) <= {2022, 2023}
     assert set(val["season"].unique()) == {2024}
     assert set(test["season"].unique()) == {2025}
+    # K2 dropped from train (only 1 game in 2023), kept in val/test.
+    assert "K2" not in set(train["player_id"].unique())
+    assert "K2" in set(val["player_id"].unique())
+    assert "K2" in set(test["player_id"].unique())
     # Print statement fires
     assert "K cross-season split" in capsys.readouterr().out
 
@@ -804,10 +863,7 @@ def test_backfill_2025_pbp_columns_updates_in_place(monkeypatch):
                     "season": 2025,
                     "week": wk,
                     "avg_fg_distance": float("nan"),
-                    "max_fg_distance": float("nan"),
                     "avg_fg_prob": float("nan"),
-                    "clutch_fg_att": float("nan"),
-                    "clutch_fg_made": float("nan"),
                     "q4_fg_att": float("nan"),
                     "q4_fg_made": float("nan"),
                     "long_fg_att": float("nan"),
