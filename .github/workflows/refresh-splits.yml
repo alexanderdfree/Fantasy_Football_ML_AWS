@@ -190,7 +190,12 @@ jobs:
           # Features added at training time (not expected in the parquet):
           # weather/Vegas in ``merge_schedule_features``, team box-score in
           # ``merge_team_box_score_features``, and each position's
-          # ``add_specific_features`` Lx ratios.
+          # ``add_specific_features`` Lx ratios. If a future PR adds a new
+          # runtime merge step in ``src/shared/feature_build.py``'s
+          # ``build_position_features``, add its produced cols to this union
+          # — otherwise this verify step will start false-positive failing
+          # on whitelisted cols that the upstream parquet legitimately
+          # doesn't carry.
           runtime_added = (
               set(WEATHER_FEATURES_ALL)
               | set(TEAM_BOX_SCORE_FEATURES)
