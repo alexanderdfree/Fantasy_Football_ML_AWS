@@ -28,7 +28,9 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import tarfile
+import threading
 import time
 from pathlib import Path
 
@@ -170,36 +172,27 @@ def _try_key(s3_client, bucket: str, key: str, dest: Path) -> dict:
     return {"key": key, "bytes": len(data), "secs": round(time.time() - t0, 2)}
 
 
-def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict:
-    """Sync one position with manifest-driven fallback.
+def _resolve_manifest_extract(s3_client, bucket: str, prefix: str, pos: str, dest: Path) -> dict:
+    """Walk manifest.stable → current → previous, extracting the first key that
+    successfully downloads + untars into ``dest``. Shared by both the boot-time
+    sync (``_sync_one``, extracts into the live ``models/`` dir) and the
+    in-flight refresh path (``refresh_position``, extracts into a temporary
+    ``models.new/`` so the swap can be atomic).
 
-    Order: manifest.stable → manifest.current → manifest.previous. There is
-    no legacy ``model.tar.gz`` fallback anymore — the producer
-    (``src/batch/train.py::upload_artifacts``) stopped writing that key; every
-    production-trained position has a manifest after the schema-v2 migration.
-    A manifest-absent state in production is a real bug (the producer
-    crashed before the atomic manifest put, or someone hand-deleted the
-    manifest); fall back through the chain only, then raise loud.
-
-    The frontend prefers ``stable`` because that's the last artifact a smoke
-    test confirmed actually loads + predicts; serving ``current`` means
-    stable was missing or unreadable, which is page-worthy.
-
+    Order rationale: the frontend prefers ``stable`` because that's the last
+    artifact a smoke test confirmed actually loads + predicts; serving
+    ``current`` means stable was missing or unreadable, which is page-worthy.
     A v1-shaped manifest (no ``stable`` slot) reads as ``stable=None`` and
     falls through to ``current`` automatically — that's the migration window.
 
     Each fall-through is logged with the grep-able tag
     ``source=stable|current|previous`` so on-call can tell from CloudWatch
     which artifact tier we ended up on.
+
+    Raises ``RuntimeError`` if the manifest is absent or every entry fails.
     """
     from botocore.exceptions import ClientError
 
-    # S3 keys are uppercase POS (set by the producer in src/batch/train.py);
-    # the local layout is lowercase to match the registry's model_dir entries
-    # (``src/qb/outputs/models``). On case-sensitive Linux these diverge, so
-    # the destination must be normalized here even though macOS APFS papered
-    # over it during the rename refactor.
-    dest = root / "src" / pos.lower() / "outputs" / "models"
     manifest = load_manifest(s3_client, bucket, prefix, pos)
 
     if manifest is None:
@@ -240,6 +233,251 @@ def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict
         return {"pos": pos, "source": label, **r}
 
     raise RuntimeError(f"[model_sync] {pos}: all manifest entries failed: {tried!r}")
+
+
+def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict:
+    """Sync one position with manifest-driven fallback (boot-time path).
+
+    Extracts directly into ``src/{pos.lower()}/outputs/models``. The boot path
+    can tolerate a non-atomic extract — a crash mid-extract aborts the boot
+    and ECS won't mark the task healthy, so the broken intermediate state
+    never serves traffic. The in-flight refresh path (``refresh_position``)
+    uses ``models.new`` + rename for atomicity because live containers can't
+    tolerate that intermediate state.
+
+    S3 keys are uppercase POS (set by the producer in src/batch/train.py);
+    the local layout is lowercase to match the registry's model_dir entries
+    (``src/qb/outputs/models``). On case-sensitive Linux these diverge, so
+    the destination must be normalized here even though macOS APFS papered
+    over it during the rename refactor.
+    """
+    dest = root / "src" / pos.lower() / "outputs" / "models"
+    return _resolve_manifest_extract(s3_client, bucket, prefix, pos, dest)
+
+
+# ---------------------------------------------------------------------------
+# In-flight model refresh — per-position decoupling from ECS deploy
+# ---------------------------------------------------------------------------
+#
+# At boot, ``sync_models_from_s3`` pulls every position. After boot, the
+# poller below watches each ``models/{POS}/manifest.json`` and re-syncs only
+# the position whose etag changed — letting a Batch fan-out's first-finished
+# position (e.g. WR at t≈2min) reach prod without waiting for the slowest one.
+#
+# Atomicity: extract → rename-swap pattern (see ``refresh_position``). The
+# brief window where ``models/`` is missing is invisible to readers — workers
+# only consult the on-disk models when ``_ensure_position_loaded`` fires under
+# ``_cache_lock``, and the sentinel touch happens *after* the rename, so
+# either a worker sees the old mtime (and the early-return on positions_loaded
+# trips) or it sees the new mtime (and acquires the lock to re-load from the
+# already-renamed dir). The poller and serving runtime never share a lock.
+#
+# Sentinel: ``src/{pos.lower()}/outputs/.refreshed_at`` (one dir above
+# ``models/`` so the swap cannot delete it). The serving code stats this on
+# every ``_ensure_position_loaded`` call and re-loads on mtime advance.
+
+
+# Literal per-position path mappings — the only entry points into the
+# filesystem from a (potentially user-tainted) ``pos`` argument. Constructing
+# paths from this dict instead of f"src/{pos.lower()}/..." (a) keeps the
+# allowlist enforcement structural rather than a value-check sanitizer
+# CodeQL may not recognize, and (b) eliminates the path-traversal vector
+# entirely — an out-of-allowlist ``pos`` returns ``None`` here and the
+# caller short-circuits before any path I/O.
+_REFRESH_PATHS_BY_POS: dict[str, dict[str, str]] = {
+    pos: {
+        "models": f"src/{pos.lower()}/outputs/models",
+        "models_new": f"src/{pos.lower()}/outputs/models.new",
+        "models_bak": f"src/{pos.lower()}/outputs/models.bak",
+        "sentinel": f"src/{pos.lower()}/outputs/.refreshed_at",
+    }
+    for pos in POSITIONS
+}
+
+
+def _refresh_paths(pos: str) -> dict[str, Path] | None:
+    """Resolve the per-position refresh-related paths under the current repo
+    root, or ``None`` if ``pos`` is not in the allowlist. The relative
+    components are looked up from ``_REFRESH_PATHS_BY_POS`` (literal strings,
+    not constructed from ``pos``), so out-of-allowlist values cannot reach
+    ``os.path``/``Path`` operations."""
+    if not isinstance(pos, str):
+        return None
+    rels = _REFRESH_PATHS_BY_POS.get(pos.upper())
+    if rels is None:
+        return None
+    root = _repo_root()
+    return {name: root / rel for name, rel in rels.items()}
+
+
+def refresh_sentinel_mtime(pos: str) -> float:
+    """Return the mtime of the in-flight refresh sentinel for ``pos``, or 0.0
+    if absent. Public read-only counterpart to the poller's ``sentinel.touch()``
+    — consumed by ``src.serving.app._ensure_position_loaded`` to detect that
+    the on-disk model for ``pos`` has been swapped since the last in-memory
+    load, triggering a re-load on the next request.
+
+    ``pos`` is validated against the ``POSITIONS`` allowlist so this function
+    is safe to call with any value — anything outside the allowlist returns
+    0.0 (the "no refresh pending" sentinel) without touching the filesystem.
+    """
+    paths = _refresh_paths(pos)
+    if paths is None:
+        return 0.0
+    try:
+        return os.path.getmtime(paths["sentinel"])
+    except OSError:
+        return 0.0
+
+
+def refresh_position(
+    pos: str,
+    last_etag: str | None,
+    s3_client=None,
+) -> tuple[str | None, bool]:
+    """Head the manifest for ``pos``; if its etag differs from ``last_etag``,
+    re-download via the same stable→current→previous fallback chain as
+    ``_sync_one``, extract to ``models.new/``, atomically swap into
+    ``models/``, and touch the refresh sentinel.
+
+    Returns ``(new_etag, did_refresh)``.
+
+    First-observation contract: when ``last_etag`` is ``None``, the function
+    treats the head as a bootstrap — it records the etag and returns
+    ``did_refresh=False`` without re-downloading. This keeps the poller from
+    redundantly re-syncing every position immediately after the boot-time
+    ``sync_models_from_s3`` already populated them.
+
+    No-op (returns ``(None, False)``) when ``FF_MODEL_S3_BUCKET`` is unset.
+
+    Fail-soft: any error (S3 head, manifest fetch, tarball get, extract,
+    rename) is logged and ``did_refresh=False`` is returned with the OLD etag
+    so the next poll retries. The live ``models/`` directory is left intact;
+    the worst case is the new model stays in S3 unused for one more poll
+    interval.
+
+    ``pos`` is validated against the ``POSITIONS`` allowlist so this function
+    is safe to call with any value — out-of-allowlist values return
+    ``(last_etag, False)`` without touching S3 or the filesystem.
+    """
+    paths = _refresh_paths(pos)
+    if paths is None:
+        return last_etag, False
+    bucket = os.environ.get(_ENV_BUCKET, "").strip()
+    if not bucket:
+        return None, False
+    prefix = os.environ.get(_ENV_PREFIX, "models").strip("/")
+
+    if s3_client is None:
+        import boto3
+
+        s3_client = boto3.client("s3")
+
+    from botocore.exceptions import ClientError
+
+    try:
+        head = s3_client.head_object(Bucket=bucket, Key=manifest_key(prefix, pos))
+    except (ClientError, OSError) as e:
+        print(f"[refresh] {pos} head_object failed: {e!r}", flush=True)
+        return last_etag, False
+
+    new_etag = head.get("ETag")
+    if new_etag == last_etag:
+        return new_etag, False
+
+    if last_etag is None:
+        # Bootstrap: record the etag now so the first real change triggers a
+        # refresh, not the redundant initial observation.
+        print(f"[refresh] {pos} bootstrap etag={new_etag}", flush=True)
+        return new_etag, False
+
+    dest = paths["models"]
+    dest_new = paths["models_new"]
+    dest_bak = paths["models_bak"]
+    sentinel = paths["sentinel"]
+
+    # Clean any leftover staging dirs from a prior crashed refresh.
+    for stale in (dest_new, dest_bak):
+        if stale.exists():
+            shutil.rmtree(stale, ignore_errors=True)
+
+    try:
+        result = _resolve_manifest_extract(s3_client, bucket, prefix, pos, dest_new)
+    except Exception as e:  # noqa: BLE001 — fail-soft: keep serving old model
+        print(f"[refresh] {pos} resolve/extract failed: {e!r} — keeping old model", flush=True)
+        if dest_new.exists():
+            shutil.rmtree(dest_new, ignore_errors=True)
+        return last_etag, False
+
+    # Atomic-ish swap. Rename pairs are O(1) on the same filesystem; the window
+    # where ``dest`` is missing is bounded by two renames. Workers serialize
+    # on the serving cache lock and only consult disk via the sentinel mtime,
+    # so the request fast path cannot observe the gap.
+    #
+    # KNOWN GAP (low-probability, sticky on hit): a worker that is mid-way
+    # through ``_apply_position_models``'s directory listing or first-open
+    # phase during the ~microsecond window between these two renames could
+    # see ``FileNotFoundError`` and end up cached in ``positions_failed``
+    # until the next manifest etag change (could be hours+ away). Open file
+    # handles already inside joblib.load / torch.load survive the rename via
+    # Linux inode semantics, so the risk is bounded to the listing/first-open
+    # phase, not mid-load. If this turns out to bite in production, the fix
+    # is symlink-swap (one atomic rename instead of two) or coupling the
+    # poller to ``_cache_lock``.
+    try:
+        if dest.exists():
+            os.rename(dest, dest_bak)
+        os.rename(dest_new, dest)
+    except OSError as e:
+        # Rollback: restore the old dir if we moved it out.
+        if dest_bak.exists() and not dest.exists():
+            with contextlib.suppress(OSError):
+                os.rename(dest_bak, dest)
+        print(f"[refresh] {pos} swap failed: {e!r} — old model restored", flush=True)
+        if dest_new.exists():
+            shutil.rmtree(dest_new, ignore_errors=True)
+        return last_etag, False
+
+    if dest_bak.exists():
+        shutil.rmtree(dest_bak, ignore_errors=True)
+
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.touch()
+    print(
+        f"[refresh] {pos} swapped to new manifest etag={new_etag} source={result['source']}",
+        flush=True,
+    )
+    return new_etag, True
+
+
+def start_refresh_poller(interval_s: int) -> threading.Thread:
+    """Spawn a daemon thread that polls every position's manifest every
+    ``interval_s`` seconds and calls ``refresh_position`` when an etag
+    changes. Returns the started thread.
+
+    Single thread looping over all 6 positions serially. Per-iteration S3
+    load is 6 head_object calls; cost is negligible (~$0.01/month per
+    container at 30s interval).
+
+    No-op when ``FF_MODEL_S3_BUCKET`` is unset — ``refresh_position`` returns
+    immediately in that case, but the thread still spins. Callers (e.g.
+    ``gunicorn.conf.py::on_starting``) gate on the env var to avoid spawning
+    a useless thread in dev/CI.
+    """
+
+    def _loop() -> None:
+        etags: dict[str, str | None] = {p: None for p in POSITIONS}
+        while True:
+            for pos in POSITIONS:
+                try:
+                    etags[pos], _ = refresh_position(pos, etags[pos])
+                except Exception as e:  # noqa: BLE001 — daemon must never die
+                    print(f"[refresh] {pos} unexpected: {e!r}", flush=True)
+            time.sleep(interval_s)
+
+    t = threading.Thread(target=_loop, daemon=True, name="model-refresh-poll")
+    t.start()
+    return t
 
 
 def sync_models_from_s3() -> dict | None:
