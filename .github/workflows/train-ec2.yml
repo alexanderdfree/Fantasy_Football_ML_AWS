@@ -33,69 +33,10 @@ env:
 
 jobs:
   detect:
-    # Decide which positions to train so we don't burn GPU time on positions
-    # whose code didn't change. workflow_dispatch honors the explicit input
-    # (break-glass); workflow_run scopes via git diff on the merge commit.
-    # The path → positions mapping lives in src/scripts/scope_positions.py
-    # (shared with train-batch.yml) and is contract-tested by
-    # tests/scripts/test_scope_positions.py — keep that module in sync with
-    # batch-image.yml's path filter if you change the global-trigger list.
-    runs-on: ubuntu-latest
-    outputs:
-      positions: ${{ steps.scope.outputs.positions }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          # workflow_run: the merged SHA on main. workflow_dispatch: the
-          # ref we were dispatched on. fetch-depth: 2 is the minimum to
-          # resolve HEAD^ for git diff.
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          fetch-depth: 2
-
-      - id: scope
-        env:
-          EVENT: ${{ github.event_name }}
-          INPUT_POSITIONS: ${{ github.event.inputs.positions }}
-        run: |
-          set -eu
-          ALL="QB RB WR TE K DST"
-
-          # Dispatch with explicit input → use verbatim (break-glass).
-          # Dispatch with empty input → retrain all (legacy semantics,
-          # e.g. "retrain after data refresh").
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            if [ -n "$INPUT_POSITIONS" ]; then
-              echo "Dispatch override: $INPUT_POSITIONS"
-              echo "positions=$INPUT_POSITIONS" >> "$GITHUB_OUTPUT"
-            else
-              echo "Dispatch with empty input → all positions."
-              echo "positions=$ALL" >> "$GITHUB_OUTPUT"
-            fi
-            exit 0
-          fi
-
-          # workflow_run: diff the merged commit against its first parent.
-          # Defensive: on a degenerate repo with no parent, default to all.
-          if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-            echo "No parent commit — defaulting to all positions."
-            echo "positions=$ALL" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          files=$(git diff --name-only HEAD^ HEAD)
-          echo "Changed files:"
-          printf '  %s\n' $files
-
-          # Pure-stdlib helper, no pip install needed; ubuntu-latest ships
-          # python3. Empty stdout = nothing model-relevant changed → train
-          # job skipped by the `if:` gate below.
-          positions=$(printf '%s\n' "$files" | python3 -m src.scripts.scope_positions)
-          if [ -z "$positions" ]; then
-            echo "No model-relevant paths changed — skipping training."
-          else
-            echo "Scoped retrain: $positions"
-          fi
-          echo "positions=$positions" >> "$GITHUB_OUTPUT"
+    # Shared with train-batch.yml via _detect-positions.yml. See that file
+    # for the path → positions logic; src/scripts/scope_positions.py is the
+    # contract-tested mapping.
+    uses: ./.github/workflows/_detect-positions.yml
 
   train:
     needs: detect
