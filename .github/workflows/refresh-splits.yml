@@ -1,21 +1,34 @@
 name: Refresh data splits in S3
 
-# One-off / on-demand workflow that regenerates ``data/splits/{train,val,test}.parquet``
-# from nflverse + PBP and uploads the result to s3://ff-predictor-training/data/.
+# Workflow that regenerates ``data/splits/{train,val,test}.parquet`` from
+# nflverse + PBP and uploads the result to s3://ff-predictor-training/data/.
 #
-# Expected cadence: a handful of times per quarter — after a config change
-# that adds new columns to a position's INCLUDE_FEATURES or attn_history_stats
-# (so the splits parquet doesn't drift behind the code). Not gated on a
-# schedule because the cost (~5–10 min of nflverse + PBP pull) doesn't
-# amortize over a daily refresh.
+# Fires on:
+#   - workflow_dispatch (manual, with optional kick_off_train chain)
+#   - push to main when a path-filtered file changes (per-position config or
+#     src/data/** or this workflow file)
+#
+# Every triggered run does the full ~10 min regen. There is intentionally
+# no "is regen needed?" smart-skip layer here: the only authoritative drift
+# detector lives in ``src/features/engineer.py::build_game_history_arrays``
+# (PR #328's guard), which can only run at training time *after*
+# ``engineer.py`` has merged its derived cols (weather_features,
+# team_box_score, contextual builders, game-script HHI/share, etc.) onto
+# the per-position df. PR #329 + #332's verify step tried to derive that
+# answer from the position-config union against the parquet schema and was
+# permanently over-strict — see the TODO.md Fixed archive entry. The
+# trade-off here is ~30 min/week of wasted CI on no-op auto-fires (PRs that
+# touch a filtered path without adding a new col) in exchange for never
+# false-positive-failing the upload step.
 #
 # Origin: PR #235 (2026-05-20) added 5 redzone per-game cols to RB's
 # attn_history_stats; the splits parquet wasn't refreshed; every subsequent
 # RB Batch job failed smoke_test with a state_dict shape mismatch and
 # manifest.stable stayed pinned at the May 20 artifact for ~24 h. This
 # workflow plus PR #328's build_game_history_arrays fail-loud guard close
-# the loop: a config-change PR can run this workflow to ship the matching
-# splits, then trigger a retrain.
+# the loop: a config-change PR auto-triggers this workflow to ship the
+# matching splits, then train-batch.yml fires independently via the
+# batch-image.yml chain.
 
 on:
   workflow_dispatch:
@@ -108,99 +121,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Check whether S3 splits already have all required columns
-        id: check
-        # Cheap "is regen needed?" gate so a path-filtered fire on a PR that
-        # didn't actually add a new column skips the ~10 min nflverse + PBP
-        # pull. Reads only the parquet footer from S3 (``pq.read_schema`` via
-        # ``S3FileSystem`` — measured ~1s against val.parquet 2026-04-16).
-        #
-        # Scope: only the per-game ``attn_history_stats`` cols from QB/RB/WR/TE
-        # are checked. Rationale:
-        #
-        # - QB/RB/WR/TE flow through ``src/data/loader.py`` and so their raw
-        #   per-game stats land in ``data/splits/*.parquet``. K and DST have
-        #   their own data paths (``src/k/data.py``, ``src/dst/data.py``)
-        #   that load at training time and never write to the cross-position
-        #   splits; their attn_history_stats cols are out of scope here.
-        # - ``include_features`` is NOT checked because most categories
-        #   (``rolling`` / ``ewma`` / ``trend`` / ``prior_season`` / ``share``
-        #   / ``defense`` / ``specific``) are DERIVED by ``src/features/
-        #   engineer.py::build_features`` at training time, not stored in the
-        #   splits parquet. Checking them produces false positives.
-        # - PR #328's ``build_game_history_arrays`` guard hard-raises when an
-        #   attn_history_stats col is missing from the per-position df, so
-        #   that's the only "must-be-in-splits" requirement. Missing
-        #   ``include_features`` cols are zero-filled by ``feature_build.py``
-        #   (warned, not raised), so they don't gate training.
-        #
-        # Fall-through-on-error scope: only S3 / parquet read failures
-        # (bucket empty, IAM hiccup, parquet corrupt) are caught below and
-        # set skip=false to let the regen run. An upstream failure — a
-        # malformed position config that raises on import, e.g. — propagates
-        # and fails the workflow loudly. That's the right asymmetry: bad
-        # configs should never silently fall through to a regen.
-        #
-        # Only ``data/val.parquet`` is sampled. train/val/test are
-        # partitions of the same preprocessed frame in ``temporal_split``
-        # ([src/data/split.py](src/data/split.py)) so their column sets are
-        # identical by construction; reading one is sufficient and val is
-        # the smallest.
-        env:
-          AWS_S3_KEY: "data/val.parquet"
-        run: |
-          python - <<'PY'
-          import importlib
-          import os
-          import sys
-
-          import pyarrow as pa
-          import pyarrow.parquet as pq
-          from pyarrow import fs
-
-          # Skill positions only; see step comment for rationale.
-          SKILL_POSITIONS = ("QB", "RB", "WR", "TE")
-
-          required: set[str] = set()
-          for pos in SKILL_POSITIONS:
-              cfg = importlib.import_module(f"src.{pos.lower()}.config").POSITION_CONFIG
-              required.update(cfg.attn_history_stats)
-
-          s3 = fs.S3FileSystem(region=os.environ["AWS_REGION"])
-          bucket = os.environ["S3_BUCKET"]
-          key = os.environ["AWS_S3_KEY"]
-          try:
-              schema = pq.read_schema(f"{bucket}/{key}", filesystem=s3)
-          except (pa.ArrowInvalid, OSError) as e:
-              # S3 connectivity / parquet corruption only — see step comment
-              # for why a malformed config is intentionally NOT caught here.
-              print(f"S3 schema read failed: {e!r} — will regen")
-              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-                  f.write("skip=false\n")
-              sys.exit(0)
-
-          have = set(schema.names)
-          missing = sorted(required - have)
-          if missing:
-              shown = missing[:5]
-              suffix = "..." if len(missing) > 5 else ""
-              print(
-                  f"S3 splits missing {len(missing)} attn_history_stats col(s) "
-                  f"from QB/RB/WR/TE: {shown}{suffix}"
-              )
-              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-                  f.write("skip=false\n")
-          else:
-              print(
-                  f"S3 splits already have all {len(required)} required "
-                  "attn_history_stats cols — skipping regen"
-              )
-              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-                  f.write("skip=true\n")
-          PY
-
       - name: Regenerate splits from nflverse + PBP
-        if: steps.check.outputs.skip != 'true'
         # ``load_raw_data`` pulls weekly stats / rosters / schedules / snap
         # counts / injuries / depth charts / PBP for SEASONS via nfl_data_py,
         # caches to ``data/raw/``, and merges the redzone PBP aggregates onto
@@ -220,16 +141,14 @@ jobs:
           PY
 
       - name: Upload regenerated splits as workflow artifact
-        # Forensic insurance: if a downstream step (verify, upload to S3,
-        # train dispatch) fails, the operator can download the parquet
-        # directly from the workflow run instead of re-running the ~10 min
-        # nflverse + PBP pull. Runs on both the happy path and any
-        # earlier-step failure (``success() || failure()`` covers both) but
-        # only when the regen actually ran — a smart-skipped run has no
-        # parquet on disk to upload. Skips on user cancellation, which is
-        # the right behaviour: cancellation usually means the operator
-        # killed the run on purpose.
-        if: (success() || failure()) && steps.check.outputs.skip != 'true'
+        # Forensic insurance: if a downstream step (Upload to S3, train
+        # dispatch) fails, the operator can download the parquet directly
+        # from the workflow run instead of re-running the ~10 min nflverse
+        # + PBP pull. Runs on both the happy path and any earlier-step
+        # failure (``success() || failure()`` covers both); skips on user
+        # cancellation, which is the right behaviour: cancellation usually
+        # means the operator killed the run on purpose.
+        if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
           name: data-splits
@@ -237,48 +156,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Verify required columns are present
-        if: steps.check.outputs.skip != 'true'
-        # Fail loud if temporal_split produced a parquet that's missing any
-        # raw col the current configs require. Same scoping as the smart-skip
-        # step above: QB/RB/WR/TE attn_history_stats only.
-        #
-        # Why this scoping is correct (mirrors the smart-skip step comment):
-        # - K and DST load via their own data paths (src/k/data.py,
-        #   src/dst/data.py), not data/splits/.
-        # - INCLUDE_FEATURES cols are mostly derived by src/features/
-        #   engineer.py at training time, so they don't belong in the
-        #   splits parquet and checking them produces false positives.
-        # - attn_history_stats is the only hard-fail requirement
-        #   (PR #328's build_game_history_arrays guard).
-        run: |
-          python - <<'PY'
-          import importlib
-
-          import pyarrow.parquet as pq
-
-          SKILL_POSITIONS = ("QB", "RB", "WR", "TE")
-
-          required: set[str] = set()
-          for pos in SKILL_POSITIONS:
-              cfg = importlib.import_module(f"src.{pos.lower()}.config").POSITION_CONFIG
-              required.update(cfg.attn_history_stats)
-
-          for split in ("train", "val", "test"):
-              cols = set(pq.read_schema(f"data/splits/{split}.parquet").names)
-              missing = sorted(required - cols)
-              assert not missing, (
-                  f"{split}.parquet missing {len(missing)} attn_history_stats "
-                  f"col(s) from QB/RB/WR/TE POSITION_CONFIG: {missing}"
-              )
-              print(
-                  f"OK {split}: {len(cols)} cols, all {len(required)} "
-                  "skill-position attn_history_stats cols present"
-              )
-          PY
-
       - name: Upload to S3 with force
-        if: steps.check.outputs.skip != 'true'
         # ``force=True`` skips the per-file ETag-vs-MD5 short-circuit in
         # ``upload_data`` so we always overwrite the existing S3 objects
         # — the regenerated parquet typically differs from the last upload
@@ -298,7 +176,6 @@ jobs:
           PY
 
       - name: Confirm S3 objects updated
-        if: steps.check.outputs.skip != 'true'
         run: |
           aws s3 ls "s3://${S3_BUCKET}/data/" --region "${AWS_REGION}"
 
@@ -317,7 +194,7 @@ jobs:
         # auto-trigger, batch-image.yml + train-batch.yml fire independently
         # via their own path filters, so chaining here would create a
         # duplicate Batch run.
-        if: ${{ inputs.kick_off_train && steps.check.outputs.skip != 'true' }}
+        if: ${{ inputs.kick_off_train }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run train-batch.yml --ref main
@@ -325,28 +202,21 @@ jobs:
       - name: Summary
         if: always()
         env:
-          SKIP: ${{ steps.check.outputs.skip }}
           TRIGGER: ${{ github.event_name }}
           KICK_OFF: ${{ inputs.kick_off_train }}
         run: |
           {
             echo "## Refresh splits run"
             echo ""
-            if [ "$SKIP" = "true" ]; then
-              echo "- **Skipped**: S3 splits already have every column the"
-              echo "  current configs require. No regen needed."
-              echo "- Trigger: \`$TRIGGER\`"
-            else
-              echo "- Bucket: \`s3://${S3_BUCKET}/data/\`"
-              echo "- Region: \`${AWS_REGION}\`"
-              echo "- Trigger: \`$TRIGGER\`"
-              echo "- kick_off_train: \`$KICK_OFF\`"
-              echo ""
-              echo "Next: for each position whose config change motivated this"
-              echo "refresh, watch the next per-position Batch job's"
-              echo "\`smoke_test\` log line — a PASS advances that position's"
-              echo "\`models/{POS}/manifest.json\`'s \`stable\` pointer, and the"
-              echo "in-flight refresh poller swaps the fresh artifact on every"
-              echo "running serving task within ~30s of the manifest write."
-            fi
+            echo "- Bucket: \`s3://${S3_BUCKET}/data/\`"
+            echo "- Region: \`${AWS_REGION}\`"
+            echo "- Trigger: \`$TRIGGER\`"
+            echo "- kick_off_train: \`$KICK_OFF\`"
+            echo ""
+            echo "Next: for each position whose config change motivated this"
+            echo "refresh, watch the next per-position Batch job's"
+            echo "\`smoke_test\` log line — a PASS advances that position's"
+            echo "\`models/{POS}/manifest.json\`'s \`stable\` pointer, and the"
+            echo "in-flight refresh poller swaps the fresh artifact on every"
+            echo "running serving task within ~30s of the manifest write."
           } >> "$GITHUB_STEP_SUMMARY"
