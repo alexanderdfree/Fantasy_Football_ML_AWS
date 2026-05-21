@@ -287,6 +287,161 @@ def test_reconstruct_weekly_from_pbp_cache_hit(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
+def test_reconstruct_weekly_pbp_dome_games_get_65f_0_wind(tmp_path, monkeypatch):
+    """Dome games in raw PBP have NaN temp/wind ~100% of the time. The
+    reconstruction must rewrite those to (65.0 F, 0.0 mph) to mirror the
+    canonical temp_adjusted/wind_adjusted handling in weather_features.py —
+    not leave them at 0.0 F (the old blanket fillna behaviour) which
+    confounded dome games with extreme-cold outdoor games."""
+    import src.k.data as k_data
+
+    def _pbp_with_nan_dome_weather(seasons, downcast=True):
+        # Two games: one dome (NaN weather, as nfl_data_py emits) and one
+        # outdoor (real weather). Each game gets one FG attempt.
+        return pd.DataFrame(
+            [
+                {  # Dome FG: NaN temp/wind in raw PBP
+                    "season": seasons[0],
+                    "season_type": "REG",
+                    "week": 1,
+                    "posteam": "MIN",
+                    "kicker_player_id": "K_DOME",
+                    "kicker_player_name": "Dome Kicker",
+                    "play_id": 1001,
+                    "field_goal_attempt": 1,
+                    "extra_point_attempt": 0,
+                    "field_goal_result": "made",
+                    "extra_point_result": None,
+                    "kick_distance": 35,
+                    "score_differential": 0,
+                    "qtr": 3,
+                    "fg_prob": 0.85,
+                    "wind": float("nan"),
+                    "temp": float("nan"),
+                    "roof": "dome",
+                    "surface": "turf",
+                },
+                {  # Outdoor FG: real weather
+                    "season": seasons[0],
+                    "season_type": "REG",
+                    "week": 1,
+                    "posteam": "BUF",
+                    "kicker_player_id": "K_OUT",
+                    "kicker_player_name": "Outdoor Kicker",
+                    "play_id": 1002,
+                    "field_goal_attempt": 1,
+                    "extra_point_attempt": 0,
+                    "field_goal_result": "made",
+                    "extra_point_result": None,
+                    "kick_distance": 42,
+                    "score_differential": 0,
+                    "qtr": 3,
+                    "fg_prob": 0.75,
+                    "wind": 12.0,
+                    "temp": 28.0,
+                    "roof": "outdoors",
+                    "surface": "grass",
+                },
+            ]
+        )
+
+    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _pbp_with_nan_dome_weather)
+
+    out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
+
+    dome_row = out[out["player_id"] == "K_DOME"].iloc[0]
+    outdoor_row = out[out["player_id"] == "K_OUT"].iloc[0]
+
+    assert dome_row["is_dome"] == 1
+    assert dome_row["game_temp"] == 65.0, (
+        f"dome game_temp must be rewritten to 65.0 F (got {dome_row['game_temp']})"
+    )
+    assert dome_row["game_wind"] == 0.0, (
+        f"dome game_wind must be rewritten to 0.0 mph (got {dome_row['game_wind']})"
+    )
+
+    assert outdoor_row["is_dome"] == 0
+    assert outdoor_row["game_temp"] == 28.0, (
+        "outdoor game_temp must be preserved, not overwritten by dome default"
+    )
+    assert outdoor_row["game_wind"] == 12.0, (
+        "outdoor game_wind must be preserved, not overwritten by dome default"
+    )
+
+
+@pytest.mark.unit
+def test_backfill_2025_pbp_dome_games_get_65f_0_wind(monkeypatch):
+    """2025 PBP backfill must apply the same dome rewrite as the historical
+    reconstruction: dome rows -> (65.0 F, 0.0 mph)."""
+    import src.k.data as k_data
+
+    def _pbp_2025_dome(seasons, downcast=True):
+        return pd.DataFrame(
+            [
+                {
+                    "season": 2025,
+                    "season_type": "REG",
+                    "week": 1,
+                    "posteam": "ATL",
+                    "kicker_player_id": "K_DOME_2025",
+                    "kicker_player_name": "Dome 2025",
+                    "play_id": 5001,
+                    "field_goal_attempt": 1,
+                    "extra_point_attempt": 0,
+                    "field_goal_result": "made",
+                    "extra_point_result": None,
+                    "kick_distance": 33,
+                    "score_differential": 0,
+                    "qtr": 4,
+                    "fg_prob": 0.9,
+                    "wind": float("nan"),
+                    "temp": float("nan"),
+                    "roof": "dome",
+                    "surface": "turf",
+                },
+            ]
+        )
+
+    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _pbp_2025_dome)
+
+    # recent_team is required: post-PR #239/#241, the 2025 backfill merges
+    # venue/weather via a second pass keyed on (season, week, recent_team)
+    # — independent of the FG-stats merge keyed on player_id.
+    k_df = pd.DataFrame(
+        [
+            {
+                "player_id": "K_DOME_2025",
+                "recent_team": "ATL",
+                "season": 2025,
+                "week": 1,
+                "avg_fg_distance": float("nan"),
+                "max_fg_distance": float("nan"),
+                "avg_fg_prob": float("nan"),
+                "clutch_fg_att": float("nan"),
+                "clutch_fg_made": float("nan"),
+                "q4_fg_att": float("nan"),
+                "q4_fg_made": float("nan"),
+                "long_fg_att": float("nan"),
+                "long_fg_made": float("nan"),
+                "game_wind": float("nan"),
+                "game_temp": float("nan"),
+                "roof": float("nan"),
+                "surface": float("nan"),
+                "is_dome": float("nan"),
+                "fg_yards_made": float("nan"),
+            }
+        ]
+    )
+
+    k_data._backfill_2025_pbp_columns(k_df, [2025])
+
+    row = k_df.iloc[0]
+    assert row["is_dome"] == 1
+    assert row["game_temp"] == 65.0
+    assert row["game_wind"] == 0.0
+
+
+@pytest.mark.unit
 def test_reconstruct_weekly_from_pbp_stale_cache_regenerates(tmp_path, monkeypatch, capsys):
     """A cache parquet missing required columns (e.g. ``fg_yards_made`` added
     after the cache was written) must be ignored and the PBP path re-run.
