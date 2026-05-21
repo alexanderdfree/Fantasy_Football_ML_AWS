@@ -232,6 +232,95 @@ class MultiTargetLoss(nn.Module):
         return combined, components
 
 
+class _GPUResidentBatcher:
+    """Iterates pre-loaded GPU tensors in shuffled mini-batches without DataLoader.
+
+    Yields batches in the same nested-tuple format the corresponding Dataset's
+    ``__getitem__`` + default ``collate_fn`` would produce. ``drop_last`` mirrors
+    the DataLoader path (``drop_last=True`` on train, ``False`` on val) so epoch
+    arithmetic and number-of-batches semantics stay identical to the DataLoader.
+
+    Construction side (``make_*_dataloaders``) is responsible for moving feature
+    tensors to ``device`` once and passing them in the order the Dataset's
+    ``__getitem__`` produces. The y_dict tensors are likewise on-device. The
+    iterator generates a permutation per epoch via ``torch.randperm`` on the
+    same device (using the global RNG state, matching how PyTorch's default
+    sampler seeds itself when ``generator=None``); each batch slices the
+    pre-loaded tensors with ``index_select`` — a near-pure GPU op that
+    eliminates the DataLoader's worker IPC, pinned-memory H2D copy, and
+    per-sample ``__getitem__`` Python overhead.
+    """
+
+    def __init__(
+        self,
+        feature_tensors: tuple,
+        y_dict: dict,
+        batch_size: int,
+        shuffle: bool,
+        drop_last: bool,
+    ):
+        if not feature_tensors:
+            raise ValueError("_GPUResidentBatcher requires at least one feature tensor")
+        self._features = feature_tensors  # tuple of on-device tensors, all same N
+        self._y_dict = y_dict  # dict[str, on-device tensor], all same N
+        self._batch_size = int(batch_size)
+        self._shuffle = bool(shuffle)
+        self._drop_last = bool(drop_last)
+        n = feature_tensors[0].shape[0]
+        self._n = n
+        self._device = feature_tensors[0].device
+        # Sanity: every feature tensor and every y tensor must share N. This is
+        # enforced by the corresponding ``MultiTarget*Dataset`` for the CPU path
+        # via list-indexing semantics; surface it explicitly here so a caller
+        # mismatch fails fast instead of producing silently mis-aligned batches.
+        for t in feature_tensors[1:]:
+            if t.shape[0] != n:
+                raise ValueError(
+                    f"_GPUResidentBatcher feature tensors must share N: got {t.shape[0]} vs {n}"
+                )
+        for k, v in y_dict.items():
+            if v.shape[0] != n:
+                raise ValueError(f"_GPUResidentBatcher target '{k}' shape {v.shape[0]} != N={n}")
+
+    def __len__(self) -> int:
+        """Number of batches yielded per pass — mirrors ``DataLoader.__len__``."""
+        if self._drop_last:
+            return self._n // self._batch_size
+        return (self._n + self._batch_size - 1) // self._batch_size
+
+    def __iter__(self):
+        if self._n == 0:
+            return
+        if self._shuffle:
+            # Uses the global torch RNG state, same as DataLoader's default
+            # RandomSampler when constructed with ``generator=None``. Seeded
+            # runs reproduce on the same device path.
+            perm = torch.randperm(self._n, device=self._device)
+        else:
+            perm = torch.arange(self._n, device=self._device)
+        last = (self._n // self._batch_size) * self._batch_size if self._drop_last else self._n
+        for i in range(0, last, self._batch_size):
+            idx = perm[i : i + self._batch_size]
+            sliced_features = tuple(t.index_select(0, idx) for t in self._features)
+            sliced_y = {k: v.index_select(0, idx) for k, v in self._y_dict.items()}
+            # Yield in the same nested shape the existing Dataset + default
+            # collate path produces (positional features..., target dict).
+            yield (*sliced_features, sliced_y)
+
+
+def _gpu_resident_device() -> torch.device | None:
+    """Return the CUDA device when the GPU-resident batcher path is eligible.
+
+    Returns ``None`` on CPU/MPS hosts so callers fall through to the DataLoader
+    path. Centralising the check keeps the four ``make_*_dataloaders`` branches
+    consistent and makes it cheap to gate the path behind an env var if a
+    future fallback is ever needed.
+    """
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return None
+
+
 class MultiTargetDataset(Dataset):
     """Dataset that returns features + dict of targets."""
 
@@ -304,10 +393,38 @@ def make_history_dataloaders(
     All history tensors must be pre-padded to a uniform ``[n, max_seq_len, game_dim]``
     shape so the default PyTorch collate can stack samples without per-batch padding.
 
-    ``pin_memory=True`` is a no-op under CPU-only runs; on CUDA it allocates
-    page-locked host tensors so the subsequent ``.to(device, non_blocking=True)``
-    in the trainer can overlap the H2D copy with compute.
+    On CUDA hosts, ``(X_static, X_history, history_mask, y_dict)`` are moved to
+    the GPU once and iterated by :class:`_GPUResidentBatcher` — see
+    :func:`make_dataloaders` for the rationale. CPU/MPS hosts retain the
+    original DataLoader path bit-for-bit.
     """
+    gpu_device = _gpu_resident_device()
+    if gpu_device is not None:
+        X_s_tr = torch.from_numpy(np.ascontiguousarray(X_train_static)).float().to(gpu_device)
+        X_h_tr = torch.from_numpy(np.ascontiguousarray(X_train_history)).float().to(gpu_device)
+        # Bool mask matches ``MultiTargetHistoryDataset.__init__``'s
+        # ``torch.from_numpy(np.asarray(..., dtype=bool))``; the downstream
+        # attention forward path expects ``bool``.
+        m_tr = torch.from_numpy(np.asarray(train_history_mask, dtype=bool)).to(gpu_device)
+        X_s_va = torch.from_numpy(np.ascontiguousarray(X_val_static)).float().to(gpu_device)
+        X_h_va = torch.from_numpy(np.ascontiguousarray(X_val_history)).float().to(gpu_device)
+        m_va = torch.from_numpy(np.asarray(val_history_mask, dtype=bool)).to(gpu_device)
+        ytr = {
+            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
+            for k, v in y_train_dict.items()
+        }
+        yva = {
+            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
+            for k, v in y_val_dict.items()
+        }
+        train_loader = _GPUResidentBatcher(
+            (X_s_tr, X_h_tr, m_tr), ytr, batch_size=batch_size, shuffle=True, drop_last=True
+        )
+        val_loader = _GPUResidentBatcher(
+            (X_s_va, X_h_va, m_va), yva, batch_size=batch_size, shuffle=False, drop_last=False
+        )
+        return train_loader, val_loader
+
     train_ds = MultiTargetHistoryDataset(
         X_train_static, X_train_history, train_history_mask, y_train_dict
     )
@@ -335,10 +452,42 @@ def make_history_dataloaders(
 def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
     """Create DataLoaders for multi-target training.
 
-    ``pin_memory=True`` is a no-op under CPU-only runs; on CUDA it allocates
-    page-locked host tensors so the subsequent ``.to(device, non_blocking=True)``
-    in the trainer can overlap the H2D copy with compute.
+    On CUDA hosts the full training+val tensors are moved to the GPU once and
+    iterated via :class:`_GPUResidentBatcher` (no DataLoader workers, no H2D
+    copy per batch). The largest position fits in a small fraction of T4's
+    16 GB; trading host RAM for residency removes the dominant residual
+    per-epoch overhead.
+
+    On CPU/MPS hosts the original DataLoader path is preserved bit-for-bit —
+    unit tests run there and the byte-identical-convergence guarantee for the
+    CPU path is what makes the new CUDA path safe to deploy incrementally.
+    ``pin_memory=True`` is a no-op under CPU-only runs; on CUDA it would
+    allocate page-locked host tensors but the CUDA branch above bypasses
+    DataLoader entirely so the flag is no longer relevant there.
     """
+    gpu_device = _gpu_resident_device()
+    if gpu_device is not None:
+        # One-time numpy → tensor → GPU move. Match the dtype the Dataset
+        # would have produced via ``torch.FloatTensor`` so downstream model
+        # ops see the same tensor types as the DataLoader path.
+        X_tr = torch.from_numpy(np.ascontiguousarray(X_train)).float().to(gpu_device)
+        X_va = torch.from_numpy(np.ascontiguousarray(X_val)).float().to(gpu_device)
+        ytr = {
+            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
+            for k, v in y_train_dict.items()
+        }
+        yva = {
+            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
+            for k, v in y_val_dict.items()
+        }
+        train_loader = _GPUResidentBatcher(
+            (X_tr,), ytr, batch_size=batch_size, shuffle=True, drop_last=True
+        )
+        val_loader = _GPUResidentBatcher(
+            (X_va,), yva, batch_size=batch_size, shuffle=False, drop_last=False
+        )
+        return train_loader, val_loader
+
     train_ds = MultiTargetDataset(X_train, y_train_dict)
     val_ds = MultiTargetDataset(X_val, y_val_dict)
     train_loader = DataLoader(
@@ -722,7 +871,48 @@ def make_history_with_opp_dataloaders(
 
     All history tensors must be pre-padded to uniform shapes so the default
     PyTorch collate can stack samples without per-batch padding.
+
+    On CUDA hosts, the six feature tensors plus targets are moved to the GPU
+    once and iterated by :class:`_GPUResidentBatcher` — see
+    :func:`make_dataloaders` for the rationale. CPU/MPS hosts retain the
+    original DataLoader path bit-for-bit.
     """
+    gpu_device = _gpu_resident_device()
+    if gpu_device is not None:
+        X_s_tr = torch.from_numpy(np.ascontiguousarray(X_train_static)).float().to(gpu_device)
+        X_h_tr = torch.from_numpy(np.ascontiguousarray(X_train_history)).float().to(gpu_device)
+        m_tr = torch.from_numpy(np.asarray(train_history_mask, dtype=bool)).to(gpu_device)
+        X_o_tr = torch.from_numpy(np.ascontiguousarray(X_train_opp_history)).float().to(gpu_device)
+        m_o_tr = torch.from_numpy(np.asarray(train_opp_history_mask, dtype=bool)).to(gpu_device)
+        X_s_va = torch.from_numpy(np.ascontiguousarray(X_val_static)).float().to(gpu_device)
+        X_h_va = torch.from_numpy(np.ascontiguousarray(X_val_history)).float().to(gpu_device)
+        m_va = torch.from_numpy(np.asarray(val_history_mask, dtype=bool)).to(gpu_device)
+        X_o_va = torch.from_numpy(np.ascontiguousarray(X_val_opp_history)).float().to(gpu_device)
+        m_o_va = torch.from_numpy(np.asarray(val_opp_history_mask, dtype=bool)).to(gpu_device)
+        ytr = {
+            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
+            for k, v in y_train_dict.items()
+        }
+        yva = {
+            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
+            for k, v in y_val_dict.items()
+        }
+        train_loader = _GPUResidentBatcher(
+            (X_s_tr, X_h_tr, m_tr, X_o_tr, m_o_tr),
+            ytr,
+            batch_size=batch_size,
+            shuffle=True,
+            drop_last=True,
+        )
+        val_loader = _GPUResidentBatcher(
+            (X_s_va, X_h_va, m_va, X_o_va, m_o_va),
+            yva,
+            batch_size=batch_size,
+            shuffle=False,
+            drop_last=False,
+        )
+        return train_loader, val_loader
+
     train_ds = MultiTargetHistoryWithOppDataset(
         X_train_static,
         X_train_history,
@@ -845,7 +1035,55 @@ def make_nested_kick_dataloaders(
     X_train_history=None,
     X_val_history=None,
 ):
-    """Build train/val DataLoaders for the nested-history attention model."""
+    """Build train/val DataLoaders for the nested-history attention model.
+
+    Mirrors :class:`MultiTargetNestedKickDataset.__getitem__`'s 5/6-tuple
+    dispatch: when ``X_*_history`` are absent the batcher yields a 5-tuple
+    ``(X_static, X_kicks, outer_mask, inner_mask, y_dict)``; when present the
+    per-game aggregate tensor is inserted between ``inner_mask`` and the
+    target dict, producing a 6-tuple — :class:`MultiHeadNestedHistoryTrainer`
+    branches on ``len(batch)`` to pick the right forward signature.
+
+    On CUDA hosts the GPU-resident batcher replaces the DataLoader path; see
+    :func:`make_dataloaders` for the rationale.
+    """
+    gpu_device = _gpu_resident_device()
+    if gpu_device is not None:
+        X_s_tr = torch.from_numpy(np.ascontiguousarray(X_train_static)).float().to(gpu_device)
+        X_k_tr = torch.from_numpy(np.ascontiguousarray(X_train_kicks)).float().to(gpu_device)
+        # Outer/inner masks are bool in ``MultiTargetNestedKickDataset.__init__``.
+        om_tr = torch.from_numpy(np.asarray(train_outer_mask, dtype=bool)).to(gpu_device)
+        im_tr = torch.from_numpy(np.asarray(train_inner_mask, dtype=bool)).to(gpu_device)
+        X_s_va = torch.from_numpy(np.ascontiguousarray(X_val_static)).float().to(gpu_device)
+        X_k_va = torch.from_numpy(np.ascontiguousarray(X_val_kicks)).float().to(gpu_device)
+        om_va = torch.from_numpy(np.asarray(val_outer_mask, dtype=bool)).to(gpu_device)
+        im_va = torch.from_numpy(np.asarray(val_inner_mask, dtype=bool)).to(gpu_device)
+        ytr = {
+            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
+            for k, v in y_train_dict.items()
+        }
+        yva = {
+            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
+            for k, v in y_val_dict.items()
+        }
+        train_feats = [X_s_tr, X_k_tr, om_tr, im_tr]
+        val_feats = [X_s_va, X_k_va, om_va, im_va]
+        if X_train_history is not None:
+            train_feats.append(
+                torch.from_numpy(np.ascontiguousarray(X_train_history)).float().to(gpu_device)
+            )
+        if X_val_history is not None:
+            val_feats.append(
+                torch.from_numpy(np.ascontiguousarray(X_val_history)).float().to(gpu_device)
+            )
+        train_loader = _GPUResidentBatcher(
+            tuple(train_feats), ytr, batch_size=batch_size, shuffle=True, drop_last=True
+        )
+        val_loader = _GPUResidentBatcher(
+            tuple(val_feats), yva, batch_size=batch_size, shuffle=False, drop_last=False
+        )
+        return train_loader, val_loader
+
     train_ds = MultiTargetNestedKickDataset(
         X_train_static,
         X_train_kicks,
