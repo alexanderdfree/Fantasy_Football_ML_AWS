@@ -37,6 +37,7 @@ from tests._pipeline_e2e_utils import (
     load_tiny_splits,
     run_pipeline_in_tmp,
 )
+from tests._skip_helpers import require_splits
 
 # Markers (unit / integration / e2e / regression) are registered in
 # ``tests/conftest.py`` so no local pytest_configure is needed here.
@@ -82,8 +83,7 @@ def pipeline_runs(request, tmp_path_factory):
     """
     position = request.param
     splits_root = Path(__file__).resolve().parents[1] / "data" / "splits"
-    if not (splits_root / "train.parquet").exists():
-        pytest.skip(f"Real splits not present at {splits_root}; skipping E2E")
+    require_splits(splits_root)
 
     splits = load_tiny_splits(position)
     cfg = build_tiny_config(position)

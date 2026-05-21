@@ -102,6 +102,13 @@ jobs:
       fail-fast: false
       matrix:
         shard: ${{ fromJSON(needs.detect.outputs.shards) }}
+    env:
+      # E2E / reproducibility tests need data/splits/*.parquet, which CI does
+      # not yet build (see tests/_skip_helpers.py::require_splits). Without
+      # this flag those tests would fail loudly in CI; with it they skip
+      # silently, matching the historical behavior. Remove the moment a CI
+      # data step is wired up — that's the whole point of the latent guard.
+      ALLOW_SKIP_E2E: "1"
 
     steps:
       - uses: actions/checkout@v6
