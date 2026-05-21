@@ -200,6 +200,13 @@ POSITION_CONFIG = PositionConfig(
     attn_max_seq_len=17,
     attn_positional_encoding=True,
     attn_dropout=0.0,
+    # Explicit attention-NN optim knobs (decoupled from the MLP nn_* path,
+    # which uses batch=512 / wd=1e-4 here). Mirrors QB/RB/K — the
+    # attention NN trains best at the smaller 256 batch with the
+    # standard 5e-5 weight-decay, regardless of how the MLP is tuned.
+    attn_lr=1e-3,
+    attn_weight_decay=5e-5,
+    attn_batch_size=256,
     attn_patience=20,
     attn_history_stats=[
         "receiving_yards",
