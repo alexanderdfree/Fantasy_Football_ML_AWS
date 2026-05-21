@@ -113,6 +113,14 @@ def _make_dst_tiny_cfg() -> dict:
     Non-training fields (targets, callables, alpha grids, loss/Huber)
     match the production DST config so the test covers the real dispatch
     paths in ``src.shared.pipeline.run_pipeline``.
+
+    ``aggregate_fn`` is set so ``pipeline.py``'s ``_total`` lambda uses the
+    real DST aggregator (linear stats + tier-mapped PA/YA bonuses) instead
+    of the wrong-sign fallback ``sum(preds[t] for t in targets)`` — that
+    fallback adds ``yards_allowed`` as if it were a positive scoring head,
+    which silently inverts the fantasy-point semantics. The bare-config
+    tests (``pipeline_run`` / ``pipeline_run_repeat``) and the attention
+    tests below all need this. See audit-318 (W.SHARED-PIPE finding 4).
     """
     cfg = {
         "targets": TARGETS,
@@ -127,6 +135,7 @@ def _make_dst_tiny_cfg() -> dict:
         "loss_weights": LOSS_WEIGHTS,
         "huber_deltas": HUBER_DELTAS,
         "poisson_targets": POISSON_TARGETS,
+        "aggregate_fn": aggregate_fn_for("DST"),
     }
     cfg.update(CONFIG_TINY)
     return cfg
@@ -278,9 +287,9 @@ class TestDSTPipelineE2E:
         per-game opp columns on the tiny dataset."""
         train, val, test = _build_tiny_splits(seed=42)
         cfg = _make_dst_tiny_cfg()
-        # Flip attention on + provide required attn_* keys. aggregate_fn is
-        # still set for serving + ranking metric reporting, but the NN itself
-        # trains on raw-stat heads only.
+        # Flip attention on + provide required attn_* keys. ``aggregate_fn``
+        # is now set inside ``_make_dst_tiny_cfg`` itself — used for ranking
+        # metric reporting; the NN trains on raw-stat heads only.
         cfg["train_attention_nn"] = True
         cfg["attn_history_stats"] = ATTN_HISTORY_STATS
         cfg["attn_static_features"] = ATTN_STATIC_FEATURES
@@ -292,7 +301,6 @@ class TestDSTPipelineE2E:
         cfg["attn_gated_fusion"] = False
         cfg["attn_gated"] = False
         cfg["attn_dropout"] = 0.0
-        cfg["aggregate_fn"] = aggregate_fn_for("DST")
 
         result = run_pipeline("DST", cfg, train, val, test, seed=42)
 
@@ -380,7 +388,6 @@ class TestDSTOppOffenseAttentionE2E:
         cfg["attn_gated_fusion"] = False
         cfg["attn_gated"] = False
         cfg["attn_dropout"] = 0.0
-        cfg["aggregate_fn"] = aggregate_fn_for("DST")
         # M12: enable the second branch — opp-OFFENSE per-game history.
         cfg["opp_attn_history_stats"] = OPP_ATTN_HISTORY_STATS
         cfg["opp_attn_max_seq_len"] = OPP_ATTN_MAX_SEQ_LEN

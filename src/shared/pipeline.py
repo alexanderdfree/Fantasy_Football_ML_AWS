@@ -1404,7 +1404,11 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     # --- Attach predictions to test DataFrame ---
     # Totals use ``cfg["aggregate_fn"]`` so ranking metrics compare like-for-like
     # against the frontend's fantasy-point outputs; falls back to sum(heads) when
-    # no aggregator is registered.
+    # no aggregator is registered. The fallback is wrong-sign for K (miss heads
+    # would add instead of subtract) and DST (yards_allowed would add as if
+    # positive); ``validate_pipeline_config`` (src/shared/position_pipeline.py)
+    # now rejects K/DST cfgs that omit ``aggregate_fn`` to surface the mistake
+    # at build time. See audit-318 (W.SHARED-PIPE finding 3).
     agg = cfg.get("aggregate_fn")
 
     def _total(preds):

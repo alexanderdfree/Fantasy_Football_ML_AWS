@@ -81,6 +81,15 @@ def validate_pipeline_config(cfg: dict[str, Any], *, context: str = "") -> None:
     Raises :class:`PipelineConfigError` with the full list of missing keys
     in one shot, so callers see all of their mistakes at once instead of
     fixing them one-at-a-time as pipeline.py crashes on each.
+
+    Additionally rejects K / DST configs that omit a non-None
+    ``aggregate_fn``. Both positions use bespoke aggregators (K's
+    sign-vectored sum subtracts miss penalties; DST's tier-mapped PA/YA
+    bonuses can't be expressed as a sum of heads) — the
+    ``sum(preds[t] for t in targets)`` fallback in ``run_pipeline``'s
+    ``_total`` lambda would silently produce wrong fantasy-point totals
+    (DST would *add* yards_allowed, K would *add* misses). See audit-318
+    (W.SHARED-PIPE finding 3).
     """
     missing = sorted(REQUIRED_PIPELINE_CFG_KEYS - cfg.keys())
     if missing:
@@ -90,6 +99,15 @@ def validate_pipeline_config(cfg: dict[str, Any], *, context: str = "") -> None:
             f"build_pipeline_config(pos, POSITION_CONFIG) is the canonical "
             f"constructor; if you've built the dict by hand, mirror the "
             f"REQUIRED_PIPELINE_CFG_KEYS set in src/shared/position_pipeline.py."
+        )
+    # K and DST: aggregate_fn must be a callable, not None / missing.
+    if context in ("K", "DST") and cfg.get("aggregate_fn") is None:
+        raise PipelineConfigError(
+            f"Pipeline config for {context} requires a non-None 'aggregate_fn' "
+            f"(K uses a sign-vectored sum; DST uses tier-mapped PA/YA bonuses). "
+            f"The fallback ``sum(preds[t] for t in targets)`` would silently "
+            f"miscompute fantasy-point totals. Use "
+            f"``aggregate_fn_for('{context}')`` from src.shared.aggregate_targets."
         )
 
 

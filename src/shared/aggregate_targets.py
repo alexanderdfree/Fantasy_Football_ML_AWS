@@ -161,15 +161,23 @@ def _tier_bonuses(values, boundaries: list[int], bonuses: list[int]):
     We pass ``right=True`` to torch to get consistent bucket assignment for
     tie values (e.g. pts_allowed=35 → tier [35, 999] → bonus -4).
 
+    Negative inputs are clamped to ``0`` before bucketize/digitize. The first
+    tier (``[0, 0]`` PA / ``[0, 99]`` YA) carries the *max* bonus (+10 / +5);
+    without the clamp a negative value (which is unreachable today because
+    PA/YA heads are non-negative-clamped, but would be reachable under a
+    future signed head) would land in ``idx=0`` and receive the max bonus,
+    inverting the scoring semantics. See audit-318 (W.SHARED-PIPE finding 2).
+
     Note: this is piecewise-constant, so it has zero gradient w.r.t. the tier
     input — PA/YA head updates come entirely from the per-target Huber loss.
     """
     if isinstance(values, torch.Tensor):
         b = torch.tensor(boundaries, dtype=values.dtype, device=values.device)
         bns = torch.tensor(bonuses, dtype=values.dtype, device=values.device)
-        idx = torch.bucketize(values.detach(), b, right=True)
+        clamped = torch.clamp(values.detach(), min=0)
+        idx = torch.bucketize(clamped, b, right=True)
         return bns[idx]
-    arr = np.asarray(values, dtype=np.float64)
+    arr = np.clip(np.asarray(values, dtype=np.float64), 0, None)
     idx = np.digitize(arr, boundaries, right=False)
     return np.asarray(bonuses, dtype=np.float64)[idx]
 
