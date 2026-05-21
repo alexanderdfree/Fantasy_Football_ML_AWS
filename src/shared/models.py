@@ -577,9 +577,42 @@ class RidgeMultiTarget:
             preds[name] = pred
         return preds
 
-    def predict_total(self, X: np.ndarray) -> np.ndarray:
+    def predict_total(
+        self,
+        X: np.ndarray,
+        pos: str | None = None,
+        scoring_format: str = "ppr",
+    ) -> np.ndarray:
+        """Aggregate per-target predictions into a single total per row.
+
+        ``pos=None`` (default) returns the unweighted sum of all heads — the
+        long-standing behavior, kept for backward compatibility with callers
+        that just want a "sum the heads" sanity check. This default is
+        position-blind, so for **K** it sums miss penalties as positive
+        contributions and for **DST** it ignores points-allowed / yards-allowed
+        tier bonuses; both are wrong as fantasy-point totals.
+
+        Pass ``pos="K"`` / ``"DST"`` / ``"QB"`` / ``"RB"`` / ``"WR"`` /
+        ``"TE"`` to route through ``src.shared.aggregate_targets`` and get
+        the position-correct fantasy total:
+
+          * K — sign-vectored sum (fg_yard_points + pat_points - fg_misses
+            - xp_misses), format-invariant.
+          * DST — linear stat scoring + tier-mapped points-allowed and
+            yards-allowed bonuses (matches ``src.dst.targets.compute_targets``).
+          * QB/RB/WR/TE — raw stats weighted by ``scoring_format``'s scoring
+            dict (``"ppr"``, ``"half_ppr"``, or ``"standard"``).
+        """
         preds = self.predict(X)
-        return sum(preds[t] for t in self.target_names)
+        if pos is None:
+            return sum(preds[t] for t in self.target_names)
+        # Import lazily so this module has no src.shared.aggregate_targets
+        # import cycle (aggregate_targets pulls in src.dst.targets and
+        # src.config; keeping it inside the method keeps models.py importable
+        # from any layer).
+        from src.shared.aggregate_targets import predictions_to_fantasy_points
+
+        return predictions_to_fantasy_points(pos, preds, scoring_format=scoring_format)
 
     def get_feature_importance(self, feature_names: list) -> dict:
         return {
@@ -691,9 +724,26 @@ class ElasticNetMultiTarget:
             preds[name] = pred
         return preds
 
-    def predict_total(self, X: np.ndarray) -> np.ndarray:
+    def predict_total(
+        self,
+        X: np.ndarray,
+        pos: str | None = None,
+        scoring_format: str = "ppr",
+    ) -> np.ndarray:
+        """Aggregate per-target predictions into a single total per row.
+
+        See :meth:`RidgeMultiTarget.predict_total` for the routing semantics —
+        ``pos=None`` returns the unweighted sum (back-compat default), and an
+        explicit ``pos`` routes through ``src.shared.aggregate_targets`` to
+        honor K's sign vector, DST's tier bonuses, or QB/RB/WR/TE's
+        scoring-format weights.
+        """
         preds = self.predict(X)
-        return sum(preds[t] for t in self.target_names)
+        if pos is None:
+            return sum(preds[t] for t in self.target_names)
+        from src.shared.aggregate_targets import predictions_to_fantasy_points
+
+        return predictions_to_fantasy_points(pos, preds, scoring_format=scoring_format)
 
     def get_feature_importance(self, feature_names: list) -> dict:
         return {
