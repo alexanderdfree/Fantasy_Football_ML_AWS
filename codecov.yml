@@ -39,10 +39,9 @@ ignore:
   - "src/qb/diagnose_outliers.py"
   - "src/rb/analyze_errors.py"
   - "src/wr/benchmark_ridge_variants.py"
-  # Note: src/training/trainer.py, src/evaluation/backtest.py, and
-  # src/data/preprocessing.py were previously ignored as "dead/one-off"
-  # but now have direct test coverage (97-100%) — keep them in the
-  # coverage denominator for the Src component.
+  # Note: src/evaluation/backtest.py and src/data/preprocessing.py were
+  # previously ignored as "dead/one-off" but now have direct test coverage
+  # (97-100%) — keep them in the coverage denominator for the Src component.
 
 comment:
   layout: "reach, diff, flags, components, files"
@@ -72,7 +71,7 @@ flag_management:
     - name: DST
       paths: [src/dst/]
     - name: shared
-      paths: [src/shared/, src/config.py, src/data/, src/features/, src/models/, src/training/, src/evaluation/, src/serving/, src/batch/]
+      paths: [src/shared/, src/config.py, src/data/, src/features/, src/models/, src/evaluation/, src/serving/, src/batch/]
 
 component_management:
   default_rules:

@@ -28,7 +28,6 @@ The rest of `src/` groups by purpose:
 - `src/data/` — cross-position data loading + temporal split (per-position `data.py` files wrap these): `loader.py`, `nflcom_loader.py`, `preprocessing.py`, `redzone_pbp.py`, `split.py`.
 - `src/features/engineer.py` — cross-position feature engineering coordinator.
 - `src/models/` — **single-target** model classes (`RidgeModel`, `ElasticNetModel`, `SeasonAverageBaseline`, `LastWeekBaseline`). These are the building blocks; `src/shared/models.py` wraps them into multi-target versions. Don't confuse this with the root-level `models/` directory (placeholder for trained-model artifacts that load from S3).
-- `src/training/trainer.py` — generic training-loop helpers.
 - `src/evaluation/metrics.py` — `compute_metrics(y_true, y_pred)` helper used by backtest and pipeline. Note: `src/shared/evaluation.py` is the larger position-aware visualization/aggregation layer that imports this helper.
 - `src/serving/` — Flask app + assets.
 - `src/batch/` — training orchestration (AWS Batch path).
