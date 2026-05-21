@@ -1572,6 +1572,10 @@ def _compute_metrics_locked():
                 if not pos_mask.any():
                     continue
                 pm = compute_metrics(y_avail[pos_mask], preds_avail[pos_mask])
+                # Round per-position metrics to 4 decimals to match the overall
+                # row below — without this, by_position dicts ship full
+                # double-precision floats while overall is pre-rounded.
+                pm = {k: round(v, 4) for k, v in pm.items()}
                 pm["position"] = pos
                 pm["n_samples"] = int(pos_mask.sum())
                 by_position.append(pm)
