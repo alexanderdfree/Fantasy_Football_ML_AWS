@@ -580,12 +580,12 @@ function renderPositionModelDetail(pos) {
         const m = tm[t.key] || {};
         const unit = m.unit;
         return `<tr>
-            <td class="tm-name">${t.label}</td>
-            <td class="tm-formula">${t.formula}</td>
-            <td class="tm-val">${formatTargetMae(m.ridge_mae, t.key, unit, currentScoring)}</td>
-            <td class="tm-val">${formatTargetMae(m.nn_mae, t.key, unit, currentScoring)}</td>
-            <td class="tm-val">${formatTargetMae(m.attn_nn_mae, t.key, unit, currentScoring)}</td>
-            <td class="tm-val">${formatTargetMae(m.lgbm_mae, t.key, unit, currentScoring)}</td>
+            <td class="tm-name">${escapeHtml(t.label)}</td>
+            <td class="tm-formula">${escapeHtml(t.formula)}</td>
+            <td class="tm-val">${escapeHtml(formatTargetMae(m.ridge_mae, t.key, unit, currentScoring))}</td>
+            <td class="tm-val">${escapeHtml(formatTargetMae(m.nn_mae, t.key, unit, currentScoring))}</td>
+            <td class="tm-val">${escapeHtml(formatTargetMae(m.attn_nn_mae, t.key, unit, currentScoring))}</td>
+            <td class="tm-val">${escapeHtml(formatTargetMae(m.lgbm_mae, t.key, unit, currentScoring))}</td>
         </tr>`;
     }).join("");
 
@@ -594,7 +594,7 @@ function renderPositionModelDetail(pos) {
     const totalCell = (v) => v != null ? `<strong>${v.toFixed(2)}</strong>` : '<strong>--</strong>';
     const totalRow = `<tr class="tm-total-row">
         <td class="tm-name"><strong>Total (fantasy points)</strong></td>
-        <td class="tm-formula">${d.adjustments || ''}</td>
+        <td class="tm-formula">${escapeHtml(d.adjustments || '')}</td>
         <td class="tm-val">${totalCell(totalM.ridge_mae)}</td>
         <td class="tm-val">${totalCell(totalM.nn_mae)}</td>
         <td class="tm-val">${totalCell(totalM.attn_nn_mae)}</td>
@@ -603,7 +603,7 @@ function renderPositionModelDetail(pos) {
 
     // Feature badges
     const featureBadges = (d.specific_features || []).map(f =>
-        `<span class="feature-badge">${f}</span>`
+        `<span class="feature-badge">${escapeHtml(f)}</span>`
     ).join("");
 
     // Architecture
@@ -613,9 +613,9 @@ function renderPositionModelDetail(pos) {
     container.innerHTML = `
         <div class="pos-model-card">
             <div class="pos-model-header">
-                <span class="pos-badge pos-${pos}">${pos}</span>
-                <span class="pos-model-name">${d.label} Model</span>
-                <span class="pos-model-meta">${d.n_features || '?'} features &middot; ${d.n_samples_test || '?'} test samples</span>
+                <span class="pos-badge pos-${escapeHtml(pos)}">${escapeHtml(pos)}</span>
+                <span class="pos-model-name">${escapeHtml(d.label)} Model</span>
+                <span class="pos-model-meta">${escapeHtml(d.n_features || '?')} features &middot; ${escapeHtml(d.n_samples_test || '?')} test samples</span>
             </div>
 
             <div class="pos-model-section-label">Raw-Stat Targets</div>
@@ -642,7 +642,7 @@ function renderPositionModelDetail(pos) {
             <div class="feature-badges">${featureBadges}</div>
 
             <div class="pos-model-section-label">Neural Network Architecture</div>
-            <div class="arch-info">Shared backbone <span class="arch-val">[${backbone}]</span> &rarr; ${(d.targets || []).length} heads (hidden: <span class="arch-val">${arch.head_hidden || '?'}</span>)</div>
+            <div class="arch-info">Shared backbone <span class="arch-val">[${escapeHtml(backbone)}]</span> &rarr; ${(d.targets || []).length} heads (hidden: <span class="arch-val">${escapeHtml(arch.head_hidden || '?')}</span>)</div>
         </div>
     `;
 }
