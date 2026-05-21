@@ -190,6 +190,33 @@ def test_main_download_only_skips_submit(_main_stubs, monkeypatch):
 
 
 @pytest.mark.unit
+def test_main_git_hash_arg_overrides_workspace_head(_main_stubs, monkeypatch):
+    """``--git-hash`` must override ``get_git_hash()`` in both the JSON's
+    ``git_hash`` field and the ``run_id`` filename suffix, truncated to 7
+    chars to match the existing run_id convention.
+
+    Guards against the failure mode in TODO.md's "Benchmark ``git_hash``
+    recorded the wrong SHA on rapid back-to-back merges" archive entry: the
+    workflow workspace HEAD can advance past the image-build SHA when a
+    follow-up PR lands while a Batch run is queued. Passing
+    ``--git-hash $GITHUB_SHA`` from CI pins the recorded SHA to the SHA the
+    docker image was actually built from. The unset/fallback path is
+    covered by ``test_main_download_only_skips_submit``'s assertion that
+    ``appended[0]["git_hash"] == "abc1234"`` (the stubbed get_git_hash).
+    """
+    import src.batch.benchmark as bb
+
+    _, _, appended = _main_stubs
+    monkeypatch.setattr(
+        "sys.argv",
+        ["src/batch/benchmark.py", "--download-only", "--git-hash", "d34db33f00ba12"],
+    )
+    bb.main()
+    assert appended[0]["git_hash"] == "d34db33"
+    assert appended[0]["run_id"].endswith("_d34db33")
+
+
+@pytest.mark.unit
 def test_main_full_launch_path(_main_stubs, monkeypatch):
     """Default invocation runs the upload → submit → wait → download flow."""
     import src.batch.benchmark as bb

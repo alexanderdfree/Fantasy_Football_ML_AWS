@@ -111,6 +111,19 @@ def main():
             "in the JSON so the serving UI can link rows to GitHub."
         ),
     )
+    parser.add_argument(
+        "--git-hash",
+        default=None,
+        help=(
+            "Override the recorded ``git_hash`` with the SHA the trained "
+            "docker image was built from. Defaults to the workspace HEAD via "
+            "``get_git_hash()``. CI passes this explicitly because the "
+            "workflow workspace can advance past the image-build SHA when "
+            "subsequent PRs merge while the Batch job is queued — recording "
+            "the workspace HEAD would mislabel runs and break MAE comparison "
+            "across consecutive benchmarks."
+        ),
+    )
     args = parser.parse_args()
 
     project_root = os.path.join(os.path.dirname(__file__), "..", "..")
@@ -168,7 +181,9 @@ def main():
         json.dump(summaries, f, indent=2)
     print(f"\nResults saved to {RESULTS_FILE}")
 
-    git_hash = get_git_hash()
+    # Truncate to 7 chars so a CI-supplied full 40-char SHA matches the
+    # short-SHA convention ``get_git_hash()`` already returns.
+    git_hash = (args.git_hash or get_git_hash())[:7]
     now = utc_now_iso()
     written_path = append_to_history(
         HISTORY_DIR,
