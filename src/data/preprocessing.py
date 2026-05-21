@@ -8,11 +8,19 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
     """Filter and clean raw NFL data for modeling."""
     df = raw_df.copy()
 
-    # Filter to regular season
-    if "season_type" in df.columns:
-        df = df[df["season_type"] == "REG"].copy()
+    # Filter to regular season. ``season_type`` is part of the nflverse
+    # weekly schema (both ``import_weekly_data`` and the 2025+ stats_player
+    # parquet emit it), so its absence indicates a malformed upstream frame
+    # rather than an older-dataset path that should be tolerated. Fail loudly.
+    assert "season_type" in df.columns, (
+        "preprocess() requires 'season_type'; upstream loader (src/data/loader.py) "
+        "must emit it. nflverse weekly data carries this column on every release."
+    )
+    df = df[df["season_type"] == "REG"].copy()
 
-    # Step 1: Filter to skill positions
+    # Step 1: Filter to all 6 modeled positions (QB/RB/WR/TE/K/DST). K and
+    # DST land here too even though they have their own data-loading paths
+    # downstream — POSITIONS is the global allowlist.
     df = df[df["position"].isin(POSITIONS)].copy()
 
     # Step 2: Remove rows where player didn't play
