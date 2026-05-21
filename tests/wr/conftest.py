@@ -88,37 +88,50 @@ def make_wr_row():
     return _build_wr_row
 
 
+def make_wr_player_games(
+    player_id: str = "W1",
+    season: int = 2023,
+    n_weeks: int = 5,
+    receptions: int = 5,
+    targets: int = 8,
+    receiving_yards: int = 70,
+    receiving_air_yards: int = 100,
+    receiving_yards_after_catch: int = 30,
+    receiving_epa: float = 2.0,
+    receiving_first_downs: int = 3,
+    recent_team: str = "KC",
+) -> pd.DataFrame:
+    """Build a multi-week single-player WR DataFrame matching feature inputs.
+
+    Module-level helper consumed both by ``wr_player_games_factory`` (the
+    pytest fixture) and by ``install_parameterized_features`` in
+    ``tests/wr/test_features.py`` (which runs at import time and can't
+    resolve fixtures). Single source of truth for the canonical WR
+    multi-week row layout.
+    """
+    return pd.DataFrame(
+        {
+            "player_id": [player_id] * n_weeks,
+            "season": [season] * n_weeks,
+            "week": list(range(1, n_weeks + 1)),
+            "receptions": [receptions] * n_weeks,
+            "targets": [targets] * n_weeks,
+            "receiving_yards": [receiving_yards] * n_weeks,
+            "receiving_air_yards": [receiving_air_yards] * n_weeks,
+            "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
+            "receiving_epa": [receiving_epa] * n_weeks,
+            "receiving_first_downs": [receiving_first_downs] * n_weeks,
+            "recent_team": [recent_team] * n_weeks,
+        }
+    )
+
+
 @pytest.fixture(scope="session")
 def wr_player_games_factory():
-    """Factory for multi-week WR game DataFrames used by feature-compute tests."""
+    """Factory for multi-week WR game DataFrames used by feature-compute tests.
 
-    def _make(
-        player_id: str = "W1",
-        season: int = 2023,
-        n_weeks: int = 5,
-        receptions: int = 5,
-        targets: int = 8,
-        receiving_yards: int = 70,
-        receiving_air_yards: int = 100,
-        receiving_yards_after_catch: int = 30,
-        receiving_epa: float = 2.0,
-        receiving_first_downs: int = 3,
-        recent_team: str = "KC",
-    ) -> pd.DataFrame:
-        return pd.DataFrame(
-            {
-                "player_id": [player_id] * n_weeks,
-                "season": [season] * n_weeks,
-                "week": list(range(1, n_weeks + 1)),
-                "receptions": [receptions] * n_weeks,
-                "targets": [targets] * n_weeks,
-                "receiving_yards": [receiving_yards] * n_weeks,
-                "receiving_air_yards": [receiving_air_yards] * n_weeks,
-                "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
-                "receiving_epa": [receiving_epa] * n_weeks,
-                "receiving_first_downs": [receiving_first_downs] * n_weeks,
-                "recent_team": [recent_team] * n_weeks,
-            }
-        )
-
-    return _make
+    Thin fixture wrapper over the module-level :func:`make_wr_player_games`
+    so import-time consumers (the parameterized-features harness) and
+    fixture consumers (in-test factories) share the same implementation.
+    """
+    return make_wr_player_games

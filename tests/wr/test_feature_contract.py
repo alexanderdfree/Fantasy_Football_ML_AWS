@@ -42,11 +42,14 @@ _SPECIFIC_CONTRACT = [
     ("reception_rate_L3", 0.0, 1.0, 0.0),
     ("team_wr_target_share_L3", 0.0, 1.0, 0.0),
     ("receiving_first_down_rate_L3", 0.0, 1.0, 0.0),
-    # yards / target & reception style features (non-negative, loose upper bound)
+    # yards / target & reception style features (non-negative, loose upper bound).
+    # Both air_yards_per_target_L3 and yac_per_reception_L3 are ratios of
+    # non-negative rolling sums (receiving_air_yards / targets, etc.), so
+    # the floor is 0.0 — the prior -5.0 ceiling masked a real bug class.
     ("yards_per_reception_L3", 0.0, 200.0, 0.0),
     ("yards_per_target_L3", 0.0, 200.0, 0.0),
-    ("air_yards_per_target_L3", -5.0, 200.0, 0.0),
-    ("yac_per_reception_L3", -5.0, 200.0, 0.0),
+    ("air_yards_per_target_L3", 0.0, 200.0, 0.0),
+    ("yac_per_reception_L3", 0.0, 200.0, 0.0),
     # EPA can be negative; wider allowed range
     ("receiving_epa_per_target_L3", -10.0, 10.0, 0.0),
 ]

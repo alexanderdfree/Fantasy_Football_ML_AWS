@@ -1,5 +1,6 @@
 import pandas as pd
 
+from src.config import SCORING
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
 
@@ -39,11 +40,16 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
             "fumbles_lost": df["fumbles_lost"].values,
         }
         wr_component = predictions_to_fantasy_points("WR", preds, "ppr")
-        rushing_component = df["rushing_yards"].fillna(0) * 0.1 + df["rushing_tds"].fillna(0) * 6
+        # Decomposition uses src.config.SCORING so a single source of
+        # truth changes here when scoring constants are tweaked.
+        rushing_component = (
+            df["rushing_yards"].fillna(0) * SCORING["rushing_yards"]
+            + df["rushing_tds"].fillna(0) * SCORING["rushing_tds"]
+        )
         passing_component = (
-            df["passing_yards"].fillna(0) * 0.04
-            + df["passing_tds"].fillna(0) * 4
-            + df["interceptions"].fillna(0) * -2
+            df["passing_yards"].fillna(0) * SCORING["passing_yards"]
+            + df["passing_tds"].fillna(0) * SCORING["passing_tds"]
+            + df["interceptions"].fillna(0) * SCORING["interceptions"]
         )
         discrepancy = (
             df["fantasy_points"] - wr_component - rushing_component - passing_component
