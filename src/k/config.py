@@ -1,3 +1,10 @@
+"""K (kicker) hyperparameters bundled in a single :class:`PositionConfig`.
+
+Downstream consumers read from the exported ``POSITION_CONFIG`` exclusively.
+``CONFIG_TINY`` and ``CONFIG_TINY_ATTN`` remain at module level — e2e and
+attention-pipeline tests import them by name.
+"""
+
 from src.shared.position_config import (
     DEFAULT_ENET_L1_RATIOS,
     PositionConfig,
@@ -5,15 +12,13 @@ from src.shared.position_config import (
 )
 
 # === K Seasons (post-PAT rule change: 2015+) ===
-SEASONS = list(range(2015, 2026))  # 2015-2025
+_SEASONS = list(range(2015, 2026))  # 2015-2025
 
-# === K Target Decomposition ===
 # 4 non-negative raw-value heads. Total fantasy points = sum with signs
-# [+1, +1, -1, -1] applied at inference (see src/shared/registry.py K entry).
-TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
+# [+1, +1, -1, -1] applied at inference (target_signs below).
+_TARGETS = ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"]
 
-# === K-Specific Features ===
-SPECIFIC_FEATURES = [
+_SPECIFIC_FEATURES = [
     # Rolling performance
     "fg_attempts_L3",
     "fg_accuracy_L5",
@@ -31,8 +36,7 @@ SPECIFIC_FEATURES = [
     "xp_accuracy_L5",
 ]
 
-# Contextual features available for kickers
-CONTEXTUAL_FEATURES = [
+_CONTEXTUAL_FEATURES = [
     "is_home",
     "week",
     "implied_team_total",
@@ -43,116 +47,9 @@ CONTEXTUAL_FEATURES = [
     "game_temp",
 ]
 
-ALL_FEATURES = SPECIFIC_FEATURES + CONTEXTUAL_FEATURES
+_ALL_FEATURES = _SPECIFIC_FEATURES + _CONTEXTUAL_FEATURES
 
-# No general features apply to kickers — all dropped
-DROP_FEATURES = set()  # Not used; kickers bypass the general feature pipeline
-
-# === Ridge ===
-_ALPHA_COUNTS = alpha_grid(-1, 4, 15)
-RIDGE_ALPHA_GRIDS = {t: _ALPHA_COUNTS for t in TARGETS}
-RIDGE_CV_FOLDS = 3
-CV_SPLIT_COLUMN = "season"
-RIDGE_REFINE_POINTS = 0
-
-# === ElasticNet (optional parallel linear baseline, L1+L2) ===
-# Off by default. Reuses RIDGE_ALPHA_GRIDS and searches over ENET_L1_RATIOS.
-TRAIN_ELASTICNET = False
-ENET_L1_RATIOS = list(DEFAULT_ENET_L1_RATIOS)
-
-# === Neural Net (2015-2025 dataset: more data allows larger model) ===
-NN_BACKBONE_LAYERS = [64, 32]
-NN_HEAD_HIDDEN = 16
-NN_DROPOUT = 0.25
-NN_LR = 3e-4
-NN_WEIGHT_DECAY = 2e-4
-NN_EPOCHS = 250
-NN_BATCH_SIZE = 128
-NN_PATIENCE = 30
-
-# === Loss Weights ===
-# Equal per-target weights.
-LOSS_WEIGHTS = {
-    "fg_yard_points": 1.0,
-    "pat_points": 1.0,
-    "fg_misses": 1.0,
-    "xp_misses": 1.0,
-}
-
-# === Huber Deltas (per-target) ===
-# Harmonized to 2.0 across targets.
-HUBER_DELTAS = {
-    "fg_yard_points": 2.0,
-    "pat_points": 2.0,
-    "fg_misses": 2.0,
-    "xp_misses": 2.0,
-}
-
-# Per-head loss family. Default "huber"; PR 2 introduces "poisson_nll" and
-# "hurdle_negbin" options. All heads on "huber" here = no behavior change.
-HEAD_LOSSES = {t: "huber" for t in TARGETS}
-
-# === Non-negative NN targets ===
-# All 4 K heads are non-negative raw counts/points; signs are applied only in
-# the final fantasy total aggregation, not in the per-head outputs.
-NN_NON_NEGATIVE_TARGETS = set(TARGETS)
-
-# === LR Scheduler ===
-SCHEDULER_TYPE = "onecycle"
-ONECYCLE_MAX_LR = 1e-3
-ONECYCLE_PCT_START = 0.3
-
-# === Cross-season split (now matching other positions) ===
-MIN_GAMES = 4
-
-# === Attention NN (nested: per-kick inner pool, per-game outer attention) ===
-TRAIN_ATTENTION_NN = True
-# Outer attention over prior games — mirrors RB's proven d_model=32 / n_heads=2.
-ATTN_D_MODEL = 32
-ATTN_N_HEADS = 2
-ATTN_ENCODER_HIDDEN_DIM = 32
-ATTN_MAX_GAMES = 17
-ATTN_PROJECT_KV = False
-ATTN_POSITIONAL_ENCODING = True
-# Gated fusion is intentionally absent: MultiHeadNetWithNestedHistory does not
-# implement it (only the flat MultiHeadNetWithHistory does), so exposing it
-# here would be a no-op invite to config drift.
-ATTN_DROPOUT = 0.05
-ATTN_LR = 1e-3
-ATTN_WEIGHT_DECAY = 5e-5
-ATTN_BATCH_SIZE = 256
-ATTN_PATIENCE = 35
-
-# Inner pool over kicks within a game.
-ATTN_KICK_DIM = 16
-ATTN_MAX_KICKS_PER_GAME = 10
-# Per-kick features consumed by the inner pool. Game-level context (wind,
-# is_home) is replicated across kicks in the same game so the inner pool
-# can condition on conditions without requiring a parallel static channel.
-ATTN_KICK_STATS = [
-    "is_fg",
-    "is_xp",
-    "kick_distance",
-    "kick_made",
-    "fg_prob",
-    "is_q4",
-    "score_diff",
-    "game_wind",
-    "is_home",
-]
-
-# Per-game aggregate stats fed alongside the inner-pool output. The inner
-# pool sees raw per-kick records (capped at 10 kicks per game) so it can't
-# recover full-game volume signal like total fg_att, total fg_made, or
-# game-level fg_yards_made. ATTN_HISTORY_STATS hands those aggregates to the
-# outer attention directly, mirroring the role they play for the flat
-# positions (QB/RB/WR/TE/DST) where the same list feeds the only attention
-# branch. Game-level context (is_home, is_dome, implied_team_total,
-# game_wind) is included here too so the attention pool can learn
-# environment-dependent recency weighting on its own — these columns are
-# rows-vary-per-game so they belong on the history tokens, not the static
-# whitelist (CLAUDE.md "Attention static-feature whitelist").
-ATTN_HISTORY_STATS = [
+_ATTN_HISTORY_STATS = [
     # FG / PAT volume + accuracy.
     "fg_att",
     "fg_made",
@@ -166,9 +63,8 @@ ATTN_HISTORY_STATS = [
     # Situational accuracy.
     "q4_fg_att",
     "q4_fg_made",
-    # Per-game fantasy total (carries the signed scoring sum the four target
-    # heads decompose into; included for the attention to learn its own
-    # recency weighting on it).
+    # Per-game fantasy total (signed scoring sum from the four target
+    # heads; attention learns its own recency weighting on it).
     "fantasy_points",
     # Game-level context — varies per game and not in the static whitelist.
     "is_home",
@@ -177,37 +73,33 @@ ATTN_HISTORY_STATS = [
     "game_wind",
 ]
 
-ATTN_STATIC_FEATURES = list(CONTEXTUAL_FEATURES)
-
-# === LightGBM ===
-TRAIN_LIGHTGBM = True
-LGBM_N_ESTIMATORS = 300
-LGBM_LEARNING_RATE = 0.05
-LGBM_NUM_LEAVES = 15
-LGBM_MAX_DEPTH = -1
-LGBM_SUBSAMPLE = 0.8
-LGBM_COLSAMPLE_BYTREE = 0.8
-LGBM_REG_LAMBDA = 2.0
-LGBM_REG_ALPHA = 0.1
-LGBM_MIN_CHILD_SAMPLES = 30
-LGBM_MIN_SPLIT_GAIN = 0.0
-LGBM_OBJECTIVE = "huber"
+_ATTN_KICK_STATS = [
+    "is_fg",
+    "is_xp",
+    "kick_distance",
+    "kick_made",
+    "fg_prob",
+    "is_q4",
+    "score_diff",
+    "game_wind",
+    "is_home",
+]
 
 
 # === Tiny config for E2E smoke tests ===
-# Shrunk to 1 epoch with a 2-layer x 8-unit NN so the full pipeline runs
+# Shrunk to 1 epoch with a 2-layer × 8-unit NN so the full pipeline runs
 # in well under 20s on CPU. Used by tests/k/test_pipeline_e2e.py.
 CONFIG_TINY = {
-    "targets": TARGETS,
-    "ridge_alpha_grids": {t: [1.0] for t in TARGETS},
+    "targets": _TARGETS,
+    "ridge_alpha_grids": {t: [1.0] for t in _TARGETS},
     "ridge_cv_folds": 2,
-    "cv_split_column": CV_SPLIT_COLUMN,
+    "cv_split_column": "season",
     "ridge_refine_points": 0,
     # ALL_FEATURES (specific + contextual), mirroring the production K config
-    # — the contextual block is what carries the PBP-derived
-    # ``game_wind`` / ``game_temp`` columns that the catch-all
-    # ``.fillna(0)`` would otherwise collapse to 0 (off the train scale).
-    "specific_features": ALL_FEATURES,
+    # — the contextual block carries the PBP-derived ``game_wind`` /
+    # ``game_temp`` columns that the catch-all ``.fillna(0)`` would
+    # otherwise collapse to 0 (off the train scale).
+    "specific_features": _ALL_FEATURES,
     "nn_backbone_layers": [8, 8],
     "nn_head_hidden": 4,
     "nn_dropout": 0.0,
@@ -218,8 +110,8 @@ CONFIG_TINY = {
     "nn_batch_size": 32,
     "nn_patience": 1,
     "nn_log_every": 1,
-    "loss_weights": LOSS_WEIGHTS,
-    "huber_deltas": HUBER_DELTAS,
+    "loss_weights": {t: 1.0 for t in _TARGETS},
+    "huber_deltas": {t: 2.0 for t in _TARGETS},
     "scheduler_type": "onecycle",
     "onecycle_max_lr": 1e-3,
     "onecycle_pct_start": 0.3,
@@ -227,15 +119,15 @@ CONFIG_TINY = {
 }
 
 # Attention tiny config — reuses CONFIG_TINY base plus a shrunk attention
-# branch. Used by the E2E attention test. `attn_history_builder_fn` must be
-# supplied by the caller (it captures a kicks_df in its closure).
+# branch. Used by the E2E attention test. ``attn_history_builder_fn`` must
+# be supplied by the caller (it captures a kicks_df in its closure).
 CONFIG_TINY_ATTN = {
     **CONFIG_TINY,
     "train_attention_nn": True,
     "attn_history_structure": "nested",
     "attn_static_from_df": True,
-    "attn_static_features": ATTN_STATIC_FEATURES,
-    "attn_history_stats": ATTN_HISTORY_STATS,
+    "attn_static_features": list(_CONTEXTUAL_FEATURES),
+    "attn_history_stats": _ATTN_HISTORY_STATS,
     "attn_d_model": 8,
     "attn_n_heads": 1,
     "attn_kick_dim": 4,
@@ -250,73 +142,83 @@ CONFIG_TINY_ATTN = {
 }
 
 
-# === Bundled config object ===
 # Single source of truth for downstream consumers (registry / pipeline / serving).
 # K's attention is nested (per-kick inner pool + per-game outer attention), so
 # attn_max_seq_len stays None — the outer sequence length lives in attn_max_games.
 POSITION_CONFIG = PositionConfig(
     name="K",
-    targets=TARGETS,
-    specific_features=SPECIFIC_FEATURES,
-    contextual_features=CONTEXTUAL_FEATURES,
-    all_features=ALL_FEATURES,
-    drop_features=DROP_FEATURES,
-    ridge_alpha_grids=RIDGE_ALPHA_GRIDS,
-    ridge_cv_folds=RIDGE_CV_FOLDS,
-    ridge_refine_points=RIDGE_REFINE_POINTS,
-    cv_split_column=CV_SPLIT_COLUMN,
-    train_elasticnet=TRAIN_ELASTICNET,
-    enet_l1_ratios=ENET_L1_RATIOS,
-    nn_backbone_layers=NN_BACKBONE_LAYERS,
-    nn_head_hidden=NN_HEAD_HIDDEN,
-    nn_dropout=NN_DROPOUT,
-    nn_non_negative_targets=NN_NON_NEGATIVE_TARGETS,
-    nn_lr=NN_LR,
-    nn_weight_decay=NN_WEIGHT_DECAY,
-    nn_epochs=NN_EPOCHS,
-    nn_batch_size=NN_BATCH_SIZE,
-    nn_patience=NN_PATIENCE,
-    head_losses=HEAD_LOSSES,
-    loss_weights=LOSS_WEIGHTS,
-    huber_deltas=HUBER_DELTAS,
-    scheduler_type=SCHEDULER_TYPE,
-    onecycle_max_lr=ONECYCLE_MAX_LR,
-    onecycle_pct_start=ONECYCLE_PCT_START,
-    train_attention_nn=TRAIN_ATTENTION_NN,
-    attn_d_model=ATTN_D_MODEL,
-    attn_n_heads=ATTN_N_HEADS,
-    attn_encoder_hidden_dim=ATTN_ENCODER_HIDDEN_DIM,
+    targets=_TARGETS,
+    specific_features=_SPECIFIC_FEATURES,
+    contextual_features=_CONTEXTUAL_FEATURES,
+    all_features=_ALL_FEATURES,
+    # No general features — kickers bypass the player-level feature pipeline.
+    drop_features=set(),
+    ridge_alpha_grids={t: alpha_grid(-1, 4, 15) for t in _TARGETS},
+    ridge_cv_folds=3,
+    ridge_refine_points=0,
+    cv_split_column="season",
+    train_elasticnet=False,
+    enet_l1_ratios=list(DEFAULT_ENET_L1_RATIOS),
+    # 2015-2025 dataset: more data allows a larger model.
+    nn_backbone_layers=[64, 32],
+    nn_head_hidden=16,
+    nn_dropout=0.25,
+    # All 4 K heads are non-negative raw counts/points; signs are applied
+    # only in the final fantasy total aggregation, not in per-head outputs.
+    nn_non_negative_targets=set(_TARGETS),
+    nn_lr=3e-4,
+    nn_weight_decay=2e-4,
+    nn_epochs=250,
+    nn_batch_size=128,
+    nn_patience=30,
+    # All heads on "huber" — no behavior change vs the default.
+    head_losses={t: "huber" for t in _TARGETS},
+    # Equal per-target weights — Huber delta harmonized to 2.0 across targets.
+    loss_weights={t: 1.0 for t in _TARGETS},
+    huber_deltas={t: 2.0 for t in _TARGETS},
+    scheduler_type="onecycle",
+    onecycle_max_lr=1e-3,
+    onecycle_pct_start=0.3,
+    # === Attention NN (nested: per-kick inner pool, per-game outer) ===
+    # Outer attention mirrors RB's proven d_model=32 / n_heads=2.
+    train_attention_nn=True,
+    attn_d_model=32,
+    attn_n_heads=2,
+    attn_encoder_hidden_dim=32,
     attn_max_seq_len=None,
-    attn_positional_encoding=ATTN_POSITIONAL_ENCODING,
-    attn_dropout=ATTN_DROPOUT,
-    attn_lr=ATTN_LR,
-    attn_weight_decay=ATTN_WEIGHT_DECAY,
-    attn_batch_size=ATTN_BATCH_SIZE,
-    attn_patience=ATTN_PATIENCE,
-    attn_static_features=ATTN_STATIC_FEATURES,
-    attn_history_stats=ATTN_HISTORY_STATS,
-    attn_project_kv=ATTN_PROJECT_KV,
-    attn_max_games=ATTN_MAX_GAMES,
-    attn_kick_dim=ATTN_KICK_DIM,
-    attn_max_kicks_per_game=ATTN_MAX_KICKS_PER_GAME,
-    attn_kick_stats=ATTN_KICK_STATS,
+    attn_positional_encoding=True,
+    attn_dropout=0.05,
+    attn_lr=1e-3,
+    attn_weight_decay=5e-5,
+    attn_batch_size=256,
+    attn_patience=35,
+    attn_static_features=list(_CONTEXTUAL_FEATURES),
+    attn_history_stats=_ATTN_HISTORY_STATS,
+    attn_project_kv=False,
+    attn_max_games=17,
+    attn_kick_dim=16,
+    attn_max_kicks_per_game=10,
+    attn_kick_stats=_ATTN_KICK_STATS,
     opp_attn_max_seq_len=None,
-    train_lightgbm=TRAIN_LIGHTGBM,
-    lgbm_n_estimators=LGBM_N_ESTIMATORS,
-    lgbm_learning_rate=LGBM_LEARNING_RATE,
-    lgbm_num_leaves=LGBM_NUM_LEAVES,
-    lgbm_max_depth=LGBM_MAX_DEPTH,
-    lgbm_subsample=LGBM_SUBSAMPLE,
-    lgbm_colsample_bytree=LGBM_COLSAMPLE_BYTREE,
-    lgbm_reg_lambda=LGBM_REG_LAMBDA,
-    lgbm_reg_alpha=LGBM_REG_ALPHA,
-    lgbm_min_child_samples=LGBM_MIN_CHILD_SAMPLES,
-    lgbm_min_split_gain=LGBM_MIN_SPLIT_GAIN,
-    lgbm_objective=LGBM_OBJECTIVE,
-    seasons=SEASONS,
-    min_games=MIN_GAMES,
-    # Sign vector applied by app.py's K aggregator (fantasy points = scoring
-    # heads minus miss penalties); mirrors the K branch in registry.py.
+    train_lightgbm=True,
+    lgbm_n_estimators=300,
+    lgbm_learning_rate=0.05,
+    lgbm_num_leaves=15,
+    lgbm_max_depth=-1,
+    lgbm_subsample=0.8,
+    lgbm_colsample_bytree=0.8,
+    lgbm_reg_lambda=2.0,
+    lgbm_reg_alpha=0.1,
+    lgbm_min_child_samples=30,
+    lgbm_min_split_gain=0.0,
+    lgbm_objective="huber",
+    seasons=_SEASONS,
+    # Cross-season split, matching other positions.
+    min_games=4,
+    # K's serving aggregator (app.py) uses ``target_signs`` to combine the
+    # four raw-count heads into fantasy points: positive for scoring heads,
+    # negative for miss penalties. Other positions go through the shared
+    # ``predictions_to_fantasy_points`` aggregator instead.
     target_signs={
         "fg_yard_points": 1.0,
         "pat_points": 1.0,

@@ -13,13 +13,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.k.config import (
-    ATTN_KICK_STATS,
-    ATTN_MAX_GAMES,
-    ATTN_MAX_KICKS_PER_GAME,
-    CONFIG_TINY,
-    CONFIG_TINY_ATTN,
-)
+from src.k.config import CONFIG_TINY, CONFIG_TINY_ATTN, POSITION_CONFIG
+
+ATTN_KICK_STATS = POSITION_CONFIG.attn_kick_stats
+ATTN_MAX_GAMES = POSITION_CONFIG.attn_max_games
+ATTN_MAX_KICKS_PER_GAME = POSITION_CONFIG.attn_max_kicks_per_game
 from src.k.data import filter_to_position
 from src.k.features import (
     add_specific_features,

@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.dst.config import TARGETS
+from src.dst.config import POSITION_CONFIG
 from tests.shared.position_fixtures import (
     register_position_markers,
     register_standard_fixtures,
@@ -32,7 +32,7 @@ register_standard_fixtures(
     globals(),
     scoring_scale=SCORING_SCALE,
     id_prefix="TEAM",
-    targets=TARGETS,
+    targets=POSITION_CONFIG.targets,
     stat_col="passing_yards",  # DST tests don't use make_position_df
     rng_kind="legacy",
 )

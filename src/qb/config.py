@@ -1,43 +1,21 @@
+"""QB hyperparameters bundled in a single :class:`PositionConfig`.
+
+Downstream consumers (training pipeline, serving, tests) read from the
+exported ``POSITION_CONFIG`` exclusively; no module-level UPPERCASE constants
+are exposed. Private helper variables stay scoped to construction.
+"""
+
 from src.shared.position_config import (
     DEFAULT_ENET_L1_RATIOS,
-    DEFAULT_OPP_ATTN_MAX_SEQ_LEN,
     DEFAULT_OPP_DEF_HISTORY_STATS,
     PositionConfig,
     alpha_grid,
     derive_attn_static_features,
 )
 
-# === QB Raw-Stat Targets ===
-# Predictions are raw NFL stats; fantasy points are aggregated post-prediction
-# via src.shared.aggregate_targets.predictions_to_fantasy_points("QB", preds).
-TARGETS = [
-    "passing_yards",
-    "rushing_yards",
-    "passing_tds",
-    "rushing_tds",
-    "interceptions",
-    "fumbles_lost",
-]
-
-# === QB-Specific Features ===
-SPECIFIC_FEATURES = [
-    "completion_pct_L3",
-    "yards_per_attempt_L3",
-    "td_rate_L3",
-    "int_rate_L3",
-    "sack_rate_L3",
-    "qb_rushing_share_L3",
-    "passing_epa_per_dropback_L3",
-    "deep_ball_rate_L3",
-    "pass_first_down_rate_L3",
-    "rushing_epa_per_carry_L3",
-    "rush_first_down_rate_L3",
-    "yac_rate_L3",
-    "sack_damage_per_dropback_L3",
-]
-
-# === QB Feature Whitelist ===
-# Explicit include list — new columns must be opted in, preventing silent leakage.
+# === QB-specific rolling stats ===
+# Feed both the rolling/L3-5-8 and prior-season aggregates inside
+# INCLUDE_FEATURES below.
 _ROLLING_STATS = [
     "carries",
     "rushing_yards",
@@ -46,9 +24,27 @@ _ROLLING_STATS = [
     "snap_pct",
 ]
 
-INCLUDE_FEATURES = {
-    # L3/L8 for all stats; snap_pct also keeps L5.
-    # L5 mean/std/max dropped (>0.97 corr with L3/L8) except snap_pct.
+# Yards targets stay on the (-2, 3) alpha grid; count targets (TDs, INTs,
+# fumbles_lost) use the (-1, 4) grid because the smaller target scale lets
+# stronger regularization dominate.
+_ALPHA_YARDS = alpha_grid(-2, 3, 15)
+_ALPHA_COUNTS = alpha_grid(-1, 4, 15)
+
+# Predictions are raw NFL stats; fantasy points are aggregated post-prediction
+# via src.shared.aggregate_targets.predictions_to_fantasy_points("QB", preds).
+_TARGETS = [
+    "passing_yards",
+    "rushing_yards",
+    "passing_tds",
+    "rushing_tds",
+    "interceptions",
+    "fumbles_lost",
+]
+
+# Explicit feature whitelist — new columns must be opted in, preventing
+# silent leakage. L5 mean/std/max dropped (>0.97 corr with L3/L8) except
+# snap_pct; passing_yards EWMA kept (others >0.98 corr with rolling means).
+_INCLUDE_FEATURES = {
     "rolling": [
         f"rolling_{a}_{stat}_L{w}"
         for stat in _ROLLING_STATS
@@ -59,10 +55,9 @@ INCLUDE_FEATURES = {
     "prior_season": [
         f"prior_season_{a}_{stat}" for stat in _ROLLING_STATS for a in ["mean", "std", "max"]
     ],
-    # Keep passing_yards EWMA only — other EWMA >0.98 corr with rolling means
     "ewma": ["ewma_passing_yards_L3", "ewma_passing_yards_L5"],
     "trend": ["trend_carries", "trend_snap_pct"],
-    # No target_share/air_yards_share — QBs have ~0 targets
+    # No target_share/air_yards_share — QBs have ~0 targets.
     "share": ["carry_share_L3", "carry_share_L5", "snap_pct"],
     "matchup": [
         "opp_fantasy_pts_allowed_to_pos",
@@ -95,232 +90,171 @@ INCLUDE_FEATURES = {
         "is_divisional",
         "temp_adjusted",
     ],
-    "specific": SPECIFIC_FEATURES,
+    "specific": [
+        "completion_pct_L3",
+        "yards_per_attempt_L3",
+        "td_rate_L3",
+        "int_rate_L3",
+        "sack_rate_L3",
+        "qb_rushing_share_L3",
+        "passing_epa_per_dropback_L3",
+        "deep_ball_rate_L3",
+        "pass_first_down_rate_L3",
+        "rushing_epa_per_carry_L3",
+        "rush_first_down_rate_L3",
+        "yac_rate_L3",
+        "sack_damage_per_dropback_L3",
+    ],
 }
 
-# === Ridge ===
-# Yards targets stay on the (-2, 3) alpha grid; count targets (TDs, INTs,
-# fumbles_lost) use the (-1, 4) grid because the smaller target scale lets
-# stronger regularization dominate.
-_ALPHA_YARDS = alpha_grid(-2, 3, 15)
-_ALPHA_COUNTS = alpha_grid(-1, 4, 15)
-
-RIDGE_ALPHA_GRIDS = {
-    "passing_yards": _ALPHA_YARDS,
-    "rushing_yards": _ALPHA_YARDS,
-    "passing_tds": _ALPHA_COUNTS,
-    "rushing_tds": _ALPHA_COUNTS,
-    "interceptions": _ALPHA_COUNTS,
-    "fumbles_lost": _ALPHA_COUNTS,
-}
-
-# === ElasticNet (optional parallel linear baseline, L1+L2) ===
-# Off by default. When enabled, the pipeline reuses RIDGE_ALPHA_GRIDS and
-# searches over ENET_L1_RATIOS. Skips PCA — L1 on a rotated basis doesn't
-# zero original features, so PCA defeats the reason to pick ElasticNet.
-TRAIN_ELASTICNET = False
-ENET_L1_RATIOS = list(DEFAULT_ENET_L1_RATIOS)
-
-# === Neural Net (2012+ dataset: wider backbone, relaxed regularization) ===
-NN_BACKBONE_LAYERS = [128]
-NN_HEAD_HIDDEN = 32
-NN_DROPOUT = 0.20
-# All 6 QB heads are non-negative raw stats (yards, TD counts, INTs, fumbles).
-NN_NON_NEGATIVE_TARGETS = set(TARGETS)
-NN_LR = 5e-4
-NN_WEIGHT_DECAY = 3e-4
-NN_EPOCHS = 300
-NN_BATCH_SIZE = 128
-NN_PATIENCE = 25
-
-# Count heads (passing/rushing TDs) moved from Huber to Poisson NLL — dispersion
-# 1.03-1.17 with negligible zero-excess, so plain Poisson fits; the extra
-# 64-unit capacity the Huber setup needed to fight the zero-mass is unnecessary.
-NN_HEAD_HIDDEN_OVERRIDES = {}
-
-# === Per-Head Loss Families ===
-# TDs + INTs + fumbles: Poisson NLL. QB TD distributions are not zero-inflated
-# (median ~2 TDs/start), so a plain Poisson rate model is the right fit and the
-# Huber-count-head-collapse failure mode (count heads regressing to the mean
-# under yards-dominated gradients) is avoided without needing wider heads.
-# No gated targets on QB (see ATTN_GATED below).
-HEAD_LOSSES = {
-    "passing_yards": "huber",
-    "rushing_yards": "huber",
-    "passing_tds": "poisson_nll",
-    "rushing_tds": "poisson_nll",
-    "interceptions": "poisson_nll",
-    "fumbles_lost": "poisson_nll",
-}
-
-# === Loss Weights ===
-# Yards heads keep 2.0/delta rebalance so count-head gradients aren't drowned
-# out (pre-rebalance: fantasy-point MAE regressed 6.33 -> 6.63; fumbles_lost
-# R2 = -0.34). Poisson NLL heads use weight 1.0 — at QB-scale rates (~1.5 TDs,
-# ~0.7 INTs, ~0.4 fumbles) the Poisson NLL is O(1), matching weighted yards.
-LOSS_WEIGHTS = {
-    "passing_yards": 0.08,  # 2.0 / 25  (Huber)
-    "rushing_yards": 0.133,  # 2.0 / 15  (Huber)
-    "passing_tds": 1.0,  # Poisson NLL
-    "rushing_tds": 1.0,  # Poisson NLL
-    "interceptions": 1.0,  # Poisson NLL
-    "fumbles_lost": 1.0,  # Poisson NLL
-}
-
-# === Huber Deltas (raw-stat units) ===
-# Only Huber heads need a delta — count heads moved to Poisson NLL.
-HUBER_DELTAS = {
-    "passing_yards": 25.0,
-    "rushing_yards": 15.0,
-}
-
-# === LR Scheduler ===
-SCHEDULER_TYPE = "cosine_warm_restarts"
-COSINE_T0 = 40
-COSINE_T_MULT = 2
-COSINE_ETA_MIN = 1e-5
-
-# === Attention NN (game history variant) ===
-TRAIN_ATTENTION_NN = True
-ATTN_D_MODEL = 32  # projection dim for each game vector
-ATTN_N_HEADS = 2
-ATTN_ENCODER_HIDDEN_DIM = 0
-ATTN_MAX_SEQ_LEN = 17
-ATTN_POSITIONAL_ENCODING = True
-ATTN_DROPOUT = 0.05
-ATTN_PATIENCE = 35
-ATTN_LR = 1e-3
-ATTN_WEIGHT_DECAY = 5e-5
-ATTN_BATCH_SIZE = 256
-ATTN_HISTORY_STATS = [
-    "passing_yards",
-    "rushing_yards",
-    "passing_tds",
-    "rushing_tds",
-    "attempts",
-    "completions",
-    "carries",
-    "interceptions",
-    "fumbles_lost",
-    "snap_pct",
-    "sacks",
-    "sack_yards",
-]
-# Categories of INCLUDE_FEATURES that flow into the attention NN's static
-# branch. The attention branch learns its own temporal representation from
-# ATTN_HISTORY_STATS, so rolling / ewma / trend / share / specific
-# categories are intentionally excluded to avoid duplicating that signal.
-# ``defense`` is also excluded: OPP_ATTN_HISTORY_STATS feeds the opposing
-# defense's trailing form through a parallel attention branch, which makes
-# the L5 static aggregates redundant for the NN. (They stay in
-# INCLUDE_FEATURES["defense"] so Ridge / LightGBM still see them.)
+# Categories that flow into the attention NN's static branch. Rolling /
+# ewma / trend / share / specific categories are intentionally excluded:
+# the attention branch learns its own temporal representation from
+# ``attn_history_stats`` so double-feeding leaks signal. ``defense`` is
+# excluded because OPP_ATTN_HISTORY_STATS feeds opposing-defense form
+# through a parallel attention branch; the L5 aggregates would be
+# redundant. Exposed at the module level so the per-position whitelist
+# test in tests/test_attn_static_columns.py can read it.
 ATTN_STATIC_CATEGORIES = [
     "prior_season",
     "matchup",
     "contextual",
     "weather_vegas",
 ]
-ATTN_STATIC_FEATURES = derive_attn_static_features(INCLUDE_FEATURES, ATTN_STATIC_CATEGORIES)
-
-# Per-game opponent-defense stats fed to the second attention branch. Mirror
-# the L5 static aggregates (opp_def_*_L5) but unrolled per game, so the NN
-# learns the trailing-form weighting itself instead of being handed a fixed
-# 5-game mean. Built by src.features.engineer.build_opp_defense_history_arrays.
-OPP_ATTN_HISTORY_STATS = list(DEFAULT_OPP_DEF_HISTORY_STATS)
-OPP_ATTN_MAX_SEQ_LEN = DEFAULT_OPP_ATTN_MAX_SEQ_LEN
-# Gated hurdle heads are DISABLED for QB. QBs throw so many TDs that the zero-
-# inflation assumption behind the hurdle model does not hold (median TD count
-# per start is ~2); a plain regression head outperforms the two-stage gate.
-ATTN_GATED = False
-ATTN_GATE_HIDDEN = 16
-ATTN_GATE_WEIGHT = 1.0
-
-# === LightGBM (Optuna-tuned, 50 trials, CV MAE 5.7415) ===
-# QB is the one position that keeps Fair after PR 3's unification attempt.
-# Running a 50-trial Huber retune regressed QB total MAE 6.269 -> 6.479
-# (+0.210 pts/game), with passing_yards MAE jumping 66.1 -> 71.2 (+5.0).
-# Root cause: LightGBM's Huber uses ``alpha=0.9`` as a *quantile* — the 90th
-# percentile of residuals demarcates the quadratic-to-linear transition.
-# On QB passing_yards (typical residuals 0-100 yards, tail to 200+), that
-# threshold puts 90% of residuals in Huber's quadratic zone. The resulting
-# effective-OLS behavior drags the model toward fitting moderate-size
-# residuals on the heavy tail, which generalizes poorly across seasons.
-# Fair's log-curvature-everywhere downweights the tail smoothly and beats
-# Huber by 0.21 pts on QB holdout.
-# RB/WR/TE/K/DST don't have a passing_yards-like heavy tail and tolerate
-# Huber; they unified to "huber" in the same PR.
-TRAIN_LIGHTGBM = True
-LGBM_N_ESTIMATORS = 1500
-LGBM_LEARNING_RATE = 0.0612763
-LGBM_NUM_LEAVES = 31
-LGBM_SUBSAMPLE = 0.867443
-LGBM_COLSAMPLE_BYTREE = 0.907776
-LGBM_REG_LAMBDA = 6.75023
-LGBM_REG_ALPHA = 0.00309259
-LGBM_MIN_CHILD_SAMPLES = 59
-LGBM_MIN_SPLIT_GAIN = 0.0632242
-LGBM_OBJECTIVE = "fair"
 
 
-# === Bundled config object ===
 # Single source of truth for downstream consumers (registry / pipeline / serving).
-# Mirror of the module-level constants above; the per-position config-parity test
-# asserts every field stays in sync. New consumers should read from POSITION_CONFIG
-# rather than importing each constant by name.
+# Read from POSITION_CONFIG exclusively; no module-level UPPERCASE constants.
 POSITION_CONFIG = PositionConfig(
     name="QB",
-    targets=TARGETS,
-    specific_features=SPECIFIC_FEATURES,
-    include_features=INCLUDE_FEATURES,
-    ridge_alpha_grids=RIDGE_ALPHA_GRIDS,
-    train_elasticnet=TRAIN_ELASTICNET,
-    enet_l1_ratios=ENET_L1_RATIOS,
-    nn_backbone_layers=NN_BACKBONE_LAYERS,
-    nn_head_hidden=NN_HEAD_HIDDEN,
-    nn_dropout=NN_DROPOUT,
-    nn_non_negative_targets=NN_NON_NEGATIVE_TARGETS,
-    nn_lr=NN_LR,
-    nn_weight_decay=NN_WEIGHT_DECAY,
-    nn_epochs=NN_EPOCHS,
-    nn_batch_size=NN_BATCH_SIZE,
-    nn_patience=NN_PATIENCE,
-    nn_head_hidden_overrides=NN_HEAD_HIDDEN_OVERRIDES,
-    head_losses=HEAD_LOSSES,
-    loss_weights=LOSS_WEIGHTS,
-    huber_deltas=HUBER_DELTAS,
-    scheduler_type=SCHEDULER_TYPE,
-    cosine_t0=COSINE_T0,
-    cosine_t_mult=COSINE_T_MULT,
-    cosine_eta_min=COSINE_ETA_MIN,
-    train_attention_nn=TRAIN_ATTENTION_NN,
-    attn_d_model=ATTN_D_MODEL,
-    attn_n_heads=ATTN_N_HEADS,
-    attn_encoder_hidden_dim=ATTN_ENCODER_HIDDEN_DIM,
-    attn_max_seq_len=ATTN_MAX_SEQ_LEN,
-    attn_positional_encoding=ATTN_POSITIONAL_ENCODING,
-    attn_dropout=ATTN_DROPOUT,
-    attn_lr=ATTN_LR,
-    attn_weight_decay=ATTN_WEIGHT_DECAY,
-    attn_batch_size=ATTN_BATCH_SIZE,
-    attn_patience=ATTN_PATIENCE,
-    attn_history_stats=ATTN_HISTORY_STATS,
-    attn_static_features=ATTN_STATIC_FEATURES,
-    attn_gated=ATTN_GATED,
-    attn_gate_hidden=ATTN_GATE_HIDDEN,
-    attn_gate_weight=ATTN_GATE_WEIGHT,
-    opp_attn_history_stats=OPP_ATTN_HISTORY_STATS,
-    opp_attn_max_seq_len=OPP_ATTN_MAX_SEQ_LEN,
-    train_lightgbm=TRAIN_LIGHTGBM,
-    lgbm_n_estimators=LGBM_N_ESTIMATORS,
-    lgbm_learning_rate=LGBM_LEARNING_RATE,
-    lgbm_num_leaves=LGBM_NUM_LEAVES,
-    lgbm_subsample=LGBM_SUBSAMPLE,
-    lgbm_colsample_bytree=LGBM_COLSAMPLE_BYTREE,
-    lgbm_reg_lambda=LGBM_REG_LAMBDA,
-    lgbm_reg_alpha=LGBM_REG_ALPHA,
-    lgbm_min_child_samples=LGBM_MIN_CHILD_SAMPLES,
-    lgbm_min_split_gain=LGBM_MIN_SPLIT_GAIN,
-    lgbm_objective=LGBM_OBJECTIVE,
+    targets=_TARGETS,
+    specific_features=_INCLUDE_FEATURES["specific"],
+    include_features=_INCLUDE_FEATURES,
+    # Yards on (-2,3) grid; counts on (-1,4) per target scale.
+    ridge_alpha_grids={
+        "passing_yards": _ALPHA_YARDS,
+        "rushing_yards": _ALPHA_YARDS,
+        "passing_tds": _ALPHA_COUNTS,
+        "rushing_tds": _ALPHA_COUNTS,
+        "interceptions": _ALPHA_COUNTS,
+        "fumbles_lost": _ALPHA_COUNTS,
+    },
+    # === ElasticNet (optional parallel linear baseline) — off by default.
+    # When enabled, reuses ridge_alpha_grids and searches over enet_l1_ratios.
+    # Skips PCA on purpose: L1 on a rotated basis doesn't zero original
+    # features, so PCA defeats the reason to pick ElasticNet.
+    train_elasticnet=False,
+    enet_l1_ratios=list(DEFAULT_ENET_L1_RATIOS),
+    # === Neural Net (2012+ dataset: wider backbone, relaxed regularization) ===
+    nn_backbone_layers=[128],
+    nn_head_hidden=32,
+    nn_dropout=0.20,
+    # All 6 QB heads are non-negative raw stats (yards, TD counts, INTs, fumbles).
+    nn_non_negative_targets=set(_TARGETS),
+    nn_lr=5e-4,
+    nn_weight_decay=3e-4,
+    nn_epochs=300,
+    nn_batch_size=128,
+    nn_patience=25,
+    nn_head_hidden_overrides={},
+    # === Per-head loss families ===
+    # TDs + INTs + fumbles use Poisson NLL — QB TD distributions are not
+    # zero-inflated (median ~2 TDs/start), so a plain Poisson rate model
+    # fits cleanly and the Huber-count-head-collapse failure mode (count
+    # heads regressing to the mean under yards-dominated gradients) is
+    # avoided without needing wider heads.
+    head_losses={
+        "passing_yards": "huber",
+        "rushing_yards": "huber",
+        "passing_tds": "poisson_nll",
+        "rushing_tds": "poisson_nll",
+        "interceptions": "poisson_nll",
+        "fumbles_lost": "poisson_nll",
+    },
+    # Yards heads keep the 2.0/delta rebalance (without it, FP MAE regressed
+    # 6.33 -> 6.63; fumbles_lost R² = -0.34). Poisson NLL heads use weight
+    # 1.0 — at QB-scale rates (~1.5 TDs, ~0.7 INTs, ~0.4 fumbles) the
+    # Poisson NLL is O(1), matching weighted yards.
+    loss_weights={
+        "passing_yards": 0.08,  # 2.0 / 25  (Huber)
+        "rushing_yards": 0.133,  # 2.0 / 15  (Huber)
+        "passing_tds": 1.0,  # Poisson NLL
+        "rushing_tds": 1.0,  # Poisson NLL
+        "interceptions": 1.0,  # Poisson NLL
+        "fumbles_lost": 1.0,  # Poisson NLL
+    },
+    # Only Huber heads need a delta — count heads moved to Poisson NLL.
+    huber_deltas={
+        "passing_yards": 25.0,
+        "rushing_yards": 15.0,
+    },
+    scheduler_type="cosine_warm_restarts",
+    cosine_t0=40,
+    cosine_t_mult=2,
+    cosine_eta_min=1e-5,
+    # === Attention NN (game history variant) ===
+    train_attention_nn=True,
+    attn_d_model=32,
+    attn_n_heads=2,
+    attn_encoder_hidden_dim=0,
+    attn_max_seq_len=17,
+    attn_positional_encoding=True,
+    attn_dropout=0.05,
+    attn_lr=1e-3,
+    attn_weight_decay=5e-5,
+    attn_batch_size=256,
+    attn_patience=35,
+    attn_history_stats=[
+        "passing_yards",
+        "rushing_yards",
+        "passing_tds",
+        "rushing_tds",
+        "attempts",
+        "completions",
+        "carries",
+        "interceptions",
+        "fumbles_lost",
+        "snap_pct",
+        "sacks",
+        "sack_yards",
+    ],
+    attn_static_features=derive_attn_static_features(_INCLUDE_FEATURES, ATTN_STATIC_CATEGORIES),
+    # Gated hurdle heads disabled for QB — QBs throw so many TDs that the
+    # zero-inflation assumption behind the hurdle model does not hold
+    # (median TD count per start is ~2); a plain regression head beats
+    # the two-stage gate.
+    attn_gated=False,
+    attn_gate_hidden=16,
+    attn_gate_weight=1.0,
+    # Per-game opponent-defense stats fed to the second attention branch.
+    # Mirrors the L5 static aggregates (opp_def_*_L5) but unrolled per
+    # game, so the NN learns the trailing-form weighting itself instead
+    # of being handed a fixed 5-game mean. Built by
+    # src.features.engineer.build_opp_defense_history_arrays.
+    opp_attn_history_stats=list(DEFAULT_OPP_DEF_HISTORY_STATS),
+    opp_attn_max_seq_len=17,
+    # === LightGBM (Optuna-tuned, 50 trials, CV MAE 5.7415) ===
+    # QB is the one position that keeps Fair after PR 3's unification attempt.
+    # 50-trial Huber retune regressed QB total MAE 6.269 -> 6.479
+    # (+0.210 pts/game), with passing_yards MAE jumping 66.1 -> 71.2.
+    # Root cause: LightGBM's Huber uses alpha=0.9 as a *quantile* — the 90th
+    # percentile of residuals demarcates the quadratic-to-linear transition.
+    # On QB passing_yards (typical residuals 0-100 yards, tail to 200+),
+    # that puts 90% of residuals in Huber's quadratic zone. Fair's
+    # log-curvature-everywhere downweights the tail smoothly and beats
+    # Huber by 0.21 pts on QB holdout. RB/WR/TE/K/DST don't have a
+    # passing_yards-like heavy tail and tolerate Huber.
+    train_lightgbm=True,
+    lgbm_n_estimators=1500,
+    lgbm_learning_rate=0.0612763,
+    lgbm_num_leaves=31,
+    lgbm_subsample=0.867443,
+    lgbm_colsample_bytree=0.907776,
+    lgbm_reg_lambda=6.75023,
+    lgbm_reg_alpha=0.00309259,
+    lgbm_min_child_samples=59,
+    lgbm_min_split_gain=0.0632242,
+    lgbm_objective="fair",
     accepts_dataframes=True,
     cpu_only=False,
     has_cv_runner=True,

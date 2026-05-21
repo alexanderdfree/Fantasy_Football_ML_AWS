@@ -201,18 +201,18 @@ def test_infer_position_matches_qb():
 def test_infer_position_matches_k():
     """K and DST target sets must route to their bespoke aggregators rather
     than fall through to the plain-sum branch in compute_target_metrics."""
-    from src.k.config import TARGETS as K_CONFIG_TARGETS
+    from src.k.config import POSITION_CONFIG as K_POSITION_CONFIG
 
-    assert infer_position(K_CONFIG_TARGETS) == "K"
+    assert infer_position(K_POSITION_CONFIG.targets) == "K"
     # Order shouldn't matter.
-    assert infer_position(list(reversed(K_CONFIG_TARGETS))) == "K"
+    assert infer_position(list(reversed(K_POSITION_CONFIG.targets))) == "K"
 
 
 @pytest.mark.unit
 def test_infer_position_matches_dst():
-    from src.dst.config import TARGETS as DST_CONFIG_TARGETS
+    from src.dst.config import POSITION_CONFIG as DST_POSITION_CONFIG
 
-    assert infer_position(DST_CONFIG_TARGETS) == "DST"
+    assert infer_position(DST_POSITION_CONFIG.targets) == "DST"
 
 
 @pytest.mark.unit

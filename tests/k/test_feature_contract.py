@@ -13,7 +13,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.k.config import CONTEXTUAL_FEATURES, SPECIFIC_FEATURES
+from src.k.config import POSITION_CONFIG
+
+CONTEXTUAL_FEATURES = POSITION_CONFIG.contextual_features
+SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
 from src.k.features import (
     add_specific_features,
     compute_features,

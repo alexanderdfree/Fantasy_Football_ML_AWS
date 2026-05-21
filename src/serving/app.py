@@ -238,10 +238,10 @@ POSITION_INFO = {
             },
         ],
         "adjustments": "None - penalties are now direct targets (interceptions, fumbles_lost).",
-        "specific_features": qb_cfg.SPECIFIC_FEATURES,
+        "specific_features": qb_cfg.POSITION_CONFIG.specific_features,
         "architecture": {
-            "backbone": list(qb_cfg.NN_BACKBONE_LAYERS),
-            "head_hidden": qb_cfg.NN_HEAD_HIDDEN,
+            "backbone": list(qb_cfg.POSITION_CONFIG.nn_backbone_layers),
+            "head_hidden": qb_cfg.POSITION_CONFIG.nn_head_hidden,
         },
     },
     "RB": {
@@ -263,10 +263,10 @@ POSITION_INFO = {
             },
         ],
         "adjustments": "None - fumbles_lost is now a direct target.",
-        "specific_features": list(rb_cfg.SPECIFIC_FEATURES),
+        "specific_features": list(rb_cfg.POSITION_CONFIG.specific_features),
         "architecture": {
-            "backbone": list(rb_cfg.NN_BACKBONE_LAYERS),
-            "head_hidden": rb_cfg.NN_HEAD_HIDDEN,
+            "backbone": list(rb_cfg.POSITION_CONFIG.nn_backbone_layers),
+            "head_hidden": rb_cfg.POSITION_CONFIG.nn_head_hidden,
         },
     },
     "WR": {
@@ -286,10 +286,10 @@ POSITION_INFO = {
             },
         ],
         "adjustments": "None - fumbles_lost is now a direct target.",
-        "specific_features": list(wr_cfg.SPECIFIC_FEATURES),
+        "specific_features": list(wr_cfg.POSITION_CONFIG.specific_features),
         "architecture": {
-            "backbone": list(wr_cfg.NN_BACKBONE_LAYERS),
-            "head_hidden": wr_cfg.NN_HEAD_HIDDEN,
+            "backbone": list(wr_cfg.POSITION_CONFIG.nn_backbone_layers),
+            "head_hidden": wr_cfg.POSITION_CONFIG.nn_head_hidden,
         },
     },
     "TE": {
@@ -301,10 +301,10 @@ POSITION_INFO = {
             {"key": "fumbles_lost", "label": "Fumbles Lost", "formula": "raw count"},
         ],
         "adjustments": "None - fumbles_lost is now a direct target.",
-        "specific_features": list(te_cfg.SPECIFIC_FEATURES),
+        "specific_features": list(te_cfg.POSITION_CONFIG.specific_features),
         "architecture": {
-            "backbone": list(te_cfg.NN_BACKBONE_LAYERS),
-            "head_hidden": te_cfg.NN_HEAD_HIDDEN,
+            "backbone": list(te_cfg.POSITION_CONFIG.nn_backbone_layers),
+            "head_hidden": te_cfg.POSITION_CONFIG.nn_head_hidden,
         },
     },
     "K": {
@@ -329,10 +329,10 @@ POSITION_INFO = {
         ],
         "adjustments": "None",
         "formula": "fg_yard_points + pat_points − fg_misses − xp_misses",
-        "specific_features": list(k_cfg.SPECIFIC_FEATURES),
+        "specific_features": list(k_cfg.POSITION_CONFIG.specific_features),
         "architecture": {
-            "backbone": list(k_cfg.NN_BACKBONE_LAYERS),
-            "head_hidden": k_cfg.NN_HEAD_HIDDEN,
+            "backbone": list(k_cfg.POSITION_CONFIG.nn_backbone_layers),
+            "head_hidden": k_cfg.POSITION_CONFIG.nn_head_hidden,
         },
     },
     "DST": {
@@ -369,10 +369,10 @@ POSITION_INFO = {
             "+ def_safeties*2 + def_tds*6 + def_blocked_kicks*2 + special_teams_tds*6 "
             "+ tier_pa(points_allowed) + tier_ya(yards_allowed)"
         ),
-        "specific_features": list(dst_cfg.SPECIFIC_FEATURES),
+        "specific_features": list(dst_cfg.POSITION_CONFIG.specific_features),
         "architecture": {
-            "backbone": list(dst_cfg.NN_BACKBONE_LAYERS),
-            "head_hidden": dst_cfg.NN_HEAD_HIDDEN,
+            "backbone": list(dst_cfg.POSITION_CONFIG.nn_backbone_layers),
+            "head_hidden": dst_cfg.POSITION_CONFIG.nn_head_hidden,
         },
     },
 }
@@ -1612,32 +1612,29 @@ def _categorize_features(features):
     return {k: v for k, v in categories.items() if v}
 
 
-def _position_arch_payload(pos, cfg, specific, targets, include_features, attn_history=None):
+def _position_arch_payload(pos, pc, include_features, attn_history=None):
     """Build the per-position JSON payload for /api/model_architecture.
 
-    `include_features` may be a categorized dict (QB/RB/WR/TE) or a flat list
+    ``pc`` is the position's :class:`~src.shared.position_config.PositionConfig`;
+    ``include_features`` may be a categorized dict (QB/RB/WR/TE) or a flat list
     (K/DST contextual); either shape is normalized to categorized groups.
     """
-
-    def get(name, default=None):
-        return getattr(cfg, name, default)
-
-    # Scheduler summary string. Constants on each position cfg are unprefixed
-    # (e.g. cfg.SCHEDULER_TYPE) — the position is implicit from the cfg module.
-    scheduler = get("SCHEDULER_TYPE", "unknown")
+    scheduler = pc.scheduler_type or "unknown"
     if scheduler == "cosine_warm_restarts":
-        t0 = get("COSINE_T0", "?")
-        tm = get("COSINE_T_MULT", "?")
-        em = get("COSINE_ETA_MIN", "?")
-        scheduler_str = f"CosineAnnealingWarmRestarts(T0={t0}, T_mult={tm}, eta_min={em})"
+        scheduler_str = (
+            f"CosineAnnealingWarmRestarts(T0={pc.cosine_t0}, T_mult={pc.cosine_t_mult}, "
+            f"eta_min={pc.cosine_eta_min})"
+        )
     elif scheduler == "onecycle":
-        mx = get("ONECYCLE_MAX_LR", "?")
-        ps = get("ONECYCLE_PCT_START", "?")
-        scheduler_str = f"OneCycleLR(max_lr={mx}, pct_start={ps})"
+        scheduler_str = (
+            f"OneCycleLR(max_lr={pc.onecycle_max_lr}, pct_start={pc.onecycle_pct_start})"
+        )
     elif scheduler == "plateau":
         scheduler_str = "ReduceLROnPlateau"
     else:
         scheduler_str = str(scheduler)
+
+    specific = pc.specific_features
 
     # Normalize feature groupings
     if isinstance(include_features, dict):
@@ -1653,19 +1650,19 @@ def _position_arch_payload(pos, cfg, specific, targets, include_features, attn_h
         flat_features = list(specific or []) + flat
 
     payload = {
-        "targets": list(targets),
-        "backbone_layers": list(get("NN_BACKBONE_LAYERS", [])),
-        "head_hidden": get("NN_HEAD_HIDDEN"),
-        "head_hidden_overrides": dict(get("NN_HEAD_HIDDEN_OVERRIDES", {}) or {}),
-        "dropout": get("NN_DROPOUT"),
-        "lr": get("NN_LR"),
-        "weight_decay": get("NN_WEIGHT_DECAY"),
-        "batch_size": get("NN_BATCH_SIZE"),
-        "epochs": get("NN_EPOCHS"),
-        "patience": get("NN_PATIENCE"),
+        "targets": list(pc.targets),
+        "backbone_layers": list(pc.nn_backbone_layers),
+        "head_hidden": pc.nn_head_hidden,
+        "head_hidden_overrides": dict(pc.nn_head_hidden_overrides or {}),
+        "dropout": pc.nn_dropout,
+        "lr": pc.nn_lr,
+        "weight_decay": pc.nn_weight_decay,
+        "batch_size": pc.nn_batch_size,
+        "epochs": pc.nn_epochs,
+        "patience": pc.nn_patience,
         "scheduler": scheduler_str,
-        "attention_enabled": bool(get("TRAIN_ATTENTION_NN", False)),
-        "lightgbm_enabled": bool(get("TRAIN_LIGHTGBM", False)),
+        "attention_enabled": bool(pc.train_attention_nn),
+        "lightgbm_enabled": bool(pc.train_lightgbm),
         "feature_count": len(flat_features),
         "features": grouped,
     }
@@ -1680,49 +1677,37 @@ def api_model_architecture():
         positions = {
             "QB": _position_arch_payload(
                 "QB",
-                qb_cfg,
-                qb_cfg.SPECIFIC_FEATURES,
-                qb_cfg.TARGETS,
-                getattr(qb_cfg, "INCLUDE_FEATURES", []),
-                getattr(qb_cfg, "ATTN_HISTORY_STATS", None),
+                qb_cfg.POSITION_CONFIG,
+                qb_cfg.POSITION_CONFIG.include_features,
+                qb_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "RB": _position_arch_payload(
                 "RB",
-                rb_cfg,
-                rb_cfg.SPECIFIC_FEATURES,
-                rb_cfg.TARGETS,
-                getattr(rb_cfg, "INCLUDE_FEATURES", []),
-                getattr(rb_cfg, "ATTN_HISTORY_STATS", None),
+                rb_cfg.POSITION_CONFIG,
+                rb_cfg.POSITION_CONFIG.include_features,
+                rb_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "WR": _position_arch_payload(
                 "WR",
-                wr_cfg,
-                wr_cfg.SPECIFIC_FEATURES,
-                wr_cfg.TARGETS,
-                getattr(wr_cfg, "INCLUDE_FEATURES", []),
-                getattr(wr_cfg, "ATTN_HISTORY_STATS", None),
+                wr_cfg.POSITION_CONFIG,
+                wr_cfg.POSITION_CONFIG.include_features,
+                wr_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "TE": _position_arch_payload(
                 "TE",
-                te_cfg,
-                te_cfg.SPECIFIC_FEATURES,
-                te_cfg.TARGETS,
-                getattr(te_cfg, "INCLUDE_FEATURES", []),
-                getattr(te_cfg, "ATTN_HISTORY_STATS", None),
+                te_cfg.POSITION_CONFIG,
+                te_cfg.POSITION_CONFIG.include_features,
+                te_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "K": _position_arch_payload(
                 "K",
-                k_cfg,
-                k_cfg.SPECIFIC_FEATURES,
-                k_cfg.TARGETS,
-                getattr(k_cfg, "CONTEXTUAL_FEATURES", []),
+                k_cfg.POSITION_CONFIG,
+                k_cfg.POSITION_CONFIG.contextual_features,
             ),
             "DST": _position_arch_payload(
                 "DST",
-                dst_cfg,
-                dst_cfg.SPECIFIC_FEATURES,
-                dst_cfg.TARGETS,
-                getattr(dst_cfg, "CONTEXTUAL_FEATURES", []),
+                dst_cfg.POSITION_CONFIG,
+                dst_cfg.POSITION_CONFIG.contextual_features,
             ),
         }
         return jsonify(

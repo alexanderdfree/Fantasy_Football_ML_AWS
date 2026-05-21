@@ -6,13 +6,13 @@ from src.shared.feature_build import (
     rolling_agg,
     safe_divide,
 )
-from src.wr.config import INCLUDE_FEATURES
+from src.wr.config import POSITION_CONFIG
 from src.wr.data import compute_team_wr_totals
 
 
 def get_feature_columns() -> list[str]:
     """Return the complete ordered list of feature columns for the WR model."""
-    return flatten_include_features(INCLUDE_FEATURES)
+    return flatten_include_features(POSITION_CONFIG.include_features)
 
 
 def add_specific_features(train_df, val_df, test_df):

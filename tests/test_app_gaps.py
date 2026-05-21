@@ -371,34 +371,42 @@ def test_ensure_position_loaded_noop_if_in_failed_set(monkeypatch):
 # --------------------------------------------------------------------------
 
 
-class _CfgModule:
-    """Fixture config module with the attributes _position_arch_payload reads."""
+def _arch_pc(scheduler_type: str = "plateau", **overrides):
+    """Build a tiny PositionConfig sized for _position_arch_payload tests."""
+    from src.shared.position_config import PositionConfig
 
-    NN_EPOCHS = 10
-    NN_BATCH_SIZE = 32
-    NN_LR = 1e-3
-    NN_WEIGHT_DECAY = 0.0
-    NN_DROPOUT = 0.1
-    NN_PATIENCE = 5
-    HUBER_DELTAS = {"passing_yards": 25.0}
-    LOSS_WEIGHTS = {"passing_yards": 1.0}
-    RIDGE_ALPHA_GRIDS = {"passing_yards": [1.0]}
-    NN_BACKBONE_LAYERS = [32, 16]
-    NN_HEAD_HIDDEN = 16
+    kwargs = {
+        "name": "QB",
+        "targets": ["passing_yards"],
+        "specific_features": ["f_spec"],
+        "nn_backbone_layers": [32, 16],
+        "nn_head_hidden": 16,
+        "nn_dropout": 0.1,
+        "nn_lr": 1e-3,
+        "nn_weight_decay": 0.0,
+        "nn_epochs": 10,
+        "nn_batch_size": 32,
+        "nn_patience": 5,
+        "huber_deltas": {"passing_yards": 25.0},
+        "loss_weights": {"passing_yards": 1.0},
+        "ridge_alpha_grids": {"passing_yards": [1.0]},
+        "scheduler_type": scheduler_type,
+    }
+    kwargs.update(overrides)
+    return PositionConfig(**kwargs)
 
 
 @pytest.mark.integration
 def test_position_arch_payload_cosine_warm_restarts_scheduler():
     import src.serving.app as app_mod
 
-    cfg = _CfgModule()
-    cfg.SCHEDULER_TYPE = "cosine_warm_restarts"
-    cfg.COSINE_T0 = 10
-    cfg.COSINE_T_MULT = 2
-    cfg.COSINE_ETA_MIN = 1e-5
-    payload = app_mod._position_arch_payload(
-        "QB", cfg, specific=["f_spec"], targets=["passing_yards"], include_features=["a", "b"]
+    pc = _arch_pc(
+        scheduler_type="cosine_warm_restarts",
+        cosine_t0=10,
+        cosine_t_mult=2,
+        cosine_eta_min=1e-5,
     )
+    payload = app_mod._position_arch_payload("QB", pc, include_features=["a", "b"])
     assert "CosineAnnealingWarmRestarts" in payload["scheduler"]
 
 
@@ -406,13 +414,8 @@ def test_position_arch_payload_cosine_warm_restarts_scheduler():
 def test_position_arch_payload_onecycle_scheduler():
     import src.serving.app as app_mod
 
-    cfg = _CfgModule()
-    cfg.SCHEDULER_TYPE = "onecycle"
-    cfg.ONECYCLE_MAX_LR = 0.01
-    cfg.ONECYCLE_PCT_START = 0.3
-    payload = app_mod._position_arch_payload(
-        "QB", cfg, specific=["f_spec"], targets=["passing_yards"], include_features=["a"]
-    )
+    pc = _arch_pc(scheduler_type="onecycle", onecycle_max_lr=0.01, onecycle_pct_start=0.3)
+    payload = app_mod._position_arch_payload("QB", pc, include_features=["a"])
     assert "OneCycleLR" in payload["scheduler"]
 
 
@@ -420,11 +423,8 @@ def test_position_arch_payload_onecycle_scheduler():
 def test_position_arch_payload_plateau_scheduler():
     import src.serving.app as app_mod
 
-    cfg = _CfgModule()
-    cfg.SCHEDULER_TYPE = "plateau"
-    payload = app_mod._position_arch_payload(
-        "QB", cfg, specific=["f_spec"], targets=["passing_yards"], include_features=["a"]
-    )
+    pc = _arch_pc(scheduler_type="plateau")
+    payload = app_mod._position_arch_payload("QB", pc, include_features=["a"])
     assert payload["scheduler"] == "ReduceLROnPlateau"
 
 
@@ -434,14 +434,9 @@ def test_position_arch_payload_include_features_as_dict():
     is preserved + 'specific' is injected if missing."""
     import src.serving.app as app_mod
 
-    cfg = _CfgModule()
-    cfg.SCHEDULER_TYPE = "plateau"
+    pc = _arch_pc(specific_features=["pos_specific"])
     payload = app_mod._position_arch_payload(
-        "QB",
-        cfg,
-        specific=["pos_specific"],
-        targets=["passing_yards"],
-        include_features={"rolling": ["r1", "r2"], "ewma": ["e1"]},
+        "QB", pc, include_features={"rolling": ["r1", "r2"], "ewma": ["e1"]}
     )
     features = payload["features"]
     assert "rolling" in features
@@ -789,14 +784,11 @@ def test_model_architecture_error_handler_returns_json_500(client, monkeypatch):
 
 @pytest.mark.integration
 def test_position_arch_payload_unknown_scheduler_falls_back_to_str():
-    """Unknown SCHEDULER_TYPE → str(value) so the UI shows whatever was set."""
+    """Unknown scheduler_type → str(value) so the UI shows whatever was set."""
     import src.serving.app as app_mod
 
-    cfg = _CfgModule()
-    cfg.SCHEDULER_TYPE = "constant"
-    payload = app_mod._position_arch_payload(
-        "QB", cfg, specific=["f_spec"], targets=["passing_yards"], include_features=["a"]
-    )
+    pc = _arch_pc(scheduler_type="constant")
+    payload = app_mod._position_arch_payload("QB", pc, include_features=["a"])
     assert payload["scheduler"] == "constant"
 
 
@@ -805,13 +797,10 @@ def test_position_arch_payload_attn_history_appended_when_provided():
     """`attn_history` arg surfaces under features.attention_history for the UI."""
     import src.serving.app as app_mod
 
-    cfg = _CfgModule()
-    cfg.SCHEDULER_TYPE = "plateau"
+    pc = _arch_pc(scheduler_type="plateau")
     payload = app_mod._position_arch_payload(
         "QB",
-        cfg,
-        specific=["f_spec"],
-        targets=["passing_yards"],
+        pc,
         include_features=["a"],
         attn_history=["passing_yards", "rushing_yards"],
     )

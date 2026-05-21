@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 import torch
 
-from src.qb.config import LOSS_WEIGHTS, TARGETS
+from src.qb.config import POSITION_CONFIG
+
+LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+TARGETS = POSITION_CONFIG.targets
 from src.shared.neural_net import MultiHeadNet
 from src.shared.training import (
     MultiHeadTrainer,

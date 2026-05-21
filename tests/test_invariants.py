@@ -115,31 +115,31 @@ def _flatten_include_features(include_features) -> set[str]:
 @pytest.mark.unit
 @pytest.mark.parametrize("pos", ALL_POSITIONS)
 def test_attn_static_features_subset_of_include(pos: str):
-    """``ATTN_STATIC_FEATURES`` columns must all live in the position's
-    feature whitelist (``INCLUDE_FEATURES`` for QB/RB/WR/TE, ``ALL_FEATURES``
-    for DST). Otherwise the attention static branch would reference columns
-    the feature pipeline doesn't produce.
+    """``POSITION_CONFIG.attn_static_features`` columns must all live in the
+    position's feature whitelist (``include_features`` for QB/RB/WR/TE,
+    ``all_features`` for DST/K). Otherwise the attention static branch would
+    reference columns the feature pipeline doesn't produce.
     """
-    cfg = _config(pos)
-    attn_static = getattr(cfg, "ATTN_STATIC_FEATURES", None)
-    if attn_static is None:
-        pytest.skip(f"{pos} has no ATTN_STATIC_FEATURES")
+    pc = _config(pos).POSITION_CONFIG
+    attn_static = pc.attn_static_features
+    if not attn_static:
+        pytest.skip(f"{pos} has no attn_static_features")
 
-    if hasattr(cfg, "INCLUDE_FEATURES"):
-        whitelist_name = "INCLUDE_FEATURES"
-        whitelist = _flatten_include_features(cfg.INCLUDE_FEATURES)
-    elif hasattr(cfg, "ALL_FEATURES"):
-        whitelist_name = "ALL_FEATURES"
-        whitelist = set(cfg.ALL_FEATURES)
+    if pc.include_features:
+        whitelist_name = "include_features"
+        whitelist = _flatten_include_features(pc.include_features)
+    elif pc.all_features:
+        whitelist_name = "all_features"
+        whitelist = set(pc.all_features)
     else:
-        pytest.skip(f"{pos} has no INCLUDE_FEATURES or ALL_FEATURES")
+        pytest.skip(f"{pos} has no include_features or all_features")
 
     missing = sorted(set(attn_static) - whitelist)
     assert not missing, (
-        f"{pos}.ATTN_STATIC_FEATURES references columns not in {whitelist_name}: "
-        f"{missing}. Either add them to {whitelist_name} or drop them from "
-        f"ATTN_STATIC_FEATURES (CLAUDE.md 'Attention static-feature whitelist "
-        f"is separate per position')."
+        f"{pos}.POSITION_CONFIG.attn_static_features references columns not in "
+        f"{whitelist_name}: {missing}. Either add them to {whitelist_name} or "
+        f"drop them from attn_static_features (CLAUDE.md 'Attention "
+        f"static-feature whitelist is separate per position')."
     )
 
 

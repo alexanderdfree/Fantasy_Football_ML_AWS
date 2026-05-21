@@ -576,8 +576,8 @@ def build_train_matrix(position: str, cfg: dict) -> tuple[np.ndarray, dict, list
     Entry point for diagnostics that need the exact ``X_train`` the pipeline
     sees (SHAP, permutation importance, ablation scripts). Delegates to
     ``_prepare_train_val`` so there's no parallel feature-building logic to
-    drift — the deprecation of ``analysis_rb_feature_signal.py`` happened
-    because it inlined a copy of the pipeline setup and missed target renames.
+    drift — diagnostic scripts that inline their own pipeline setup miss
+    target renames and silently use stale data prep.
 
     Val is built and discarded; training-side feature engineering is agnostic
     to whether val is present, so the work is cheap and the interface stays

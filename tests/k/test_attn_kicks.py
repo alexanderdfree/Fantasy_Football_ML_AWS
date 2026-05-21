@@ -10,7 +10,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.k.config import ATTN_KICK_STATS
+from src.k.config import POSITION_CONFIG
+
+ATTN_KICK_STATS = POSITION_CONFIG.attn_kick_stats
 from src.k.data import reconstruct_kicker_kicks_from_pbp
 from src.k.features import build_nested_kick_history
 

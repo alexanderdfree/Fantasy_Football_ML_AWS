@@ -4,7 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.wr.config import SPECIFIC_FEATURES
+from src.wr.config import POSITION_CONFIG
+
+SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
 from src.wr.features import _compute_features, fill_nans
 
 # ---------------------------------------------------------------------------
@@ -127,25 +129,25 @@ class TestComputeWRFeatures:
 
 @pytest.mark.unit
 class TestFillWRNans:
-    def test_fills_nan_with_train_mean(self, wr_nan_splits_factory):
-        train, val, test = wr_nan_splits_factory([1.0, 2.0, 3.0], [np.nan], [np.nan])
+    def test_fills_nan_with_train_mean(self, make_splits):
+        train, val, test = make_splits([1.0, 2.0, 3.0], [np.nan], [np.nan])
         train, val, test = fill_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 2.0
         assert pytest.approx(test["feat1"].iloc[0]) == 2.0
 
-    def test_replaces_inf_with_train_mean(self, wr_nan_splits_factory):
-        train, val, test = wr_nan_splits_factory([1.0, 3.0], [np.inf], [-np.inf])
+    def test_replaces_inf_with_train_mean(self, make_splits):
+        train, val, test = make_splits([1.0, 3.0], [np.inf], [-np.inf])
         train, val, test = fill_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 2.0
         assert pytest.approx(test["feat1"].iloc[0]) == 2.0
 
-    def test_train_inf_replaced_before_mean(self, wr_nan_splits_factory):
-        train, val, test = wr_nan_splits_factory([1.0, np.inf, 3.0], [np.nan], [np.nan])
+    def test_train_inf_replaced_before_mean(self, make_splits):
+        train, val, test = make_splits([1.0, np.inf, 3.0], [np.nan], [np.nan])
         train, val, test = fill_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 2.0
 
-    def test_no_nans_unchanged(self, wr_nan_splits_factory):
-        train, val, test = wr_nan_splits_factory([1.0, 2.0], [3.0], [4.0])
+    def test_no_nans_unchanged(self, make_splits):
+        train, val, test = make_splits([1.0, 2.0], [3.0], [4.0])
         train, val, test = fill_nans(train, val, test, ["feat1"])
         assert pytest.approx(val["feat1"].iloc[0]) == 3.0
         assert pytest.approx(test["feat1"].iloc[0]) == 4.0

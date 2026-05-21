@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.rb.config import TARGETS
+from src.rb.config import POSITION_CONFIG
 from tests.shared.position_fixtures import (
     register_position_markers,
     register_standard_fixtures,
@@ -34,7 +34,7 @@ register_standard_fixtures(
     globals(),
     scoring_scale=SCORING_SCALE,
     id_prefix="P",
-    targets=TARGETS,
+    targets=POSITION_CONFIG.targets,
     stat_col="rushing_yards",
     rng_kind="legacy",
     install_default_shortcuts=True,

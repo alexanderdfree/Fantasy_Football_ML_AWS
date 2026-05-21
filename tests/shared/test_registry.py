@@ -27,7 +27,7 @@ def test_head_hidden_overrides_match_position_config(pos):
     the kwarg (MultiHeadNet defaults ``head_hidden_overrides=None``).
     """
     config_module = importlib.import_module(f"src.{pos.lower()}.config")
-    cfg_overrides = getattr(config_module, "NN_HEAD_HIDDEN_OVERRIDES", None)
+    cfg_overrides = config_module.POSITION_CONFIG.nn_head_hidden_overrides
 
     reg_overrides = INFERENCE_REGISTRY[pos]["nn_kwargs"].get("head_hidden_overrides")
 
@@ -65,16 +65,16 @@ def test_attn_kwargs_backbone_layers_match_config(pos):
     miswired prefix on its own.
     """
     config_module = importlib.import_module(f"src.{pos.lower()}.config")
-    cfg_layers = list(getattr(config_module, "NN_BACKBONE_LAYERS", []))
+    cfg_layers = list(config_module.POSITION_CONFIG.nn_backbone_layers)
     assert cfg_layers, (
-        f"{pos}: config defines no NN_BACKBONE_LAYERS — every position with "
-        f"an attention NN needs one. Update src/{pos.lower()}/config.py."
+        f"{pos}: POSITION_CONFIG.nn_backbone_layers is empty — every position "
+        f"with an attention NN needs one. Update src/{pos.lower()}/config.py."
     )
 
     reg_kwargs = INFERENCE_REGISTRY[pos]["attn_nn_kwargs_static"]
     reg_layers = list(reg_kwargs.get("backbone_layers", []))
     assert reg_layers == cfg_layers, (
-        f"{pos}: config declares NN_BACKBONE_LAYERS={cfg_layers!r} but registry "
+        f"{pos}: config declares nn_backbone_layers={cfg_layers!r} but registry "
         f"passes backbone_layers={reg_layers!r}. The two paths build different "
         f"architectures, so MultiHeadNetWithHistory.load_state_dict will fail "
         f"on the trained checkpoint."

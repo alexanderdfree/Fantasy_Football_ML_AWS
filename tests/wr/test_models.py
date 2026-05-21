@@ -5,7 +5,9 @@ import pandas as pd
 import pytest
 
 from src.shared.models import RidgeMultiTarget
-from src.wr.config import TARGETS
+from src.wr.config import POSITION_CONFIG
+
+TARGETS = POSITION_CONFIG.targets
 
 
 @pytest.fixture

@@ -6,7 +6,7 @@ QB historically refers to the position-df factory as ``make_df`` rather than
 ``make_position_df``, so we pass the name through ``position_df_fixture_name``.
 """
 
-from src.qb.config import TARGETS
+from src.qb.config import POSITION_CONFIG
 from tests.shared.position_fixtures import (
     register_position_markers,
     register_standard_fixtures,
@@ -24,7 +24,7 @@ register_standard_fixtures(
     globals(),
     scoring_scale=SCORING_SCALE,
     id_prefix="QB",
-    targets=TARGETS,
+    targets=POSITION_CONFIG.targets,
     stat_col="passing_yards",
     position_df_fixture_name="make_df",
 )

@@ -4,7 +4,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.rb.config import GATED_ORDINAL_TARGETS, ORDINAL_TARGETS, TARGETS
+from src.rb.config import POSITION_CONFIG
+
+GATED_ORDINAL_TARGETS = POSITION_CONFIG.gated_ordinal_targets
+ORDINAL_TARGETS = POSITION_CONFIG.ordinal_targets
+TARGETS = POSITION_CONFIG.targets
 from src.shared.models import (
     GatedOrdinalTDClassifier,
     OrdinalTDClassifier,

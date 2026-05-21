@@ -19,7 +19,10 @@ import pandas as pd
 import pytest
 
 from src.features.engineer import get_attn_static_columns
-from src.te.config import ATTN_STATIC_FEATURES, SPECIFIC_FEATURES
+from src.te.config import POSITION_CONFIG
+
+ATTN_STATIC_FEATURES = POSITION_CONFIG.attn_static_features
+SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
 from src.te.features import (
     add_specific_features,
     fill_nans,

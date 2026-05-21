@@ -33,13 +33,13 @@ import pytest
 import torch
 from sklearn.preprocessing import StandardScaler
 
-from src.dst.config import (
-    ALL_FEATURES,
-    HUBER_DELTAS,
-    LOSS_WEIGHTS,
-    NN_NON_NEGATIVE_TARGETS,
-    TARGETS,
-)
+from src.dst.config import POSITION_CONFIG
+
+ALL_FEATURES = POSITION_CONFIG.all_features
+HUBER_DELTAS = POSITION_CONFIG.huber_deltas
+LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+NN_NON_NEGATIVE_TARGETS = POSITION_CONFIG.nn_non_negative_targets
+TARGETS = POSITION_CONFIG.targets
 from src.dst.features import compute_features
 from src.dst.targets import compute_targets
 from src.evaluation.metrics import compute_metrics

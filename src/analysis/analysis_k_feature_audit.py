@@ -89,16 +89,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.k.config import (  # noqa: E402
-    ALL_FEATURES,
-    ATTN_STATIC_FEATURES,
-    CONTEXTUAL_FEATURES,
-    SPECIFIC_FEATURES,
-    TARGETS,
-)
+from src.k.config import POSITION_CONFIG  # noqa: E402
 from src.k.data import load_data, season_split  # noqa: E402
 from src.k.features import compute_features  # noqa: E402
 from src.k.targets import compute_targets  # noqa: E402
+
+ALL_FEATURES = POSITION_CONFIG.all_features
+ATTN_STATIC_FEATURES = POSITION_CONFIG.attn_static_features
+CONTEXTUAL_FEATURES = POSITION_CONFIG.contextual_features
+SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
+TARGETS = POSITION_CONFIG.targets
 
 OUT_DIR = PROJECT_ROOT / "analysis_output"
 OUT_JSON = OUT_DIR / "k_feature_audit.json"

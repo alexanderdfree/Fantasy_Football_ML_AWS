@@ -20,7 +20,11 @@ import pandas as pd
 import pytest
 
 from src.features.engineer import get_attn_static_columns
-from src.rb.config import ATTN_STATIC_FEATURES, INCLUDE_FEATURES, SPECIFIC_FEATURES
+from src.rb.config import POSITION_CONFIG
+
+ATTN_STATIC_FEATURES = POSITION_CONFIG.attn_static_features
+INCLUDE_FEATURES = POSITION_CONFIG.include_features
+SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
 from src.rb.features import (
     add_specific_features,
     fill_nans,

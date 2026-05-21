@@ -139,12 +139,12 @@ class TestQBRunCVPipeline:
 
     def test_best_cv_alphas_round_trip(self, cv_pipeline_run):
         """``best_cv_alphas`` must carry one alpha per non-special CV target."""
-        from src.qb.config import TARGETS
+        from src.qb.config import POSITION_CONFIG
 
         best = cv_pipeline_run["best_cv_alphas"]
         # In the tiny config no two_stage / classification targets, so all
         # TARGETS should be present with positive float alphas.
-        for target in TARGETS:
+        for target in POSITION_CONFIG.targets:
             assert target in best
             assert best[target] > 0
 

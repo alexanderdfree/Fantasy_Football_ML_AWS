@@ -73,19 +73,19 @@ class TestKAttentionRegistryWiring:
         fresh.load_state_dict(state, strict=True)
 
     def test_kwargs_align_with_training_config(self, reg):
-        """Registry kwargs must mirror the ATTN_* values used at training."""
-        import src.k.config as k_cfg
+        """Registry kwargs must mirror the POSITION_CONFIG values used at training."""
+        from src.k.config import POSITION_CONFIG as pc
 
         kw = reg["attn_nn_kwargs_static"]
-        assert kw["d_kick"] == k_cfg.ATTN_KICK_DIM
-        assert kw["d_model"] == k_cfg.ATTN_D_MODEL
-        assert kw["n_attn_heads"] == k_cfg.ATTN_N_HEADS
-        assert kw["encoder_hidden_dim"] == k_cfg.ATTN_ENCODER_HIDDEN_DIM
-        assert kw["max_games"] == k_cfg.ATTN_MAX_GAMES
-        assert reg["attn_max_games"] == k_cfg.ATTN_MAX_GAMES
-        assert reg["attn_max_kicks_per_game"] == k_cfg.ATTN_MAX_KICKS_PER_GAME
-        assert reg["attn_kick_stats"] == list(k_cfg.ATTN_KICK_STATS)
-        assert reg["attn_static_features"] == list(k_cfg.ATTN_STATIC_FEATURES)
+        assert kw["d_kick"] == pc.attn_kick_dim
+        assert kw["d_model"] == pc.attn_d_model
+        assert kw["n_attn_heads"] == pc.attn_n_heads
+        assert kw["encoder_hidden_dim"] == pc.attn_encoder_hidden_dim
+        assert kw["max_games"] == pc.attn_max_games
+        assert reg["attn_max_games"] == pc.attn_max_games
+        assert reg["attn_max_kicks_per_game"] == pc.attn_max_kicks_per_game
+        assert reg["attn_kick_stats"] == list(pc.attn_kick_stats)
+        assert reg["attn_static_features"] == list(pc.attn_static_features)
 
     def test_predict_numpy_end_to_end(self, reg):
         """Tiny forward pass through predict_numpy — catches signature drift

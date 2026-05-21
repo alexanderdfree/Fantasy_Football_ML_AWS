@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 import torch
 
-from src.rb.config import TARGETS
+from src.rb.config import POSITION_CONFIG
+
+TARGETS = POSITION_CONFIG.targets
 from src.shared.neural_net import MultiHeadNet
 
 

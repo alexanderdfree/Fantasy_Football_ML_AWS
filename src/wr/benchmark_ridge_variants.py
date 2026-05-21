@@ -21,7 +21,7 @@ from src.config import MIN_GAMES_PER_SEASON, SPLITS_DIR
 from src.evaluation.metrics import compute_metrics
 from src.shared.models import RidgeMultiTarget
 from src.shared.pipeline import _tune_ridge_alphas_cv
-from src.wr.config import RIDGE_ALPHA_GRIDS, SPECIFIC_FEATURES, TARGETS
+from src.wr.config import POSITION_CONFIG
 from src.wr.data import filter_to_position
 from src.wr.features import (
     add_specific_features,
@@ -29,6 +29,10 @@ from src.wr.features import (
     get_feature_columns,
 )
 from src.wr.targets import compute_targets
+
+RIDGE_ALPHA_GRIDS = POSITION_CONFIG.ridge_alpha_grids
+SPECIFIC_FEATURES = POSITION_CONFIG.specific_features
+TARGETS = POSITION_CONFIG.targets
 
 # ── Aggressive feature drops (on top of INCLUDE_FEATURES whitelist) ────────
 EXTRA_DROPS = {
