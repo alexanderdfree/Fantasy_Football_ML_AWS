@@ -1,4 +1,4 @@
-"""Unit tests for src/batch/launch_tune.py.
+"""Unit tests for src/tuning/launch_tune.py.
 
 Tests don't hit AWS — `boto3.client` is mocked. We assert the *shape* of the
 Batch submission (command, env, retry strategy) rather than verifying that
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.batch import launch_tune
+from src.tuning import launch_tune
 
 pytestmark = pytest.mark.unit
 
@@ -98,7 +98,7 @@ def test_dry_run_does_not_call_aws(monkeypatch, capsys):
     """--dry-run must print the plan and exit before any AWS call. Asserted
     by ensuring boto3.client is never invoked."""
     monkeypatch.setattr("sys.argv", ["launch_tune", "--positions", "QB", "--dry-run"])
-    with patch("src.batch.launch_tune.boto3") as mock_boto3:
+    with patch("src.tuning.launch_tune.boto3") as mock_boto3:
         launch_tune.main()
         mock_boto3.client.assert_not_called()
     out = capsys.readouterr().out
