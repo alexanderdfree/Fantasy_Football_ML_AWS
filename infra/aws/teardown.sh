@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REGION="us-east-1"
+REGION="${AWS_REGION:-us-east-1}"
 CLUSTER="fantasy-cluster"
 SERVICE="fantasy-service"
 ALB_NAME="fantasy-alb"

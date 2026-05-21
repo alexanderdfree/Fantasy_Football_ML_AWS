@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-REGION="us-east-1"
+REGION="${AWS_REGION:-us-east-1}"
 ECR_REPO="fantasy-predictor"
 CLUSTER="fantasy-cluster"
 SERVICE="fantasy-service"
@@ -284,6 +284,7 @@ log "All 6 S3 tarballs present — task will sync from S3 at boot."
 
 TASK_DEF_JSON=$(sed \
   -e "s|__ACCOUNT_ID__|$ACCOUNT_ID|g" \
+  -e "s|__REGION__|$REGION|g" \
   -e "s|__ECR_URI__|$ECR_URI|g" \
   -e "s|__IMAGE_TAG__|$IMAGE_TAG|g" \
   -e "s|__FF_MODEL_S3_BUCKET__|$TASK_BUCKET_VALUE|g" \

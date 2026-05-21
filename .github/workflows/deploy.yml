@@ -41,7 +41,7 @@ on:
   workflow_dispatch:
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY: fantasy-predictor
   ECS_CLUSTER: fantasy-cluster
   ECS_SERVICE: fantasy-service

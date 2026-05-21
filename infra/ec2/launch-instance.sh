@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-REGION="us-east-1"
+REGION="${AWS_REGION:-us-east-1}"
 BUCKET="ff-predictor-training"
 INFRA_PREFIX="infra/ec2"
 INSTANCE_TYPE="g4dn.xlarge"
@@ -76,10 +76,13 @@ for p in \
 done
 
 log "Putting inline policy ff-training-workload..."
+POLICY_FILE="$(mktemp)"
+sed -e "s|__REGION__|$REGION|g" "$SCRIPT_DIR/iam-instance-policy.json" > "$POLICY_FILE"
 aws iam put-role-policy \
   --role-name "$ROLE_NAME" \
   --policy-name ff-training-workload \
-  --policy-document "file://$SCRIPT_DIR/iam-instance-policy.json"
+  --policy-document "file://$POLICY_FILE"
+rm -f "$POLICY_FILE"
 
 if ! aws iam get-instance-profile --instance-profile-name "$PROFILE_NAME" >/dev/null 2>&1; then
   log "Creating instance profile $PROFILE_NAME..."

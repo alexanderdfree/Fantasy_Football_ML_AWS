@@ -13,7 +13,7 @@ exec > >(tee -a /var/log/ff-train/user-data.log) 2>&1
 
 echo "=== ff-training bootstrap $(date -Iseconds) ==="
 
-REGION="us-east-1"
+REGION="${AWS_REGION:-us-east-1}"
 BUCKET="ff-predictor-training"
 INFRA_PREFIX="infra/ec2"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --region "$REGION")

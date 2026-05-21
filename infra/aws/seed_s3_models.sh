@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-REGION="us-east-1"
+REGION="${AWS_REGION:-us-east-1}"
 BUCKET="ff-predictor-training"
 PREFIX="models"
 POSITIONS=(QB RB WR TE K DST)

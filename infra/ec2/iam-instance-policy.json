@@ -29,7 +29,7 @@
         "ecr:GetDownloadUrlForLayer",
         "ecr:BatchGetImage"
       ],
-      "Resource": "arn:aws:ecr:us-east-1:*:repository/ff-training"
+      "Resource": "arn:aws:ecr:__REGION__:*:repository/ff-training"
     },
     {
       "Sid": "CloudWatchLogs",
@@ -40,7 +40,7 @@
         "logs:PutLogEvents",
         "logs:DescribeLogStreams"
       ],
-      "Resource": "arn:aws:logs:us-east-1:*:log-group:/ff/training:*"
+      "Resource": "arn:aws:logs:__REGION__:*:log-group:/ff/training:*"
     }
   ]
 }

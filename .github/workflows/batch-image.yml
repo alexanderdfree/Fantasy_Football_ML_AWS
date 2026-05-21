@@ -27,7 +27,7 @@ on:
   workflow_dispatch: {}
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY: ff-training
   JOB_DEFINITION: ff-training-job
   # Same bucket train-batch.yml uses. The revision-stash step below writes to

@@ -30,8 +30,8 @@
         "ecr:BatchGetImage"
       ],
       "Resource": [
-        "arn:aws:ecr:us-east-1:*:repository/ff-training",
-        "arn:aws:ecr:us-east-1:*:repository/dockerhub/*"
+        "arn:aws:ecr:__REGION__:*:repository/ff-training",
+        "arn:aws:ecr:__REGION__:*:repository/dockerhub/*"
       ]
     },
     {
@@ -41,7 +41,7 @@
         "ecr:BatchImportUpstreamImage",
         "ecr:CreateRepository"
       ],
-      "Resource": "arn:aws:ecr:us-east-1:*:repository/dockerhub/*"
+      "Resource": "arn:aws:ecr:__REGION__:*:repository/dockerhub/*"
     },
     {
       "Sid": "CloudWatchLogs",
@@ -52,7 +52,7 @@
         "logs:PutLogEvents",
         "logs:DescribeLogStreams"
       ],
-      "Resource": "arn:aws:logs:us-east-1:*:log-group:/aws/batch/job*"
+      "Resource": "arn:aws:logs:__REGION__:*:log-group:/aws/batch/job*"
     }
   ]
 }
