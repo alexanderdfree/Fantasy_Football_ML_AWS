@@ -22,9 +22,20 @@ src/{pos}/
 
 Tests for each position live under `tests/{pos}/`.
 
-Shared plumbing is in [src/shared/](src/shared/): `pipeline.py` (train/eval loop), `models.py` (Ridge + MultiHeadNet), `neural_net.py` (attention), `aggregate_targets.py` (raw-stat → fantasy-point scoring), `training.py`, `evaluation.py`, `backtest.py`.
+Shared plumbing is in [src/shared/](src/shared/): `pipeline.py` (train/eval loop), `models.py` (multi-target wrappers: `RidgeMultiTarget`, `ElasticNetMultiTarget`, `LightGBMMultiTarget`, plus `TwoStageRidge` and the gated TD heads), `neural_net.py` (attention), `aggregate_targets.py` (raw-stat → fantasy-point scoring), `training.py`, `evaluation.py`, `backtest.py`.
 
-The rest of `src/` groups by purpose: `src/serving/` (Flask app + assets), `src/batch/` (training orchestration), `src/benchmarking/`, `src/tuning/` (Optuna + ablations), `src/analysis/` (post-hoc analyses), `src/scripts/` (operator CLIs).
+The rest of `src/` groups by purpose:
+- `src/data/` — cross-position data loading + temporal split (per-position `data.py` files wrap these): `loader.py`, `nflcom_loader.py`, `preprocessing.py`, `redzone_pbp.py`, `split.py`.
+- `src/features/engineer.py` — cross-position feature engineering coordinator.
+- `src/models/` — **single-target** model classes (`RidgeModel`, `ElasticNetModel`, `SeasonAverageBaseline`, `LastWeekBaseline`). These are the building blocks; `src/shared/models.py` wraps them into multi-target versions. Don't confuse this with the root-level `models/` directory (placeholder for trained-model artifacts that load from S3).
+- `src/training/trainer.py` — generic training-loop helpers.
+- `src/evaluation/metrics.py` — `compute_metrics(y_true, y_pred)` helper used by backtest and pipeline. Note: `src/shared/evaluation.py` is the larger position-aware visualization/aggregation layer that imports this helper.
+- `src/serving/` — Flask app + assets.
+- `src/batch/` — training orchestration (AWS Batch path).
+- `src/benchmarking/`, `src/tuning/` — Optuna + ablations.
+- `src/analysis/` — post-hoc analyses.
+- `src/scripts/` — operator CLIs.
+- `src/config.py` — global constants (`SEASONS`, `POSITIONS`, scoring dicts, `TOP_K_RANKING`). Distinct from per-position `src/{pos}/config.py`, which holds model hyperparams.
 
 All six positions train an attention NN (DST landed via `cc0c627`, K via `801b61a`). There is no "skill-positions-only" carve-out anymore — if you're adding an NN-related knob, wire it through every position.
 

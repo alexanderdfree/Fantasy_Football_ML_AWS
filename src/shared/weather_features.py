@@ -28,7 +28,7 @@ WEATHER_FEATURES_ALL = [
     "implied_total_x_wind",
 ]
 
-# Per-position drops (from docs/design_weather_and_odds.md feature table)
+# Per-position drops (from docs/archive/design_weather_and_odds.md feature table)
 WEATHER_DROPS_BY_POSITION = {
     "QB": {"is_grass"},
     "RB": {"is_dome", "temp_adjusted", "wind_adjusted", "implied_total_x_wind"},
