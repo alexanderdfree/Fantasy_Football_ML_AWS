@@ -194,7 +194,12 @@ class TestBuildOppDefenseHistoryArrays:
 
     def test_stat_subset_column_intersection(self):
         """Requesting a stat that isn't in the lookup frame silently drops
-        it instead of raising — same robustness as build_game_history_arrays."""
+        it instead of raising. Note: the per-player ``build_game_history_arrays``
+        now raises on missing cols instead (see PR adding the fail-loud guard);
+        the opp-defense path keeps the lenient intersection because its caller
+        ``build_opp_defense_per_game_df`` already pre-filters to the
+        intersection it knows is present, so this code path is exercised
+        only via test inputs."""
         df = _synthetic_all_position_df()
         per_game = build_opp_defense_per_game_df(df)
         X_opp, _ = build_opp_defense_history_arrays(

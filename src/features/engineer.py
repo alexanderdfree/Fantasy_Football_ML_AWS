@@ -323,8 +323,22 @@ def build_game_history_arrays(
     """
     if history_stats is None:
         history_stats = GAME_HISTORY_STATS
-    # Only use stats that exist in the DataFrame
-    history_stats = [s for s in history_stats if s in df.columns]
+    # Fail loud if any requested stat is missing from the DataFrame. Previously
+    # this silently filtered missing columns and adapted game_dim — which let a
+    # config change that added new history stats (e.g. PR #235's redzone cols)
+    # silently train an attention NN with a smaller game_dim than the inference
+    # registry expected, surfacing only at smoke-test time with a state_dict
+    # shape mismatch. Raising here surfaces the stale-splits root cause at
+    # training time with a clear pointer to the regen workflow.
+    missing = [s for s in history_stats if s not in df.columns]
+    if missing:
+        raise KeyError(
+            f"build_game_history_arrays: history_stats columns missing from df: "
+            f"{missing}. Likely cause: data/splits/*.parquet was generated before "
+            f"these columns were added to a position's ATTN_HISTORY_STATS — "
+            f"trigger refresh-splits.yml (or regenerate via the SETUP.md data-pull "
+            f"snippet and re-upload to S3) so the splits include the new columns."
+        )
     game_dim = len(history_stats)
 
     n = len(df)
