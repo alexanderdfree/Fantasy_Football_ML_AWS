@@ -131,20 +131,20 @@ jobs:
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       - name: Publish SOCI index for cold-start lazy-loading
-        # Cold-start opt 2a (docs/batch_design.md): SOCI v2 (Seekable OCI)
+        # Cold-start opt 2a (docs/batch_design.md §2a): SOCI v2 (Seekable OCI)
         # lets Batch start the container before the full image is pulled.
-        # ECS picks up the SOCI index automatically when one exists in ECR
-        # alongside the image tag.
+        # The ff-gpu-spot Compute Environment runs the soci-snapshotter
+        # daemon via the ff-batch-lt launch template (infra/batch/userdata.sh),
+        # so a missing/stale index now means a Spot host falls back to
+        # ~122s full pull — silent regression. Hence continue-on-error: false.
         #
-        # continue-on-error because soci reads from containerd's content
-        # store and Docker on ubuntu-latest defaults to overlay2; the
-        # ctr-pull workaround can be finicky and this is a nice-to-have
-        # (the image works without the index, just slower cold-start).
-        # Tighten once this is observed working across runs.
-        continue-on-error: true
+        # SOCI_VERSION MUST match infra/batch/userdata.sh's pinned version;
+        # publisher/consumer version skew breaks lazy-load (manifest format
+        # evolves between minor releases).
+        continue-on-error: false
         env:
           IMAGE_URI: ${{ steps.build.outputs.image_uri }}
-          SOCI_VERSION: "0.10.0"
+          SOCI_VERSION: "0.13.0"
         run: |
           set -euo pipefail
 

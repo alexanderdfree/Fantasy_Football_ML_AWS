@@ -1,6 +1,6 @@
 # ff-training AWS Batch + Spot
 
-_Last verified: 2026-05-20._
+_Last verified: 2026-05-21._
 
 Provisions an AWS Batch managed compute environment on Spot g4dn.xlarge so all
 six position pipelines train in parallel (one position per Spot instance). This
@@ -35,26 +35,26 @@ The script creates:
 | IAM role (task execution) | `ecsTaskExecutionRole` |
 | Instance profile | `ecsInstanceRole` |
 | Security group | `ff-batch-sg` (egress only) |
-| Compute environment | `ff-gpu-spot` (SPOT, max 24 vCPU, g4dn.xlarge) |
+| Launch template | `ff-batch-lt` (UserData = [infra/batch/userdata.sh](userdata.sh), installs `soci-snapshotter-grpc` v0.13.0) |
+| Compute environment | `ff-gpu-spot` (SPOT, max 24 vCPU, g4dn.xlarge, launchTemplate=`ff-batch-lt:$Latest`) |
 | Job queue | `ff-training-queue` |
 | Job definition | `ff-training-job` (rev 1; CI re-registers on every push) |
 | CloudWatch log group | `/aws/batch/job` (7-day retention) |
 
-## Cold-start optimization (recommended)
+## Cold-start optimization
 
-The cold-start tax (image pull on a fresh Spot instance) is the original reason
-this project moved off Batch. Two AWS-side optimizations were planned to bring
-cold-start from ~120s pull to ~60–90s total; both are wired into
-[batch-image.yml](../../.github/workflows/batch-image.yml). **Measured
-2026-05-20: ~258 s total cold-start (~120 s Spot+boot + ~122 s full image pull
-+ ~10 s container start)** — the SOCI snapshotter is not active on the default
-Batch AMI, so the SOCI indexes in ECR are ignored. See
-[docs/batch_design.md §2a](../../docs/batch_design.md) for activation options
-(pin a Bottlerocket GPU AMI, or pin AL2 + userdata install of
-`soci-snapshotter-grpc`). The pull-through cache rule below is independently
-useful at GHA build time.
+The cold-start tax (image pull on a fresh Spot instance) is the original
+reason this project moved off Batch. Two AWS-side optimizations bring it
+down: the `ff-batch-lt` launch template (installs `soci-snapshotter-grpc`
+on the AL2 host pre-boot via [userdata.sh](userdata.sh)) cuts the runtime
+image pull from ~122s to ~5–10s; the ECR pull-through cache cuts GHA
+build time on cold base layers. Baseline 2026-05-20 cold-start was
+**~258 s** (~120 s Spot+boot + ~122 s full image pull + ~10 s container
+start); expected post-Option-B cold-start is **~135 s** (~115 s saved
+per job). See [docs/batch_design.md §2a](../../docs/batch_design.md) for
+the full activation story.
 
-**Run the pull-through cache rule creation once after `setup.sh`:**
+### ECR pull-through cache (one-time, after `setup.sh`)
 
 ```
 aws ecr create-pull-through-cache-rule \
@@ -81,13 +81,28 @@ ecr:GetDownloadUrlForLayer
 ecr:BatchGetImage
 ```
 
-A SOCI index is also published alongside the image (cold-start opt 2a). The
-SOCI publish step is `continue-on-error: true` — if it fails, the image still
-works, just with a slower first pull on each fresh Spot instance. **As of
-2026-05-20 the index is published successfully but unused at runtime** —
-the default Batch AMI doesn't run `soci-snapshotter-grpc`; see
-[docs/batch_design.md §2a](../../docs/batch_design.md) for the snapshotter
-activation paths.
+### SOCI snapshotter (Option B, default since 2026-05-21)
+
+A SOCI index is published alongside the image by
+[batch-image.yml](../../.github/workflows/batch-image.yml)'s `Publish SOCI
+index` step (`continue-on-error: false`, version-pinned to `0.13.0`). The
+`ff-gpu-spot` CE uses the `ff-batch-lt` launch template, whose UserData
+([userdata.sh](userdata.sh)) installs `soci-snapshotter-grpc` v0.13.0 on
+the AL2 host, registers it as a containerd proxy plugin, and starts it
+as a systemd unit ordered `Before=ecs.service`. First image pull on a
+fresh Spot host streams lazily via SOCI instead of doing a full ~122 s
+pull.
+
+**SOCI_VERSION discipline**: the version pin MUST stay aligned between
+[userdata.sh](userdata.sh) (host snapshotter) and
+[batch-image.yml](../../.github/workflows/batch-image.yml) (index
+publisher). Manifest format evolves between minor releases.
+
+**Live-account migration**: running `bash infra/batch/setup.sh` against
+an existing CE reconciles the launch template via `DISABLE →
+update-compute-environment → ENABLE`, polling VALID between each step.
+The CE's `minvCpus=0` means there are no in-flight instances to disrupt
+— the next training run gets the new launch template.
 
 ## Verification
 
@@ -120,6 +135,56 @@ activation paths.
 4. **End-to-end CI:** `gh workflow run train-batch.yml -f positions=K -f seed=42`
    should run the detect → launch → freshness → benchmark commit → ECS refresh
    pipeline and write a fresh `benchmark_history/{run_id}.json`.
+
+5. **SOCI is actually used (post-Option-B):** while a fresh K job is RUNNING,
+   capture the image-pull window:
+   ```
+   JOB_ID=<from step 4>
+   CLUSTER=$(aws batch describe-compute-environments \
+     --compute-environments ff-gpu-spot --region us-east-1 \
+     --query 'computeEnvironments[0].ecsClusterArn' --output text)
+   TASK_ARN=$(aws batch describe-jobs --jobs $JOB_ID --region us-east-1 \
+     --query 'jobs[0].container.taskArn' --output text)
+   aws ecs describe-tasks --cluster $CLUSTER --tasks $TASK_ARN \
+     --region us-east-1 \
+     --query 'tasks[0].[pullStartedAt,pullStoppedAt]'
+   ```
+   Expect: pull window ~5–10 s (down from ~122 s baseline 2026-05-20). Anything
+   over ~30 s means SOCI didn't activate on that host — run "Rollback SOCI launch
+   template" below and inspect `/var/log/soci-userdata.log` on the failing host
+   via `aws ssm start-session --target <ec2InstanceId>`.
+
+## Rollback SOCI launch template
+
+If userdata breaks instance boot (CE goes `INVALID`, jobs stuck `RUNNABLE`, or
+first job fails repeatedly with `CannotPullContainerError` despite the per-job
+retry), detach the launch template from the CE — next Spot host uses the
+default ECS-optimized GPU AMI again, training resumes at the pre-Option-B ~122 s
+pull:
+
+```
+aws batch update-compute-environment --compute-environment ff-gpu-spot \
+  --state DISABLED --region us-east-1
+# Wait VALID:
+until [ "$(aws batch describe-compute-environments --compute-environments ff-gpu-spot \
+  --region us-east-1 --query 'computeEnvironments[0].status' --output text)" = "VALID" ]; do
+  sleep 5
+done
+
+aws batch update-compute-environment --compute-environment ff-gpu-spot \
+  --compute-resources 'launchTemplate={}' --region us-east-1
+until [ "$(aws batch describe-compute-environments --compute-environments ff-gpu-spot \
+  --region us-east-1 --query 'computeEnvironments[0].status' --output text)" = "VALID" ]; do
+  sleep 5
+done
+
+aws batch update-compute-environment --compute-environment ff-gpu-spot \
+  --state ENABLED --region us-east-1
+```
+
+This is the Tier-1 rollback (fast, no PR revert). Tier-2 is the existing full
+flip: `gh variable set BATCH_ACTIVE --body "false"` — returns push-driven
+training to the warm-EC2 path, unaffected by the launch template.
 
 ## Switch the active trainer
 
@@ -167,8 +232,9 @@ manually if you want a complete wipe.
 
 | File | Purpose |
 |---|---|
-| `setup.sh` | Idempotent provisioning: IAM, SG, CE, JQ, JD seed revision. |
-| `teardown.sh` | Reverse-order tear down; idempotent. |
+| `setup.sh` | Idempotent provisioning: IAM, SG, launch template, CE (with `ff-batch-lt`), JQ, JD seed revision. Reconciles launch template onto existing CE on re-run. |
+| `teardown.sh` | Reverse-order tear down (incl. launch template after CE delete); idempotent. |
+| `userdata.sh` | EC2 launch-template UserData. Installs `soci-snapshotter-grpc` v0.13.0 on AL2 + configures containerd proxy plugin + starts systemd unit `Before=ecs.service`. |
 | `iam-trust-policy-job.json` | `ecs-tasks.amazonaws.com` trust (job + execution roles). |
 | `iam-trust-policy-instance.json` | `ec2.amazonaws.com` trust (EC2 instance role). |
 | `iam-job-policy.json` | Inline policy on `BatchTrainingRole` — S3 r/w, ECR pull (incl. pull-through hydration), CW Logs. |
@@ -178,7 +244,9 @@ manually if you want a complete wipe.
 See [`docs/batch_design.md`](../../docs/batch_design.md). Short version: warm
 EC2 forced sequential training because one T4 can't host six concurrent NN
 jobs; Spot fanout gives each position its own T4, parallelizing the workload.
-Cold-start (the original blocker) is partially mitigated — SOCI indexes are
-published but the snapshotter is not active on the default AMI, so measured
-2026-05-20 cold-start is ~258 s vs the ~60–90 s design target. See
-[docs/batch_design.md §2a](../../docs/batch_design.md) for activation paths.
+Cold-start (the original blocker) is mitigated by SOCI lazy-loading on the
+Spot host via `ff-batch-lt` launch template + [userdata.sh](userdata.sh)
+(Option B, default since 2026-05-21). Baseline 2026-05-20 cold-start was
+~258 s (snapshotter inactive); expected post-Option-B is ~135 s. See
+[docs/batch_design.md §2a](../../docs/batch_design.md) for the activation
+story.

@@ -17,6 +17,7 @@ INSTANCE_ROLE="ecsInstanceRole"
 INSTANCE_PROFILE="ecsInstanceRole"
 TASK_EXEC_ROLE="ecsTaskExecutionRole"
 SG_NAME="ff-batch-sg"
+LAUNCH_TEMPLATE_NAME="ff-batch-lt"
 
 log() { echo "[batch-teardown] $*"; }
 
@@ -90,6 +91,19 @@ if [ "$CE_EXISTS" != "None" ] && [ -n "$CE_EXISTS" ] && [ "$CE_EXISTS" != "null"
   aws batch delete-compute-environment \
     --compute-environment "$COMPUTE_ENV" \
     --region "$REGION" || true
+fi
+
+# --- 3b. Launch Template ------------------------------------------------
+# Safe to delete after CE deletion: AWS Batch holds a reference while the
+# CE exists; deleting the template before the CE returns a dependency
+# error. Delete after the CE is gone.
+if aws ec2 describe-launch-templates \
+     --launch-template-names "$LAUNCH_TEMPLATE_NAME" \
+     --region "$REGION" >/dev/null 2>&1; then
+  log "Deleting launch template $LAUNCH_TEMPLATE_NAME..."
+  aws ec2 delete-launch-template \
+    --launch-template-name "$LAUNCH_TEMPLATE_NAME" \
+    --region "$REGION" >/dev/null || true
 fi
 
 # --- 4. Security group --------------------------------------------------
