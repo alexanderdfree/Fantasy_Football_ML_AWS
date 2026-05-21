@@ -191,8 +191,8 @@ jobs:
         # mismatch on the next model swap (the trained model has the new
         # cols; the running task's ``pos_test.columns`` doesn't, and the
         # serving's ``_apply_position_models`` silently filters the col
-        # list before instantiating the inference model — see PR following
-        # this one for the bug postmortem).
+        # list before instantiating the inference model — postmortem in
+        # this PR's body and in ``tests/test_refresh_splits_workflow.py``).
         #
         # Non-blocking: ``update-service`` returns ~1s. The actual rolling
         # deploy proceeds asynchronously via ECS; we do NOT wait on
