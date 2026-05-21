@@ -29,7 +29,7 @@ def _pts_allowed_to_bonus(pts: float) -> float:
     for lo, hi, bonus in _PTS_ALLOWED_TIERS:
         if lo <= pts <= hi:
             return bonus
-    return -4  # 35+
+    return -4  # >999, unreachable in practice (35+ is covered by the last tier)
 
 
 def _yds_allowed_to_bonus(ya: float) -> float:
@@ -38,7 +38,7 @@ def _yds_allowed_to_bonus(ya: float) -> float:
     for lo, hi, bonus in _YDS_ALLOWED_TIERS:
         if lo <= ya <= hi:
             return bonus
-    return -5  # 450+
+    return -5  # >99999, unreachable in practice (450+ is covered by the last tier)
 
 
 def compute_targets(df: pd.DataFrame) -> pd.DataFrame:

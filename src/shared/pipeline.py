@@ -603,11 +603,7 @@ def _train_nn(
     targets,
     seed,
 ):
-    """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history).
-
-    Shared by the regular NN and Weather NN to guarantee identical training.
-    The only thing that differs between them is the input feature matrix.
-    """
+    """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history)."""
     seed_everything(seed)
     nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
 

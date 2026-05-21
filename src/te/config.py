@@ -72,7 +72,6 @@ _INCLUDE_FEATURES = {
         "opp_def_rush_yds_allowed_L5",
         "opp_def_pts_allowed_L5",
     ],
-    # TE keeps is_home (unlike RB/WR where it's zero-variance).
     "contextual": [
         "is_home",
         "week",

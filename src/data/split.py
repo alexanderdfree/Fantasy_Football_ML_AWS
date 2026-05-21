@@ -1,6 +1,8 @@
 import os
+
 import pandas as pd
-from src.config import TRAIN_SEASONS, VAL_SEASONS, TEST_SEASONS, SPLITS_DIR, CV_VAL_SEASONS
+
+from src.config import CV_VAL_SEASONS, SPLITS_DIR, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 
 
 def temporal_split(
@@ -28,8 +30,9 @@ def temporal_split(
 
     # Assert no overlap
     all_seasons = set(train_seasons) | set(val_seasons) | set(test_seasons)
-    assert len(all_seasons) == len(train_seasons) + len(val_seasons) + len(test_seasons), \
+    assert len(all_seasons) == len(train_seasons) + len(val_seasons) + len(test_seasons), (
         "Season overlap detected between splits"
+    )
 
     print(f"Split sizes: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
 
@@ -63,8 +66,10 @@ def expanding_window_folds(
         train_seasons = list(range(min_train_season, val_season))
         train_df = df[df["season"].isin(train_seasons)].copy()
         val_df = df[df["season"] == val_season].copy()
-        print(f"  Fold {i+1}: train seasons {train_seasons[0]}-{train_seasons[-1]} "
-              f"({len(train_df)} rows), val season {val_season} ({len(val_df)} rows)")
+        print(
+            f"  Fold {i + 1}: train seasons {train_seasons[0]}-{train_seasons[-1]} "
+            f"({len(train_df)} rows), val season {val_season} ({len(val_df)} rows)"
+        )
         folds.append((i, train_df, val_df))
 
     return folds

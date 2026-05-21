@@ -1,4 +1,5 @@
 import pandas as pd
+
 from src.config import POSITIONS
 from src.data.loader import compute_all_scoring_formats
 
