@@ -2189,10 +2189,6 @@ def api_predictions_breakdown():
     with no value for any target (e.g. lgbm for K/DST) is reported in
     ``unavailable_models``. A stale on-disk snapshot predating these columns
     degrades to ``{"components": [], "unavailable": true}`` rather than erroring.
-
-    Defined before the ``/api/predictions/<player_id>`` dynamic route is matched:
-    Werkzeug ranks the static ``breakdown`` segment above the ``<player_id>``
-    placeholder, so this never collides with ``api_player``.
     """
     player_id = request.args.get("player_id", "")
     week_arg = request.args.get("week", "")

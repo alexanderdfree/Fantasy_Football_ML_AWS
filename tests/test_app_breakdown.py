@@ -86,11 +86,11 @@ def test_breakdown_400_missing_player_id(client_with_data):
 
 
 @pytest.mark.integration
-def test_breakdown_does_not_collide_with_player_route(client_with_data):
-    """The static /breakdown segment must win over /api/predictions/<player_id>.
+def test_breakdown_route_resolves_to_handler(client_with_data):
+    """/api/predictions/breakdown reaches the breakdown handler (not a 404).
 
-    A regression here would route ``breakdown`` into ``api_player`` (treating
-    "breakdown" as a player_id → 404) instead of the breakdown handler.
+    Smoke test that the static route is registered and returns the breakdown
+    payload shape.
     """
     resp = client_with_data.get("/api/predictions/breakdown?player_id=QB000&week=1")
     assert resp.status_code == 200
