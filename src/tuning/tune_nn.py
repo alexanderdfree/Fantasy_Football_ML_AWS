@@ -5,6 +5,7 @@ Usage:
     python -m src.tuning.tune_nn QB RB WR TE            # multiple (sequential)
     python -m src.tuning.tune_nn RB --n-trials 30
     python -m src.tuning.tune_nn RB --timeout 7200      # seconds, per position
+    python -m src.tuning.tune_nn RB --n-jobs 3          # concurrent trials (GPU-bound)
     python -m src.tuning.tune_nn RB --print-best        # inspect saved study
 
 MVP scope (v1)
