@@ -24,8 +24,8 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **What:** `_get_data()` caches results in a module-level dict (serialized by `_cache_lock` since #31). The cache is never cleared. Not a real problem in practice (server restarts frequently), but worth noting.
 
 ### [LOW] `drop_last=True` silently discards training samples
-- **File:** `src/shared/training.py:167, 196, 449`
-- **What:** Last incomplete batch is dropped in all three DataLoaders (attention, multi-target, history-multi-target). With batch_size=512 (WR) and 32,521 training rows, 121 rows (~0.4%) are never seen. Standard practice, but combined with early stopping means those rows never contribute.
+- **File:** the train-DataLoader constructions in `src/shared/training.py` (grep `drop_last=True`).
+- **What:** Last incomplete batch is dropped in every training DataLoader (attention, multi-target, history-multi-target, plus the CV and per-kick variants). With batch_size=512 (WR) and 32,521 training rows, 121 rows (~0.4%) are never seen. Standard practice, but combined with early stopping means those rows never contribute.
 
 ### [LOW] K targets overwrite `fantasy_points` column
 - **File:** `src/k/targets.py:31`

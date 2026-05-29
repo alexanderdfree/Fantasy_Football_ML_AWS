@@ -103,7 +103,7 @@ Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy po
 **Takeaways:**
 - **LightGBM wins QB and RB.** It beats both NN families on the positions with the densest count-heavy targets (passing/rushing yards, TDs). The RB feature audit cycle (drop 14 redundant features, restore prior-season signals, add 3 orthogonal upstream aggregates) closed the gap between the audit-driven model variants — LightGBM is now the front-runner at RB by a small margin.
 - **Attention NN wins WR and TE.** Sequence + interaction structure pays off when the target is heavily reception-driven. The attention pool's positional encoding catches recent-game weighting that pure rolling features lose.
-- **K and DST report negative aggregate R².** This is the real signal, not a measurement bug: commit `0c66171` (PR #178) fixed the K/DST evaluation aggregator to use the same signed/tiered logic the serving layer uses, and the result is that all three model families struggle to beat predicting the per-player mean. K is the harder of the two — kickers genuinely have weak week-over-week signal at the available sample size. Ridge wins both, narrowly, by being the most boring predictor; the higher-capacity models overfit. This is consistent with the [docs/expert_comparison.md](docs/expert_comparison.md) finding that published expert projections also have low R² on these positions.
+- **K and DST report negative aggregate R².** This is the real signal, not a measurement bug: commit `0c66171` (PR #178) fixed the K/DST evaluation aggregator to use the same signed/tiered logic the serving layer uses, and the result is that all three model families struggle to beat predicting the per-player mean. K is the harder of the two — kickers genuinely have weak week-over-week signal at the available sample size. The per-position winners are decided by tiny margins well inside run-to-run variance (LightGBM edges K at 4.061 MAE; the Attention NN edges DST at 5.162) — no family is a clear winner here. This is consistent with the [docs/expert_comparison.md](docs/expert_comparison.md) finding that published expert projections also have low R² on these positions.
 - **Aggregate MAE rose for K and DST compared to the pre-`0c66171` table.** The earlier table reported K=3.6 and DST=3.8 against a partially-wrong unit space (unsigned sum for K, missing PA/YA tier lookup for DST). The corrected aggregator produces the real fantasy-point error: K MAE ≈ 6.7, DST MAE ≈ 5.2. The dashboard always showed correct values; only the eval-table aggregate was wrong.
 - Error analysis and per-target breakdown: [docs/expert_comparison.md](docs/expert_comparison.md) and the per-position breakdowns in the linked benchmark JSON.
 
@@ -115,7 +115,7 @@ The repository is organized with top-level `src/` (all source code), `data/`, `m
 src/                                All Python source code
   qb/ rb/ wr/ te/ k/ dst/           Per-position configs, features, targets, runners
   shared/                           Cross-position infrastructure
-    neural_net.py                   MultiHeadNet, AttentionPool, GatedTDHead
+    neural_net.py                   MultiHeadNet, AttentionPool, GatedHead
     models.py                       RidgeMultiTarget, LightGBMMultiTarget, baselines
     training.py                     MultiTargetLoss, trainer, schedulers
     pipeline.py                     Position-pipeline orchestrator

@@ -38,7 +38,7 @@ Aggregator `predictions_to_fantasy_points("RB", preds)` converts the raw-stat pr
 For each of `[fantasy_points, targets, receptions, carries, rushing_yards, receiving_yards, snap_pct]`, three aggregates `[mean, std, max]` × two windows `[L3, L8]`. `fantasy_points` additionally gets `rolling_min` at L3, L5, L8 (the only L5 retained; see "L5 dropped" rule below).
 
 #### `prior_season` (after PR-#190 audit drops)
-Prior-season `[mean, std, max]` over the same 7 base stats, **minus** the 8 cells filtered by `_PRIOR_SEASON_DROPS` ([config.py:55-77](../src/rb/config.py:55)): `prior_season_{mean,std,max}_receptions`, `prior_season_{mean,std,max}_rushing_yards`, `prior_season_std_receiving_yards`, `prior_season_std_fantasy_points`. Drop rationale is in the inline comment.
+Prior-season `[mean, std, max]` over the same 7 base stats, **minus** the 10 cells filtered by `_PRIOR_SEASON_DROPS` ([config.py:56-67](../src/rb/config.py:56)): `prior_season_{mean,std,max}_receptions`, `prior_season_{mean,std,max}_rushing_yards`, `prior_season_{mean,std,max}_fantasy_points`, `prior_season_std_receiving_yards`. Drop rationale is in the inline comment.
 
 #### `ewma`
 Empty by design: "All EWMA dropped (>0.98 corr with rolling means)".
@@ -89,7 +89,7 @@ Defined in `SPECIFIC_FEATURES` at [config.py:14-30](../src/rb/config.py:14):
 
 **Excluded by design**: `rolling`, `ewma`, `trend`, `share`, `specific`. The attention sequence already learns temporal patterns from `ATTN_HISTORY_STATS`; routing rolling/share/specific into the static branch would double-count signal ([config.py:281-283](../src/rb/config.py:281)).
 
-### `ATTN_HISTORY_STATS` (15 per-game stats fed as a sequence)
+### `ATTN_HISTORY_STATS` (32 per-game stats fed as a sequence)
 
 ```python
 [
@@ -98,6 +98,15 @@ Defined in `SPECIFIC_FEATURES` at [config.py:14-30](../src/rb/config.py:14):
     "rushing_first_downs", "receiving_first_downs",
     "game_carry_share", "game_target_share",
     "game_carry_hhi", "game_target_hhi",
+    # Game-script context
+    "implied_team_total", "implied_opp_total", "is_home", "days_rest",
+    # Team box score for the historical game
+    "team_pass_attempts", "team_completions", "team_passing_yards",
+    "team_rush_attempts", "team_rushing_yards", "team_points_scored",
+    "team_turnovers", "opp_team_points_scored",
+    # Per-game red-zone & goal-line touch counts (from PBP)
+    "redzone_carries", "redzone_targets", "inside10_carries",
+    "inside5_carries", "redzone_target_share",
 ]
 ```
 
@@ -194,7 +203,7 @@ Behaviour-preserving cleanup of `opportunity_index_L3`'s per-game ratio computat
 - yards: w = 0.133 (= 2/15)
 - TDs / fumbles / receptions: w = 1.0
 
-Encoded the `2.0/δ` invariant inline in [config.py:200-216](../src/rb/config.py:200) so future contributors who change a Huber δ re-derive the matching weight. NN FP MAE recovered from 5.21 → 4.23 (-0.98 pt/game). Ridge / LGBM unaffected (per-target, independent).
+Encoded the `2.0/δ` invariant inline in [config.py:250-260](../src/rb/config.py:250) so future contributors who change a Huber δ re-derive the matching weight. NN FP MAE recovered from 5.21 → 4.23 (-0.98 pt/game). Ridge / LGBM unaffected (per-target, independent).
 
 ### 2026-04 — `51cb2e3` / PR #15 target-migration: RB raw-stat targets + dual-gate TD
 **This is the foundational target migration.** Switched RB predictions from fantasy-point components (`rushing_floor`, `receiving_floor`, `td_points`) to raw NFL stats:
@@ -252,7 +261,7 @@ Every position predicts raw NFL stats. Fantasy points are computed *after* predi
 
 ### 4. Loss weights are tuned inverse-to-Huber-delta
 
-`LOSS_WEIGHTS[t] ≈ 2.0 / HUBER_DELTAS[t]`. Source: PR #21, [CLAUDE.md](../CLAUDE.md), [config.py:200-216](../src/rb/config.py:200). Why: without this, yards heads (δ=15) dominate count heads (δ=0.5) by ~2500× per sample.
+`LOSS_WEIGHTS[t] ≈ 2.0 / HUBER_DELTAS[t]`. Source: PR #21, [CLAUDE.md](../CLAUDE.md), [config.py:250-260](../src/rb/config.py:250). Why: without this, yards heads (δ=15) dominate count heads (δ=0.5) by ~2500× per sample.
 
 ### 5. Always diff training vs inference paths
 
