@@ -316,20 +316,23 @@ class TestLoadBaseDataLocked:
             assert col in results.columns
 
     def test_pred_columns_initialized_to_expected_sentinel_values(self, boot_env):
-        """Ridge / NN init to 0.0 (every row gets a value once the position
-        loads); attn_nn / lgbm init to NaN so K/DST rows - which have no such
-        models - are correctly excluded from overall MAE."""
+        """ALL four model pred columns init to NaN (audit-320 F33). Previously
+        ridge/nn defaulted to 0.0 while attn_nn/lgbm defaulted to NaN —
+        inconsistent failure semantics that let a failed ridge/nn load silently
+        serve 0.0 as if it were a real prediction (and skew overall MAE). NaN is
+        now the uniform "no result" sentinel; a row only carries a real value
+        after _apply_position_models successfully overwrites it."""
         app_mod = boot_env["app"]
         app_mod._load_base_data_locked()
 
         results = app_mod._cache["results"]
         for fmt in ("ppr", "half_ppr", "standard"):
-            assert (results[f"ridge_pred_{fmt}"] == 0.0).all()
-            assert (results[f"nn_pred_{fmt}"] == 0.0).all()
+            assert results[f"ridge_pred_{fmt}"].isna().all()
+            assert results[f"nn_pred_{fmt}"].isna().all()
             assert results[f"attn_nn_pred_{fmt}"].isna().all()
             assert results[f"lgbm_pred_{fmt}"].isna().all()
-        assert (results["ridge_pred"] == 0.0).all()
-        assert (results["nn_pred"] == 0.0).all()
+        assert results["ridge_pred"].isna().all()
+        assert results["nn_pred"].isna().all()
         assert results["attn_nn_pred"].isna().all()
         assert results["lgbm_pred"].isna().all()
 
