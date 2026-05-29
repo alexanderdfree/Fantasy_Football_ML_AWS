@@ -150,9 +150,7 @@ def test_reconstruct_redzone_from_pbp_happy_path(tmp_path, monkeypatch):
     synthetic frame (rushing + receiving yardline gates, RZ denominator)."""
     import src.data.redzone_pbp as rz
 
-    monkeypatch.setattr(
-        rz.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
-    )
+    monkeypatch.setattr(rz.nfl_source, "pbp_data", lambda seasons, cols: _synthetic_pbp(seasons[0]))
 
     out = rz.reconstruct_redzone_from_pbp([2020], cache_dir=str(tmp_path))
 
@@ -214,9 +212,7 @@ def test_redzone_target_share_zero_when_team_has_no_redzone_passes(tmp_path, mon
     rushing-only row for RB-C must carry redzone_target_share=0, not NaN."""
     import src.data.redzone_pbp as rz
 
-    monkeypatch.setattr(
-        rz.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
-    )
+    monkeypatch.setattr(rz.nfl_source, "pbp_data", lambda seasons, cols: _synthetic_pbp(seasons[0]))
 
     out = rz.reconstruct_redzone_from_pbp([2020], cache_dir=str(tmp_path))
 
@@ -238,7 +234,7 @@ def test_reconstruct_redzone_from_pbp_cache_hit(tmp_path, monkeypatch):
     def _should_not_be_called(*args, **kwargs):
         raise AssertionError("import_pbp_data was called despite cache hit")
 
-    monkeypatch.setattr(rz.nfl, "import_pbp_data", _should_not_be_called)
+    monkeypatch.setattr(rz.nfl_source, "pbp_data", _should_not_be_called)
 
     out = rz.reconstruct_redzone_from_pbp([2021], cache_dir=str(tmp_path))
     assert len(out) == 1
@@ -269,9 +265,7 @@ def test_reconstruct_redzone_stale_cache_regenerates(tmp_path, monkeypatch, caps
         }
     ).to_parquet(stale_cache)
 
-    monkeypatch.setattr(
-        rz.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
-    )
+    monkeypatch.setattr(rz.nfl_source, "pbp_data", lambda seasons, cols: _synthetic_pbp(seasons[0]))
 
     out = rz.reconstruct_redzone_from_pbp([2020], cache_dir=str(tmp_path))
 
@@ -293,10 +287,10 @@ def test_reconstruct_redzone_skips_failing_seasons(tmp_path, monkeypatch, capsys
     authoritative. Returns empty frame with the full schema."""
     import src.data.redzone_pbp as rz
 
-    def _bad(seasons, downcast=True):
+    def _bad(seasons, cols):
         raise RuntimeError(f"pbp fetch boom for {seasons}")
 
-    monkeypatch.setattr(rz.nfl, "import_pbp_data", _bad)
+    monkeypatch.setattr(rz.nfl_source, "pbp_data", _bad)
 
     out = rz.reconstruct_redzone_from_pbp([2020], cache_dir=str(tmp_path))
 
@@ -331,13 +325,13 @@ def test_reconstruct_redzone_partial_failure_does_not_cache(tmp_path, monkeypatc
 
     call_count = {"n": 0}
 
-    def _flaky(seasons, downcast=True):
+    def _flaky(seasons, cols):
         call_count["n"] += 1
         if call_count["n"] == 1:
             return _synthetic_pbp(seasons[0])
         raise RuntimeError("upstream 502")
 
-    monkeypatch.setattr(rz.nfl, "import_pbp_data", _flaky)
+    monkeypatch.setattr(rz.nfl_source, "pbp_data", _flaky)
 
     out = rz.reconstruct_redzone_from_pbp([2020, 2021], cache_dir=str(tmp_path))
 

@@ -199,7 +199,7 @@ def _mock_all_nfl_helpers(monkeypatch):
     # by load_raw_data) doesn't hit the network. Aggregator references these
     # columns by name; an empty frame with the right schema yields an empty
     # red-zone result, which the loader gracefully treats as "all zeros".
-    def _fake_pbp(seasons, downcast=True):
+    def _fake_pbp(seasons, cols):
         return pd.DataFrame(
             {
                 "season": pd.Series([], dtype="int64"),
@@ -213,18 +213,18 @@ def _mock_all_nfl_helpers(monkeypatch):
             }
         )
 
-    monkeypatch.setattr(loader.nfl, "import_weekly_data", _fake_weekly)
-    monkeypatch.setattr(loader.nfl, "import_seasonal_rosters", _fake_rosters)
-    monkeypatch.setattr(loader.nfl, "import_schedules", _fake_schedules)
-    monkeypatch.setattr(loader.nfl, "import_snap_counts", _fake_snap_counts)
-    monkeypatch.setattr(loader.nfl, "import_ids", _fake_ids)
-    monkeypatch.setattr(loader.nfl, "import_injuries", _fake_injuries)
-    monkeypatch.setattr(loader.nfl, "import_depth_charts", _fake_depth_charts)
+    monkeypatch.setattr(loader.nfl_source, "weekly_data", _fake_weekly)
+    monkeypatch.setattr(loader.nfl_source, "rosters", _fake_rosters)
+    monkeypatch.setattr(loader.nfl_source, "schedules", _fake_schedules)
+    monkeypatch.setattr(loader.nfl_source, "snap_counts", _fake_snap_counts)
+    monkeypatch.setattr(loader.nfl_source, "player_ids", _fake_ids)
+    monkeypatch.setattr(loader.nfl_source, "injuries", _fake_injuries)
+    monkeypatch.setattr(loader.nfl_source, "depth_charts", _fake_depth_charts)
     # reconstruct_redzone_from_pbp lives in src.data.redzone_pbp and pulls
     # nfl_data_py via its own module-level binding, so stub it there too.
     import src.data.redzone_pbp as redzone_pbp
 
-    monkeypatch.setattr(redzone_pbp.nfl, "import_pbp_data", _fake_pbp)
+    monkeypatch.setattr(redzone_pbp.nfl_source, "pbp_data", _fake_pbp)
 
 
 @pytest.mark.unit
@@ -277,7 +277,7 @@ def test_load_raw_data_depth_chart_rank_picks_min_deterministically(
             }
         )
 
-    monkeypatch.setattr(loader.nfl, "import_depth_charts", _two_row_depth_charts)
+    monkeypatch.setattr(loader.nfl_source, "depth_charts", _two_row_depth_charts)
 
     df = loader.load_raw_data([2022, 2023], cache_dir=str(tmp_path))
     p00_row = df[df["player_id"] == "P00"].iloc[0]
@@ -393,7 +393,7 @@ def test_load_raw_data_espn_depth_lands_real_rank(tmp_path, monkeypatch):
             }
         )
 
-    monkeypatch.setattr(loader.nfl, "import_schedules", _full_schedules)
+    monkeypatch.setattr(loader.nfl_source, "schedules", _full_schedules)
 
     url_calls: list[str] = []
 
@@ -453,19 +453,19 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
 
     # Stub everything to scream if called.
     for name in (
-        "import_weekly_data",
-        "import_seasonal_rosters",
-        "import_schedules",
-        "import_snap_counts",
-        "import_injuries",
-        "import_depth_charts",
+        "weekly_data",
+        "rosters",
+        "schedules",
+        "snap_counts",
+        "injuries",
+        "depth_charts",
     ):
-        monkeypatch.setattr(loader.nfl, name, _make_boom(name))
+        monkeypatch.setattr(loader.nfl_source, name, _make_boom(name))
     # import_pbp_data fires from src.data.redzone_pbp; stub it to scream too
     # so the cache short-circuit covers the new red-zone fetch path.
     import src.data.redzone_pbp as redzone_pbp
 
-    monkeypatch.setattr(redzone_pbp.nfl, "import_pbp_data", _make_boom("import_pbp_data"))
+    monkeypatch.setattr(redzone_pbp.nfl_source, "pbp_data", _make_boom("import_pbp_data"))
     # import_ids is called inside the snap-merge try/except; it's ok for it to fire.
     ids_calls: list[None] = []
 
@@ -473,7 +473,7 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
         ids_calls.append(None)
         return pd.DataFrame({"pfr_id": ["pfr1"], "gsis_id": ["P00"]})
 
-    monkeypatch.setattr(loader.nfl, "import_ids", _ids)
+    monkeypatch.setattr(loader.nfl_source, "player_ids", _ids)
 
     seasons = [2022, 2023]
     # Pre-write every cache.
@@ -575,7 +575,7 @@ def test_load_raw_data_snap_merge_exception_falls_back_to_nan(tmp_path, monkeypa
     def _bad_ids():
         raise RuntimeError("nflverse id-map missing")
 
-    monkeypatch.setattr(loader.nfl, "import_ids", _bad_ids)
+    monkeypatch.setattr(loader.nfl_source, "player_ids", _bad_ids)
 
     df = loader.load_raw_data([2023], cache_dir=str(tmp_path))
     assert "snap_pct" in df.columns
@@ -584,32 +584,22 @@ def test_load_raw_data_snap_merge_exception_falls_back_to_nan(tmp_path, monkeypa
 
 
 @pytest.mark.unit
-def test_load_raw_data_new_season_url_branch(tmp_path, monkeypatch):
-    """Seasons ≥ 2025 go through the nflverse release URL + column rename."""
+def test_load_raw_data_unified_weekly_path_handles_old_and_new_seasons(tmp_path, monkeypatch):
+    """After the nflreadpy migration there is no 2025-only URL branch: every
+    season flows through ``nfl_source.weekly_data`` (one code path). A mixed
+    old+new season request must return rows for both. The legacy-schema rename
+    moved into the shim and is covered by tests/data/test_nfl_source.py."""
     import src.data.loader as loader
 
     _mock_all_nfl_helpers(monkeypatch)
 
-    # For 2025 the loader does pd.read_parquet(url). Intercept.
+    # 2025 depth charts come from the nflverse ESPN `depth_charts` release via a
+    # direct pd.read_parquet(url); intercept it. Weekly is unified through the
+    # nf_source shim (mocked above) so there is no weekly URL. _fake_schedules
+    # lacks gameday/game_type, so _normalize_espn_depth returns empty and 2025
+    # depth falls to the -1 sentinel; this test only asserts the unified weekly path.
     def _fake_url_read_parquet(path, *args, **kwargs):
-        if isinstance(path, str) and "stats_player_week_2025" in path:
-            return pd.DataFrame(
-                {
-                    "player_id": ["P00"],
-                    "season": [2025],
-                    "week": [1],
-                    "position": ["QB"],
-                    "team": ["KC"],  # will be renamed to recent_team
-                    "passing_interceptions": [1],  # → interceptions
-                    "sacks_suffered": [2],  # → sacks
-                    "sack_yards_lost": [14],  # → sack_yards
-                }
-            )
         if isinstance(path, str) and "depth_charts_2025" in path:
-            # ESPN-format 2025 depth feed — mocked so the new-season depth branch
-            # doesn't hit the network. _fake_schedules lacks gameday/game_type, so
-            # _normalize_espn_depth returns empty → 2025 depth falls to the -1
-            # sentinel; this test only asserts the weekly URL renames.
             return pd.DataFrame(
                 {
                     "dt": ["2025-09-04T10:00:00Z"],
@@ -624,26 +614,12 @@ def test_load_raw_data_new_season_url_branch(tmp_path, monkeypatch):
         return pd.read_parquet(path, *args, **kwargs)
 
     monkeypatch.setattr(loader.pd, "read_parquet", _fake_url_read_parquet)
-
     df = loader.load_raw_data([2024, 2025], cache_dir=str(tmp_path))
-    # 2024 from import_weekly_data + 2025 from the URL branch
+    assert 2024 in df["season"].values
     assert 2025 in df["season"].values
-    # Renamed columns must land.
+    # recent_team is the harmonised name the rest of the pipeline keys on
+    # (produced by the shim; _fake_weekly already emits it).
     assert "recent_team" in df.columns
-    assert "interceptions" in df.columns
-    # Pin the rename mapping on the 2025 row itself: the url branch supplied
-    # team/passing_interceptions/sacks_suffered/sack_yards_lost; if any of
-    # the renames silently broke, downstream feature engineering would drop
-    # the column to all-NaN without erroring.
-    row_2025 = df[df["season"] == 2025].iloc[0]
-    assert row_2025["recent_team"] == "KC"
-    assert row_2025["interceptions"] == 1
-    assert row_2025["sacks"] == 2
-    assert row_2025["sack_yards"] == 14
-    # The pre-rename columns must not survive — otherwise dtypes diverge from
-    # the 2024 path and downstream concat would produce mixed-dtype warnings.
-    assert "team" not in df.columns
-    assert "passing_interceptions" not in df.columns
 
 
 @pytest.mark.unit
@@ -657,8 +633,8 @@ def test_load_raw_data_no_snap_seasons_returns_empty_snap_df(tmp_path, monkeypat
 
     # Override weekly to produce pre-2012 rows (simulate old nfl data).
     monkeypatch.setattr(
-        loader.nfl,
-        "import_weekly_data",
+        loader.nfl_source,
+        "weekly_data",
         lambda seasons: pd.DataFrame(
             {
                 "player_id": ["P00"],

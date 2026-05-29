@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import os
 
-import nfl_data_py as nfl
 import pandas as pd
 import pyarrow.parquet as pq
 
 from src.config import CACHE_DIR
+from src.data import nfl_source
 
 # Feature columns the current implementation produces (excluding the four
 # ``player_id``/``season``/``week``/``recent_team`` merge keys). Single
@@ -190,7 +190,7 @@ def reconstruct_redzone_from_pbp(
         # whole load — mirrors the defensive posture of
         # reconstruct_kicker_weekly_from_pbp.
         try:
-            pbp = nfl.import_pbp_data([yr], downcast=True)
+            pbp = nfl_source.pbp_data([yr], nfl_source.PBP_REDZONE_COLS)
             pbp = pbp[pbp["season_type"] == "REG"]
             weekly = _aggregate_one_season(pbp)
             all_weekly.append(weekly)

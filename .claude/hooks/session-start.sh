@@ -20,8 +20,6 @@ pip install -r requirements.txt
 
 pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
 
-pip install --no-deps nfl_data_py==0.3.3
-
 pip install -r requirements-dev.txt
 
 {

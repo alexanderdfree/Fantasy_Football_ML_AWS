@@ -24,10 +24,6 @@ pip install -r requirements.txt
 # PyTorch (CPU wheel — swap in the CUDA wheel if training locally)
 pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
 
-# nfl_data_py is installed without its transitive deps on purpose
-# (it pulls in heavy/old packages that conflict with pandas 3.x).
-pip install --no-deps nfl_data_py==0.3.3
-
 # Dev/test tooling (pytest, ruff) — only needed for running tests or lint
 pip install -r requirements-dev.txt
 ```

@@ -170,28 +170,28 @@ jobs:
       - name: Install dependencies
         run: uv pip install --system -r requirements-dev.txt
 
-      - name: Install nfl_data_py (no-deps, matches Dockerfile)
-        run: uv pip install --system --no-deps nfl_data_py==0.3.3
-
       # data/raw/ is gitignored (28 MB of player stats). The pipeline_e2e +
       # regression tests load data/raw/schedules_2012_2025.parquet via
-      # src.shared.weather_features and src.features.engineer. Fetch it from
-      # nfl_data_py (same call as src/data/loader.load_raw_data) and cache
-      # across CI runs since completed-season schedules don't change.
+      # src.shared.weather_features and src.features.engineer. Fetch it through
+      # the nfl_source shim (same call src/data/loader.load_raw_data uses) and
+      # cache across CI runs since completed-season schedules don't change.
       - name: Cache schedule parquet across CI runs
         id: sched-cache
         uses: actions/cache@v5
         with:
           path: data/raw/schedules_2012_2025.parquet
-          key: schedules-2012-2025-v1
+          # v2: schedules now sourced via nflreadpy, not nfl_data_py.
+          key: schedules-2012-2025-v2
 
-      - name: Download schedule parquet via nfl_data_py (cache miss)
+      - name: Download schedule parquet via nflreadpy (cache miss)
         if: steps.sched-cache.outputs.cache-hit != 'true'
+        env:
+          NFLREADPY_CACHE: "off"  # data/raw is the authoritative cache
         run: |
           mkdir -p data/raw
           python - <<'PY'
-          import nfl_data_py as nfl
-          sched = nfl.import_schedules(list(range(2012, 2026)))
+          from src.data import nfl_source
+          sched = nfl_source.schedules(list(range(2012, 2026)))
           sched.to_parquet('data/raw/schedules_2012_2025.parquet')
           print(f'Wrote schedules: {len(sched)} rows')
           PY
