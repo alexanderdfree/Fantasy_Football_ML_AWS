@@ -326,5 +326,5 @@ POSITION_CONFIG = PositionConfig(
     lgbm_objective="huber",
     accepts_dataframes=False,
     cpu_only=True,
-    has_cv_runner=False,
+    has_cv_runner=True,
 )

@@ -19,7 +19,7 @@ from src.dst.config import POSITION_CONFIG
 from src.dst.data import build_data
 from src.dst.features import compute_features
 from src.dst.targets import compute_targets
-from src.shared.pipeline import run_pipeline
+from src.shared.pipeline import run_cv_pipeline, run_pipeline
 from src.shared.position_pipeline import build_pipeline_config
 
 CONFIG = build_pipeline_config("DST", POSITION_CONFIG)
@@ -63,5 +63,24 @@ def run(seed=42, config=None):
     )
 
 
+def run_cv(seed=42, config=None):
+    """Expanding-window CV for DST. Self-loads team-level data (like ``run()``),
+    then hands the full train+val frame plus a held-out 2025 test frame to the
+    shared CV pipeline. Defined as a module-level function (not a factory
+    closure) so the runpy-monkeypatch test pattern keeps working.
+    """
+    dst_df = build_data()
+    dst_df = compute_targets(dst_df)
+    compute_features(dst_df)
+    full_df = dst_df[dst_df["season"].isin(TRAIN_SEASONS + VAL_SEASONS)].copy()
+    test_df = dst_df[dst_df["season"].isin(TEST_SEASONS)].copy()
+    return run_cv_pipeline("DST", config if config is not None else CONFIG, full_df, test_df, seed)
+
+
 if __name__ == "__main__":
-    run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="DST pipeline")
+    parser.add_argument("--cv", action="store_true", help="Use expanding-window cross-validation")
+    args = parser.parse_args()
+    (run_cv if args.cv else run)()

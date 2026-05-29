@@ -17,11 +17,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 from src.k.config import POSITION_CONFIG
 from src.k.data import load_data, load_kicks, season_split
 from src.k.features import build_nested_kick_history, compute_features
 from src.k.targets import compute_targets
-from src.shared.pipeline import run_pipeline
+from src.shared.pipeline import run_cv_pipeline, run_pipeline
 from src.shared.position_pipeline import build_pipeline_config
 
 # K's CONFIG omits the runtime-injected attn_history_builder_fn; run() fills
@@ -64,16 +65,22 @@ def run(seed=42, config=None):
     cfg = dict(config if config is not None else CONFIG)
 
     # Closure over kicks_df so the shared pipeline can build nested history
-    # arrays for each split without knowing kicker specifics. Read the
-    # attention-window shape from ``cfg`` (with ``POSITION_CONFIG`` as the
-    # fallback) so a caller / tuner that overrides attn_max_games etc. via
-    # ``run(config=...)`` actually takes effect — these three keys aren't
-    # plumbed into the cfg dict by ``build_pipeline_config`` (K's nested
-    # attention is the sole consumer), so the closure is the only place a
-    # tuner override of them can land. Without this, ``attn_max_games=20``
-    # in cfg produced a [N,17,...] tensor and the override was silently
-    # dropped (the model's max_games is derived from ``hist_train.shape[1]``).
-    kick_history_builder = functools.partial(
+    # arrays for each split without knowing kicker specifics. The window shape
+    # (attn_max_games etc.) is read from ``cfg`` inside the helper so a tuner
+    # override via ``run(config=...)`` takes effect — these keys aren't plumbed
+    # into the cfg dict by ``build_pipeline_config`` (K's nested attention is the
+    # sole consumer), so the closure is the only place a tuner override can land.
+    # Shared with ``run_cv`` via ``_build_kick_history_closure``.
+    cfg["attn_history_builder_fn"] = _build_kick_history_closure(cfg, kicks_df)
+
+    return run_pipeline("K", cfg, train_df, val_df, test_df, seed)
+
+
+def _build_kick_history_closure(cfg, kicks_df):
+    """Bind the per-kick nested-history builder over ``kicks_df`` (shared by
+    ``run`` and ``run_cv``). Reads the attention-window shape from ``cfg`` so a
+    tuner override of ``attn_max_games`` etc. takes effect."""
+    return functools.partial(
         build_nested_kick_history,
         kicks_df=kicks_df,
         kick_stats=cfg.get("attn_kick_stats", POSITION_CONFIG.attn_kick_stats),
@@ -83,10 +90,35 @@ def run(seed=42, config=None):
         ),
     )
 
-    cfg["attn_history_builder_fn"] = kick_history_builder
 
-    return run_pipeline("K", cfg, train_df, val_df, test_df, seed)
+def run_cv(seed=42, config=None):
+    """Expanding-window CV for K. Self-loads kicker data + the per-kick closure
+    (like ``run()``), then hands the full train+val frame plus a held-out 2025
+    test frame to the shared CV pipeline.
+
+    ``full_df`` is built from the *unfiltered* ``k_df`` (not ``season_split``,
+    which applies K's ``min_games`` to train) so ``_prepare_position_data``
+    applies the shared ``MIN_GAMES_PER_SEASON`` filter uniformly per fold,
+    matching the QB/RB/WR CV path. Module-level def (not a factory closure) so
+    the runpy-monkeypatch test pattern keeps working.
+    """
+    k_df = load_data()
+    k_df = compute_targets(k_df)
+    compute_features(k_df)
+    kicks_df = load_kicks(k_df)
+
+    cfg = dict(config if config is not None else CONFIG)
+    cfg["attn_history_builder_fn"] = _build_kick_history_closure(cfg, kicks_df)
+
+    full_df = k_df[k_df["season"].isin(TRAIN_SEASONS + VAL_SEASONS)].copy()
+    test_df = k_df[k_df["season"].isin(TEST_SEASONS)].copy()
+    return run_cv_pipeline("K", cfg, full_df, test_df, seed)
 
 
 if __name__ == "__main__":
-    run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="K pipeline")
+    parser.add_argument("--cv", action="store_true", help="Use expanding-window cross-validation")
+    args = parser.parse_args()
+    (run_cv if args.cv else run)()

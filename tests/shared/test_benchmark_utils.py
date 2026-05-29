@@ -307,12 +307,15 @@ def test_summarize_includes_cv_block():
         "ridge": {"total": {"mae_mean": 5.1, "mae_std": 0.25}},
         "nn": {"total": {"mae_mean": 4.6, "mae_std": 0.3}},
     }
-    r["best_cv_alpha"] = 10.0
+    # run_cv_pipeline returns per-target alphas under best_cv_alphas (plural dict).
+    # The old code read a scalar best_cv_alpha that never existed post-rename, so
+    # `benchmark --cv` KeyError'd here; assert the corrected key/shape.
+    r["best_cv_alphas"] = {"passing_yards": 10.0, "passing_tds": 1.0}
     s = summarize_pipeline_result("TE", r)
     assert s["cv_ridge_mae_mean"] == 5.1
     assert s["cv_ridge_mae_std"] == 0.25
     assert s["cv_nn_mae_mean"] == 4.6
-    assert s["best_cv_alpha"] == 10.0
+    assert s["best_cv_alphas"] == {"passing_yards": 10.0, "passing_tds": 1.0}
 
 
 @pytest.mark.unit

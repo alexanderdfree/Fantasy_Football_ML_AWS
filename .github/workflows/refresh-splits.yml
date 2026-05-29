@@ -256,6 +256,56 @@ jobs:
           )
           PY
 
+      - name: Verify train->test covariate shift
+        # Warn-loud guard for the depth_chart-style regression class: a feature
+        # that is in-distribution in train but degenerate in test (e.g. the -1
+        # depth-chart sentinel that standardized to ~-4 sigma and regressed QB
+        # attention NN 6.513 -> 8.066, TODO.md archive) silently tanks the NN.
+        # We flag any whitelisted feature whose train->test |mean_z| > 1 or
+        # frac-beyond-4-sigma > 0.5, measured POST build_position_features (i.e.
+        # after the pipeline's own imputations, so the depth_chart fix correctly
+        # shows ~0 now). Warn-only by default so a legitimately-shifted new
+        # feature doesn't block every refresh; set COVSHIFT_HARD_FAIL=1 to make
+        # it refuse the S3 upload. Skill positions only — matches the
+        # column-presence step's scoping (K/DST don't write data/splits/).
+        # See src/analysis/covariate_shift.py.
+        env:
+          COVSHIFT_HARD_FAIL: ""
+        run: |
+          python - <<'PY'
+          import os
+
+          from src.analysis.covariate_shift import (
+              DEFAULT_ALLOWLIST,
+              gate_check,
+              shift_report_for_position,
+          )
+
+          hard_fail = os.environ.get("COVSHIFT_HARD_FAIL", "").strip() == "1"
+          summary = ["## Covariate-shift guard (train -> test)", ""]
+          any_flagged = False
+          for pos in ["QB", "RB", "WR", "TE"]:
+              report = shift_report_for_position(pos, allowlist=DEFAULT_ALLOWLIST.get(pos, set()))
+              ok, offenders = gate_check(report)
+              if ok:
+                  summary.append(f"- {pos}: OK ({report['n_features']} features)")
+                  continue
+              any_flagged = True
+              for off in offenders:
+                  mz = off.get("mean_z", float("nan"))
+                  print(f"::warning::[{pos}] covariate shift: {off['feature']} mean_z={mz:.3f}")
+                  summary.append(f"- **{pos}** FLAG `{off['feature']}` mean_z={mz:.3f}")
+
+          step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if step_summary:
+              with open(step_summary, "a") as fh:
+                  fh.write("\n".join(summary) + "\n")
+
+          if any_flagged and hard_fail:
+              raise SystemExit("Covariate-shift gate failed (COVSHIFT_HARD_FAIL=1).")
+          print("Covariate-shift guard:", "FLAGGED (warn-only)" if any_flagged else "clean")
+          PY
+
       - name: Upload regenerated splits as workflow artifact
         # Forensic insurance: if a downstream step (Upload to S3, train
         # dispatch) fails, the operator can download the parquet directly

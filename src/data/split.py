@@ -2,7 +2,14 @@ import os
 
 import pandas as pd
 
-from src.config import CV_VAL_SEASONS, SPLITS_DIR, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
+from src.config import (
+    CV_VAL_SEASONS,
+    ROLLING_ORIGIN_TEST_SEASONS,
+    SPLITS_DIR,
+    TEST_SEASONS,
+    TRAIN_SEASONS,
+    VAL_SEASONS,
+)
 from src.data.preprocessing import impute_snap_pct
 
 
@@ -104,5 +111,75 @@ def expanding_window_folds(
             f"({len(train_df)} rows), val season {val_season} ({len(val_df)} rows)"
         )
         folds.append((i, train_df, val_df))
+
+    return folds
+
+
+def rolling_origin_folds(
+    df: pd.DataFrame,
+    test_seasons: list[int] | None = None,
+    min_train_season: int = 2012,
+) -> list[tuple]:
+    """Generate rolling-origin (walk-forward) train/val/test folds.
+
+    For each test season ``T``: train = ``[min_train_season .. T-2]``, val =
+    ``T-1``, test = ``T``. Unlike ``expanding_window_folds`` (where val == eval,
+    a mildly optimistic in-the-loop estimate), each origin's *test* season is a
+    clean forward holdout never used for tuning or early stopping — so
+    aggregating per-origin test metrics mean±std turns the single-season point
+    estimate into a distribution. The final origin (``test == TEST_SEASONS[0]``)
+    reproduces the production ``temporal_split`` season-for-season, so a
+    rolling-origin run is directly comparable to the headline single split.
+
+    Distinct from the K-fold-over-seasons rejected in D1: every origin trains
+    strictly on the past, preserving the deployment-mirror (no leakage).
+
+    Leakage note: every engineered column in ``df`` is split-independent by
+    construction (within-(player, season) or prior-season aggregates), and
+    ``snap_pct`` is pre-lagged in ``src/features/engineer.py`` *before* any
+    split — so re-slicing an already-featured frame by season is leakage-free,
+    and the per-origin ``impute_snap_pct`` below is a no-op in the canonical
+    ``preprocess -> build_features -> split`` flow (it stays for frames that
+    still carry raw NaN ``snap_pct``). The only genuinely split-sensitive steps
+    — ``depth_chart_rank`` imputation and the ``StandardScaler`` — run *inside*
+    ``run_pipeline`` per origin, post-split, so they refit on each origin's
+    train. If a future change bakes a train-fit transform into the split
+    parquets, this invariant breaks and the re-slice would leak.
+
+    Returns:
+        List of ``(origin_idx, train_df, val_df, test_df)`` tuples.
+    """
+    if test_seasons is None:
+        test_seasons = ROLLING_ORIGIN_TEST_SEASONS
+
+    assert "season_type" in df.columns, (
+        "rolling_origin_folds() requires 'season_type'; upstream loader "
+        "(src/data/loader.py) must emit it."
+    )
+    df = df[df["season_type"] == "REG"].copy()
+
+    folds = []
+    for i, test_season in enumerate(test_seasons):
+        val_season = test_season - 1
+        train_seasons = list(range(min_train_season, val_season))
+        if not train_seasons:
+            raise ValueError(
+                f"rolling_origin_folds: test_season={test_season} leaves no train "
+                f"seasons above min_train_season={min_train_season}."
+            )
+        train_df = df[df["season"].isin(train_seasons)].copy()
+        val_df = df[df["season"] == val_season].copy()
+        test_df = df[df["season"] == test_season].copy()
+        # Per-origin train-only snap_pct imputation, mirroring temporal_split /
+        # expanding_window_folds (no-op when snap_pct is already lag-filled).
+        train_df = impute_snap_pct(train_df, fit_on=train_df)
+        val_df = impute_snap_pct(val_df, fit_on=train_df)
+        test_df = impute_snap_pct(test_df, fit_on=train_df)
+        print(
+            f"  Origin {chr(65 + i)}: train {train_seasons[0]}-{train_seasons[-1]} "
+            f"({len(train_df)} rows), val {val_season} ({len(val_df)} rows), "
+            f"test {test_season} ({len(test_df)} rows)"
+        )
+        folds.append((i, train_df, val_df, test_df))
 
     return folds

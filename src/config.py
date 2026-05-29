@@ -41,6 +41,15 @@ TEST_SEASONS = [2025]
 # === Cross-Validation (expanding window) ===
 CV_VAL_SEASONS = [2021, 2022, 2023, 2024]
 
+# === Rolling-origin (walk-forward) multi-season TEST evaluation ===
+# Each test season T is scored by a model trained on [min_train .. T-2], val =
+# T-1, test = T. The final origin (test=2025) is byte-identical to the
+# production single split (TRAIN_SEASONS / VAL_SEASONS / TEST_SEASONS above), so
+# a rolling-origin run reproduces the headline number and adds A/B origins for a
+# mean±std. Distinct from the rejected K-fold-over-seasons (D1): every origin
+# trains strictly on the past, preserving the deployment-mirror.
+ROLLING_ORIGIN_TEST_SEASONS = [2023, 2024, 2025]
+
 # === Features: Rolling ===
 ROLLING_WINDOWS = [3, 5, 8]
 ROLL_STATS = [
