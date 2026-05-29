@@ -262,12 +262,12 @@ File-disjointness: ✓ (no file in two bundles).
 ## Format example — verify-then-close confirmation excerpt (Mode B)
 
 ```
-| id   | area    | claim             | verdict   | evidence                                            |
-|------|---------|-------------------|-----------|-----------------------------------------------------|
-| F63  | DST     | FIXED via #359    | CONFIRMED | src/dst/data.py:91 `away_info["spread_line"] = -…`  |
-| F13  | K       | LEAVE (false_pos) | CONFIRMED | is_home guard valid — left-merge can miss schedule  |
-| F37  | Serving | LEAVE (kept)      | CONFIRMED | K/DST half_ppr==ppr by design (no reception weight) |
-| F108 | Data    | FIXED via #359    | GAP       | dead _NAME_OVERRIDES still imported at loader.py:44 |
+| id      | area    | claim             | verdict   | evidence                                            |
+|---------|---------|-------------------|-----------|-----------------------------------------------------|
+| DST-002 | DST     | FIXED via #PR     | CONFIRMED | src/dst/data.py away-row spread_line sign-flipped   |
+| K-005   | K       | LEAVE (false_pos) | CONFIRMED | is_home guard valid — left-merge can miss schedule  |
+| SRV-001 | Serving | LEAVE (kept)      | CONFIRMED | K/DST half_ppr==ppr by design (no reception weight) |
+| DATA-09 | Data    | FIXED via #PR     | GAP       | claimed-removed helper still imported at loader.py  |
 
-Tally: 11 issues, 130/131 CONFIRMED, 1 GAP (F108 → Tier A). Close 10 issues now; #345 waits on the F108 PR.
+Tally (illustrative): 11 issues, 130/131 CONFIRMED, 1 GAP (DATA-09 → Tier A). Close the 10 clean issues now; the gap-bearing issue waits on its fix PR.
 ```
