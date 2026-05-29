@@ -323,6 +323,9 @@ def _stub_main_io(t, monkeypatch, *, runner_returns=_UNSET):
     monkeypatch.setattr(t, "download_data", lambda *a, **k: None)
     monkeypatch.setattr(t, "upload_artifacts", lambda *a, **k: None)
     monkeypatch.setattr(t, "_assert_gpu", lambda pos: None)
+    # On a CUDA-visible Windows box the nvidia-smi sidecar would open a POSIX
+    # /tmp path; neutralise it so main() exercises the branch under test.
+    monkeypatch.setattr(t, "_start_nvidia_smi_sidecar", lambda csv_path: None)
     monkeypatch.setattr(
         t.pd,
         "read_parquet",

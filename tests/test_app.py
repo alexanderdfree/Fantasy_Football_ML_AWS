@@ -366,9 +366,16 @@ class TestGracefulDegradation:
         # way the global /api/ error handler should turn the exception into
         # structured JSON — that's the contract we care about.
         r = client.get("/api/predictions")
-        assert r.is_json, f"Expected JSON error body, got {r.content_type}"
-        assert r.status_code == 500
-        assert "error" in r.get_json()
+        # The contract is "JSON, never an HTML error page". The status depends on
+        # whether serving splits exist relative to cwd: with no data (CI) the
+        # build raises and the /api/ handler returns a JSON 500; with data present
+        # the app degrades gracefully (NaN'd model preds) and returns a JSON 200.
+        # Both satisfy the contract, so assert JSON either way rather than coupling
+        # to ambient data presence.
+        assert r.is_json, f"Expected JSON body, got {r.content_type}"
+        assert r.status_code in (200, 500)
+        if r.status_code == 500:
+            assert "error" in r.get_json()
 
 
 # ===========================================================================

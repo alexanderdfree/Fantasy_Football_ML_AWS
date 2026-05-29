@@ -337,7 +337,7 @@ def test_every_multihead_net_call_passes_non_negative_targets():
     offenders: list[str] = []
     for path in py_files:
         try:
-            tree = ast.parse(path.read_text(), filename=str(path))
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         except SyntaxError:  # pragma: no cover — would also break ruff/import
             continue
         for call in _multihead_net_calls(tree):

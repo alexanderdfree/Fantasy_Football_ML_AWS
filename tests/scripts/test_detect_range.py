@@ -27,6 +27,7 @@ step — if you change the range/scan logic in ``tests.yml``, change it here too
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -88,6 +89,8 @@ printf '%s\n' "$docs_only"
 
 
 def _scan_docs_only(repo: Path, *range_args: str) -> bool:
+    if sys.platform == "win32":
+        pytest.skip("the [docs-only] scan shells out to bash; this is Linux/CI-only logic")
     out = subprocess.run(
         ["bash", "-c", _SCAN, "bash", *range_args],
         cwd=str(repo),
