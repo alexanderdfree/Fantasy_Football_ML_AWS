@@ -438,6 +438,13 @@ def build_opp_defense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
         # degrade gracefully to zero-filled history tensors.
         return pd.DataFrame(columns=["opponent_team", "season", "week"] + OPP_DEFENSE_HISTORY_STATS)
 
+    # Normalize the player frame's opponent_team to modern codes before the
+    # groupby — mirror of the schedule-side normalization for def_pts_allowed
+    # below. A no-op on nflverse weekly data (already modern: LA/LAC/LV); closes
+    # the silent-miss gap if a source ever feeds historical codes (OAK/SD/STL).
+    df = df.copy()
+    df["opponent_team"] = df["opponent_team"].replace(_TEAM_CODE_NORMALIZATION)
+
     def_stats = (
         df.groupby(["opponent_team", "season", "week"])
         .agg(
@@ -561,6 +568,13 @@ def build_opp_offense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     # Combined fumbles_lost across sack / rushing / receiving sources — same
     # combination DST's own `fumbles_lost` head uses.
     work = df.copy()
+    # Normalize the player frame's recent_team to modern codes before the
+    # groupby — mirror of the opponent_team normalization in
+    # _build_defense_matchup_features and the schedule-side normalization of
+    # off_pts_scored below. nflverse weekly data already emits modern codes
+    # (LA/LAC/LV), so this is a no-op in production; it closes the silent-miss
+    # gap should any upstream source feed historical codes (OAK/SD/STL).
+    work["recent_team"] = work["recent_team"].replace(_TEAM_CODE_NORMALIZATION)
     work["_fumbles_lost"] = (
         work["sack_fumbles_lost"].fillna(0)
         + work["rushing_fumbles_lost"].fillna(0)
@@ -685,8 +699,11 @@ def build_opp_defense_history_arrays(
     lookup = opp_def_per_game.sort_values(["opponent_team", "season", "week"]).reset_index(
         drop=True
     )
-    # (opp_team, season) -> contiguous index range into the sorted lookup.
-    groups: dict[tuple, tuple[int, np.ndarray, np.ndarray]] = {}
+    # (opp_team, season) -> contiguous (start, end) index range into the sorted
+    # lookup. The per-game arrays (team/season/week/stat) live as module-local
+    # numpy arrays below, not in this dict — values stored here are 2-tuples of
+    # ints, so the annotation reflects ``tuple[int, int]``.
+    groups: dict[tuple, tuple[int, int]] = {}
     team_arr = lookup["opponent_team"].to_numpy()
     season_arr = lookup["season"].to_numpy()
     week_arr = lookup["week"].to_numpy()
@@ -825,6 +842,19 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = 0.0
         return df
 
+    # Normalize the player frame's opponent_team (and recent_team, used by the
+    # implied-total merge below) to modern codes BEFORE the groupby/merges. The
+    # schedule side is normalized too, so both sides must agree. nflverse weekly
+    # data already emits modern codes (LA/LAC/LV) for relocation franchises,
+    # making this a no-op in production — but it closes the latent silent-miss
+    # gap if any upstream source ever feeds a frame with historical codes
+    # (OAK/SD/STL). A one-sided (schedule-only) normalization cannot survive
+    # that case. See nflcom_loader.schedule_team_code_normalization.
+    df = df.copy()
+    df["opponent_team"] = df["opponent_team"].replace(_TEAM_CODE_NORMALIZATION)
+    if "recent_team" in df.columns:
+        df["recent_team"] = df["recent_team"].replace(_TEAM_CODE_NORMALIZATION)
+
     # Aggregate offensive stats allowed by each defense per game
     def_stats = (
         df.groupby(["opponent_team", "season", "week"])
@@ -914,8 +944,14 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     if len(df) != n_before:
         df = df.drop_duplicates(subset=["player_id", "season", "week"], keep="first")
 
-    # Fill NaNs (early-season games with no prior history)
-    for col in list(stat_map.values()) + ["opp_def_pts_allowed_L5", "implied_team_total"]:
+    # Fill NaNs (early-season games with no prior history) for the rolling
+    # opp-defense stats. ``implied_team_total`` is deliberately NOT filled here:
+    # the production schedule-merge path (``merge_schedule_features``) preserves
+    # NaN for unmatched games so downstream code can detect them, and the final
+    # feature build (``feature_build.py``'s catch-all
+    # ``replace([inf, -inf], nan).fillna(0)``) maps any survivor to 0 uniformly.
+    # Force-filling 0 here diverged from that NaN-preserving contract.
+    for col in list(stat_map.values()) + ["opp_def_pts_allowed_L5"]:
         df[col] = df[col].fillna(0)
 
     return df
