@@ -159,6 +159,10 @@ Fantasy Projection Lab and Fantasy Football Analytics provide general benchmarks
 | **Hua et al. (arXiv:2111.02874, 2021)** | Deep Learning + NLP (ESPN text features) | RMSE: 6.78 across positions | [arXiv](https://arxiv.org/pdf/2111.02874) |
 | **SMU Data Science Review (2024)** | Ensemble Neural Networks | Improved prediction accuracy over single models for top-12 classification | [SMU Scholar](https://scholar.smu.edu/datasciencereview/vol8/iss2/7/) |
 | **Chant (2023)** | Multi-season regression models | R² = 0.53 (1 year), 0.61 (2 years), 0.81 (in-season with 5+ weeks) | [jadenchant.github.io](https://jadenchant.github.io/pages/projects/nfl_fantasy_pt/) |
+| **Beal, Norman & Ramchurn (IJCSS, 2020)** | LR / LSTM / RBF / Random Forest (best per position) | Per-game RMSE (FanDuel scoring): QB 6.89, RB 6.07, WR 4.39, TE 4.10, DEF 3.85, K 3.28 | [Southampton ePrints](https://eprints.soton.ac.uk/445995/1/DFS_IJCSS.pdf) |
+| **Lutz (arXiv:1505.06918, 2015)** | SVR, Neural Net (QB only) | QB RMSE ≈ 7.8 (standard scoring, top-24 QBs) | [arXiv](https://arxiv.org/abs/1505.06918) |
+
+> **Scoring-format caveat:** these RMSE figures are *context, not a like-for-like target*. Beal et al. and Lutz use FanDuel / standard scoring (not full PPR), and Beal et al.'s per-position models use player-history-only features (narrower inputs than ours), which deflates their WR/TE/K RMSE. Also note many "fantasy RMSE" numbers online are actually MAE, R², normalized error, or win-rate — verify what each measures before citing.
 
 ---
 
@@ -218,7 +222,7 @@ DST landed via [commit `cc0c627`](../) with a 10-target attention model (sacks, 
 
 3. **NFL.com gives us a direct, significance-tested head-to-head.** The only mainstream source publishing scoring-grade raw projections we can join to actuals. On 2025: QB is the only position where NFL.com beats us by a meaningful margin (~0.8 MAE pts — and that gap is statistically significant, with the ΔMAE bootstrap CI excluding zero and DM p ≪ 0.05); RB / WR / TE are within run-to-run variance; K we beat cleanly. Two scripts back this: `src/analysis/analysis_nflcom_baseline.py` (NFL.com vs actuals, per-target + weekly breakouts) and `src/analysis/analysis_expert_comparison.py` (same-sample model-vs-NFL.com with ranking + paired bootstrap / Diebold-Mariano significance). Both regenerate on demand; neither report is committed.
 
-4. **Other expert sites publish only relative rankings.** Industry accuracy tracking (FantasyPros, FFA) ranks sources 1st/2nd/3rd by position rather than reporting raw MAE. This makes exact head-to-head comparison with those sources impossible, but our results fall within the ranges where professional projection systems operate.
+4. **Other expert sites largely publish relative rankings, not per-game error.** FantasyPros ranks experts 1st/2nd/3rd by position — its "accuracy gap" is converted to z-scores before aggregation, so no raw MAE/RMSE is surfaced. FFA *does* compute the full error suite: its [2013 post](https://fantasyfootballanalytics.net/2013/05/the-best-fantasy-football-projections.html) published raw R²/MAE/RMSE (e.g., NFL.com RMSE 62.47, FantasyPros 45.36), but those are **single-league, full-season totals** (not per-game), and its current per-game MAE/RMSE lives behind the FFA Insider paywall. So a like-for-like *per-game* numeric comparison against those sources isn't possible from free, citable data — though our results fall within the ranges where professional projection systems operate. (DFS/industry sources — 4for4, Establish The Run, Subvertadown, PFF — publish "most accurate" marketing with no citable raw error metric.)
 
 5. **TD variance remains the structural ceiling at QB.** Per-target QB MAE is dominated by `passing_yards` (68 yds = 2.7 fantasy pts) and `passing_tds` (0.89 TDs = 3.5 fantasy pts at 4 pts/TD). The TD head is the single largest contributor and has the lowest R² of any QB target — week-to-week QB TD output is closer to noise than to a learnable signal at this player-pool size.
 
@@ -237,3 +241,5 @@ DST landed via [commit `cc0c627`](../) with a 10-target attention model (sacks, 
 9. Gneiting, T. "Making and Evaluating Point Forecasts." *Journal of the American Statistical Association* 106(494), 746–762 (2011). https://arxiv.org/abs/0912.0902
 10. Taggart, R. J. "Point forecasting and forecast evaluation with generalized Huber loss." *Electronic Journal of Statistics* 16(1), 201–231 (2022). https://arxiv.org/abs/2108.12426
 11. Diebold, F. X. & Mariano, R. S. "Comparing Predictive Accuracy." *Journal of Business & Economic Statistics* 13(3), 253–263 (1995). https://www.tandfonline.com/doi/abs/10.1080/07350015.1995.10524599
+12. Beal, R., Norman, T. J. & Ramchurn, S. D. "Optimising Daily Fantasy Sports Teams with Artificial Intelligence." *International Journal of Computer Science in Sport* 19(2), 21–35 (2020). https://eprints.soton.ac.uk/445995/1/DFS_IJCSS.pdf
+13. Lutz, R. "Fantasy Football Prediction." arXiv:1505.06918 (2015). https://arxiv.org/abs/1505.06918
