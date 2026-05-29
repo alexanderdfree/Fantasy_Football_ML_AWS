@@ -19,6 +19,11 @@ Each surviving finding becomes ONE GitHub issue:
         - **Suggested action**: <one sentence>
         - **Evidence**: `<verbatim line from the file>`
         - **Related**: #<other_issue> [optional — added by a post-create comment if cross-referenced in STEP 3b PASS 3]
+        - **Machine-readable finding** (appended verbatim at the END of the body; deterministically parseable — STEP 1c dedup and the solve-issues consumer read THIS; prose fields above are for humans + backward-compat):
+          ```json
+          {"schema":"claude-audit/v1","file":"<path>","line":<int>,"severity":"HIGH|MED","area":"<area>","category":"<category>","first_seen_sha":"<short_sha>"}
+          ```
+          category ∈ unfinished_pr | merge_conflict | orphan_code | invariant | broken_reference | train_serve_drift | wrong_result | security | other. `file` is the path WITHOUT :line; `line` is the int. area/severity mirror the labels; first_seen_sha = the SHORT_SHA of the filing run.
 
 There are NO F-numbers. Findings are identified by their GitHub issue number. Because dedup (STEP 1c / 3c) suppresses refiling, each issue persists across fires — so its **First seen** SHA/date and `createdAt` give the finding's true age. You only ever CREATE new issues for findings not already filed; never edit or reset an existing issue.
 
@@ -45,7 +50,11 @@ STEP 1 — Prep (sequential, ~2 min):
         # For file-aware dedup, capture each known issue's cited File: path (strip the :line):
         : > /tmp/known_files.tsv
         cut -f1 /tmp/known_issues.tsv | while read N; do
-          F=$(gh issue view "$N" --json body --jq '.body' | grep -m1 -oE '`[^`]+:[0-9]+`' | tr -d '`' | sed -E 's/:[0-9]+$//')
+          B=$(gh issue view "$N" --json body --jq '.body' | tr -d '\r')
+          # Prefer the v1 machine-readable block; .file is the path WITHOUT :line — exactly what dedup keys on.
+          F=$(printf '%s\n' "$B" | sed -n '/```json/,/```/p' | sed '1d;$d' | jq -r 'select(.schema=="claude-audit/v1") | .file' 2>/dev/null | head -n1)
+          # Legacy fallback for issues filed before the block existed:
+          [ -z "$F" ] && F=$(printf '%s\n' "$B" | grep -m1 -oE '`[^`]+:[0-9]+`' | tr -d '`' | sed -E 's/:[0-9]+$//')
           printf '%s\t%s\n' "$N" "$F" >> /tmp/known_files.tsv
         done
       Dedupe KEY = (area + cited file-path + ≥2 distinctive title keywords). The title prefix `[claude-audit] <area>:` carries area; `/tmp/known_files.tsv` carries the file.
@@ -62,7 +71,7 @@ STEP 2 — Fanout (parallel, ~13 min):
     #8  Data+features       — src/data/, src/features/
     #9  Serving auditor     — src/serving/, tests/serving/ (extra focus: training-vs-inference drift)
     #10 Batch+CI auditor    — src/batch/, .github/workflows/, .claude/hooks/
-    #11 Docs consistency    — CLAUDE.md, README.md, SETUP.md, TODO.md, docs/
+    #11 Docs consistency    — CLAUDE.md, README.md, SETUP.md, TODO.md, docs/ (FOCUS: substantive doc-vs-code mismatches — wrong module/symbol attribution, a documented feature/decision/count that doesn't exist or is miscounted, a stated invariant the code violates, a dead cross-ref to a deleted file. Do NOT report a doc/comment whose ONLY error is a stale `file:line`/`file:lines X-Y` citation when the cited target is otherwise correct — line numbers drift as code is inserted above; that is cosmetic, not a finding.)
     #12 Within-position invariant + broken-reference auditor — iterate over QB → DST one at a time. WITHIN-position invariant violations (LOSS_WEIGHTS ≈ 2.0/HUBER_DELTAS within one position's config; target-naming consistent within a position) AND broken-reference drift (a file in position X references a key/value X's own config.py doesn't define). DOES NOT FLAG per-position differences ACROSS positions — those are by design.
 
   Per-worker template (substitute {N}, {SCOPE}, {FOCUS}):
@@ -82,18 +91,34 @@ STEP 2 — Fanout (parallel, ~13 min):
       - "Add F to all positions for parity" / "harmonize X across positions" → feature engineering
       - "Position X has CONFIG_TINY, Y doesn't" → optional convention
       - "Position X's NN hidden dim differs from Y's" → per-position tuning
+      - "Doc/comment cites `file:lineN` or `file:lines X-Y` but the entity is actually at a different line/range" → PURELY COSMETIC. Source line numbers drift whenever code is inserted above; a stale line-NUMBER or line-RANGE in prose/docstrings is NOT a finding. DROP it.
+        STILL REPORT (substantive doc errors, NOT line-number drift): wrong MODULE/symbol attribution (doc says feature X is in module A but it's in B); a documented feature/decision/COUNT that doesn't exist or is wrong (e.g. "ADR has D1–D15" when a real D16 exists); a stated INVARIANT the code violates; a dead cross-ref to a DELETED file; a config KEY/VALUE a file references that isn't defined (that is broken_reference, worker #12). The line-number being off is only noise when the cited TARGET is otherwise correct.
       When in doubt, drop the finding.
 
     STOP RULES — drop anything overlapping:
     <inline CLAUDE.md Stop rules + every TODO.md FIXED title from STEP 1>
 
+    SELF-VERIFY (mandatory — for EVERY candidate BEFORE you emit it; first-line filter, not the orchestrator's job):
+      1. Re-open the cited file at the cited line. Confirm evidence_quote is VERBATIM-present (whitespace-normalized: collapse space/tab runs, ignore leading/trailing indent). If absent at (or within ±3 lines of) the cited line, DROP.
+      2. Actively re-confirm the defect STILL HOLDS via the cheapest decisive check for its category — do not infer from the quote alone:
+           - orphan_code: `grep -rn "<symbol>" src/` — if any prod caller exists outside tests, DROP.
+           - broken_reference: open the referenced key/value; confirm it truly is NOT defined (`grep -rn "<KEY>" src/<pos>/config.py`). If it resolves, DROP.
+           - unfinished_pr / merge_conflict: `git log -p -n 30 -- <file>`; confirm the half-finished/competing edit is still on HEAD and not completed by a later commit. If reconciled, DROP.
+           - train_serve_drift: read both callsites; confirm train-path and serve-path expressions actually differ. If they match, DROP.
+           - invariant: re-read the cited values; confirm the WITHIN-position invariant is actually violated (a per-position difference is NOT a finding). If satisfied, DROP.
+           - wrong_result / security / other: name the concrete trigger (input/condition) reaching the wrong/unsafe path; if you cannot, DROP.
+      3. Only survivors of both checks may be emitted. When in doubt, DROP.
+      The orchestrator (STEP 3) re-verifies as a BACKSTOP; self-verify is your first-line filter and must not be skipped.
+
     SEVERITY: HIGH (wrong result / silent loss / security / benchmark-changing) or MED (unfinished-PR artifact / within-position invariant violation / broken-reference drift / semantic merge conflict / orphan code under live test coverage). NO LOW.
 
-    OUTPUT: JSON array only. Each: {"file": "<path>", "line": <int>, "severity": "HIGH"|"MED", "title": "<<80 chars>", "what": "<2-3 sentences>", "why_suspect": "<2-3 sentences>", "suggested_action": "<one sentence>", "evidence_quote": "<verbatim line from file>"}
+    OUTPUT: JSON array only. Each: {"file": "<path>", "line": <int>, "severity": "HIGH"|"MED", "category": "unfinished_pr|merge_conflict|orphan_code|invariant|broken_reference|train_serve_drift|wrong_result|security|other", "title": "<<80 chars>", "what": "<2-3 sentences>", "why_suspect": "<2-3 sentences>", "suggested_action": "<one sentence>", "evidence_quote": "<verbatim line from file>", "verification": "<one-line note of what you checked + result>"}
     Workers do NOT create issues and do NOT assign issue numbers — the orchestrator does.
+    Pick category to match the defect type (drives downstream triage + dedup): unfinished-PR artifact→unfinished_pr; semantic merge conflict→merge_conflict; orphan-code-under-test→orphan_code; within-position invariant→invariant; missing config key/value reference→broken_reference; training-vs-inference mismatch→train_serve_drift; silently-wrong output→wrong_result; security→security; else→other.
 
 STEP 3 — Verify new findings (sequential, ~5 min):
   For each new finding from each worker:
+    (Workers already self-verified per the per-worker SELF-VERIFY block; STEP 3 is the orchestrator BACKSTOP — re-run the cheap checks below; do not trust the worker's verification note blindly.)
     3a. Read file at cited line. Confirm evidence_quote matches (whitespace-normalized). DROP if mismatch.
     3b. grep CLAUDE.md + TODO.md for 2-3 distinctive title keywords. DROP if matched.
     3c. Dedupe against existing issues: a new finding is a DUPLICATE (DROP it) when some entry in /tmp/known_issues.tsv has the SAME area (its title prefix `[claude-audit] <area>:`) AND the SAME cited file (per /tmp/known_files.tsv) AND ≥2 shared distinctive title keywords. The pool already spans open AND closed — so a finding already filed, already triaged-closed, or already fixed is NOT re-filed.
@@ -116,6 +141,17 @@ STEP 4 — File issues (~3 min):
 
   4a. PER-FINDING ISSUES (only if N_NEW > 0). For each finding in /tmp/consolidated_new.jsonl: write the canonical body (see ISSUE MODEL) to /tmp/body.md, resolve its area + severity label, create the issue, and record the new number keyed by tentative ID:
         SEV_LABEL=$( [ "$severity" = "HIGH" ] && echo severity-high || echo severity-medium )
+        category=${category:-other}
+        # Append the machine-readable block to the prose body already in /tmp/body.md:
+        {
+          printf '\n```json\n'
+          jq -nc \
+            --arg file "$file" --argjson line "$line" \
+            --arg sev "$severity" --arg area "$area" \
+            --arg cat "$category" --arg sha "$SHORT_SHA" \
+            '{schema:"claude-audit/v1",file:$file,line:$line,severity:$sev,area:$area,category:$cat,first_seen_sha:$sha}'
+          printf '\n```\n'
+        } >> /tmp/body.md
         URL=$(gh issue create \
                 --title "[claude-audit] ${area}: ${title}" \
                 --label claude-audit --label "$SEV_LABEL" --label "$area" \
