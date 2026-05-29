@@ -55,20 +55,41 @@ if [ -n "$docs_only_base" ] && docs_only_in_range "$docs_only_base..HEAD"; then
   exit 0
 fi
 
-# Locate tools: prefer project venv, fall back to PATH.
-if [ -x ".venv/bin/ruff" ]; then
-  ruff=".venv/bin/ruff"
-elif command -v ruff >/dev/null 2>&1; then
-  ruff="ruff"
-else
-  ruff=""
+# Locate tools: prefer a project venv, fall back to PATH. Handle both the Unix
+# venv layout (`.venv/bin/<tool>`) and the Windows layout
+# (`.venv/Scripts/<tool>.exe`; pip may not install a standalone pytest.exe, so
+# fall back to the venv interpreter's `python.exe -m pytest`). In a git worktree
+# the venv is usually created once in the main worktree and not duplicated per
+# feature checkout, so after the local `.venv` also probe the main worktree's
+# (resolved via `git worktree list`, whose first entry is always the main one).
+venv_roots=(".venv")
+main_wt=$(git worktree list --porcelain 2>/dev/null \
+  | awk 'NR==1 && /^worktree /{print substr($0, 10); exit}' | tr -d '\r')
+if [ -n "$main_wt" ] && [ -d "$main_wt/.venv" ]; then
+  venv_roots+=("$main_wt/.venv")
 fi
-if [ -x ".venv/bin/pytest" ]; then
-  pytest=".venv/bin/pytest"
-elif command -v pytest >/dev/null 2>&1; then
-  pytest="pytest"
-else
-  pytest=""
+
+# ruff is a standalone executable in every layout, so a single token suffices.
+ruff=""
+for vr in "${venv_roots[@]}"; do
+  if [ -x "$vr/bin/ruff" ]; then ruff="$vr/bin/ruff"; break; fi
+  if [ -x "$vr/Scripts/ruff.exe" ]; then ruff="$vr/Scripts/ruff.exe"; break; fi
+done
+if [ -z "$ruff" ] && command -v ruff >/dev/null 2>&1; then
+  ruff="ruff"
+fi
+
+# pytest is kept as an ARRAY: the Windows `python.exe -m pytest` fallback is
+# multiple argv tokens, and a scalar `$pytest` would be mis-run as a single
+# command name containing spaces. Invoked below as `"${pytest_cmd[@]}" -m unit`.
+pytest_cmd=()
+for vr in "${venv_roots[@]}"; do
+  if [ -x "$vr/bin/pytest" ]; then pytest_cmd=("$vr/bin/pytest"); break; fi
+  if [ -x "$vr/Scripts/pytest.exe" ]; then pytest_cmd=("$vr/Scripts/pytest.exe"); break; fi
+  if [ -x "$vr/Scripts/python.exe" ]; then pytest_cmd=("$vr/Scripts/python.exe" -m pytest); break; fi
+done
+if [ "${#pytest_cmd[@]}" -eq 0 ] && command -v pytest >/dev/null 2>&1; then
+  pytest_cmd=("pytest")
 fi
 
 fail=0
@@ -93,8 +114,8 @@ else
   echo "pre-pr hook: ruff not found (install or activate .venv)" >&2
   fail=1
 fi
-if [ -n "$pytest" ]; then
-  run_and_capture "pytest -m unit" "$pytest" -m unit -q
+if [ "${#pytest_cmd[@]}" -gt 0 ]; then
+  run_and_capture "pytest -m unit" "${pytest_cmd[@]}" -m unit -q
 else
   echo "pre-pr hook: pytest not found (install or activate .venv)" >&2
   fail=1
