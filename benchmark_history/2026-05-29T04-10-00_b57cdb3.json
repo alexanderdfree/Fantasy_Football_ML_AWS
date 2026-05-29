@@ -1,0 +1,817 @@
+{
+  "run_id": "2026-05-29T04:10:00_b57cdb3",
+  "timestamp": "2026-05-29T04:10:00",
+  "git_hash": "b57cdb3",
+  "note": "Batch Spot auto-run (b57cdb3)",
+  "backend": "batch",
+  "instance_type": "g4dn.xlarge (Spot)",
+  "positions": [
+    "QB",
+    "RB",
+    "WR",
+    "TE",
+    "K",
+    "DST"
+  ],
+  "results": [
+    {
+      "position": "QB",
+      "ridge_mae": 6.539,
+      "ridge_r2": 0.273,
+      "nn_mae": 6.514,
+      "nn_r2": 0.275,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "passing_yards": {
+          "mae": 69.187,
+          "r2": 0.314
+        },
+        "rushing_yards": {
+          "mae": 11.257,
+          "r2": 0.229
+        },
+        "passing_tds": {
+          "mae": 0.879,
+          "r2": 0.19
+        },
+        "rushing_tds": {
+          "mae": 0.247,
+          "r2": 0.041
+        },
+        "interceptions": {
+          "mae": 0.641,
+          "r2": 0.01
+        },
+        "fumbles_lost": {
+          "mae": 0.292,
+          "r2": -0.016
+        }
+      },
+      "ridge_per_target": {
+        "passing_yards": {
+          "mae": 68.503,
+          "r2": 0.331
+        },
+        "rushing_yards": {
+          "mae": 12.072,
+          "r2": 0.192
+        },
+        "passing_tds": {
+          "mae": 0.879,
+          "r2": 0.176
+        },
+        "rushing_tds": {
+          "mae": 0.264,
+          "r2": 0.052
+        },
+        "interceptions": {
+          "mae": 0.642,
+          "r2": 0.017
+        },
+        "fumbles_lost": {
+          "mae": 0.293,
+          "r2": -0.012
+        }
+      },
+      "ridge_top12": 0.532,
+      "nn_top12": 0.5,
+      "attn_nn_mae": 6.585,
+      "attn_nn_r2": 0.249,
+      "attn_nn_per_target": {
+        "passing_yards": {
+          "mae": 67.817,
+          "r2": 0.313
+        },
+        "rushing_yards": {
+          "mae": 11.032,
+          "r2": 0.254
+        },
+        "passing_tds": {
+          "mae": 0.891,
+          "r2": 0.158
+        },
+        "rushing_tds": {
+          "mae": 0.246,
+          "r2": 0.042
+        },
+        "interceptions": {
+          "mae": 0.64,
+          "r2": 0.034
+        },
+        "fumbles_lost": {
+          "mae": 0.285,
+          "r2": -0.005
+        }
+      },
+      "attn_nn_top12": 0.509,
+      "lgbm_mae": 6.693,
+      "lgbm_r2": 0.242,
+      "lgbm_per_target": {
+        "passing_yards": {
+          "mae": 71.305,
+          "r2": 0.278
+        },
+        "rushing_yards": {
+          "mae": 10.932,
+          "r2": 0.22
+        },
+        "passing_tds": {
+          "mae": 0.922,
+          "r2": 0.115
+        },
+        "rushing_tds": {
+          "mae": 0.226,
+          "r2": 0.053
+        },
+        "interceptions": {
+          "mae": 0.657,
+          "r2": 0.003
+        },
+        "fumbles_lost": {
+          "mae": 0.243,
+          "r2": -0.019
+        }
+      },
+      "lgbm_top12": 0.5,
+      "elapsed_sec": 68.7,
+      "phase_seconds": {
+        "assert_gpu": 0.3,
+        "sync_raw_data": 1.1,
+        "download_data": 0.4,
+        "read_parquets": 0.8,
+        "run_pipeline": 64.9,
+        "copy_artifacts": 0.0,
+        "pipeline.prepare_data": 11.1,
+        "pipeline.ridge_tune": 3.3,
+        "pipeline.ridge_fit": 0.1,
+        "pipeline.lgbm_train": 6.0,
+        "pipeline.nn_train": 32.8,
+        "pipeline.attn_nn_train": 15.0,
+        "pipeline.train_models_total": 47.8,
+        "pipeline.backtest": 0.5,
+        "pipeline.save_artifacts": 0.1,
+        "pipeline.figures": 4.8
+      }
+    },
+    {
+      "position": "RB",
+      "ridge_mae": 4.502,
+      "ridge_r2": 0.36,
+      "nn_mae": 4.302,
+      "nn_r2": 0.419,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "rushing_tds": {
+          "mae": 0.323,
+          "r2": 0.126
+        },
+        "receiving_tds": {
+          "mae": 0.126,
+          "r2": 0.041
+        },
+        "rushing_yards": {
+          "mae": 18.517,
+          "r2": 0.411
+        },
+        "receiving_yards": {
+          "mae": 9.202,
+          "r2": 0.242
+        },
+        "receptions": {
+          "mae": 1.002,
+          "r2": 0.357
+        },
+        "fumbles_lost": {
+          "mae": 0.101,
+          "r2": -0.013
+        }
+      },
+      "ridge_per_target": {
+        "rushing_tds": {
+          "mae": 0.241,
+          "r2": -0.16
+        },
+        "receiving_tds": {
+          "mae": 0.064,
+          "r2": -0.059
+        },
+        "rushing_yards": {
+          "mae": 20.048,
+          "r2": 0.419
+        },
+        "receiving_yards": {
+          "mae": 10.192,
+          "r2": 0.243
+        },
+        "receptions": {
+          "mae": 1.079,
+          "r2": 0.343
+        },
+        "fumbles_lost": {
+          "mae": 0.078,
+          "r2": 0.018
+        }
+      },
+      "ridge_top12": 0.454,
+      "nn_top12": 0.44,
+      "attn_nn_mae": 4.179,
+      "attn_nn_r2": 0.418,
+      "attn_nn_per_target": {
+        "rushing_tds": {
+          "mae": 0.317,
+          "r2": 0.123
+        },
+        "receiving_tds": {
+          "mae": 0.102,
+          "r2": 0.046
+        },
+        "rushing_yards": {
+          "mae": 18.074,
+          "r2": 0.422
+        },
+        "receiving_yards": {
+          "mae": 9.52,
+          "r2": 0.24
+        },
+        "receptions": {
+          "mae": 0.982,
+          "r2": 0.354
+        },
+        "fumbles_lost": {
+          "mae": 0.084,
+          "r2": 0.012
+        }
+      },
+      "attn_nn_top12": 0.431,
+      "lgbm_mae": 4.195,
+      "lgbm_r2": 0.425,
+      "lgbm_per_target": {
+        "rushing_tds": {
+          "mae": 0.323,
+          "r2": 0.125
+        },
+        "receiving_tds": {
+          "mae": 0.109,
+          "r2": 0.045
+        },
+        "rushing_yards": {
+          "mae": 18.05,
+          "r2": 0.427
+        },
+        "receiving_yards": {
+          "mae": 8.627,
+          "r2": 0.215
+        },
+        "receptions": {
+          "mae": 0.997,
+          "r2": 0.371
+        },
+        "fumbles_lost": {
+          "mae": 0.078,
+          "r2": 0.023
+        }
+      },
+      "lgbm_top12": 0.458,
+      "elapsed_sec": 144.7,
+      "phase_seconds": {
+        "assert_gpu": 0.3,
+        "sync_raw_data": 1.9,
+        "download_data": 0.3,
+        "read_parquets": 0.9,
+        "run_pipeline": 140.4,
+        "copy_artifacts": 0.0,
+        "pipeline.prepare_data": 26.7,
+        "pipeline.ridge_tune": 5.4,
+        "pipeline.ridge_fit": 1.1,
+        "pipeline.nn_train": 25.6,
+        "pipeline.lgbm_train": 27.8,
+        "pipeline.attn_nn_train": 82.1,
+        "pipeline.train_models_total": 107.7,
+        "pipeline.backtest": 0.5,
+        "pipeline.save_artifacts": 0.2,
+        "pipeline.figures": 4.7
+      }
+    },
+    {
+      "position": "WR",
+      "ridge_mae": 4.779,
+      "ridge_r2": 0.312,
+      "nn_mae": 4.256,
+      "nn_r2": 0.368,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.293,
+          "r2": 0.089
+        },
+        "receiving_yards": {
+          "mae": 20.188,
+          "r2": 0.353
+        },
+        "receptions": {
+          "mae": 1.365,
+          "r2": 0.435
+        },
+        "fumbles_lost": {
+          "mae": 0.011,
+          "r2": -0.011
+        }
+      },
+      "ridge_per_target": {
+        "receiving_tds": {
+          "mae": 0.313,
+          "r2": 0.079
+        },
+        "receiving_yards": {
+          "mae": 22.834,
+          "r2": 0.3
+        },
+        "receptions": {
+          "mae": 1.522,
+          "r2": 0.375
+        },
+        "fumbles_lost": {
+          "mae": 0.028,
+          "r2": -0.002
+        }
+      },
+      "ridge_top12": 0.352,
+      "nn_top12": 0.37,
+      "attn_nn_mae": 4.292,
+      "attn_nn_r2": 0.352,
+      "attn_nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.301,
+          "r2": 0.083
+        },
+        "receiving_yards": {
+          "mae": 20.349,
+          "r2": 0.339
+        },
+        "receptions": {
+          "mae": 1.373,
+          "r2": 0.416
+        },
+        "fumbles_lost": {
+          "mae": 0.011,
+          "r2": -0.011
+        }
+      },
+      "attn_nn_top12": 0.352,
+      "lgbm_mae": 4.238,
+      "lgbm_r2": 0.361,
+      "lgbm_per_target": {
+        "receiving_tds": {
+          "mae": 0.299,
+          "r2": 0.075
+        },
+        "receiving_yards": {
+          "mae": 19.872,
+          "r2": 0.346
+        },
+        "receptions": {
+          "mae": 1.367,
+          "r2": 0.439
+        },
+        "fumbles_lost": {
+          "mae": 0.028,
+          "r2": -0.001
+        }
+      },
+      "lgbm_top12": 0.356,
+      "elapsed_sec": 125.7,
+      "phase_seconds": {
+        "assert_gpu": 0.2,
+        "sync_raw_data": 2.0,
+        "download_data": 0.5,
+        "read_parquets": 0.7,
+        "run_pipeline": 121.0,
+        "copy_artifacts": 0.0,
+        "pipeline.prepare_data": 20.8,
+        "pipeline.ridge_tune": 5.7,
+        "pipeline.ridge_fit": 0.1,
+        "pipeline.nn_train": 14.1,
+        "pipeline.lgbm_train": 23.6,
+        "pipeline.attn_nn_train": 80.9,
+        "pipeline.train_models_total": 94.9,
+        "pipeline.backtest": 0.5,
+        "pipeline.save_artifacts": 0.2,
+        "pipeline.figures": 3.9
+      }
+    },
+    {
+      "position": "TE",
+      "ridge_mae": 3.726,
+      "ridge_r2": 0.316,
+      "nn_mae": 3.515,
+      "nn_r2": 0.336,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.277,
+          "r2": 0.073
+        },
+        "receiving_yards": {
+          "mae": 14.71,
+          "r2": 0.324
+        },
+        "receptions": {
+          "mae": 1.211,
+          "r2": 0.388
+        },
+        "fumbles_lost": {
+          "mae": 0.013,
+          "r2": -0.013
+        }
+      },
+      "ridge_per_target": {
+        "receiving_tds": {
+          "mae": 0.3,
+          "r2": 0.058
+        },
+        "receiving_yards": {
+          "mae": 15.379,
+          "r2": 0.328
+        },
+        "receptions": {
+          "mae": 1.267,
+          "r2": 0.387
+        },
+        "fumbles_lost": {
+          "mae": 0.028,
+          "r2": -0.004
+        }
+      },
+      "ridge_top12": 0.481,
+      "nn_top12": 0.463,
+      "attn_nn_mae": 3.508,
+      "attn_nn_r2": 0.325,
+      "attn_nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.285,
+          "r2": 0.058
+        },
+        "receiving_yards": {
+          "mae": 14.909,
+          "r2": 0.321
+        },
+        "receptions": {
+          "mae": 1.204,
+          "r2": 0.394
+        },
+        "fumbles_lost": {
+          "mae": 0.013,
+          "r2": -0.013
+        }
+      },
+      "attn_nn_top12": 0.468,
+      "lgbm_mae": 3.595,
+      "lgbm_r2": 0.317,
+      "lgbm_per_target": {
+        "receiving_tds": {
+          "mae": 0.287,
+          "r2": 0.053
+        },
+        "receiving_yards": {
+          "mae": 14.84,
+          "r2": 0.313
+        },
+        "receptions": {
+          "mae": 1.263,
+          "r2": 0.383
+        },
+        "fumbles_lost": {
+          "mae": 0.028,
+          "r2": 0.001
+        }
+      },
+      "lgbm_top12": 0.472,
+      "elapsed_sec": 142.3,
+      "phase_seconds": {
+        "assert_gpu": 0.2,
+        "sync_raw_data": 1.0,
+        "download_data": 0.4,
+        "read_parquets": 0.8,
+        "run_pipeline": 138.7,
+        "copy_artifacts": 0.0,
+        "pipeline.prepare_data": 13.7,
+        "pipeline.ridge_tune": 3.5,
+        "pipeline.ridge_fit": 0.1,
+        "pipeline.lgbm_train": 9.7,
+        "pipeline.nn_train": 33.9,
+        "pipeline.attn_nn_train": 85.6,
+        "pipeline.train_models_total": 119.5,
+        "pipeline.backtest": 0.6,
+        "pipeline.save_artifacts": 0.1,
+        "pipeline.figures": 4.2
+      }
+    },
+    {
+      "position": "K",
+      "ridge_mae": 4.008,
+      "ridge_r2": 0.018,
+      "nn_mae": 4.167,
+      "nn_r2": -0.096,
+      "nn_wins_mae": false,
+      "nn_per_target": {
+        "fg_yard_points": {
+          "mae": 4.032,
+          "r2": -0.066
+        },
+        "pat_points": {
+          "mae": 1.096,
+          "r2": 0.059
+        },
+        "fg_misses": {
+          "mae": 0.394,
+          "r2": 0.007
+        },
+        "xp_misses": {
+          "mae": 0.171,
+          "r2": -0.02
+        }
+      },
+      "ridge_per_target": {
+        "fg_yard_points": {
+          "mae": 4.004,
+          "r2": 0.002
+        },
+        "pat_points": {
+          "mae": 1.064,
+          "r2": 0.141
+        },
+        "fg_misses": {
+          "mae": 0.409,
+          "r2": -0.012
+        },
+        "xp_misses": {
+          "mae": 0.178,
+          "r2": -0.027
+        }
+      },
+      "ridge_top12": 0.468,
+      "nn_top12": 0.421,
+      "attn_nn_mae": 4.221,
+      "attn_nn_r2": -0.099,
+      "attn_nn_per_target": {
+        "fg_yard_points": {
+          "mae": 4.118,
+          "r2": -0.09
+        },
+        "pat_points": {
+          "mae": 1.075,
+          "r2": 0.103
+        },
+        "fg_misses": {
+          "mae": 0.408,
+          "r2": -0.027
+        },
+        "xp_misses": {
+          "mae": 0.165,
+          "r2": -0.061
+        }
+      },
+      "attn_nn_top12": 0.412,
+      "lgbm_mae": 4.133,
+      "lgbm_r2": -0.051,
+      "lgbm_per_target": {
+        "fg_yard_points": {
+          "mae": 4.082,
+          "r2": -0.057
+        },
+        "pat_points": {
+          "mae": 1.075,
+          "r2": 0.109
+        },
+        "fg_misses": {
+          "mae": 0.406,
+          "r2": -0.014
+        },
+        "xp_misses": {
+          "mae": 0.177,
+          "r2": -0.025
+        }
+      },
+      "lgbm_top12": 0.449,
+      "elapsed_sec": 68.6,
+      "phase_seconds": {
+        "assert_gpu": 0.3,
+        "sync_raw_data": 1.7,
+        "run_pipeline": 65.2,
+        "copy_artifacts": 0.0,
+        "pipeline.prepare_data": 1.9,
+        "pipeline.ridge_tune": 0.6,
+        "pipeline.ridge_fit": 0.0,
+        "pipeline.lgbm_train": 1.2,
+        "pipeline.nn_train": 23.7,
+        "pipeline.attn_nn_train": 21.7,
+        "pipeline.train_models_total": 45.4,
+        "pipeline.backtest": 0.5,
+        "pipeline.save_artifacts": 0.0,
+        "pipeline.figures": 3.6
+      }
+    },
+    {
+      "position": "DST",
+      "ridge_mae": 5.203,
+      "ridge_r2": 0.044,
+      "nn_mae": 5.115,
+      "nn_r2": 0.084,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "def_sacks": {
+          "mae": 1.378,
+          "r2": -0.022
+        },
+        "def_ints": {
+          "mae": 0.688,
+          "r2": -0.015
+        },
+        "def_fumble_rec": {
+          "mae": 0.496,
+          "r2": -0.038
+        },
+        "def_fumbles_forced": {
+          "mae": 0.695,
+          "r2": -0.053
+        },
+        "def_safeties": {
+          "mae": 0.049,
+          "r2": -0.032
+        },
+        "def_tds": {
+          "mae": 0.106,
+          "r2": -0.026
+        },
+        "def_blocked_kicks": {
+          "mae": 0.102,
+          "r2": -0.009
+        },
+        "special_teams_tds": {
+          "mae": 0.107,
+          "r2": -0.029
+        },
+        "points_allowed": {
+          "mae": 7.534,
+          "r2": 0.082
+        },
+        "yards_allowed": {
+          "mae": 60.492,
+          "r2": 0.113
+        }
+      },
+      "ridge_per_target": {
+        "def_sacks": {
+          "mae": 1.377,
+          "r2": 0.054
+        },
+        "def_ints": {
+          "mae": 0.691,
+          "r2": -0.009
+        },
+        "def_fumble_rec": {
+          "mae": 0.555,
+          "r2": -0.023
+        },
+        "def_fumbles_forced": {
+          "mae": 0.691,
+          "r2": -0.032
+        },
+        "def_safeties": {
+          "mae": 0.051,
+          "r2": -0.005
+        },
+        "def_tds": {
+          "mae": 0.125,
+          "r2": -0.037
+        },
+        "def_blocked_kicks": {
+          "mae": 0.109,
+          "r2": -0.007
+        },
+        "special_teams_tds": {
+          "mae": 0.085,
+          "r2": -0.013
+        },
+        "points_allowed": {
+          "mae": 7.506,
+          "r2": 0.091
+        },
+        "yards_allowed": {
+          "mae": 62.367,
+          "r2": 0.05
+        }
+      },
+      "ridge_top12": 0.509,
+      "nn_top12": 0.518,
+      "attn_nn_mae": 5.107,
+      "attn_nn_r2": 0.061,
+      "attn_nn_per_target": {
+        "def_sacks": {
+          "mae": 1.403,
+          "r2": -0.001
+        },
+        "def_ints": {
+          "mae": 0.687,
+          "r2": -0.003
+        },
+        "def_fumble_rec": {
+          "mae": 0.497,
+          "r2": -0.025
+        },
+        "def_fumbles_forced": {
+          "mae": 0.687,
+          "r2": -0.006
+        },
+        "def_safeties": {
+          "mae": 0.022,
+          "r2": -0.023
+        },
+        "def_tds": {
+          "mae": 0.051,
+          "r2": -0.054
+        },
+        "def_blocked_kicks": {
+          "mae": 0.109,
+          "r2": -0.007
+        },
+        "special_teams_tds": {
+          "mae": 0.094,
+          "r2": -0.006
+        },
+        "points_allowed": {
+          "mae": 7.344,
+          "r2": 0.155
+        },
+        "yards_allowed": {
+          "mae": 59.332,
+          "r2": 0.138
+        }
+      },
+      "attn_nn_top12": 0.565,
+      "lgbm_mae": 5.271,
+      "lgbm_r2": 0.016,
+      "lgbm_per_target": {
+        "def_sacks": {
+          "mae": 1.386,
+          "r2": 0.034
+        },
+        "def_ints": {
+          "mae": 0.693,
+          "r2": 0.005
+        },
+        "def_fumble_rec": {
+          "mae": 0.537,
+          "r2": -0.004
+        },
+        "def_fumbles_forced": {
+          "mae": 0.687,
+          "r2": -0.001
+        },
+        "def_safeties": {
+          "mae": 0.05,
+          "r2": -0.004
+        },
+        "def_tds": {
+          "mae": 0.125,
+          "r2": -0.021
+        },
+        "def_blocked_kicks": {
+          "mae": 0.11,
+          "r2": -0.003
+        },
+        "special_teams_tds": {
+          "mae": 0.084,
+          "r2": -0.003
+        },
+        "points_allowed": {
+          "mae": 7.593,
+          "r2": 0.08
+        },
+        "yards_allowed": {
+          "mae": 65.421,
+          "r2": -0.045
+        }
+      },
+      "lgbm_top12": 0.481,
+      "elapsed_sec": 220.9,
+      "phase_seconds": {
+        "assert_gpu": 0.3,
+        "sync_raw_data": 1.9,
+        "run_pipeline": 217.4,
+        "copy_artifacts": 0.0,
+        "pipeline.prepare_data": 0.4,
+        "pipeline.ridge_tune": 6.3,
+        "pipeline.ridge_fit": 0.1,
+        "pipeline.lgbm_train": 3.6,
+        "pipeline.nn_train": 101.9,
+        "pipeline.attn_nn_train": 89.9,
+        "pipeline.train_models_total": 191.8,
+        "pipeline.backtest": 0.6,
+        "pipeline.save_artifacts": 0.1,
+        "pipeline.figures": 8.0
+      }
+    }
+  ],
+  "pr_number": 360
+}
