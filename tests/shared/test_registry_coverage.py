@@ -80,17 +80,16 @@ def test_get_runner_returns_callable(pos):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("pos", ["QB", "RB", "WR"])  # only these three have cv runners
+@pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])  # all six now have cv runners
 def test_get_cv_runner_returns_callable(pos):
     fn = get_cv_runner(pos)
     assert callable(fn)
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("pos", ["TE", "K", "DST"])
-def test_get_cv_runner_raises_for_positions_without_cv(pos):
-    with pytest.raises(ValueError, match="CV pipeline not implemented"):
-        get_cv_runner(pos)
+def test_get_cv_runner_raises_on_unknown_position():
+    with pytest.raises(ValueError, match="Unknown position"):
+        get_cv_runner("XYZ")
 
 
 @pytest.mark.unit
