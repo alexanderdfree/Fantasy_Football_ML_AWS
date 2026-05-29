@@ -115,7 +115,7 @@ def _maybe_upload_to_s3(local_path: str) -> None:
         s3 = boto3.client("s3", region_name=region)
         s3.upload_file(local_path, bucket, key)
         print(f"Uploaded benchmark to s3://{bucket}/{key}")
-    except Exception as exc:  # noqa: BLE001 - network/credential boundary, see CLAUDE.md
+    except Exception as exc:  # noqa: BLE001 — network/credential boundary, see CLAUDE.md
         print(f"WARNING: benchmark S3 sync failed ({exc}); local JSON kept at {local_path}")
 
 
