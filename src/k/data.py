@@ -12,6 +12,12 @@ from src.shared.weather_features import _TEAM_CODE_NORMALIZATION
 SEASONS = POSITION_CONFIG.seasons
 MIN_GAMES = POSITION_CONFIG.min_games
 
+# Last season that belongs to the training split (val=2024, test=2025). Used
+# both by ``season_split`` to carve the train rows and by ``load_data``'s
+# Vegas-line imputation to fit the fill statistic on train rows only — keep
+# the two in lockstep so the imputation never leaks val/test into the median.
+_TRAIN_MAX_SEASON = 2023
+
 # ---------------------------------------------------------------------------
 # PBP-based kicker reconstruction (≤ 2024; lower bound comes from ``SEASONS``)
 # ---------------------------------------------------------------------------
@@ -394,9 +400,22 @@ def load_data() -> pd.DataFrame:
 
     k_df = k_df.merge(schedule_info, on=["recent_team", "season", "week"], how="left")
 
-    # Fill missing Vegas lines with season medians
+    # Fill missing Vegas lines with the TRAIN-only median, applied to every
+    # split. Fitting the median on the full concatenated frame (train+val+test)
+    # leaked the holdout Vegas-line distribution into the fill value the model
+    # sees at train time — the same cross-fold leak the shared pipeline avoids
+    # by imputing snap_pct on train rows only (``src/data/split.py``). The
+    # per-(player_id, season) MIN_GAMES filter is applied later inside
+    # ``season_split``, so the train mask here is the raw season cut; that's
+    # fine — dropping a few low-game train rows from the median fit doesn't
+    # reintroduce leakage. Falls back to the full-frame median only when there
+    # are no train rows (synthetic fixtures), preserving prior behaviour there.
+    train_mask = k_df["season"] <= _TRAIN_MAX_SEASON
     for col in ["total_line", "implied_team_total"]:
-        median_val = k_df[col].median()
+        train_vals = k_df.loc[train_mask, col]
+        median_val = train_vals.median()
+        if pd.isna(median_val):
+            median_val = k_df[col].median()
         k_df[col] = k_df[col].fillna(median_val)
     if "is_home" not in k_df.columns or k_df["is_home"].isna().any():
         k_df["is_home"] = k_df["is_home"].fillna(0)
@@ -621,6 +640,7 @@ def reconstruct_kicker_kicks_from_pbp(
         return pd.read_parquet(cache_path)
 
     all_kicks = []
+    skipped_seasons: list[int] = []
     for yr in seasons:
         print(f"  Loading per-kick PBP for {yr}...")
         # Wrap the entire per-year extraction (not just import_pbp_data) so a
@@ -683,6 +703,7 @@ def reconstruct_kicker_kicks_from_pbp(
             all_kicks.append(pd.concat([fg_kicks, xp_kicks], ignore_index=True))
         except Exception as e:
             print(f"  WARNING: per-kick PBP extraction failed for {yr} ({e}); skipping")
+            skipped_seasons.append(yr)
             continue
 
     if not all_kicks:
@@ -695,6 +716,17 @@ def reconstruct_kicker_kicks_from_pbp(
     result = result.sort_values(
         ["player_id", "season", "week", "play_id"], kind="stable"
     ).reset_index(drop=True)
+
+    if skipped_seasons:
+        # Don't poison the combined cache key with a partial result — the next
+        # call would treat it as authoritative for the full range and silently
+        # serve kickers from the skipped season(s) with zero kick history.
+        # Mirrors the same guard in ``reconstruct_kicker_weekly_from_pbp``; the
+        # per-kick path was added later and originally cached unconditionally,
+        # so a transient nflverse 502 on one season permanently corrupted the
+        # attention NN's inner-pool inputs for that season.
+        print(f"  Skipped seasons {skipped_seasons}; not caching partial result to {cache_path}")
+        return result
 
     os.makedirs(cache_dir, exist_ok=True)
     result.to_parquet(cache_path)
@@ -738,7 +770,7 @@ def season_split(k_df: pd.DataFrame) -> tuple:
     regardless of season-game-count so K's holdout distribution matches the
     other positions.
     """
-    train = k_df[k_df["season"] <= 2023].copy()
+    train = k_df[k_df["season"] <= _TRAIN_MAX_SEASON].copy()
     val = k_df[k_df["season"] == 2024].copy()
     test = k_df[k_df["season"] == 2025].copy()
 

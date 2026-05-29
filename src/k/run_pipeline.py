@@ -57,21 +57,32 @@ def run(seed=42, config=None):
     # --- Cross-season split ---
     train_df, val_df, test_df = season_split(k_df)
 
-    # Closure over kicks_df so the shared pipeline can build nested history
-    # arrays for each split without knowing kicker specifics.
-    kick_history_builder = functools.partial(
-        build_nested_kick_history,
-        kicks_df=kicks_df,
-        kick_stats=POSITION_CONFIG.attn_kick_stats,
-        max_games=POSITION_CONFIG.attn_max_games,
-        max_kicks_per_game=POSITION_CONFIG.attn_max_kicks_per_game,
-    )
-
     # Shallow-copy the caller's config (or CONFIG default) so we can inject the
     # runtime builder without mutating the source dict — the tuner reuses the
     # same base_cfg across trials and would crash on the second trial if we
     # mutated it in place.
     cfg = dict(config if config is not None else CONFIG)
+
+    # Closure over kicks_df so the shared pipeline can build nested history
+    # arrays for each split without knowing kicker specifics. Read the
+    # attention-window shape from ``cfg`` (with ``POSITION_CONFIG`` as the
+    # fallback) so a caller / tuner that overrides attn_max_games etc. via
+    # ``run(config=...)`` actually takes effect — these three keys aren't
+    # plumbed into the cfg dict by ``build_pipeline_config`` (K's nested
+    # attention is the sole consumer), so the closure is the only place a
+    # tuner override of them can land. Without this, ``attn_max_games=20``
+    # in cfg produced a [N,17,...] tensor and the override was silently
+    # dropped (the model's max_games is derived from ``hist_train.shape[1]``).
+    kick_history_builder = functools.partial(
+        build_nested_kick_history,
+        kicks_df=kicks_df,
+        kick_stats=cfg.get("attn_kick_stats", POSITION_CONFIG.attn_kick_stats),
+        max_games=cfg.get("attn_max_games", POSITION_CONFIG.attn_max_games),
+        max_kicks_per_game=cfg.get(
+            "attn_max_kicks_per_game", POSITION_CONFIG.attn_max_kicks_per_game
+        ),
+    )
+
     cfg["attn_history_builder_fn"] = kick_history_builder
 
     return run_pipeline("K", cfg, train_df, val_df, test_df, seed)
