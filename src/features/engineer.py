@@ -14,6 +14,7 @@ from src.config import (
     SHARE_WINDOWS,
     TREND_STATS,
 )
+from src.data.external_sources import EXTERNAL_PRIOR_STATS
 from src.shared.weather_features import (
     _TEAM_CODE_NORMALIZATION,
     _load_schedules,
@@ -24,7 +25,13 @@ logger = logging.getLogger(__name__)
 
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Build all 144 engineered features from preprocessed data."""
+    """Build the engineered feature columns from preprocessed data.
+
+    Covers rolling / prior-season / EWMA / trend / share / opponent-defense
+    aggregates plus the per-game history columns and the external-source
+    (ff_opportunity / QBR / contract) signals merged upstream by
+    src.data.loader. Each position's config opts into the subset it consumes.
+    """
     df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
     # --- Rolling Features (84: 81 mean/std/max + 3 min) ---
@@ -177,6 +184,29 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df["prior_season_mean_redzone_touches_per_game"] = (
         df["prior_season_total_redzone_touches"] / games
     ).fillna(0.0)
+
+    # --- Prior-season means of external opportunity / QBR signals ---
+    # ff_opportunity expected stats and weekly ESPN QBR are merged per-game by
+    # src.data.loader (via src.data.external_sources). Their prior-season means
+    # form the static-branch "opportunity / talent" prior — the leakage-safe
+    # (season + 1 shift), non-cumulative shape the attention static branch
+    # accepts (career-cumulative is deliberately kept in the history domain; see
+    # tests/test_attn_static_columns.py, which forbids career_* from static).
+    # ff_opp is skill-position-only and QBR is QB-only, so guard each column
+    # with ``in``; groupby.mean() skips NaN, so positions/seasons lacking the
+    # source resolve to NaN and only whitelisting positions consume the result.
+    # NaN here is the same rookie-first-season shape as every other
+    # prior_season_* feature and is handled by the same downstream fill.
+    external_prior_stats = [c for c in EXTERNAL_PRIOR_STATS if c in df.columns]
+    if external_prior_stats:
+        prior_external = (
+            df.groupby(["player_id", "season"])[external_prior_stats]
+            .mean()
+            .rename(columns=lambda c: f"prior_season_mean_{c}")
+            .reset_index()
+        )
+        prior_external["season"] = prior_external["season"] + 1  # align S-1 with S
+        df = df.merge(prior_external, on=["player_id", "season"], how="left")
 
     # --- EWMA Features (14) ---
     ewma_cols: dict[str, pd.Series] = {}

@@ -47,6 +47,14 @@ _INCLUDE_FEATURES = {
     ],
     "prior_season": [
         f"prior_season_{a}_{stat}" for stat in _ROLLING_STATS for a in ["mean", "std", "max"]
+    ]
+    + [
+        # ff_opportunity expected-production prior (static "opportunity" signal,
+        # leakage-safe S-1 mean). Built in src.features.engineer from the
+        # per-game *_exp columns merged by src.data.external_sources.
+        "prior_season_mean_total_fantasy_points_exp",
+        "prior_season_mean_rec_yards_gained_exp",
+        "prior_season_mean_receptions_exp",
     ],
     "ewma": [],
     "trend": ["trend_targets", "trend_carries", "trend_snap_pct"],
@@ -85,6 +93,12 @@ _INCLUDE_FEATURES = {
         "practice_status",
         "game_status",
         "depth_chart_rank",
+        # Contract value — team-investment / expected-role prior. Static
+        # player-season state, merged by src.data.external_sources.
+        "contract_apy_cap_pct",
+        "contract_guaranteed",
+        "contract_years_remaining",
+        "contract_age",
     ],
     # Keep 3 features with signal: implied_team_total (r=-0.035),
     # implied_opp_total (r=0.029), is_dome (r=0.027).
@@ -204,6 +218,13 @@ POSITION_CONFIG = PositionConfig(
         "fumbles_lost",
         "carries",
         "snap_pct",
+        # Per-game ff_opportunity expected receiving stats, merged by
+        # src.data.external_sources. Leakage-safe via build_game_history_arrays
+        # (prior in-season games only).
+        "rec_yards_gained_exp",
+        "rec_touchdown_exp",
+        "receptions_exp",
+        "rec_first_down_exp",
     ],
     attn_static_features=derive_attn_static_features(_INCLUDE_FEATURES, ATTN_STATIC_CATEGORIES),
     attn_gated=True,

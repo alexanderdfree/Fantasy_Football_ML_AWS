@@ -366,6 +366,12 @@ def synthetic_splits(synthetic_dataset):
     df = synthetic_dataset.drop(
         columns=[c for c in conflict_cols if c in synthetic_dataset.columns]
     )
+    # External-source columns the loader merges in production (ff_opportunity /
+    # ESPN QBR / contracts) so build_features' prior-season aggregates land and
+    # RB's include_features + attn_history_stats whitelists resolve.
+    from tests._pipeline_e2e_utils import attach_external_source_columns
+
+    attach_external_source_columns(df)
     df = build_features(df)
 
     seasons = sorted(df["season"].unique())

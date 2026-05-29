@@ -230,6 +230,12 @@ def test_build_train_matrix_loads_synthetic_splits(tmp_path, monkeypatch):
                     }
                 )
     df = pd.DataFrame(rows)
+    # External-source columns (ff_opportunity / QBR / contracts) the loader
+    # merges in production — add them so build_features' prior-season aggregates
+    # land and QB's include_features whitelist resolves (loader isn't run here).
+    from tests._pipeline_e2e_utils import attach_external_source_columns
+
+    attach_external_source_columns(df, rng)
     # Run the same build_features step that refresh-splits.yml runs in
     # production so the parquet has every engineered col QB's
     # include_features whitelist references. Without this, the new

@@ -226,6 +226,32 @@ def _mock_all_nfl_helpers(monkeypatch):
 
     monkeypatch.setattr(redzone_pbp.nfl_source, "pbp_data", _fake_pbp)
 
+    # External sources (src.data.external_sources) are imported into the loader
+    # namespace and fetch via their own module's nfl_data_py / pd.read_parquet
+    # bindings, so stub them at the loader level (empty merge-ready frames →
+    # the merge blocks skip + the loader backfills the columns).
+    monkeypatch.setattr(
+        loader,
+        "load_ff_opportunity",
+        lambda seasons, cache_dir=None: pd.DataFrame(
+            columns=["player_id", "season", "week", *loader.FF_OPP_FEATURE_COLUMNS]
+        ),
+    )
+    monkeypatch.setattr(
+        loader,
+        "load_qbr_weekly",
+        lambda seasons, cache_dir=None: pd.DataFrame(
+            columns=["player_id", "season", "week", *loader.QBR_FEATURE_COLUMNS]
+        ),
+    )
+    monkeypatch.setattr(
+        loader,
+        "load_contracts",
+        lambda seasons, cache_dir=None: pd.DataFrame(
+            columns=["player_id", "season", *loader.CONTRACT_FEATURE_COLUMNS]
+        ),
+    )
+
 
 @pytest.mark.unit
 def test_load_raw_data_fresh_fetch_old_seasons_only(tmp_path, monkeypatch):
@@ -552,10 +578,33 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
         }
     ).to_parquet(tmp_path / f"redzone_pbp_{seasons[0]}_{seasons[-1]}.parquet")
 
+    # Pre-write the external-source caches (ff_opportunity / QBR / contracts) so
+    # load_ff_opportunity / load_qbr_weekly / load_contracts short-circuit on the
+    # parquet read and never hit nfl_data_py or the network.
+    from src.data.external_sources import (
+        CONTRACT_FEATURE_COLUMNS,
+        FF_OPP_FEATURE_COLUMNS,
+        QBR_FEATURE_COLUMNS,
+    )
+
+    pd.DataFrame(columns=["player_id", "season", "week", *FF_OPP_FEATURE_COLUMNS]).to_parquet(
+        tmp_path / f"ff_opportunity_{seasons[0]}_{seasons[-1]}.parquet"
+    )
+    pd.DataFrame(columns=["player_id", "season", "week", *QBR_FEATURE_COLUMNS]).to_parquet(
+        tmp_path / f"qbr_weekly_{seasons[0]}_{seasons[-1]}.parquet"
+    )
+    pd.DataFrame(columns=["player_id", "season", *CONTRACT_FEATURE_COLUMNS]).to_parquet(
+        tmp_path / f"contracts_{seasons[0]}_{seasons[-1]}.parquet"
+    )
+
     out = loader.load_raw_data(seasons, cache_dir=str(tmp_path))
     # Enrichment columns still land from the merge path.
     assert "snap_pct" in out.columns
     assert "depth_chart_rank" in out.columns
+    # External-source columns land (backfilled from the empty merge-ready caches).
+    assert "total_fantasy_points_exp" in out.columns
+    assert "qbr_total" in out.columns
+    assert "contract_apy_cap_pct" in out.columns
     # The cache short-circuit must skip every nfl.* fetch helper.
     assert boom_calls == [], f"nfl_data_py was hit despite caches: {boom_calls}"
     # import_ids fires inside the snap-merge try block — confirm the path took
