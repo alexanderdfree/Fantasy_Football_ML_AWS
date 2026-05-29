@@ -27,7 +27,9 @@ def _synthetic_pbp(season: int) -> pd.DataFrame:
       * KC week 1: two rushes by RB-A (yardlines 4, 15) + two pass attempts to
         WR-X (yardlines 8, 18) + one pass attempt to WR-Y (yardline 30, NOT RZ).
       * KC week 2: one rush by RB-A (yardline 22, NOT RZ) + one rush by RB-B
-        (yardline 3) + one pass attempt to WR-Y (yardline 12).
+        (yardline 3) + one pass attempt to WR-Y (yardline 12) + one QB-A
+        kneel-down (yardline 2, ``play_type='qb_kneel'``) that carries a
+        ``rusher_player_id`` but must NOT count toward redzone/inside5 carries.
       * BUF week 1: one rush by RB-C (yardline 50, NOT RZ) + zero pass attempts
         in the RZ (lets us assert redzone_target_share=0 when denom=0).
       * POST/playoff row (must be filtered out by season_type).
@@ -35,31 +37,70 @@ def _synthetic_pbp(season: int) -> pd.DataFrame:
     rows = []
 
     def row(**kw):
+        # ``play_type`` defaults to None; rush/pass rows set it explicitly so
+        # the rushing aggregator's ``play_type == 'run'`` filter (symmetric with
+        # the receiving ``pass_attempt == 1`` filter) excludes kneels/no-plays.
         base = {
             "season": season,
             "season_type": "REG",
             "rusher_player_id": np.nan,
             "receiver_player_id": np.nan,
             "pass_attempt": 0,
+            "play_type": None,
             "yardline_100": np.nan,
         }
         base.update(kw)
         rows.append(base)
 
     # --- KC week 1 ---
-    row(week=1, posteam="KC", rusher_player_id="RB-A", yardline_100=4)  # inside 5
-    row(week=1, posteam="KC", rusher_player_id="RB-A", yardline_100=15)  # in RZ, not in 10
-    row(week=1, posteam="KC", receiver_player_id="WR-X", pass_attempt=1, yardline_100=8)
-    row(week=1, posteam="KC", receiver_player_id="WR-X", pass_attempt=1, yardline_100=18)
-    row(week=1, posteam="KC", receiver_player_id="WR-Y", pass_attempt=1, yardline_100=30)
+    row(week=1, posteam="KC", rusher_player_id="RB-A", play_type="run", yardline_100=4)  # inside 5
+    row(
+        week=1, posteam="KC", rusher_player_id="RB-A", play_type="run", yardline_100=15
+    )  # RZ, not 10
+    row(
+        week=1,
+        posteam="KC",
+        receiver_player_id="WR-X",
+        pass_attempt=1,
+        play_type="pass",
+        yardline_100=8,
+    )
+    row(
+        week=1,
+        posteam="KC",
+        receiver_player_id="WR-X",
+        pass_attempt=1,
+        play_type="pass",
+        yardline_100=18,
+    )
+    row(
+        week=1,
+        posteam="KC",
+        receiver_player_id="WR-Y",
+        pass_attempt=1,
+        play_type="pass",
+        yardline_100=30,
+    )
 
     # --- KC week 2 ---
-    row(week=2, posteam="KC", rusher_player_id="RB-A", yardline_100=22)  # OUT of RZ
-    row(week=2, posteam="KC", rusher_player_id="RB-B", yardline_100=3)  # inside 5
-    row(week=2, posteam="KC", receiver_player_id="WR-Y", pass_attempt=1, yardline_100=12)
+    row(
+        week=2, posteam="KC", rusher_player_id="RB-A", play_type="run", yardline_100=22
+    )  # OUT of RZ
+    row(week=2, posteam="KC", rusher_player_id="RB-B", play_type="run", yardline_100=3)  # inside 5
+    row(
+        week=2,
+        posteam="KC",
+        receiver_player_id="WR-Y",
+        pass_attempt=1,
+        play_type="pass",
+        yardline_100=12,
+    )
+    # QB kneel-down inside the 5 — has a rusher_player_id + rush_attempt semantics
+    # but play_type='qb_kneel'. The F30 fix must exclude it from the carry counts.
+    row(week=2, posteam="KC", rusher_player_id="QB-A", play_type="qb_kneel", yardline_100=2)
 
     # --- BUF week 1 ---
-    row(week=1, posteam="BUF", rusher_player_id="RB-C", yardline_100=50)
+    row(week=1, posteam="BUF", rusher_player_id="RB-C", play_type="run", yardline_100=50)
 
     # --- Playoff row that must be filtered ---
     row(
@@ -67,6 +108,7 @@ def _synthetic_pbp(season: int) -> pd.DataFrame:
         week=20,
         posteam="KC",
         rusher_player_id="RB-A",
+        play_type="run",
         yardline_100=1,
     )
 
@@ -142,6 +184,14 @@ def test_reconstruct_redzone_from_pbp_happy_path(tmp_path, monkeypatch):
     assert rb_a_w1["redzone_carries"] == 2
     assert rb_a_w1["inside10_carries"] == 1
     assert rb_a_w1["inside5_carries"] == 1
+
+    # F30 guard: QB-A's week-2 kneel-down (y=2, play_type='qb_kneel') carries a
+    # rusher_player_id but is NOT a run play. The rushing aggregator must filter
+    # it out (symmetric with the receiving pass_attempt==1 filter), so QB-A
+    # produces no rushing row at all — without the play_type=='run' filter it
+    # would falsely show redzone_carries=1, inside5_carries=1.
+    qb_a_w2 = out[(out["player_id"] == "QB-A") & (out["week"] == 2)]
+    assert len(qb_a_w2) == 0
 
     # WR-X week 1 KC: 2 RZ targets (y=8, y=18).
     wr_x_w1 = out[(out["player_id"] == "WR-X") & (out["week"] == 1)].iloc[0]

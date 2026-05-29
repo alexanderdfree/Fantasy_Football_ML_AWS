@@ -91,6 +91,14 @@ def expanding_window_folds(
         train_seasons = list(range(min_train_season, val_season))
         train_df = df[df["season"].isin(train_seasons)].copy()
         val_df = df[df["season"] == val_season].copy()
+        # Per-fold train-only snap_pct imputation, mirroring temporal_split.
+        # Each fold's val rows must be filled with that fold's TRAIN-only
+        # medians — never medians computed over the val season — so the CV
+        # estimate doesn't leak the holdout snap_pct distribution back into
+        # the imputation (the same cross-split leak temporal_split closes).
+        # No-op when snap_pct is already absent or fully observed.
+        train_df = impute_snap_pct(train_df, fit_on=train_df)
+        val_df = impute_snap_pct(val_df, fit_on=train_df)
         print(
             f"  Fold {i + 1}: train seasons {train_seasons[0]}-{train_seasons[-1]} "
             f"({len(train_df)} rows), val season {val_season} ({len(val_df)} rows)"

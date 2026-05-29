@@ -83,6 +83,7 @@ def compute_target_metrics(
     y_pred_dict: dict,
     target_names: list[str],
     gate_info: dict | None = None,
+    scoring_format: str = "ppr",
 ) -> dict:
     """Compute per-target and total metrics.
 
@@ -91,6 +92,11 @@ def compute_target_metrics(
     fantasy-points aggregation via the per-position aggregator when the
     position is recognized; otherwise it falls back to the plain sum of
     per-target values.
+
+    ``scoring_format`` selects the fantasy scoring weights used to aggregate
+    the recognized-position ``"total"`` (e.g. ``"ppr"``, ``"half_ppr"``,
+    ``"standard"``). Defaults to ``"ppr"`` so existing callers see unchanged
+    metrics; the plain-sum fallback for unknown positions ignores it.
 
     When ``gate_info`` is supplied, gated targets additionally report:
     ``gate_auc``, ``gate_brier``, ``positive_rate``, ``predicted_positive_rate``,
@@ -107,12 +113,23 @@ def compute_target_metrics(
 
     position = infer_position(target_names)
     if position is not None:
-        true_pts = predictions_to_fantasy_points(position, y_true_dict, "ppr")
-        pred_pts = predictions_to_fantasy_points(position, y_pred_dict, "ppr")
+        true_pts = predictions_to_fantasy_points(position, y_true_dict, scoring_format)
+        pred_pts = predictions_to_fantasy_points(position, y_pred_dict, scoring_format)
+        # MAE of the aggregated points is sourced from the shared
+        # ``compute_fantasy_points_mae`` helper so the total-point error reported
+        # here and that public helper can never drift; rmse/r2 come from the same
+        # aggregated arrays. ``compute_metrics`` and the helper agree by
+        # construction (both are mean|pred - true|), so the default-PPR metric is
+        # unchanged.
+        total = compute_metrics(true_pts, pred_pts)
+        total["mae"] = compute_fantasy_points_mae(
+            position, y_true_dict, y_pred_dict, scoring_format=scoring_format
+        )
+        results["total"] = total
     else:
         true_pts = np.sum([y_true_dict[t] for t in target_names], axis=0)
         pred_pts = np.sum([y_pred_dict[t] for t in target_names], axis=0)
-    results["total"] = compute_metrics(true_pts, pred_pts)
+        results["total"] = compute_metrics(true_pts, pred_pts)
     results["total"]["unit"] = "pts"
 
     for target in target_names:
@@ -158,7 +175,12 @@ def compute_fantasy_points_mae(
 ) -> float:
     """MAE in fantasy points after aggregating raw-stat predictions via the
     per-position aggregator. Lets callers compare models across positions on the
-    same scale even when target sets differ."""
+    same scale even when target sets differ.
+
+    This is the canonical total-points MAE: ``compute_target_metrics`` calls it
+    to fill the ``"total"`` MAE for recognized positions, so the per-model
+    comparison table and any direct cross-format caller share one definition.
+    """
     true_pts = predictions_to_fantasy_points(pos, y_true_dict, scoring_format)
     pred_pts = predictions_to_fantasy_points(pos, y_pred_dict, scoring_format)
     return float(np.mean(np.abs(pred_pts - true_pts)))

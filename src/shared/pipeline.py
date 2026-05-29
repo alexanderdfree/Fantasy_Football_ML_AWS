@@ -711,7 +711,8 @@ def _train_attention_nn(
         X_train = X_train[:, col_idx]
         X_val = X_val[:, col_idx]
         X_test = X_test[:, col_idx]
-        print(f"  Attention static features: {len(col_idx)}/{len(feature_cols)} (filtered)")
+        suffix = " (filtered)" if len(col_idx) != len(feature_cols) else ""
+        print(f"  Attention static features: {len(col_idx)}/{len(feature_cols)}{suffix}")
 
     nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
 
@@ -871,9 +872,195 @@ def _train_nested_attention_nn(
     test_preds = model.predict_numpy(
         X_test_s, hist_test, outer_test, inner_test, device, X_game_history=game_hist_test
     )
-    metrics = compute_target_metrics(y_test_dict, test_preds, targets)
+    # Mirror the flat attention path: surface gate diagnostics for any gated
+    # targets so a nested+gated config doesn't silently lose gate AUC/Brier/
+    # conditional-MAE. ``build_gate_info`` returns ``None`` when no targets are
+    # gated (today's K config), leaving metrics unchanged.
+    gate_info = build_gate_info(test_preds, cfg.get("gated_targets") or [])
+    metrics = compute_target_metrics(y_test_dict, test_preds, targets, gate_info=gate_info)
 
     return model, nn_scaler, test_preds, metrics, history
+
+
+def _train_attention_holdout(
+    cfg,
+    targets,
+    seed,
+    X_train,
+    X_val,
+    X_test,
+    y_train_dict,
+    y_val_dict,
+    y_test_dict,
+    pos_train,
+    pos_val,
+    pos_test,
+    feature_cols,
+    opp_source_frames,
+):
+    """Build attention static/history/opp tensors and train the attention NN.
+
+    Shared by both ``run_pipeline`` (flat path) and ``run_cv_pipeline``'s final
+    holdout so the two entry points can't drift on static-feature selection,
+    nested-vs-flat dispatch, or the opponent-history branch. Returns
+    ``(attn_model, attn_nn_scaler, attn_nn_test_preds, attn_nn_metrics,
+    attn_history, attn_feature_cols)``.
+
+    ``opp_source_frames`` is the ``(train_df, val_df, test_df)`` triple of
+    *all-position* frames the "defense" opponent builder concatenates; the
+    "offense" builder ignores it and reads the weekly cache instead.
+    """
+    # Static features: either filter the base matrix (RB-style whitelist)
+    # or rebuild directly from the DataFrame (K-style — its L1 attention
+    # features live outside ALL_FEATURES to stay out of Ridge/base NN).
+    if cfg.get("attn_static_from_df", False):
+        attn_static_cols = cfg["attn_static_features"]
+        X_attn_train = pos_train[attn_static_cols].to_numpy(dtype=np.float32)
+        X_attn_val = pos_val[attn_static_cols].to_numpy(dtype=np.float32)
+        X_attn_test = pos_test[attn_static_cols].to_numpy(dtype=np.float32)
+        attn_feature_cols = list(attn_static_cols)
+    else:
+        X_attn_train, X_attn_val, X_attn_test = X_train, X_val, X_test
+        attn_feature_cols = feature_cols
+
+    structure = cfg.get("attn_history_structure", "flat")
+    if structure == "nested":
+        builder_fn = cfg["attn_history_builder_fn"]
+        hist_train, outer_train, inner_train = builder_fn(pos_train)
+        hist_val, outer_val, inner_val = builder_fn(pos_val)
+        hist_test, outer_test, inner_test = builder_fn(pos_test)
+        print(
+            f"  Nested history shape: {hist_train.shape} "
+            f"(max_games={hist_train.shape[1]}, "
+            f"max_kicks={hist_train.shape[2]}, "
+            f"kick_dim={hist_train.shape[3]})"
+        )
+
+        # Optional per-game aggregate branch ("ATTN_HISTORY_STATS" for the
+        # nested path). Built with the same build_game_history_arrays helper the
+        # flat positions use, but capped to the nested model's max_games so the
+        # outer sequence length matches the kick tensor.
+        game_history_stats = cfg.get("attn_history_stats")
+        game_hist_train = game_hist_val = game_hist_test = None
+        if game_history_stats:
+            nested_max_games = hist_train.shape[1]
+            game_hist_train, _ = build_game_history_arrays(
+                pos_train, history_stats=game_history_stats, max_seq_len=nested_max_games
+            )
+            game_hist_val, _ = build_game_history_arrays(
+                pos_val, history_stats=game_history_stats, max_seq_len=nested_max_games
+            )
+            game_hist_test, _ = build_game_history_arrays(
+                pos_test, history_stats=game_history_stats, max_seq_len=nested_max_games
+            )
+            print(
+                f"  Per-game history shape: {game_hist_train.shape} "
+                f"(game_dim={game_hist_train.shape[-1]})"
+            )
+
+        return (
+            *_train_nested_attention_nn(
+                X_attn_train,
+                X_attn_val,
+                X_attn_test,
+                hist_train,
+                outer_train,
+                inner_train,
+                hist_val,
+                outer_val,
+                inner_val,
+                hist_test,
+                outer_test,
+                inner_test,
+                y_train_dict,
+                y_val_dict,
+                y_test_dict,
+                cfg,
+                targets,
+                seed,
+                game_hist_train=game_hist_train,
+                game_hist_val=game_hist_val,
+                game_hist_test=game_hist_test,
+            ),
+            attn_feature_cols,
+        )
+
+    history_stats = cfg.get("attn_history_stats", None)
+    max_seq_len = cfg.get("attn_max_seq_len", 17)
+
+    hist_train, mask_train = build_game_history_arrays(
+        pos_train, history_stats=history_stats, max_seq_len=max_seq_len
+    )
+    hist_val, mask_val = build_game_history_arrays(
+        pos_val, history_stats=history_stats, max_seq_len=max_seq_len
+    )
+    hist_test, mask_test = build_game_history_arrays(
+        pos_test, history_stats=history_stats, max_seq_len=max_seq_len
+    )
+    print(f"  History shape: {hist_train.shape} (game_dim={hist_train.shape[2]})")
+
+    # Optional second attention branch: opponent-side game log. Kind-based
+    # dispatch via OPP_ATTN_PER_GAME_BUILDERS — "defense" (QB/RB/WR/TE)
+    # aggregates over the all-position concat of train/val/test; "offense"
+    # (DST) loads the raw player-week cache because DST's train/val/test frames
+    # are team-level and lack the offensive columns the offense aggregation
+    # needs. Either way the downstream `build_opp_defense_history_arrays` call
+    # is reused unchanged — it's generic over the per-game frame and stat list.
+    opp_history_stats = cfg.get("opp_attn_history_stats")
+    opp_hist_train = opp_mask_train = None
+    opp_hist_val = opp_mask_val = None
+    opp_hist_test = opp_mask_test = None
+    if opp_history_stats:
+        opp_max_seq_len = cfg.get("opp_attn_max_seq_len", max_seq_len)
+        opp_attn_kind = cfg.get("opp_attn_kind", "defense")
+        builder = OPP_ATTN_PER_GAME_BUILDERS[opp_attn_kind]
+        if opp_attn_kind == "offense":
+            weekly_cache_path = f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+            opp_source_df = pd.read_parquet(weekly_cache_path)
+        else:
+            opp_source_df = pd.concat(list(opp_source_frames), ignore_index=True)
+        opp_per_game = builder(opp_source_df)
+        opp_hist_train, opp_mask_train = build_opp_defense_history_arrays(
+            pos_train, opp_per_game, opp_history_stats, opp_max_seq_len
+        )
+        opp_hist_val, opp_mask_val = build_opp_defense_history_arrays(
+            pos_val, opp_per_game, opp_history_stats, opp_max_seq_len
+        )
+        opp_hist_test, opp_mask_test = build_opp_defense_history_arrays(
+            pos_test, opp_per_game, opp_history_stats, opp_max_seq_len
+        )
+        print(
+            f"  Opp-{opp_attn_kind} history shape: {opp_hist_train.shape} "
+            f"(opp_dim={opp_hist_train.shape[2]})"
+        )
+
+    return (
+        *_train_attention_nn(
+            X_attn_train,
+            X_attn_val,
+            X_attn_test,
+            hist_train,
+            mask_train,
+            hist_val,
+            mask_val,
+            hist_test,
+            mask_test,
+            y_train_dict,
+            y_val_dict,
+            y_test_dict,
+            cfg,
+            targets,
+            seed,
+            feature_cols=attn_feature_cols,
+            opp_hist_train=opp_hist_train,
+            opp_mask_train=opp_mask_train,
+            opp_hist_val=opp_hist_val,
+            opp_mask_val=opp_mask_val,
+            opp_hist_test=opp_hist_test,
+            opp_mask_test=opp_mask_test,
+        ),
+        attn_feature_cols,
+    )
 
 
 def _train_lightgbm(
@@ -897,7 +1084,12 @@ def _train_lightgbm(
     )
     model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
 
-    test_preds = model.predict(X_test)
+    # Mirror the NN/Ridge/ElasticNet paths: honor the position's per-head
+    # non-negative set so LGBM heads clamp like every other model instead of
+    # leaking negative raw-stat predictions into fantasy-point aggregation.
+    # ``None`` (a position that never set the knob) preserves the prior
+    # clamp-every-head default inside ``LightGBMMultiTarget.predict``.
+    test_preds = model.predict(X_test, non_negative_targets=cfg.get("nn_non_negative_targets"))
     metrics = compute_target_metrics(y_test_dict, test_preds, targets)
     return model, test_preds, metrics
 
@@ -1182,177 +1374,29 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         if cfg.get("train_attention_nn", False):
             print(f"\n=== {pos} Attention Multi-Head Neural Net ===")
             with timed("attn_nn_train", store=phase_seconds):
-                # Static features: either filter the base matrix (RB-style whitelist)
-                # or rebuild directly from the DataFrame (K-style — its L1 attention
-                # features live outside ALL_FEATURES to stay out of Ridge/base NN).
-                if cfg.get("attn_static_from_df", False):
-                    attn_static_cols = cfg["attn_static_features"]
-                    X_attn_train = pos_train[attn_static_cols].to_numpy(dtype=np.float32)
-                    X_attn_val = pos_val[attn_static_cols].to_numpy(dtype=np.float32)
-                    X_attn_test = pos_test[attn_static_cols].to_numpy(dtype=np.float32)
-                    attn_feature_cols = list(attn_static_cols)
-                else:
-                    X_attn_train, X_attn_val, X_attn_test = X_train, X_val, X_test
-                    attn_feature_cols = feature_cols
-
-                structure = cfg.get("attn_history_structure", "flat")
-                if structure == "nested":
-                    builder_fn = cfg["attn_history_builder_fn"]
-                    hist_train, outer_train, inner_train = builder_fn(pos_train)
-                    hist_val, outer_val, inner_val = builder_fn(pos_val)
-                    hist_test, outer_test, inner_test = builder_fn(pos_test)
-                    print(
-                        f"  Nested history shape: {hist_train.shape} "
-                        f"(max_games={hist_train.shape[1]}, "
-                        f"max_kicks={hist_train.shape[2]}, "
-                        f"kick_dim={hist_train.shape[3]})"
-                    )
-
-                    # Optional per-game aggregate branch ("ATTN_HISTORY_STATS"
-                    # for the nested path). Built with the same
-                    # build_game_history_arrays helper the flat positions use,
-                    # but capped to the nested model's max_games so the outer
-                    # sequence length matches the kick tensor.
-                    game_history_stats = cfg.get("attn_history_stats")
-                    game_hist_train = game_hist_val = game_hist_test = None
-                    if game_history_stats:
-                        nested_max_games = hist_train.shape[1]
-                        game_hist_train, _ = build_game_history_arrays(
-                            pos_train,
-                            history_stats=game_history_stats,
-                            max_seq_len=nested_max_games,
-                        )
-                        game_hist_val, _ = build_game_history_arrays(
-                            pos_val,
-                            history_stats=game_history_stats,
-                            max_seq_len=nested_max_games,
-                        )
-                        game_hist_test, _ = build_game_history_arrays(
-                            pos_test,
-                            history_stats=game_history_stats,
-                            max_seq_len=nested_max_games,
-                        )
-                        print(
-                            f"  Per-game history shape: {game_hist_train.shape} "
-                            f"(game_dim={game_hist_train.shape[-1]})"
-                        )
-
-                    (
-                        attn_model,
-                        attn_nn_scaler,
-                        attn_nn_test_preds,
-                        attn_nn_metrics,
-                        attn_history,
-                    ) = _train_nested_attention_nn(
-                        X_attn_train,
-                        X_attn_val,
-                        X_attn_test,
-                        hist_train,
-                        outer_train,
-                        inner_train,
-                        hist_val,
-                        outer_val,
-                        inner_val,
-                        hist_test,
-                        outer_test,
-                        inner_test,
-                        y_train_dict,
-                        y_val_dict,
-                        y_test_dict,
-                        cfg,
-                        targets,
-                        seed,
-                        game_hist_train=game_hist_train,
-                        game_hist_val=game_hist_val,
-                        game_hist_test=game_hist_test,
-                    )
-                else:
-                    history_stats = cfg.get("attn_history_stats", None)
-                    max_seq_len = cfg.get("attn_max_seq_len", 17)
-
-                    hist_train, mask_train = build_game_history_arrays(
-                        pos_train, history_stats=history_stats, max_seq_len=max_seq_len
-                    )
-                    hist_val, mask_val = build_game_history_arrays(
-                        pos_val, history_stats=history_stats, max_seq_len=max_seq_len
-                    )
-                    hist_test, mask_test = build_game_history_arrays(
-                        pos_test, history_stats=history_stats, max_seq_len=max_seq_len
-                    )
-                    print(f"  History shape: {hist_train.shape} (game_dim={hist_train.shape[2]})")
-
-                    # Optional second attention branch: opponent-side game log.
-                    # Kind-based dispatch via OPP_ATTN_PER_GAME_BUILDERS —
-                    # "defense" (QB/RB/WR/TE) aggregates over the all-position
-                    # concat of train/val/test; "offense" (DST) loads the raw
-                    # player-week cache because DST's train/val/test frames are
-                    # team-level and lack the offensive columns the offense
-                    # aggregation needs. Either way the downstream
-                    # `build_opp_defense_history_arrays` call is reused
-                    # unchanged — it's generic over the per-game frame and
-                    # stat list.
-                    opp_history_stats = cfg.get("opp_attn_history_stats")
-                    opp_hist_train = opp_mask_train = None
-                    opp_hist_val = opp_mask_val = None
-                    opp_hist_test = opp_mask_test = None
-                    if opp_history_stats:
-                        opp_max_seq_len = cfg.get("opp_attn_max_seq_len", max_seq_len)
-                        opp_attn_kind = cfg.get("opp_attn_kind", "defense")
-                        builder = OPP_ATTN_PER_GAME_BUILDERS[opp_attn_kind]
-                        if opp_attn_kind == "offense":
-                            weekly_cache_path = (
-                                f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
-                            )
-                            opp_source_df = pd.read_parquet(weekly_cache_path)
-                        else:
-                            opp_source_df = pd.concat(
-                                [train_df, val_df, test_df], ignore_index=True
-                            )
-                        opp_per_game = builder(opp_source_df)
-                        opp_hist_train, opp_mask_train = build_opp_defense_history_arrays(
-                            pos_train, opp_per_game, opp_history_stats, opp_max_seq_len
-                        )
-                        opp_hist_val, opp_mask_val = build_opp_defense_history_arrays(
-                            pos_val, opp_per_game, opp_history_stats, opp_max_seq_len
-                        )
-                        opp_hist_test, opp_mask_test = build_opp_defense_history_arrays(
-                            pos_test, opp_per_game, opp_history_stats, opp_max_seq_len
-                        )
-                        print(
-                            f"  Opp-{opp_attn_kind} history shape: {opp_hist_train.shape} "
-                            f"(opp_dim={opp_hist_train.shape[2]})"
-                        )
-
-                    (
-                        attn_model,
-                        attn_nn_scaler,
-                        attn_nn_test_preds,
-                        attn_nn_metrics,
-                        attn_history,
-                    ) = _train_attention_nn(
-                        X_attn_train,
-                        X_attn_val,
-                        X_attn_test,
-                        hist_train,
-                        mask_train,
-                        hist_val,
-                        mask_val,
-                        hist_test,
-                        mask_test,
-                        y_train_dict,
-                        y_val_dict,
-                        y_test_dict,
-                        cfg,
-                        targets,
-                        seed,
-                        feature_cols=attn_feature_cols,
-                        opp_hist_train=opp_hist_train,
-                        opp_mask_train=opp_mask_train,
-                        opp_hist_val=opp_hist_val,
-                        opp_mask_val=opp_mask_val,
-                        opp_hist_test=opp_hist_test,
-                        opp_mask_test=opp_mask_test,
-                    )
+                (
+                    attn_model,
+                    attn_nn_scaler,
+                    attn_nn_test_preds,
+                    attn_nn_metrics,
+                    attn_history,
+                    attn_feature_cols,
+                ) = _train_attention_holdout(
+                    cfg,
+                    targets,
+                    seed,
+                    X_train,
+                    X_val,
+                    X_test,
+                    y_train_dict,
+                    y_val_dict,
+                    y_test_dict,
+                    pos_train,
+                    pos_val,
+                    pos_test,
+                    feature_cols,
+                    opp_source_frames=(train_df, val_df, test_df),
+                )
 
         return {
             "model": model,
@@ -1851,6 +1895,42 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     ridge_test_preds = ridge_model.predict(X_test)
     ridge_metrics = compute_target_metrics(y_test_dict, ridge_test_preds, targets)
 
+    # ElasticNet (optional parallel linear baseline with L1+L2) — mirrors
+    # run_pipeline so CV mode reports the same model when train_elasticnet=True.
+    enet_metrics = None
+    if cfg.get("train_elasticnet", False):
+        print(f"\n=== {pos} ElasticNet Multi-Target (Final Holdout) ===")
+        enet_tune_grids = {t: cfg["ridge_alpha_grids"][t] for t in cv_ridge_targets}
+        enet_l1_ratios = cfg.get("enet_l1_ratios", [0.3, 0.5, 0.7])
+        enet_best = (
+            _tune_enet_cv(
+                X_train,
+                y_train_dict,
+                pos_train[cv_col].values,
+                targets=cv_ridge_targets,
+                alpha_grids=enet_tune_grids,
+                l1_ratios=enet_l1_ratios,
+                n_cv_folds=cfg.get("ridge_cv_folds", 4),
+                refine_points=cfg.get("ridge_refine_points", 5),
+            )
+            if cv_ridge_targets
+            else {}
+        )
+        enet_model, _enet_test_preds, enet_metrics = _train_elasticnet(
+            X_train,
+            X_test,
+            y_train_dict,
+            y_test_dict,
+            cfg,
+            targets,
+            enet_best,
+        )
+        non_converged = [
+            t for t, info in enet_model.convergence_report().items() if not info["converged"]
+        ]
+        if non_converged:
+            print(f"  WARNING: ElasticNet did not converge for: {non_converged}")
+
     # NN
     print(f"\n=== {pos} Multi-Head NN (Final Holdout) ===")
     model, nn_scaler, nn_test_preds, nn_metrics, history = _train_nn(
@@ -1864,6 +1944,37 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         targets,
         seed,
     )
+
+    # Attention NN (game history as sequences) — mirrors run_pipeline so CV mode
+    # reports attention metrics when train_attention_nn=True (QB/RB/WR in prod).
+    # All-position frames for the opponent-defense builder are the season-sliced
+    # full frames + holdout test (they retain every position, unlike pos_*).
+    attn_nn_metrics = None
+    if cfg.get("train_attention_nn", False):
+        print(f"\n=== {pos} Attention Multi-Head Neural Net (Final Holdout) ===")
+        (
+            _attn_model,
+            _attn_scaler,
+            _attn_test_preds,
+            attn_nn_metrics,
+            _attn_history,
+            _attn_cols,
+        ) = _train_attention_holdout(
+            cfg,
+            targets,
+            seed,
+            X_train,
+            X_val,
+            X_test,
+            y_train_dict,
+            y_val_dict,
+            y_test_dict,
+            pos_train,
+            pos_val,
+            pos_test,
+            feature_cols,
+            opp_source_frames=(final_train_df, final_val_df, test_df),
+        )
 
     # LightGBM
     lgbm_test_preds = None
@@ -1890,6 +2001,10 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         f"{pos} Ridge (per-target CV alphas)": ridge_metrics,
         f"{pos} Multi-Head NN": nn_metrics,
     }
+    if enet_metrics is not None:
+        comparison[f"{pos} ElasticNet"] = enet_metrics
+    if attn_nn_metrics is not None:
+        comparison[f"{pos} Attention NN"] = attn_nn_metrics
     if lgbm_metrics is not None:
         comparison[f"{pos} LightGBM"] = lgbm_metrics
     print_comparison_table(comparison, position=pos, target_names=targets)
@@ -1995,4 +2110,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     if lgbm_metrics is not None:
         result["lgbm_metrics"] = lgbm_metrics
         result["lgbm_ranking"] = lgbm_ranking
+    if enet_metrics is not None:
+        result["enet_metrics"] = enet_metrics
+    if attn_nn_metrics is not None:
+        result["attn_nn_metrics"] = attn_nn_metrics
     return result

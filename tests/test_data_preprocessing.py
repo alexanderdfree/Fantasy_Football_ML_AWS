@@ -1,9 +1,10 @@
 """Coverage tests for ``src/data/preprocessing.py``.
 
 ``preprocess()`` filters raw nflverse weekly data to skill positions, drops
-no-snap zero-stat rows, fills missing stat columns with 0, imputes
-``snap_pct`` with position-week medians, and computes the three fantasy
-scoring formats. These tests exercise every step + every conditional
+no-snap zero-stat rows, fills missing stat columns with 0, and computes the
+three fantasy scoring formats. It deliberately does NOT impute ``snap_pct``
+(audit-320 F72) — that is deferred to the train-only post-split fill in
+``src/data/split.py``. These tests exercise every step + every conditional
 branch (with/without ``season_type``, with/without ``snap_pct``, with/
 without ``fantasy_points_ppr``) on synthetic frames that pin down the
 expected behavior.
@@ -182,13 +183,24 @@ def test_preprocess_fills_missing_stat_columns_with_zero():
 
 
 # --------------------------------------------------------------------------
-# snap_pct median imputation
+# snap_pct imputation is deferred to split time (train-only), NOT done here
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-def test_preprocess_imputes_snap_pct_with_position_week_median():
-    """One QB row at week 5 has snap_pct=NaN — fill with median of others."""
+def test_preprocess_does_not_impute_snap_pct():
+    """``preprocess`` no longer fills ``snap_pct`` (audit-320 F72).
+
+    The legacy in-line fill fitted position-week medians on the full
+    (train+val+test) frame, leaking holdout distribution into train-row
+    imputation, and pre-empted the train-only post-split fill in
+    ``temporal_split``/``expanding_window_folds`` (those only ``fillna``
+    NaNs). Imputation is now performed exclusively POST-SPLIT with
+    train-only medians, so a NaN ``snap_pct`` must survive ``preprocess``
+    unchanged. (The production ``build_features`` lag step then zeroes any
+    remaining NaN via ``groupby(...).shift(1).fillna(0)`` before
+    ``temporal_split`` runs — see ``src/data/preprocessing.py`` Step 4.)
+    """
     df = pd.DataFrame(
         [
             _base_row(player_id="QB1", week=5, snap_pct=0.80),
@@ -198,14 +210,22 @@ def test_preprocess_imputes_snap_pct_with_position_week_median():
     )
     out = preprocess(df)
     qb3 = out[out["player_id"] == "QB3"].iloc[0]
-    # median of (0.80, 0.60) = 0.70
-    assert qb3["snap_pct"] == pytest.approx(0.70)
+    # NaN is left for the split-time train-only imputation; not median-filled here.
+    assert np.isnan(qb3["snap_pct"])
+    # Observed values pass through untouched.
+    assert out[out["player_id"] == "QB1"].iloc[0]["snap_pct"] == pytest.approx(0.80)
+    assert out[out["player_id"] == "QB2"].iloc[0]["snap_pct"] == pytest.approx(0.60)
 
 
 @pytest.mark.unit
-def test_preprocess_fills_orphan_snap_pct_with_zero_after_median_attempt():
-    """If an entire (position, week) group is all NaN, the transform-median is
-    NaN and the second fillna(0) catches it."""
+def test_preprocess_leaves_orphan_snap_pct_nan_for_split_time():
+    """A row whose ``snap_pct`` is NaN passes through ``preprocess`` as NaN.
+
+    Post-F72 ``preprocess`` performs no snap_pct fill, so the orphan NaN
+    is left for the train-only post-split imputation (``temporal_split``'s
+    ``impute_snap_pct`` falls back to 0 for empty groups) and the
+    ``build_features`` lag's ``fillna(0)``.
+    """
     df = pd.DataFrame(
         [
             _base_row(
@@ -214,8 +234,7 @@ def test_preprocess_fills_orphan_snap_pct_with_zero_after_median_attempt():
         ]
     )
     out = preprocess(df)
-    # No other QB rows in week 10 → median is NaN → fallback to 0.
-    assert out.iloc[0]["snap_pct"] == 0.0
+    assert np.isnan(out.iloc[0]["snap_pct"])
 
 
 # --------------------------------------------------------------------------

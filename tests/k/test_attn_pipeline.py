@@ -28,6 +28,7 @@ from src.k.features import (
     get_feature_columns,
 )
 from src.k.targets import compute_targets
+from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_pipeline
 
 
@@ -64,6 +65,12 @@ def _callables() -> dict:
         "fill_nans_fn": fill_nans,
         "get_feature_columns_fn": get_feature_columns,
         "compute_adjustment_fn": None,
+        # Set so pipeline.py's ``_total`` lambda uses K's real signed
+        # aggregator (fg/pat points minus fg/xp misses) instead of the
+        # wrong-sign fallback ``sum(preds[t])``, which adds misses as positive.
+        # Shared by _attn_config and _base_config so the bit-identity sweep over
+        # 'total' compares the correct aggregation. See audit-320 F11 (F96).
+        "aggregate_fn": aggregate_fn_for("K"),
     }
 
 

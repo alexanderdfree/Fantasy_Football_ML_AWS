@@ -79,6 +79,21 @@ def test_team_abbr_normalize(raw, expected):
     assert _team_abbr_normalize(raw) == expected
 
 
+def test_schedule_team_code_normalization_is_nflverse_variant():
+    """F104: the schedule-join variant is derived from the canonical base map
+    but uses the Rams' nflverse code (STL -> LA, not LAR), and leaves the
+    modern ``LA`` untouched (no LA -> LAR rewrite that would break the join)."""
+    from src.data.nflcom_loader import schedule_team_code_normalization
+
+    sched_map = schedule_team_code_normalization()
+    # Exactly the three relocated franchises, with the nflverse Rams code.
+    assert sched_map == {"OAK": "LV", "SD": "LAC", "STL": "LA"}
+    # The base NFL.com/roster map keeps STL -> LAR and rewrites LA -> LAR;
+    # the schedule variant must NOT, or the Rams join against player rows
+    # (which carry "LA") silently misses.
+    assert "LA" not in sched_map
+
+
 # ---------- Loader (parser) tests -----------------------------------------------
 
 
@@ -210,7 +225,8 @@ def test_load_projections_uses_cache(tmp_path):
     load_nflcom_projections(
         seasons=[2024], weeks=[1], cache_dir=str(tmp_path), reader=_fixture_reader_qb_only
     )
-    cache_file = tmp_path / f"nflcom_projections_{_CACHE_VERSION}_2024_2024.parquet"
+    # Cache key includes a weeks signature (F73): weeks=[1] -> "w1-1".
+    cache_file = tmp_path / f"nflcom_projections_{_CACHE_VERSION}_2024_2024_w1-1.parquet"
     assert cache_file.exists()
 
     # Second call: reader raises if invoked. Cache hit must skip it entirely.
@@ -219,6 +235,28 @@ def test_load_projections_uses_cache(tmp_path):
 
     df = load_nflcom_projections(seasons=[2024], weeks=[1], cache_dir=str(tmp_path), reader=boom)
     assert len(df) == 5
+
+
+def test_load_projections_cache_key_varies_with_weeks(tmp_path):
+    """F73: a different ``weeks`` range must not collide on the earlier cache.
+
+    A first call for weeks=[1] then a second for weeks=[1, 2] must write
+    distinct cache files (keyed by the weeks signature) so the second call
+    re-fetches rather than silently returning the narrower frame's coverage.
+    """
+    load_nflcom_projections(
+        seasons=[2024], weeks=[1], cache_dir=str(tmp_path), reader=_fixture_reader_qb_only
+    )
+    # Distinct week range -> distinct cache key, so the reader is consulted
+    # again (a stale-key collision would instead boom-skip the network).
+    load_nflcom_projections(
+        seasons=[2024], weeks=[1, 2], cache_dir=str(tmp_path), reader=_fixture_reader_qb_only
+    )
+    files = sorted(p.name for p in tmp_path.glob("nflcom_projections_v1_*.parquet"))
+    assert files == [
+        "nflcom_projections_v1_2024_2024_w1-1.parquet",
+        "nflcom_projections_v1_2024_2024_w1-2.parquet",
+    ], files
 
 
 def test_load_projections_force_refresh_bypasses_cache(tmp_path):
@@ -619,7 +657,8 @@ def test_load_with_gsis_id_writes_cache(tmp_path):
         rosters=rosters,
         reader=_fixture_reader_qb_only,
     )
-    joined_path = tmp_path / f"nflcom_projections_joined_{_CACHE_VERSION}_2024_2024.parquet"
+    # Joined cache key includes min_match_rate (F105): default 0.90 -> "mr90".
+    joined_path = tmp_path / f"nflcom_projections_joined_{_CACHE_VERSION}_2024_2024_mr90.parquet"
     assert joined_path.exists()
 
     # Second call hits the joined cache; reader / rosters not consulted.
@@ -633,3 +672,69 @@ def test_load_with_gsis_id_writes_cache(tmp_path):
         reader=boom,
     )
     assert len(df) == 5
+
+
+def test_load_with_gsis_id_cache_key_varies_with_min_match_rate(tmp_path):
+    """F105: a stricter ``min_match_rate`` must not silently hit an earlier,
+    looser-threshold cache. Distinct thresholds -> distinct cache files."""
+    rosters = _make_rosters(
+        [
+            {"player_id": f"00-{i}", "player_name": n, "team": t, "position": "QB", "season": 2024}
+            for i, (n, t) in enumerate(
+                [
+                    ("Josh Allen", "BUF"),
+                    ("Patrick Mahomes II", "KC"),
+                    ("Lamar Jackson", "BAL"),
+                    ("AJ McCarron", "CIN"),
+                    ("Jameis Winston", "CLE"),
+                ]
+            )
+        ]
+    )
+    # Full-match roster, so both thresholds pass — we are checking the cache
+    # KEY varies, not the RuntimeError path.
+    load_nflcom_with_gsis_id(
+        seasons=[2024],
+        cache_dir=str(tmp_path),
+        rosters=rosters,
+        reader=_fixture_reader_qb_only,
+        min_match_rate=0.80,
+    )
+    load_nflcom_with_gsis_id(
+        seasons=[2024],
+        cache_dir=str(tmp_path),
+        rosters=rosters,
+        reader=_fixture_reader_qb_only,
+        min_match_rate=0.99,
+    )
+    files = sorted(p.name for p in tmp_path.glob("nflcom_projections_joined_v1_*.parquet"))
+    assert files == [
+        "nflcom_projections_joined_v1_2024_2024_mr80.parquet",
+        "nflcom_projections_joined_v1_2024_2024_mr99.parquet",
+    ], files
+
+
+def test_normalize_one_position_missing_optional_columns_no_crash():
+    """F27: a CSV missing the projected-pts / rank / stat columns must degrade
+    to NaN/0 columns rather than crashing on a scalar-NaN ``.fillna()``."""
+    from src.data.nflcom_loader import _normalize_one_position
+
+    # Minimal frame with only the always-required identity columns.
+    df = pd.DataFrame(
+        {
+            "season": [2024, 2024],
+            "week": [1, 1],
+            "position": ["QB", "QB"],
+            "PlayerId": ["1", "2"],
+            "PlayerName": ["Josh Allen", "Patrick Mahomes"],
+            "Team": ["BUF", "KC"],
+            "PlayerOpponent": ["MIA", "DEN"],
+        }
+    )
+    out = _normalize_one_position(df, "QB")
+    # Missing PlayerWeekProjectedPts -> 0.0 (NaN coerced by the .fillna chain).
+    assert list(out["nflcom_projected_pts"]) == [0.0, 0.0]
+    # Missing ProjectedRank -> all NaN (no fillna applied to rank).
+    assert out["nflcom_projected_rank"].isna().all()
+    # Missing QB stat columns (PassingYDS, ...) -> 0.0.
+    assert list(out["passing_yards"]) == [0.0, 0.0]

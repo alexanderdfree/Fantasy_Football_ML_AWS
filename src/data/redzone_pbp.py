@@ -69,17 +69,21 @@ def _aggregate_one_season(pbp: pd.DataFrame) -> pd.DataFrame:
 
     Three independent aggregations:
 
-    1. Rushing-side: for rows with a ``rusher_player_id``, count plays with
-       ``yardline_100 <= {20, 10, 5}`` grouped by player-week-team.
+    1. Rushing-side: for run plays with a ``rusher_player_id``, count plays
+       with ``yardline_100 <= {20, 10, 5}`` grouped by player-week-team.
     2. Receiving-side: for pass-attempt rows with a ``receiver_player_id``,
        count plays with ``yardline_100 <= 20`` grouped by player-week-team.
     3. Team-level denominator: for all pass attempts, count plays with
        ``yardline_100 <= 20`` grouped by team-week. Used to convert
        ``redzone_targets`` (count) into ``redzone_target_share`` (rate).
 
-    The receiving filter requires ``pass_attempt == 1`` so designed runs from
-    shotgun (with a ``receiver_player_id`` field set by the parser) don't
-    leak into the target count.
+    The rushing filter requires ``play_type == "run"`` so that QB kneel-downs
+    (``play_type == "qb_kneel"``, often inside the 5 in victory formation) and
+    penalty-nullified plays (``play_type == "no_play"``) — both of which carry
+    a ``rusher_player_id`` and ``rush_attempt == 1`` — don't inflate the carry
+    counts. This mirrors the receiving filter, which requires ``pass_attempt
+    == 1`` so designed runs from shotgun (with a ``receiver_player_id`` field
+    set by the parser) don't leak into the target count.
 
     Regular-season-only filter applied defensively. The public caller in
     this module already filters before delegating; the redundant guard here
@@ -91,7 +95,7 @@ def _aggregate_one_season(pbp: pd.DataFrame) -> pd.DataFrame:
     in_rz = pbp["yardline_100"] <= 20
 
     # --- Rushing-side aggregates ---
-    rush = pbp[pbp["rusher_player_id"].notna()].copy()
+    rush = pbp[(pbp["rusher_player_id"].notna()) & (pbp["play_type"] == "run")].copy()
     rush_yl = rush["yardline_100"]
     rush["_rz_carry"] = (rush_yl <= 20).astype("int32")
     rush["_in10_carry"] = (rush_yl <= 10).astype("int32")

@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from src.config import CACHE_DIR, SEASONS
+from src.data.nflcom_loader import schedule_team_code_normalization
 
 # ---------------------------------------------------------------------------
 # Feature definitions
@@ -48,7 +49,13 @@ _schedule_cache_lock = threading.Lock()
 # uses the current team codes throughout, but the historical schedule still
 # carries the pre-relocation codes (OAK/SD/STL) for those seasons, so a
 # direct (season, week, team) join misses every pre-move row without this.
-_TEAM_CODE_NORMALIZATION = {"OAK": "LV", "SD": "LAC", "STL": "LA"}
+#
+# Derived from the canonical base map in ``src.data.nflcom_loader`` (single
+# source of truth) via ``schedule_team_code_normalization()``, which encodes
+# the one documented join-direction difference: nflverse schedule/weekly data
+# canonicalize the Rams to ``"LA"`` (STL -> LA), whereas the NFL.com/roster
+# universe uses ``"LAR"``. Resolves to ``{"OAK": "LV", "SD": "LAC", "STL": "LA"}``.
+_TEAM_CODE_NORMALIZATION = schedule_team_code_normalization()
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,7 @@ from src.dst.features import (
     get_feature_columns,
 )
 from src.dst.targets import compute_targets
+from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_pipeline
 from tests.dst.conftest import _build_tiny_dataset
 from tests.dst.test_pipeline_e2e import _build_synthetic_schedules
@@ -54,6 +55,11 @@ def _make_dst_elasticnet_cfg() -> dict:
         "loss_weights": LOSS_WEIGHTS,
         "huber_deltas": HUBER_DELTAS,
         "poisson_targets": POISSON_TARGETS,
+        # Mirror _make_dst_tiny_cfg: set the real DST aggregator so the
+        # ElasticNet ranking/backtest ``_total`` uses signed PA/YA bonuses
+        # instead of the wrong-sign fallback ``sum(preds[t])``, which adds
+        # yards_allowed as a positive scoring head. See audit-320 F97 (F62).
+        "aggregate_fn": aggregate_fn_for("DST"),
     }
     cfg.update(CONFIG_TINY)
     cfg["train_elasticnet"] = True

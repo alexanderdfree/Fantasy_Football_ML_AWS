@@ -23,6 +23,7 @@ invalidate old caches without surgery.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
@@ -30,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.error import HTTPError, URLError
 
 import nfl_data_py as nfl
+import numpy as np
 import pandas as pd
 
 from src.config import CACHE_DIR
@@ -109,17 +111,23 @@ _ALL_TARGET_COLUMNS = {
 # Historical -> canonical NFL team-abbr mapping. Both NFL.com and nflverse have
 # historically inconsistent codes; canonicalize one side so the join works.
 #
-# This is the **canonical project-wide team-code normalization map**. Other
-# bundles (W.SHARED-WEATHER, W.SHARED-ENG) should import ``TEAM_CODE_MAP``
-# or call ``normalize_team_code(code)`` instead of maintaining their own
-# parallel dictionaries.
+# This is the **canonical project-wide team-code normalization base map** — the
+# single source of truth for relocation/abbr aliases. It targets the
+# *NFL.com/roster* join universe, which canonicalizes the Rams to ``"LAR"``
+# (``import_seasonal_rosters`` and NFL.com projection CSVs). Callers should
+# import ``TEAM_CODE_MAP`` / call ``normalize_team_code(code)`` rather than
+# hand-maintaining a parallel dictionary.
 #
-# Note: this map uses ``"STL": "LAR"`` (NFL.com-style canonical). The
-# nflverse schedule release historically uses ``"LA"`` for the Rams in some
-# years instead of ``"LAR"``. Callers joining against nflverse schedules
-# may need to chain a ``{"LA": "LAR"}`` (already included) or
-# ``{"LAR": "LA"}`` extension depending on join direction; see
-# ``src/shared/weather_features.py`` for one such adapter.
+# Join-universe caveat (do NOT "fix" by collapsing the two): the nflverse
+# *schedule* + *weekly* releases use ``"LA"`` for the Rams (verified across
+# 2016-2025: ``import_schedules`` and ``import_weekly_data`` both emit ``LA``,
+# never ``LAR``). A merge that maps the schedule's ``LA`` to ``LAR`` while the
+# player frame still carries ``LA`` silently misses every Rams row. The
+# schedule-join consumers therefore derive their normalization from this base
+# via ``schedule_team_code_normalization()`` below, which remaps the Rams back
+# to ``LA`` and drops the historical ``STL`` to ``LA`` (not ``LAR``). That
+# helper is the *one* place the schedule-universe variant is defined;
+# ``src/shared/weather_features._TEAM_CODE_NORMALIZATION`` is built from it.
 TEAM_CODE_MAP: dict[str, str] = {
     "OAK": "LV",
     "SD": "LAC",
@@ -170,10 +178,25 @@ def normalize_team_code(code: str | None) -> str:
     return TEAM_CODE_MAP.get(s, s)
 
 
-# Hand-curated overrides for names where normalization isn't enough. Populate
-# this from the top-5 unmatched-names log after the first end-to-end run if
-# needed; keep ≤20 entries. Empty by default.
-_NAME_OVERRIDES: dict[str, str] = {}
+def schedule_team_code_normalization() -> dict[str, str]:
+    """Return the relocation map for the *nflverse schedule/weekly* join universe.
+
+    Derived from :data:`TEAM_CODE_MAP` (the single source of truth) with the
+    one documented join-direction difference: nflverse schedules and weekly
+    data canonicalize the Rams to ``"LA"`` (not ``"LAR"``), so the historical
+    ``STL`` maps to ``LA`` and the modern ``LA`` is left untouched (no
+    ``LA -> LAR`` rewrite, which would break the Rams join against player rows
+    that already carry ``LA``). The ``WSH/JAX/JAC`` entries are dropped because
+    nflverse already emits ``WAS``/``JAX`` consistently — only the three
+    relocated franchises ever differ between the schedule's historical codes
+    and the player frame's modern codes.
+
+    Consumed by ``src.shared.weather_features._TEAM_CODE_NORMALIZATION`` so the
+    schedule-side normalization has exactly one definition.
+    """
+    base = {k: v for k, v in TEAM_CODE_MAP.items() if k in ("OAK", "SD", "STL")}
+    base["STL"] = "LA"  # nflverse schedule/weekly uses LA for the Rams, not LAR.
+    return base
 
 
 def normalize_player_name(name: str | None) -> str:
@@ -202,8 +225,7 @@ def normalize_player_name(name: str | None) -> str:
     tokens = s.split()
     while tokens and tokens[-1] in _SUFFIX_TOKENS:
         tokens.pop()
-    s = " ".join(tokens)
-    return _NAME_OVERRIDES.get(s, s)
+    return " ".join(tokens)
 
 
 def _team_abbr_normalize(team: str | None) -> str:
@@ -215,6 +237,25 @@ def _team_abbr_normalize(team: str | None) -> str:
     helper.
     """
     return normalize_team_code(team)
+
+
+def _weeks_cache_signature(weeks: tuple[int, ...] | list[int]) -> str:
+    """Stable, filename-safe signature of a week selection for cache keys.
+
+    A contiguous range renders as the readable ``w{min}-{max}`` (e.g. the
+    default 1-18 weeks -> ``w1-18``); any non-contiguous / sparse selection
+    renders as ``w{min}-{max}-{len}-{8-hex hash}`` so the filename stays bounded
+    while remaining unique per distinct selection. Order- and duplicate-
+    insensitive: ``(3, 1, 2)`` and ``(1, 2, 3)`` produce the same signature.
+    """
+    uniq = sorted(set(int(w) for w in weeks))
+    if not uniq:
+        return "wnone"
+    lo, hi = uniq[0], uniq[-1]
+    if uniq == list(range(lo, hi + 1)):
+        return f"w{lo}-{hi}"
+    digest = hashlib.sha1(",".join(map(str, uniq)).encode()).hexdigest()[:8]
+    return f"w{lo}-{hi}-{len(uniq)}-{digest}"
 
 
 def _projection_url(year: int, week: int, position: str) -> str:
@@ -289,6 +330,20 @@ def _read_one_projection(
     return None
 
 
+def _numeric_col(df: pd.DataFrame, col: str) -> pd.Series:
+    """Coerce ``df[col]`` to numeric, returning an all-NaN Series if absent.
+
+    ``pd.to_numeric(df.get(col))`` returns a *scalar* ``np.nan`` when ``col`` is
+    missing (``df.get`` yields ``None``), and any chained ``.fillna()`` then
+    raises ``AttributeError`` on the scalar. Guard the existence check so a
+    missing upstream column degrades to an all-NaN column of the right length
+    instead of crashing the whole fetch.
+    """
+    if col not in df.columns:
+        return pd.Series(np.nan, index=df.index, dtype="float64")
+    return pd.to_numeric(df[col], errors="coerce")
+
+
 def _normalize_one_position(df: pd.DataFrame, position: str) -> pd.DataFrame:
     """Apply per-position column mapping + universal columns.
 
@@ -310,15 +365,13 @@ def _normalize_one_position(df: pd.DataFrame, position: str) -> pd.DataFrame:
             # detect float NaN via pd.isna and emit "" instead.
             "team": df["Team"].map(_team_abbr_normalize),
             "opponent": df["PlayerOpponent"].map(_team_abbr_normalize),
-            "nflcom_projected_pts": pd.to_numeric(
-                df.get("PlayerWeekProjectedPts"), errors="coerce"
-            ).fillna(0.0),
-            "nflcom_projected_rank": pd.to_numeric(df.get("ProjectedRank"), errors="coerce"),
+            "nflcom_projected_pts": _numeric_col(df, "PlayerWeekProjectedPts").fillna(0.0),
+            "nflcom_projected_rank": _numeric_col(df, "ProjectedRank"),
         }
     )
     column_map = NFLCOM_COLUMN_MAP[position]
     for src_col, target_col in column_map.items():
-        vals = pd.to_numeric(df.get(src_col), errors="coerce").fillna(0.0)
+        vals = _numeric_col(df, src_col).fillna(0.0)
         if target_col == "fumbles_lost":
             vals = vals * _FUM_LOST_RATIO
         out[target_col] = vals.astype(float)
@@ -351,8 +404,15 @@ def load_nflcom_projections(
         raise ValueError("seasons must be a non-empty list of ints")
     weeks_to_try = tuple(weeks) if weeks is not None else NFLCOM_DEFAULT_WEEKS
     os.makedirs(cache_dir, exist_ok=True)
+    # Include a weeks signature in the cache key. Without it, a first call with
+    # the default 1-18 range and a later call with a narrower (or different)
+    # week range collide on the same file, so the later call silently returns
+    # the earlier frame's week coverage. The full week range is canonicalized
+    # (de-duped + ordered) so equivalent-but-unsorted inputs hash to one key.
+    weeks_sig = _weeks_cache_signature(weeks_to_try)
     cache_path = (
-        f"{cache_dir}/nflcom_projections_{_CACHE_VERSION}_{min(seasons)}_{max(seasons)}.parquet"
+        f"{cache_dir}/nflcom_projections_{_CACHE_VERSION}"
+        f"_{min(seasons)}_{max(seasons)}_{weeks_sig}.parquet"
     )
     if os.path.exists(cache_path) and not force_refresh:
         return pd.read_parquet(cache_path)
@@ -480,9 +540,17 @@ def load_nflcom_with_gsis_id(
     if not seasons:
         raise ValueError("seasons must be a non-empty list of ints")
     os.makedirs(cache_dir, exist_ok=True)
+    # Encode ``min_match_rate`` in the cache key. A cache hit returns the joined
+    # frame without recomputing the match rate, so the RuntimeError guard below
+    # only fires on a cold cache. Without the threshold in the key, a first
+    # caller at min_match_rate=0.80 caches an 0.85-rate result and a later
+    # caller passing min_match_rate=0.99 silently receives it as if its
+    # (stricter) threshold had passed. Quantize to whole percent so equivalent
+    # floats (0.90 vs 0.9000001) share one cache file.
+    rate_sig = f"mr{int(round(min_match_rate * 100))}"
     cache_path = (
         f"{cache_dir}/nflcom_projections_joined_{_CACHE_VERSION}"
-        f"_{min(seasons)}_{max(seasons)}.parquet"
+        f"_{min(seasons)}_{max(seasons)}_{rate_sig}.parquet"
     )
     if os.path.exists(cache_path) and not force_refresh:
         return pd.read_parquet(cache_path)
