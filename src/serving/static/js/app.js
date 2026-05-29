@@ -97,6 +97,7 @@ async function init() {
     setupSearch();
     setupModelToggle();
     setupScoringToggle();
+    setupHistoryControls();
     setupWikiClickHandler();
     applyInitialRoute();
 
@@ -290,6 +291,9 @@ function onScoringChanged() {
     const view = activeTab ? activeTab.dataset.view : null;
     if (view === "standings") loadStandings();
     if (view === "model-performance") loadMetrics();
+    // History detail rows show per-target fantasy-point equivalents, so refresh
+    // them too (collapses any open detail; re-opening uses the new format).
+    if (view === "history") loadHistory();
     // If the player modal is open, re-fetch with the new format.
     if (modalOpen && currentPlayerId) openPlayerModal(currentPlayerId);
 }
@@ -1039,6 +1043,16 @@ async function loadWikiPage(slug, anchor = null) {
 // merge commit to a PR; for runs where the lookup returned empty (manual
 // dispatches, force pushes) we fall back to a commit-SHA link.
 // ---------------------------------------------------------------------------
+// Layout constants for the History table. Mirror the backend's
+// _BENCHMARK_MODELS / _BENCHMARK_POSITIONS ordering so a row's per-model pill
+// arrays line up by index. historyData caches the last fetch so the two
+// checkboxes (detailed mode, group-by-position) re-render without re-fetching.
+const HISTORY_MODELS = ["ridge", "nn", "attn_nn", "lgbm"];
+const HISTORY_MODEL_LABELS = { ridge: "Ridge", nn: "NN", attn_nn: "Attn NN", lgbm: "LGBM" };
+const HISTORY_MODEL_COL_CLASS = { ridge: "ridge-col", nn: "nn-col", attn_nn: "attn-nn-col", lgbm: "lgbm-col" };
+const HISTORY_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"];
+let historyData = null;
+
 function formatTrainingTime(seconds) {
     if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return "--";
     const total = Math.round(seconds);
@@ -1047,20 +1061,55 @@ function formatTrainingTime(seconds) {
     return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function renderMaePills(pills) {
-    // The API now always emits six pills per cell (one per position), with
-    // mae=null where that position-model pair didn't train (partial runs,
-    // [docs-only] sentinel files). Empty-array path remains for defensive
-    // robustness against pre-update cached payloads and legacy fixtures.
-    if (!Array.isArray(pills) || pills.length === 0) return '<span class="history-empty">—</span>';
-    return pills
-        .map(p => {
-            const value = p.mae == null
+function renderSummaryPills(entries) {
+    // Generic pill list: each entry is {label, mae}. label is a position
+    // (group-by-model layout) or a model name (group-by-position). mae=null
+    // renders as "--" (that position-model pair didn't train in this run);
+    // empty list renders an em-dash. The optional per_target field carried on
+    // pills is ignored here — it only drives the detailed-mode expansion.
+    if (!Array.isArray(entries) || entries.length === 0) return '<span class="history-empty">—</span>';
+    return entries
+        .map(e => {
+            const value = e.mae == null
                 ? '<span class="history-pill-skip">--</span>'
-                : fmt(p.mae, 2);
-            return `<span class="history-pill"><span class="history-pill-pos">${escapeHtml(p.position)}</span> ${value}</span>`;
+                : fmt(e.mae, 2);
+            return `<span class="history-pill"><span class="history-pill-pos">${escapeHtml(e.label)}</span> ${value}</span>`;
         })
         .join("");
+}
+
+function historyColumns(groupByPosition) {
+    // Group-by-position: one column per position. These carry no .{model}-col
+    // class, so the page-wide #model-display hide rule is intentionally inert
+    // here (model becomes an inner dimension). Group-by-model (default): one
+    // column per model, keeping .{model}-col so #model-display still filters.
+    if (groupByPosition) {
+        return HISTORY_POSITIONS.map(pos => ({ key: pos, label: pos, cls: "col-history-mae" }));
+    }
+    return HISTORY_MODELS.map(m => ({
+        key: m,
+        label: `${HISTORY_MODEL_LABELS[m]} MAE`,
+        cls: `col-history-mae ${HISTORY_MODEL_COL_CLASS[m]}`,
+    }));
+}
+
+function historyCellEntries(row, columnKey, groupByPosition) {
+    if (groupByPosition) {
+        // Column is a position; inner entries are the four models at that position.
+        const posIdx = HISTORY_POSITIONS.indexOf(columnKey);
+        return HISTORY_MODELS.map(m => ({
+            label: HISTORY_MODEL_LABELS[m],
+            mae: row[m] && row[m][posIdx] ? row[m][posIdx].mae : null,
+        }));
+    }
+    // Column is a model; inner entries are the six positions in canonical order.
+    return (row[columnKey] || []).map(p => ({ label: p.position, mae: p.mae }));
+}
+
+function historyRowHasDetail(row) {
+    // A run is expandable only when some (position, model) cell carries
+    // per-target detail — skipped/sentinel runs and old totals-only runs aren't.
+    return HISTORY_MODELS.some(m => (row[m] || []).some(p => p && p.per_target));
 }
 
 function renderHistoryIdCell(repoSlug, row) {
@@ -1095,25 +1144,128 @@ async function loadHistory() {
     const tbody = document.getElementById("history-body");
     try {
         const data = await fetchJSON("/api/benchmark_history");
-        const repoSlug = data.repo_slug || "";
-        if (!data.rows || data.rows.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="arch-loading">No benchmark runs yet.</td></tr>';
-            return;
-        }
-        tbody.innerHTML = data.rows.map(row => `
-            <tr>
-                <td class="col-history-pr">${renderHistoryIdCell(repoSlug, row)}</td>
-                <td class="col-history-ts">${formatHistoryTimestamp(row.timestamp)}</td>
-                <td class="col-history-mae ridge-col">${renderMaePills(row.ridge)}</td>
-                <td class="col-history-mae nn-col">${renderMaePills(row.nn)}</td>
-                <td class="col-history-mae attn-nn-col">${renderMaePills(row.attn_nn)}</td>
-                <td class="col-history-mae lgbm-col">${renderMaePills(row.lgbm)}</td>
-                <td class="col-history-time">${formatTrainingTime(row.total_elapsed_sec)}</td>
-            </tr>
-        `).join("");
+        historyData = {
+            rows: data.rows || [],
+            repoSlug: data.repo_slug || "",
+            targetLabels: data.target_labels || {},
+            targetUnits: data.target_units || {},
+        };
+        renderHistory();
     } catch (e) {
         console.error("Failed to load benchmark history:", e);
-        tbody.innerHTML = '<tr><td colspan="7" class="error-message">Failed to load benchmark history.</td></tr>';
+        historyData = null;
+        const head = document.getElementById("history-head");
+        if (head) head.innerHTML = "";
+        // colspan 9 = the widest layout (group-by-position); harmless when fewer.
+        tbody.innerHTML = '<tr><td colspan="9" class="error-message">Failed to load benchmark history.</td></tr>';
+    }
+}
+
+function renderHistory() {
+    // Re-render from cached historyData using the live checkbox state. Called by
+    // loadHistory (after fetch) and on every checkbox change — never re-fetches.
+    // Rebuilds both <thead> and <tbody> since the column set differs between
+    // group-by-model (4 cols) and group-by-position (6 cols).
+    const head = document.getElementById("history-head");
+    const tbody = document.getElementById("history-body");
+    if (!historyData || !head || !tbody) return;
+    const groupByPosition = document.getElementById("history-group-by-position-toggle").checked;
+    const detailed = document.getElementById("history-detailed-toggle").checked;
+    const columns = historyColumns(groupByPosition);
+    const colSpan = columns.length + 3; // PR + Timestamp + variable cols + Training time
+
+    head.innerHTML = `<tr>
+        <th class="col-history-pr">PR</th>
+        <th class="col-history-ts">Timestamp (UTC)</th>
+        ${columns.map(c => `<th class="${c.cls}">${escapeHtml(c.label)}</th>`).join("")}
+        <th class="col-history-time">Training time</th>
+    </tr>`;
+
+    const { rows, repoSlug } = historyData;
+    if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="${colSpan}" class="arch-loading">No benchmark runs yet.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = rows
+        .map(row => {
+            const expandable = detailed && historyRowHasDetail(row);
+            const cells = columns
+                .map(c => `<td class="${c.cls}">${renderSummaryPills(historyCellEntries(row, c.key, groupByPosition))}</td>`)
+                .join("");
+            const caret = expandable ? '<span class="history-caret">▸</span>' : "";
+            const mainRow = `<tr${expandable ? ' class="history-row-expandable"' : ""}>
+                <td class="col-history-pr">${caret}${renderHistoryIdCell(repoSlug, row)}</td>
+                <td class="col-history-ts">${formatHistoryTimestamp(row.timestamp)}</td>
+                ${cells}
+                <td class="col-history-time">${formatTrainingTime(row.total_elapsed_sec)}</td>
+            </tr>`;
+            return mainRow + (expandable ? renderHistoryDetail(row, colSpan) : "");
+        })
+        .join("");
+}
+
+function renderHistoryDetail(row, colSpan) {
+    // One block per trained position: a target(rows) x model(cols) table that
+    // mirrors the Model Performance tab's renderPositionModelDetail, reusing
+    // formatTargetMae for units + fantasy-point equivalents. Orientation is
+    // fixed (per-position blocks) regardless of the group-by-position toggle —
+    // targets are position-specific, so model-as-column is the only clean layout.
+    const { targetLabels, targetUnits } = historyData;
+    const blocks = HISTORY_POSITIONS.map((pos, posIdx) => {
+        // Target set/order comes from the first model that has detail for this
+        // position (every model shares a position's targets).
+        let targets = null;
+        for (const m of HISTORY_MODELS) {
+            const pt = row[m] && row[m][posIdx] && row[m][posIdx].per_target;
+            if (pt) { targets = Object.keys(pt); break; }
+        }
+        if (!targets || !targets.length) return "";
+        const trows = targets
+            .map(tkey => {
+                const label = targetLabels[tkey] || tkey;
+                const unit = targetUnits[tkey];
+                const cells = HISTORY_MODELS.map(m => {
+                    const pt = row[m] && row[m][posIdx] && row[m][posIdx].per_target;
+                    const val = pt ? pt[tkey] : null;
+                    return `<td class="tm-val">${escapeHtml(formatTargetMae(val, tkey, unit, currentScoring))}</td>`;
+                }).join("");
+                return `<tr><td class="tm-name">${escapeHtml(label)}</td>${cells}</tr>`;
+            })
+            .join("");
+        return `
+            <div class="history-detail-block">
+                <div class="history-detail-pos"><span class="pos-badge pos-${escapeHtml(pos)}">${escapeHtml(pos)}</span></div>
+                <div class="table-container">
+                    <table class="pos-model-table">
+                        <thead><tr><th>Target</th><th>Ridge</th><th>NN</th><th>Attn NN</th><th>LGBM</th></tr></thead>
+                        <tbody>${trows}</tbody>
+                    </table>
+                </div>
+            </div>`;
+    }).join("");
+    return `<tr class="history-detail-row" hidden><td colspan="${colSpan}">${blocks}</td></tr>`;
+}
+
+function setupHistoryControls() {
+    ["history-detailed-toggle", "history-group-by-position-toggle"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("change", renderHistory);
+    });
+    // Delegated expand/collapse: click a detailed-mode row to toggle its detail
+    // row (the immediate next sibling). Clicks on the PR/commit link still work.
+    const tbody = document.getElementById("history-body");
+    if (tbody) {
+        tbody.addEventListener("click", e => {
+            if (e.target.closest("a")) return;
+            const row = e.target.closest("tr.history-row-expandable");
+            if (!row) return;
+            const detail = row.nextElementSibling;
+            if (detail && detail.classList.contains("history-detail-row")) {
+                detail.hidden = !detail.hidden;
+                row.classList.toggle("expanded", !detail.hidden);
+            }
+        });
     }
 }
 
