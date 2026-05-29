@@ -1,7 +1,7 @@
-"""Benchmark script: runs RB, QB, WR pipelines and prints a comparison table.
+"""Benchmark script: runs the QB, RB, WR, TE, K, DST pipelines and prints a comparison table.
 
 Usage:
-    python benchmark.py                          # run all 3 positions
+    python benchmark.py                          # run all 6 positions
     python benchmark.py RB                       # run one position
     python benchmark.py --note "tuned WR dropout" # annotate the run
 """

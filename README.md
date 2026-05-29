@@ -6,7 +6,7 @@ Personal project. Solo, ongoing.
 
 ## What it Does
 
-The system ingests weekly NFL data from [nflverse](https://github.com/nflverse) (player stats, rosters, schedules, snap counts), engineers rolling/EWMA/share/matchup features plus Vegas odds and weather joins, and trains one model per position family per architecture. Each position is evaluated against actual 2025 fantasy output in three scoring formats (Standard, Half-PPR, Full PPR). A Flask dashboard lets users look up any player and compare Ridge / neural net / LightGBM projections side-by-side with the real result.
+The system ingests weekly NFL data from [nflverse](https://github.com/nflverse) (player stats, rosters, schedules, snap counts, depth charts, injuries), engineers rolling/EWMA/share/matchup features plus Vegas odds and weather joins, and trains one model per position family per architecture. Each position is evaluated against actual 2025 fantasy output in three scoring formats (Standard, Half-PPR, Full PPR). A Flask dashboard lets users look up any player and compare Ridge / neural net / LightGBM projections side-by-side with the real result.
 
 ## Research Question
 
@@ -79,7 +79,7 @@ pytest
 pytest -m unit        # fast tests only
 ```
 
-Coverage is tracked on [Codecov](https://app.codecov.io/gh/alexanderdfree/Fantasy_Football_ML_AWS) with an **80% target per position and shared component** (see [codecov.yml](codecov.yml)). One-off diagnostic CLIs (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`) are excluded from the denominator — everything else gets pulled in.
+Coverage is tracked on [Codecov](https://app.codecov.io/gh/alexanderdfree/Fantasy_Football_ML_AWS) with an **80% target per position and shared component** (see [codecov.yml](codecov.yml)). One-off diagnostic CLIs (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`, `src/wr/benchmark_ridge_variants.py`) are excluded from the denominator — everything else gets pulled in.
 
 Full training on GPU runs in CI: by default a push to `main` fans out six Spot g4dn.xlarge instances via AWS Batch ([docs/batch_design.md](docs/batch_design.md), [infra/batch/README.md](infra/batch/README.md)). Setting `BATCH_ACTIVE=false` falls back to the warm-EC2 trainer ([docs/ec2_design.md](docs/ec2_design.md), [infra/ec2/README.md](infra/ec2/README.md)).
 
@@ -89,22 +89,22 @@ Full training on GPU runs in CI: by default a push to `main` fans out six Spot g
 
 ## Evaluation
 
-Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination), top-12 hit rate (agreement with the actual weekly top 12 at the position, PPR scoring). Numbers from [benchmark_history/2026-04-27T19-01-49_86fe9c0.json](benchmark_history/2026-04-27T19-01-49_86fe9c0.json) — the first full-positions EC2 run after the K nested attention (`801b61a`), DST raw-stat migration (`cc0c627`), RB feature audit cycle (PRs #190–#192), and the K/DST aggregate-metric fix (`0c66171`).
+Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination), top-12 hit rate (agreement with the actual weekly top 12 at the position, PPR scoring). Numbers from [benchmark_history/2026-05-29T11-00-49_9de4d84.json](benchmark_history/2026-05-29T11-00-49_9de4d84.json) — the latest full six-position Batch (Spot) run (commit `9de4d84`, PR #367) after the K nested attention (`801b61a`), DST raw-stat migration (`cc0c627`), RB feature audit cycle (PRs #190–#192), and the K/DST aggregate-metric fix (`0c66171`).
 
 | Position | Ridge MAE | NN MAE | Attn NN MAE | LGBM MAE | Best | R² (best) | Top-12 (best) |
 |---|---|---|---|---|---|---|---|
-| QB  | 6.546 | 6.435 | 6.549 | **6.256** | LightGBM     | 0.269  | 0.548 |
-| RB  | 4.399 | 4.278 | 4.315 | **4.159** | LightGBM     | 0.417  | 0.512 |
-| WR  | 4.351 | 4.182 | **4.106** | 4.231 | Attention NN | 0.347  | 0.385 |
-| TE  | 3.546 | 3.494 | **3.444** | 3.517 | Attention NN | 0.299  | 0.496 |
-| K   | 4.079 | 4.128 | 4.132 | **4.061** | LightGBM     | −0.013 | 0.431 |
-| DST | 5.212 | **5.162** | 5.346 | 5.274 | MultiHeadNet | 0.067  | 0.500 |
+| QB  | 6.539 | **6.514** | 6.585 | 6.693 | MultiHeadNet | 0.275  | 0.500 |
+| RB  | 4.502 | 4.302 | **4.179** | 4.195 | Attention NN | 0.418  | 0.431 |
+| WR  | 4.779 | 4.256 | 4.292 | **4.238** | LightGBM     | 0.361  | 0.356 |
+| TE  | 3.726 | 3.515 | **3.508** | 3.595 | Attention NN | 0.325  | 0.468 |
+| K   | **4.008** | 4.167 | 4.221 | 4.133 | Ridge        | 0.018  | 0.468 |
+| DST | 5.203 | 5.115 | **5.107** | 5.271 | Attention NN | 0.061  | 0.565 |
 
 **Takeaways:**
-- **LightGBM wins QB and RB.** It beats both NN families on the positions with the densest count-heavy targets (passing/rushing yards, TDs). The RB feature audit cycle (drop 14 redundant features, restore prior-season signals, add 3 orthogonal upstream aggregates) closed the gap between the audit-driven model variants — LightGBM is now the front-runner at RB by a small margin.
-- **Attention NN wins WR and TE.** Sequence + interaction structure pays off when the target is heavily reception-driven. The attention pool's positional encoding catches recent-game weighting that pure rolling features lose.
-- **K and DST report negative aggregate R².** This is the real signal, not a measurement bug: commit `0c66171` (PR #178) fixed the K/DST evaluation aggregator to use the same signed/tiered logic the serving layer uses, and the result is that all three model families struggle to beat predicting the per-player mean. K is the harder of the two — kickers genuinely have weak week-over-week signal at the available sample size. The per-position winners are decided by tiny margins well inside run-to-run variance (LightGBM edges K at 4.061 MAE; the Attention NN edges DST at 5.162) — no family is a clear winner here. This is consistent with the [docs/expert_comparison.md](docs/expert_comparison.md) finding that published expert projections also have low R² on these positions.
-- **Aggregate MAE rose for K and DST compared to the pre-`0c66171` table.** The earlier table reported K=3.6 and DST=3.8 against a partially-wrong unit space (unsigned sum for K, missing PA/YA tier lookup for DST). The corrected aggregator produces the real fantasy-point error: K MAE ≈ 6.7, DST MAE ≈ 5.2. The dashboard always showed correct values; only the eval-table aggregate was wrong.
+- **LightGBM wins WR only; the NN families take QB, RB, TE, and DST.** In the latest run LightGBM is the front-runner at WR (4.238 MAE) but slips to last at QB (6.693, behind the plain MultiHeadNet at 6.514) and is edged at RB by the Attention NN (4.179 vs 4.195). The RB feature audit cycle (drop 14 redundant features, restore prior-season signals, add 3 orthogonal upstream aggregates) closed the model variants to within run-to-run noise at RB.
+- **Attention NN wins RB, TE, and DST.** Sequence + interaction structure pays off across the reception- and count-driven targets. The attention pool's positional encoding catches recent-game weighting that pure rolling features lose.
+- **K and DST report near-zero aggregate R².** This is the real signal, not a measurement bug: commit `0c66171` (PR #178) fixed the K/DST evaluation aggregator to use the same signed/tiered logic the serving layer uses, and the result is that every model family barely beats predicting the per-player mean (best R² ≈ 0.02 at K, ≈ 0.06 at DST; several families go slightly negative). K is the harder of the two — kickers genuinely have weak week-over-week signal at the available sample size. The per-position winners are decided by tiny margins well inside run-to-run variance (Ridge edges K at 4.008 MAE; the Attention NN edges DST at 5.107) — no family is a clear winner here. This is consistent with the [docs/expert_comparison.md](docs/expert_comparison.md) finding that published expert projections also have low R² on these positions.
+- **Aggregate MAE rose for K and DST compared to the pre-`0c66171` table.** The earlier table reported K=3.6 and DST=3.8 against a partially-wrong unit space (unsigned sum for K, missing PA/YA tier lookup for DST). The corrected aggregator produces the real fantasy-point error: K MAE ≈ 4.0, DST MAE ≈ 5.1 (best models). The dashboard always showed correct values; only the eval-table aggregate was wrong.
 - Error analysis and per-target breakdown: [docs/expert_comparison.md](docs/expert_comparison.md) and the per-position breakdowns in the linked benchmark JSON.
 
 ## Repo Layout
@@ -206,7 +206,7 @@ GitHub Actions
 deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS ──▶ alexfree.me
 ```
 
-- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six g4dn.xlarge Spot instances via AWS Batch (one position per host, parallel; ~15 min wall-clock, ~$0.40/run). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
+- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six g4dn.xlarge Spot instances via AWS Batch (one position per host, parallel; ~15 min wall-clock, ~$0.16/run). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
 - **Artifact safety** — S3 manifest schema v2 tracks `stable` / `current` / `previous` plus a 5-version `history`. New artifacts must clear a smoke-test gate before being promoted to `stable`. [src/scripts/promote.py](src/scripts/promote.py) supports manual rollback to any history entry; bucket versioning is defense-in-depth.
 - **Serving** — ECS Fargate (arm64, 1 vCPU / 2 GB) sits behind an ALB with ACM-terminated HTTPS. The slim Flask image fetches models from S3 at boot rather than baking them in — keeps the image roughly 3× smaller and lets prod track new artifacts without a full redeploy.
 - **IAM** — the serving task role is scoped to `s3:GetObject` on `ff-predictor-training/models/*` only.
@@ -216,7 +216,7 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 - Always-stable serving + smoke-test gate + S3 bucket versioning (PR #130, `c7fa2d7`)
 - Versioned history + manifest-driven rollback (PR #104, `1b20e9e`)
 - Operational rollback CLI [src/scripts/promote.py](src/scripts/promote.py) (PR #122, `e8bf2a7`)
-- ECS force-rollover after training so promoted artifacts get picked up by a fresh task (PR #179, `8c42e88`)
+- ECS force-rollover after training (EC2 rollback path only; the default Batch path now relies on the serving container's in-flight manifest poller, PR #330) so promoted artifacts get picked up (PR #179, `8c42e88`)
 - PPR / Half-PPR / Standard scoring switch wired end-to-end through the dashboard (PR #153, `a533990`)
 - Wiki tab renders repo markdown docs in-app (PR #138, `ce4543e`)
 - Benchmark History tab — per-PR rows fetched from S3 at boot, auto-updates after every training run without a redeploy (PR #201, `056423b`)
@@ -239,7 +239,7 @@ push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov ·
              └──▶ deploy.yml ─────────▶ ECR ──▶ ECS Fargate
 ```
 
-- Five production workflows ([tests.yml](.github/workflows/tests.yml), [batch-image.yml](.github/workflows/batch-image.yml), [train-batch.yml](.github/workflows/train-batch.yml), [train-ec2.yml](.github/workflows/train-ec2.yml), [deploy.yml](.github/workflows/deploy.yml)) plus three diagnostic ones ([ablate-rb-gate.yml](.github/workflows/ablate-rb-gate.yml), [retune-lgbm.yml](.github/workflows/retune-lgbm.yml), [retune-nn-batch.yml](.github/workflows/retune-nn-batch.yml)) for one-click experiments on the GPU host.
+- Seven production workflows ([tests.yml](.github/workflows/tests.yml), [batch-image.yml](.github/workflows/batch-image.yml), [train-batch.yml](.github/workflows/train-batch.yml), [train-ec2.yml](.github/workflows/train-ec2.yml), [deploy.yml](.github/workflows/deploy.yml), [refresh-splits.yml](.github/workflows/refresh-splits.yml) — auto-rebuilds `data/splits` in S3 on config/`src.data` changes, [skip-sentinel.yml](.github/workflows/skip-sentinel.yml) — writes placeholder benchmark rows for non-training commits) plus three diagnostic ones ([ablate-rb-gate.yml](.github/workflows/ablate-rb-gate.yml), [retune-lgbm.yml](.github/workflows/retune-lgbm.yml), [retune-nn-batch.yml](.github/workflows/retune-nn-batch.yml)) for one-click experiments on the GPU host. The reusable [_detect-positions.yml](.github/workflows/_detect-positions.yml) is shared by the two training workflows.
 - **`tests.yml`** — 7-shard pytest matrix (QB / RB / WR / TE / K / DST / shared) with per-shard Codecov flags and an 80% per-component target enforced via [codecov.yml](codecov.yml). Within-shard parallelism via `pytest-xdist`.
 - **`batch-image.yml` → `train-batch.yml` *or* `train-ec2.yml`** — the image build is gated by path filters and pushes to ECR with both an ECR pull-through-cache-routed base layer and a SOCI v2 index for fast Spot cold-start. The `detect` job (shared by both training workflows) diffs `HEAD^..HEAD` and retrains *only* the positions whose code changed; cross-cutting changes (`src/shared/`, `src/batch/`, shared `src/` modules, `requirements.txt`) retrain all six. `BATCH_ACTIVE` selects which training workflow fires; `workflow_dispatch` on either bypasses the gate.
 - **`deploy.yml`** — native `arm64` runner (no QEMU emulation), BuildKit cache persisted across runs, path-filtered to the serving surface so docs-only or test-only changes don't trigger a deploy.

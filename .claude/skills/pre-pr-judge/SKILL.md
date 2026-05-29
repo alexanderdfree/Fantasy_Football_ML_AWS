@@ -1,13 +1,13 @@
 ---
 name: pre-pr-judge
-description: Before `gh pr create`, vet the change against the original task — spawn a worker subagent that diffs the branch against `origin/main` and flags scope creep ("the agent did more than I asked"). Lightweight, agent-triggered companion to the user-triggered `/ultrareview`. Use after [.claude/hooks/pre-pr.sh](.claude/hooks/pre-pr.sh) passes but before opening the PR. Skip for trivial changes.
+description: Before `gh pr create`, vet the change against the original task — spawn a worker subagent that diffs the branch against `origin/main` and flags scope creep ("the agent did more than I asked"). Lightweight, agent-triggered companion to the user-triggered `/review`. Use after [.claude/hooks/pre-pr.sh](.claude/hooks/pre-pr.sh) passes but before opening the PR. Skip for trivial changes.
 ---
 
 # Pre-PR judge
 
 Inspired by Spotify's Honk Part 3: *"the judge vetoes ~25% of agent sessions; of those, the agent course-corrects ~50% of the time."* The deterministic gates in [.claude/hooks/pre-pr.sh](.claude/hooks/pre-pr.sh) catch what ruff, pytest, and benchmark freshness can express. This skill catches what they can't — *did the change match what was asked?*
 
-`/ultrareview` is the heavyweight, user-triggered, multi-agent review that runs *after* the PR opens. This is the lightweight, agent-triggered, single-subagent check that runs *before*.
+`/review` is the heavyweight, user-triggered, multi-agent review that runs *after* the PR opens. This is the lightweight, agent-triggered, single-subagent check that runs *before*.
 
 ## When to run
 

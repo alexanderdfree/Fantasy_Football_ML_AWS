@@ -602,7 +602,7 @@ def main():
         choices=["rb-gate"],
         default=None,
         help="Run a named ablation instead of a standard training run. "
-        "'rb-gate' requires --position RB; runs the three-way TD-gate "
+        "'rb-gate' requires --position RB; runs the six-variant TD-gate "
         "ablation and prints the decision table. Skips S3 upload.",
     )
     parser.add_argument(

@@ -139,7 +139,7 @@ The CE's `minvCpus=0` means there are no in-flight instances to disrupt
    AWS_REGION=us-east-1 python -m src.batch.launch --positions K --seed 42
    ```
    Expect: job submitted → RUNNABLE → STARTING → RUNNING → SUCCEEDED, then
-   model.tar.gz in `s3://ff-predictor-training/models/K/`.
+   a fresh `manifest.json` at `s3://ff-predictor-training/models/K/manifest.json` pointing at the new `models/K/history/{ts}-{sha7}/model.tar.gz` artifact (the flat `models/K/model.tar.gz` mirror was removed in #282/#288).
 
 3. **Full parallel fanout test:**
    ```

@@ -8,7 +8,7 @@ Function signatures, data schemas, and implementation contracts for every module
 
 ### 1.1 `src/data/loader.py`
 
-#### `load_raw_data(seasons: list[int], cache_dir: str = "data/raw") -> pd.DataFrame`
+#### `load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) -> pd.DataFrame`
 
 **nfl_data_py API calls (in order):**
 
@@ -106,7 +106,11 @@ def compute_fantasy_points(df, scoring=None):
     fantasy_points = pd.Series(0.0, index=df.index)
     for key, weight in scoring.items():
         if key == "fumbles_lost":
-            val = df["sack_fumbles_lost"].fillna(0) + df["rushing_fumbles_lost"].fillna(0)
+            val = (
+                df["sack_fumbles_lost"].fillna(0)
+                + df["rushing_fumbles_lost"].fillna(0)
+                + df["receiving_fumbles_lost"].fillna(0)
+            )
         else:
             val = df[col_map[key]].fillna(0)
         fantasy_points += val * weight
@@ -622,21 +626,26 @@ class RidgeMultiTarget:
     """Wrapper around scikit-learn Ridge for multi-target prediction.
     Each target gets an independent Ridge model with separate alpha."""
 
-    def __init__(self, target_names: list[str], alphas: dict[str, float]):
-        # Creates one Ridge model per target with its own alpha
+    def __init__(self, target_names: list[str],
+                 alpha: float | dict[str, float] = 1.0,
+                 two_stage_targets: dict | None = None,
+                 classification_targets: dict | None = None,
+                 pca_n_components: int | None = None,
+                 non_negative_targets: set | None = None):
+        # One model per target: RidgeModel, or TwoStageRidge / OrdinalTDClassifier /
+        # GatedOrdinalTDClassifier for two_stage / classification targets.
         pass
 
-    def fit(self, X_train: np.ndarray, y_dict: dict[str, np.ndarray]) -> None:
-        # Fit each Ridge model on its target
+    def fit(self, X_train: np.ndarray, y_train_dict: dict) -> None:
         pass
 
-    def predict(self, X: np.ndarray) -> dict[str, np.ndarray]:
-        # Returns dict of per-target predictions (clamped >= 0).
-        # Fantasy-point aggregation happens post-hoc, not here.
+    def predict(self, X: np.ndarray) -> dict:
+        # Per-target predictions; only targets in non_negative_targets are clamped
+        # >= 0 (default: all targets). Fantasy-point aggregation happens post-hoc.
         pass
 
-    def get_feature_importance(self, target_name: str) -> pd.Series:
-        # Return |coef_| for a specific target
+    def get_feature_importance(self, feature_names: list) -> dict:
+        # Returns {target_name: pd.Series of |coef_|} for all linear heads.
         pass
 ```
 
@@ -745,15 +754,16 @@ shows the TD heads gated as the illustrative case; RB also gates `receptions`.)
 ```python
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-5)
 criterion = MultiTargetLoss(
-    # Representative subset — full target list is RB_TARGETS
+    # Representative subset — full target list is POSITION_CONFIG.targets
     target_names=["rushing_yards", "receiving_yards", "receptions", "rushing_tds"],
-    # RB_LOSS_WEIGHTS entries (~2.0 / huber_delta)
+    # RB loss_weights: yards use 2.0/delta rebalance; Poisson/hurdle heads use 1.0
     loss_weights={"rushing_yards": 0.133, "receiving_yards": 0.133,
-                  "receptions": 1.0, "rushing_tds": 4.0},
-    # RB_HUBER_DELTAS entries (raw-stat units)
-    huber_deltas={"rushing_yards": 15.0, "receiving_yards": 15.0,
-                  "receptions": 2.0, "rushing_tds": 0.5},
-    w_total=1.0,  # RB_LOSS_W_TOTAL
+                  "receptions": 1.0, "rushing_tds": 1.0},
+    # RB huber_deltas only cover the Huber heads (yards)
+    huber_deltas={"rushing_yards": 15.0, "receiving_yards": 15.0},
+    # receptions -> hurdle_negbin, rushing_tds -> poisson_nll (not Huber)
+    head_losses={"receptions": "hurdle_negbin", "rushing_tds": "poisson_nll"},
+    gated_targets=["receptions", "rushing_tds", "receiving_tds"],
 )
 # Scheduler varies by position: OneCycleLR (TE, K) or CosineWarmRestarts (QB, RB, WR, DST)
 ```
@@ -768,11 +778,15 @@ criterion = MultiTargetLoss(
 
 ```python
 class MultiTargetLoss(nn.Module):
-    """Combined Huber loss for multi-head network.
-    Loss = sum(weight[t] * Huber(pred[t], target[t])) + w_total * Huber(total_pred, total_actual)
-    Per-target Huber deltas allow different MSE-to-MAE thresholds.
+    """Per-head dispatchable loss for a multi-head network.
+    Each target is assigned a loss family via head_losses[name]; supported values are
+    in SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin", "hurdle_poisson").
+    Loss = sum(weight[t] * loss_fn[t](pred[t], target[t]))
+         + sum(gate_weight * BCE(gate_logit_t, (target_t > 0)) for t in gated_targets)
     """
-    def __init__(self, target_names, loss_weights, huber_deltas=None, w_total=0.5):
+    def __init__(self, target_names, loss_weights, huber_deltas=None,
+                 head_losses=None, gate_weight=1.0, gated_targets=None,
+                 poisson_targets=None):
         pass
 
     def forward(self, preds: dict, targets: dict) -> tuple:
@@ -785,7 +799,8 @@ class MultiTargetLoss(nn.Module):
 ```python
 class MultiHeadTrainer:
     def __init__(self, model, optimizer, scheduler, criterion, device,
-                 target_names, patience=15, scheduler_per_batch=False):
+                 target_names, patience=15, scheduler_per_batch=False,
+                 log_every=10, epoch_callback=None, use_amp=False):
         pass
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
@@ -794,10 +809,10 @@ class MultiHeadTrainer:
         {
             "train_loss": [float, ...],
             "val_loss": [float, ...],
+            "epoch_sec": [float, ...],
+            "peak_mem_gb": [float, ...],
             "val_loss_{target}": [float, ...],   # per target
             "val_mae_{target}": [float, ...],    # per target
-            "val_mae_total": [float, ...],
-            "val_rmse_total": [float, ...],
         }
         """
         # For each epoch:
@@ -813,7 +828,7 @@ class MultiHeadTrainer:
 ```python
 def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
     """Creates DataLoaders for multi-target training.
-    y_train_dict/y_val_dict: {target_name: np.ndarray, "total": np.ndarray}
+    y_train_dict/y_val_dict: {target_name: np.ndarray} (one entry per raw-stat target; no "total" key)
     Train: shuffle=True, drop_last=True; Val: shuffle=False
     """
     pass
@@ -823,11 +838,10 @@ def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
 
 ```python
 def plot_training_curves(history, target_names, save_path):
-    """Four-panel figure:
-    Top-left: overall train/val loss
-    Top-right: per-target validation losses
-    Bottom-left: per-target MAE
-    Bottom-right: total MAE and RMSE
+    """Three-panel figure (1x3):
+    Panel 1: overall train/val loss
+    Panel 2: per-target validation losses
+    Panel 3: per-target MAE
     """
     pass
 ```
@@ -842,10 +856,12 @@ def plot_training_curves(history, target_names, save_path):
 
 ```python
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+    y_true_arr = np.asarray(y_true)
+    r2 = r2_score(y_true, y_pred) if y_true_arr.size >= 2 else float("nan")
     return {
         "mae":  mean_absolute_error(y_true, y_pred),
-        "rmse": np.sqrt(mean_squared_error(y_true, y_pred)),
-        "r2":   r2_score(y_true, y_pred),
+        "rmse": root_mean_squared_error(y_true, y_pred),
+        "r2":   r2,
     }
 ```
 
@@ -875,11 +891,12 @@ def print_comparison_table(
 
 ### 5.2 `src/shared/backtest.py`
 
-#### `run_weekly_simulation(test_df, pred_columns, true_col="fantasy_points") -> dict`
+#### `run_weekly_simulation(test_df, pred_columns, true_col="fantasy_points", top_k=12) -> dict`
 
 ```python
 def run_weekly_simulation(test_df: pd.DataFrame, pred_columns: dict,
-                          true_col: str = "fantasy_points") -> dict:
+                          true_col: str = "fantasy_points",
+                          top_k: int = 12) -> dict:
     """
     Week-by-week prediction accuracy simulation across the test season.
     Evaluates individual player projection quality — NO lineup construction.
@@ -898,9 +915,9 @@ def run_weekly_simulation(test_df: pd.DataFrame, pred_columns: dict,
             },
             "weekly_ranking": {
                 model_name: [{
-                    "week": int, "position": str,
-                    "top12_hit_rate": float,   # precision@12
-                    "spearman_corr": float,    # rank correlation
+                    "week": int,
+                    "top_k_hit_rate": float,   # precision@top_k
+                    "spearman": float,         # rank correlation
                 }, ...]
             },
             "season_summary": {
@@ -911,10 +928,10 @@ def run_weekly_simulation(test_df: pd.DataFrame, pred_columns: dict,
     pass
 ```
 
-#### `plot_weekly_accuracy(sim_results, save_path) -> None`
+#### `plot_weekly_accuracy(sim_results, position, save_path) -> None`
 
 ```python
-def plot_weekly_accuracy(sim_results: dict, save_path: str) -> None:
+def plot_weekly_accuracy(sim_results: dict, position: str, save_path: str) -> None:
     """Two-panel figure showing prediction quality over the season.
 
     Left panel:  Per-week MAE for each model (line chart, weeks 1-18)
@@ -931,8 +948,8 @@ def plot_weekly_accuracy(sim_results: dict, save_path: str) -> None:
 
 ### Ridge Coefficient Analysis
 
-Per-target feature importance is available via `RidgeMultiTarget.get_feature_importance(target_name)`,
-which returns `|coef_|` sorted descending for any target.
+Per-target feature importance is available via `RidgeMultiTarget.get_feature_importance(feature_names)`,
+which returns a dict `{target_name: pd.Series of |coef_| sorted descending}` over all linear heads.
 
 ### Neural Net Permutation Importance
 

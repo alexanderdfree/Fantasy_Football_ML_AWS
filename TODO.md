@@ -15,12 +15,12 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **Risk:** If a kicker changes teams or role between seasons, stale cross-season features could mislead the model. Likely small impact.
 
 ### [LOW] Optuna parallel trials wired but disabled by default
-- **File:** `src/tuning/tune_lgbm.py:448` (`study.optimize(n_jobs=args.n_jobs)`), CLI flag definition at `:378`.
-- **What:** `--n-jobs` exists (default `1`) and is plumbed into `study.optimize`. The default keeps trials serial — nothing flips it on yet. Optuna's thread-based trial parallelism is safe with the existing SQLite storage at `:432`.
-- **Why not flipped:** Needs a wall-clock benchmark on the tuning host to confirm a win, and the value must be coordinated with the LGBM tree-learning `n_jobs=-1` (set on Linux in `src/shared/models.py:_LGBM_N_JOBS`) to avoid oversubscribing a 4-vCPU box. On EC2 g4dn picking `--n-jobs=2` (with LGBM at `-1`) is the obvious starting point; `--n-jobs=-1` will fight the per-trial tree-learning threads.
+- **File:** `src/tuning/tune_lgbm.py:465` (`study.optimize(n_jobs=args.n_jobs)`), CLI flag definition at `:395`.
+- **What:** `--n-jobs` exists (default `1`) and is plumbed into `study.optimize`. The default keeps trials serial — nothing flips it on yet. Optuna's thread-based trial parallelism is safe with the existing SQLite storage at `:430`.
+- **Why not flipped:** Needs a wall-clock benchmark on the tuning host to confirm a win, and the value must be coordinated with the LGBM tree-learning `n_jobs=-1` (set via the `LGBM_N_JOBS` env var, read by `src/shared/models.py:_lgbm_n_jobs()`) to avoid oversubscribing a 4-vCPU box. On EC2 g4dn picking `--n-jobs=2` (with LGBM at `-1`) is the obvious starting point; `--n-jobs=-1` will fight the per-trial tree-learning threads.
 
 ### [LOW] `_cache` dict grows without eviction
-- **File:** `src/serving/app.py:87` (`_cache = {}`)
+- **File:** `src/serving/app.py:88` (`_cache = {}`)
 - **What:** `_get_data()` caches results in a module-level dict (serialized by `_cache_lock` since #31). The cache is never cleared. Not a real problem in practice (server restarts frequently), but worth noting.
 
 ### [LOW] `drop_last=True` silently discards training samples
@@ -36,17 +36,12 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **What:** Pattern like `(a / b).fillna(0)` followed by `df.loc[b == 0, col] = 0` is redundant — fillna already handled the division-by-zero case. Not wrong, just noisy.
 
 ### [UNCERTAIN] K/DST index collision in `_get_data()`
-- **File:** `src/serving/app.py:1079-1092`
+- **File:** `src/serving/app.py:1223`
 - **What:** K/DST test rows are appended to `results` with `offset = results.index.max() + 1`. Assumes the general test data has a well-behaved index. If the general test parquet has gaps, K/DST indices could collide. Probably safe in practice since parquet preserves sequential indices.
 
 ### [UNCERTAIN] Team share features computed per-split
-- **Files:** `src/rb/features.py:74`, `src/wr/features.py:58`, `src/te/features.py:51`
+- **Files:** `src/rb/features.py:96`, `src/wr/features.py:60`, `src/te/features.py:59`
 - **What:** Team carry/target shares are computed within each split independently (`compute_team_*_totals` runs on each split's own data). A player's share could differ between train and test if their teammates are distributed differently across splits. By design (prevents leakage), but the share values won't be globally consistent.
-
-### [LOW] Unify the three `detect` jobs into one shared helper
-- **Files:** `.github/workflows/train-batch.yml` (detect), `.github/workflows/train-ec2.yml` (detect), `.github/workflows/tests.yml` (detect)
-- **What:** `train-batch.yml` and `train-ec2.yml` already share `src/scripts/scope_positions.py` (pinned by `tests/scripts/test_scope_positions.py`). `tests.yml`'s detect job has divergent semantics — docs/markdown stripping, a `shared` shard fallback, and a different global-trigger list (`conftest.py`, `pyproject.toml`, `tests/_pipeline_e2e_utils.py`, etc.) — so it still computes its scoping in inline bash.
-- **Why not now:** The tests detect mapping is genuinely different (it emits *shard names*, including a `shared` shard, and falls back to all-shards on uncertainty). Sharing one helper would need a config-driven mapping, not the train detect's hardcoded list. Worth doing once the train side's contract has bedded in, but no rush.
 
 ### [LOW] Drop `RidgeMultiTarget.predict_total` / `ElasticNetMultiTarget.predict_total`
 - **Files:** `src/shared/models.py:350-352, 464-466`; consumers in `tests/{qb,rb,wr,te,k,dst}/test_models.py`, `tests/shared/test_elasticnet.py`.
@@ -58,20 +53,29 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **What:** Each position builds its `CONFIG` at module import, which eagerly imports `data.py` / `features.py` / `targets.py` before `run_pipeline()` is called. Import-time failures surface in confusing places (the importing test, not the position's own module). Move to a function-local build or `functools.cached_property`.
 - **Why not now:** Touches 6 `run_pipeline.py` files; the W.SHARED-A worker (PR #314) couldn't touch per-position files under its boundary. Carry-over from L-S17.
 
-### [LOW] Delete `fill_nans_safe` (dead in `src/`, only exercised by `TestFillNansSafe`)
-- **Files:** `src/features/engineer.py:1017-1042`; `tests/test_feature_leakage.py::TestFillNansSafe`.
-- **What:** Zero callers in `src/`; production uses `src/shared/feature_build.py::fill_nans_with_train_means`. The test class pins the dead-code contract — both should disappear together. Carry-over from L-D1.
-
-### [LOW] WR `benchmark_ridge_variants.py` R² table has the same `recv_fl`/`rush_fl`/`td_pts` mislabel that M18 fixed for the MAE table
-- **File:** `src/wr/benchmark_ridge_variants.py` (R² table; the MAE table was fixed in PR #312 as M18).
-- **What:** When fixing the MAE-table header literals to iterate over `TARGETS`, the parallel R² table below was scoped out of M18's fix and still uses the same stale literal headers. Diagnostic-output only (not on the training path) but should land alongside the same one-line `TARGETS` iteration.
-- **Source:** W.WR worker observation during PR #312 (flagged but not fixed under M18's narrow scope).
-
 ---
 
 ## Archive (Fixed)
 
 Kept for the lessons-learned value — each entry captures a debug-to-root-cause cycle and a one-line takeaway that's been useful when modifying related code.
+
+### [FIXED] Unified the three CI `detect` jobs onto one shared `scope_positions.py` helper
+- **File(s):** [.github/workflows/tests.yml](.github/workflows/tests.yml) (`detect` job now calls `python3 -m src.scripts.scope_positions --mode test`), [src/scripts/scope_positions.py](src/scripts/scope_positions.py) (`--mode {train,test}` flag + `compute_test_shards`), contract-tested by [tests/scripts/test_scope_positions.py](tests/scripts/test_scope_positions.py).
+- **What:** `train-batch.yml` / `train-ec2.yml` already shared `scope_positions.py`, but `tests.yml`'s detect job computed its shard scoping in ~95 lines of inline bash with divergent semantics (docs-strip, a `shared` shard, an all-shards fallback) — so the "three detect jobs aren't unified" item stayed open.
+- **Fix:** A `--mode test` flag (`compute_test_shards`) was added to `scope_positions.py` so all three detect jobs now read one tested source of truth; the `shared` shard + fallback logic moved into the helper. Recorded in docs/ARCHITECTURE.md Update history (2026-05-20).
+- **Lesson:** Divergent-but-related CI scoping logic is better parameterized behind one tested helper than duplicated in inline bash — the "config-driven mapping" the open item worried about turned out to be a small `--mode` parameter.
+
+### [FIXED] `fill_nans_safe` dead code (and its self-pinning `TestFillNansSafe`) removed
+- **File(s):** [src/features/engineer.py](src/features/engineer.py) + `tests/test_feature_leakage.py` (both removed in PR [#323](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/323), commit `f0a8421`).
+- **What:** `fill_nans_safe` had zero callers in `src/` (production uses `src/shared/feature_build.py::fill_nans_with_train_means`); its only exerciser was `tests/test_feature_leakage.py::TestFillNansSafe`, a test that existed solely to pin the dead-code contract.
+- **Fix:** PR #323 (Tier A docs + dead-symbol cleanup) deleted the function and the entire `tests/test_feature_leakage.py` atomically; `fill_nans_with_train_means` remains the production helper.
+- **Lesson:** A test that exists only to pin a dead symbol should be deleted with the symbol, not kept as false coverage.
+
+### [FIXED] WR `benchmark_ridge_variants.py` R² table carried the `recv_fl`/`rush_fl`/`td_pts` mislabel M18 left unfixed
+- **File(s):** [src/wr/benchmark_ridge_variants.py](src/wr/benchmark_ridge_variants.py) (commit `7c67469`, PR [#356](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/356), finding F6).
+- **What:** M18 (PR #312) migrated the MAE-table headers to iterate `TARGETS` but scoped out the parallel R² table, which kept hardcoded `recv_td`/`recv_yd`/`recs` columns and dropped `fumbles_lost`.
+- **Fix:** The R² table now builds `r2_target_header` from `TARGETS` (`benchmark_ridge_variants.py:274`) and prints `r2_cells` over `TARGETS` (`:284`), so all four raw stats render.
+- **Lesson:** When migrating one table's headers to iterate a target list, grep the file for sibling tables sharing the same hardcoded literals and fix them in the same pass.
 
 ### [FIXED] `depth_chart_rank` `-1` missing-sentinel regressed QB attention NN 6.5→8.0 (2025 season has zero depth-chart coverage)
 - **File(s):** [src/shared/feature_build.py](src/shared/feature_build.py) (`build_position_features` imputes `depth_chart_rank == -1` to the leakage-safe train mean of real ranks, just before the catch-all `.fillna(0)`; `pd.notna(fill_val)` guard leaves all-sentinel positions constant), [tests/shared/test_feature_build.py](tests/shared/test_feature_build.py) (new `TestDepthChartRankSentinel`: impute case + all-sentinel-guard case).
@@ -273,7 +277,7 @@ Kept for the lessons-learned value — each entry captures a debug-to-root-cause
 - **Lesson:** When a cross-cutting convention lands across positions, audit *every* position's config for residue — not just the obviously-affected ones. Six configuration surfaces (D6 cross-cutting consequence) means six places to look, and a rollback to "one position is an exception" is exactly the kind of drift the convention was meant to prevent.
 
 ### [FIXED] LightGBM `n_jobs=-1` "perf win" test was confounded by a co-resident `torch.compile` regression
-- **Files:** `src/batch/Dockerfile.train` (`LGBM_N_JOBS=-1` env removed in PR #196), `src/shared/models.py:30` (`_LGBM_N_JOBS` reads env, defaults to `1`).
+- **Files:** `src/batch/Dockerfile.train` (`LGBM_N_JOBS=-1` env removed in PR #196), `src/shared/models.py` (`_lgbm_n_jobs()` reads the `LGBM_N_JOBS` env var, defaults to `1`).
 - **What:** PR #188 (`cb3c960`) baked `LGBM_N_JOBS=-1` into the training image to try multi-core LightGBM on the EC2 g4dn. The benchmark didn't move, and the next commit (PR #189, `3167b56`) traced an unrelated +32% wall-time regression to `torch.compile` being enabled on T4. With both changes live in the same image, the LightGBM threading question was never genuinely measured — the compile regression masked any signal LightGBM might have shown.
 - **Fix:** PR #196 (`35f0a57`) reverted the `LGBM_N_JOBS=-1` bake, returning the image to env-var-only opt-in (default `1`). The torch.compile short-circuit lands separately under D12. LGBM threading is left as an open perf question to measure cleanly later.
 - **Lesson:** Don't ship two perf experiments in the same image. Every "perf win" must be isolated from co-resident regressions, or its signal is impossible to read. The auto-memory entry on "Check git log for SHA perf regressions" formalizes this — before crediting a perf result, search `git log` for nearby PRs that touched the same path.

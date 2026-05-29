@@ -46,6 +46,21 @@ fixture = fixture.sort_values(["position", "player_id"]).reset_index(drop=True)
 fixture.to_parquet("tests/fixtures/weekly_2023_w1.parquet", compression="snappy")
 ```
 
+## `nflcom_QB_projected_sample.csv`
+
+**What it represents.** A small NFL.com projected-stats CSV slice (QB rows)
+used by `tests/test_nflcom_loader.py` to exercise the parsing/schema contract of
+`src.data.nflcom_loader`. The fetch is mocked offline, so this fixture stands in
+for the upstream NFL.com response.
+
+- **Shape**: 5 QB rows (plus header)
+- **Size**: ~0.7 KB (well under the 100 KB cap; Git LFS not required)
+- **Columns**: `PlayerName`, `PlayerId`, `Pos`, `Team`, `PlayerOpponent`, the
+  Passing/Rushing/Receiving splits (`PassingYDS`, `PassingTD`, `PassingInt`,
+  `RushingYDS`, `RushingTD`, `ReceivingRec`, `ReceivingYDS`, `ReceivingTD`),
+  `RetTD`, `FumTD`, `2PT`, `Fum`, `PlayerWeekProjectedPts`, `ProjectedRank`,
+  `Rank`, `TotalPoints`, `ProjectionDiff`.
+
 ## Size cap policy
 
 Fixtures must be **under 100 KB** each. If a fixture grows beyond that, move

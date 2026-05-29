@@ -27,7 +27,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     """Build all 144 engineered features from preprocessed data."""
     df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
-    # --- Rolling Features (93: 90 mean/std/max + 3 min) ---
+    # --- Rolling Features (84: 81 mean/std/max + 3 min) ---
     rolling_cols: dict[str, pd.Series] = {}
     for stat in ROLL_STATS:
         grouped = df.groupby(["player_id", "season"])[stat]
@@ -47,7 +47,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
                 )
     df = pd.concat([df, pd.DataFrame(rolling_cols, index=df.index)], axis=1)
 
-    # --- Prior-Season Summary Features (30 = 10 stats x 3 aggs) ---
+    # --- Prior-Season Summary Features (27 = 9 stats x 3 aggs) ---
     prior_stats = list(ROLL_STATS)
     prior = df.groupby(["player_id", "season"])[prior_stats].agg(["mean", "std", "max"])
     prior.columns = [f"prior_season_{agg}_{stat}" for stat, agg in prior.columns]
@@ -986,8 +986,9 @@ def _build_contextual_features(df: pd.DataFrame) -> pd.DataFrame:
         df["game_status"] = 1.0
 
     # Depth chart rank (merged in loader; ensure default).
-    # 3.0 matches loader.py's NaN-fill convention so "no depth chart data"
-    # produces the same signal regardless of which fallback fires.
+    # loader.py now fills absent depth ranks with -1 (a clearly out-of-band
+    # sentinel; see src/data/loader.py); this 3.0 column-absent fallback only
+    # fires for synthetic fixtures lacking the column entirely.
     if "depth_chart_rank" not in df.columns:
         df["depth_chart_rank"] = 3.0
 
@@ -1027,7 +1028,7 @@ def get_attn_static_columns(
     """Return the subset of ``all_feature_cols`` whitelisted for the attention
     NN's static branch, preserving the input column order.
 
-    Each position's config (``{POS}_ATTN_STATIC_FEATURES`` for QB/RB/WR/TE/DST)
+    Each position's config (``attn_static_features`` for QB/RB/WR/TE/K/DST)
     owns the whitelist. The attention branch learns its own temporal
     representation from ``{POS}_ATTN_HISTORY_STATS``, so rolling / EWMA / trend
     / share / specific categories are intentionally excluded upstream at the

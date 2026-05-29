@@ -484,7 +484,8 @@ def start_refresh_poller(interval_s: int) -> threading.Thread:
 
 def sync_models_from_s3() -> dict | None:
     """Download+extract all six position tarballs in parallel, preferring
-    the manifest-pointed ``current`` with automatic fallback to ``previous``.
+    the manifest-pointed ``stable`` artifact, falling back to ``current``
+    then ``previous``.
 
     Per-position failures are isolated: if at least one position syncs
     successfully, the function logs the failures, records them in the

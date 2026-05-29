@@ -1,6 +1,6 @@
 # Design Document 3: XGBoost as a 4th Ensemble Model
 
-> **Status: historical artifact (2026-04-21).** Rationale was folded into [ADR-001 §D3](ARCHITECTURE.md#d3-three-way-model-comparison-no-ensemble). Kept for provenance, not updated after the three-way independent comparison was chosen instead.
+> **Status: historical artifact (2026-04-21).** Rationale was folded into [ADR-001 §D3](../ARCHITECTURE.md#d3-three-way-model-comparison-no-ensemble). Kept for provenance, not updated after the three-way independent comparison was chosen instead.
 
 ## Motivation
 
