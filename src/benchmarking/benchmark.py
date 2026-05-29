@@ -73,6 +73,52 @@ def run_one(position, cv=False):
     return runner()
 
 
+def _maybe_upload_to_s3(local_path: str) -> None:
+    """Mirror one local benchmark JSON to S3 so the run reaches the website's History tab.
+
+    The serving container downloads ``s3://{bucket}/{prefix}/benchmark_history/*.json`` at
+    boot (``src/shared/model_sync.py::sync_benchmark_history_from_s3``) and serves it via
+    ``/api/benchmark_history``; uploading here is what makes a *local* run eventually appear
+    on the site. Env-gated on ``FF_MODEL_S3_BUCKET`` (no-op for pure-local dev without a
+    bucket configured) and writes the same ``{prefix}/benchmark_history/{basename}`` key the
+    cloud path uses, so producer and consumer stay aligned.
+
+    Mirror of ``src/batch/benchmark.py::_maybe_upload_to_s3`` — deliberately kept here rather
+    than lifted to the otherwise-natural ``src/shared/benchmark_utils.py``, because any edit
+    under ``src/shared/`` fires the 6-position GPU retrain in
+    ``src/scripts/scope_positions.py`` and this is a serving/tooling change that touches no
+    model artifact. Two intentional differences from the batch copy:
+
+    1. **Best-effort:** a network/credential failure warns and returns rather than crashing
+       the run — the local ``benchmark_history/{run_id}.json`` is already durably written by
+       ``append_to_history`` (tmp + ``os.replace``), so the result is never lost. The batch
+       copy lets the exception propagate because CI wants a hard failure signal; a dev's
+       local benchmark must not die just because S3 is unreachable.
+    2. **Lazy ``import boto3``** inside the function, so the no-bucket path has no boto3
+       dependency at all.
+
+    Do not "fix" #1 to match the batch copy.
+    """
+    bucket = os.environ.get("FF_MODEL_S3_BUCKET", "").strip()
+    if not bucket:
+        print(
+            "FF_MODEL_S3_BUCKET unset — skipping cloud sync; this run won't appear on the "
+            "website (set FF_MODEL_S3_BUCKET + AWS creds to enable, or pass --no-sync to silence)."
+        )
+        return
+    prefix = os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/")
+    key = f"{prefix}/benchmark_history/{os.path.basename(local_path)}"
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+    try:
+        import boto3
+
+        s3 = boto3.client("s3", region_name=region)
+        s3.upload_file(local_path, bucket, key)
+        print(f"Uploaded benchmark to s3://{bucket}/{key}")
+    except Exception as exc:  # noqa: BLE001 - network/credential boundary, see CLAUDE.md
+        print(f"WARNING: benchmark S3 sync failed ({exc}); local JSON kept at {local_path}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark NN pipelines")
     parser.add_argument(
@@ -83,6 +129,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--note", default="", help="Describe what changed in this run")
     parser.add_argument("--cv", action="store_true", help="Use expanding-window cross-validation")
+    parser.add_argument(
+        "--no-sync",
+        action="store_true",
+        help="Skip the S3 mirror of this run (local benchmark_history/ is still written). "
+        "Use for throwaway/experimental runs you don't want on the website's History tab.",
+    )
     args = parser.parse_args()
 
     positions = args.positions
@@ -125,5 +177,8 @@ if __name__ == "__main__":
             "results": summaries,
         },
     )
+
+    if not args.no_sync:
+        _maybe_upload_to_s3(written_path)
 
     print_history_comparison(HISTORY_DIR, summaries, exclude_path=written_path)

@@ -65,9 +65,12 @@ The dashboard loads pre-trained model artifacts from each position's `src/{pos}/
 python -m src.benchmarking.benchmark              # all positions, full comparison
 python -m src.benchmarking.benchmark RB           # one position
 python -m src.benchmarking.benchmark QB RB WR     # several positions
+python -m src.benchmarking.benchmark RB --no-sync # skip the S3 mirror (throwaway run)
 ```
 
 Each run writes a `{run_id}.json` file under [benchmark_history/](benchmark_history/) with the git SHA, timestamp, and per-position config snapshot (used by CI to track benchmark drift) and refreshes the model artifacts under `src/{pos}/outputs/models/`. Headline results are summarized in the Evaluation section of [README.md](README.md).
+
+**Cloud sync (so local runs appear on the website's History tab).** When `FF_MODEL_S3_BUCKET` is set (with AWS credentials available — e.g. `export FF_MODEL_S3_BUCKET=ff-predictor-training`), each run also mirrors its JSON to `s3://{bucket}/{FF_MODEL_S3_PREFIX:-models}/benchmark_history/`, the same key the serving container syncs at boot — so the run shows up on the History tab at the next container restart. Without the env var the upload is skipped (you'll see a one-line notice and the local JSON is still written); pass `--no-sync` to skip the upload even when a bucket is configured.
 
 ## Run tests
 
