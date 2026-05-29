@@ -8,6 +8,7 @@ a direct target.
 
 import pandas as pd
 
+from src.config import SCORING
 from src.rb.config import POSITION_CONFIG
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
@@ -46,10 +47,12 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
     preds = {t: df[t].to_numpy() for t in POSITION_CONFIG.targets}
     fantasy_points_check = predictions_to_fantasy_points("RB", preds, "ppr")
 
+    # Decomposition uses src.config.SCORING so a single source of truth
+    # changes here when scoring constants are tweaked (mirrors WR/QB/TE).
     passing_component = (
-        df["passing_yards"].fillna(0) * 0.04
-        + df["passing_tds"].fillna(0) * 4
-        + df["interceptions"].fillna(0) * -2
+        df["passing_yards"].fillna(0) * SCORING["passing_yards"]
+        + df["passing_tds"].fillna(0) * SCORING["passing_tds"]
+        + df["interceptions"].fillna(0) * SCORING["interceptions"]
     )
     discrepancy = (df["fantasy_points"] - fantasy_points_check - passing_component).abs()
     if (discrepancy > 0.01).any():

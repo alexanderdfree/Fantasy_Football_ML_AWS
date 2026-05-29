@@ -51,4 +51,12 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
         n_bad = (discrepancy > 0.01).sum()
         print(f"WARNING: {n_bad} QB rows have target decomposition discrepancy > 0.01 pts")
 
+    if "fantasy_points_ppr" in df.columns:
+        nfl_discrepancy = (df["fantasy_points"] - df["fantasy_points_ppr"]).abs()
+        n_nfl_mismatch = int((nfl_discrepancy > 0.5).sum())
+        if n_nfl_mismatch > 0:
+            print(
+                f"INFO: {n_nfl_mismatch} rows differ from nflverse fantasy_points_ppr by > 0.5 pts"
+            )
+
     return df
