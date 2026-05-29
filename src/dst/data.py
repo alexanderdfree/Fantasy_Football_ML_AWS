@@ -2,7 +2,7 @@ import nfl_data_py as nfl
 import numpy as np
 import pandas as pd
 
-from src.config import CACHE_DIR, SEASONS
+from src.config import CACHE_DIR, SEASONS, TRAIN_SEASONS
 from src.data.loader import load_team_week_stats
 
 
@@ -80,6 +80,14 @@ def build_data() -> pd.DataFrame:
         "roof",
     ]
     away_info["is_home"] = 0
+    # nflverse ``spread_line`` is from the HOME team's perspective (positive =>
+    # home favored; verified: corr(spread_line, home_margin) = +0.44, home win
+    # rate 67% when spread_line>0). For the away team's D/ST this sign is
+    # inverted — a +13 line means the away team is a 13-point underdog, so its
+    # own-team spread is -13. Negate so ``spread_line`` consistently means
+    # "this D/ST's team is favored by N" across home and away rows; otherwise
+    # the feature's sign flips for exactly half the dataset.
+    away_info["spread_line"] = -away_info["spread_line"]
 
     context = pd.concat([home_info, away_info], ignore_index=True)
     # Binary dome indicator (dome or retractable-closed roof)
@@ -354,29 +362,55 @@ def build_data() -> pd.DataFrame:
     # yards_allowed defaults to 350 (roughly league-average) when missing so
     # the tier mapping still lands in a reasonable band.
     dst_df["yards_allowed"] = dst_df["yards_allowed"].fillna(350)
+
+    # Statistic-based fills are computed on TRAIN seasons only and applied to
+    # every split. Computing median/mean over the full frame (which includes
+    # the val=2024 / test=2025 holdout rows) leaks holdout distribution into
+    # the imputation used for train rows — and conversely fills val/test NaNs
+    # with a statistic they helped define, contaminating the cross-season
+    # generalization the temporal split assumes. This mirrors the train-only
+    # imputation pattern in src/data/split.py (impute_snap_pct(fit_on=train)).
+    # Constant fills below (is_home/rest_days/div_game/is_dome and the 0-fills
+    # above) don't depend on the data distribution, so they need no split-aware
+    # treatment.
+    train_rows = dst_df[dst_df["season"].isin(TRAIN_SEASONS)]
+
+    def _train_stat(col: str, agg: str) -> float:
+        """Train-only median/mean for ``col``, falling back to the full frame
+        when no TRAIN_SEASONS rows are present (e.g. a single-season fixture).
+        Production always has train rows, so the fallback is inert there."""
+        train_vals = train_rows[col]
+        stat = train_vals.median() if agg == "median" else train_vals.mean()
+        if pd.isna(stat):
+            stat = dst_df[col].median() if agg == "median" else dst_df[col].mean()
+        return stat
+
+    # league-average points-allowed (train-only) reused by the opp_scoring fills
+    train_pts_allowed_mean = _train_stat("points_allowed", "mean")
     for col in ["spread_line", "total_line"]:
-        dst_df[col] = dst_df[col].fillna(dst_df[col].median())
+        dst_df[col] = dst_df[col].fillna(_train_stat(col, "median"))
     dst_df["is_home"] = dst_df["is_home"].fillna(0)
     dst_df["rest_days"] = dst_df["rest_days"].fillna(7)
     dst_df["div_game"] = dst_df["div_game"].fillna(0)
     dst_df["is_dome"] = dst_df["is_dome"].fillna(0)
-    dst_df["opp_scoring_L5"] = dst_df["opp_scoring_L5"].fillna(dst_df["points_allowed"].mean())
-    dst_df["opp_scoring_L3"] = dst_df["opp_scoring_L3"].fillna(dst_df["points_allowed"].mean())
+    dst_df["opp_scoring_L5"] = dst_df["opp_scoring_L5"].fillna(train_pts_allowed_mean)
+    dst_df["opp_scoring_L3"] = dst_df["opp_scoring_L3"].fillna(train_pts_allowed_mean)
     dst_df["opp_turnovers_L5"] = dst_df["opp_turnovers_L5"].fillna(
-        dst_df["opp_turnovers_L5"].median()
+        _train_stat("opp_turnovers_L5", "median")
     )
     dst_df["opp_sacks_allowed_L5"] = dst_df["opp_sacks_allowed_L5"].fillna(
-        dst_df["opp_sacks_allowed_L5"].median()
+        _train_stat("opp_sacks_allowed_L5", "median")
     )
-    # Opposing QB features: EPA fills with 0 (league-average), rates/yards with median
+    # Opposing QB features: EPA fills with 0 (league-average), rates/yards with
+    # the train-only median.
     dst_df["opp_qb_epa_L5"] = dst_df["opp_qb_epa_L5"].fillna(0)
     for col in ["opp_qb_int_rate_L5", "opp_qb_sack_rate_L5", "opp_qb_rush_yds_L5"]:
-        dst_df[col] = dst_df[col].fillna(dst_df[col].median())
+        dst_df[col] = dst_df[col].fillna(_train_stat(col, "median"))
 
     # Per-game opp columns (attention history) — fill scoring with the
-    # league-average points-allowed, and turnover / QB-EPA columns with 0,
-    # so the first-week-of-season attention sequence isn't degenerate.
-    dst_df["opp_scoring"] = dst_df["opp_scoring"].fillna(dst_df["points_allowed"].mean())
+    # league-average (train-only) points-allowed, and turnover / QB-EPA columns
+    # with 0, so the first-week-of-season attention sequence isn't degenerate.
+    dst_df["opp_scoring"] = dst_df["opp_scoring"].fillna(train_pts_allowed_mean)
     dst_df["opp_fumbles"] = dst_df["opp_fumbles"].fillna(0)
     dst_df["opp_interceptions"] = dst_df["opp_interceptions"].fillna(0)
     dst_df["opp_qb_epa"] = dst_df["opp_qb_epa"].fillna(0)
