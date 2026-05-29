@@ -117,6 +117,24 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Mark splits-rebuild pending (train-batch race gate)
+        # train-batch.yml downloads splits from S3 and races this ~10 min
+        # rebuild — the batch-image build that gates train (~9 min) is shorter,
+        # so without a gate the Batch jobs download last-commit's splits and
+        # train one commit behind (the #383 nflreadpy migration only landed on
+        # a later manual retrain — see TODO.md). Write a per-SHA "pending"
+        # marker BEFORE the rebuild so train's gate knows a rebuild is in
+        # flight for this commit and waits for the matching "ready" marker
+        # (written after the S3 upload below). Keyed by github.sha — the same
+        # identifier train-batch sees as workflow_run.head_sha (the SHA its
+        # image was built from), matching the job-def-revisions/${SHA}.txt
+        # convention. Best-effort (|| true): a marker-write failure must not
+        # fail the refresh; train's gate is fail-safe (proceeds on absence).
+        run: |
+          printf '%s\n' "${GITHUB_RUN_ID}" | aws s3 cp - \
+            "s3://${S3_BUCKET}/splits-rebuild-markers/pending/${GITHUB_SHA}.txt" \
+            --region "${AWS_REGION}" --no-cli-pager || true
+
       - name: Regenerate splits from nflverse + PBP
         # ``load_raw_data`` pulls weekly stats / rosters / schedules / snap
         # counts / injuries / depth charts / PBP for SEASONS via nflreadpy,
@@ -276,6 +294,18 @@ jobs:
       - name: Confirm S3 objects updated
         run: |
           aws s3 ls "s3://${S3_BUCKET}/data/" --region "${AWS_REGION}"
+
+      - name: Mark splits-rebuild ready (train-batch race gate)
+        # Written only after the S3 upload above succeeded (sequential steps —
+        # a failed upload fails the job before reaching here), so this marker's
+        # presence means data/splits/ in S3 reflects this commit. train-batch's
+        # gate waits for it before submitting Batch jobs. Best-effort (|| true):
+        # if the marker write itself fails, the splits are still uploaded and
+        # train's gate degrades to a poll-then-proceed (fail-safe), never a block.
+        run: |
+          printf '%s\n' "${GITHUB_RUN_ID}" | aws s3 cp - \
+            "s3://${S3_BUCKET}/splits-rebuild-markers/ready/${GITHUB_SHA}.txt" \
+            --region "${AWS_REGION}" --no-cli-pager || true
 
       - name: Kick off ECS rolling deploy (non-blocking)
         # Force the ECS service to roll new tasks so they re-sync the fresh
