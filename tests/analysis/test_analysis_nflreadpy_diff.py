@@ -131,3 +131,25 @@ def test_duplicate_keys_noted_and_first_kept() -> None:
     assert any("duplicate keys" in n for n in d.notes)
     # first row for id=1 (x=1.0) kept → matches b → no value mismatch
     assert d.value_results["x"]["n_mismatch"] == 0
+
+
+def test_column_override_uses_full_schema_for_col_diff() -> None:
+    """pbp passes column-subset frames + full-schema overrides: the column-set
+    diff must reflect the overrides, while the value diff still runs on the
+    actual (subset) frames.
+    """
+    a = _f(game_id=["g1"], play_id=[1], yardline_100=[50.0])
+    b = _f(game_id=["g1"], play_id=[1], yardline_100=[50.0])
+    d = mod.compare_frames(
+        a,
+        b,
+        ["game_id", "play_id"],
+        ["yardline_100"],
+        a_cols_override=["game_id", "play_id", "yardline_100", "dakota"],
+        b_cols_override=["game_id", "play_id", "yardline_100", "new_metric"],
+    )
+    # column diff comes from the overrides, not the 3-col subset frames
+    assert d.col_a_only == ["dakota"]
+    assert d.col_b_only == ["new_metric"]
+    # value diff still ran on the subset frames
+    assert d.value_results["yardline_100"]["n_mismatch"] == 0

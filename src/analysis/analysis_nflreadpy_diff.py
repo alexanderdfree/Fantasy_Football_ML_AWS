@@ -351,12 +351,12 @@ def compare_frames(
     b = b.rename(columns=applied)
 
     a_cols = list(a_cols_override) if a_cols_override is not None else list(a.columns)
-    b_cols = list(b_cols_override) if b_cols_override is not None else list(b.columns)
     if b_cols_override is None:
-        b_cols = list(b.columns)
-    # apply rename to the override list too (for pbp full-schema diff)
-    elif applied:
-        b_cols = [applied.get(c, c) for c in b_cols]
+        b_cols = list(b.columns)  # b already renamed above
+    else:
+        # apply the rename to the supplied full-schema list too (pbp full-schema
+        # diff); applied.get(c, c) is a no-op when no rename matched.
+        b_cols = [applied.get(c, c) for c in b_cols_override]
     sa, sb = set(a_cols), set(b_cols)
 
     diff = SourceDiff(
