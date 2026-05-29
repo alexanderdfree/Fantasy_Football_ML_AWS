@@ -69,11 +69,12 @@ _FORBIDDEN_WR_SPECIFIC = {
     "team_wr_target_share_L3",
     "air_yards_per_target_L3",
 }
-_FORBIDDEN_TE_SPECIFIC = {
-    "yards_per_reception_L3",
-    "team_te_target_share_L3",
-    "td_rate_per_target_L3",
-}
+# Derived from the config's single source of truth rather than a hardcoded
+# partial list — every entry in TE's ``specific_features`` (the ``team_te_*``,
+# ``*_per_reception_*``, ``td_rate_per_target_*`` … families) is a temporal
+# aggregate that must stay out of the attention static branch. A hardcoded
+# subset would silently miss new TE-specific features slipping in.
+_FORBIDDEN_TE_SPECIFIC = set(te_cfg.POSITION_CONFIG.specific_features)
 _FORBIDDEN_SPECIFIC = {
     "QB": _FORBIDDEN_QB_SPECIFIC,
     "RB": _FORBIDDEN_RB_SPECIFIC,
