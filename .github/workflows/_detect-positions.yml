@@ -103,6 +103,19 @@ jobs:
           # non-squash merges and direct multi-commit pushes to main, where
           # the [docs-only] tag may live in a constituent commit subject
           # rather than the merge commit itself.
+          #
+          # NOTE: this job is NOT exposed to the false-green bug that
+          # tests.yml's pull_request detect had (TODO.md, 2026-05-29). That one
+          # ran on the synthetic refs/pull/N/merge commit and ranged from a
+          # lagging github.event.pull_request.base.sha, so `base.sha..HEAD`
+          # swept in unrelated main commits merged after the PR's base. This
+          # job runs only on workflow_run (post-merge) / workflow_dispatch —
+          # HEAD is a REAL main commit and HEAD^ is its genuine predecessor, so
+          # HEAD^..HEAD scopes to exactly what the squash/merge landed. Do NOT
+          # "fix" this to `HEAD^2 --not HEAD^1`: that would drop the merge
+          # commit's own subject on a non-squash merge, and break outright on
+          # the linear squash-merge case (the common one), where HEAD has no
+          # second parent.
           docs_only=false
           for sha in $(git log --format=%H HEAD^..HEAD); do
             if git log -1 --format=%B "$sha" | awk 'NR==1 || /^\* /' | grep -qF '[docs-only]'; then

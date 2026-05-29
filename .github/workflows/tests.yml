@@ -63,21 +63,43 @@ jobs:
           fetch-depth: 0
 
       - id: scope
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -eu
-          if [ "$EVENT" = "pull_request" ]; then
-            BASE="$BASE_SHA"
+          # Scope this change to the PR's OWN commits — not the full range
+          # between the PR's base and HEAD.
+          #
+          # On a pull_request event, actions/checkout checks out the synthetic
+          # merge commit refs/pull/N/merge ("Merge <pr-head> into <main-tip>").
+          # Its first parent (HEAD^1) is the *current* main tip and its second
+          # parent (HEAD^2) is the PR head, so the PR's own commits are exactly
+          # those reachable from HEAD^2 but not HEAD^1 — independent of how far
+          # main has advanced past the PR's base.
+          #
+          # We deliberately do NOT use github.event.pull_request.base.sha. It
+          # pins to the base recorded when the event fired, which lags the live
+          # main tip, so `base.sha..HEAD` sweeps in EVERY commit merged to main
+          # after this PR's base. If any of those unrelated commits carries a
+          # `[docs-only]` subject, the scan below would emit shards=[] and skip
+          # this PR's entire test fan-out while `tests-pass` still reports
+          # green: a false green. PR #367 hit exactly this on 2026-05-29 when
+          # PR #368's `[docs-only]` commit (0a17b4e) landed on main mid-review
+          # and fell inside 39aa8a6..<#367 merge head>. See TODO.md's archive.
+          if git rev-parse --verify "HEAD^2" >/dev/null 2>&1; then
+            # Merge commit: pull_request event (or a real merge pushed to main).
+            commit_args=(HEAD^2 --not HEAD^1)
+            diff_args=(HEAD^1...HEAD^2)
+          elif git rev-parse --verify "HEAD~1" >/dev/null 2>&1; then
+            # Linear history: push to main after a squash merge, or a PR whose
+            # merge commit couldn't be computed (checkout falls back to the PR
+            # head). Scan the single new commit against its parent.
+            commit_args=(HEAD~1..HEAD)
+            diff_args=(HEAD~1 HEAD)
           else
-            BASE="HEAD~1"
-          fi
-          if ! git rev-parse --verify "$BASE" >/dev/null 2>&1; then
+            # Root commit / no parent to diff against — run the full matrix.
             echo 'shards=["QB","RB","WR","TE","K","DST","shared"]' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Opt-in: any commit in BASE..HEAD whose subject line contains
+          # Opt-in: any commit in the range whose subject line contains
           # `[docs-only]` signals the author asserts the diff has no
           # behavioural impact (comment / docstring / import-reorder only).
           # The default detect logic treats those as substantive because
@@ -96,7 +118,7 @@ jobs:
           # commit N+1 looking like a subject of commit N due to lack of
           # separators in `git log --format=%B`.
           docs_only=false
-          for sha in $(git log --format=%H "$BASE..HEAD"); do
+          for sha in $(git log --format=%H "${commit_args[@]}"); do
             if git log -1 --format=%B "$sha" | awk 'NR==1 || /^\* /' | grep -qF '[docs-only]'; then
               docs_only=true
               break
@@ -106,7 +128,7 @@ jobs:
             echo 'shards=[]' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          files=$(git diff --name-only "$BASE" HEAD)
+          files=$(git diff --name-only "${diff_args[@]}")
           shards=$(printf '%s\n' "$files" | python3 -m src.scripts.scope_positions --mode test)
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
 
