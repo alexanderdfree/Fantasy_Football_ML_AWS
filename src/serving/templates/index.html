@@ -368,19 +368,19 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                     <div class="approach-desc">One row per CI training run, newest first. Each MAE cell lists every position trained in that run, on the position's raw-stat scale. PRs that only touch a subset of positions retrain just those.</div>
                 </div>
             </div>
+            <div class="history-controls">
+                <label class="history-check">
+                    <input type="checkbox" id="history-detailed-toggle">
+                    Detailed mode <span class="history-check-hint">(click a run for per-target MAE)</span>
+                </label>
+                <label class="history-check">
+                    <input type="checkbox" id="history-group-by-position-toggle">
+                    Group by position
+                </label>
+            </div>
             <div class="table-container">
                 <table id="history-table">
-                    <thead>
-                        <tr>
-                            <th class="col-history-pr">PR</th>
-                            <th class="col-history-ts">Timestamp (UTC)</th>
-                            <th class="col-history-mae ridge-col">Ridge MAE</th>
-                            <th class="col-history-mae nn-col">NN MAE</th>
-                            <th class="col-history-mae attn-nn-col">Attn NN MAE</th>
-                            <th class="col-history-mae lgbm-col">LGBM MAE</th>
-                            <th class="col-history-time">Training time</th>
-                        </tr>
-                    </thead>
+                    <thead id="history-head"></thead>
                     <tbody id="history-body">
                         <tr><td colspan="7" class="arch-loading">Loading benchmark history…</td></tr>
                     </tbody>

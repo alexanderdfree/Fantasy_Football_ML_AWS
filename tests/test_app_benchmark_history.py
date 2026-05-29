@@ -445,3 +445,137 @@ class TestCaching:
         )
         second = client.get("/api/benchmark_history").get_json()
         assert {r["git_hash"] for r in second["rows"]} == {"aaa1111", "bbb2222"}
+
+
+class TestPerTargetDetail:
+    """Detailed mode (History tab) reads a flattened ``per_target`` map on each
+    pill. It's attached only when the source result carries ``{model}_per_target``
+    (a ``{target: {mae, r2}}`` block); otherwise the key is omitted so the
+    at-a-glance pill stays exactly ``{position, mae}`` and the exact-equality
+    assertions in TestRowShape keep passing untouched."""
+
+    def test_per_target_attached_when_present(self, history_client):
+        client, history_dir = history_client
+        _write_run(
+            history_dir,
+            ts="2026-05-20T10:00:00",
+            sha="aaa1111",
+            pr=242,
+            results=[
+                {
+                    "position": "QB",
+                    "ridge_mae": 6.5,
+                    "ridge_per_target": {
+                        "passing_yards": {"mae": 67.618, "r2": 0.352},
+                        "passing_tds": {"mae": 0.86, "r2": 0.091},
+                    },
+                }
+            ],
+        )
+        qb_ridge = client.get("/api/benchmark_history").get_json()["rows"][0]["ridge"][0]
+        # MAE-only, r2 dropped, rounded to 3dp.
+        assert qb_ridge == {
+            "position": "QB",
+            "mae": 6.5,
+            "per_target": {"passing_yards": 67.618, "passing_tds": 0.86},
+        }
+
+    def test_per_target_omitted_when_absent(self, history_client):
+        """A run with the total ``ridge_mae`` but no ``ridge_per_target`` keeps the
+        pill at exactly {position, mae} — the regression guard for the existing
+        exact-equality tests."""
+        client, history_dir = history_client
+        _write_run(
+            history_dir,
+            ts="2026-05-20T10:00:00",
+            sha="aaa1111",
+            pr=242,
+            results=[{"position": "QB", "ridge_mae": 6.5}],
+        )
+        assert client.get("/api/benchmark_history").get_json()["rows"][0]["ridge"][0] == {
+            "position": "QB",
+            "mae": 6.5,
+        }
+
+    def test_per_target_omitted_for_untrained_position(self, history_client):
+        """Partial K-only run: the five untrained positions carry neither a
+        numeric mae nor a per_target key across every model; the trained K cell
+        carries detail only for the model whose source had per_target."""
+        client, history_dir = history_client
+        _write_run(
+            history_dir,
+            ts="2026-05-20T10:00:00",
+            sha="aaa1111",
+            pr=242,
+            results=[
+                {
+                    "position": "K",
+                    "ridge_mae": 6.5,
+                    "ridge_per_target": {"fg_yard_points": {"mae": 3.1, "r2": 0.2}},
+                }
+            ],
+        )
+        row = client.get("/api/benchmark_history").get_json()["rows"][0]
+        for model in ("ridge", "nn", "attn_nn", "lgbm"):
+            assert row[model][0] == {"position": "QB", "mae": None}
+        k_ridge = row["ridge"][4]
+        assert k_ridge["position"] == "K"
+        assert k_ridge["per_target"] == {"fg_yard_points": 3.1}
+        assert "per_target" not in row["nn"][4]
+
+    def test_per_target_nan_or_none_mae_dropped(self, history_client):
+        """Per-target entries whose mae is NaN/None are scrubbed by _safe_num and
+        dropped from the flattened map (browsers reject NaN; the frontend would
+        otherwise render ``undefined``)."""
+        client, history_dir = history_client
+        _write_run(
+            history_dir,
+            ts="2026-05-20T10:00:00",
+            sha="aaa1111",
+            pr=242,
+            results=[
+                {
+                    "position": "QB",
+                    "ridge_mae": 6.5,
+                    "ridge_per_target": {
+                        "passing_yards": {"mae": 67.6, "r2": 0.3},
+                        "passing_tds": {"mae": None, "r2": 0.1},
+                        "rushing_tds": {"mae": float("nan"), "r2": 0.0},
+                    },
+                }
+            ],
+        )
+        qb_ridge = client.get("/api/benchmark_history").get_json()["rows"][0]["ridge"][0]
+        assert qb_ridge["per_target"] == {"passing_yards": 67.6}
+
+    def test_per_target_empty_dict_omitted(self, history_client):
+        """An empty ``ridge_per_target: {}`` is treated as 'no detail' — the key
+        is omitted so detailed mode falls back to the total for that cell."""
+        client, history_dir = history_client
+        _write_run(
+            history_dir,
+            ts="2026-05-20T10:00:00",
+            sha="aaa1111",
+            pr=242,
+            results=[{"position": "QB", "ridge_mae": 6.5, "ridge_per_target": {}}],
+        )
+        pill = client.get("/api/benchmark_history").get_json()["rows"][0]["ridge"][0]
+        assert "per_target" not in pill
+
+
+class TestTargetMaps:
+    """The endpoint serves static {target_key: label} and {target_key: unit}
+    lookups so detailed mode can render 'Passing Yards … yds' without a second
+    /api/position_details fetch. They're present regardless of how many runs
+    exist (built from POSITION_INFO / TARGET_UNITS)."""
+
+    def test_target_labels_and_units_in_response(self, history_client):
+        client, _ = history_client
+        body = client.get("/api/benchmark_history").get_json()
+        assert body["target_labels"]["passing_yards"] == "Passing Yards"
+        # K target has a label but (intentionally) no unit entry — formatTargetMae
+        # renders it without a unit suffix.
+        assert body["target_labels"]["fg_yard_points"] == "FG Yard Points"
+        assert "fg_yard_points" not in body["target_units"]
+        assert body["target_units"]["passing_yards"] == "yds"
+        assert body["target_units"]["receptions"] == "rec"

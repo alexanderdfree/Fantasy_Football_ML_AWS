@@ -56,7 +56,7 @@ from src.features.engineer import (
     build_opp_defense_history_arrays,
     get_attn_static_columns,
 )
-from src.shared.aggregate_targets import predictions_to_fantasy_points
+from src.shared.aggregate_targets import TARGET_UNITS, predictions_to_fantasy_points
 from src.shared.artifact_integrity import (
     assert_scaler_matches,
     read_scaler_meta,
@@ -2384,6 +2384,14 @@ _BENCHMARK_MODELS = ("ridge", "nn", "attn_nn", "lgbm")
 # mirrors the rest of the UI (POSITION_INFO iteration in /api/position_details).
 _BENCHMARK_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
+# Flat {target_key: label} merged across positions, served alongside the History
+# rows so the detailed-mode per-target breakdown can render "Passing Yards" (not
+# the raw "passing_yards" key) without a second /api/position_details round-trip.
+# Labels are consistent per key across positions (e.g. fumbles_lost, receiving_yards
+# share one label wherever they appear), so a flat merge is unambiguous. Paired
+# with TARGET_UNITS (also served top-level) for the unit suffix.
+_TARGET_LABELS = {t["key"]: t["label"] for info in POSITION_INFO.values() for t in info["targets"]}
+
 # (mtime, rows) — invalidated whenever sync_benchmark_history_from_s3 (or a
 # manual write) touches benchmark_history/. Lock keeps two concurrent
 # /api/benchmark_history requests from re-parsing in parallel after an
@@ -2398,6 +2406,30 @@ def _benchmark_history_dir() -> str:
     # <repo_root>/benchmark_history/ in both local dev and the container.
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     return os.path.join(repo_root, "benchmark_history")
+
+
+def _extract_per_target(raw) -> dict:
+    """Flatten a stored ``{model}_per_target`` block to ``{target: mae}``.
+
+    The benchmark files store per-target metrics as
+    ``{target: {"mae": float, "r2": float}}`` (see
+    ``src/shared/benchmark_utils.py::_per_target``). The History tab's detailed
+    mode only needs MAE, so we drop r2. Targets whose MAE is NaN/None (scrubbed
+    by ``_safe_num``) are dropped so the frontend never renders ``undefined``.
+    Returns ``{}`` when ``raw`` is absent or not a dict — callers treat empty as
+    "no detail" and omit the ``per_target`` key entirely, which keeps the
+    existing exact-equality pill assertions green.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, float] = {}
+    for target, v in raw.items():
+        if not isinstance(v, dict):
+            continue
+        mae = _safe_num(v.get("mae"))
+        if mae is not None:
+            out[target] = round(mae, 3)
+    return out
 
 
 def _benchmark_row(entry: dict) -> dict:
@@ -2420,7 +2452,14 @@ def _benchmark_row(entry: dict) -> dict:
         r = by_pos.get(pos, {})
         for m in _BENCHMARK_MODELS:
             mae = _safe_num(r.get(f"{m}_mae"))
-            pills[m].append({"position": pos, "mae": round(mae, 3) if mae is not None else None})
+            pill = {"position": pos, "mae": round(mae, 3) if mae is not None else None}
+            # Detailed mode (History tab) reads this per-target MAE breakdown.
+            # Omit the key when there's no detail so the at-a-glance pill stays
+            # exactly {position, mae} (untrained positions, old-format runs).
+            per_target = _extract_per_target(r.get(f"{m}_per_target"))
+            if per_target:
+                pill["per_target"] = per_target
+            pills[m].append(pill)
         elapsed = _safe_num(r.get("elapsed_sec"))
         if elapsed is not None:
             total_elapsed += elapsed
@@ -2492,8 +2531,19 @@ def api_benchmark_history():
     ``sync_benchmark_history_from_s3()`` at boot, which is itself triggered
     on each training run by the post-train ``aws ecs update-service --force-
     new-deployment`` in ``train-ec2.yml``.
+
+    ``target_labels`` / ``target_units`` are static lookup maps the History
+    tab's detailed mode uses to render per-target MAE rows ("Passing Yards …
+    yds") from the raw target keys carried on each pill's ``per_target``.
     """
-    return jsonify({"repo_slug": _BENCHMARK_REPO_SLUG, "rows": _load_benchmark_history_rows()})
+    return jsonify(
+        {
+            "repo_slug": _BENCHMARK_REPO_SLUG,
+            "rows": _load_benchmark_history_rows(),
+            "target_labels": _TARGET_LABELS,
+            "target_units": TARGET_UNITS,
+        }
+    )
 
 
 @app.route("/health")
