@@ -19,6 +19,7 @@ This document compares our model's weekly fantasy point predictions against publ
 - Most expert accuracy rankings report *relative* rankings (1st, 2nd, 3rd by position) rather than raw MAE values, making direct numerical comparison difficult.
 - Scoring format differences (standard vs. half-PPR vs. full PPR) shift absolute point totals and therefore MAE.
 - One source — **NFL.com** — publishes per-game projections we can score directly; see "NFL.com Head-to-Head Baseline" below for the apples-to-apples MAE.
+- **Training loss ≠ evaluation metric.** Our models train with Huber loss (robust to the boom/bust tail of fantasy scoring), but every comparison here is on MAE / RMSE / R² over held-out predictions — metrics that don't depend on what any model trained on. Squared error is the consistent scoring rule for the conditional *mean* (which mean-oriented expert projections implicitly target) and absolute error for the *median* (Gneiting 2011); Huber is consistent only for an intermediate robust "Huber mean" functional (Taggart 2022), so we never score a head-to-head *with* Huber. We report MAE (the better-matched summary for heavy-tailed errors) and RMSE side by side — RMSE because it favors the experts' implicit squared-error objective, which makes beating them on it the stronger claim.
 - Despite these limitations, published accuracy thresholds and academic benchmarks provide meaningful context for interpreting our results.
 
 ---
@@ -114,6 +115,27 @@ The QB gap is consistent with the structural QB limitation noted under "Position
 - NFL.com's player pool is implicitly curated (they only project players likely to play); our model evaluates every rostered player at each position. NFL.com's MAE is on `n_matched` rows where both sides have a projection, so this is partially controlled, but coverage differences in marginal players still affect the per-position N.
 - The 92.2% NFL.com name-match rate (see the loader logs) drops ~7.8% of NFL.com rows that couldn't be joined to a `gsis_id` — mostly free-agent placeholders ("Alex Hale (K, FA)", etc.).
 
+### Significance-tested head-to-head (`analysis_expert_comparison.py`)
+
+The baseline table above scores NFL.com against actuals across every NFL.com-matched row. A second script — [`src/analysis/analysis_expert_comparison.py`](../src/analysis/analysis_expert_comparison.py) — runs the stricter, decision-relevant comparison. It joins our model's held-out per-player-week predictions to NFL.com on the **intersection** where both project, scores both against the same ground-truth `fantasy_points` column (genuinely *paired* errors), and adds:
+
+- **MAE and RMSE** for each side (see the loss-vs-metric caveat above for why both).
+- **Ranking** quality — top-K hit-rate and Spearman ρ — because fantasy is a selection problem and rank metrics are loss-agnostic.
+- A **paired significance test** — a player-clustered bootstrap CI on ΔMAE / ΔRMSE (primary) plus a Diebold-Mariano test with the Harvey-Leybourne-Newbold small-sample correction (Diebold & Mariano 1995). This is what separates a real edge from run-to-run noise.
+
+Because it restricts to the model ∩ NFL.com sample, its per-position N and NFL.com MAE differ slightly from the baseline table above (which is on the full NFL.com-matched set).
+
+**Illustrative QB 2025 output** (n = 663 common player-weeks; model = production Attention NN):
+
+| Metric | Model | NFL.com | Δ (model − expert) | 95% CI | DM p |
+|--------|---:|---:|---:|:--:|---:|
+| MAE | 6.596 | 5.756 | +0.840 | [0.54, 1.15] | 8.6e-7 |
+| RMSE | 8.235 | 7.702 | +0.534 | [0.13, 0.88] | 0.011 |
+| Top-12 hit rate | 0.468 | 0.491 | — | — | — |
+| Spearman ρ | 0.480 | 0.536 | — | — | — |
+
+The ΔMAE CI excludes zero and DM p ≪ 0.05, so NFL.com's QB edge is **statistically real**, not benchmark-snapshot noise — and it holds on RMSE too (the metric tilted *toward* the expert's squared-error objective) and on both ranking metrics. This is the rigorous version of the QB gap discussed above. Run it with `python -m src.analysis.analysis_expert_comparison` (defaults to PPR / `TEST_SEASONS` / all positions; writes `analysis_output/expert_comparison.json`, regenerated on demand and not committed).
+
 ---
 
 ## Published Accuracy Thresholds
@@ -194,7 +216,7 @@ DST landed via [commit `cc0c627`](../) with a 10-target attention model (sacks, 
 
 2. **No single architecture wins everywhere.** Multi-Head NN wins QB; Attention NN wins RB / TE / DST; LightGBM wins WR; Ridge wins K. This is the strongest signal yet that maintaining a diverse model portfolio is worth the training cost — the per-position routing in `src.benchmarking.benchmark` picks the actual best architecture per position rather than locking in one family.
 
-3. **NFL.com gives us a direct head-to-head.** The only mainstream source publishing scoring-grade raw projections we can join to actuals. On 2025: QB is the only position where NFL.com beats us by a meaningful margin (~0.5 MAE pts); RB / WR / TE are within run-to-run variance; K we beat cleanly. Full per-target and weekly breakouts are written to the `nflcom_baseline.json` report by `src/analysis/analysis_nflcom_baseline.py` (regenerated on demand; not committed).
+3. **NFL.com gives us a direct, significance-tested head-to-head.** The only mainstream source publishing scoring-grade raw projections we can join to actuals. On 2025: QB is the only position where NFL.com beats us by a meaningful margin (~0.8 MAE pts — and that gap is statistically significant, with the ΔMAE bootstrap CI excluding zero and DM p ≪ 0.05); RB / WR / TE are within run-to-run variance; K we beat cleanly. Two scripts back this: `src/analysis/analysis_nflcom_baseline.py` (NFL.com vs actuals, per-target + weekly breakouts) and `src/analysis/analysis_expert_comparison.py` (same-sample model-vs-NFL.com with ranking + paired bootstrap / Diebold-Mariano significance). Both regenerate on demand; neither report is committed.
 
 4. **Other expert sites publish only relative rankings.** Industry accuracy tracking (FantasyPros, FFA) ranks sources 1st/2nd/3rd by position rather than reporting raw MAE. This makes exact head-to-head comparison with those sources impossible, but our results fall within the ranges where professional projection systems operate.
 
@@ -212,3 +234,6 @@ DST landed via [commit `cc0c627`](../) with a 10-target attention model (sacks, 
 6. Dross, E. "Predicting NFL Players Fantasy Performance." INST 414 (2023). https://medium.com/inst414-data-science-tech/predicting-nfl-players-fantasy-performance-362f5f1828d3
 7. "Data Analysis on Predicting the Top 12 Fantasy Football Players by Position." SMU Data Science Review, Vol. 8, No. 2 (2024). https://scholar.smu.edu/datasciencereview/vol8/iss2/7/
 8. Chant, J. "NFL Fantasy Point Prediction." (2023). https://jadenchant.github.io/pages/projects/nfl_fantasy_pt/
+9. Gneiting, T. "Making and Evaluating Point Forecasts." *Journal of the American Statistical Association* 106(494), 746–762 (2011). https://arxiv.org/abs/0912.0902
+10. Taggart, R. J. "Point forecasting and forecast evaluation with generalized Huber loss." *Electronic Journal of Statistics* 16(1), 201–231 (2022). https://arxiv.org/abs/2108.12426
+11. Diebold, F. X. & Mariano, R. S. "Comparing Predictive Accuracy." *Journal of Business & Economic Statistics* 13(3), 253–263 (1995). https://www.tandfonline.com/doi/abs/10.1080/07350015.1995.10524599
