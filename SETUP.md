@@ -73,9 +73,20 @@ python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda
 python -c "from src.data.loader import load_raw_data; from src.data.preprocessing import preprocess; from src.features.engineer import build_features; from src.data.split import temporal_split; temporal_split(build_features(preprocess(load_raw_data())))"
 ```
 
-**Run training / tuning** — identical commands to macOS/Linux, run from the repo root:
+**Run training / tuning** — identical commands to macOS/Linux, run from the repo root.
+**Set `$env:OPENBLAS_NUM_THREADS='1'` first — REQUIRED on Windows, not a perf knob:** without it,
+local pipeline / benchmark / tuning runs crash partway through a position with a `0xC0000005` access
+violation (process exit `-1073741819`, no Python traceback), because concurrent threaded LAPACK `eigh`
+calls (the Ridge-PCA alpha CV in [src/shared/pipeline.py](src/shared/pipeline.py)) segfault Windows'
+bundled OpenBLAS. Linux OpenBLAS tolerates it, which is why AWS Batch / CI never hit it (the Batch
+job-def and `conftest.py` pin the same thread caps — this is the local-dev equivalent). Capping it to
+one thread fixes it and only throttles numpy's BLAS — LightGBM uses a separate OpenMP runtime
+(`LGBM_N_JOBS`, below), so tree-building still uses every core. Set it once per PowerShell session; it
+covers every command below, including the tuners.
 
 ```powershell
+$env:OPENBLAS_NUM_THREADS = "1"   # REQUIRED on Windows (cmd: set OPENBLAS_NUM_THREADS=1)
+
 python -m src.qb.run_pipeline                       # one position, full pipeline
 python -m src.benchmarking.benchmark RB --no-sync   # benchmark one position
 python -m src.tuning.tune_nn RB --n-trials 30       # Optuna NN tuning
@@ -91,10 +102,11 @@ get full use of the 9950X3D's cores, see the next subsection.
 
 ### Use all 16 cores (performance)
 
-Most parallelism is already wired: Ridge/ElasticNet CV and the BLAS under scikit-learn fan out
-across all cores via `joblib`, and a single position overlaps its CPU classical-ML models with the
-GPU attention NN ([src/shared/pipeline.py](src/shared/pipeline.py)). Two things to know to fully use
-the 9950X3D:
+Most parallelism is already wired: Ridge/ElasticNet CV fans its alpha grid across cores via `joblib`
+(one thread per alpha — each doing a single-threaded BLAS solve under the REQUIRED
+`OPENBLAS_NUM_THREADS=1` above, so the cores stay busy via the alpha fan-out, not multi-threaded
+BLAS), and a single position overlaps its CPU classical-ML models with the GPU attention NN
+([src/shared/pipeline.py](src/shared/pipeline.py)). Two things to know to fully use the 9950X3D:
 
 **NN training is GPU-bound.** During the attention-NN phase the CPU will look mostly idle — that's
 expected; the 5080 is doing the work. The CPU-heavy parts are the classical-ML models and tuning.
