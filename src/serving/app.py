@@ -14,6 +14,7 @@ import sys
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 
 import bleach
 import markdown
@@ -28,7 +29,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import torch
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 
 import src.dst.config as dst_cfg
 import src.dst.data as dst_data
@@ -1563,6 +1564,13 @@ _PREDICTIONS_CACHE_DIR = os.path.join(_REPO_ROOT, "data", "serving_cache")
 _PREDICTIONS_PARQUET = "predictions.parquet"
 _METRICS_JSON = "metrics.json"
 _FINGERPRINT_JSON = "fingerprint.json"
+# Browser-ready snapshot the frontend hydrates its first paint from (see
+# /api/snapshot + static/js/app.js). Auxiliary to the cache triple above —
+# its absence is non-fatal (frontend falls back to /api/predictions), so it is
+# deliberately NOT part of model_sync._PREDICTIONS_CACHE_FILES (that tuple is
+# all-or-nothing; a missing member forces a 30-60s recompute). It rides the
+# best-effort model_sync._PREDICTIONS_CACHE_OPTIONAL path instead.
+_SNAPSHOT_JSON = "snapshot.json"
 
 
 def _iter_fingerprint_paths():
@@ -1652,6 +1660,46 @@ def _compute_models_fingerprint():
     return h.hexdigest(), files
 
 
+def _write_snapshot_json():
+    """Write the browser-ready predictions snapshot to ``snapshot.json``.
+
+    Built from the same ``_records_to_player_rows`` serializer ``/api/predictions``
+    uses, so the static snapshot can never drift from the live API shape. Carries
+    every player-week row for all three scoring formats plus the week list and
+    degraded-position set, so the frontend can filter/sort/scoring-switch entirely
+    client-side off a single fetch.
+
+    Best-effort and auxiliary: a write failure logs and returns (serving
+    continues; the frontend falls back to ``/api/predictions``). Atomic
+    ``os.replace`` so a concurrent reader never sees a half-written file. Caller
+    must hold ``_cache_lock`` and have ``_cache["results"]`` populated.
+    """
+    results = _cache.get("results")
+    if results is None:
+        return
+    payload = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "weeks": sorted(int(w) for w in results["week"].unique()),
+        "degraded_positions": _degraded_positions(),
+        "scoring": {fmt: _records_to_player_rows(results, scoring=fmt) for fmt in _VALID_SCORING},
+    }
+    os.makedirs(_PREDICTIONS_CACHE_DIR, exist_ok=True)
+    path = os.path.join(_PREDICTIONS_CACHE_DIR, _SNAPSHOT_JSON)
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp, path)
+    except Exception as e:  # noqa: BLE001 — snapshot is best-effort, must not break serving
+        print(f"[snapshot] write failed: {e!r} — frontend will fall back to /api/predictions")
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        return
+    print(
+        f"[snapshot] wrote {path} (weeks={len(payload['weeks'])}, rows/format={len(payload['scoring']['ppr'])})"
+    )
+
+
 def _try_hydrate_from_disk():
     """Populate ``_cache`` directly from data/serving_cache/ when the stored
     fingerprint matches the live one. Caller must hold ``_cache_lock``.
@@ -1735,6 +1783,16 @@ def _try_hydrate_from_disk():
         f"position_details={len(position_details)}, "
         f"errors={len(position_load_errors)})"
     )
+    # The browser snapshot may be absent on caches written by pre-snapshot
+    # containers (the core triple synced from S3, snapshot.json did not exist
+    # there yet). Regenerate it locally from the just-hydrated results so
+    # /api/snapshot serves on this container without waiting for the next
+    # retrain. Local-only (no S3 upload): regeneration is a cheap in-memory
+    # serialize, and the canonical snapshot lands in S3 via the full-compute
+    # _persist_cache_to_disk path. Off the request path (hydrate runs in the
+    # post_fork warm thread).
+    if not os.path.isfile(os.path.join(_PREDICTIONS_CACHE_DIR, _SNAPSHOT_JSON)):
+        _write_snapshot_json()
     return True
 
 
@@ -1789,6 +1847,9 @@ def _persist_cache_to_disk():
                 os.unlink(tmp)
         return
     print(f"[predcache] wrote cache to {_PREDICTIONS_CACHE_DIR} (sha={sha[:8]})")
+    # Write the browser snapshot before uploading so the upload (which also
+    # pushes the auxiliary snapshot.json) finds it on disk.
+    _write_snapshot_json()
     try:
         upload_predictions_cache_to_s3()
     except Exception as e:  # noqa: BLE001 — upload best-effort
@@ -1970,6 +2031,29 @@ def api_predictions():
             "degraded_positions": _degraded_positions(),
         }
     )
+
+
+@app.route("/api/snapshot")
+def api_snapshot():
+    """Serve the precomputed predictions snapshot straight off disk.
+
+    The frontend hydrates its first paint from this (static/js/app.js::init), so
+    this route MUST NOT call ``_ensure_metrics`` / load models — that is the whole
+    point: instant first paint with zero compute on the request path. Missing
+    file -> 404, and the frontend falls back to ``/api/predictions``. The file is
+    produced off the request path by ``_write_snapshot_json`` (the compute +
+    hydrate paths, both driven by the post_fork warm thread) and synced from S3
+    at boot as an auxiliary cache file.
+    """
+    path = os.path.join(_PREDICTIONS_CACHE_DIR, _SNAPSHOT_JSON)
+    if not os.path.isfile(path):
+        return jsonify({"error": "snapshot not available"}), 404
+    resp = send_file(path, mimetype="application/json", conditional=True)
+    # Snapshot content changes on retrain; send_file stamps a size/mtime ETag,
+    # so "no-cache" makes browsers revalidate cheaply (304 when unchanged)
+    # rather than serving a stale snapshot after a model refresh.
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 @app.route("/api/metrics")

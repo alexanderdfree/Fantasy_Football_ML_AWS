@@ -3,6 +3,11 @@
 const PAGE_SIZE = 50;
 const VALID_SCORING = ["ppr", "half_ppr", "standard"];
 let allPlayers = [];
+// When true, predictions were hydrated from the precomputed /api/snapshot
+// (zero server compute); filtering/sorting/scoring all happen client-side over
+// `snapshotData`. When false we fell back to the live /api/predictions API.
+let usingSnapshot = false;
+let snapshotData = null;
 let currentPage = 1;
 let currentSort = "actual";
 let currentOrder = "desc";
@@ -101,31 +106,59 @@ async function init() {
     setupWikiClickHandler();
     applyInitialRoute();
 
-    // Load weeks dropdown
-    try {
-        const weeksData = await fetchJSON("/api/weeks");
-        const weekSelect = document.getElementById("week-filter");
-        weeksData.weeks.forEach(w => {
-            const opt = document.createElement("option");
-            opt.value = w;
-            opt.textContent = `Week ${w}`;
-            weekSelect.appendChild(opt);
-        });
-    } catch (e) {
-        console.error("Failed to load weeks:", e);
-    }
-
     // Attach filter change listeners
     document.getElementById("week-filter").addEventListener("change", () => { currentPage = 1; loadPredictions(); });
 
-    // Initial data load
+    // The page shell is ready — drop the blocking full-screen overlay now
+    // instead of holding it until data arrives. Predictions stream into the
+    // table afterward with the lighter in-table loading indicator, so the
+    // chrome (tabs, filters, search) is interactive immediately even when the
+    // server is cold.
+    document.getElementById("loading-overlay").classList.add("hidden");
+
+    await bootstrapPredictions();
+}
+
+// Hydrate the first paint from the precomputed static snapshot (/api/snapshot)
+// when available — zero model-load on the server, instant in all cases incl.
+// cold containers. On a miss (404 / network / no snapshot yet) fall back to the
+// live API, loading weeks + predictions in parallel rather than sequentially.
+async function bootstrapPredictions() {
     try {
-        await loadPredictions();
+        const snap = await fetchJSON("/api/snapshot");
+        if (snap && snap.scoring) {
+            usingSnapshot = true;
+            snapshotData = snap;
+            populateWeeks(snap.weeks || []);
+            renderDegradedBanner(snap.degraded_positions || []);
+            loadPredictions();  // snapshot branch: client-side filter + render
+            return;
+        }
     } catch (e) {
-        console.error("Failed to load predictions:", e);
-    } finally {
-        document.getElementById("loading-overlay").classList.add("hidden");
+        // 404 (this container has no snapshot yet) or a network error — fall
+        // through to the live API path below.
     }
+    usingSnapshot = false;
+    await Promise.all([loadWeeks(), loadPredictions()]);
+}
+
+async function loadWeeks() {
+    try {
+        const weeksData = await fetchJSON("/api/weeks");
+        populateWeeks(weeksData.weeks);
+    } catch (e) {
+        console.error("Failed to load weeks:", e);
+    }
+}
+
+function populateWeeks(weeks) {
+    const weekSelect = document.getElementById("week-filter");
+    (weeks || []).forEach(w => {
+        const opt = document.createElement("option");
+        opt.value = w;
+        opt.textContent = `Week ${w}`;
+        weekSelect.appendChild(opt);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +361,15 @@ function setupSortHeaders() {
 // Predictions
 // ---------------------------------------------------------------------------
 async function loadPredictions() {
+    if (usingSnapshot) {
+        // The snapshot already holds every player-week for each scoring format.
+        // Pick the active format; renderTable() filters (position/week/search),
+        // sorts, and paginates client-side — no network round trip.
+        allPlayers = (snapshotData && snapshotData.scoring[currentScoring]) || [];
+        renderTable();
+        return;
+    }
+
     const position = getActivePosition("position-filter");
     const week = document.getElementById("week-filter").value;
     const search = document.getElementById("search-input").value;
@@ -370,9 +412,25 @@ function renderDegradedBanner(degraded) {
     banner.classList.remove("hidden");
 }
 
+// Client-side position/week/search filter over `allPlayers`. In snapshot mode
+// `allPlayers` is the full dataset for the active scoring format, so this is the
+// real filter. In live-API (fallback) mode the server already filtered by the
+// same current criteria, so re-applying them here is an idempotent no-op.
+function getFilteredPlayers() {
+    const position = getActivePosition("position-filter");
+    const week = document.getElementById("week-filter").value;
+    const search = document.getElementById("search-input").value.trim().toLowerCase();
+    return allPlayers.filter(p => {
+        if (position !== "ALL" && p.position !== position) return false;
+        if (week !== "ALL" && String(p.week) !== String(week)) return false;
+        if (search && !(p.name || "").toLowerCase().includes(search)) return false;
+        return true;
+    });
+}
+
 function renderTable() {
     // Sort locally for instant re-sorting
-    const sorted = [...allPlayers].sort((a, b) => {
+    const sorted = [...getFilteredPlayers()].sort((a, b) => {
         const va = a[currentSort] ?? 0;
         const vb = b[currentSort] ?? 0;
         return currentOrder === "desc" ? vb - va : va - vb;
