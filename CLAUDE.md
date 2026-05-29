@@ -122,8 +122,9 @@ The routine's prompt is version-controlled here, not only in the dashboard. **[.
 
 ## Worktree workflow
 
-This repo is regularly worked from `.claude/worktrees/<name>` clones where the parent worktree holds `main`. Two quirks:
+This repo is regularly worked from `.claude/worktrees/<name>` clones where the parent worktree holds `main`. Three quirks:
 
+- **Edit/Write paths must carry the worktree prefix.** Sub-agents (Explore/Plan) and plan files report repo-relative or *parent*-absolute paths (`/…/Final-Project/src/foo.py`). Using those verbatim for Edit/Write silently writes to the parent (`main`'s checkout, or whatever branch it holds) instead of this feature branch — `git status` in the worktree stays clean and any benchmark re-run uses the *unchanged* code (MAE Δ=0.0000 on every target is the late smell). **Before the first Edit/Write, re-prefix the path to `/…/Final-Project/.claude/worktrees/<name>/…`, then `grep` the new symbol in the worktree file to confirm the edit landed there.** Recovery: `cp <parent>/<file> <worktree>/<file>` (if committed baselines match) or `git -C <parent> diff -- <file> | git -C <worktree> apply`, then `git -C <parent> checkout -- <file>`. Burned ~30 min GPU time on PR #284; recurred on #354 and #370.
 - **`gh pr merge --delete-branch` fails** in a worktree (it tries to `git checkout main`, which is held by the parent). Use `gh pr merge <N> --squash` then `git push origin --delete <branch>` separately. Local feature branch can stay.
 - **"Is X on `main`?" / dead-link checks** must read `origin/main:<path>` via `git fetch origin main --quiet && git show origin/main:<path>` — never `cat <path>` in the worktree, which lags `main`.
 
