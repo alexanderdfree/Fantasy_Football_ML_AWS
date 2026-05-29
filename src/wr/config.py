@@ -84,6 +84,12 @@ _INCLUDE_FEATURES = {
         "game_status",
         "depth_chart_rank",
     ],
+    # WR carries wind_adjusted/temp_adjusted (TE's config omits them by
+    # design): the deep/sideline routes that drive WR receiving_yards are
+    # far more wind- and temperature-sensitive than the short, middle-of-
+    # field routes that dominate TE production, so the weather signal earns
+    # its place in the WR whitelist but not the TE one. This asymmetry is
+    # intentional — do not "sync" TE to match.
     "weather_vegas": [
         "implied_team_total",
         "implied_opp_total",
@@ -163,6 +169,10 @@ POSITION_CONFIG = PositionConfig(
     nn_lr=1e-3,
     nn_weight_decay=1e-4,
     nn_epochs=250,
+    # 512 (vs 128/256 elsewhere) is intentional: WR has the largest training
+    # set of any position, so the bigger batch gives smoother gradients and
+    # faster epochs without hurting generalization — tuned, not a typo. (The
+    # attention NN path below decouples to attn_batch_size=256.)
     nn_batch_size=512,
     nn_patience=25,
     # TDs + fumbles on Poisson NLL; receptions on zero-truncated NegBin-2
