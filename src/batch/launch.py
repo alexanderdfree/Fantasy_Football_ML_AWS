@@ -392,6 +392,25 @@ def _print_plan(positions, seed):
         print(f"    - {pos:<4} -> definition {_job_definition_for(pos)}")
 
 
+def _append_benchmark_history(positions, *, note):
+    """Best-effort: roll succeeded positions into a benchmark_history row + S3
+    mirror so a standalone (non-CI) Batch run shows up in the serving app's
+    History tab after the container's next boot. Reuses benchmark.py's
+    aggregation so there is exactly one code path. Never affects the launch
+    exit code — a flaky S3 mirror shouldn't fail an otherwise-successful run.
+    """
+    if not positions:
+        return
+    try:
+        # Local import: src/batch/benchmark.py imports from this module, so a
+        # module-level import here would be circular.
+        from src.batch.benchmark import record_benchmark_run
+
+        record_benchmark_run(positions, backend="batch", note=note)
+    except Exception as e:  # noqa: BLE001 — append is a convenience, not a gate
+        print(f"[benchmark_history] auto-append skipped: {e!r}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Launch AWS Batch training jobs")
     parser.add_argument(
@@ -431,8 +450,20 @@ def main():
             "Used by CI (train-batch.yml) where the runner has no local data."
         ),
     )
+    parser.add_argument(
+        "--append-history",
+        default="true",
+        help=(
+            "After a successful wait, roll the succeeded positions into a "
+            "benchmark_history row + S3 mirror so the run appears in the serving "
+            "History tab (true/false, default true). CI passes false — "
+            "train-batch.yml runs benchmark.py --download-only separately with "
+            "the image SHA + PR number."
+        ),
+    )
     args = parser.parse_args()
     wait = args.wait.lower() == "true"
+    append_history = args.append_history.lower() == "true"
     wait_timeout = args.wait_timeout if args.wait_timeout is not None else WAIT_TIMEOUT_SECONDS
 
     if args.dry_run:
@@ -492,6 +523,8 @@ def main():
         print(f"\nSucceeded: {succeeded}")
         print("Downloading model artifacts...")
         download_artifacts(succeeded, stopped_at_by_pos=stopped_at_by_pos, s3_client=s3_client)
+        if append_history:
+            _append_benchmark_history(succeeded, note="Standalone Batch run")
 
     print("\nAll done.")
 

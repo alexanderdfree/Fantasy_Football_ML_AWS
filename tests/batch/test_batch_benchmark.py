@@ -494,3 +494,45 @@ def test_maybe_upload_to_s3_strips_prefix_slashes(monkeypatch, tmp_path):
         bb._maybe_upload_to_s3(str(tmp_path / "x.json"))
     args = fake_s3.upload_file.call_args.args
     assert args[2] == "nightly/v2/benchmark_history/x.json"
+
+
+# --------------------------------------------------------------------------
+# record_benchmark_run — shared by main() (CLI/CI) and launch.py auto-append
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_record_benchmark_run_writes_row(_main_stubs):
+    """Aggregates the resolved metrics into one history row and returns the
+    written path. ``_main_stubs`` stubs download_metrics → {QB, RB} + the
+    benchmark_utils helpers and points HISTORY_DIR/RESULTS_FILE at tmp_path."""
+    import src.batch.benchmark as bb
+
+    _, printed, appended = _main_stubs
+    path = bb.record_benchmark_run(["QB", "RB"], note="Standalone Batch run")
+
+    assert path is not None
+    assert len(appended) == 1
+    row = appended[0]
+    assert row["note"] == "Standalone Batch run"
+    assert row["backend"] == "batch"
+    assert row["positions"] == ["QB", "RB"]
+    assert row["git_hash"] == "abc1234"  # stubbed get_git_hash
+    assert len(printed) == 2  # QB + RB summaries
+
+
+@pytest.mark.unit
+def test_record_benchmark_run_returns_none_when_no_metrics(monkeypatch):
+    """No resolvable metrics → prints, writes nothing, returns None (so the
+    launch.py auto-append is a clean no-op)."""
+    import src.batch.benchmark as bb
+
+    monkeypatch.setattr(bb, "download_metrics", lambda positions: {})
+    appended: list[dict] = []
+    monkeypatch.setattr(
+        bb, "append_to_history", lambda p, e, **kw: appended.append(e) or "/tmp/x.json"
+    )
+    monkeypatch.setattr(bb, "print_comparison_table", lambda *a, **k: None)
+
+    assert bb.record_benchmark_run(["QB"]) is None
+    assert appended == []

@@ -49,6 +49,11 @@ HISTORY_DIR = "benchmark_history"
 # for any future bucket-layout migration.
 S3_PREFIX = os.environ.get("FF_MODEL_S3_PREFIX", "models")
 
+# Repo root, so record_benchmark_run() resolves HISTORY_DIR / RESULTS_FILE
+# independent of cwd. main() chdirs here, but src/batch/launch.py's auto-append
+# calls record_benchmark_run() without chdir-ing.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
 
 def download_metrics(positions):
     """Download benchmark_metrics.json from each position's model artifacts.
@@ -137,6 +142,103 @@ def find_git_sha_divergence(all_metrics: dict, expected_sha: str | None) -> list
         for pos, metrics in all_metrics.items()
         if metrics.get("git_sha") and (metrics.get("git_sha") or "")[:7] != expected_short
     ]
+
+
+def record_benchmark_run(
+    positions,
+    *,
+    backend="batch",
+    instance_type="g4dn.xlarge (Spot)",
+    note="",
+    pr_number=None,
+    git_hash=None,
+):
+    """Aggregate already-trained artifacts into one benchmark_history row.
+
+    Downloads ``benchmark_metrics.json`` for ``positions`` (via each manifest),
+    prints the comparison table, writes ``benchmark_history/{run_id}.json``, and
+    mirrors it to S3. Returns the written path, or ``None`` if no metrics were
+    resolvable.
+
+    Shared by ``main()`` (CLI / CI) and ``src/batch/launch.py``'s standalone
+    auto-append so both go through exactly one code path. ``HISTORY_DIR`` /
+    ``RESULTS_FILE`` are resolved against the repo root when relative, so the
+    function is correct regardless of the caller's cwd.
+    """
+    print("\nDownloading benchmark metrics...")
+    all_metrics = download_metrics(positions)
+
+    if not all_metrics:
+        print("No metrics found. Skipping benchmark history append.")
+        return None
+
+    # Per-position git_sha coherency check (see find_git_sha_divergence for
+    # rationale). Defense-in-depth against the lingering manifest-write race
+    # after Layer A's job-def revision pinning.
+    expected_sha = ((git_hash or get_git_hash() or "")[:7]) or None
+    diverged = find_git_sha_divergence(all_metrics, expected_sha)
+    if diverged:
+        print(f"\nWARNING: git_sha divergence across positions (expected {expected_sha}):")
+        for pos, recorded in diverged:
+            print(f"  {pos}: trained image at {recorded}")
+        print(
+            "  Investigate whether two train-batch.yml runs overlapped on "
+            "this run's S3 writes. The model artifacts are still each "
+            "internally consistent (Layer A guarantees per-job image pinning), "
+            "but the run is heterogeneous and shouldn't be compared as a unit."
+        )
+    elif expected_sha:
+        with_sha = [p for p, m in all_metrics.items() if m.get("git_sha")]
+        if with_sha:
+            print(f"\ngit_sha coherent at {expected_sha} across {len(with_sha)} positions")
+
+    # Build summaries
+    summaries = []
+    for pos in positions:
+        if pos in all_metrics:
+            summaries.append(summarize_pipeline_result(pos, all_metrics[pos]))
+
+    print_comparison_table(
+        summaries,
+        header="AWS Batch Benchmark Results (MAE / R2)",
+        show_time=False,
+    )
+
+    results_path = (
+        RESULTS_FILE if os.path.isabs(RESULTS_FILE) else os.path.join(_REPO_ROOT, RESULTS_FILE)
+    )
+    with open(results_path, "w") as f:
+        json.dump(summaries, f, indent=2)
+    print(f"\nResults saved to {results_path}")
+
+    # Truncate to 7 chars so a CI-supplied full 40-char SHA matches the
+    # short-SHA convention ``get_git_hash()`` already returns.
+    git_short = (git_hash or get_git_hash())[:7]
+    now = utc_now_iso()
+    history_dir = (
+        HISTORY_DIR if os.path.isabs(HISTORY_DIR) else os.path.join(_REPO_ROOT, HISTORY_DIR)
+    )
+    written_path = append_to_history(
+        history_dir,
+        {
+            "run_id": f"{now}_{git_short}",
+            "timestamp": now,
+            "git_hash": git_short,
+            "note": note or f"AWS {backend} benchmark",
+            "backend": backend,
+            "instance_type": instance_type,
+            "positions": [s["position"] for s in summaries],
+            "results": summaries,
+        },
+        pr_number=pr_number,
+    )
+
+    # Mirror the new file to S3 so the serving container can pull it at boot
+    # via sync_benchmark_history_from_s3 — git auto-commit is preserved for
+    # auditability but is not on the inference data path. Env-gated to match
+    # the model/data sync pattern in src/shared/model_sync.py.
+    _maybe_upload_to_s3(written_path)
+    return written_path
 
 
 def main():
@@ -238,74 +340,17 @@ def main():
         if failed:
             print(f"Failed positions: {failed}")
 
-    # Download metrics
-    print("\nDownloading benchmark metrics...")
-    all_metrics = download_metrics(args.positions)
-
-    if not all_metrics:
-        print("No metrics found. Exiting.")
-        return
-
-    # Per-position git_sha coherency check (see find_git_sha_divergence for
-    # rationale). Defense-in-depth against the lingering manifest-write race
-    # after Layer A's job-def revision pinning.
-    expected_sha = ((args.git_hash or get_git_hash() or "")[:7]) or None
-    diverged = find_git_sha_divergence(all_metrics, expected_sha)
-    if diverged:
-        print(f"\nWARNING: git_sha divergence across positions (expected {expected_sha}):")
-        for pos, recorded in diverged:
-            print(f"  {pos}: trained image at {recorded}")
-        print(
-            "  Investigate whether two train-batch.yml runs overlapped on "
-            "this run's S3 writes. The model artifacts are still each "
-            "internally consistent (Layer A guarantees per-job image pinning), "
-            "but the run is heterogeneous and shouldn't be compared as a unit."
-        )
-    elif expected_sha:
-        with_sha = [p for p, m in all_metrics.items() if m.get("git_sha")]
-        if with_sha:
-            print(f"\ngit_sha coherent at {expected_sha} across {len(with_sha)} positions")
-
-    # Build summaries
-    summaries = []
-    for pos in args.positions:
-        if pos in all_metrics:
-            summaries.append(summarize_pipeline_result(pos, all_metrics[pos]))
-
-    print_comparison_table(
-        summaries,
-        header="AWS Batch Benchmark Results (MAE / R2)",
-        show_time=False,
-    )
-
-    with open(RESULTS_FILE, "w") as f:
-        json.dump(summaries, f, indent=2)
-    print(f"\nResults saved to {RESULTS_FILE}")
-
-    # Truncate to 7 chars so a CI-supplied full 40-char SHA matches the
-    # short-SHA convention ``get_git_hash()`` already returns.
-    git_hash = (args.git_hash or get_git_hash())[:7]
-    now = utc_now_iso()
-    written_path = append_to_history(
-        HISTORY_DIR,
-        {
-            "run_id": f"{now}_{git_hash}",
-            "timestamp": now,
-            "git_hash": git_hash,
-            "note": args.note or f"AWS {args.backend} benchmark",
-            "backend": args.backend,
-            "instance_type": args.instance_type,
-            "positions": [s["position"] for s in summaries],
-            "results": summaries,
-        },
+    # Download metrics, build the comparison table, and record the run (writes
+    # benchmark_history/{run_id}.json + S3 mirror). Shared with
+    # src/batch/launch.py's standalone auto-append via record_benchmark_run.
+    record_benchmark_run(
+        args.positions,
+        backend=args.backend,
+        instance_type=args.instance_type,
+        note=args.note,
         pr_number=args.pr_number,
+        git_hash=args.git_hash,
     )
-
-    # Mirror the new file to S3 so the serving container can pull it at boot
-    # via sync_benchmark_history_from_s3 — git auto-commit is preserved for
-    # auditability but is not on the inference data path. Env-gated to match
-    # the model/data sync pattern in src/shared/model_sync.py.
-    _maybe_upload_to_s3(written_path)
 
 
 def _maybe_upload_to_s3(local_path: str) -> None:

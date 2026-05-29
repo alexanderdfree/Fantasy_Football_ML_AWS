@@ -87,6 +87,14 @@ def _main_happy_stubs(monkeypatch):
     monkeypatch.setattr(lm, "submit_job", _submit)
     monkeypatch.setattr(lm, "wait_for_jobs", _wait)
     monkeypatch.setattr(lm, "download_artifacts", _download)
+
+    # Stub the benchmark_history auto-append so the wait path doesn't reach S3
+    # in unit tests; record the call so tests can assert it fired for the
+    # succeeded set.
+    def _append(positions, *, note=None):
+        calls.append({"append": list(positions), "note": note})
+
+    monkeypatch.setattr(lm, "_append_benchmark_history", _append)
     return calls
 
 
@@ -159,6 +167,7 @@ def test_main_failed_jobs_branch(monkeypatch, capsys):
 
     monkeypatch.setattr(lm, "download_artifacts", _download)
     monkeypatch.setattr("sys.argv", ["launch.py", "--positions", "QB", "RB"])
+    monkeypatch.setattr(lm, "_append_benchmark_history", lambda *a, **k: None)
     # main() now exits non-zero when any position is FAILED / TIMED_OUT so CI
     # surfaces the regression instead of silently passing; train-batch.yml's
     # post-step comment claims the workflow blocks on non-success.
@@ -203,6 +212,7 @@ def test_main_submit_exception_is_logged(monkeypatch, capsys):
     monkeypatch.setattr(lm, "submit_job", _bad_submit)
     monkeypatch.setattr(lm, "wait_for_jobs", _wait)
     monkeypatch.setattr(lm, "download_artifacts", _download)
+    monkeypatch.setattr(lm, "_append_benchmark_history", lambda *a, **k: None)
     monkeypatch.setattr("sys.argv", ["launch.py", "--positions", "QB", "RB"])
     lm.main()
 
@@ -234,6 +244,7 @@ def test_main_wait_timeout_override(monkeypatch, capsys):
         return {p: ("SUCCEEDED", 0) for p in j}
 
     monkeypatch.setattr(lm, "wait_for_jobs", _wait)
+    monkeypatch.setattr(lm, "_append_benchmark_history", lambda *a, **k: None)
 
     override = 1234
     monkeypatch.setattr(
@@ -245,3 +256,35 @@ def test_main_wait_timeout_override(monkeypatch, capsys):
     # main() must forward the CLI override (not the module default
     # WAIT_TIMEOUT_SECONDS) to wait_for_jobs as `timeout_seconds`.
     assert captured_timeouts == [override]
+
+
+@pytest.mark.unit
+def test_main_auto_appends_history_for_succeeded(_main_happy_stubs, monkeypatch):
+    """Default wait path rolls the succeeded positions into a benchmark_history
+    row via ``_append_benchmark_history`` so a standalone (non-CI) run shows up
+    in the serving History tab."""
+    from src.batch import launch as lm
+
+    monkeypatch.setattr("sys.argv", ["launch.py", "--positions", "QB", "RB"])
+    lm.main()
+
+    appended = [c for c in _main_happy_stubs if "append" in c]
+    assert len(appended) == 1
+    # job_ids order is non-deterministic (as_completed) — compare sorted.
+    assert sorted(appended[0]["append"]) == ["QB", "RB"]
+
+
+@pytest.mark.unit
+def test_main_append_history_false_skips_append(_main_happy_stubs, monkeypatch):
+    """``--append-history false`` (what CI passes — train-batch.yml appends
+    separately via benchmark.py with the image SHA + PR number) must not
+    auto-append."""
+    from src.batch import launch as lm
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["launch.py", "--positions", "QB", "--append-history", "false"],
+    )
+    lm.main()
+
+    assert not [c for c in _main_happy_stubs if "append" in c]

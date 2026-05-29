@@ -37,17 +37,29 @@ ALL_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
 # bash regex that used to live in both workflows. Anchored at start-of-path
 # so a same-named substring deeper in the tree doesn't spuriously match.
 #
-# Note the negative lookahead inside the ``src/batch/`` clause: files whose
-# name contains ``tune`` or ``ablate`` (e.g. a misplaced ``launch_tune.py``
-# or ``tune_lgbm.py`` or ``ablate_*.py``) are EXCLUDED, because that family
-# of files is tuning/ablation infrastructure that fans out via the
-# ``retune-nn-batch.yml`` workflow — touching them must not retrain
-# production models. New tuner/ablation files should live in
-# ``src/tuning/``, which isn't in this regex at all; the lookahead is
-# belt-and-suspenders against a future ``src/batch/`` placement.
+# Note the negative lookahead inside the ``src/batch/`` clause. Two families
+# of files under ``src/batch/`` are EXCLUDED from the global trigger:
+#
+#   1. ``tune`` / ``ablate`` (e.g. a misplaced ``launch_tune.py``,
+#      ``tune_lgbm.py``, ``ablate_*.py``) — tuning/ablation infrastructure that
+#      fans out via ``retune-nn-batch.yml``; touching it must not retrain
+#      production models. New tuner/ablation files should live in
+#      ``src/tuning/`` (not in this regex at all); the lookahead is
+#      belt-and-suspenders against a future ``src/batch/`` placement.
+#   2. Exactly ``launch.py`` and ``benchmark.py`` — job-submission
+#      orchestration and read-only post-hoc benchmark aggregation. Neither
+#      changes a model artifact, so editing them shouldn't burn a 6-position
+#      GPU retrain. Matched by exact basename (``(?:launch|benchmark)\.py$``),
+#      NOT substring, so a future ``benchmark_runner.py`` / ``relaunch.py``
+#      still triggers conservatively. ACCEPTED RISK: ``launch.py`` also owns
+#      the seed default, job-definition dispatch, and data-split upload — a
+#      change there that *does* affect what trains will now silently skip the
+#      retrain, so the operator must trigger ``workflow_dispatch`` manually.
+#      (Test sharding is unaffected — see ``_TEST_SHARED_REGEX`` — so these
+#      files' tests still run in CI.)
 _GLOBAL_REGEX = re.compile(
     r"^src/(shared|data|features)/"
-    r"|^src/batch/(?!.*(?:tune|ablate))"
+    r"|^src/batch/(?!.*(?:tune|ablate)|(?:launch|benchmark)\.py$)"
     r"|^src/config\.py$"
     r"|^requirements\.txt$"
 )
