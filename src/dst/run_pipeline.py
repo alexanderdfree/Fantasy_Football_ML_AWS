@@ -2,7 +2,7 @@
 
 D/ST operates at the team level (not player level). Data is constructed
 from schedule scores, opponent offensive stats, and individual defensive
-player stats. Uses standard temporal splits (2018-2023 / 2024 / 2025).
+player stats. Uses standard temporal splits (2012-2023 / 2024 / 2025).
 
 DST is one of two positions (with K) that loads its own data inside ``run()``;
 the shared factory provides the CONFIG dict but the team-level data assembly

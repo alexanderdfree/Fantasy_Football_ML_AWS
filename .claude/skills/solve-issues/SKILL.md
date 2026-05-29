@@ -120,7 +120,7 @@ Apply the project's tier definitions (CLAUDE.md "Sub-agent contract" + memory `f
 - **Tier B** — behavior-equivalent fixes: refactors, dedup, in-place → return, mechanical wiring, new validators. **May touch training-adjacent files; no MAE delta.**
 - **Tier C** — bounded behavior changes: feature plumbing, data-leakage fixes, bug fixes in training/serving paths, cache fingerprint changes. **Requires per-position benchmark verification by the worker; benchmark deltas reported in the PR body.**
 
-Within each tier, partition findings into **file-disjoint bundles** (one worker per bundle, target ~8–13 bundles per tier — the established sweet spot from PRs [#312](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/312)–[#326](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/326)). Each bundle:
+Within each tier, partition findings into **file-disjoint bundles** (one worker per bundle, target ~8–13 bundles per tier — the established sweet spot from the audit-318 cycle ([#323](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/323)/[#325](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/325)/[#326](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/326))). Each bundle:
 
 - Lists its `finding_id`s
 - Lists its `files_touched` (file-disjointness verified across all bundles in the tier — write the table in the plan)
@@ -248,7 +248,7 @@ Once the verify-then-close plan is approved:
 - **Feature-drift LEAVE category** encodes the project's stop-rules from CLAUDE.md and auto-memory directly into the verification rubric. Audit suggestions that violate "no rolling into ATTN_STATIC_FEATURES" or "no training on fantasy_points" get caught at triage, not at PR review.
 - **CI-friendly PR cadence** — 2–3 PRs instead of 50+ per-bug PRs cuts ~95% of `tests.yml`'s 7-shard matrix runs.
 - **Plan-mode-first** — verdict list and bundling strategy are user-approved before any branches are cut or workers spawn. Workers operate on a vetted plan; nothing speculative ships.
-- **Reuses established orchestration** — the per-tier worker → cherry-pick → staging-branch → one-PR flow has shipped 6+ tier PRs (audit-310, audit-318 cycles) without conflict-driven rebundles.
+- **Reuses established orchestration** — the per-tier worker → cherry-pick → staging-branch → one-PR flow has shipped 6+ tier PRs (the code-review remediation rollup #312/#314/#315, audit-318 cycles) without conflict-driven rebundles.
 - **Verify-then-close (Mode B) retires remediated backlogs** — confirms a remediation actually held on `main` (not merely that PRs merged — memory `feedback_squash_merge_verify_content`) and closes the finite tracking issues, so the next `[claude-audit]` re-scan starts from a true-clean state instead of re-flagging already-fixed findings or leaving split issues open indefinitely.
 
 ## Format example — triage table excerpt

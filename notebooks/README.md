@@ -16,4 +16,4 @@ Each script is invocable via `python -m src.analysis.<filename>` (or `python src
 
 ## Why no notebooks
 
-Notebooks were considered and rejected for this project. Rationale documented in [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md). Summary: pipelined experiments + benchmarks ([src/benchmarking/benchmark.py](../src/benchmarking/benchmark.py)) cover the "what's the model doing?" question better than ad-hoc notebook cells, and the per-position rerunnable scripts cover the "why is this prediction off?" question.
+Notebooks were considered and rejected for this project. Rationale: pipelined experiments + benchmarks ([src/benchmarking/benchmark.py](../src/benchmarking/benchmark.py)) cover the "what's the model doing?" question better than ad-hoc notebook cells, and the per-position rerunnable scripts cover the "why is this prediction off?" question.

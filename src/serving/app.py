@@ -110,8 +110,8 @@ _results_write_lock = threading.Lock()
 # wiki cache path doesn't nest into other cache helpers, so the RLock
 # reentrancy that ``_cache_lock`` requires is overkill here.
 #
-# See L-SS4 in code_review_findings.md for the original analysis (one
-# RLock serializing two unrelated cache disciplines).
+# Originally split out under code-review finding L-SS4 (one RLock serializing
+# two unrelated cache disciplines).
 _wiki_cache_lock = threading.Lock()
 # Benchmark-history cache (see ``_load_benchmark_history_rows``) is a third
 # discipline because its invalidation is mtime-driven rather than write-driven
@@ -687,7 +687,9 @@ def _load_k_splits():
     """Load kicker data with features pre-computed on full dataset.
 
     K uses its own data pipeline because kicking stats (FG/PAT) are only
-    available for 2025 in nflverse, and uses within-season temporal splits.
+    available from 2025 onward via nflverse's weekly API, so they are
+    reconstructed from play-by-play (1999+) for 2015-2025; it uses a
+    cross-season split (Train 2015-2023, Val 2024, Test 2025).
     Also returns the per-kick records dataframe needed by the attention NN's
     nested kick-history builder at inference time.
     """
@@ -2766,9 +2768,11 @@ def api_benchmark_history():
 
     Reads every top-level ``*.json`` under ``benchmark_history/``. Filesystem
     is the source of truth — the container is kept fresh by
-    ``sync_benchmark_history_from_s3()`` at boot, which is itself triggered
-    on each training run by the post-train ``aws ecs update-service --force-
-    new-deployment`` in ``train-ec2.yml``.
+    ``sync_benchmark_history_from_s3()`` at boot. On the active Batch path
+    (``train-batch.yml``, ``BATCH_ACTIVE=true``) the forced ECS refresh was
+    removed in PR #330, so a fresh sync happens on the next natural task roll /
+    in-flight model-refresh; the rollback EC2 path (``train-ec2.yml``) still
+    forces a redeploy via ``aws ecs update-service --force-new-deployment``.
 
     ``target_labels`` / ``target_units`` are static lookup maps the History
     tab's detailed mode uses to render per-target MAE rows ("Passing Yards …

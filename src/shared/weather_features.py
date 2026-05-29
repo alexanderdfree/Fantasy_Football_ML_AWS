@@ -1,6 +1,6 @@
 """Weather, venue, and Vegas implied-odds features for the Weather NN model.
 
-Merges schedule data onto player DataFrames and computes 12 derived features.
+Merges schedule data onto player DataFrames and computes 11 derived features.
 Used by the Weather NN — an exact copy of each position's NN except with
 these additional features appended to the input.
 """
@@ -190,7 +190,7 @@ def _build_team_schedule_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
 
 
 def merge_schedule_features(df: pd.DataFrame, label: str | None = None) -> pd.DataFrame:
-    """Merge schedule data and compute 12 weather/venue/Vegas features in-place.
+    """Merge schedule data and compute 11 weather/venue/Vegas features in-place.
 
     Idempotent: skips if features are already present.
 
@@ -201,7 +201,7 @@ def merge_schedule_features(df: pd.DataFrame, label: str | None = None) -> pd.Da
             produce distinguishable log lines.
 
     Returns:
-        The same DataFrame with 12 new columns added.
+        The same DataFrame with 11 new columns added.
     """
     if "_schedule_merged" in df.columns:
         return df

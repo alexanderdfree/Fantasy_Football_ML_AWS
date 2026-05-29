@@ -49,9 +49,8 @@ Namecheap parking.)
   pushes to ECR, re-registers the task def, and force-redeploys the service.
   No manual action.
 - **Fresh models from EC2 training** → `src/batch/train.py` uploads to
-  `s3://ff-predictor-training/models/{POS}/model.tar.gz`. The running Fargate
-  task will pick them up on next restart (trigger via
-  `aws ecs update-service --force-new-deployment`).
+  the versioned key `s3://ff-predictor-training/models/{POS}/history/{ts}-{sha7}/model.tar.gz` and atomically promotes the pointer in `s3://ff-predictor-training/models/{POS}/manifest.json` (the flat `models/{POS}/model.tar.gz` mirror was removed in #282/#288). The running Fargate
+  task picks them up automatically via the in-flight manifest poller (`src.shared.model_sync.start_refresh_poller`, started in `gunicorn.conf.py`) — no restart or force-deploy required.
 
 ## Cost control
 
@@ -68,7 +67,8 @@ Baseline with stack up: ~$54/month. After teardown: ~$0.10/month (ECR storage).
 | `bootstrap.sh` | Idempotent full stand-up |
 | `teardown.sh` | Cost-control delete of ALB + service + SGs |
 | `seed_s3_models.sh` | Upload git-committed models to S3 so Gap 1 sync has data |
-| `task-definition.json` | ECS task def template (ARM64 Fargate, 1 vCPU / 2 GB, `/health` check). Placeholders `__ACCOUNT_ID__`, `__ECR_URI__`, `__IMAGE_TAG__`, `__FF_MODEL_S3_BUCKET__` are substituted by `bootstrap.sh`. |
+| `enable_bucket_versioning.sh` | Enable S3 bucket versioning on the artifacts bucket (operator-run once, idempotent) so a buggy GC prune or console misclick can be recovered. |
+| `task-definition.json` | ECS task def template (ARM64 Fargate, 1 vCPU / 2 GB, `/health` check). Placeholders `__ACCOUNT_ID__`, `__REGION__`, `__ECR_URI__`, `__IMAGE_TAG__`, `__FF_MODEL_S3_BUCKET__` are substituted by `bootstrap.sh`. |
 | `task-role-policy.json` | `s3:GetObject` on `ff-predictor-training/models/*` for the task role |
 | `task-trust-policy.json` | Trust policy letting ECS tasks assume both the execution and task roles |
 | `.env.out` | Resource IDs from the last bootstrap run (gitignored) |

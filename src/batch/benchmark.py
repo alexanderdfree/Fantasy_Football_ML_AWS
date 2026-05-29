@@ -130,7 +130,7 @@ def find_git_sha_divergence(all_metrics: dict, expected_sha: str | None) -> list
 
     Empty when ``expected_sha`` is falsy (workflow_dispatch / local) or when
     every position with a recorded SHA matches. Positions without a recorded
-    SHA (pre-PR-281 artifacts, or jobs where the env var wasn't forwarded)
+    SHA (pre-PR-288 artifacts, or jobs where the env var wasn't forwarded)
     are skipped rather than flagged — silence here just means "no positive
     coherency signal," not "divergence detected."
     """

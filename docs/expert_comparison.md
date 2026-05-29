@@ -25,24 +25,24 @@ This document compares our model's weekly fantasy point predictions against publ
 
 ## Our Model Performance
 
-From the 2026-05-20 benchmark run (`benchmark_history/2026-05-20T06-11-13_de8b961.json`, plus K from the post-`#227` re-run `2026-05-20T06-39-23_4af6a9d.json`), evaluated on the 2025 test season:
+From the 2026-05-29 benchmark run (`benchmark_history/2026-05-29T11-00-49_9de4d84.json`), evaluated on the 2025 test season:
 
 | Model | QB MAE | QB R² | RB MAE | RB R² | WR MAE | WR R² | TE MAE | TE R² | K MAE | K R² | DST MAE | DST R² |
 |-------|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Ridge Regression | 6.546 | 0.217 | 4.399 | 0.339 | 4.351 | 0.342 | 3.546 | 0.315 | 4.079 | 0.012 | 5.212 | 0.044 |
-| Multi-Head NN | 6.435 | 0.229 | 4.278 | 0.398 | 4.182 | 0.348 | 3.494 | 0.305 | 4.128 | -0.042 | **5.162** | **0.067** |
-| Attention NN | 6.544 | 0.222 | 4.247 | 0.376 | **4.106** | 0.350 | **3.445** | 0.301 | 4.132 | -0.021 | 5.288 | -0.009 |
-| LightGBM | **6.256** | **0.269** | **4.159** | **0.417** | 4.231 | **0.356** | 3.517 | **0.317** | **4.061** | -0.013 | 5.274 | 0.015 |
-| **Best (MAE)** | LGBM 6.256 | LGBM 0.269 | LGBM 4.159 | LGBM 0.417 | Attn NN 4.106 | LGBM 0.356 | Attn NN 3.445 | LGBM 0.317 | LGBM 4.061 | Ridge 0.012 | NN 5.162 | NN 0.067 |
+| Ridge Regression | 6.539 | 0.273 | 4.502 | 0.360 | 4.779 | 0.312 | 3.726 | 0.316 | **4.008** | **0.018** | 5.203 | 0.044 |
+| Multi-Head NN | **6.514** | **0.275** | 4.302 | 0.419 | 4.256 | **0.368** | 3.515 | **0.336** | 4.167 | -0.096 | 5.115 | **0.084** |
+| Attention NN | 6.585 | 0.249 | **4.179** | 0.418 | 4.292 | 0.352 | **3.508** | 0.325 | 4.221 | -0.099 | **5.107** | 0.061 |
+| LightGBM | 6.693 | 0.242 | 4.195 | **0.425** | **4.238** | 0.361 | 3.595 | 0.317 | 4.133 | -0.051 | 5.271 | 0.016 |
+| **Best (MAE)** | NN 6.514 | NN 0.275 | Attn NN 4.179 | LGBM 0.425 | LGBM 4.238 | NN 0.368 | Attn NN 3.508 | NN 0.336 | Ridge 4.008 | Ridge 0.018 | Attn NN 5.107 | NN 0.084 |
 
 **Per-target MAE breakdown** (Attention NN, in native stat units):
 
 | Position | Per-target MAE |
 |----------|----------------|
-| **QB** | passing_yards: 68.4 yds, rushing_yards: 11.4 yds, passing_tds: 0.88, rushing_tds: 0.25, interceptions: 0.61, fumbles_lost: 0.25 |
-| **RB** | rushing_yards: 18.3 yds, receiving_yards: 9.2 yds, receptions: 0.98, rushing_tds: 0.31, receiving_tds: 0.10, fumbles_lost: 0.04 |
-| **WR** | receiving_yards: 19.9 yds, receptions: 1.32, receiving_tds: 0.29, fumbles_lost: 0.01 |
-| **TE** | receiving_yards: 14.8 yds, receptions: 1.22, receiving_tds: 0.28, fumbles_lost: 0.01 |
+| **QB** | passing_yards: 67.8 yds, rushing_yards: 11.0 yds, passing_tds: 0.89, rushing_tds: 0.25, interceptions: 0.64, fumbles_lost: 0.29 |
+| **RB** | rushing_yards: 18.1 yds, receiving_yards: 9.5 yds, receptions: 0.98, rushing_tds: 0.32, receiving_tds: 0.10, fumbles_lost: 0.08 |
+| **WR** | receiving_yards: 20.3 yds, receptions: 1.37, receiving_tds: 0.30, fumbles_lost: 0.01 |
+| **TE** | receiving_yards: 14.9 yds, receptions: 1.20, receiving_tds: 0.29, fumbles_lost: 0.01 |
 
 K and DST use bespoke aggregators (signed FG/PAT for K; tier-mapped points/yards-allowed for DST); see [`src/k/config.py`](../src/k/config.py) and [`src/dst/config.py`](../src/dst/config.py) for the per-target target lists.
 
@@ -98,14 +98,14 @@ Pairing the NFL.com MAEs above with the per-position best from "Our Model Perfor
 
 | Position | Our MAE (best model) | NFL.com MAE | Delta |
 |----------|---:|---:|---:|
-| **QB** | 6.256 (LightGBM) | 5.713 | NFL.com leads by 0.54 |
-| **RB** | 4.159 (LightGBM) | 4.110 | NFL.com leads by 0.05 (≈ tied) |
-| **WR** | 4.106 (Attention NN) | 3.983 | NFL.com leads by 0.12 |
-| **TE** | 3.445 (Attention NN) | 3.390 | NFL.com leads by 0.06 (≈ tied) |
-| **K**  | 4.061 (LightGBM) | 4.358 | We lead by 0.30 |
-| **DST** | 5.162 (Multi-Head NN) | — | (no NFL.com DST data) |
+| **QB** | 6.514 (Multi-Head NN) | 5.713 | NFL.com leads by 0.80 |
+| **RB** | 4.179 (Attention NN) | 4.110 | NFL.com leads by 0.07 (≈ tied) |
+| **WR** | 4.238 (LightGBM) | 3.983 | NFL.com leads by 0.26 |
+| **TE** | 3.508 (Attention NN) | 3.390 | NFL.com leads by 0.12 |
+| **K**  | 4.008 (Ridge) | 4.358 | We lead by 0.35 |
+| **DST** | 5.107 (Attention NN) | — | (no NFL.com DST data) |
 
-QB is the only position where NFL.com beats us by a meaningful margin (~0.5 MAE pts); RB / WR / TE are within 0.1–0.15 pts, which is below the run-to-run variance we typically see between benchmark snapshots. K is the only position where we beat NFL.com cleanly — partly because their kicker projection schema is per-distance-bucket FG attempts that doesn't aggregate well, and partly because our K model now keys directly off cached PBP after the `fg_yards_made` schema fix in [#227](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/227).
+QB is the position where NFL.com beats us by the largest margin (~0.8 MAE pts); RB and TE are within ~0.1 pts (below the run-to-run variance we typically see between benchmark snapshots), and WR is ~0.26 pts behind. K is the only position where we beat NFL.com cleanly — partly because their kicker projection schema is per-distance-bucket FG attempts that doesn't aggregate well, and partly because our K model now keys directly off cached PBP after the `fg_yards_made` schema fix in [#227](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/227).
 
 The QB gap is consistent with the structural QB limitation noted under "Position-by-Position Analysis": touchdown variance dominates QB error, and a curated expert projection that incorporates context (matchup, narrative, etc.) can suppress that volatility better than a stats-driven model trained on broader player pools.
 
@@ -144,47 +144,47 @@ Fantasy Projection Lab and Fantasy Football Analytics provide general benchmarks
 
 ### Quarterbacks
 
-**Our best MAE: 6.256 (LightGBM)** --- falls within the 5.0-7.0 "established systems" range.
+**Our best MAE: 6.514 (Multi-Head NN)** --- falls within the 5.0-7.0 "established systems" range.
 
-QBs are generally considered the most predictable position due to consistent volume (30+ pass attempts per game), yet our R² is moderate (0.217–0.269 across models). The per-target breakdown reveals why: `passing_tds` and `rushing_tds` carry meaningful per-game volatility (a QB throwing 1 vs. 3 TDs swings the score by 8 fantasy points), and this volatility limits any model's predictive power on a weekly basis. The `passing_yards` head alone accounts for the bulk of fantasy-point variance (MAE 68 yards × 0.04 pts/yd ≈ 2.7 fantasy points).
+QBs are generally considered the most predictable position due to consistent volume (30+ pass attempts per game), yet our R² is moderate (0.242–0.275 across models). The per-target breakdown reveals why: `passing_tds` and `rushing_tds` carry meaningful per-game volatility (a QB throwing 1 vs. 3 TDs swings the score by 8 fantasy points), and this volatility limits any model's predictive power on a weekly basis. The `passing_yards` head alone accounts for the bulk of fantasy-point variance (MAE 68 yards × 0.04 pts/yd ≈ 2.7 fantasy points).
 
-The deep learning NLP study (arXiv:2111.02874) reported a comparable RMSE of 6.78 using ESPN text features, suggesting our QB MAE of 6.26 is in line with neural-network approaches in the literature. LightGBM edges the attention NN here by ~0.3 MAE points, which is consistent with tree models being well-suited to high-variance count targets (TDs) where smooth gradients don't help much.
+The deep learning NLP study (arXiv:2111.02874) reported a comparable RMSE of 6.78 using ESPN text features, suggesting our QB MAE of 6.51 is in line with neural-network approaches in the literature. The Multi-Head NN edges the other architectures here by a narrow margin (and LightGBM is actually the weakest on QB this run), so no single family has a decisive edge on this high-variance position.
 
 ### Running Backs
 
-**Our best MAE: 4.159 (LightGBM)** --- in the "competitive" range (< 5.0), narrowly.
+**Our best MAE: 4.179 (Attention NN)** --- in the "competitive" range (< 5.0), narrowly.
 
 RBs are among the most volatile fantasy positions due to game-script dependence and TD variance, making a sub-5 MAE a solid result. For context:
-- The k-NN academic benchmark reported RB RMSE of 4.19, and our MAE of 4.16 is below that (MAE ≤ RMSE by definition).
-- Our R² of 0.417 (LightGBM) is just under the 0.53–0.61 range reported by Kapania's multi-season Stanford study — but our test set is the full 2025 RB pool, not just starters, which suppresses R² on a noisier denominator.
-- Per-target MAE distributes the error: rushing_yards 18.3 yds × 0.1 ≈ 1.8 pts; receiving_yards 9.2 yds × 0.1 ≈ 0.9 pts; receptions 0.98 × 1.0 ≈ 1.0 pt; rushing_tds 0.31 × 6 ≈ 1.9 pts. TDs remain the dominant single source of error in fantasy-point space.
+- The k-NN academic benchmark reported RB RMSE of 4.19, and our MAE of 4.18 is below that (MAE ≤ RMSE by definition).
+- Our best R² of 0.425 (LightGBM) is just under the 0.53–0.61 range reported by Kapania's multi-season Stanford study — but our test set is the full 2025 RB pool, not just starters, which suppresses R² on a noisier denominator.
+- Per-target MAE distributes the error: rushing_yards 18.1 yds × 0.1 ≈ 1.8 pts; receiving_yards 9.5 yds × 0.1 ≈ 1.0 pt; receptions 0.98 × 1.0 ≈ 1.0 pt; rushing_tds 0.32 × 6 ≈ 1.9 pts. TDs remain the dominant single source of error in fantasy-point space.
 
 ### Wide Receivers
 
-**Our best MAE: 4.106 (Attention NN)** --- competitive (< 5.0), with the attention NN edging LightGBM by 0.12 MAE points.
+**Our best MAE: 4.238 (LightGBM)** --- competitive (< 5.0), with LightGBM edging the attention NN by ~0.05 MAE points.
 
-WR is the position where the attention architecture pulls clearest of the trees: receiver production has strong route/scheme/coverage dependencies that benefit from learned attention over player history + opponent defensive context.
+WR is a tight race between the trees and the neural models: receiver production has strong route/scheme/coverage dependencies that the attention NN captures via learned attention over player history + opponent defensive context, but LightGBM narrowly takes the MAE this run while the Multi-Head and attention NNs stay within ~0.05.
 - The academic linear regression benchmark for WRs reported RMSE of 3.64, which is lower but used a curated player pool (top 50 WRs only) and a different season.
-- Our R² of 0.350 (Attention NN) sits within the published WR consistency range (R² ~ 0.30–0.65 depending on methodology).
-- Per-target MAE: receiving_yards 19.9 yds × 0.1 ≈ 2.0 pts is the largest contributor; receptions 1.32 × 1.0 (PPR) ≈ 1.3 pts; receiving_tds 0.29 × 6 ≈ 1.7 pts.
+- Our best R² of 0.368 (Multi-Head NN) sits within the published WR consistency range (R² ~ 0.30–0.65 depending on methodology).
+- Per-target MAE (Attention NN): receiving_yards 20.3 yds × 0.1 ≈ 2.0 pts is the largest contributor; receptions 1.37 × 1.0 (PPR) ≈ 1.4 pts; receiving_tds 0.30 × 6 ≈ 1.8 pts.
 
 ### Tight Ends
 
-**Our best MAE: 3.445 (Attention NN)** --- comfortably in the competitive range.
+**Our best MAE: 3.508 (Attention NN)** --- comfortably in the competitive range.
 
-TEs are the lowest-volume offensive skill position and produce the lowest-variance fantasy outputs of QB/RB/WR/TE, which gives the model a structurally easier target — most starting TEs land in a 4–10 point band most weeks. The attention NN narrowly edges LightGBM (3.445 vs 3.517 MAE); per-target the receptions head (1.22 MAE) carries proportionally more of the fantasy-point error than for WR because TE target volume is lower (3–5 targets/game typical).
+TEs are the lowest-volume offensive skill position and produce the lowest-variance fantasy outputs of QB/RB/WR/TE, which gives the model a structurally easier target — most starting TEs land in a 4–10 point band most weeks. The attention NN narrowly edges LightGBM (3.508 vs 3.595 MAE); per-target the receptions head (1.20 MAE) carries proportionally more of the fantasy-point error than for WR because TE target volume is lower (3–5 targets/game typical).
 
 ### Kickers
 
-**Our best MAE: 4.061 (LightGBM)** --- in the competitive band, on a position no public benchmark covers carefully.
+**Our best MAE: 4.008 (Ridge)** --- in the competitive band, on a position no public benchmark covers carefully.
 
-K is interesting because kicker fantasy production is *highly* opponent/weather/coach dependent — and our model now beats NFL.com here (4.061 vs 4.358 MAE) after the `fg_yards_made` schema fix in [#227](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/227) restored the FG-distance signal that had been silently dropped from the PBP cache. K's R² hovers near zero across all four models (−0.04 to 0.01); on this position, "low MAE + near-zero R²" is the right operating point — kicker variance week-to-week is too high to extract a meaningful rank-order signal, but absolute prediction error is tight.
+K is interesting because kicker fantasy production is *highly* opponent/weather/coach dependent — and our model now beats NFL.com here (4.008 vs 4.358 MAE) after the `fg_yards_made` schema fix in [#227](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/227) restored the FG-distance signal that had been silently dropped from the PBP cache. K's R² hovers near zero across all four models (−0.10 to 0.02); on this position, "low MAE + near-zero R²" is the right operating point — kicker variance week-to-week is too high to extract a meaningful rank-order signal, but absolute prediction error is tight.
 
 ### Defense / Special Teams
 
-**Our best MAE: 5.162 (Multi-Head NN)** --- in the 5.0–7.0 "established systems" band.
+**Our best MAE: 5.107 (Attention NN)** --- in the 5.0–7.0 "established systems" band.
 
-DST landed via [commit `cc0c627`](../) with a 10-target attention model (sacks, INTs, fumble recoveries, fumbles forced, safeties, def TDs, blocked kicks, ST TDs, points allowed, yards allowed) plus a parallel opp-OFFENSE attention branch (PR [#223](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/223)) that conditions defensive predictions on the offense being faced. The Multi-Head NN (no attention) slightly outperforms the attention variant on DST (5.162 vs 5.288 MAE) — DST signal is structurally simpler than skill-position production and the attention branch hasn't added clear value yet on the current feature set.
+DST landed via [commit `cc0c627`](../) with a 10-target attention model (sacks, INTs, fumble recoveries, fumbles forced, safeties, def TDs, blocked kicks, ST TDs, points allowed, yards allowed) plus a parallel opp-OFFENSE attention branch (PR [#223](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/223)) that conditions defensive predictions on the offense being faced. The Attention NN and the Multi-Head NN (no attention) are effectively tied on DST (5.107 vs 5.115 MAE) — DST signal is structurally simpler than skill-position production, so the attention branch is roughly on par with the plain NN rather than pulling decisively ahead on the current feature set.
 
 ---
 
@@ -192,13 +192,13 @@ DST landed via [commit `cc0c627`](../) with a 10-target attention model (sacks, 
 
 1. **All six positions are now in the "competitive" or "established" MAE bands.** QB / DST sit in the 5.0–7.0 "established systems" band; RB / WR / TE / K all clear the < 5.0 "competitive" threshold. The previous gap where K/DST results were pending is closed (this iteration of the doc).
 
-2. **No single architecture wins everywhere.** LightGBM wins QB / RB / K (and ties WR / TE on R²); Attention NN wins WR / TE; Multi-Head NN wins DST. This is the strongest signal yet that maintaining a diverse model portfolio is worth the training cost — the per-position routing in `src.benchmarking.benchmark` picks the actual best architecture per position rather than locking in one family.
+2. **No single architecture wins everywhere.** Multi-Head NN wins QB; Attention NN wins RB / TE / DST; LightGBM wins WR; Ridge wins K. This is the strongest signal yet that maintaining a diverse model portfolio is worth the training cost — the per-position routing in `src.benchmarking.benchmark` picks the actual best architecture per position rather than locking in one family.
 
 3. **NFL.com gives us a direct head-to-head.** The only mainstream source publishing scoring-grade raw projections we can join to actuals. On 2025: QB is the only position where NFL.com beats us by a meaningful margin (~0.5 MAE pts); RB / WR / TE are within run-to-run variance; K we beat cleanly. Full per-target and weekly breakouts are written to the `nflcom_baseline.json` report by `src/analysis/analysis_nflcom_baseline.py` (regenerated on demand; not committed).
 
 4. **Other expert sites publish only relative rankings.** Industry accuracy tracking (FantasyPros, FFA) ranks sources 1st/2nd/3rd by position rather than reporting raw MAE. This makes exact head-to-head comparison with those sources impossible, but our results fall within the ranges where professional projection systems operate.
 
-5. **TD variance remains the structural ceiling at QB.** Per-target QB MAE is dominated by `passing_yards` (68 yds = 2.7 fantasy pts) and `passing_tds` (0.88 TDs = 3.5 fantasy pts at 4 pts/TD). The TD head is the single largest contributor and has the lowest R² of any QB target — week-to-week QB TD output is closer to noise than to a learnable signal at this player-pool size.
+5. **TD variance remains the structural ceiling at QB.** Per-target QB MAE is dominated by `passing_yards` (68 yds = 2.7 fantasy pts) and `passing_tds` (0.89 TDs = 3.5 fantasy pts at 4 pts/TD). The TD head is the single largest contributor and has the lowest R² of any QB target — week-to-week QB TD output is closer to noise than to a learnable signal at this player-pool size.
 
 ---
 

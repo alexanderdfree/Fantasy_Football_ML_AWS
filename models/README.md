@@ -6,8 +6,8 @@ Trained model artifacts and model loading pointers.
 
 Trained model artifacts (Ridge / MultiHeadNet / Attention NN / LightGBM, one per position) are produced by training and stored in two places:
 
-- **Runtime / local:** `src/{pos}/outputs/models/` (gitignored). Populated by running `python -m src.{pos}.run_pipeline` or the multi-position runner via `python -m src.batch.train`. Example: `src/qb/outputs/models/multihead_attn.pt`.
-- **Production / S3:** `s3://<bucket>/models/{POSITION}/model.tar.gz` (uppercase `{POSITION}` in the S3 key). The Flask serving container pulls from S3 at startup via [src/shared/model_sync.py](../src/shared/model_sync.py).
+- **Runtime / local:** `src/{pos}/outputs/models/` (gitignored). Populated by running `python -m src.{pos}.run_pipeline` or the multi-position runner via `python -m src.batch.train`. Example: `src/qb/outputs/models/qb_multihead_nn.pt` (the attention variant is saved as `qb_attention_nn.pt`).
+- **Production / S3:** under `s3://<bucket>/models/{POSITION}/` (uppercase `{POSITION}`): a `manifest.json` pointer (slots `stable`/`current`/`previous`) plus versioned artifacts at `history/{ts}-{sha7}/model.tar.gz`. The legacy flat `models/{POSITION}/model.tar.gz` mirror was removed in the parallel-train race fix (#282/#288). The Flask serving container reads the manifest and pulls the `stable` artifact via [src/shared/model_sync.py](../src/shared/model_sync.py) (polled in-flight, not only at startup).
 
 ## Model class implementations
 
