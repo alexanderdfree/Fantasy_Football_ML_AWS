@@ -357,6 +357,10 @@ def test_compute_metrics_locked_populates_cache(monkeypatch):
     results = pd.DataFrame(
         {
             "position": (["QB"] * 10 + ["RB"] * 10 + ["WR"] * 10),
+            # `week` isn't used by metric math, but _persist_cache_to_disk now
+            # also writes snapshot.json via _records_to_player_rows, which
+            # requires it — match the production results shape.
+            "week": ([1] * 10 + [2] * 10 + [3] * 10),
             "fantasy_points": actual,
             "fantasy_points_half_ppr": actual * 0.95,
             "fantasy_points_standard": actual * 0.9,

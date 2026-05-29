@@ -1677,16 +1677,23 @@ def _write_snapshot_json():
     results = _cache.get("results")
     if results is None:
         return
-    payload = {
-        "generated_at": datetime.now(UTC).isoformat(),
-        "weeks": sorted(int(w) for w in results["week"].unique()),
-        "degraded_positions": _degraded_positions(),
-        "scoring": {fmt: _records_to_player_rows(results, scoring=fmt) for fmt in _VALID_SCORING},
-    }
-    os.makedirs(_PREDICTIONS_CACHE_DIR, exist_ok=True)
     path = os.path.join(_PREDICTIONS_CACHE_DIR, _SNAPSHOT_JSON)
     tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    # Payload construction (results["week"], _records_to_player_rows) is inside
+    # the try so a malformed/partial results frame can't break the caller — this
+    # writer is auxiliary and must never abort _persist_cache_to_disk or the S3
+    # upload that follows it. path/tmp stay above the try (pure string ops) so
+    # the except's os.unlink(tmp) cleanup always has a bound name.
     try:
+        payload = {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "weeks": sorted(int(w) for w in results["week"].unique()),
+            "degraded_positions": _degraded_positions(),
+            "scoring": {
+                fmt: _records_to_player_rows(results, scoring=fmt) for fmt in _VALID_SCORING
+            },
+        }
+        os.makedirs(_PREDICTIONS_CACHE_DIR, exist_ok=True)
         with open(tmp, "w") as f:
             json.dump(payload, f)
         os.replace(tmp, path)
