@@ -178,6 +178,12 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
     # Mirror the actuals' format multipliers so tests can predict expected
     # values for the format-aware endpoints.
     fmt_multipliers = {"ppr": 1.0, "half_ppr": 0.95, "standard": 0.9}
+    # Per-target raw-stat columns for the breakdown endpoint. Sourced from app so
+    # the fixture tracks the real schema (POSITION_INFO targets + the union the
+    # results frame pre-declares).
+    from src.serving.app import _ALL_TARGETS, _MODEL_PRED_PREFIXES, POSITION_INFO
+
+    pos_target_keys = {p: [t["key"] for t in POSITION_INFO[p]["targets"]] for p in positions}
     rows = []
     for pos in positions:
         for i in range(n_per_position):
@@ -216,6 +222,25 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                         base_attn * m if not np.isnan(base_attn) else np.nan
                     )
                     row[f"lgbm_pred_{fmt}"] = base_lgbm * m if not np.isnan(base_lgbm) else np.nan
+                # Per-target raw-stat columns: NaN everywhere, then fill this
+                # position's own targets (sparse, mirrors _load_base_data_locked).
+                # lgbm stays NaN for K/DST (no LightGBM trained there).
+                for t in _ALL_TARGETS:
+                    row[f"actual_{t}"] = np.nan
+                    for prefix in _MODEL_PRED_PREFIXES:
+                        row[f"pred_{prefix}_{t}"] = np.nan
+                for t in pos_target_keys[pos]:
+                    stat = float(rng.uniform(0, 50))
+                    row[f"actual_{t}"] = stat
+                    row[f"pred_ridge_{t}"] = stat + float(rng.normal(0, 2))
+                    row[f"pred_nn_{t}"] = stat + float(rng.normal(0, 2))
+                    if pos not in ("K", "DST"):
+                        row[f"pred_attn_nn_{t}"] = stat + float(rng.normal(0, 2))
+                        row[f"pred_lgbm_{t}"] = stat + float(rng.normal(0, 2))
+                    else:
+                        # attn_nn IS trained for K/DST in production; keep it real
+                        # so the breakdown shows attn_nn for these positions.
+                        row[f"pred_attn_nn_{t}"] = stat + float(rng.normal(0, 2))
                 rows.append(row)
     return pd.DataFrame(rows)
 
