@@ -1,0 +1,12 @@
+{
+  "trigger_id": "trig_013gKH4q2g2TToBbCr4QDQcJ",
+  "dashboard_url": "https://claude.ai/code/routines/trig_013gKH4q2g2TToBbCr4QDQcJ",
+  "model": "claude-opus-4-7",
+  "environment_id": "env_01WCEhA61gYJ8u7K8aZ3AyVU",
+  "cron_expression": "0 */2 * * *",
+  "allowed_tools": ["Bash", "Read", "Write", "Glob", "Grep", "Agent", "TodoWrite"],
+  "sources": [
+    {"git_repository": {"url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS"}}
+  ],
+  "name": "Codebase audit fanout (every 2h, skip-if-HEAD-already-audited)"
+}

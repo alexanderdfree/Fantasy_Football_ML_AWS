@@ -108,6 +108,18 @@ Commands live in [SETUP.md](SETUP.md). Shortcuts:
 
 AWS-side operational notes live in auto-memory (GPU quota, training path, CI anomaly) — Claude loads those automatically, so this file doesn't duplicate them.
 
+## Scheduled routines
+
+A Claude Code cloud routine (a claude.ai scheduled remote agent) runs a **codebase audit** every 2h: it fans out parallel auditor subagents, dedupes against past `claude-audit` GitHub issues, and files one new `[claude-audit]`-labeled issue per fire (HIGH/MED findings). Those issues are what the [`solve-issues`](.claude/skills/solve-issues/SKILL.md) skill triages — this is the producer side of that loop.
+
+The routine's prompt is version-controlled here, not only in the dashboard. **[.claude/routines/audit/](.claude/routines/audit/) is the source of truth:**
+- [`prompt.md`](.claude/routines/audit/prompt.md) — the full audit prompt (what actually runs).
+- [`shim.md`](.claude/routines/audit/shim.md) — the thin pointer deployed to the dashboard; at run time it reads `prompt.md` from the `main` checkout and executes it verbatim.
+- [`config.json`](.claude/routines/audit/config.json) — deploy params (trigger id, model, cron, environment, allowed tools).
+- [`README.md`](.claude/routines/audit/README.md) — the edit/push recipe and gotchas.
+
+**To change what the audit does:** edit `prompt.md`, merge to `main` — the next fire picks it up, no dashboard push needed. **To change a deploy param or the shim itself:** edit `config.json` / `shim.md`, then invoke `/schedule` and say "push the audit routine" (see the README). `prompt.md` must stay at exactly that path on `main`, or the shim stops without auditing rather than improvising.
+
 ## Worktree workflow
 
 This repo is regularly worked from `.claude/worktrees/<name>` clones where the parent worktree holds `main`. Two quirks:
