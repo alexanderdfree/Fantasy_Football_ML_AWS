@@ -35,8 +35,15 @@ import torch
 
 
 def _make_results_frame(n: int = 12) -> pd.DataFrame:
-    """Empty results frame matching the shape app.py builds."""
-    return pd.DataFrame(
+    """Empty results frame matching the shape app.py builds.
+
+    Includes the per-target ``actual_{t}`` / ``pred_{model}_{t}`` columns the
+    production base frame pre-declares (see ``_load_base_data_locked``) so the
+    breakdown-persistence assertions have columns to land in.
+    """
+    import src.serving.app as app_mod
+
+    frame = pd.DataFrame(
         {
             "player_id": [f"P{i}" for i in range(n)],
             "position": ["QB"] * n,
@@ -49,6 +56,15 @@ def _make_results_frame(n: int = 12) -> pd.DataFrame:
             "attn_nn_pred": [np.nan] * n,
             "lgbm_pred": [np.nan] * n,
         }
+    )
+    per_target_cols = [f"actual_{t}" for t in app_mod._ALL_TARGETS] + [
+        f"pred_{prefix}_{t}"
+        for t in app_mod._ALL_TARGETS
+        for prefix in app_mod._MODEL_PRED_PREFIXES
+    ]
+    return pd.concat(
+        [frame, pd.DataFrame(np.nan, index=frame.index, columns=per_target_cols)],
+        axis=1,
     )
 
 
@@ -246,6 +262,19 @@ def test_apply_position_models_qb_flat_path(_mocked_app, _qb_registry):
     assert results["lgbm_pred"].notna().all()
     # Attention wasn't enabled → attn_nn_pred stays NaN.
     assert results["attn_nn_pred"].isna().all()
+
+    # Per-target raw-stat columns written for the QB stub's targets (the
+    # breakdown drill-down reads these). The stub registry's targets are
+    # passing_yards + rushing_yards.
+    for t in ("passing_yards", "rushing_yards"):
+        assert results[f"actual_{t}"].notna().all()
+        assert results[f"pred_ridge_{t}"].notna().all()
+        assert results[f"pred_nn_{t}"].notna().all()
+        assert results[f"pred_lgbm_{t}"].notna().all()
+    # attn_nn disabled here → its per-target column stays NaN.
+    assert results["pred_attn_nn_passing_yards"].isna().all()
+    # A target NOT in the QB stub registry is untouched (stays NaN).
+    assert results["actual_receptions"].isna().all()
 
     details = _mocked_app._cache["position_details"]["QB"]
     assert details["n_features"] == 1

@@ -1287,3 +1287,24 @@ tr.history-row-expandable.expanded .history-caret { transform: rotate(90deg); }
 .history-detail-block:last-child { margin-bottom: 0; }
 .history-detail-pos { margin-bottom: 6px; }
 .history-detail-block .pos-model-table { width: auto; min-width: 380px; }
+
+/* Predictions tab: expandable row + per-stat breakdown sub-table */
+tr.predictions-row-expandable { cursor: pointer; }
+tr.predictions-row-expandable:hover { background: var(--bg-primary); }
+.row-caret {
+    display: inline-block;
+    margin-right: 5px;
+    color: var(--text-secondary);
+    font-size: 10px;
+    transition: transform 0.12s ease;
+}
+tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
+.predictions-detail-row[hidden] { display: none; }
+.predictions-detail-row > td { background: var(--bg-primary); padding: 12px 16px; }
+.breakdown-msg { color: var(--text-secondary); font-size: 13px; }
+.breakdown-table { width: auto; min-width: 420px; border-collapse: collapse; }
+.breakdown-table th,
+.breakdown-table td { padding: 5px 14px; text-align: right; font-size: 13px; }
+.breakdown-table th { color: var(--text-secondary); font-weight: 600; }
+.breakdown-table .bd-stat { text-align: left; }
+.breakdown-table tbody tr:hover { background: var(--bg-secondary); }

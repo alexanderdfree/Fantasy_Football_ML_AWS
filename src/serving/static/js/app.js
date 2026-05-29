@@ -459,8 +459,11 @@ function renderTable() {
             ? `<img class="player-headshot" src="${escapeHtml(p.headshot)}" alt="" loading="lazy">`
             : `<div class="player-headshot"></div>`;
 
-        return `<tr data-player-id="${escapeHtml(p.player_id)}">
-            <td class="col-rank">${rank}</td>
+        // Main row is followed by a hidden detail row (the per-stat breakdown,
+        // fetched lazily on first expand). The caret toggles the breakdown;
+        // clicking elsewhere on the row still opens the week-trend modal.
+        return `<tr class="predictions-row-expandable" data-player-id="${escapeHtml(p.player_id)}" data-week="${p.week}">
+            <td class="col-rank"><span class="row-caret">▸</span>${rank}</td>
             <td class="col-player"><div class="player-cell">${headshot}<span class="player-name">${escapeHtml(p.name)}</span></div></td>
             <td class="col-pos"><span class="pos-badge pos-${escapeHtml(p.position)}">${escapeHtml(p.position)}</span></td>
             <td class="col-team">${escapeHtml(p.team)}</td>
@@ -474,15 +477,83 @@ function renderTable() {
             <td class="col-delta nn-col ${cls(nnDelta)}">${nnDelta != null ? fmtDelta(nnDelta) : "--"}</td>
             <td class="col-delta attn-nn-col ${cls(attnDelta)}">${attnDelta != null ? fmtDelta(attnDelta) : "--"}</td>
             <td class="col-delta lgbm-col ${cls(lgbmDelta)}">${lgbmDelta != null ? fmtDelta(lgbmDelta) : "--"}</td>
-        </tr>`;
+        </tr><tr class="predictions-detail-row" hidden><td colspan="14"></td></tr>`;
     }).join("");
 
-    // Click rows to open modal
-    tbody.querySelectorAll("tr").forEach(row => {
-        row.addEventListener("click", () => openPlayerModal(row.dataset.playerId));
+    // Caret toggles the inline per-stat breakdown; clicking elsewhere on the row
+    // opens the week-trend modal (unchanged behavior). Scope to main rows so the
+    // detail rows don't get a modal handler.
+    tbody.querySelectorAll("tr.predictions-row-expandable").forEach(row => {
+        row.addEventListener("click", (e) => {
+            if (e.target.closest(".row-caret")) {
+                e.stopPropagation();
+                toggleBreakdown(row);
+            } else {
+                openPlayerModal(row.dataset.playerId);
+            }
+        });
     });
 
     renderPagination(totalPages);
+}
+
+// Per-stat breakdown drill-down. Columns reuse the model col classes so the
+// "Model Display" selector hides sub-table columns in lockstep with the main
+// table (CSS body.model-* rules in style.css are descendant selectors).
+const BREAKDOWN_MODELS = [
+    { key: "actual", label: "Actual", cls: "" },
+    { key: "ridge", label: "Ridge", cls: "ridge-col" },
+    { key: "nn", label: "NN", cls: "nn-col" },
+    { key: "attn_nn", label: "Attn NN", cls: "attn-nn-col" },
+    { key: "lgbm", label: "LGBM", cls: "lgbm-col" },
+];
+
+function toggleBreakdown(row) {
+    const detail = row.nextElementSibling;
+    if (!detail || !detail.classList.contains("predictions-detail-row")) return;
+    const willShow = detail.hidden;
+    detail.hidden = !detail.hidden;
+    row.classList.toggle("expanded", willShow);
+    // Lazy: fetch + render only on first expand. Cached in the DOM thereafter.
+    if (willShow && !detail.dataset.loaded) {
+        detail.dataset.loaded = "1";
+        loadBreakdown(row.dataset.playerId, row.dataset.week, detail.querySelector("td"));
+    }
+}
+
+async function loadBreakdown(playerId, week, cellEl) {
+    cellEl.innerHTML = '<span class="breakdown-msg">Loading…</span>';
+    try {
+        const params = new URLSearchParams({ player_id: playerId, week });
+        const data = await fetchJSON(`/api/predictions/breakdown?${params}`);
+        cellEl.innerHTML = renderBreakdownTable(data);
+    } catch (e) {
+        console.error("Failed to load breakdown:", e);
+        cellEl.innerHTML = '<span class="breakdown-msg">Failed to load breakdown.</span>';
+        // Allow a retry on next expand.
+        cellEl.parentElement.dataset.loaded = "";
+    }
+}
+
+function renderBreakdownTable(data) {
+    if (data.unavailable || !data.components || !data.components.length) {
+        return '<span class="breakdown-msg">Per-stat breakdown unavailable for this snapshot.</span>';
+    }
+    const head = BREAKDOWN_MODELS.map(m => `<th class="${m.cls}">${m.label}</th>`).join("");
+    const body = data.components.map(c => {
+        const cells = BREAKDOWN_MODELS.map(m => {
+            const v = c[m.key];
+            const txt = v == null
+                ? "--"
+                : `${fmt(v, 1)}${c.unit ? " " + escapeHtml(c.unit) : ""}`;
+            return `<td class="${m.cls}">${txt}</td>`;
+        }).join("");
+        return `<tr><td class="bd-stat">${escapeHtml(c.label)}</td>${cells}</tr>`;
+    }).join("");
+    return `<table class="breakdown-table">
+        <thead><tr><th class="bd-stat">Stat</th>${head}</tr></thead>
+        <tbody>${body}</tbody>
+    </table>`;
 }
 
 function deltaClass(d) {

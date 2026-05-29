@@ -405,6 +405,13 @@ POSITION_INFO = {
 }
 
 
+# Union of every position's raw-stat target keys (deduped, sorted). Drives the
+# per-target breakdown columns pre-declared in the results frame so they survive
+# the parquet persist/hydrate round-trip. POSITION_INFO is the single source for
+# target identity + display order used by /api/predictions/breakdown.
+_ALL_TARGETS = sorted({t["key"] for info in POSITION_INFO.values() for t in info["targets"]})
+
+
 # ---------------------------------------------------------------------------
 # Wiki — render committed markdown docs as in-app HTML pages.
 # Slug is the only public identifier; raw paths are never accepted from the
@@ -1071,6 +1078,33 @@ def _apply_position_models(train, val, test, pos, results):
                     results.loc[pos_index, _pred_col(prefix, fmt)] = np.nan
                 results.loc[pos_index, legacy_col] = np.nan
 
+        # Per-target raw-stat predictions + actuals for the breakdown drill-down
+        # (/api/predictions/breakdown). Raw stats are scoring-format-invariant, so
+        # one column per (model, target) and one per target for the actual. These
+        # are the same per-target arrays already consumed by the per-target MAE
+        # block below; we persist them so the breakdown survives the parquet
+        # hydrate path (a hydrated container never re-runs this function). Columns
+        # are pre-declared in _load_base_data_locked. A missing model (e.g. lgbm
+        # for K/DST) NaN's its target columns for this position's rows.
+        per_target_preds = (
+            ("ridge", ridge_preds),
+            ("nn", nn_preds),
+            ("attn_nn", attn_nn_preds),
+            ("lgbm", lgbm_preds),
+        )
+        for prefix, preds in per_target_preds:
+            for t in targets:
+                col = f"pred_{prefix}_{t}"
+                if preds is not None and t in preds:
+                    results.loc[pos_index, col] = np.round(
+                        np.asarray(preds[t], dtype=np.float64), 2
+                    ).astype(np.float32)
+                else:
+                    results.loc[pos_index, col] = np.nan
+        for t in targets:
+            if t in pos_test.columns:
+                results.loc[pos_index, f"actual_{t}"] = pos_test[t].to_numpy(dtype=np.float32)
+
     # Cache per-target metrics for /api/position_details. Per-target MAEs are
     # raw-stat (yards / TDs / receptions count) and so are format-invariant —
     # only the aggregated "total" row depends on scoring format. We cache the
@@ -1240,6 +1274,27 @@ def _load_base_data_locked():
     results["nn_pred"] = np.nan
     results["attn_nn_pred"] = np.nan
     results["lgbm_pred"] = np.nan
+
+    # Per-target raw-stat columns for the predictions-tab breakdown drill-down
+    # (/api/predictions/breakdown). One actual_{t} per target plus pred_{model}_{t}
+    # per model. Raw stats are scoring-format-invariant, so a single set suffices
+    # (not one per format). Sparse — each row only fills its own position's
+    # targets, the rest stay NaN — but the schema is uniform across rows so the
+    # parquet persist/hydrate round-trip is stable. Populated per position in
+    # _apply_position_models; absent columns are tolerated by the endpoint (a
+    # stale on-disk snapshot may predate this schema). Added in one concat block
+    # (~95 columns) to avoid the BlockManager fragmentation a per-column insert
+    # loop would cause at this width.
+    per_target_cols = [f"actual_{t}" for t in _ALL_TARGETS] + [
+        f"pred_{prefix}_{t}" for t in _ALL_TARGETS for prefix in _MODEL_PRED_PREFIXES
+    ]
+    results = pd.concat(
+        [
+            results,
+            pd.DataFrame(np.nan, index=results.index, columns=per_target_cols),
+        ],
+        axis=1,
+    )
 
     _cache["splits"] = {
         "QB": (train, val, test),
@@ -2118,6 +2173,102 @@ def api_player(player_id):
             "season_avg": _safe_num(round(df[actual_col].mean(), 2)),
             "season_total": _safe_num(round(df[actual_col].sum(), 2)),
             "scoring": scoring,
+        }
+    )
+
+
+@app.route("/api/predictions/breakdown")
+def api_predictions_breakdown():
+    """Per-stat breakdown for one player-week: each model's predicted raw stats
+    plus the actual, for the expandable row in the predictions tab.
+
+    Raw stats (yards / TDs / receptions / PA / YA / ...) are
+    scoring-format-invariant, so this endpoint takes no ``scoring`` param and the
+    sub-table is identical across PPR / half / standard. Columns are persisted by
+    ``_apply_position_models`` (``pred_{model}_{t}`` / ``actual_{t}``); a model
+    with no value for any target (e.g. lgbm for K/DST) is reported in
+    ``unavailable_models``. A stale on-disk snapshot predating these columns
+    degrades to ``{"components": [], "unavailable": true}`` rather than erroring.
+
+    Defined before the ``/api/predictions/<player_id>`` dynamic route is matched:
+    Werkzeug ranks the static ``breakdown`` segment above the ``<player_id>``
+    placeholder, so this never collides with ``api_player``.
+    """
+    player_id = request.args.get("player_id", "")
+    week_arg = request.args.get("week", "")
+    if not player_id:
+        return jsonify({"error": "player_id required"}), 400
+    try:
+        week = int(week_arg)
+    except (ValueError, TypeError):
+        return jsonify({"error": f"Invalid week: {week_arg}"}), 400
+
+    _ensure_base_data()
+    df = _cache["results"]
+    match = df[(df["player_id"] == player_id) & (df["week"] == week)]
+    if match.empty:
+        return jsonify({"error": "Player/week not found"}), 404
+    position = _safe_str(match.iloc[0]["position"])
+    if position not in POSITION_INFO:
+        return jsonify({"error": f"Unknown position: {position}"}), 400
+
+    # Ensure the position's models have run so the per-target columns are
+    # populated (mirrors api_player). No-op on a disk-hydrated container.
+    _ensure_position_loaded(position)
+    df = _cache["results"]
+    match = df[(df["player_id"] == player_id) & (df["week"] == week)]
+    if match.empty:
+        return jsonify({"error": "Player/week not found"}), 404
+    r = match.iloc[0]
+    cols = df.columns
+    target_infos = POSITION_INFO[position]["targets"]
+
+    # Stale-snapshot guard: if not one per-target column exists, the cache
+    # predates this feature — report degraded rather than all-empty cells.
+    expected = [f"actual_{t['key']}" for t in target_infos]
+    for t in target_infos:
+        expected.extend(f"pred_{prefix}_{t['key']}" for prefix in _MODEL_PRED_PREFIXES)
+    if not any(c in cols for c in expected):
+        return jsonify(
+            {
+                "player_id": player_id,
+                "week": week,
+                "position": position,
+                "components": [],
+                "unavailable_models": list(_MODEL_PRED_PREFIXES),
+                "unavailable": True,
+            }
+        )
+
+    components = []
+    for t in target_infos:
+        tkey = t["key"]
+        actual_col = f"actual_{tkey}"
+        comp = {
+            "key": tkey,
+            "label": t["label"],
+            "unit": TARGET_UNITS.get(tkey, ""),
+            "actual": _safe_num(r.get(actual_col)) if actual_col in cols else None,
+        }
+        for prefix in _MODEL_PRED_PREFIXES:
+            pcol = f"pred_{prefix}_{tkey}"
+            comp[prefix] = _safe_num(r.get(pcol)) if pcol in cols else None
+        components.append(comp)
+
+    # A model is unavailable if it has no value for any target (lgbm on K/DST, or
+    # a position whose model failed to load).
+    unavailable = [
+        prefix for prefix in _MODEL_PRED_PREFIXES if all(c.get(prefix) is None for c in components)
+    ]
+
+    return jsonify(
+        {
+            "player_id": player_id,
+            "week": week,
+            "position": position,
+            "components": components,
+            "unavailable_models": unavailable,
+            "unavailable": False,
         }
     )
 
