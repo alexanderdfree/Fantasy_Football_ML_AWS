@@ -6,6 +6,9 @@ against open+closed `claude-audit` GitHub issues, and files **one issue per find
 labeled by severity (`severity-high`/`severity-medium`) and area, HIGH/MED only — plus one
 closed `[claude-audit] checkpoint …` issue per fire recording the audited SHA (the skip-check
 breadcrumb; it carries no severity label, so it's excluded from the actionable backlog). The
+**one exception** is `docs`-area findings: they all append into a single persistent issue
+titled `[claude-audit] docs: consolidated documentation findings` (a rolling `## Open findings`
++ `## Resolved` body the routine edits in place each fire), rather than one issue each. The
 per-finding issues it produces are consumed by the [`solve-issues`](../../skills/solve-issues/SKILL.md)
 skill, which triages, severity-orders, and bundles them into tier-by-risk PRs.
 

@@ -1,5 +1,5 @@
 === MISSION ===
-Review my code in parallel for bugs/quirks — spawn as many Opus 4.8 1M Max subagents as you can, each emitting HIGH/MED-only findings with verbatim evidence. The orchestrator verifies each cited line, dedupes against open and closed GitHub issues, drops anything already in CLAUDE.md Stop rules or TODO.md Fixed archive, consolidates partial/full duplicates within this run's worker output, and files ONE GITHUB ISSUE PER SURVIVING FINDING — labeled by severity (`severity-high`/`severity-medium`) and area — plus one closed checkpoint issue recording the audited SHA. Watch for artifacts of unfinished (yet merged) PRs, semantic merge conflicts from concurrent PRs blind to each other's changes, cross-position inconsistencies, training-vs-inference drift, and orphan code under live test coverage.
+Review my code in parallel for bugs/quirks — spawn as many Opus 4.8 1M Max subagents as you can, each emitting HIGH/MED-only findings with verbatim evidence. The orchestrator verifies each cited line, dedupes against open and closed GitHub issues, drops anything already in CLAUDE.md Stop rules or TODO.md Fixed archive, consolidates partial/full duplicates within this run's worker output, and files ONE GITHUB ISSUE PER SURVIVING FINDING — labeled by severity (`severity-high`/`severity-medium`) and area (EXCEPT `docs` findings, which all collapse into one single persistent consolidated docs issue) — plus one closed checkpoint issue recording the audited SHA. Watch for artifacts of unfinished (yet merged) PRs, semantic merge conflicts from concurrent PRs blind to each other's changes, cross-position inconsistencies, training-vs-inference drift, and orphan code under live test coverage.
 
 === IMPLEMENTATION ===
 You are the orchestrator for a scheduled code-audit run on the Fantasy_Football_ML_AWS repo. Working dir is the repo root. Time budget: 30 minutes wall-clock (skipped runs exit in <1 min). You are READ-ONLY on repo files. The ONLY write actions permitted are `gh label create` (the severity labels, idempotent), `gh issue create` (per-finding issues + the checkpoint), `gh issue comment` (only on issues YOU create in THIS same run), and `gh issue close` (only on the checkpoint issue YOU create in THIS run). Writing to /tmp/* is fine.
@@ -26,6 +26,23 @@ Ensure the severity labels exist (idempotent — safe to run every fire; area la
     gh label create severity-high   --color B60205 --description "Audit: wrong result / silent loss / security / benchmark-changing" 2>/dev/null || true
     gh label create severity-medium --color FBCA04 --description "Audit: unfinished-PR artifact / invariant / drift / orphan code" 2>/dev/null || true
 
+=== DOCS EXCEPTION (one persistent consolidated issue) ===
+`docs`-area findings do NOT get individual issues. They all live in ONE persistent issue with the exact fixed title `[claude-audit] docs: consolidated documentation findings` (labels: `claude-audit`, `docs`, `severity-medium`, plus `severity-high` iff it currently holds an open HIGH docs finding). Its body is a rolling list with two sections:
+
+    ## Open findings
+    #### <SEV>: <title>
+    - **File**: `<path>:<line>`
+    - **First seen**: @<short_sha> on <YYYY-MM-DD>
+    - **What**: <2-3 sentences>
+    - **Why suspect**: <2-3 sentences>
+    - **Suggested action**: <one sentence>
+    - **Evidence**: `<verbatim line from the file>`
+
+    ## Resolved (dedup log — do not re-file)
+    - [#<pr> | LEAVE:<cat>] <title> (`<file>`) — <YYYY-MM-DD>
+
+Each fire APPENDS new (deduped) docs findings under `## Open findings`, preserving existing blocks AND their First-seen (so the per-finding age survives). `solve-issues` moves a finding from `## Open findings` to `## Resolved` when it's fixed or left, and closes the whole issue once `## Open findings` is empty. All non-`docs` findings remain one-issue-per-finding.
+
 STEP 0 — Skip check (sequential, ~30 sec):
   0a. HEAD_SHA=$(git rev-parse HEAD); SHORT_SHA=$(git rev-parse --short HEAD)
   0b. Fetch bodies of recent CHECKPOINT issues (each records one audited SHA):
@@ -48,7 +65,12 @@ STEP 1 — Prep (sequential, ~2 min):
           F=$(gh issue view "$N" --json body --jq '.body' | grep -m1 -oE '`[^`]+:[0-9]+`' | tr -d '`' | sed -E 's/:[0-9]+$//')
           printf '%s\t%s\n' "$N" "$F" >> /tmp/known_files.tsv
         done
-      Dedupe KEY = (area + cited file-path + ≥2 distinctive title keywords). The title prefix `[claude-audit] <area>:` carries area; `/tmp/known_files.tsv` carries the file.
+        # DOCS: also pull the consolidated docs issue (open AND closed, by exact title) so docs findings
+        # already listed (Open) or already resolved (Resolved) are not re-appended this fire:
+        gh issue list --label claude-audit --state all --limit 50 --json number,title \
+          --jq '.[] | select(.title=="[claude-audit] docs: consolidated documentation findings") | .number' \
+          | while read N; do gh issue view "$N" --json body --jq '.body'; done > /tmp/docs_pool.txt
+      Dedupe KEY = (area + cited file-path + ≥2 distinctive title keywords). The title prefix `[claude-audit] <area>:` carries area; `/tmp/known_files.tsv` carries the file. For `docs` findings the pool is `/tmp/docs_pool.txt` (the consolidated issue's Open + Resolved entries) instead of the per-finding title/file pool.
 
 STEP 2 — Fanout (parallel, ~13 min):
   Spawn 12 general-purpose subagents IN A SINGLE MESSAGE (Agent tool calls run concurrently). Each Agent call sets model="opus". Worker scopes:
@@ -96,7 +118,7 @@ STEP 3 — Verify new findings (sequential, ~5 min):
   For each new finding from each worker:
     3a. Read file at cited line. Confirm evidence_quote matches (whitespace-normalized). DROP if mismatch.
     3b. grep CLAUDE.md + TODO.md for 2-3 distinctive title keywords. DROP if matched.
-    3c. Dedupe against existing issues: a new finding is a DUPLICATE (DROP it) when some entry in /tmp/known_issues.tsv has the SAME area (its title prefix `[claude-audit] <area>:`) AND the SAME cited file (per /tmp/known_files.tsv) AND ≥2 shared distinctive title keywords. The pool already spans open AND closed — so a finding already filed, already triaged-closed, or already fixed is NOT re-filed.
+    3c. Dedupe against existing issues: a new finding is a DUPLICATE (DROP it) when some entry in /tmp/known_issues.tsv has the SAME area (its title prefix `[claude-audit] <area>:`) AND the SAME cited file (per /tmp/known_files.tsv) AND ≥2 shared distinctive title keywords. The pool already spans open AND closed — so a finding already filed, already triaged-closed, or already fixed is NOT re-filed. For a `docs`-area finding, dedupe instead against /tmp/docs_pool.txt: DROP if its file + ≥2 title keywords already appear in the consolidated docs issue's `## Open findings` OR `## Resolved` sections.
     3d. For "unfinished PR" / "semantic merge conflict" claims: `git log -p -n 20 -- <file>` and confirm consistency. DROP if completed elsewhere.
     3e. If finding matches NOT FINDINGS patterns: DROP.
   Hold /tmp/new_findings.jsonl (survivors). Hold N_NEW, N_NEW_HIGH, N_NEW_MED.
@@ -114,7 +136,9 @@ STEP 4 — File issues (~3 min):
   HEAD_SHA=$(git rev-parse HEAD); SHORT_SHA=$(git rev-parse --short HEAD); DATE=$(date -u +"%Y-%m-%d %H:%M UTC"); DATE_ONLY=$(date -u +"%Y-%m-%d")
   All First seen = SHORT_SHA on DATE_ONLY.
 
-  4a. PER-FINDING ISSUES (only if N_NEW > 0). For each finding in /tmp/consolidated_new.jsonl: write the canonical body (see ISSUE MODEL) to /tmp/body.md, resolve its area + severity label, create the issue, and record the new number keyed by tentative ID:
+  Split survivors into NON-DOCS (area ≠ docs) and DOCS (area == docs).
+
+  4a. NON-DOCS PER-FINDING ISSUES (for each non-docs survivor). Write the canonical body (see ISSUE MODEL) to /tmp/body.md, resolve its area + severity label, create the issue, and record the new number keyed by tentative ID:
         SEV_LABEL=$( [ "$severity" = "HIGH" ] && echo severity-high || echo severity-medium )
         URL=$(gh issue create \
                 --title "[claude-audit] ${area}: ${title}" \
@@ -123,6 +147,20 @@ STEP 4 — File issues (~3 min):
         NUM=${URL##*/}                      # issue number from the URL
         printf '%s\t%s\t%s\n' "$tID" "$NUM" "$URL" >> /tmp/filed.tsv
       If a `gh issue create` fails (e.g. an unexpected area label), retry once WITHOUT the area label; if it still fails, print the full body to stdout so the finding isn't lost.
+
+  4a-docs. CONSOLIDATED DOCS ISSUE (only if there are DOCS survivors). Maintain the single persistent docs issue (see DOCS EXCEPTION):
+        DOCS_TITLE="[claude-audit] docs: consolidated documentation findings"
+        DN=$(gh issue list --label claude-audit --state open --json number,title \
+               --jq ".[] | select(.title==\"$DOCS_TITLE\") | .number" | head -1)
+        # Build one `#### <SEV>: <title>` block per docs survivor (full fields, First seen = this run) → /tmp/docs_new_blocks.md
+        ANY_HIGH=$( <any docs survivor is HIGH?> && echo 1 || echo "" )
+        - If DN is EMPTY (no open consolidated docs issue): create it. Body = title header + "## Open findings\n" + /tmp/docs_new_blocks.md + "\n\n## Resolved (dedup log — do not re-file)\n":
+            LBLS="--label claude-audit --label docs --label severity-medium"; [ -n "$ANY_HIGH" ] && LBLS="$LBLS --label severity-high"
+            DURL=$(gh issue create --title "$DOCS_TITLE" $LBLS --body-file /tmp/docs_body.md); DN=${DURL##*/}
+        - Else (DN exists): fetch its current body, INSERT /tmp/docs_new_blocks.md at the end of the `## Open findings` section (preserve all existing Open blocks AND the entire `## Resolved` section), write the merged body to /tmp/docs_body.md, and update in place:
+            gh issue edit "$DN" --body-file /tmp/docs_body.md
+            [ -n "$ANY_HIGH" ] && gh issue edit "$DN" --add-label severity-high   # ensure HIGH is queryable; severity-medium stays
+        Record `docs<TAB>${DN}<TAB>(consolidated)` in /tmp/filed.tsv.
 
   4b. RELATED LINKS. For each pairing tA<TAB>tB<TAB>reason in /tmp/related.tsv, resolve to issue numbers via /tmp/filed.tsv and cross-link with comments on the issues you just created:
         gh issue comment "$NUM_A" --body "Related: #${NUM_B} — ${reason}"
@@ -143,8 +181,8 @@ STEP 4 — File issues (~3 min):
 CONSTRAINTS:
   - Read-only on repo files. Writing to /tmp/* is fine.
   - Do NOT push branches or open PRs.
-  - Allowed writes ONLY: `gh label create` (severity labels, idempotent), `gh issue create` (per-finding issues + the one checkpoint), `gh issue comment` (Related links on issues YOU created this run), `gh issue close` (the checkpoint YOU created this run). Do NOT close or modify any other issue, and do NOT use `gh issue edit` to modify any issue's title/body.
-  - ONE issue per finding. Severity is a LABEL (`severity-high`/`severity-medium`), NEVER in the title. Area is both the title prefix and a label.
+  - Allowed writes ONLY: `gh label create` (severity labels, idempotent), `gh issue create` (per-finding issues, the checkpoint, and the consolidated docs issue when absent), `gh issue comment` (Related links on issues YOU created this run), `gh issue close` (the checkpoint YOU created this run), and `gh issue edit` (ONLY the single consolidated docs issue titled `[claude-audit] docs: consolidated documentation findings`, which you own and append to — NEVER any other issue). Do NOT close or modify any other issue.
+  - ONE issue per finding — EXCEPT `docs` findings, which all append into the single persistent consolidated docs issue (see DOCS EXCEPTION). Severity is a LABEL (`severity-high`/`severity-medium`), NEVER in the title. Area is both the title prefix and a label.
   - First seen on each finding = the SHORT_SHA / DATE_ONLY of the run that FIRST files it. You only create issues for findings not already in the dedupe pool, so existing issues (and their First seen) are left untouched.
   - Never re-flag anything in the Stop rules block, TODO.md Fixed archive, or the dedupe pool (open+closed per-finding issue titles/files — STEP 1c/3c). Dedup spans open AND closed so a triaged-closed or fixed finding is not re-filed.
   - Never propose cross-position harmonization — feature engineering, not audit.

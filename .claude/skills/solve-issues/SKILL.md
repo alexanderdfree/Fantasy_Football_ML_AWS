@@ -5,7 +5,7 @@ description: Triage the open [claude-audit] per-finding GitHub issues (one findi
 
 # Solve audit-job issues
 
-The scheduled `[claude-audit]` routine files **one GitHub issue per finding**, each labeled `claude-audit` + a severity label (`severity-high`/`severity-medium`) + an area label (`qb`/`shared`/`docs`/…). The open severity-labeled issues are the live backlog; a closed `[claude-audit] checkpoint …` issue per fire records the audited SHA (it is **not** a finding — it carries no severity label, so it never appears in the backlog query). A meaningful fraction of findings are real bugs; the rest are noise: stale claims, false positives, or suggestions that re-introduce reverted designs (rolling features into the attention static branch, training on `fantasy_points`, loss-config knobs in `tune_nn.py`, etc. — see [CLAUDE.md](CLAUDE.md) "Stop rules").
+The scheduled `[claude-audit]` routine files **one GitHub issue per finding**, each labeled `claude-audit` + a severity label (`severity-high`/`severity-medium`) + an area label (`qb`/`shared`/…). The open severity-labeled issues are the live backlog; a closed `[claude-audit] checkpoint …` issue per fire records the audited SHA (it is **not** a finding — it carries no severity label, so it never appears in the backlog query). **One exception:** all `docs`-area findings live in a SINGLE persistent issue titled exactly `[claude-audit] docs: consolidated documentation findings` (a rolling `## Open findings` + `## Resolved` body), not one issue each — so the `docs` entry in the backlog is multi-finding (parsed from its body), and its findings are retired by **editing** that issue, not closing it. A meaningful fraction of findings are real bugs; the rest are noise: stale claims, false positives, or suggestions that re-introduce reverted designs (rolling features into the attention static branch, training on `fantasy_points`, loss-config knobs in `tune_nn.py`, etc. — see [CLAUDE.md](CLAUDE.md) "Stop rules").
 
 This skill enters plan mode, triages each open finding into **FIX** or **LEAVE** (with a category), then drafts the fix plan using the project's tier-by-risk PR consolidation pattern (CLAUDE.md "Sub-agent contract — two shapes" + auto-memory `feedback_tier_by_risk_pr_consolidation`). It produces a verdict + bundle plan for `ExitPlanMode` approval — **no branches cut, no workers spawned for code changes, until the user approves**.
 
@@ -54,6 +54,7 @@ If not already in plan mode, call `EnterPlanMode` first. The skill produces a tr
 2. Fetch full body + comments for each target issue: `gh issue view <N> --json number,title,body,labels,comments`.
 3. Parse into per-finding records `{id (=issue #), severity, area, title, file, line, what, why_suspect, suggested_action, evidence_snippet}`:
    - **Per-finding issue (default):** one issue = one finding. Read `severity` and `area` from the **labels** (`severity-*` / the area label), the rest from the body fields. `id` is the issue number — keep it; you'll cite `Closes #id` (FIX) or close it directly (LEAVE).
+   - **Consolidated docs issue** (title exactly `[claude-audit] docs: consolidated documentation findings`): multi-finding. Parse each `#### <SEV>: <title>` block under its `## Open findings` section into its own record (`area=docs`, severity from the block header). **Ignore the `## Resolved` section** (already-handled). Since many findings share one issue number, set `id = #<docsIssueN>::<title-slug>` — you'll retire each by editing the issue body, NOT `Closes #N`.
    - **Legacy fallback (explicitly-passed multi-finding issue):** if the body groups findings under area headers (`### QB`, `### Shared`, …) or it's a `#NNN split`, parse each `#### …` finding block into its own record (severity from the finding header, area from the section / split title). This drains the pre-migration batch issues without re-filing them.
 4. Compare the head SHA (`@<sha>` in a finding's First-seen line, or a batch title) against `git rev-parse origin/main`. If drifted by > a handful of commits, note it ("auditor SHA is N commits behind `main`; some findings may already be stale or remediated at head").
 5. **Pick the mode** (see "## Two modes"): if the target issue(s) already carry a remediation comment whose cited PRs are merged → **Mode B** (jump to "## Mode B: verify-then-close"). Otherwise → **Mode A** (continue to Phase 2).
@@ -135,10 +136,10 @@ Write the plan to the plan file with these sections:
 
 0. **Master backlog (severity-ordered)** — the at-a-glance ranked view of everything open: all findings sorted by **severity (HIGH first)**, then area, then issue #: `severity | area | #issue | title | verdict | tier-if-FIX`. This answers "what's open, by severity"; sections 3–5 answer "what to fix first / together". (The same view is available any time without the skill via `gh issue list --label claude-audit --label severity-high`.)
 1. **Triage table** — one row per finding: `#issue | severity | area | file:line | verdict | category-if-LEAVE | tier-if-FIX`
-2. **LEAVE rationale + issues to close** — grouped by category, one line per finding pointing to the stop-rule or evidence. These issues are closed (with a reason comment) on approval — list the `#issue`s explicitly.
+2. **LEAVE rationale + issues to retire** — grouped by category, one line per finding pointing to the stop-rule or evidence. Retired on approval: **non-docs** by closing the issue with a reason comment; **docs** by editing the consolidated issue (move the block to `## Resolved`). List them explicitly.
 3. **FIX bundles per tier** — Tier A → B → C, each tier listing bundles with `bundle_id | finding_ids (#issues) | files | worker_brief_summary`
 4. **File-disjointness verification** — per-tier table proving no file appears in two bundles
-5. **Execution sequence** — Tier A PR → wait green/merge → Tier B PR → … (the CI-light cadence). Each PR body cites `Closes #N` for every finding-issue it fixes, so merging auto-closes them.
+5. **Execution sequence** — Tier A PR → wait green/merge → Tier B PR → … (the CI-light cadence). Each PR body cites `Closes #N` for every non-docs finding-issue it fixes (auto-close on merge); docs fixes are reconciled post-merge by editing the consolidated docs issue (step 12).
 6. **Open questions for user** — anything UNCERTAIN that needs the user's call before workers spawn
 
 Then call `ExitPlanMode`.
@@ -188,11 +189,14 @@ Write the plan with: (1) the **confirmation table**; (2) the **per-issue close l
 
 Once the user approves the plan via `ExitPlanMode`:
 
-**First, retire the LEAVE issues.** For each finding triaged LEAVE (`false_positive` / `feature_drift` / `stale`), close its issue with a one-line reason (for `feature_drift`, cite the CLAUDE.md stop-rule by section name):
-```
-gh issue close <#> --comment "Triaged LEAVE (<category>): <reason / stop-rule section>. Not a fix target."
-```
-`out_of_scope` and UNCERTAIN-deferred issues stay **open** — they remain the visible backlog. Then execute the FIX tiers one at a time. For each tier:
+**First, retire the LEAVE issues.** For each finding triaged LEAVE (`false_positive` / `feature_drift` / `stale`):
+- **Non-docs** — close its issue with a one-line reason (for `feature_drift`, cite the CLAUDE.md stop-rule by section name):
+  ```
+  gh issue close <#> --comment "Triaged LEAVE (<category>): <reason / stop-rule section>. Not a fix target."
+  ```
+- **Docs** (the consolidated issue) — you can't close the shared issue; instead `gh issue edit` it: delete the finding's block from `## Open findings` and append a line to `## Resolved` as `- [LEAVE:<cat>] <title> (\`file\`) — <date>`. If `## Open findings` is now empty, close the consolidated docs issue.
+
+`out_of_scope` and UNCERTAIN-deferred stay **open** (non-docs: the issue stays open; docs: the block stays under `## Open findings`). Then execute the FIX tiers one at a time. For each tier:
 
 1. **Staging branch from `origin/main`**:
    ```
@@ -214,7 +218,7 @@ gh issue close <#> --comment "Triaged LEAVE (<category>): <reason / stop-rule se
 8. **Invoke `pre-pr-judge` skill** (mandatory — see [CLAUDE.md](CLAUDE.md) "Before `gh pr create`").
 9. **Open the tier PR** with body following the PR [#325](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/325) / [#326](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/326) structure:
    - **Summary** — tier name, bundle count, finding count, cherry-pick method
-   - **Closes** — `Closes #N` for every finding-issue fixed in this tier (so merge auto-closes them)
+   - **Closes** — `Closes #N` for every NON-DOCS finding-issue fixed in this tier (so merge auto-closes them). Docs findings have no own issue — instead list them as `resolves docs finding "<title>" in #<docs-issue>`; the post-merge step (12) edits the consolidated docs issue.
    - **Bundles** — grouped by area, each with bundle ID, commit SHA, files, one-line description
    - **Deferred** — bundles bumped to a later tier and why
    - **Risk** — what behavior changes (Tier B: none; Tier C: bounded, list the metric deltas)
@@ -222,7 +226,7 @@ gh issue close <#> --comment "Triaged LEAVE (<category>): <reason / stop-rule se
    - For Tier C: **mandatory Batch dry-run callout** if any bundle touches GPU code paths (memory `feedback_gpu_guarded_code_needs_gpu_test`)
 10. **Wait green CI** (`gh pr checks <N> --watch`) before opening the next tier's PR. This is the CI-load-light cadence — sequential PRs, not all three open at once.
 11. **Merge** (`gh pr merge <N> --squash`, then `git push origin --delete <branch>` separately — memory `gh_pr_merge_worktree`).
-12. **Confirm closure** — the merged PR's `Closes #N` auto-closes each finding-issue it fixed. Spot-check with `gh issue view #N --json state` (CLOSED); manually `gh issue close #N` any that GitHub didn't auto-close (wording mismatch, etc.). LEAVE issues were already closed at the top of this section.
+12. **Confirm closure** — for **non-docs** fixes, the merged PR's `Closes #N` auto-closes each finding-issue; spot-check with `gh issue view #N --json state` (CLOSED) and manually `gh issue close #N` any GitHub missed. For **docs** fixes, `gh issue edit` the consolidated docs issue: delete each fixed finding's block from `## Open findings` and append it to `## Resolved` as `- [#<thisPR>] <title> (\`file\`) — <date>`; when `## Open findings` is empty, close the issue and re-sync its labels (drop `severity-high` if no open HIGH docs finding remains). LEAVE issues/blocks were already retired at the top of this section.
 
 After all tier PRs land, the open `severity-*`-labeled backlog should show only `out_of_scope` + UNCERTAIN→deferred findings. The next `[claude-audit]` cycle won't re-file the fixed/closed ones — its dedup spans **closed** issues too.
 
