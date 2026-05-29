@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.pipeline import run_pipeline
 from src.te.config import CONFIG_TINY, POSITION_CONFIG
 from tests._skip_helpers import require_splits
@@ -53,7 +54,14 @@ pytestmark = [
 
 
 def _build_tiny_cfg() -> dict:
-    """Bundle CONFIG_TINY with the TE callables required by run_pipeline."""
+    """Bundle CONFIG_TINY with the TE callables required by run_pipeline.
+
+    ``aggregate_fn`` is set so ``pipeline.py``'s ``_total`` lambda uses TE's
+    real signed aggregator instead of the wrong-sign fallback
+    ``sum(preds[t] for t in targets)``. Without it the ``pred_*_total`` columns
+    are computed via a bare positive sum and the test would validate that buggy
+    path against itself. See audit-320 F62 (related: DST F97, K F11).
+    """
     return {
         **CONFIG_TINY,
         "filter_fn": filter_to_position,
@@ -61,6 +69,7 @@ def _build_tiny_cfg() -> dict:
         "add_features_fn": add_specific_features,
         "fill_nans_fn": fill_nans,
         "get_feature_columns_fn": get_feature_columns,
+        "aggregate_fn": aggregate_fn_for("TE"),
     }
 
 
