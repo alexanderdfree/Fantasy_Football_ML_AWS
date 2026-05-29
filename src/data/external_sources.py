@@ -184,10 +184,18 @@ def load_qbr_weekly(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFr
     ``QBR_FEATURE_COLUMNS`` (empty if the source is unavailable).
     """
     path = f"{cache_dir}/qbr_weekly_{seasons[0]}_{seasons[-1]}.parquet"
+    keep = ["player_id", "season", "week", *QBR_FEATURE_COLUMNS]
     if os.path.exists(path):
         return _coerce_merge_keys(pd.read_parquet(path))
-    raw = _fetch_qbr_weekly_raw(seasons)
-    ids = nfl_source.player_ids()
+    try:
+        raw = _fetch_qbr_weekly_raw(seasons)
+        ids = nfl_source.player_ids()
+    except Exception as e:
+        # Supplementary QB-only signal: a fetch failure degrades to "no QBR"
+        # (loader leaves the columns NaN) rather than crashing the shared
+        # load_raw_data pull for all six positions.
+        print(f"WARNING: QBR fetch failed ({e}); skipping")
+        return pd.DataFrame(columns=keep)
     out = _coerce_merge_keys(bridge_qbr_to_gsis(raw, ids))
     out.to_parquet(path)
     return out
@@ -243,7 +251,13 @@ def load_contracts(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFra
     path = f"{cache_dir}/contracts_{seasons[0]}_{seasons[-1]}.parquet"
     if os.path.exists(path):
         return _coerce_merge_keys(pd.read_parquet(path))
-    raw = nfl_source.contracts()
+    try:
+        raw = nfl_source.contracts()
+    except Exception as e:
+        # Supplementary signal: degrade to "no contract" (loader fills 0)
+        # rather than crashing the shared load_raw_data pull.
+        print(f"WARNING: contracts fetch failed ({e}); skipping")
+        return pd.DataFrame(columns=["player_id", "season", *CONTRACT_FEATURE_COLUMNS])
     out = _coerce_merge_keys(derive_active_contracts(raw, list(seasons)))
     out.to_parquet(path)
     return out
