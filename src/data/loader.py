@@ -228,33 +228,46 @@ def load_raw_data(
             weekly["snap_pct"] = float("nan")
 
     # 5. Injury reports
-    practice_map = {
-        "Full Participation in Practice": 2,
-        "Limited Participation in Practice": 1,
-        "Did Not Participate In Practice": 0,
-    }
-    injuries["practice_status_num"] = injuries["practice_status"].map(practice_map)
+    # Wrapped defensively (parallel to the snap-count merge above): a malformed
+    # or empty injuries frame (e.g. a season the source has no injury data for,
+    # or an upstream schema rename) would otherwise KeyError on the .map/.groupby
+    # below. On failure the practice/game status columns still land with their
+    # neutral fill defaults so downstream features see "no injury" rather than
+    # crashing.
+    try:
+        practice_map = {
+            "Full Participation in Practice": 2,
+            "Limited Participation in Practice": 1,
+            "Did Not Participate In Practice": 0,
+        }
+        injuries["practice_status_num"] = injuries["practice_status"].map(practice_map)
 
-    status_map = {"Questionable": 0.5, "Doubtful": 0.1, "Out": 0.0}
-    injuries["game_status_num"] = injuries["report_status"].map(status_map).fillna(1.0)
+        status_map = {"Questionable": 0.5, "Doubtful": 0.1, "Out": 0.0}
+        injuries["game_status_num"] = injuries["report_status"].map(status_map).fillna(1.0)
 
-    # Worst practice/game status per player-week (multiple injuries possible)
-    inj_agg = (
-        injuries.groupby(["gsis_id", "season", "week"])
-        .agg(
-            practice_status=("practice_status_num", "min"),
-            game_status=("game_status_num", "min"),
+        # Worst practice/game status per player-week (multiple injuries possible)
+        inj_agg = (
+            injuries.groupby(["gsis_id", "season", "week"])
+            .agg(
+                practice_status=("practice_status_num", "min"),
+                game_status=("game_status_num", "min"),
+            )
+            .reset_index()
         )
-        .reset_index()
-    )
 
-    weekly = weekly.merge(
-        inj_agg,
-        left_on=["player_id", "season", "week"],
-        right_on=["gsis_id", "season", "week"],
-        how="left",
-    )
-    weekly.drop(columns=["gsis_id"], errors="ignore", inplace=True)
+        weekly = weekly.merge(
+            inj_agg,
+            left_on=["player_id", "season", "week"],
+            right_on=["gsis_id", "season", "week"],
+            how="left",
+        )
+        weekly.drop(columns=["gsis_id"], errors="ignore", inplace=True)
+    except Exception as e:
+        print(f"WARNING: Injury merge failed ({e}), injury status will be neutral")
+    if "practice_status" not in weekly.columns:
+        weekly["practice_status"] = float("nan")
+    if "game_status" not in weekly.columns:
+        weekly["game_status"] = float("nan")
     weekly["practice_status"] = weekly["practice_status"].fillna(2.0)
     weekly["game_status"] = weekly["game_status"].fillna(1.0)
 
@@ -347,6 +360,10 @@ def compute_all_scoring_formats(df: pd.DataFrame) -> pd.DataFrame:
 
     Adds columns: fantasy_points_standard, fantasy_points_half_ppr, fantasy_points
     """
+    # Copy before mutating so ad-hoc callers (REPL/notebooks) don't see their
+    # input frame silently gain columns — mirrors the copy-first contract in
+    # src/data/preprocessing.py and src/data/split.py.
+    df = df.copy()
     df["fantasy_points_standard"] = compute_fantasy_points(df, SCORING_STANDARD)
     df["fantasy_points_half_ppr"] = compute_fantasy_points(df, SCORING_HALF_PPR)
     df["fantasy_points"] = compute_fantasy_points(df, SCORING_PPR)

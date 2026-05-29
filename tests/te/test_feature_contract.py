@@ -53,7 +53,14 @@ def _make_minimal_split(
     team: str = "KC",
     seed: int = 42,
 ) -> pd.DataFrame:
-    """Build a TE split with every raw column touched by _compute_features."""
+    """Build a TE split with every raw column touched by _compute_features.
+
+    Pass at least two distinct player_ids on the same team so
+    team_te_target_share_L3 takes non-trivial (<1.0) values and the
+    multi-player team-share aggregation branch is exercised. A single-player
+    split degenerates the share to 1.0 and silently bypasses that branch
+    (audit-320 F93).
+    """
     rng = np.random.default_rng(seed)
     rows = []
     for pid in player_ids:
@@ -84,8 +91,8 @@ class TestTESpecificFeatureContract:
 
     def test_all_specific_columns_present_after_add(self):
         train = _make_minimal_split(seed=1)
-        val = _make_minimal_split(player_ids=("V1",), seed=2)
-        test = _make_minimal_split(player_ids=("X1",), seed=3)
+        val = _make_minimal_split(player_ids=("V1", "V2"), seed=2)
+        test = _make_minimal_split(player_ids=("X1", "X2"), seed=3)
 
         t, v, x = add_specific_features(train, val, test)
         for col in EXPECTED_TE_SPECIFIC:
@@ -94,8 +101,8 @@ class TestTESpecificFeatureContract:
 
     def test_specific_columns_are_numeric(self):
         train = _make_minimal_split(seed=1)
-        val = _make_minimal_split(player_ids=("V1",), seed=2)
-        test = _make_minimal_split(player_ids=("X1",), seed=3)
+        val = _make_minimal_split(player_ids=("V1", "V2"), seed=2)
+        test = _make_minimal_split(player_ids=("X1", "X2"), seed=3)
         t, v, x = add_specific_features(train, val, test)
         for col in EXPECTED_TE_SPECIFIC:
             for df in (t, v, x):
@@ -106,8 +113,8 @@ class TestTESpecificFeatureContract:
     def test_no_inf_after_fill_nans(self):
         """fill_nans must eliminate inf and NaN from specific columns."""
         train = _make_minimal_split(seed=1)
-        val = _make_minimal_split(player_ids=("V1",), seed=2)
-        test = _make_minimal_split(player_ids=("X1",), seed=3)
+        val = _make_minimal_split(player_ids=("V1", "V2"), seed=2)
+        test = _make_minimal_split(player_ids=("X1", "X2"), seed=3)
         t, v, x = add_specific_features(train, val, test)
         t, v, x = fill_nans(t, v, x, EXPECTED_TE_SPECIFIC)
         for col in EXPECTED_TE_SPECIFIC:
@@ -118,8 +125,8 @@ class TestTESpecificFeatureContract:
     def test_specific_columns_not_all_nan(self):
         """Every specific column produces at least one non-NaN value on realistic input."""
         train = _make_minimal_split(n_weeks=6, seed=1)
-        val = _make_minimal_split(player_ids=("V1",), n_weeks=6, seed=2)
-        test = _make_minimal_split(player_ids=("X1",), n_weeks=6, seed=3)
+        val = _make_minimal_split(player_ids=("V1", "V2"), n_weeks=6, seed=2)
+        test = _make_minimal_split(player_ids=("X1", "X2"), n_weeks=6, seed=3)
         t, _, _ = add_specific_features(train, val, test)
         for col in EXPECTED_TE_SPECIFIC:
             assert t[col].notna().any(), f"{col} is entirely NaN on non-empty input"

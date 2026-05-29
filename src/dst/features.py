@@ -14,11 +14,28 @@ def compute_features(df: pd.DataFrame) -> None:
 
     Must be called on the FULL dataset (before splitting) so that rolling
     windows and prior-season features have complete history.
+
+    Side-effect contract: per-group rolling aggregates require chronological
+    row order, so the function physically reorders ``df`` by
+    ``(team, season, week)`` via column-wise reassignment (no
+    ``sort_values(..., inplace=True)``, which pandas discourages under CoW)
+    before computing features. Row labels are realigned so ``df.index``
+    reflects the sorted order — same as the previous in-place mutator left
+    the frame.
     """
-    assert "fantasy_points" in df.columns, (
-        "DST compute_features requires compute_targets to have run first"
-    )
-    df.sort_values(["team", "season", "week"], inplace=True)
+    # Guard with an explicit raise (not ``assert``, which ``python -O``
+    # strips): ``_dst_total_pts`` below reads ``fantasy_points``, which is
+    # written by compute_targets. Missing it means scoring hasn't run, and a
+    # bare KeyError on the assignment would be opaque.
+    if "fantasy_points" not in df.columns:
+        raise KeyError(
+            "DST compute_features requires compute_targets to have run first "
+            "(missing 'fantasy_points' column)."
+        )
+    df_sorted = df.sort_values(["team", "season", "week"])
+    for col in df_sorted.columns:
+        df[col] = df_sorted[col].values
+    df.index = df_sorted.index
 
     # Pre-compute D/ST fantasy points for rolling features.  We use the
     # tier-mapped ``fantasy_points`` column produced by compute_targets

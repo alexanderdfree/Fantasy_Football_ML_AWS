@@ -20,8 +20,19 @@ def compute_features(df: pd.DataFrame) -> None:
     Must be called on the FULL dataset (before splitting) so that rolling
     windows have access to complete within-season history. The shift(1)
     prevents current-week leakage.
+
+    Side-effect contract: per-group rolling aggregates require chronological
+    row order, so the function physically reorders ``df`` by
+    ``(player_id, season, week)`` via column-wise reassignment (no
+    ``sort_values(..., inplace=True)``, which pandas discourages under CoW)
+    before computing features. Row labels are realigned so ``df.index``
+    reflects the sorted order — same as the previous in-place mutator left
+    the frame.
     """
-    df.sort_values(["player_id", "season", "week"], inplace=True)
+    df_sorted = df.sort_values(["player_id", "season", "week"])
+    for col in df_sorted.columns:
+        df[col] = df_sorted[col].values
+    df.index = df_sorted.index
 
     # Rolling-feature input: signed fantasy total written by compute_targets.
     df["_k_total_pts"] = df["fantasy_points"]

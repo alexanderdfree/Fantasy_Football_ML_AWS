@@ -23,8 +23,20 @@ def add_specific_features(train_df, val_df, test_df):
 
 
 def _compute_features(df: pd.DataFrame) -> None:
-    """Compute all 8 WR-specific features in-place."""
-    df.sort_values(["player_id", "season", "week"], inplace=True)
+    """Compute all 8 WR-specific features in-place.
+
+    Side-effect contract: per-group rolling aggregates require chronological
+    row order, so the function physically reorders ``df`` by
+    ``(player_id, season, week)`` via column-wise reassignment (no
+    ``sort_values(..., inplace=True)``, which pandas discourages under CoW)
+    before computing features. Row labels are realigned so ``df.index``
+    reflects the sorted order — same as the previous in-place mutator left
+    the frame. Callers that needed the original row order should pass a copy.
+    """
+    df_sorted = df.sort_values(["player_id", "season", "week"])
+    for col in df_sorted.columns:
+        df[col] = df_sorted[col].values
+    df.index = df_sorted.index
 
     grp = ["player_id", "season"]
 

@@ -1061,6 +1061,10 @@ class MultiHeadNetWithNestedHistory(nn.Module):
 
         # Splice per-game aggregates onto the inner-pool output when configured.
         if self.game_dim > 0:
+            if x_game_history is None:
+                raise ValueError(
+                    "Model was built with game_dim set; forward() requires x_game_history."
+                )
             per_game = torch.cat([per_game, x_game_history], dim=-1)
 
         # Outer encode + attend

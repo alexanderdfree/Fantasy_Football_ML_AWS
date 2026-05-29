@@ -312,6 +312,17 @@ POSITION_CONFIG = PositionConfig(
     lgbm_reg_alpha=0.1,
     lgbm_min_child_samples=25,
     lgbm_min_split_gain=0.0,
+    # Single global objective applied to every LGBMRegressor head
+    # (LightGBMMultiTarget takes one objective, not per-target). This
+    # diverges from the attention NN's head_losses, which fit poisson_nll
+    # for the four sparse counts (def_safeties/def_tds/def_blocked_kicks/
+    # special_teams_tds). The divergence is intentional, not a bug: the
+    # Poisson rationale above (scale-aware gradients where Huber@delta=0.25
+    # collapses to ~MSE) is an NN-loss argument; gradient-boosted trees on
+    # those lambda~0.03-0.08 targets split on the raw count regardless of
+    # objective, and the ensemble averages the two estimators' outputs
+    # rather than requiring matched objectives. Threading per-target
+    # Poisson into LGBM was evaluated and is not worth the complexity here.
     lgbm_objective="huber",
     accepts_dataframes=False,
     cpu_only=True,
