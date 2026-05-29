@@ -425,3 +425,93 @@ def test_post_fork_swallows_warm_exception(monkeypatch):
             break
         time.sleep(0.01)
     assert fake_worker.log.warning.called, "exception should be logged via worker.log.warning"
+
+
+# ---------------------------------------------------------------------------
+# Browser snapshot (static first-paint payload) + /api/snapshot route
+# ---------------------------------------------------------------------------
+
+
+def test_persist_writes_browser_snapshot(cache_dir, fingerprint_files, monkeypatch):
+    """``_persist_cache_to_disk`` emits ``snapshot.json`` with all three scoring
+    formats, the week list, and rows identical to the ``/api/predictions``
+    serializer — so the static snapshot can never drift from the live API.
+    """
+    import src.serving.app as app_mod
+
+    monkeypatch.setattr(app_mod, "upload_predictions_cache_to_s3", lambda: None)
+    results = _fake_results()
+    app_mod._cache["results"] = results
+    app_mod._cache["metrics_by_format"] = _fake_metrics()
+
+    app_mod._persist_cache_to_disk()
+
+    snap_path = cache_dir / "snapshot.json"
+    assert snap_path.is_file()
+    snap = json.loads(snap_path.read_text())
+    assert set(snap["scoring"]) == {"ppr", "half_ppr", "standard"}
+    assert snap["weeks"] == sorted(int(w) for w in results["week"].unique())
+    assert snap["degraded_positions"] == []
+    # Rows are exactly what /api/predictions would serialize for each format.
+    for fmt in ("ppr", "half_ppr", "standard"):
+        assert snap["scoring"][fmt] == app_mod._records_to_player_rows(results, scoring=fmt)
+
+
+def test_hydrate_regenerates_snapshot_when_absent(cache_dir, fingerprint_files, monkeypatch):
+    """A container hydrating a cache written before snapshots existed (triple
+    present, ``snapshot.json`` absent) regenerates the snapshot locally so
+    ``/api/snapshot`` serves without waiting for the next retrain.
+    """
+    import src.serving.app as app_mod
+
+    monkeypatch.setattr(app_mod, "upload_predictions_cache_to_s3", lambda: None)
+    app_mod._cache["results"] = _fake_results()
+    app_mod._cache["metrics_by_format"] = _fake_metrics()
+    app_mod._persist_cache_to_disk()
+
+    # Simulate the pre-snapshot cache shape: drop the snapshot, keep the triple.
+    (cache_dir / "snapshot.json").unlink()
+    assert not (cache_dir / "snapshot.json").exists()
+
+    app_mod._cache.clear()
+    assert app_mod._try_hydrate_from_disk() is True
+    assert (cache_dir / "snapshot.json").is_file(), "hydrate should regenerate the missing snapshot"
+
+
+def test_snapshot_route_serves_file_without_triggering_compute(cache_dir, monkeypatch):
+    """``/api/snapshot`` serves straight off disk and MUST NOT call the heavy
+    ``_ensure_metrics`` model-load path — that decoupling is the whole point.
+    """
+    import src.serving.app as app_mod
+
+    def _boom():
+        raise AssertionError("/api/snapshot must not call _ensure_metrics")
+
+    monkeypatch.setattr(app_mod, "_ensure_metrics", _boom)
+
+    payload = {
+        "weeks": [1, 2],
+        "degraded_positions": [],
+        "scoring": {"ppr": [], "half_ppr": [], "standard": []},
+    }
+    (cache_dir / "snapshot.json").write_text(json.dumps(payload))
+
+    resp = app_mod.app.test_client().get("/api/snapshot")
+    assert resp.status_code == 200
+    assert resp.get_json() == payload
+    assert resp.headers["Cache-Control"] == "no-cache"
+
+
+def test_snapshot_route_404_when_absent(cache_dir, monkeypatch):
+    """No snapshot on disk -> 404 (frontend falls back to /api/predictions),
+    still without invoking the compute path.
+    """
+    import src.serving.app as app_mod
+
+    def _boom():
+        raise AssertionError("/api/snapshot must not call _ensure_metrics")
+
+    monkeypatch.setattr(app_mod, "_ensure_metrics", _boom)
+
+    resp = app_mod.app.test_client().get("/api/snapshot")
+    assert resp.status_code == 404

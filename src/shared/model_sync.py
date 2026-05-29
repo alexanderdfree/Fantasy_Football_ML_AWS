@@ -733,6 +733,13 @@ def sync_data_from_s3() -> dict | None:
 
 _PREDICTIONS_CACHE_DIR_REL = "data/serving_cache"
 _PREDICTIONS_CACHE_FILES = ("predictions.parquet", "metrics.json", "fingerprint.json")
+# Auxiliary cache files synced/uploaded best-effort. Their absence is NOT a
+# partial-sync (it never triggers the cleanup-and-recompute path that a missing
+# required file does) — the consumer tolerates them being absent. snapshot.json
+# is the browser-ready predictions payload the frontend hydrates first paint
+# from (see src/serving/app.py::_write_snapshot_json + /api/snapshot); if it is
+# missing the frontend simply falls back to /api/predictions.
+_PREDICTIONS_CACHE_OPTIONAL = ("snapshot.json",)
 
 
 def sync_predictions_cache_from_s3() -> dict | None:
@@ -819,6 +826,21 @@ def sync_predictions_cache_from_s3() -> dict | None:
             "missing": missing,
             "failed": failed,
         }
+    # Required triple is complete. Pull auxiliary files (browser snapshot)
+    # best-effort: a 404 means no container has uploaded one yet (the serving
+    # app regenerates it locally on hydrate), and any other error just leaves
+    # the frontend to fall back to /api/predictions — neither invalidates the
+    # hydrate-gating triple above.
+    for name in _PREDICTIONS_CACHE_OPTIONAL:
+        try:
+            _download_file(s3, bucket, f"{s3_prefix}/{name}", dest_dir / name)
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code not in ("NoSuchKey", "404"):
+                print(f"[predcache_sync] optional {name} FAILED: {e!r} — skipping")
+        except Exception as e:  # noqa: BLE001 — best-effort
+            print(f"[predcache_sync] optional {name} FAILED: {e!r} — skipping")
+
     print(
         f"[predcache_sync] done in {total}s, {total_bytes / 1e6:.1f} MB across {len(results)} files"
     )
@@ -864,6 +886,20 @@ def upload_predictions_cache_to_s3() -> dict | None:
                 Key=f"{s3_prefix}/{name}",
                 Body=data,
                 ContentType=content_type,
+            )
+            total_bytes += len(data)
+        # Auxiliary files (browser snapshot): upload when present, skip silently
+        # when absent — never gates the required-triple upload above.
+        for name in _PREDICTIONS_CACHE_OPTIONAL:
+            src = src_dir / name
+            if not src.is_file():
+                continue
+            data = src.read_bytes()
+            s3.put_object(
+                Bucket=bucket,
+                Key=f"{s3_prefix}/{name}",
+                Body=data,
+                ContentType="application/json",
             )
             total_bytes += len(data)
     except Exception as e:  # noqa: BLE001 — best-effort upload

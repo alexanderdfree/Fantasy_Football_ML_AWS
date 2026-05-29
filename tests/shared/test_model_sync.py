@@ -1308,3 +1308,75 @@ def test_predcache_respects_custom_prefix(monkeypatch, tmp_path):
     # an unrelated path. This is the actual contract under test.
     assert all(key.startswith("staging/v3/predictions_cache/") for key in fake_s3.puts)
     assert not any(key.startswith("models/") for key in fake_s3.puts)
+
+
+@pytest.mark.unit
+def test_predcache_sync_pulls_optional_snapshot_when_present(monkeypatch, tmp_path):
+    """The browser snapshot (snapshot.json) is synced best-effort alongside the
+    required triple. It is auxiliary, so it does not count toward summary['files'].
+    """
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    objects = {
+        "models/predictions_cache/predictions.parquet": b"PAR1x",
+        "models/predictions_cache/metrics.json": b'{"ppr": {}}',
+        "models/predictions_cache/fingerprint.json": b'{"sha256": "abc"}',
+        "models/predictions_cache/snapshot.json": b'{"scoring": {}}',
+    }
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_predictions_cache_from_s3()
+
+    assert summary["files"] == 3
+    dest = tmp_path / "data" / "serving_cache"
+    assert (dest / "snapshot.json").read_bytes() == objects[
+        "models/predictions_cache/snapshot.json"
+    ]
+
+
+@pytest.mark.unit
+def test_predcache_sync_missing_snapshot_does_not_break_triple(monkeypatch, tmp_path):
+    """Regression guard: a bucket with the required triple but NO snapshot.json
+    must hydrate the triple normally. The optional file's absence must not
+    trigger the partial-cleanup-and-recompute path that a missing *required*
+    file does — otherwise every fresh container in the transition window would
+    eat a 30-60s recompute.
+    """
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    objects = {
+        "models/predictions_cache/predictions.parquet": b"PAR1x",
+        "models/predictions_cache/metrics.json": b'{"ppr": {}}',
+        "models/predictions_cache/fingerprint.json": b'{"sha256": "abc"}',
+        # snapshot.json deliberately absent
+    }
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_predictions_cache_from_s3()
+
+    assert summary["files"] == 3
+    dest = tmp_path / "data" / "serving_cache"
+    for name in ("predictions.parquet", "metrics.json", "fingerprint.json"):
+        assert (dest / name).is_file(), f"{name} must survive a missing optional snapshot"
+    assert not (dest / "snapshot.json").exists()
+
+
+@pytest.mark.unit
+def test_predcache_upload_includes_optional_snapshot_when_present(monkeypatch, tmp_path):
+    """snapshot.json on disk is uploaded alongside the triple; the returned
+    ``files`` count still reflects only the required triple.
+    """
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    cache = tmp_path / "data" / "serving_cache"
+    cache.mkdir(parents=True)
+    for name in ("predictions.parquet", "metrics.json", "fingerprint.json"):
+        (cache / name).write_bytes(b"x")
+    (cache / "snapshot.json").write_bytes(b'{"scoring": {}}')
+
+    fake_s3 = _FakeS3WithPut({})
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.upload_predictions_cache_to_s3()
+
+    assert summary["files"] == 3
+    assert fake_s3.puts["models/predictions_cache/snapshot.json"] == b'{"scoring": {}}'
