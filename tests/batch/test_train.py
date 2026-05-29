@@ -766,6 +766,8 @@ class TestMainIntegration:
             ),
             mock.patch("src.batch.train.get_runner", return_value=fake_runner),
             mock.patch("src.batch.train.accepts_dataframes", return_value=True),
+            # CUDA-visible Windows: skip the nvidia-smi sidecar's POSIX /tmp open.
+            mock.patch("src.batch.train._start_nvidia_smi_sidecar", return_value=None),
         ):
             from src.batch.train import main
 

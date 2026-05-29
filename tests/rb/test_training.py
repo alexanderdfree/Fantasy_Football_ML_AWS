@@ -155,7 +155,7 @@ class TestMakeDataloaders:
         n = 128
         X = np.random.randn(n, 3).astype(np.float32)
         y = {"rushing_yards": np.random.randn(n).astype(np.float32)}
-        loader, _ = make_dataloaders(X, y, X[:10], y, batch_size=32)
+        loader, _ = make_dataloaders(X, y, X[:10], {k: v[:10] for k, v in y.items()}, batch_size=32)
         total = sum(x.shape[0] for x, _ in loader)
         assert total == n
 

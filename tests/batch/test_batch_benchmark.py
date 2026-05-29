@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import tarfile
 from unittest import mock
 
@@ -59,6 +60,10 @@ def _fake_manifest(pos: str, current_key: str | None = None, stable_key: str | N
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="download_metrics' temp-file reopen raises PermissionError on Windows; the AWS benchmark-download path is Linux-only",
+)
 def test_download_metrics_happy_path(tmp_path, monkeypatch):
     """Manifest's ``current`` resolves → tar fetched from history key → metrics dict."""
     import src.batch.benchmark as bb
@@ -130,6 +135,10 @@ def test_download_metrics_absent_manifest_returns_none(monkeypatch):
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="download_metrics' temp-file reopen raises PermissionError on Windows; the AWS benchmark-download path is Linux-only",
+)
 def test_download_metrics_falls_through_to_stable_on_current_failure(tmp_path, monkeypatch):
     """``current`` download fails → falls through to ``stable``."""
     import src.batch.benchmark as bb
