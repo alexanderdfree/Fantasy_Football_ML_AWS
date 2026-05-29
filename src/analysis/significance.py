@@ -7,6 +7,12 @@ confidence interval and a bootstrap p-value on each pairwise gap, so "Attention 
 Ridge by 0.15 MAE" becomes "… by 0.15 MAE, 95% CI [0.04, 0.27], p=0.01" — or honestly
 "within noise."
 
+This file also hosts the lower-level **paired-error primitives** —
+:func:`diebold_mariano_test` and :func:`paired_bootstrap_metric_ci` — that
+``analysis_expert_comparison.py`` uses to compare the model against an expert
+baseline (NFL.com). Both layers share one home for the "is this forecast-accuracy
+gap real?" question; see the Layer 1 / Layer 2 banners below.
+
 **Scope — within-season sampling noise only.** This cannot estimate season-to-season
 variance (there is one test season). For that, use the rolling-origin evaluation
 (``src/data/split.py::rolling_origin_folds`` + ``benchmark.py --rolling-origin``). The two
@@ -36,6 +42,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -61,6 +68,198 @@ CANONICAL_PRED_COLUMNS: dict[str, str] = {
     "LightGBM": "pred_lgbm_total",
 }
 DEFAULT_BASELINES: tuple[str, ...] = ("Season Avg",)
+
+
+# ===========================================================================
+# Layer 1 — low-level paired-error primitives (model-vs-EXPERT).
+# Pure NumPy/SciPy, no model/data deps. Consumed by
+# ``analysis_expert_comparison.py`` to decide whether a model-vs-NFL.com gap is
+# real. ``paired_bootstrap`` below (Layer 2) is the model-vs-MODEL test-season
+# tool that fuses an MAE block-bootstrap with the within-week top-k pass; it is
+# kept separate because the top-k hit-rate is a rank statistic these row-level
+# error primitives can't express, but its MAE arm is the same idea as
+# ``paired_bootstrap_metric_ci(..., groups=week)``.
+# ===========================================================================
+_METRIC_FNS = {
+    "mae": lambda e: float(np.mean(np.abs(e))),
+    "rmse": lambda e: float(np.sqrt(np.mean(np.square(e)))),
+}
+
+
+def _as_paired_errors(errors_a, errors_b) -> tuple[np.ndarray, np.ndarray]:
+    """Coerce two error vectors to 1-D float arrays, validating shape + size."""
+    e_a = np.asarray(errors_a, dtype=float).ravel()
+    e_b = np.asarray(errors_b, dtype=float).ravel()
+    if e_a.shape != e_b.shape:
+        raise ValueError(
+            f"errors_a and errors_b must have the same length; got {e_a.shape} vs {e_b.shape}"
+        )
+    if e_a.size < 2:
+        raise ValueError("need at least 2 paired observations")
+    return e_a, e_b
+
+
+def _autocov(x: np.ndarray, k: int) -> float:
+    """Population (1/n) k-th autocovariance of ``x`` about its own mean."""
+    n = x.size
+    xbar = x.mean()
+    return float(np.sum((x[k:] - xbar) * (x[: n - k] - xbar)) / n)
+
+
+def diebold_mariano_test(errors_a, errors_b, *, power: int = 1, h: int = 1) -> dict:
+    """Paired Diebold-Mariano test of equal predictive accuracy (HLN-corrected).
+
+    Tests H0: forecaster A and forecaster B have equal expected loss, on the
+    *paired* forecast errors. The loss is ``L(e) = |e|**power`` — ``power=1``
+    matches an MAE headline, ``power=2`` matches RMSE.
+
+    Args:
+        errors_a: forecast errors of model A (``pred - actual``).
+        errors_b: forecast errors of model B, same observations / order.
+        power: loss exponent (1 = absolute-error loss, 2 = squared-error loss).
+        h: forecast horizon. For independent observations (player-weeks are not
+           a multi-step horizon) leave at 1; ``h>1`` adds autocovariance terms
+           to the long-run variance.
+
+    Returns:
+        ``{"dm_stat", "p_value", "n", "mean_loss_diff", "favored"}`` where the
+        loss differential is ``d = L(e_a) - L(e_b)`` (negative ⇒ A more
+        accurate), ``p_value`` is two-sided from a Student-t with ``n-1`` df, and
+        ``favored`` is ``"model"`` (A), ``"expert"`` (B), or ``"tie"``.
+
+    Reference: Diebold & Mariano (1995), *JBES* 13(3); Harvey, Leybourne &
+    Newbold (1997), *IJF* 13(2) (small-sample correction).
+    """
+    if h < 1:
+        raise ValueError("h must be >= 1")
+    e_a, e_b = _as_paired_errors(errors_a, errors_b)
+    n = e_a.size
+
+    d = np.abs(e_a) ** power - np.abs(e_b) ** power
+    dbar = float(d.mean())
+
+    gamma0 = _autocov(d, 0)
+    if gamma0 <= 0.0:
+        # Zero-variance loss differential: identical losses (tie) or a constant
+        # nonzero gap (degenerate-decisive). Continuous errors never hit this;
+        # guard so we don't divide by zero.
+        if abs(dbar) < 1e-12:
+            return {"dm_stat": 0.0, "p_value": 1.0, "n": n, "mean_loss_diff": 0.0, "favored": "tie"}
+        return {
+            "dm_stat": float("inf") if dbar > 0 else float("-inf"),
+            "p_value": 0.0,
+            "n": n,
+            "mean_loss_diff": dbar,
+            "favored": "model" if dbar < 0 else "expert",
+        }
+
+    # Long-run variance of the mean differential (autocovariances up to h-1).
+    lrv = gamma0 + 2.0 * sum(_autocov(d, k) for k in range(1, h))
+    var_mean = lrv / n
+    if var_mean <= 0.0:
+        # Negative LRV estimate (possible for h>1 with strong negative
+        # autocorrelation). Fall back to the h=1 variance, which is >0 here.
+        var_mean = gamma0 / n
+
+    dm = dbar / np.sqrt(var_mean)
+    # Harvey-Leybourne-Newbold small-sample correction + Student-t reference.
+    hln_factor = np.sqrt((n + 1 - 2 * h + h * (h - 1) / n) / n)
+    dm_star = float(dm * hln_factor)
+    p_value = float(2.0 * stats.t.sf(abs(dm_star), df=n - 1))
+
+    return {
+        "dm_stat": dm_star,
+        "p_value": p_value,
+        "n": n,
+        "mean_loss_diff": dbar,
+        "favored": "model" if dbar < 0 else "expert",
+    }
+
+
+def paired_bootstrap_metric_ci(
+    errors_a,
+    errors_b,
+    *,
+    metric: str = "mae",
+    groups=None,
+    n_boot: int = 1000,
+    seed: int = 0,
+    ci: float = 0.95,
+) -> dict:
+    """Bootstrap CI for ``metric(A) - metric(B)`` on paired errors.
+
+    Resamples the paired observations with replacement ``n_boot`` times and
+    recomputes the metric difference each time. When ``groups`` is supplied
+    (e.g. ``player_id`` or ``week``), resampling is **clustered**: whole groups
+    are drawn with replacement, so correlated observations move together and the
+    interval isn't artificially tight.
+
+    Args:
+        errors_a: forecast errors of model A (``pred - actual``).
+        errors_b: forecast errors of model B, same observations / order.
+        metric: ``"mae"`` or ``"rmse"``.
+        groups: optional cluster id per observation (len == n). ``None`` ⇒ i.i.d.
+            row resampling.
+        n_boot: number of bootstrap replicates.
+        seed: PRNG seed (``np.random.default_rng``) for reproducibility.
+        ci: central interval mass (0.95 ⇒ 2.5/97.5 percentiles).
+
+    Returns:
+        ``{"delta", "lo", "hi", "p_value", "metric", "n_boot"}``. ``delta`` is the
+        observed metric difference (negative ⇒ A better); ``[lo, hi]`` excluding 0
+        ⇒ the difference is significant at the ``1-ci`` level. ``p_value`` is the
+        two-sided bootstrap proportion.
+    """
+    e_a, e_b = _as_paired_errors(errors_a, errors_b)
+    n = e_a.size
+    metric = metric.lower()
+    if metric not in _METRIC_FNS:
+        raise ValueError(f"metric must be one of {sorted(_METRIC_FNS)}; got {metric!r}")
+    if n_boot < 1:
+        raise ValueError("n_boot must be >= 1")
+    if not 0.0 < ci < 1.0:
+        raise ValueError("ci must be in (0, 1)")
+    mfn = _METRIC_FNS[metric]
+    observed = mfn(e_a) - mfn(e_b)
+
+    rng = np.random.default_rng(seed)
+    deltas = np.empty(n_boot, dtype=float)
+
+    if groups is None:
+        for b in range(n_boot):
+            idx = rng.integers(0, n, size=n)
+            deltas[b] = mfn(e_a[idx]) - mfn(e_b[idx])
+    else:
+        groups_arr = np.asarray(groups).ravel()
+        if groups_arr.shape[0] != n:
+            raise ValueError(f"groups must have length {n}; got {groups_arr.shape[0]}")
+        uniq = np.unique(groups_arr)
+        idx_by_group = [np.flatnonzero(groups_arr == g) for g in uniq]
+        n_groups = len(idx_by_group)
+        for b in range(n_boot):
+            chosen = rng.integers(0, n_groups, size=n_groups)
+            idx = np.concatenate([idx_by_group[c] for c in chosen])
+            deltas[b] = mfn(e_a[idx]) - mfn(e_b[idx])
+
+    alpha = 1.0 - ci
+    lo = float(np.percentile(deltas, 100.0 * alpha / 2.0))
+    hi = float(np.percentile(deltas, 100.0 * (1.0 - alpha / 2.0)))
+    # Two-sided bootstrap p: twice the smaller tail mass at 0.
+    p_value = float(min(1.0, 2.0 * min(np.mean(deltas >= 0.0), np.mean(deltas <= 0.0))))
+
+    return {
+        "delta": float(observed),
+        "lo": lo,
+        "hi": hi,
+        "p_value": p_value,
+        "metric": metric,
+        "n_boot": int(n_boot),
+    }
+
+
+# ===========================================================================
+# Layer 2 — high-level model-vs-MODEL comparison on the test season.
+# ===========================================================================
 
 
 def _block_indices(test_df: pd.DataFrame, unit: str) -> list[np.ndarray]:
