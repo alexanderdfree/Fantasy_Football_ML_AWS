@@ -231,6 +231,53 @@ jobs:
           echo "Pinning job submissions to ${JOB_DEFINITION:-ff-training-job}:${REVISION}"
           echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
 
+      - name: Wait for fresh data splits (refresh-splits race gate)
+        # refresh-splits.yml rebuilds + uploads data/splits/ to S3 on the same
+        # merge that triggered this train (path-filtered on src/data/** + skill
+        # configs). It takes ~14 min; the batch-image build that gates this
+        # workflow is ~9 min, so without this gate the Batch jobs download
+        # last-commit's splits and train one commit behind — the #383 nflreadpy
+        # migration's data only landed on a later manual retrain (see TODO.md).
+        # Wait for refresh-splits' per-SHA "ready" marker before submitting.
+        #
+        # All paths PROCEED — fail-safe, never blocks the pipeline:
+        #   ready present       -> splits fresh, proceed.
+        #   no pending marker   -> refresh-splits didn't fire for this SHA (no
+        #                          splits-affecting change), proceed immediately.
+        #   pending, not ready  -> rebuild in flight; poll ~20 min for ready,
+        #                          then proceed (::warning::) on timeout.
+        # Skipped on workflow_dispatch (operators dispatch deliberately, after
+        # refresh-splits has finished — mirrors the dedup_check gate). Keyed by
+        # workflow_run.head_sha, matching the job-def-revisions/${SHA}.txt and
+        # train-success-markers/${SHA}.txt conventions.
+        if: github.event_name == 'workflow_run'
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -u
+          base="splits-rebuild-markers"
+          have() {
+            aws s3api head-object --bucket "$S3_BUCKET" --key "$1" \
+              --region "$AWS_REGION" >/dev/null 2>&1
+          }
+          if have "${base}/ready/${HEAD_SHA}.txt"; then
+            echo "splits-ready marker present for ${HEAD_SHA} — splits are fresh."
+            exit 0
+          fi
+          if ! have "${base}/pending/${HEAD_SHA}.txt"; then
+            echo "No refresh-splits marker for ${HEAD_SHA} (no splits-affecting change) — proceeding."
+            exit 0
+          fi
+          echo "refresh-splits is rebuilding splits for ${HEAD_SHA}; waiting for the ready marker..."
+          for i in $(seq 1 40); do
+            sleep 30
+            if have "${base}/ready/${HEAD_SHA}.txt"; then
+              echo "splits-ready marker appeared after ~$((i * 30))s — proceeding with fresh splits."
+              exit 0
+            fi
+          done
+          echo "::warning::splits-ready marker for ${HEAD_SHA} not seen within ~20 min; proceeding with current S3 splits (fail-safe)."
+
       - name: Submit Batch jobs and wait
         id: train
         env:
