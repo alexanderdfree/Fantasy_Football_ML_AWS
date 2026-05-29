@@ -36,7 +36,7 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **What:** Pattern like `(a / b).fillna(0)` followed by `df.loc[b == 0, col] = 0` is redundant — fillna already handled the division-by-zero case. Not wrong, just noisy.
 
 ### [UNCERTAIN] K/DST index collision in `_get_data()`
-- **File:** `src/serving/app.py:1189`
+- **File:** `src/serving/app.py:1223`
 - **What:** K/DST test rows are appended to `results` with `offset = results.index.max() + 1`. Assumes the general test data has a well-behaved index. If the general test parquet has gaps, K/DST indices could collide. Probably safe in practice since parquet preserves sequential indices.
 
 ### [UNCERTAIN] Team share features computed per-split
