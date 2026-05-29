@@ -119,6 +119,29 @@ def _maybe_upload_to_s3(local_path: str) -> None:
         print(f"WARNING: benchmark S3 sync failed ({exc}); local JSON kept at {local_path}")
 
 
+def _significance_block(position, result):
+    """Compact within-season bootstrap CI on the best model's MAE gaps, for history fold-in.
+
+    Schema-safe: the website History tab (``src/serving/app.py::_benchmark_row``) and
+    ``print_history_comparison`` read only known keys, so this extra ``significance`` key is
+    ignored by old readers. Returns None if the result lacks per-row test predictions.
+    """
+    test_df = result.get("test_df")
+    if test_df is None:
+        return None
+    from src.analysis.significance import (
+        compact_significance,
+        paired_bootstrap,
+        pred_columns_from_test_df,
+    )
+
+    pred_cols = pred_columns_from_test_df(test_df)
+    if "Ridge" not in pred_cols:
+        return None
+    boot = paired_bootstrap(test_df, pred_cols, n_boot=2000)
+    return compact_significance(boot)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark NN pipelines")
     parser.add_argument(
@@ -135,6 +158,12 @@ if __name__ == "__main__":
         help="Skip the S3 mirror of this run (local benchmark_history/ is still written). "
         "Use for throwaway/experimental runs you don't want on the website's History tab.",
     )
+    parser.add_argument(
+        "--significance",
+        action="store_true",
+        help="Attach a within-season paired-bootstrap CI on the best model's MAE gap vs Ridge "
+        "and vs the baseline (src/analysis/significance.py). Single-split only; ignored for --cv.",
+    )
     args = parser.parse_args()
 
     positions = args.positions
@@ -149,6 +178,10 @@ if __name__ == "__main__":
         elapsed = time.time() - t0
         s = summarize_pipeline_result(pos, result)
         s["elapsed_sec"] = round(elapsed, 1)
+        if args.significance and not args.cv:
+            sig_block = _significance_block(pos, result)
+            if sig_block is not None:
+                s["significance"] = sig_block
         summaries.append(s)
         print(f"\n  [{pos}] Completed in {elapsed:.1f}s")
 
