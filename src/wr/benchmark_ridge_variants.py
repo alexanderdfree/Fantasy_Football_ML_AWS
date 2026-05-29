@@ -36,7 +36,10 @@ TARGETS = POSITION_CONFIG.targets
 
 # ── Aggressive feature drops (on top of INCLUDE_FEATURES whitelist) ────────
 EXTRA_DROPS = {
-    # snap_pct L5 rolling — missed in L5 cleanup, r=0.993 with L8
+    # snap_pct L5 rolling — kept in production intentionally (see the
+    # `if w != 5 or stat == "snap_pct"` guard in src/wr/config.py's
+    # _INCLUDE_FEATURES). The aggressive variant drops it here to test the
+    # r=0.993 redundancy-with-L8 claim; this is not an accidental retention.
     "rolling_mean_snap_pct_L5",
     "rolling_std_snap_pct_L5",
     "rolling_max_snap_pct_L5",
@@ -195,7 +198,9 @@ def main():
         ("3. pcr_50", base_cols, 50),
         ("4. pcr_30", base_cols, 30),
         ("5. aggressive_drops", aggressive_cols, None),
-        ("6. aggressive_drops+pcr", aggressive_cols, None),  # PCA TBD after 2-4
+        # pca_n starts None; auto-selected from the best PCR variant (2-4)
+        # by the block below (see lines ~204-209), not unfinished work.
+        ("6. aggressive_drops+pcr", aggressive_cols, None),
     ]
 
     results = []
@@ -262,21 +267,23 @@ def main():
 
     print(f"{'=' * table_width}")
 
-    # Per-target R2 table
-    print(f"\n{'=' * 80}")
+    # Per-target R2 table \u2014 iterate ``TARGETS`` so every raw stat (incl.
+    # ``fumbles_lost``) renders. Pre-2024 versions hardcoded three columns
+    # (recv_td/recv_yd/recs) and dropped fumbles_lost (M18 fix was incomplete
+    # here \u2014 the MAE table above was migrated but this R2 table was missed).
+    r2_target_header = " ".join(f"{t[:8]:>8}" for t in TARGETS)
+    r2_hdr = f"{'Variant':<28} {'Total':>8} {r2_target_header}"
+    r2_width = len(r2_hdr)
+    print(f"\n{'=' * r2_width}")
     print("  PER-TARGET R\u00b2 BY VARIANT")
-    print(f"{'=' * 80}")
-    r2_hdr = f"{'Variant':<28} {'Total':>8} {'recv_td':>8} {'recv_yd':>8} {'recs':>8}"
+    print(f"{'=' * r2_width}")
     print(r2_hdr)
-    print("-" * 80)
+    print("-" * r2_width)
     for r in results:
         m = r["metrics"]
-        print(
-            f"{r['name']:<28} {m['total']['r2']:>8.3f} "
-            f"{m['receiving_tds']['r2']:>8.3f} {m['receiving_yards']['r2']:>8.3f} "
-            f"{m['receptions']['r2']:>8.3f}"
-        )
-    print(f"{'=' * 80}")
+        r2_cells = " ".join(f"{m[t]['r2']:>8.3f}" for t in TARGETS)
+        print(f"{r['name']:<28} {m['total']['r2']:>8.3f} {r2_cells}")
+    print(f"{'=' * r2_width}")
 
     # Best variant
     best = min(results, key=lambda r: r["metrics"]["total"]["mae"])

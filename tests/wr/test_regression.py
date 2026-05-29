@@ -7,7 +7,7 @@ features, and asserts:
   * every trained model beats the season-average baseline
   * LightGBM is not dramatically worse than Ridge (tuned loosely so a
     genuine regression catches it, not flaky CI noise)
-  * Neural net MAE is within ±25% of LightGBM (sanity guard)
+  * Neural net MAE is within ±30% of LightGBM (sanity guard)
 
 These thresholds are intentionally generous — they exist to catch silent
 "forgot to fit" / "lost a feature" regressions, not to tune accuracy.

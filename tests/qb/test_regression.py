@@ -159,7 +159,7 @@ class TestQBRegression:
             f"LightGBM MAE {lgbm_mae:.3f} not better than baseline {baseline_mae:.3f}"
         )
 
-    def test_nn_within_25pct_of_lightgbm(self, synthetic_qb_data):
+    def test_nn_within_0_6x_to_1_7x_of_lightgbm(self, synthetic_qb_data):
         X_train, y_train, X_test, y_test = synthetic_qb_data
 
         # LightGBM reference

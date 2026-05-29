@@ -68,9 +68,3 @@ def _build_qb_row(**overrides) -> pd.DataFrame:
         )
         defaults["fantasy_points"] = fp
     return pd.DataFrame([defaults])
-
-
-@pytest.fixture(scope="session")
-def make_qb_row():
-    """Factory for single-row QB target inputs."""
-    return _build_qb_row

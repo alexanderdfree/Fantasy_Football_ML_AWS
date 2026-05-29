@@ -366,13 +366,19 @@ POSITION_CONFIG = PositionConfig(
     # ``gated_ordinal_targets`` is read by ``_rb_classification_targets`` in
     # ``src/shared/position_pipeline.py``. ``two_stage_targets`` and
     # ``ordinal_targets`` are kept (rather than deleted) for three reasons:
-    #   1. ``src/tuning/ablate_rb_gate.py`` flips ``td_model_type`` to compare
-    #      ridge / two-stage / ordinal / gated-ordinal side by side.
+    #   1. They preserve tuned hyperparameters for the alternate
+    #      ``td_model_type`` values (``two_stage`` / ``ordinal``) so switching
+    #      the selector for a manual Ridge-side comparison doesn't require
+    #      re-deriving them. (Note: ``src/tuning/ablate_rb_gate.py`` does NOT
+    #      touch ``td_model_type`` or these blocks — it ablates the attention
+    #      NN's sparse-count heads by flipping ``gated_targets`` / ``head_losses``
+    #      / ``loss_weights``, an orthogonal axis.)
     #   2. ``tests/rb/test_models.py`` reads ``POSITION_CONFIG.ordinal_targets``
     #      directly (``test_uses_config_from_rb_ordinal_targets``).
     #   3. Future ablations should not have to re-derive the hyperparameters.
-    # Drift risk: a model-only change here that doesn't run the ablation will
-    # leave the dormant blocks stale relative to ``gated_ordinal_targets``.
+    # Drift risk: a model-only change here that doesn't re-tune the alternate
+    # variants will leave the dormant blocks stale relative to
+    # ``gated_ordinal_targets``.
     # Two-stage zero-inflated TD models: both rushing_tds and receiving_tds.
     two_stage_targets={
         "rushing_tds": {"clf_C": 0.001, "ridge_alpha": 0.01, "threshold": 0.5},

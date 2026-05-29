@@ -167,10 +167,11 @@ def _job_definition_for(position: str) -> str:
     GPU one. ``batch-image.yml`` registers a new revision against
     ``$JOB_DEFINITION`` (the GPU def) only; the CPU def has no matching
     revision number, so appending the GPU's revision to a CPU submission
-    would silently target a non-existent revision and fall back to the
-    bare-name (latest) resolution AWS Batch performs on no-match. Latent
-    today (no CPU Spot path is wired up), but pinning would silently fail
-    the moment one is — so guard explicitly here, not "we'll catch it
+    would reference a non-existent ``{cpu-def}:N`` and AWS Batch's
+    ``submit_job`` raises ``ClientException`` (it does NOT fall back to the
+    bare-name latest resolution) — the job would fail to submit. Latent
+    today (no CPU Spot path is wired up), but pinning would break the
+    moment one is — so guard explicitly here, not "we'll catch it
     when the CPU path lands".
     """
     use_cpu = position in CPU_ONLY_POSITIONS and JOB_DEFINITION_CPU
