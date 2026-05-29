@@ -141,6 +141,8 @@ jobs:
         # ``Verify engineered columns`` step below gates against that
         # recurrence; ``src/shared/feature_build.py`` now also raises
         # ``KeyError`` on missing cols rather than zero-filling silently.
+        env:
+          NFLREADPY_CACHE: "off"  # data/raw is the authoritative cache (matches tests.yml)
         run: |
           python - <<'PY'
           from src.data.loader import load_raw_data
