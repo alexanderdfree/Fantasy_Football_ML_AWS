@@ -1,6 +1,6 @@
 ---
 name: solve-issues
-description: Triage the rolling [claude-audit] GH issue, then plan parallel-worker fixes bundled into 2–3 tier-by-risk PRs for user approval. Enters plan mode. Verifies each open finding, classifies FIX vs LEAVE (skipping stale claims, false positives, and feature-drift suggestions that violate project stop-rules), partitions FIX set into file-disjoint bundles across Tier A/B/C risk tiers, then exits plan mode for approval. Trigger with `/solve-issues` when the user wants to clear the rolling audit backlog; not for one-off bug fixes.
+description: Triage the rolling [claude-audit] GH issue, then plan parallel-worker fixes bundled into 2–3 tier-by-risk PRs for user approval. Enters plan mode. Verifies each open finding, classifies FIX vs LEAVE (skipping stale claims, false positives, and feature-drift suggestions that violate project stop-rules), partitions FIX set into file-disjoint bundles across Tier A/B/C risk tiers, then exits plan mode for approval. Trigger with `/solve-issues` when the user wants to clear the rolling audit backlog; not for one-off bug fixes. Also runs a verify-then-close mode for an already-remediated backlog passed explicitly (e.g. a `#NNN split` set like `/solve-issues #338-348`): confirms each finding's fix is on `main` (or its LEAVE still holds), then closes the finite tracking issues — never the rolling issue.
 ---
 
 # Solve audit-job issues
@@ -9,28 +9,48 @@ The rolling `[claude-audit] rolling — N open findings @<sha>` GitHub issue col
 
 This skill enters plan mode, triages each open finding into **FIX** or **LEAVE** (with a category), then drafts the fix plan using the project's tier-by-risk PR consolidation pattern (CLAUDE.md "Sub-agent contract — two shapes" + auto-memory `feedback_tier_by_risk_pr_consolidation`). It produces a verdict + bundle plan for `ExitPlanMode` approval — **no branches cut, no workers spawned for code changes, until the user approves**.
 
+## Two modes
+
+This skill runs in one of two modes, chosen after Phase 1 fetches the target issue(s):
+
+- **Mode A — triage-and-fix** (the default; everything in Phases 1–5 and "How to act on the approved plan" below). Findings are fresh/unaddressed → triage each FIX/LEAVE → bundle the FIX set into tier-by-risk PRs. This is the mode for the live `rolling` issue.
+- **Mode B — verify-and-close** (the "## Mode B" section below). The target issue(s) **already carry a remediation record** — a comment mapping each finding to a merged fix PR or a categorized LEAVE — **and** are *finite* tracking issues (a `#NNN split — <Area>`, a dated per-cycle dump, or a consolidated issue), not the perpetual `rolling` collector. The job is to CONFIRM the remediation actually landed on `main` and is sound, then CLOSE the finite issue(s).
+
+**Detecting the mode** (do this right after Phase 1's fetch): choose **Mode B** iff all three hold —
+
+1. a comment on the issue matches `/remediation .*complete/i`, or otherwise maps each finding to a PR # / LEAVE category;
+2. the cited fix PRs are merged to `main` (`git log origin/main --grep=<area/PR marker>`);
+3. the issue title is **not** `rolling`.
+
+Otherwise run **Mode A**. A large SHA-drift (the issue's `@<sha>` is many commits behind `main`, per Phase 1 step 4) is a strong hint to look for a remediation comment *before* assuming the findings are still open.
+
 ## When to run
 
-- User invokes `/solve-issues` (optionally with `<issue-number>` to override auto-detection).
-- User asks to "work down the audit findings", "triage the rolling audit issue", "clear the audit backlog", or similar.
-- After a fresh `[claude-audit]` cycle has added findings.
+- User invokes `/solve-issues` (optionally with an explicit `<issue-number>`, a range `#A-B`, or a list `#A,#B,…` to override auto-detection).
+- User asks to "work down the audit findings", "triage the rolling audit issue", "clear the audit backlog", or similar → usually **Mode A**.
+- User asks to "confirm/close an already-worked audit backlog", "verify the split issues are done", "mark the audit issues done if fixed", or points at a `#NNN split` set → **Mode B** (verify-then-close).
+- After a fresh `[claude-audit]` cycle has added findings → **Mode A**.
 
 Skip when:
 
 - The user is fixing one specific bug — use a normal flow, not this skill.
-- The target issue is not the rolling `[claude-audit]` issue (e.g. a user-reported bug, a non-audit task issue) — use plain plan mode.
-- The user has indicated PRs should not be opened in this session.
+- The target is a **non-audit** issue (a user-reported bug, a generic task issue) — use plain plan mode. (Finite *audit* issues — `#NNN split`, dated per-cycle, or consolidated — are **in scope**: run **Mode B**.)
+- The user has indicated PRs should not be opened in this session — skip Mode A. (Mode B's verify-then-close opens no PRs unless a gap is found, so it may still apply.)
 
 ## How to run
 
 If not already in plan mode, call `EnterPlanMode` first. The skill produces a triage + bundling plan for `ExitPlanMode` approval — no code edits, no commits, no branches, no PRs during the plan phase.
 
-### Phase 1 — Fetch the rolling issue
+### Phase 1 — Fetch the target issue(s)
 
-1. Auto-detect: `gh issue list --state open --search '[claude-audit] rolling in:title' --json number,title,updatedAt --limit 5`. If multiple, pick highest-numbered. If the user passed `/solve-issues <N>`, use `<N>` directly.
+1. Resolve the target:
+   - Explicit `/solve-issues <N>` → use `<N>`.
+   - Explicit **range/list** `/solve-issues #A-B` or `#A,#B,…` → expand to the set and run per-issue. For a `#NNN split` set each issue **is** its own area partition, so skip the area-header parse in step 3.
+   - Otherwise auto-detect the rolling issue: `gh issue list --state open --search '[claude-audit] rolling in:title' --json number,title,updatedAt --limit 5`; if multiple, pick highest-numbered.
 2. Fetch full body + comments: `gh issue view <N> --json number,title,body,comments`.
-3. Parse the body into per-finding records: `{id, severity (HIGH|MED), area, title, file, line, what, why_suspect, suggested_action, evidence_snippet}`. The issue body groups findings under area headers (`### QB`, `### Shared`, …) — use those as the partition for Phase 2 workers.
-4. Compare the head SHA in the issue title (`@<sha>`) against `git rev-parse origin/main`. If drifted by > a handful of commits, note in the plan ("issue auditor SHA is N commits behind `main`; some findings may be stale at head").
+3. Parse the body into per-finding records: `{id, severity (HIGH|MED), area, title, file, line, what, why_suspect, suggested_action, evidence_snippet}`. The rolling issue body groups findings under area headers (`### QB`, `### Shared`, …) — use those as the Phase 2 worker partition. (For a `#NNN split` set, the issue itself is the area.)
+4. Compare the head SHA in the issue title (`@<sha>`) against `git rev-parse origin/main`. If drifted by > a handful of commits, note it ("issue auditor SHA is N commits behind `main`; some findings may already be stale or remediated at head").
+5. **Pick the mode** (see "## Two modes"): if the issue(s) already carry a remediation comment whose cited PRs are merged and the title is not `rolling` → **Mode B** (jump to "## Mode B: verify-then-close"). Otherwise → **Mode A** (continue to Phase 2).
 
 ### Phase 2 — Verify in parallel (file-disjoint workers, one per area)
 
@@ -116,6 +136,47 @@ Write the plan to the plan file with these sections:
 
 Then call `ExitPlanMode`.
 
+## Mode B: verify-then-close (alternate to Phases 2–5)
+
+Use this when Phase 1 selected Mode B: the findings are already claimed-remediated and the issue(s) are finite. The goal is **confirm, then close** — Phases 2–4's FIX bundling does not run unless verification turns up a gap.
+
+### Phase 2V — Verify in parallel (one `Explore` worker per area)
+
+Spawn **one `Explore` subagent per area / per split issue**, all in one parallel batch. Worker brief (fill the `{...}` slots):
+
+> You are VERIFYING already-claimed remediation of audit findings for area **{AREA}**, issue(s) **#{N}**. Working dir: `{worktree_path}` — confirm it is at `origin/main` HEAD; read files with **absolute paths** (memory `feedback_edit_tool_worktree_path`). Each issue body lists findings (id + `file:line` + what + why) and carries a remediation comment mapping each finding to a FIX (with PR #) or a LEAVE (category + reason); the fix PRs are already merged to `main`. CONFIRM the remediation is real and sound — do **not** re-fix, edit, commit, or push.
+>
+> Fetch `gh issue view <N> --json body,comments`. For each finding:
+>
+> - **claimed FIXED** → open the cited `file:line` and confirm the described bug is gone / the fix is present; quote 1–3 lines as evidence. Docs findings: confirm the doc now matches the code it describes (the stale claim is gone **and** the new text is accurate).
+> - **claimed LEAVE** → re-validate the category against current code (`false_positive` = genuinely correct as-is; `stale` = genuinely resolved elsewhere; `feature_drift` = the suggestion would violate a CLAUDE.md stop-rule). **A LEAVE that is actually a real, unfixed bug is the critical thing to catch → flag it GAP.**
+> - Behavioral / shared-code / infra claims: same depth as the Mode A rubric — run the most-targeted test **foreground only** (memory `feedback_background_pytest_terminates_agents`); grep every caller for `src/shared/*` claims (memory `feedback_grep_endpoint_when_changing_contract`); check all config layers for Batch/ECS claims (memory `feedback_layered_config_overrides`).
+>
+> Return one block per finding, **GAP-first then CONFIRMED**:
+>
+> ```
+> - id: <finding-id>  issue #<N>
+>   claim: FIXED via #<pr> | LEAVE (<category>)
+>   verdict: CONFIRMED | GAP
+>   evidence: <quoted line(s) / grep / test result>
+>   note: <one sentence; for GAP: what's actually wrong + suggested tier A/B/C>
+> ```
+>
+> End with a one-line tally (e.g. "QB 4/4 confirmed; GAPs: none"). Time budget ~12–15 min.
+
+Verdict from grep alone is forbidden (memory `feedback_audit_run_the_test`) — and don't treat "the PR merged" as proof the fix is live: confirm against current `main` (memory `feedback_squash_merge_verify_content`).
+
+### Phase 3V — Consolidate & decide
+
+Merge the worker outputs into one **confirmation table** (`id | area | claim | verdict | evidence`).
+
+- **0 GAPs** → every finding is fixed-on-main or correctly-left → proceed to close (the plan's only write step is the close).
+- **Any GAP** → those findings re-enter **Mode A** (Phase 4 bundling → tier-by-risk PR) as a scoped sub-effort. The affected issue **stays open** until its gap PR merges and a re-verify comes back clean. Partial close is allowed: issues whose findings are all CONFIRMED close now; gap-bearing issues wait.
+
+### Phase 5V — Write the plan + exit
+
+Write the plan with: (1) the **confirmation table**; (2) the **per-issue close list** (which issues close, with the fix-PR list to cite in each close comment); (3) any **gap → tier-PR sub-plan** (reusing Phase 4's bundling). Then call `ExitPlanMode`.
+
 ## How to act on the approved plan
 
 Once the user approves the plan via `ExitPlanMode`, execute one tier at a time. For each tier:
@@ -151,12 +212,26 @@ Once the user approves the plan via `ExitPlanMode`, execute one tier at a time. 
 
 After all tier PRs land, the rolling issue should show only LEAVE findings + any UNCERTAIN→deferred items. The next `[claude-audit]` cycle will either re-flag them (real-but-deferred) or drop them (stale-after-fix).
 
+### Mode B execution (verify-then-close)
+
+Once the verify-then-close plan is approved:
+
+1. **If any GAP** — run the Mode A per-tier flow above for the gap findings first (staging branch → workers → cherry-pick → tier PR → green CI → merge), then re-verify the gap before closing its issue.
+2. **For each finite issue verified clean**, post a confirmation comment and close it:
+   ```
+   gh issue comment <N> --body "Re-verified at <sha> — N/N findings confirmed (FIXED present on main / LEAVE still valid, 0 gaps). Remediation landed via PRs <list>. Closing as done."
+   gh issue close <N> --reason completed
+   ```
+3. **Never close the `rolling` issue** — only finite tracking issues (split / consolidated / dated per-cycle). The live rolling/cycle issues stay open for the next audit pass. (This extends, not replaces, Mode A step 12's "do not auto-close the rolling issue.")
+4. **Verify the close**: `gh issue list --state open` no longer lists the closed set; the live cycle issues remain.
+
 ## What this catches that ad-hoc triage doesn't
 
 - **Feature-drift LEAVE category** encodes the project's stop-rules from CLAUDE.md and auto-memory directly into the verification rubric. Audit suggestions that violate "no rolling into ATTN_STATIC_FEATURES" or "no training on fantasy_points" get caught at triage, not at PR review.
 - **CI-friendly PR cadence** — 2–3 PRs instead of 50+ per-bug PRs cuts ~95% of `tests.yml`'s 7-shard matrix runs.
 - **Plan-mode-first** — verdict list and bundling strategy are user-approved before any branches are cut or workers spawn. Workers operate on a vetted plan; nothing speculative ships.
 - **Reuses established orchestration** — the per-tier worker → cherry-pick → staging-branch → one-PR flow has shipped 6+ tier PRs (audit-310, audit-318 cycles) without conflict-driven rebundles.
+- **Verify-then-close (Mode B) retires remediated backlogs** — confirms a remediation actually held on `main` (not merely that PRs merged — memory `feedback_squash_merge_verify_content`) and closes the finite tracking issues, so the next `[claude-audit]` re-scan starts from a true-clean state instead of re-flagging already-fixed findings or leaving split issues open indefinitely.
 
 ## Format example — triage table excerpt
 
@@ -182,4 +257,17 @@ After all tier PRs land, the rolling issue should show only LEAVE findings + any
 | W.SCRIPTS | OPS-002            | src/qb/diagnose_outliers.py      | Update _train_nn callsite to new signature.    |
 
 File-disjointness: ✓ (no file in two bundles).
+```
+
+## Format example — verify-then-close confirmation excerpt (Mode B)
+
+```
+| id      | area    | claim             | verdict   | evidence                                            |
+|---------|---------|-------------------|-----------|-----------------------------------------------------|
+| DST-002 | DST     | FIXED via #PR     | CONFIRMED | src/dst/data.py away-row spread_line sign-flipped   |
+| K-005   | K       | LEAVE (false_pos) | CONFIRMED | is_home guard valid — left-merge can miss schedule  |
+| SRV-001 | Serving | LEAVE (kept)      | CONFIRMED | K/DST half_ppr==ppr by design (no reception weight) |
+| DATA-09 | Data    | FIXED via #PR     | GAP       | claimed-removed helper still imported at loader.py  |
+
+Tally (illustrative): 11 issues, 130/131 CONFIRMED, 1 GAP (DATA-09 → Tier A). Close the 10 clean issues now; the gap-bearing issue waits on its fix PR.
 ```
