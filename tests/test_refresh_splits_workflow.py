@@ -79,6 +79,36 @@ def test_upload_to_s3_step_exists():
     )
 
 
+def test_splits_rebuild_markers_written_pending_then_ready():
+    """PR #516's fail-safe gate: refresh-splits MUST write a per-SHA "pending"
+    marker BEFORE the rebuild and a "ready" marker AFTER the S3 upload. The
+    train workflows' "Wait for fresh data splits" gate keys off these (pending
+    present ⇒ rebuild in flight ⇒ wait; ready present ⇒ splits fresh ⇒ proceed).
+    If either write moves or disappears, the consumer gate silently degrades to
+    the racy proceed-immediately path — the bug PR #516 closed."""
+    steps = _refresh_job_steps()
+    names = _step_names()
+    regen_idx = names.index("Regenerate splits from nflverse + PBP")
+    upload_idx = names.index("Upload to S3 with force")
+    pending_idx = ready_idx = None
+    for i, step in enumerate(steps):
+        run_body = step.get("run", "") or ""
+        if "splits-rebuild-markers/pending/" in run_body:
+            pending_idx = i
+        if "splits-rebuild-markers/ready/" in run_body:
+            ready_idx = i
+    assert pending_idx is not None, "missing the splits-rebuild 'pending' marker write"
+    assert ready_idx is not None, "missing the splits-rebuild 'ready' marker write"
+    assert pending_idx < regen_idx, (
+        "the 'pending' marker must be written BEFORE the regenerate step so the "
+        "train gate knows a rebuild is in flight for this SHA."
+    )
+    assert ready_idx > upload_idx, (
+        "the 'ready' marker must be written AFTER 'Upload to S3 with force' so "
+        "its presence means the S3 splits actually reflect this commit."
+    )
+
+
 def test_ecs_kick_step_exists_after_s3_upload():
     """The workflow MUST kick the ECS service AFTER uploading splits to S3
     so running serving tasks roll fresh and re-sync the new splits at boot.
