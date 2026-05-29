@@ -452,7 +452,9 @@ def refresh_position(
     return new_etag, True
 
 
-def start_refresh_poller(interval_s: int) -> threading.Thread:
+def start_refresh_poller(
+    interval_s: int, stop_event: threading.Event | None = None
+) -> threading.Thread:
     """Spawn a daemon thread that polls every position's manifest every
     ``interval_s`` seconds and calls ``refresh_position`` when an etag
     changes. Returns the started thread.
@@ -465,17 +467,27 @@ def start_refresh_poller(interval_s: int) -> threading.Thread:
     immediately in that case, but the thread still spins. Callers (e.g.
     ``gunicorn.conf.py::on_starting``) gate on the env var to avoid spawning
     a useless thread in dev/CI.
+
+    ``stop_event`` is an optional graceful-shutdown hook: when provided, the
+    loop exits once it is set and sleeps on it interruptibly. Production
+    callers omit it and rely on ``daemon=True`` for process-exit teardown;
+    tests pass one so the thread is joined and never leaks across the suite —
+    a leaked spinning poller calls the real ``boto3.client`` and pollutes
+    other tests' global boto3 mocks (see tests/shared/test_local_benchmark_sync.py).
     """
 
     def _loop() -> None:
         etags: dict[str, str | None] = {p: None for p in POSITIONS}
-        while True:
+        while stop_event is None or not stop_event.is_set():
             for pos in POSITIONS:
                 try:
                     etags[pos], _ = refresh_position(pos, etags[pos])
                 except Exception as e:  # noqa: BLE001 — daemon must never die
                     print(f"[refresh] {pos} unexpected: {e!r}", flush=True)
-            time.sleep(interval_s)
+            if stop_event is None:
+                time.sleep(interval_s)
+            elif stop_event.wait(interval_s):
+                break
 
     t = threading.Thread(target=_loop, daemon=True, name="model-refresh-poll")
     t.start()

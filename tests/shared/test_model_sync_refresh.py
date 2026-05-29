@@ -308,12 +308,20 @@ def test_start_refresh_poller_calls_refresh_position_for_all_positions(monkeypat
 
     monkeypatch.setattr(model_sync, "refresh_position", fake_refresh)
 
-    thread = model_sync.start_refresh_poller(interval_s=0)
-    assert thread.daemon is True
-    # Wait up to 2s for the poller to cycle through all 6 positions once.
-    assert barrier.wait(timeout=2.0), f"poller did not visit all positions; seen={seen}"
-    # No clean shutdown API — relies on daemon=True for process exit. Test
-    # passes as long as the barrier set within timeout.
+    stop = threading.Event()
+    thread = model_sync.start_refresh_poller(interval_s=0, stop_event=stop)
+    try:
+        assert thread.daemon is True
+        # Wait up to 2s for the poller to cycle through all 6 positions once.
+        assert barrier.wait(timeout=2.0), f"poller did not visit all positions; seen={seen}"
+    finally:
+        # Stop + join BEFORE monkeypatch restores the real refresh_position, so
+        # the daemon never calls real boto3. A leaked spinning poller pollutes
+        # later tests' global boto3.client mocks — the cross-test flake this fixes
+        # (tests/shared/test_local_benchmark_sync.py saw boto3.client "called 7 times").
+        stop.set()
+        thread.join(timeout=2.0)
+        assert not thread.is_alive(), "refresh poller thread did not stop"
 
 
 @pytest.mark.unit
@@ -332,12 +340,20 @@ def test_start_refresh_poller_survives_refresh_exception(monkeypatch):
 
     monkeypatch.setattr(model_sync, "refresh_position", fake_refresh)
 
-    model_sync.start_refresh_poller(interval_s=0)
-    # Give the daemon time to recover from the exception and visit at least 2
-    # more positions, proving it didn't die.
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
-        if len(seen) >= 3:
-            break
-        time.sleep(0.05)
-    assert len(seen) >= 3, f"poller died after exception; seen={seen}"
+    stop = threading.Event()
+    thread = model_sync.start_refresh_poller(interval_s=0, stop_event=stop)
+    try:
+        # Give the daemon time to recover from the exception and visit at least 2
+        # more positions, proving it didn't die.
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if len(seen) >= 3:
+                break
+            time.sleep(0.05)
+        assert len(seen) >= 3, f"poller died after exception; seen={seen}"
+    finally:
+        # Stop + join before teardown so the daemon doesn't leak and call real
+        # boto3 (see the sibling test + start_refresh_poller docstring).
+        stop.set()
+        thread.join(timeout=2.0)
+        assert not thread.is_alive(), "refresh poller thread did not stop"
