@@ -2,7 +2,7 @@
 
 Mirrors ``src/analysis/analysis_rb_feature_audit.py`` but adapted to K's
 position-specific data flow (no shared ``data/splits/train.parquet`` —
-K's loader hits ``nfl_data_py`` directly with a parquet cache under
+K's loader hits nflverse via the ``nfl_source`` shim with a parquet cache under
 ``data/raw/``). The K pipeline currently shows negative R² across every
 model (Ridge 4.079, NN 4.128, Attn 4.132, LGBM 4.061 — see
 ``benchmark_history/2026-05-20T06-39-23_4af6a9d.json``); this audit
@@ -347,7 +347,7 @@ def main() -> int:
     args = parser.parse_args()
 
     # ── Load + materialise features ────────────────────────────────────────
-    # The K loader handles caching directly via nfl_data_py — no shared
+    # The K loader handles caching directly via the nfl_source shim — no shared
     # data/splits/train.parquet equivalent. Fail loudly with a SETUP.md
     # pointer if the parquet cache is missing.
     try:

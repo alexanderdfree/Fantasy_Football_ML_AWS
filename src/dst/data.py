@@ -1,8 +1,8 @@
-import nfl_data_py as nfl
 import numpy as np
 import pandas as pd
 
 from src.config import CACHE_DIR, SEASONS, TRAIN_SEASONS
+from src.data import nfl_source
 from src.data.loader import load_team_week_stats
 
 
@@ -424,7 +424,7 @@ def build_data() -> pd.DataFrame:
 
     # Team logos from nfl_data_py
     try:
-        team_desc = nfl.import_team_desc()
+        team_desc = nfl_source.teams()
         logo_map = team_desc.set_index("team_abbr")["team_logo_espn"].to_dict()
         dst_df["headshot_url"] = dst_df["team"].map(logo_map).fillna("")
     except Exception:

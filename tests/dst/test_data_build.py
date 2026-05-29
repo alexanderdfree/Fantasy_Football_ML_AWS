@@ -142,7 +142,7 @@ def synthetic_parquets(tmp_path, monkeypatch):
     fake_team_desc = pd.DataFrame(
         {"team_abbr": _TEAMS, "team_logo_espn": [f"https://logo/{t}.png" for t in _TEAMS]}
     )
-    monkeypatch.setattr(dst_data.nfl, "import_team_desc", lambda: fake_team_desc)
+    monkeypatch.setattr(dst_data.nfl_source, "teams", lambda: fake_team_desc)
 
     return cache_dir
 
@@ -271,7 +271,7 @@ def test_build_dst_data_logo_fallback_on_nfl_error(synthetic_parquets, monkeypat
     def _boom():
         raise RuntimeError("nflverse down")
 
-    monkeypatch.setattr(dst_data.nfl, "import_team_desc", _boom)
+    monkeypatch.setattr(dst_data.nfl_source, "teams", _boom)
 
     df = dst_data.build_data()
     assert (df["headshot_url"] == "").all()

@@ -43,15 +43,14 @@ ENV UV_LINK_MODE=copy
 # one cached layer. The cache mount on /root/.cache/uv persists wheel
 # downloads across builds (CI mirrors this via actions/cache — see
 # batch-image.yml). --break-system-packages is required because the pytorch
-# base image's system Python 3.12 is PEP 668 marked. nfl_data_py needs
-# --no-deps (mord/old-numpy conflict), so it runs in the same RUN but as a
-# separate uv call. appdirs/fastparquet are runtime deps of nfl_data_py that
-# we install explicitly since --no-deps skipped them.
+# base image's system Python 3.12 is PEP 668 marked. The nflverse data feed
+# (nflreadpy + polars) installs cleanly from requirements.txt — no --no-deps
+# workaround or extra appdirs/fastparquet pins like the deprecated nfl_data_py
+# required. nflreadpy is imported transitively at startup (src.{k,dst}.data →
+# src.data.nfl_source) even though no nflverse fetch happens at training time.
 COPY src/batch/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system --break-system-packages -r requirements.txt appdirs fastparquet && \
-    uv pip install --system --break-system-packages --no-deps nfl_data_py==0.3.3 && \
-    (pip check || echo "pip check: nfl_data_py wants old numpy/pandas; not imported at training time")
+    uv pip install --system --break-system-packages -r requirements.txt
 
 # All Python source lives under src/ after the layout migration.
 # .dockerignore handles the coarse exclusions (Flask UI, scratch scripts,

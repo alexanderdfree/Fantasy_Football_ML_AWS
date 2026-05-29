@@ -1,7 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-import nfl_data_py as nfl
 import pandas as pd
 
 from src.config import (
@@ -12,6 +11,7 @@ from src.config import (
     SCORING_STANDARD,
     SEASONS,
 )
+from src.data import nfl_source
 from src.data.nflcom_loader import schedule_team_code_normalization
 from src.data.redzone_pbp import RZ_PBP_FEATURE_COLUMNS, reconstruct_redzone_from_pbp
 
@@ -190,33 +190,19 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
     def _fetch_weekly():
         if os.path.exists(weekly_path):
             return pd.read_parquet(weekly_path)
-        # nfl_data_py only has player_stats up to 2024; 2025+ uses nflverse stats_player
-        old_seasons = [s for s in seasons if s <= 2024]
-        new_seasons = [s for s in seasons if s >= 2025]
-        parts = []
-        if old_seasons:
-            parts.append(nfl.import_weekly_data(old_seasons))
-        for s in new_seasons:
-            url = f"https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_{s}.parquet"
-            df_new = pd.read_parquet(url)
-            # Harmonise column names to match old format
-            df_new = df_new.rename(
-                columns={
-                    "team": "recent_team",
-                    "passing_interceptions": "interceptions",
-                    "sacks_suffered": "sacks",
-                    "sack_yards_lost": "sack_yards",
-                }
-            )
-            parts.append(df_new)
-        weekly = pd.concat(parts, ignore_index=True)
+        # All seasons come from nflreadpy's load_player_stats (the modern nflverse
+        # stats_player release). Harmonisation of that schema to the legacy weekly
+        # column names lives in src.data.nfl_source.weekly_data — one code path for
+        # every season (previously ≤2024 used nfl_data_py and ≥2025 read the
+        # stats_player parquet directly, with the rename inlined here).
+        weekly = nfl_source.weekly_data(seasons)
         weekly.to_parquet(weekly_path)
         return weekly
 
     def _fetch_rosters():
         if os.path.exists(rosters_path):
             return pd.read_parquet(rosters_path)
-        rosters = nfl.import_seasonal_rosters(seasons)
+        rosters = nfl_source.rosters(seasons)
         # Coerce mixed-type columns that break parquet serialization
         # (e.g. jersey_number is str in older seasons, int in newer)
         for col in rosters.columns:
@@ -228,7 +214,7 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
     def _fetch_schedules():
         if os.path.exists(schedules_path):
             return pd.read_parquet(schedules_path)
-        schedules = nfl.import_schedules(seasons)
+        schedules = nfl_source.schedules(seasons)
         schedules.to_parquet(schedules_path)
         return schedules
 
@@ -236,31 +222,30 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         if os.path.exists(snap_path):
             return pd.read_parquet(snap_path)
         snap_seasons = [s for s in seasons if s >= 2012]
-        snap_counts = nfl.import_snap_counts(snap_seasons) if snap_seasons else pd.DataFrame()
+        snap_counts = nfl_source.snap_counts(snap_seasons) if snap_seasons else pd.DataFrame()
         snap_counts.to_parquet(snap_path)
         return snap_counts
 
     def _fetch_injuries():
         if os.path.exists(injury_path):
             return pd.read_parquet(injury_path)
-        injuries = nfl.import_injuries(seasons)
+        injuries = nfl_source.injuries(seasons)
         injuries.to_parquet(injury_path)
         return injuries
 
     def _fetch_depth(schedules):
         if os.path.exists(depth_path):
             return pd.read_parquet(depth_path)
-        # nfl_data_py reads the nflverse depth_charts release, which serves the
-        # legacy NFL-Data-Exchange schema for ≤2024 and the new ESPN schema
-        # (dt/pos_grp/pos_rank, daily snapshots, no season/week) for ≥2025.
-        # Mirror _fetch_weekly: pull legacy via nfl_data_py, normalize ESPN to
-        # the legacy 5-column shape so the downstream Offense/depth_team merge
-        # stays untouched.
+        # nflreadpy's load_depth_charts serves the legacy NFL-Data-Exchange schema
+        # for ≤2024 and the new ESPN schema (dt/pos_grp/pos_rank, daily snapshots,
+        # no season/week) for ≥2025. Pull legacy via the nfl_source shim; normalize
+        # ESPN to the legacy 5-column shape so the downstream Offense/depth_team
+        # merge stays untouched.
         old_seasons = [s for s in seasons if s <= 2024]
         new_seasons = [s for s in seasons if s >= 2025]
         parts = []
         if old_seasons:
-            parts.append(nfl.import_depth_charts(old_seasons)[_DEPTH_CANONICAL_COLS])
+            parts.append(nfl_source.depth_charts(old_seasons)[_DEPTH_CANONICAL_COLS])
         for s in new_seasons:
             url = (
                 "https://github.com/nflverse/nflverse-data/releases/download/"
@@ -314,7 +299,7 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
 
     # --- Merge snap counts via ID bridge ---
     try:
-        ids = nfl.import_ids()
+        ids = nfl_source.player_ids()
         pfr_to_gsis = ids[["pfr_id", "gsis_id"]].dropna().drop_duplicates()
         # Subset-dedup on pfr_id before merging — the full-row drop_duplicates
         # above only collapses identical (pfr_id, gsis_id) pairs. If a single

@@ -136,7 +136,7 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 
 Derived from root `requirements.txt`:
 - **Excluded**: `torch` (in base image), `flask`, `gunicorn`, `pytest`
-- **Added**: `boto3>=1.34` (S3 operations), `nfl_data_py==0.3.3` (K/DST data loading)
+- **Added**: `boto3>=1.34` (S3 operations), `nflreadpy==0.1.5` + `polars==1.41.1` (nflverse data loading via the `src/data/nfl_source.py` shim; imported transitively by K/DST data modules even though no fetch happens at training time)
 
 ## Position Pipeline Invocation
 

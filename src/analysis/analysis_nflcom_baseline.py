@@ -59,7 +59,7 @@ _TOTALS_ONLY_POSITIONS = {"K"}
 _SKIPPED_POSITIONS = {"DST"}
 
 # nflverse stats_player_week parquets — one per season, covers all positions
-# including K (which nfl_data_py.import_weekly_data omits).
+# including K (which the legacy nfl_data_py weekly feed omitted).
 _NFLVERSE_PLAYER_WEEK_URL = (
     "https://github.com/nflverse/nflverse-data/releases/download/"
     "stats_player/stats_player_week_{season}.parquet"

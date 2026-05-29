@@ -17,7 +17,7 @@ snap counts/injuries/depth charts).
 - **Size**: ~38 KB (well under the 100 KB cap; Git LFS not required)
 - **Captured on**: 2026-04-16 from the local cache parquet at
   `data/raw/weekly_2012_2025.parquet` (which itself was sourced from
-  `nfl_data_py.import_weekly_data([2023])` + nflverse roster/snap/injury/depth
+  `nflreadpy.load_player_stats([2023], summary_level="week")` (via the `src/data/nfl_source.py` shim) + nflverse roster/snap/injury/depth
   joins via `src.data.loader.load_raw_data`).
 
 ## How to regenerate

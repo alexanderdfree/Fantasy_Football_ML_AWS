@@ -191,10 +191,10 @@ def _synthetic_pbp(season: int, n_fg: int = 6, n_xp: int = 4) -> pd.DataFrame:
 def test_reconstruct_weekly_from_pbp_happy_path(tmp_path, monkeypatch):
     import src.k.data as k_data
 
-    def _fake_pbp(seasons, downcast=True):
+    def _fake_pbp(seasons, cols):
         return _synthetic_pbp(seasons[0])
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _fake_pbp)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _fake_pbp)
 
     out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
     # 2 kickers x 3 weeks = 6 potential rows (some may merge differently)
@@ -219,7 +219,7 @@ def test_reconstruct_weekly_from_pbp_xp_only_game_gets_venue(tmp_path, monkeypat
     """
     import src.k.data as k_data
 
-    def _xp_only_pbp(seasons, downcast=True):
+    def _xp_only_pbp(seasons, cols):
         """Synthetic PBP where K01 has only XPs (no FGs)."""
         yr = seasons[0]
         rows = []
@@ -249,7 +249,7 @@ def test_reconstruct_weekly_from_pbp_xp_only_game_gets_venue(tmp_path, monkeypat
             )
         return pd.DataFrame(rows)
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _xp_only_pbp)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _xp_only_pbp)
     out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
 
     k01 = out[out["player_id"] == "K01"].iloc[0]
@@ -279,7 +279,7 @@ def test_reconstruct_weekly_from_pbp_cache_hit(tmp_path, monkeypatch):
     def _should_not_be_called(*args, **kwargs):
         raise AssertionError("import_pbp_data was called despite cache hit")
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _should_not_be_called)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _should_not_be_called)
 
     out = k_data.reconstruct_kicker_weekly_from_pbp([2021], cache_dir=str(tmp_path))
     assert len(out) == 1
@@ -295,7 +295,7 @@ def test_reconstruct_weekly_pbp_dome_games_get_65f_0_wind(tmp_path, monkeypatch)
     confounded dome games with extreme-cold outdoor games."""
     import src.k.data as k_data
 
-    def _pbp_with_nan_dome_weather(seasons, downcast=True):
+    def _pbp_with_nan_dome_weather(seasons, cols):
         # Two games: one dome (NaN weather, as nfl_data_py emits) and one
         # outdoor (real weather). Each game gets one FG attempt.
         return pd.DataFrame(
@@ -345,7 +345,7 @@ def test_reconstruct_weekly_pbp_dome_games_get_65f_0_wind(tmp_path, monkeypatch)
             ]
         )
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _pbp_with_nan_dome_weather)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _pbp_with_nan_dome_weather)
 
     out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
 
@@ -375,7 +375,7 @@ def test_backfill_2025_pbp_dome_games_get_65f_0_wind(monkeypatch):
     reconstruction: dome rows -> (65.0 F, 0.0 mph)."""
     import src.k.data as k_data
 
-    def _pbp_2025_dome(seasons, downcast=True):
+    def _pbp_2025_dome(seasons, cols):
         return pd.DataFrame(
             [
                 {
@@ -402,7 +402,7 @@ def test_backfill_2025_pbp_dome_games_get_65f_0_wind(monkeypatch):
             ]
         )
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _pbp_2025_dome)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _pbp_2025_dome)
 
     # recent_team is required: post-PR #239/#241, the 2025 backfill merges
     # venue/weather via a second pass keyed on (season, week, recent_team)
@@ -454,7 +454,7 @@ def test_reconstruct_weekly_from_pbp_stale_cache_regenerates(tmp_path, monkeypat
     pd.DataFrame({"player_id": ["K01"], "season": [2020], "week": [1]}).to_parquet(stale_cache)
 
     monkeypatch.setattr(
-        k_data.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
+        k_data.nfl_source, "pbp_data", lambda seasons, cols: _synthetic_pbp(seasons[0])
     )
 
     out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
@@ -488,7 +488,7 @@ def test_reconstruct_weekly_from_pbp_pre_xp_venue_cache_rejected(tmp_path, monke
     pd.DataFrame([cache_row]).to_parquet(stale_cache)
 
     monkeypatch.setattr(
-        k_data.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
+        k_data.nfl_source, "pbp_data", lambda seasons, cols: _synthetic_pbp(seasons[0])
     )
 
     out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
@@ -509,10 +509,10 @@ def test_reconstruct_weekly_pbp_skips_failing_seasons(tmp_path, monkeypatch, cap
     next call doesn't treat a partial frame as authoritative."""
     import src.k.data as k_data
 
-    def _bad(seasons, downcast=True):
+    def _bad(seasons, cols):
         raise RuntimeError(f"pbp fetch boom for {seasons}")
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _bad)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _bad)
 
     out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
     assert out.empty
@@ -528,13 +528,13 @@ def test_reconstruct_weekly_pbp_partial_failure_skips_cache(tmp_path, monkeypatc
     of the failed years)."""
     import src.k.data as k_data
 
-    def _selective(seasons, downcast=True):
+    def _selective(seasons, cols):
         yr = seasons[0]
         if yr == 2021:
             raise RuntimeError("upstream 502 for 2021")
         return _synthetic_pbp(yr)
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _selective)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _selective)
 
     out = k_data.reconstruct_kicker_weekly_from_pbp([2020, 2021], cache_dir=str(tmp_path))
     # 2020 survives; 2021 was dropped.
@@ -557,7 +557,7 @@ def test_reconstruct_kicks_from_pbp_happy_path(tmp_path, monkeypatch):
     import src.k.data as k_data
 
     monkeypatch.setattr(
-        k_data.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
+        k_data.nfl_source, "pbp_data", lambda seasons, cols: _synthetic_pbp(seasons[0])
     )
     out = k_data.reconstruct_kicker_kicks_from_pbp([2020], cache_dir=str(tmp_path))
     assert "is_fg" in out.columns
@@ -598,7 +598,7 @@ def test_reconstruct_kicks_from_pbp_cache_hit(tmp_path, monkeypatch):
     def _should_not_be_called(*a, **k):
         raise AssertionError("import_pbp_data was called despite cache hit")
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _should_not_be_called)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _should_not_be_called)
     out = k_data.reconstruct_kicker_kicks_from_pbp([2022], cache_dir=str(tmp_path))
     assert len(out) == 1
 
@@ -623,11 +623,11 @@ def test_reconstruct_kicks_from_pbp_stale_cache_regenerates(tmp_path, monkeypatc
     # PBP call must fire (cache is stale).
     called = {"n": 0}
 
-    def _stub_pbp(seasons, downcast=True):
+    def _stub_pbp(seasons, cols):
         called["n"] += 1
         raise RuntimeError("synthetic boom — we just need to know PBP was tried")
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _stub_pbp)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _stub_pbp)
     _ = k_data.reconstruct_kicker_kicks_from_pbp([2022], cache_dir=str(tmp_path))
     assert called["n"] == 1
     assert "Stale kick cache" in capsys.readouterr().out
@@ -638,10 +638,10 @@ def test_reconstruct_kicks_pbp_skips_failing_seasons(tmp_path, monkeypatch, caps
     """If ``import_pbp_data`` throws for a season, we log and continue."""
     import src.k.data as k_data
 
-    def _bad(seasons, downcast=True):
+    def _bad(seasons, cols):
         raise RuntimeError(f"pbp fetch boom for {seasons}")
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _bad)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _bad)
     # Every season fails, so the result is the empty frame the function returns.
     out = k_data.reconstruct_kicker_kicks_from_pbp([2020], cache_dir=str(tmp_path))
     assert out.empty
@@ -673,7 +673,7 @@ def _cached_pbp(tmp_path, monkeypatch):
     def _no_network(*args, **kwargs):
         raise AssertionError("nfl.import_pbp_data must not be called when the PBP cache hits")
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _no_network)
 
     # Synthetic kicker weekly cache (2022-2024).
     kicker_rows = [
@@ -758,7 +758,7 @@ def test_load_kicker_data_fills_missing_is_home_with_zero(tmp_path, monkeypatch)
     def _no_network(*args, **kwargs):
         raise AssertionError("import_pbp_data must not be called when the cache hits")
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _no_network)
 
     # PBP cache contains a kicker on team "ZZZ" that the schedule doesn't cover.
     pd.DataFrame([_kicker_pbp_cache_row("K01", 2022, 1, recent_team="ZZZ")]).to_parquet(
@@ -846,7 +846,7 @@ def test_backfill_2025_pbp_columns_updates_in_place(monkeypatch):
     import src.k.data as k_data
 
     monkeypatch.setattr(
-        k_data.nfl, "import_pbp_data", lambda seasons, downcast=True: _synthetic_pbp(seasons[0])
+        k_data.nfl_source, "pbp_data", lambda seasons, cols: _synthetic_pbp(seasons[0])
     )
 
     # k_df: 2 kickers x 2 weeks in 2025 with everything NaN/None.
@@ -894,7 +894,7 @@ def test_backfill_2025_pbp_logs_warning_on_failure(monkeypatch, capsys):
     def _boom(*args, **kwargs):
         raise RuntimeError("network down")
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _boom)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _boom)
 
     k_df = pd.DataFrame(
         {
@@ -944,7 +944,7 @@ def test_load_kicker_data_includes_2025_weekly_branch(tmp_path, monkeypatch):
             "and the 2025 backfill is stubbed to no-op"
         )
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _no_network)
 
     # 2024 PBP cache
     pd.DataFrame([_kicker_pbp_cache_row("K01", 2024, 1)]).to_parquet(
@@ -1014,7 +1014,7 @@ def test_load_data_backfills_venue_for_xp_only_games(tmp_path, monkeypatch):
     def _no_network(*args, **kwargs):
         raise AssertionError("import_pbp_data must not be called when the cache hits")
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _no_network)
 
     # 2024 PBP cache (one FG-attempted row).
     pd.DataFrame([_kicker_pbp_cache_row("K00", 2024, 1)]).to_parquet(
@@ -1088,7 +1088,7 @@ def test_load_data_treats_empty_string_surface_as_missing(tmp_path, monkeypatch)
     def _no_network(*args, **kwargs):
         raise AssertionError("import_pbp_data must not be called when the cache hits")
 
-    monkeypatch.setattr(k_data.nfl, "import_pbp_data", _no_network)
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _no_network)
 
     pd.DataFrame([_kicker_pbp_cache_row("K00", 2024, 1)]).to_parquet(
         tmp_path / "kicker_pbp_2024_2024.parquet"

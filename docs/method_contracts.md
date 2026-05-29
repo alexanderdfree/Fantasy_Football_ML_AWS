@@ -10,7 +10,7 @@ Function signatures, data schemas, and implementation contracts for every module
 
 #### `load_raw_data(seasons: list[int], cache_dir: str = "data/raw") -> pd.DataFrame`
 
-**nfl_data_py API calls (in order):**
+**nflverse data calls (in order)** — now routed through the [`src/data/nfl_source.py`](../src/data/nfl_source.py) shim (`nfl_source.weekly_data` wraps `nflreadpy.load_player_stats`, `nfl_source.pbp_data` wraps `load_pbp`, etc.). The legacy `nfl_data_py` call names below are retained as a reference mapping:
 
 ```python
 import nfl_data_py as nfl

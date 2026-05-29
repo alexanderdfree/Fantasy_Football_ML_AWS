@@ -18,17 +18,16 @@ ENV UV_LINK_MODE=copy
 # one cached layer. The /root/.cache/uv mount persists wheel downloads across
 # builds (CI mirrors this via actions/cache in deploy.yml). Torch uses the
 # CPU-only index; --extra-index-url keeps pypi.org as a fallback because uv's
-# --index-url fully overrides the default index (pip's does not). nfl_data_py
-# needs --no-deps (mord/old-numpy conflict) and runs as a separate uv call in
-# the same RUN so the layer boundary matches the previous Dockerfile.
+# --index-url fully overrides the default index (pip's does not). The nflverse
+# data feed (nflreadpy + polars) is a normal pinned entry in requirements.txt
+# — no --no-deps workaround like the deprecated nfl_data_py needed.
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system \
         --index-url https://download.pytorch.org/whl/cpu \
         --extra-index-url https://pypi.org/simple \
         torch==2.11.0 && \
-    uv pip install --system -r requirements.txt && \
-    uv pip install --system --no-deps nfl_data_py==0.3.3
+    uv pip install --system -r requirements.txt
 
 # All Python source, Flask templates/static, and per-position assets live
 # under src/. data/ and src/**/outputs/models/ are deliberately NOT copied —

@@ -30,11 +30,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.error import HTTPError, URLError
 
-import nfl_data_py as nfl
 import numpy as np
 import pandas as pd
 
 from src.config import CACHE_DIR
+from src.data import nfl_source
 
 NFLCOM_BASE = "https://raw.githubusercontent.com/hvpkod/NFL-Data/main/NFL-data-Players"
 NFLCOM_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K")
@@ -560,7 +560,7 @@ def load_nflcom_with_gsis_id(
     )
 
     if rosters is None:
-        rosters = nfl.import_seasonal_rosters(list(seasons))
+        rosters = nfl_source.rosters(list(seasons))
     lookup = _build_roster_lookup(rosters)
 
     proj = proj.copy()

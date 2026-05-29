@@ -1,11 +1,11 @@
 import os
 
-import nfl_data_py as nfl
 import pandas as pd
 import pyarrow.parquet as pq
 
 from src.config import CACHE_DIR
 from src.config import SEASONS as GLOBAL_SEASONS
+from src.data import nfl_source
 from src.k.config import POSITION_CONFIG
 from src.shared.weather_features import _TEAM_CODE_NORMALIZATION
 
@@ -118,7 +118,7 @@ def reconstruct_kicker_weekly_from_pbp(
         # change in one season doesn't abort the whole load. Mirrors the
         # defensive posture of reconstruct_kicker_kicks_from_pbp.
         try:
-            pbp = nfl.import_pbp_data([yr], downcast=True)
+            pbp = nfl_source.pbp_data([yr], nfl_source.PBP_KICKER_COLS)
             # Keep only regular season
             pbp = pbp[pbp["season_type"] == "REG"]
 
@@ -482,7 +482,7 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
         all_weekly = []
         all_game_venue = []
         for yr in seasons:
-            pbp = nfl.import_pbp_data([yr], downcast=True)
+            pbp = nfl_source.pbp_data([yr], nfl_source.PBP_KICKER_COLS)
             pbp = pbp[pbp["season_type"] == "REG"]
 
             # Game-level venue/weather lookup keyed on (season, week, posteam).
@@ -647,7 +647,7 @@ def reconstruct_kicker_kicks_from_pbp(
         # missing column or unexpected schema in one season doesn't abort the
         # whole load. Mirrors the defensive posture of _backfill_2025_pbp_columns.
         try:
-            pbp = nfl.import_pbp_data([yr], downcast=True)
+            pbp = nfl_source.pbp_data([yr], nfl_source.PBP_KICKER_COLS)
             pbp = pbp[pbp["season_type"] == "REG"]
 
             fg_rows = pbp[pbp["field_goal_attempt"] == 1]

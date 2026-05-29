@@ -107,12 +107,6 @@ jobs:
       - name: Install dependencies
         run: uv pip install --system -r requirements.txt
 
-      - name: Install nfl_data_py (no-deps, matches Dockerfile)
-        # Same pattern as tests.yml. Skips nfl_data_py's transitive deps
-        # which conflict with the pinned numpy / pyarrow / pandas in
-        # requirements.txt.
-        run: uv pip install --system --no-deps nfl_data_py==0.3.3
-
       # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
       # major version comment. SHA = aws-actions/configure-aws-credentials v4
       # tip as of 2026-05-21.
@@ -125,7 +119,7 @@ jobs:
 
       - name: Regenerate splits from nflverse + PBP
         # ``load_raw_data`` pulls weekly stats / rosters / schedules / snap
-        # counts / injuries / depth charts / PBP for SEASONS via nfl_data_py,
+        # counts / injuries / depth charts / PBP for SEASONS via nflreadpy,
         # caches to ``data/raw/``, and merges the redzone PBP aggregates onto
         # the weekly frame. ``preprocess`` does the standard cleanup;
         # ``build_features`` materialises the ~150 engineered cols (rolling_*,
