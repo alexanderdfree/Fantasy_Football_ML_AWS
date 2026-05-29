@@ -1,0 +1,14 @@
+# Local NVIDIA-CUDA dev + training environment (Windows 11 / Linux + NVIDIA GPU).
+# GPU analog of requirements-dev.txt: same tooling, but pulls the CUDA 12.8 torch
+# build (Blackwell / sm_120, e.g. RTX 5080) instead of the CPU wheel.
+# Use ONLY on a CUDA box. macOS/CPU dev and CI keep using requirements-dev.txt.
+# Keep the tool pins below in sync with requirements-dev.txt.
+-r requirements.txt
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+pytest==9.0.3
+pytest-timeout>=2.0
+pytest-cov>=4.0
+pytest-xdist>=3.6
+ruff==0.15.0
+optuna==4.8.0  # src/tuning/tune_lgbm.py + tune_nn.py + tests/tuning/ — matches requirements-dev.txt

@@ -28,6 +28,68 @@ pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements-dev.txt
 ```
 
+## Windows 11 + NVIDIA GPU install (e.g. RTX 5080)
+
+The block above installs the **CPU** PyTorch wheel. To train/tune locally on an NVIDIA GPU —
+Windows 11 with an RTX 5080 (or any Blackwell `sm_120` card), or Linux + NVIDIA — use the
+**CUDA 12.8** build instead. It's the same `torch==2.11.0`, just the `cu128` wheel (the `cu126`
+wheel the AWS Tesla-T4 path uses tops out at `sm_90`, so Blackwell needs `cu128` specifically).
+
+**Prerequisites**
+
+- Python **3.12** — matches the project; the `cu128` cp312 wheel exists. Install from python.org and tick *"Add python.exe to PATH"*.
+- A recent NVIDIA driver (R570+, the GeForce 50-series launch driver or newer). You do **not** need a separate CUDA Toolkit — the pip wheel bundles its own CUDA 12.8 runtime via `nvidia-*` packages.
+- `git`.
+
+**Create and activate a venv** (PowerShell):
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+# If activation is blocked by execution policy, run once in this shell:
+#   Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+```
+
+(`cmd` users: `.venv\Scripts\activate.bat`.)
+
+**Install** the GPU dependency set ([requirements-gpu.txt](requirements-gpu.txt) — the GPU analog of `requirements-dev.txt`, with the `cu128` torch build):
+
+```powershell
+pip install -r requirements-gpu.txt
+```
+
+To match CI's `uv` path instead, set `UV_INDEX_STRATEGY` first — `$env:UV_INDEX_STRATEGY="unsafe-best-match"` in PowerShell (or `set UV_INDEX_STRATEGY=unsafe-best-match` in `cmd`) — then `uv pip install -r requirements-gpu.txt`. To swap an existing CPU env in place without a full reinstall: `pip install --force-reinstall torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128`.
+
+**Verify the GPU is visible:**
+
+```powershell
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+# → 2.11.0+cu128 12.8 True NVIDIA GeForce RTX 5080
+```
+
+**First-time data pull** — the heredoc in the next section is bash-only; on Windows use this cross-shell one-liner instead:
+
+```powershell
+python -c "from src.data.loader import load_raw_data; from src.data.preprocessing import preprocess; from src.features.engineer import build_features; from src.data.split import temporal_split; temporal_split(build_features(preprocess(load_raw_data())))"
+```
+
+**Run training / tuning** — identical commands to macOS/Linux, run from the repo root:
+
+```powershell
+python -m src.qb.run_pipeline                       # one position, full pipeline
+python -m src.benchmarking.benchmark RB --no-sync   # benchmark one position
+python -m src.tuning.tune_nn RB --n-trials 30       # Optuna NN tuning
+python -m src.tuning.tune_lgbm RB                   # Optuna LightGBM tuning
+```
+
+Run from the repo root — the tuners look for a relative `data/raw/` (same as on macOS, not a
+Windows-specific quirk). The RTX 5080 is picked up automatically by the `torch.cuda.is_available()`
+device check ([src/shared/pipeline.py](src/shared/pipeline.py)); the attention NN trains in FP16,
+which is native (and full-throughput) on Blackwell. The 9950X3D's 16 cores are used automatically
+by LightGBM and the sklearn CV grids — nothing to configure. The remaining sections below
+(*Run benchmarks*, *Run tests*, *Lint*) work as written with the same `python -m …` / `pytest` /
+`ruff` commands.
+
 ## First-time data pull and split
 
 `src.data.loader.load_raw_data()` caches the nflverse pulls to `data/raw/`. `src.features.engineer.build_features()` materialises the ~150 engineered columns (rolling_*, ewma_*, trend_*, prior_season_*, opp_*, contextual, position one-hots) every position's `include_features` whitelist references — without this step every engineered column ends up constant-zero via the silent backfill that used to live in `src/shared/feature_build.py` (now raises `KeyError`). `src.data.split.temporal_split()` writes `train.parquet`, `val.parquet`, `test.parquet` under `data/splits/`. The app and benchmark both read from `data/splits/`, so these must exist before anything else runs.
