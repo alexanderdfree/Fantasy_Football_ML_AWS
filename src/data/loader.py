@@ -12,11 +12,113 @@ from src.config import (
     SCORING_STANDARD,
     SEASONS,
 )
+from src.data.nflcom_loader import schedule_team_code_normalization
 from src.data.redzone_pbp import RZ_PBP_FEATURE_COLUMNS, reconstruct_redzone_from_pbp
 
 # Re-export the redzone_pbp feature list as a list (for ``not in df.columns``
 # loops below). Single source of truth lives in ``redzone_pbp.RZ_PBP_FEATURE_COLUMNS``.
 _REDZONE_COLUMNS = list(RZ_PBP_FEATURE_COLUMNS)
+
+# Legacy (NFL-Data-Exchange) depth-chart schema. The merge in ``load_raw_data``
+# and the audit in ``src/scripts/audit_features.py`` both depend on exactly these
+# columns, so the 2025+ ESPN feed is normalized back to this shape rather than
+# changing every consumer (see ``_normalize_espn_depth``).
+_DEPTH_CANONICAL_COLS = ["gsis_id", "season", "week", "formation", "depth_team"]
+
+# Schedule-side relocation map (OAK→LV, SD→LAC, STL→LA) — reused so the ESPN
+# depth feed's team codes align with the schedule for the as-of join. The 2025
+# ESPN code set already matches the schedule's exactly; this only future-proofs
+# against a legacy code reappearing.
+_TEAM_CODE_NORMALIZATION = schedule_team_code_normalization()
+
+
+def _is_espn_offense(pos_grp: pd.Series) -> pd.Series:
+    """Boolean mask selecting offensive rows in the 2025+ ESPN depth feed.
+
+    The feed groups players by personnel package in ``pos_grp``; today the only
+    offensive value is ``"3WR 1TE"`` while defenses are ``"Base 4-3 D"`` /
+    ``"Base 3-4 D"`` and special teams is ``"Special Teams"``. Select offense
+    *negatively* (not a defensive front, not special teams) so a future
+    offensive label (``"2WR 2TE"``, ``"Empty"``, …) isn't silently dropped.
+    """
+    g = pos_grp.fillna("").str.strip()
+    return ~(g.str.endswith(" D") | g.eq("Special Teams"))
+
+
+def _normalize_espn_depth(espn: pd.DataFrame, schedules: pd.DataFrame, season: int) -> pd.DataFrame:
+    """Collapse the 2025+ ESPN depth feed into the legacy 5-column depth shape.
+
+    The ESPN feed is a daily snapshot time-series (``dt`` timestamp, no
+    season/week) keyed by ``gsis_id`` with depth rank in ``pos_rank``. For each
+    of a team's weekly games we keep the latest snapshot at/before kickoff (an
+    as-of join on the schedule's ``gameday`` — leakage-safe since depth charts
+    are pre-game public info), then take the player's best (min) offensive rank
+    that week, mirroring the legacy ``min(depth_team)`` semantics.
+
+    Returns ``gsis_id, season, week, formation="Offense", depth_team`` (str rank
+    to match the legacy dtype; the downstream merge re-coerces it to numeric).
+    Returns empty if the schedule lacks the columns the join needs — the
+    loader's ``-1`` sentinel + consumer-side impute then cover the gap.
+    """
+    empty = pd.DataFrame({c: pd.Series(dtype="object") for c in _DEPTH_CANONICAL_COLS})
+    required = {"season", "week", "game_type", "gameday", "home_team", "away_team"}
+    if not required.issubset(schedules.columns):
+        return empty
+
+    off = espn[_is_espn_offense(espn["pos_grp"])].copy()
+    off = off[off["gsis_id"].notna() & off["gsis_id"].astype(str).str.len().gt(0)]
+    if off.empty:
+        return empty
+    off["snapshot_ts"] = pd.to_datetime(off["dt"], errors="coerce", utc=True).dt.tz_localize(None)
+    off = off.dropna(subset=["snapshot_ts"])
+    off["team"] = off["team"].replace(_TEAM_CODE_NORMALIZATION)
+    # Best (min) rank per player per snapshot — a player can hold multiple slots
+    # in one snapshot; min mirrors the legacy ``min(depth_team)`` (order-independent).
+    snap = off.groupby(["gsis_id", "team", "snapshot_ts"], as_index=False)["pos_rank"].min()
+
+    sched = schedules[(schedules["game_type"] == "REG") & (schedules["season"] == season)]
+    # gameday is date-granularity, so kickoff is that day's midnight: a snapshot
+    # taken the morning of the game falls *after* it and maps to the prior day's
+    # snapshot instead. Conservative and leakage-safe; coverage stays ~99.8%.
+    kickoff = pd.to_datetime(sched["gameday"], errors="coerce")
+    cal = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "team": sched["home_team"].replace(_TEAM_CODE_NORMALIZATION),
+                    "week": sched["week"],
+                    "kickoff": kickoff,
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "team": sched["away_team"].replace(_TEAM_CODE_NORMALIZATION),
+                    "week": sched["week"],
+                    "kickoff": kickoff,
+                }
+            ),
+        ],
+        ignore_index=True,
+    ).dropna(subset=["kickoff"])
+    if cal.empty:
+        return empty
+
+    # Pair each player-snapshot with each of their team's weekly games, keep
+    # snapshots at/before that game's kickoff, then take the latest such snapshot
+    # per (player, week) — the depth chart entering that game. A bye week has no
+    # cal row, so the prior snapshot correctly carries to the next played week.
+    merged = snap.merge(cal, on="team")
+    merged = merged[merged["snapshot_ts"] <= merged["kickoff"]]
+    if merged.empty:
+        return empty
+    idx = merged.groupby(["gsis_id", "week"])["snapshot_ts"].idxmax()
+    out = merged.loc[idx, ["gsis_id", "week", "pos_rank"]].rename(
+        columns={"pos_rank": "depth_team"}
+    )
+    out["season"] = season
+    out["formation"] = "Offense"
+    out["depth_team"] = out["depth_team"].astype("int64").astype(str)
+    return out[_DEPTH_CANONICAL_COLS]
 
 
 def load_team_week_stats(
@@ -62,17 +164,17 @@ def load_team_week_stats(
     return df
 
 
-def load_raw_data(
-    seasons: list[int] | None = None, cache_dir: str = CACHE_DIR
-) -> pd.DataFrame:
+def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) -> pd.DataFrame:
     """Load and merge NFL weekly data, rosters, snap counts, and schedules.
 
-    The six independent network/parquet fetches (weekly, rosters, schedules,
-    snap counts, injuries, depth charts) run in a ``ThreadPoolExecutor`` so a
-    cold cache populates in parallel. Each is HTTP/parquet I/O and so spends
-    most of its time off the GIL. Cache hits short-circuit at the start of
-    each helper so warm starts pay only the parquet read cost (also fanned
-    out, but trivial).
+    Most network/parquet fetches (weekly, rosters, schedules, snap counts,
+    injuries, red-zone PBP) run in a ``ThreadPoolExecutor`` so a cold cache
+    populates in parallel. Depth charts run *after* the pool: the 2025+ ESPN
+    format needs schedule kickoff dates to map its daily snapshots onto NFL
+    weeks (see ``_fetch_depth`` / ``_normalize_espn_depth``). Each fetch is
+    HTTP/parquet I/O and so spends most of its time off the GIL. Cache hits
+    short-circuit at the start of each helper so warm starts pay only the
+    parquet read cost (also fanned out, but trivial).
     """
     if seasons is None:
         seasons = SEASONS
@@ -145,10 +247,27 @@ def load_raw_data(
         injuries.to_parquet(injury_path)
         return injuries
 
-    def _fetch_depth():
+    def _fetch_depth(schedules):
         if os.path.exists(depth_path):
             return pd.read_parquet(depth_path)
-        depth = nfl.import_depth_charts(seasons)
+        # nfl_data_py reads the nflverse depth_charts release, which serves the
+        # legacy NFL-Data-Exchange schema for ≤2024 and the new ESPN schema
+        # (dt/pos_grp/pos_rank, daily snapshots, no season/week) for ≥2025.
+        # Mirror _fetch_weekly: pull legacy via nfl_data_py, normalize ESPN to
+        # the legacy 5-column shape so the downstream Offense/depth_team merge
+        # stays untouched.
+        old_seasons = [s for s in seasons if s <= 2024]
+        new_seasons = [s for s in seasons if s >= 2025]
+        parts = []
+        if old_seasons:
+            parts.append(nfl.import_depth_charts(old_seasons)[_DEPTH_CANONICAL_COLS])
+        for s in new_seasons:
+            url = (
+                "https://github.com/nflverse/nflverse-data/releases/download/"
+                f"depth_charts/depth_charts_{s}.parquet"
+            )
+            parts.append(_normalize_espn_depth(pd.read_parquet(url), schedules, s))
+        depth = pd.concat(parts, ignore_index=True)
         depth.to_parquet(depth_path)
         return depth
 
@@ -158,26 +277,29 @@ def load_raw_data(
         # short-circuits to a parquet read on warm cache.
         return reconstruct_redzone_from_pbp(seasons, cache_dir=cache_dir)
 
-    with ThreadPoolExecutor(max_workers=7) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         weekly_f = pool.submit(_fetch_weekly)
         rosters_f = pool.submit(_fetch_rosters)
         schedules_f = pool.submit(_fetch_schedules)
         snap_counts_f = pool.submit(_fetch_snap_counts)
         injuries_f = pool.submit(_fetch_injuries)
-        depth_f = pool.submit(_fetch_depth)
         redzone_f = pool.submit(_fetch_redzone)
         weekly = weekly_f.result()
         rosters = rosters_f.result()
-        # _fetch_schedules() is called for its parquet side-effect (downstream
-        # consumers read schedules_{min}_{max}.parquet directly — see
-        # src/k/data.py::load_data and src/shared/weather_features.py::_load_schedules).
-        # The returned frame is intentionally discarded; .result() is invoked so
-        # any fetch exception propagates instead of being silently swallowed.
-        schedules_f.result()
+        # _fetch_schedules() persists schedules_{min}_{max}.parquet for downstream
+        # consumers (src/k/data.py::load_data, src/shared/weather_features.py::
+        # _load_schedules). The frame is also consumed below by _fetch_depth, which
+        # needs kickoff dates to map the 2025+ ESPN depth feed (a daily snapshot
+        # series with no week column) onto NFL weeks via an as-of join.
+        schedules = schedules_f.result()
         snap_counts = snap_counts_f.result()
         injuries = injuries_f.result()
-        depth = depth_f.result()
         redzone = redzone_f.result()
+
+    # Depth charts depend on the schedule (as-of join for the 2025+ ESPN format),
+    # so they run after the pool rather than inside it. Cold cache pays one extra
+    # HTTP read; the warm path short-circuits on the parquet.
+    depth = _fetch_depth(schedules)
 
     # --- Merge rosters for position override ---
     roster_pos = rosters[["player_id", "season", "position"]].drop_duplicates(

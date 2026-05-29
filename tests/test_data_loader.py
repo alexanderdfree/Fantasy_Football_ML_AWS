@@ -14,6 +14,8 @@ import pandas as pd
 import pytest
 
 from src.data.loader import (
+    _is_espn_offense,
+    _normalize_espn_depth,
     compute_all_scoring_formats,
     compute_fantasy_points,
     load_raw_data,
@@ -287,6 +289,152 @@ def test_load_raw_data_depth_chart_rank_picks_min_deterministically(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "pos_grp,expected",
+    [
+        ("3WR 1TE", True),
+        ("2WR 2TE", True),  # unseen offensive personnel label — must survive
+        ("Empty", True),
+        ("Base 4-3 D", False),
+        ("Base 3-4 D", False),
+        ("Special Teams", False),
+    ],
+)
+def test_is_espn_offense_selects_offense_negatively(pos_grp, expected):
+    """_is_espn_offense excludes defensive fronts (' D') and 'Special Teams';
+    everything else (including unseen offensive personnel labels) is offense."""
+    mask = _is_espn_offense(pd.Series([pos_grp]))
+    assert bool(mask.iloc[0]) is expected
+
+
+@pytest.mark.unit
+def test_normalize_espn_depth_asof_maps_snapshots_to_weeks():
+    """The daily ESPN feed (no week column) collapses to one row per
+    (player, week) using the latest snapshot at/before that week's kickoff:
+    a preseason snapshot feeds week 1; a mid-season snapshot supersedes it for
+    later weeks. Defensive rows are dropped; depth_team is the str rank."""
+    espn = pd.DataFrame(
+        {
+            "dt": [
+                "2025-08-20T10:00:00Z",  # preseason → latest ≤ wk1 kickoff
+                "2025-09-10T10:00:00Z",  # between wk1 and wk2 → applies to wk2
+                "2025-08-20T10:00:00Z",  # defense — must be excluded
+            ],
+            "team": ["KC", "KC", "KC"],
+            "gsis_id": ["P00", "P00", "D99"],
+            "pos_grp": ["3WR 1TE", "3WR 1TE", "Base 4-3 D"],
+            "pos_slot": [9, 9, 1],
+            "pos_rank": [2, 1, 1],
+        }
+    )
+    schedules = pd.DataFrame(
+        {
+            "season": [2025, 2025],
+            "week": [1, 2],
+            "game_type": ["REG", "REG"],
+            "gameday": ["2025-09-07", "2025-09-14"],
+            "home_team": ["KC", "KC"],
+            "away_team": ["LV", "DEN"],
+        }
+    )
+
+    out = _normalize_espn_depth(espn, schedules, 2025).sort_values("week")
+
+    assert list(out.columns) == ["gsis_id", "season", "week", "formation", "depth_team"]
+    assert "D99" not in out["gsis_id"].values  # defense excluded
+    assert out[out["week"] == 1].iloc[0]["depth_team"] == "2"  # preseason rank carries to wk1
+    assert out[out["week"] == 2].iloc[0]["depth_team"] == "1"  # 09-10 snapshot applies to wk2
+    assert (out["formation"] == "Offense").all()
+    # str rank survives the legacy pd.to_numeric coercion the loader merge applies.
+    assert pd.to_numeric(out["depth_team"]).tolist() == [2, 1]
+
+
+@pytest.mark.unit
+def test_normalize_espn_depth_empty_when_schedule_incomplete():
+    """If the schedule lacks columns the as-of join needs, normalization returns
+    an empty (but correctly-typed) frame so the loader's -1 sentinel +
+    consumer-side impute cover the gap rather than crashing."""
+    espn = pd.DataFrame(
+        {
+            "dt": ["2025-09-04T10:00:00Z"],
+            "team": ["KC"],
+            "gsis_id": ["P00"],
+            "pos_grp": ["3WR 1TE"],
+            "pos_slot": [9],
+            "pos_rank": [1],
+        }
+    )
+    bad_sched = pd.DataFrame({"season": [2025], "week": [1], "home_team": ["KC"]})
+    out = _normalize_espn_depth(espn, bad_sched, 2025)
+    assert out.empty
+    assert list(out.columns) == ["gsis_id", "season", "week", "formation", "depth_team"]
+
+
+@pytest.mark.unit
+def test_load_raw_data_espn_depth_lands_real_rank(tmp_path, monkeypatch):
+    """End-to-end: a 2025 season fetches the ESPN depth feed via URL, as-of
+    joins it onto the schedule, and lands a REAL depth_chart_rank (not the -1
+    sentinel) on the merged frame — the data the -1 consumer impute stood in for."""
+    import src.data.loader as loader
+
+    _mock_all_nfl_helpers(monkeypatch)
+
+    # Complete schedule so the as-of join produces rows (the shared mock's
+    # _fake_schedules omits gameday/game_type).
+    def _full_schedules(seasons):
+        return pd.DataFrame(
+            {
+                "season": [2025],
+                "week": [1],
+                "game_type": ["REG"],
+                "gameday": ["2025-09-07"],
+                "home_team": ["KC"],
+                "away_team": ["LV"],
+            }
+        )
+
+    monkeypatch.setattr(loader.nfl, "import_schedules", _full_schedules)
+
+    url_calls: list[str] = []
+
+    def _fake_url_read_parquet(path, *args, **kwargs):
+        s = str(path)
+        if "stats_player_week_2025" in s:
+            url_calls.append(s)
+            return pd.DataFrame(
+                {
+                    "player_id": ["P00"],
+                    "season": [2025],
+                    "week": [1],
+                    "position": ["QB"],
+                    "team": ["KC"],
+                }
+            )
+        if "depth_charts_2025" in s:
+            url_calls.append(s)
+            return pd.DataFrame(
+                {
+                    "dt": ["2025-09-04T10:00:00Z"],  # ≤ wk1 kickoff 2025-09-07
+                    "team": ["KC"],
+                    "gsis_id": ["P00"],
+                    "pos_grp": ["3WR 1TE"],
+                    "pos_slot": [9],
+                    "pos_rank": [1],
+                }
+            )
+        return pd.read_parquet(path, *args, **kwargs)
+
+    monkeypatch.setattr(loader.pd, "read_parquet", _fake_url_read_parquet)
+
+    df = loader.load_raw_data([2025], cache_dir=str(tmp_path))
+
+    assert any("depth_charts_2025" in u for u in url_calls), "ESPN depth URL was not read"
+    p00 = df[(df["player_id"] == "P00") & (df["season"] == 2025)]
+    assert len(p00) == 1
+    assert p00.iloc[0]["depth_chart_rank"] == 1.0  # real ESPN rank, not the -1 sentinel
+
+
+@pytest.mark.unit
 def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
     """Pre-written caches → the loader skips every nfl.* call and reads from disk."""
     import src.data.loader as loader
@@ -455,6 +603,21 @@ def test_load_raw_data_new_season_url_branch(tmp_path, monkeypatch):
                     "passing_interceptions": [1],  # → interceptions
                     "sacks_suffered": [2],  # → sacks
                     "sack_yards_lost": [14],  # → sack_yards
+                }
+            )
+        if isinstance(path, str) and "depth_charts_2025" in path:
+            # ESPN-format 2025 depth feed — mocked so the new-season depth branch
+            # doesn't hit the network. _fake_schedules lacks gameday/game_type, so
+            # _normalize_espn_depth returns empty → 2025 depth falls to the -1
+            # sentinel; this test only asserts the weekly URL renames.
+            return pd.DataFrame(
+                {
+                    "dt": ["2025-09-04T10:00:00Z"],
+                    "team": ["KC"],
+                    "gsis_id": ["P00"],
+                    "pos_grp": ["3WR 1TE"],
+                    "pos_slot": [9],
+                    "pos_rank": [1],
                 }
             )
         # Otherwise delegate to the real pd.read_parquet (cache reads).
