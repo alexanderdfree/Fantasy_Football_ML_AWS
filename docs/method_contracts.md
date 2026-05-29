@@ -126,34 +126,6 @@ def compute_all_scoring_formats(df):
     return df
 ```
 
-#### `compute_fantasy_points_floor(df: pd.DataFrame, ppr_weight: float = 1.0) -> pd.Series`
-
-Yardage + receptions only (no TDs, no turnovers). The `ppr_weight` parameter
-controls the reception value (0.0 for standard, 0.5 for half-PPR, 1.0 for full PPR).
-
-```python
-def compute_fantasy_points_floor(df, ppr_weight=1.0):
-    return (
-        df["passing_yards"].fillna(0) * 0.04 +
-        df["rushing_yards"].fillna(0) * 0.1 +
-        df["receiving_yards"].fillna(0) * 0.1 +
-        df["receptions"].fillna(0) * ppr_weight
-    )
-```
-
-#### `compute_all_floor_formats(df: pd.DataFrame) -> pd.DataFrame`
-
-Computes floor for all three formats. Adds columns:
-`fantasy_points_floor_standard`, `fantasy_points_floor_half_ppr`, `fantasy_points_floor`.
-
-```python
-def compute_all_floor_formats(df):
-    df["fantasy_points_floor_standard"] = compute_fantasy_points_floor(df, ppr_weight=0.0)
-    df["fantasy_points_floor_half_ppr"] = compute_fantasy_points_floor(df, ppr_weight=0.5)
-    df["fantasy_points_floor"] = compute_fantasy_points_floor(df, ppr_weight=1.0)
-    return df
-```
-
 ---
 
 ### 1.2 `src/data/preprocessing.py`
@@ -169,7 +141,6 @@ def compute_all_floor_formats(df):
 | 3 | Fill missing stat columns with 0 | No row removal |
 | 4 | Fill missing `snap_pct` with position-week median | No row removal |
 | 5 | Compute fantasy points for all scoring formats via `compute_all_scoring_formats()` | Adds `fantasy_points_standard`, `fantasy_points_half_ppr`, `fantasy_points` |
-| 6 | Compute fantasy points floor for all formats via `compute_all_floor_formats()` | Adds `fantasy_points_floor_standard`, `fantasy_points_floor_half_ppr`, `fantasy_points_floor` |
 
 **NOTE:** The min-games filter (< 6 games in a season) is intentionally NOT applied
 here. It is applied in `build_features()` AFTER team totals are computed, so that
@@ -177,7 +148,7 @@ fringe players' targets/carries/air_yards contribute to correct team denominator
 for share features. Filtering before team totals would inflate target_share and
 carry_share for remaining players.
 
-**Expected output:** ~35-40K rows with all stat columns + fantasy points columns for all three scoring formats (standard, half-PPR, full PPR) and their corresponding floor columns.
+**Expected output:** ~35-40K rows with all stat columns + fantasy points columns for all three scoring formats (standard, half-PPR, full PPR).
 Rows are reduced to ~30-35K after the min-games filter in `build_features()`.
 
 ---
@@ -207,11 +178,11 @@ Rows are reduced to ~30-35K after the min-games filter in `build_features()`.
 
 **Complete feature catalog:**
 
-##### Rolling Features (93 features: 90 mean/std/max + 3 min)
+##### Rolling Features (84 features: 81 mean/std/max + 3 min)
 
 For each combination of stat × window × aggregation:
 
-**Stats (10):** `fantasy_points`, `fantasy_points_floor`, `targets`, `receptions`, `carries`, `rushing_yards`, `receiving_yards`, `passing_yards`, `attempts`, `snap_pct`
+**Stats (9):** `fantasy_points`, `targets`, `receptions`, `carries`, `rushing_yards`, `receiving_yards`, `passing_yards`, `attempts`, `snap_pct`
 
 **Windows (3):** 3, 5, 8 weeks
 
@@ -414,6 +385,13 @@ df.drop(columns=drop_cols, inplace=True)
 **Splitting rush vs receiving points provides position-specific matchup signal:**
 an RB facing a defense weak against the run but strong against dump-offs gets
 a different (and more accurate) projection than one facing the reverse.
+
+**Per-position whitelist:** all four are always engineered, but the include-whitelist
+differs by position. QB/WR/TE keep all four. RB drops `opp_fantasy_pts_allowed_to_pos`
+(VIF 193 — the total is ≈ rush + recv, and the rush/recv split carries directional
+info the sum collapses) and `opp_def_rank_vs_pos` (rank() of that dropped sum,
+Spearman 1.0); RB keeps only the `opp_rush_pts_allowed_to_pos` /
+`opp_recv_pts_allowed_to_pos` components. See `src/{pos}/config.py`.
 
 **Pipeline (leakage-safe — defense stats use only prior weeks):**
 1. From `schedules`, determine each team's opponent for each week
@@ -653,11 +631,65 @@ class RidgeMultiTarget:
         pass
 
     def predict(self, X: np.ndarray) -> dict[str, np.ndarray]:
-        # Returns dict of per-target predictions (clamped >= 0) + "total" (sum)
+        # Returns dict of per-target predictions (clamped >= 0).
+        # Fantasy-point aggregation happens post-hoc, not here.
         pass
 
     def get_feature_importance(self, target_name: str) -> pd.Series:
         # Return |coef_| for a specific target
+        pass
+```
+
+#### `class ElasticNetMultiTarget`
+
+```python
+class ElasticNetMultiTarget:
+    """ElasticNet (L1+L2) parallel to RidgeMultiTarget. Replaces only the vanilla
+    linear branch with ElasticNet; two-stage and ordinal-classification targets
+    keep their domain-specific classes. Never uses PCA (L1 on a rotated basis
+    zeros components, not original features)."""
+
+    def __init__(self, target_names: list[str],
+                 alpha: float | dict[str, float] = 1.0,
+                 l1_ratio: float | dict[str, float] = 0.5,
+                 two_stage_targets: dict | None = None,
+                 classification_targets: dict | None = None,
+                 non_negative_targets: set | None = None,
+                 max_iter: int = 5000, tol: float = 1e-4):
+        # One ElasticNet model per target with its own alpha / l1_ratio
+        pass
+
+    def fit(self, X_train: np.ndarray, y_train_dict: dict) -> None:
+        pass
+
+    def predict(self, X: np.ndarray) -> dict[str, np.ndarray]:
+        # Returns dict of per-target predictions (non-negative subset clamped >= 0)
+        pass
+```
+
+#### `class LightGBMMultiTarget`
+
+```python
+class LightGBMMultiTarget:
+    """Separate LightGBM regressors per target (mirrors RidgeMultiTarget interface)."""
+
+    def __init__(self, target_names: list[str],
+                 n_estimators: int = 500, learning_rate: float = 0.05,
+                 num_leaves: int = 31, max_depth: int = -1,
+                 subsample: float = 0.8, colsample_bytree: float = 0.8,
+                 reg_lambda: float = 1.0, reg_alpha: float = 0.0,
+                 min_child_samples: int = 20, min_split_gain: float = 0.0,
+                 objective: str = "huber", seed: int = 42):
+        # One LGBMRegressor per target sharing these params
+        pass
+
+    def fit(self, X_train, y_train_dict, X_val=None, y_val_dict=None,
+            feature_names=None) -> None:
+        # Optional eval_set enables early stopping (30 rounds)
+        pass
+
+    def predict(self, X, non_negative_targets: set[str] | None = None) -> dict[str, np.ndarray]:
+        # Returns dict of per-target predictions; default clamps every target >= 0
         pass
 ```
 
@@ -675,7 +707,7 @@ class MultiHeadNet(nn.Module):
         pass
 
     def forward(self, x: torch.Tensor) -> dict:
-        # Returns dict with per-target predictions + "total"
+        # Returns dict with per-target predictions (no aggregated "total" key)
         # Each head output passes through clamp(min=0) for non-negativity
         # (configurable per-target via non_negative_targets parameter)
         pass
@@ -689,8 +721,8 @@ class MultiHeadNet(nn.Module):
 ```
 Input (N features) → Linear(N, 128) → BatchNorm(128) → ReLU → Dropout(0.15)
                    → Linear(128, 64) → BatchNorm(64) → ReLU → Dropout(0.15)
-                   ├→ rushing_tds head:     GatedTDHead(64, gate_hidden=16, value_hidden=64)
-                   ├→ receiving_tds head:   GatedTDHead(64, gate_hidden=16, value_hidden=64)
+                   ├→ rushing_tds head:     GatedHead(64, gate_hidden=16, value_hidden=64)
+                   ├→ receiving_tds head:   GatedHead(64, gate_hidden=16, value_hidden=64)
                    ├→ rushing_yards head:   Linear(64, 48) → ReLU → Linear(48, 1) → clamp(min=0)
                    ├→ receiving_yards head: Linear(64, 48) → ReLU → Linear(48, 1) → clamp(min=0)
                    ├→ receptions head:      Linear(64, 48) → ReLU → Linear(48, 1) → clamp(min=0)
@@ -702,10 +734,12 @@ Input (N features) → Linear(N, 128) → BatchNorm(128) → ReLU → Dropout(0.
 By default all targets are clamped to >= 0. DST overrides this to leave `pts_allowed_bonus`
 unconstrained (range: -4 to +10).
 
-**Note:** RB's TD heads (`rushing_tds`, `receiving_tds`) are wrapped by `GatedTDHead`,
-a zero-inflated hurdle head: a sigmoid gate predicts `P(TD > 0)` and a Softplus branch
-predicts `E[TD | TD > 0]`; the product is the expected TD count. WR/TE use one gated head
-(`receiving_tds`); QB/K/DST do not use gated TD heads.
+**Note:** sparse count heads are wrapped by `GatedHead`, a zero-inflated hurdle head:
+a sigmoid gate predicts `P(stat > 0)` and a Softplus branch predicts `E[stat | stat > 0]`;
+the product is the expected count. The gated set is configured per position via
+`gated_targets`: RB gates three (`receptions`, `rushing_tds`, `receiving_tds`); WR/TE
+gate two (`receptions`, `receiving_tds`); QB/K/DST use no gated heads. (The diagram above
+shows the TD heads gated as the illustrative case; RB also gates `receptions`.)
 
 **Optimizer and loss (RB raw-stat example, from `src/rb/config.py`):**
 ```python
@@ -943,7 +977,7 @@ CV_VAL_SEASONS = [2021, 2022, 2023, 2024]
 # === Features: Rolling ===
 ROLLING_WINDOWS = [3, 5, 8]
 ROLL_STATS = [
-    "fantasy_points", "fantasy_points_floor", "targets", "receptions",
+    "fantasy_points", "targets", "receptions",
     "carries", "rushing_yards", "receiving_yards", "passing_yards",
     "attempts", "snap_pct",
 ]
