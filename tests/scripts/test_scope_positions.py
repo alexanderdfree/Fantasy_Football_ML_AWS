@@ -75,9 +75,7 @@ class TestGlobalTriggers:
         [
             "src/shared/pipeline.py",
             "src/shared/team_box_score.py",  # the e62807e trigger
-            "src/batch/launch.py",
             "src/batch/train.py",
-            "src/batch/benchmark.py",
             "src/data/loader.py",
             "src/features/foo.py",
             "src/config.py",
@@ -202,16 +200,25 @@ class TestSrcBatchTuneAblateExcluded:
         "path",
         [
             "src/batch/train.py",
-            "src/batch/launch.py",
-            "src/batch/benchmark.py",
             "src/batch/__init__.py",
             # "turnaround" contains "tur..." but NOT "tune" as a substring —
             # confirms the regex doesn't false-match on similar-looking names.
             "src/batch/turnaround.py",
+            # Precision: the launch.py/benchmark.py carve-out is an EXACT
+            # basename match, so a differently-named file still fans out.
+            "src/batch/benchmark_runner.py",
         ],
     )
     def test_src_batch_real_training_still_triggers(self, path):
         assert scope_positions.compute_positions([path]) == ALL_SIX
+
+    @pytest.mark.parametrize("path", ["src/batch/launch.py", "src/batch/benchmark.py"])
+    def test_src_batch_orchestration_files_excluded(self, path):
+        # launch.py (job submission) and benchmark.py (read-only post-hoc
+        # benchmark aggregation) never change a model artifact, so editing them
+        # must NOT trigger a 6-position GPU retrain. Exact-basename match —
+        # benchmark_runner.py above still fans out.
+        assert scope_positions.compute_positions([path]) == []
 
     def test_mixed_tune_and_train_triggers(self):
         # A diff that touches both a tuning file AND a real training file

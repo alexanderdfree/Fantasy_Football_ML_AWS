@@ -237,11 +237,16 @@ jobs:
           # positions reach SUCCEEDED. --skip-upload because CI has no local
           # data/splits/*.parquet — the splits in s3://ff-predictor-training/data/
           # are refreshed out-of-band by a developer running launch.py from a
-          # workstation.
+          # workstation. --append-history false because the dedicated
+          # "Append Batch run to benchmark_history/" step below runs
+          # benchmark.py --download-only with the image SHA + PR number;
+          # letting launch.py also auto-append would write a duplicate,
+          # mislabeled row per run.
           python -m src.batch.launch \
             --positions $POSITIONS \
             --seed "$SEED" \
-            --skip-upload
+            --skip-upload \
+            --append-history false
 
       - name: Verify model artifact freshness
         # Anchor on when training STARTED, not "now" — Spot parallelism makes
