@@ -88,6 +88,22 @@ def build_position_features(
             f"columns. Missing: {missing}"
         )
 
+    # Remediate the depth_chart_rank "-1 = no depth-chart data" sentinel set in
+    # src/data/loader.py. Left raw, -1 is out-of-band vs legitimate ranks (>=1),
+    # so StandardScaler maps it to a large negative z-score and the attention NN
+    # extrapolates badly; for seasons with no depth-chart coverage (e.g. 2025,
+    # entirely missing) EVERY row hits the sentinel and the metric regresses.
+    # Impute to the train mean of real ranks (leakage-safe) so missing -> ~0
+    # after standardization (neutral). loader.py defers this consumer-side fix
+    # by design. Positions whose ranks are *all* sentinel (e.g. K — kickers are
+    # never on depth charts) yield a NaN mean; the guard leaves them constant,
+    # which StandardScaler's zero-variance handling already neutralizes to 0.
+    if "depth_chart_rank" in pos_train.columns:
+        fill_val = pos_train["depth_chart_rank"].replace(-1, np.nan).mean()
+        if pd.notna(fill_val):
+            for df in dfs:
+                df["depth_chart_rank"] = df["depth_chart_rank"].replace(-1, fill_val)
+
     for df in dfs:
         df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 

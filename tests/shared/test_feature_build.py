@@ -216,3 +216,56 @@ class TestFillNansWithTrainMeans:
         test = pd.DataFrame({"feat_a": [1.0]})
         with pytest.raises(KeyError, match="not in train_df"):
             fill_nans_with_train_means(train, val, test, ["feat_a", "feat_missing"])
+
+
+# ---------------------------------------------------------------------------
+# depth_chart_rank "-1 = missing depth chart" sentinel remediation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestDepthChartRankSentinel:
+    """build_position_features imputes the loader's -1 sentinel
+    (src/data/loader.py) to the train mean of real ranks so it never reaches
+    StandardScaler as an out-of-band ~-4 sigma value. Regression guard for the
+    QB attn_nn_mae 6.5 -> 8.0 jump caused by 2025's fully-missing depth charts.
+    """
+
+    @staticmethod
+    def _df_with_dcr(ranks: list[float]) -> pd.DataFrame:
+        df = _minimal_df(len(ranks))
+        df["depth_chart_rank"] = [float(r) for r in ranks]
+        return df
+
+    def test_minus_one_imputed_to_train_real_mean(self):
+        # Train real ranks {1,2,3} (+ a sentinel row); test entirely sentinel
+        # (the 2025 case). -1 must become the train real-rank mean (2.0).
+        train = self._df_with_dcr([1.0, 2.0, 3.0, -1.0])
+        val = self._df_with_dcr([1.0, -1.0])
+        test = self._df_with_dcr([-1.0, -1.0])
+        cfg = _make_cfg(["depth_chart_rank"])
+        pos_train, pos_val, pos_test = build_position_features(
+            train, val, test, cfg, ["depth_chart_rank"]
+        )
+        # train real mean = (1+2+3)/3 = 2.0; applied (leakage-safe) to all splits
+        assert (pos_test["depth_chart_rank"] == 2.0).all()
+        assert (pos_test["depth_chart_rank"] != -1).all()
+        assert pos_test["depth_chart_rank"].between(1, 3).all()
+        assert sorted(pos_train["depth_chart_rank"]) == [1.0, 2.0, 2.0, 3.0]
+        # val: real rank preserved, sentinel imputed to 2.0
+        assert list(pos_val["depth_chart_rank"]) == [1.0, 2.0]
+
+    def test_all_sentinel_position_left_constant(self):
+        # K-like: depth_chart_rank is all -1 (kickers are never on depth
+        # charts). The NaN-mean guard skips imputation, leaving the constant
+        # -1 — StandardScaler's zero-variance handling neutralizes it to 0.
+        train = self._df_with_dcr([-1.0, -1.0, -1.0])
+        val = self._df_with_dcr([-1.0])
+        test = self._df_with_dcr([-1.0])
+        cfg = _make_cfg(["depth_chart_rank"])
+        pos_train, pos_val, pos_test = build_position_features(
+            train, val, test, cfg, ["depth_chart_rank"]
+        )
+        assert (pos_train["depth_chart_rank"] == -1).all()
+        assert (pos_val["depth_chart_rank"] == -1).all()
+        assert (pos_test["depth_chart_rank"] == -1).all()
