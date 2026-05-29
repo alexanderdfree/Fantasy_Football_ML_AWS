@@ -579,6 +579,14 @@ def _wiki_rewrite_href(href: str, doc_path: str) -> str:
     target, _, anchor = href.partition("#")
     if not target:
         return href
+    # Reject absolute targets up front. ``os.path.join(doc_dir, target)``
+    # silently DISCARDS doc_dir when ``target`` is absolute (e.g. "/etc/passwd"),
+    # so the ``..``-prefix guard below never sees it and we'd emit a malformed
+    # ``<blob_base>//etc/passwd`` external link. Author-controlled markdown is the
+    # trust boundary, but a copy/pasted fragment from external docs can slip an
+    # absolute path past defense-in-depth — make it inert.
+    if os.path.isabs(target):
+        return "#"
     doc_dir = os.path.dirname(doc_path)
     resolved = os.path.normpath(os.path.join(doc_dir, target))
     target_slug = _WIKI_PATH_TO_SLUG.get(resolved)
@@ -602,10 +610,6 @@ def _render_wiki_doc(slug: str) -> str:
     is atomic at the bytecode level.
     """
     cache_key = ("wiki", slug)
-    with _wiki_cache_lock:
-        cached = _cache.get(cache_key)
-        if cached is not None:
-            return cached
     meta = WIKI_DOCS[slug]
     # WIKI_DOCS paths are relative to repo root (e.g. "docs/ARCHITECTURE.md").
     # After the src/ migration this module lives at src/serving/app.py, so
@@ -614,6 +618,22 @@ def _render_wiki_doc(slug: str) -> str:
     # both local dev and the deployed container.
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     abs_path = os.path.join(repo_root, meta["path"])
+    # mtime-keyed cache: the wiki docs are rendered from on-disk markdown that a
+    # docs-only deploy or an in-place edit can change under a long-lived worker.
+    # Caching the HTML indefinitely (the original behaviour) served the stale
+    # render until a container restart. Stat the source and store ``(mtime, html)``
+    # so an edit (newer mtime) re-renders. ``os.stat`` is cheap (~µs); the render
+    # + bleach pass is the expensive part we still skip on the common hit.
+    try:
+        current_mtime = os.stat(abs_path).st_mtime
+    except OSError:
+        # File vanished (shouldn't happen for a registered doc) — fall through to
+        # ``open`` below, which raises a clear error the route turns into a 500.
+        current_mtime = None
+    with _wiki_cache_lock:
+        cached = _cache.get(cache_key)
+        if cached is not None and current_mtime is not None and cached[0] == current_mtime:
+            return cached[1]
     with open(abs_path, encoding="utf-8") as f:
         text = f.read()
     html = markdown.markdown(
@@ -636,8 +656,15 @@ def _render_wiki_doc(slug: str) -> str:
         protocols=_WIKI_ALLOWED_PROTOCOLS,
         strip=True,
     )
+    # Re-stat right before caching so the stored mtime matches the bytes we just
+    # rendered (the file could have been rewritten between the read above and
+    # here); a subsequent edit then still produces a newer mtime and re-renders.
     with _wiki_cache_lock:
-        _cache[cache_key] = html
+        try:
+            render_mtime = os.stat(abs_path).st_mtime
+        except OSError:
+            render_mtime = current_mtime
+        _cache[cache_key] = (render_mtime, html)
     return html
 
 
@@ -728,16 +755,27 @@ def _apply_position_models(train, val, test, pos, results):
 
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)
     pos_index = pos_test.index
-    errors = _cache.setdefault("position_load_errors", {})
-    # Drop stale entries for this position before re-trying. Per-model failures
-    # below write ``{pos}_{model_type}`` keys (e.g. ``"QB_ridge"``); without
-    # this clear, a previous attempt's keys would linger after a successful
-    # refresh and keep ``/health`` reporting "degraded" indefinitely — which
-    # used to latch the ALB target to 503 and trigger ECS replacement (see
-    # alexfree.me, 2026-05-21 12:16 UTC). Match the key-parsing rule in
-    # ``_degraded_positions``: bare ``pos`` OR ``{pos}_*``.
-    for stale_key in [k for k in errors if k == pos or k.startswith(f"{pos}_")]:
-        errors.pop(stale_key, None)
+    # ``position_load_errors`` is shared across the parallel pre-warm workers
+    # (one thread per position in ``_ensure_all_positions_loaded``). The
+    # get-or-create (``setdefault``) and the iterate-then-pop clear loop below
+    # are read-modify-write sequences that can interleave between workers, so
+    # hold ``_results_write_lock`` for them — the same lock that already guards
+    # the shared ``results`` DataFrame writes lower down. (Per-model
+    # ``errors[f"{pos}_..."] = ...`` assignments to distinct ``{pos}_*`` keys are
+    # individually atomic under the GIL and only the worker owning ``pos`` ever
+    # writes them, so those don't need the lock — only the dict-creation and the
+    # multi-step clear do.)
+    with _results_write_lock:
+        errors = _cache.setdefault("position_load_errors", {})
+        # Drop stale entries for this position before re-trying. Per-model
+        # failures below write ``{pos}_{model_type}`` keys (e.g. ``"QB_ridge"``);
+        # without this clear, a previous attempt's keys would linger after a
+        # successful refresh and keep ``/health`` reporting "degraded"
+        # indefinitely — which used to latch the ALB target to 503 and trigger
+        # ECS replacement (see alexfree.me, 2026-05-21 12:16 UTC). Match the
+        # key-parsing rule in ``_degraded_positions``: bare ``pos`` OR ``{pos}_*``.
+        for stale_key in [k for k in errors if k == pos or k.startswith(f"{pos}_")]:
+            errors.pop(stale_key, None)
 
     def _combine_total(preds: dict, fmt: str = "ppr") -> np.ndarray:
         # K — sign-vectored sum, no reception target, format-invariant.
@@ -813,10 +851,13 @@ def _apply_position_models(train, val, test, pos, results):
         errors[f"{pos}_nn"] = str(e)
         print(f"[app] {pos} nn load failed: {e!r} — NaN'ing nn_pred")
 
-    # Attention NN — enabled per-position via ``reg["train_attention_nn"]``.
-    # Flat-history variant for QB/RB/WR/TE/DST; nested per-kick variant for K.
-    # Positions without an attention model leave the column as NaN so the
-    # frontend renders "--".
+    # Attention NN — gated per-position via ``reg["train_attention_nn"]``.
+    # ALL SIX positions train AND serve an attention NN today (DST landed via
+    # cc0c627, K via 801b61a — see CLAUDE.md "six-position symmetry"): flat-
+    # history variant for QB/RB/WR/TE/DST, nested per-kick variant for K. The
+    # per-position guard is a forward-compatibility fallback — a future position
+    # that left ``train_attention_nn`` False would leave the column NaN so the
+    # frontend renders "--"; no prod position hits that path now.
     attn_nn_preds = None
     attn_nn_totals = None
     if reg.get("train_attention_nn", False) and reg.get("attn_nn_file"):
@@ -898,7 +939,23 @@ def _apply_position_models(train, val, test, pos, results):
                     X_game_history=game_hist_test,
                 )
             else:
-                hist_stats = [s for s in reg.get("attn_history_stats", []) if s in pos_test.columns]
+                # Pass the FULL attn_history_stats list — identical to the
+                # training path (src.shared.pipeline builds the train/val/test
+                # history with cfg["attn_history_stats"] unfiltered). A previous
+                # pre-filter (``[s for s in ... if s in pos_test.columns]``) was
+                # added here to dodge the KeyError that build_game_history_arrays
+                # raises on a missing column (PR #328), but that filter created a
+                # silent train/inference drift: dropping a column the saved model
+                # was trained on shrinks game_dim, mismatching the model's
+                # first-layer weight shape (best case a state_dict load error,
+                # worst case columns mapped to the wrong slots → silently wrong
+                # preds). CLAUDE.md "Always diff training vs inference paths".
+                # The KeyError is the correct fail-loud signal that serving's
+                # feature build didn't produce a column the model needs; it's
+                # caught by the enclosing ``except Exception`` which records a
+                # ``{pos}_attn_nn`` error and NaN's the attn_nn pred (frontend
+                # renders "--") — graceful degradation, not a silent wrong number.
+                hist_stats = list(reg.get("attn_history_stats", []))
                 max_seq_len = reg.get("attn_max_seq_len", 17)
                 hist_test, mask_test = build_game_history_arrays(
                     pos_test, history_stats=hist_stats, max_seq_len=max_seq_len
@@ -958,8 +1015,11 @@ def _apply_position_models(train, val, test, pos, results):
             attn_nn_preds = None
             attn_nn_totals = None
 
-    # LightGBM — only trained for QB/RB/WR/TE. Same no-column-emitted policy for
-    # K/DST as Attention NN.
+    # LightGBM — the only model NOT trained for every position: QB/RB/WR/TE
+    # only (gated by ``reg["train_lightgbm"]``). K/DST leave lgbm_pred NaN so the
+    # frontend renders "--". (Attention NN, by contrast, IS trained for all six —
+    # see the attn_nn block above; an older comment here wrongly grouped attn_nn
+    # with lgbm as K/DST-absent.)
     lgbm_preds = None
     lgbm_totals = None
     if reg.get("train_lightgbm", False):
@@ -976,7 +1036,7 @@ def _apply_position_models(train, val, test, pos, results):
 
     # Write into results — NaN the pred column when its model failed so the
     # frontend renders "--" instead of a misleading 0.0 (the DataFrame
-    # initializes the per-format columns to 0.0 / NaN in _load_base_data_locked).
+    # initializes every per-format column to NaN in _load_base_data_locked).
     # We write three format-specific columns per model AND the legacy unsuffixed
     # column (a PPR alias) so existing fixtures / tests keep working.
     #
@@ -1129,6 +1189,18 @@ def _load_base_data_locked():
             if col in pos_test_df.columns:
                 pos_rows[col] = pos_test_df[col].values
             elif col in ("fantasy_points_half_ppr", "fantasy_points_standard"):
+                # NOT a fabricated value: K and DST scoring is format-invariant.
+                # The three scoring dicts (SCORING_STANDARD/HALF_PPR/PPR) differ
+                # ONLY in the ``receptions`` weight (0.0 / 0.5 / 1.0), and neither
+                # K (sign-vector FG/PAT sum) nor DST (linear stats + tier-mapped
+                # PA/YA bonuses) has a reception term — so their standard,
+                # half-PPR, and PPR totals are identically equal to ``fantasy_points``
+                # (PPR). The K/DST splits carry only the unsuffixed ``fantasy_points``
+                # column, so we mirror it into the suffixed columns here. This keeps
+                # ``/api/predictions?scoring=half_ppr|standard`` showing the correct
+                # ``actual`` for K/DST players (via _records_to_player_rows ->
+                # _actual_col) instead of null. (For QB/RB/WR/TE the suffixed
+                # columns come straight from the split via the first branch.)
                 pos_rows[col] = pos_test_df["fantasy_points"].values
             elif col == "headshot_url":
                 pos_rows[col] = ""
@@ -1146,21 +1218,25 @@ def _load_base_data_locked():
     k_test = k_test_reindexed
     dst_test = dst_test_reindexed
 
-    # Initialize per-model, per-format prediction columns. ridge/nn default to
-    # 0.0 (every row gets a value once the position loads); attn_nn/lgbm default
-    # to NaN so any rows whose model failed to load are correctly excluded from
-    # overall MAE in _compute_metrics_locked (every position trains both attn_nn
-    # and lgbm in production, but per-model load failures NaN those preds — see
-    # _apply_position_models).
+    # Initialize ALL per-model, per-format prediction columns to NaN. A failed
+    # or never-loaded model must leave its pred column NaN so the row is
+    # excluded from overall MAE in _compute_metrics_locked and the frontend
+    # renders "--". Previously ridge/nn defaulted to 0.0 while attn_nn/lgbm
+    # defaulted to NaN — inconsistent failure semantics that let a failed ridge
+    # or nn load silently serve 0.0 as if it were a real prediction (a 0.0 ridge
+    # pred is indistinguishable from a genuine low projection and skews MAE).
+    # On success _apply_position_models overwrites every row for the position;
+    # on a per-model failure it NaN's that model's column explicitly — so NaN is
+    # the correct "no result" sentinel for all four models uniformly.
     for fmt in _VALID_SCORING:
-        results[_pred_col("ridge", fmt)] = 0.0
-        results[_pred_col("nn", fmt)] = 0.0
+        results[_pred_col("ridge", fmt)] = np.nan
+        results[_pred_col("nn", fmt)] = np.nan
         results[_pred_col("attn_nn", fmt)] = np.nan
         results[_pred_col("lgbm", fmt)] = np.nan
     # Legacy unsuffixed columns kept as a PPR alias so existing tests / code
     # that reads results["ridge_pred"] doesn't break.
-    results["ridge_pred"] = 0.0
-    results["nn_pred"] = 0.0
+    results["ridge_pred"] = np.nan
+    results["nn_pred"] = np.nan
     results["attn_nn_pred"] = np.nan
     results["lgbm_pred"] = np.nan
 
@@ -1178,6 +1254,50 @@ def _load_base_data_locked():
     _cache["results"] = results
     _cache["positions_loaded"] = set()
     _cache["base_loaded"] = True
+
+
+def _refresh_k_data_locked():
+    """Re-derive K's split + per-kick records from current on-disk data.
+
+    Called from ``_ensure_position_loaded``'s in-flight-refresh branch when K's
+    sentinel advances. Caller must hold ``_cache_lock``. Idempotent and
+    best-effort: a reload failure leaves the boot-cached K data in place (better
+    a slightly-stale tensor than a crashed refresh) and surfaces via the normal
+    ``_apply_position_models`` error path on the upcoming load.
+
+    The fresh ``k_test`` is reindexed onto the EXISTING K-row index in
+    ``_cache["results"]`` so ``_apply_position_models``' ``pos_index`` write still
+    lands on the right rows. If the fresh test frame's row count diverges from
+    the cached K rows (e.g. a mid-season PBP sync added kicker-weeks — rare; the
+    model-tarball poller and the splits refresh are separate paths), we refresh
+    only ``k_kicks_df`` (the nested-history source the finding is about) and keep
+    the existing split frame, because rebuilding the results row layout for one
+    position mid-flight would misalign every other position's cached rows.
+    """
+    if "results" not in _cache or "splits" not in _cache:
+        return
+    try:
+        k_train, k_val, k_test, k_kicks_df = _load_k_splits()
+    except Exception as e:  # noqa: BLE001 — refresh is best-effort
+        print(f"[K] data refresh failed: {e!r} — reusing boot-cached k_kicks_df/splits")
+        return
+    # Refreshing the per-kick records is the core of the fix: the new model's
+    # nested-history tensor must be built from the data it was trained against.
+    _cache["k_kicks_df"] = k_kicks_df
+    results = _cache["results"]
+    existing_k_index = results.index[results["position"] == "K"]
+    if len(existing_k_index) == len(k_test):
+        k_test = k_test.copy()
+        k_test.index = existing_k_index
+        _cache["splits"]["K"] = (k_train, k_val, k_test)
+    else:
+        # Row-count drift — keep the existing (correctly-indexed) split frame so
+        # the per-position write stays aligned; only the kicks_df is refreshed.
+        print(
+            f"[K] refreshed kicks_df but split row count changed "
+            f"({len(existing_k_index)} cached K rows vs {len(k_test)} fresh) — "
+            f"keeping existing split index to preserve results-row alignment"
+        )
 
 
 def _ensure_position_loaded(pos):
@@ -1254,6 +1374,24 @@ def _ensure_position_loaded(pos):
             _cache.get("positions_failed", set()).discard(pos)
             _cache.get("positions_failed_mtime", {}).pop(pos, None)
             _cache.get("position_load_errors", {}).pop(pos, None)
+            # Also drop the stale per-target MAEs for this position. Without this,
+            # if the upcoming _apply_position_models fails (slow-path exception
+            # below), /api/position_details would keep serving the PREVIOUS
+            # load's MAEs while /health reports the position failed and its preds
+            # are NaN — a confusing inconsistency. _apply_position_models only
+            # overwrites position_details[pos] on success, so we must clear it on
+            # invalidation to avoid the stale-survives-failed-reload case.
+            _cache.get("position_details", {}).pop(pos, None)
+            # K's nested attention builds its [N,G,K,kick_dim] history tensor from
+            # the per-kick records in ``_cache["k_kicks_df"]`` (and reads its split
+            # from ``_cache["splits"]["K"]``). Both were populated once at boot in
+            # _load_base_data_locked and never refreshed. If a refresh swaps in a
+            # K model trained on a freshly-synced PBP week, reusing the stale
+            # kicks_df feeds the new model an inference tensor from the OLD data —
+            # silent divergence. Re-derive both from the current on-disk data so
+            # the new model sees the data distribution it was trained against.
+            if pos == "K":
+                _refresh_k_data_locked()
             _invalidate_metrics_cache(reason=f"in-flight-refresh:{pos}")
             print(f"[{pos}] in-flight refresh detected (sentinel mtime advanced) — re-loading")
         if pos in _cache.get("positions_loaded", set()):
@@ -1316,6 +1454,31 @@ def _ensure_all_positions_loaded():
     errors = _cache.setdefault("position_load_errors", {})
     mtimes = _cache.setdefault("positions_mtime", {})
     failed_mtimes = _cache.setdefault("positions_failed_mtime", {})
+    details = _cache.setdefault("position_details", {})
+    # Re-check per-position sentinels against the recorded load mtimes. After a
+    # successful pre-warm every position sits in ``loaded``, so the bare
+    # ``p not in loaded`` filter would leave ``pending`` empty and this aggregate
+    # rebuild (driven by _ensure_metrics' sentinel-advance branch) would recompute
+    # metrics over STALE per-position preds — the per-position slow path in
+    # _ensure_position_loaded re-applies an advanced position, but this all-
+    # positions orchestrator never did. Evict any position whose on-disk sentinel
+    # advanced beyond its stored value so it gets re-applied against the new model
+    # below. Mirrors the per-position cleanup (drop loaded/failed/mtime/errors/
+    # details; refresh K's per-kick data).
+    for pos in _ALL_POSITIONS:
+        stored = mtimes.get(pos, -1.0)
+        if stored != -1.0 and refresh_sentinel_mtime(pos) > stored:
+            loaded.discard(pos)
+            failed.discard(pos)
+            mtimes.pop(pos, None)
+            failed_mtimes.pop(pos, None)
+            errors.pop(pos, None)
+            for stale_key in [k for k in errors if k.startswith(f"{pos}_")]:
+                errors.pop(stale_key, None)
+            details.pop(pos, None)
+            if pos == "K":
+                _refresh_k_data_locked()
+            print(f"[{pos}] sentinel advanced post-prewarm — re-applying in aggregate rebuild")
     pending = [p for p in _ALL_POSITIONS if p not in loaded and p not in failed]
 
     def _load_one(pos):
@@ -1646,9 +1809,21 @@ def _ensure_metrics():
         # (e.g. /api/metrics with all positions still marked loaded against
         # stale mtimes), so the sentinel sweep here is the second line of
         # defense.
-        if "metrics_by_format" in _cache:
+        sentinel_advanced = "metrics_by_format" in _cache
+        if sentinel_advanced:
             _invalidate_metrics_cache(reason="sentinel-advance")
-        if _try_hydrate_from_disk():
+        # Only re-hydrate from disk on a genuine cold start (no in-memory
+        # aggregate to begin with). On a sentinel advance we MUST NOT hydrate:
+        # _invalidate_metrics_cache's unlink is best-effort (contextlib.suppress
+        # on OSError — NFS lag, a lost race with another writer, a perms blip can
+        # all leave the stale predictions.parquet/metrics.json/fingerprint.json
+        # in place), and a sentinel touch doesn't change any model file's
+        # (size, head-bytes) so the fingerprint still matches — _try_hydrate_from_disk
+        # would re-load the exact stale aggregate we just invalidated, silently
+        # un-invalidating the refresh. Recompute from the (now re-applied)
+        # per-position preds instead and let _compute_metrics_locked overwrite
+        # the disk cache with fresh content.
+        if not sentinel_advanced and _try_hydrate_from_disk():
             return
         _ensure_all_positions_loaded()
         _compute_metrics_locked()
@@ -1701,7 +1876,9 @@ def _compute_metrics_locked():
                 per_format[name] = {"overall": None, "by_position": []}
                 continue
             pred_series = results[pred_col]
-            # Skip rows where this model has no prediction (K/DST for attn/lgbm).
+            # Skip rows where this model has no prediction (K/DST for lgbm, or
+            # any position whose model failed to load). attn_nn IS trained for
+            # all six positions, so K/DST attn_nn rows are real, not skipped.
             available_mask = pred_series.notna().values
             if not available_mask.any():
                 per_format[name] = {"overall": None, "by_position": []}
@@ -1909,8 +2086,10 @@ def api_weekly_accuracy():
     scoring = _validate_scoring(request.args.get("scoring", "ppr"))
     results, _ = _get_data(scoring)
     actual = results[_actual_col(scoring)].values
-    # Per-row abs error; NaN where a model has no prediction (K/DST attn/lgbm)
-    # so groupby.mean() excludes those rows from that model's weekly MAE.
+    # Per-row abs error; NaN where a model has no prediction (K/DST for lgbm,
+    # plus any position whose model failed to load) so groupby.mean() excludes
+    # those rows from that model's weekly MAE. attn_nn is trained for all six
+    # positions, so K/DST attn_nn rows carry real preds and are not NaN.
     err_df = results.assign(
         _ridge_err=np.abs(actual - results[_pred_col("ridge", scoring)].values),
         _nn_err=np.abs(actual - results[_pred_col("nn", scoring)].values),

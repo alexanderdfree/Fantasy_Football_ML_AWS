@@ -253,6 +253,13 @@ jobs:
           # run would otherwise trip the threshold on early positions'
           # artifacts that aged past 1200s while later positions trained.
           train_started_at="${{ steps.train.outputs.started_at }}"
+          # Empty anchor ⇒ the train step never recorded started_at; the
+          # arithmetic below would treat "" as 0 and false-pass the gate
+          # without verifying freshness. Fail loud (mirrors train-batch.yml).
+          if [ -z "$train_started_at" ]; then
+            echo "ERROR: train step did not emit started_at — cannot verify artifact freshness." >&2
+            exit 1
+          fi
           echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
           echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
           fail=0
@@ -338,16 +345,25 @@ jobs:
           else
             echo "No PR resolved for $HEAD_SHA (direct push or workflow_dispatch)"
           fi
-          # ``--git-hash $GITHUB_SHA``: pin the recorded SHA to the image
-          # SHA, not the workspace HEAD. Mirrors train-batch.yml; see the
-          # TODO.md "Benchmark git_hash" archive entry for the failure mode.
+          # ``--git-hash "$HEAD_SHA"``: pin the recorded SHA to the image
+          # build SHA (``github.event.workflow_run.head_sha``), NOT
+          # ``$GITHUB_SHA``. On a workflow_run trigger ``$GITHUB_SHA`` is the
+          # run-LEVEL head_sha (current main HEAD when queued), which diverges
+          # from the image-build SHA on rapid back-to-back merges. ``$HEAD_SHA``
+          # is the stable image-build SHA that FF_TRAIN_GIT_SHA stamps into the
+          # metrics, so the recorded git_hash matches benchmark.py's coherency
+          # check. Empty under workflow_dispatch → benchmark.py falls back to
+          # the workspace HEAD via get_git_hash(). Mirrors train-batch.yml; see
+          # the TODO.md "Benchmark git_hash" archive entry for the failure mode.
+          NOTE_SHA="${HEAD_SHA:-$GITHUB_SHA}"
+          NOTE_SHA="${NOTE_SHA::7}"
           python -m src.batch.benchmark \
             --download-only \
             --backend ec2 \
             --instance-type "g4dn.xlarge (On-Demand)" \
             --positions $POSITIONS \
-            --note "EC2 auto-run (${GITHUB_SHA::7})" \
-            --git-hash "$GITHUB_SHA" \
+            --note "EC2 auto-run (${NOTE_SHA})" \
+            --git-hash "$HEAD_SHA" \
             "${PR_ARGS[@]}"
 
       - name: Refresh ECS service to pick up new model + benchmark artifacts

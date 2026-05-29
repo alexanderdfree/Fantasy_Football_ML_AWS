@@ -79,6 +79,13 @@ class TestGlobalTriggers:
             "src/data/loader.py",
             "src/features/foo.py",
             "src/config.py",
+            # src/__init__.py is a top-level global like src/config.py — a
+            # package-level constant or re-export added there affects every
+            # position. Previously omitted from the train-mode regex (it
+            # only matched src/config.py), so an edit silently skipped the
+            # retrain; the train-detect path now mirrors the test-detect
+            # regex's ^src/(__init__|config)\.py$.
+            "src/__init__.py",
             "requirements.txt",
         ],
     )
@@ -261,6 +268,15 @@ class TestPathAnchoring:
         # `src/qb/config.py` should NOT match the `src/config.py` global,
         # only the per-position rule for QB.
         assert scope_positions.compute_positions(["src/qb/config.py"]) == ["QB"]
+
+    def test_init_py_match_is_exact(self):
+        # `src/__init__.py` is a top-level global → all six. A per-position
+        # `src/qb/__init__.py` is NOT the top-level global; it matches only
+        # the per-position prefix rule for QB (the `^src/(__init__|config)`
+        # alternation is anchored with a trailing `$`, so `src/qb/__init__.py`
+        # can't satisfy it).
+        assert scope_positions.compute_positions(["src/__init__.py"]) == ALL_SIX
+        assert scope_positions.compute_positions(["src/qb/__init__.py"]) == ["QB"]
 
     def test_requirements_dev_does_not_trigger_global(self):
         # Only top-level `requirements.txt` is the global; dev/test variants

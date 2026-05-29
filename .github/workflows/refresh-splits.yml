@@ -34,7 +34,7 @@ on:
   workflow_dispatch:
     inputs:
       kick_off_train:
-        description: "Trigger train-batch.yml after upload"
+        description: "Rebuild image + retrain (via batch-image.yml; respects BATCH_ACTIVE) after upload"
         type: boolean
         default: false
   push:
@@ -83,7 +83,7 @@ env:
 permissions:
   contents: read
   # ``actions: write`` is needed only for the optional ``kick_off_train``
-  # step's ``gh workflow run train-batch.yml`` call. Scoped to this workflow.
+  # step's ``gh workflow run batch-image.yml`` call. Scoped to this workflow.
   actions: write
 
 jobs:
@@ -310,25 +310,41 @@ jobs:
             --no-cli-pager > /dev/null
           echo "Kicked off ECS rolling deploy on $ECS_CLUSTER/$ECS_SERVICE."
 
-      - name: Trigger train-batch.yml
+      - name: Trigger retrain via image rebuild
         # Optional chain — if the operator wants the full
-        # regen-splits-then-retrain flow in one click, this dispatches the
-        # training workflow. Always dispatched against ``main`` rather than
-        # ``${GITHUB_REF}`` — if an operator ever runs refresh-splits.yml
-        # from a feature branch, propagating that ref would resolve
-        # train-batch.yml from the branch (possibly a stale copy with
-        # different inputs / job-def) instead of the production file on
-        # main. The splits we just uploaded affect every position equally,
-        # so the train-batch.yml on main is always the right target.
+        # regen-splits-then-retrain flow in one click, this dispatches
+        # ``batch-image.yml`` (NOT train-batch.yml directly). Routing through
+        # the image build matters for two reasons:
+        #
+        #   1. (was F78) Dispatching train-batch.yml directly would retrain on
+        #      whatever image is already in ECR — potentially stale relative to
+        #      the current main. batch-image.yml rebuilds + repushes the image,
+        #      registers the job-def revision, then fires its workflow_run
+        #      chain, so the retrain always runs the current code. It also
+        #      routes through train-batch.yml's dedup_check, which a direct
+        #      dispatch bypasses.
+        #   2. (was F117) batch-image.yml's downstream workflow_run fans out to
+        #      whichever train workflow the ``BATCH_ACTIVE`` repo variable
+        #      selects (train-batch.yml when true, train-ec2.yml when the EC2
+        #      rollback path is active). A direct ``gh workflow run
+        #      train-batch.yml`` hard-routed to Batch even during an EC2
+        #      rollback. Going through the image build respects the active-path
+        #      choice with no BATCH_ACTIVE logic duplicated here.
+        #
+        # Always dispatched against ``main`` rather than ``${GITHUB_REF}`` — if
+        # an operator ever runs refresh-splits.yml from a feature branch,
+        # propagating that ref would resolve batch-image.yml from the branch
+        # (possibly a stale copy) instead of the production file on main. The
+        # splits we just uploaded affect every position equally, so the
+        # main copy is always the right target.
         #
         # Only fires on workflow_dispatch (`inputs.kick_off_train`); on push
-        # auto-trigger, batch-image.yml + train-batch.yml fire independently
-        # via their own path filters, so chaining here would create a
-        # duplicate Batch run.
+        # auto-trigger, batch-image.yml fires independently via its own path
+        # filters, so chaining here would create a duplicate build + retrain.
         if: ${{ inputs.kick_off_train }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run train-batch.yml --ref main
+        run: gh workflow run batch-image.yml --ref main
 
       - name: Summary
         if: always()

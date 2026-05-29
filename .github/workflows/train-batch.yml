@@ -44,8 +44,11 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
-  ECS_CLUSTER: fantasy-cluster
-  ECS_SERVICE: fantasy-service
+  # No ECS_CLUSTER/ECS_SERVICE here — PR #330 removed the post-train ECS
+  # refresh step from this workflow (the serving container's in-flight
+  # manifest poller now picks up new stable artifacts without a forced
+  # rollover), so this path no longer touches ECS. The EC2 path keeps its
+  # ECS rollover, so train-ec2.yml still defines them.
   # Required for `uv pip install -r requirements-dev.txt` to resolve transitive
   # deps that exist on multiple indexes (e.g. `requests`, found on PyTorch CPU
   # index but at a different version than the one resolved by other deps —
@@ -92,6 +95,15 @@ jobs:
     # written by the train job ONLY after artifact-freshness passes, so
     # it also fixes the prior bug where a positions=empty run that
     # skipped train was treated as a "successful train" by dedup.
+    #
+    # Gated on BATCH_ACTIVE (mirroring the `train` job's gate) so the EC2
+    # rollback path doesn't burn CI minutes + an S3 head-object call on
+    # every batch-image.yml completion. workflow_dispatch still runs it so
+    # an operator smoke-test of the Batch path resolves dedup normally.
+    # When skipped, `train`'s `if:` already short-circuits on the same
+    # BATCH_ACTIVE clause (and a skipped job's empty `skip` output is
+    # `!= 'true'`), so the gate stays consistent.
+    if: vars.BATCH_ACTIVE == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.check.outputs.skip }}
@@ -145,8 +157,13 @@ jobs:
     runs-on: ubuntu-latest
     # Worst case: attempts=3 Spot retries × 1800s per attempt = 90 min per
     # chronically-interrupted position, parallel = 90 min + cold-start + post.
-    # 180 min ceiling keeps a hung run from spinning forever.
-    timeout-minutes: 180
+    # launch.py blocks for up to its WAIT_TIMEOUT_SECONDS=10800 (180 min)
+    # default in "Submit Batch jobs and wait"; the job ceiling MUST sit above
+    # that so the post-train steps (freshness verify, benchmark append, push,
+    # marker write) have headroom rather than being killed mid-wait — a kill
+    # there skips the success-marker write and the next workflow_run.completed
+    # delivery re-triggers a full retrain. 210 = 180 wait + 30 min headroom.
+    timeout-minutes: 210
     permissions:
       contents: write
     steps:
@@ -257,6 +274,19 @@ jobs:
           POSITIONS: ${{ needs.detect.outputs.positions }}
         run: |
           train_started_at="${{ steps.train.outputs.started_at }}"
+          # An empty anchor means the train step never recorded started_at
+          # (it exited before the `echo ... >> GITHUB_OUTPUT` line). Without
+          # this guard, the `age=$(( train_started_at - lm_ts ))` arithmetic
+          # below treats "" as 0, every artifact's age goes negative, the
+          # STALE check (age > 1200) is never tripped, and the gate
+          # false-passes a run whose freshness was never actually verified.
+          # Fail loud instead. (Kept as an explicit check rather than
+          # `set -eu` so the loop's `fail=1` accumulation + `exit $fail`
+          # tail semantics are unchanged.)
+          if [ -z "$train_started_at" ]; then
+            echo "ERROR: train step did not emit started_at — cannot verify artifact freshness." >&2
+            exit 1
+          fi
           echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
           echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
           fail=0
@@ -286,14 +316,14 @@ jobs:
           exit $fail
 
       - name: Append Batch run to benchmark_history/
-        # MUST run before "Refresh ECS service" — the benchmark append also
-        # mirrors the JSON to s3://{bucket}/models/benchmark_history/ (see
-        # src/batch/benchmark.py::_maybe_upload_to_s3). The new ECS task's
-        # boot-time sync_benchmark_history_from_s3 reads that prefix, and the
-        # in-container result is cached for the task's lifetime (cache key is
-        # the dir mtime, which never bumps post-boot). Refreshing ECS before
-        # the new JSON exists in S3 means the History tab won't show this run
-        # until the next training run rolls the service.
+        # Mirrors the JSON to s3://{bucket}/models/benchmark_history/ (see
+        # src/batch/benchmark.py::_maybe_upload_to_s3) so the serving
+        # container's boot-time sync_benchmark_history_from_s3 picks it up
+        # on the next task roll. PR #330 removed this workflow's forced ECS
+        # service refresh (the EC2 path keeps it; see train-ec2.yml's
+        # "Refresh ECS service" step), so there is no ordering dependency on
+        # an ECS step here anymore — the History tab simply reflects the
+        # S3-mirrored JSON whenever serving tasks next cycle.
         env:
           GH_TOKEN: ${{ github.token }}
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
@@ -322,18 +352,32 @@ jobs:
           else
             echo "No PR resolved for $HEAD_SHA (direct push or workflow_dispatch)"
           fi
-          # ``--git-hash $GITHUB_SHA``: pin the recorded SHA to the image
-          # SHA, not the workspace HEAD — the ``git pull --rebase`` above
-          # can advance the workspace past the image-build SHA when PRs
-          # land mid-run. See TODO.md "Benchmark git_hash recorded the
-          # wrong SHA on rapid back-to-back merges" archive entry.
+          # Human label for the note: image-build SHA when present, else the
+          # workspace SHA on a manual dispatch. Truncated to 7 chars.
+          NOTE_SHA="${HEAD_SHA:-$GITHUB_SHA}"
+          NOTE_SHA="${NOTE_SHA::7}"
+          # ``--git-hash "$HEAD_SHA"``: pin the recorded SHA to the image
+          # build SHA (``github.event.workflow_run.head_sha``), NOT
+          # ``$GITHUB_SHA``. On a workflow_run trigger ``$GITHUB_SHA`` is the
+          # run-LEVEL head_sha (current main HEAD when this run was queued),
+          # which diverges from the image-build SHA on rapid back-to-back
+          # merges — the same two-head_sha trap the dedup_check fix
+          # documents. ``$HEAD_SHA`` is the stable image-build SHA that
+          # FF_TRAIN_GIT_SHA stamps into each position's metrics, so the
+          # recorded ``git_hash`` matches benchmark.py's per-position
+          # coherency check (find_git_sha_divergence) instead of
+          # false-flagging divergence. Empty under workflow_dispatch (no
+          # upstream image build); benchmark.py then falls back to the
+          # workspace HEAD via get_git_hash(), which is correct for a
+          # manual run. See TODO.md "Benchmark git_hash recorded the wrong
+          # SHA on rapid back-to-back merges" archive entry.
           python -m src.batch.benchmark \
             --download-only \
             --backend batch \
             --instance-type "g4dn.xlarge (Spot)" \
             --positions $POSITIONS \
-            --note "Batch Spot auto-run (${GITHUB_SHA::7})" \
-            --git-hash "$GITHUB_SHA" \
+            --note "Batch Spot auto-run (${NOTE_SHA})" \
+            --git-hash "$HEAD_SHA" \
             "${PR_ARGS[@]}"
 
       - name: Commit and push benchmark_history/

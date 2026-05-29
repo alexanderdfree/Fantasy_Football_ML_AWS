@@ -57,10 +57,17 @@ ALL_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
 #      retrain, so the operator must trigger ``workflow_dispatch`` manually.
 #      (Test sharding is unaffected — see ``_TEST_SHARED_REGEX`` — so these
 #      files' tests still run in CI.)
+# ``^src/(__init__|config)\.py$`` covers both top-level globals: src/config.py
+# (SEASONS / POSITIONS / scoring dicts / TOP_K_RANKING) and src/__init__.py
+# (currently empty, but a re-export or package-level constant added there would
+# affect every position). Mirrors the test-mode ``_TEST_GLOBAL_REGEX`` so the
+# train-detect and test-detect paths agree on what counts as a global config
+# change — previously only src/config.py matched, so an edit to src/__init__.py
+# silently scoped to no positions and skipped the retrain.
 _GLOBAL_REGEX = re.compile(
     r"^src/(shared|data|features)/"
     r"|^src/batch/(?!.*(?:tune|ablate)|(?:launch|benchmark)\.py$)"
-    r"|^src/config\.py$"
+    r"|^src/(__init__|config)\.py$"
     r"|^requirements\.txt$"
 )
 

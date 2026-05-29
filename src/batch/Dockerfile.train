@@ -4,8 +4,10 @@
 # instead of Docker Hub — first pull in the region seeds the ECR cache,
 # every subsequent Batch instance pulls from the local AWS network.
 #
-# Example:
-#   --build-arg PULL_THROUGH_PREFIX=123456789012.dkr.ecr.us-east-1.amazonaws.com/dockerhub/
+# Example (region is parameterized — batch-image.yml derives the registry
+# from the account + ``vars.AWS_REGION`` since PR #308, so this is illustrative
+# only; the build always overrides it with the live region's registry):
+#   --build-arg PULL_THROUGH_PREFIX=123456789012.dkr.ecr.<region>.amazonaws.com/dockerhub/
 # Leave unset to pull directly from Docker Hub (original behavior).
 ARG PULL_THROUGH_PREFIX=
 FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime

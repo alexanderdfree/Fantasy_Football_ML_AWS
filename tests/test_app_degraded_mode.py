@@ -32,7 +32,10 @@ _ALL_POS = ("QB", "RB", "WR", "TE", "K", "DST")
 
 def _minimal_results() -> pd.DataFrame:
     """One row per position; columns + initial values mirror what
-    ``_load_base_data_locked`` sets up (ridge/nn init to 0.0, attn/lgbm to NaN).
+    ``_load_base_data_locked`` sets up. Per audit-320 F33 all four model pred
+    columns now init to NaN (uniform "no result" sentinel — see app.py); these
+    tests stub ``_apply_position_models`` so the init values are immaterial to
+    the assertions, but we keep them honest to the production shape.
     """
     return pd.DataFrame(
         {
@@ -46,8 +49,8 @@ def _minimal_results() -> pd.DataFrame:
             "fantasy_points": [10.0] * len(_ALL_POS),
             "fantasy_points_standard": [9.0] * len(_ALL_POS),
             "fantasy_points_half_ppr": [9.5] * len(_ALL_POS),
-            "ridge_pred": [0.0] * len(_ALL_POS),
-            "nn_pred": [0.0] * len(_ALL_POS),
+            "ridge_pred": [np.nan] * len(_ALL_POS),
+            "nn_pred": [np.nan] * len(_ALL_POS),
             "attn_nn_pred": [np.nan] * len(_ALL_POS),
             "lgbm_pred": [np.nan] * len(_ALL_POS),
         }
