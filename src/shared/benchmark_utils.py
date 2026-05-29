@@ -142,7 +142,12 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         summary["cv_ridge_mae_std"] = round(cv["ridge"]["total"]["mae_std"], 3)
         summary["cv_nn_mae_mean"] = round(cv["nn"]["total"]["mae_mean"], 3)
         summary["cv_nn_mae_std"] = round(cv["nn"]["total"]["mae_std"], 3)
-        summary["best_cv_alpha"] = result["best_cv_alpha"]
+        # ``run_cv_pipeline`` returns per-target alphas under ``best_cv_alphas``
+        # (plural dict). The old code read ``best_cv_alpha`` (singular scalar) —
+        # a key that hasn't existed since the per-target rename, so every
+        # ``benchmark --cv`` run KeyError'd here. Store the dict; the printer
+        # renders a compact distinct-value summary.
+        summary["best_cv_alphas"] = result["best_cv_alphas"]
     # EC2 path: src/batch/train.py writes these into benchmark_metrics.json so the
     # row appended by src/batch/benchmark.py --download-only carries timing. Local
     # benchmark.py sets elapsed_sec on the summary directly so these no-op for
@@ -301,15 +306,23 @@ def print_comparison_table(summaries: list, *, header: str, show_time: bool = Tr
         print(f"\n{'=' * 72}")
         print("Cross-Validation Metrics (mean +/- std across 4 folds)")
         print("=" * 72)
-        print(f"{'Pos':<5} {'Ridge MAE':>20} {'NN MAE':>20} {'Best Alpha':>12}")
-        print("-" * 60)
+        print(f"{'Pos':<5} {'Ridge MAE':>20} {'NN MAE':>20} {'Best Alphas':>18}")
+        print("-" * 66)
         for s in summaries:
             if "cv_ridge_mae_mean" in s:
+                # Per-target alphas -> compact distinct-value summary (the column
+                # used to format a single scalar, which broke after the
+                # per-target rename).
+                alphas = s.get("best_cv_alphas", {})
+                if isinstance(alphas, dict) and alphas:
+                    alpha_str = ",".join(f"{a:g}" for a in sorted(set(alphas.values())))
+                else:
+                    alpha_str = str(alphas)
                 print(
                     f"{s['position']:<5} "
                     f"{s['cv_ridge_mae_mean']:>8.3f} +/- {s['cv_ridge_mae_std']:<6.3f} "
                     f"{s['cv_nn_mae_mean']:>8.3f} +/- {s['cv_nn_mae_std']:<6.3f} "
-                    f"{s['best_cv_alpha']:>10.2f}"
+                    f"{alpha_str:>16}"
                 )
         print("=" * 72)
 

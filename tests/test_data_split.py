@@ -10,7 +10,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.data.split import expanding_window_folds, temporal_split
+from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
+from src.data.split import expanding_window_folds, rolling_origin_folds, temporal_split
 
 
 @pytest.fixture()
@@ -190,3 +191,126 @@ def test_expanding_window_folds_imputes_snap_pct_train_only():
     assert v2["snap_pct"] == pytest.approx(0.25)
     # Observed val value passes through.
     assert val0[val0["player_id"] == "V1"].iloc[0]["snap_pct"] == pytest.approx(0.90)
+
+
+# --------------------------------------------------------------------------
+# rolling_origin_folds
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_rolling_origin_folds_default_boundaries(_sample_df):
+    """Default ROLLING_ORIGIN_TEST_SEASONS = [2023, 2024, 2025]; each origin has
+    train [..T-2], val T-1, test T, with disjoint season sets."""
+    folds = rolling_origin_folds(_sample_df)
+    assert len(folds) == 3
+    expected_test = [2023, 2024, 2025]
+    for (_i, train, val, test), t in zip(folds, expected_test, strict=True):
+        assert set(test["season"].unique()) == {t}
+        assert set(val["season"].unique()) == {t - 1}
+        assert train["season"].max() == t - 2
+        # No season appears in more than one split.
+        tr, va, te = set(train["season"]), set(val["season"]), set(test["season"])
+        assert tr.isdisjoint(va) and tr.isdisjoint(te) and va.isdisjoint(te)
+
+
+@pytest.mark.unit
+def test_rolling_origin_final_origin_matches_production_split(_sample_df):
+    """The last origin (test=2025) reproduces temporal_split's season slices, so a
+    rolling-origin run is directly comparable to the production single split."""
+    folds = rolling_origin_folds(_sample_df)
+    _, train, val, test = folds[-1]
+    present = set(_sample_df["season"].unique())
+    assert set(train["season"].unique()) == (set(TRAIN_SEASONS) & present)
+    assert set(val["season"].unique()) == (set(VAL_SEASONS) & present)
+    assert set(test["season"].unique()) == (set(TEST_SEASONS) & present)
+
+
+@pytest.mark.unit
+def test_rolling_origin_folds_custom_test_seasons(_sample_df):
+    folds = rolling_origin_folds(_sample_df, test_seasons=[2024], min_train_season=2021)
+    assert len(folds) == 1
+    _, train, val, test = folds[0]
+    assert set(train["season"].unique()) == {2021, 2022}
+    assert set(val["season"].unique()) == {2023}
+    assert set(test["season"].unique()) == {2024}
+
+
+@pytest.mark.unit
+def test_rolling_origin_folds_asserts_when_season_type_absent(_sample_df_no_season_type):
+    with pytest.raises(AssertionError, match="season_type"):
+        rolling_origin_folds(_sample_df_no_season_type, test_seasons=[2021], min_train_season=2020)
+
+
+@pytest.mark.unit
+def test_rolling_origin_folds_drops_postseason(_sample_df_with_season_type):
+    folds = rolling_origin_folds(_sample_df_with_season_type, test_seasons=[2025])
+    _, _, val, _ = folds[0]  # val season 2024 carried the POST rows
+    assert (val["season_type"] != "POST").all()
+
+
+@pytest.mark.unit
+def test_rolling_origin_folds_raises_when_no_train_seasons(_sample_df):
+    """A test season leaving no train seasons above min_train_season is a config
+    error, not a silent empty-train run."""
+    with pytest.raises(ValueError, match="no train seasons"):
+        rolling_origin_folds(_sample_df, test_seasons=[2013], min_train_season=2012)
+
+
+@pytest.mark.unit
+def test_rolling_origin_folds_imputes_snap_pct_train_only():
+    """Each origin's val/test ``snap_pct`` NaN is filled with that origin's
+    TRAIN-only median — same train-only contract as expanding_window_folds."""
+    import numpy as np
+
+    rows = [
+        # Train (2021, QB, wk1): 0.20, 0.30 -> train-only median 0.25
+        {
+            "season": 2021,
+            "week": 1,
+            "player_id": "T1",
+            "position": "QB",
+            "snap_pct": 0.20,
+            "season_type": "REG",
+        },
+        {
+            "season": 2021,
+            "week": 1,
+            "player_id": "T2",
+            "position": "QB",
+            "snap_pct": 0.30,
+            "season_type": "REG",
+        },
+        # Val (2022, QB, wk1): observed 0.90 + a NaN to impute.
+        {
+            "season": 2022,
+            "week": 1,
+            "player_id": "V1",
+            "position": "QB",
+            "snap_pct": 0.90,
+            "season_type": "REG",
+        },
+        {
+            "season": 2022,
+            "week": 1,
+            "player_id": "V2",
+            "position": "QB",
+            "snap_pct": np.nan,
+            "season_type": "REG",
+        },
+        # Test (2023, QB, wk1): a NaN to impute.
+        {
+            "season": 2023,
+            "week": 1,
+            "player_id": "X1",
+            "position": "QB",
+            "snap_pct": np.nan,
+            "season_type": "REG",
+        },
+    ]
+    df = pd.DataFrame(rows)
+    folds = rolling_origin_folds(df, test_seasons=[2023], min_train_season=2021)
+    _, train, val, test = folds[0]
+    assert set(train["snap_pct"].round(2)) == {0.20, 0.30}
+    assert val[val["player_id"] == "V2"].iloc[0]["snap_pct"] == pytest.approx(0.25)
+    assert test[test["player_id"] == "X1"].iloc[0]["snap_pct"] == pytest.approx(0.25)
