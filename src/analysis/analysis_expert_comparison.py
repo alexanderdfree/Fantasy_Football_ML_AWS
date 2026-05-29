@@ -303,6 +303,19 @@ def main(
     if nflcom_loader is None:
         nflcom_loader = load_nflcom_with_gsis_id
 
+    # The default model loader sources predictions from the pipeline's held-out
+    # test_df, which is scored in the pipeline's configured format (PPR for the
+    # shipped models). This script re-scores only the *expert* side to
+    # ``scoring_format``; re-scoring it to a non-PPR format while the model side
+    # stays PPR would be apples-to-oranges, so warn rather than silently mislead.
+    if scoring_format != "ppr" and model_preds_loader is _default_model_preds:
+        print(
+            f"WARNING: --scoring-format={scoring_format} only re-scores the NFL.com (expert) "
+            "side. The model side reflects the pipeline's configured scoring (PPR for the shipped "
+            "models), so a non-PPR head-to-head is only valid if the pipeline is also run in that "
+            "format."
+        )
+
     print(f"\nLoading NFL.com projections for seasons {list(eval_seasons)}...")
     nflcom_full = nflcom_loader(list(eval_seasons))
 
@@ -360,6 +373,9 @@ def _parse_args() -> argparse.Namespace:
         "--scoring-format",
         default=SCORING_FORMAT_DEFAULT,
         choices=["ppr", "half_ppr", "standard"],
+        help="Scoring format for the NFL.com side. NOTE: the model side reflects the pipeline's "
+        "configured scoring (PPR for shipped models), so non-PPR is only valid if the pipeline is "
+        "also run in that format (default: ppr).",
     )
     parser.add_argument(
         "--positions",

@@ -154,8 +154,8 @@ def test_missing_model_column_is_skipped(tmp_path) -> None:
             {"player_id": ["P4"], "season": [2025], "week": [1], "fantasy_points": [10.0]}
         )
 
-    # No pred_* column ⇒ _pick_model_col raises inside _compare_one_position via
-    # _default path; here the column-check short-circuits to a skip.
+    # No pred_* column ⇒ _compare_one_position's model-column check short-circuits
+    # to a skip (rather than raising).
     result = mod.main(
         eval_seasons=(2025,),
         positions=("QB",),
@@ -165,3 +165,18 @@ def test_missing_model_column_is_skipped(tmp_path) -> None:
         nflcom_loader=_stub_nflcom_loader,
     )
     assert result["positions"]["QB"]["skipped"] is True
+
+
+def test_no_scoring_warning_with_injected_loader(tmp_path, capsys) -> None:
+    """Injected loaders control their own scoring, so the non-PPR model/expert
+    mismatch warning must NOT fire for them (it is scoped to the default loader)."""
+    mod.main(
+        eval_seasons=(2025,),
+        scoring_format="half_ppr",
+        positions=("QB",),
+        output_dir=str(tmp_path),
+        n_boot=10,
+        model_preds_loader=_stub_model_loader,
+        nflcom_loader=_stub_nflcom_loader,
+    )
+    assert "WARNING: --scoring-format" not in capsys.readouterr().out
