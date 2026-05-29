@@ -24,6 +24,7 @@ LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
 TARGETS = POSITION_CONFIG.targets
 from src.k.features import compute_features, get_feature_columns
 from src.k.targets import compute_targets
+from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
@@ -52,8 +53,12 @@ def k_training_arrays(tiny_dataset):
 
     y_train_dict = {t: train_df[t].values.astype(np.float32) for t in TARGETS}
     y_val_dict = {t: val_df[t].values.astype(np.float32) for t in TARGETS}
-    val_total = sum(y_val_dict[t] for t in TARGETS)
-    train_total = sum(y_train_dict[t] for t in TARGETS)
+    # K's aggregate_fn flips miss signs to negative (penalties); a naive
+    # sum(y[t]) would add fg_misses/xp_misses positively, inverting the
+    # contract. Use the signed production aggregator (matches fantasy_points).
+    k_aggregate = aggregate_fn_for("K")
+    val_total = k_aggregate(y_val_dict)
+    train_total = k_aggregate(y_train_dict)
 
     baseline_preds = np.full(len(X_val), float(train_total.mean()), dtype=np.float32)
     baseline_mae = float(np.mean(np.abs(baseline_preds - val_total)))
@@ -70,7 +75,9 @@ def k_training_arrays(tiny_dataset):
 
 
 def _total_mae(preds: dict, y_true_total: np.ndarray) -> float:
-    total = sum(preds[t] for t in TARGETS)
+    # Signed K aggregation (misses subtract) so predicted totals match the
+    # ground-truth `val_total` built via the same aggregator.
+    total = aggregate_fn_for("K")(preds)
     return float(np.mean(np.abs(total - y_true_total)))
 
 

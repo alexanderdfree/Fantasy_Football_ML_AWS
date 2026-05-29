@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import torch
 
+from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.neural_net import MultiHeadNet
 from src.shared.training import (
     MultiHeadTrainer,
@@ -167,8 +168,11 @@ class TestMultiHeadTrainer:
         y_train = {t: np.random.randn(n_train).astype(np.float32) for t in TARGETS}
         y_val = {t: np.random.randn(n_val).astype(np.float32) for t in TARGETS}
 
-        y_train["total"] = sum(y_train[t] for t in TARGETS)
-        y_val["total"] = sum(y_val[t] for t in TARGETS)
+        # K's aggregate_fn subtracts misses; use the signed production
+        # aggregator rather than a naive sum so `total` matches fantasy_points.
+        k_aggregate = aggregate_fn_for("K")
+        y_train["total"] = k_aggregate(y_train)
+        y_val["total"] = k_aggregate(y_val)
 
         train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
 
@@ -233,9 +237,11 @@ class TestMultiHeadTrainer:
         X_train = np.random.randn(n_train, d).astype(np.float32)
         X_val = np.random.randn(n_val, d).astype(np.float32) * 5 + 10
         y_train = {t: np.random.randn(n_train).astype(np.float32) for t in TARGETS}
-        y_train["total"] = sum(y_train[t] for t in TARGETS)
         y_val = {t: np.random.randn(n_val).astype(np.float32) * 10 for t in TARGETS}
-        y_val["total"] = sum(y_val[t] for t in TARGETS)
+        # Signed K aggregation (misses subtract), matching fantasy_points.
+        k_aggregate = aggregate_fn_for("K")
+        y_train["total"] = k_aggregate(y_train)
+        y_val["total"] = k_aggregate(y_val)
 
         train_loader, val_loader = make_dataloaders(X_train, y_train, X_val, y_val, batch_size=32)
         model = MultiHeadNet(

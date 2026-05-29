@@ -138,11 +138,18 @@ def _mae(pred: np.ndarray, y: np.ndarray) -> float:
     return float(np.mean(np.abs(pred - y)))
 
 
-def _season_average_mae(pos_train, pos_test, target="fantasy_points") -> float:
-    """Mean-of-training-season fantasy points, broadcast to test."""
-    mean_fp = float(pos_train[target].mean())
-    y_test = pos_test[target].values.astype(np.float32)
-    return float(np.mean(np.abs(mean_fp - y_test)))
+def _season_average_mae(train_total: np.ndarray, test_total: np.ndarray) -> float:
+    """Mean-of-training total broadcast to test, scored on the same total.
+
+    Both args must be the *same* aggregated total series the model is scored
+    against (``y_*['total']``, the PPR aggregate of the four TE-only targets).
+    Earlier this scored the baseline against ``pos_test['fantasy_points']``,
+    which embeds the synthetic rushing-yards contribution that ``tiny_splits``
+    adds to TE rows — a different ground truth than ``y_test['total']`` the
+    model uses, weakening the inequality (audit-320 F91).
+    """
+    mean_total = float(np.mean(train_total))
+    return float(np.mean(np.abs(mean_total - test_total)))
 
 
 class TestTERegressionThresholds:
@@ -153,7 +160,7 @@ class TestTERegressionThresholds:
         preds = model.predict(t["X_test"])
 
         ridge_mae = _mae(_aggregate_preds_total(preds), t["y_test"]["total"])
-        baseline_mae = _season_average_mae(t["pos_train"], t["pos_test"])
+        baseline_mae = _season_average_mae(t["y_train"]["total"], t["y_test"]["total"])
         assert ridge_mae < baseline_mae, (
             f"Ridge MAE {ridge_mae:.3f} failed to beat season-avg baseline {baseline_mae:.3f}"
         )
