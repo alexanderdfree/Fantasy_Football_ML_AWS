@@ -470,6 +470,17 @@ def main():
         help="Seed for pipeline runs inside each trial (Optuna sampler uses its own seed=42).",
     )
     parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=2,
+        help=(
+            "Concurrent Optuna trials (thread-based; safe with the SQLite storage). "
+            "NN trials are GPU-bound and share the single GPU, so this is bounded by "
+            "GPU memory, not CPU cores — default 2 fits a 16 GB card (T4 / RTX 5080); "
+            "raising it gives diminishing returns since trials time-slice one GPU."
+        ),
+    )
+    parser.add_argument(
         "--print-best",
         action="store_true",
         help="Load existing studies and print best params without running new trials.",
@@ -584,13 +595,14 @@ def main():
                 n_trials=remaining,
                 timeout=args.timeout,
                 show_progress_bar=True,
-                # Two concurrent trials fit comfortably: each trial is now
-                # attention-NN-only (Ridge / base NN / LGBM skipped via the
-                # cfg overrides in _make_objective), so the CPU branch is
-                # idle and the T4's 16 GB easily holds two small attention
-                # models. Above 2 risks CPU-side contention from FE / data
-                # loading; revisit once measured.
-                n_jobs=2,
+                # Concurrent-trial count via --n-jobs (default 2). Trials are
+                # attention-NN-only (Ridge / base NN / LGBM skipped via the cfg
+                # overrides in _make_objective), so the CPU branch is idle and a
+                # 16 GB card (T4 / RTX 5080) easily holds two small attention
+                # models. NN trials are GPU-bound and time-slice the single GPU,
+                # so raising --n-jobs is bounded by GPU memory, not CPU cores;
+                # above ~2-3 risks CPU-side contention from FE / data loading.
+                n_jobs=args.n_jobs,
                 callbacks=callbacks,
             )
         else:
