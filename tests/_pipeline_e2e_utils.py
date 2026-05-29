@@ -45,6 +45,38 @@ if _PROJECT_ROOT not in sys.path:
 ALL_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
 
 
+def attach_external_source_columns(df: pd.DataFrame, rng=None) -> pd.DataFrame:
+    """Add synthetic ff_opportunity / ESPN-QBR / contract columns to a raw
+    weekly frame.
+
+    In production ``src.data.loader`` merges these external-source columns onto
+    every weekly row; synthetic test frames bypass the loader, so any test that
+    then runs ``build_features`` + ``build_position_features`` must add them
+    here or the prior-season aggregates won't materialise and the position
+    ``include_features`` / ``attn_history_stats`` whitelists raise ``KeyError``.
+    Single source of truth for the column list (mirrors
+    ``src.data.external_sources``). Mutates and returns ``df``.
+    """
+    import numpy as np
+
+    from src.data.external_sources import (
+        CONTRACT_FEATURE_COLUMNS,
+        FF_OPP_FEATURE_COLUMNS,
+        QBR_FEATURE_COLUMNS,
+    )
+
+    if rng is None:
+        rng = np.random.default_rng(0)
+    n = len(df)
+    for col in FF_OPP_FEATURE_COLUMNS:
+        df[col] = rng.uniform(0.0, 20.0, n)
+    for col in QBR_FEATURE_COLUMNS:  # qbr_total ~0-100, pts_added ~ small
+        df[col] = rng.uniform(0.0, 80.0, n)
+    for col in CONTRACT_FEATURE_COLUMNS:
+        df[col] = rng.uniform(0.0, 1.0, n)
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Shrunk-config assembly
 # ---------------------------------------------------------------------------

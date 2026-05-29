@@ -128,6 +128,12 @@ _INCLUDE_FEATURES = {
         # gaps the rejected hurdle_poisson fix would have closed.
         "prior_season_total_redzone_touches",
         "prior_season_mean_redzone_touches_per_game",
+        # ff_opportunity expected-production prior (static "opportunity" signal,
+        # leakage-safe S-1 mean). Built in src.features.engineer from the
+        # per-game *_exp columns merged by src.data.external_sources.
+        "prior_season_mean_total_fantasy_points_exp",
+        "prior_season_mean_rush_yards_gained_exp",
+        "prior_season_mean_receptions_exp",
     ],
     "ewma": [],
     "trend": ["trend_fantasy_points", "trend_targets", "trend_carries", "trend_snap_pct"],
@@ -164,6 +170,12 @@ _INCLUDE_FEATURES = {
         "practice_status",
         "game_status",
         "depth_chart_rank",
+        # Contract value — team-investment / expected-role prior. Static
+        # player-season state, merged by src.data.external_sources.
+        "contract_apy_cap_pct",
+        "contract_guaranteed",
+        "contract_years_remaining",
+        "contract_age",
     ],
     # implied_team + implied_opp encodes both game total and spread direction
     # without the perfect collinearity of keeping total_line alongside.
@@ -338,6 +350,14 @@ POSITION_CONFIG = PositionConfig(
         "inside10_carries",
         "inside5_carries",
         "redzone_target_share",
+        # Per-game ff_opportunity expected stats (rushing + receiving),
+        # merged by src.data.external_sources. Leakage-safe via
+        # build_game_history_arrays (prior in-season games only).
+        "rush_yards_gained_exp",
+        "rush_touchdown_exp",
+        "rec_yards_gained_exp",
+        "rec_touchdown_exp",
+        "receptions_exp",
     ],
     attn_static_features=derive_attn_static_features(_INCLUDE_FEATURES, ATTN_STATIC_CATEGORIES),
     opp_attn_history_stats=list(DEFAULT_OPP_DEF_HISTORY_STATS),

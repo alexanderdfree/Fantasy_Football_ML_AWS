@@ -95,6 +95,12 @@ def _generate_season(season, seed, n_players=25, n_weeks=17):
         + df["interceptions"] * -2
     )
     df["fantasy_points_ppr"] = df["fantasy_points"]
+    # External-source columns the loader merges in production (ff_opportunity /
+    # ESPN QBR / contracts) so build_features' prior-season aggregates land and
+    # QB's include_features + attn_history_stats whitelists resolve.
+    from tests._pipeline_e2e_utils import attach_external_source_columns
+
+    attach_external_source_columns(df, rng)
     return df
 
 

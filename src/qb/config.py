@@ -60,6 +60,19 @@ _INCLUDE_FEATURES = {
     ],
     "prior_season": [
         f"prior_season_{a}_{stat}" for stat in _ROLLING_STATS for a in ["mean", "std", "max"]
+    ]
+    + [
+        # ff_opportunity expected-production prior (static "opportunity" signal,
+        # leakage-safe S-1 mean). Built in src.features.engineer from the
+        # per-game *_exp columns merged by src.data.external_sources.
+        "prior_season_mean_total_fantasy_points_exp",
+        "prior_season_mean_pass_yards_gained_exp",
+        "prior_season_mean_pass_touchdown_exp",
+        # ESPN QBR prior (static "QB quality" signal). Career-cumulative is
+        # deliberately kept in the history domain (see tests/test_attn_static_columns.py);
+        # the prior-season mean is the static-legal shape.
+        "prior_season_mean_qbr_total",
+        "prior_season_mean_pts_added",
     ],
     "ewma": ["ewma_passing_yards_L3", "ewma_passing_yards_L5"],
     "trend": ["trend_carries", "trend_snap_pct"],
@@ -87,6 +100,13 @@ _INCLUDE_FEATURES = {
         "practice_status",
         "game_status",
         "depth_chart_rank",
+        # Contract value — team-investment / expected-role prior. Static
+        # player-season state (active contract as-of season), merged by
+        # src.data.external_sources. apy_cap_pct is cross-era-normalized.
+        "contract_apy_cap_pct",
+        "contract_guaranteed",
+        "contract_years_remaining",
+        "contract_age",
     ],
     "weather_vegas": [
         "implied_team_total",
@@ -244,6 +264,16 @@ POSITION_CONFIG = PositionConfig(
         "snap_pct",
         "sacks",
         "sack_yards",
+        # Per-game ff_opportunity expected stats (modeled from in-game
+        # opportunity) + per-game ESPN QBR. Merged by src.data.external_sources;
+        # leakage-safe via build_game_history_arrays (prior in-season games only).
+        "pass_yards_gained_exp",
+        "pass_touchdown_exp",
+        "pass_interception_exp",
+        "rush_yards_gained_exp",
+        "rush_touchdown_exp",
+        "qbr_total",
+        "pts_added",
     ],
     attn_static_features=derive_attn_static_features(_INCLUDE_FEATURES, ATTN_STATIC_CATEGORIES),
     # Gated hurdle heads disabled for QB — QBs throw so many TDs that the

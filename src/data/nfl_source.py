@@ -128,3 +128,35 @@ def pbp_data(seasons: list[int], cols: tuple[str, ...]) -> pd.DataFrame:
     df = _nflreadpy.load_pbp(seasons)
     available = [c for c in cols if c in df.columns]
     return _to_pandas(df.select(available))
+
+
+def ff_opportunity(seasons: list[int]) -> pd.DataFrame:
+    """ff_opportunity expected-points per player-game (ffverse ``ep_weekly``
+    model). gsis-keyed (``player_id``); ``*_exp`` columns are the modeled
+    expected stats the opportunity features read."""
+    return _to_pandas(_nflreadpy.load_ff_opportunity(seasons))
+
+
+def contracts() -> pd.DataFrame:
+    """Historical player contracts (OTC via nflverse). One row per contract,
+    all seasons (no season filter at the source); carries ``gsis_id`` +
+    ``year_signed`` / ``apy_cap_pct`` / ``guaranteed`` / ``years``."""
+    return _to_pandas(_nflreadpy.load_contracts())
+
+
+# nflreadpy 0.1.5 has no QBR loader, so QBR comes straight from the nflverse
+# espnscrapeR-data CSV — the same source nfl_data_py.import_qbr read. ESPN-id
+# keyed (bridged to gsis downstream via player_ids()).
+_QBR_WEEKLY_URL = (
+    "https://raw.githubusercontent.com/nflverse/espnscrapeR-data/master/data/qbr-nfl-weekly.csv"
+)
+
+
+def qbr_weekly(seasons: list[int]) -> pd.DataFrame:
+    """Weekly ESPN QBR from the nflverse espnscrapeR-data CSV, filtered to the
+    requested season range. Read with pandas directly (not nflreadpy — it has
+    no QBR loader); already pandas, so no Polars conversion needed."""
+    df = pd.read_csv(_QBR_WEEKLY_URL)
+    if seasons and "season" in df.columns:
+        df = df[df["season"].between(min(seasons), max(seasons))]
+    return df

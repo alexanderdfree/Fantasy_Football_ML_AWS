@@ -12,6 +12,14 @@ from src.config import (
     SEASONS,
 )
 from src.data import nfl_source
+from src.data.external_sources import (
+    CONTRACT_FEATURE_COLUMNS,
+    FF_OPP_FEATURE_COLUMNS,
+    QBR_FEATURE_COLUMNS,
+    load_contracts,
+    load_ff_opportunity,
+    load_qbr_weekly,
+)
 from src.data.nflcom_loader import schedule_team_code_normalization
 from src.data.redzone_pbp import RZ_PBP_FEATURE_COLUMNS, reconstruct_redzone_from_pbp
 
@@ -262,13 +270,26 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         # short-circuits to a parquet read on warm cache.
         return reconstruct_redzone_from_pbp(seasons, cache_dir=cache_dir)
 
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    def _fetch_ff_opp():
+        return load_ff_opportunity(seasons, cache_dir=cache_dir)
+
+    def _fetch_qbr():
+        # Merge-ready weekly QBR (ESPN id already bridged to gsis internally).
+        return load_qbr_weekly(seasons, cache_dir=cache_dir)
+
+    def _fetch_contracts():
+        return load_contracts(seasons, cache_dir=cache_dir)
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
         weekly_f = pool.submit(_fetch_weekly)
         rosters_f = pool.submit(_fetch_rosters)
         schedules_f = pool.submit(_fetch_schedules)
         snap_counts_f = pool.submit(_fetch_snap_counts)
         injuries_f = pool.submit(_fetch_injuries)
         redzone_f = pool.submit(_fetch_redzone)
+        ff_opp_f = pool.submit(_fetch_ff_opp)
+        qbr_f = pool.submit(_fetch_qbr)
+        contracts_f = pool.submit(_fetch_contracts)
         weekly = weekly_f.result()
         rosters = rosters_f.result()
         # _fetch_schedules() persists schedules_{min}_{max}.parquet for downstream
@@ -280,6 +301,9 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         snap_counts = snap_counts_f.result()
         injuries = injuries_f.result()
         redzone = redzone_f.result()
+        ff_opp = ff_opp_f.result()
+        qbr = qbr_f.result()
+        contracts = contracts_f.result()
 
     # Depth charts depend on the schedule (as-of join for the 2025+ ESPN format),
     # so they run after the pool rather than inside it. Cold cache pays one extra
@@ -425,6 +449,39 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
             how="left",
         )
     for col in _REDZONE_COLUMNS:
+        if col not in weekly.columns:
+            weekly[col] = 0.0
+        weekly[col] = weekly[col].fillna(0.0)
+
+    # --- Merge ff_opportunity expected-stat per-game columns ---
+    # Per-game expected stats (modeled from in-game opportunity) feed the
+    # attention NN history sequence for QB/RB/WR/TE, and prior-season means of
+    # them feed the static branch. ff_opp is gsis-keyed (joins directly) and
+    # deduped to one row per player-game, so this left-merge can't fan out.
+    # No modeled opportunity that week → 0 (a meaningful low-usage signal).
+    if not ff_opp.empty:
+        weekly = weekly.merge(ff_opp, on=["player_id", "season", "week"], how="left")
+    for col in FF_OPP_FEATURE_COLUMNS:
+        if col not in weekly.columns:
+            weekly[col] = 0.0
+        weekly[col] = weekly[col].fillna(0.0)
+
+    # --- Merge weekly ESPN QBR (already bridged ESPN id → gsis in load_qbr_weekly) ---
+    # QB-only per-game signal. Left NaN (not zero-filled): non-QB rows never use
+    # it, QB weeks without a QBR are skipped by the prior-season mean and zeroed
+    # only inside the attention history tensor (build_game_history_arrays).
+    if not qbr.empty:
+        weekly = weekly.merge(qbr, on=["player_id", "season", "week"], how="left")
+    for col in QBR_FEATURE_COLUMNS:
+        if col not in weekly.columns:
+            weekly[col] = float("nan")
+
+    # --- Merge active-as-of-season contract attributes ---
+    # Player-season state (one row per player-season → no fan-out). Players with
+    # no contract data (undrafted/minimum/team-unit DST) → 0.
+    if not contracts.empty:
+        weekly = weekly.merge(contracts, on=["player_id", "season"], how="left")
+    for col in CONTRACT_FEATURE_COLUMNS:
         if col not in weekly.columns:
             weekly[col] = 0.0
         weekly[col] = weekly[col].fillna(0.0)
