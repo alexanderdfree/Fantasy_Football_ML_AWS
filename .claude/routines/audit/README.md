@@ -2,9 +2,12 @@
 
 Source-of-truth for the `[claude-audit]` cloud routine — a Claude Code scheduled remote
 agent that runs every 2 hours, fans out parallel auditor subagents over the repo, dedupes
-against past `claude-audit` GitHub issues, and files **one new issue per fire** with HIGH/MED
-findings. The issues it produces are consumed by the [`solve-issues`](../../skills/solve-issues/SKILL.md)
-skill.
+against open+closed `claude-audit` GitHub issues, and files **one issue per finding** —
+labeled by severity (`severity-high`/`severity-medium`) and area, HIGH/MED only — plus one
+closed `[claude-audit] checkpoint …` issue per fire recording the audited SHA (the skip-check
+breadcrumb; it carries no severity label, so it's excluded from the actionable backlog). The
+per-finding issues it produces are consumed by the [`solve-issues`](../../skills/solve-issues/SKILL.md)
+skill, which triages, severity-orders, and bundles them into tier-by-risk PRs.
 
 | | |
 |---|---|

@@ -1,25 +1,37 @@
 === MISSION ===
-Review my code in parallel for bugs/quirks — spawn as many Opus 4.8 1M Max subagents as you can, each emitting HIGH/MED-only findings with verbatim evidence. The orchestrator verifies each cited line, dedupes against open and closed GitHub issues, drops anything already in CLAUDE.md Stop rules or TODO.md Fixed archive, consolidates partial/full duplicates within this run's worker output, and creates ONE NEW GitHub issue per fire containing all that run's findings in full long-form. Watch for artifacts of unfinished (yet merged) PRs, semantic merge conflicts from concurrent PRs blind to each other's changes, cross-position inconsistencies, training-vs-inference drift, and orphan code under live test coverage.
+Review my code in parallel for bugs/quirks — spawn as many Opus 4.8 1M Max subagents as you can, each emitting HIGH/MED-only findings with verbatim evidence. The orchestrator verifies each cited line, dedupes against open and closed GitHub issues, drops anything already in CLAUDE.md Stop rules or TODO.md Fixed archive, consolidates partial/full duplicates within this run's worker output, and files ONE GITHUB ISSUE PER SURVIVING FINDING — labeled by severity (`severity-high`/`severity-medium`) and area — plus one closed checkpoint issue recording the audited SHA. Watch for artifacts of unfinished (yet merged) PRs, semantic merge conflicts from concurrent PRs blind to each other's changes, cross-position inconsistencies, training-vs-inference drift, and orphan code under live test coverage.
 
 === IMPLEMENTATION ===
-You are the orchestrator for a scheduled code-audit run on the Fantasy_Football_ML_AWS repo. Working dir is the repo root. Time budget: 30 minutes wall-clock (skipped runs exit in <1 min). You are READ-ONLY on repo files. The ONLY write actions permitted are `gh issue create`, `gh issue close` (only on issues YOU create in THIS same run), and `gh issue comment` (only on issues YOU create in THIS same run). Writing to /tmp/* is fine.
+You are the orchestrator for a scheduled code-audit run on the Fantasy_Football_ML_AWS repo. Working dir is the repo root. Time budget: 30 minutes wall-clock (skipped runs exit in <1 min). You are READ-ONLY on repo files. The ONLY write actions permitted are `gh label create` (the severity labels, idempotent), `gh issue create` (per-finding issues + the checkpoint), `gh issue comment` (only on issues YOU create in THIS same run), and `gh issue close` (only on the checkpoint issue YOU create in THIS run). Writing to /tmp/* is fine.
 
-=== FINDING FORMAT (canonical, full long-form) ===
-    #### F<N> <SEV>: <title>
-    - **File**: `<path>:<line>`
-    - **First seen**: @<short_sha> on <YYYY-MM-DD>
-    - **What**: <2-3 sentences>
-    - **Why suspect**: <2-3 sentences>
-    - **Suggested action**: <one sentence>
-    - **Evidence**: `<verbatim line from the file>`
-    - **Related**: F<other_id> [optional — only if cross-referenced in STEP 3b PASS 3]
+=== ISSUE MODEL (one issue per finding) ===
+Each surviving finding becomes ONE GitHub issue:
+  - **Title**: `[claude-audit] <area>: <title>` — `<area>` ∈ qb|rb|wr|te|k|dst|shared|data|serving|batch|ci|docs|cross-position; `<title>` is the finding title (<80 chars). Severity is NEVER in the title — it is a LABEL, so a HIGH↔MED reclassification doesn't mint a "new" title and break dedup.
+  - **Labels**: `claude-audit`, the severity label (`severity-high` or `severity-medium`), and the area label.
+  - **Area** is derived from the finding's `file` path / the worker scope that produced it: `src/qb/*`→qb … `src/dst/*`→dst, `src/shared|models|training|evaluation/*`→shared, `src/data|features/*`→data, `src/serving/*`→serving, `src/batch/*`→batch, `.github/workflows|.claude/hooks/*`→ci, docs/CLAUDE.md/README.md/SETUP.md/TODO.md→docs. Worker #12 invariant/broken-ref findings take the area of the position they pertain to.
+  - **Body** (canonical long-form):
+        - **File**: `<path>:<line>`
+        - **Severity**: HIGH | MED
+        - **Area**: <area>
+        - **First seen**: @<short_sha> on <YYYY-MM-DD>
+        - **What**: <2-3 sentences>
+        - **Why suspect**: <2-3 sentences>
+        - **Suggested action**: <one sentence>
+        - **Evidence**: `<verbatim line from the file>`
+        - **Related**: #<other_issue> [optional — added by a post-create comment if cross-referenced in STEP 3b PASS 3]
 
-F-numbers are PER ISSUE (each new issue starts at F1; F-numbers do not carry across issues). First seen is the SHORT_SHA / DATE of the current run.
+There are NO F-numbers. Findings are identified by their GitHub issue number. Because dedup (STEP 1c / 3c) suppresses refiling, each issue persists across fires — so its **First seen** SHA/date and `createdAt` give the finding's true age. You only ever CREATE new issues for findings not already filed; never edit or reset an existing issue.
+
+Ensure the severity labels exist (idempotent — safe to run every fire; area labels already exist in the repo):
+    gh label create severity-high   --color B60205 --description "Audit: wrong result / silent loss / security / benchmark-changing" 2>/dev/null || true
+    gh label create severity-medium --color FBCA04 --description "Audit: unfinished-PR artifact / invariant / drift / orphan code" 2>/dev/null || true
 
 STEP 0 — Skip check (sequential, ~30 sec):
   0a. HEAD_SHA=$(git rev-parse HEAD); SHORT_SHA=$(git rev-parse --short HEAD)
-  0b. gh issue list --label claude-audit --state all --limit 10 --json number --jq '.[].number' \
-        | while read N; do gh issue view $N --json body,comments --jq '.body, (.comments[].body // empty)'; done > /tmp/audit_history.txt
+  0b. Fetch bodies of recent CHECKPOINT issues (each records one audited SHA):
+        gh issue list --label claude-audit --state all --limit 60 --json number,title \
+          --jq '.[] | select(.title | test("checkpoint")) | .number' \
+          | while read N; do gh issue view $N --json body --jq '.body'; done > /tmp/audit_history.txt
   0c. If /tmp/audit_history.txt contains a line exactly matching `HEAD-SHA: ${HEAD_SHA}`: print SKIPPED message and exit 0.
   0d. Else proceed.
   SAFETY: If gh fails, do NOT skip.
@@ -27,13 +39,16 @@ STEP 0 — Skip check (sequential, ~30 sec):
 STEP 1 — Prep (sequential, ~2 min):
   1a. Read CLAUDE.md "Stop rules" section verbatim. Hold it.
   1b. grep "^### \[FIXED\]" TODO.md — capture every title line. Hold the list.
-  1c. Build the dedupe pool. Fetch bodies + comments of ALL recent claude-audit issues (open AND closed, last 30):
-        gh issue list --label claude-audit --state all --limit 30 --json number --jq '.[].number' \
-          | while read N; do gh issue view $N --json body,comments --jq '.body, (.comments[].body // empty)'; done > /tmp/dedupe_pool.txt
-        grep -E "^#### (F[0-9]+ )?(HIGH|MED): " /tmp/dedupe_pool.txt \
-          | sed -E 's/^#### (F[0-9]+ )?(HIGH|MED): //' > /tmp/known_titles.txt
-        # Also extract one-line compact entries from older issues (legacy compressed format) for dedupe
-        grep -E "^- F[0-9]+ \[(HIGH|MED)\]" /tmp/dedupe_pool.txt >> /tmp/known_titles.txt
+  1c. Build the dedupe pool from existing PER-FINDING issues — open AND closed, those carrying a `severity-*` label (this naturally EXCLUDES checkpoint issues, which have no severity label):
+        gh issue list --label claude-audit --state all --limit 400 --json number,title,labels \
+          --jq '.[] | select(any(.labels[]; .name=="severity-high" or .name=="severity-medium")) | "\(.number)\t\(.title)"' > /tmp/known_issues.tsv
+        # For file-aware dedup, capture each known issue's cited File: path (strip the :line):
+        : > /tmp/known_files.tsv
+        cut -f1 /tmp/known_issues.tsv | while read N; do
+          F=$(gh issue view "$N" --json body --jq '.body' | grep -m1 -oE '`[^`]+:[0-9]+`' | tr -d '`' | sed -E 's/:[0-9]+$//')
+          printf '%s\t%s\n' "$N" "$F" >> /tmp/known_files.tsv
+        done
+      Dedupe KEY = (area + cited file-path + ≥2 distinctive title keywords). The title prefix `[claude-audit] <area>:` carries area; `/tmp/known_files.tsv` carries the file.
 
 STEP 2 — Fanout (parallel, ~13 min):
   Spawn 12 general-purpose subagents IN A SINGLE MESSAGE (Agent tool calls run concurrently). Each Agent call sets model="opus". Worker scopes:
@@ -75,86 +90,62 @@ STEP 2 — Fanout (parallel, ~13 min):
     SEVERITY: HIGH (wrong result / silent loss / security / benchmark-changing) or MED (unfinished-PR artifact / within-position invariant violation / broken-reference drift / semantic merge conflict / orphan code under live test coverage). NO LOW.
 
     OUTPUT: JSON array only. Each: {"file": "<path>", "line": <int>, "severity": "HIGH"|"MED", "title": "<<80 chars>", "what": "<2-3 sentences>", "why_suspect": "<2-3 sentences>", "suggested_action": "<one sentence>", "evidence_quote": "<verbatim line from file>"}
-    Workers do NOT assign F-numbers — the orchestrator does.
+    Workers do NOT create issues and do NOT assign issue numbers — the orchestrator does.
 
 STEP 3 — Verify new findings (sequential, ~5 min):
   For each new finding from each worker:
     3a. Read file at cited line. Confirm evidence_quote matches (whitespace-normalized). DROP if mismatch.
     3b. grep CLAUDE.md + TODO.md for 2-3 distinctive title keywords. DROP if matched.
-    3c. Check title against /tmp/known_titles.txt (substring either direction). DROP if found — already reported in a recent claude-audit issue.
+    3c. Dedupe against existing issues: a new finding is a DUPLICATE (DROP it) when some entry in /tmp/known_issues.tsv has the SAME area (its title prefix `[claude-audit] <area>:`) AND the SAME cited file (per /tmp/known_files.tsv) AND ≥2 shared distinctive title keywords. The pool already spans open AND closed — so a finding already filed, already triaged-closed, or already fixed is NOT re-filed.
     3d. For "unfinished PR" / "semantic merge conflict" claims: `git log -p -n 20 -- <file>` and confirm consistency. DROP if completed elsewhere.
     3e. If finding matches NOT FINDINGS patterns: DROP.
   Hold /tmp/new_findings.jsonl (survivors). Hold N_NEW, N_NEW_HIGH, N_NEW_MED.
 
 STEP 3b — Consolidate duplicates within THIS run's findings (sequential, ~2 min):
-  Operates only on the new findings from this run (no rolling state). Use tentative F1..F${N_NEW} IDs.
-  PASS 1 — Full duplicates: same file AND same line AND whitespace-normalized evidence match. Keep lowest tentative-F; drop the others. Record canonical ← merged.
-  PASS 2 — Same-file partial duplicates: lines within ±10 AND ≥2 distinctive title keywords AND `what`/`why_suspect` describe semantically the same defect. Canonical = lowest tentative-F; merge any UNIQUE one-sentence fragments from others into canonical's what/why_suspect (no bloat); drop the others.
-  PASS 3 — Cross-file related: different files, ≥3 shared title keywords, what/why_suspect of one references the other's file/symbol. Keep BOTH and inject `- **Related**: F<other>` into each.
+  Operates only on the new findings from this run (no rolling state). Use tentative local IDs t1..t${N_NEW}.
+  PASS 1 — Full duplicates: same file AND same line AND whitespace-normalized evidence match. Keep one; drop the others.
+  PASS 2 — Same-file partial duplicates: lines within ±10 AND ≥2 distinctive title keywords AND `what`/`why_suspect` describe semantically the same defect. Keep one; merge any UNIQUE one-sentence fragments from the others into its what/why_suspect (no bloat); drop the others.
+  PASS 3 — Cross-file related: different files, ≥3 shared title keywords, what/why_suspect of one references the other's file/symbol. Keep BOTH; record the pairing (tentative IDs + one-line reason) in /tmp/related.tsv so the orchestrator can link the two ISSUES with a comment AFTER both are created (issue numbers aren't known until then).
   CONSERVATIVE BIAS: when in doubt, do not merge.
-  HARD CAP: never drop more than 30% of N_NEW via consolidation. If exceeded, skip consolidation and post unconsolidated.
-  Output: /tmp/consolidated_new.jsonl (final set, post-consolidation) + /tmp/consolidations.jsonl (log of merged clusters + cross-references).
+  HARD CAP: never drop more than 30% of N_NEW via consolidation. If exceeded, skip consolidation and file unconsolidated.
+  Output: /tmp/consolidated_new.jsonl (final set, each tagged with its tentative ID + resolved area) + /tmp/related.tsv (tA<TAB>tB<TAB>reason).
 
-STEP 4 — Compile + post (~3 min):
+STEP 4 — File issues (~3 min):
   HEAD_SHA=$(git rev-parse HEAD); SHORT_SHA=$(git rev-parse --short HEAD); DATE=$(date -u +"%Y-%m-%d %H:%M UTC"); DATE_ONLY=$(date -u +"%Y-%m-%d")
+  All First seen = SHORT_SHA on DATE_ONLY.
 
-  ASSIGN F-NUMBERS: number the consolidated findings F1, F2, ... in worker-output order. All First seen = SHORT_SHA on DATE_ONLY.
+  4a. PER-FINDING ISSUES (only if N_NEW > 0). For each finding in /tmp/consolidated_new.jsonl: write the canonical body (see ISSUE MODEL) to /tmp/body.md, resolve its area + severity label, create the issue, and record the new number keyed by tentative ID:
+        SEV_LABEL=$( [ "$severity" = "HIGH" ] && echo severity-high || echo severity-medium )
+        URL=$(gh issue create \
+                --title "[claude-audit] ${area}: ${title}" \
+                --label claude-audit --label "$SEV_LABEL" --label "$area" \
+                --body-file /tmp/body.md)
+        NUM=${URL##*/}                      # issue number from the URL
+        printf '%s\t%s\t%s\n' "$tID" "$NUM" "$URL" >> /tmp/filed.tsv
+      If a `gh issue create` fails (e.g. an unexpected area label), retry once WITHOUT the area label; if it still fails, print the full body to stdout so the finding isn't lost.
 
-  Case A — N_NEW == 0:
-    → CLEAN CHECKPOINT. Create + immediately close an issue with title "[claude-audit] ${DATE} — 0 findings (clean) @${SHORT_SHA}" and body containing HEAD-SHA + HEAD-SHORT + Date. Use --label claude-audit. Close with comment "Clean-state checkpoint, auto-closed by audit routine."
+  4b. RELATED LINKS. For each pairing tA<TAB>tB<TAB>reason in /tmp/related.tsv, resolve to issue numbers via /tmp/filed.tsv and cross-link with comments on the issues you just created:
+        gh issue comment "$NUM_A" --body "Related: #${NUM_B} — ${reason}"
+        gh issue comment "$NUM_B" --body "Related: #${NUM_A} — ${reason}"
 
-  Case B — N_NEW > 0:
-    → CREATE ONE NEW ISSUE for this run. Build /tmp/new_body.md:
+  4c. CHECKPOINT ISSUE (ALWAYS — every run, including clean N_NEW==0 runs). Records the audited SHA for STEP 0's skip-check and serves as the per-fire audit-trail entry. Build /tmp/checkpoint.md:
+        HEAD-SHA: ${HEAD_SHA}
+        HEAD-SHORT: ${SHORT_SHA}
+        Date: ${DATE}
+        Findings filed this run: ${N_NEW} (${N_NEW_HIGH} HIGH, ${N_NEW_MED} MED)
+        Filed: <comma-separated #numbers from /tmp/filed.tsv, or "none (clean checkpoint)">
+      Create it then immediately close it. Label `claude-audit` ONLY — no severity/area label, so it never shows up in the actionable backlog (STEP 1c / the consumer query both filter to severity-labeled issues):
+        CP=$(gh issue create --title "[claude-audit] checkpoint ${DATE} @${SHORT_SHA}" --label claude-audit --body-file /tmp/checkpoint.md)
+        gh issue close "${CP##*/}" --comment "Audit checkpoint — HEAD recorded for skip-check; per-finding issues filed separately. Auto-closed by audit routine."
 
-      # [claude-audit] ${DATE} — ${N_OPEN_AFTER} findings (${N_HIGH} HIGH, ${N_MED} MED) @${SHORT_SHA}
-
-      HEAD-SHA: ${HEAD_SHA}
-
-      ## TL;DR
-      | Area | HIGH | MED |
-      |------|------|-----|
-      ...rows by area, then a Total row...
-
-      ## Consolidations + cross-references this run
-      (only include if any from STEP 3b)
-      - Consolidated: M clusters, X entries dropped
-          - F<canonical> ← F<merged>, ... (`<file>` — reason)
-      - Cross-referenced: K pairings
-          - F<A> ↔ F<B> (`<file_a>` ↔ `<file_b>` — reason)
-
-      ## Findings
-      ### <area>
-      #### F<N> HIGH: <title>
-      - **File**: `path:line`
-      - **First seen**: @<short_sha> on <YYYY-MM-DD>
-      - **What**: ...
-      - **Why suspect**: ...
-      - **Suggested action**: ...
-      - **Evidence**: `<evidence_quote>`
-      - **Related**: F<other> [if any]
-      ...grouped by area, sorted by F-number ascending within area...
-
-      ---
-      *Per-run audit issue. Each fire creates a new one. F-numbers are scoped to THIS issue. Close when triaged; dedupe against open AND closed issues prevents re-flagging.*
-
-    HARD BOUND on body size: target ≤55k chars (safety margin under GitHub's 65k cap). If estimated body would exceed this, split into MULTIPLE issues with titles "[claude-audit] ${DATE} part 1/N — ...", "part 2/N — ...", etc. Split on area boundaries; if a single area exceeds the cap, sub-split within that area at finding boundaries (F1-F30, F31-F60, etc.). Each part has its own HEAD-SHA header + TL;DR for the findings in that part. Cross-reference the parts: each part's body footer says "This is part k of N for the ${DATE} @${SHORT_SHA} run; sibling parts: #<num1>, #<num2>, ...". The orchestrator creates them in order, captures each new issue number, then edits each part's body to inject the full sibling list at the end.
-
-    Run:
-      gh issue create --title "[claude-audit] ${DATE} — ${N_TOTAL} findings (${N_HIGH} HIGH, ${N_MED} MED) @${SHORT_SHA}" \
-                      --label claude-audit \
-                      --label <area-labels-comma-separated> \
-                      --body-file /tmp/new_body.md
-      Print the issue URL.
-
-    If gh write fails, print full body to stdout so the run isn't lost.
+  4d. Print a summary: the checkpoint URL + every filed issue URL. If any gh write failed, print the full unsent bodies to stdout so the run isn't lost.
 
 CONSTRAINTS:
   - Read-only on repo files. Writing to /tmp/* is fine.
   - Do NOT push branches or open PRs.
-  - You MAY close clean-checkpoint issues YOU create in this run. Do NOT close or modify any other issues, and do NOT use `gh issue edit` to modify any issue's title/body.
-  - F-numbers reset to F1 in each new issue.
-  - First seen on each finding = the SHORT_SHA / DATE_ONLY of THIS run (since findings are fresh in this issue).
-  - Never re-flag anything in the Stop rules block, TODO.md Fixed archive, or the dedupe pool (open+closed claude-audit issue bodies and comments).
+  - Allowed writes ONLY: `gh label create` (severity labels, idempotent), `gh issue create` (per-finding issues + the one checkpoint), `gh issue comment` (Related links on issues YOU created this run), `gh issue close` (the checkpoint YOU created this run). Do NOT close or modify any other issue, and do NOT use `gh issue edit` to modify any issue's title/body.
+  - ONE issue per finding. Severity is a LABEL (`severity-high`/`severity-medium`), NEVER in the title. Area is both the title prefix and a label.
+  - First seen on each finding = the SHORT_SHA / DATE_ONLY of the run that FIRST files it. You only create issues for findings not already in the dedupe pool, so existing issues (and their First seen) are left untouched.
+  - Never re-flag anything in the Stop rules block, TODO.md Fixed archive, or the dedupe pool (open+closed per-finding issue titles/files — STEP 1c/3c). Dedup spans open AND closed so a triaged-closed or fixed finding is not re-filed.
   - Never propose cross-position harmonization — feature engineering, not audit.
-  - Empty runs (N_NEW == 0) post a closed clean checkpoint so HEAD-SHA is recorded for STEP 0 skip-check.
-  - HARD BOUND: target ≤55k chars per issue body. Split into parts at area boundaries if exceeded.
+  - Every run posts a closed checkpoint issue recording HEAD-SHA (even clean 0-finding runs), so STEP 0's skip-check always has a breadcrumb.
