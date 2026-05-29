@@ -6,7 +6,7 @@ Sources, libraries, and AI-tool usage for this project.
 
 ## Data
 
-- **[nfl_data_py](https://github.com/nflverse/nfl_data_py)** 0.3.3 (MIT, wrapper for [nflverse](https://github.com/nflverse)) — weekly player stats, rosters, schedules, snap counts, injuries, depth charts for seasons 2012–2025. Used for every target and nearly every feature. Cached under `data/raw/` via [src/data/loader.py](src/data/loader.py). 2025+ weekly stats come from nflverse `stats_player` directly (nfl_data_py lags a season).
+- **[nfl_data_py](https://github.com/nflverse/nfl_data_py)** 0.3.3 (MIT, wrapper for [nflverse](https://github.com/nflverse)) — weekly player stats, rosters, schedules, snap counts, injuries, depth charts for seasons 2012–2025. Used for every target and nearly every feature. Cached under `data/raw/` via [src/data/loader.py](src/data/loader.py). 2025+ weekly stats come from the nflverse `stats_player` release directly, and 2025+ depth charts from the nflverse `depth_charts` release (ESPN-sourced as of 2025, normalized back to the legacy schema in `_normalize_espn_depth`) — nfl_data_py lags a season for both.
 - **Vegas odds + weather features** — joined in [src/shared/weather_features.py](src/shared/weather_features.py). Source and feature rationale are documented in [docs/archive/design_weather_and_odds.md](docs/archive/design_weather_and_odds.md).
 
 No data was manually labelled or scraped.
