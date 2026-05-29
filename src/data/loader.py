@@ -77,6 +77,9 @@ def _normalize_espn_depth(espn: pd.DataFrame, schedules: pd.DataFrame, season: i
     snap = off.groupby(["gsis_id", "team", "snapshot_ts"], as_index=False)["pos_rank"].min()
 
     sched = schedules[(schedules["game_type"] == "REG") & (schedules["season"] == season)]
+    # gameday is date-granularity, so kickoff is that day's midnight: a snapshot
+    # taken the morning of the game falls *after* it and maps to the prior day's
+    # snapshot instead. Conservative and leakage-safe; coverage stays ~99.8%.
     kickoff = pd.to_datetime(sched["gameday"], errors="coerce")
     cal = pd.concat(
         [
@@ -164,12 +167,14 @@ def load_team_week_stats(
 def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) -> pd.DataFrame:
     """Load and merge NFL weekly data, rosters, snap counts, and schedules.
 
-    The six independent network/parquet fetches (weekly, rosters, schedules,
-    snap counts, injuries, depth charts) run in a ``ThreadPoolExecutor`` so a
-    cold cache populates in parallel. Each is HTTP/parquet I/O and so spends
-    most of its time off the GIL. Cache hits short-circuit at the start of
-    each helper so warm starts pay only the parquet read cost (also fanned
-    out, but trivial).
+    Most network/parquet fetches (weekly, rosters, schedules, snap counts,
+    injuries, red-zone PBP) run in a ``ThreadPoolExecutor`` so a cold cache
+    populates in parallel. Depth charts run *after* the pool: the 2025+ ESPN
+    format needs schedule kickoff dates to map its daily snapshots onto NFL
+    weeks (see ``_fetch_depth`` / ``_normalize_espn_depth``). Each fetch is
+    HTTP/parquet I/O and so spends most of its time off the GIL. Cache hits
+    short-circuit at the start of each helper so warm starts pay only the
+    parquet read cost (also fanned out, but trivial).
     """
     if seasons is None:
         seasons = SEASONS
