@@ -510,30 +510,39 @@ class TestAttentionEntropyRegulariserWiring:
         assert history["train_loss"][0] > 0
 
     def test_entropy_term_increments_first_batch_loss(self, history_data_factory):
-        """Running a single train batch with coeff>0 produces a larger loss
-        than with coeff=0 — the entropy term must actually reach the loss."""
-        # Build matched pairs; same seed makes predictions identical at step 0.
+        """The entropy regulariser must actually reach the loss.
+
+        With coeff=0 the model exposes no entropy term, so the trainer's
+        ``loss = loss + entropy_term`` branch never fires. With coeff>0 the
+        trainer adds ``model.attention_entropy_loss()`` to the base criterion
+        output, so the final loss strictly exceeds the base loss.
+
+        Both legs are checked within a single model/forward. The earlier
+        formulation compared a coeff=0 forward's base loss against a coeff>0
+        forward's base loss at atol=1e-5 -- a cross-forward float-equality
+        precondition that drifts on nondeterministic platforms (Windows/CUDA
+        threaded-BLAS reduction order) even when the wiring is correct. The
+        additivity it scaffolds is a within-model property, so assert it within
+        one model.
+        """
         trainer_off, loader_off, _ = self._build(history_data_factory, coeff=0.0)
         trainer_on, loader_on, _ = self._build(history_data_factory, coeff=0.1)
         trainer_off.model.train()
         trainer_on.model.train()
 
-        batch_off = next(iter(loader_off))
-        batch_on = next(iter(loader_on))
+        # coeff=0 leg: run a real forward, but the model exposes no entropy
+        # term, so the trainer would add nothing to the base loss.
+        trainer_off._forward_batch(next(iter(loader_off)))
+        assert trainer_off.model.attention_entropy_loss() is None
 
-        preds_off, y_off = trainer_off._forward_batch(batch_off)
-        preds_on, y_on = trainer_on._forward_batch(batch_on)
-
-        base_loss, _ = trainer_off.criterion(preds_off, y_off)
-        entropy_only_base, _ = trainer_on.criterion(preds_on, y_on)
+        # coeff>0 leg: base loss and entropy term come from the SAME forward, so
+        # final = base + entropy has no cross-forward float drift to assert on.
+        preds_on, y_on = trainer_on._forward_batch(next(iter(loader_on)))
+        base_loss, _ = trainer_on.criterion(preds_on, y_on)
         entropy_term = trainer_on.model.attention_entropy_loss()
-
         assert entropy_term is not None and entropy_term.item() > 0
-        # Replicates what the trainer does internally: base + entropy
-        final_loss = entropy_only_base + entropy_term
-        # The off-model and on-model share seeds/architecture → base losses
-        # match. The regularised final loss must strictly exceed it.
-        torch.testing.assert_close(base_loss, entropy_only_base, atol=1e-5, rtol=0)
+        # Replicates what the trainer does internally: final = base + entropy.
+        final_loss = base_loss + entropy_term
         assert final_loss.item() > base_loss.item()
 
 
