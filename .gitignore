@@ -66,6 +66,7 @@ infra/aws/.env.out
 !.claude/hooks/
 !.claude/settings.json
 !.claude/skills/
+!.claude/routines/
 
 # Credentials (preventive)
 *.pem
