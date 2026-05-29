@@ -4,9 +4,7 @@ from src.config import POSITIONS
 from src.data.loader import compute_all_scoring_formats
 
 
-def impute_snap_pct(
-    df: pd.DataFrame, *, fit_on: pd.DataFrame | None = None
-) -> pd.DataFrame:
+def impute_snap_pct(df: pd.DataFrame, *, fit_on: pd.DataFrame | None = None) -> pd.DataFrame:
     """Fill missing ``snap_pct`` values with the ``(position, week)`` median.
 
     Parameters
@@ -51,11 +49,7 @@ def impute_snap_pct(
         df["snap_pct"] = df["snap_pct"].fillna(0)
         return df
 
-    medians = (
-        source.dropna(subset=["snap_pct"])
-        .groupby(["position", "week"])["snap_pct"]
-        .median()
-    )
+    medians = source.dropna(subset=["snap_pct"]).groupby(["position", "week"])["snap_pct"].median()
     # Vectorised lookup: map each row's (position, week) to the median.
     keys = pd.MultiIndex.from_arrays([df["position"], df["week"]])
     lookup = medians.reindex(keys).values
@@ -159,14 +153,25 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
         else:
             df[col] = 0
 
-    # Step 4: Fill missing snap_pct with position-week median.
-    # NOTE: this in-line call fits medians on ``df`` itself (single-frame
-    # behaviour). When ``preprocess()`` is called on a frame that spans
-    # train/val/test, val/test rows leak into the training-row imputation
-    # via the shared median — callers operating on split-aware data should
-    # skip Step 4 here and call ``impute_snap_pct(frame, fit_on=train)``
-    # POST-SPLIT instead (``src/data/split.py::temporal_split`` does this).
-    df = impute_snap_pct(df)
+    # Step 4 (removed): no longer impute snap_pct here. The previous in-line
+    # ``impute_snap_pct(df)`` fitted position-week medians on ``df`` itself —
+    # a frame that spans train + val + test — so val/test snap_pct leaked
+    # into the training-row imputation via the shared median, AND it pre-empted
+    # the split-aware train-only fill in
+    # ``src/data/split.py::{temporal_split,expanding_window_folds}`` (those
+    # calls only ``fillna`` NaNs, so a frame whose NaNs were already filled
+    # here saw them as no-ops). snap_pct imputation is now performed
+    # exclusively POST-SPLIT with train-only medians via
+    # ``impute_snap_pct(frame, fit_on=train_df)``.
+    #
+    # No path is left with un-imputed snap_pct: the canonical production flow
+    # (refresh-splits.yml + tests/qb/test_pipeline_e2e.py) is
+    # ``preprocess -> build_features -> temporal_split``, and
+    # ``src/features/engineer.py`` lags snap_pct with
+    # ``groupby(...).shift(1).fillna(0)`` (zeroing every remaining NaN —
+    # both first-week rows and genuinely-missing weeks) before
+    # ``temporal_split`` runs. The serving layer reads the already-imputed
+    # split parquets and never calls ``preprocess`` directly.
 
     # Step 5: Compute fantasy points for all scoring formats
     df = compute_all_scoring_formats(df)

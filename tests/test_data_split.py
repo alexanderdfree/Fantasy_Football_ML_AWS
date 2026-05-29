@@ -155,3 +155,38 @@ def test_expanding_window_folds_custom_seasons(_sample_df):
     _, train1, val1 = folds[1]
     assert set(train1["season"].unique()) == {2021, 2022}
     assert set(val1["season"].unique()) == {2023}
+
+
+@pytest.mark.unit
+def test_expanding_window_folds_imputes_snap_pct_train_only():
+    """audit-320 F106: each fold's val ``snap_pct`` NaN is filled with that
+    fold's TRAIN-only (position, week) median, mirroring ``temporal_split``.
+
+    The val season carries a distinct snap_pct distribution; a leaky
+    full-frame median would mix it in. Asserting the imputed val value
+    equals the train-only median (and is NOT the val-inclusive median)
+    pins the train-only contract.
+    """
+    import numpy as np
+
+    rows = []
+    # Train season 2021, (QB, week 1): 0.20, 0.30 -> train-only median 0.25
+    rows.append({"season": 2021, "week": 1, "player_id": "T1", "position": "QB", "snap_pct": 0.20})
+    rows.append({"season": 2021, "week": 1, "player_id": "T2", "position": "QB", "snap_pct": 0.30})
+    # Val season 2022, (QB, week 1): one observed 0.90 + one NaN to impute.
+    # Full-frame median over {0.20,0.30,0.90} = 0.30; train-only median = 0.25.
+    rows.append({"season": 2022, "week": 1, "player_id": "V1", "position": "QB", "snap_pct": 0.90})
+    rows.append(
+        {"season": 2022, "week": 1, "player_id": "V2", "position": "QB", "snap_pct": np.nan}
+    )
+    df = pd.DataFrame(rows)
+
+    folds = expanding_window_folds(df, val_seasons=[2022], min_train_season=2021)
+    _, train0, val0 = folds[0]
+    # Train rows untouched.
+    assert set(train0[train0["position"] == "QB"]["snap_pct"].round(2)) == {0.20, 0.30}
+    # Val NaN filled with TRAIN-only median (0.25), not the val-inclusive 0.30.
+    v2 = val0[val0["player_id"] == "V2"].iloc[0]
+    assert v2["snap_pct"] == pytest.approx(0.25)
+    # Observed val value passes through.
+    assert val0[val0["player_id"] == "V1"].iloc[0]["snap_pct"] == pytest.approx(0.90)
