@@ -102,6 +102,40 @@ def _make_skill_position_frame(seed: int, season: int, n_players: int = 5) -> pd
                         "fantasy_points": float(rng.uniform(5, 25)),
                     }
                 )
+    # Kickers ALSO appear in the offensive player-week table (with ~0 offensive
+    # fantasy points), so the real ``data/splits/test.parquet`` carries K rows.
+    # ``_load_base_data_locked`` must NOT copy them into ``results`` — K is
+    # appended separately from ``_load_k_splits``. Mirror that here with the SAME
+    # player_id/week as the appended K split (``_make_k_split`` default:
+    # K000-K002, weeks 1-2) so the duplication regression actually reproduces:
+    # without the position filter each kicker appears twice (a phantom actual≈0 /
+    # null-pred twin). Offensive raw stats are 0 to mirror a kicker's stat line.
+    for i in range(3):
+        for week in (1, 2):
+            rows.append(
+                {
+                    "player_id": f"K{i:03d}",
+                    "player_display_name": f"Kicker {i}",
+                    "position": "K",
+                    "recent_team": "KC",
+                    "season": season,
+                    "week": week,
+                    "season_type": "REG",
+                    "headshot_url": f"https://example.com/K{i}.png",
+                    "passing_yards": 0.0,
+                    "passing_tds": 0.0,
+                    "interceptions": 0.0,
+                    "rushing_yards": 0.0,
+                    "rushing_tds": 0.0,
+                    "receiving_yards": 0.0,
+                    "receiving_tds": 0.0,
+                    "receptions": 0.0,
+                    "sack_fumbles_lost": 0.0,
+                    "rushing_fumbles_lost": 0.0,
+                    "receiving_fumbles_lost": 0.0,
+                    "fantasy_points": 0.0,
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -210,6 +244,12 @@ def boot_env(tmp_path, monkeypatch):
     # actually fires (POST rows must be dropped from the cached splits).
     n_test_rows_raw = len(test_df)
     n_test_post = int((test_df["season_type"] == "POST").sum())
+    # The skill test.parquet now carries kicker rows (mirrors production). The
+    # base copy in _load_base_data_locked drops the separately-appended positions
+    # (K/DST) from it, so the shape assertion must subtract the REG K/DST rows
+    # present in the skill frame.
+    _reg_test = test_df[test_df["season_type"] == "REG"]
+    n_test_skill_appended = int(_reg_test["position"].isin(("K", "DST")).sum())
 
     # K + DST loaders fan out into nfl_data_py and the PBP cache; stub them to
     # return synthetic DataFrames so the test stays hermetic. The integration
@@ -253,6 +293,7 @@ def boot_env(tmp_path, monkeypatch):
         "tmp_path": tmp_path,
         "n_test_rows_raw": n_test_rows_raw,
         "n_test_post": n_test_post,
+        "n_test_skill_appended": n_test_skill_appended,
         "n_k_test": len(k_test),
         "n_dst_test": len(dst_test),
         "n_k_kicks": len(k_kicks),
@@ -371,7 +412,9 @@ class TestLoadBaseDataLocked:
 
     def test_concat_shape_matches_sum_of_test_splits(self, boot_env):
         """``results`` length should equal the skill-position test row count
-        (minus POST-filtered rows) plus the K/DST test row counts."""
+        (minus POST-filtered rows, minus the K/DST rows the skill parquet also
+        carries — those are dropped by the base copy because K/DST are appended
+        from their own splits) plus the K/DST test row counts."""
         app_mod = boot_env["app"]
         app_mod._load_base_data_locked()
 
@@ -379,13 +422,39 @@ class TestLoadBaseDataLocked:
         expected = (
             boot_env["n_test_rows_raw"]
             - boot_env["n_test_post"]
+            - boot_env["n_test_skill_appended"]
             + boot_env["n_k_test"]
             + boot_env["n_dst_test"]
         )
         assert len(results) == expected, (
             f"results has {len(results)} rows, expected {expected} "
             f"(skill_test={boot_env['n_test_rows_raw']} - post={boot_env['n_test_post']} "
+            f"- skill_appended={boot_env['n_test_skill_appended']} "
             f"+ k={boot_env['n_k_test']} + dst={boot_env['n_dst_test']})"
+        )
+
+    def test_no_phantom_duplicate_kicker_rows(self, boot_env):
+        """Regression (alexfree.me): the skill ``test.parquet`` carries kicker
+        player-weeks with ~0 offensive fantasy_points, and K is ALSO appended
+        from its dedicated split. Copying the skill-frame kickers into
+        ``results`` doubled every kicker — a phantom twin with actual≈0 and null
+        predictions — so half the kicker leaderboard rendered blank. Assert each
+        kicker (player_id, week) appears exactly once and the K-row count equals
+        the appended K split (the phantom rows are filtered out)."""
+        app_mod = boot_env["app"]
+        app_mod._load_base_data_locked()
+
+        results = app_mod._cache["results"]
+        k_rows = results[results["position"] == "K"]
+        dup_mask = k_rows.duplicated(subset=["player_id", "week"], keep=False)
+        assert not dup_mask.any(), (
+            f"{int(dup_mask.sum())} duplicate kicker (player_id, week) rows in "
+            "results — the skill-frame kicker phantoms were not filtered out"
+        )
+        _, _, k_test = app_mod._cache["splits"]["K"]
+        assert len(k_rows) == len(k_test), (
+            f"results has {len(k_rows)} K rows, expected {len(k_test)} "
+            "(only the appended K split, no skill-frame phantoms)"
         )
 
     def test_season_type_filter_drops_post_rows(self, boot_env):

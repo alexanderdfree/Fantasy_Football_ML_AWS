@@ -573,9 +573,12 @@ class TestTargetMaps:
         client, _ = history_client
         body = client.get("/api/benchmark_history").get_json()
         assert body["target_labels"]["passing_yards"] == "Passing Yards"
-        # K target has a label but (intentionally) no unit entry — formatTargetMae
-        # renders it without a unit suffix.
+        # K targets now carry a unit too (added so the breakdown drill-down AND
+        # the History tab render kicker stats with a suffix instead of bare
+        # numbers — see TODO.md Fixed archive). fg_yard_points is a point value;
+        # fg_misses is a raw miss count.
         assert body["target_labels"]["fg_yard_points"] == "FG Yard Points"
-        assert "fg_yard_points" not in body["target_units"]
+        assert body["target_units"]["fg_yard_points"] == "pts"
+        assert body["target_units"]["fg_misses"] == "misses"
         assert body["target_units"]["passing_yards"] == "yds"
         assert body["target_units"]["receptions"] == "rec"

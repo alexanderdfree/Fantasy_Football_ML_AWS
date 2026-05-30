@@ -109,6 +109,13 @@ TARGET_UNITS = {
     "special_teams_tds": "TDs",
     "points_allowed": "pts",
     "yards_allowed": "yds",
+    # Kicker raw-stat units (predictions-tab breakdown drill-down). See
+    # ``K_TARGETS`` above / ``src/k/targets.py``: fg_yard_points and pat_points
+    # are point values, fg_misses / xp_misses are raw miss counts.
+    "fg_yard_points": "pts",
+    "pat_points": "pts",
+    "fg_misses": "misses",
+    "xp_misses": "misses",
 }
 
 # Targets whose MAE should be rendered in both raw units and fantasy-point-equivalent

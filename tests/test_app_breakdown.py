@@ -68,6 +68,23 @@ def test_breakdown_dst_has_all_ten_targets(client_with_data):
 
 
 @pytest.mark.integration
+def test_breakdown_kicker_components_have_units(client_with_data):
+    """Regression: kicker targets were absent from ``TARGET_UNITS``, so the
+    per-stat breakdown rendered bare numbers (no units) for kickers. Every K
+    component must carry a non-empty unit wired from ``TARGET_UNITS``."""
+    from src.shared.aggregate_targets import TARGET_UNITS
+
+    resp = client_with_data.get("/api/predictions/breakdown?player_id=K000&week=1")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["position"] == "K"
+    assert body["components"]  # K000 must resolve to a breakdown
+    for c in body["components"]:
+        assert c["unit"], f"kicker target {c['key']!r} has no display unit"
+        assert c["unit"] == TARGET_UNITS[c["key"]]
+
+
+@pytest.mark.integration
 def test_breakdown_404_unknown_player(client_with_data):
     resp = client_with_data.get("/api/predictions/breakdown?player_id=NOPE&week=1")
     assert resp.status_code == 404
