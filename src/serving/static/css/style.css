@@ -1244,7 +1244,7 @@ body.model-lgbm .attn-nn-col { display: none; }
 .history-link-disabled { color: var(--text-secondary); }
 .history-link-disabled code { font-size: 12px; }
 
-/* History controls (detailed mode + group-by-position checkboxes) */
+/* History controls (detailed mode + group-by-model checkbox) */
 .history-controls {
     display: flex;
     flex-wrap: wrap;

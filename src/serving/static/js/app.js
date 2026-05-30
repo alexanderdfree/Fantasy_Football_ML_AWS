@@ -1175,7 +1175,7 @@ async function loadWikiPage(slug, anchor = null) {
 // Layout constants for the History table. Mirror the backend's
 // _BENCHMARK_MODELS / _BENCHMARK_POSITIONS ordering so a row's per-model pill
 // arrays line up by index. historyData caches the last fetch so the two
-// checkboxes (detailed mode, group-by-position) re-render without re-fetching.
+// checkboxes (detailed mode, group-by-model) re-render without re-fetching.
 const HISTORY_MODELS = ["ridge", "nn", "attn_nn", "lgbm"];
 const HISTORY_MODEL_LABELS = { ridge: "Ridge", nn: "NN", attn_nn: "Attn NN", lgbm: "LGBM" };
 const HISTORY_MODEL_COL_CLASS = { ridge: "ridge-col", nn: "nn-col", attn_nn: "attn-nn-col", lgbm: "lgbm-col" };
@@ -1208,10 +1208,10 @@ function renderSummaryPills(entries) {
 }
 
 function historyColumns(groupByPosition) {
-    // Group-by-position: one column per position. These carry no .{model}-col
-    // class, so the page-wide #model-display hide rule is intentionally inert
-    // here (model becomes an inner dimension). Group-by-model (default): one
-    // column per model, keeping .{model}-col so #model-display still filters.
+    // Group-by-position (default): one column per position. These carry no
+    // .{model}-col class, so the page-wide #model-display hide rule is
+    // intentionally inert here (model becomes an inner dimension). Group-by-model:
+    // one column per model, keeping .{model}-col so #model-display still filters.
     if (groupByPosition) {
         return HISTORY_POSITIONS.map(pos => ({ key: pos, label: pos, cls: "col-history-mae" }));
     }
@@ -1298,7 +1298,8 @@ function renderHistory() {
     const head = document.getElementById("history-head");
     const tbody = document.getElementById("history-body");
     if (!historyData || !head || !tbody) return;
-    const groupByPosition = document.getElementById("history-group-by-position-toggle").checked;
+    // Checkbox is "Group by model"; default (unchecked) groups by position.
+    const groupByPosition = !document.getElementById("history-group-by-model-toggle").checked;
     const detailed = document.getElementById("history-detailed-toggle").checked;
     const columns = historyColumns(groupByPosition);
     const colSpan = columns.length + 3; // PR + Timestamp + variable cols + Training time
@@ -1310,7 +1311,11 @@ function renderHistory() {
         <th class="col-history-time">Training time</th>
     </tr>`;
 
-    const { rows, repoSlug } = historyData;
+    const { repoSlug } = historyData;
+    // Hide commits that didn't retrain (training-skipped sentinels): they carry
+    // no MAE data and only add noise. training_skipped is set per row by the
+    // backend (explicit sentinel flag, or empty results).
+    const rows = historyData.rows.filter(row => !row.training_skipped);
     if (!rows.length) {
         tbody.innerHTML = `<tr><td colspan="${colSpan}" class="arch-loading">No benchmark runs yet.</td></tr>`;
         return;
@@ -1377,7 +1382,7 @@ function renderHistoryDetail(row, colSpan) {
 }
 
 function setupHistoryControls() {
-    ["history-detailed-toggle", "history-group-by-position-toggle"].forEach(id => {
+    ["history-detailed-toggle", "history-group-by-model-toggle"].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.addEventListener("change", renderHistory);
     });
