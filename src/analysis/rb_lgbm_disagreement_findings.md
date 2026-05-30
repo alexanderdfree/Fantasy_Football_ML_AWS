@@ -1,6 +1,6 @@
-# RB LightGBM "underprediction" vs Ridge/NN — findings
+# RB model comparison — LGBM "underprediction" + NN/attention by history depth
 
-**Date:** 2026-05-30 · **Verdict: EXPECTED behaviour, not a bug.**
+**Date:** 2026-05-30 · **Verdict: EXPECTED behaviour, not a bug** (both parts).
 **Reproduce:** `python -m src.analysis.analysis_rb_lgbm_disagreement`
 (2025 test set, 1643 RB player-weeks; local CPU retrain reproduces the serving-UI numbers).
 
@@ -104,8 +104,56 @@ re-import Ridge's overprediction variance on the common low weeks without ceilin
 benefit, so it is unlikely to lower MAE — left as a separately-benchmarkable
 question, not pursued here.
 
+## NN & attention NN by in-season history depth
+
+Follow-up question: the attention NN is *history-aware*, so for Henry W2 — where
+the within-season sequence holds only **1 game** — shouldn't it have regressed
+toward LGBM's ~12 rather than printing 17.2?
+
+**The structure is as assumed, and the masking is correct.**
+`build_game_history_arrays` ([src/features/engineer.py](src/features/engineer.py))
+groups by `(player_id, season)`, so the sequence is within-season: Henry W2 = 1
+real game + 16 zero-padded slots, and `AttentionPool` masks the padding with
+`-inf` before softmax — the model attends *only* to the one real game.
+
+**But a 1-item sequence does not imply "regress."** Attention over a length-1
+sequence *extracts* that game — there is no small-sample → hedge reflex — so the
+lone explosive Week 1 (plus the static prior-season branch, ≈19.8) yields a high
+prediction. Define `n_prior_games` = in-season games played before the row (= the
+attention sequence's real length). Per-model MAE by depth (2025 test); **bold =
+best**:
+
+| n_prior_games | n | avg actual | Ridge | NN | Attn | LGBM |
+|---|---|---|---|---|---|---|
+| 0 (opener) | 159 | 4.5 | 4.51 | **3.26** | 3.81 | 3.33 |
+| 1 | 148 | 5.7 | 4.01 | 3.71 | 3.68 | **3.60** |
+| 2–3 | 273 | 6.3 | 4.02 | 3.71 | 3.66 | **3.65** |
+| 4–7 | 440 | 7.2 | 4.19 | 4.20 | 4.14 | **4.07** |
+| 8+ | 623 | 9.0 | 5.09 | 4.95 | 4.85 | **4.78** |
+
+1. **At `n_prior_games==1` (Henry's bucket) the attention NN (3.68) is on par with
+   LGBM (3.60), and the average bias is *negative*** — so Henry W2 is a within-bucket
+   outlier, not a systematic over-trust of sparse history. On the 22 sparse-history
+   rows whose recent game was hot (≥18 FP), players **actually averaged 16.6 FP next
+   week** — hot starts usually persist, so ~17 was the right expected value. LGBM
+   under-predicts these the most (bias −3.31); it only looked "right" on Henry
+   because Henry is the 1-of-1 crater. Pushing the attention NN toward ~12 would
+   *degrade* the typical case.
+2. **The one genuine weak spot is the season opener (`n_prior_games==0`).** With no
+   real games the attention history branch is inert (all-padding → 0), so the model
+   leans on its static prior-season branch and over-predicts (bias **+1.13**, MAE
+   3.81 — the worst non-Ridge model; the plain NN handles no-history best at 3.26).
+   Deferred to a tracked follow-up.
+
+**The attention NN never has the lowest MAE in any history-depth bucket** — LGBM
+(or, at the opener, the plain NN) wins everywhere. For RB the attention architecture
+is not earning its complexity over the tree model.
+
 ## Conclusion
 
-The disagreement is textbook tree-vs-linear behaviour on a volatile, mean-reverting
-target, and it is precisely why LightGBM is the production-best (lowest-MAE) model
-for RB. **No model change recommended.**
+Part 1 — the LGBM "underprediction" is textbook tree-vs-linear behaviour on a
+volatile, mean-reverting target, precisely why LightGBM is the production-best
+(lowest-MAE) RB model. Part 2 — the attention NN's history-awareness does **not**
+make it regress on a short sequence, and its ~17 for Henry was well calibrated; its
+only real gap is the empty-history season opener (`n_prior_games==0`), tracked as a
+follow-up. **No model change recommended in this analysis.**

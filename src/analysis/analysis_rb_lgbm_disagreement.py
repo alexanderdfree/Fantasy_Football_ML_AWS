@@ -1,27 +1,32 @@
-"""Why LightGBM "underpredicts" some RB player-weeks vs Ridge/NN (operator-only CLI).
+"""RB model comparison: LGBM-vs-peers disagreement, and NN / attention-NN
+behaviour by in-season history depth (operator-only CLI).
 
-Motivated by player-weeks where LightGBM prints far below the other RB models on
-the serving UI (the canonical case: Derrick Henry 2025 Week 2 — LGBM ~12.6,
-Attn-NN ~17, NN ~16, Ridge ~26). The question: bug, or just model differences?
+Part 1 — LGBM vs peers. Motivated by player-weeks where LightGBM prints far
+below the other RB models (canonical case: Derrick Henry 2025 Week 2 — LGBM
+~12.6, Attn-NN ~17, NN ~16, Ridge ~26). Against ground truth it is not a bug:
+Henry's W2 actual was 2.3 FP (he cratered after a 29.2-pt Week 1), so LGBM was
+the *closest* model and Ridge the *worst*. Trees can't extrapolate past their
+leaves and shrink toward typical outcomes; the linear model extrapolates the hot
+Week 1. This conservatism is why LightGBM is the production-best RB model.
 
-This script settles it with a class-level comparison against ground truth across
-*every* RB test player-week (not just the cited row). It does **not** change any
-model — it quantifies behaviour and prints a verdict.
+Part 2 — NN & attention NN by history depth. The attention NN is history-aware,
+so one might expect it to *regress* when the per-game sequence is short (at season
+Week 2 the within-season history holds a single game). It does not: attention
+over a length-1 sequence extracts that one game — there is no "small-sample →
+hedge" reflex — so a lone explosive game (plus the static prior-season branch)
+yields a high prediction. Empirically that is well calibrated: sparse-history
+players coming off a hot game average ~16.6 FP next week, so ~17 was the right
+expected value and Henry's crater is a 1-of-1 anomaly. The one genuine weak spot
+is the season opener (``n_prior_games == 0``, empty history): the attention NN
+leans on its static branch and over-predicts. And the attention NN never beats
+LightGBM in any history-depth bucket.
 
-Key idea: "LGBM predicts lower than its peers" is not the same as "LGBM is
-wrong." Henry's Week 2 actual was 2.3 FP — he cratered after a 29.2-pt Week 1 —
-so on that row LGBM (12.6) was the *closest* of the four models and Ridge (26)
-the *worst*. The driver is structural: at Week 2 the lagged features are
-dominated by the single explosive Week 1, the linear model extrapolates that hot
-signal straight up, and the tree model (Huber loss + heavy L1/L2 regularisation,
-``num_leaves=16``) cannot extrapolate past its training leaves and shrinks toward
-typical outcomes. On a volatile, mean-reverting target this conservatism is *why*
-LightGBM is the production-best (lowest-MAE) model for RB.
-
-The full RB pipeline runs on every invocation (``run()``), so this module is
-gated behind ``if __name__ == "__main__"`` — importing it must NOT fire the
-pipeline. The pure helpers below (``per_model_metrics``, ``peer_gap``,
-``calibration_table``, ``gap_decomposition``) are unit-tested in
+This script quantifies behaviour and prints a verdict — it does **not** change
+any model. The full RB pipeline runs on every invocation (``run()``), so this
+module is gated behind ``if __name__ == "__main__"`` — importing it must NOT fire
+the pipeline. The pure helpers below (``per_model_metrics``, ``peer_gap``,
+``calibration_table``, ``gap_decomposition``, ``add_history_depth``,
+``history_depth_table``) are unit-tested in
 ``tests/analysis/test_analysis_rb_lgbm_disagreement.py``.
 
 Usage:
@@ -64,6 +69,17 @@ DISAGREEMENT_THRESHOLD = 4.0
 
 # Actual-FP bin edges for the calibration table.
 CALIB_BINS = [0, 5, 10, 15, 20, 25, np.inf]
+
+# In-season games-played buckets for the history-depth table. n_prior_games is
+# the attention model's real (non-padded) sequence length for the row, so
+# bucket "0" == season opener with an empty history sequence.
+HISTORY_DEPTH_BUCKETS = [(0, 0, "0"), (1, 1, "1"), (2, 3, "2-3"), (4, 7, "4-7"), (8, 99, "8+")]
+
+# Sparse-history calibration cut: a "hot" most-recent game is one whose FP was at
+# least this high (rolling_max over the last 3 games == the single prior game's FP
+# when only one game has been played).
+HOT_RECENT_FP = 18.0
+RECENT_MAX_COL = "rolling_max_fantasy_points_L3"
 
 
 def available_models(df: pd.DataFrame) -> dict[str, str]:
@@ -147,6 +163,48 @@ def gap_decomposition(
     return out
 
 
+def add_history_depth(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy with ``n_prior_games`` = in-season games played before each row.
+
+    This equals the attention model's real (non-padded) sequence length for the
+    row: ``build_game_history_arrays`` groups by ``(player_id, season)`` and gives
+    each game its prior in-season games (current excluded). So ``n_prior_games==0``
+    is a season opener with an all-padding (empty) history sequence, and Henry's
+    2025 Week 2 has ``n_prior_games==1`` (just his Week 1).
+    """
+    out = df.sort_values(["player_id", "season", "week"]).copy()
+    out["n_prior_games"] = out.groupby(["player_id", "season"]).cumcount()
+    return out
+
+
+def history_depth_table(
+    df: pd.DataFrame,
+    models: dict[str, str] | None = None,
+    buckets: list[tuple[int, int, str]] | None = None,
+) -> pd.DataFrame:
+    """Per-model MAE & bias within each in-season history-depth bucket.
+
+    One row per bucket with columns: ``npg`` (label), ``n``, ``avg_actual``, then
+    ``{model} MAE`` and ``{model} bias`` for each model. Requires
+    ``n_prior_games`` (call :func:`add_history_depth` first).
+    """
+    models = models or available_models(df)
+    buckets = buckets or HISTORY_DEPTH_BUCKETS
+    rows = []
+    for lo, hi, label in buckets:
+        sub = df[df["n_prior_games"].between(lo, hi)]
+        row: dict[str, object] = {
+            "npg": label,
+            "n": len(sub),
+            "avg_actual": sub[ACTUAL].mean() if len(sub) else float("nan"),
+        }
+        for name, m in per_model_metrics(sub, models).items():
+            row[f"{name} MAE"] = m["mae"]
+            row[f"{name} bias"] = m["bias"]
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 # --------------------------------------------------------------------------- #
 # Presentation (IO; not unit-tested)
 # --------------------------------------------------------------------------- #
@@ -217,7 +275,37 @@ def _make_plots(df: pd.DataFrame, gap: pd.Series, outdir: str) -> None:
     p2 = os.path.join(outdir, "rb_ridge_vs_lgbm.png")
     fig.savefig(p2, dpi=120)
     plt.close(fig)
-    print(f"\nPlots written: {p1}  |  {p2}")
+
+    written = [p1, p2]
+
+    # 3) Per-model MAE vs in-season history depth (the NN / attention-NN lens).
+    # Shows the attention NN never dips below LGBM and is weakest at npg==0.
+    if "n_prior_games" in df.columns:
+        depths = list(range(0, 13))  # 0..12 prior games; tail is sparse
+        fig, ax = plt.subplots(figsize=(6, 5))
+        for name, col in models.items():
+            maes = []
+            for d in depths:
+                sub = df[df["n_prior_games"] == d]
+                maes.append(
+                    np.mean(np.abs(sub[col].to_numpy() - sub[ACTUAL].to_numpy()))
+                    if len(sub)
+                    else np.nan
+                )
+            ax.plot(depths, maes, marker="o", label=name)
+        ax.set_xlabel("in-season games played before this week (attention seq length)")
+        ax.set_ylabel("MAE (fantasy points)")
+        ax.set_title(
+            "RB MAE by history depth: attention NN never beats LGBM;\nweakest at the season opener (0 prior games)"
+        )
+        ax.legend()
+        fig.tight_layout()
+        p3 = os.path.join(outdir, "rb_mae_by_history_depth.png")
+        fig.savefig(p3, dpi=120)
+        plt.close(fig)
+        written.append(p3)
+
+    print("\nPlots written: " + "  |  ".join(written))
 
 
 def main() -> None:
@@ -231,7 +319,7 @@ def main() -> None:
     df = result["test_df"].copy()
     models = available_models(df)
     gap = peer_gap(df, models)
-    df = df.assign(_gap=gap)
+    df = add_history_depth(df.assign(_gap=gap))
     y = df[ACTUAL]
 
     print("\n" + "=" * 72)
@@ -295,6 +383,63 @@ def main() -> None:
             "disagreement class.\nThis is a real cost, not just a model difference; "
             "surface to a human before acting."
         )
+    print("-" * 72)
+
+    # ----------------------------------------------------------------------- #
+    # PART 2 — NN & attention NN by in-season history depth.
+    # ----------------------------------------------------------------------- #
+    print("\n" + "=" * 72)
+    print("PART 2 — NN & attention NN by in-season history depth")
+    print("=" * 72)
+    hdt = history_depth_table(df, models)
+    mae_cols = ["npg", "n", "avg_actual"] + [f"{n} MAE" for n in models]
+    bias_cols = ["npg"] + [f"{n} bias" for n in models]
+    print("\nMAE by history depth (n_prior_games == attention seq length):")
+    print(hdt[mae_cols].to_string(index=False, float_format=lambda v: f"{v:.3f}"))
+    print("\nbias (pred - actual) by history depth:")
+    print(hdt[bias_cols].to_string(index=False, float_format=lambda v: f"{v:+.3f}"))
+
+    # Sparse history (1-2 prior games) split by whether the recent game was hot.
+    if RECENT_MAX_COL in df.columns:
+        sparse = df["n_prior_games"].between(1, 2)
+        hot = df[RECENT_MAX_COL] >= HOT_RECENT_FP
+        _print_metric_table(
+            f"sparse hist (1-2 games) + HOT recent game (>={HOT_RECENT_FP:.0f} FP)",
+            per_model_metrics(df[sparse & hot], models),
+        )
+        _print_metric_table(
+            "sparse hist (1-2 games) + cool recent game",
+            per_model_metrics(df[sparse & ~hot], models),
+        )
+        sh = df[sparse & hot]
+        if len(sh):
+            print(
+                f"  -> these {len(sh)} 'sparse+hot' player-weeks actually averaged "
+                f"{sh[ACTUAL].mean():.1f} FP: hot starts usually persist, so a high "
+                "prediction is the right expected value (Henry's 2.3 crater is the tail)."
+            )
+
+    # Attention-NN verdict: does it ever beat LGBM, and where is it weakest?
+    attn_best_buckets = sum(
+        1
+        for lo, hi, _ in HISTORY_DEPTH_BUCKETS
+        if (m := per_model_metrics(df[df["n_prior_games"].between(lo, hi)], models))
+        and min(m, key=lambda k: m[k]["mae"]) == "Attention NN"
+    )
+    opener = per_model_metrics(df[df["n_prior_games"] == 0], models)
+    attn_opener_bias = opener.get("Attention NN", {}).get("bias", float("nan"))
+    lgbm_opener_bias = opener.get(LGBM, {}).get("bias", float("nan"))
+    print("\n" + "-" * 72)
+    print(
+        f"VERDICT (Part 2): attention NN is best in {attn_best_buckets}/"
+        f"{len(HISTORY_DEPTH_BUCKETS)} history-depth buckets. Season-opener (npg==0) bias: "
+        f"Attn {attn_opener_bias:+.2f} vs LGBM {lgbm_opener_bias:+.2f} — the empty-history"
+    )
+    print(
+        "case is its one real weak spot. History-awareness does NOT make it regress on a "
+        "single explosive game; ~17 for Henry was well-calibrated to the typical sparse+hot "
+        "outcome (those players average ~16-17 FP the next week)."
+    )
     print("-" * 72)
 
     if not args.no_plots:
