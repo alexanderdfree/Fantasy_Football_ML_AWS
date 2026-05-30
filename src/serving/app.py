@@ -1164,6 +1164,15 @@ def _apply_position_models(train, val, test, pos, results):
 
 _ALL_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 
+# Positions sourced from their own dedicated splits (``_load_k_splits`` /
+# ``_load_dst_splits``) and appended to ``results`` separately in
+# ``_load_base_data_locked``. They MUST be excluded from the skill-position
+# ``test.parquet`` base copy: kickers ALSO appear in the offensive player table
+# (with ~0 offensive fantasy_points), so copying them there would double every
+# kicker row once the K split is appended — a phantom twin with actual≈0 and
+# null preds. See TODO.md Fixed archive ("Kicker rows duplicated in serving").
+_APPENDED_POSITIONS = ("K", "DST")
+
 
 def _ensure_base_data():
     """Load splits + build empty results frame. Idempotent. No model loads."""
@@ -1211,7 +1220,14 @@ def _load_base_data_locked():
         "fantasy_points_standard",
     ]
     keep_cols = [c for c in keep_cols if c in test.columns]
-    results = test[keep_cols].copy()
+    # K/DST arrive via their authoritative splits in the append loop below; the
+    # skill ``test.parquet`` ALSO carries kicker player-weeks (~0 offensive
+    # fantasy_points), so copying them here would double every kicker once the K
+    # split is appended — a phantom twin with actual≈0 and null preds (the model
+    # writes preds only to the appended rows' index). Exclude the separately-
+    # appended positions from the base copy. (DST players aren't in test.parquet
+    # today; that half of the guard is defensive.)
+    results = test[~test["position"].isin(_APPENDED_POSITIONS)][keep_cols].copy()
 
     # K/DST test frames need their index aligned to ``results``' offset so the
     # per-position writes in ``_apply_position_models`` land on the right rows.
