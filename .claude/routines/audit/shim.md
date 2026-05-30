@@ -4,4 +4,4 @@ Your full, authoritative instructions are version-controlled in this repo at `.c
 
 1. Read `.claude/routines/audit/prompt.md`.
 2. If it is missing or empty, STOP NOW: do not create any GitHub issue and do not improvise an audit — exit so the failure is visible in the run log.
-3. Otherwise, follow that file's instructions exactly and to completion, as if they were your prompt. Everything it specifies still applies in full: the STEP 0 skip-check, the 30-minute time budget, the read-only-on-repo-files constraint (only `gh issue create`/`close`/`comment` on issues you create this run, plus `/tmp/*`), the dedupe rules, the consolidation passes, and the issue title/body/finding format.
+3. Otherwise, follow that file's instructions exactly and to completion, as if they were your prompt. Everything it specifies still applies in full: the 30-minute time budget, the read-only-on-repo-files constraint (only `gh issue create`/`close`/`comment` on issues you create this run, plus `/tmp/*`), the dedupe rules, the consolidation passes, and the issue title/body/finding format.

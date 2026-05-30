@@ -8,5 +8,5 @@
   "sources": [
     {"git_repository": {"url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS"}}
   ],
-  "name": "Codebase audit fanout (every 2h, skip-if-HEAD-already-audited)"
+  "name": "Codebase audit fanout (every 2h)"
 }

@@ -2,7 +2,7 @@
 Review my code in parallel for bugs/quirks — spawn as many Opus 4.8 1M Max subagents as you can, each emitting HIGH/MED-only findings with verbatim evidence. The orchestrator verifies each cited line, dedupes against open and closed GitHub issues, drops anything already in CLAUDE.md Stop rules or TODO.md Fixed archive, consolidates partial/full duplicates within this run's worker output, and files ONE GITHUB ISSUE PER SURVIVING FINDING — labeled by severity (`severity-high`/`severity-medium`) and area — plus one closed checkpoint issue recording the audited SHA. Watch for artifacts of unfinished (yet merged) PRs, semantic merge conflicts from concurrent PRs blind to each other's changes, cross-position inconsistencies, training-vs-inference drift, and orphan code under live test coverage.
 
 === IMPLEMENTATION ===
-You are the orchestrator for a scheduled code-audit run on the Fantasy_Football_ML_AWS repo. Working dir is the repo root. Time budget: 30 minutes wall-clock (skipped runs exit in <1 min). You are READ-ONLY on repo files. The ONLY write actions permitted are `gh label create` (the severity labels, idempotent), `gh issue create` (per-finding issues + the checkpoint), `gh issue comment` (only on issues YOU create in THIS same run), and `gh issue close` (only on the checkpoint issue YOU create in THIS run). Writing to /tmp/* is fine.
+You are the orchestrator for a scheduled code-audit run on the Fantasy_Football_ML_AWS repo. Working dir is the repo root. Time budget: 30 minutes wall-clock. You are READ-ONLY on repo files. The ONLY write actions permitted are `gh label create` (the severity labels, idempotent), `gh issue create` (per-finding issues + the checkpoint), `gh issue comment` (only on issues YOU create in THIS same run), and `gh issue close` (only on the checkpoint issue YOU create in THIS run). Writing to /tmp/* is fine.
 
 === ISSUE MODEL (one issue per finding) ===
 Each surviving finding becomes ONE GitHub issue:
@@ -30,16 +30,6 @@ There are NO F-numbers. Findings are identified by their GitHub issue number. Be
 Ensure the severity labels exist (idempotent — safe to run every fire; area labels already exist in the repo):
     gh label create severity-high   --color B60205 --description "Audit: wrong result / silent loss / security / benchmark-changing" 2>/dev/null || true
     gh label create severity-medium --color FBCA04 --description "Audit: unfinished-PR artifact / invariant / drift / orphan code" 2>/dev/null || true
-
-STEP 0 — Skip check (sequential, ~30 sec):
-  0a. HEAD_SHA=$(git rev-parse HEAD); SHORT_SHA=$(git rev-parse --short HEAD)
-  0b. Fetch bodies of recent CHECKPOINT issues (each records one audited SHA):
-        gh issue list --label claude-audit --state all --limit 60 --json number,title \
-          --jq '.[] | select(.title | test("checkpoint")) | .number' \
-          | while read N; do gh issue view $N --json body --jq '.body'; done > /tmp/audit_history.txt
-  0c. If /tmp/audit_history.txt contains a line exactly matching `HEAD-SHA: ${HEAD_SHA}`: print SKIPPED message and exit 0.
-  0d. Else proceed.
-  SAFETY: If gh fails, do NOT skip.
 
 STEP 1 — Prep (sequential, ~2 min):
   1a. Read CLAUDE.md "Stop rules" section verbatim. Hold it.
@@ -164,7 +154,7 @@ STEP 4 — File issues (~3 min):
         gh issue comment "$NUM_A" --body "Related: #${NUM_B} — ${reason}"
         gh issue comment "$NUM_B" --body "Related: #${NUM_A} — ${reason}"
 
-  4c. CHECKPOINT ISSUE (ALWAYS — every run, including clean N_NEW==0 runs). Records the audited SHA for STEP 0's skip-check and serves as the per-fire audit-trail entry. Build /tmp/checkpoint.md:
+  4c. CHECKPOINT ISSUE (ALWAYS — every run, including clean N_NEW==0 runs). The per-fire audit-trail entry — records the audited SHA + findings filed this run. Build /tmp/checkpoint.md:
         HEAD-SHA: ${HEAD_SHA}
         HEAD-SHORT: ${SHORT_SHA}
         Date: ${DATE}
@@ -172,7 +162,7 @@ STEP 4 — File issues (~3 min):
         Filed: <comma-separated #numbers from /tmp/filed.tsv, or "none (clean checkpoint)">
       Create it then immediately close it. Label `claude-audit` ONLY — no severity/area label, so it never shows up in the actionable backlog (STEP 1c / the consumer query both filter to severity-labeled issues):
         CP=$(gh issue create --title "[claude-audit] checkpoint ${DATE} @${SHORT_SHA}" --label claude-audit --body-file /tmp/checkpoint.md)
-        gh issue close "${CP##*/}" --comment "Audit checkpoint — HEAD recorded for skip-check; per-finding issues filed separately. Auto-closed by audit routine."
+        gh issue close "${CP##*/}" --comment "Audit checkpoint — HEAD + finding counts recorded for the audit trail; per-finding issues filed separately. Auto-closed by audit routine."
 
   4d. Print a summary: the checkpoint URL + every filed issue URL. If any gh write failed, print the full unsent bodies to stdout so the run isn't lost.
 
@@ -184,4 +174,4 @@ CONSTRAINTS:
   - First seen on each finding = the SHORT_SHA / DATE_ONLY of the run that FIRST files it. You only create issues for findings not already in the dedupe pool, so existing issues (and their First seen) are left untouched.
   - Never re-flag anything in the Stop rules block, TODO.md Fixed archive, or the dedupe pool (open+closed per-finding issue titles/files — STEP 1c/3c). Dedup spans open AND closed so a triaged-closed or fixed finding is not re-filed.
   - Never propose cross-position harmonization — feature engineering, not audit.
-  - Every run posts a closed checkpoint issue recording HEAD-SHA (even clean 0-finding runs), so STEP 0's skip-check always has a breadcrumb.
+  - Every run posts a closed checkpoint issue recording HEAD-SHA (even clean 0-finding runs) as the per-fire audit trail.
