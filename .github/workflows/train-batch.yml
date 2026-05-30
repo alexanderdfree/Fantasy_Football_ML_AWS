@@ -58,6 +58,11 @@ env:
   # with "no version of requests==2.33.0" — same code path that's been
   # working for tests.yml since migration but silently absent here.
   UV_INDEX_STRATEGY: unsafe-best-match
+  # Public serving URL for the post-train cache-warm probe. NOT an ECS var —
+  # warming goes through the ALB like any user request (a plain HTTPS GET to
+  # /warm), not the ECS control plane, so it doesn't reintroduce the post-train
+  # ECS coupling PR #330 removed. See the "Warm serving cache" step.
+  SERVICE_URL: https://alexfree.me
 
 permissions:
   contents: read
@@ -361,6 +366,55 @@ jobs:
             echo "| $POS | $status | $LM | $mb |" >> "$GITHUB_STEP_SUMMARY"
           done
           exit $fail
+
+      - name: Warm serving cache
+        # Move the post-retrain recompute off the user request path. The
+        # in-flight refresh poller (FF_MODEL_REFRESH_INTERVAL_S, default 30s)
+        # swaps the freshly-trained models into the running tasks; the next
+        # /warm (the same _ensure_metrics() the first /api/predictions a user
+        # makes would run) recomputes predictions + re-uploads the S3 cache
+        # (D14). Probing /warm here means a CI runner eats that 30-60s, not a
+        # real visitor — and guarantees the fresh cache exists in S3 before
+        # traffic, so any later container hydrates instantly.
+        #
+        # Best-effort: a warm miss must never fail the train workflow. The
+        # existing post_fork pre-warm + lazy compute paths are the backstop.
+        continue-on-error: true
+        run: |
+          warm_url="${SERVICE_URL%/}/warm"
+          echo "Warming $warm_url"
+          # Baseline fingerprint before the running tasks swap in the new
+          # models. This first probe may itself take 30-60s if it lands on a
+          # cold / just-refreshed worker — that's the point: a runner pays it.
+          baseline=$(curl -fsS --max-time 150 "$warm_url" | jq -r '.fingerprint // empty' || true)
+          echo "baseline fingerprint: ${baseline:-<none>}"
+          # Poll until the content-based fingerprint advances past baseline
+          # (confirms the poller swapped the freshly-trained models and a
+          # worker recomputed + re-uploaded the S3 cache), bounded so a no-op
+          # run (e.g. baseline already current) can't hang the job.
+          deadline=$(( $(date +%s) + 180 ))
+          advanced=""
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            sleep 15
+            current=$(curl -fsS --max-time 150 "$warm_url" | jq -r '.fingerprint // empty' || true)
+            echo "  probe fingerprint: ${current:-<none>}"
+            if [ -n "$current" ] && [ -n "$baseline" ] && [ "$current" != "$baseline" ]; then
+              advanced="$current"
+              break
+            fi
+          done
+          if [ -n "$advanced" ]; then
+            echo "fingerprint advanced to $advanced — new models live, cache rebuilt."
+          else
+            echo "fingerprint stable at ${baseline:-<none>} (already current, or no model change) — spreading warm anyway."
+          fi
+          # Spread the warm across the desiredCount=2 tasks' gunicorn workers;
+          # the ALB distributes these GETs, so each call may land on a
+          # different not-yet-warm worker and trigger its recompute + upload.
+          for _ in $(seq 1 12); do
+            curl -fsS --max-time 150 "$warm_url" \
+              | jq -c '{fingerprint, rows, elapsed_s, degraded_positions}' || true
+          done
 
       - name: Append Batch run to benchmark_history/
         # Mirrors the JSON to s3://{bucket}/models/benchmark_history/ (see

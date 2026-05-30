@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import threading
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -2841,6 +2842,52 @@ def health():
             }
         ), 200
     return jsonify({"status": "ok"})
+
+
+@app.route("/warm")
+def warm():
+    """Explicit, observable cache-warm trigger for CI / operators.
+
+    Runs the same ``_ensure_metrics()`` the first ``/api/predictions?position=ALL``
+    call would — so the heavy model-load + inference (or a disk/S3 hydrate)
+    happens on THIS synthetic request instead of a real user's. After a
+    retrain the in-flight refresh poller swaps new models into the running
+    task; the next ``_ensure_metrics()`` recomputes and re-uploads the S3
+    prediction cache (``_persist_cache_to_disk`` -> ``upload_predictions_cache_to_s3``).
+    Hitting ``/warm`` from the post-train workflow moves that 30-60 s recompute
+    off the user path AND guarantees the fresh cache lands in S3 before real
+    traffic, so subsequent containers hydrate instantly (D14).
+
+    Idempotent and cheap once warm: ``_ensure_metrics`` early-returns when the
+    aggregate is cached and no position sentinel advanced (see app.py around
+    its first line), so repeated probes are dict reads. Strictly lighter than
+    the already-public ``/api/predictions?position=ALL`` — no new abuse surface.
+    Mirrors that endpoint's fail-loud contract: if every position fails to
+    load, ``_ensure_metrics`` raises and this returns 500, same as a real
+    predictions request would.
+
+    The reported ``fingerprint`` is content-based (``_compute_models_fingerprint``)
+    so it is stable across containers for byte-identical models — CI can poll
+    until it advances past a pre-retrain baseline to confirm the new models are
+    live and the cache was rebuilt.
+    """
+    t0 = time.time()
+    _ensure_metrics()
+    elapsed = round(time.time() - t0, 3)
+    fingerprint, _ = _compute_models_fingerprint()
+    return jsonify(
+        {
+            "status": "ok",
+            "fingerprint": fingerprint[:12],
+            # ``_ensure_metrics`` populates ``results`` on every success path
+            # (hydrate or compute), same guarantee ``/api/predictions`` relies
+            # on. ``positions_loaded`` uses the defensive read ``/health`` uses.
+            "rows": int(len(_cache["results"])),
+            "positions_loaded": sorted(_cache.get("positions_loaded") or set()),
+            "degraded_positions": _degraded_positions(),
+            "elapsed_s": elapsed,
+        }
+    )
 
 
 if __name__ == "__main__":

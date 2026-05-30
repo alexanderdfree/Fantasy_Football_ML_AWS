@@ -46,6 +46,10 @@ env:
   ECS_CLUSTER: fantasy-cluster
   ECS_SERVICE: fantasy-service
   TASK_FAMILY: fantasy-predictor
+  # Public serving URL for the post-deploy cache-warm probe (plain HTTPS GET
+  # to /warm; see the final step). Fresh tasks hydrate the S3 cache at boot
+  # when models are unchanged — this just warms any worker that raced traffic.
+  SERVICE_URL: https://alexfree.me
 
 # Read-only GITHUB_TOKEN — the deploy job authenticates to AWS via secrets
 # (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY), not via OIDC, so no
@@ -194,3 +198,18 @@ jobs:
           wait-for-service-stability: true
           wait-for-minutes: 20
           force-new-deployment: true
+
+      - name: Warm serving cache
+        # Belt-and-suspenders after the rollout: fresh tasks already hydrate
+        # the S3 prediction cache at boot (D14) when models are unchanged, but
+        # a few /warm probes ensure every gunicorn worker across the
+        # desiredCount=2 tasks is warm before traffic. Never block the deploy
+        # on a warm miss — post_fork + lazy compute remain the backstop.
+        continue-on-error: true
+        run: |
+          warm_url="${SERVICE_URL%/}/warm"
+          echo "Warming $warm_url"
+          for _ in $(seq 1 8); do
+            curl -fsS --max-time 150 "$warm_url" \
+              | jq -c '{fingerprint, rows, elapsed_s, degraded_positions}' || true
+          done
