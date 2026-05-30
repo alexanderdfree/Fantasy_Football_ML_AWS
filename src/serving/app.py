@@ -1227,7 +1227,7 @@ def _load_base_data_locked():
     # writes preds only to the appended rows' index). Exclude the separately-
     # appended positions from the base copy. (DST players aren't in test.parquet
     # today; that half of the guard is defensive.)
-    results = test[~test["position"].isin(_APPENDED_POSITIONS)][keep_cols].copy()
+    results = test.loc[~test["position"].isin(_APPENDED_POSITIONS), keep_cols].copy()
 
     # K/DST test frames need their index aligned to ``results``' offset so the
     # per-position writes in ``_apply_position_models`` land on the right rows.
