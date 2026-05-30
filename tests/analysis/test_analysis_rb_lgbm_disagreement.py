@@ -62,6 +62,15 @@ def test_per_model_metrics_mae_and_bias():
     assert min(m, key=lambda k: m[k]["mae"]) == "LightGBM"
 
 
+def test_per_model_metrics_handles_empty_slice():
+    """A data-dependent slice (gap<=-4, actual>=20) can be empty on another
+    season; metrics must come back NaN with n=0, not raise from sklearn."""
+    m = ad.per_model_metrics(_synthetic().iloc[0:0])
+    assert m["LightGBM"]["n"] == 0
+    assert np.isnan(m["LightGBM"]["mae"])
+    assert np.isnan(m["Ridge"]["bias"])
+
+
 def test_peer_gap_is_peer_mean_minus_lgbm():
     gap = ad.peer_gap(_synthetic())
     # row0: mean(10,8,6)=8 - 4 = 4 ; row1: mean(20,16,12)=16 - 8 = 8.

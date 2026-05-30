@@ -79,6 +79,14 @@ def per_model_metrics(
     Bias = mean(pred - actual): positive ⇒ the model over-predicts.
     """
     models = models or available_models(df)
+    # A data-dependent slice (e.g. gap<=-4 or actual>=20) can be empty on a
+    # different season; compute_metrics → sklearn raises on 0 samples, so return
+    # NaNs rather than crash the diagnostic.
+    if len(df) == 0:
+        return {
+            name: {"mae": float("nan"), "bias": float("nan"), "rmse": float("nan"), "n": 0}
+            for name in models
+        }
     y = df[actual].to_numpy(dtype=float)
     out: dict[str, dict[str, float]] = {}
     for name, col in models.items():
