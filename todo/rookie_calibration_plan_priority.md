@@ -1,7 +1,7 @@
 # Rookie calibration — implementation plan (next priority)
 
 A pick-up plan for a future session. The diagnosis is done and the evaluation
-harness exists; this is the *fix*. Read [rookie_cohort_findings.md](rookie_cohort_findings.md)
+harness exists; this is the *fix*. Read [rookie_cohort_findings_priority.md](rookie_cohort_findings_priority.md)
 first — it has the numbers this plan refers to.
 
 ## Context (what we know)
@@ -90,7 +90,7 @@ flat-or-up. Overall MAE flat is expected and fine.
 - Check **training vs serving** feature parity: confirm `years_exp`/first-season is
   available for 2025 inference in `src/serving/app.py`, not just training.
 
-## Baselines to beat (seed 42, from rookie_cohort_findings.md)
+## Baselines to beat (seed 42, from rookie_cohort_findings_priority.md)
 
 - **QB Ridge `rookie_early`**: bias **+3.619**, MAE 6.222, MAEbc 5.172 (→ ~1.05 recoverable).
 - Cross-model QB `rookie_early` bias all strongly positive (+2.9 to +4.4).

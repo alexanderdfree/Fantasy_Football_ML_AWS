@@ -4,7 +4,7 @@
 > another session can pick up the one actionable follow-up (a QB `attn_batch_size`
 > A/B). The corresponding `[PRIORITY]` note is in [TODO.md](../TODO.md)'s Open section.
 >
-> **Relationship to [`increase_batch_size_plan.md`](increase_batch_size_plan.md):** these
+> **Relationship to [`increase_batch_size_plan_priority.md`](increase_batch_size_plan_priority.md):** these
 > are two ends of the *same* hyperparameter. That doc widens the Optuna grid *up*
 > (add a 1024 rung) for the large-N positions; this audit looks at *current
 > production* `attn_batch_size` and finds it's already too *large* (update-starved)

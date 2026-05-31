@@ -45,7 +45,7 @@ scattered cohort scripts that **overlap the net-new cohorts** below. The impleme
 Net effect: the consolidation now unifies **five** scattered cohort scripts (the original three +
 these two), which strengthens the rationale. Re-scan `git log origin/main --grep` for
 `cohort`/`subgroup`/`rookie`/`injury` at implementation time in case more has shipped, and keep the
-two findings docs (`rookie_cohort_findings.md`, plus the three originals) as conclusions.
+two findings docs (`rookie_cohort_findings_priority.md`, plus the three originals) as conclusions.
 
 ## Scope
 
