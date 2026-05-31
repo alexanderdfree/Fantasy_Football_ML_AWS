@@ -77,6 +77,9 @@ The NN clamps outputs to ≥ 0 per head. **All six positions set `nn_non_negativ
 ### Always diff training vs inference paths
 The training pipeline in `src/shared/pipeline.py` and the serving code in `src/serving/app.py` both build features. They have drifted silently in the past (weather/Vegas merge in training but not serving; scaler clip in one path but not the other). If you touch feature building in either, check the other.
 
+### Merge-key-correct ≠ source-semantics-correct
+A feature merged on the current `(player_id, season, week)` with no `.shift()` can still be stale: the upstream *source* may label a snapshot by the wrong week. Grepping `.shift()`/`.diff()` proves the *code* doesn't lag — it says nothing about the data source. The legacy (≤2024) nflverse depth chart labeled "week W" actually reflected week W-1's lineup; `_fetch_depth` applies `week -= 1` (REG-only) to realign it ([#595](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/595)). For any "known-before-kickoff" feature (depth chart, weather, lines, injuries), audit alignment against an independent ground truth (e.g. does the chart's rank-1 QB match who *actually* started week W?), restricted to transition rows where stale-by-1 separates from current — don't trust the merge key. The reusable diagnostic is [src/analysis/audit_depth_alignment.py](src/analysis/audit_depth_alignment.py).
+
 ### Use `torch` ops inside NN training paths, not `numpy`
 Anything that runs inside the forward pass, loss, or an `aggregate_fn` callback must stay in `torch` to preserve gradients. `np.digitize`/`np.clip`/`np.where` on tensors silently breaks autograd — call `torch.bucketize`/`torch.clamp`/`torch.where` instead. Note that `torch.bucketize(..., right=False)` and `np.digitize(..., right=False)` use opposite edge-inclusion conventions; verify boundaries when porting.
 
