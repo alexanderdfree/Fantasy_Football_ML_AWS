@@ -320,10 +320,21 @@ if [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; then
       pipeline_files+=("src/$p/$s.py")
     done
   done
+  # Portable mtime in epoch seconds. GNU stat (Linux/WSL) uses ``-c %Y``; BSD
+  # stat (macOS) uses ``-f %m``. Probe the exact capability once — ``stat -c %Y .``
+  # succeeds on GNU and fails on BSD (``-c`` is an illegal option there) — and
+  # pick each platform's native syntax. Do NOT rely on ``-f``-first fallthrough:
+  # on GNU ``-f`` means --file-system and prints filesystem info (not the mtime)
+  # to stdout *without* failing over, which silently broke this gate on WSL.
+  if stat -c %Y . >/dev/null 2>&1; then
+    _mtime() { stat -c %Y "$1" 2>/dev/null || echo 0; }
+  else
+    _mtime() { stat -f %m "$1" 2>/dev/null || echo 0; }
+  fi
   ref_ts=0
   for pf in "${pipeline_files[@]}"; do
     [ -f "$pf" ] || continue
-    t=$(stat -f %m "$pf" 2>/dev/null || stat -c %Y "$pf" 2>/dev/null || echo 0)
+    t=$(_mtime "$pf")
     if [ "$t" -gt "$ref_ts" ]; then ref_ts="$t"; fi
   done
 
@@ -335,7 +346,7 @@ if [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; then
     # ``positions`` array enumerates which positions the run covered.
     for bf in benchmark_history/*.json; do
       [ -f "$bf" ] || continue
-      bts=$(stat -f %m "$bf" 2>/dev/null || stat -c %Y "$bf" 2>/dev/null || echo 0)
+      bts=$(_mtime "$bf")
       if [ "$bts" -gt "$ref_ts" ]; then
         if "$jq_bin" -e --arg p "$pos" '.positions | index($p)' "$bf" >/dev/null 2>&1; then
           found=1
@@ -356,7 +367,7 @@ if [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; then
     if [ "$found" -eq 0 ]; then
       lpos=$(printf '%s' "$pos" | tr '[:upper:]' '[:lower:]')
       if [ -d "$lpos/outputs/models" ]; then
-        pos_outputs_ts=$(stat -f %m "$lpos/outputs/models" 2>/dev/null || stat -c %Y "$lpos/outputs/models" 2>/dev/null || echo 0)
+        pos_outputs_ts=$(_mtime "$lpos/outputs/models")
         if [ "$pos_outputs_ts" -gt "$ref_ts" ]; then
           found=1
         fi
@@ -391,7 +402,7 @@ if [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; then
     for pos in QB RB WR TE K DST; do
       for bf in benchmark_history/*.json; do
         [ -f "$bf" ] || continue
-        bts=$(stat -f %m "$bf" 2>/dev/null || stat -c %Y "$bf" 2>/dev/null || echo 0)
+        bts=$(_mtime "$bf")
         if [ "$bts" -gt "$ref_ts" ]; then
           if "$jq_bin" -e --arg p "$pos" '.positions | index($p)' "$bf" >/dev/null 2>&1; then
             any_position_fresh=1
@@ -401,7 +412,7 @@ if [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; then
       done
       lpos=$(printf '%s' "$pos" | tr '[:upper:]' '[:lower:]')
       if [ -d "$lpos/outputs/models" ]; then
-        pos_outputs_ts=$(stat -f %m "$lpos/outputs/models" 2>/dev/null || stat -c %Y "$lpos/outputs/models" 2>/dev/null || echo 0)
+        pos_outputs_ts=$(_mtime "$lpos/outputs/models")
         if [ "$pos_outputs_ts" -gt "$ref_ts" ]; then
           any_position_fresh=1
           break
