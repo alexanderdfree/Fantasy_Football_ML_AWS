@@ -263,5 +263,8 @@ The Claude-Code machinery (hooks, skills, the scheduled audit routine, sub-agent
 | Scope-creep check before opening a PR | `pre-pr-judge` skill | _(to fill)_ |
 | Capture prompt-lessons after a non-routine session | `post-session-critique` skill | _(to fill)_ |
 | Triage the `claude-audit` issue backlog into tier-by-risk PRs | `solve-issues` skill | _(to fill)_ |
+| Sync auto-memory across machines (S3) | `scripts/claude-memory-sync.sh` + bootstrap hooks (#686) | **N/A by design** — Codex memory is global + local-by-design (off by default; no official cross-machine sync); durable knowledge → this file |
 
 Until a row is filled, **run that step by hand** — e.g. `ruff format <file>` after editing, and `ruff check . && ruff format --check . && pytest -m unit` before `gh pr create`.
+
+**Memory sync is the one row that's N/A, not pending.** The repo's S3 auto-memory sync ([scripts/claude-memory-sync.sh](scripts/claude-memory-sync.sh), #686) is **Claude-only by design**: Codex memory (`~/.codex/memories/`) is a *global, local-by-design* store (off by default, no official cross-machine sync, and a SQLite-backed pipeline rather than a clean markdown subtree), and both vendors put durable knowledge in `AGENTS.md`, not memory — OpenAI: *"Keep required team guidance in `AGENTS.md` or checked-in documentation. Treat memories as a helpful local recall layer, not as the only source for rules that must always apply."* So the cross-agent, cross-machine **durable** layer is *this file* (it rides git to every machine and both agents); incidental per-agent memory stays local.
