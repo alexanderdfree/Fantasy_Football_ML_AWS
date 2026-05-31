@@ -8,6 +8,13 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 
 ## Open
 
+### [PLANNED] Consolidate `--cv` benchmark reporting into the clean rolling-origin walk-forward
+- **Plan:** [docs/cv_rolling_origin_consolidation.md](docs/cv_rolling_origin_consolidation.md) — full design, retrain-cost constraints, and verification steps. Pick this up directly from that doc.
+- **File(s):** `src/benchmarking/benchmark.py` (`__main__` dispatch); `docs/ARCHITECTURE.md` (D1 + Update history).
+- **What:** `benchmark.py` exposes two overlapping multi-season evals. `--cv` ([`run_cv_pipeline`](src/shared/pipeline.py:1675) → [`expanding_window_folds`](src/data/split.py:80), `CV_VAL_SEASONS=[2021..2024]`) scores each fold on the **same season it early-stops/selects on** (`val == eval`, mildly optimistic) and never sees 2025. `--rolling-origin` ([`run_rolling_origin`](src/benchmarking/benchmark.py:327) → [`rolling_origin_folds`](src/data/split.py:118)) is a strict superset: clean `val != eval` (train `[..T-2]`/val `T-1`/test `T`), all models, includes 2025, final origin == production split. They're redundant; `--cv`'s numbers are the optimistic, 2024-capped subset.
+- **Recommended (zero retrain):** make `--cv` a deprecated alias routing to the rolling-origin walk-forward (one-line deprecation note). Touches only `src/benchmarking/` + `docs/` → no retrain trigger ([scope_positions.py](src/scripts/scope_positions.py)). Keep `run_cv_pipeline`/`run_cv()`/`get_cv_runner` (ad-hoc + unit-tested; freshly extended 2026-05-29). `expanding_window_folds` stays for the LGBM tuner ([tune_lgbm.py](src/tuning/tune_lgbm.py)), where `val == eval` is the correct objective.
+- **Why parked:** designed but deferred. The plan doc lists four heavier optional follow-ups (clarify the `expanding_window_folds` docstring; extend `ROLLING_ORIGIN_TEST_SEASONS`; add val-vs-test "optimism gap" columns; full removal of the CV path) — each beyond benchmark.py fires a 6-position retrain.
+
 ### [ACKNOWLEDGED] K features use cross-season rolling windows
 - **File:** `src/k/features.py:27`
 - **What:** Kicker features group by `["player_id"]` only (no season reset), so rolling windows span across seasons. A kicker's late-season 2024 stats influence early-2025 predictions.
