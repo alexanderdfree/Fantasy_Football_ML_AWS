@@ -161,8 +161,15 @@ def build_summary(
     sleeper_loader=None,
     actuals_loader=None,
     dst_actuals_loader=None,
+    reliability_seasons: Sequence[int] | None = None,
 ) -> dict:
-    """Build the committed expert-summary dict. Loaders are injectable for tests."""
+    """Build the committed expert-summary dict. Loaders are injectable for tests.
+
+    ``reliability_seasons`` controls the multi-season span for the per-source
+    residual-σ block (``expert_reliability``); ``None`` uses
+    ``expert_uncertainty.RELIABILITY_SEASONS_DEFAULT``. It is deliberately wider
+    than ``eval_seasons`` (the 2025 head-to-head) so σ is a stable estimate.
+    """
     eval_seasons = tuple(int(s) for s in eval_seasons)
     nflcom_loader = nflcom_loader or load_nflcom_with_gsis_id
     sleeper_loader = sleeper_loader or load_sleeper_with_gsis_id
@@ -207,6 +214,26 @@ def build_summary(
             f"(top30 ids: {len(ids)})"
         )
 
+    # Per-source residual σ over a wider archive than the 2025 head-to-head. Deferred
+    # import: expert_uncertainty imports helpers from this module, so a top-level
+    # import here would cycle. Reuse the resolved (possibly injected) loaders.
+    from src.analysis.expert_uncertainty import (
+        RELIABILITY_SEASONS_DEFAULT,
+        compute_expert_reliability,
+    )
+
+    if reliability_seasons is None:
+        reliability_seasons = RELIABILITY_SEASONS_DEFAULT
+    print(f"Computing per-source residual σ over {list(reliability_seasons)}...")
+    expert_reliability = compute_expert_reliability(
+        reliability_seasons,
+        scoring_format=SCORING_FORMAT,
+        nflcom_loader=nflcom_loader,
+        sleeper_loader=sleeper_loader,
+        actuals_loader=actuals_loader,
+        dst_actuals_loader=dst_actuals_loader,
+    )
+
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "scoring": SCORING_FORMAT,
@@ -220,6 +247,7 @@ def build_summary(
         },
         "top30_ids": top30_ids,
         "subsets": subsets,
+        "expert_reliability": expert_reliability,
     }
 
 
@@ -227,8 +255,9 @@ def main(
     eval_seasons: Sequence[int] = EVAL_SEASONS_DEFAULT,
     top_n: int = TOP_N_DEFAULT,
     output_path: str = OUTPUT_PATH_DEFAULT,
+    reliability_seasons: Sequence[int] | None = None,
 ) -> dict:
-    result = build_summary(eval_seasons, top_n)
+    result = build_summary(eval_seasons, top_n, reliability_seasons=reliability_seasons)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(result, f, indent=2, default=_json_default)
@@ -243,9 +272,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--seasons", nargs="+", type=int, default=list(EVAL_SEASONS_DEFAULT))
     parser.add_argument("--top-n", type=int, default=TOP_N_DEFAULT)
     parser.add_argument("--output-path", default=OUTPUT_PATH_DEFAULT)
+    parser.add_argument(
+        "--reliability-seasons",
+        nargs="+",
+        type=int,
+        default=None,
+        help="Season span for the per-source residual-σ block "
+        "(default: expert_uncertainty.RELIABILITY_SEASONS_DEFAULT ≈ 2018–2025).",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    main(eval_seasons=tuple(args.seasons), top_n=args.top_n, output_path=args.output_path)
+    main(
+        eval_seasons=tuple(args.seasons),
+        top_n=args.top_n,
+        output_path=args.output_path,
+        reliability_seasons=(
+            tuple(args.reliability_seasons) if args.reliability_seasons is not None else None
+        ),
+    )

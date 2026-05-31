@@ -428,6 +428,33 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                 </div>
             </div>
 
+            <div class="comparison-table-block" id="comparison-reliability-block">
+                <div class="section-header">Source reliability — residual σ (pts)</div>
+                <div class="comparison-reliability-sub">
+                    How noisy each source's weekly projection is around the actual outcome on the
+                    <span id="comparison-reliability-span">2025 test season</span>. σ is the spread of
+                    (value − actual); <strong>lower σ = steadier</strong>. <strong>Our Model</strong> is
+                    computed live and updates each retrain; experts are scored on the same season. Hover a
+                    cell for its bias (+ ⇒ over-projects), sample size, and each expert's full 2018–2025 σ.
+                </div>
+                <div class="table-container">
+                    <table class="comparison-table">
+                        <thead>
+                            <tr>
+                                <th>Position</th>
+                                <th class="comparison-num">Our Model</th>
+                                <th class="comparison-num">NFL.com</th>
+                                <th class="comparison-num">RotoWire</th>
+                            </tr>
+                        </thead>
+                        <tbody id="comparison-reliability-body">
+                            <tr><td colspan="4" class="arch-loading">Loading reliability…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="comparison-reliability-note" id="comparison-reliability-note"></div>
+            </div>
+
             <div class="comparison-notes" id="comparison-notes"></div>
         </section>
 

@@ -1158,6 +1158,7 @@ async function loadComparison() {
         if (comparisonData.error) throw new Error(comparisonData.error);
         comparisonLoaded = true;
         renderComparisonTables();
+        renderComparisonReliability();
         renderComparisonNotes();
     } catch (e) {
         console.error("Failed to load comparison:", e);
@@ -1225,6 +1226,82 @@ function renderComparisonTables() {
     const top30Body = document.getElementById("comparison-top30-body");
     if (allBody) allBody.innerHTML = renderComparisonRows(subsets.all || {});
     if (top30Body) top30Body.innerHTML = renderComparisonRows(subsets.top30 || {});
+}
+
+// Source reliability — residual σ per source on the 2025 test season. The model
+// side is live (auto-updates on retrain); experts are scored on the same season,
+// with their full 2018–2025 archive σ shown on hover. One table, always σ
+// (independent of the MAE/RMSE/R² toggle); lower σ = steadier.
+const RELIABILITY_COLS = [
+    { key: "model", label: "Our Model" },
+    { key: "nflcom", label: "NFL.com" },
+    { key: "rotowire", label: "RotoWire" },
+];
+
+function _validSigma(v) {
+    return v !== null && v !== undefined && !Number.isNaN(v);
+}
+
+// Resolve one (position, source) reliability cell on the 2025 basis. The model
+// comes from the live model_reliability map; experts come from the committed
+// block's per_season["2025"] slice, carrying the pooled multi-season σ for hover.
+function reliabilityCell(pos, key) {
+    if (key === "model") {
+        const m = comparisonData.model_reliability && comparisonData.model_reliability[pos];
+        if (!m || !_validSigma(m.sigma)) return null;
+        return { sigma: m.sigma, bias: m.bias, n: m.n, arch: m.best_arch, kind: "model" };
+    }
+    const rel = comparisonData.expert_reliability;
+    const pooled = rel && rel.positions && rel.positions[pos] && rel.positions[pos][key];
+    if (!pooled) return null;
+    const s = pooled.per_season && pooled.per_season["2025"];
+    if (!s || !_validSigma(s.sigma)) return null;
+    return {
+        sigma: s.sigma,
+        bias: s.bias,
+        n: s.n,
+        kind: "expert",
+        totals_only: !!pooled.totals_only,
+        archiveSigma: pooled.sigma,
+        archiveN: pooled.n,
+    };
+}
+
+function renderComparisonReliability() {
+    const block = document.getElementById("comparison-reliability-block");
+    const body = document.getElementById("comparison-reliability-body");
+    if (!block || !body) return;
+    const rel = comparisonData && comparisonData.expert_reliability;
+    if (!rel || !rel.positions) {
+        block.style.display = "none";
+        return;
+    }
+    block.style.display = "";
+
+    body.innerHTML = COMPARISON_POSITIONS.map(pos => {
+        const cells = RELIABILITY_COLS.map(c => reliabilityCell(pos, c.key));
+        const sigmas = cells.filter(Boolean).map(c => c.sigma);
+        const best = sigmas.length ? Math.min(...sigmas) : null;
+        const tds = cells.map(c => {
+            if (!c) return `<td class="comparison-num comparison-empty">—</td>`;
+            const isBest = best !== null && Math.abs(c.sigma - best) < 1e-9;
+            const cls = "comparison-num" + (isBest ? " comparison-best" : "");
+            const star = c.totals_only ? `<span class="comparison-arch">totals-only*</span>` : "";
+            const biasTxt = (c.bias >= 0 ? "+" : "") + c.bias.toFixed(2);
+            const dir = c.bias >= 0 ? "over" : "under";
+            const verb = c.kind === "model" ? "predicts" : "projects";
+            let title = `bias ${biasTxt} pts (${dir}-${verb}) · n=${c.n} · 2025`;
+            if (c.kind === "model" && c.arch) title += ` · ${c.arch}`;
+            if (c.kind === "expert" && _validSigma(c.archiveSigma)) {
+                title += ` · 2018–2025 σ ${c.archiveSigma.toFixed(2)} (n=${c.archiveN})`;
+            }
+            return `<td class="${cls}" title="${escapeHtml(title)}">${c.sigma.toFixed(2)}${star}</td>`;
+        }).join("");
+        return `<tr><td class="comparison-pos">${pos}</td>${tds}</tr>`;
+    }).join("");
+
+    const noteEl = document.getElementById("comparison-reliability-note");
+    if (noteEl) noteEl.innerHTML = rel.note ? `<p>${escapeHtml(rel.note)}</p>` : "";
 }
 
 function renderComparisonNotes() {
