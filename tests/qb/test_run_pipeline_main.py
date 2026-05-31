@@ -10,6 +10,7 @@ coverage in the QB flag.
 
 from __future__ import annotations
 
+import os
 import runpy
 import sys
 from pathlib import Path
@@ -64,6 +65,35 @@ def test_main_tiny_wires_shrunk_config(monkeypatch):
     assert cfg.get("nn_epochs") == 1
     assert cfg.get("train_attention_nn") is False
     assert cfg.get("train_lightgbm") is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("device", ["cpu", "cuda", "auto"])
+def test_main_device_flag_exports_ff_device(monkeypatch, device):
+    """``--device X`` publishes ``FF_DEVICE=X`` before dispatch so the deep device
+    selectors (_nn_device / _gpu_resident_device via cuda_enabled) observe it.
+
+    The stubbed pipeline never builds a model, so ``--device cuda`` here just
+    sets the env var — it does not touch ``torch.cuda`` and is safe on CI.
+    """
+    _patch_shared_pipeline(monkeypatch)
+    # Pre-seed via monkeypatch so its teardown restores FF_DEVICE regardless of
+    # the direct os.environ write cli_main performs.
+    monkeypatch.setenv("FF_DEVICE", "sentinel")
+    monkeypatch.setattr(sys, "argv", ["run.py", "--device", device])
+    runpy.run_path(str(_MODULE_PATH), run_name="__main__")
+    assert os.environ["FF_DEVICE"] == device
+
+
+@pytest.mark.unit
+def test_main_without_device_flag_leaves_ff_device_untouched(monkeypatch):
+    """Omitting --device must not clobber an inherited FF_DEVICE — the flag
+    overrides the environment only when actually passed (default=None)."""
+    _patch_shared_pipeline(monkeypatch)
+    monkeypatch.setenv("FF_DEVICE", "cpu")
+    monkeypatch.setattr(sys, "argv", ["run.py"])
+    runpy.run_path(str(_MODULE_PATH), run_name="__main__")
+    assert os.environ["FF_DEVICE"] == "cpu"
 
 
 @pytest.mark.unit

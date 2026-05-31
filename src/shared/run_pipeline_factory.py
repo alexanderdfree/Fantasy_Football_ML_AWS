@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -116,7 +117,28 @@ def cli_main(
         action="store_true",
         help="Use shrunk smoke-test config",
     )
+    parser.add_argument(
+        "--device",
+        choices=("auto", "cpu", "cuda"),
+        default=None,
+        help=(
+            "Compute device for the attention NN. Omitted: honour $FF_DEVICE if "
+            "set, else 'auto'. 'auto' uses CUDA when available and CPU otherwise "
+            "(the historical behaviour — Linux/macOS/CI unchanged). 'cpu' forces "
+            "the CPU path even on a CUDA-visible box (e.g. macOS, or a Windows "
+            "dev box with a flaky CUDA build); 'cuda' requires a GPU and errors "
+            "if none is visible. An explicit value is exported as FF_DEVICE for "
+            "the run, reaching the device selectors via src.shared.utils."
+        ),
+    )
     args = parser.parse_args()
+    # Publish an explicit --device before dispatch so the device selectors deep
+    # in the pipeline (_nn_device / _gpu_resident_device, via
+    # src.shared.utils.cuda_enabled) observe it. Left unset, FF_DEVICE from the
+    # surrounding shell (or its "auto" default) is respected — the flag overrides
+    # the environment only when actually passed.
+    if args.device is not None:
+        os.environ["FF_DEVICE"] = args.device
     config = _build_tiny_config(position_name) if args.tiny else default_config
     if run_cv_fn is not None and args.cv:
         run_cv_fn(config=config)

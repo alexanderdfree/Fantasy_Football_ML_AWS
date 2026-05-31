@@ -73,7 +73,7 @@ from src.shared.training import (
     make_nested_kick_dataloaders,
     plot_training_curves,
 )
-from src.shared.utils import seed_everything, timed
+from src.shared.utils import cuda_enabled, seed_everything, timed
 
 
 def _read_split(path: str) -> pd.DataFrame:
@@ -122,7 +122,7 @@ def _resolve_nn_log_every(cfg):
 
 
 def _nn_device() -> torch.device:
-    if torch.cuda.is_available():
+    if cuda_enabled():
         # Batch shapes are stable across epochs (DataLoader uses fixed
         # batch_size with drop_last=True on train), so the autotuner's
         # selected kernels stay valid; the one-time search cost amortises
