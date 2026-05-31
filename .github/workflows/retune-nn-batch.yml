@@ -2,7 +2,7 @@ name: Retune NN on Batch (Spot)
 
 # Manually-triggered Optuna sweep of the attention-NN hyperparameters across
 # all six positions. Mirrors train-batch.yml's per-position fan-out — one
-# Spot g4dn.xlarge per position via AWS Batch, saturating the 24-vCPU Spot
+# Spot g6.xlarge per position via AWS Batch, saturating the 24-vCPU Spot
 # G+VT quota (4 vCPU × 6 positions = 24 vCPU). NN training is GPU-bound;
 # running multiple trials on the same GPU would oversubscribe, so each
 # container does Optuna n_jobs=1.
@@ -55,8 +55,8 @@ jobs:
             echo "positions input is empty" >&2
             exit 1
           fi
-          # Cost-ceiling sanity guard: 6 positions × 100 trials × ~2 min × g4dn
-          # Spot ≈ ~$4 / run, which is fine. >100 trials/position usually means
+          # Cost-ceiling sanity guard: 6 positions × 100 trials × ~2 min × g6
+          # Spot ≈ ~$7 / run, which is fine. >100 trials/position usually means
           # an operator typo (e.g. "3000" instead of "30"); fail the workflow
           # before submitting six Spot jobs that would burn the budget. Bypass
           # by raising this ceiling consciously in a PR if you ever need a
@@ -85,7 +85,7 @@ jobs:
       fail-fast: false
       matrix:
         position: ${{ fromJson(needs.parse.outputs.matrix) }}
-    # 30 trials × ~2 min/trial on g4dn.xlarge ≈ 60 min; Spot retries can
+    # 30 trials × ~2 min/trial on g6.xlarge ≈ 60 min; Spot retries can
     # bring per-position wall-clock to ~3 hr worst case. 4 hr ceiling
     # catches a stuck job before it pins the runner indefinitely.
     timeout-minutes: 240

@@ -4,7 +4,7 @@
 #
 # Prereqs:
 #   - AWS CLI v2 with credentials for the target account.
-#   - "All G and VT Spot Instance Requests" vCPU quota >= 24 (six g4dn.xlarge
+#   - "All G and VT Spot Instance Requests" vCPU quota >= 24 (six g6.xlarge
 #     in parallel). Script refuses to proceed otherwise.
 #   - S3 bucket ff-predictor-training exists (training uses it).
 #   - ECR repo ff-training exists (created by batch-image.yml's first run).
@@ -60,7 +60,7 @@ QUOTA=$(aws service-quotas get-service-quota \
   --output text)
 QUOTA_INT=${QUOTA%.*}
 if [ "$QUOTA_INT" -lt "$MAX_VCPUS" ]; then
-  log "ERROR: Spot G+VT quota is $QUOTA; need >= $MAX_VCPUS (6 x g4dn.xlarge x 4 vCPU)."
+  log "ERROR: Spot G+VT quota is $QUOTA; need >= $MAX_VCPUS (6 x g6.xlarge x 4 vCPU)."
   log "Request an increase:"
   log "  aws service-quotas request-service-quota-increase --service-code ec2 \\"
   log "    --quota-code $SPOT_QUOTA_CODE --desired-value $MAX_VCPUS --region $REGION"
@@ -236,7 +236,7 @@ if [ "$CE_STATUS" = "None" ] || [ -z "$CE_STATUS" ] || [ "$CE_STATUS" = "null" ]
       \"allocationStrategy\": \"SPOT_PRICE_CAPACITY_OPTIMIZED\",
       \"minvCpus\": 0,
       \"maxvCpus\": $MAX_VCPUS,
-      \"instanceTypes\": [\"g4dn.xlarge\"],
+      \"instanceTypes\": [\"g6.xlarge\"],
       \"subnets\": [$SUBNETS_JSON],
       \"securityGroupIds\": [\"$SG_ID\"],
       \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\",

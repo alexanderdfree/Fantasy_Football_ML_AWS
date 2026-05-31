@@ -1,6 +1,6 @@
 # AWS Batch Training Design Doc
 
-> **Status (2026-05-21): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g4dn.xlarge Spot instances, one position per host. **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself), which is now train-batch.yml's dominant wall-clock cost — PR #330 removed the forced "Refresh ECS service" (`update-service --force-new-deployment`) step from train-batch.yml (per-position in-flight model refresh via `src/shared/model_sync.py` makes new artifacts live within one ~30s poll interval; ECS rolling redeploy via deploy.yml's ALB-tuned ~3 min path is now decoupled from the train workflow). The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate.** Warm-EC2 rollback path: ~120-min sequential loop. Cold-start mitigation: SOCI v2 indexes published by PR #216 + `soci-snapshotter-grpc` v0.13.0 installed on the AL2 Spot host via the `ff-batch-lt` launch template (Option B, this PR — see §2a for the active configuration). Image kept ~5–6 GB via aggressive `.dockerignore` + explicit `COPY`. Baseline 2026-05-20 cold-start ~258 s; expected ~135 s once the launch template is attached to the live CE (post-merge `bash infra/batch/setup.sh` reconciles). See [D13 in docs/ARCHITECTURE.md](ARCHITECTURE.md#d13-spot-fan-out-via-aws-batch-overrides-d7-when-batch_activetrue) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
+> **Status (2026-05-31): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g6.xlarge Spot instances, one position per host (migrated from g4dn.xlarge 2026-05-31 — T4 → L4 for BF16 + torch.compile re-eligibility; see ARCHITECTURE.md Update history). **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself), which is now train-batch.yml's dominant wall-clock cost — PR #330 removed the forced "Refresh ECS service" (`update-service --force-new-deployment`) step from train-batch.yml (per-position in-flight model refresh via `src/shared/model_sync.py` makes new artifacts live within one ~30s poll interval; ECS rolling redeploy via deploy.yml's ALB-tuned ~3 min path is now decoupled from the train workflow). The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate.** Warm-EC2 rollback path: ~120-min sequential loop. Cold-start mitigation: SOCI v2 indexes published by PR #216 + `soci-snapshotter-grpc` v0.13.0 installed on the AL2 Spot host via the `ff-batch-lt` launch template (Option B, this PR — see §2a for the active configuration). Image kept ~5–6 GB via aggressive `.dockerignore` + explicit `COPY`. Baseline 2026-05-20 cold-start ~258 s; expected ~135 s once the launch template is attached to the live CE (post-merge `bash infra/batch/setup.sh` reconciles). See [D13 in docs/ARCHITECTURE.md](ARCHITECTURE.md#d13-spot-fan-out-via-aws-batch-overrides-d7-when-batch_activetrue) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
 >
 > Rollback: `gh variable set BATCH_ACTIVE --body "false"` returns push-driven training to the warm-EC2 path ([docs/ec2_design.md](ec2_design.md)) on the next push to `main`. Both paths remain provisioned.
 
@@ -11,7 +11,7 @@ container pull, dependency install) for training runs that only take ~2 minutes 
 Goals:
 
 1. Minimize orchestration overhead with a lean job submission path
-2. Cut compute cost ~70% via Spot pricing ($0.16/hr vs $0.53/hr for g4dn.xlarge)
+2. Cut compute cost ~60% via Spot pricing (~$0.35/hr g6 Spot vs $0.80/hr g6 on-demand; the historical g4dn comparison was ~$0.16/hr Spot vs $0.53/hr OD pre-2026-05-31 migration)
 3. Keep the same parallel-6-positions pattern and S3 artifact flow
 4. Scale to zero when idle (no cost between runs)
 
@@ -27,7 +27,7 @@ src/batch/launch.py ─────────────> S3: s3://ff-trainin
        │                               test.parquet
        │
        ├─> Batch Job: ff-rb-xxx ───> CloudWatch Logs
-       │     (g4dn.xlarge Spot)        stdout/stderr streamed
+       │     (g6.xlarge Spot)          stdout/stderr streamed
        │     src.batch.train --position RB
        │       ├─ boto3: download data from S3
        │       ├─ src.rb.run_pipeline.run(train_df, val_df, test_df)
@@ -226,7 +226,7 @@ aws batch create-compute-environment \
     "allocationStrategy": "SPOT_PRICE_CAPACITY_OPTIMIZED",
     "minvCpus": 0,
     "maxvCpus": 24,
-    "instanceTypes": ["g4dn.xlarge"],
+    "instanceTypes": ["g6.xlarge"],
     "subnets": ["SUBNET_A", "SUBNET_B"],
     "securityGroupIds": ["DEFAULT_SG"],
     "instanceRole": "ecsInstanceRole",
@@ -236,7 +236,7 @@ aws batch create-compute-environment \
 
 - `type=SPOT` — 70% cheaper than on-demand
 - `minvCpus=0` — scales to zero when idle (no cost)
-- `maxvCpus=24` — up to 6 concurrent g4dn.xlarge (4 vCPUs each)
+- `maxvCpus=24` — up to 6 concurrent g6.xlarge (4 vCPUs each, same as g4dn)
 - `allocationStrategy=SPOT_PRICE_CAPACITY_OPTIMIZED` — AWS-recommended strategy that weighs *both* capacity (lowest current reclaim risk) and Spot price. Strict superset of `SPOT_CAPACITY_OPTIMIZED`: same reclaim-avoidance behaviour plus price awareness
 
 ### Job Queue
@@ -283,7 +283,7 @@ aws batch register-job-definition \
   }'
 ```
 
-- `vcpus=4, memory=15000` — matches g4dn.xlarge (4 vCPU, 16 GB RAM)
+- `vcpus=4, memory=15000` — matches g6.xlarge (4 vCPU, 16 GB RAM; identical sizing to g4dn pre-2026-05-31)
 - `resourceRequirements: GPU=1` — ensures GPU scheduling
 - `timeout: 1800` — 30-minute max **per attempt** (wall-clock cap)
 - `retry-strategy` — up to 3 attempts; `evaluateOnExit` retries only on Spot reclaim (`Host EC2*`) or transient ECR pull errors. Anything else (`onReason: "*"`) is treated as a genuine app failure and fails immediately so app crashes don't loop. With the 30-min per-attempt cap, worst-case wall-clock is bounded at 90 min per position.
@@ -339,8 +339,9 @@ CUDA auto-detection in `src/shared/pipeline.py` falls back to CPU. Local pipelin
 ## CPU-only Queue for K/DST (optional)
 
 K and DST pipelines are Ridge/LGBM only — they never touch CUDA. Running them on
-g4dn.xlarge Spot costs ~$0.16/hr of GPU time they won't use. To route them to a
-cheaper CPU Spot pool:
+g6.xlarge Spot costs ~$0.35/hr of GPU time they won't use (higher than the g4dn
+era's ~$0.16/hr; the gap is now bigger so the CPU-queue optimization is more
+worthwhile). To route them to a cheaper CPU Spot pool:
 
 1. Register a CPU compute env (e.g. `c6i.large` Spot) + job queue + CPU job
    definition (`ff-training-job-cpu`) pointing at the same ECR image.
@@ -491,10 +492,13 @@ exits cleanly — image still works, cold starts just aren't accelerated.
 
 ### Cold-start (baseline 2026-05-20 and Option B target)
 
-Cold-start on the active Batch path (six g4dn.xlarge Spot), measured
+Cold-start on the active Batch path (six g6.xlarge Spot post-2026-05-31; was
+g4dn.xlarge when these baseline measurements were taken), measured
 2026-05-20 via live ECS `describe-tasks` + Batch `describe-jobs`
 across a workflow_run, and the expected window after Option B
-activation (launch template + SOCI snapshotter, see §2a):
+activation (launch template + SOCI snapshotter, see §2a). The instance-floor
+phase is GPU-family-independent; the swap to g6 doesn't change the cold-start
+math materially:
 
 | Phase | Baseline (2026-05-20, pre-Option-B) | Post-Option-B target |
 |---|---|---|
@@ -512,7 +516,7 @@ pull window drop is the canonical Option B success signal.
 
 The original ~60–90 s design target assumed (a) snapshotter active and
 (b) instance provisioning ~30 s. (b) was optimistic — instance
-provisioning on g4dn.xlarge Spot is ~120 s floor regardless. (a) was
+provisioning on G-family Spot (g4dn pre-migration, g6 now) is ~120 s floor regardless. (a) was
 addressed by Option B; the achievable post-Option-B total is ~135 s,
 not 60–90 s, but that's still the single largest realizable win on
 this path.

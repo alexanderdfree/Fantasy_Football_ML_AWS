@@ -259,7 +259,7 @@ jobs:
           # src/batch/launch.py still append/override on top of these).
           #
           # 1. NN_DATALOADER_NUM_WORKERS=3 — src/shared/training.py reads it; on
-          #    g4dn.xlarge with 4 vCPU, 3 prefetch workers keep the GPU fed for
+          #    g6.xlarge with 4 vCPU, 3 prefetch workers keep the GPU fed for
           #    attention training while leaving one core for the CPU branch
           #    overlapped via the ThreadPoolExecutor introduced in 00c6d10.
           #

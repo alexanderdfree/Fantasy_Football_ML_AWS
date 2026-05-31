@@ -1,7 +1,7 @@
 """Launch AWS Batch training for all positions and collect benchmark metrics.
 
 Runs the same pipelines as benchmark.py but on AWS Batch GPU instances
-(g4dn.xlarge Spot).  Downloads benchmark_metrics.json from each job's model
+(g6.xlarge Spot).  Downloads benchmark_metrics.json from each job's model
 artifacts and prints a unified comparison table.
 
 Usage:
@@ -148,7 +148,7 @@ def record_benchmark_run(
     positions,
     *,
     backend="batch",
-    instance_type="g4dn.xlarge (Spot)",
+    instance_type="g6.xlarge (Spot)",
     note="",
     pr_number=None,
     git_hash=None,
@@ -274,7 +274,7 @@ def main():
     )
     parser.add_argument(
         "--instance-type",
-        default="g4dn.xlarge (Spot)",
+        default="g6.xlarge (Spot)",
         help="Instance-type label recorded in benchmark_history/",
     )
     parser.add_argument(

@@ -1,7 +1,7 @@
 """Launch parallel AWS Batch tuning jobs for the attention NN.
 
 Mirrors ``src/batch/launch.py`` but submits ``--mode=tune`` jobs instead of
-training jobs. Each position runs in its own Spot g4dn.xlarge container so
+training jobs. Each position runs in its own Spot g6.xlarge container so
 the six positions tune in parallel (matches the 24-vCPU Spot G+VT quota
 documented in the AWS-quota auto-memory).
 
@@ -27,7 +27,7 @@ Config (env vars, all optional — same names as ``launch.py``):
 
 All six positions are now supported — K/DST were added once their ``run()``
 signatures accepted a ``config=`` kwarg. The 24-vCPU Spot quota tolerates
-six concurrent g4dn.xlarge jobs exactly; concurrent local launches will
+six concurrent g6.xlarge jobs exactly; concurrent local launches will
 queue at ``RUNNABLE`` instead of pushing over-quota.
 """
 
@@ -58,7 +58,7 @@ from src.batch.launch import (  # noqa: E402
 # Spot job that will fail on ``get_config()``.
 SUPPORTED_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
-# Default Optuna trial budget per position. On g4dn.xlarge each trial is
+# Default Optuna trial budget per position. On g6.xlarge each trial is
 # 1–2 min, so 30 trials ≈ 30–60 min per position — well under the 3h wait
 # timeout. **Intentionally diverges** from ``src/tuning/tune_nn.py``'s
 # ``_DEFAULT_N_TRIALS = 15``: that one is the local-laptop default (each

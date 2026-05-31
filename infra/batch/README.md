@@ -2,7 +2,7 @@
 
 _Last verified: 2026-05-21._
 
-Provisions an AWS Batch managed compute environment on Spot g4dn.xlarge so all
+Provisions an AWS Batch managed compute environment on Spot g6.xlarge so all
 six position pipelines train in parallel (one position per Spot instance). This
 is the **default push-driven trainer since 2026-05-20** — [train-batch.yml](../../.github/workflows/train-batch.yml)
 runs when the `BATCH_ACTIVE` repo variable is `true`; flipping it to `false`
@@ -36,7 +36,7 @@ The script creates:
 | Instance profile | `ecsInstanceRole` |
 | Security group | `ff-batch-sg` (egress only) |
 | Launch template | `ff-batch-lt` (UserData = [infra/batch/userdata.sh](userdata.sh), installs `soci-snapshotter-grpc` v0.13.0) |
-| Compute environment | `ff-gpu-spot` (SPOT, max 24 vCPU, g4dn.xlarge, launchTemplate=`ff-batch-lt:$Latest`) |
+| Compute environment | `ff-gpu-spot` (SPOT, max 24 vCPU, g6.xlarge, launchTemplate=`ff-batch-lt:$Latest`) |
 | Job queue | `ff-training-queue` |
 | Job definition | `ff-training-job` (rev 1; CI re-registers on every push) |
 | CloudWatch log group | `/aws/batch/job` (7-day retention) |
@@ -146,7 +146,7 @@ The CE's `minvCpus=0` means there are no in-flight instances to disrupt
    AWS_REGION=us-east-1 python -m src.batch.launch \
      --positions QB RB WR TE K DST --seed 42
    ```
-   All six should reach RUNNING simultaneously (six g4dn.xlarge instances,
+   All six should reach RUNNING simultaneously (six g6.xlarge instances,
    exactly saturating the 24 vCPU Spot quota). Total wall-clock for the
    "Submit Batch jobs and wait" step measured ~10 min on 2026-05-21
    — the slowest position dominates, not the sum.
@@ -241,15 +241,16 @@ stopped in parallel — flipping back is instant.
 
 ## Cost
 
-Spot g4dn.xlarge in us-east-1: ~$0.16/hr × 6 positions × ~10 min ≈ **~$0.16 per
-full retrain** (measured 2026-05-21; cost dropped from the original ~$0.40 est.
-as per-position training came in ~2 min not ~5). Single-position retrains scale
-down linearly. At zero capacity
-when idle, the CE has no standing cost. CloudWatch logs and ECR storage are
-free-tier territory for this volume.
+Spot g6.xlarge in us-east-1: ~$0.35/hr × 6 positions × ~10 min ≈ **~$0.35 per
+full retrain** (estimate post-migration from g4dn; measured baseline was ~$0.16
+on g4dn 2026-05-21). Single-position retrains scale down linearly. At zero
+capacity when idle, the CE has no standing cost. CloudWatch logs and ECR storage
+are free-tier territory for this volume.
 
-Compared to the warm-EC2 path's ~$8/mo idle EBS + ~$0.53/hr active OD, Spot
-fanout is cheaper *and* faster.
+Compared to the warm-EC2 g4dn path's ~$8/mo idle EBS + ~$0.53/hr active OD,
+Spot fanout is still cheaper *and* faster. The g4dn → g6 swap was chosen for
+BF16 support (T4 lacked sm_80+) and `torch.compile` re-eligibility (rejected on
+T4 in D12), not cost — absolute annual delta is ~$25.
 
 ## Teardown
 
