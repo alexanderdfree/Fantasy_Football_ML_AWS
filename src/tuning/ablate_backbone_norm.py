@@ -3,9 +3,10 @@
 The project uses ``BatchNorm1d`` in exactly one place — the shared static-feature
 backbone MLP (``src/shared/neural_net.py::_build_backbone``: ``Linear -> BN ->
 ReLU -> Dropout``) reused by every ``MultiHeadNet*`` variant — and ``LayerNorm``
-throughout the attention path (per-game encoder, Pre-LN ``SelfAttentionBlock``,
-per-target history norms). The BatchNorm choice was inherited from the first RB
-prototype (``113f780``), consolidated in #93 (``9ead4f9``), and never A/B'd.
+throughout the attention-pooling path (per-game encoder, per-target history
+norms; plus the optional, off-by-default Pre-LN ``SelfAttentionBlock``). The
+BatchNorm choice was inherited from the first RB prototype (``113f780``),
+consolidated in #93 (``9ead4f9``), and never A/B'd.
 
 This script settles it empirically. It runs the real position pipeline twice
 under an identical seed and identical splits — once with the stock BatchNorm
@@ -51,6 +52,10 @@ from src.shared.benchmark_utils import append_to_history, get_git_hash, utc_now_
 
 ABLATION_NAME = "backbone_norm"
 HISTORY_DIR = "benchmark_history"
+
+# A mean Δ FP MAE smaller than this (or within seed noise) counts as "no
+# meaningful difference" — ~0.5% of a typical ~4 pt/game baseline.
+FLAT_NOISE_THRESHOLD = 0.02
 
 VARIANTS = {
     "bn": "BatchNorm1d backbone (stock / production)",
@@ -237,7 +242,7 @@ def _verdict(seeds: list[int], by: dict, sentinel_ok: bool, have_both: bool) -> 
         f"VERDICT (attention NN, headline): mean Δ(LN-BN) FP MAE = {mean_d:+.4f} ± {sd:.4f} "
         f"over {len(deltas)} seeds."
     )
-    if abs(mean_d) <= sd or abs(mean_d) < 0.02:
+    if abs(mean_d) <= sd or abs(mean_d) < FLAT_NOISE_THRESHOLD:
         print(
             "  FLAT: the gap is within seed noise. BatchNorm (production) is fine for the tabular "
             "backbone; no change warranted — document the rationale + this result."
