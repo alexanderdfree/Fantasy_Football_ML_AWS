@@ -1,7 +1,7 @@
 # RB ascension — measure the literal per-model undershoot (continuation note)
 
 **Status:** deferred (heavy local run not yet executed). This is a ready-to-run
-plan for a future session. Tracked in [TODO.md](../../TODO.md) under
+plan for a future session. Tracked in [TODO.md](../TODO.md) under
 `[NEXT] Measure literal RB-model undershoot on ascension games`.
 
 ## The question
@@ -9,7 +9,7 @@ plan for a future session. Tracked in [TODO.md](../../TODO.md) under
 Do the trained RB models actually **undershoot** the week a backup ascends into a
 workhorse role (starter injured), now that 2025 `depth_chart_rank` is confirmed
 present? The earlier "76% under-prediction" figure
-([rb_ascension_findings.md](rb_ascension_findings.md)) is an **input-information
+([rb_ascension_findings.md](../src/analysis/rb_ascension_findings.md)) is an **input-information
 bound** (realized FP vs an L3-mean volume baseline), *not* the literal error of
 the trained ensemble. This task gets the real per-model number.
 
@@ -71,9 +71,9 @@ localized breakage if it surfaces (likely `label_ascension_rows` column deps:
 
 - Run completes, prints the cohort table; sanity: ascension-bucket bias **negative**
   and N≈14; `established`-bucket bias near the global RB bias (~−0.8, per
-  [rb_lgbm_disagreement_findings.md](rb_lgbm_disagreement_findings.md)) as an
+  [rb_lgbm_disagreement_findings.md](../src/analysis/rb_lgbm_disagreement_findings.md)) as an
   anchor; Ridge/LGBM reproduce on a re-run.
 - If material, add a "Literal model undershoot (2025)" subsection to
-  [rb_ascension_findings.md](rb_ascension_findings.md) with the measured per-model
+  [rb_ascension_findings.md](../src/analysis/rb_ascension_findings.md) with the measured per-model
   bias/MAE, framed against the input bound. `src/analysis/` only → no retrain; ship
   as a small PR.

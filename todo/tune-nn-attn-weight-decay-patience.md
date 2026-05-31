@@ -8,7 +8,7 @@ The Optuna attention tuner (`src/tuning/tune_nn.py`) currently samples 6 attenti
 attention trainer actually consumes are **not** searched:
 
 - **`attn_weight_decay`** — an asymmetry, not a documented exclusion: the base NN's
-  `nn_weight_decay` *is* tuned ([tune_nn.py:185](src/tuning/tune_nn.py#L185)) but the
+  `nn_weight_decay` *is* tuned ([tune_nn.py:185](../src/tuning/tune_nn.py#L185)) but the
   attention branch's weight decay is pinned at the per-position default (`5e-5` for
   QB/RB/WR/K, `3e-4` for TE/DST). Reads like a v1-scoping omission. **Clean addition.**
 - **`attn_patience`** — early-stopping patience (default `20` everywhere). The user asked
@@ -17,7 +17,7 @@ attention trainer actually consumes are **not** searched:
 Both cfg keys already flow end-to-end, so this is contained to the tuner + its tests:
 `position_pipeline.py:235-238` sets `cfg["attn_weight_decay"]` / `cfg["attn_patience"]`,
 and the attention trainer reads them at
-[pipeline.py:768-769](src/shared/pipeline.py#L768)
+[pipeline.py:768-769](../src/shared/pipeline.py#L768)
 (`weight_decay=cfg.get("attn_weight_decay", cfg["nn_weight_decay"])`,
 `patience=cfg.get("attn_patience", cfg["nn_patience"])`). Overriding the cfg keys in
 `_sample_overrides` is therefore sufficient — no pipeline or position-config changes.
@@ -31,13 +31,13 @@ paste-ready constants; an operator hand-pastes winners into `src/{pos}/config.py
 ### ⚠️ `attn_patience` is weakly identified by this objective
 
 The trial objective is `min(val_loss)` over the training trajectory
-([tune_nn.py:258](src/tuning/tune_nn.py#L258)). Patience controls only *when*
+([tune_nn.py:258](../src/tuning/tune_nn.py#L258)). Patience controls only *when*
 early-stopping halts; the LR schedule is a fixed function of epoch. So larger patience just
 lets the deterministic trajectory run more epochs, and `min` over a longer prefix is always
 ≤ `min` over a shorter one → **the objective is monotone non-increasing in patience**. TPE
 will drift `attn_patience` toward the top of its range regardless of generalization value.
 Mitigations baked into this plan: keep the range **tight (15–30)** and well below
-`nn_epochs` (the `HyperbandPruner.max_resource` cap, [tune_nn.py:569](src/tuning/tune_nn.py#L569)),
+`nn_epochs` (the `HyperbandPruner.max_resource` cap, [tune_nn.py:569](../src/tuning/tune_nn.py#L569)),
 and document the caveat in a code comment so the next reader doesn't treat the tuned
 patience as a meaningful optimum. If on reflection this isn't worth the search budget, drop
 `attn_patience` and ship only `attn_weight_decay`.
@@ -46,7 +46,7 @@ patience as a meaningful optimum. If on reflection this isn't worth the search b
 
 ### 1. `src/tuning/tune_nn.py` — search space + paste-ready mapping
 
-In `_sample_overrides` ([tune_nn.py:172-187](src/tuning/tune_nn.py#L172)), add to the
+In `_sample_overrides` ([tune_nn.py:172-187](../src/tuning/tune_nn.py#L172)), add to the
 returned dict, in the attn cluster (after `attn_batch_size`):
 
 ```python
@@ -60,7 +60,7 @@ Rationale for ranges: `attn_weight_decay` mirrors `nn_weight_decay`'s `1e-5–1e
 and brackets both current defaults (`5e-5`, `3e-4`). `attn_patience` 15–30 brackets the
 default `20` and stays far under `nn_epochs`.
 
-In `_PARAM_TO_CONST` ([tune_nn.py:278-291](src/tuning/tune_nn.py#L278)), add two entries so
+In `_PARAM_TO_CONST` ([tune_nn.py:278-291](../src/tuning/tune_nn.py#L278)), add two entries so
 the new params appear in `_format_config_lines` output (keep them in the attn block):
 
 ```python
