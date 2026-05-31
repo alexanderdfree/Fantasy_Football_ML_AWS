@@ -1,0 +1,1190 @@
+{
+  "generated_at": "2026-05-31T06:04:07.525851+00:00",
+  "scoring": "ppr",
+  "nominal_coverage": 0.8,
+  "tau": [
+    0.1,
+    0.5,
+    0.9
+  ],
+  "eval_seasons": [
+    2025
+  ],
+  "method": "linear quantile regression of actual fantasy points on the source's projection, per position (\u03c4 = 0.1 / 0.5 / 0.9, monotone-rearranged)",
+  "sources_meta": {
+    "nflcom": {
+      "label": "NFL.com",
+      "candidate_fit_seasons": [
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024
+      ],
+      "look_ahead_seasons": [
+        2021,
+        2022,
+        2023
+      ],
+      "provenance_unverified": false,
+      "note": "Bands from a quantile regression of actual PPR points on NFL.com's projection (per position). The hvpkod NFL.com archive's pre-2024 offense 'projected' files are backfilled with realized box scores (their projected stats equal the actual stats ~92-96% of the time, and are whole integers) \u2014 a third-party-archive scraping error, not NFL.com itself. Those seasons are auto-excluded, so offense bands fit on the genuine 2024 projections. NFL.com K is unaffected; NFL.com has no DST projections."
+    },
+    "rotowire": {
+      "label": "RotoWire",
+      "candidate_fit_seasons": [
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024
+      ],
+      "look_ahead_seasons": [],
+      "provenance_unverified": true,
+      "note": "RotoWire projections via Sleeper's unofficial API \u2014 provenance unverified. In practice its error spread is stable across every season and matches the held-out season, so its bands sanity-check clean (no look-ahead detected). K is out of scope."
+    }
+  },
+  "intervals": {
+    "nflcom": {
+      "QB": {
+        "params": {
+          "floor": {
+            "intercept": -0.3,
+            "slope": 0.457021
+          },
+          "median": {
+            "intercept": 0.24,
+            "slope": 0.991205
+          },
+          "ceiling": {
+            "intercept": 8.1,
+            "slope": 1.157823
+          }
+        },
+        "calibration": {
+          "coverage": 0.7485,
+          "mean_width": 17.5145,
+          "median_below": 0.5196,
+          "n_eval": 664,
+          "n_fit": 621,
+          "flag": "ok"
+        },
+        "proj_range": [
+          0.0,
+          23.07
+        ],
+        "fit_seasons": [
+          2024
+        ],
+        "excluded_seasons": {
+          "2021": "look-ahead",
+          "2022": "look-ahead",
+          "2023": "look-ahead"
+        },
+        "totals_only": false,
+        "scoring_note": null,
+        "examples": [
+          {
+            "player_id": "00-0034857",
+            "player_name": "Josh Allen",
+            "season": 2025,
+            "week": 14,
+            "projection": 24.19,
+            "floor": 10.75,
+            "median": 24.22,
+            "ceiling": 36.11,
+            "actual": 35.84,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0033873",
+            "player_name": "Patrick Mahomes",
+            "season": 2025,
+            "week": 13,
+            "projection": 22.99,
+            "floor": 10.21,
+            "median": 23.03,
+            "ceiling": 34.72,
+            "actual": 29.44,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0034796",
+            "player_name": "Lamar Jackson",
+            "season": 2025,
+            "week": 2,
+            "projection": 22.83,
+            "floor": 10.14,
+            "median": 22.87,
+            "ceiling": 34.54,
+            "actual": 26.3,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036389",
+            "player_name": "Jalen Hurts",
+            "season": 2025,
+            "week": 12,
+            "projection": 22.8,
+            "floor": 10.12,
+            "median": 22.84,
+            "ceiling": 34.5,
+            "actual": 30.86,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0039851",
+            "player_name": "Drake Maye",
+            "season": 2025,
+            "week": 12,
+            "projection": 21.71,
+            "floor": 9.62,
+            "median": 21.76,
+            "ceiling": 33.23,
+            "actual": 15.96,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0040691",
+            "player_name": "Jaxson Dart",
+            "season": 2025,
+            "week": 18,
+            "projection": 21.7,
+            "floor": 9.62,
+            "median": 21.75,
+            "ceiling": 33.23,
+            "actual": 20.4,
+            "in_band": true
+          }
+        ]
+      },
+      "RB": {
+        "params": {
+          "floor": {
+            "intercept": -0.797546,
+            "slope": 0.420869
+          },
+          "median": {
+            "intercept": 0.0,
+            "slope": 0.95342
+          },
+          "ceiling": {
+            "intercept": 3.8,
+            "slope": 1.522396
+          }
+        },
+        "calibration": {
+          "coverage": 0.78,
+          "mean_width": 12.8487,
+          "median_below": 0.5821,
+          "n_eval": 1577,
+          "n_fit": 1434,
+          "flag": "ok"
+        },
+        "proj_range": [
+          0.0,
+          22.06
+        ],
+        "fit_seasons": [
+          2024
+        ],
+        "excluded_seasons": {
+          "2021": "look-ahead",
+          "2022": "look-ahead",
+          "2023": "look-ahead"
+        },
+        "totals_only": false,
+        "scoring_note": null,
+        "examples": [
+          {
+            "player_id": "00-0033280",
+            "player_name": "Christian McCaffrey",
+            "season": 2025,
+            "week": 12,
+            "projection": 25.16,
+            "floor": 9.79,
+            "median": 23.99,
+            "ceiling": 42.1,
+            "actual": 27.2,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0039139",
+            "player_name": "Jahmyr Gibbs",
+            "season": 2025,
+            "week": 16,
+            "projection": 24.56,
+            "floor": 9.54,
+            "median": 23.42,
+            "ceiling": 41.19,
+            "actual": 22.8,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036223",
+            "player_name": "Jonathan Taylor",
+            "season": 2025,
+            "week": 12,
+            "projection": 23.86,
+            "floor": 9.24,
+            "median": 22.75,
+            "ceiling": 40.12,
+            "actual": 8.6,
+            "in_band": false
+          },
+          {
+            "player_id": "00-0038542",
+            "player_name": "Bijan Robinson",
+            "season": 2025,
+            "week": 16,
+            "projection": 23.53,
+            "floor": 9.11,
+            "median": 22.44,
+            "ceiling": 39.63,
+            "actual": 29.8,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0039040",
+            "player_name": "De'Von Achane",
+            "season": 2025,
+            "week": 11,
+            "projection": 22.93,
+            "floor": 8.85,
+            "median": 21.87,
+            "ceiling": 38.71,
+            "actual": 21.5,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0039361",
+            "player_name": "Bucky Irving",
+            "season": 2025,
+            "week": 2,
+            "projection": 20.94,
+            "floor": 8.02,
+            "median": 19.97,
+            "ceiling": 35.68,
+            "actual": 18.1,
+            "in_band": true
+          }
+        ]
+      },
+      "WR": {
+        "params": {
+          "floor": {
+            "intercept": -0.703065,
+            "slope": 0.30648
+          },
+          "median": {
+            "intercept": 0.0,
+            "slope": 0.904658
+          },
+          "ceiling": {
+            "intercept": 4.224485,
+            "slope": 1.566364
+          }
+        },
+        "calibration": {
+          "coverage": 0.8034,
+          "mean_width": 12.9685,
+          "median_below": 0.5673,
+          "n_eval": 2498,
+          "n_fit": 2281,
+          "flag": "ok"
+        },
+        "proj_range": [
+          0.0,
+          20.94
+        ],
+        "fit_seasons": [
+          2024
+        ],
+        "excluded_seasons": {
+          "2021": "look-ahead",
+          "2022": "look-ahead",
+          "2023": "look-ahead"
+        },
+        "totals_only": false,
+        "scoring_note": null,
+        "examples": [
+          {
+            "player_id": "00-0039075",
+            "player_name": "Puka Nacua",
+            "season": 2025,
+            "week": 17,
+            "projection": 22.84,
+            "floor": 6.3,
+            "median": 20.67,
+            "ceiling": 40.0,
+            "actual": 15.7,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0038543",
+            "player_name": "Jaxon Smith-Njigba",
+            "season": 2025,
+            "week": 10,
+            "projection": 22.45,
+            "floor": 6.18,
+            "median": 20.31,
+            "ceiling": 39.39,
+            "actual": 20.3,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036963",
+            "player_name": "Amon-Ra St. Brown",
+            "season": 2025,
+            "week": 16,
+            "projection": 21.69,
+            "floor": 5.94,
+            "median": 19.62,
+            "ceiling": 38.19,
+            "actual": 9.4,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036900",
+            "player_name": "Ja'Marr Chase",
+            "season": 2025,
+            "week": 2,
+            "projection": 21.54,
+            "floor": 5.9,
+            "median": 19.48,
+            "ceiling": 37.96,
+            "actual": 36.5,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036358",
+            "player_name": "CeeDee Lamb",
+            "season": 2025,
+            "week": 11,
+            "projection": 20.41,
+            "floor": 5.55,
+            "median": 18.47,
+            "ceiling": 36.2,
+            "actual": 17.6,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036322",
+            "player_name": "Justin Jefferson",
+            "season": 2025,
+            "week": 2,
+            "projection": 19.58,
+            "floor": 5.3,
+            "median": 17.72,
+            "ceiling": 34.9,
+            "actual": 11.1,
+            "in_band": true
+          }
+        ]
+      },
+      "TE": {
+        "params": {
+          "floor": {
+            "intercept": -0.365471,
+            "slope": 0.250152
+          },
+          "median": {
+            "intercept": 0.364722,
+            "slope": 0.839703
+          },
+          "ceiling": {
+            "intercept": 5.620139,
+            "slope": 1.333208
+          }
+        },
+        "calibration": {
+          "coverage": 0.8111,
+          "mean_width": 11.2168,
+          "median_below": 0.5027,
+          "n_eval": 1281,
+          "n_fit": 1150,
+          "flag": "ok"
+        },
+        "proj_range": [
+          0.0,
+          16.58
+        ],
+        "fit_seasons": [
+          2024
+        ],
+        "excluded_seasons": {
+          "2021": "look-ahead",
+          "2022": "look-ahead",
+          "2023": "look-ahead"
+        },
+        "totals_only": false,
+        "scoring_note": null,
+        "examples": [
+          {
+            "player_id": "00-0037744",
+            "player_name": "Trey McBride",
+            "season": 2025,
+            "week": 13,
+            "projection": 19.47,
+            "floor": 4.51,
+            "median": 16.72,
+            "ceiling": 31.58,
+            "actual": 22.2,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0039338",
+            "player_name": "Brock Bowers",
+            "season": 2025,
+            "week": 11,
+            "projection": 17.01,
+            "floor": 3.89,
+            "median": 14.65,
+            "ceiling": 28.29,
+            "actual": 14.2,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0033288",
+            "player_name": "George Kittle",
+            "season": 2025,
+            "week": 16,
+            "projection": 15.17,
+            "floor": 3.43,
+            "median": 13.11,
+            "ceiling": 25.85,
+            "actual": 24.5,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0040663",
+            "player_name": "Harold Fannin Jr.",
+            "season": 2025,
+            "week": 15,
+            "projection": 14.41,
+            "floor": 3.24,
+            "median": 12.46,
+            "ceiling": 24.83,
+            "actual": 11.8,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0038996",
+            "player_name": "Tucker Kraft",
+            "season": 2025,
+            "week": 9,
+            "projection": 14.09,
+            "floor": 3.16,
+            "median": 12.2,
+            "ceiling": 24.4,
+            "actual": 4.0,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0040128",
+            "player_name": "Tyler Warren",
+            "season": 2025,
+            "week": 9,
+            "projection": 13.77,
+            "floor": 3.08,
+            "median": 11.93,
+            "ceiling": 23.98,
+            "actual": 7.6,
+            "in_band": true
+          }
+        ]
+      },
+      "K": {
+        "params": {
+          "floor": {
+            "intercept": 0.6,
+            "slope": 0.194175
+          },
+          "median": {
+            "intercept": 5.51194,
+            "slope": 0.298507
+          },
+          "ceiling": {
+            "intercept": 13.1,
+            "slope": 0.227001
+          }
+        },
+        "calibration": {
+          "coverage": 0.7897,
+          "mean_width": 12.744,
+          "median_below": 0.4668,
+          "n_eval": 542,
+          "n_fit": 2009,
+          "flag": "ok"
+        },
+        "proj_range": [
+          0.0,
+          14.11
+        ],
+        "fit_seasons": [
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "excluded_seasons": {},
+        "totals_only": true,
+        "scoring_note": "standard scoring (totals-only)",
+        "examples": [
+          {
+            "player_id": "00-0037692",
+            "player_name": "Brandon Aubrey",
+            "season": 2025,
+            "week": 17,
+            "projection": 11.12,
+            "floor": 2.76,
+            "median": 8.83,
+            "ceiling": 15.62,
+            "actual": 16.5,
+            "in_band": false
+          },
+          {
+            "player_id": "00-0031136",
+            "player_name": "Chris Boswell",
+            "season": 2025,
+            "week": 11,
+            "projection": 9.97,
+            "floor": 2.54,
+            "median": 8.49,
+            "ceiling": 15.36,
+            "actual": 9.5,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0039172",
+            "player_name": "Jake Bates",
+            "season": 2025,
+            "week": 14,
+            "projection": 9.75,
+            "floor": 2.49,
+            "median": 8.42,
+            "ceiling": 15.31,
+            "actual": 18.1,
+            "in_band": false
+          },
+          {
+            "player_id": "00-0039409",
+            "player_name": "Cam Little",
+            "season": 2025,
+            "week": 18,
+            "projection": 9.67,
+            "floor": 2.48,
+            "median": 8.4,
+            "ceiling": 15.3,
+            "actual": 16.9,
+            "in_band": false
+          },
+          {
+            "player_id": "00-0037224",
+            "player_name": "Cameron Dicker",
+            "season": 2025,
+            "week": 13,
+            "projection": 9.56,
+            "floor": 2.46,
+            "median": 8.37,
+            "ceiling": 15.27,
+            "actual": 9.6,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0033303",
+            "player_name": "Harrison Butker",
+            "season": 2025,
+            "week": 13,
+            "projection": 9.39,
+            "floor": 2.42,
+            "median": 8.31,
+            "ceiling": 15.23,
+            "actual": 4.0,
+            "in_band": true
+          }
+        ]
+      },
+      "DST": null
+    },
+    "rotowire": {
+      "QB": {
+        "params": {
+          "floor": {
+            "intercept": -3.47086,
+            "slope": 0.589953
+          },
+          "median": {
+            "intercept": 0.75685,
+            "slope": 0.861842
+          },
+          "ceiling": {
+            "intercept": 9.521117,
+            "slope": 0.960548
+          }
+        },
+        "calibration": {
+          "coverage": 0.7578,
+          "mean_width": 19.0702,
+          "median_below": 0.4606,
+          "n_eval": 545,
+          "n_fit": 3539,
+          "flag": "ok"
+        },
+        "proj_range": [
+          0.0,
+          27.5
+        ],
+        "fit_seasons": [
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "excluded_seasons": {},
+        "totals_only": false,
+        "scoring_note": null,
+        "examples": [
+          {
+            "player_id": "00-0034857",
+            "player_name": "Josh Allen",
+            "season": 2025,
+            "week": 14,
+            "projection": 24.24,
+            "floor": 10.83,
+            "median": 21.65,
+            "ceiling": 32.8,
+            "actual": 35.84,
+            "in_band": false
+          },
+          {
+            "player_id": "00-0034796",
+            "player_name": "Lamar Jackson",
+            "season": 2025,
+            "week": 2,
+            "projection": 23.05,
+            "floor": 10.13,
+            "median": 20.62,
+            "ceiling": 31.66,
+            "actual": 26.3,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036389",
+            "player_name": "Jalen Hurts",
+            "season": 2025,
+            "week": 12,
+            "projection": 22.86,
+            "floor": 10.01,
+            "median": 20.46,
+            "ceiling": 31.48,
+            "actual": 30.86,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0033873",
+            "player_name": "Patrick Mahomes",
+            "season": 2025,
+            "week": 13,
+            "projection": 22.84,
+            "floor": 10.0,
+            "median": 20.44,
+            "ceiling": 31.46,
+            "actual": 29.44,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0039851",
+            "player_name": "Drake Maye",
+            "season": 2025,
+            "week": 12,
+            "projection": 21.79,
+            "floor": 9.38,
+            "median": 19.54,
+            "ceiling": 30.45,
+            "actual": 15.96,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0040691",
+            "player_name": "Jaxson Dart",
+            "season": 2025,
+            "week": 18,
+            "projection": 21.5,
+            "floor": 9.21,
+            "median": 19.28,
+            "ceiling": 30.17,
+            "actual": 20.4,
+            "in_band": true
+          }
+        ]
+      },
+      "RB": {
+        "params": {
+          "floor": {
+            "intercept": -0.917806,
+            "slope": 0.386038
+          },
+          "median": {
+            "intercept": -0.20098,
+            "slope": 0.917715
+          },
+          "ceiling": {
+            "intercept": 5.329771,
+            "slope": 1.379251
+          }
+        },
+        "calibration": {
+          "coverage": 0.8081,
+          "mean_width": 14.5375,
+          "median_below": 0.5452,
+          "n_eval": 1449,
+          "n_fit": 8976,
+          "flag": "ok"
+        },
+        "proj_range": [
+          0.0,
+          28.87
+        ],
+        "fit_seasons": [
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "excluded_seasons": {},
+        "totals_only": false,
+        "scoring_note": null,
+        "examples": [
+          {
+            "player_id": "00-0033280",
+            "player_name": "Christian McCaffrey",
+            "season": 2025,
+            "week": 17,
+            "projection": 24.99,
+            "floor": 8.73,
+            "median": 22.74,
+            "ceiling": 39.8,
+            "actual": 28.1,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0039040",
+            "player_name": "De'Von Achane",
+            "season": 2025,
+            "week": 11,
+            "projection": 24.8,
+            "floor": 8.66,
+            "median": 22.56,
+            "ceiling": 39.54,
+            "actual": 21.5,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0039139",
+            "player_name": "Jahmyr Gibbs",
+            "season": 2025,
+            "week": 16,
+            "projection": 24.59,
+            "floor": 8.58,
+            "median": 22.37,
+            "ceiling": 39.25,
+            "actual": 22.8,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0038542",
+            "player_name": "Bijan Robinson",
+            "season": 2025,
+            "week": 16,
+            "projection": 23.74,
+            "floor": 8.25,
+            "median": 21.58,
+            "ceiling": 38.07,
+            "actual": 29.8,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036223",
+            "player_name": "Jonathan Taylor",
+            "season": 2025,
+            "week": 13,
+            "projection": 22.8,
+            "floor": 7.88,
+            "median": 20.72,
+            "ceiling": 36.77,
+            "actual": 15.1,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0035700",
+            "player_name": "Josh Jacobs",
+            "season": 2025,
+            "week": 11,
+            "projection": 20.29,
+            "floor": 6.91,
+            "median": 18.42,
+            "ceiling": 33.31,
+            "actual": 4.0,
+            "in_band": false
+          }
+        ]
+      },
+      "WR": {
+        "params": {
+          "floor": {
+            "intercept": -0.92516,
+            "slope": 0.309936
+          },
+          "median": {
+            "intercept": -0.314628,
+            "slope": 0.882724
+          },
+          "ceiling": {
+            "intercept": 5.208442,
+            "slope": 1.379243
+          }
+        },
+        "calibration": {
+          "coverage": 0.8208,
+          "mean_width": 13.8104,
+          "median_below": 0.498,
+          "n_eval": 2299,
+          "n_fit": 14276,
+          "flag": "ok"
+        },
+        "proj_range": [
+          -1.1,
+          26.15
+        ],
+        "fit_seasons": [
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "excluded_seasons": {},
+        "totals_only": false,
+        "scoring_note": null,
+        "examples": [
+          {
+            "player_id": "00-0039075",
+            "player_name": "Puka Nacua",
+            "season": 2025,
+            "week": 17,
+            "projection": 22.77,
+            "floor": 6.13,
+            "median": 19.78,
+            "ceiling": 36.61,
+            "actual": 15.7,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0038543",
+            "player_name": "Jaxon Smith-Njigba",
+            "season": 2025,
+            "week": 9,
+            "projection": 22.27,
+            "floor": 5.98,
+            "median": 19.34,
+            "ceiling": 35.93,
+            "actual": 20.9,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036963",
+            "player_name": "Amon-Ra St. Brown",
+            "season": 2025,
+            "week": 16,
+            "projection": 21.69,
+            "floor": 5.8,
+            "median": 18.83,
+            "ceiling": 35.12,
+            "actual": 9.4,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036900",
+            "player_name": "Ja'Marr Chase",
+            "season": 2025,
+            "week": 9,
+            "projection": 20.5,
+            "floor": 5.43,
+            "median": 17.78,
+            "ceiling": 33.48,
+            "actual": 17.1,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036358",
+            "player_name": "CeeDee Lamb",
+            "season": 2025,
+            "week": 11,
+            "projection": 20.11,
+            "floor": 5.31,
+            "median": 17.43,
+            "ceiling": 32.94,
+            "actual": 17.6,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0036322",
+            "player_name": "Justin Jefferson",
+            "season": 2025,
+            "week": 1,
+            "projection": 18.76,
+            "floor": 4.89,
+            "median": 16.24,
+            "ceiling": 31.08,
+            "actual": 14.4,
+            "in_band": true
+          }
+        ]
+      },
+      "TE": {
+        "params": {
+          "floor": {
+            "intercept": -0.50108,
+            "slope": 0.258155
+          },
+          "median": {
+            "intercept": 0.375,
+            "slope": 0.806452
+          },
+          "ceiling": {
+            "intercept": 5.09855,
+            "slope": 1.318392
+          }
+        },
+        "calibration": {
+          "coverage": 0.8048,
+          "mean_width": 11.3145,
+          "median_below": 0.4932,
+          "n_eval": 1178,
+          "n_fit": 7006,
+          "flag": "ok"
+        },
+        "proj_range": [
+          -1.16,
+          20.8
+        ],
+        "fit_seasons": [
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "excluded_seasons": {},
+        "totals_only": false,
+        "scoring_note": null,
+        "examples": [
+          {
+            "player_id": "00-0037744",
+            "player_name": "Trey McBride",
+            "season": 2025,
+            "week": 17,
+            "projection": 19.35,
+            "floor": 4.5,
+            "median": 15.98,
+            "ceiling": 30.61,
+            "actual": 23.6,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0039338",
+            "player_name": "Brock Bowers",
+            "season": 2025,
+            "week": 11,
+            "projection": 19.33,
+            "floor": 4.49,
+            "median": 15.96,
+            "ceiling": 30.58,
+            "actual": 14.2,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0033288",
+            "player_name": "George Kittle",
+            "season": 2025,
+            "week": 16,
+            "projection": 15.23,
+            "floor": 3.43,
+            "median": 12.66,
+            "ceiling": 25.18,
+            "actual": 24.5,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0038041",
+            "player_name": "Jake Ferguson",
+            "season": 2025,
+            "week": 6,
+            "projection": 14.51,
+            "floor": 3.24,
+            "median": 12.08,
+            "ceiling": 24.23,
+            "actual": 12.3,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0040663",
+            "player_name": "Harold Fannin",
+            "season": 2025,
+            "week": 15,
+            "projection": 14.41,
+            "floor": 3.22,
+            "median": 11.99,
+            "ceiling": 24.09,
+            "actual": 11.8,
+            "in_band": true
+          },
+          {
+            "player_id": "00-0038996",
+            "player_name": "Tucker Kraft",
+            "season": 2025,
+            "week": 9,
+            "projection": 14.1,
+            "floor": 3.14,
+            "median": 11.75,
+            "ceiling": 23.69,
+            "actual": 4.0,
+            "in_band": true
+          }
+        ]
+      },
+      "K": null,
+      "DST": {
+        "params": {
+          "floor": {
+            "intercept": -7.172507,
+            "slope": 0.808625
+          },
+          "median": {
+            "intercept": 0.011788,
+            "slope": 0.785855
+          },
+          "ceiling": {
+            "intercept": 7.939086,
+            "slope": 1.015228
+          }
+        },
+        "calibration": {
+          "coverage": 0.7868,
+          "mean_width": 16.426,
+          "median_below": 0.4688,
+          "n_eval": 544,
+          "n_fit": 3662,
+          "flag": "ok"
+        },
+        "proj_range": [
+          -4.16,
+          17.17
+        ],
+        "fit_seasons": [
+          2018,
+          2019,
+          2020,
+          2021,
+          2022,
+          2023,
+          2024
+        ],
+        "excluded_seasons": {},
+        "totals_only": false,
+        "scoring_note": null,
+        "examples": [
+          {
+            "player_id": "HOU",
+            "player_name": "HOU",
+            "season": 2025,
+            "week": 16,
+            "projection": 14.37,
+            "floor": 4.45,
+            "median": 11.3,
+            "ceiling": 22.53,
+            "actual": 12.0,
+            "in_band": true
+          },
+          {
+            "player_id": "PHI",
+            "player_name": "PHI",
+            "season": 2025,
+            "week": 15,
+            "projection": 14.04,
+            "floor": 4.18,
+            "median": 11.05,
+            "ceiling": 22.19,
+            "actual": 19.0,
+            "in_band": true
+          },
+          {
+            "player_id": "DEN",
+            "player_name": "DEN",
+            "season": 2025,
+            "week": 18,
+            "projection": 13.98,
+            "floor": 4.13,
+            "median": 11.0,
+            "ceiling": 22.13,
+            "actual": 24.0,
+            "in_band": false
+          },
+          {
+            "player_id": "MIN",
+            "player_name": "MIN",
+            "season": 2025,
+            "week": 18,
+            "projection": 13.93,
+            "floor": 4.09,
+            "median": 10.96,
+            "ceiling": 22.08,
+            "actual": 15.0,
+            "in_band": true
+          },
+          {
+            "player_id": "BUF",
+            "player_name": "BUF",
+            "season": 2025,
+            "week": 18,
+            "projection": 13.79,
+            "floor": 3.98,
+            "median": 10.85,
+            "ceiling": 21.94,
+            "actual": 8.0,
+            "in_band": true
+          },
+          {
+            "player_id": "JAX",
+            "player_name": "JAX",
+            "season": 2025,
+            "week": 15,
+            "projection": 11.86,
+            "floor": 2.42,
+            "median": 9.33,
+            "ceiling": 19.98,
+            "actual": 10.0,
+            "in_band": true
+          }
+        ]
+      }
+    }
+  }
+}

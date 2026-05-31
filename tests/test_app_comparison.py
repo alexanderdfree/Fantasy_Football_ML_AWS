@@ -366,3 +366,82 @@ def test_committed_expert_summary_contract():
     # The reliability table renders the 2025 slice per source — lock that it ships.
     assert "2025" in qb_nfl_rel["per_season"]
     assert {"n", "bias", "sigma"} <= set(qb_nfl_rel["per_season"]["2025"])
+
+
+# --------------------------------------------------------------------------- #
+# Prediction intervals — _load_expert_intervals + the /api/comparison block +
+# the committed expert_intervals.json calibration contract
+# --------------------------------------------------------------------------- #
+
+_INTERVAL_SOURCES = ("nflcom", "rotowire")
+
+
+@pytest.mark.unit
+def test_load_expert_intervals_missing_file_returns_none(app_module, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "_EXPERT_INTERVALS_PATH", str(tmp_path / "nope.json"))
+    assert app_module._load_expert_intervals() is None
+
+
+@pytest.mark.integration
+def test_comparison_includes_intervals_block(app_module, synthetic_cache, monkeypatch):
+    """The intervals ride along on the /api/comparison payload (one fetch)."""
+    monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
+    app_module._cache.update(synthetic_cache)
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        body = c.get("/api/comparison").get_json()
+
+    assert "intervals" in body
+    iv = body["intervals"]
+    assert iv is not None and set(iv["intervals"]) == set(_INTERVAL_SOURCES)
+
+
+@pytest.mark.integration
+def test_comparison_intervals_optional(app_module, synthetic_cache, monkeypatch):
+    """A missing intervals file degrades to intervals=None; accuracy tables unaffected."""
+    monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
+    monkeypatch.setattr(app_module, "_load_expert_intervals", lambda: None)
+    app_module._cache.update(synthetic_cache)
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        body = c.get("/api/comparison").get_json()
+
+    assert body["intervals"] is None
+    assert body["subsets"]["all"]["QB"]["nflcom"] is not None
+
+
+@pytest.mark.unit
+def test_committed_expert_intervals_contract():
+    """The fitter's committed output has the shape the route + UI rely on, AND the
+    nominal-80% bands empirically cover ≈80% of held-out actuals (the key check —
+    pinned here so a regeneration that miscalibrates fails CI)."""
+    import src.serving.app as app_mod
+
+    with open(app_mod._EXPERT_INTERVALS_PATH, encoding="utf-8") as f:
+        data = json.load(f)
+
+    assert data["nominal_coverage"] == 0.8
+    assert data["tau"] == [0.1, 0.5, 0.9]
+    assert set(data["intervals"]) == set(_INTERVAL_SOURCES)
+    # Coverage holes: NFL.com has no DST; RotoWire has no K.
+    assert data["intervals"]["nflcom"]["DST"] is None
+    assert data["intervals"]["rotowire"]["K"] is None
+
+    for source in _INTERVAL_SOURCES:
+        for pos, block in data["intervals"][source].items():
+            if block is None or block.get("skipped"):
+                continue
+            assert set(block["params"]) == {"floor", "median", "ceiling"}
+            cov = block["calibration"]["coverage"]
+            assert 0.6 <= cov <= 0.95, f"{source}/{pos} coverage {cov} off-nominal"
+            assert 0 < len(block["examples"]) <= 6
+            for e in block["examples"]:
+                assert e["floor"] <= e["median"] <= e["ceiling"]
+                assert e["in_band"] == (e["floor"] <= e["actual"] <= e["ceiling"])
+
+    # The NFL.com look-ahead leak (the hvpkod archive's pre-2024 offense 'projected'
+    # files are backfilled with realized box scores) was detected + excluded; RotoWire
+    # is clean. NFL.com offense therefore fits on the single genuine 2024 season.
+    assert {2021, 2022, 2023} <= set(data["sources_meta"]["nflcom"]["look_ahead_seasons"])
+    assert data["sources_meta"]["rotowire"]["look_ahead_seasons"] == []
+    assert data["intervals"]["nflcom"]["RB"]["fit_seasons"] == [2024]
