@@ -153,32 +153,31 @@ def _nn_device() -> torch.device:
 
 
 def _maybe_compile(model: torch.nn.Module) -> torch.nn.Module:
-    """No-op: returns ``model`` unchanged.
+    """Opt-in ``torch.compile`` for sm_80+ GPUs; a no-op everywhere by default.
 
-    Previously wrapped models with ``torch.compile(model, dynamic=True)`` on
-    CUDA. The first successful EC2 measurement (cb3c960 train-ec2 run, after
-    the g++ fix in PR #187 unblocked Inductor) showed total ``run_pipeline``
-    time grew from ~1180s to ~1558s — a +32% wall-clock regression — with
-    ``attn_nn_train`` as the dominant offender (e.g., QB ``attn_nn_train``
-    136s on T4 vs ~37s locally on macOS/MPS without compile). Two reasons
-    compile loses on this hardware:
+    D12 measured ``torch.compile(model, dynamic=True)`` at **+32%** wall-clock on
+    the T4 (cb3c960 train-ec2 run): the T4 is sm_75 with too few SMs for
+    ``max_autotune_gemm`` (Inductor logged "Not enough SMs"), and the attention
+    path's variable padded-sequence lengths trigger dynamic-shape guard re-checks
+    that never amortize. **That decision stands for the T4** — so this stays a
+    no-op on T4 and, crucially, a no-op *everywhere unless explicitly opted in*,
+    keeping AWS T4 production and CPU/Mac/CI byte-identical to today.
 
-    - **T4 is sm_75 with few SMs.** Inductor logged ``Not enough SMs to use
-      max_autotune_gemm mode`` — the headline GEMM optimization is disabled
-      because the GPU is too small for it.
-    - **Dynamic shapes defeat ``dynamic=True``.** The attention path's
-      variable padded-sequence lengths still trigger guard re-checks (and
-      occasionally full recompiles) for each new shape, so the per-batch
-      compile-overhead never amortizes.
-
-    Kept as an indirection so the four call sites don't need to change and
-    so a future re-test on different hardware (sm_80+ Ampere, or a path
-    with shape-pinned attention) is a one-function edit. To re-enable for
-    a measurement, restore the ``torch.compile(model, dynamic=True)`` call
-    here and re-run train-ec2; compare the resulting benchmark against the
-    first compile-off baseline this commit produces.
+    It is re-enabled ONLY when ``FF_COMPILE`` is truthy AND the GPU is sm_80+
+    (e.g. RTX 5080 ``sm_120``, which has many more SMs than the T4), as a local
+    experiment. The +32% was a *T4* result; sm_80+ may win — but the dynamic-
+    shape caveat above is hardware-independent, so **benchmark before trusting
+    it** (diff ``benchmark_history/`` with vs without ``FF_COMPILE=1``).
     """
-    return model
+    if os.environ.get("FF_COMPILE", "").lower() not in {"1", "true", "yes", "on"}:
+        return model
+    if not cuda_enabled():
+        return model
+    # sm_80 (Ampere) is the first generation with enough SMs for the GEMM
+    # autotune path; T4 (sm_75) stays on the proven no-compile path (D12).
+    if torch.cuda.get_device_capability()[0] < 8:
+        return model
+    return torch.compile(model, dynamic=True)
 
 
 def _scale_xs(*X_arrays: np.ndarray) -> tuple[StandardScaler, list[np.ndarray]]:
