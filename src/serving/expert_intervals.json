@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-31T05:23:27.375137+00:00",
+  "generated_at": "2026-05-31T06:04:07.525851+00:00",
   "scoring": "ppr",
   "nominal_coverage": 0.8,
   "tau": [
@@ -27,10 +27,12 @@
         2024
       ],
       "look_ahead_seasons": [
+        2021,
+        2022,
         2023
       ],
       "provenance_unverified": false,
-      "note": "Bands from a quantile regression of actual PPR points on NFL.com's projection (per position). Some older NFL.com 'projected' files are backfilled with realized stats (a look-ahead leak) and are auto-excluded from the fit, so offense bands fit on the recent genuine season(s). NFL.com has no DST projections."
+      "note": "Bands from a quantile regression of actual PPR points on NFL.com's projection (per position). The hvpkod NFL.com archive's pre-2024 offense 'projected' files are backfilled with realized box scores (their projected stats equal the actual stats ~92-96% of the time, and are whole integers) \u2014 a third-party-archive scraping error, not NFL.com itself. Those seasons are auto-excluded, so offense bands fit on the genuine 2024 projections. NFL.com K is unaffected; NFL.com has no DST projections."
     },
     "rotowire": {
       "label": "RotoWire",
@@ -53,20 +55,20 @@
       "QB": {
         "params": {
           "floor": {
-            "intercept": -0.30000000000000004,
-            "slope": 0.4570211389128559
+            "intercept": -0.3,
+            "slope": 0.457021
           },
           "median": {
             "intercept": 0.24,
-            "slope": 0.9912045289819587
+            "slope": 0.991205
           },
           "ceiling": {
             "intercept": 8.1,
-            "slope": 1.157823409834134
+            "slope": 1.157823
           }
         },
         "calibration": {
-          "coverage": 0.762,
+          "coverage": 0.7485,
           "mean_width": 17.5145,
           "median_below": 0.5196,
           "n_eval": 664,
@@ -81,9 +83,9 @@
           2024
         ],
         "excluded_seasons": {
-          "2023": "look-ahead",
-          "2021": "non-stationary",
-          "2022": "non-stationary"
+          "2021": "look-ahead",
+          "2022": "look-ahead",
+          "2023": "look-ahead"
         },
         "totals_only": false,
         "scoring_note": null,
@@ -165,37 +167,37 @@
       "RB": {
         "params": {
           "floor": {
-            "intercept": -0.3528310715956949,
-            "slope": 0.4679457182966775
+            "intercept": -0.797546,
+            "slope": 0.420869
           },
           "median": {
-            "intercept": 0.2,
-            "slope": 0.9903381642512078
+            "intercept": 0.0,
+            "slope": 0.95342
           },
           "ceiling": {
-            "intercept": 9.387944463257703,
-            "slope": 1.0328479512360311
+            "intercept": 3.8,
+            "slope": 1.522396
           }
         },
         "calibration": {
-          "coverage": 0.7223,
-          "mean_width": 13.9723,
-          "median_below": 0.6195,
+          "coverage": 0.78,
+          "mean_width": 12.8487,
+          "median_below": 0.5821,
           "n_eval": 1577,
-          "n_fit": 2815,
+          "n_fit": 1434,
           "flag": "ok"
         },
         "proj_range": [
-          -2.0,
-          44.1
+          0.0,
+          22.06
         ],
         "fit_seasons": [
-          2021,
           2024
         ],
         "excluded_seasons": {
-          "2023": "look-ahead",
-          "2022": "non-stationary"
+          "2021": "look-ahead",
+          "2022": "look-ahead",
+          "2023": "look-ahead"
         },
         "totals_only": false,
         "scoring_note": null,
@@ -206,9 +208,9 @@
             "season": 2025,
             "week": 12,
             "projection": 25.16,
-            "floor": 11.42,
-            "median": 25.12,
-            "ceiling": 35.37,
+            "floor": 9.79,
+            "median": 23.99,
+            "ceiling": 42.1,
             "actual": 27.2,
             "in_band": true
           },
@@ -218,9 +220,9 @@
             "season": 2025,
             "week": 16,
             "projection": 24.56,
-            "floor": 11.14,
-            "median": 24.52,
-            "ceiling": 34.76,
+            "floor": 9.54,
+            "median": 23.42,
+            "ceiling": 41.19,
             "actual": 22.8,
             "in_band": true
           },
@@ -230,9 +232,9 @@
             "season": 2025,
             "week": 12,
             "projection": 23.86,
-            "floor": 10.81,
-            "median": 23.83,
-            "ceiling": 34.03,
+            "floor": 9.24,
+            "median": 22.75,
+            "ceiling": 40.12,
             "actual": 8.6,
             "in_band": false
           },
@@ -242,9 +244,9 @@
             "season": 2025,
             "week": 16,
             "projection": 23.53,
-            "floor": 10.66,
-            "median": 23.5,
-            "ceiling": 33.69,
+            "floor": 9.11,
+            "median": 22.44,
+            "ceiling": 39.63,
             "actual": 29.8,
             "in_band": true
           },
@@ -254,9 +256,9 @@
             "season": 2025,
             "week": 11,
             "projection": 22.93,
-            "floor": 10.38,
-            "median": 22.91,
-            "ceiling": 33.08,
+            "floor": 8.85,
+            "median": 21.87,
+            "ceiling": 38.71,
             "actual": 21.5,
             "in_band": true
           },
@@ -266,9 +268,9 @@
             "season": 2025,
             "week": 2,
             "projection": 20.94,
-            "floor": 9.45,
-            "median": 20.94,
-            "ceiling": 31.02,
+            "floor": 8.02,
+            "median": 19.97,
+            "ceiling": 35.68,
             "actual": 18.1,
             "in_band": true
           }
@@ -277,16 +279,16 @@
       "WR": {
         "params": {
           "floor": {
-            "intercept": -0.7030647985989495,
-            "slope": 0.3064798598949212
+            "intercept": -0.703065,
+            "slope": 0.30648
           },
           "median": {
             "intercept": 0.0,
-            "slope": 0.904657572973355
+            "slope": 0.904658
           },
           "ceiling": {
-            "intercept": 4.224484748557296,
-            "slope": 1.5663643858202805
+            "intercept": 4.224485,
+            "slope": 1.566364
           }
         },
         "calibration": {
@@ -305,9 +307,9 @@
           2024
         ],
         "excluded_seasons": {
-          "2023": "look-ahead",
-          "2021": "non-stationary",
-          "2022": "non-stationary"
+          "2021": "look-ahead",
+          "2022": "look-ahead",
+          "2023": "look-ahead"
         },
         "totals_only": false,
         "scoring_note": null,
@@ -389,16 +391,16 @@
       "TE": {
         "params": {
           "floor": {
-            "intercept": -0.36547149787750177,
-            "slope": 0.2501516070345664
+            "intercept": -0.365471,
+            "slope": 0.250152
           },
           "median": {
-            "intercept": 0.3647217138550973,
-            "slope": 0.8397028743675315
+            "intercept": 0.364722,
+            "slope": 0.839703
           },
           "ceiling": {
-            "intercept": 5.620138954088819,
-            "slope": 1.3332081494695327
+            "intercept": 5.620139,
+            "slope": 1.333208
           }
         },
         "calibration": {
@@ -417,9 +419,9 @@
           2024
         ],
         "excluded_seasons": {
-          "2023": "look-ahead",
-          "2021": "non-stationary",
-          "2022": "non-stationary"
+          "2021": "look-ahead",
+          "2022": "look-ahead",
+          "2023": "look-ahead"
         },
         "totals_only": false,
         "scoring_note": null,
@@ -501,21 +503,21 @@
       "K": {
         "params": {
           "floor": {
-            "intercept": 0.6000000000000001,
-            "slope": 0.1941747572815534
+            "intercept": 0.6,
+            "slope": 0.194175
           },
           "median": {
-            "intercept": 5.511940298507463,
-            "slope": 0.29850746268656714
+            "intercept": 5.51194,
+            "slope": 0.298507
           },
           "ceiling": {
             "intercept": 13.1,
-            "slope": 0.2270011947431303
+            "slope": 0.227001
           }
         },
         "calibration": {
           "coverage": 0.7897,
-          "mean_width": 12.7441,
+          "mean_width": 12.744,
           "median_below": 0.4668,
           "n_eval": 542,
           "n_fit": 2009,
@@ -615,16 +617,16 @@
       "QB": {
         "params": {
           "floor": {
-            "intercept": -3.4708598130841137,
-            "slope": 0.5899532710280375
+            "intercept": -3.47086,
+            "slope": 0.589953
           },
           "median": {
-            "intercept": 0.7568496678470058,
-            "slope": 0.861841912733019
+            "intercept": 0.75685,
+            "slope": 0.861842
           },
           "ceiling": {
-            "intercept": 9.521116590607972,
-            "slope": 0.960547622552628
+            "intercept": 9.521117,
+            "slope": 0.960548
           }
         },
         "calibration": {
@@ -729,21 +731,21 @@
       "RB": {
         "params": {
           "floor": {
-            "intercept": -0.91780601576323,
-            "slope": 0.3860382821296446
+            "intercept": -0.917806,
+            "slope": 0.386038
           },
           "median": {
-            "intercept": -0.2009795834192616,
-            "slope": 0.917714992782017
+            "intercept": -0.20098,
+            "slope": 0.917715
           },
           "ceiling": {
-            "intercept": 5.329770992366413,
-            "slope": 1.3792505204718941
+            "intercept": 5.329771,
+            "slope": 1.379251
           }
         },
         "calibration": {
           "coverage": 0.8081,
-          "mean_width": 14.5374,
+          "mean_width": 14.5375,
           "median_below": 0.5452,
           "n_eval": 1449,
           "n_fit": 8976,
@@ -843,16 +845,16 @@
       "WR": {
         "params": {
           "floor": {
-            "intercept": -0.9251595259799452,
-            "slope": 0.3099361896080219
+            "intercept": -0.92516,
+            "slope": 0.309936
           },
           "median": {
-            "intercept": -0.31462799495586324,
-            "slope": 0.8827238335435056
+            "intercept": -0.314628,
+            "slope": 0.882724
           },
           "ceiling": {
-            "intercept": 5.208441748997358,
-            "slope": 1.3792428836936321
+            "intercept": 5.208442,
+            "slope": 1.379243
           }
         },
         "calibration": {
@@ -957,16 +959,16 @@
       "TE": {
         "params": {
           "floor": {
-            "intercept": -0.5010795587890166,
-            "slope": 0.2581553625909411
+            "intercept": -0.50108,
+            "slope": 0.258155
           },
           "median": {
-            "intercept": 0.3749999999999999,
-            "slope": 0.8064516129032259
+            "intercept": 0.375,
+            "slope": 0.806452
           },
           "ceiling": {
-            "intercept": 5.098549769281476,
-            "slope": 1.3183915622940012
+            "intercept": 5.09855,
+            "slope": 1.318392
           }
         },
         "calibration": {
@@ -1072,16 +1074,16 @@
       "DST": {
         "params": {
           "floor": {
-            "intercept": -7.172506738544472,
-            "slope": 0.8086253369272234
+            "intercept": -7.172507,
+            "slope": 0.808625
           },
           "median": {
-            "intercept": 0.011787819253436768,
-            "slope": 0.7858546168958745
+            "intercept": 0.011788,
+            "slope": 0.785855
           },
           "ceiling": {
-            "intercept": 7.939086294416244,
-            "slope": 1.0152284263959392
+            "intercept": 7.939086,
+            "slope": 1.015228
           }
         },
         "calibration": {

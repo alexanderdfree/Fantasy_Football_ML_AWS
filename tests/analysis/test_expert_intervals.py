@@ -129,8 +129,9 @@ def test_apply_bands_is_monotone() -> None:
 def test_select_fit_seasons_drops_leak_and_nonstationary() -> None:
     rng = np.random.default_rng(2)
     parts = []
-    # Genuine stationary: 2022, 2024 (std ~6). Look-ahead: 2023 (std ~0).
-    # Non-stationary tight: 2021 (std ~3, above the leak floor but < 0.8×recent).
+    # Genuine stationary: 2022, 2024 (std ~6 → near-exact ~0.07). Fully backfilled:
+    # 2023 (actual==projection → near-exact 1.0). Non-stationary tight: 2021 (std ~3,
+    # genuine near-exact ~0.13 but < 0.8×the recent season's spread).
     for s, sd in [(2021, 3.0), (2022, 6.0), (2023, 0.0), (2024, 6.0)]:
         proj = rng.uniform(5, 25, 120)
         actual = proj + (rng.normal(0, sd, 120) if sd else 0.0)
@@ -140,6 +141,28 @@ def test_select_fit_seasons_drops_leak_and_nonstationary() -> None:
     assert 2023 in excluded and excluded[2023] == "look-ahead"
     assert 2021 in excluded and excluded[2021] == "non-stationary"
     assert set(kept) == {2022, 2024}
+
+
+def test_select_fit_seasons_catches_partial_backfill() -> None:
+    """The bug a residual-std detector misses: a season ~40% backfilled still has a
+    normal-looking std (genuine rows dominate the variance) but must be dropped — the
+    copied rows pile up at residual ≈ 0, which the near-exact detector catches."""
+    rng = np.random.default_rng(3)
+    n = 300
+    proj = rng.uniform(5, 25, n)
+    # 40% exact copies of the actual, 60% genuine (std ~6) → overall std stays ~5.
+    is_copy = rng.random(n) < 0.40
+    actual = np.where(is_copy, proj, proj + rng.normal(0, 6, n))
+    leak = pd.DataFrame({"season": 2022, "projection": proj, "actual": actual})
+    genuine = pd.DataFrame(
+        {"season": 2024, "projection": rng.uniform(5, 25, n), "actual": rng.uniform(5, 25, n)}
+    )
+    genuine["actual"] = genuine["projection"] + rng.normal(0, 6, n)
+    panel = pd.concat([leak, genuine], ignore_index=True)
+    assert panel[panel.season == 2022].eval("actual - projection").std() > 3.0  # std looks normal
+    kept, excluded = mod._select_fit_seasons(panel, {_EVAL_SEASON})
+    assert excluded.get(2022) == "look-ahead"  # caught despite the normal std
+    assert kept == [2024]
 
 
 # --------------------------------------------------------------------------- #

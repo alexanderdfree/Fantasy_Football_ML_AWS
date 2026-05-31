@@ -101,31 +101,43 @@ _MIN_EVAL_ROWS = 20
 _MAX_EXAMPLES = 6  # per (source, position) — bounded so the committed JSON stays small.
 
 # Fit-season selection. Two contamination modes show up empirically and would
-# wreck held-out calibration if fit on blind (verified 2026-05-31, see below):
-#   1. LOOK-AHEAD: some (source, season) cells have a residual (actual −
-#      projection) std of ~0.2–0.7 fantasy points — impossibly tight for a real
-#      weekly projection. Those "projected" rows are backfilled with the realized
-#      stat. NFL.com's 2023 offense files are the clear instance (QB std 0.68, TE
-#      0.16); RotoWire is clean across every year. A season whose residual std is
-#      below ``_LEAK_STD_FLOOR`` is dropped as look-ahead.
-#   2. NON-STATIONARITY: even genuine NFL.com offense seasons run tighter the
-#      further back you go (QB 2021/22 ≈ 5.2–5.5 vs 2024/25 ≈ 7.1–7.6) — fitting
-#      the band on them under-covers the recent regime. A genuine season is kept
-#      only if its residual std is within ``_STATIONARITY_FRAC`` of the *most
-#      recent* genuine season's (the one closest to the held-out distribution).
-# This pair calibrates every cell to ≈0.72–0.82 (nominal 0.80) without any
-# per-cell hand-tuning: it keeps NFL.com K's full stationary history and all of
-# RotoWire, but collapses NFL.com offense onto the recent genuine season(s).
-_LEAK_STD_FLOOR = 2.0
+# wreck held-out calibration if fit on blind (verified forensically 2026-05-31):
+#   1. LOOK-AHEAD: the hvpkod/NFL-Data community archive's NFL.com "projected"
+#      CSVs for 2021, 2022 AND 2023 are backfilled with the *realized* box score,
+#      not projections — proven by an exact-match test: for 2021–2023 the archive's
+#      projected raw passing yards equal the actual box score ~92–96% of the time
+#      (e.g. 2023 Josh Allen "projected" 359 / actual 359), and the values are
+#      whole integers; for 2024–2025 they're fractional expected values matching
+#      actuals ~0%. (This is a third-party-archive scraping/labeling error, NOT
+#      NFL.com publishing — and it's NFL.com only; RotoWire is clean every year.)
+#      The right detector is the **near-exact fraction**, NOT residual std: a
+#      season ~1/3 backfilled still has a normal-looking std (the genuine rows
+#      dominate the variance) so a std floor misses it, but the copied rows pile
+#      up at |actual − projection| ≈ 0. A season is dropped as look-ahead when
+#      >``_LOOKAHEAD_FRAC`` of its rows fall within ``_LOOKAHEAD_EPS`` pts of the
+#      actual. At eps=0.5 the split is clean: genuine cells sit ≤0.18 (NFL.com
+#      2024/25 ~0.13–0.18, NFL.com K ~0.07–0.09, all RotoWire ~0.04–0.12) while
+#      every backfilled NFL.com offense cell is ≥0.40 — so 0.30 separates with margin.
+#   2. NON-STATIONARITY: a genuine season is kept only if its residual std is
+#      within ``_STATIONARITY_FRAC`` of the *most recent* genuine season's (the
+#      one closest to the held-out distribution) — a secondary guard for honest
+#      drift, now that look-ahead is handled directly.
+# Net effect (no per-cell hand-tuning): NFL.com offense collapses onto its only
+# genuine pre-2025 season (2024); NFL.com K's full stationary history and all of
+# RotoWire are kept. Every cell calibrates to ≈0.72–0.82 (nominal 0.80).
+_LOOKAHEAD_EPS = 0.5
+_LOOKAHEAD_FRAC = 0.30
 _STATIONARITY_FRAC = 0.8
 
 _TOTALS_ONLY = {("nflcom", "K")}  # NFL.com K is standard-scoring totals-only.
 
 _NFLCOM_NOTE = (
     "Bands from a quantile regression of actual PPR points on NFL.com's projection "
-    "(per position). Some older NFL.com 'projected' files are backfilled with realized "
-    "stats (a look-ahead leak) and are auto-excluded from the fit, so offense bands fit "
-    "on the recent genuine season(s). NFL.com has no DST projections."
+    "(per position). The hvpkod NFL.com archive's pre-2024 offense 'projected' files are "
+    "backfilled with realized box scores (their projected stats equal the actual stats "
+    "~92-96% of the time, and are whole integers) — a third-party-archive scraping error, "
+    "not NFL.com itself. Those seasons are auto-excluded, so offense bands fit on the "
+    "genuine 2024 projections. NFL.com K is unaffected; NFL.com has no DST projections."
 )
 _ROTOWIRE_NOTE = (
     "RotoWire projections via Sleeper's unofficial API — provenance unverified. In "
@@ -264,23 +276,28 @@ def _select_fit_seasons(
 ) -> tuple[list[int], dict[int, str]]:
     """Pick genuine, distribution-matched fit seasons from the pre-eval panel.
 
-    Drops look-ahead-contaminated seasons (residual std below ``_LEAK_STD_FLOOR``)
-    and non-stationary older seasons (std below ``_STATIONARITY_FRAC`` of the most
-    recent genuine season). Returns ``(kept_seasons, {season: exclusion_reason})``.
+    Drops look-ahead-contaminated seasons (>``_LOOKAHEAD_FRAC`` of rows are near-exact
+    copies of the actual) and non-stationary older seasons (residual std below
+    ``_STATIONARITY_FRAC`` of the most recent genuine season). Returns
+    ``(kept_seasons, {season: exclusion_reason})``.
     """
     pre = panel[~panel["season"].isin(eval_set)]
     if pre.empty:
         return [], {}
     resid = pre["actual"] - pre["projection"]
+    near_exact = (resid.abs() < _LOOKAHEAD_EPS).groupby(pre["season"]).mean()
     stds = resid.groupby(pre["season"]).std()
 
     excluded: dict[int, str] = {}
     genuine: dict[int, float] = {}
-    for season, sd in stds.items():
-        if not np.isfinite(sd) or sd < _LEAK_STD_FLOOR:
-            excluded[int(season)] = "look-ahead"
+    for season in stds.index:
+        s = int(season)
+        if near_exact[season] > _LOOKAHEAD_FRAC:
+            excluded[s] = "look-ahead"  # projections too often copy the realized stat
+        elif not np.isfinite(stds[season]):
+            excluded[s] = "look-ahead"  # degenerate (zero-variance) — also a backfill tell
         else:
-            genuine[int(season)] = float(sd)
+            genuine[s] = float(stds[season])
     if not genuine:
         return [], excluded
 
