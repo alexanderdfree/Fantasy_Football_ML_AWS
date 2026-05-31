@@ -208,6 +208,10 @@ CONFIG_TINY = {
 # Single source of truth for downstream consumers (registry / pipeline / serving).
 POSITION_CONFIG = PositionConfig(
     name="RB",
+    # Relaxed from the global 6 → 1: the train-only filter was stripping low-volume
+    # RB seasons the model is still scored on; relaxing lowers cold-start MAE (LGBM
+    # would_filter +0.175±0.021, 8-seed) with no kept regression. See TODO.md.
+    min_games_per_season=1,
     targets=_TARGETS,
     specific_features=_SPECIFIC_FEATURES,
     include_features=_INCLUDE_FEATURES,

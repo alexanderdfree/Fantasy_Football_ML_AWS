@@ -123,6 +123,17 @@ class PositionConfig:
     all_features: list[str] = field(default_factory=list)
     drop_features: set[str] = field(default_factory=set)
 
+    # === Training population ===
+    # Minimum games-in-a-season floor applied to TRAIN rows only (val/test keep
+    # every row) — see ``src/shared/pipeline.py::_prepare_position_data_uncached``.
+    # ``None`` falls back to the global ``MIN_GAMES_PER_SEASON``. Relaxing it adds
+    # low-volume player-seasons back to training, which measurably helps the
+    # cold-start test subgroup without hurting established players (TODO.md
+    # "[FIXED] Train-only MIN_GAMES_PER_SEASON filter"). Distinct from the K-only
+    # ``min_games`` field below, which K applies separately in ``src/k/data.py``
+    # as a data-loader pre-filter.
+    min_games_per_season: int | None = None
+
     # === Ridge / ElasticNet ===
     ridge_alpha_grids: dict[str, list[float]] = field(default_factory=dict)
     ridge_pca_components: int | None = None

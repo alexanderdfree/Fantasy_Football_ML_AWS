@@ -156,7 +156,11 @@ def main():
     pos_test = filter_to_position(test_df)
 
     games_per_season = pos_train.groupby(["player_id", "season"])["week"].transform("count")
-    pos_train = pos_train[games_per_season >= MIN_GAMES_PER_SEASON].copy()
+    # Match production's per-position floor (WR sets min_games_per_season=1); None → global.
+    min_games = POSITION_CONFIG.min_games_per_season
+    if min_games is None:
+        min_games = MIN_GAMES_PER_SEASON
+    pos_train = pos_train[games_per_season >= min_games].copy()
 
     pos_train = compute_targets(pos_train)
     pos_val = compute_targets(pos_val)

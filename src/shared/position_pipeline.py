@@ -22,6 +22,7 @@ import importlib
 from collections.abc import Callable
 from typing import Any
 
+from src.config import MIN_GAMES_PER_SEASON
 from src.shared.aggregate_targets import aggregate_fn_for
 from src.shared.position import Position
 from src.shared.position_config import PositionConfig
@@ -160,6 +161,14 @@ def build_pipeline_config(
     cfg: dict[str, Any] = {
         # === Targets and feature whitelist ===
         "targets": pc.targets,
+        # Train-only min-games floor, resolved here to a concrete int (None → the
+        # global MIN_GAMES_PER_SEASON) so the value cfg carries — and thus the
+        # feature-cache fingerprint — stays correct if the global ever changes. Read
+        # in pipeline.py::_prepare_position_data_uncached (which keeps a defensive
+        # None-fallback for cfgs built outside this factory).
+        "min_games_per_season": (
+            pc.min_games_per_season if pc.min_games_per_season is not None else MIN_GAMES_PER_SEASON
+        ),
         # K is the lone exception: pass ``ALL_FEATURES`` (specific + contextual)
         # so ``fill_nans`` train-mean-fills the PBP-derived ``game_wind`` /
         # ``game_temp`` columns. For everyone else ``specific_features``

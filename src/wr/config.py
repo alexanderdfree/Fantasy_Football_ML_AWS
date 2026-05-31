@@ -154,6 +154,9 @@ CONFIG_TINY = {
 # Single source of truth for downstream consumers (registry / pipeline / serving).
 POSITION_CONFIG = PositionConfig(
     name="WR",
+    # Relaxed from the global 6 → 1: relaxing the train-only filter lowers cold-start
+    # MAE (attn would_filter +0.211±0.064, 8-seed) with no kept regression. TODO.md.
+    min_games_per_season=1,
     targets=_TARGETS,
     specific_features=_SPECIFIC_FEATURES,
     include_features=_INCLUDE_FEATURES,

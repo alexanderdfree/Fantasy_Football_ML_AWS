@@ -142,6 +142,10 @@ CONFIG_TINY = {
 
 POSITION_CONFIG = PositionConfig(
     name="TE",
+    # Relaxed from the global 6 → 1: relaxing the train-only filter lowers cold-start
+    # MAE (LGBM would_filter +0.471 deterministic, clean monotonic) with no kept
+    # regression. See TODO.md.
+    min_games_per_season=1,
     targets=_TARGETS,
     specific_features=_SPECIFIC_FEATURES,
     include_features=_INCLUDE_FEATURES,
