@@ -109,8 +109,8 @@ Return a confirmation table:
 
 If there are no GAPs:
 
-- Post a confirmation comment on each fully verified issue.
-- Close with `gh issue close <N> --reason completed`.
+- For each confirmed FIXED issue, post a confirmation comment and close with `gh issue close <N> --reason completed`.
+- For each confirmed LEAVE issue, preserve the noise accounting: ensure the `leave` label exists, apply it, and close with `gh issue close <N> --reason "not planned"` plus a one-line LEAVE reason.
 - Verify the issues no longer appear in the open actionable backlog.
 
 If any GAP remains:
