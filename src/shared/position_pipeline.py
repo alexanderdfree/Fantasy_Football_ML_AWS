@@ -160,6 +160,9 @@ def build_pipeline_config(
     cfg: dict[str, Any] = {
         # === Targets and feature whitelist ===
         "targets": pc.targets,
+        # Train-only min-games floor (None → global MIN_GAMES_PER_SEASON); read in
+        # pipeline.py::_prepare_position_data_uncached, keyed in feature_cache.
+        "min_games_per_season": pc.min_games_per_season,
         # K is the lone exception: pass ``ALL_FEATURES`` (specific + contextual)
         # so ``fill_nans`` train-mean-fills the PBP-derived ``game_wind`` /
         # ``game_temp`` columns. For everyone else ``specific_features``

@@ -521,9 +521,15 @@ def _prepare_position_data_uncached(position, cfg, train_df, val_df, test_df=Non
     pos_val = cfg["filter_fn"](val_df)
     pos_test = cfg["filter_fn"](test_df) if test_df is not None else None
 
-    # Min-games filter: training only
+    # Min-games filter: training only. Per-position via cfg["min_games_per_season"]
+    # (None → the global MIN_GAMES_PER_SEASON). Relaxing it adds low-volume
+    # player-seasons back to TRAIN, which helps the cold-start test subgroup the
+    # model would otherwise never see (TODO.md min-games entry).
+    min_games = cfg.get("min_games_per_season")
+    if min_games is None:
+        min_games = MIN_GAMES_PER_SEASON
     games_per_season = pos_train.groupby(["player_id", "season"])["week"].transform("count")
-    pos_train = pos_train[games_per_season >= MIN_GAMES_PER_SEASON].copy()
+    pos_train = pos_train[games_per_season >= min_games].copy()
 
     dfs_for_features = [pos_train, pos_val] + ([pos_test] if pos_test is not None else [])
     sizes = ", ".join(

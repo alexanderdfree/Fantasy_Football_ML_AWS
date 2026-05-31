@@ -13,15 +13,18 @@ can see whether relaxing the filter helps the low-volume test rows
 established rows (``kept``, >= 6 games).
 
 Investigation-only:
-  * It monkeypatches the module constant rather than editing production code.
+  * It overrides ``cfg["min_games_per_season"]`` per run (the production knob added
+    alongside this tool) rather than editing production code.
   * It lives in ``src/tuning/`` (no retrain trigger; scope_positions.py).
   * It writes results to ``benchmark_history/ablations/``.
 
-Cache gotcha (the one way this differs from ``ablate_rb_gate.py``): the threshold
-is NOT part of the feature-cache key (``src/shared/feature_cache.py`` hashes only
-position + frame content + cfg), so a live cache would serve the first variant's
-filtered features to every subsequent threshold. This module forces
-``FF_FEATURE_CACHE_DISABLE=1`` at import to prevent that.
+The swept threshold flows through ``cfg["min_games_per_season"]``. The pipeline
+reads that cfg key (the global ``MIN_GAMES_PER_SEASON`` is only the ``None``
+fallback), so overriding the cfg — not monkeypatching the global, which a position's
+own ``min_games_per_season`` would shadow — is what moves the filter.
+``src/shared/feature_cache.py`` includes the key in the cache fingerprint, so
+threshold variants get distinct cache entries and don't collide (no cache-disable
+needed).
 
 Two-phase protocol:
     # Phase 1 — deterministic Ridge+LGBM signal, full threshold curve, 1 seed
@@ -34,11 +37,11 @@ Notes:
   * ``--seeds N`` runs seeds ``[42, 43, ..., 42+N-1]`` — the SAME list across every
     threshold, so threshold comparisons are paired. Deterministic models (Ridge,
     LightGBM) show std~=0; the seed spread is the NN/attention signal.
-  * Default positions are rb/wr (highest low-volume fraction). QB/K/DST are
-    expected near-null — the printed train-row count per threshold confirms the
-    filter barely bites there (starters/teams play ~full seasons). For K the
-    population filter may live in ``src/k/data.py`` rather than the patched
-    pipeline constant; trust the train-row delta, not the assumption.
+  * Default positions are rb/wr (highest low-volume fraction). K/DST are inert —
+    DST has no <6-game team-seasons and K floors its own ``min_games`` in
+    ``src/k/data.py`` before the shared filter, so the shared knob barely bites; the
+    UNRELIABLE train-row flag marks K/DST (their ``filter_fn`` is identity on the
+    shared skill-split). Trust the per-bucket test deltas (from the real pipeline).
 """
 
 from __future__ import annotations
@@ -48,12 +51,6 @@ import copy
 import os
 import sys
 from importlib import import_module
-from unittest.mock import patch
-
-# MUST precede any import that pulls in ``src.shared.feature_cache``. The min-games
-# threshold is not in the cache key, so a live cache would serve the first
-# variant's filtered features to every subsequent threshold. See module docstring.
-os.environ.setdefault("FF_FEATURE_CACHE_DISABLE", "1")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -163,26 +160,26 @@ def _train_rows_by_threshold(cfg, thresholds) -> tuple[dict[int, int], bool]:
     return {int(thr): int((g >= thr).sum()) for thr in thresholds}, reliable
 
 
-def run_one(pos: str, run_fn, cfg, threshold: int, seed: int, run_config=None) -> dict:
-    """One production pipeline run with the train filter monkeypatched.
+def run_one(pos: str, run_fn, cfg, threshold: int, seed: int, base_config=None) -> dict:
+    """One production pipeline run with the train min-games filter set to ``threshold``.
 
-    ``run_config`` overrides the module CONFIG passed to ``run()``. The Phase-1
-    fast path passes a copy with the NN/attention heads disabled — the deterministic
-    Ridge + LightGBM stay at full production config (this is a skip, not a weakened
-    proxy), so their per-bucket MAE is production-faithful.
+    ``base_config`` is the optional Phase-1 fast-path config (NN/attention heads
+    disabled — the deterministic Ridge + LightGBM stay at full production config, a
+    skip, not a weakened proxy). Either way it is deep-copied and forced to
+    ``min_games_per_season=threshold``; the pipeline reads that cfg key (the global
+    ``MIN_GAMES_PER_SEASON`` is only the ``None`` fallback) so the cfg override — not
+    a monkeypatch, which the position's own ``min_games_per_season`` would shadow — is
+    what moves the filter. Deep-copying per call avoids mutating a shared override.
     """
-    mode = "Ridge+LGBM only" if run_config is not None else "all models"
+    cfg_run = copy.deepcopy(base_config if base_config is not None else cfg)
+    cfg_run["min_games_per_season"] = threshold
+    mode = "Ridge+LGBM only" if base_config is not None else "all models"
     print(f"\n{'=' * 72}\n{pos.upper()}  threshold={threshold}  seed={seed}  [{mode}]\n{'=' * 72}")
-    # The filter reads ``src.shared.pipeline.MIN_GAMES_PER_SEASON`` (a module global,
-    # bound via ``from src.config import ...``); patching that path rebinds exactly
-    # what ``_prepare_position_data_uncached`` reads. The filter sits downstream of
-    # frame injection, so passing frames to run() cannot achieve this.
-    with patch("src.shared.pipeline.MIN_GAMES_PER_SEASON", threshold):
-        result = run_fn(seed=seed, config=run_config)
+    result = run_fn(seed=seed, config=cfg_run)
     test_df = result["test_df"]
     buckets = _subgroup_mae(test_df, cfg["targets"], cfg.get("aggregate_fn"))
     pred_cols = _pred_total_cols(test_df)
-    if run_config is not None:
+    if base_config is not None:
         # Skip-nn fast path: the base NN ran at minimal epochs (degraded) and
         # attention was skipped — report only the deterministic Ridge/LightGBM/ENet.
         pred_cols = [c for c in pred_cols if "nn" not in _short(c)]

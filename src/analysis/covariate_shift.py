@@ -226,7 +226,12 @@ def shift_report_for_position(
     pos_test = cfg["filter_fn"](test_df)
 
     games = pos_train.groupby(["player_id", "season"])["week"].transform("count")
-    pos_train = pos_train[games >= MIN_GAMES_PER_SEASON].copy()
+    # Per-position floor (None → global), matching pipeline.py so the shift report
+    # reflects production's actual train population after the min-games relaxation.
+    min_games = cfg.get("min_games_per_season")
+    if min_games is None:
+        min_games = MIN_GAMES_PER_SEASON
+    pos_train = pos_train[games >= min_games].copy()
 
     pos_train = cfg["compute_targets_fn"](pos_train)
     pos_val = cfg["compute_targets_fn"](pos_val)

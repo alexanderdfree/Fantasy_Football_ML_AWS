@@ -5,15 +5,14 @@ seed aggregation) so a future config/pipeline refactor doesn't break the ablatio
 CLI silently. The actual pipeline ``run`` is not invoked — that is a multi-minute
 training run, out of scope for unit tests.
 
-The most important guard here is ``test_feature_cache_disabled_on_import``: the
-min-games threshold is NOT in the feature-cache key, so without the env flag every
-threshold variant would reuse the first variant's filtered features and the whole
-ablation would be silently invalid.
+The most important guard here is ``test_min_games_in_cache_fingerprint``: the swept
+threshold flows through ``cfg["min_games_per_season"]``, which must be in the
+feature-cache fingerprint so threshold variants get distinct cache entries (else a
+live cache serves the prior threshold's filtered features and the ablation is
+silently invalid).
 """
 
 from __future__ import annotations
-
-import os
 
 import numpy as np
 import pandas as pd
@@ -38,10 +37,23 @@ def test_module_imports_cleanly():
         assert hasattr(amg, attr), f"missing {attr}"
 
 
-def test_feature_cache_disabled_on_import():
-    """Importing the module must force the feature cache off — the threshold is not
-    in the cache key, so a live cache would serve stale filtered features."""
-    assert os.environ.get("FF_FEATURE_CACHE_DISABLE") == "1"
+def test_min_games_in_cache_fingerprint():
+    """The swept threshold flows through cfg["min_games_per_season"], which must be in
+    the feature-cache fingerprint so threshold variants get distinct cache entries
+    (else a live cache serves the prior threshold's filtered features)."""
+    from src.shared.feature_cache import _config_fingerprint
+
+    base = {
+        "filter_fn": lambda d: d,
+        "compute_targets_fn": lambda d: d,
+        "get_feature_columns_fn": lambda: [],
+        "add_features_fn": lambda *a, **k: None,
+        "fill_nans_fn": lambda *a, **k: None,
+    }
+    fp1 = _config_fingerprint({**base, "min_games_per_season": 1})
+    fp6 = _config_fingerprint({**base, "min_games_per_season": 6})
+    assert fp1["min_games_per_season"] == 1
+    assert fp1 != fp6  # distinct thresholds → distinct fingerprint → distinct cache key
 
 
 def test_parse_args_defaults():

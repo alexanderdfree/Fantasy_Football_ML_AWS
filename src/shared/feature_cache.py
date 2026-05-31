@@ -92,6 +92,10 @@ def _config_fingerprint(cfg: dict) -> dict:
         "fill_nans_fn": _fn_name(cfg["fill_nans_fn"]),
         "specific_features": list(cfg.get("specific_features") or []),
         "targets": list(cfg.get("targets") or []),
+        # The train-only min-games floor changes which rows survive into the cached
+        # pos_train, so it must key the cache — else a threshold change silently
+        # reuses the prior threshold's filtered frame.
+        "min_games_per_season": cfg.get("min_games_per_season"),
         "attn_history_stats": list(cfg.get("attn_history_stats") or []),
         "opp_attn_history_stats": list(cfg.get("opp_attn_history_stats") or []),
         "opp_attn_kind": cfg.get("opp_attn_kind", "defense"),
