@@ -114,7 +114,7 @@ def test_model_reliability_sigma_bias(app_module):
         {
             "player_id": f"QB00{i}",
             "position": "QB",
-            "actual_ppr": fp[i],
+            "fantasy_points": fp[i],
             "ridge_pred_ppr": ridge[i],
             "nn_pred_ppr": fp[i] + 5.0,  # all worse → ridge wins on MAE
             "attn_nn_pred_ppr": fp[i] + 6.0,
@@ -137,7 +137,7 @@ def test_model_reliability_none_when_no_predictions(app_module):
             {
                 "player_id": "K000",
                 "position": "K",
-                "actual_ppr": 8.0,
+                "fantasy_points": 8.0,
                 "ridge_pred_ppr": np.nan,
                 "nn_pred_ppr": np.nan,
                 "attn_nn_pred_ppr": np.nan,
