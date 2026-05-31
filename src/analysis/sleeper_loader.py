@@ -3,8 +3,8 @@
 Source: Sleeper's undocumented projections endpoint
 ``https://api.sleeper.app/projections/nfl/{season}/{week}`` (free, no auth). Every
 record carries ``company: "rotowire"`` — so this is **one** additional expert
-(RotoWire), not a consensus. Offense only (QB/RB/WR/TE) for now; Sleeper also
-serves DST/K but those need team-keying / are totals-only and are out of scope.
+(RotoWire), not a consensus. Covers offense (QB/RB/WR/TE, joined via the gsis
+crosswalk) and DST (team-keyed); K is totals-only and out of scope.
 
 Lives under ``src/analysis/`` (not ``src/data/``) on purpose: ``src/data/`` is a
 global retrain trigger in ``src/scripts/scope_positions.py`` and this loader is
@@ -47,11 +47,16 @@ from src.data import nfl_source
 
 SLEEPER_BASE = "https://api.sleeper.app/projections/nfl"
 SLEEPER_OFFENSE_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE")
-"""Positions ingested. Sleeper also serves K/DEF, but K is totals-only and DEF
-needs team-keying — both out of scope for this offense-only cut."""
+"""Offensive positions ingested via the sleeper_id -> gsis_id crosswalk join."""
+
+# Sleeper serves DST under the "DEF" code, keyed by team abbrev (player_id = team,
+# no gsis). K is totals-only (not decomposable to our distance-based targets) and
+# stays out of scope.
+_SLEEPER_DEF_CODE = "DEF"
+SLEEPER_FETCH_POSITIONS: tuple[str, ...] = (*SLEEPER_OFFENSE_POSITIONS, _SLEEPER_DEF_CODE)
 
 SLEEPER_DEFAULT_WEEKS = tuple(range(1, 19))  # 18-week regular season since 2021.
-_CACHE_VERSION = "v1"
+_CACHE_VERSION = "v2"  # bumped: cache now also carries DST rows + DST target columns.
 # Sleeper returns byte-identical placeholder junk (only adp_dd_ppr) for 2016/2017;
 # genuine weekly projections start in 2018.
 _MIN_SEASON = 2018
@@ -72,7 +77,33 @@ SLEEPER_STAT_MAP: dict[str, str] = {
     "rec_td": "receiving_tds",
     "fum_lost": "fumbles_lost",
 }
-_ALL_TARGET_COLUMNS: tuple[str, ...] = tuple(SLEEPER_STAT_MAP.values())
+
+# Sleeper DST ``stats`` field -> our DST target name. DST records are team-keyed
+# and routed through the bespoke DST aggregator. Sleeper covers all 10 DST_TARGETS
+# (special_teams_tds <- st_td); values here must equal aggregate_targets.DST_TARGETS.
+SLEEPER_DST_STAT_MAP: dict[str, str] = {
+    "sack": "def_sacks",
+    "int": "def_ints",
+    "fum_rec": "def_fumble_rec",
+    "ff": "def_fumbles_forced",
+    "safe": "def_safeties",
+    "def_td": "def_tds",
+    "blk_kick": "def_blocked_kicks",
+    "st_td": "special_teams_tds",
+    "pts_allow": "points_allowed",
+    "yds_allow": "yards_allowed",
+}
+
+# Sleeper uses "LAR" for the Rams; nflverse schedules (and the model's DST
+# player_id, which is the team abbrev) use "LA". Every other team matches. This is
+# a pure rename — consistent across all seasons since 2016, NOT a relocation remap
+# — so it's safe to apply for any 2018+ season.
+_DST_TEAM_FIXUP: dict[str, str] = {"LAR": "LA"}
+
+_ALL_TARGET_COLUMNS: tuple[str, ...] = (
+    *SLEEPER_STAT_MAP.values(),
+    *SLEEPER_DST_STAT_MAP.values(),
+)
 
 
 # ---------- Network ----------------------------------------------------------
@@ -140,54 +171,68 @@ def _normalize_week(records: list, season: int, week: int) -> pd.DataFrame:
 
     Output columns: season, week, position, sleeper_player_id, player_name, team,
     company, sleeper_projected_pts, plus every target in ``_ALL_TARGET_COLUMNS``
-    (0-filled where a position doesn't carry the stat). Non-offense / position-less
-    records are dropped.
+    (0-filled where a position doesn't carry the stat). Offense records are keyed by
+    Sleeper player id; DST ("DEF") records are team-keyed (player_id = team, mapped
+    to the nflverse convention) and emitted with position "DST". Placeholder /
+    position-less records are dropped.
     """
     rows: list[dict] = []
     for rec in records:
         player = rec.get("player") or {}
-        pos = player.get("position")
-        if pos not in SLEEPER_OFFENSE_POSITIONS:
-            continue
+        raw_pos = player.get("position")
         stats = rec.get("stats") or {}
-        # Sleeper returns a record for EVERY rostered player, not just projected
-        # ones; inactive/practice-squad placeholders carry no stat line (no
-        # pts_ppr, no mapped stat). Ingesting those as a confident 0.0 projection
-        # would conflate "RotoWire didn't project this player" with "projected
-        # zero" and contaminate the comparison (NFL.com's curated archive has no
-        # such rows). Drop records with no genuine projection signal.
-        if "pts_ppr" not in stats and not any(k in stats for k in SLEEPER_STAT_MAP):
+        if raw_pos in SLEEPER_OFFENSE_POSITIONS:
+            stat_map = SLEEPER_STAT_MAP
+            # Drop unprojected roster placeholders (no pts_ppr, no mapped stat):
+            # Sleeper returns a record for EVERY rostered player, and scoring a
+            # placeholder as a confident 0.0 projection contaminates the comparison
+            # (NFL.com's curated archive has no such rows).
+            if "pts_ppr" not in stats and not any(k in stats for k in stat_map):
+                continue
+            row = {
+                "position": raw_pos,
+                "sleeper_player_id": str(rec.get("player_id")),
+                "player_name": f"{player.get('first_name', '')} {player.get('last_name', '')}".strip(),
+                # The populated team is at the record top level; player.team_abbr is
+                # often null in the payload — prefer the record's value.
+                "team": rec.get("team") or player.get("team_abbr") or player.get("team") or "",
+            }
+        elif raw_pos == _SLEEPER_DEF_CODE:
+            stat_map = SLEEPER_DST_STAT_MAP
+            if "pts_ppr" not in stats and not any(k in stats for k in stat_map):
+                continue
+            # DST is team-keyed: Sleeper's player_id IS the team abbrev. Map to the
+            # nflverse convention (LAR -> LA) so it joins the model's DST player_id.
+            team = _DST_TEAM_FIXUP.get(str(rec.get("player_id")), str(rec.get("player_id")))
+            row = {"position": "DST", "sleeper_player_id": team, "player_name": team, "team": team}
+        else:
             continue
-        row = {
-            "season": int(rec.get("season", season)),
-            "week": int(rec.get("week", week)),
-            "position": pos,
-            "sleeper_player_id": str(rec.get("player_id")),
-            "player_name": f"{player.get('first_name', '')} {player.get('last_name', '')}".strip(),
-            # The populated team is at the record top level; player.team_abbr is
-            # often null in the payload — prefer the record's value.
-            "team": rec.get("team") or player.get("team_abbr") or player.get("team") or "",
-            "company": rec.get("company"),
-            "sleeper_projected_pts": float(stats.get("pts_ppr") or 0.0),
-        }
-        for src_field, target in SLEEPER_STAT_MAP.items():
+        row["season"] = int(rec.get("season", season))
+        row["week"] = int(rec.get("week", week))
+        row["company"] = rec.get("company")
+        row["sleeper_projected_pts"] = float(stats.get("pts_ppr") or 0.0)
+        for src_field, target in stat_map.items():
             row[target] = float(stats.get(src_field) or 0.0)
         rows.append(row)
 
+    base_cols = [
+        "season",
+        "week",
+        "position",
+        "sleeper_player_id",
+        "player_name",
+        "team",
+        "company",
+        "sleeper_projected_pts",
+    ]
     if not rows:
-        cols = [
-            "season",
-            "week",
-            "position",
-            "sleeper_player_id",
-            "player_name",
-            "team",
-            "company",
-            "sleeper_projected_pts",
-            *_ALL_TARGET_COLUMNS,
-        ]
-        return pd.DataFrame(columns=cols)
-    return pd.DataFrame(rows)
+        return pd.DataFrame(columns=[*base_cols, *_ALL_TARGET_COLUMNS])
+    df = pd.DataFrame(rows)
+    # Offense rows lack DST targets and vice versa -> NaN after the build; 0-fill so
+    # every target column is present and numeric for the per-position aggregator.
+    for col in _ALL_TARGET_COLUMNS:
+        df[col] = df[col].fillna(0.0) if col in df.columns else 0.0
+    return df
 
 
 def _validate_seasons(seasons: Sequence[int]) -> list[int]:
@@ -221,10 +266,10 @@ def load_sleeper_projections(
     force_refresh: bool = False,
     *,
     weeks: Sequence[int] | None = None,
-    positions: Sequence[str] = SLEEPER_OFFENSE_POSITIONS,
+    positions: Sequence[str] = SLEEPER_FETCH_POSITIONS,
     reader=_default_reader,
 ) -> pd.DataFrame:
-    """Fetch + cache Sleeper projections for one or more seasons (offense only).
+    """Fetch + cache Sleeper projections for one or more seasons (offense + DST).
 
     Cache: ``{cache_dir}/sleeper_projections_{_CACHE_VERSION}_{min}_{max}_{weeks}_{positions}.parquet``.
     Per-(season, week) HTTP errors are logged + skipped rather than fatal. ``reader``
@@ -274,12 +319,14 @@ def load_sleeper_with_gsis_id(
     reader=_default_reader,
     player_ids_loader=None,
 ) -> pd.DataFrame:
-    """Augment ``load_sleeper_projections`` with internal ``player_id`` (gsis_id).
+    """Augment ``load_sleeper_projections`` with internal ``player_id``.
 
-    Joins Sleeper's ``sleeper_player_id`` to ``gsis_id`` via the nflverse
-    ``ff_playerids`` crosswalk (``nfl_source.player_ids()``) — the same bridge
-    pattern used for ESPN-QBR and PFR elsewhere in the repo. Rows that don't map
-    keep ``player_id = NaN`` and are dropped by the downstream inner join.
+    Offense rows: ``sleeper_player_id`` is bridged to ``gsis_id`` via the nflverse
+    ``ff_playerids`` crosswalk (``nfl_source.player_ids()``) — the same pattern used
+    for ESPN-QBR / PFR. DST rows are **team-keyed** (no gsis): ``player_id`` is the
+    nflverse-normalized team abbrev, which joins the model's DST ``player_id``
+    directly. Offense rows that don't map keep ``player_id = NaN`` and are dropped by
+    the downstream inner join.
 
     ``player_ids_loader`` is injectable for tests (default ``nfl_source.player_ids``).
     """
@@ -295,13 +342,21 @@ def load_sleeper_with_gsis_id(
     # string ints ("4881"). Normalize both to str-of-int for the merge.
     bridge = bridge.assign(sleeper_player_id=bridge["sleeper_id"].astype("int64").astype(str))
 
-    merged = proj.merge(
-        bridge[["sleeper_player_id", "gsis_id"]], on="sleeper_player_id", how="left"
+    is_dst = proj["position"] == "DST"
+    offense = (
+        proj[~is_dst]
+        .merge(bridge[["sleeper_player_id", "gsis_id"]], on="sleeper_player_id", how="left")
+        .rename(columns={"gsis_id": "player_id"})
     )
-    merged = merged.rename(columns={"gsis_id": "player_id"})
+    dst = proj[is_dst].copy()
+    dst["player_id"] = dst["sleeper_player_id"]  # team abbrev, already normalized
+    merged = pd.concat([offense, dst], ignore_index=True)
 
-    n_total = len(merged)
-    n_matched = int(merged["player_id"].notna().sum())
-    rate = n_matched / n_total if n_total else 0.0
-    print(f"\nSleeper gsis_id join: {n_matched}/{n_total} = {rate:.1%} matched ({_PROVIDER})")
+    n_off = len(offense)
+    n_matched = int(offense["player_id"].notna().sum())
+    rate = n_matched / n_off if n_off else 0.0
+    print(
+        f"\nSleeper gsis_id join: {n_matched}/{n_off} = {rate:.1%} offense matched "
+        f"({_PROVIDER}); DST team-keyed (n={len(dst)})"
+    )
     return merged
