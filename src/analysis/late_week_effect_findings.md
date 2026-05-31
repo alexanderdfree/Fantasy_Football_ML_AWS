@@ -71,6 +71,18 @@ what "Huber already absorbs the outliers + more data helps" predicts.
 - **K/DST** were not in Stage 1 (raw-split scoring limitation). They get correct totals
   via the per-position pipeline in `--stage2` / `--ablation` if coverage is wanted; the
   effect there is second-order (kickers/defenses play regardless of offensive rest).
-- **Latent bug surfaced (independent of this):** `snap_pct` imputation groups by raw
-  `(position, week)` (`src/data/preprocessing.py`), conflating 2012–2020's *final* wk17
-  with 2021+'s *penultimate* wk17. Worth a separate season-aware fix.
+- **Latent bug surfaced (independent of this) — investigated 2026-05-30, benign:**
+  `snap_pct` imputation groups by raw `(position, week)`
+  (`src/data/preprocessing.py::impute_snap_pct`), conflating 2012–2020's *final* wk17
+  with 2021+'s *penultimate* wk17 — an era-contaminated median in principle. **No
+  production impact: the median branch is dead code.** `src/features/engineer.py`
+  zero-fills every `snap_pct` NaN (`groupby(["player_id","season"]).shift(1).fillna(0)`,
+  L290) *before* any split function runs, so by the time `impute_snap_pct` executes — in
+  `temporal_split` (on that in-memory post-`build_features` frame) and in the CV /
+  rolling-origin folds (`expanding_window_folds` / `rolling_origin_folds`, which re-read
+  the post-`build_features` on-disk splits) — there are **0 NaN** to fill — confirmed
+  empirically (train/val/test all 0.00% NaN `snap_pct`; the 11–21% exact-zero mass is the
+  lag signature). The era-conflated median is never computed against a real row, and would
+  be small anyway (week-17 era-Δ ≤ 0.06 snap-share across positions). Left unchanged —
+  a `src/data/` edit to dead code would force a guaranteed Δ=0 six-position retrain. Full
+  write-up in TODO.md → `[INVESTIGATED, BENIGN]`.
