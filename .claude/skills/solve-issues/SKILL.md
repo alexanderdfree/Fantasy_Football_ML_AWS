@@ -188,11 +188,13 @@ Write the plan with: (1) the **confirmation table**; (2) the **per-issue close l
 
 Once the user approves the plan via `ExitPlanMode`:
 
-**First, retire the LEAVE issues.** For each finding triaged LEAVE (`false_positive` / `feature_drift` / `stale`), close its issue with a one-line reason (for `feature_drift`, cite the CLAUDE.md stop-rule by section name):
+**First, retire the LEAVE issues.** For each finding triaged LEAVE (`false_positive` / `feature_drift` / `stale`), label it `leave` and close it as **not planned** with a one-line reason (for `feature_drift`, cite the CLAUDE.md stop-rule by section name). The `leave` label + `not planned` state distinguish a noise issue from a genuinely-fixed one (which closes `completed`), so the audit routine can compute a per-area real-vs-noise **yield** to weight its worker budgets ([audit prompt.md](../../routines/audit/prompt.md) STEP 1d):
 ```
-gh issue close <#> --comment "Triaged LEAVE (<category>): <reason / stop-rule section>. Not a fix target."
+gh label create leave --color CCCCCC --description "Audit finding triaged as noise (false positive / stale / stop-rule drift)" 2>/dev/null || true
+gh issue edit <#> --add-label leave
+gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>): <reason / stop-rule section>. Not a fix target."
 ```
-`out_of_scope` and UNCERTAIN-deferred issues stay **open** — they remain the visible backlog. Then execute the FIX tiers one at a time. For each tier:
+`out_of_scope` and UNCERTAIN-deferred issues stay **open** — they remain the visible backlog (they are NOT noise; do not label them `leave`). Then execute the FIX tiers one at a time. For each tier:
 
 1. **Staging branch from `origin/main`**:
    ```
