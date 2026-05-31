@@ -5,7 +5,7 @@ description: Reflect on the current Claude Code session and propose CLAUDE.md or
 
 # Post-session critique
 
-Inspired by Spotify's Honk Part 2: *"After a session, the agent itself is in a surprisingly good position to tell you what was missing."* The TODO.md "Fixed archive" already captures **code** lessons; this captures **prompt** lessons.
+Inspired by Spotify's Honk Part 2: *"After a session, the agent itself is in a surprisingly good position to tell you what was missing."* The [todo/fixed-archive.md](todo/fixed-archive.md) "Fixed archive" already captures **code** lessons; this captures **prompt** lessons.
 
 ## When to run
 
@@ -34,7 +34,7 @@ A reflection under 200 words with these sections:
 
 - Generic observations ("could have been clearer", "more examples would help").
 - Things already documented — `Read` [CLAUDE.md](CLAUDE.md) and the project's auto-memory `MEMORY.md` (at `~/.claude/projects/<slug>/memory/MEMORY.md`) first to check for duplicates.
-- Code-level lessons that belong in TODO.md's Fixed archive — those go through the normal PR workflow, not here.
+- Code-level lessons that belong in [todo/fixed-archive.md](todo/fixed-archive.md) — those go through the normal PR workflow, not here.
 
 ## Format example
 
