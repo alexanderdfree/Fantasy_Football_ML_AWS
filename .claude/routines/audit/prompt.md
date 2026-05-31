@@ -67,7 +67,7 @@ STEP 2 — Fanout (parallel): two layers, ALL workers spawned IN A SINGLE MESSAG
     #6  DST auditor         — src/dst/, tests/dst/
     #7  Shared auditor      — src/shared/, src/models/, src/training/, src/evaluation/, tests/shared/
     #8  Data+features       — src/data/, src/features/
-    #9  Serving auditor     — src/serving/, tests/serving/ (extra focus: training-vs-inference drift)
+    #9  Serving auditor     — src/serving/, tests/serving/ (focus: serving-internal correctness — request/feature handling, scaler & artifact loading; the train/serve PARITY comparison is lens L1's job)
     #10 Batch+CI auditor    — src/batch/, .github/workflows/, .claude/hooks/
     #11 Docs consistency    — CLAUDE.md, README.md, SETUP.md, TODO.md, docs/ (FOCUS: substantive doc-vs-code mismatches — wrong module/symbol attribution, a documented feature/decision/count that doesn't exist or is miscounted, a stated invariant the code violates, a dead cross-ref to a deleted file. Do NOT report a doc/comment whose ONLY error is a stale `file:line`/`file:lines X-Y` citation when the cited target is otherwise correct — line numbers drift as code is inserted above; that is cosmetic, not a finding.)
 
