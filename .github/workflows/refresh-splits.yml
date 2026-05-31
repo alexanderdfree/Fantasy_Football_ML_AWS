@@ -306,6 +306,67 @@ jobs:
           print("Covariate-shift guard:", "FLAGGED (warn-only)" if any_flagged else "clean")
           PY
 
+      - name: Verify depth-chart temporal alignment
+        # Standing guard against the PR #595 off-by-1 class: the legacy depth
+        # chart's source ``week`` labeled W actually reflected week W-1's lineup
+        # (stale by a game), invisible to a .shift() grep. Re-checks alignment on
+        # the freshly-built splits via QB starter-consistency (does the chart's
+        # rank-1 QB match who actually started week W?) plus a structural week-range
+        # canary (depth weeks must not overrun the schedule's REG range — the
+        # 1-19-for-18-games fingerprint). Warn-only by default so a noisy season
+        # doesn't block the refresh; set DEPTH_ALIGN_HARD_FAIL=1 to refuse the S3
+        # upload. See src/analysis/audit_depth_alignment.py.
+        env:
+          DEPTH_ALIGN_HARD_FAIL: ""
+        run: |
+          python - <<'PY'
+          import os
+
+          from src.analysis.audit_depth_alignment import (
+              alignment_from_caches,
+              depth_week_range_check,
+              gate_check_alignment,
+          )
+
+          hard_fail = os.environ.get("DEPTH_ALIGN_HARD_FAIL", "").strip() == "1"
+          summary = ["## Depth-chart alignment guard", ""]
+          failed = False
+
+          rates = alignment_from_caches()
+          if rates is None:
+              summary.append("- alignment: SKIPPED (a data/raw cache was missing)")
+              print("::warning::depth alignment guard skipped — a required data/raw cache was missing")
+          else:
+              ok, reason = gate_check_alignment(rates)
+              summary.append(
+                  f"- alignment: overall={rates['overall_current']:.3f} "
+                  f"trans_cur={rates['transition_current']:.3f} "
+                  f"trans_prev={rates['transition_prev']:.3f} (n={rates['n_transitions']}) -> "
+                  + ("OK" if ok else f"**FAIL** ({reason})")
+              )
+              if not ok:
+                  failed = True
+                  print(f"::warning::depth alignment: {reason}")
+
+          range_ok, offenders = depth_week_range_check()
+          if range_ok:
+              summary.append("- week-range: OK")
+          else:
+              failed = True
+              for off in offenders:
+                  print(f"::warning::depth week-range overruns schedule: {off}")
+                  summary.append(f"- **week-range FAIL** {off}")
+
+          step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if step_summary:
+              with open(step_summary, "a") as fh:
+                  fh.write("\n".join(summary) + "\n")
+
+          if failed and hard_fail:
+              raise SystemExit("Depth-chart alignment gate failed (DEPTH_ALIGN_HARD_FAIL=1).")
+          print("Depth-chart alignment guard:", "FLAGGED (warn-only)" if failed else "clean")
+          PY
+
       - name: Upload regenerated splits as workflow artifact
         # Forensic insurance: if a downstream step (Upload to S3, train
         # dispatch) fails, the operator can download the parquet directly
