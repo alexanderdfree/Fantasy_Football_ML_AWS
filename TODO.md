@@ -8,6 +8,15 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 
 ## Open
 
+### [PLANNED — PRIORITY] Extend NN Optuna grid: add batch-size rung 1024 + widen LR ceiling
+- **Plan doc:** [src/tuning/increase_batch_size_plan.md](src/tuning/increase_batch_size_plan.md) — full rationale (VRAM math, per-position steps/epoch + drop_last table, accepted consequences). Read it before starting.
+- **File(s):** [src/tuning/tune_nn.py](src/tuning/tune_nn.py) `_sample_overrides` (lines ~179–186); [tests/tuning/test_tune_nn.py](tests/tuning/test_tune_nn.py) (assertions at lines 105, 107, 109, 110).
+- **What:** Investigated "increase NN batch size + adjust LR accordingly." Key reframings: optimizer is **AdamW** (so √-scaling, not SGD linear scaling) and batch×LR are **already jointly Optuna-searched** — so "adjust LR" = widen the LR ceiling so the larger-batch optimum isn't clipped, then let TPE find the pairing. VRAM is slack (~69K-param model, peak ≤~250 MB at batch 1024); the binding constraint is steps/epoch + `drop_last` tail on the *smallest* position (QB ~7.7K rows), since the grid is position-agnostic.
+- **Change (4 steps, code unchanged so far):** (1) both batch grids `[128,256,512]` → `[128,256,512,1024]`; (2) both LR ranges `1e-4..5e-3` → `1e-4..1e-2` (log) + a comment block recording the rationale; (3) update the 4 test assertions (grid membership + the `<= 5e-3` → `<= 1e-2` bound — widening **up** does break the old bound); (4) when the grid lands, update the `[LOW] drop_last=True` entry below to note the ~7% QB tail now reachable @1024, and add an ARCHITECTURE.md `Update history` line.
+- **Decisions (from user):** extend grid but **do not re-run the tuner**; add **one shared rung (1024)** only — *not* 2048, *not* position-aware; keep objective pure `min(val_loss)` (no speed tiebreak). 2048 / position-aware grid / hard-pinning a bigger batch in `POSITION_CONFIG` are explicit out-of-scope follow-ups.
+- **Verify:** `ruff check . && ruff format --check .` + `pytest tests/tuning/test_tune_nn.py -m unit`. No GPU / pipeline run needed (`.md`-only handoff today; the tuner run is a later user-triggered step).
+- **Status:** Plan + this note committed (docs-only). Code change **not yet made** — pick up at step 1.
+
 ### [ACKNOWLEDGED] K features use cross-season rolling windows
 - **File:** `src/k/features.py:27`
 - **What:** Kicker features group by `["player_id"]` only (no season reset), so rolling windows span across seasons. A kicker's late-season 2024 stats influence early-2025 predictions.
