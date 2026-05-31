@@ -141,6 +141,49 @@ oversubscription (the `--n-jobs` help flags this). And unset `LGBM_N_JOBS` (or u
 when running the full `pytest` suite — with `-n auto` xdist workers a high per-process thread count
 oversubscribes the runner.
 
+## WSL2 (Linux on Windows) + RTX 5080
+
+Running the project from WSL2 (Ubuntu on Windows 11) instead of native Windows: the GPU still works
+(WSL passes the 5080 through to CUDA), and you get the Linux `bash` toolchain. Two differences from
+the native-Windows section above.
+
+**Install — `uv` handles the Python 3.12 + `cu128` wheel.** WSL distros usually ship a newer system
+Python (e.g. 3.14), and the project needs 3.12. `uv` fetches the right interpreter for you, so you
+don't need a system `python3.12`:
+
+```bash
+uv venv --python 3.12 && source .venv/bin/activate
+uv pip install -r requirements.txt
+# Blackwell sm_120 needs the cu128 wheel (the AWS cu126 path tops out at sm_90):
+UV_INDEX_STRATEGY=unsafe-best-match uv pip install -r requirements-gpu.txt
+uv pip install -r requirements-dev.txt
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+# → 2.11.0+cu128 12.8 True NVIDIA GeForce RTX 5080
+```
+
+**The Windows `OPENBLAS_NUM_THREADS=1` crash does NOT apply here — but still cap BLAS, for speed.**
+WSL2 is Linux, so the native-Windows `0xC0000005` LAPACK segfault can't happen. The caps are still
+worth setting for a *throughput* reason (not safety): the Ridge/ElasticNet alpha CV fans alphas over
+`joblib.Parallel(n_jobs=-1, prefer="threads")`, and if each joblib thread also spawns a BLAS
+thread-pool you oversubscribe the 16 cores — the same pathology the AWS Batch job-definition caps fix
+addresses (ADR D13). Capping BLAS to 1 lets the outer joblib axis own a clean 16-way fan-out. Source
+the helper instead of exporting by hand:
+
+```bash
+source scripts/wsl-env.sh                 # OMP/MKL/OPENBLAS/NUMEXPR=1, LGBM_N_JOBS=16
+python -m src.qb.run_pipeline             # single position, full pipeline
+python -m src.benchmarking.benchmark RB   # benchmark one position
+
+# Tuning — the script prints the reminder, but: unset LGBM_N_JOBS first so the
+# Optuna trials (not each LightGBM model) get the cores.
+unset LGBM_N_JOBS
+python -m src.tuning.tune_lgbm RB --n-jobs 16   # CPU-bound: parallel trials
+python -m src.tuning.tune_nn   RB --n-jobs 2    # GPU-bound: 2 trials share the 5080
+```
+
+Everything else in the *Use all 16 cores* subsection above applies verbatim — only the shell syntax
+differs (`export FOO=bar` / `source` instead of `$env:FOO`).
+
 ## First-time data pull and split
 
 `src.data.loader.load_raw_data()` caches the nflverse pulls to `data/raw/`. `src.features.engineer.build_features()` materialises the ~150 engineered columns (rolling_*, ewma_*, trend_*, prior_season_*, opp_*, contextual, position one-hots) every position's `include_features` whitelist references — without this step every engineered column ends up constant-zero via the silent backfill that used to live in `src/shared/feature_build.py` (now raises `KeyError`). `src.data.split.temporal_split()` writes `train.parquet`, `val.parquet`, `test.parquet` under `data/splits/`. The app and benchmark both read from `data/splits/`, so these must exist before anything else runs.
