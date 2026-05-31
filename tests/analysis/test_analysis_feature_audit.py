@@ -98,6 +98,26 @@ def test_high_corr_pairs_skips_nan():
     assert fa._high_corr_pairs(corr, threshold=0.5) == []
 
 
+def test_max_abs_offdiag_is_threshold_free():
+    # Worst pair below any reporting threshold must still surface as the max.
+    corr = pd.DataFrame(
+        [[1.0, 0.78, -0.10], [0.78, 1.0, 0.05], [-0.10, 0.05, 1.0]],
+        index=["a", "b", "c"],
+        columns=["a", "b", "c"],
+    )
+    assert fa._max_abs_offdiag(corr) == pytest.approx(0.78)
+
+
+def test_max_abs_offdiag_takes_absolute_value():
+    corr = pd.DataFrame([[1.0, -0.97], [-0.97, 1.0]], index=["a", "b"], columns=["a", "b"])
+    assert fa._max_abs_offdiag(corr) == pytest.approx(0.97)
+
+
+def test_max_abs_offdiag_single_column_is_nan():
+    corr = pd.DataFrame([[1.0]], index=["a"], columns=["a"])
+    assert np.isnan(fa._max_abs_offdiag(corr))
+
+
 def test_drop_candidates_thresholds():
     df = _collinear_frame()
     corr = df.corr()

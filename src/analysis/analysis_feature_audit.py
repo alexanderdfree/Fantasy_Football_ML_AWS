@@ -140,6 +140,22 @@ def _high_corr_pairs(corr: pd.DataFrame, threshold: float) -> list[tuple[str, st
     return pairs
 
 
+def _max_abs_offdiag(corr: pd.DataFrame) -> float:
+    """Largest |value| off the diagonal of a correlation matrix (nan if < 2 cols).
+
+    Unlike ``_high_corr_pairs``, this is threshold-free — it reports the true
+    maximum pairwise |Pearson| even when no pair clears the reporting threshold
+    (e.g. K, whose worst pair sits at ~0.78, would otherwise summarise as nan).
+    """
+    arr = corr.to_numpy()
+    if arr.shape[0] < 2:
+        return float("nan")
+    rows, cols = np.triu_indices_from(arr, k=1)
+    vals = np.abs(arr[rows, cols])
+    vals = vals[~np.isnan(vals)]
+    return float(vals.max()) if vals.size else float("nan")
+
+
 def _vif(df: pd.DataFrame, cols: list[str]) -> dict[str, float]:
     """VIF_i = 1 / (1 - R^2_i) via sklearn LinearRegression.
 
@@ -410,7 +426,9 @@ def _audit_position(pos: str, splits_dir: Path, corr_threshold: float, top_n: in
     high_full = _high_corr_pairs(full_pearson, threshold=corr_threshold)
     high_static = _high_corr_pairs(static_pearson, threshold=corr_threshold)
     full_ge_drop = [p for p in high_full if abs(p[2]) >= DROP_R]
-    max_abs_r = abs(high_full[0][2]) if high_full else float("nan")
+    # True max |Pearson| from the full matrix — not high_full[0], which is nan
+    # when no pair clears corr_threshold (e.g. K's worst pair ~0.78 < 0.85).
+    max_abs_r = _max_abs_offdiag(full_pearson)
 
     # ── VIF + condition number ────────────────────────────────────────────
     print("  computing VIF on static block …")
