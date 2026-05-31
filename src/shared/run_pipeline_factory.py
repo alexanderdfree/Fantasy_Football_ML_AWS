@@ -119,16 +119,20 @@ def cli_main(
     )
     parser.add_argument(
         "--device",
-        choices=("auto", "cpu", "cuda"),
+        choices=("auto", "cpu", "cuda", "mps"),
         default=None,
         help=(
             "Compute device for the attention NN. Omitted: honour $FF_DEVICE if "
             "set, else 'auto'. 'auto' uses CUDA when available and CPU otherwise "
-            "(the historical behaviour — Linux/macOS/CI unchanged). 'cpu' forces "
-            "the CPU path even on a CUDA-visible box (e.g. macOS, or a Windows "
-            "dev box with a flaky CUDA build); 'cuda' requires a GPU and errors "
-            "if none is visible. An explicit value is exported as FF_DEVICE for "
-            "the run, reaching the device selectors via src.shared.utils."
+            "(the historical behaviour — Linux/macOS/CI unchanged; 'auto' never "
+            "picks MPS). 'cpu' forces the CPU path even on a CUDA-visible box "
+            "(e.g. macOS, or a Windows dev box with a flaky CUDA build); 'cuda' "
+            "requires a GPU and errors if none is visible; 'mps' opts into Apple "
+            "Silicon MPS (macOS only, errors if MPS isn't available) — opt-in for "
+            "benchmarking the NN on a Mac, not the default (see CLAUDE.md's "
+            "Platform & hardware targets). An explicit value is exported as "
+            "FF_DEVICE for the run, reaching the device selectors via "
+            "src.shared.utils."
         ),
     )
     args = parser.parse_args()

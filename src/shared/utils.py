@@ -15,7 +15,7 @@ import torch
 # to reach the device helpers deep in the call graph without disturbing the
 # monkeypatch-sensitive ``run_pipeline`` signature.
 _DEVICE_ENV = "FF_DEVICE"
-_VALID_DEVICES = ("auto", "cpu", "cuda")
+_VALID_DEVICES = ("auto", "cpu", "cuda", "mps")
 
 # Operator-facing AMP-precision override, analogous to FF_DEVICE. ``auto`` picks
 # the dtype by GPU compute capability (see ``amp_dtype``); the explicit values
@@ -25,11 +25,11 @@ _VALID_AMP = ("auto", "bf16", "fp16", "fp32")
 
 
 def requested_device() -> str:
-    """Operator-requested device: ``"auto"`` (default), ``"cpu"``, or ``"cuda"``.
+    """Operator-requested device: ``"auto"`` (default), ``"cpu"``, ``"cuda"``, or ``"mps"``.
 
     Sourced from ``$FF_DEVICE`` (set by ``run_pipeline --device``). An unset or
     unrecognised value falls back to ``"auto"`` so a typo can never silently pin
-    the wrong device — only the three explicit choices change behaviour.
+    the wrong device — only the four explicit choices change behaviour.
     """
     val = os.environ.get(_DEVICE_ENV, "auto").strip().lower()
     return val if val in _VALID_DEVICES else "auto"
@@ -40,16 +40,19 @@ def cuda_enabled() -> bool:
 
     - ``auto`` (default): CUDA iff ``torch.cuda.is_available()`` — the historical
       behaviour, so Linux/macOS/CI runs are unchanged when the flag is omitted.
+      ``auto`` never selects MPS (that stays opt-in via ``mps``), so the default
+      path is CUDA-or-CPU and byte-identical to CI.
     - ``cpu``: never CUDA — force the CPU path wherever this is consulted.
     - ``cuda``: require CUDA and raise if torch sees no device, so an explicit
       request fails loudly instead of silently degrading to CPU.
+    - ``mps``: not CUDA — see :func:`mps_enabled`.
 
     Single source of truth for the CPU/CUDA decision shared by ``_nn_device``
     (src/shared/pipeline.py) and ``_gpu_resident_device`` (src/shared/training.py)
     so the NN's device and its batcher path cannot disagree.
     """
     req = requested_device()
-    if req == "cpu":
+    if req in ("cpu", "mps"):
         return False
     available = torch.cuda.is_available()
     if req == "cuda" and not available:
@@ -109,6 +112,29 @@ def amp_dtype() -> torch.dtype | None:
         return torch.float16
     # auto / fp16: FP16 is the proven default on every CUDA device.
     return torch.float16
+
+
+def mps_enabled() -> bool:
+    """Whether Apple MPS should be used for this run.
+
+    MPS is **opt-in**: only ``--device mps`` (``FF_DEVICE=mps``) selects it. It is
+    deliberately excluded from ``auto`` because, for this project's small
+    attention model, MPS has no proven speedup over the CPU path, it breaks
+    byte-identity with the CPU/CI numerics, and it risks silent op-fallback (see
+    the *Platform & hardware targets* section of CLAUDE.md — run an A/B before
+    relying on it). Raises if MPS is requested but unavailable so an explicit
+    request fails loudly instead of silently degrading to CPU.
+    """
+    if requested_device() != "mps":
+        return False
+    if not torch.backends.mps.is_available():
+        raise RuntimeError(
+            "--device mps (FF_DEVICE=mps) was requested, but "
+            "torch.backends.mps.is_available() is False. MPS needs an Apple "
+            "Silicon Mac with an MPS-enabled torch build; rerun with "
+            "--device auto (or --device cpu)."
+        )
+    return True
 
 
 def seed_everything(seed: int) -> None:

@@ -28,6 +28,25 @@ pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements-dev.txt
 ```
 
+## Apple Silicon (macOS) — optional MPS
+
+The install above uses the **CPU** wheel; on an Apple Silicon Mac the pipeline runs on the CPU
+and is byte-identical to CI. To try the Mac's GPU for the attention-NN phase, **opt in** with
+`--device mps` (equivalently `FF_DEVICE=mps`) — it is *not* auto-selected: `auto` stays on the CPU
+on macOS so benchmark numbers stay comparable to CI/the GPU hosts. MPS only accelerates the NN
+(Ridge / ElasticNet / LightGBM stay on the CPU), and for this small model the speedup is unproven,
+so measure before relying on it:
+
+```bash
+# A/B one position: default (CPU) vs MPS
+time python -m src.wr.run_pipeline
+time python -m src.wr.run_pipeline --device mps
+```
+
+If MPS is meaningfully faster on your Mac, the default can be flipped later in the `auto` branch of
+[src/shared/utils.py](src/shared/utils.py). See CLAUDE.md's *Platform & hardware targets* for the
+full per-platform matrix and rationale.
+
 ## Windows 11 + NVIDIA GPU install (e.g. RTX 5080)
 
 The block above installs the **CPU** PyTorch wheel. To train/tune locally on an NVIDIA GPU —

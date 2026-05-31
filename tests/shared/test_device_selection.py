@@ -3,8 +3,9 @@
 These guard the contract ``run_pipeline --device`` relies on: ``auto`` reproduces
 the historical ``torch.cuda.is_available()`` behaviour (so Linux/macOS/CI are
 unchanged when the flag is omitted), ``cpu`` forces the CPU path even on a
-CUDA-visible host, and ``cuda`` fails loudly when no GPU is visible rather than
-silently degrading to CPU.
+CUDA-visible host, ``cuda`` fails loudly when no GPU is visible rather than
+silently degrading to CPU, and ``mps`` is an opt-in that ``auto`` never selects
+(so the default path stays CUDA-or-CPU and byte-identical to CI).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import torch
 from src.shared.utils import (
     amp_dtype,
     cuda_enabled,
+    mps_enabled,
     requested_amp_dtype,
     requested_device,
 )
@@ -33,6 +35,8 @@ def test_requested_device_defaults_to_auto_when_unset(monkeypatch):
         ("cpu", "cpu"),
         ("cuda", "cuda"),
         ("auto", "auto"),
+        ("mps", "mps"),
+        ("MPS", "mps"),  # case-insensitive
         ("CUDA", "cuda"),  # case-insensitive
         ("  cpu  ", "cpu"),  # surrounding whitespace tolerated
         ("gpu", "auto"),  # unrecognised → safe auto fallback, never a wrong guess
@@ -155,3 +159,45 @@ def test_amp_dtype_bf16_optin_is_sm80_gated(monkeypatch, capability, expected):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, **k: capability)
     assert amp_dtype() is expected
+
+
+@pytest.mark.unit
+def test_cuda_enabled_mps_request_is_not_cuda(monkeypatch):
+    """--device mps must keep CUDA off even on a CUDA-visible box, so the NN's
+    device and its batcher path can't both fire."""
+    monkeypatch.setenv("FF_DEVICE", "mps")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert cuda_enabled() is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("req", ["auto", "cpu", "cuda"])
+def test_mps_enabled_false_unless_explicitly_requested(monkeypatch, req):
+    """MPS is opt-in: auto never selects it even when MPS is available."""
+    monkeypatch.setenv("FF_DEVICE", req)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    assert mps_enabled() is False
+
+
+@pytest.mark.unit
+def test_mps_enabled_auto_default_ignores_mps(monkeypatch):
+    """Unset FF_DEVICE (auto) keeps the default path CUDA-or-CPU, never MPS."""
+    monkeypatch.delenv("FF_DEVICE", raising=False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    assert mps_enabled() is False
+
+
+@pytest.mark.unit
+def test_mps_enabled_uses_mps_when_available(monkeypatch):
+    monkeypatch.setenv("FF_DEVICE", "mps")
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    assert mps_enabled() is True
+
+
+@pytest.mark.unit
+def test_mps_enabled_raises_when_unavailable(monkeypatch):
+    """--device mps fails loudly rather than silently running on CPU."""
+    monkeypatch.setenv("FF_DEVICE", "mps")
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="device mps"):
+        mps_enabled()
