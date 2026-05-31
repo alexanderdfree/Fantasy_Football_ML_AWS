@@ -197,7 +197,7 @@ function populateTeams(teams) {
 // sub-page navigation (inside loadWikiPage) replaceState so intra-wiki link
 // clicks don't pile up history entries.
 // ---------------------------------------------------------------------------
-const TAB_VIEWS = new Set(["predictions", "standings", "model-performance", "model-architecture", "wiki", "history"]);
+const TAB_VIEWS = new Set(["predictions", "standings", "model-performance", "comparison", "model-architecture", "wiki", "history"]);
 
 function viewFromHash(hash) {
     if (!hash || hash === "#") return "predictions";
@@ -221,6 +221,7 @@ function activateTab(view) {
     });
     if (view === "model-performance") loadMetrics();
     else if (view === "standings") loadStandings();
+    else if (view === "comparison") loadComparison();
     else if (view === "model-architecture") loadModelArchitecture();
     else if (view === "wiki") loadWiki();
     else if (view === "history") loadHistory();
@@ -1122,6 +1123,143 @@ async function loadModelArchitecture() {
         tableEl.innerHTML = `<p class="arch-error">Failed to load: ${e.message}</p>`;
         accEl.innerHTML = "";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Comparison — our model (live) vs expert projection sources (NFL.com,
+// RotoWire), by position, on two player subsets (all + top-30/position). One
+// /api/comparison fetch; the MAE/RMSE/R² toggle re-renders from the cached
+// payload. Lower is better for MAE/RMSE, higher for R².
+// ---------------------------------------------------------------------------
+let comparisonLoaded = false;
+let comparisonToggleWired = false;
+let comparisonData = null;
+let comparisonMetric = "mae";
+
+const COMPARISON_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"];
+const COMPARISON_SOURCES = [
+    { key: "model", label: "Our Model" },
+    { key: "nflcom", label: "NFL.com" },
+    { key: "rotowire", label: "RotoWire" },
+];
+const COMPARISON_METRIC_HINTS = {
+    mae: "Mean absolute error — lower is better",
+    rmse: "Root mean squared error — lower is better",
+    r2: "R² (coefficient of determination) — higher is better",
+};
+
+async function loadComparison() {
+    setupComparisonToggle();
+    if (comparisonLoaded) return;
+    const allBody = document.getElementById("comparison-all-body");
+    const top30Body = document.getElementById("comparison-top30-body");
+    try {
+        comparisonData = await fetchJSON("/api/comparison");
+        if (comparisonData.error) throw new Error(comparisonData.error);
+        comparisonLoaded = true;
+        renderComparisonTables();
+        renderComparisonNotes();
+    } catch (e) {
+        console.error("Failed to load comparison:", e);
+        const msg = `<tr><td colspan="4" class="arch-error">Failed to load: ${escapeHtml(e.message)}</td></tr>`;
+        if (allBody) allBody.innerHTML = msg;
+        if (top30Body) top30Body.innerHTML = msg;
+    }
+}
+
+function setupComparisonToggle() {
+    if (comparisonToggleWired) return;
+    const toggle = document.getElementById("comparison-metric-toggle");
+    if (!toggle) return;
+    toggle.querySelectorAll(".pill").forEach(pill => {
+        pill.addEventListener("click", () => {
+            comparisonMetric = pill.dataset.metric;
+            toggle.querySelectorAll(".pill").forEach(p => p.classList.toggle("active", p === pill));
+            const hint = document.getElementById("comparison-metric-hint");
+            if (hint) hint.textContent = COMPARISON_METRIC_HINTS[comparisonMetric] || "";
+            if (comparisonData) renderComparisonTables();
+        });
+    });
+    comparisonToggleWired = true;
+}
+
+function comparisonCellValue(cell) {
+    if (!cell) return null;
+    const v = cell[comparisonMetric];
+    return v === null || v === undefined || Number.isNaN(v) ? null : v;
+}
+
+function formatComparisonValue(v) {
+    return comparisonMetric === "r2" ? v.toFixed(3) : v.toFixed(2);
+}
+
+function renderComparisonRows(posMap) {
+    const higherBetter = comparisonMetric === "r2";
+    return COMPARISON_POSITIONS.map(pos => {
+        const cells = posMap[pos] || {};
+        const values = COMPARISON_SOURCES.map(s => comparisonCellValue(cells[s.key])).filter(
+            v => v !== null
+        );
+        const best = values.length ? (higherBetter ? Math.max(...values) : Math.min(...values)) : null;
+
+        const tds = COMPARISON_SOURCES.map(s => {
+            const cell = cells[s.key];
+            const v = comparisonCellValue(cell);
+            if (v === null) return `<td class="comparison-num comparison-empty">—</td>`;
+            const isBest = best !== null && Math.abs(v - best) < 1e-9;
+            const cls = "comparison-num" + (isBest ? " comparison-best" : "");
+            const arch =
+                s.key === "model" && cell && cell.best_arch
+                    ? `<span class="comparison-arch">${escapeHtml(cell.best_arch)}</span>`
+                    : "";
+            return `<td class="${cls}">${formatComparisonValue(v)}${arch}</td>`;
+        }).join("");
+        return `<tr><td class="comparison-pos">${pos}</td>${tds}</tr>`;
+    }).join("");
+}
+
+function renderComparisonTables() {
+    if (!comparisonData) return;
+    const subsets = comparisonData.subsets || {};
+    const allBody = document.getElementById("comparison-all-body");
+    const top30Body = document.getElementById("comparison-top30-body");
+    if (allBody) allBody.innerHTML = renderComparisonRows(subsets.all || {});
+    if (top30Body) top30Body.innerHTML = renderComparisonRows(subsets.top30 || {});
+}
+
+function renderComparisonNotes() {
+    const el = document.getElementById("comparison-notes");
+    if (!el || !comparisonData) return;
+    const meta = comparisonData.experts_meta || {};
+    const date = (comparisonData.generated_at || "").slice(0, 10);
+    const unavailable = comparisonData.model_source === "unavailable";
+    const nflNote = (meta.nflcom && meta.nflcom.note) || "";
+    const rwNote = (meta.rotowire && meta.rotowire.note) || "";
+    const modelLine = unavailable
+        ? "Currently unavailable (models not loaded). "
+        : "Computed live from the deployed models (best architecture per position), so it tracks the latest retrain. ";
+    el.innerHTML = `
+        <div class="section-header">About this comparison</div>
+        <ul class="comparison-note-list">
+            <li><strong>Seasons.</strong> Our model trains on 2012–2023, validates on 2024, and is tested on <strong>2025</strong>; every number here is on the held-out 2025 season, and the experts are scored on 2025 too.</li>
+            <li><strong>Scoring.</strong> Full PPR (1 pt / reception). Projections and actuals run through the same scoring formula, so it's apples-to-apples. RMSE is shown alongside MAE because expert projections implicitly target squared error.</li>
+            <li><strong>Our Model.</strong> ${modelLine}MAE/RMSE/R² are on weekly fantasy-point totals.</li>
+            <li><strong>NFL.com.</strong> ${escapeHtml(nflNote)}</li>
+            <li><strong>RotoWire.</strong> ${escapeHtml(rwNote)}</li>
+            <li><strong>Top 30.</strong> The second table restricts to the top 30 players per position by actual 2025 fantasy points — the fantasy-relevant starters.</li>
+            <li><strong>Caveat.</strong> Each source is scored on the players it actually projects, so this is an approximate scoreboard rather than a strictly paired test. For the rigorous paired, significance-tested head-to-heads, see the <a href="#wiki:expert-comparison" class="comparison-link" data-slug="expert-comparison">Expert Projection Comparison</a> wiki page.</li>
+            ${date ? `<li class="comparison-note-meta">Expert data generated ${escapeHtml(date)}.</li>` : ""}
+        </ul>`;
+    el.querySelectorAll(".comparison-link").forEach(a => {
+        a.addEventListener("click", ev => {
+            ev.preventDefault();
+            const hash = `#wiki:${a.dataset.slug}`;
+            if ((location.hash || "") !== hash) {
+                history.pushState(null, "", location.pathname + location.search + hash);
+            }
+            activateTab("wiki");
+        });
+    });
 }
 
 // ---------------------------------------------------------------------------

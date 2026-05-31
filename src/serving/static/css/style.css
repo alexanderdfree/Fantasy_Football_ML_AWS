@@ -1323,3 +1323,52 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
 .breakdown-table th { color: var(--text-secondary); font-weight: 600; }
 .breakdown-table .bd-stat { text-align: left; }
 .breakdown-table tbody tr:hover { background: var(--bg-secondary); }
+
+/* ---------------------------------------------------------------------------
+   Comparison tab — model vs expert scoreboard (two tables + metric toggle)
+   --------------------------------------------------------------------------- */
+.comparison-controls {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 4px 0 18px;
+}
+.comparison-metric-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+}
+.comparison-metric-hint { font-size: 13px; color: var(--text-secondary); }
+.comparison-table-block { margin-bottom: 22px; }
+
+/* Static info tables — opt out of the generic clickable-row affordance. */
+.comparison-table tbody tr { cursor: default; }
+.comparison-table tbody tr:hover { background: var(--bg-hover); }
+.comparison-pos { font-weight: 600; color: var(--text-primary); }
+.comparison-num { text-align: right; font-variant-numeric: tabular-nums; }
+.comparison-table thead th.comparison-num { text-align: right; }
+.comparison-empty { color: var(--text-muted); }
+.comparison-best { color: var(--accent); font-weight: 700; }
+.comparison-arch {
+    display: block;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+.comparison-notes { margin-top: 8px; }
+.comparison-note-list {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+}
+.comparison-note-list li { margin-bottom: 6px; }
+.comparison-note-list strong { color: var(--text-primary); }
+.comparison-note-meta { color: var(--text-muted); font-style: italic; }
+.comparison-link { color: var(--accent); text-decoration: none; }
+.comparison-link:hover { text-decoration: underline; }
