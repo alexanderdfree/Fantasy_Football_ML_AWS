@@ -8,6 +8,13 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 
 ## Open
 
+### [PRIORITY] Fix rookie early-game prediction bias (calibration, QB first)
+- **Plan:** [src/analysis/rookie_calibration_plan.md](src/analysis/rookie_calibration_plan.md) — full pick-up plan for the next session (approach, wire-up, success criteria, stop-rules). Read it before starting.
+- **What:** The model has no rookie handling — every history feature is imputed to 0, so it defaults a rookie toward a league-average starter. The tracked rookie metric ([src/analysis/rookie_cohort_metrics.py](src/analysis/rookie_cohort_metrics.py), PR #620) shows the real defect is **directional bias, not MAE**: QB/WR/TE **over-predict rookies' first ~3 games** (QB `rookie_early` bias **+2.9 to +4.4 FP/g across every model**), then under-predict once a role is established; RB under-predicts throughout. Rookies are ~14–21% of rows and score less, so this is **invisible in overall MAE** — which is exactly why the #519 draft-capital feature read benchmark-flat.
+- **Fix:** a **game-phase-aware** rookie calibration — add non-temporal `is_rookie` + `rookie_early` static features (roster metadata, no leakage; CLAUDE.md "eligible reach #1") so the best model learns to cancel the early-game over-prediction. **Scope the first cut to QB** (best model = Ridge, largest recoverable bias: `rookie_early` MAE 6.22 → 5.17 bias-corrected). A *flat* `is_rookie` offset is wrong — the early-over/rest-under signs cancel.
+- **Judge on the subgroup metric** (`rookie_early` bias + bias-corrected MAE + top-12), **NOT** overall benchmark MAE — that will stay ~flat by construction (~0.05 overall) and reading it as failure is the #519 trap. Validate with `python -m src.analysis.rookie_cohort_metrics --positions QB` before/after, ≥2 seeds.
+- **Do NOT** re-introduce draft *capital* (`log(pick)`) — the specifically-rejected pedigree prior (#519). This is a bias/calibration fix on roster metadata, not a pedigree feature.
+
 ### [PLANNED] Consolidate `--cv` benchmark reporting into the clean rolling-origin walk-forward
 - **Plan:** [docs/cv_rolling_origin_consolidation.md](docs/cv_rolling_origin_consolidation.md) — full design, retrain-cost constraints, and verification steps. Pick this up directly from that doc.
 - **File(s):** `src/benchmarking/benchmark.py` (`__main__` dispatch); `docs/ARCHITECTURE.md` (D1 + Update history).
