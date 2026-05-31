@@ -64,14 +64,19 @@ concentrated almost entirely on the ascension week itself.
 
 ## depth_chart_rank — the only forward-looking signal, and it's the weak link
 
-- **2025 (the test season) has 0 RB depth-chart rows** — the forward signal is
-  *entirely dead* exactly where the model is evaluated;
-  [feature_build.py](src/shared/feature_build.py) imputes the `-1` sentinel to the
-  train mean (neutral).
-- In 2012–2024, 95% of ascension weeks had a depth-chart row, but only **70% listed
-  the player rank ≤ 2, median rank 2** — the official chart frequently *still lists
-  him as the backup* the week he explodes. Even when present it's a weak, single,
-  low-weight feature.
+- **2025 is covered, not missing.** The 2025 depth feed is the ESPN-format schema
+  (no legacy `formation`/`depth_team`); the loader normalizes it via
+  `_normalize_espn_depth` ([src/data/loader.py](src/data/loader.py), PR #370). Loaded
+  the production way, 2025 has 24,596 offensive player-weeks and **100% of the 14 2025
+  ascension events carry a depth_chart_rank**. (An earlier cut of this doc said "2025
+  dead" — that was a bug in *this diagnostic*, which pulled the raw
+  `nfl_source.depth_charts` shim and filtered on `formation`, silently dropping the
+  un-normalized 2025 ESPN rows. Fixed; it now loads depth the way the loader does.)
+- **The real weakness is rank quality, not coverage.** Across all 205 events 97%
+  carry a depth_chart_rank that week, but only **70% are listed rank ≤ 2 (median rank
+  2)** — the official chart frequently *still lists the ascending back as the backup*
+  the week he explodes. It's present, but a weak, single, low-weight ordinal slot; it
+  does not encode the vacated *volume* (which is the lever in "Where a fix could help").
 
 ## Concrete examples (largest input→output gaps)
 
