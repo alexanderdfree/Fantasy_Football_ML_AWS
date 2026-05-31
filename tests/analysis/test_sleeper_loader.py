@@ -75,6 +75,21 @@ def _fake_reader(url: str) -> list:
             "player": {"position": "DEF", "first_name": "", "last_name": "", "team_abbr": "SF"},
             "stats": {"sack": 3.0, "pts_ppr": 8.0},
         },
+        {
+            # Unprojected roster placeholder (no pts_ppr, no mapped stat) — must
+            # be dropped so it isn't ingested as a confident 0.0 projection.
+            "player_id": "99999",
+            "season": season,
+            "week": week,
+            "company": "rotowire",
+            "player": {
+                "position": "QB",
+                "first_name": "Bench",
+                "last_name": "Qb",
+                "team_abbr": "NYJ",
+            },
+            "stats": {"adp_dd_ppr": 999.0},
+        },
     ]
 
 
@@ -100,9 +115,11 @@ def test_column_mapping_and_offense_filter(tmp_path) -> None:
     df = mod.load_sleeper_projections(
         [2024], cache_dir=str(tmp_path), weeks=[1, 2], reader=_fake_reader
     )
-    # 2 offense players × 2 weeks; DEF dropped.
+    # 2 projected offense players × 2 weeks; DEF dropped (offense filter) and the
+    # unprojected QB placeholder dropped (no stat line).
     assert len(df) == 4
     assert set(df["position"]) == {"QB", "RB"}
+    assert "99999" not in set(df["sleeper_player_id"])  # placeholder excluded
     qb = df[(df["position"] == "QB") & (df["week"] == 1)].iloc[0]
     assert qb["passing_yards"] == 210.0
     assert qb["passing_tds"] == 1.5

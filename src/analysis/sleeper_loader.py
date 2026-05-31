@@ -150,13 +150,23 @@ def _normalize_week(records: list, season: int, week: int) -> pd.DataFrame:
         if pos not in SLEEPER_OFFENSE_POSITIONS:
             continue
         stats = rec.get("stats") or {}
+        # Sleeper returns a record for EVERY rostered player, not just projected
+        # ones; inactive/practice-squad placeholders carry no stat line (no
+        # pts_ppr, no mapped stat). Ingesting those as a confident 0.0 projection
+        # would conflate "RotoWire didn't project this player" with "projected
+        # zero" and contaminate the comparison (NFL.com's curated archive has no
+        # such rows). Drop records with no genuine projection signal.
+        if "pts_ppr" not in stats and not any(k in stats for k in SLEEPER_STAT_MAP):
+            continue
         row = {
             "season": int(rec.get("season", season)),
             "week": int(rec.get("week", week)),
             "position": pos,
             "sleeper_player_id": str(rec.get("player_id")),
             "player_name": f"{player.get('first_name', '')} {player.get('last_name', '')}".strip(),
-            "team": player.get("team_abbr") or player.get("team") or "",
+            # The populated team is at the record top level; player.team_abbr is
+            # often null in the payload — prefer the record's value.
+            "team": rec.get("team") or player.get("team_abbr") or player.get("team") or "",
             "company": rec.get("company"),
             "sleeper_projected_pts": float(stats.get("pts_ppr") or 0.0),
         }
@@ -216,16 +226,19 @@ def load_sleeper_projections(
 ) -> pd.DataFrame:
     """Fetch + cache Sleeper projections for one or more seasons (offense only).
 
-    Cache: ``{cache_dir}/sleeper_projections_{_CACHE_VERSION}_{min}_{max}_{weeks}.parquet``.
+    Cache: ``{cache_dir}/sleeper_projections_{_CACHE_VERSION}_{min}_{max}_{weeks}_{positions}.parquet``.
     Per-(season, week) HTTP errors are logged + skipped rather than fatal. ``reader``
     is injectable for tests.
     """
     seasons = _validate_seasons(seasons)
     weeks_to_try = tuple(weeks) if weeks is not None else SLEEPER_DEFAULT_WEEKS
     os.makedirs(cache_dir, exist_ok=True)
+    # Include a positions token so a narrower fetch can't be served a wider cache
+    # (or vice versa) under the same key.
+    pos_sig = "-".join(sorted(positions))
     cache_path = (
         f"{cache_dir}/sleeper_projections_{_CACHE_VERSION}"
-        f"_{min(seasons)}_{max(seasons)}_{_weeks_signature(weeks_to_try)}.parquet"
+        f"_{min(seasons)}_{max(seasons)}_{_weeks_signature(weeks_to_try)}_{pos_sig}.parquet"
     )
     if os.path.exists(cache_path) and not force_refresh:
         return pd.read_parquet(cache_path)
