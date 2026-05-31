@@ -39,6 +39,7 @@ from src.shared.artifact_integrity import (
     write_scaler_meta,
 )
 from src.shared.backtest import plot_weekly_accuracy, run_weekly_simulation
+from src.shared.core_pool import lease_cores
 from src.shared.evaluation import (
     build_gate_info,
     compute_metrics,
@@ -330,6 +331,7 @@ def _tune_ridge_alphas_cv(
     n_cv_folds=4,
     refine_points=5,
     pca_n_components=None,
+    n_jobs=-1,
 ):
     """Per-target Ridge alpha tuning with expanding-window CV.
 
@@ -354,7 +356,7 @@ def _tune_ridge_alphas_cv(
         grid = list(alpha_grids[target])
 
         # --- Pass 1: coarse search ---
-        coarse_maes = Parallel(n_jobs=-1, prefer="threads")(
+        coarse_maes = Parallel(n_jobs=n_jobs, prefer="threads")(
             delayed(_eval_alpha_cv)(X_train, y, folds, alpha, pca_n_components) for alpha in grid
         )
         best_idx = int(np.argmin(coarse_maes))
@@ -366,7 +368,7 @@ def _tune_ridge_alphas_cv(
             log_step = np.log10(grid[1]) - np.log10(grid[0])
             center = np.log10(best_alpha)
             fine_grid = list(np.logspace(center - log_step, center + log_step, refine_points))
-            fine_maes = Parallel(n_jobs=-1, prefer="threads")(
+            fine_maes = Parallel(n_jobs=n_jobs, prefer="threads")(
                 delayed(_eval_alpha_cv)(X_train, y, folds, alpha, pca_n_components)
                 for alpha in fine_grid
             )
@@ -417,6 +419,7 @@ def _tune_enet_cv(
     l1_ratios,
     n_cv_folds=4,
     refine_points=5,
+    n_jobs=-1,
 ):
     """Per-target ElasticNet tuning over (alpha, l1_ratio).
 
@@ -439,7 +442,7 @@ def _tune_enet_cv(
 
         for l1_ratio in l1_ratios:
             # --- Pass 1: coarse alpha search at this l1_ratio ---
-            coarse_maes = Parallel(n_jobs=-1, prefer="threads")(
+            coarse_maes = Parallel(n_jobs=n_jobs, prefer="threads")(
                 delayed(_eval_enet_cv)(X_train, y, folds, alpha, l1_ratio) for alpha in grid
             )
             idx = int(np.argmin(coarse_maes))
@@ -451,7 +454,7 @@ def _tune_enet_cv(
                 log_step = np.log10(grid[1]) - np.log10(grid[0])
                 center = np.log10(alpha_here)
                 fine_grid = list(np.logspace(center - log_step, center + log_step, refine_points))
-                fine_maes = Parallel(n_jobs=-1, prefer="threads")(
+                fine_maes = Parallel(n_jobs=n_jobs, prefer="threads")(
                     delayed(_eval_enet_cv)(X_train, y, folds, alpha, l1_ratio)
                     for alpha in fine_grid
                 )
@@ -1088,7 +1091,17 @@ def _train_attention_holdout(
 
 
 def _train_lightgbm(
-    X_train, X_val, X_test, y_train_dict, y_val_dict, y_test_dict, cfg, targets, feature_cols, seed
+    X_train,
+    X_val,
+    X_test,
+    y_train_dict,
+    y_val_dict,
+    y_test_dict,
+    cfg,
+    targets,
+    feature_cols,
+    seed,
+    n_jobs=None,
 ):
     """Train a LightGBM multi-target model. Returns (model, test_preds, metrics)."""
     model = LightGBMMultiTarget(
@@ -1105,6 +1118,7 @@ def _train_lightgbm(
         min_split_gain=cfg.get("lgbm_min_split_gain", 0.0),
         objective=cfg.get("lgbm_objective", "huber"),
         seed=seed,
+        n_jobs=n_jobs,
     )
     model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
 
@@ -1254,7 +1268,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         ridge_metrics = None
         if cfg.get("train_ridge", True):
             print(f"\n=== {pos} Ridge Multi-Target (Per-Target CV Tuning) ===")
-            with timed("ridge_tune", store=phase_seconds):
+            with lease_cores("ridge_cv") as _nj, timed("ridge_tune", store=phase_seconds):
                 best_alphas = (
                     _tune_ridge_alphas_cv(
                         X_train,
@@ -1265,6 +1279,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                         n_cv_folds=cfg.get("ridge_cv_folds", 4),
                         refine_points=cfg.get("ridge_refine_points", 5),
                         pca_n_components=pca_n,
+                        n_jobs=_nj,
                     )
                     if ridge_tune_targets
                     else {}
@@ -1301,7 +1316,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             # any future grid override; require the ridge grid explicitly.
             enet_tune_grids = {t: cfg["ridge_alpha_grids"][t] for t in ridge_tune_targets}
             enet_l1_ratios = cfg.get("enet_l1_ratios", [0.3, 0.5, 0.7])
-            with timed("elasticnet_tune", store=phase_seconds):
+            with lease_cores("enet_cv") as _nj, timed("elasticnet_tune", store=phase_seconds):
                 enet_best = (
                     _tune_enet_cv(
                         X_train,
@@ -1312,6 +1327,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                         l1_ratios=enet_l1_ratios,
                         n_cv_folds=cfg.get("ridge_cv_folds", 4),
                         refine_points=cfg.get("ridge_refine_points", 5),
+                        n_jobs=_nj,
                     )
                     if ridge_tune_targets
                     else {}
@@ -1340,7 +1356,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         lgbm_model = None
         if cfg.get("train_lightgbm", False):
             print(f"\n=== {pos} LightGBM Multi-Target ===")
-            with timed("lgbm_train", store=phase_seconds):
+            with lease_cores("lgbm", default=None) as _nj, timed("lgbm_train", store=phase_seconds):
                 lgbm_model, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
                     X_train,
                     X_val,
@@ -1352,6 +1368,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                     targets,
                     feature_cols,
                     seed,
+                    n_jobs=_nj,
                 )
 
         return {

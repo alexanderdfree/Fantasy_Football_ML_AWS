@@ -8,13 +8,16 @@ process's kernels run while another's Python preps its next batch — the GPU's 
 fill in and total wall-clock drops ~3-4x.
 
 The only real hazard is CPU oversubscription: each position's Ridge alpha-CV fans out
-over ``joblib.Parallel(n_jobs=-1, prefer="threads")`` (``src/shared/pipeline.py``) and
-LightGBM uses ``LGBM_N_JOBS`` threads, so six positions each grabbing all 16 cores
-thrash. This orchestrator partitions the **physical** cores across only the *currently
-active* positions (via ``os.sched_setaffinity``) and **re-pins survivors onto the freed
-cores when a position finishes** — and, when ``-j`` is below the position count,
-dispatches the next queued position onto the freed cores. So nothing is hard-wired
-per-position; cores follow the work.
+over ``joblib.Parallel(prefer="threads")`` (``src/shared/pipeline.py``) and LightGBM uses
+``LGBM_N_JOBS`` threads, so six positions each grabbing all 16 cores thrash. This
+orchestrator starts a **work-conserving core pool** (``src/shared/core_pool.py``): a
+coordinator owns the box's physical cores and each position leases its fair share
+(``ceil(total / active)``) for the duration of a CPU stage, releasing on stage exit. As
+positions finish, the orchestrator lowers the active count and the survivors' next leases
+widen — so the thread *count*, not just affinity, follows the work. (The old static
+per-slice ``LGBM_N_JOBS`` was immutable post-spawn, so freed cores were stranded; this
+fixes that.) When ``-j`` is below the position count, the next queued position dispatches
+into the freed slot.
 
 Outputs are identical to a sequential ``benchmark QB RB …`` run: each worker trains its
 position once (which writes ``{pos}/outputs/`` artifacts via the shared pipeline's
@@ -37,6 +40,7 @@ Prefer the ``scripts/train-local-parallel.sh`` wrapper, which sources ``scripts/
 
 import argparse
 import contextlib
+import glob
 import json
 import os
 import subprocess
@@ -64,13 +68,14 @@ from src.shared.benchmark_utils import (  # noqa: E402
     summarize_pipeline_result,
     utc_now_iso,
 )
+from src.shared.core_pool import ENV_ADDR, ENV_POS, start_coordinator  # noqa: E402
 
 ALL_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
-# Heaviest-first dispatch order: positions with more rows + the full attention NN + a
-# 1500-tree LightGBM finish slowest, so they start first (and, since ``_split_cores``
-# hands the larger chunks to the front, get more cores). A heuristic, not a measurement
-# — tweak freely; it only affects the ``-j < N`` dispatch order and initial chunk sizing.
+# Fallback heaviest-first dispatch order, used only when ``benchmark_history`` carries no
+# usable per-position ``elapsed_sec`` for ``_history_cost_order`` to derive a measured order
+# from. A heuristic — it only seeds the ``-j < N`` dispatch order; the core pool balances
+# core counts mid-run regardless of who starts first.
 _COST_ORDER = ("WR", "RB", "QB", "TE", "DST", "K")
 
 
@@ -118,21 +123,6 @@ def _split_cores(phys: list[int], n: int) -> list[list[int]]:
     return chunks
 
 
-def _plan_slots(active_order: list[str], new: list[str], phys: list[int]) -> dict[str, list[int]]:
-    """Assign each position a physical-core slice sized to the post-fill active count.
-
-    ``active_order`` are the still-running positions (front of the list so their slices
-    stay stable), ``new`` are the ones about to launch. Returns ``{pos: cores}`` for the
-    combined set. A position is **launched with** its slice, which sets both its CPU
-    affinity *and* its ``LGBM_N_JOBS`` / ``LOKY_MAX_CPU_COUNT`` thread caps — so the slice
-    must be right from the start: re-pinning a running process later widens its affinity
-    but cannot change its (immutable) thread-count env.
-    """
-    order_after = list(active_order) + list(new)
-    chunks = _split_cores(phys, len(order_after))
-    return dict(zip(order_after, chunks, strict=False))
-
-
 def _pin_self(cores: list[int]):
     """Return a ``preexec_fn`` that pins the forked child to ``cores`` before exec."""
     cset = set(cores)
@@ -145,23 +135,41 @@ def _pin_self(cores: list[int]):
     return _fn
 
 
-def _repin(pid: int, cores: list[int]) -> None:
-    """Re-pin every thread of a running process to ``cores`` (best-effort)."""
-    cset = set(cores)
+def _history_cost_order(history_dir: str = HISTORY_DIR) -> list[str] | None:
+    """Heaviest-first order from the most recent history entry with per-position timings.
+
+    Reads the newest ``benchmark_history/*.json`` whose ``results`` carry ``elapsed_sec``
+    and returns positions sorted slowest-first. ``None`` when no usable entry exists (the
+    caller falls back to ``_COST_ORDER``). Parallel-run times are *contended* wall-clock, so
+    this is a rough heavy-first signal — but it only seeds dispatch; the pool self-balances.
+    """
     try:
-        tids = os.listdir(f"/proc/{pid}/task")
-    except FileNotFoundError:
-        tids = [str(pid)]  # no /proc — try the main thread only
-    for tid in tids:
-        with contextlib.suppress(
-            AttributeError, ProcessLookupError, PermissionError, ValueError, OSError
-        ):
-            os.sched_setaffinity(int(tid), cset)
+        files = sorted(
+            glob.glob(os.path.join(history_dir, "*.json")), key=os.path.getmtime, reverse=True
+        )
+    except OSError:
+        return None
+    for path in files:
+        entry = _read_summary(path)
+        results = (entry or {}).get("results")
+        if not isinstance(results, list):
+            continue
+        timed = [
+            (r.get("position"), r.get("elapsed_sec"))
+            for r in results
+            if r.get("position") and isinstance(r.get("elapsed_sec"), int | float)
+        ]
+        if len(timed) >= 2:
+            return [p for p, _ in sorted(timed, key=lambda x: x[1], reverse=True)]
+    return None
 
 
 def _sort_by_cost(positions: list[str]) -> list[str]:
-    rank = {p: i for i, p in enumerate(_COST_ORDER)}
-    return sorted(positions, key=lambda p: rank.get(p, len(_COST_ORDER)))
+    """Order positions heaviest-first — measured ``elapsed_sec`` if history has it, else
+    the static ``_COST_ORDER`` fallback."""
+    order = _history_cost_order() or list(_COST_ORDER)
+    rank = {p: i for i, p in enumerate(order)}
+    return sorted(positions, key=lambda p: rank.get(p, len(order)))
 
 
 def _default_jobs(n_positions: int) -> int:
@@ -206,14 +214,17 @@ def _run_worker(pos: str, summary_out: str, cv: bool, significance: bool) -> int
 # ------------------------------------------------------------------- orchestrator
 
 
-def _launch(pos, cores, tmpdir, logdir, passthrough):
+def _launch(pos, cores, tmpdir, logdir, passthrough, pool_addr):
     summary_path = os.path.join(tmpdir, f"{pos}.json")
     log_path = os.path.join(logdir, f"local-train-{pos}.log")
     env = dict(os.environ)
-    # Cap this process's CPU fan-out to its core slice. taskset/affinity bounds *which*
-    # cores it lands on; these env caps bound how many threads joblib/LightGBM spawn.
-    env["LGBM_N_JOBS"] = str(len(cores))
-    env["LOKY_MAX_CPU_COUNT"] = str(len(cores))
+    # Each CPU stage leases its thread count from the core pool at runtime (see
+    # src/shared/core_pool.py), so we no longer freeze LGBM_N_JOBS/LOKY_MAX_CPU_COUNT per
+    # slice — that was immutable post-spawn and stranded freed cores. The worker is pinned
+    # to all physical cores at launch (``cores``); the pool narrows affinity per CPU stage.
+    # BLAS stays single-threaded so the leased joblib/LightGBM axis owns the fan-out.
+    env[ENV_ADDR] = pool_addr
+    env[ENV_POS] = pos
     for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
         env.setdefault(k, "1")
     env.setdefault("FF_DEVICE", "cuda")
@@ -244,19 +255,6 @@ def _launch(pos, cores, tmpdir, logdir, passthrough):
     }
 
 
-def _rebalance(active: "OrderedDict", phys: list[int], announce: bool) -> None:
-    """Re-split the physical cores across the currently-active positions and re-pin."""
-    if not active:
-        return
-    chunks = _split_cores(phys, len(active))
-    for (pos, info), chunk in zip(active.items(), chunks, strict=False):
-        changed = list(chunk) != list(info["cores"])
-        info["cores"] = chunk
-        _repin(info["proc"].pid, chunk)
-        if announce and changed:
-            print(f"[rebalance] {pos} -> cores {chunk}", flush=True)
-
-
 def _read_summary(path: str):
     try:
         with open(path) as f:
@@ -265,8 +263,20 @@ def _read_summary(path: str):
         return None
 
 
-def _record_and_sync(summaries: list[dict], positions: list[str], note: str, no_sync: bool) -> None:
-    """Mirror of ``benchmark.py``'s post-loop block: table, results file, history, S3."""
+def _record_and_sync(
+    summaries: list[dict],
+    positions: list[str],
+    note: str,
+    no_sync: bool,
+    total_wall_sec: float | None = None,
+) -> None:
+    """Mirror of ``benchmark.py``'s post-loop block: table, results file, history, S3.
+
+    ``total_wall_sec`` is the orchestrator's measured end-to-end run time (launch of the
+    first worker → last worker done); it is recorded on the history entry so the headline
+    parallel-run wall-clock is captured automatically, without an external stopwatch. It
+    differs from each position's ``elapsed_sec`` (which only sums to the total at ``-j``
+    ≥ position count, where every worker launches at once)."""
     print_comparison_table(summaries, header="MAE Comparison (test set)", show_time=True)
     with open(RESULTS_FILE, "w") as f:
         json.dump(summaries, f, indent=2)
@@ -285,6 +295,7 @@ def _record_and_sync(summaries: list[dict], positions: list[str], note: str, no_
             **{p.lower(): collect_pos_config(p) for p in positions},
         },
         "results": summaries,
+        "total_wall_sec": total_wall_sec,
     }
     written_path = append_to_history(HISTORY_DIR, entry)
     if not no_sync:
@@ -299,79 +310,79 @@ def orchestrate(positions, jobs, passthrough, note, no_sync, dry_run) -> int:
 
     if dry_run:
         first = order[:jobs]
-        chunks = _split_cores(phys, len(first))
+        init_cap = _split_cores(phys, len(first))  # indicative initial per-position cap
         print(f"[dry-run] physical cores ({len(phys)}): {phys}")
         print(f"[dry-run] -j {jobs}; {len(positions)} positions; dispatch order {order}")
-        for pos, chunk in zip(first, chunks, strict=False):
-            print(
-                f"[dry-run]   {pos:<4} cores {chunk}  LGBM_N_JOBS={len(chunk)}  "
-                f"-> python -m src.benchmarking.parallel_train --worker {pos}"
-            )
+        print(
+            f"[dry-run] core pool: each CPU stage leases up to ceil({len(phys)}/active) cores; "
+            "the cap widens as positions finish"
+        )
+        for pos, chunk in zip(first, init_cap, strict=False):
+            print(f"[dry-run]   {pos:<4} ~{len(chunk)} cores initially")
         if len(order) > jobs:
-            print(
-                f"[dry-run] queued (dispatched onto freed cores as positions finish): {order[jobs:]}"
-            )
+            print(f"[dry-run] queued (dispatched as positions finish): {order[jobs:]}")
         return 0
 
     logdir = "logs"
     os.makedirs(logdir, exist_ok=True)
     tmpdir = tempfile.mkdtemp(prefix="ff-parallel-")
+    pool_addr, set_active_count, pool_stop = start_coordinator(phys, tmpdir)
     queue = deque(order)
     active: OrderedDict = OrderedDict()
     results: dict = {}
 
     print(
         f"[parallel_train] {len(positions)} positions, -j {jobs}, {len(phys)} physical cores "
-        f"{phys}; logs -> {logdir}/local-train-<POS>.log",
+        f"{phys}; core pool {pool_addr}; logs -> {logdir}/local-train-<POS>.log",
         flush=True,
     )
 
-    while queue or active:
-        if queue and len(active) < jobs:
-            new = []
-            while queue and len(active) + len(new) < jobs:
-                new.append(queue.popleft())
-            # Size each slice to the post-fill active count *before* launching, so each
-            # worker's LGBM_N_JOBS/affinity match its slice (a launched process's
-            # thread-count env can't be changed afterwards — only its affinity).
-            plan = _plan_slots(list(active.keys()), new, phys)
-            for pos in new:
-                active[pos] = _launch(pos, plan[pos], tmpdir, logdir, passthrough)
-                print(
-                    f"[{pos}] launched (pid {active[pos]['proc'].pid}) cores {plan[pos]}",
-                    flush=True,
-                )
-            # Adding workers narrows the survivors' slices; re-pin their affinity to match.
-            for pos, info in active.items():
-                if pos not in new and list(info["cores"]) != list(plan[pos]):
-                    info["cores"] = plan[pos]
-                    _repin(info["proc"].pid, plan[pos])
+    run_t0 = time.time()
+    try:
+        while queue or active:
+            if queue and len(active) < jobs:
+                while queue and len(active) < jobs:
+                    pos = queue.popleft()
+                    active[pos] = _launch(pos, phys, tmpdir, logdir, passthrough, pool_addr)
+                    print(f"[{pos}] launched (pid {active[pos]['proc'].pid})", flush=True)
+                # Tell the pool how many positions now contend so its per-stage fair-share
+                # cap (ceil(cores / active)) is right.
+                set_active_count(len(active))
 
-        finished = [p for p, info in active.items() if info["proc"].poll() is not None]
-        if not finished:
-            time.sleep(0.5)
-            continue
+            finished = [p for p, info in active.items() if info["proc"].poll() is not None]
+            if not finished:
+                time.sleep(0.5)
+                continue
 
-        for pos in finished:
-            info = active.pop(pos)
-            info["logf"].close()
-            rc = info["proc"].returncode
-            elapsed = time.time() - info["t0"]
-            summary = _read_summary(info["summary_path"]) if rc == 0 else None
-            if summary is not None:
-                summary.setdefault("elapsed_sec", round(elapsed, 1))
-            results[pos] = summary
-            tag = "ok" if summary is not None else f"FAILED (rc={rc})"
-            print(f"[{pos}] {tag} in {elapsed:.1f}s  (log: {info['log_path']})", flush=True)
-        # survivors inherit the freed cores; next queued position (if any) fills the slot
-        _rebalance(active, phys, announce=True)
+            for pos in finished:
+                info = active.pop(pos)
+                info["logf"].close()
+                rc = info["proc"].returncode
+                elapsed = time.time() - info["t0"]
+                summary = _read_summary(info["summary_path"]) if rc == 0 else None
+                if summary is not None:
+                    summary.setdefault("elapsed_sec", round(elapsed, 1))
+                results[pos] = summary
+                tag = "ok" if summary is not None else f"FAILED (rc={rc})"
+                print(f"[{pos}] {tag} in {elapsed:.1f}s  (log: {info['log_path']})", flush=True)
+            # A finished position lowers the active count, so survivors' next CPU-stage
+            # leases widen — and the next queued position dispatches into the freed slot.
+            set_active_count(len(active))
+    finally:
+        pool_stop()
+
+    total_wall_sec = round(time.time() - run_t0, 1)
+    print(
+        f"[parallel_train] total wall-clock: {total_wall_sec}s ({len(positions)} positions, -j {jobs})",
+        flush=True,
+    )
 
     ordered = [p for p in positions if results.get(p) is not None]
     failed = [p for p in positions if results.get(p) is None]
     if not ordered:
         print("[parallel_train] all positions failed — nothing recorded.", file=sys.stderr)
         return 1
-    _record_and_sync([results[p] for p in ordered], ordered, note, no_sync)
+    _record_and_sync([results[p] for p in ordered], ordered, note, no_sync, total_wall_sec)
     if failed:
         print(f"\n[parallel_train] FAILED positions (not recorded): {failed}", file=sys.stderr)
         for p in failed:

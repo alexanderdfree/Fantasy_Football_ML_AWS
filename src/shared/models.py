@@ -811,6 +811,7 @@ class LightGBMMultiTarget:
         min_split_gain=0.0,
         objective="huber",
         seed=42,
+        n_jobs=None,
     ):
         self.target_names = target_names
         self._params = dict(
@@ -826,7 +827,9 @@ class LightGBMMultiTarget:
             min_split_gain=min_split_gain,
             objective=objective,
             random_state=seed,
-            n_jobs=_lgbm_n_jobs(),
+            # ``n_jobs`` override (the parallel-trainer's core-pool lease passes a
+            # per-stage thread count); ``None`` falls back to the ``LGBM_N_JOBS`` env.
+            n_jobs=_lgbm_n_jobs() if n_jobs is None else int(n_jobs),
             verbosity=-1,
         )
         self._models = {name: lgb.LGBMRegressor(**self._params) for name in target_names}
