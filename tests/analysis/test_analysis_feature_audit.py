@@ -78,6 +78,23 @@ def test_condition_number_pca_improves_conditioning():
     assert post < pre  # dropping the near-null direction conditions the matrix
 
 
+def test_pca_conditioning_picks_components_and_conditions():
+    df = _collinear_frame()
+    # x1~x2 collinear so ~2 directions hold the variance; 99% target should pick
+    # <= n_features components and yield a finite, better-conditioned matrix.
+    n, cond = fa._pca_conditioning(df, ["x1", "x2", "x3"], 0.99)
+    assert n is not None and 1 <= n <= 3
+    assert np.isfinite(cond)
+    pre, _ = fa._condition_number(df, ["x1", "x2", "x3"], None)
+    assert cond <= pre + 1e-6  # PCA never worsens conditioning
+
+
+def test_pca_conditioning_small_sample_returns_none():
+    df = _collinear_frame(n=10)
+    n, cond = fa._pca_conditioning(df, ["x1", "x2", "x3"], 0.99)
+    assert n is None and np.isnan(cond)
+
+
 def test_high_corr_pairs_ranks_planted_pair_first():
     df = _collinear_frame()
     pairs = fa._high_corr_pairs(df.corr(), threshold=0.85)

@@ -13,82 +13,100 @@ of the current whitelists rather than the full ~100. The conditioning /
 correlation **structure** is stable across refreshes; regenerate on a fresh pull
 before quoting exact figures externally. Numbers rot — re-run, don't cite blindly.
 
+## Two populations — and why it matters
+
+Production imputes NaN/±inf → 0 (`src/shared/feature_build.py:110`) and trains on
+**every** row. But rookies have no prior season (`prior_season_* = NaN`) and a
+player's first games have no rolling history (`rolling_*_L8 = NaN`), so a naive
+listwise `dropna()` silently drops them — keeping only **~52–59%** of skill-position
+rows, a veteran-heavy subset. The audit therefore reports **both**:
+
+- **imputed (production)** — NaN→0, the actual matrix Ridge/NN factorize;
+- **complete-case** — `dropna()`, the textbook VIF/redundancy view.
+
+They disagree in a way worth knowing: imputing rookies' `prior_season_*` to 0 adds a
+shared-zero block that **inflates** apparent redundancy in that family, so on the
+production population the prior-season drop-candidate counts roughly **double**.
+
 ## Cross-position summary
 
-`cond_pre` / `cond_post` = condition number of the standardised **full** feature
-matrix before / after the PCA that position runs ahead of Ridge
-(`ridge_pca_components`). `maxVIF` is on the **static** (attention-NN) block.
-`#r≥.95` counts full-set feature pairs at \|Pearson\| ≥ 0.95.
+`cond_imp` / `cond_cc` = condition number of the standardised **full** matrix on the
+imputed vs complete-case population. `prodPCA` = condition number after the PCA Ridge
+actually runs (`ridge_pca_components`; "—" = none). `hypPCA` = hypothetical PCA
+retaining 99% variance, computed for **every** position. `maxVIF` is the static block.
 
-| pos | n_feat | cond_pre | cond_post (PCA) | conditioning | max VIF (static) | max \|r\| | #r≥.95 | drop cands |
-|-----|-------:|---------:|----------------:|--------------|-----------------:|---------:|-------:|-----------:|
-| QB  |  91 | **1.5e16** | — (no PCA) | multicollinear   | 25.6  | 0.999 | 15 | 2 |
-| WR  |  96 | **1.8e16** | 6.5 (PCA 30)   | multicollinear   | 472.3 | 0.993 | 17 | 4 |
-| TE  |  94 | **1.5e16** | — (no PCA) | multicollinear   | 577.4 | 0.996 | 25 | 6 |
-| RB  | 101 | **2.3e16** | 32.2 (PCA 80)  | multicollinear   | 21.4  | 0.969 |  7 | 0 |
-| DST |  38 | 33.6       | 3.4 (PCA 20)   | well-conditioned | 2.3   | 0.980 |  4 | 0 |
-| K   |  19 | 8.3        | — (no PCA) | well-conditioned | 2.3   |  n/a  |  0 | 0 |
+| pos | n_feat | %cc | cond_imp | cond_cc | prodPCA | hypPCA (n) | conditioning | max VIF | max\|r\| | #drop |
+|-----|-------:|----:|---------:|--------:|--------:|-----------:|--------------|--------:|--------:|------:|
+| QB  |  91 | 59% | 4.6e15 | 1.5e16 | — (none) | **18 (55c)** | multicollinear | 82   | 0.9995 |  9 |
+| WR  |  96 | 58% | 2.6e15 | 1.8e16 | 7.3 (30c) | 18 (56c) | multicollinear | 1050 | 0.997 | 13 |
+| TE  |  94 | 58% | 8.5e15 | 1.5e16 | — (none) | **17 (53c)** | multicollinear | 836  | 0.997 | 14 |
+| RB  | 101 | 52% | 3.7e15 | 2.3e16 | 44 (80c) | 19 (63c) | multicollinear | 50   | 0.974 |  1 |
+| DST |  38 | 91% | 33 | 34 | 3.4 (20c) | 6.9 (29c) | well-conditioned | 1.2 | 0.980 | 0 |
+| K   |  19 |100% | 8.3 | 8.3 | — (none) | 4.7 (17c) | well-conditioned | 2.3 | 0.777 | 0 |
 
 ## The answer: very collinear at the skill positions — but not a problem for predictions
 
-The four skill positions (QB/WR/TE/RB) are **numerically multicollinear** — full-set
-condition numbers ~1e16 are at the floating-point precision limit, i.e. the design
-matrix is effectively rank-deficient. This is *by construction*: L3/L5/L8 rolling
-windows of the same stat sit at r ≈ 0.95–0.999 (QB's `rolling_*_snap_pct_L5↔L8` =
-0.999; EWMA↔rolling passing yards = 0.99), and prior-season mean/max/std triples and
-opponent-defense component sums pile on. K (19 features) and DST (38) are
-well-conditioned — collinearity here is purely a skill-position phenomenon.
+QB/WR/TE/RB are **numerically multicollinear on both populations** — full-set condition
+numbers ~1e15–1e16 are at the floating-point precision limit, i.e. effectively
+rank-deficient. By construction: L3/L5/L8 rolling windows of the same stat sit at
+r ≈ 0.95–0.9995 (QB's worst is `rolling_max_snap_pct_L5↔L8` = 0.9995; EWMA↔rolling
+passing yards = 0.996), with prior-season mean/max/std triples and opponent-defense
+component sums on top. K (19 features) and DST (38) are well-conditioned — collinearity
+is purely a skill-position phenomenon, and unaffected by population (their %cc is 100/91).
 
-It is **not currently hurting predictions**, because nothing consumes the raw
-ill-conditioned matrix:
+It is **not currently hurting predictions**, because nothing consumes the raw matrix:
 
-- **Ridge** runs PCA first where it matters and L2-shrinks regardless. PCA collapses
-  the conditioning wherever it's applied: WR 1.8e16 → **6.5**, RB 2.3e16 → **32**,
-  DST 34 → **3.4**. L2 + CV-tuned alpha handle the rest.
+- **Ridge** runs PCA where configured (WR 2.6e15→7.3; RB 3.7e15→44; DST 33→3.4) and
+  L2-shrinks with CV-tuned alpha regardless.
 - **LightGBM** is tree-based — correlated features are interchangeable, no coefficient
   inflation.
-- **The attention/base NN** uses weight decay + dropout, and windowed features are kept
-  out of the static branch by design, so its static block stays modest (cond ≤ ~100).
+- **The attention/base NN** uses weight decay + dropout and keeps windowed features out
+  of the static branch by design, so its static block stays modest (cond ≤ ~100).
 
-Where it *does* bite: **Ridge coefficient "feature importance" plots are not
-trustworthy** under r ≈ 0.97 (coefficients split/flip between twins) — read SHAP on
-LightGBM (`analysis_shap_lgbm.py`) for attribution instead. Those plots are offline
-figures only (not surfaced in serving).
+Where it *does* bite: **Ridge coefficient "feature importance" plots are untrustworthy**
+under r ≈ 0.97 (coefficients split/flip between twins) — read SHAP on LightGBM
+(`analysis_shap_lgbm.py`) for attribution. Those plots are offline figures only (not
+surfaced in serving).
 
 ## The actionable gaps
 
 1. **QB and TE have no PCA before Ridge** (`ridge_pca_components=None`), so their Ridge
-   sees a ~1.5e16-conditioned matrix and leans entirely on alpha. They're also the only
-   skill positions without a dedicated collinearity audit. WR (PCA 30) and RB (PCA 80)
-   don't have this exposure.
+   sees a ~1e15-conditioned matrix and leans entirely on alpha. The hypothetical-PCA
+   probe shows ~55/53 components at 99% variance would bring both to **cond ≈ 17–18**
+   (well-conditioned), the same regime WR/RB/DST already enjoy. This is the motivation
+   for the **sequenced follow-up PR** that adds PCA to QB/TE (and K) configs — gated on a
+   per-position benchmark diff, since only Ridge could move and only where it's the best
+   model for a target.
 
-2. **WR and TE still carry redundancies RB already removed.** The single worst offender
-   is `opp_fantasy_pts_allowed_to_pos` ↔ `opp_recv_pts_allowed_to_pos` (r ≈ 0.99,
-   **static VIF ≈ 470 on both** for WR; 577 for TE) — the same exact-sum redundancy RB
-   dropped in its 2026-05 audit (RB's static block is now clean: **0 drop candidates**).
-   Plus the prior-season mean/max/std clusters (receptions↔targets, rushing↔carries).
+2. **WR and TE still carry the `opp_fantasy_pts_allowed_to_pos` exact-sum** that RB
+   dropped in its 2026-05 audit — r ≈ 0.997, **static VIF ≈ 1050 (WR) / 836 (TE)** on
+   both populations (not a rookie artifact; defense features aren't NaN for rookies).
+   Single worst redundancy in the repo.
+
+3. **RB's static block is not actually clean on the production population.** RB's own
+   audit (complete-case) reported 0 drop candidates; the imputed population surfaces 1
+   (`prior_season_mean_receiving_yards` ↔ `prior_season_mean_targets`, r = 0.951). A
+   reminder that complete-case audits understate prior-season redundancy.
 
 ### Drop candidates (static block, \|r\| > 0.95 AND VIF > 10 — investigate, don't auto-drop)
 
-- **QB (2):** `prior_season_std_rushing_yards` (keep `…_max_rushing_yards`),
-  `prior_season_mean_attempts` (keep `…_mean_passing_yards`).
-- **WR (4):** `opp_fantasy_pts_allowed_to_pos` (keep `opp_recv_pts_allowed_to_pos`, VIF 472/467),
-  `prior_season_std_rushing_yards`, `prior_season_mean_receptions` (keep `…_mean_targets`),
-  `prior_season_std_carries`.
-- **TE (6):** `opp_fantasy_pts_allowed_to_pos` (keep `opp_recv_pts_allowed_to_pos`, VIF 577/567),
-  `prior_season_std_carries`, `prior_season_max_rushing_yards`, `prior_season_mean_receptions`,
-  `prior_season_mean_rushing_yards`, `prior_season_std_receiving_yards` — the worst static block
-  of the six (VIF up to 577; prior-season carries/rushing VIFs of 69/70).
-- **RB / DST / K (0):** none — RB's audit already pruned these; DST/K are low-dimensional.
+Counts are on the **production (imputed)** population; top entries:
 
-These are NOT recommendations to act yet. Acting (PCA for QB/TE, or dropping the WR/TE
-opp-defense sum) requires a real pipeline run + benchmark diff — the LightGBM and NN
-paths are collinearity-robust, so the only model that could move is Ridge, and only if
-it's the best model for an affected target. That's the follow-up, scoped separately.
+- **QB (9):** `prior_season_mean_attempts` (keep `…_mean_passing_yards`), `prior_season_max_attempts`, `prior_season_max_passing_yards`, `prior_season_std_rushing_yards`, `prior_season_max_snap_pct`, … — entirely the prior-season aggregate block.
+- **WR (13):** `opp_fantasy_pts_allowed_to_pos` (VIF 1050) + the prior-season targets/receptions/receiving-yards/carries clusters.
+- **TE (14):** `opp_fantasy_pts_allowed_to_pos` (VIF 836) + the broadest prior-season block of the six.
+- **RB (1):** `prior_season_mean_receiving_yards` (keep `…_mean_targets`).
+- **DST / K (0):** none — low-dimensional and well-conditioned.
+
+These are NOT recommendations to act unilaterally. Acting (PCA for QB/TE/K, or dropping
+the WR/TE opp-defense sum) needs a real pipeline run + benchmark diff — the LightGBM and
+NN paths are collinearity-robust, so only Ridge could move, and only where it's the best
+model for an affected target.
 
 ## Validation
 
 The tool reproduces K's independently-measured conditioning: this run gives K
-**cond 8.27 / max VIF 2.3 / 0 drop candidates**, matching the standalone
-`analysis_k_feature_audit.py` (cond 8.33, no drops). RB's clean static block (0
-candidates) likewise matches the post-audit state from `analysis_rb_feature_audit.py`.
+**cond 8.27 / max VIF 2.3 / max|r| 0.777 / 0 drop candidates**, matching the standalone
+`analysis_k_feature_audit.py` (cond 8.33, no drops). K and DST are population-invariant
+(%cc 100/91), confirming the impute-vs-dropna split only moves the rookie-heavy skill
+positions.

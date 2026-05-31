@@ -20,11 +20,17 @@ way the production pipeline does, then computes:
      de-correlated, so a high VIF there is a real smell; the full set is
      saturated with by-construction rolling-window collinearity that the
      pair ranking conveys more legibly.
-  3. Condition number of the standardised **full** design matrix, reported
-     pre- and post-PCA when the position runs PCA before Ridge
-     (``cfg.ridge_pca_components``: WR=30, DST=20, RB=80; QB/TE/K=None) —
-     so you can see whether PCA actually fixes the conditioning. Thresholds:
-     ``<1e2`` well-conditioned, ``<1e4`` moderate, ``<1e6`` suspect,
+  3. Condition number of the standardised **full** design matrix, reported on
+     BOTH populations and against PCA:
+       - imputed (production): NaN/±inf -> 0 like ``feature_build.py:110``, the
+         full population the models train on (rookies + early-game rows kept);
+       - complete-case: listwise ``dropna()``, the textbook view — but only the
+         veteran-heavy subset with complete history (e.g. QB ~59% of rows);
+       - prod-PCA: post the PCA Ridge actually runs (``ridge_pca_components``:
+         WR=30, DST=20, RB=80; QB/TE/K=None), "—" when the position runs none;
+       - hypothetical PCA: components retaining 99% variance, computed for
+         EVERY position so you can see what PCA would buy QB/TE/K (which run none).
+     Thresholds: ``<1e2`` well-conditioned, ``<1e4`` moderate, ``<1e6`` suspect,
      ``>=1e6`` multicollinear (a skill-position pre-PCA reference is ~1.8e8).
   4. Drop candidates (``|r|>0.95`` AND a side ``VIF>10``) on the static
      block — reported as *candidates to investigate*, never auto-dropped.
@@ -104,6 +110,11 @@ SIGNAL_TARGETS = {
 DROP_R = 0.95
 DROP_VIF = 10.0
 
+# Variance retained by the "what would PCA buy this position" probe. 0.99 mirrors
+# the spirit of the configured Ridge PCA components (e.g. RB's 80 ≈ 99%+ variance)
+# and is applied uniformly so QB/TE/K (no production PCA) get a comparable number.
+PCA_VARIANCE_TARGET = 0.99
+
 
 # ───────────────────────── shared numeric helpers ──────────────────────────
 # (Ported verbatim from analysis_rb_feature_audit.py / analysis_k_feature_audit.py;
@@ -123,6 +134,48 @@ def _present_numeric(df: pd.DataFrame, cols: list[str]) -> list[str]:
             continue
         out.append(c)
     return out
+
+
+def _clean_features(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    """Return a copy of ``df`` with NaN/±inf in the present ``cols`` filled to 0.0.
+
+    Mirrors the production catch-all at ``src/shared/feature_build.py:110``
+    (``build_position_features``: ``replace([inf,-inf], nan).fillna(0)``), the
+    last NaN-handling step every model's feature matrix passes through. Using
+    this instead of listwise ``dropna()`` keeps the audit on the SAME full,
+    imputed population the models actually train on — not the veteran-heavy
+    complete-case subset (rookies have NaN ``prior_season_*``; a player's
+    early games have NaN rolling stats). dropna() silently restricted the QB
+    audit to ~59% of rows; production sees 100%. See PR #594.
+    """
+    out = df.copy()
+    present = [c for c in cols if c in out.columns]
+    if present:
+        out[present] = out[present].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return out
+
+
+def _pca_conditioning(
+    df: pd.DataFrame, cols: list[str], variance_threshold: float
+) -> tuple[int | None, float]:
+    """(#components, condition number) retaining ``variance_threshold`` of variance.
+
+    A threshold-free "what would PCA buy this position" probe — answers it
+    uniformly for the positions whose Ridge does NOT run PCA (QB/TE/K) as well
+    as those that do. Returns the smallest component count whose cumulative
+    explained-variance ratio reaches ``variance_threshold`` and the condition
+    number of that PCA-reduced matrix. ``(None, nan)`` if too few rows/cols.
+    Caller passes an already-imputed frame to measure the production population.
+    """
+    sub = df[cols].dropna()
+    if len(sub) < 50 or len(cols) < 2:
+        return None, float("nan")
+    X = StandardScaler().fit_transform(sub.to_numpy(dtype=float))
+    cumvar = np.cumsum(PCA().fit(X).explained_variance_ratio_)
+    n = int(np.searchsorted(cumvar, variance_threshold) + 1)
+    n = max(1, min(n, X.shape[1], X.shape[0]))
+    cond = float(np.linalg.cond(PCA(n_components=n).fit_transform(X)))
+    return n, cond
 
 
 def _high_corr_pairs(corr: pd.DataFrame, threshold: float) -> list[tuple[str, str, float]]:
@@ -411,17 +464,39 @@ def _audit_position(pos: str, splits_dir: Path, corr_threshold: float, top_n: in
         )
         print(f"  WARN: {len(missing)} feature(s) missing from frame (stale split?): {preview}")
 
-    full_present = _present_numeric(df, full_cols)
-    static_present = _present_numeric(df, static_cols)
+    # Production imputes NaN/±inf -> 0 (feature_build.py:110) and keeps every
+    # row. Build that imputed frame and report BOTH populations:
+    #   - complete-case (listwise dropna) — the textbook VIF/redundancy view;
+    #   - production (imputed) — what Ridge/NN actually factorize, incl. rookies
+    #     and early-game rows whose prior_season_*/rolling_* were NaN -> 0.
+    feature_universe = list(dict.fromkeys([*full_cols, *static_cols]))
+    present_universe = [c for c in feature_universe if c in df.columns]
+    n_rows = len(df)
+    if present_universe:
+        finite = df[present_universe].replace([np.inf, -np.inf], np.nan)
+        n_complete = int((~finite.isna().any(axis=1)).sum())
+    else:
+        n_complete = n_rows
+    df_imp = _clean_features(df, feature_universe)
+    pct_complete = 100 * n_complete / n_rows if n_rows else 0.0
+    print(
+        f"  populations: production(imputed)={n_rows:,} rows (100%)  |  "
+        f"complete-case={n_complete:,} ({pct_complete:.0f}%)"
+    )
+
+    # Present-numeric on the imputed frame: a column constant among veterans but
+    # 0 for rookies *does* vary post-fill, exactly as the model sees it.
+    full_present = _present_numeric(df_imp, full_cols)
+    static_present = _present_numeric(df_imp, static_cols)
     print(f"  features audited: full={len(full_present)} static={len(static_present)}")
 
-    # ── Correlations ──────────────────────────────────────────────────────
+    # ── Correlations (reported on the production/imputed population) ────────
     print("  computing Pearson correlations …")
-    full_pearson = df[full_present].corr(method="pearson")
-    static_pearson = df[static_present].corr(method="pearson")
+    full_pearson = df_imp[full_present].corr(method="pearson")
+    static_pearson = df_imp[static_present].corr(method="pearson")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        full_spearman = _spearman_matrix(df, full_present)
+        full_spearman = _spearman_matrix(df_imp, full_present)
 
     high_full = _high_corr_pairs(full_pearson, threshold=corr_threshold)
     high_static = _high_corr_pairs(static_pearson, threshold=corr_threshold)
@@ -432,23 +507,33 @@ def _audit_position(pos: str, splits_dir: Path, corr_threshold: float, top_n: in
 
     # ── VIF + condition number ────────────────────────────────────────────
     print("  computing VIF on static block …")
-    vif = _vif(df, static_present)
+    vif = _vif(df_imp, static_present)
     max_vif = max((v for v in vif.values() if not np.isnan(v)), default=float("nan"))
 
-    cond_pre, cond_post = _condition_number(df, full_present, pca_components)
+    # Condition number on BOTH populations, so the imputation effect is visible.
+    cond_pre, cond_post = _condition_number(df_imp, full_present, pca_components)
+    cond_complete, _ = _condition_number(df.replace([np.inf, -np.inf], np.nan), full_present, None)
     cond_label = _classify_condition_number(cond_pre)
     post_str = "—" if cond_post is None else f"{cond_post:.3g}"
     print(
-        f"  condition number (full set)  pre-PCA: {cond_pre:.3g} ({cond_label})   "
-        f"post-PCA({pca_components}): {post_str}"
+        f"  cond# full (imputed)   pre-PCA: {cond_pre:.3g} ({cond_label})   "
+        f"prod-PCA({pca_components}): {post_str}"
     )
-    cond_static_pre, _ = _condition_number(df, static_present, None)
-    print(f"  condition number (static)    : {cond_static_pre:.3g}")
+    print(f"  cond# full (complete-case)     : {cond_complete:.3g}")
+    # Hypothetical PCA for EVERY position (incl. QB/TE/K which run none in prod):
+    # what conditioning would retaining PCA_VARIANCE_TARGET variance achieve?
+    hyp_n, hyp_cond = _pca_conditioning(df_imp, full_present, PCA_VARIANCE_TARGET)
+    print(
+        f"  cond# full hypothetical PCA    : {hyp_cond:.3g} "
+        f"({hyp_n} comps @ {PCA_VARIANCE_TARGET:.0%} var)"
+    )
+    cond_static_pre, _ = _condition_number(df_imp, static_present, None)
+    print(f"  cond# static (imputed)         : {cond_static_pre:.3g}")
 
     # ── Signal sanity check + drop-candidate tie-break input ──────────────
     target_signal: dict[str, float] = {}
-    if signal_target and signal_target in df.columns:
-        rys = df[full_present].corrwith(df[signal_target])
+    if signal_target and signal_target in df_imp.columns:
+        rys = df_imp[full_present].corrwith(df_imp[signal_target])
         target_signal = {f: float(v) for f, v in rys.items() if not np.isnan(v)}
         print(f"\n  Top 10 features by |Pearson| with {signal_target} (signal sanity check):")
         for f, _v in rys.abs().sort_values(ascending=False).head(10).items():
@@ -473,14 +558,25 @@ def _audit_position(pos: str, splits_dir: Path, corr_threshold: float, top_n: in
     OUT_DIR.mkdir(exist_ok=True)
     payload = {
         "position": pos,
-        "n_rows_train": int(len(df)),
+        "nan_handling": "impute_zero_like_production (feature_build.py:110)",
+        "n_rows_train": int(n_rows),
+        "n_rows_complete_case": n_complete,
+        "pct_rows_complete_case": round(pct_complete, 1),
         "n_features_full": len(full_present),
         "n_features_static": len(static_present),
         "missing_from_frame": missing,
         "corr_threshold": corr_threshold,
         "ridge_pca_components": pca_components,
-        "condition_number_full": {"pre_pca": cond_pre, "post_pca": cond_post, "label": cond_label},
-        "condition_number_static": {"pre_pca": cond_static_pre},
+        "condition_number_full": {
+            "imputed_pre_pca": cond_pre,
+            "imputed_prod_pca": cond_post,
+            "complete_case_pre_pca": cond_complete,
+            "hypothetical_pca_components": hyp_n,
+            "hypothetical_pca_cond": hyp_cond,
+            "hypothetical_pca_variance": PCA_VARIANCE_TARGET,
+            "label": cond_label,
+        },
+        "condition_number_static": {"imputed_pre_pca": cond_static_pre},
         "max_abs_pearson_full": max_abs_r,
         "n_pairs_ge_0.95_full": len(full_ge_drop),
         "high_corr_pairs_full": [
@@ -512,8 +608,11 @@ def _audit_position(pos: str, splits_dir: Path, corr_threshold: float, top_n: in
     return {
         "position": pos,
         "n_features_full": len(full_present),
+        "pct_complete_case": round(pct_complete, 0),
         "cond_pre_pca": cond_pre,
+        "cond_complete_case": cond_complete,
         "cond_post_pca": cond_post,
+        "cond_hypothetical_pca": hyp_cond,
         "cond_label": cond_label,
         "max_vif_static": max_vif,
         "max_abs_pearson_full": max_abs_r,
@@ -524,25 +623,36 @@ def _audit_position(pos: str, splits_dir: Path, corr_threshold: float, top_n: in
 
 
 def _print_summary(rows: list[dict]) -> None:
-    print(f"\n\n{'=' * 96}\n=== cross-position collinearity summary ===\n{'=' * 96}")
+    print(f"\n\n{'=' * 110}\n=== cross-position collinearity summary ===\n{'=' * 110}")
+    print(
+        "  cond columns are condition number of the FULL feature matrix. "
+        "imp=production population (NaN->0); cc=complete-case (dropna);"
+    )
+    print(
+        "  prodPCA=PCA Ridge actually runs (— if none); hypPCA=hypothetical "
+        f"PCA @ {PCA_VARIANCE_TARGET:.0%} var (what PCA would buy a no-PCA position)."
+    )
     hdr = (
-        f"{'pos':<5s} {'n_feat':>6s} {'cond_pre':>10s} {'cond_post':>10s} "
-        f"{'label':<16s} {'maxVIF':>8s} {'max|r|':>7s} {'#r>=.95':>8s} {'#drop':>6s} {'status':<8s}"
+        f"{'pos':<5s} {'n_feat':>6s} {'%cc':>4s} {'cond_imp':>9s} {'cond_cc':>9s} "
+        f"{'prodPCA':>8s} {'hypPCA':>8s} {'label':<16s} {'maxVIF':>8s} {'max|r|':>7s} "
+        f"{'#r>=.95':>8s} {'#drop':>6s} {'status':<10s}"
     )
     print(hdr)
     print("-" * len(hdr))
     for r in rows:
         if r["status"] != "ok":
             print(
-                f"{r['position']:<5s} {'—':>6s} {'—':>10s} {'—':>10s} {'—':<16s} "
-                f"{'—':>8s} {'—':>7s} {'—':>8s} {'—':>6s} {r['status']:<8s}"
+                f"{r['position']:<5s} {'—':>6s} {'—':>4s} {'—':>9s} {'—':>9s} {'—':>8s} "
+                f"{'—':>8s} {'—':<16s} {'—':>8s} {'—':>7s} {'—':>8s} {'—':>6s} {r['status']:<10s}"
             )
             continue
-        post = "—" if r["cond_post_pca"] is None else f"{r['cond_post_pca']:.2e}"
+        post = "—" if r["cond_post_pca"] is None else f"{r['cond_post_pca']:.1e}"
         print(
-            f"{r['position']:<5s} {r['n_features_full']:>6d} {r['cond_pre_pca']:>10.2e} {post:>10s} "
-            f"{r['cond_label']:<16s} {r['max_vif_static']:>8.1f} {r['max_abs_pearson_full']:>7.3f} "
-            f"{r['n_pairs_ge_0.95_full']:>8d} {r['n_drop_candidates_static']:>6d} {r['status']:<8s}"
+            f"{r['position']:<5s} {r['n_features_full']:>6d} {r['pct_complete_case']:>3.0f}% "
+            f"{r['cond_pre_pca']:>9.1e} {r['cond_complete_case']:>9.1e} {post:>8s} "
+            f"{r['cond_hypothetical_pca']:>8.1e} {r['cond_label']:<16s} {r['max_vif_static']:>8.1f} "
+            f"{r['max_abs_pearson_full']:>7.3f} {r['n_pairs_ge_0.95_full']:>8d} "
+            f"{r['n_drop_candidates_static']:>6d} {r['status']:<10s}"
         )
 
 
