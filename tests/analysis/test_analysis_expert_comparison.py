@@ -90,8 +90,55 @@ def _sleeper_qb() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+_DST_TARGETS = (
+    "def_sacks",
+    "def_ints",
+    "def_fumble_rec",
+    "def_fumbles_forced",
+    "def_safeties",
+    "def_tds",
+    "def_blocked_kicks",
+    "special_teams_tds",
+    "points_allowed",
+    "yards_allowed",
+)
+
+
+def _model_df_dst() -> pd.DataFrame:
+    """Model DST test_df: teams T1..T6 over weeks 1-2 (player_id = team abbrev)."""
+    rows = []
+    for wk in (1, 2):
+        for i in range(1, 7):
+            actual = 6.0 + i + wk
+            rows.append(
+                {
+                    "player_id": f"T{i}",
+                    "season": 2025,
+                    "week": wk,
+                    "fantasy_points": actual,
+                    "pred_attn_nn_total": actual + (0.5 if i % 2 else -0.7),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _sleeper_dst() -> pd.DataFrame:
+    """Sleeper DST frame: teams T3..T8 (overlap w/ model = T3,T4,T5,T6). Team-keyed
+    player_id + the 10 DST target columns (varied so totals differ row-to-row)."""
+    rows = []
+    for wk in (1, 2):
+        for i in range(3, 9):
+            row = {"position": "DST", "player_id": f"T{i}", "season": 2025, "week": wk}
+            for j, t in enumerate(_DST_TARGETS):
+                row[t] = float((i + j + wk) % 3)
+            row["points_allowed"] = 14.0 + i
+            row["yards_allowed"] = 300.0 + 10.0 * i
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def _stub_model_loader(pos, eval_seasons, scoring_format):
-    return _model_df_qb()
+    return _model_df_dst() if pos == "DST" else _model_df_qb()
 
 
 def _stub_nflcom_loader(seasons):
@@ -99,7 +146,8 @@ def _stub_nflcom_loader(seasons):
 
 
 def _stub_sleeper_loader(seasons):
-    return _sleeper_qb()
+    # Both offense (QB) and DST rows, mirroring the real loader's combined frame.
+    return pd.concat([_sleeper_qb(), _sleeper_dst()], ignore_index=True)
 
 
 def _run(tmp_path, **kw):
@@ -155,15 +203,21 @@ def test_two_experts_each_same_sample_and_significance(tmp_path) -> None:
         assert (block["delta_mae"]["value"] < 0) == (block["model"]["mae"] < block["expert"]["mae"])
 
 
-def test_dst_skipped_for_both_experts(tmp_path) -> None:
+def test_sleeper_covers_dst_nflcom_skips(tmp_path) -> None:
     result = _run(tmp_path, positions=("DST",), n_boot=10)
+    # NFL.com has no DST projections -> skipped.
     assert result["experts"]["nflcom"]["positions"]["DST"]["skipped"] is True
-    assert result["experts"]["sleeper"]["positions"]["DST"]["skipped"] is True
+    # Sleeper now covers DST (team-keyed): model teams T1..T6 ∩ Sleeper T3..T8 =
+    # T3..T6 × 2 weeks = 8 matched.
+    sl_dst = result["experts"]["sleeper"]["positions"]["DST"]
+    assert not sl_dst.get("skipped")
+    assert sl_dst["n_matched"] == 8
+    assert set(sl_dst["model"]) >= {"mae", "rmse"}
 
 
-def test_sleeper_skips_kicker_offense_only(tmp_path) -> None:
+def test_sleeper_skips_kicker(tmp_path) -> None:
     result = _run(tmp_path, positions=("K",), n_boot=10)
-    # NFL.com covers K (totals-only); Sleeper is offense-only ⇒ K skipped.
+    # NFL.com covers K (totals-only); Sleeper covers offense + DST but not K.
     assert result["experts"]["sleeper"]["positions"]["K"]["skipped"] is True
 
 

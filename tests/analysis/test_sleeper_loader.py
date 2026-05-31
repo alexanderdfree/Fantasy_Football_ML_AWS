@@ -67,13 +67,27 @@ def _fake_reader(url: str) -> list:
             },
         },
         {
-            # DEF record — must be dropped (offense-only ingest).
-            "player_id": "SF",
+            # DST record — ingested (team-keyed). "LAR" exercises the LAR->LA fixup;
+            # player.team_abbr is null (the team is at the record top level).
+            "player_id": "LAR",
             "season": season,
             "week": week,
             "company": "rotowire",
-            "player": {"position": "DEF", "first_name": "", "last_name": "", "team_abbr": "SF"},
-            "stats": {"sack": 3.0, "pts_ppr": 8.0},
+            "team": "LAR",
+            "player": {"position": "DEF", "first_name": "", "last_name": "", "team_abbr": None},
+            "stats": {
+                "sack": 2.5,
+                "int": 0.8,
+                "fum_rec": 0.5,
+                "ff": 0.7,
+                "safe": 0.02,
+                "def_td": 0.1,
+                "blk_kick": 0.05,
+                "st_td": 0.04,
+                "pts_allow": 21.0,
+                "yds_allow": 340.0,
+                "pts_ppr": 7.0,
+            },
         },
         {
             # Unprojected roster placeholder (no pts_ppr, no mapped stat) — must
@@ -111,22 +125,51 @@ def test_module_imports_cleanly() -> None:
     assert mod._MIN_SEASON == 2018
 
 
-def test_column_mapping_and_offense_filter(tmp_path) -> None:
+def test_offense_mapping_and_placeholder_filter(tmp_path) -> None:
     df = mod.load_sleeper_projections(
         [2024], cache_dir=str(tmp_path), weeks=[1, 2], reader=_fake_reader
     )
-    # 2 projected offense players × 2 weeks; DEF dropped (offense filter) and the
-    # unprojected QB placeholder dropped (no stat line).
-    assert len(df) == 4
-    assert set(df["position"]) == {"QB", "RB"}
+    # Per week: QB + RB + DST (the unprojected QB placeholder is dropped) -> 6 rows.
+    assert len(df) == 6
+    assert set(df["position"]) == {"QB", "RB", "DST"}
     assert "99999" not in set(df["sleeper_player_id"])  # placeholder excluded
     qb = df[(df["position"] == "QB") & (df["week"] == 1)].iloc[0]
     assert qb["passing_yards"] == 210.0
     assert qb["passing_tds"] == 1.5
     assert qb["interceptions"] == 0.6
     assert qb["sleeper_player_id"] == "4881"
-    # Missing-by-position stats are 0-filled (QB has no receiving stats here).
+    # Cross-position stats are 0-filled (QB carries no receiving / DST stats here).
     assert qb["receiving_yards"] == 0.0
+    assert qb["def_sacks"] == 0.0
+
+
+def test_dst_mapping_and_team_fixup(tmp_path) -> None:
+    df = mod.load_sleeper_projections(
+        [2024], cache_dir=str(tmp_path), weeks=[1], reader=_fake_reader
+    )
+    dst = df[df["position"] == "DST"]
+    assert len(dst) == 1
+    row = dst.iloc[0]
+    assert row["sleeper_player_id"] == "LA"  # LAR -> LA fixup (nflverse convention)
+    assert row["team"] == "LA"
+    assert row["def_sacks"] == 2.5
+    assert row["def_ints"] == 0.8
+    assert row["special_teams_tds"] == 0.04  # st_td -> special_teams_tds
+    assert row["points_allowed"] == 21.0
+    assert row["yards_allowed"] == 340.0
+    assert row["passing_yards"] == 0.0  # offense targets 0-filled on a DST row
+
+
+def test_dst_team_keyed_offense_gsis(tmp_path) -> None:
+    df = mod.load_sleeper_with_gsis_id(
+        [2024],
+        cache_dir=str(tmp_path),
+        weeks=[1],
+        reader=_fake_reader,
+        player_ids_loader=_fake_player_ids,
+    )
+    assert df[df["position"] == "DST"].iloc[0]["player_id"] == "LA"  # team-keyed, no gsis
+    assert df[df["position"] == "QB"].iloc[0]["player_id"] == "00-0034796"  # offense gsis-bridged
 
 
 def test_gsis_join(tmp_path) -> None:

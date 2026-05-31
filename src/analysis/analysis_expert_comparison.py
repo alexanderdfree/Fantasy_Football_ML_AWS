@@ -27,7 +27,7 @@ Gneiting (2011) / Taggart (2022) basis.
 Experts:
   - **NFL.com** (hvpkod archive): QB/RB/WR/TE/K. DST skipped (no projections); K
     is totals-only (standard-scoring, not PPR-decomposable).
-  - **Sleeper (RotoWire)**: QB/RB/WR/TE (offense only). A single provider, not a
+  - **Sleeper (RotoWire)**: QB/RB/WR/TE + DST (K out of scope). A single provider, not a
     consensus. PROVENANCE CAVEAT — Sleeper's historical projections may be
     backfilled; sanity-check RotoWire's MAE against NFL.com's (a plausible expert
     lands ~5-6 MAE at QB; an implausibly low number signals look-ahead).
@@ -77,7 +77,11 @@ from src.analysis.significance import (
 from src.analysis.sleeper_loader import load_sleeper_with_gsis_id
 from src.config import TEST_SEASONS, TOP_K_RANKING
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
-from src.shared.aggregate_targets import POSITION_TARGET_MAP, predictions_to_fantasy_points
+from src.shared.aggregate_targets import (
+    DST_TARGETS,
+    POSITION_TARGET_MAP,
+    predictions_to_fantasy_points,
+)
 from src.shared.evaluation import compute_metrics, compute_ranking_metrics
 
 EVAL_SEASONS_DEFAULT: tuple[int, ...] = tuple(TEST_SEASONS) if TEST_SEASONS else (2025,)
@@ -139,15 +143,17 @@ def _project_nflcom_expert(raw_df: pd.DataFrame, pos: str, scoring_format: str) 
 
 
 def _project_sleeper_to_ppr(raw_df: pd.DataFrame, pos: str, scoring_format: str) -> pd.DataFrame:
-    """Aggregate Sleeper's raw-stat projections to PPR fantasy points (offense).
+    """Aggregate Sleeper's raw-stat projections to PPR fantasy points.
 
-    Mirrors ``_project_nflcom_to_ppr`` but reads the Sleeper frame (player_id =
-    gsis_id from the crosswalk) and emits the standard ``expert_pred_total`` column.
+    Mirrors ``_project_nflcom_to_ppr`` but reads the Sleeper frame and emits the
+    standard ``expert_pred_total`` column. Offense (QB/RB/WR/TE) uses
+    ``POSITION_TARGET_MAP``; DST uses ``DST_TARGETS`` and routes through the tier-based
+    DST aggregator. ``predictions_to_fantasy_points`` picks the right path by position.
     """
     pos_df = raw_df[(raw_df["position"] == pos) & raw_df["player_id"].notna()].copy()
     if pos_df.empty:
         return _empty_expert_frame()
-    targets = list(POSITION_TARGET_MAP[pos].keys())
+    targets = list(DST_TARGETS) if pos == "DST" else list(POSITION_TARGET_MAP[pos].keys())
     pred_dict = {t: pos_df[t].to_numpy() for t in targets}
     out = pos_df[_KEY_COLS].reset_index(drop=True).copy()
     out[_EXPERT_PRED_COL] = predictions_to_fantasy_points(pos, pred_dict, scoring_format)
@@ -170,7 +176,7 @@ def _build_experts(nflcom_loader, sleeper_loader) -> list[ExpertSource]:
             label="Sleeper (RotoWire)",
             load=sleeper_loader or load_sleeper_with_gsis_id,
             project=_project_sleeper_to_ppr,
-            skipped=frozenset({"DST", "K"}),  # offense only this cut
+            skipped=frozenset({"K"}),  # offense + DST; K is totals-only (out of scope)
             note=_SLEEPER_NOTE,
         ),
     ]
@@ -520,7 +526,7 @@ def _parse_args() -> argparse.Namespace:
         choices=list(TARGET_POSITIONS_DEFAULT),
         metavar="POS",
         help="Positions to evaluate (default: all). Per expert, unsupported positions are skipped "
-        "(NFL.com: no DST; Sleeper: offense only).",
+        "(NFL.com: no DST; Sleeper: offense + DST, no K).",
     )
     parser.add_argument("--output-dir", default=OUTPUT_DIR_DEFAULT)
     parser.add_argument("--n-boot", type=int, default=N_BOOT_DEFAULT, help="Bootstrap replicates")
