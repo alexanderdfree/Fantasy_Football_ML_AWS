@@ -2731,6 +2731,9 @@ def api_comparison():
             "experts_meta": experts.get("experts_meta", {}),
             "top_n": experts.get("top_n"),
             "subsets": out_subsets,
+            # Per-source residual σ (multi-season, expert-only). Static — straight
+            # from the committed JSON; no live model counterpart (see the block's note).
+            "expert_reliability": experts.get("expert_reliability"),
         }
     )
 

@@ -122,6 +122,18 @@ def _fake_experts():
             }
         return out
 
+    def rel_cell(sigma):
+        return {
+            "n": 100,
+            "mae": 5.0,
+            "rmse": 7.0,
+            "r2": 0.3,
+            "bias": 0.4,
+            "sigma": sigma,
+            "per_season": {},
+            "seasons": [2024, 2025],
+        }
+
     return {
         "generated_at": "2026-05-31T00:00:00+00:00",
         "scoring": "ppr",
@@ -129,6 +141,19 @@ def _fake_experts():
         "experts_meta": {"model": {}, "nflcom": {"note": "n"}, "rotowire": {"note": "r"}},
         "top30_ids": {p: [f"{p}000", f"{p}001"] for p in _POSITIONS},
         "subsets": {"all": subset(1.0), "top30": subset(1.1)},
+        "expert_reliability": {
+            "seasons": [2024, 2025],
+            "scoring": "ppr",
+            "residual_convention": "projection_minus_actual",
+            "note": "Residual σ ... provenance ...",
+            "positions": {
+                p: {
+                    "nflcom": None if p == "DST" else rel_cell(6.9),
+                    "rotowire": None if p == "K" else rel_cell(7.4),
+                }
+                for p in _POSITIONS
+            },
+        },
     }
 
 
@@ -162,6 +187,24 @@ def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_
     assert top_qb["nflcom"]["mae"] == 5.5  # 5.0 * 1.1
 
     assert body["generated_at"] and "experts_meta" in body
+
+
+@pytest.mark.integration
+def test_comparison_passes_expert_reliability_through(app_module, synthetic_cache, monkeypatch):
+    """The per-source residual-σ block is forwarded verbatim from the committed JSON,
+    including the position-coverage gaps (NFL.com no-DST, RotoWire no-K)."""
+    monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
+    app_module._cache.update(synthetic_cache)
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        body = c.get("/api/comparison").get_json()
+
+    rel = body["expert_reliability"]
+    assert rel["seasons"] == [2024, 2025]
+    assert rel["positions"]["QB"]["nflcom"]["sigma"] == 6.9
+    assert rel["positions"]["QB"]["rotowire"]["sigma"] == 7.4
+    assert rel["positions"]["DST"]["nflcom"] is None
+    assert rel["positions"]["K"]["rotowire"] is None
 
 
 @pytest.mark.integration
@@ -231,3 +274,13 @@ def test_committed_expert_summary_contract():
         ids = data["top30_ids"][pos]
         assert 0 < len(ids) <= data["top_n"]
     assert "experts_meta" in data and "generated_at" in data
+
+    # Per-source residual-σ block (expert uncertainty): multi-season, expert-only,
+    # same coverage holes as the head-to-head (NFL.com no DST, RotoWire no K).
+    rel = data["expert_reliability"]
+    assert rel["seasons"] and rel["residual_convention"] == "projection_minus_actual"
+    assert set(rel["positions"]) == set(_POSITIONS)
+    assert rel["positions"]["DST"]["nflcom"] is None
+    assert rel["positions"]["K"]["rotowire"] is None
+    qb_nfl_rel = rel["positions"]["QB"]["nflcom"]
+    assert {"n", "mae", "rmse", "bias", "sigma"} <= set(qb_nfl_rel)

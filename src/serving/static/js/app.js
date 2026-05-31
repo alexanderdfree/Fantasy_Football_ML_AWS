@@ -1158,6 +1158,7 @@ async function loadComparison() {
         if (comparisonData.error) throw new Error(comparisonData.error);
         comparisonLoaded = true;
         renderComparisonTables();
+        renderComparisonReliability();
         renderComparisonNotes();
     } catch (e) {
         console.error("Failed to load comparison:", e);
@@ -1225,6 +1226,60 @@ function renderComparisonTables() {
     const top30Body = document.getElementById("comparison-top30-body");
     if (allBody) allBody.innerHTML = renderComparisonRows(subsets.all || {});
     if (top30Body) top30Body.innerHTML = renderComparisonRows(subsets.top30 || {});
+}
+
+// Source reliability — per-source residual σ (multi-season, expert-only). One
+// table, always σ (unaffected by the MAE/RMSE/R² toggle); lower σ = steadier.
+const RELIABILITY_SOURCES = [
+    { key: "nflcom", label: "NFL.com" },
+    { key: "rotowire", label: "RotoWire" },
+];
+
+function renderComparisonReliability() {
+    const block = document.getElementById("comparison-reliability-block");
+    const body = document.getElementById("comparison-reliability-body");
+    if (!block || !body) return;
+    const rel = comparisonData && comparisonData.expert_reliability;
+    if (!rel || !rel.positions) {
+        block.style.display = "none";
+        return;
+    }
+    block.style.display = "";
+
+    // Span only, not a season count: NFL.com's archive is missing 2020, so per-source
+    // coverage differs within the window — the per-cell sample size (hover) is the honest n.
+    const seasons = rel.seasons || [];
+    const spanEl = document.getElementById("comparison-reliability-span");
+    if (spanEl && seasons.length) {
+        spanEl.textContent = `${seasons[0]}–${seasons[seasons.length - 1]}`;
+    }
+
+    let anyTotalsOnly = false;
+    body.innerHTML = COMPARISON_POSITIONS.map(pos => {
+        const cell = rel.positions[pos] || {};
+        const sigmas = RELIABILITY_SOURCES.map(s => (cell[s.key] ? cell[s.key].sigma : null)).filter(
+            v => v !== null && v !== undefined && !Number.isNaN(v)
+        );
+        const best = sigmas.length ? Math.min(...sigmas) : null;
+        const tds = RELIABILITY_SOURCES.map(s => {
+            const b = cell[s.key];
+            if (!b || b.sigma === null || b.sigma === undefined || Number.isNaN(b.sigma)) {
+                return `<td class="comparison-num comparison-empty">—</td>`;
+            }
+            const isBest = best !== null && Math.abs(b.sigma - best) < 1e-9;
+            const cls = "comparison-num" + (isBest ? " comparison-best" : "");
+            if (b.totals_only) anyTotalsOnly = true;
+            const star = b.totals_only ? `<span class="comparison-arch">totals-only*</span>` : "";
+            const biasTxt = (b.bias >= 0 ? "+" : "") + b.bias.toFixed(2);
+            const dir = b.bias >= 0 ? "over" : "under";
+            const title = `bias ${biasTxt} pts (${dir}-projects) · n=${b.n}`;
+            return `<td class="${cls}" title="${escapeHtml(title)}">${b.sigma.toFixed(2)}${star}</td>`;
+        }).join("");
+        return `<tr><td class="comparison-pos">${pos}</td>${tds}</tr>`;
+    }).join("");
+
+    const noteEl = document.getElementById("comparison-reliability-note");
+    if (noteEl) noteEl.innerHTML = rel.note ? `<p>${escapeHtml(rel.note)}</p>` : "";
 }
 
 function renderComparisonNotes() {
