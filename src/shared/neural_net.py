@@ -353,12 +353,13 @@ class AttentionPool(nn.Module):
     ``exp(0)=1`` → behaviour identical to the baseline at step zero.
 
     Optional ``use_alibi_bias`` adds an ALiBi-style time-decay bias to the
-    pre-softmax attention scores: ``score(b, h, s) += -slope[h] * games_ago(b, s)``.
-    ``games_ago`` is computed per row from the mask (caller must place real
-    games at positions ``0..n_real-1``, oldest first) so older games get
-    a larger additive penalty. Complements or replaces the absolute learned
-    ``pos_embedding`` on the parent models — ALiBi generalises to variable
-    sequence lengths without an extra parameter table.
+    pre-softmax attention scores: ``score(b, h, s) += -slope[h] * games_ago(s)``.
+    Sequences are newest-first (caller places the most-recent real game at
+    position 0, older games at higher indices, right-padded), so ``games_ago``
+    is simply the position index ``s`` and older games get a larger additive
+    penalty. Complements or replaces the absolute learned ``pos_embedding`` on
+    the parent models — ALiBi generalises to variable sequence lengths without
+    an extra parameter table.
 
     Optional ``cond_dim`` enables opponent/context-conditioned queries. When
     set >0, forward expects a ``context: [batch, cond_dim]`` tensor; queries
@@ -491,17 +492,15 @@ class AttentionPool(nn.Module):
             attn = attn * inv_t
 
         if self.use_alibi_bias:
-            # Per-row games_ago: the most-recent real game is 0, the oldest is
-            # n_real-1. With right-padding, position ``s`` of a row with
-            # ``n_real`` real games has games_ago = n_real - 1 - s. When mask
-            # is None (tests), all positions are treated as real.
+            # Sequences are newest-first (index 0 = most-recent game, older games
+            # at higher indices, right-padded — see
+            # src.features.engineer.build_game_history_arrays). So games_ago is
+            # just the position index, independent of n_real: position ``s`` is
+            # ``s`` games ago. Padded positions get a large games_ago but are
+            # masked to -inf below, so their value is irrelevant.
             seq_len = keys.size(1)
-            if mask is not None:
-                n_real = mask.sum(dim=-1, keepdim=True)  # [batch, 1]
-            else:
-                n_real = torch.full((batch_size, 1), seq_len, device=keys.device, dtype=torch.long)
             positions = torch.arange(seq_len, device=keys.device)  # [seq_len]
-            games_ago = (n_real - 1 - positions).clamp(min=0).float()  # [batch, seq_len]
+            games_ago = positions.float().unsqueeze(0)  # [1, seq_len]
             # Slopes repeated across targets so target t shares the same slope
             # set across its n_heads. Flat order matches q_flat reshape, so
             # ``slopes.repeat(n_targets)`` yields [h0, h1, ..., h0, h1, ...].

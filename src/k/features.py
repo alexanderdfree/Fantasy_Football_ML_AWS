@@ -141,12 +141,14 @@ def build_nested_kick_history(
 
     For each row in `weekly_df`, gathers that kicker's prior-week kicks from
     `kicks_df` (same player_id, same season, `kicks.week < weekly.week`),
-    bucketed by prior-game index. Outer dim is game-ordered oldest-first
-    (most recent game in the last real slot). Within a game, kicks are sorted
-    by ``play_id`` (PBP's monotonically increasing per-play sequence number)
-    so within-game ordering is deterministic. Truncation keeps the most recent
-    `max_games` games and, within each game, the last `max_kicks_per_game`
-    kicks under the play_id ordering.
+    bucketed by prior-game index. Outer dim is game-ordered newest-first
+    (most recent game at outer index 0, older games at higher indices,
+    right-padded — mirrors :func:`src.features.engineer.build_game_history_arrays`
+    so the attention branch's positional embedding is recency-indexed). Within a
+    game, kicks are sorted by ``play_id`` (PBP's monotonically increasing per-play
+    sequence number) so within-game ordering is deterministic. Truncation keeps the
+    most recent `max_games` games and, within each game, the last
+    `max_kicks_per_game` kicks under the play_id ordering.
 
     Returns:
         X_history:  [n, max_games, max_kicks_per_game, kick_dim] float32, zero-padded
@@ -207,7 +209,10 @@ def build_nested_kick_history(
             if cut == 0:
                 continue
             start = max(0, cut - max_games)
-            for g_idx, slot in enumerate(range(start, cut)):
+            # reversed() so the most-recent prior game lands at outer index 0,
+            # older games at higher indices (newest-first, right-padded). Within
+            # a game the kick ordering below is unchanged.
+            for g_idx, slot in enumerate(reversed(range(start, cut))):
                 kick_idx = prior_idx_list[slot]
                 if len(kick_idx) > max_kicks_per_game:
                     kick_idx = kick_idx[-max_kicks_per_game:]

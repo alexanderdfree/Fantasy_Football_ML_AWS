@@ -3,7 +3,7 @@
 
 Covers:
 - Per-game aggregation shape and stat correctness.
-- Sequence builder padding, mask, oldest→newest ordering.
+- Sequence builder padding, mask, newest→oldest ordering.
 - Strict leakage guard (target week's own defense stats must NOT appear in
   the sequence) and season-boundary behaviour.
 - Robustness to missing columns / empty frames.
@@ -127,8 +127,8 @@ class TestBuildOppDefenseHistoryArrays:
         assert mask[0].sum() == 2
         values = X_opp[0, :2, 0]  # first stat = def_sacks
         assert 30.0 not in values, f"week-3 value leaked into history: {values}"
-        # Oldest → newest ordering: week 1 (=10) first, week 2 (=20) second.
-        np.testing.assert_array_equal(values, [10.0, 20.0])
+        # Newest → oldest ordering: week 2 (=20) first, week 1 (=10) second.
+        np.testing.assert_array_equal(values, [20.0, 10.0])
 
     def test_season_boundary_isolation(self):
         """A defense's games from a prior season must NOT appear in the
@@ -158,7 +158,8 @@ class TestBuildOppDefenseHistoryArrays:
         assert mask[0].sum() == 2
         values = X_opp[0, :2, 0]
         assert 999.0 not in values, "prior-season value leaked across season boundary"
-        np.testing.assert_array_equal(values, [1.0, 2.0])
+        # Newest → oldest ordering: week 2 (=2.0) first, week 1 (=1.0) second.
+        np.testing.assert_array_equal(values, [2.0, 1.0])
 
     def test_truncation_keeps_most_recent(self):
         """When prior games > max_seq_len, the sequence keeps the MOST RECENT
@@ -178,8 +179,9 @@ class TestBuildOppDefenseHistoryArrays:
             df, per_game, OPP_DEFENSE_HISTORY_STATS, max_seq_len=3
         )
         assert mask[0].sum() == 3
-        # Weeks 7, 8, 9 kept (oldest dropped); weeks 1-6 absent.
-        np.testing.assert_array_equal(X_opp[0, :3, 0], [7.0, 8.0, 9.0])
+        # Weeks 7, 8, 9 kept (oldest dropped); weeks 1-6 absent. Newest-first:
+        # week 9 at index 0, then 8, then 7.
+        np.testing.assert_array_equal(X_opp[0, :3, 0], [9.0, 8.0, 7.0])
 
     def test_empty_per_game_returns_zero_filled(self):
         df = pd.DataFrame([{"player_id": "p1", "opponent_team": "X", "season": 2023, "week": 3}])
