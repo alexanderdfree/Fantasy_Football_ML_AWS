@@ -58,6 +58,19 @@ def test_split_cores_clamps_when_more_positions_than_cores():
     assert chunks == [[0], [1], [2]]  # clamped to one core each, no empties
 
 
+def test_plan_slots_sizes_match_active_count_and_are_disjoint():
+    phys = list(range(16))
+    # cold start: 6 positions launched at once -> 6 disjoint slices covering all 16 cores,
+    # each sized so its LGBM_N_JOBS (= slice length) never exceeds its core count.
+    plan = pt._plan_slots([], ["WR", "RB", "QB", "TE", "DST", "K"], phys)
+    assert [len(plan[p]) for p in ["WR", "RB", "QB", "TE", "DST", "K"]] == [3, 3, 3, 3, 2, 2]
+    assert sorted(c for cs in plan.values() for c in cs) == phys  # disjoint, full coverage
+    # incremental fill: 1 survivor + 1 new -> two disjoint 8-core halves
+    plan2 = pt._plan_slots(["WR"], ["RB"], phys)
+    assert len(plan2["WR"]) == 8 and len(plan2["RB"]) == 8
+    assert set(plan2["WR"]).isdisjoint(plan2["RB"])
+
+
 def test_sort_by_cost_heaviest_first():
     # arbitrary input order -> WR/RB/QB ahead of the lighter TE/DST/K
     assert pt._sort_by_cost(["K", "QB", "DST", "WR", "TE", "RB"]) == [

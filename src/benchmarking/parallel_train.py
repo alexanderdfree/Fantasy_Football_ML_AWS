@@ -118,6 +118,21 @@ def _split_cores(phys: list[int], n: int) -> list[list[int]]:
     return chunks
 
 
+def _plan_slots(active_order: list[str], new: list[str], phys: list[int]) -> dict[str, list[int]]:
+    """Assign each position a physical-core slice sized to the post-fill active count.
+
+    ``active_order`` are the still-running positions (front of the list so their slices
+    stay stable), ``new`` are the ones about to launch. Returns ``{pos: cores}`` for the
+    combined set. A position is **launched with** its slice, which sets both its CPU
+    affinity *and* its ``LGBM_N_JOBS`` / ``LOKY_MAX_CPU_COUNT`` thread caps — so the slice
+    must be right from the start: re-pinning a running process later widens its affinity
+    but cannot change its (immutable) thread-count env.
+    """
+    order_after = list(active_order) + list(new)
+    chunks = _split_cores(phys, len(order_after))
+    return dict(zip(order_after, chunks, strict=False))
+
+
 def _pin_self(cores: list[int]):
     """Return a ``preexec_fn`` that pins the forked child to ``cores`` before exec."""
     cset = set(cores)
@@ -312,14 +327,25 @@ def orchestrate(positions, jobs, passthrough, note, no_sync, dry_run) -> int:
     )
 
     while queue or active:
-        launched = False
-        while queue and len(active) < jobs:
-            pos = queue.popleft()
-            active[pos] = _launch(pos, phys, tmpdir, logdir, passthrough)
-            print(f"[{pos}] launched (pid {active[pos]['proc'].pid})", flush=True)
-            launched = True
-        if launched:
-            _rebalance(active, phys, announce=False)  # assign disjoint slices to the new set
+        if queue and len(active) < jobs:
+            new = []
+            while queue and len(active) + len(new) < jobs:
+                new.append(queue.popleft())
+            # Size each slice to the post-fill active count *before* launching, so each
+            # worker's LGBM_N_JOBS/affinity match its slice (a launched process's
+            # thread-count env can't be changed afterwards — only its affinity).
+            plan = _plan_slots(list(active.keys()), new, phys)
+            for pos in new:
+                active[pos] = _launch(pos, plan[pos], tmpdir, logdir, passthrough)
+                print(
+                    f"[{pos}] launched (pid {active[pos]['proc'].pid}) cores {plan[pos]}",
+                    flush=True,
+                )
+            # Adding workers narrows the survivors' slices; re-pin their affinity to match.
+            for pos, info in active.items():
+                if pos not in new and list(info["cores"]) != list(plan[pos]):
+                    info["cores"] = plan[pos]
+                    _repin(info["proc"].pid, plan[pos])
 
         finished = [p for p, info in active.items() if info["proc"].poll() is not None]
         if not finished:
