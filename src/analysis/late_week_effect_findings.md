@@ -77,9 +77,10 @@ what "Huber already absorbs the outliers + more data helps" predicts.
   with 2021+'s *penultimate* wk17 — an era-contaminated median in principle. **No
   production impact: the median branch is dead code.** `src/features/engineer.py`
   zero-fills every `snap_pct` NaN (`groupby(["player_id","season"]).shift(1).fillna(0)`,
-  L290) *before* any split function runs, so by the time `impute_snap_pct` executes (in
-  `temporal_split` / `expanding_window_folds` / `rolling_origin_folds`, all of which read
-  the post-`build_features` on-disk splits) there are **0 NaN** to fill — confirmed
+  L290) *before* any split function runs, so by the time `impute_snap_pct` executes — in
+  `temporal_split` (on that in-memory post-`build_features` frame) and in the CV /
+  rolling-origin folds (`expanding_window_folds` / `rolling_origin_folds`, which re-read
+  the post-`build_features` on-disk splits) — there are **0 NaN** to fill — confirmed
   empirically (train/val/test all 0.00% NaN `snap_pct`; the 11–21% exact-zero mass is the
   lag signature). The era-conflated median is never computed against a real row, and would
   be small anyway (week-17 era-Δ ≤ 0.06 snap-share across positions). Left unchanged —
