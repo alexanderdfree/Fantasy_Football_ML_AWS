@@ -44,7 +44,7 @@ time python -m src.wr.run_pipeline --device mps
 ```
 
 If MPS is meaningfully faster on your Mac, the default can be flipped later in the `auto` branch of
-[src/shared/utils.py](src/shared/utils.py). See CLAUDE.md's *Platform & hardware targets* for the
+[src/shared/utils.py](src/shared/utils.py). See [AGENTS.md](AGENTS.md)'s *Platform & hardware targets* for the
 full per-platform matrix and rationale.
 
 ## Windows 11 + NVIDIA GPU install (e.g. RTX 5080)
@@ -309,3 +309,17 @@ scripts/claude-memory-sync.sh push --prune    # mirror: also delete S3 files rem
 - **Credentials:** needs AWS creds (env or `~/.aws/credentials`); it cleanly no-ops when the `aws` CLI or creds are absent, so it is safe in a hook. Override the location with `FF_MEMORY_S3_BUCKET` / `FF_MEMORY_S3_PREFIX`.
 - **Full-auto:** `bash scripts/bootstrap-claude-wsl.sh --with-memory-sync` installs `SessionStart` (pull) + `Stop` (push) hooks into your global `~/.claude/settings.json` (async, non-blocking) and does one initial pull — so sync happens hands-off. The hooks self-scope to repos containing the script, so they no-op everywhere else.
 - **Durable vs incidental:** this syncs Claude's *incidental, machine-local* recall across your boxes. **Durable, share-worthy project knowledge belongs in version-controlled [AGENTS.md](AGENTS.md)** — the cross-agent source of truth both Claude Code and Codex read — not in synced auto-memory. (This S3 sync is **Claude-only by design**; Codex keeps its own *global, local-by-design* memory with no official cross-machine sync — see [AGENTS.md](AGENTS.md) § "Codex specifics".)
+
+## Bootstrap Codex local prompts (owner only)
+
+Codex project hooks are version-controlled under [`.codex/`](.codex/) and load when the repo is trusted. After hook changes, open `/hooks` in Codex, review the changed commands, and trust them.
+
+Codex custom slash prompts are local-user files, not repo-scoped files. The repo keeps templates in [`.codex/prompts/`](.codex/prompts/); install or refresh the actual `~/.codex/prompts/*.md` copies with:
+
+```bash
+scripts/bootstrap-codex-local.sh
+```
+
+Restart Codex after installing prompts. They appear as `/prompts:pre-pr-judge`, `/prompts:pre-pr-gate`, `/prompts:post-pr-followup`, `/prompts:post-session-critique`, and `/prompts:solve-issues`.
+
+Known difference from Claude Code: Codex `SessionStart` hooks can add model-visible context, but they cannot persist environment exports like Claude's `CLAUDE_ENV_FILE` flow. Use the normal setup instructions above for the Python environment; the Codex pre-PR hook will probe the main worktree's `.venv` when the current worktree lacks one.
