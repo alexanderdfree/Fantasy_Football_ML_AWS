@@ -224,7 +224,8 @@ def _run_nn_training(
     # of the default ``foreach`` multi-tensor path's several launches — a
     # launch-overhead win for this small, host-bound model (~20% GPU util).
     # CUDA-only; ``fused=False`` is the valid no-op on CPU/MPS.
-    _fused = next(model.parameters()).is_cuda
+    _first_param = next(model.parameters(), None)
+    _fused = _first_param is not None and _first_param.is_cuda
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=lr, weight_decay=weight_decay, fused=_fused
     )
