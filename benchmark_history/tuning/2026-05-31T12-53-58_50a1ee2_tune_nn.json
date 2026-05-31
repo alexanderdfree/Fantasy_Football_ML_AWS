@@ -1,0 +1,151 @@
+{
+  "run_id": "2026-05-31T12:53:58_50a1ee2_tune_nn",
+  "timestamp": "2026-05-31T12:53:58",
+  "git_hash": "50a1ee2",
+  "kind": "tune_nn",
+  "n_trials": 15,
+  "positions": [
+    "QB",
+    "RB",
+    "WR",
+    "TE",
+    "K",
+    "DST"
+  ],
+  "results": {
+    "QB": {
+      "best_trial": 2,
+      "best_val_loss": 121.17379760742188,
+      "best_params": {
+        "attn_d_model": 32,
+        "attn_n_heads": 2,
+        "attn_encoder_hidden_dim": 0,
+        "attn_dropout": 0.114161731126458,
+        "attn_lr": 0.004759657337746305,
+        "attn_batch_size": 512,
+        "nn_head_hidden": 64,
+        "nn_dropout": 0.11188848781596974,
+        "nn_lr": 0.0017387306085589573,
+        "nn_weight_decay": 1.6028958660435672e-05,
+        "nn_batch_size": 128,
+        "nn_backbone_layers": [
+          64
+        ]
+      },
+      "n_trials": 15,
+      "elapsed_seconds": 180.3
+    },
+    "RB": {
+      "best_trial": 7,
+      "best_val_loss": 35.492244720458984,
+      "best_params": {
+        "attn_d_model": 64,
+        "attn_n_heads": 2,
+        "attn_encoder_hidden_dim": 0,
+        "attn_dropout": 0.11027129618002915,
+        "attn_lr": 0.00217267703342834,
+        "attn_batch_size": 512,
+        "nn_head_hidden": 24,
+        "nn_dropout": 0.25424724354971606,
+        "nn_lr": 0.002824806795802138,
+        "nn_weight_decay": 1.0708887003630694e-05,
+        "nn_batch_size": 128,
+        "nn_backbone_layers": [
+          128
+        ]
+      },
+      "n_trials": 15,
+      "elapsed_seconds": 485.1
+    },
+    "WR": {
+      "best_trial": 12,
+      "best_val_loss": 30.932004928588867,
+      "best_params": {
+        "attn_d_model": 48,
+        "attn_n_heads": 1,
+        "attn_encoder_hidden_dim": 64,
+        "attn_dropout": 0.22856631523663345,
+        "attn_lr": 0.004606257392692751,
+        "attn_batch_size": 512,
+        "nn_head_hidden": 64,
+        "nn_dropout": 0.2807953998541707,
+        "nn_lr": 0.00034269237891459617,
+        "nn_weight_decay": 0.0009190372038940122,
+        "nn_batch_size": 256,
+        "nn_backbone_layers": [
+          64
+        ]
+      },
+      "n_trials": 15,
+      "elapsed_seconds": 774.6
+    },
+    "TE": {
+      "best_trial": 5,
+      "best_val_loss": 20.506223678588867,
+      "best_params": {
+        "attn_d_model": 64,
+        "attn_n_heads": 4,
+        "attn_encoder_hidden_dim": 16,
+        "attn_dropout": 0.26587069737346886,
+        "attn_lr": 0.00016057745562814878,
+        "attn_batch_size": 128,
+        "nn_head_hidden": 48,
+        "nn_dropout": 0.18200818420804674,
+        "nn_lr": 0.001268543239341043,
+        "nn_weight_decay": 0.0001437650653214785,
+        "nn_batch_size": 256,
+        "nn_backbone_layers": [
+          128
+        ]
+      },
+      "n_trials": 15,
+      "elapsed_seconds": 652.7
+    },
+    "K": {
+      "best_trial": 8,
+      "best_val_loss": 7.447345733642578,
+      "best_params": {
+        "attn_d_model": 24,
+        "attn_n_heads": 1,
+        "attn_encoder_hidden_dim": 64,
+        "attn_dropout": 0.1858316040720791,
+        "attn_lr": 0.00015855722922757245,
+        "attn_batch_size": 128,
+        "nn_head_hidden": 24,
+        "nn_dropout": 0.015737257091053624,
+        "nn_lr": 0.0007182246590016505,
+        "nn_weight_decay": 3.788031231411881e-05,
+        "nn_batch_size": 256,
+        "nn_backbone_layers": [
+          128,
+          32
+        ]
+      },
+      "n_trials": 15,
+      "elapsed_seconds": 180.1
+    },
+    "DST": {
+      "best_trial": 2,
+      "best_val_loss": 112.42318725585938,
+      "best_params": {
+        "attn_d_model": 24,
+        "attn_n_heads": 2,
+        "attn_encoder_hidden_dim": 16,
+        "attn_dropout": 0.12018848956859207,
+        "attn_lr": 0.00019566088293330346,
+        "attn_batch_size": 256,
+        "nn_head_hidden": 48,
+        "nn_dropout": 0.07006029138933778,
+        "nn_lr": 0.000796746658928567,
+        "nn_weight_decay": 1.6776662164405623e-05,
+        "nn_batch_size": 512,
+        "nn_backbone_layers": [
+          128
+        ]
+      },
+      "n_trials": 15,
+      "elapsed_seconds": 338.7
+    }
+  },
+  "note": "backfilled local Windows run 2026-05-29"
+}
