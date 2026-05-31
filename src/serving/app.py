@@ -2610,6 +2610,131 @@ def api_wiki_page(slug):
     return jsonify({"slug": slug, "name": meta["name"], "group": meta["group"], "html": html})
 
 
+# ---------------------------------------------------------------------------
+# Comparison tab: our model vs expert projection sources
+# ---------------------------------------------------------------------------
+#
+# The expert (NFL.com / RotoWire) numbers are static — generated offline by
+# ``src.analysis.build_comparison_summary`` and committed beside this file. Our
+# model's column is computed LIVE from the loaded models (same metrics path as
+# the Model Performance tab), so it auto-updates on every retrain. The committed
+# JSON also carries the top-30-per-position ``player_id`` sets so the live model
+# column is sliced on the *same* players the experts were scored on.
+_COMPARISON_EXPERTS_PATH = os.path.join(os.path.dirname(__file__), "comparison_experts.json")
+
+
+def _load_comparison_experts():
+    """Read the committed expert-summary JSON. Returns ``None`` on any read error."""
+    try:
+        with open(_COMPARISON_EXPERTS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        traceback.print_exc()
+        return None
+
+
+def _model_block_from_results(results, scoring, pos, id_filter=None):
+    """Live model {mae,rmse,r2,n,best_arch} for one position, computed from the
+    cached per-row predictions. Picks the best-MAE architecture (mirrors the
+    per-position routing in ``src.benchmarking.benchmark``). ``id_filter`` (a set
+    of ``player_id`` strings) restricts to the top-30 subset; ``None`` = all rows.
+    Returns ``None`` when no model has predictions for this slice.
+    """
+    if results is None or "position" not in results.columns:
+        return None
+    actual_col = _actual_col(scoring)
+    if actual_col not in results.columns:
+        return None
+    sub = results[results["position"] == pos]
+    if id_filter is not None:
+        sub = sub[sub["player_id"].astype(str).isin(id_filter)]
+    if sub.empty:
+        return None
+    actual = sub[actual_col].to_numpy()
+    best = None
+    for name, prefix in _MODEL_PRED_COLUMNS:
+        pred_col = _pred_col(prefix, scoring)
+        if pred_col not in sub.columns:
+            continue
+        pred = sub[pred_col]
+        mask = pred.notna().to_numpy()
+        if not mask.any():
+            continue
+        m = compute_metrics(actual[mask], pred.to_numpy()[mask])
+        mae = float(m["mae"])
+        if best is None or mae < best["mae"]:
+            r2 = m["r2"]
+            r2 = (
+                None
+                if (r2 is None or (isinstance(r2, float) and np.isnan(r2)))
+                else round(float(r2), 4)
+            )
+            best = {
+                "mae": round(mae, 4),
+                "rmse": round(float(m["rmse"]), 4),
+                "r2": r2,
+                "n": int(mask.sum()),
+                "best_arch": name,
+            }
+    return best
+
+
+@app.route("/api/comparison")
+def api_comparison():
+    """Our model (live) vs NFL.com / RotoWire (static), by position, for two
+    subsets (all rostered players + top-30 per position). MAE/RMSE/R² each.
+    """
+    scoring = _validate_scoring(request.args.get("scoring", "ppr"))
+    experts = _load_comparison_experts()
+    if experts is None:
+        return jsonify({"error": "Comparison data unavailable"}), 500
+
+    # Live model metrics — best-effort. If models can't load (e.g. a cold box
+    # with no artifacts), the experts still render and the model column shows —.
+    model_source = "live"
+    results = None
+    try:
+        _ensure_metrics()
+        with _cache_lock:
+            results = _cache.get("results")
+    except Exception:
+        traceback.print_exc()
+        model_source = "unavailable"
+    if results is None or getattr(results, "empty", True):
+        model_source = "unavailable"
+
+    top30_ids = experts.get("top30_ids", {})
+    expert_subsets = experts.get("subsets", {})
+    out_subsets = {}
+    for subset in ("all", "top30"):
+        out_subsets[subset] = {}
+        pos_experts = expert_subsets.get(subset, {})
+        for pos in _ALL_POSITIONS:
+            cell = pos_experts.get(pos) or {}
+            id_filter = set(map(str, top30_ids.get(pos, []))) if subset == "top30" else None
+            model_block = (
+                _model_block_from_results(results, scoring, pos, id_filter)
+                if model_source == "live"
+                else None
+            )
+            out_subsets[subset][pos] = {
+                "model": model_block,
+                "nflcom": cell.get("nflcom"),
+                "rotowire": cell.get("rotowire"),
+            }
+
+    return jsonify(
+        {
+            "scoring": scoring,
+            "model_source": model_source,
+            "generated_at": experts.get("generated_at"),
+            "experts_meta": experts.get("experts_meta", {}),
+            "top_n": experts.get("top_n"),
+            "subsets": out_subsets,
+        }
+    )
+
+
 # Env-overridable so a rename or fork doesn't silently break every History
 # row's GitHub link. Defense-in-depth: validate the format before trusting
 # it, since the slug ends up interpolated into an href in the frontend.
