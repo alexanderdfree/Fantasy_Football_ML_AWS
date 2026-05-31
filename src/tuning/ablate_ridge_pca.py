@@ -169,6 +169,11 @@ def sweep_position(pos: str, pca_grid: list[int | None], smoke: bool) -> list[di
             _shrink_for_smoke(cfg)
         cfg["ridge_pca_components"] = pca_n
         # Eval on 2024 (val-as-test) and 2025 (real test); Ridge fits train only.
+        # NOTE: this re-tunes alphas + refits for each frame (2x the work per
+        # pca_n). That's deliberate — folding it into one fit would mean
+        # predicting outside run_pipeline, which is exactly the weather/Vegas
+        # merge bypass this harness exists to avoid (see module docstring). The
+        # faithful feature path is worth the extra Ridge fit.
         val_mae = _ridge_total_mae(pos, cfg, train, val, val)
         test_mae = _ridge_total_mae(pos, cfg, train, val, test)
         if base_val is None:
