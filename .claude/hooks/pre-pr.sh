@@ -438,8 +438,13 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 # B3 nudge: deterministic checks alone don't catch scope drift ("agent did more
-# than I asked"). The pre-pr-judge skill spawns a worker subagent for that.
-# Belt-and-suspenders to the CLAUDE.md "When making changes" instruction.
-echo "pre-pr hook: deterministic checks passed. if pre-pr-judge has not run this session, invoke it before this PR opens (catches scope creep — see .claude/skills/pre-pr-judge/SKILL.md)." >&2
+# than I asked"). The pre-pr-judge skill/prompt checks that layer. Keep the
+# deterministic gate single-sourced, but point the nudge at the active agent's
+# entrypoint when Codex wraps this hook.
+if [ "${CODEX_PRE_PR_WRAPPER:-}" = "1" ]; then
+  echo "pre-pr hook: deterministic checks passed. if /prompts:pre-pr-judge has not run this session, invoke it before this PR opens (catches scope creep — see .codex/prompts/pre-pr-judge.md)." >&2
+else
+  echo "pre-pr hook: deterministic checks passed. if pre-pr-judge has not run this session, invoke it before this PR opens (catches scope creep — see .claude/skills/pre-pr-judge/SKILL.md)." >&2
+fi
 
 exit 0

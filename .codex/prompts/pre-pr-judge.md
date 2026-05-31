@@ -9,10 +9,11 @@ Use `BASE` if supplied; otherwise use `origin/main`. If `ORIGINAL_TASK` is suppl
 
 Steps:
 
-1. Ensure the branch is current enough for a fair diff: run `git fetch origin main --quiet`. If the branch has not been rebased recently, report that and recommend rebasing before the final judge.
-2. Collect `git status --short`, `git log BASE..HEAD --oneline`, and `git diff BASE...HEAD`.
-3. Judge only scope alignment. Do not do a general code review; the deterministic hooks and `codex review` cover code quality.
-4. If Codex subagents are available, delegate the diff-vs-intent read to one subagent and ask for a verdict under 200 words. Otherwise perform the same check directly.
+1. Resolve `BASE` to the supplied value or `origin/main`.
+2. Rebase before judging: run `git fetch origin main --quiet` and then `git rebase BASE`. If the rebase conflicts, run `git rebase --abort`, report the conflict, and stop. Do not judge or open a PR from a stale or conflicted branch.
+3. Collect `git status --short`, `git log BASE..HEAD --oneline`, and `git diff BASE...HEAD`.
+4. Judge only scope alignment. Do not do a general code review; the deterministic hooks and `codex review` cover code quality.
+5. If Codex subagents are available, delegate the diff-vs-intent read to one subagent and ask for a verdict under 200 words. Otherwise perform the same check directly.
 
 Return this shape:
 
