@@ -142,17 +142,25 @@ def _subgroup_mae(test_df: pd.DataFrame, targets, agg) -> dict[str, dict]:
     return out
 
 
-def _train_rows_by_threshold(cfg, thresholds) -> dict[int, int]:
+def _train_rows_by_threshold(cfg, thresholds) -> tuple[dict[int, int], bool]:
     """Surviving TRAIN rows at each threshold — replicates the production filter
     (filter-to-position, then ``groupby(player_id, season).week.count() >= thr``) so
-    the table shows how much each threshold strips. A ~0 delta for QB/K/DST is the
-    expected confirmation that the filter barely bites there."""
+    the table shows how much each threshold strips.
+
+    Returns ``(counts, reliable)``. ``reliable`` is False for K/DST: their
+    ``filter_fn`` is identity on the shared (skill-only) ``train.parquet`` because
+    K/DST load their real training data separately — so the count would reflect the
+    *skill* split, not the position's true train population. For those, trust the
+    per-bucket *test* deltas (which come from the real pipeline run), not this count.
+    QB/RB/WR/TE counts are the true post-filter train sizes.
+    """
     train_df = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
     if "season_type" in train_df.columns:
         train_df = train_df[train_df["season_type"] == "REG"]
     pos_train = cfg["filter_fn"](train_df)
+    reliable = len(pos_train) < len(train_df)  # filter_fn actually subset to a position
     g = pos_train.groupby(["player_id", "season"])["week"].transform("count")
-    return {int(thr): int((g >= thr).sum()) for thr in thresholds}
+    return {int(thr): int((g >= thr).sum()) for thr in thresholds}, reliable
 
 
 def run_one(pos: str, run_fn, cfg, threshold: int, seed: int, run_config=None) -> dict:
@@ -212,7 +220,11 @@ def _fmt(cell: dict | None, multi_seed: bool) -> str:
 
 
 def print_position_summary(
-    pos: str, train_rows: dict, per_threshold: dict, baseline_threshold: int
+    pos: str,
+    train_rows: dict,
+    per_threshold: dict,
+    baseline_threshold: int,
+    train_rows_reliable: bool = True,
 ) -> None:
     thresholds = sorted(per_threshold)
     agg_by_thr = {thr: _aggregate_seeds(per_threshold[thr])[0] for thr in thresholds}
@@ -226,7 +238,16 @@ def print_position_summary(
         f"{'  (mean±std over seeds)' if multi_seed else ''}"
     )
     print(f"{'#' * 96}")
-    print("train rows by threshold: " + "  ".join(f"{thr}={train_rows[thr]}" for thr in thresholds))
+    caveat = (
+        ""
+        if train_rows_reliable
+        else "  (UNRELIABLE — filter_fn identity on shared skill-split; trust test deltas)"
+    )
+    print(
+        "train rows by threshold: "
+        + "  ".join(f"{thr}={train_rows[thr]}" for thr in thresholds)
+        + caveat
+    )
 
     for bucket in KEY_BUCKETS:
         n = agg_by_thr[thresholds[0]][bucket]["n"]
@@ -259,7 +280,8 @@ def print_position_summary(
                     parts.append(
                         f"{_short(pc)} Δ={d:+.3f}" + (f"±{noise:.3f}" if multi_seed else "")
                     )
-            print(f"    {bucket:<18} " + "  ".join(parts))
+            body = "  ".join(parts) if parts else "n=0 (no rows — filter inert for this bucket)"
+            print(f"    {bucket:<18} {body}")
         print(
             "    (filter HURTS low-volume if would_filter Δ>0 beyond noise AND kept Δ not meaningfully <0)"
         )
@@ -339,16 +361,19 @@ def main(argv=None) -> None:
             run_config["nn_epochs"] = 2
             run_config["train_attention_nn"] = False
             run_config["train_elasticnet"] = False
-        train_rows = _train_rows_by_threshold(cfg, args.thresholds)
+        train_rows, train_rows_reliable = _train_rows_by_threshold(cfg, args.thresholds)
         per_threshold = {
             thr: [run_one(pos, run_fn, cfg, thr, s, run_config) for s in seeds]
             for thr in args.thresholds
         }
         all_results[pos] = {
             "train_rows": train_rows,
+            "train_rows_reliable": train_rows_reliable,
             "aggregated": {thr: _aggregate_seeds(per_threshold[thr])[0] for thr in args.thresholds},
         }
-        print_position_summary(pos, train_rows, per_threshold, args.baseline_threshold)
+        print_position_summary(
+            pos, train_rows, per_threshold, args.baseline_threshold, train_rows_reliable
+        )
     if not args.no_history:
         _write_ablation(args, all_results)
 

@@ -151,3 +151,26 @@ def test_print_position_summary_runs(capsys):
     assert "RB" in out
     assert "VERDICT" in out
     assert "would_filter(<6)" in out
+
+
+def test_print_position_summary_unreliable_rows_and_empty_bucket(capsys):
+    """K/DST shape: unreliable train-row count + an empty would_filter bucket (n=0)
+    must not crash and must annotate both."""
+
+    def _stub():
+        return {
+            "buckets": {
+                "ALL": {"n": 5, "pred_lgbm_total": 5.0},
+                "would_filter(<6)": {"n": 0},  # no pred cols when the bucket is empty
+                "kept(>=6)": {"n": 5, "pred_lgbm_total": 5.0},
+            },
+            "pred_cols": ["pred_lgbm_total"],
+        }
+
+    per_threshold = {1: [_stub()], 6: [_stub()]}
+    amg.print_position_summary(
+        "dst", {1: 60645, 6: 50789}, per_threshold, baseline_threshold=6, train_rows_reliable=False
+    )
+    out = capsys.readouterr().out
+    assert "UNRELIABLE" in out  # train-row caveat for identity-filter positions
+    assert "n=0 (no rows" in out  # empty-bucket verdict guard
