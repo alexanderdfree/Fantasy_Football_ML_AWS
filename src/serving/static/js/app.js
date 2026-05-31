@@ -108,6 +108,11 @@ async function init() {
 
     // Attach filter change listeners
     document.getElementById("week-filter").addEventListener("change", () => { currentPage = 1; loadPredictions(); });
+    // Team and Min-Proj-Pts are pure client-side filters (applied in
+    // getFilteredPlayers over the already-loaded rows), so they re-render
+    // without a refetch in both the snapshot and live-API paths.
+    document.getElementById("team-filter").addEventListener("change", () => { currentPage = 1; renderTable(); });
+    document.getElementById("min-points-filter").addEventListener("input", () => { currentPage = 1; renderTable(); });
 
     // The page shell is ready — drop the blocking full-screen overlay now
     // instead of holding it until data arrives. Predictions stream into the
@@ -130,6 +135,10 @@ async function bootstrapPredictions() {
             usingSnapshot = true;
             snapshotData = snap;
             populateWeeks(snap.weeks || []);
+            // Teams aren't carried in the snapshot payload — derive them from the
+            // rows we already have (scoring-invariant, so any format works).
+            const teams = [...new Set((snap.scoring.ppr || []).map(p => p.team).filter(Boolean))].sort();
+            populateTeams(teams);
             renderDegradedBanner(snap.degraded_positions || []);
             loadPredictions();  // snapshot branch: client-side filter + render
             return;
@@ -139,7 +148,7 @@ async function bootstrapPredictions() {
         // through to the live API path below.
     }
     usingSnapshot = false;
-    await Promise.all([loadWeeks(), loadPredictions()]);
+    await Promise.all([loadWeeks(), loadTeams(), loadPredictions()]);
 }
 
 async function loadWeeks() {
@@ -151,6 +160,15 @@ async function loadWeeks() {
     }
 }
 
+async function loadTeams() {
+    try {
+        const teamsData = await fetchJSON("/api/teams");
+        populateTeams(teamsData.teams);
+    } catch (e) {
+        console.error("Failed to load teams:", e);
+    }
+}
+
 function populateWeeks(weeks) {
     const weekSelect = document.getElementById("week-filter");
     (weeks || []).forEach(w => {
@@ -158,6 +176,16 @@ function populateWeeks(weeks) {
         opt.value = w;
         opt.textContent = `Week ${w}`;
         weekSelect.appendChild(opt);
+    });
+}
+
+function populateTeams(teams) {
+    const teamSelect = document.getElementById("team-filter");
+    (teams || []).forEach(t => {
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.textContent = t;
+        teamSelect.appendChild(opt);
     });
 }
 
@@ -419,11 +447,20 @@ function renderDegradedBanner(degraded) {
 function getFilteredPlayers() {
     const position = getActivePosition("position-filter");
     const week = document.getElementById("week-filter").value;
+    const team = document.getElementById("team-filter").value;
     const search = document.getElementById("search-input").value.trim().toLowerCase();
+    // Min projected points: a row passes if ANY model projects >= the threshold
+    // (max across the available model predictions). NaN (empty input) disables it.
+    const minPts = parseFloat(document.getElementById("min-points-filter").value);
     return allPlayers.filter(p => {
         if (position !== "ALL" && p.position !== position) return false;
         if (week !== "ALL" && String(p.week) !== String(week)) return false;
+        if (team !== "ALL" && p.team !== team) return false;
         if (search && !(p.name || "").toLowerCase().includes(search)) return false;
+        if (!isNaN(minPts)) {
+            const preds = [p.ridge_pred, p.nn_pred, p.attn_nn_pred, p.lgbm_pred].filter(v => v != null);
+            if (!preds.length || Math.max(...preds) < minPts) return false;
+        }
         return true;
     });
 }

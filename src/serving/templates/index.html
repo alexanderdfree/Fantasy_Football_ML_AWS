@@ -76,6 +76,16 @@
                         </select>
                     </div>
                     <div class="filter-group">
+                        <label>Team</label>
+                        <select id="team-filter">
+                            <option value="ALL">All Teams</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Min Proj. Pts</label>
+                        <input type="number" id="min-points-filter" min="0" step="any" placeholder="0" inputmode="decimal">
+                    </div>
+                    <div class="filter-group">
                         <label>Model</label>
                         <select id="model-display">
                             <option value="all">All Models</option>
@@ -110,7 +120,7 @@
                             <th class="col-player">Player</th>
                             <th class="col-pos">Pos</th>
                             <th class="col-team">Team</th>
-                            <th class="col-week">Wk</th>
+                            <th class="col-week sortable" data-sort="week">Wk <span class="sort-arrow"></span></th>
                             <th class="col-actual sortable active-sort" data-sort="actual">
                                 Actual <span class="sort-arrow">&#9660;</span>
                             </th>

@@ -317,6 +317,21 @@ select:focus {
     border-color: var(--accent);
 }
 
+.filter-group input[type="number"] {
+    width: 90px;
+    padding: 7px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-size: 13px;
+    outline: none;
+}
+
+.filter-group input[type="number"]:focus {
+    border-color: var(--accent);
+}
+
 /* === Filter Meta === */
 .filter-meta {
     margin-left: auto;
