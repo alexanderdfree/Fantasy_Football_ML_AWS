@@ -17,6 +17,14 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 - **Verify:** `ruff check . && ruff format --check .` + `pytest tests/tuning/test_tune_nn.py -m unit`. No GPU / pipeline run needed (`.md`-only handoff today; the tuner run is a later user-triggered step).
 - **Status:** Plan + this note committed (docs-only). Code change **not yet made** — pick up at step 1.
 
+### GPU launch-bound levers (CUDA graphs / single-process streams) — plans, not yet built
+- **Plan doc:** [todo/gpu_launch_bound_levers.md](todo/gpu_launch_bound_levers.md) — the diagnosis (`-j` sweep + phase data proving launch-boundedness), the MPS dead-end (Linux-only; unavailable on both WSL2 *and* native Windows), and two opt-in levers with friction points + A/B gates. Read it first.
+- **What:** local 6-position parallel training is **GPU launch/host-bound** at full concurrency — the core pool (#670) cut the LightGBM stage 15–90× but total wall-clock stayed flat (~242s) because the shared-GPU attention-NN training (~200s/pos, launch-bound) dominates and `-j6` is already optimal (`-j6` 242s < `-j3` 244s < `-j2` 269s). **CPU allocation is not the lever** — don't re-optimize it for local wall-clock.
+- **Levers (both opt-in; both must clear a per-position A/B = inertness Δ=0 MAE + measured speedup; gated like `FF_COMPILE`):** (A) **CUDA graphs** — capture+replay fwd/bwd to collapse the launch storm; frictions = GradScaler (keep outside the graph), the side-effecting attention-entropy regulariser, static input buffers (`drop_last` already gives fixed train shapes). (B) **single-process + per-position CUDA streams** — the MPS substitute; bigger refactor that would supersede the subprocess model + the core pool.
+- **Recommended:** Lever A first (lower risk, per-position, orchestrator intact); start with a `make_graphed_callables` feasibility probe. Lever B only if A is insufficient.
+- **Stop-rule:** `torch.compile` is measured-rejected (#641, +169% on 5080); a hand-rolled graph sidesteps the dynamic-shape recompile but still must clear the A/B.
+- **Status:** planned only — nothing built (decided 2026-05-31 to plan-not-build).
+
 ### [PRIORITY] Attn-pass batch size is update-starved on small-N positions (QB, K) — audit findings
 - **Findings doc:** [todo/batch_size_audit_priority.md](todo/batch_size_audit_priority.md) — per-position steps/epoch table, model-standing cross-ref, and the QB A/B recipe. Read it first.
 - **Relationship:** the *complement* of the `[PRIORITY] Extend NN Optuna grid (1024 rung)` entry above — same hyperparameter, opposite end. That widens the grid *up* for large-N positions; this audits *current production* `attn_batch_size` and finds it already too *large* (update-starved) for the small-N positions' **attention** pass. Also the concrete steps/epoch math behind the `[LOW] drop_last=True` item below.
