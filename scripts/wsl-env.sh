@@ -35,7 +35,11 @@ export OMP_NUM_THREADS MKL_NUM_THREADS OPENBLAS_NUM_THREADS NUMEXPR_NUM_THREADS
 # Default LGBM_N_JOBS is 1 (a macOS nested-OpenMP segfault guard, see
 # src/shared/models.py). On a 16-core Linux box that leaves 15 cores idle
 # during the LightGBM stage of a bare `run_pipeline`. 16 = physical cores,
-# NOT the 32 logical -- LightGBM regresses under SMT/hyperthreading.
+# NOT the 32 logical -- LightGBM regresses HARD under SMT/hyperthreading.
+# Measured on the 9950X3D (2026-05-31, RB run_pipeline, MAE identical): the
+# `lgbm_train` phase took 4-5s at LGBM_N_JOBS=16 vs 83-109s at 32 -- ~16-27x
+# slower (small dataset + 32 threads spanning both CCDs = pathological). So the
+# parallel local trainer caps LGBM_N_JOBS to each position's *physical* slice.
 #
 # NOTE: for `python -m src.tuning.tune_lgbm` do the OPPOSITE -- leave
 # LGBM_N_JOBS=1 and let --n-jobs (defaults to min(cpu,16)=16) parallelise the
