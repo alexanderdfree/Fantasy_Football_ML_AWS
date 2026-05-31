@@ -101,6 +101,54 @@ def test_model_block_none_when_position_absent(app_module):
 
 
 # --------------------------------------------------------------------------- #
+# _model_reliability_from_results — live model residual σ (2025 test rows)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_model_reliability_sigma_bias(app_module):
+    """σ + bias come from the best-MAE arch's residuals (pred − actual)."""
+    fp = [10.0, 12.0, 14.0, 16.0, 18.0]
+    ridge = [11.0, 11.0, 14.0, 17.0, 17.0]  # resid +1,-1,0,+1,-1 → bias 0, sample σ 1
+    rows = [
+        {
+            "player_id": f"QB00{i}",
+            "position": "QB",
+            "actual_ppr": fp[i],
+            "ridge_pred_ppr": ridge[i],
+            "nn_pred_ppr": fp[i] + 5.0,  # all worse → ridge wins on MAE
+            "attn_nn_pred_ppr": fp[i] + 6.0,
+            "lgbm_pred_ppr": fp[i] + 7.0,
+        }
+        for i in range(5)
+    ]
+    block = app_module._model_reliability_from_results(pd.DataFrame(rows), "ppr", "QB")
+    assert block["best_arch"] == "Ridge Regression"
+    assert block["n"] == 5
+    assert block["bias"] == 0.0
+    assert block["sigma"] == 1.0  # sample std (ddof=1) of [+1,-1,0,+1,-1]
+    assert {"n", "mae", "bias", "sigma", "best_arch"} == set(block)
+
+
+@pytest.mark.unit
+def test_model_reliability_none_when_no_predictions(app_module):
+    df = pd.DataFrame(
+        [
+            {
+                "player_id": "K000",
+                "position": "K",
+                "actual_ppr": 8.0,
+                "ridge_pred_ppr": np.nan,
+                "nn_pred_ppr": np.nan,
+                "attn_nn_pred_ppr": np.nan,
+                "lgbm_pred_ppr": np.nan,
+            }
+        ]
+    )
+    assert app_module._model_reliability_from_results(df, "ppr", "K") is None
+
+
+# --------------------------------------------------------------------------- #
 # /api/comparison — route (Flask boundary)
 # --------------------------------------------------------------------------- #
 
@@ -130,7 +178,17 @@ def _fake_experts():
             "r2": 0.3,
             "bias": 0.4,
             "sigma": sigma,
-            "per_season": {},
+            # Frontend renders the 2025 slice; pooled σ rides along for the hover.
+            "per_season": {
+                "2025": {
+                    "n": 40,
+                    "mae": 5.2,
+                    "rmse": 7.1,
+                    "r2": 0.28,
+                    "bias": 0.5,
+                    "sigma": sigma + 0.3,
+                }
+            },
             "seasons": [2024, 2025],
         }
 
@@ -208,6 +266,25 @@ def test_comparison_passes_expert_reliability_through(app_module, synthetic_cach
 
 
 @pytest.mark.integration
+def test_comparison_includes_live_model_reliability(app_module, synthetic_cache, monkeypatch):
+    """The model side of the reliability table is computed live per position from the
+    cached test predictions (auto-updates on retrain), alongside the static experts."""
+    monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
+    app_module._cache.update(synthetic_cache)
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        body = c.get("/api/comparison").get_json()
+
+    mr = body["model_reliability"]
+    assert set(mr) == set(_POSITIONS)
+    qb = mr["QB"]
+    assert qb is not None
+    assert {"n", "mae", "bias", "sigma", "best_arch"} == set(qb)
+    assert qb["best_arch"] in _ARCHES
+    assert qb["sigma"] >= 0.0
+
+
+@pytest.mark.integration
 def test_comparison_scoring_param_passthrough(app_module, synthetic_cache, monkeypatch):
     monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
     app_module._cache.update(synthetic_cache)
@@ -233,6 +310,8 @@ def test_comparison_model_unavailable_when_no_results(app_module, monkeypatch):
     qb = body["subsets"]["all"]["QB"]
     assert qb["model"] is None
     assert qb["nflcom"] is not None  # experts unaffected
+    # The live model reliability column is also unavailable, per position.
+    assert body["model_reliability"]["QB"] is None
 
 
 @pytest.mark.integration
@@ -284,3 +363,6 @@ def test_committed_expert_summary_contract():
     assert rel["positions"]["K"]["rotowire"] is None
     qb_nfl_rel = rel["positions"]["QB"]["nflcom"]
     assert {"n", "mae", "rmse", "bias", "sigma"} <= set(qb_nfl_rel)
+    # The reliability table renders the 2025 slice per source — lock that it ships.
+    assert "2025" in qb_nfl_rel["per_season"]
+    assert {"n", "bias", "sigma"} <= set(qb_nfl_rel["per_season"]["2025"])

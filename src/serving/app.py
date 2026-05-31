@@ -2679,6 +2679,52 @@ def _model_block_from_results(results, scoring, pos, id_filter=None):
     return best
 
 
+def _model_reliability_from_results(results, scoring, pos):
+    """Live model residual σ + bias for one position on the held-out 2025 test rows.
+
+    Computed from the same cached per-row predictions as ``_model_block_from_results``
+    (so it auto-updates on every retrain) and picks the same best-MAE architecture,
+    then reports ``sigma = std(pred − actual, ddof=1)`` and ``bias = mean(pred − actual)``
+    for it — the model-side counterpart to the experts' ``expert_reliability``. Residual
+    convention matches ``src.analysis.expert_uncertainty``: **bias > 0 ⇒ over-predicts**.
+    The model is leakage-free only on its test split, so this is 2025-only by design
+    (the whole Comparison tab is the 2025 test season). ``None`` when no model has
+    predictions for this position.
+    """
+    if results is None or "position" not in results.columns:
+        return None
+    actual_col = _actual_col(scoring)
+    if actual_col not in results.columns:
+        return None
+    sub = results[results["position"] == pos]
+    if sub.empty:
+        return None
+    actual = sub[actual_col].to_numpy()
+    best = None
+    for name, prefix in _MODEL_PRED_COLUMNS:
+        pred_col = _pred_col(prefix, scoring)
+        if pred_col not in sub.columns:
+            continue
+        pred = sub[pred_col]
+        mask = pred.notna().to_numpy()
+        if not mask.any():
+            continue
+        a = actual[mask].astype(float)
+        p = pred.to_numpy()[mask].astype(float)
+        mae = float(np.mean(np.abs(p - a)))
+        if best is None or mae < best["mae"]:
+            resid = p - a
+            n = int(mask.sum())
+            best = {
+                "n": n,
+                "mae": round(mae, 4),
+                "bias": round(float(np.mean(resid)), 4),
+                "sigma": round(float(np.std(resid, ddof=1)) if n > 1 else 0.0, 4),
+                "best_arch": name,
+            }
+    return best
+
+
 @app.route("/api/comparison")
 def api_comparison():
     """Our model (live) vs NFL.com / RotoWire (static), by position, for two
@@ -2723,6 +2769,19 @@ def api_comparison():
                 "rotowire": cell.get("rotowire"),
             }
 
+    # Live model residual σ on the 2025 test rows — the model-side counterpart to the
+    # static expert_reliability block. Computed fresh each request (auto-updates on
+    # retrain); None per position when models aren't loaded, so the tab degrades to
+    # the expert columns alone.
+    model_reliability = {
+        pos: (
+            _model_reliability_from_results(results, scoring, pos)
+            if model_source == "live"
+            else None
+        )
+        for pos in _ALL_POSITIONS
+    }
+
     return jsonify(
         {
             "scoring": scoring,
@@ -2731,9 +2790,12 @@ def api_comparison():
             "experts_meta": experts.get("experts_meta", {}),
             "top_n": experts.get("top_n"),
             "subsets": out_subsets,
-            # Per-source residual σ (multi-season, expert-only). Static — straight
-            # from the committed JSON; no live model counterpart (see the block's note).
+            # Per-source residual σ: experts are static multi-season (2018–2025) from the
+            # committed JSON; the model side is computed live on the 2025 test season
+            # (its only leakage-free season). The frontend renders both on the 2025 basis
+            # for an apples-to-apples table and shows each expert's full-archive σ on hover.
             "expert_reliability": experts.get("expert_reliability"),
+            "model_reliability": model_reliability,
         }
     )
 

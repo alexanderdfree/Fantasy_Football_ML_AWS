@@ -1228,12 +1228,44 @@ function renderComparisonTables() {
     if (top30Body) top30Body.innerHTML = renderComparisonRows(subsets.top30 || {});
 }
 
-// Source reliability — per-source residual σ (multi-season, expert-only). One
-// table, always σ (unaffected by the MAE/RMSE/R² toggle); lower σ = steadier.
-const RELIABILITY_SOURCES = [
+// Source reliability — residual σ per source on the 2025 test season. The model
+// side is live (auto-updates on retrain); experts are scored on the same season,
+// with their full 2018–2025 archive σ shown on hover. One table, always σ
+// (independent of the MAE/RMSE/R² toggle); lower σ = steadier.
+const RELIABILITY_COLS = [
+    { key: "model", label: "Our Model" },
     { key: "nflcom", label: "NFL.com" },
     { key: "rotowire", label: "RotoWire" },
 ];
+
+function _validSigma(v) {
+    return v !== null && v !== undefined && !Number.isNaN(v);
+}
+
+// Resolve one (position, source) reliability cell on the 2025 basis. The model
+// comes from the live model_reliability map; experts come from the committed
+// block's per_season["2025"] slice, carrying the pooled multi-season σ for hover.
+function reliabilityCell(pos, key) {
+    if (key === "model") {
+        const m = comparisonData.model_reliability && comparisonData.model_reliability[pos];
+        if (!m || !_validSigma(m.sigma)) return null;
+        return { sigma: m.sigma, bias: m.bias, n: m.n, arch: m.best_arch, kind: "model" };
+    }
+    const rel = comparisonData.expert_reliability;
+    const pooled = rel && rel.positions && rel.positions[pos] && rel.positions[pos][key];
+    if (!pooled) return null;
+    const s = pooled.per_season && pooled.per_season["2025"];
+    if (!s || !_validSigma(s.sigma)) return null;
+    return {
+        sigma: s.sigma,
+        bias: s.bias,
+        n: s.n,
+        kind: "expert",
+        totals_only: !!pooled.totals_only,
+        archiveSigma: pooled.sigma,
+        archiveN: pooled.n,
+    };
+}
 
 function renderComparisonReliability() {
     const block = document.getElementById("comparison-reliability-block");
@@ -1246,32 +1278,24 @@ function renderComparisonReliability() {
     }
     block.style.display = "";
 
-    // Span only, not a season count: NFL.com's archive is missing 2020, so per-source
-    // coverage differs within the window — the per-cell sample size (hover) is the honest n.
-    const seasons = rel.seasons || [];
-    const spanEl = document.getElementById("comparison-reliability-span");
-    if (spanEl && seasons.length) {
-        spanEl.textContent = `${seasons[0]}–${seasons[seasons.length - 1]}`;
-    }
-
     body.innerHTML = COMPARISON_POSITIONS.map(pos => {
-        const cell = rel.positions[pos] || {};
-        const sigmas = RELIABILITY_SOURCES.map(s => (cell[s.key] ? cell[s.key].sigma : null)).filter(
-            v => v !== null && v !== undefined && !Number.isNaN(v)
-        );
+        const cells = RELIABILITY_COLS.map(c => reliabilityCell(pos, c.key));
+        const sigmas = cells.filter(Boolean).map(c => c.sigma);
         const best = sigmas.length ? Math.min(...sigmas) : null;
-        const tds = RELIABILITY_SOURCES.map(s => {
-            const b = cell[s.key];
-            if (!b || b.sigma === null || b.sigma === undefined || Number.isNaN(b.sigma)) {
-                return `<td class="comparison-num comparison-empty">—</td>`;
-            }
-            const isBest = best !== null && Math.abs(b.sigma - best) < 1e-9;
+        const tds = cells.map(c => {
+            if (!c) return `<td class="comparison-num comparison-empty">—</td>`;
+            const isBest = best !== null && Math.abs(c.sigma - best) < 1e-9;
             const cls = "comparison-num" + (isBest ? " comparison-best" : "");
-            const star = b.totals_only ? `<span class="comparison-arch">totals-only*</span>` : "";
-            const biasTxt = (b.bias >= 0 ? "+" : "") + b.bias.toFixed(2);
-            const dir = b.bias >= 0 ? "over" : "under";
-            const title = `bias ${biasTxt} pts (${dir}-projects) · n=${b.n}`;
-            return `<td class="${cls}" title="${escapeHtml(title)}">${b.sigma.toFixed(2)}${star}</td>`;
+            const star = c.totals_only ? `<span class="comparison-arch">totals-only*</span>` : "";
+            const biasTxt = (c.bias >= 0 ? "+" : "") + c.bias.toFixed(2);
+            const dir = c.bias >= 0 ? "over" : "under";
+            const verb = c.kind === "model" ? "predicts" : "projects";
+            let title = `bias ${biasTxt} pts (${dir}-${verb}) · n=${c.n} · 2025`;
+            if (c.kind === "model" && c.arch) title += ` · ${c.arch}`;
+            if (c.kind === "expert" && _validSigma(c.archiveSigma)) {
+                title += ` · 2018–2025 σ ${c.archiveSigma.toFixed(2)} (n=${c.archiveN})`;
+            }
+            return `<td class="${cls}" title="${escapeHtml(title)}">${c.sigma.toFixed(2)}${star}</td>`;
         }).join("");
         return `<tr><td class="comparison-pos">${pos}</td>${tds}</tr>`;
     }).join("");
