@@ -161,6 +161,17 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 - **What:** Each position builds its `CONFIG` at module import, which eagerly imports `data.py` / `features.py` / `targets.py` before `run_pipeline()` is called. Import-time failures surface in confusing places (the importing test, not the position's own module). Move to a function-local build or `functools.cached_property`.
 - **Why not now:** Touches 6 `run_pipeline.py` files; the W.SHARED-A worker (PR #314) couldn't touch per-position files under its boundary. Carry-over from L-S17.
 
+### [LOW] 63 fully-empty columns carried in every unified split (dead weight)
+- **Files:** `src/data/split.py` (`temporal_split`), `src/features/engineer.py` (`build_features`).
+- **What:** A comprehensive data profile (`src/analysis/analysis_training_data_profile.py`) found 63 columns are 100% null in every split: all K/DST raw stats (`fg_*`, `pat_*`, `gwfg_*`, `def_*`), return stats (`punt_returns`, `kickoff_returns`, `*_return_yards`), `game_id`, `passing_cpoe`, `penalties`, `penalty_yards`, and `fumble_recovery_*`. These are present because `load_raw_data` merges them from nflverse (they are populated for other table shapes) but they carry no signal for the QB/RB/WR/TE models that read the unified splits. Train split alone wastes ~15–20 MB and these columns muddy any automated feature scan (`analysis_feature_audit.py`, `analysis_data_completeness.py`).
+- **Fix:** either drop them in `temporal_split` (pass a column allowlist) or have `build_features` filter to the union of all six positions' `get_feature_columns()` plus identifier/target columns. Whichever path, update the `Verify engineered columns` step in `refresh-splits.yml` to assert absence.
+- **Stop-rule:** the empty columns are genuinely empty (not partial: K/DST self-load their own frames); dropping them should produce a Δ=0 Ridge MAE on a fresh benchmark run (use as the inertness tell).
+
+### [LOW] data/splits schema non-uniform: test(2025) carries 56 raw columns absent in train/val
+- **Files:** `src/data/split.py`, `src/data/loader.py`.
+- **What:** The same data profile found 56 columns (e.g. `game_id`, all `def_*`, `misc_yards`, `fumble_recovery_*`) that are 100% null in train (2012–2023) and val (2024) but fully populated in test (2025). The 2025 split was built from a newer nflverse schema that includes these fields. Currently benign — none are whitelisted model features — but a future feature reading any of these would silently train on all-null and evaluate on real data (a model would see the column as all-zero at train time and then real values at test time, a hidden covariate shift).
+- **Fix:** standardise the column set across all three splits at build time — either zero-fill the train/val rows for the new columns, or exclude the new columns from the split parquets entirely. Pair with the `[LOW] 63 fully-empty columns` fix above so both cleanups happen in one split-builder edit.
+
 ---
 
 ## Archive (Fixed)
