@@ -27,6 +27,7 @@ from src.data.split import expanding_window_folds
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
 from src.shared.models import LightGBMMultiTarget
 from src.shared.pipeline import _prepare_position_data
+from src.tuning.history import append_tuning_run
 
 
 def _ensure_data_from_s3():
@@ -550,6 +551,14 @@ def main():
         print("\n==== BEST_PARAMS_JSON_START ====")
         print(json.dumps(all_results, indent=2, default=str))
         print("==== BEST_PARAMS_JSON_END ====")
+
+        hist_path = append_tuning_run(
+            "tune_lgbm",
+            all_results,
+            n_trials=args.n_trials,
+            positions=list(all_results),
+        )
+        print(f"History entry: {hist_path}")
 
 
 if __name__ == "__main__":

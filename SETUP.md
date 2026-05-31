@@ -112,6 +112,11 @@ python -m src.tuning.tune_nn RB --n-trials 30       # Optuna NN tuning
 python -m src.tuning.tune_lgbm RB                   # Optuna LightGBM tuning
 ```
 
+Each `tune_nn` / `tune_lgbm` run also appends a git-tracked history entry under
+`benchmark_history/tuning/` (one JSON per run, `{timestamp}_{git_hash}_{tune_nn,tune_lgbm}.json`) —
+commit it to version-control that run's best params, the same way `benchmark_history/` tracks
+benchmark runs.
+
 Run from the repo root — the tuners look for a relative `data/raw/` (same as on macOS, not a
 Windows-specific quirk). The RTX 5080 is picked up automatically by the `torch.cuda.is_available()`
 device check ([src/shared/pipeline.py](src/shared/pipeline.py)); the attention NN trains in FP16,
