@@ -158,6 +158,8 @@ class _Handler(socketserver.StreamRequestHandler):
                     with coord.cond:
                         coord.alloc.release(key)
                         coord.cond.notify_all()
+                    self.wfile.write((json.dumps({"released": True}) + "\n").encode())
+                    self.wfile.flush()
         except (OSError, ConnectionError):
             pass
         finally:
@@ -317,7 +319,9 @@ def lease_cores(
         if prev_aff is not None:
             with contextlib.suppress(AttributeError, OSError):
                 os.sched_setaffinity(0, prev_aff)
-        with contextlib.suppress(OSError):
+        with contextlib.suppress(OSError, ConnectionError, TimeoutError, json.JSONDecodeError):
+            sock.settimeout(5.0)
             _send(sock, {"op": "release"})
+            _recv(sock)
         with contextlib.suppress(OSError):
             sock.close()
