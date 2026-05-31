@@ -101,6 +101,7 @@ STEP 2 — Fanout (parallel): two layers, ALL workers spawned IN A SINGLE MESSAG
       - "Position X's NN hidden dim differs from Y's" → per-position tuning
       - "Doc/comment cites `file:lineN` or `file:lines X-Y` but the entity is actually at a different line/range" → PURELY COSMETIC. Source line numbers drift whenever code is inserted above; a stale line-NUMBER or line-RANGE in prose/docstrings is NOT a finding. DROP it.
         STILL REPORT (substantive doc errors, NOT line-number drift): wrong MODULE/symbol attribution (doc says feature X is in module A but it's in B); a documented feature/decision/COUNT that doesn't exist or is wrong (e.g. "ADR has D1–D15" when a real D16 exists); a stated INVARIANT the code violates; a dead cross-ref to a DELETED file; a config KEY/VALUE a file references that isn't defined (that is broken_reference, lens L4). The line-number being off is only noise when the cited TARGET is otherwise correct.
+      - ANY finding that would change a design choice, feature selection, model architecture/hyperparameters, scoring, or otherwise alter model accuracy as a matter of tuning or judgment rather than fixing a defect → DROP. UNLESS IT IS A CLEAR, NON-CONTROVERSIAL CORRECTNESS BUG.
       When in doubt, drop the finding.
 
     STOP RULES — drop anything overlapping:
@@ -118,7 +119,7 @@ STEP 2 — Fanout (parallel): two layers, ALL workers spawned IN A SINGLE MESSAG
       3. Only survivors of both checks may be emitted. When in doubt, DROP.
       The orchestrator (STEP 3) re-verifies as a BACKSTOP; self-verify is your first-line filter and must not be skipped.
 
-    SEVERITY: HIGH (wrong result / silent loss / security / benchmark-changing) or MED (unfinished-PR artifact / within-position invariant violation / broken-reference drift / semantic merge conflict / orphan code under live test coverage). NO LOW.
+    SEVERITY: HIGH (wrong result / silent loss / security / benchmark-changing — where "benchmark-changing" means a clear correctness bug whose fix happens to move the metric, NOT a tuning/design change; see NOT FINDINGS) or MED (unfinished-PR artifact / within-position invariant violation / broken-reference drift / semantic merge conflict / orphan code under live test coverage). NO LOW.
 
     OUTPUT: JSON array only. Each: {"file": "<path>", "line": <int>, "severity": "HIGH"|"MED", "category": "unfinished_pr|merge_conflict|orphan_code|invariant|broken_reference|train_serve_drift|wrong_result|security|other", "title": "<<80 chars>", "what": "<2-3 sentences>", "why_suspect": "<2-3 sentences>", "suggested_action": "<one sentence>", "evidence_quote": "<verbatim line from file>", "verification": "<one-line note of what you checked + result>"}
     Workers do NOT create issues and do NOT assign issue numbers — the orchestrator does.
@@ -192,4 +193,5 @@ CONSTRAINTS:
   - First seen on each finding = the SHORT_SHA / DATE_ONLY of the run that FIRST files it. You only create issues for findings not already in the dedupe pool, so existing issues (and their First seen) are left untouched.
   - Never re-flag anything in the Stop rules block, TODO.md Fixed archive, or the dedupe pool (open+closed per-finding issue titles/files — STEP 1c/3c). Dedup spans open AND closed so a triaged-closed or fixed finding is not re-filed.
   - Never propose cross-position harmonization — feature engineering, not audit.
+  - Never file design / tuning / accuracy-judgment changes — only clear, non-controversial correctness bugs (the blanket NOT FINDINGS rule).
   - Every run posts a closed checkpoint issue recording HEAD-SHA (even clean 0-finding runs) as the per-fire audit trail.

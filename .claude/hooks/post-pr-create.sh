@@ -27,7 +27,14 @@ if ! [[ "$cmd" =~ (^|[[:space:]&|;\(])gh[[:space:]]+pr[[:space:]]+create([[:spac
   exit 0
 fi
 
-ctx="PR opened. Run this post-create workflow now, in order:
+# Detect a solve-issues autonomous-fix PR by its staging branch (`audit-NNN/tier-X`,
+# cut by the solve-issues skill). Those PRs must NOT auto-merge — they stop for
+# explicit user merge sign-off (the user reviews the diff + Tier C benchmark deltas
+# before anything lands on main). Every other PR keeps the auto-merge workflow.
+cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || true
+branch=$(git branch --show-current 2>/dev/null || true)
+
+ctx_head="PR opened. Run this post-create workflow now, in order:
 
 1. Rebase onto latest main: \`git fetch origin main --quiet && git rebase origin/main\`. If the rebase is a no-op (branch already up to date), skip the push. If it succeeds with changes, \`git push --force-with-lease\`. If it conflicts, run \`git rebase --abort\` and surface the conflict to the user — do not attempt unilateral resolution.
 
@@ -39,17 +46,32 @@ ctx="PR opened. Run this post-create workflow now, in order:
 
 4. If you applied any fixes, commit with subject \"review: address /review nits\" and \`git push\`.
 
-5. If any architectural findings were surfaced in step 3: stop here. Summarize each one in one line for the user and DO NOT merge. The user decides whether to address them.
+5. If any architectural findings were surfaced in step 3: stop here. Summarize each one in one line for the user and DO NOT merge. The user decides whether to address them."
+
+if [[ "$branch" =~ ^audit-.*/tier- ]]; then
+  step6="
+
+6. Do NOT auto-merge — this is a solve-issues autonomous-fix PR. After steps 1-5:
+   a. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry or use \`--admin\`.
+   b. Show the user the final diff (\`gh pr diff <N>\`) and — for Tier C — the benchmark deltas from the PR body, and ask for EXPLICIT merge sign-off (AskUserQuestion). Do NOT merge until the user approves.
+   c. Only after the user approves: \`gh pr merge <N> --squash\`, then \`git push origin --delete <branch-name>\` (do NOT use \`--delete-branch\` — it fails in worktrees)."
+else
+  step6="
 
 6. Otherwise, auto-merge:
    a. Resolve the PR number with \`gh pr view --json number\` and the branch name with \`git branch --show-current\`. Hold onto both before the merge step in case the worktree HEAD changes.
    b. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry the merge or use \`--admin\`. (Exception: the documented \`Run Tests\` silent-stop anomaly — see CLAUDE.md's CI section; fall back to local \`pytest\` + manual \`gh pr merge --admin\` only if the user confirms.)
    c. Merge: \`gh pr merge <N> --squash\`. Do NOT use \`--delete-branch\` — it fails in worktrees (see CLAUDE.md's worktree section).
-   d. Delete the remote branch: \`git push origin --delete <branch-name>\`.
+   d. Delete the remote branch: \`git push origin --delete <branch-name>\`."
+fi
+
+ctx_tail="
 
 7. End-of-turn summary: report what was applied (one line for the commit), what (if anything) was surfaced for user judgment, and whether the PR was merged.
 
 Separately: if this session had a non-routine moment — user corrected your approach mid-flight, a CLAUDE.md stop-rule bit you, or something went unusually well because of a specific rule — invoke the post-session-critique skill before moving on, to capture the prompt lesson. Skip if the session was routine (do not run the skill just because this hook fired). See .claude/skills/post-session-critique/SKILL.md."
+
+ctx="${ctx_head}${step6}${ctx_tail}"
 
 # Inject context via the PostToolUse hook protocol. Using --arg keeps the
 # multi-line payload readable here and lets jq handle JSON escaping.
