@@ -23,6 +23,10 @@ _VALID_DEVICES = ("auto", "cpu", "cuda", "mps")
 _AMP_DTYPE_ENV = "FF_AMP_DTYPE"
 _VALID_AMP = ("auto", "bf16", "fp16", "fp32")
 
+# Operator-facing CUDA-graph capture toggle, analogous to FF_COMPILE. Opt-in
+# (off unless explicitly set) and sm_80+ only — see ``cuda_graph_enabled``.
+_CUDA_GRAPH_ENV = "FF_CUDA_GRAPH"
+
 
 def requested_device() -> str:
     """Operator-requested device: ``"auto"`` (default), ``"cpu"``, ``"cuda"``, or ``"mps"``.
@@ -135,6 +139,35 @@ def mps_enabled() -> bool:
             "--device auto (or --device cpu)."
         )
     return True
+
+
+def cuda_graph_enabled() -> bool:
+    """Whether hand-rolled CUDA graph capture is requested for NN training.
+
+    Opt-in speed knob, mirroring :func:`_maybe_compile`'s ``FF_COMPILE`` gate
+    (src/shared/pipeline.py): **off unless ``$FF_CUDA_GRAPH`` is truthy**, and
+    then only on CUDA sm_80+. Capturing the NN's forward+backward once and
+    replaying it collapses the hundreds of thousands of microsecond kernel
+    launches the tiny attention model is bottlenecked on (it is GPU-launch-
+    bound, not compute-bound). Unlike ``FF_COMPILE`` (torch.compile), graph
+    replay runs the *eager* kernels unchanged — no Inductor fusion — so it does
+    not perturb the metric path the way fusion did (the "WR flip", #641).
+
+    Gated to sm_80+ for parity with ``FF_COMPILE`` and because the win is a
+    local-dev optimisation on the Blackwell box; the default-off path keeps AWS
+    (T4/L4) and CPU/CI byte-identical to today.
+    """
+    if os.environ.get(_CUDA_GRAPH_ENV, "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    if not cuda_enabled():
+        return False
+    # sm_80+ only, same gate as _maybe_compile (T4 sm_75 stays on the eager path).
+    return torch.cuda.get_device_capability()[0] >= 8
 
 
 def seed_everything(seed: int) -> None:

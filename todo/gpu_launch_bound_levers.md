@@ -1,10 +1,11 @@
 # GPU launch-bound optimization — levers & plans (not yet built)
 
 Planning doc for making **local 6-position parallel training faster**, written after the
-core-pool work (#670) established that the bottleneck is the GPU, not the CPU. Nothing here
-is built — this is the pick-up plan for a future focused session. Both levers are opt-in,
-must clear a per-position A/B (inertness Δ=0 MAE + measured speedup) before shipping, and are
-gated like the existing `FF_COMPILE` per-arch speed knobs (ADR-0017).
+core-pool work (#670) established that the bottleneck is the GPU, not the CPU. **Lever A is
+now built & measured** (2026-05-31, see below); Lever B is not. Both levers are opt-in and
+gated like the existing `FF_COMPILE` per-arch speed knobs (ADR-0017). The intended gate was a
+per-position A/B (inertness Δ=0 MAE + speedup) — Lever A cleared the speedup but **not** the
+strict Δ=0 inertness, and shipped as a documented opt-in speed knob anyway (details below).
 
 ## Diagnosis: the parallel local trainer is GPU launch/host-bound, not CPU-bound
 
@@ -33,20 +34,30 @@ NVIDIA MPS would give true multi-process kernel co-residency — but it is **Lin
 
 ---
 
-## Lever A — CUDA graphs (per-position; collapse the per-step launch storm)
+## Lever A — CUDA graphs (per-position; collapse the per-step launch storm) — BUILT & MEASURED (2026-05-31)
 
-**Idea:** capture the per-step forward+backward kernel sequence once and `replay()` it, turning thousands of host launches into one. Directly attacks the launch overhead.
+**Idea:** capture the per-step forward+backward kernel sequence once and replay it, turning thousands of host launches into one.
 
-**Approach:** opt-in `FF_CUDA_GRAPH` env flag (off by default, sm_80+ gate, mirroring `FF_COMPILE` in `pipeline.py`). When on, `MultiHeadTrainer.train` / `MultiHeadHistoryTrainer.train` graph **only forward+backward** via `torch.cuda.make_graphed_callables` (or a hand-rolled warmup→capture→replay), leaving the GradScaler/optimizer step *outside* the graph.
+**Shipped:** opt-in `FF_CUDA_GRAPH` (off by default, sm_80+ gate, mirrors `FF_COMPILE`; `cuda_graph_enabled()` in `utils.py`). `MultiHeadTrainer._maybe_graph_model` wraps the model with `torch.cuda.make_graphed_callables` at the top of `train()`, leaving GradScaler/optimizer step *outside* the captured fwd+bwd. The nested-K trainer is deliberately **not** graphed (its `x_game_history=` kwarg + `None`-leaf inputs violate the tensor-only `sample_args` contract). The three original "friction points" mostly evaporated against the real torch 2.11 `make_graphed_callables`: it is **pytree-native** (the dict-returning forward round-trips with no adapter), **auto-dispatches** train→graph / eval→eager (so the ragged val pass is untouched, no manual plumbing), and the **entropy regulariser is dormant** (`attn_entropy_coeff=0` in every config, so the side-effect never fires).
 
-**Three friction points to solve (the real work):**
-1. **GradScaler (FP16 default on the 5080).** `scaler.step`/`update` have data-dependent inf/nan control flow (`training.py:694-717`) — not graph-safe. Keep them outside the captured region; graph only fwd+bwd. (Optimizer step is already a single fused-AdamW launch since #655, so little is lost.)
-2. **Side-effecting entropy regulariser.** `attention_entropy_loss()` reads attn weights cached as a side effect of the last forward (`neural_net.py:609`, `training.py:679`). Graph replay writes the *same* static buffers each step, so the entropy term must read the post-replay buffer (wire it as a graph output / read the static tensor after `replay()`), not a fresh Python value.
-3. **Static input buffers.** Allocate static `(static_x, static_h, static_mask, static_y)`; copy each batch in, `replay()`. `drop_last=True` guarantees fixed train-batch shape; the GPU-resident batcher already holds data on-GPU, so this is a copy into the captured buffers. Val pass (drop_last=False, variable last batch) stays un-graphed — it's eval-only and cheaper.
+**Result on RB (single position, 5080, dropout-0 unless noted):**
+- **Speedup: 1.84× on `attn_nn_train`** (23.8s→13.1s); ~1.54× total pipeline. Real — the model is *partly* launch-bound (but only partly: FP32 is 2× slower than FP16, so tensor-core compute matters too).
+- **NOT bit-inert.** Graph-vs-eager attn_nn drifts **+0.13% aggregate / ~0.5% worst-target** (`receiving_yards`), while **eager-vs-eager is Δ=0.0000** (fully reproducible). So the drift is graph-attributable, not noise.
 
-**Benchmark gate:** single position (start with a heavy one, e.g. DST/TE), `FF_CUDA_GRAPH` off vs on. Assert **inertness** (per-target MAE Δ=0.0000 — graphs change launch mechanics, not math) and report **attn_nn_train wall-clock delta**. Ship behind the flag only if it wins; if it regresses or walls on the entropy/scaler frictions, record the result here and stop (the torch.compile precedent says this is a real risk).
+**Root cause (fully bisected):** the forward output is **bitwise identical**, and a **single** fwd+bwd step is **bitwise identical** (trivial loss *and* real `MultiTargetLoss` + FP16 ×65536 GradScaler scaling — grad Δ=0). The drift is purely **multi-step**: the **FP16 + GradScaler** path amplifies sub-ULP graph kernel-ordering differences over thousands of steps. The same fixed-step A/B in **FP32 keeps the divergence 30–100× smaller** (0.0014 vs 0.044 weight-space), confirming amplification rather than a bug. It appears in both the learnable weights *and* the BatchNorm running-stat buffers, and **early-stopping further amplifies it** (a perturbed val curve picks a different best epoch — LN swings the stop 13 epochs).
 
-**Effort:** ~1 focused session + 1 training A/B run. Per-position, doesn't disturb the orchestrator.
+**Fix levers tried — none gives fast AND bit-inert:**
+
+| Lever | Bit-inert? | Fast vs AMP-eager? | Verdict |
+|---|---|---|---|
+| LayerNorm backbone (`FF_NN_NORM`) | No — *worse* per-target (0.27) | 2.05× | flatter val curve → early-stop swings 13 epochs; aggregate ≈ BN |
+| FP32 (`FF_AMP_DTYPE=fp32`) | ≈ yes | **No — 0.87×** (slower than baseline) | FP32 forfeits the FP16 tensor-core 2×; graph collapse doesn't overcome it |
+| Deterministic stop (`FF_NN_FIXED_EPOCHS=N`) | No — 0.077 worst | 1.84× | drift is model-state divergence, not best-epoch *selection* |
+| BN running-stat recalibration (implied) | No | — | learnable weights also diverge (0.074), not just BN buffers |
+
+**Decision (2026-05-31):** ship `FF_CUDA_GRAPH` as an **opt-in local-iteration speed knob** with the non-inertness documented — per-step math is exact and the model is equivalent quality, but it is **not** suitable for bit-comparable benchmark A/Bs. Off by default ⇒ AWS / CI / production byte-identical (the commit is training-skippable; Ridge MAE unchanged). The investigation knobs (`FF_NN_NORM`, `FF_FORCE_DROPOUT_ZERO`, `FF_NN_FIXED_EPOCHS`) are **kept** for a follow-up. Note `FF_NN_NORM` overlaps [src/tuning/ablate_backbone_norm.py](../src/tuning/ablate_backbone_norm.py) (which monkeypatches the same BN→LN swap) but composes with the graph env knobs in a single `benchmark` invocation.
+
+**Follow-up directions (open):** the only route to fast + bit-inert sidesteps the FP16+GradScaler amplifier — e.g. graph **forward-only** (bit-inert but marginal: the backward holds most of the launches), or a scheme that avoids the dynamic loss scaler. Not pursued.
 
 ---
 
@@ -69,7 +80,7 @@ NVIDIA MPS would give true multi-process kernel co-residency — but it is **Lin
 ---
 
 ## Recommended sequencing
-1. **Lever A first** — lower risk, per-position, leaves the orchestrator intact; a clean win shippable behind `FF_CUDA_GRAPH`. Start with the feasibility probe (does `make_graphed_callables` capture the real attention model + autocast given the entropy/scaler frictions?).
-2. **Lever B only if A is insufficient** — it's the bigger MPS-substitute hammer but supersedes the core pool + subprocess model; weigh that explicitly before committing.
+1. ~~**Lever A first**~~ — **DONE** (shipped behind `FF_CUDA_GRAPH`, 1.84×, off by default; not bit-inert — see the Lever A result above).
+2. **Lever B only if A is insufficient** — it's the bigger MPS-substitute hammer but supersedes the core pool + subprocess model; weigh that explicitly before committing. (A's per-position 1.84× is a real local-iteration win, so B is lower priority now.)
 
 Both are **launch-overhead** levers (the measured bottleneck), not occupancy/FLOP levers (the 5080 has those to spare).

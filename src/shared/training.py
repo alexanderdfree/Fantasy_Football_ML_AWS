@@ -1,6 +1,7 @@
 """Generic training infrastructure: loss, dataset, dataloaders, and trainer."""
 
 import contextlib
+import os
 import time
 
 import matplotlib.pyplot as plt
@@ -10,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from src.shared.utils import amp_dtype, cuda_enabled
+from src.shared.utils import amp_dtype, cuda_enabled, cuda_graph_enabled
 
 SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
 
@@ -605,6 +606,9 @@ class MultiHeadTrainer:
         self._scaler = torch.amp.GradScaler(
             "cuda", enabled=self._use_amp and self._amp_dtype is torch.float16
         )
+        # Flipped True once make_graphed_callables has wrapped self.model
+        # (FF_CUDA_GRAPH path); guards _maybe_graph_model against re-capturing.
+        self._graphed = False
 
     def _autocast(self):
         """Return the autocast context when AMP is active, else nullcontext.
@@ -631,7 +635,78 @@ class MultiHeadTrainer:
         preds = self.model(X_batch)
         return preds, y_batch
 
+    def _graph_inputs(self, batch) -> tuple:
+        """Device-resident positional tensor args for ``self.model(...)``.
+
+        Mirrors the model-call side of :meth:`_forward_batch`; used only as
+        ``sample_args`` for ``make_graphed_callables`` (:meth:`_maybe_graph_model`).
+        Keep in lockstep with ``_forward_batch`` — the CUDA-graph A/B's Part-1
+        gate (``torch.equal`` on a fixed batch) catches any drift. Subclasses with
+        extra history tensors override this.
+        """
+        X_batch, _ = batch
+        return (X_batch.to(self.device, non_blocking=True),)
+
+    def _maybe_graph_model(self, train_loader) -> None:
+        """Opt-in (``FF_CUDA_GRAPH``, sm_80+): replace ``self.model`` with a CUDA
+        graph capture of its forward+backward, replayed each train step.
+
+        The tiny attention model is GPU-launch-bound; capturing collapses its
+        per-step kernel launches into one replay. ``make_graphed_callables``
+        patches ``model.forward`` in place (so ``.train()`` / ``.eval()`` /
+        ``.parameters()`` keep working) and routes ``model.eval()`` back to the
+        original eager forward — so the un-graphed, ragged-last-batch validation
+        pass is unaffected and only the fixed-shape (``drop_last=True``) train
+        forward is graphed. GradScaler / optimizer step stay OUTSIDE the graph
+        (they have data-dependent inf/NaN control flow); only fwd+bwd are captured.
+
+        Inert by construction — replay runs the same eager kernels, no Inductor
+        fusion. With dropout live the replay's RNG stream diverges from the
+        un-graphed run (capture warmup iters + offset stepping), so flag-on MAE
+        differs from eager by seed-noise, not 0 — see the two-part A/B gate in
+        todo/gpu_launch_bound_levers.md.
+
+        NOTE: if ``attn_entropy_coeff`` is ever set > 0, ``last_attn_entropy``
+        becomes a static graph buffer written at capture; the entropy term (read
+        outside the forward in :meth:`train`) would then need re-validation that it
+        sees post-replay state. It is 0 / off in every current config.
+        """
+        if self._graphed or not cuda_graph_enabled():
+            return
+        sample_args = self._graph_inputs(next(iter(train_loader)))
+        self.model.train()
+        # make_graphed_callables requires autocast caching disabled; the optimizer
+        # step/GradScaler stay outside the captured fwd+bwd region.
+        capture_ctx = (
+            torch.amp.autocast(device_type="cuda", dtype=self._amp_dtype, cache_enabled=False)
+            if self._use_amp
+            else contextlib.nullcontext()
+        )
+        with capture_ctx:
+            # Patches model.forward in place and returns the same module.
+            # allow_unused_input=True: per-position gated/plain head mixes leave
+            # some params unused for a given graph's outputs.
+            self.model = torch.cuda.make_graphed_callables(
+                self.model,
+                sample_args,
+                num_warmup_iters=3,
+                allow_unused_input=True,
+            )
+        self._graphed = True
+
     def train(self, train_loader, val_loader, n_epochs) -> dict:
+        # Opt-in CUDA graph capture (FF_CUDA_GRAPH, sm_80+); no-op otherwise.
+        self._maybe_graph_model(train_loader)
+        # FF_NN_FIXED_EPOCHS=<N> (test-only): train exactly N epochs, never
+        # early-stop, keep last-epoch weights (skip best-val restore). Makes
+        # model selection independent of the (graph-perturbed) val curve, so a
+        # CUDA-graph A/B isolates trajectory divergence from best-epoch-selection
+        # drift. Unset / non-positive → normal early-stopping behaviour.
+        _fixed_raw = os.environ.get("FF_NN_FIXED_EPOCHS", "").strip()
+        _fixed_n = int(_fixed_raw) if _fixed_raw.isdigit() and int(_fixed_raw) > 0 else 0
+        _fixed_epochs = _fixed_n > 0
+        if _fixed_epochs:
+            n_epochs = _fixed_n
         history = {
             k: []
             for k in [
@@ -845,7 +920,7 @@ class MultiHeadTrainer:
                 self.epochs_without_improvement = 0
             else:
                 self.epochs_without_improvement += 1
-                if self.epochs_without_improvement >= self.patience:
+                if not _fixed_epochs and self.epochs_without_improvement >= self.patience:
                     print(f"Early stopping at epoch {epoch + 1}")
                     if self.best_model_state is not None:
                         self.model.load_state_dict(self.best_model_state)
@@ -870,7 +945,7 @@ class MultiHeadTrainer:
             # Loop completed all n_epochs without early stopping. Without this,
             # the caller would get the last-epoch weights instead of the best
             # checkpoint, silently degrading model quality.
-            if self.best_model_state is not None:
+            if not _fixed_epochs and self.best_model_state is not None:
                 self.model.load_state_dict(self.best_model_state)
 
         return history
@@ -891,6 +966,14 @@ class MultiHeadHistoryTrainer(MultiHeadTrainer):
         y_batch = {k: v.to(self.device, non_blocking=True) for k, v in y_batch.items()}
         preds = self.model(X_static, X_hist, hist_mask)
         return preds, y_batch
+
+    def _graph_inputs(self, batch) -> tuple:
+        X_static, X_hist, hist_mask, _ = batch
+        return (
+            X_static.to(self.device, non_blocking=True),
+            X_hist.to(self.device, non_blocking=True),
+            hist_mask.to(self.device, non_blocking=True),
+        )
 
 
 class MultiTargetHistoryWithOppDataset(Dataset):
@@ -1045,6 +1128,16 @@ class MultiHeadHistoryWithOppTrainer(MultiHeadTrainer):
         y_batch = {k: v.to(self.device, non_blocking=True) for k, v in y_batch.items()}
         preds = self.model(X_static, X_hist, hist_mask, X_opp, opp_mask)
         return preds, y_batch
+
+    def _graph_inputs(self, batch) -> tuple:
+        X_static, X_hist, hist_mask, X_opp, opp_mask, _ = batch
+        return (
+            X_static.to(self.device, non_blocking=True),
+            X_hist.to(self.device, non_blocking=True),
+            hist_mask.to(self.device, non_blocking=True),
+            X_opp.to(self.device, non_blocking=True),
+            opp_mask.to(self.device, non_blocking=True),
+        )
 
 
 class MultiTargetNestedKickDataset(Dataset):
