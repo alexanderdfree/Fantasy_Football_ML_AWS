@@ -6,9 +6,13 @@ single week. Every RB volume/role feature is a ``shift=1`` rolling aggregate
 sequence, so on the ascension week itself the model's inputs *still encode
 backup usage* — it cannot anticipate the breakout, only react to it. The one
 forward-looking signal, ``depth_chart_rank`` (current-week depth charts publish
-pre-game), is weak (median rank 2 even on ascension weeks) and is **entirely
-absent for the 2025 test season** (``src/shared/feature_build.py`` imputes the
-``-1`` sentinel to the train mean).
+pre-game), is present for every season — including 2025, via the ESPN-format
+adapter ``src/data/loader.py::_normalize_espn_depth`` (PR #370) — but is a *weak*
+lever: on ascension weeks the chart often still lists the player as a backup
+(median rank ~2). This diagnostic loads depth the SAME way the loader does, so
+its coverage matches production; the raw ``nfl_source.depth_charts`` shim must
+NOT be used directly (its 2025 ESPN schema lacks the legacy
+``formation``/``depth_team`` columns, which silently drops the whole season).
 
 This operator-only diagnostic quantifies that. Two modes:
 
@@ -279,38 +283,69 @@ def _print_convergence(events: pd.DataFrame, prepared: pd.DataFrame) -> None:
         )
 
 
+def _offense_depth_ranks(depth: pd.DataFrame) -> pd.DataFrame:
+    """Collapse a canonical depth frame (``gsis_id, season, week, formation,
+    depth_team``) to one offensive rank per player-week — ``min(depth_team)``
+    over Offense rows, mirroring the loader's ``depth_chart_rank`` aggregation
+    (``src/data/loader.py``). Pure; unit-tested."""
+    off = depth[depth["formation"] == "Offense"].copy()
+    off["depth_team"] = pd.to_numeric(off["depth_team"], errors="coerce")
+    return off.groupby(["gsis_id", "season", "week"]).agg(rank=("depth_team", "min")).reset_index()
+
+
+def _depth_chart_ranks(seasons: list[int], schedules: pd.DataFrame) -> pd.DataFrame:
+    """Per-(gsis_id, season, week) offensive depth_chart_rank, loaded the SAME
+    way ``src/data/loader.py::_fetch_depth`` does: the legacy nflreadpy schema
+    for <=2024, and the ESPN-format release parquet normalized via
+    ``_normalize_espn_depth`` for >=2025. Using the loader's path (not the raw
+    ``nfl_source.depth_charts`` shim) is the whole point — the shim returns the
+    un-normalized 2025 ESPN schema (no ``formation``/``depth_team``), which an
+    Offense filter silently drops, falsely reading as "2025 missing"."""
+    from src.data import nfl_source
+    from src.data.loader import _DEPTH_CANONICAL_COLS, _normalize_espn_depth
+
+    old = [s for s in seasons if s <= 2024]
+    new = [s for s in seasons if s >= 2025]
+    parts = []
+    if old:
+        parts.append(nfl_source.depth_charts(old)[_DEPTH_CANONICAL_COLS])
+    for s in new:
+        url = (
+            "https://github.com/nflverse/nflverse-data/releases/download/"
+            f"depth_charts/depth_charts_{s}.parquet"
+        )
+        parts.append(_normalize_espn_depth(pd.read_parquet(url), schedules, s))
+    return _offense_depth_ranks(pd.concat(parts, ignore_index=True))
+
+
 def _print_depth_coverage(events: pd.DataFrame) -> None:
-    _hr("depth_chart_rank — the only forward-looking signal")
+    _hr("depth_chart_rank — forward-looking signal (loaded as production does)")
     from src.data import nfl_source
 
-    dc = nfl_source.depth_charts(SEASONS)
-    dc = dc[dc["formation"] == "Offense"].copy()
-    dc["depth_team"] = pd.to_numeric(dc["depth_team"], errors="coerce")
-    dc_rb = dc[dc["position"] == "RB"]
-    agg = dc_rb.groupby(["gsis_id", "season", "week"]).agg(rank=("depth_team", "min")).reset_index()
-    cov = dc_rb.groupby("season")["week"].count()
-    print("  RB depth-chart rows per season (0 => forward signal absent):")
+    ranks = _depth_chart_ranks(SEASONS, nfl_source.schedules(SEASONS))
+    cov = ranks.groupby("season").size()
+    print("  Offensive player-weeks with a depth_chart_rank, per season (0 => absent):")
     for s in SEASONS:
-        n = int(cov.get(s, 0))
-        tag = (
-            "  <- TEST: forward signal DEAD"
-            if s in set(TEST_SEASONS) and n == 0
-            else ("  <- TEST" if s in set(TEST_SEASONS) else "")
-        )
-        print(f"    {s}: {n:5d}{tag}")
+        tag = "  <- TEST (ESPN-format via #370)" if s in set(TEST_SEASONS) else ""
+        print(f"    {s}: {int(cov.get(s, 0)):6d}{tag}")
+    # Coverage + signal quality on the (RB) ascension events themselves.
     ek = events[["player_id", "season", "week"]].rename(columns={"player_id": "gsis_id"})
-    caught = ek.merge(agg, on=["gsis_id", "season", "week"], how="left")
-    covered = caught[~caught["season"].isin(set(TEST_SEASONS))]
-    has_rank = covered["rank"].notna()
-    if len(covered):
+    caught = ek.merge(ranks, on=["gsis_id", "season", "week"], how="left")
+    has_rank = caught["rank"].notna()
+    print(
+        f"\n  Of {len(caught)} ascension events: {has_rank.mean():.0%} had a depth_chart_rank @ W"
+    )
+    if has_rank.any():
+        r = caught.loc[has_rank, "rank"]
         print(
-            f"\n  Of {len(covered)} non-test events: {has_rank.mean():.0%} had a depth-chart row."
+            f"    among those: {(r <= 2).mean():.0%} listed rank<=2 (chart 'caught' the "
+            f"promotion), median rank {r.median():.0f} (>=2 ⇒ often still listed as backup)."
         )
-        if has_rank.any():
-            r = covered.loc[has_rank, "rank"]
+        t = caught[caught["season"].isin(set(TEST_SEASONS))]
+        if len(t):
             print(
-                f"    among those, {(r <= 2).mean():.0%} listed rank<=2 (chart 'caught' the "
-                f"promotion), median rank {r.median():.0f} (>=2 ⇒ often still listed as backup)."
+                f"    2025 test season: {t['rank'].notna().mean():.0%} of {len(t)} events covered "
+                f"— depth_chart_rank is NOT missing for 2025."
             )
 
 

@@ -164,3 +164,54 @@ def test_convergence_table_offsets():
     # B has no week 5+, so later offsets are empty.
     assert conv[conv["offset"] == "W+1"].iloc[0]["n"] == 0
     assert np.isnan(conv[conv["offset"] == "W+1"].iloc[0]["realized_fp"])
+
+
+def test_offense_depth_ranks_min_over_offense_only():
+    # min(depth_team) per player-week over Offense rows; non-Offense ignored;
+    # str depth_team coerced to numeric (matches the legacy + ESPN-normalized dtype).
+    depth = pd.DataFrame(
+        {
+            "gsis_id": ["p1", "p1", "p1", "p2"],
+            "season": [2025, 2025, 2025, 2025],
+            "week": [1, 1, 1, 1],
+            "formation": ["Offense", "Offense", "Defense", "Offense"],
+            "depth_team": ["3", "1", "1", "2"],
+        }
+    )
+    out = a._offense_depth_ranks(depth)
+    assert len(out) == 2
+    assert out.set_index("gsis_id")["rank"].to_dict() == {"p1": 1, "p2": 2}  # Defense row ignored
+
+
+def test_espn_schema_flows_to_offense_ranks():
+    """Guards the fixed bug: a 2025-style ESPN frame (no ``formation``/``depth_team``)
+    must still yield offensive ranks once normalized the loader's way — the raw-shim
+    path silently dropped it. Reuses the real ``_normalize_espn_depth`` adapter."""
+    from src.data.loader import _normalize_espn_depth
+
+    espn = pd.DataFrame(
+        {
+            "dt": ["2025-09-05 12:00:00", "2025-09-06 12:00:00"],
+            "team": ["KC", "KC"],
+            "gsis_id": ["00-0000001", "00-0000001"],
+            "pos_grp": ["3WR 1TE", "3WR 1TE"],  # offensive package per _is_espn_offense
+            "pos_rank": [2, 1],
+        }
+    )
+    schedules = pd.DataFrame(
+        {
+            "season": [2025],
+            "week": [1],
+            "game_type": ["REG"],
+            "gameday": ["2025-09-07"],
+            "home_team": ["KC"],
+            "away_team": ["DET"],
+        }
+    )
+    canonical = _normalize_espn_depth(espn, schedules, 2025)
+    assert not canonical.empty  # the ESPN season is NOT dropped
+    ranks = a._offense_depth_ranks(canonical)
+    assert len(ranks) == 1
+    row = ranks.iloc[0]
+    assert row["season"] == 2025
+    assert row["rank"] == 1  # latest snapshot before kickoff (Sep 6), min rank
