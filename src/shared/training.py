@@ -649,6 +649,10 @@ class MultiHeadTrainer:
         loss_weights = getattr(self.criterion, "loss_weights", None) or {}
         weight_sum = sum(loss_weights.get(t, 1.0) for t in self.target_names) or 1.0
         _cuda = torch.cuda.is_available() and self.device.type == "cuda"
+        # Hoisted out of the batch loop: the model's optional attention-entropy
+        # method is a fixed attribute; only the *call* (which reads the latest
+        # attention weights) needs to happen per batch.
+        entropy_fn = getattr(self.model, "attention_entropy_loss", None)
 
         for epoch in range(n_epochs):
             if _cuda:
@@ -669,11 +673,9 @@ class MultiHeadTrainer:
                 with self._autocast():
                     preds, y_batch = self._forward_batch(batch)
                     loss, _ = self.criterion(preds, y_batch)
-                    # Attention entropy regulariser: additive term that models
-                    # can optionally expose via ``attention_entropy_loss``.
-                    # Returns ``None`` when the feature is off so the hot path
-                    # is a single attribute check.
-                    entropy_fn = getattr(self.model, "attention_entropy_loss", None)
+                    # Attention entropy regulariser (additive). ``entropy_fn``
+                    # is hoisted above the epoch loop; it returns ``None`` when
+                    # the feature is off.
                     if entropy_fn is not None:
                         entropy_term = entropy_fn()
                         if entropy_term is not None:
@@ -692,30 +694,31 @@ class MultiHeadTrainer:
                 self._scaler.scale(loss).backward()
                 self._scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                # GradScaler.step skips ``optimizer.step()`` when inf/NaN
-                # gradients are detected (and ``update()`` halves the scale).
-                # Advancing a per-batch scheduler (OneCycleLR) on a skipped
-                # step burns LR-schedule budget on noise: the schedule
-                # silently drifts ahead of the actual optimizer-step count,
-                # eroding the planned warmup and cooldown. Guard the
-                # scheduler advance on ``scaler.get_scale()`` staying constant
-                # — a strict decrease across ``step``+``update`` is GradScaler's
-                # "I skipped + backed off" signal. With AMP disabled (CPU/MPS,
-                # ``use_amp=False``) ``get_scale()`` is constant at 1.0 so the
-                # branch always advances the scheduler — bit-identical to the
-                # pre-guard behaviour. The BF16 path (scaler disabled) is the
-                # same: get_scale() is a constant 1.0, so the scheduler advances
-                # every step.
-                scale_before = self._scaler.get_scale()
-                self._scaler.step(self.optimizer)
-                self._scaler.update()
-                scheduler_stepped = self._scaler.get_scale() >= scale_before
-                if self.scheduler_per_batch and scheduler_stepped:
-                    self.scheduler.step()
+                # GradScaler.step skips ``optimizer.step()`` on inf/NaN grads
+                # (and ``update()`` backs the scale off). ``get_scale()`` forces
+                # a CPU-GPU sync, so read it ONLY on the per-batch-scheduler path
+                # that actually needs the skip signal: advancing a per-batch
+                # schedule (OneCycleLR) on a skipped step would drift its
+                # warmup/cooldown. A strict scale *decrease* across step+update
+                # is GradScaler's "I skipped" signal. The default
+                # ``cosine_warm_restarts`` is scheduler_per_batch=False, so
+                # step()/update() still run every batch but we pay ZERO
+                # get_scale() syncs (was 2/batch here, both discarded). When the
+                # scaler is disabled (BF16 / CPU / use_amp=False) get_scale() is
+                # a constant 1.0 anyway, so behaviour is identical either way.
+                if self.scheduler_per_batch:
+                    scale_before = self._scaler.get_scale()
+                    self._scaler.step(self.optimizer)
+                    self._scaler.update()
+                    if self._scaler.get_scale() >= scale_before:
+                        self.scheduler.step()
+                else:
+                    self._scaler.step(self.optimizer)
+                    self._scaler.update()
 
                 # ``loss.detach().float()`` keeps the accumulator on-GPU and
                 # in FP32; no host sync per batch (cf. ``loss.item()``).
-                epoch_train_loss = epoch_train_loss + loss.detach().float()
+                epoch_train_loss += loss.detach().float()
                 n_train_batches += 1
 
             # Single end-of-epoch sync (forces accumulator off-GPU). Guard
