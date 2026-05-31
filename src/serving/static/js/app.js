@@ -1254,7 +1254,6 @@ function renderComparisonReliability() {
         spanEl.textContent = `${seasons[0]}–${seasons[seasons.length - 1]}`;
     }
 
-    let anyTotalsOnly = false;
     body.innerHTML = COMPARISON_POSITIONS.map(pos => {
         const cell = rel.positions[pos] || {};
         const sigmas = RELIABILITY_SOURCES.map(s => (cell[s.key] ? cell[s.key].sigma : null)).filter(
@@ -1268,7 +1267,6 @@ function renderComparisonReliability() {
             }
             const isBest = best !== null && Math.abs(b.sigma - best) < 1e-9;
             const cls = "comparison-num" + (isBest ? " comparison-best" : "");
-            if (b.totals_only) anyTotalsOnly = true;
             const star = b.totals_only ? `<span class="comparison-arch">totals-only*</span>` : "";
             const biasTxt = (b.bias >= 0 ? "+" : "") + b.bias.toFixed(2);
             const dir = b.bias >= 0 ? "over" : "under";
