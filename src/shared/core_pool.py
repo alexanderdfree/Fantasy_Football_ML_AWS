@@ -36,11 +36,13 @@ change is numerically inert: ``n_jobs`` controls thread count only, never the ma
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import math
 import os
 import socket
 import socketserver
+import sys
 import threading
 from collections import deque
 from collections.abc import Iterator
@@ -51,6 +53,13 @@ ENV_ADDR = "FF_CORE_POOL_ADDR"  # AF_UNIX socket path; unset => lease_cores is a
 ENV_POS = "FF_CORE_POOL_POS"  # this worker's position label (diagnostics only)
 
 _RECV_CHUNK = 4096
+
+# AF_UNIX ``bind()`` rejects a socket path at or beyond the platform's ``sun_path`` capacity —
+# 104 bytes on macOS/BSD, 108 on Linux. The kernel measures the path string passed to ``bind``,
+# so a deep *parent dir* overflows it long before the filename does (pytest's per-test
+# ``tmp_path`` under a long ``$TMPDIR`` already clears 100 bytes on macOS). The original guard
+# hard-coded 108 and so slipped a 104–107-byte macOS path straight into a raw ``OSError``.
+_SUN_PATH_MAX = 104 if sys.platform == "darwin" else 108
 
 
 # --------------------------------------------------------------------------- allocator
@@ -186,16 +195,32 @@ class _ThreadingUnixServer(socketserver.ThreadingUnixStreamServer):
     allow_reuse_address = True
 
 
+def _socket_path(socket_dir: str) -> str:
+    """An ``AF_UNIX`` path for the pool, guaranteed to fit ``sun_path`` (see ``_SUN_PATH_MAX``).
+
+    Prefers ``<socket_dir>/core_pool.sock`` so the socket lives with the run that owns it. When
+    that dir is too deep for the platform limit (a long ``$TMPDIR`` on macOS — pytest's per-test
+    ``tmp_path`` alone clears it), falls back to ``/tmp`` — the shortest canonical Unix temp root,
+    always present since this module is ``AF_UNIX``-only — with a short name hashed from
+    ``socket_dir`` so distinct dirs get distinct sockets and a reconnect within one run is stable.
+    """
+    addr = os.path.join(socket_dir, "core_pool.sock")
+    if len(addr.encode()) < _SUN_PATH_MAX:
+        return addr
+    digest = hashlib.sha1(socket_dir.encode()).hexdigest()[:12]
+    return os.path.join("/tmp", f"ffcp-{digest}.sock")
+
+
 def start_coordinator(all_cores: list[int], socket_dir: str):
     """Bind an ``AF_UNIX`` socket and serve the pool on a daemon thread.
 
     Returns ``(addr, set_active_count, stop)``: the socket path to hand workers via
     ``FF_CORE_POOL_ADDR``, a callable the orchestrator calls with its running-position count,
-    and a shutdown callable (idempotent) that stops the thread and unlinks the socket.
+    and a shutdown callable (idempotent) that stops the thread and unlinks the socket. The path
+    is chosen by ``_socket_path`` so a deep ``socket_dir`` degrades to a short ``/tmp`` socket
+    instead of overflowing ``AF_UNIX``'s ``sun_path`` limit.
     """
-    addr = os.path.join(socket_dir, "core_pool.sock")
-    if len(addr.encode()) >= 108:  # AF_UNIX sun_path limit
-        raise ValueError(f"AF_UNIX socket path too long ({len(addr.encode())} >= 108): {addr}")
+    addr = _socket_path(socket_dir)
     with contextlib.suppress(FileNotFoundError):
         os.unlink(addr)
     server = _ThreadingUnixServer(addr, _Handler)
