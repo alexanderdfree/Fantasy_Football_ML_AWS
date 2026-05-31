@@ -185,6 +185,14 @@ class TestAuxiliaryEndpoints:
         assert body["weeks"] == sorted(body["weeks"])
         assert all(isinstance(w, int) for w in body["weeks"])
 
+    def test_teams_returns_sorted_strings(self, client_with_data):
+        r = client_with_data.get("/api/teams")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert "teams" in body
+        assert body["teams"] == sorted(body["teams"])
+        assert all(isinstance(t, str) for t in body["teams"])
+
     def test_metrics_returns_both_models(self, client_with_data):
         r = client_with_data.get("/api/metrics")
         assert r.status_code == 200

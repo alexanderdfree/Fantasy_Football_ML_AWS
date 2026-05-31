@@ -2152,6 +2152,14 @@ def api_weeks():
     return jsonify({"weeks": [int(w) for w in weeks]})
 
 
+@app.route("/api/teams")
+def api_teams():
+    _ensure_base_data()
+    results = _cache["results"]
+    teams = sorted(t for t in results["recent_team"].dropna().unique().tolist() if t)
+    return jsonify({"teams": [str(t) for t in teams]})
+
+
 @app.route("/api/player/<player_id>")
 def api_player(player_id):
     scoring = _validate_scoring(request.args.get("scoring", "ppr"))
