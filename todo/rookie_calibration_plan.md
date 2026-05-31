@@ -1,7 +1,7 @@
 # Rookie calibration — implementation plan (next priority)
 
 A pick-up plan for a future session. The diagnosis is done and the evaluation
-harness exists; this is the *fix*. Read [rookie_cohort_findings.md](../src/analysis/rookie_cohort_findings.md)
+harness exists; this is the *fix*. Read [rookie_cohort_findings.md](rookie_cohort_findings.md)
 first — it has the numbers this plan refers to.
 
 ## Context (what we know)
