@@ -1,0 +1,324 @@
+{
+  "run_id": "2026-05-31T02:51:28_3b99f06_backbone_norm",
+  "timestamp": "2026-05-31T02:51:28",
+  "git_hash": "3b99f06",
+  "kind": "ablation",
+  "name": "backbone_norm",
+  "position": "WR",
+  "seeds": [
+    42,
+    7,
+    123,
+    1,
+    2,
+    3,
+    99,
+    2024
+  ],
+  "variants": [
+    {
+      "variant": "bn",
+      "seed": 42,
+      "attn_fp_mae": 4.211399727218969,
+      "base_fp_mae": 4.154921222876032,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.2882508635520935,
+        "receiving_yards": 20.298561096191406,
+        "receptions": 1.33119535446167,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.1881505250930786,
+        "receiving_yards": 20.154123306274414,
+        "receptions": 1.3582563400268555,
+        "fumbles_lost": 0.011208967305719852
+      }
+    },
+    {
+      "variant": "ln",
+      "seed": 42,
+      "attn_fp_mae": 4.211586803181605,
+      "base_fp_mae": 4.146020079203087,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.2872244417667389,
+        "receiving_yards": 20.358964920043945,
+        "receptions": 1.3359309434890747,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.1881505250930786,
+        "receiving_yards": 20.414196014404297,
+        "receptions": 1.3630694150924683,
+        "fumbles_lost": 0.011208967305719852
+      }
+    },
+    {
+      "variant": "bn",
+      "seed": 7,
+      "attn_fp_mae": 4.253828212973759,
+      "base_fp_mae": 4.334037686061051,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.29413744807243347,
+        "receiving_yards": 20.269439697265625,
+        "receptions": 1.3489081859588623,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.30942606925964355,
+        "receiving_yards": 20.331106185913086,
+        "receptions": 1.3858219385147095,
+        "fumbles_lost": 0.028792232275009155
+      }
+    },
+    {
+      "variant": "ln",
+      "seed": 7,
+      "attn_fp_mae": 4.2205981246387365,
+      "base_fp_mae": 4.302083366077313,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.2983078360557556,
+        "receiving_yards": 20.201297760009766,
+        "receptions": 1.3391636610031128,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.30366745591163635,
+        "receiving_yards": 20.51009178161621,
+        "receptions": 1.3644249439239502,
+        "fumbles_lost": 0.011208967305719852
+      }
+    },
+    {
+      "variant": "bn",
+      "seed": 123,
+      "attn_fp_mae": 4.216449671344544,
+      "base_fp_mae": 4.324604901083237,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.2908667325973511,
+        "receiving_yards": 20.14475440979004,
+        "receptions": 1.3345940113067627,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.3090994656085968,
+        "receiving_yards": 20.228864669799805,
+        "receptions": 1.3846023082733154,
+        "fumbles_lost": 0.011208967305719852
+      }
+    },
+    {
+      "variant": "ln",
+      "seed": 123,
+      "attn_fp_mae": 4.18294349571942,
+      "base_fp_mae": 4.320228869182239,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.2852063477039337,
+        "receiving_yards": 20.109500885009766,
+        "receptions": 1.3414151668548584,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.30298149585723877,
+        "receiving_yards": 20.483448028564453,
+        "receptions": 1.384036898612976,
+        "fumbles_lost": 0.011208967305719852
+      }
+    },
+    {
+      "variant": "bn",
+      "seed": 1,
+      "attn_fp_mae": 4.241608821204584,
+      "base_fp_mae": 4.291687655754334,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.2967022657394409,
+        "receiving_yards": 20.168746948242188,
+        "receptions": 1.347251296043396,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.3026816248893738,
+        "receiving_yards": 20.167301177978516,
+        "receptions": 1.3813267946243286,
+        "fumbles_lost": 0.011208967305719852
+      }
+    },
+    {
+      "variant": "ln",
+      "seed": 1,
+      "attn_fp_mae": 4.279210019867429,
+      "base_fp_mae": 4.305192392871225,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.30122998356819153,
+        "receiving_yards": 20.332157135009766,
+        "receptions": 1.3546627759933472,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.29761677980422974,
+        "receiving_yards": 20.365564346313477,
+        "receptions": 1.3839176893234253,
+        "fumbles_lost": 0.011208967305719852
+      }
+    },
+    {
+      "variant": "bn",
+      "seed": 2,
+      "attn_fp_mae": 4.273451550606134,
+      "base_fp_mae": 4.3676081658555,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.30246517062187195,
+        "receiving_yards": 20.405954360961914,
+        "receptions": 1.3483245372772217,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.30634623765945435,
+        "receiving_yards": 20.426427841186523,
+        "receptions": 1.4122880697250366,
+        "fumbles_lost": 0.011208967305719852
+      }
+    },
+    {
+      "variant": "ln",
+      "seed": 2,
+      "attn_fp_mae": 4.267939129151148,
+      "base_fp_mae": 4.34935550731096,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.2981697618961334,
+        "receiving_yards": 20.36880874633789,
+        "receptions": 1.351210117340088,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.3031519949436188,
+        "receiving_yards": 20.459501266479492,
+        "receptions": 1.3888497352600098,
+        "fumbles_lost": 0.011208967305719852
+      }
+    },
+    {
+      "variant": "bn",
+      "seed": 3,
+      "attn_fp_mae": 4.214105160774632,
+      "base_fp_mae": 4.351853511725262,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.28941142559051514,
+        "receiving_yards": 20.19866180419922,
+        "receptions": 1.3327083587646484,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.3146156668663025,
+        "receiving_yards": 20.44550132751465,
+        "receptions": 1.3713277578353882,
+        "fumbles_lost": 0.011272148229181767
+      }
+    },
+    {
+      "variant": "ln",
+      "seed": 3,
+      "attn_fp_mae": 4.253879011019444,
+      "base_fp_mae": 4.311223554507411,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.29546064138412476,
+        "receiving_yards": 20.24761962890625,
+        "receptions": 1.3534551858901978,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.30149713158607483,
+        "receiving_yards": 20.624649047851562,
+        "receptions": 1.3602173328399658,
+        "fumbles_lost": 0.011208967305719852
+      }
+    },
+    {
+      "variant": "bn",
+      "seed": 99,
+      "attn_fp_mae": 4.213304482975467,
+      "base_fp_mae": 4.310235149002641,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.2875213027000427,
+        "receiving_yards": 20.123321533203125,
+        "receptions": 1.3461352586746216,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.3030964434146881,
+        "receiving_yards": 20.286834716796875,
+        "receptions": 1.3681455850601196,
+        "fumbles_lost": 0.011208967305719852
+      }
+    },
+    {
+      "variant": "ln",
+      "seed": 99,
+      "attn_fp_mae": 4.208104047340583,
+      "base_fp_mae": 4.33951562439219,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.2875853478908539,
+        "receiving_yards": 20.054710388183594,
+        "receptions": 1.3431721925735474,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.30174049735069275,
+        "receiving_yards": 20.378555297851562,
+        "receptions": 1.397792100906372,
+        "fumbles_lost": 0.011229549534618855
+      }
+    },
+    {
+      "variant": "bn",
+      "seed": 2024,
+      "attn_fp_mae": 4.232065309323758,
+      "base_fp_mae": 4.3214674415125,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.2984248995780945,
+        "receiving_yards": 20.197826385498047,
+        "receptions": 1.3379199504852295,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.32449084520339966,
+        "receiving_yards": 20.031068801879883,
+        "receptions": 1.3780906200408936,
+        "fumbles_lost": 0.011299881152808666
+      }
+    },
+    {
+      "variant": "ln",
+      "seed": 2024,
+      "attn_fp_mae": 4.2899869569776365,
+      "base_fp_mae": 4.372367908490048,
+      "ridge_fp_mae": 4.725188292544469,
+      "attn_targets": {
+        "receiving_tds": 0.3050808906555176,
+        "receiving_yards": 20.253311157226562,
+        "receptions": 1.3614692687988281,
+        "fumbles_lost": 0.011208967305719852
+      },
+      "base_targets": {
+        "receiving_tds": 0.3124919831752777,
+        "receiving_yards": 20.534040451049805,
+        "receptions": 1.3843249082565308,
+        "fumbles_lost": 0.011208967305719852
+      }
+    }
+  ]
+}
