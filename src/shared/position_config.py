@@ -143,14 +143,15 @@ class PositionConfig:
     nn_batch_size: int = 128
     nn_patience: int = 30
     nn_head_hidden_overrides: dict[str, int] = field(default_factory=dict)
-    # FP16 autocast + GradScaler on the NN forward + loss path (both base
-    # and attention branches). True by default so every position picks it
-    # up on T4 (sm_75 has native FP16 Tensor Cores); flip to False per-
-    # position if a benchmark diff shows a per-target MAE regression beyond
-    # the project's ±2% tolerance. No-op on non-CUDA devices (GradScaler
-    # short-circuits via `enabled=False`). Was BF16 in PR #293 — replaced
-    # with FP16 because T4 has no native BF16 Tensor Cores (Ampere+); BF16
-    # autocast hung production for ~1 hour before this fix.
+    # Mixed-precision autocast on the NN forward + loss path (both base and
+    # attention branches). True by default so every position opts in; flip to
+    # False per-position if a benchmark diff shows a per-target MAE regression
+    # beyond the project's ±2% tolerance. The *dtype* is chosen by `amp_dtype()`
+    # (src/shared/utils.py), NOT here: FP16 + GradScaler on all CUDA (T4 and
+    # Blackwell — a 5080 A/B showed BF16 regresses high-magnitude heads, so FP16
+    # is the default everywhere), and a no-op on non-CUDA (CPU/MPS → byte-
+    # identical to FP32). BF16 is opt-in via FF_AMP_DTYPE=bf16 (sm_80+ only;
+    # refused on T4, which it hung in #293/#301).
     nn_use_amp: bool = True
 
     # === Per-head loss families ===

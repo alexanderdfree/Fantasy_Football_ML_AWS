@@ -17,6 +17,12 @@ import torch
 _DEVICE_ENV = "FF_DEVICE"
 _VALID_DEVICES = ("auto", "cpu", "cuda")
 
+# Operator-facing AMP-precision override, analogous to FF_DEVICE. ``auto`` picks
+# the dtype by GPU compute capability (see ``amp_dtype``); the explicit values
+# pin it for A/B testing without code edits.
+_AMP_DTYPE_ENV = "FF_AMP_DTYPE"
+_VALID_AMP = ("auto", "bf16", "fp16", "fp32")
+
 
 def requested_device() -> str:
     """Operator-requested device: ``"auto"`` (default), ``"cpu"``, or ``"cuda"``.
@@ -53,6 +59,56 @@ def cuda_enabled() -> bool:
             "build, or rerun with --device auto (or --device cpu)."
         )
     return available
+
+
+def requested_amp_dtype() -> str:
+    """Operator-requested AMP dtype: ``"auto"`` (default), ``bf16``/``fp16``/``fp32``.
+
+    Sourced from ``$FF_AMP_DTYPE``. Unset/unrecognised → ``"auto"`` so a typo can
+    never silently pin the wrong precision.
+    """
+    val = os.environ.get(_AMP_DTYPE_ENV, "auto").strip().lower()
+    return val if val in _VALID_AMP else "auto"
+
+
+def amp_dtype() -> torch.dtype | None:
+    """The autocast dtype for this run, or ``None`` if AMP should be off.
+
+    Layers on :func:`cuda_enabled` so the selection follows the same single
+    source of truth as device placement:
+
+    - **Non-CUDA (CPU/MPS — local Mac dev, CI):** ``None``. AMP is off, so those
+      runs stay byte-identical to the FP32 path.
+    - **CUDA, default (``auto``/``fp16``):** ``torch.float16`` on *all* CUDA
+      (T4 and Blackwell alike). A deterministic 5080 A/B showed BF16 *regresses*
+      high-magnitude heads — QB ``passing_yards`` +2.2–3.1% — because BF16 trades
+      mantissa bits (7 vs FP16's 10) the model uses for exponent range it does
+      not need (``GradScaler`` already covers FP16 gradient underflow). FP16 also
+      runs full-throughput Tensor Cores on Blackwell, so there is no speed reason
+      to switch. Hence BF16 is never auto-selected.
+
+    ``$FF_AMP_DTYPE`` overrides the default for experimentation:
+
+    - ``bf16`` — opt into BF16, but **only on sm_80+** (Ampere/Ada/Blackwell).
+      On Turing (Tesla T4 ``sm_75``) BF16 autocast hung production (PRs
+      #293/#301), so this falls back to FP16 there rather than reintroduce the
+      hang — the opt-in cannot footgun a T4.
+    - ``fp16`` — force FP16 (same as the default; explicit for symmetry).
+    - ``fp32`` — disable AMP entirely (e.g. to measure the TF32 FP32 path).
+    """
+    if not cuda_enabled():
+        return None
+    req = requested_amp_dtype()
+    if req == "fp32":
+        return None
+    if req == "bf16":
+        # Opt-in BF16 is SAFE only on sm_80+. T4 (sm_75) has no BF16 Tensor
+        # Cores — BF16 autocast hung it (#293/#301) — so degrade to FP16.
+        if torch.cuda.get_device_capability()[0] >= 8:
+            return torch.bfloat16
+        return torch.float16
+    # auto / fp16: FP16 is the proven default on every CUDA device.
+    return torch.float16
 
 
 def seed_everything(seed: int) -> None:

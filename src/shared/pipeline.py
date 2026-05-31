@@ -140,9 +140,14 @@ def _nn_device() -> torch.device:
             "yes",
             "on",
         }
-        torch.backends.cudnn.benchmark = not (
-            force_deterministic or torch.are_deterministic_algorithms_enabled()
-        )
+        deterministic = force_deterministic or torch.are_deterministic_algorithms_enabled()
+        torch.backends.cudnn.benchmark = not deterministic
+        # TF32 for FP32 matmuls on Ampere+ (sm_80+). This is a hardware no-op on
+        # Turing (T4, sm_75) and on CPU, so the T4/Mac/CI numerics are unchanged;
+        # it only speeds up residual FP32 GEMMs on Blackwell (RTX 5080). Skipped
+        # under deterministic mode, where full-precision FP32 is the contract.
+        if not deterministic:
+            torch.set_float32_matmul_precision("high")
         return torch.device("cuda")
     return torch.device("cpu")
 
