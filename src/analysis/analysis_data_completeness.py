@@ -108,7 +108,6 @@ def _build_frames(pos: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
 
 def _prep_preimpute(
-    pos: str,
     spec: dict,
     tr: pd.DataFrame,
     va: pd.DataFrame,
@@ -132,7 +131,7 @@ def audit_position(pos: str) -> dict:
     """Run the full completeness audit for one position. Returns a result dict."""
     spec = get_inference_spec(pos)
     tr, va, te = _build_frames(pos)
-    ptr, pva, pte, fcols = _prep_preimpute(pos, spec, tr, va, te)
+    ptr, pva, pte, fcols = _prep_preimpute(spec, tr, va, te)
     targets = list(spec["targets"])
 
     present = [c for c in fcols if c in ptr.columns]
