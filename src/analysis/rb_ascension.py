@@ -304,7 +304,7 @@ def _print_depth_coverage(events: pd.DataFrame) -> None:
     has_rank = covered["rank"].notna()
     if len(covered):
         print(
-            f"\n  Of {len(covered)} non-test events: {has_rank.mean():.0%} had a depth-chart row; "
+            f"\n  Of {len(covered)} non-test events: {has_rank.mean():.0%} had a depth-chart row."
         )
         if has_rank.any():
             r = covered.loc[has_rank, "rank"]
