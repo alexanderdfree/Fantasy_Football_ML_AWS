@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from src.shared.utils import cuda_enabled
+from src.shared.utils import amp_dtype, cuda_enabled
 
 SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
 
@@ -577,39 +577,46 @@ class MultiHeadTrainer:
         self.best_val_metric = float("inf")
         self.best_model_state = None
         self.epochs_without_improvement = 0
-        # FP16 autocast + GradScaler on the forward + loss path. Replaces a
-        # previous BF16 attempt (PR #293) that hung on T4 — T4 (sm_75/Turing)
-        # has no native BF16 Tensor Cores (added in Ampere sm_80), so BF16
-        # ops either fell back to FP32 or hit a software-emulation path that
-        # wedged training. T4 *does* have native FP16 Tensor Cores
-        # (~65 TFLOPS vs ~8 FP32), so FP16 is the canonical Turing AMP
-        # recipe.
+        # AMP dtype on the forward + loss path, chosen by ``amp_dtype()``
+        # (src/shared/utils.py) — one source of truth for every host:
         #
-        # GradScaler handles FP16 gradient underflow by multiplying the loss
-        # by a dynamic scale factor (default starts at 2^16) before
-        # backward, then unscaling before the optimizer step; it auto-
-        # adjusts on inf/NaN detection. The small-mean Poisson NLL / Huber
-        # heads (DST def_safeties ~0.05, def_tds ~0.07) sit comfortably
-        # above FP16's smallest normalized value (~6e-5); GradScaler covers
-        # the gradient-side underflow concern.
+        #   - CUDA, default: float16 + GradScaler. FP16 is the proven default on
+        #     ALL CUDA (T4 sm_75 AND Blackwell sm_120). T4 has FP16 Tensor Cores
+        #     (~65 TFLOPS vs ~8 FP32); on the 5080 a deterministic A/B showed
+        #     BF16 *regresses* high-magnitude heads (QB passing_yards +2.2-3.1%)
+        #     and FP16 runs full-throughput there too, so FP16 wins on both.
+        #   - CUDA, FF_AMP_DTYPE=bf16 (opt-in, sm_80+ only): bfloat16, no
+        #     GradScaler (BF16 keeps the FP32 exponent range). amp_dtype()
+        #     refuses BF16 on T4 (degrades to FP16) so the opt-in can't
+        #     reintroduce the #293/#301 T4 hang.
+        #   - Non-CUDA (CPU/MPS — local Mac dev, CI) or FF_AMP_DTYPE=fp32:
+        #     amp_dtype() is None → AMP off, byte-identical to the FP32 path.
         #
-        # Forced off on non-CUDA devices (MPS/CPU) so local dev runs and CI
-        # tests are byte-identical to the FP32 path; GradScaler enabled=
-        # short-circuits when AMP is off so the .scale/.step/.update calls
-        # are no-ops.
-        self._use_amp = bool(use_amp) and getattr(device, "type", None) == "cuda"
-        self._scaler = torch.amp.GradScaler("cuda", enabled=self._use_amp)
+        # GradScaler handles FP16 gradient underflow (dynamic loss scale,
+        # auto-adjusting on inf/NaN); it is enabled ONLY for the float16 path.
+        # For the BF16 opt-in and the no-AMP path it is constructed with
+        # enabled=False so the .scale/.unscale_/.step/.update calls in the loop
+        # are no-ops and a single code path covers all three dtypes. The
+        # optimizer step and parameter master copies stay in FP32 in every case.
+        self._amp_dtype = (
+            amp_dtype() if (bool(use_amp) and getattr(device, "type", None) == "cuda") else None
+        )
+        self._use_amp = self._amp_dtype is not None
+        self._scaler = torch.amp.GradScaler(
+            "cuda", enabled=self._use_amp and self._amp_dtype is torch.float16
+        )
 
     def _autocast(self):
-        """Return the FP16 autocast context when AMP is active, else nullcontext.
+        """Return the autocast context when AMP is active, else nullcontext.
 
         Wrapped around forward + criterion so matmul / linear / attention ops
-        downcast to FP16 on T4 Tensor Cores; the optimizer step and gradient
-        update happen outside the context so master copies stay in FP32 and
-        GradScaler can rescale gradients between backward() and step().
+        downcast to the selected ``self._amp_dtype`` (BF16 on sm_80+, FP16 on
+        T4); the optimizer step and gradient update happen outside the context
+        so master copies stay in FP32 and GradScaler (FP16 only) can rescale
+        gradients between backward() and step().
         """
         if self._use_amp:
-            return torch.amp.autocast(device_type="cuda", dtype=torch.float16)
+            return torch.amp.autocast(device_type="cuda", dtype=self._amp_dtype)
         return contextlib.nullcontext()
 
     def _forward_batch(self, batch) -> tuple[dict, dict]:
@@ -671,11 +678,13 @@ class MultiHeadTrainer:
                         entropy_term = entropy_fn()
                         if entropy_term is not None:
                             loss = loss + entropy_term
-                # FP16 AMP path uses GradScaler to keep gradients in
-                # representable range. When AMP is off (CPU / MPS / use_amp=False)
-                # GradScaler is constructed with enabled=False and these
-                # scaler.* methods are pass-through no-ops — the path is
-                # bit-identical to the original loss.backward() + optimizer.step().
+                # Only the FP16 AMP path (T4) uses GradScaler, to keep gradients
+                # in representable range. In every other case — CPU / MPS,
+                # use_amp=False, AND the BF16 path on sm_80+ (BF16 keeps the FP32
+                # exponent range so no scaling is needed) — GradScaler is
+                # constructed with enabled=False and these scaler.* methods are
+                # pass-through no-ops, so the path is bit-identical to a plain
+                # loss.backward() + optimizer.step().
                 #
                 # scaler.unscale_() must run BEFORE clip_grad_norm_ so the
                 # clip threshold (max_norm=1.0) is applied to real-scale
@@ -694,7 +703,9 @@ class MultiHeadTrainer:
                 # "I skipped + backed off" signal. With AMP disabled (CPU/MPS,
                 # ``use_amp=False``) ``get_scale()`` is constant at 1.0 so the
                 # branch always advances the scheduler — bit-identical to the
-                # pre-guard behaviour.
+                # pre-guard behaviour. The BF16 path (scaler disabled) is the
+                # same: get_scale() is a constant 1.0, so the scheduler advances
+                # every step.
                 scale_before = self._scaler.get_scale()
                 self._scaler.step(self.optimizer)
                 self._scaler.update()
