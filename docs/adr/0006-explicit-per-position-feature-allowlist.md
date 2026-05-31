@@ -25,5 +25,3 @@ K was the lone exception until PR #199 (`dff43fb`): when the convention landed i
 **Rejected.** Opt-out was the earlier pattern and was exactly how the feature-clipping bug and the schedule-features-at-inference bug slipped in. Allowlist refactor landed in commit `18170a6` alongside the gated TD change.
 
 **References.** [src/qb/config.py::POSITION_CONFIG](../../src/qb/config.py) (`include_features` + `attn_static_features` fields on the position-config object), [src/te/config.py](../../src/te/config.py), [src/dst/config.py:218-228](../../src/dst/config.py), [src/k/config.py:140-152](../../src/k/config.py), [src/shared/pipeline.py](../../src/shared/pipeline.py). Weather/Vegas features (from [docs/archive/design_weather_and_odds.md](../archive/design_weather_and_odds.md)) are opted in per-position through the same mechanism.
-
----

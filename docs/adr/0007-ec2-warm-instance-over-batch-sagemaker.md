@@ -28,5 +28,3 @@ The commit↔model relationship is now one-to-one: every merge to `main` produce
 **Rejected.** SageMaker (`eedacfc` → `57d52f9`): managed overhead without training-time dominance. Kubernetes (GKE/EKS): too much machinery for a single GPU job. Long-lived instance without auto-shutdown: leaves an expensive GPU running unused.
 
 **References.** Active path: [docs/ec2_design.md](../ec2_design.md), [infra/ec2/README.md](../../infra/ec2/README.md), [.github/workflows/train-ec2.yml](../../.github/workflows/train-ec2.yml), [src/batch/train.py](../../src/batch/train.py) (reused as the in-container entrypoint). Standby path: [docs/batch_design.md](../batch_design.md), [src/batch/launch.py](../../src/batch/launch.py). Commit arc: `eedacfc` (SageMaker) → `57d52f9` (pivot to Batch) → `ffb3119` (final Batch) → `4b96c41` / `deb3cc7` (EC2 wiring) → `ec5ab17` (SSM polling fix).
-
----

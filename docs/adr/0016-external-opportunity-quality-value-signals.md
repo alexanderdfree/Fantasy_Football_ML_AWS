@@ -15,5 +15,3 @@
 **Consequence.** New raw columns must be present in `data/splits/*.parquet`, so a splits regen (refresh-splits path) + S3 refresh is required before training/serving pick them up; until then `build_game_history_arrays` fails loud (by design). Serving needs no code change — it reuses `build_position_features` + the saved attn config lists, so the new history/static features flow through automatically once the splits carry the raw columns.
 
 **References.** [src/data/external_sources.py](../../src/data/external_sources.py), [src/data/loader.py](../../src/data/loader.py), [src/features/engineer.py](../../src/features/engineer.py) (prior-season external-signal block), QB/RB/WR/TE `src/{pos}/config.py` (`attn_history_stats` + `prior_season`/`contextual` `include_features`), [tests/test_external_sources.py](../../tests/test_external_sources.py). Extends [D4](0004-attention-over-game-history.md) and [D6](0006-explicit-per-position-feature-allowlist.md).
-
----

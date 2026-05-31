@@ -13,5 +13,3 @@
 **Consequence.** New per-platform work has a single reuse point and a documented matrix (the *Platform & hardware targets* section of [CLAUDE.md](../../CLAUDE.md)). Because `src/shared/` is in the path-based retrain trigger, even a numerically-inert detection refactor fires a 6-position retrain — verify the no-op via the Ridge-identity tell, or mark the commit training-skipped.
 
 **References.** [src/shared/platform_detect.py](../../src/shared/platform_detect.py), [src/shared/utils.py](../../src/shared/utils.py), [src/shared/pipeline.py](../../src/shared/pipeline.py) (`_nn_device`), [src/shared/training.py](../../src/shared/training.py) (`_autocast` AMP-dtype rationale), [tests/shared/test_platform_detect.py](../../tests/shared/test_platform_detect.py), [tests/shared/test_device_selection.py](../../tests/shared/test_device_selection.py), [CLAUDE.md](../../CLAUDE.md) (*Platform & hardware targets*), [SETUP.md](../../SETUP.md). Extends [D12](0012-training-step-perf-composition.md); pairs with the `FF_AMP_DTYPE` (#640) and `FF_COMPILE` (#641) AMP/compile entries in the Update history.
-
----

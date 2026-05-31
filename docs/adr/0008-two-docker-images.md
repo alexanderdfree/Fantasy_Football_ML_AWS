@@ -21,5 +21,3 @@ The training Dockerfile ([src/batch/Dockerfile.train](../../src/batch/Dockerfile
 **Rejected.** Multi-stage builds that share a base were considered but rejected as debug-hostile: when a training run fails on Batch, the fastest debug path is `docker run` the exact training image locally. A multi-stage build obscures that.
 
 **References.** [Dockerfile](../../Dockerfile) (Flask), [src/batch/Dockerfile.train](../../src/batch/Dockerfile.train) (Batch), [.dockerignore](../../.dockerignore). Landed in commit `0e814a1`.
-
----

@@ -26,5 +26,3 @@ Net effect on a typical push: if the instance is already warm, training starts w
 **Rejected.** Dedicated-instance reserved-pricing: commits to 24/7 usage we don't need. Spot on EC2 with no auto-shutdown: interrupts mid-training. On-demand with no auto-shutdown: burns $0.53/hr through idle weekends. Lambda-backed GPU (not generally available at this size): no GPU, and would add a cold-start problem back.
 
 **References.** [docs/ec2_design.md](../ec2_design.md), [infra/ec2/launch-instance.sh](../../infra/ec2/launch-instance.sh), [infra/ec2/user-data.sh](../../infra/ec2/user-data.sh), [infra/ec2/auto-shutdown.sh](../../infra/ec2/auto-shutdown.sh), [.github/workflows/train-ec2.yml](../../.github/workflows/train-ec2.yml). Standby assets: [src/batch/build_and_push.sh](../../src/batch/build_and_push.sh), [src/batch/Dockerfile.train](../../src/batch/Dockerfile.train). Arc: `4145257` → `8a50eec` → `ffb3119` (Batch cold-start stack) → `4b96c41` → `deb3cc7` (EC2 warm-host implementation) → `ec5ab17` (SSM polling fix).
-
----

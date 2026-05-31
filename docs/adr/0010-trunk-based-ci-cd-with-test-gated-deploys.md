@@ -19,5 +19,3 @@
 **Rejected.** Environment branches would add a staging deploy with nothing behind it — in a solo project the "prod monitoring" is the dashboard on my laptop. Manual deploys were the original state; replacing them was the point.
 
 **References.** [.github/workflows/tests.yml](../../.github/workflows/tests.yml), [batch-image.yml](../../.github/workflows/batch-image.yml), [deploy.yml](../../.github/workflows/deploy.yml). Landed in commit `ffb3119`.
-
----

@@ -19,5 +19,3 @@
 **Rejected.** Ensembling was considered and rejected because it would obscure exactly the finding the project is trying to produce. (A future production system would of course blend these — that's a follow-up, not this ADR.)
 
 **References.** [src/shared/models.py](../../src/shared/models.py) (`RidgeMultiTarget`, `LightGBMMultiTarget`), [src/shared/neural_net.py](../../src/shared/neural_net.py), [src/shared/pipeline.py](../../src/shared/pipeline.py). LightGBM added in commit `f343c20`.
-
----
