@@ -296,6 +296,10 @@ POSITION_CONFIG = PositionConfig(
     attn_project_kv=False,
     attn_positional_encoding=True,
     attn_gated_fusion=False,
+    # Season openers (empty in-season history) otherwise get a zero/constant
+    # pooled history vector and over-predict off the static prior-season branch
+    # (npg==0 bias +1.13). Give that case a learned per-target embedding instead.
+    attn_no_history_embedding=True,
     attn_dropout=0.05,
     attn_lr=1e-3,
     attn_weight_decay=5e-5,

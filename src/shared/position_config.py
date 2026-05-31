@@ -187,6 +187,9 @@ class PositionConfig:
     attn_gated: bool = False
     attn_gate_hidden: int = 16
     attn_gate_weight: float = 1.0
+    # Learned per-target embedding for empty-history (season-opener) rows; see
+    # MultiHeadNetWithHistory. Off by default; RB opts in.
+    attn_no_history_embedding: bool = False
 
     # === Opposing-side attention branch ===
     opp_attn_history_stats: list[str] = field(default_factory=list)

@@ -800,6 +800,98 @@ class TestMultiHeadNetWithHistory:
             assert torch.isfinite(out[key]).all(), f"NaN/Inf in {key}"
 
 
+@pytest.mark.unit
+class TestNoHistoryEmbedding:
+    """Season-opener fix: learned per-target embedding for empty-history rows.
+
+    A season opener has an all-padding history sequence, so the attention pool
+    returns a zero vector that the per-target LayerNorm maps to its (constant)
+    bias — the head then leans on the static branch and over-predicts. With
+    ``no_history_embedding=True`` that dead vector is swapped for a learned
+    per-target embedding, gated on ``mask.sum(dim=1) == 0``.
+    """
+
+    def _build(self, no_history_embedding, seed=0, **kw):
+        torch.manual_seed(seed)
+        return MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[16, 8],
+            d_model=8,
+            n_attn_heads=2,
+            head_hidden=4,
+            dropout=0.0,
+            no_history_embedding=no_history_embedding,
+            **kw,
+        )
+
+    def _mixed_inputs(self, batch=4, seq_len=6):
+        """Row 0 is a season opener (all-padding); rows 1.. have real games."""
+        x_static = torch.randn(batch, 5)
+        x_history = torch.randn(batch, seq_len, 3)
+        mask = torch.ones(batch, seq_len, dtype=torch.bool)
+        mask[0] = False
+        return x_static, x_history, mask
+
+    def test_off_creates_no_param(self):
+        model = self._build(no_history_embedding=False)
+        assert not hasattr(model, "no_history_emb")
+        assert model.no_history_embedding is False
+
+    def test_on_creates_per_target_param(self):
+        model = self._build(no_history_embedding=True)
+        assert isinstance(model.no_history_emb, torch.nn.Parameter)
+        assert model.no_history_emb.shape == (
+            len(TARGETS),
+            model.attn_pool.n_heads * model.d_model,
+        )
+
+    def test_zero_init_inert_at_step_zero(self):
+        """Flag on (zero-init, built last) is bit-identical to flag off at init.
+
+        The new Parameter draws no RNG, so every other weight inits identically,
+        and zero-init matches the baseline's LayerNorm(0)=0 empty-history vector.
+        This is what makes the validation A/B clean — if it drifts, OFF vs ON is
+        no longer ceteris paribus.
+        """
+        m_off = self._build(no_history_embedding=False, seed=0).eval()
+        m_on = self._build(no_history_embedding=True, seed=0).eval()
+        x_static, x_history, mask = self._mixed_inputs()
+        with torch.no_grad():
+            out_off = m_off(x_static, x_history, mask)
+            out_on = m_on(x_static, x_history, mask)
+        for t in TARGETS:
+            assert torch.allclose(out_off[t], out_on[t], atol=1e-6), t
+
+    def test_nonzero_emb_isolated_to_opener_rows(self):
+        """Perturbing the embedding moves opener rows only — never real-history rows."""
+        # No non-negativity clamp here so the perturbation propagates linearly
+        # instead of being masked by torch.clamp(min=0).
+        model = self._build(no_history_embedding=True, seed=0, non_negative_targets=set()).eval()
+        x_static, x_history, mask = self._mixed_inputs()
+        with torch.no_grad():
+            base = model(x_static, x_history, mask)
+            model.no_history_emb.add_(5.0)
+            after = model(x_static, x_history, mask)
+        for t in TARGETS:
+            # Rows 1.. have real history and never read no_history_emb.
+            assert torch.allclose(base[t][1:], after[t][1:], atol=1e-6), f"{t} leaked to non-opener"
+        # The opener row is driven by the embedding -> at least one target moves.
+        assert any(not torch.allclose(base[t][0], after[t][0]) for t in TARGETS)
+
+    def test_emb_receives_gradient_from_openers(self):
+        """no_history_emb gets gradient when the batch contains opener rows."""
+        model = self._build(no_history_embedding=True, seed=0)
+        x_static = torch.randn(3, 5)
+        x_history = torch.randn(3, 6, 3)
+        mask = torch.zeros(3, 6, dtype=torch.bool)  # all openers
+        out = model(x_static, x_history, mask)
+        sum(out[t].sum() for t in TARGETS).backward()
+        assert model.no_history_emb.grad is not None
+        assert model.no_history_emb.grad.abs().sum() > 0
+
+
 # ---------------------------------------------------------------------------
 # MultiHeadNetWithNestedHistory
 # ---------------------------------------------------------------------------

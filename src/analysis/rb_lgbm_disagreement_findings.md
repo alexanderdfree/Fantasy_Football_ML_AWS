@@ -156,4 +156,35 @@ volatile, mean-reverting target, precisely why LightGBM is the production-best
 (lowest-MAE) RB model. Part 2 — the attention NN's history-awareness does **not**
 make it regress on a short sequence, and its ~17 for Henry was well calibrated; its
 only real gap is the empty-history season opener (`n_prior_games==0`), tracked as a
-follow-up. **No model change recommended in this analysis.**
+follow-up. **No model change recommended in this analysis** (the season-opener
+follow-up was implemented separately — see the Update below).
+
+## Update (2026-05-30): season-opener fix shipped
+
+The `n_prior_games==0` weak spot (the attention NN over-predicting on empty in-season
+history — the "deferred follow-up" in Part 2) was addressed with a **learned no-history
+embedding** in `MultiHeadNetWithHistory` ([src/shared/neural_net.py](../shared/neural_net.py)):
+under `attn_no_history_embedding`, an empty-history row (all-padding mask) gets a
+per-target learned vector in place of the dead pooled-history vector (which the
+per-target LayerNorm otherwise maps to its constant bias, so the head leaned entirely on
+the hot static prior-season branch). The parameter is zero-initialised and built last, so
+it draws no RNG and is bit-identical to the baseline at init — the flag OFF/ON A/B is
+exactly ceteris-paribus (Ridge/NN/LGBM MAE identical to 6 d.p., confirming clean
+attribution).
+
+**RB result (two seeds, same splits).** The fix reduces season-opener over-prediction in
+both: opener bias `+1.13 → +0.52` (seed 42) and `+0.72 → +0.59` (seed 123), opener MAE
+`3.81 → 3.39` and `3.42 → 3.37`, with overall attention-NN MAE flat within seed noise
+(`4.25 → 4.15` seed 42; `4.19 → 4.20` seed 123). The **baseline opener problem is itself
+seed-sensitive** (bias +1.13 vs +0.72), so the gain's magnitude varies while its direction
+(toward 0) is robust. Re-running this script now prints post-fix Part 2 numbers, which
+will differ from the pre-fix table above.
+
+**Rejected variant — mirroring the embedding onto the opp-defense branch.** A team's
+opponent-defense history is empty iff it is **week 1**, and every player in week 1 is also
+playing their own opener — so `opp-empty ⊆ player-empty` (confirmed: 99 week-1 rows ⊂ 159
+`npg==0` rows). A separate opp-branch embedding therefore reaches no row the player
+embedding doesn't already cover; it double-counts the opener signal, competes for the same
+week-1 gradient (diluting the player correction — opener bias only reached +0.86, overall
+regressed to 4.25), and adds overfit-prone capacity. Reverted: the player branch is the
+correct and sufficient home for the opener signal.

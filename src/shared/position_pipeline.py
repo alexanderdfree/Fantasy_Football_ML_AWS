@@ -254,6 +254,9 @@ def build_pipeline_config(
     cfg["head_losses"] = pc.head_losses
     if pos != Position.K:
         cfg["attn_gated"] = pc.attn_gated
+        # Empty-history (season-opener) learned embedding — flat attention only;
+        # K's nested factory doesn't consume it.
+        cfg["attn_no_history_embedding"] = pc.attn_no_history_embedding
     # attn_gate_hidden / attn_gate_weight only ride along on the skill positions
     # whose ATTN_GATED can be True (RB/WR/TE) plus QB which sets them to False
     # but historically plumbed them. K and DST omit the pair.
