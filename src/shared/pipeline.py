@@ -73,7 +73,7 @@ from src.shared.training import (
     make_nested_kick_dataloaders,
     plot_training_curves,
 )
-from src.shared.utils import cuda_enabled, seed_everything, timed
+from src.shared.utils import cuda_enabled, mps_enabled, seed_everything, timed
 
 
 def _read_split(path: str) -> pd.DataFrame:
@@ -149,6 +149,12 @@ def _nn_device() -> torch.device:
         if not deterministic:
             torch.set_float32_matmul_precision("high")
         return torch.device("cuda")
+    # MPS is opt-in (FF_DEVICE=mps) and never reached on the auto/cpu/cuda paths,
+    # so the default CUDA-or-CPU selection above stays byte-identical. The
+    # GPU-resident batcher (_gpu_resident_device) and FP16 AMP (_autocast) are
+    # CUDA-only by design, so an MPS run uses the DataLoader + FP32 path.
+    if mps_enabled():
+        return torch.device("mps")
     return torch.device("cpu")
 
 
