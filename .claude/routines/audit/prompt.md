@@ -1,5 +1,5 @@
 === MISSION ===
-Review my code in parallel for bugs/quirks — spawn as many Opus 4.8 1M Max subagents as you can, each emitting HIGH/MED-only findings with verbatim evidence. The orchestrator verifies each cited line, dedupes against open and closed GitHub issues, drops anything already in CLAUDE.md Stop rules or TODO.md Fixed archive, consolidates partial/full duplicates within this run's worker output, and files ONE GITHUB ISSUE PER SURVIVING FINDING — labeled by severity (`severity-high`/`severity-medium`) and area — plus one closed checkpoint issue recording the audited SHA. Watch for artifacts of unfinished (yet merged) PRs, semantic merge conflicts from concurrent PRs blind to each other's changes, cross-position inconsistencies, training-vs-inference drift, and orphan code under live test coverage.
+Review my code in parallel for bugs/quirks — spawn a panel of Opus subagents — per-area location auditors plus standing cross-cutting lenses — each emitting HIGH/MED-only findings with verbatim evidence. The orchestrator verifies each cited line, dedupes against open and closed GitHub issues, drops anything already in CLAUDE.md Stop rules or TODO.md Fixed archive, consolidates partial/full duplicates within this run's worker output, and files ONE GITHUB ISSUE PER SURVIVING FINDING — labeled by severity (`severity-high`/`severity-medium`) and area — plus one closed checkpoint issue recording the audited SHA. Watch for artifacts of unfinished (yet merged) PRs, semantic merge conflicts from concurrent PRs blind to each other's changes, cross-position inconsistencies, training-vs-inference drift, and orphan code under live test coverage.
 
 === IMPLEMENTATION ===
 You are the orchestrator for a scheduled code-audit run on the Fantasy_Football_ML_AWS repo. Working dir is the repo root. Time budget: 2 hours wall-clock. You are READ-ONLY on repo files. The ONLY write actions permitted are `gh label create` (the severity labels, idempotent), `gh issue create` (per-finding issues + the checkpoint), `gh issue comment` (only on issues YOU create in THIS same run), and `gh issue close` (only on the checkpoint issue YOU create in THIS run). Writing to /tmp/* is fine.
@@ -8,7 +8,7 @@ You are the orchestrator for a scheduled code-audit run on the Fantasy_Football_
 Each surviving finding becomes ONE GitHub issue:
   - **Title**: `[claude-audit] <area>: <title>` — `<area>` ∈ qb|rb|wr|te|k|dst|shared|data|serving|batch|ci|docs|cross-position; `<title>` is the finding title (<80 chars). Severity is NEVER in the title — it is a LABEL, so a HIGH↔MED reclassification doesn't mint a "new" title and break dedup.
   - **Labels**: `claude-audit`, the severity label (`severity-high` or `severity-medium`), and the area label.
-  - **Area** is derived from the finding's `file` path / the worker scope that produced it: `src/qb/*`→qb … `src/dst/*`→dst, `src/shared|models|training|evaluation/*`→shared, `src/data|features/*`→data, `src/serving/*`→serving, `src/batch/*`→batch, `.github/workflows|.claude/hooks/*`→ci, docs/CLAUDE.md/README.md/SETUP.md/TODO.md→docs. Worker #12 invariant/broken-ref findings take the area of the position they pertain to.
+  - **Area** is derived from the finding's `file` path / the worker scope that produced it: `src/qb/*`→qb … `src/dst/*`→dst, `src/shared|models|training|evaluation/*`→shared, `src/data|features/*`→data, `src/serving/*`→serving, `src/batch/*`→batch, `.github/workflows|.claude/hooks/*`→ci, docs/CLAUDE.md/README.md/SETUP.md/TODO.md→docs. The config-invariant/broken-ref lens (L4) findings take the area of the position they pertain to.
   - **Body** (canonical long-form):
         - **File**: `<path>:<line>`
         - **Severity**: HIGH | MED
@@ -49,8 +49,16 @@ STEP 1 — Prep (sequential, ~2 min):
         done
       Dedupe KEY = (area + cited file-path + ≥2 distinctive title keywords). The title prefix `[claude-audit] <area>:` carries area; `/tmp/known_files.tsv` carries the file.
 
-STEP 2 — Fanout (parallel, ~13 min):
-  Spawn 12 general-purpose subagents IN A SINGLE MESSAGE (Agent tool calls run concurrently). Each Agent call sets model="opus". Worker scopes:
+  1d. Compute per-area YIELD (real-vs-noise track record) to weight worker budgets in STEP 2. A finding triaged NOISE carries the `leave` label (applied by the solve-issues skill, closed "not planned"); a genuinely-fixed finding closes WITHOUT `leave` (as "completed"). Bucket CLOSED audit issues by the `[claude-audit] <area>:` title prefix (this excludes checkpoints + cross-position):
+        gh issue list --label claude-audit --state closed --limit 800 --json title,labels > /tmp/closed.json
+        for area in qb rb wr te k dst shared data serving batch ci docs; do
+          sample=$(jq --arg a "$area" '[.[] | select(.title|startswith("[claude-audit] "+$a+":"))] | length' /tmp/closed.json)
+          noise=$(jq --arg a "$area" '[.[] | select(.title|startswith("[claude-audit] "+$a+":")) | select(any(.labels[];.name=="leave"))] | length' /tmp/closed.json)
+          printf '%s\t%s\t%s\n' "$area" "$sample" "$noise"
+        done > /tmp/area_yield.tsv   # area<TAB>sample<TAB>noise; yield = (sample-noise)/sample
+      Until the `leave` backlog accrues, most areas read sample<5 → STEP 2's min-sample guard keeps their base tier (correct cold-start). Historical LEAVE issues closed before this signal existed lack the label and miscount as "real" until re-triaged — the min-sample guard bounds that.
+
+STEP 2 — Fanout (parallel): two layers, ALL workers spawned IN A SINGLE MESSAGE (Agent tool calls run concurrently), each Agent call model="opus". LAYER A = the per-area location auditors #1–#11 below; LAYER B = the four standing cross-cutting lenses L1–L4 below (always spawned, every fire). Total ≈ 15. If the platform caps concurrent spawns below that, spawn LAYER A then LAYER B in two back-to-back messages (each concurrent within itself). Each worker's {BUDGET} comes from the tier table after the lens list. LAYER A location-auditor scopes:
     #1  QB auditor          — src/qb/, tests/qb/
     #2  RB auditor          — src/rb/, tests/rb/
     #3  WR auditor          — src/wr/, tests/wr/
@@ -59,13 +67,23 @@ STEP 2 — Fanout (parallel, ~13 min):
     #6  DST auditor         — src/dst/, tests/dst/
     #7  Shared auditor      — src/shared/, src/models/, src/training/, src/evaluation/, tests/shared/
     #8  Data+features       — src/data/, src/features/
-    #9  Serving auditor     — src/serving/, tests/serving/ (extra focus: training-vs-inference drift)
+    #9  Serving auditor     — src/serving/, tests/serving/ (focus: serving-internal correctness — request/feature handling, scaler & artifact loading; the train/serve PARITY comparison is lens L1's job)
     #10 Batch+CI auditor    — src/batch/, .github/workflows/, .claude/hooks/
     #11 Docs consistency    — CLAUDE.md, README.md, SETUP.md, TODO.md, docs/ (FOCUS: substantive doc-vs-code mismatches — wrong module/symbol attribution, a documented feature/decision/count that doesn't exist or is miscounted, a stated invariant the code violates, a dead cross-ref to a deleted file. Do NOT report a doc/comment whose ONLY error is a stale `file:line`/`file:lines X-Y` citation when the cited target is otherwise correct — line numbers drift as code is inserted above; that is cosmetic, not a finding.)
-    #12 Within-position invariant + broken-reference auditor — iterate over QB → DST one at a time. WITHIN-position invariant violations (LOSS_WEIGHTS ≈ 2.0/HUBER_DELTAS within one position's config; target-naming consistent within a position) AND broken-reference drift (a file in position X references a key/value X's own config.py doesn't define). DOES NOT FLAG per-position differences ACROSS positions — those are by design.
 
-  Per-worker template (substitute {N}, {SCOPE}, {FOCUS}):
-    ROLE: Auditor #{N} of 12. Scope: {SCOPE}. 12-minute budget.
+  LAYER B — standing cross-cutting lenses (by failure-MODE, not location; ALWAYS spawned, every fire):
+    L1  Train/serve parity — SCOPE: src/serving/ vs src/shared/pipeline.py + each src/{pos}/features.py. FOCUS: a feature / scaler / merge (weather, Vegas, red-zone, clip) present in the TRAINING feature-build but absent or different in the SERVING path (or vice-versa). Read BOTH callsites; only an actual expression/column DIFFERENCE is a finding (category train_serve_drift).
+    L2  Cross-position consistency — SCOPE: src/qb|rb|wr|te|k|dst/ side-by-side. FOCUS: ONLY *unintended* divergence — a fix / rename / guard applied to 5 of 6 positions but missing in the 6th with NO per-position rationale. Intentional per-position differences (features, hyperparams, loss weights, NN dims, CONFIG_TINY) are NOT findings (see NOT FINDINGS). This is the most false-positive-prone lens: when a difference COULD be deliberate tuning/whitelist, DROP.
+    L3  Recent-PR archaeology — SCOPE: the last ~30 commits / recently-merged PRs, tree-wide (`git log -p -n 30`, `gh pr list --state merged --limit 20`). FOCUS: unfinished-but-merged-PR artifacts and semantic merge conflicts between concurrent PRs blind to each other (categories unfinished_pr, merge_conflict).
+    L4  Config-invariant + broken-reference — SCOPE: all six src/{pos}/config.py + their consumers. FOCUS: WITHIN-position invariant violations (LOSS_WEIGHTS ≈ 2.0/HUBER_DELTAS within one position's config; target-naming consistent within a position) AND broken-reference drift (a file in position X references a key/value X's own config.py doesn't define). DOES NOT FLAG per-position differences ACROSS positions — those are by design.
+
+  BUDGET — set each worker's {BUDGET} (minutes; SOFT pacing only — the run's 2h wall-clock is the sole HARD limit) from a base leverage tier, adjusted by per-area yield (/tmp/area_yield.tsv from STEP 1d; yield = (sample−noise)/sample):
+    Base tier: HEAVY 30 → shared, serving, data, and all four lenses L1–L4. MEDIUM 20 → qb rb wr te k dst, batch/CI (#10). LIGHT 10 → docs.
+    Yield adjustment (ONLY for an area with sample ≥ 5): yield ≥ 0.60 → bump up one tier (10→20→30); yield < 0.30 → drop one tier (30→20→10). FLOOR: shared, serving, and L1–L4 never drop below HEAVY. sample < 5 (or no data) → keep base tier.
+    Before spawning, print the chosen {worker → tier, budget, yield, sample} table to stdout — no silent weighting.
+
+  Per-worker template (substitute {ROLE_ID}, {SCOPE}, {FOCUS}, {BUDGET}; {ROLE_ID} = the worker's name, e.g. "QB auditor" or "Lens L1 — train/serve parity"):
+    ROLE: {ROLE_ID}. Scope: {SCOPE}. {BUDGET}-minute soft budget (pacing only; the run's 2h wall-clock is the sole hard limit).
 
     PRIMARY FOCUS:
       (a) Artifacts of unfinished-but-merged PRs (dead code, half-renamed symbols, orphan imports, commented-out blocks, TODO/FIXME, feature-list/test-fixture mismatches).
@@ -82,7 +100,7 @@ STEP 2 — Fanout (parallel, ~13 min):
       - "Position X has CONFIG_TINY, Y doesn't" → optional convention
       - "Position X's NN hidden dim differs from Y's" → per-position tuning
       - "Doc/comment cites `file:lineN` or `file:lines X-Y` but the entity is actually at a different line/range" → PURELY COSMETIC. Source line numbers drift whenever code is inserted above; a stale line-NUMBER or line-RANGE in prose/docstrings is NOT a finding. DROP it.
-        STILL REPORT (substantive doc errors, NOT line-number drift): wrong MODULE/symbol attribution (doc says feature X is in module A but it's in B); a documented feature/decision/COUNT that doesn't exist or is wrong (e.g. "ADR has D1–D15" when a real D16 exists); a stated INVARIANT the code violates; a dead cross-ref to a DELETED file; a config KEY/VALUE a file references that isn't defined (that is broken_reference, worker #12). The line-number being off is only noise when the cited TARGET is otherwise correct.
+        STILL REPORT (substantive doc errors, NOT line-number drift): wrong MODULE/symbol attribution (doc says feature X is in module A but it's in B); a documented feature/decision/COUNT that doesn't exist or is wrong (e.g. "ADR has D1–D15" when a real D16 exists); a stated INVARIANT the code violates; a dead cross-ref to a DELETED file; a config KEY/VALUE a file references that isn't defined (that is broken_reference, lens L4). The line-number being off is only noise when the cited TARGET is otherwise correct.
       When in doubt, drop the finding.
 
     STOP RULES — drop anything overlapping:
