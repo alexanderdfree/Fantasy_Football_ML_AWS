@@ -185,11 +185,16 @@ def _mock_all_nfl_helpers(monkeypatch):
         )
 
     def _fake_depth_charts(seasons):
+        # game_type + week=2: the legacy loader realigns charts by ``week -= 1`` (NFL
+        # Data Exchange charts are stale by one game — see
+        # src/analysis/audit_depth_alignment.py), so a week-2 chart is the one that
+        # lands on these week-1 player rows after the shift.
         return pd.DataFrame(
             {
                 "gsis_id": ["P00"] * 2,
                 "season": [seasons[0]] * 2,
-                "week": [1] * 2,
+                "week": [2] * 2,
+                "game_type": ["REG"] * 2,
                 "formation": ["Offense", "Defense"],
                 "depth_team": ["1", "1"],
             }
@@ -297,7 +302,9 @@ def test_load_raw_data_depth_chart_rank_picks_min_deterministically(
             {
                 "gsis_id": ["P00", "P00"],
                 "season": [seasons[0]] * 2,
-                "week": [1] * 2,
+                # week-2 chart -> week-1 player rows after the loader's week-=1 realign.
+                "week": [2] * 2,
+                "game_type": ["REG", "REG"],
                 "formation": ["Offense", "Offense"],
                 "depth_team": depth_order,
             }

@@ -253,7 +253,27 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         new_seasons = [s for s in seasons if s >= 2025]
         parts = []
         if old_seasons:
-            parts.append(nfl_source.depth_charts(old_seasons)[_DEPTH_CANONICAL_COLS])
+            # The legacy NFL Data Exchange ``week`` is stale by one game: the chart
+            # labeled week W reflects the lineup from week W-1, not the one entering
+            # week W (audited 2026-05-30 by src/analysis/audit_depth_alignment.py —
+            # rank-1-QB vs actual-starter match 0.873 at the raw label vs 0.913 after
+            # ``week -= 1`` (the argmax over shifts ±2); at QB-change weeks 0.227 match
+            # the current week vs 0.707 the prior week). Realign so week-W
+            # ``depth_chart_rank`` is the chart entering week W's game — matching the
+            # >=2025 ESPN as-of-kickoff path (``_normalize_espn_depth``), which removes
+            # a train(stale)/test(current) skew. REG-only: playoff ``week`` numbers
+            # overlap the regular season, and ``_normalize_espn_depth`` is REG-only too.
+            # The labeled week-1 chart (preseason roster) shifts to week 0 and drops out
+            # of the (player, season, week) merge; the "extra" week-19 label backfills
+            # week 18, so coverage stays ~99%. The residual QB-change-week lag is
+            # depth-chart inertia (charts react ~2 weeks late) — a source limit no
+            # uniform relabel fixes.
+            legacy = nfl_source.depth_charts(old_seasons)
+            legacy = legacy[legacy["game_type"] == "REG"].copy()
+            legacy["week"] = pd.to_numeric(legacy["week"], errors="coerce") - 1
+            legacy = legacy.dropna(subset=["week"])
+            legacy["week"] = legacy["week"].astype(int)
+            parts.append(legacy[_DEPTH_CANONICAL_COLS])
         for s in new_seasons:
             url = (
                 "https://github.com/nflverse/nflverse-data/releases/download/"
