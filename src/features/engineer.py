@@ -341,6 +341,12 @@ def build_game_history_arrays(
     For each player-week row, gathers that player's prior games within the same
     season (shifted by 1 to prevent leakage — same convention as rolling features).
 
+    Ordering is newest-first: index 0 holds the most-recent prior game, with older
+    games at higher indices and zero-padding on the right. This keeps each absolute
+    sequence index at a fixed recency ("games ago") regardless of how many prior
+    games the player has, so the attention branch's learned positional embedding at
+    a given index always means the same thing across players.
+
     Args:
         df: DataFrame with player_id, season, week, and stat columns.
             Must already be sorted by [player_id, season, week].
@@ -348,7 +354,8 @@ def build_game_history_arrays(
         max_seq_len: maximum history length (pad/truncate to this).
 
     Returns:
-        X_history: [n_samples, max_seq_len, game_dim] float32 array (zero-padded)
+        X_history: [n_samples, max_seq_len, game_dim] float32 array (right-padded;
+            index 0 = most-recent prior game)
         history_mask: [n_samples, max_seq_len] bool array (True = real game)
     """
     if history_stats is None:
@@ -401,10 +408,12 @@ def build_game_history_arrays(
                 continue  # no history for first game of season
 
             start = max(0, pos_in_group - max_seq_len)
-            prior_indices = indices[start:pos_in_group]
+            # Reverse so the most-recent prior game is first (index 0) and older
+            # games follow; padding stays on the right. Fixes each index to a
+            # constant recency across players (see function docstring).
+            prior_indices = indices[start:pos_in_group][::-1]
             seq_len = len(prior_indices)
 
-            # Fill from the start so oldest game is first, most recent is last
             hist_sorted[row_idx, :seq_len] = stat_values[prior_indices]
             mask_sorted[row_idx, :seq_len] = True
 
@@ -707,8 +716,9 @@ def build_opp_defense_history_arrays(
 
     Returns:
         ``(X_opp, opp_mask)`` where ``X_opp`` is ``[n, max_seq_len, opp_dim]``
-        float32 (oldest → newest within the sequence) and ``opp_mask`` is
-        ``[n, max_seq_len]`` bool (``True`` = real game).
+        float32 (newest → oldest within the sequence: index 0 = most-recent prior
+        game, right-padded — mirrors :func:`build_game_history_arrays`) and
+        ``opp_mask`` is ``[n, max_seq_len]`` bool (``True`` = real game).
     """
     if opp_stats is None:
         opp_stats = OPP_DEFENSE_HISTORY_STATS
@@ -774,7 +784,10 @@ def build_opp_defense_history_arrays(
             seq_len = max_seq_len
         else:
             slice_start = start
-        X_opp[row_idx, :seq_len] = stat_arr[slice_start:take_end]
+        # Reverse to newest-first (index 0 = most-recent prior game), right-padded —
+        # mirrors build_game_history_arrays so the opp-defense attention branch shares
+        # the same recency-indexed positional convention.
+        X_opp[row_idx, :seq_len] = stat_arr[slice_start:take_end][::-1]
         opp_mask[row_idx, :seq_len] = True
 
     np.nan_to_num(X_opp, copy=False, nan=0.0)

@@ -96,8 +96,8 @@ class TestBuildNestedKickHistory:
         seen = {X[0, 0, 0, distance_idx], X[0, 1, 0, distance_idx]}
         assert seen == {20.0, 30.0}, f"leaked distances: {seen}"
 
-    def test_outer_ordering_oldest_first(self):
-        """Earliest prior game sits in slot 0, most recent in the last real slot."""
+    def test_outer_ordering_newest_first(self):
+        """Most-recent prior game sits in slot 0, oldest in the last real slot."""
         weekly = _weekly("K1", 2023, [4])
         kicks = pd.DataFrame(
             [
@@ -110,9 +110,9 @@ class TestBuildNestedKickHistory:
             weekly, kicks, ATTN_KICK_STATS, max_games=5, max_kicks_per_game=2
         )
         distance_idx = ATTN_KICK_STATS.index("kick_distance")
-        assert X[0, 0, 0, distance_idx] == 20.0  # oldest
+        assert X[0, 0, 0, distance_idx] == 40.0  # most recent
         assert X[0, 1, 0, distance_idx] == 30.0
-        assert X[0, 2, 0, distance_idx] == 40.0  # most recent
+        assert X[0, 2, 0, distance_idx] == 20.0  # oldest
 
     def test_outer_truncation_keeps_most_recent(self):
         """When prior-game count > max_games, the oldest games are dropped."""
@@ -125,11 +125,11 @@ class TestBuildNestedKickHistory:
             weekly, kicks, ATTN_KICK_STATS, max_games=3, max_kicks_per_game=1
         )
         distance_idx = ATTN_KICK_STATS.index("kick_distance")
-        # Only 3 most recent games kept (weeks 5, 6, 7), oldest-first
+        # Only 3 most recent games kept (weeks 5, 6, 7), newest-first
         assert outer[0, 0] and outer[0, 1] and outer[0, 2]
-        assert X[0, 0, 0, distance_idx] == 50.0
+        assert X[0, 0, 0, distance_idx] == 70.0
         assert X[0, 1, 0, distance_idx] == 60.0
-        assert X[0, 2, 0, distance_idx] == 70.0
+        assert X[0, 2, 0, distance_idx] == 50.0
 
     def test_inner_truncation_keeps_most_recent_kick(self):
         """When a game has > max_kicks_per_game kicks, the oldest inside-game kicks drop."""

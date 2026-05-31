@@ -308,16 +308,17 @@ class TestAttentionPool:
             pool.queries.zero_()
         # Recompute the internal attention weights by hand to make the
         # monotonicity contract explicit (avoids exposing .last_weights).
+        # Sequences are newest-first, so games_ago == position index.
         seq_len = 5
         slopes = pool.alibi_slopes  # [n_heads]
         positions = torch.arange(seq_len)
-        games_ago = (seq_len - 1 - positions).float()  # [4,3,2,1,0]
+        games_ago = positions.float()  # [0,1,2,3,4]
         scores = -slopes.unsqueeze(-1) * games_ago.unsqueeze(0)  # [n_heads, seq_len]
         weights = torch.softmax(scores, dim=-1)
-        # For every head, weights must be non-decreasing by sequence position
-        # (oldest → newest). Slopes are strictly positive, so strict inequality.
+        # For every head, weights must be strictly decreasing by sequence position
+        # (newest at index 0 → oldest). Slopes are strictly positive.
         for h in range(pool.n_heads):
-            assert (weights[h, 1:] > weights[h, :-1]).all()
+            assert (weights[h, 1:] < weights[h, :-1]).all()
 
     def test_alibi_bias_respects_mask(self):
         """A row with only 2 real games must have 2-way attention; padding
