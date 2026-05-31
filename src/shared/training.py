@@ -10,6 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
+from src.shared.utils import cuda_enabled
+
 SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
 
 # DataLoader worker count is fixed at 0 (the PyTorch default). PR #309's
@@ -345,10 +347,11 @@ def _gpu_resident_device() -> torch.device | None:
 
     Returns ``None`` on CPU/MPS hosts so callers fall through to the DataLoader
     path. Centralising the check keeps the four ``make_*_dataloaders`` branches
-    consistent and makes it cheap to gate the path behind an env var if a
-    future fallback is ever needed.
+    consistent and lets ``run_pipeline --device`` (via ``cuda_enabled``) gate the
+    path: ``--device cpu`` returns ``None`` here so the NN trains through the
+    DataLoader path even on a CUDA-visible host.
     """
-    if torch.cuda.is_available():
+    if cuda_enabled():
         return torch.device("cuda")
     return None
 
