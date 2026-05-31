@@ -96,7 +96,7 @@ SUBGROUP_SPECS: list[tuple[str, str, str | None, Callable[[pd.DataFrame], pd.Ser
     ),
     (
         "ret_2wk",
-        "  ↳ returning, 2+ wk missed (days_rest≥21)",
+        "  ↳ returning, 2+ wk missed (days_rest>14)",
         DAYS_REST,
         lambda df: df[DAYS_REST] > 14,
     ),
