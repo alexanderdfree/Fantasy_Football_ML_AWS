@@ -1,9 +1,9 @@
-"""Head-to-head: our model vs. NFL.com expert projections.
+"""Head-to-head: our model vs. expert projections (NFL.com + Sleeper/RotoWire).
 
 Where :mod:`src.analysis.analysis_nflcom_baseline` scores NFL.com *against
 actuals* (so you eyeball it next to the model's benchmark numbers), this script
-puts the **model and the expert on the same player-weeks** and adjudicates the
-gap properly:
+puts the **model and each expert on the same player-weeks** and adjudicates the
+gap properly, per expert:
 
   - Restricts both forecasters to the *intersection* of player-weeks where each
     has a projection (same-sample), scoring both against the single ground-truth
@@ -19,19 +19,22 @@ gap properly:
     ΔMAE / ΔRMSE (primary) plus a Diebold-Mariano test (named companion), so a
     0.1-pt gap over one season isn't mistaken for a real edge.
 
-Loss ≠ metric: the model trains with Huber, the expert is squared-error-oriented,
+Loss ≠ metric: the model trains with Huber, the experts are squared-error-oriented,
 but the comparison happens entirely on held-out errors under shared metrics, so
 the training-loss mismatch is irrelevant here. See the methodology memo for the
 Gneiting (2011) / Taggart (2022) basis.
 
-Scope: this compares against NFL.com only (the single expert source in the repo;
-there is no consensus/FantasyPros/ESPN feed). DST is skipped (no NFL.com DST
-projections). K is totals-only and flagged (NFL.com K is standard-scoring totals,
-not PPR-decomposable).
+Experts:
+  - **NFL.com** (hvpkod archive): QB/RB/WR/TE/K. DST skipped (no projections); K
+    is totals-only (standard-scoring, not PPR-decomposable).
+  - **Sleeper (RotoWire)**: QB/RB/WR/TE (offense only). A single provider, not a
+    consensus. PROVENANCE CAVEAT — Sleeper's historical projections may be
+    backfilled; sanity-check RotoWire's MAE against NFL.com's (a plausible expert
+    lands ~5-6 MAE at QB; an implausibly low number signals look-ahead).
 
 Outputs:
-  analysis_output/expert_comparison.json  -- per-position head-to-head + significance
-  stdout                                  -- pretty-printed comparison table
+  analysis_output/expert_comparison.json  -- per-(expert, position) head-to-head + significance
+  stdout                                  -- one pretty-printed table per expert
 
 Operator usage:
   python -m src.analysis.analysis_expert_comparison                  # default = TEST_SEASONS, PPR, all positions
@@ -39,8 +42,9 @@ Operator usage:
   python -m src.analysis.analysis_expert_comparison --scoring-format half_ppr --n-boot 2000
 
 Note: the default model loader runs each position's full training pipeline
-(``src.{pos}.run_pipeline.run()``) to obtain held-out predictions, so a full run
-trains every requested position (minutes). ``--positions`` subsets the work.
+(``src.{pos}.run_pipeline.run()``) once per position to obtain held-out
+predictions (reused across experts), so a full run trains every requested
+position (minutes). ``--positions`` subsets the work.
 """
 
 from __future__ import annotations
@@ -49,7 +53,8 @@ import argparse
 import importlib
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import numpy as np
@@ -69,8 +74,10 @@ from src.analysis.significance import (
     diebold_mariano_test,
     paired_bootstrap_metric_ci,
 )
+from src.analysis.sleeper_loader import load_sleeper_with_gsis_id
 from src.config import TEST_SEASONS, TOP_K_RANKING
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
+from src.shared.aggregate_targets import POSITION_TARGET_MAP, predictions_to_fantasy_points
 from src.shared.evaluation import compute_metrics, compute_ranking_metrics
 
 EVAL_SEASONS_DEFAULT: tuple[int, ...] = tuple(TEST_SEASONS) if TEST_SEASONS else (2025,)
@@ -85,6 +92,88 @@ SEED_DEFAULT = 0
 # disabled (e.g. a CONFIG_TINY run).
 _MODEL_PRED_COLS: tuple[str, ...] = ("pred_attn_nn_total", "pred_nn_total")
 _KEY_COLS = ["player_id", "season", "week"]
+_EXPERT_PRED_COL = "expert_pred_total"
+
+_SLEEPER_NOTE = (
+    "RotoWire via Sleeper's unofficial API; a single provider, not a consensus. "
+    "Historical-projection provenance is unverified — read RotoWire's MAE as a "
+    "sanity check (a plausible expert is ~5-6 at QB; an implausibly low value "
+    "signals look-ahead/backfill, in which case do not trust the comparison)."
+)
+
+
+# ---------- Expert sources ---------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ExpertSource:
+    """One comparable expert: how to load its raw projections and project them.
+
+    ``load(seasons) -> raw DataFrame``; ``project(raw, pos, scoring_format) ->
+    [player_id, season, week, expert_pred_total]``. ``skipped`` lists positions the
+    source can't cover; ``totals_only`` lists positions it covers only as a single
+    points total (not re-aggregatable to arbitrary scoring).
+    """
+
+    name: str
+    label: str
+    load: Callable[[Sequence[int]], pd.DataFrame]
+    project: Callable[[pd.DataFrame, str, str], pd.DataFrame]
+    skipped: frozenset[str] = field(default_factory=frozenset)
+    totals_only: frozenset[str] = field(default_factory=frozenset)
+    note: str = ""
+
+
+def _empty_expert_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=[*_KEY_COLS, _EXPERT_PRED_COL])
+
+
+def _project_nflcom_expert(raw_df: pd.DataFrame, pos: str, scoring_format: str) -> pd.DataFrame:
+    """Adapt the NFL.com projector to the standard ``expert_pred_total`` shape."""
+    proj = _project_nflcom_to_ppr(raw_df, pos, scoring_format)
+    if proj.empty:
+        return _empty_expert_frame()
+    return proj[[*_KEY_COLS, "nflcom_pred_total"]].rename(
+        columns={"nflcom_pred_total": _EXPERT_PRED_COL}
+    )
+
+
+def _project_sleeper_to_ppr(raw_df: pd.DataFrame, pos: str, scoring_format: str) -> pd.DataFrame:
+    """Aggregate Sleeper's raw-stat projections to PPR fantasy points (offense).
+
+    Mirrors ``_project_nflcom_to_ppr`` but reads the Sleeper frame (player_id =
+    gsis_id from the crosswalk) and emits the standard ``expert_pred_total`` column.
+    """
+    pos_df = raw_df[(raw_df["position"] == pos) & raw_df["player_id"].notna()].copy()
+    if pos_df.empty:
+        return _empty_expert_frame()
+    targets = list(POSITION_TARGET_MAP[pos].keys())
+    pred_dict = {t: pos_df[t].to_numpy() for t in targets}
+    out = pos_df[_KEY_COLS].reset_index(drop=True).copy()
+    out[_EXPERT_PRED_COL] = predictions_to_fantasy_points(pos, pred_dict, scoring_format)
+    return out
+
+
+def _build_experts(nflcom_loader, sleeper_loader) -> list[ExpertSource]:
+    """Construct the default expert list, honoring injected loaders (tests)."""
+    return [
+        ExpertSource(
+            name="nflcom",
+            label="NFL.com",
+            load=nflcom_loader or load_nflcom_with_gsis_id,
+            project=_project_nflcom_expert,
+            skipped=frozenset(_SKIPPED_POSITIONS),
+            totals_only=frozenset(_TOTALS_ONLY_POSITIONS),
+        ),
+        ExpertSource(
+            name="sleeper",
+            label="Sleeper (RotoWire)",
+            load=sleeper_loader or load_sleeper_with_gsis_id,
+            project=_project_sleeper_to_ppr,
+            skipped=frozenset({"DST", "K"}),  # offense only this cut
+            note=_SLEEPER_NOTE,
+        ),
+    ]
 
 
 # ---------- Model-prediction sourcing ----------------------------------------
@@ -128,19 +217,25 @@ def _wilcoxon_abs_error(e_model: np.ndarray, e_expert: np.ndarray) -> dict | Non
 def _compare_one_position(
     pos: str,
     model_df: pd.DataFrame,
-    nflcom_full: pd.DataFrame,
+    expert_df: pd.DataFrame,
+    expert_name: str,
     eval_seasons: Sequence[int],
     scoring_format: str,
     n_boot: int,
     seed: int,
 ) -> dict:
-    """Build the head-to-head block for one position (model vs NFL.com)."""
+    """Build the head-to-head block for one (position, expert).
+
+    ``expert_df`` is already projected to ``[player_id, season, week,
+    expert_pred_total]`` by the source's ``project`` callable.
+    """
     eval_set = {int(s) for s in eval_seasons}
 
     model_col = next((c for c in _MODEL_PRED_COLS if c in model_df.columns), None)
     if model_col is None:
         return {
             "position": pos,
+            "expert_name": expert_name,
             "skipped": True,
             "reason": f"model test_df has no prediction column {list(_MODEL_PRED_COLS)}",
         }
@@ -149,6 +244,7 @@ def _compare_one_position(
     if missing:
         return {
             "position": pos,
+            "expert_name": expert_name,
             "skipped": True,
             "reason": f"model test_df missing {sorted(missing)}",
         }
@@ -159,10 +255,14 @@ def _compare_one_position(
     model["season"] = model["season"].astype(int)
     model["week"] = model["week"].astype(int)
 
-    expert = _project_nflcom_to_ppr(nflcom_full, pos, scoring_format)
-    if expert.empty:
-        return {"position": pos, "skipped": True, "reason": f"no NFL.com projections for {pos}"}
-    expert = expert[_KEY_COLS + ["nflcom_pred_total"]].copy()
+    if expert_df is None or expert_df.empty:
+        return {
+            "position": pos,
+            "expert_name": expert_name,
+            "skipped": True,
+            "reason": f"no {expert_name} projections for {pos}",
+        }
+    expert = expert_df[[*_KEY_COLS, _EXPERT_PRED_COL]].copy()
     expert["player_id"] = expert["player_id"].astype(str)
     expert["season"] = expert["season"].astype(int)
     expert["week"] = expert["week"].astype(int)
@@ -172,13 +272,14 @@ def _compare_one_position(
     if joined.empty:
         return {
             "position": pos,
+            "expert_name": expert_name,
             "skipped": True,
             "reason": f"no (player_id, season, week) overlap for {pos}",
         }
 
     actual = joined["fantasy_points"].to_numpy(dtype=float)
     model_pred = joined[model_col].to_numpy(dtype=float)
-    expert_pred = joined["nflcom_pred_total"].to_numpy(dtype=float)
+    expert_pred = joined[_EXPERT_PRED_COL].to_numpy(dtype=float)
     e_model = model_pred - actual
     e_expert = expert_pred - actual
 
@@ -189,7 +290,7 @@ def _compare_one_position(
         joined, pred_col=model_col, true_col="fantasy_points", top_k=TOP_K_RANKING
     )
     expert_rank = compute_ranking_metrics(
-        joined, pred_col="nflcom_pred_total", true_col="fantasy_points", top_k=TOP_K_RANKING
+        joined, pred_col=_EXPERT_PRED_COL, true_col="fantasy_points", top_k=TOP_K_RANKING
     )
 
     groups = joined["player_id"].to_numpy()
@@ -202,9 +303,9 @@ def _compare_one_position(
 
     return {
         "position": pos,
+        "expert_name": expert_name,
         "n_matched": int(len(joined)),
         "model_col": model_col,
-        "totals_only": pos in _TOTALS_ONLY_POSITIONS,
         "model": {
             "mae": model_metrics["mae"],
             "rmse": model_metrics["rmse"],
@@ -245,13 +346,15 @@ def _fmt(x: float, width: int = 8, prec: int = 3) -> str:
     return f"{x:>{width}.{prec}f}"
 
 
-def _print_summary_table(
-    blocks: list[dict], eval_seasons: Sequence[int], scoring_format: str
+def _print_expert_table(
+    label: str, note: str, blocks: list[dict], eval_seasons: Sequence[int], scoring_format: str
 ) -> None:
     season_label = "+".join(str(s) for s in eval_seasons)
     print("\n" + "=" * 100)
-    print(f"Model vs NFL.com — head-to-head ({scoring_format.upper()}, {season_label})")
+    print(f"Model vs {label} — head-to-head ({scoring_format.upper()}, {season_label})")
     print("  ΔMAE = model − expert (negative ⇒ model better); CI is a player-clustered bootstrap")
+    if note:
+        print(f"  note: {note}")
     print("=" * 100)
     header = (
         f"{'Pos':<5}{'n':>6}{'M_MAE':>8}{'E_MAE':>8}{'ΔMAE':>8}"
@@ -277,6 +380,17 @@ def _print_summary_table(
     print("=" * 100)
 
 
+def _print_summary(experts_out: dict, eval_seasons: Sequence[int], scoring_format: str) -> None:
+    for edata in experts_out.values():
+        _print_expert_table(
+            edata["label"],
+            edata["note"],
+            list(edata["positions"].values()),
+            eval_seasons,
+            scoring_format,
+        )
+
+
 # ---------- Entry point ------------------------------------------------------
 
 
@@ -290,53 +404,76 @@ def main(
     seed: int = SEED_DEFAULT,
     model_preds_loader=None,
     nflcom_loader=None,
+    sleeper_loader=None,
 ) -> dict:
-    """Run the model-vs-NFL.com comparison, print + write JSON, return the result.
+    """Run the model-vs-experts comparison, print + write JSON, return the result.
 
-    ``model_preds_loader(pos, eval_seasons, scoring_format) -> DataFrame`` and
-    ``nflcom_loader(seasons) -> DataFrame`` are injectable for tests; production
-    callers leave them at their defaults.
+    ``model_preds_loader(pos, eval_seasons, scoring_format) -> DataFrame``,
+    ``nflcom_loader(seasons) -> DataFrame`` and ``sleeper_loader(seasons) ->
+    DataFrame`` are injectable for tests; production callers leave them defaulted.
     """
     eval_seasons = tuple(int(s) for s in eval_seasons)
     if model_preds_loader is None:
         model_preds_loader = _default_model_preds
-    if nflcom_loader is None:
-        nflcom_loader = load_nflcom_with_gsis_id
+    experts = _build_experts(nflcom_loader, sleeper_loader)
 
     # The default model loader sources predictions from the pipeline's held-out
-    # test_df, which is scored in the pipeline's configured format (PPR for the
-    # shipped models). This script re-scores only the *expert* side to
-    # ``scoring_format``; re-scoring it to a non-PPR format while the model side
-    # stays PPR would be apples-to-oranges, so warn rather than silently mislead.
+    # test_df, scored in the pipeline's configured format (PPR for shipped models).
+    # This script re-scores only the *expert* side to ``scoring_format``; a non-PPR
+    # head-to-head while the model side stays PPR would be apples-to-oranges.
     if scoring_format != "ppr" and model_preds_loader is _default_model_preds:
         print(
-            f"WARNING: --scoring-format={scoring_format} only re-scores the NFL.com (expert) "
-            "side. The model side reflects the pipeline's configured scoring (PPR for the shipped "
-            "models), so a non-PPR head-to-head is only valid if the pipeline is also run in that "
-            "format."
+            f"WARNING: --scoring-format={scoring_format} only re-scores the expert sides. "
+            "The model side reflects the pipeline's configured scoring (PPR for the shipped "
+            "models), so a non-PPR head-to-head is only valid if the pipeline is also run in "
+            "that format."
         )
 
-    print(f"\nLoading NFL.com projections for seasons {list(eval_seasons)}...")
-    nflcom_full = nflcom_loader(list(eval_seasons))
+    # Load each expert's raw projections once (network/data-source boundary —
+    # defensive: a failed expert is skipped, not fatal to the others).
+    expert_raws: dict[str, pd.DataFrame | None] = {}
+    for src in experts:
+        print(f"\nLoading {src.label} projections for seasons {list(eval_seasons)}...")
+        try:
+            expert_raws[src.name] = src.load(list(eval_seasons))
+        except (RuntimeError, OSError, ValueError, KeyError) as e:
+            print(
+                f"  WARN: {src.label} load failed ({type(e).__name__}: {e}); skipping this expert"
+            )
+            expert_raws[src.name] = None
 
-    blocks: list[dict] = []
+    experts_out: dict[str, dict] = {
+        src.name: {"label": src.label, "note": src.note, "positions": {}} for src in experts
+    }
+
     for pos in positions:
         print(f"\n{'#' * 60}\n# {pos}\n{'#' * 60}")
-        if pos in _SKIPPED_POSITIONS:
-            blocks.append(
-                {
+        needs_model = any(pos not in src.skipped for src in experts)
+        model_df = model_preds_loader(pos, eval_seasons, scoring_format) if needs_model else None
+        for src in experts:
+            out_positions = experts_out[src.name]["positions"]
+            if pos in src.skipped:
+                out_positions[pos] = {
                     "position": pos,
+                    "expert_name": src.name,
                     "skipped": True,
-                    "reason": "NFL.com has no DST projections in hvpkod/NFL-Data",
+                    "reason": f"{src.label} has no {pos} projections",
                 }
+                continue
+            if expert_raws[src.name] is None:
+                out_positions[pos] = {
+                    "position": pos,
+                    "expert_name": src.name,
+                    "skipped": True,
+                    "reason": f"{src.label} projections unavailable",
+                }
+                continue
+            expert_df = src.project(expert_raws[src.name], pos, scoring_format)
+            block = _compare_one_position(
+                pos, model_df, expert_df, src.name, eval_seasons, scoring_format, n_boot, seed
             )
-            continue
-        model_df = model_preds_loader(pos, eval_seasons, scoring_format)
-        blocks.append(
-            _compare_one_position(
-                pos, model_df, nflcom_full, eval_seasons, scoring_format, n_boot, seed
-            )
-        )
+            block["totals_only"] = pos in src.totals_only
+            out_positions[pos] = block
 
     result = {
         "generated_at": datetime.now(UTC).isoformat(),
@@ -344,8 +481,7 @@ def main(
         "scoring": scoring_format,
         "n_boot": int(n_boot),
         "seed": int(seed),
-        "expert_source": "nflcom",
-        "positions": {b["position"]: b for b in blocks},
+        "experts": experts_out,
     }
 
     os.makedirs(output_dir, exist_ok=True)
@@ -354,13 +490,13 @@ def main(
         json.dump(result, f, indent=2, default=_json_default)
     print(f"\nWrote {out_path}")
 
-    _print_summary_table(blocks, eval_seasons, scoring_format)
+    _print_summary(experts_out, eval_seasons, scoring_format)
     return result
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Head-to-head: our model vs NFL.com expert projections (MAE/RMSE + ranking + paired significance)"
+        description="Head-to-head: our model vs expert projections (NFL.com + Sleeper) — MAE/RMSE + ranking + paired significance"
     )
     parser.add_argument(
         "--seasons",
@@ -373,7 +509,7 @@ def _parse_args() -> argparse.Namespace:
         "--scoring-format",
         default=SCORING_FORMAT_DEFAULT,
         choices=["ppr", "half_ppr", "standard"],
-        help="Scoring format for the NFL.com side. NOTE: the model side reflects the pipeline's "
+        help="Scoring format for the expert sides. NOTE: the model side reflects the pipeline's "
         "configured scoring (PPR for shipped models), so non-PPR is only valid if the pipeline is "
         "also run in that format (default: ppr).",
     )
@@ -383,7 +519,8 @@ def _parse_args() -> argparse.Namespace:
         default=list(TARGET_POSITIONS_DEFAULT),
         choices=list(TARGET_POSITIONS_DEFAULT),
         metavar="POS",
-        help="Positions to evaluate (default: all). DST is skipped (no NFL.com DST).",
+        help="Positions to evaluate (default: all). Per expert, unsupported positions are skipped "
+        "(NFL.com: no DST; Sleeper: offense only).",
     )
     parser.add_argument("--output-dir", default=OUTPUT_DIR_DEFAULT)
     parser.add_argument("--n-boot", type=int, default=N_BOOT_DEFAULT, help="Bootstrap replicates")
