@@ -203,6 +203,23 @@ python -m src.tuning.tune_nn   RB --n-jobs 2    # GPU-bound: 2 trials share the 
 Everything else in the *Use all 16 cores* subsection above applies verbatim — only the shell syntax
 differs (`export FOO=bar` / `source` instead of `$env:FOO`).
 
+### Parallel local training — all six positions at once
+
+Train every position concurrently instead of the sequential `benchmark` loop (the runner partitions
+the physical cores across positions and rebalances as each finishes). Each position trains once,
+writing its `src/{pos}/outputs/` artifacts and one consolidated `benchmark_history/` entry; with AWS
+creds present it mirrors that to the website History tab (metrics only). Per-position logs go to
+`logs/local-train-<POS>.log`.
+
+```bash
+source scripts/wsl-env.sh
+scripts/train-local-parallel.sh            # all 6, concurrency autodetected
+scripts/train-local-parallel.sh QB RB WR   # a subset
+scripts/train-local-parallel.sh -j 4       # cap concurrency
+scripts/train-local-parallel.sh --dry-run  # print the core plan, launch nothing
+scripts/train-local-parallel.sh --no-sync  # don't mirror to the website
+```
+
 ## First-time data pull and split
 
 `src.data.loader.load_raw_data()` caches the nflverse pulls to `data/raw/`. `src.features.engineer.build_features()` materialises the ~150 engineered columns (rolling_*, ewma_*, trend_*, prior_season_*, opp_*, contextual, position one-hots) every position's `include_features` whitelist references — without this step every engineered column ends up constant-zero via the silent backfill that used to live in `src/shared/feature_build.py` (now raises `KeyError`). `src.data.split.temporal_split()` writes `train.parquet`, `val.parquet`, `test.parquet` under `data/splits/`. The app and benchmark both read from `data/splits/`, so these must exist before anything else runs.

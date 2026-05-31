@@ -29,6 +29,9 @@ analysis_output/
 # Benchmark history in-flight writes (see shared/benchmark_utils.append_to_history)
 benchmark_history/**/*.tmp
 
+# Per-position logs from the parallel local trainer (scripts/train-local-parallel.sh)
+/logs/
+
 # Jupyter
 .ipynb_checkpoints/
 
