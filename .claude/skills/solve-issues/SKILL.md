@@ -80,7 +80,11 @@ Worker brief (template — fill the `{...}` slots, send all workers in one paral
 >   files_touched_if_FIX: [list]
 >   ```
 >
-> **Verification rubric** — read [CLAUDE.md](CLAUDE.md) "Conventions that bite" and "Stop rules" before starting. Default verdict is **FIX**; only LEAVE with a category and reason. The five LEAVE categories:
+> **Verification rubric** — read [CLAUDE.md](CLAUDE.md) "Conventions that bite" and "Stop rules" before starting. Default verdict is **FIX**; only LEAVE with a category and reason.
+>
+> **Blanket scope rule:** any finding that would change a design choice, feature selection, model architecture/hyperparameters, scoring, or otherwise move model accuracy as a matter of tuning or judgment (not fixing a defect) is **LEAVE** — `feature_drift` (cite the stop-rule if one applies; else note "design/tuning choice, not a defect"). **UNLESS IT IS A CLEAR, NON-CONTROVERSIAL CORRECTNESS BUG.**
+>
+> The five LEAVE categories:
 >
 > | Category | What it means |
 > |---|---|
@@ -223,7 +227,7 @@ gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>):
    - **Test plan** — pytest / ruff / benchmark checklist
    - For Tier C: **mandatory Batch dry-run callout** if any bundle touches GPU code paths (memory `feedback_gpu_guarded_code_needs_gpu_test`)
 10. **Wait green CI** (`gh pr checks <N> --watch`) before opening the next tier's PR. This is the CI-load-light cadence — sequential PRs, not all three open at once.
-11. **Merge** (`gh pr merge <N> --squash`, then `git push origin --delete <branch>` separately — memory `gh_pr_merge_worktree`).
+11. **Get explicit user merge sign-off, then merge.** After green CI, show the user the PR diff (`gh pr diff <N>`) and — for Tier C — the benchmark deltas from the PR body, and ask for explicit approval (AskUserQuestion). Only after the user approves: `gh pr merge <N> --squash`, then `git push origin --delete <branch>` separately — memory `gh_pr_merge_worktree`. Never auto-merge a solve-issues PR on green CI alone — `.claude/hooks/post-pr-create.sh` injects the same stop for `audit-*/tier-*` branches.
 12. **Confirm closure** — the merged PR's `Closes #N` auto-closes each finding-issue it fixed. Spot-check with `gh issue view #N --json state` (CLOSED); manually `gh issue close #N` any that GitHub didn't auto-close (wording mismatch, etc.). LEAVE issues were already closed at the top of this section.
 
 After all tier PRs land, the open `severity-*`-labeled backlog should show only `out_of_scope` + UNCERTAIN→deferred findings. The next `[claude-audit]` cycle won't re-file the fixed/closed ones — its dedup spans **closed** issues too.
@@ -245,7 +249,7 @@ Once the verify-then-close plan is approved:
 
 - **Feature-drift LEAVE category** encodes the project's stop-rules from CLAUDE.md and auto-memory directly into the verification rubric. Audit suggestions that violate "no rolling into ATTN_STATIC_FEATURES" or "no training on fantasy_points" get caught at triage, not at PR review.
 - **CI-friendly PR cadence** — 2–3 PRs instead of 50+ per-bug PRs cuts ~95% of `tests.yml`'s 7-shard matrix runs.
-- **Plan-mode-first** — verdict list and bundling strategy are user-approved before any branches are cut or workers spawn. Workers operate on a vetted plan; nothing speculative ships.
+- **Plan-mode-first + merge sign-off** — verdict list and bundling strategy are user-approved before any branches are cut or workers spawn. Workers operate on a vetted plan; nothing speculative ships. And beyond plan approval, each tier PR stops for **explicit user merge sign-off** (the diff + Tier C benchmark deltas) — a solve-issues PR is never auto-merged on green CI alone (enforced by `post-pr-create.sh` for `audit-*/tier-*` branches).
 - **Reuses established orchestration** — the per-tier worker → cherry-pick → staging-branch → one-PR flow has shipped 6+ tier PRs (the code-review remediation rollup #312/#314/#315, audit-318 cycles) without conflict-driven rebundles.
 - **Verify-then-close (Mode B) retires remediated backlogs** — confirms a remediation actually held on `main` (not merely that PRs merged — memory `feedback_squash_merge_verify_content`) and closes the finite tracking issues, so the next `[claude-audit]` re-scan starts from a true-clean state instead of re-flagging already-fixed findings or leaving split issues open indefinitely.
 
