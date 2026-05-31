@@ -91,8 +91,10 @@ def build_position_features(
     # Remediate the depth_chart_rank "-1 = no depth-chart data" sentinel set in
     # src/data/loader.py. Left raw, -1 is out-of-band vs legitimate ranks (>=1),
     # so StandardScaler maps it to a large negative z-score and the attention NN
-    # extrapolates badly; for seasons with no depth-chart coverage (e.g. 2025,
-    # entirely missing) EVERY row hits the sentinel and the metric regresses.
+    # extrapolates badly; for seasons/players with no depth-chart coverage EVERY
+    # row hits the sentinel and the metric regresses. (2025 was such a gap until
+    # the ESPN-format adapter src/data/loader.py::_normalize_espn_depth (PR #370)
+    # closed it — 2025 is now covered; only all-sentinel positions like K remain.)
     # Impute to the train mean of real ranks (leakage-safe) so missing -> ~0
     # after standardization (neutral). loader.py defers this consumer-side fix
     # by design. Positions whose ranks are *all* sentinel (e.g. K — kickers are
