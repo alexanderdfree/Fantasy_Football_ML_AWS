@@ -1160,6 +1160,7 @@ async function loadComparison() {
         renderComparisonTables();
         renderComparisonReliability();
         renderComparisonNotes();
+        renderIntervals();
     } catch (e) {
         console.error("Failed to load comparison:", e);
         const msg = `<tr><td colspan="4" class="arch-error">Failed to load: ${escapeHtml(e.message)}</td></tr>`;
@@ -1337,6 +1338,161 @@ function renderComparisonNotes() {
             activateTab("wiki");
         });
     });
+}
+
+// ---------------------------------------------------------------------------
+// Prediction intervals — per-projection 80% floor–ceiling bands for the expert
+// sources. Fit offline (src/analysis/expert_intervals.py) and committed; ride
+// along on the /api/comparison payload. The calibration table reports held-out
+// coverage (does the 80% band contain ~80% of actuals?); the example bands show
+// real test-season player-weeks with floor/median/ceiling and where the actual
+// landed. Optional block — hidden when the committed JSON is absent.
+// ---------------------------------------------------------------------------
+const INTERVAL_SOURCES = [
+    { key: "nflcom", label: "NFL.com" },
+    { key: "rotowire", label: "RotoWire" },
+];
+let intervalsPos = "QB";
+let intervalsPosWired = false;
+
+function intervalsBlockFor(intervals, source, pos) {
+    const s = intervals && intervals.intervals && intervals.intervals[source];
+    if (!s) return null;
+    const b = s[pos];
+    if (!b || b.skipped || !b.calibration) return null;
+    return b;
+}
+
+function renderIntervals() {
+    const block = document.getElementById("comparison-intervals-block");
+    if (!block) return;
+    const intervals = comparisonData && comparisonData.intervals;
+    if (!intervals || !intervals.intervals) {
+        block.style.display = "none";
+        return;
+    }
+    block.style.display = "";
+
+    const nominalPct = Math.round((intervals.nominal_coverage || 0.8) * 100);
+    const intro = document.getElementById("intervals-intro");
+    if (intro) {
+        intro.innerHTML = `Each expert gives a single number per player-week. We quantile-regress the
+            actual fantasy points on that projection (per position) to attach an <strong>${nominalPct}%
+            band</strong> — a floor (10th percentile) and ceiling (90th percentile) — around every
+            projection. A well-calibrated band contains the actual outcome about ${nominalPct}% of the time.`;
+    }
+    renderIntervalsCalibration(intervals);
+    setupIntervalsPosToggle(intervals);
+    renderIntervalsNotes(intervals);
+}
+
+function renderIntervalsCalibration(intervals) {
+    const body = document.getElementById("intervals-calibration-body");
+    if (!body) return;
+    body.innerHTML = COMPARISON_POSITIONS.map(pos => {
+        const tds = INTERVAL_SOURCES.map(s => {
+            const b = intervalsBlockFor(intervals, s.key, pos);
+            if (!b) return `<td class="comparison-num comparison-empty">—</td>`;
+            const cal = b.calibration;
+            const covPct = (cal.coverage * 100).toFixed(0);
+            const flag = cal.flag || "ok";
+            const std = b.totals_only ? ` <span class="interval-totals" title="standard scoring">std</span>` : "";
+            const fit = (b.fit_seasons || []).join(", ");
+            const tip = fit ? ` title="fit on ${escapeHtml(fit)}"` : "";
+            return `<td class="comparison-num"${tip}>
+                <span class="interval-cov interval-cov-${flag}">${covPct}%</span>${std}
+                <span class="interval-cov-sub">n=${cal.n_eval} · band ${cal.mean_width.toFixed(1)}</span></td>`;
+        }).join("");
+        return `<tr><td class="comparison-pos">${pos}</td>${tds}</tr>`;
+    }).join("");
+}
+
+function setupIntervalsPosToggle(intervals) {
+    const toggle = document.getElementById("intervals-pos-toggle");
+    if (!toggle) return;
+    // Default to the first position that actually has example bands.
+    const hasEx = pos => INTERVAL_SOURCES.some(s => {
+        const b = intervalsBlockFor(intervals, s.key, pos);
+        return b && b.examples && b.examples.length;
+    });
+    if (!hasEx(intervalsPos)) intervalsPos = COMPARISON_POSITIONS.find(hasEx) || intervalsPos;
+    toggle.innerHTML = COMPARISON_POSITIONS.map(
+        pos => `<button class="pill${pos === intervalsPos ? " active" : ""}" data-pos="${pos}">${pos}</button>`
+    ).join("");
+    if (!intervalsPosWired) {
+        toggle.addEventListener("click", ev => {
+            const pill = ev.target.closest(".pill");
+            if (!pill) return;
+            intervalsPos = pill.dataset.pos;
+            toggle.querySelectorAll(".pill").forEach(p => p.classList.toggle("active", p === pill));
+            renderIntervalsExamples(comparisonData.intervals, intervalsPos);
+        });
+        intervalsPosWired = true;
+    }
+    renderIntervalsExamples(intervals, intervalsPos);
+}
+
+function renderIntervalsExamples(intervals, pos) {
+    const host = document.getElementById("intervals-examples");
+    if (!host) return;
+    const cols = INTERVAL_SOURCES.map(s => {
+        const b = intervalsBlockFor(intervals, s.key, pos);
+        const examples = (b && b.examples) || [];
+        const head = `<div class="intervals-col-head">${s.label}</div>`;
+        if (!examples.length) {
+            return `<div class="intervals-col">${head}<div class="intervals-empty">No ${escapeHtml(pos)} projections.</div></div>`;
+        }
+        return `<div class="intervals-col">${head}${examples.map(renderBandBar).join("")}</div>`;
+    }).join("");
+    host.innerHTML = `<div class="intervals-cols">${cols}</div>`;
+}
+
+function renderBandBar(ex) {
+    // Per-row scale spans the band AND the actual, so the actual marker is always
+    // visible even when it lands outside the band.
+    const lo = Math.min(ex.floor, ex.actual);
+    const hi = Math.max(ex.ceiling, ex.actual);
+    const span = hi - lo || 1;
+    const pct = x => ((x - lo) / span) * 100;
+    const fillL = pct(ex.floor);
+    const fillW = pct(ex.ceiling) - fillL;
+    const cls = ex.in_band ? "in" : "out";
+    const mark = ex.in_band ? "✓" : "✗";
+    return `<div class="band-row">
+        <div class="band-head">
+            <span class="band-player">${escapeHtml(ex.player_name)}</span>
+            <span class="band-week">Wk ${ex.week}</span>
+            <span class="band-proj">proj ${ex.projection.toFixed(1)}</span>
+        </div>
+        <div class="band-track">
+            <div class="band-fill" style="left:${fillL}%;width:${fillW}%"></div>
+            <div class="band-median" style="left:${pct(ex.median)}%" title="median ${ex.median.toFixed(1)}"></div>
+            <div class="band-actual band-actual-${cls}" style="left:${pct(ex.actual)}%"></div>
+        </div>
+        <div class="band-foot">
+            <span class="band-end">${ex.floor.toFixed(1)}</span>
+            <span class="band-actual-label band-actual-${cls}">actual ${ex.actual.toFixed(1)} ${mark}</span>
+            <span class="band-end">${ex.ceiling.toFixed(1)}</span>
+        </div>
+    </div>`;
+}
+
+function renderIntervalsNotes(intervals) {
+    const el = document.getElementById("intervals-notes");
+    if (!el) return;
+    const meta = intervals.sources_meta || {};
+    const evalSeasons = (intervals.eval_seasons || []).join(", ");
+    const rwUnverified = meta.rotowire && meta.rotowire.provenance_unverified;
+    const nflLeak = (meta.nflcom && meta.nflcom.look_ahead_seasons) || [];
+    el.innerHTML = `
+        <ul class="comparison-note-list">
+            <li><strong>Method.</strong> ${escapeHtml(intervals.method || "")}. Fit on genuine pre-${escapeHtml(evalSeasons)} player-weeks (which seasons varies by position — hover a coverage cell); the coverage above is measured on the held-out ${escapeHtml(evalSeasons)} season, so it reflects the bands as shipped.</li>
+            <li><strong>Reading coverage.</strong> Near 80% is well-calibrated. Well below means the band is too tight (over-confident); well above means it is too wide.</li>
+            ${nflLeak.length ? `<li><strong>Look-ahead guard.</strong> Some NFL.com "projected" files (${escapeHtml(nflLeak.join(", "))}) are backfilled with realized stats — implausibly accurate, so auto-excluded from the fit. NFL.com offense bands therefore fit on the recent genuine season(s).</li>` : ""}
+            <li><strong>NFL.com K.</strong> Totals-only ("std") — the band is on the standard-scoring kicker scale, not PPR.</li>
+            ${rwUnverified ? `<li><strong>RotoWire caveat.</strong> Provenance is unverified, but its error spread is stable across every season and matches the held-out season, so its bands sanity-check clean (no look-ahead detected).</li>` : ""}
+            <li><strong>Coverage holes.</strong> NFL.com has no DST; RotoWire has no K.</li>
+        </ul>`;
 }
 
 // ---------------------------------------------------------------------------

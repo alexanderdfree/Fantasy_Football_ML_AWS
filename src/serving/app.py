@@ -2621,12 +2621,31 @@ def api_wiki_page(slug):
 # JSON also carries the top-30-per-position ``player_id`` sets so the live model
 # column is sliced on the *same* players the experts were scored on.
 _COMPARISON_EXPERTS_PATH = os.path.join(os.path.dirname(__file__), "comparison_experts.json")
+# Per-projection prediction intervals (80% floor–ceiling bands) for the expert
+# sources, generated offline by ``src.analysis.expert_intervals`` and committed
+# beside this file. Same committed-JSON + live-endpoint pattern as the expert
+# summary above; surfaced under the Comparison tab's "Prediction intervals" block.
+_EXPERT_INTERVALS_PATH = os.path.join(os.path.dirname(__file__), "expert_intervals.json")
 
 
 def _load_comparison_experts():
     """Read the committed expert-summary JSON. Returns ``None`` on any read error."""
     try:
         with open(_COMPARISON_EXPERTS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        traceback.print_exc()
+        return None
+
+
+def _load_expert_intervals():
+    """Read the committed expert-intervals JSON. Returns ``None`` on any read error.
+
+    Optional: a missing/unreadable file degrades to ``None`` so the Comparison tab
+    still renders its accuracy tables without the intervals block.
+    """
+    try:
+        with open(_EXPERT_INTERVALS_PATH, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         traceback.print_exc()
@@ -2781,6 +2800,9 @@ def api_comparison():
         )
         for pos in _ALL_POSITIONS
     }
+    # Per-projection prediction intervals (static, optional) ride along on the
+    # same payload so the Comparison tab needs only one fetch.
+    intervals = _load_expert_intervals()
 
     return jsonify(
         {
@@ -2796,6 +2818,7 @@ def api_comparison():
             # for an apples-to-apples table and shows each expert's full-archive σ on hover.
             "expert_reliability": experts.get("expert_reliability"),
             "model_reliability": model_reliability,
+            "intervals": intervals,
         }
     )
 

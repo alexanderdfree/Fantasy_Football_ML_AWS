@@ -1385,3 +1385,59 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
     font-size: 12px;
     line-height: 1.5;
 }
+
+/* ---- Prediction intervals (80% floor–ceiling bands) ---- */
+#comparison-intervals-block { margin-top: 26px; border-top: 1px solid var(--border); padding-top: 18px; }
+.intervals-intro { color: var(--text-secondary); font-size: 13px; line-height: 1.6; margin-bottom: 14px; }
+.intervals-intro strong { color: var(--text-primary); }
+.intervals-sub-header {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--text-muted); margin-bottom: 6px;
+}
+/* Coverage cell: colored by how close to nominal 80% it lands. */
+.interval-cov { font-weight: 700; }
+.interval-cov-ok { color: var(--accent); }
+.interval-cov-tight { color: #f59e0b; }   /* under-covers — band too tight */
+.interval-cov-wide { color: var(--accent-secondary); }  /* over-covers — band too wide */
+.interval-cov-sub { display: block; font-size: 11px; font-weight: 400; color: var(--text-muted); margin-top: 2px; }
+.interval-totals {
+    font-size: 10px; color: var(--text-muted); border: 1px solid var(--border);
+    border-radius: 3px; padding: 0 3px; vertical-align: middle;
+}
+
+.intervals-examples-controls { display: flex; align-items: center; gap: 10px; margin: 18px 0 10px; }
+.intervals-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 720px) { .intervals-cols { grid-template-columns: 1fr; } }
+.intervals-col-head {
+    font-weight: 600; color: var(--text-primary); font-size: 13px;
+    margin-bottom: 10px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+}
+.intervals-empty { color: var(--text-muted); font-size: 13px; font-style: italic; }
+
+.band-row { margin-bottom: 14px; }
+.band-head { display: flex; align-items: baseline; gap: 8px; font-size: 12px; margin-bottom: 4px; }
+.band-player { font-weight: 600; color: var(--text-primary); }
+.band-week { color: var(--text-muted); }
+.band-proj { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.band-track {
+    position: relative; height: 12px; border-radius: 6px;
+    background: var(--bg-primary); border: 1px solid var(--border);
+}
+.band-fill {
+    position: absolute; top: 0; bottom: 0; background: var(--accent-dim);
+    border-left: 2px solid var(--accent); border-right: 2px solid var(--accent);
+    border-radius: 3px;
+}
+.band-median { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--text-secondary); }
+.band-actual {
+    position: absolute; top: 50%; width: 10px; height: 10px; border-radius: 50%;
+    transform: translate(-50%, -50%); border: 2px solid var(--bg-card);
+}
+.band-actual-in { background: var(--accent); }
+.band-actual-out { background: #f59e0b; }
+.band-foot {
+    display: flex; justify-content: space-between; font-size: 11px;
+    color: var(--text-muted); margin-top: 4px; font-variant-numeric: tabular-nums;
+}
+.band-actual-label.band-actual-in { color: var(--accent); }
+.band-actual-label.band-actual-out { color: #f59e0b; }

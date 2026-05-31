@@ -456,6 +456,36 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
             </div>
 
             <div class="comparison-notes" id="comparison-notes"></div>
+
+            <!-- Prediction intervals: per-projection 80% floor–ceiling bands -->
+            <div class="comparison-table-block" id="comparison-intervals-block" style="display:none;">
+                <div class="section-header">Prediction intervals — 80% floor–ceiling bands</div>
+                <div class="intervals-intro" id="intervals-intro"></div>
+
+                <div class="intervals-sub-header">Calibration — does the 80% band actually contain ~80% of outcomes?</div>
+                <div class="table-container">
+                    <table class="comparison-table" id="intervals-calibration-table">
+                        <thead>
+                            <tr>
+                                <th>Position</th>
+                                <th class="comparison-num">NFL.com</th>
+                                <th class="comparison-num">RotoWire</th>
+                            </tr>
+                        </thead>
+                        <tbody id="intervals-calibration-body">
+                            <tr><td colspan="3" class="arch-loading">Loading intervals…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="intervals-examples-controls">
+                    <span class="comparison-metric-label">Example bands</span>
+                    <div class="pill-group" id="intervals-pos-toggle"></div>
+                </div>
+                <div id="intervals-examples"></div>
+
+                <div class="comparison-notes" id="intervals-notes"></div>
+            </div>
         </section>
 
         <!-- ============ HISTORY VIEW ============ -->
