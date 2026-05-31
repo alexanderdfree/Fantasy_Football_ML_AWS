@@ -45,5 +45,19 @@ export OMP_NUM_THREADS MKL_NUM_THREADS OPENBLAS_NUM_THREADS NUMEXPR_NUM_THREADS
 : "${LGBM_N_JOBS:=16}"
 export LGBM_N_JOBS
 
+# --- S3 sync target so LOCAL benchmark runs reach the website History tab ------
+# `src.benchmarking.benchmark` (and the parallel runner) mirror each run's
+# benchmark_history JSON to s3://${FF_MODEL_S3_BUCKET}/${FF_MODEL_S3_PREFIX}/
+# benchmark_history/ unless --no-sync is passed; the serving container downloads
+# those at boot and serves them at /api/benchmark_history. The sync silently
+# no-ops when FF_MODEL_S3_BUCKET is unset -- which is why local runs never showed
+# up before. This is **metrics only**: it uploads the results JSON, never model
+# weights, so it cannot change live predictions on the site. Needs AWS creds
+# (env or ~/.aws/credentials); a missing-cred upload warns and is non-fatal.
+: "${FF_MODEL_S3_BUCKET:=ff-predictor-training}"
+: "${FF_MODEL_S3_PREFIX:=models}"
+export FF_MODEL_S3_BUCKET FF_MODEL_S3_PREFIX
+
 echo "[wsl-env] BLAS threads=1 (OMP/MKL/OPENBLAS/NUMEXPR), LGBM_N_JOBS=${LGBM_N_JOBS}" >&2
+echo "[wsl-env] History sync -> s3://${FF_MODEL_S3_BUCKET}/${FF_MODEL_S3_PREFIX}/benchmark_history/ (metrics only; --no-sync to skip)" >&2
 echo "[wsl-env] for tuning: 'unset LGBM_N_JOBS' then 'python -m src.tuning.tune_lgbm <POS> --n-jobs 16'" >&2
