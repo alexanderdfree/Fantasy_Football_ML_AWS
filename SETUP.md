@@ -292,3 +292,19 @@ Pushes to `main` trigger one of two training workflows, selected by the `BATCH_A
 - **`BATCH_ACTIVE=false`** (rollback) → [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml): starts the warm g4dn.xlarge OD instance, runs the six position pipelines sequentially via SSM (~120 min wall-clock; one T4 can't fit concurrent NN runs). See [infra/ec2/README.md](infra/ec2/README.md) and [docs/ec2_design.md](docs/ec2_design.md).
 
 Flip with `gh variable set BATCH_ACTIVE --body "true"` or `--body "false"`; the new value takes effect on the next push. `workflow_dispatch` on either workflow bypasses the gate for smoke-testing the inactive path. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
+
+## Sync Claude auto-memory across machines (owner only)
+
+Claude Code's per-project auto-memory lives at `~/.claude/projects/<slug>/memory/` (the `MEMORY.md` index plus one markdown file per remembered fact) — outside this repo, and deliberately **not** committed (the repo is public). [scripts/claude-memory-sync.sh](scripts/claude-memory-sync.sh) syncs just that `memory/` subtree between machines (e.g. the Mac and the WSL box) through the private `ff-predictor-training` S3 bucket, under a machine-independent key (`claude-memory/<repo>/`) derived from the git remote — so each box's divergent local project path converges on one location. Session transcripts and subagent metadata are never touched.
+
+```bash
+scripts/claude-memory-sync.sh status          # dry-run both directions; changes nothing
+scripts/claude-memory-sync.sh pull            # S3 -> local   (start of a work block)
+scripts/claude-memory-sync.sh push            # local -> S3   (end of a work block)
+scripts/claude-memory-sync.sh push --prune    # mirror: also delete S3 files removed locally
+```
+
+- **Discipline:** pull at the start, push at the end. You work one machine at a time, so this keeps the lone conflict hotspot (`MEMORY.md`) clean.
+- **Additive by default:** a memory created on the other box is never silently dropped; `--prune` opts into mirror-delete (the bucket has versioning enabled as the recovery net).
+- **Credentials:** needs AWS creds (env or `~/.aws/credentials`); it cleanly no-ops when the `aws` CLI or creds are absent, so it is safe in a hook. Override the location with `FF_MEMORY_S3_BUCKET` / `FF_MEMORY_S3_PREFIX`.
+- **Full-auto:** `bash scripts/bootstrap-claude-wsl.sh --with-memory-sync` installs `SessionStart` (pull) + `Stop` (push) hooks into your global `~/.claude/settings.json` (async, non-blocking) and does one initial pull — so sync happens hands-off. The hooks self-scope to repos containing the script, so they no-op everywhere else.

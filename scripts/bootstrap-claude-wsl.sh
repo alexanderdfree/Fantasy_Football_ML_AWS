@@ -10,6 +10,10 @@
 #   2. ~/.claude/hooks/worktree-parent-guard.sh -- the global PreToolUse hook the
 #                                            settings above reference.
 #
+# Optional add-on (--with-memory-sync): also installs SessionStart/Stop hooks
+# that sync Claude's auto-memory to private S3 via scripts/claude-memory-sync.sh
+# (off by default; see that script + SETUP.md's memory-sync section).
+#
 # What this does NOT touch (deliberately):
 #   * The PROJECT config -- .claude/settings.json and .claude/hooks/*.sh are
 #     tracked in git, so `git clone`/`pull` already brings them. Nothing to do.
@@ -27,6 +31,25 @@
 # REPLACES arrays, so the `permissions.allow` / `hooks.PreToolUse` arrays below
 # overwrite any existing same-named arrays -- the backup is your safety net.)
 set -euo pipefail
+
+# Optional add-on: also install the Claude-memory <-> S3 sync hooks
+# (scripts/claude-memory-sync.sh). Off by default; enable with --with-memory-sync.
+WITH_MEMORY_SYNC=0
+for arg in "$@"; do
+  case "$arg" in
+    --with-memory-sync) WITH_MEMORY_SYNC=1 ;;
+    -h | --help)
+      echo "usage: $(basename "$0") [--with-memory-sync]"
+      exit 0
+      ;;
+    *)
+      echo "[bootstrap] unknown arg: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 CLAUDE_DIR="${HOME}/.claude"
 HOOKS_DIR="${CLAUDE_DIR}/hooks"
@@ -128,6 +151,51 @@ read -r -d '' DESIRED <<'JSON_EOF' || true
 }
 JSON_EOF
 
+# Optional: fold the memory-sync SessionStart(pull)+Stop(push) hooks into the
+# desired settings so the same jq merge below installs them. Requires jq (the
+# merge does). The hook command self-scopes via a `[ -x ]` guard — it no-ops in
+# any project lacking scripts/claude-memory-sync.sh — so a GLOBAL hook is
+# harmless everywhere but this repo and its worktrees.
+if [ "$WITH_MEMORY_SYNC" -eq 1 ]; then
+  if command -v jq >/dev/null 2>&1; then
+    read -r -d '' MEMSYNC_HOOKS <<'JSON_EOF' || true
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$CLAUDE_PROJECT_DIR/scripts/claude-memory-sync.sh\" ] && bash \"$CLAUDE_PROJECT_DIR/scripts/claude-memory-sync.sh\" pull || true",
+            "async": true,
+            "timeout": 20,
+            "statusMessage": "Pulling Claude memory from S3"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$CLAUDE_PROJECT_DIR/scripts/claude-memory-sync.sh\" ] && bash \"$CLAUDE_PROJECT_DIR/scripts/claude-memory-sync.sh\" push || true",
+            "async": true,
+            "statusMessage": "Syncing Claude memory to S3"
+          }
+        ]
+      }
+    ]
+  }
+}
+JSON_EOF
+    DESIRED="$(jq -n --argjson base "$DESIRED" --argjson add "$MEMSYNC_HOOKS" '$base * $add')"
+  else
+    echo "[bootstrap] WARN: --with-memory-sync needs jq to merge the hooks; skipped." >&2
+    WITH_MEMORY_SYNC=0
+  fi
+fi
+
 backup_existing() {
   local stamp
   stamp="$(date +%Y%m%d-%H%M%S)"
@@ -155,6 +223,13 @@ else
   echo "[bootstrap] wrote settings (unmerged) -> $SETTINGS"
 fi
 
+# --- Optional: seed memory from S3 now (so a fresh box has it immediately) ----
+if [ "$WITH_MEMORY_SYNC" -eq 1 ]; then
+  echo "[bootstrap] memory-sync hooks installed (SessionStart pull + Stop push)."
+  echo "[bootstrap] doing an initial memory pull from S3 (best-effort)..."
+  bash "$REPO_ROOT/scripts/claude-memory-sync.sh" pull || true
+fi
+
 # --- Summary -----------------------------------------------------------------
 cat <<'DONE'
 
@@ -165,4 +240,7 @@ cat <<'DONE'
 
   Verify Claude picked up the settings: open Claude Code and run  /status
   (effort should read "max"; agent-teams tooling should be available).
+
+  To also sync Claude auto-memory across machines via S3 (owner only), re-run:
+    bash scripts/bootstrap-claude-wsl.sh --with-memory-sync
 DONE
