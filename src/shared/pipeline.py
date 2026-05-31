@@ -187,6 +187,31 @@ def _maybe_compile(model: torch.nn.Module) -> torch.nn.Module:
     return torch.compile(model, dynamic=True)
 
 
+def _maybe_force_dropout_zero(cfg: dict) -> dict:
+    """Test-only (``FF_FORCE_DROPOUT_ZERO``): return a cfg copy with every NN
+    dropout rate zeroed; a no-op (returns ``cfg`` unchanged) by default.
+
+    Sole purpose is the CUDA-graph Part-1 inertness gate: with dropout off the
+    forward draws no random masks, so an ``FF_CUDA_GRAPH=0`` vs ``=1`` A/B can
+    assert *exact* (per-target MAE Δ=0.0000) kernel inertness instead of the
+    seed-noise band live dropout forces — graph capture's warmup iters and RNG
+    offset stepping perturb *which* masks are drawn, not the kernel math. Never
+    set in production; it changes the model (regularisation), not just the
+    launch mechanics.
+    """
+    if os.environ.get("FF_FORCE_DROPOUT_ZERO", "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return cfg
+    out = dict(cfg)
+    for key in ("nn_dropout", "attn_dropout", "attn_history_dropout", "attn_self_dropout"):
+        out[key] = 0.0
+    return out
+
+
 def _scale_xs(*X_arrays: np.ndarray) -> tuple[StandardScaler, list[np.ndarray]]:
     """Fit a StandardScaler on the first array, transform + clip all arrays.
 
@@ -653,6 +678,7 @@ def _train_nn(
 ):
     """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history)."""
     seed_everything(seed)
+    cfg = _maybe_force_dropout_zero(cfg)
     nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
 
     train_loader, val_loader = make_dataloaders(
@@ -716,6 +742,7 @@ def _train_attention_nn(
     history; otherwise the model runs as a single-history net (back-compat).
     """
     seed_everything(seed)
+    cfg = _maybe_force_dropout_zero(cfg)
     use_opp = opp_hist_train is not None
     if use_opp and (
         opp_mask_train is None
@@ -853,6 +880,7 @@ def _train_nested_attention_nn(
     inner-pool output before the outer attention.
     """
     seed_everything(seed)
+    cfg = _maybe_force_dropout_zero(cfg)
     nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])

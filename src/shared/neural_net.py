@@ -1,5 +1,7 @@
 """Generic multi-head neural network for fantasy point decomposition."""
 
+import os
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -189,13 +191,28 @@ def _build_backbone(
     keys produced by each caller remain ``self.backbone.0.weight`` etc. —
     existing checkpoints continue to load without migration.
     """
+    # FF_NN_NORM (test-only, default "batch"): swap BatchNorm1d -> LayerNorm to
+    # probe CUDA-graph inertness. BN mutates running-stat buffers as a forward
+    # side effect; under graph capture that EMA update diverges from eager,
+    # shifting the eval-mode (val/test) normalisation (see
+    # todo/gpu_launch_bound_levers.md). LayerNorm is stateless (no running
+    # stats, train==eval). Default "batch" keeps production byte-identical.
+    use_layernorm = os.environ.get("FF_NN_NORM", "").strip().lower() in {
+        "layer",
+        "ln",
+        "layernorm",
+    }
+
+    def _norm(dim: int) -> nn.Module:
+        return nn.LayerNorm(dim) if use_layernorm else nn.BatchNorm1d(dim)
+
     blocks: list[nn.Module] = []
     prev_dim = input_dim
     for hidden_dim in hidden_dims:
         blocks.extend(
             [
                 nn.Linear(prev_dim, hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
+                _norm(hidden_dim),
                 nn.ReLU(),
                 nn.Dropout(dropout),
             ]
