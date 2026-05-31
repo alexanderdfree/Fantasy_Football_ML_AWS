@@ -1,6 +1,6 @@
 # Design Document 2: LSTM + Multi-Head Architecture for Sequential Understanding
 
-> **Status: historical artifact (2026-04-21).** Rationale was folded into [ADR-001 §D4](../ARCHITECTURE.md#d4-attention-over-game-history-all-positions). Kept for provenance, not updated after the learned-query attention pool was chosen instead.
+> **Status: historical artifact (2026-04-21).** Rationale was folded into [ADR-0004 (Attention over game history)](../adr/0004-attention-over-game-history.md). Kept for provenance, not updated after the learned-query attention pool was chosen instead.
 
 ## Motivation
 

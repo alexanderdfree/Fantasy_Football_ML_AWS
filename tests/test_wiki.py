@@ -33,6 +33,14 @@ class TestWikiIndex:
         slugs = {e["slug"] for e in body}
         assert "architecture" in slugs, "ADR-001 is the default landing page"
 
+    def test_includes_autoregistered_adr_decisions(self, client):
+        # docs/adr/*.md are auto-globbed into WIKI_DOCS with digit-leading slugs,
+        # so a new per-decision ADR appears in the wiki without a manual entry.
+        body = client.get("/api/wiki/index").get_json()
+        adr = [e for e in body if e["slug"][:1].isdigit()]
+        assert len(adr) >= 17, "all per-decision ADR files should auto-register"
+        assert all(e["group"] == "Architecture Decisions" for e in adr)
+
 
 class TestWikiPage:
     def test_known_slug_returns_rendered_html(self, client):
@@ -56,6 +64,16 @@ class TestWikiPage:
         # which the server-side rewriter should turn into `#wiki:batch-design`.
         body = client.get("/api/wiki/architecture").get_json()
         assert "#wiki:batch-design" in body["html"]
+
+    def test_adr_decision_page_renders(self, client):
+        # Per-decision ADR files (docs/adr/*.md) auto-register with a digit-leading
+        # slug and must render like any other wiki doc.
+        slug = "0017-platform-autodetection-per-arch-optimization-policy"
+        r = client.get(f"/api/wiki/{slug}")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["slug"] == slug
+        assert "ADR-0017" in body["html"]
 
 
 class TestWikiRegistryIntegrity:
