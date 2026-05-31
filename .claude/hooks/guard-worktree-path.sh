@@ -17,6 +17,14 @@
 # ~/.claude/.../memory, …) are allowed so legitimate out-of-tree writes still work.
 set -u
 
+# Resolve jq: prefer PATH, fall back to common absolute install locations so the
+# hook works whether or not jq lives at /usr/bin (WSL/dev boxes differ from CI).
+jq_bin=""
+for _c in jq /usr/bin/jq /usr/local/bin/jq /opt/homebrew/bin/jq /home/linuxbrew/.linuxbrew/bin/jq; do
+  if command -v "$_c" >/dev/null 2>&1; then jq_bin="$_c"; break; fi
+done
+[ -n "$jq_bin" ] || exit 0  # no jq → cannot parse path; fail open (matches prior behavior)
+
 input=$(cat)
 
 proj="${CLAUDE_PROJECT_DIR:-}"
@@ -27,7 +35,7 @@ esac
 parent="${proj%%/.claude/worktrees/*}"
 
 # Edit/Write/MultiEdit carry file_path; NotebookEdit carries notebook_path.
-fp=$(printf '%s' "$input" | /usr/bin/jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null || true)
+fp=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null || true)
 [ -n "$fp" ] || exit 0
 
 case "$fp" in
