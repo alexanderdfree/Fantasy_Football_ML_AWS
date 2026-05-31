@@ -18,7 +18,7 @@ Bug classes guarded against:
 
 Excluded files (intentional historical records — do *not* lint):
 
-* ``TODO.md`` "Fixed archive" entries
+* ``TODO.md`` and ``todo/fixed-archive.md`` "Fixed archive" entries
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ARCHIVE_EXCLUSIONS: frozenset[str] = frozenset(
     {
         "TODO.md",  # "Fixed archive" — incident records frozen in time
+        "todo/fixed-archive.md",  # Fixed archive, split out of TODO.md — same frozen records
         # This test file itself contains the patterns it forbids — that's
         # the whole point of the test, but pytest collects this file too.
         "tests/test_rename_path_invariants.py",
