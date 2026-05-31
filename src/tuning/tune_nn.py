@@ -43,7 +43,7 @@ Out of scope (v1)
 Batch follow-up
 ---------------
 `src/tuning/launch_tune.py` and `.github/workflows/retune-nn-batch.yml` will
-fan out one Spot g4dn.xlarge per position (matching `train-batch.yml`). The
+fan out one Spot g6.xlarge per position (matching `train-batch.yml`). The
 container dispatches to this script via a new `--mode=tune` flag added to
 `src/batch/train.py` — the Batch job's `command` becomes:
 
@@ -117,7 +117,7 @@ def _ensure_data_from_s3() -> None:
 
 
 # 15 trials per position is a laptop-friendly default; bump to 30 on Batch
-# g4dn.xlarge. Per-trial cost dropped substantially after 2026-05-21 from the
+# g6.xlarge. Per-trial cost dropped substantially after 2026-05-21 from the
 # FP16 / sync-removal / GPU-resident-dataset wave and from skipping Ridge /
 # LGBM / base NN inside trials (see _make_objective below); the original
 # "5–10 min locally, 1–2 min on Batch" design figures are stale — remeasure
@@ -230,7 +230,7 @@ def _make_objective(pos: str, base_cfg: dict, seed: int):
         # so Ridge / ElasticNet / LightGBM / base NN are wasted compute per
         # trial. Disabling them drops trial wall-clock substantially and frees
         # the CPU branch, which is what makes n_jobs > 1 in study.optimize
-        # viable on the 4 vCPU g4dn.xlarge. Attention NN is independent of
+        # viable on the 4 vCPU g6.xlarge. Attention NN is independent of
         # the other branches (it builds its own scaler; no stacking).
         cfg["train_ridge"] = False
         cfg["train_elasticnet"] = False

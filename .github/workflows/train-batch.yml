@@ -3,7 +3,7 @@ name: Train on Batch (Spot)
 # Active training path when BATCH_ACTIVE=true. Fires after batch-image.yml
 # pushes a fresh image to ECR, then submits one Batch job per position to the
 # ff-gpu-spot Compute Environment. Each position trains in parallel on its own
-# Spot g4dn.xlarge. See docs/batch_design.md.
+# Spot g6.xlarge. See docs/batch_design.md.
 #
 # When BATCH_ACTIVE != 'true' the gate on the `train` job below skips this
 # workflow on workflow_run; train-ec2.yml stays active. workflow_dispatch
@@ -475,7 +475,7 @@ jobs:
           python -m src.batch.benchmark \
             --download-only \
             --backend batch \
-            --instance-type "g4dn.xlarge (Spot)" \
+            --instance-type "g6.xlarge (Spot)" \
             --positions $POSITIONS \
             --note "Batch Spot auto-run (${NOTE_SHA})" \
             --git-hash "$HEAD_SHA" \

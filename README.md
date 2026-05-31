@@ -41,7 +41,7 @@ nflverse API ─┐
                                                 ▼
                              ┌────────────────────────────────┐
                              │ GPU training (BATCH_ACTIVE)    │◀── GitHub Actions
-                             │  true  → 6× Spot g4dn (Batch)  │    push to main
+                             │  true  → 6× Spot g6 (Batch)    │    push to main
                              │          (default; ~15 min)    │
                              │  false → warm OD g4dn (SSM)    │
                              │          (rollback; ~120 min)  │
@@ -81,7 +81,7 @@ pytest -m unit        # fast tests only
 
 Coverage is tracked on [Codecov](https://app.codecov.io/gh/alexanderdfree/Fantasy_Football_ML_AWS) with an **80% target per position and shared component** (see [codecov.yml](codecov.yml)). One-off diagnostic CLIs (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`, `src/wr/benchmark_ridge_variants.py`) are excluded from the denominator — everything else gets pulled in.
 
-Full training on GPU runs in CI: by default a push to `main` fans out six Spot g4dn.xlarge instances via AWS Batch ([docs/batch_design.md](docs/batch_design.md), [infra/batch/README.md](infra/batch/README.md)). Setting `BATCH_ACTIVE=false` falls back to the warm-EC2 trainer ([docs/ec2_design.md](docs/ec2_design.md), [infra/ec2/README.md](infra/ec2/README.md)).
+Full training on GPU runs in CI: by default a push to `main` fans out six Spot g6.xlarge instances via AWS Batch ([docs/batch_design.md](docs/batch_design.md), [infra/batch/README.md](infra/batch/README.md)). Setting `BATCH_ACTIVE=false` falls back to the warm-EC2 trainer ([docs/ec2_design.md](docs/ec2_design.md), [infra/ec2/README.md](infra/ec2/README.md)).
 
 ## Video Links
 
@@ -181,7 +181,7 @@ GitHub Actions
    │                              ▼ workflow_run
    │        ┌──────────────────────────────────────────────┐
    │        │ BATCH_ACTIVE=true (default):                 │
-   │        │   train-batch.yml → 6× g4dn.xlarge Spot      │
+   │        │   train-batch.yml → 6× g6.xlarge Spot        │
    │        │     (one position per host, parallel)        │
    │        │     src.batch.launch submits, polls, downloads│
    │        │   ~15 min wall-clock                         │
@@ -206,7 +206,7 @@ GitHub Actions
 deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS ──▶ alexfree.me
 ```
 
-- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six g4dn.xlarge Spot instances via AWS Batch (one position per host, parallel; ~15 min wall-clock, ~$0.16/run). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
+- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six g6.xlarge Spot instances via AWS Batch (one position per host, parallel; ~15 min wall-clock, ~$0.35/run estimate on g6 — migrated from g4dn 2026-05-31). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
 - **Artifact safety** — S3 manifest schema v2 tracks `stable` / `current` / `previous` plus a 5-version `history`. New artifacts must clear a smoke-test gate before being promoted to `stable`. [src/scripts/promote.py](src/scripts/promote.py) supports manual rollback to any history entry; bucket versioning is defense-in-depth.
 - **Serving** — ECS Fargate (arm64, 1 vCPU / 2 GB) sits behind an ALB with ACM-terminated HTTPS. The slim Flask image fetches models from S3 at boot rather than baking them in — keeps the image roughly 3× smaller and lets prod track new artifacts without a full redeploy.
 - **IAM** — the serving task role is scoped to `s3:GetObject` on `ff-predictor-training/models/*` only.
@@ -221,7 +221,7 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 - Wiki tab renders repo markdown docs in-app (PR #138, `ce4543e`)
 - Benchmark History tab — per-PR rows fetched from S3 at boot, auto-updates after every training run without a redeploy (PR #201, `056423b`)
 - Slim arm64 serving image with runtime S3 model fetch (PR #83, `3243d72`)
-- Parallel Spot fan-out across six g4dn.xlarge Spot instances collapses full-retrain wall-clock from sum(per-position) to max(per-position), ~15 min vs ~120 min (D13); the warm-EC2 rollback path (D7) eliminates 3–5 min Batch scale-up on the days a single-position iteration matters more than parallelism
+- Parallel Spot fan-out across six g6.xlarge Spot instances collapses full-retrain wall-clock from sum(per-position) to max(per-position), ~15 min vs ~120 min (D13); the warm-EC2 rollback path (D7) eliminates 3–5 min Batch scale-up on the days a single-position iteration matters more than parallelism
 
 ### GitHub CI/CD
 
@@ -229,7 +229,7 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov · 80% target)
              │
              │                                            BATCH_ACTIVE=true
-             ├──▶ batch-image.yml ──┬─▶ train-batch.yml ──▶ 6× Spot g4dn (parallel)
+             ├──▶ batch-image.yml ──┬─▶ train-batch.yml ──▶ 6× Spot g6 (parallel)
              │                      │                       (~15 min full retrain)
              │                      │
              │                      │                            BATCH_ACTIVE=false

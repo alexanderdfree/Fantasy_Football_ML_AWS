@@ -38,7 +38,7 @@ S3_BUCKET = os.environ.get("FF_S3_BUCKET", "ff-predictor-training")
 JOB_QUEUE = os.environ.get("FF_JOB_QUEUE", "ff-training-queue")
 JOB_DEFINITION = os.environ.get("FF_JOB_DEFINITION", "ff-training-job")
 # Optional CPU-only job definition. When set, K and DST route here instead of
-# the default GPU definition so we don't waste g4dn Spot-hours on Ridge/LGBM.
+# the default GPU definition so we don't waste g6 Spot-hours on Ridge/LGBM.
 # Set to an empty string to leave unset — we treat empty as "not configured".
 JOB_DEFINITION_CPU = os.environ.get("FF_JOB_DEFINITION_CPU", "") or None
 # Pin job submissions to a specific job-definition revision. batch-image.yml
