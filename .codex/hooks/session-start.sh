@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# SessionStart hook: add Codex-specific setup reminders. Unlike Claude's remote
+# SessionStart hook, Codex hooks cannot persist shell exports into later tool
+# calls, so this is context-only.
+set -u
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.codex/hooks/lib.sh
+. "$script_dir/lib.sh"
+
+jq_bin="$(codex_find_jq)" || exit 0
+input="$(cat)"
+root="$(codex_project_root "$input" "$jq_bin")"
+
+context="Final-Project Codex context: read AGENTS.md before non-trivial edits. This repo has tracked Codex hooks under .codex/hooks; review/trust them with /hooks after changes. Custom prompt templates live in .codex/prompts but Codex only loads user-home prompts, so run scripts/bootstrap-codex-local.sh and restart Codex when those templates change."
+
+if [ ! -d "$root/.venv" ]; then
+  main_worktree="$(codex_main_worktree "$root")"
+  if [ -n "$main_worktree" ] && [ -d "$main_worktree/.venv" ]; then
+    context="$context The current worktree has no .venv; the main worktree has one, and the pre-PR hook will probe it for ruff/pytest."
+  else
+    context="$context No .venv was found in this worktree or the main worktree; use SETUP.md before running the full local gates."
+  fi
+fi
+
+codex_json_context "SessionStart" "$context"
