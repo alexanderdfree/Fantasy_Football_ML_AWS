@@ -227,6 +227,10 @@ POSITION_CONFIG = PositionConfig(
     # representation from per-game defensive + opponent history, so
     # rolling/EWMA/trend features are stripped from its static input.
     train_attention_nn=True,
+    # Learned embedding for empty-history (season-opener) rows — reduces the
+    # attention NN's opener over-prediction (player branch only; see
+    # src/shared/neural_net.py and src/analysis/rb_lgbm_disagreement_findings.md).
+    attn_no_history_embedding=True,
     attn_d_model=32,
     attn_n_heads=2,
     attn_encoder_hidden_dim=32,  # 2-layer game encoder before attention

@@ -574,6 +574,7 @@ class MultiHeadNetWithHistory(nn.Module):
         self_attn_dropout: float = 0.0,
         condition_queries_on_static: bool = False,
         opp_game_dim: int | None = None,
+        no_history_embedding: bool = False,
     ):
         super().__init__()
         self.target_names = target_names
@@ -733,6 +734,20 @@ class MultiHeadNetWithHistory(nn.Module):
                     nn.Linear(h, 1),
                 )
 
+        # === No-history (season-opener) embedding ===
+        # A season opener has an all-padding history sequence, so AttentionPool
+        # returns a zero vector that the per-target LayerNorm maps to its bias
+        # (a constant) — the head then leans entirely on the static prior-season
+        # branch and over-predicts. When enabled, replace that dead/constant
+        # vector with a per-target learned embedding, gated on an all-False mask
+        # (``history_mask.sum(dim=1) == 0``). Built LAST and zero-initialised so
+        # it draws no RNG (the flag on/off models are bit-identical at init) and
+        # is inert at step 0 (the LayerNorm bias also inits to 0); it only
+        # diverges from baseline as training learns the opener offset.
+        self.no_history_embedding = no_history_embedding
+        if no_history_embedding:
+            self.no_history_emb = nn.Parameter(torch.zeros(self.n_targets, attn_out_dim))
+
     def forward(
         self,
         x_static: torch.Tensor,
@@ -759,6 +774,13 @@ class MultiHeadNetWithHistory(nn.Module):
             seq_len = encoded.size(1)
             positions = torch.arange(seq_len, device=encoded.device)
             encoded = encoded + self.pos_embedding(positions)
+
+        # Flag season-opener rows (all-padding history) from the ORIGINAL mask,
+        # before sequence dropout. _apply_history_dropout never empties a row
+        # that had real games (its restore guard keeps >=1), so capturing here
+        # vs. after is equivalent for real-history rows and unambiguous for
+        # openers. None when the feature is off (keeps the hot path clean).
+        no_history = (history_mask.sum(dim=1) == 0) if self.no_history_embedding else None
 
         # Sequence dropout: during training, randomly mask real games so the
         # pool never locks onto any one game. Eval uses the full mask.
@@ -806,6 +828,13 @@ class MultiHeadNetWithHistory(nn.Module):
         preds = {}
         for i, name in enumerate(self.target_names):
             history_vec = self.history_norms[i](history_per_target[:, i, :])
+            if self.no_history_embedding:
+                # Season openers: swap the dead pooled history for the learned
+                # per-target embedding. torch.where keeps autograd; gradient
+                # reaches no_history_emb[i] only through the empty-history rows.
+                history_vec = torch.where(
+                    no_history.unsqueeze(-1), self.no_history_emb[i], history_vec
+                )
             if self.use_gated_fusion:
                 gate = self.fusion_gates[i](torch.cat([x_static, history_vec], dim=-1))
                 history_vec = gate * history_vec
@@ -1212,6 +1241,7 @@ def build_multihead_net_with_history(
         self_attn_dropout=cfg.get("attn_self_dropout", 0.0),
         condition_queries_on_static=cfg.get("attn_condition_queries_on_static", False),
         opp_game_dim=opp_game_dim,
+        no_history_embedding=cfg.get("attn_no_history_embedding", False),
     )
 
 
