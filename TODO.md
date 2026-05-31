@@ -15,6 +15,13 @@ Tracking known issues and uncertainties in the project. Resolved issues are kept
 - **Judge on the subgroup metric** (`rookie_early` bias + bias-corrected MAE + top-12), **NOT** overall benchmark MAE — that will stay ~flat by construction (~0.05 overall) and reading it as failure is the #519 trap. Validate with `python -m src.analysis.rookie_cohort_metrics --positions QB` before/after, ≥2 seeds.
 - **Do NOT** re-introduce draft *capital* (`log(pick)`) — the specifically-rejected pedigree prior (#519). This is a bias/calibration fix on roster metadata, not a pedigree feature.
 
+### [NEXT] Measure literal RB-model undershoot on ascension games
+- **Plan:** [src/analysis/rb_ascension_model_error_plan.md](src/analysis/rb_ascension_model_error_plan.md) — ready-to-run continuation note (read this first).
+- **What:** Run `python -m src.analysis.rb_ascension --with-model-error` to get the literal per-model (Ridge / NN / Attn-NN / LightGBM) signed bias + MAE on the 2025 ascension cohort (~14 events) vs established. The shipped "76% under-prediction" ([rb_ascension_findings.md](src/analysis/rb_ascension_findings.md)) is an *input-information bound*, **not** the trained-model error — this measures the real undershoot now that 2025 `depth_chart_rank` is correctly loaded.
+- **Why deferred:** heavy — no local splits, so `run()` self-builds (network pulls incl. PBP redzone) + CPU-trains the ensemble (~30–60+ min on this box; torch is CPU-only).
+- **Caveats:** headline **Ridge + LightGBM** (deterministic); **NN + Attn-NN are single-seed (42) + N≈14 → directional only**, don't headline a precise number or a best-model flip (auto-memory `feedback_nn_seed_sensitive_overall_mae`). Don't substitute a reduced-config proxy (can flip the sign). If 14 is too thin, escalate to rolling-origin 2023–25 (~40 events).
+- **Context:** PRs #588 (diagnostic) / #592 (depth-shim fix) / #593 (stale comment); the cohort/lag path is depth-independent, so the 76% bound stands.
+
 ### [PLANNED] Consolidate `--cv` benchmark reporting into the clean rolling-origin walk-forward
 - **Plan:** [docs/cv_rolling_origin_consolidation.md](docs/cv_rolling_origin_consolidation.md) — full design, retrain-cost constraints, and verification steps. Pick this up directly from that doc.
 - **File(s):** `src/benchmarking/benchmark.py` (`__main__` dispatch); `docs/ARCHITECTURE.md` (D1 + Update history).
