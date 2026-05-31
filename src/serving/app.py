@@ -5,6 +5,7 @@ No general cross-position model is used.
 """
 
 import contextlib
+import glob
 import hashlib
 import json
 import logging
@@ -433,6 +434,11 @@ WIKI_DOCS: dict[str, dict] = {
         "group": "Architecture",
         "path": "docs/ARCHITECTURE.md",
     },
+    "architecture-history": {
+        "name": "ADR Update History (archived)",
+        "group": "Architecture",
+        "path": "docs/architecture-history.md",
+    },
     "ec2-design": {
         "name": "EC2 Training Design",
         "group": "Architecture",
@@ -479,6 +485,28 @@ WIKI_DOCS: dict[str, dict] = {
         "path": "infra/aws/README.md",
     },
 }
+
+# Auto-register per-decision ADR files (docs/adr/*.md) so a new ADR shows up in
+# the wiki without a manual WIKI_DOCS entry. Slug = filename stem (e.g.
+# "0017-platform-autodetection-…"); display name = the file's first markdown
+# heading; grouped under "Architecture Decisions"; sorted for stable order.
+_ADR_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+for _adr_path in sorted(glob.glob(os.path.join(_ADR_REPO_ROOT, "docs", "adr", "*.md"))):
+    _stem = os.path.splitext(os.path.basename(_adr_path))[0]
+    _adr_slug = _stem if _stem[:1].isdigit() else f"adr-{_stem.lower()}"
+    try:
+        with open(_adr_path, encoding="utf-8") as _f:
+            _adr_name = _f.readline().lstrip("# ").strip() or _stem
+    except OSError:
+        _adr_name = _stem
+    WIKI_DOCS.setdefault(
+        _adr_slug,
+        {
+            "name": _adr_name,
+            "group": "Architecture Decisions",
+            "path": os.path.relpath(_adr_path, _ADR_REPO_ROOT),
+        },
+    )
 
 # Reverse map: normalized repo-relative path -> slug. Used to rewrite intra-wiki
 # markdown links (e.g. "[ARCH](docs/ARCHITECTURE.md)") into in-app `#wiki:slug`

@@ -2,7 +2,7 @@
 
 _Last verified: 2026-05-20._
 
-> **Status: Active when `BATCH_ACTIVE != 'true'` (rollback path).** The push-to-`main` training default is now Spot fan-out via [docs/batch_design.md](batch_design.md) when `BATCH_ACTIVE=true`. This warm-EC2 path remains the fallback: one flip back (`gh variable set BATCH_ACTIVE --body "false"`) restores it on the next push. See [D13 in docs/ARCHITECTURE.md](ARCHITECTURE.md#d13-spot-fan-out-via-aws-batch-overrides-d7-when-batch_activetrue). The warm host stays provisioned indefinitely; idle cost is ~$8/mo of EBS while stopped.
+> **Status: Active when `BATCH_ACTIVE != 'true'` (rollback path).** The push-to-`main` training default is now Spot fan-out via [docs/batch_design.md](batch_design.md) when `BATCH_ACTIVE=true`. This warm-EC2 path remains the fallback: one flip back (`gh variable set BATCH_ACTIVE --body "false"`) restores it on the next push. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md). The warm host stays provisioned indefinitely; idle cost is ~$8/mo of EBS while stopped.
 
 ## Problem
 
