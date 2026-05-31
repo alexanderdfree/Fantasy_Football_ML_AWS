@@ -38,7 +38,15 @@ def _synthetic() -> pd.DataFrame:
 
 def test_module_imports_without_running_pipeline():
     """Importing must not pull the pipeline (``run`` is deferred into main())."""
-    for fn in ("main", "per_model_metrics", "peer_gap", "calibration_table", "gap_decomposition"):
+    for fn in (
+        "main",
+        "per_model_metrics",
+        "peer_gap",
+        "calibration_table",
+        "gap_decomposition",
+        "add_history_depth",
+        "history_depth_table",
+    ):
         assert hasattr(ad, fn)
     assert ad.LGBM == "LightGBM"
     assert ad.ACTUAL == "fantasy_points"
@@ -96,3 +104,45 @@ def test_calibration_table_shape():
     assert len(calib) == 2
     assert {"bin", "n", "avg_actual", "Ridge", "LightGBM"} <= set(calib.columns)
     assert calib["n"].tolist() == [1, 1]
+
+
+def _history_frame() -> pd.DataFrame:
+    # One player across two seasons (rows deliberately out of week order to test
+    # the sort) plus a second player. LGBM predicts the actual exactly -> MAE 0.
+    return pd.DataFrame(
+        {
+            "player_id": ["A", "A", "A", "A", "B"],
+            "season": [2024, 2024, 2025, 2025, 2025],
+            "week": [2, 1, 3, 1, 1],
+            "fantasy_points": [10.0, 5.0, 8.0, 12.0, 4.0],
+            "pred_ridge_total": [11.0, 6.0, 9.0, 13.0, 5.0],
+            "pred_nn_total": [10.5, 5.5, 8.5, 12.5, 4.5],
+            "pred_attn_nn_total": [10.2, 5.2, 8.2, 12.2, 4.2],
+            "pred_lgbm_total": [10.0, 5.0, 8.0, 12.0, 4.0],
+        }
+    )
+
+
+def test_add_history_depth_resets_each_season():
+    out = ad.add_history_depth(_history_frame())
+    # Sorted by (player_id, season, week); the in-season count resets at the
+    # season boundary, so a season opener is always n_prior_games == 0.
+    key = list(zip(out["player_id"], out["season"], out["week"], out["n_prior_games"], strict=True))
+    assert key == [
+        ("A", 2024, 1, 0),
+        ("A", 2024, 2, 1),
+        ("A", 2025, 1, 0),
+        ("A", 2025, 3, 1),
+        ("B", 2025, 1, 0),
+    ]
+
+
+def test_history_depth_table_buckets():
+    df = ad.add_history_depth(_history_frame())
+    tbl = ad.history_depth_table(df, buckets=[(0, 0, "0"), (1, 1, "1")])
+    assert tbl["npg"].tolist() == ["0", "1"]
+    # npg==0: A-2024-w1, A-2025-w1, B-2025-w1 (3) ; npg==1: A-2024-w2, A-2025-w3 (2)
+    assert tbl["n"].tolist() == [3, 2]
+    # LGBM predicts the actual exactly -> MAE 0 in every bucket.
+    assert tbl["LightGBM MAE"].tolist() == pytest.approx([0.0, 0.0])
+    assert "Attention NN bias" in tbl.columns
