@@ -1,10 +1,10 @@
 """Unit + smoke tests for src/analysis/analysis_expert_comparison.py.
 
 The default loaders train the pipeline / hit the network — out of scope for unit
-tests. These inject stub model + NFL.com loaders so the join, same-sample
-intersection, significance wiring, DST skip, and JSON output are all exercised on
-synthetic frames. Also an import smoke so a signature break fails the unit shard
-rather than only at PR-review time.
+tests. These inject stub model + NFL.com + Sleeper loaders so the per-expert join,
+same-sample intersection, significance wiring, position skips, and nested JSON
+output are all exercised on synthetic frames. Also an import smoke so a signature
+break fails the unit shard rather than only at PR-review time.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from src.analysis import analysis_expert_comparison as mod
 
 pytestmark = pytest.mark.unit
 
-# QB target columns NFL.com's projector aggregates (POSITION_TARGET_MAP["QB"]).
+# QB target columns the offense projectors aggregate (POSITION_TARGET_MAP["QB"]).
 _QB_TARGETS = (
     "passing_yards",
     "rushing_yards",
@@ -27,6 +27,19 @@ _QB_TARGETS = (
     "interceptions",
     "fumbles_lost",
 )
+
+
+def _qb_stats(i: int, wk: int) -> dict:
+    """Varied raw QB stats so aggregated totals differ row-to-row (keeps DM /
+    Wilcoxon non-degenerate)."""
+    return {
+        "passing_yards": 220.0 + 5 * i + wk,
+        "rushing_yards": 10.0 + i,
+        "passing_tds": 1.0 + (i % 3),
+        "rushing_tds": float(i % 2),
+        "interceptions": float((i + wk) % 2),
+        "fumbles_lost": 0.0,
+    }
 
 
 def _model_df_qb() -> pd.DataFrame:
@@ -41,7 +54,6 @@ def _model_df_qb() -> pd.DataFrame:
                     "season": 2025,
                     "week": wk,
                     "fantasy_points": actual,
-                    # Model is close to actual but not exact, with per-row variation.
                     "pred_attn_nn_total": actual + (0.5 if i % 2 else -0.7),
                 }
             )
@@ -49,7 +61,7 @@ def _model_df_qb() -> pd.DataFrame:
 
 
 def _nflcom_qb() -> pd.DataFrame:
-    """Raw NFL.com frame for players P4..P9 over weeks 1-2 (overlap = P4,P5,P6)."""
+    """Raw NFL.com frame for players P4..P9 over weeks 1-2 (overlap w/ model = P4,P5,P6)."""
     rows = []
     for wk in (1, 2):
         for i in range(4, 10):
@@ -60,18 +72,20 @@ def _nflcom_qb() -> pd.DataFrame:
                 "week": wk,
                 "nflcom_projected_pts": 12.0 + i,
             }
-            # Varied raw stats so the aggregated total differs from actual and
-            # row-to-row (keeps DM / Wilcoxon non-degenerate).
-            row.update(
-                {
-                    "passing_yards": 220.0 + 5 * i + wk,
-                    "rushing_yards": 10.0 + i,
-                    "passing_tds": 1.0 + (i % 3),
-                    "rushing_tds": float(i % 2),
-                    "interceptions": float((i + wk) % 2),
-                    "fumbles_lost": 0.0,
-                }
-            )
+            row.update(_qb_stats(i, wk))
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _sleeper_qb() -> pd.DataFrame:
+    """Gsis-joined Sleeper frame for players P3..P8 over weeks 1-2 (overlap w/ model
+    = P3,P4,P5,P6). Shape mirrors ``load_sleeper_with_gsis_id`` output: player_id is
+    the gsis-bridged id, plus position + target columns."""
+    rows = []
+    for wk in (1, 2):
+        for i in range(3, 9):
+            row = {"position": "QB", "player_id": f"P{i}", "season": 2025, "week": wk}
+            row.update(_qb_stats(i + 1, wk))  # offset so Sleeper ≠ NFL.com projection
             rows.append(row)
     return pd.DataFrame(rows)
 
@@ -84,68 +98,85 @@ def _stub_nflcom_loader(seasons):
     return _nflcom_qb()
 
 
-def test_module_imports_cleanly() -> None:
-    assert hasattr(mod, "main")
-    assert hasattr(mod, "_compare_one_position")
-    assert hasattr(mod, "_default_model_preds")
-    assert mod._MODEL_PRED_COLS[0] == "pred_attn_nn_total"
+def _stub_sleeper_loader(seasons):
+    return _sleeper_qb()
 
 
-def test_head_to_head_same_sample_and_significance(tmp_path) -> None:
-    result = mod.main(
+def _run(tmp_path, **kw):
+    """main() with all three loaders stubbed (no network/training)."""
+    defaults = dict(
         eval_seasons=(2025,),
-        positions=("QB", "DST"),
         output_dir=str(tmp_path),
         n_boot=50,
         seed=0,
         model_preds_loader=_stub_model_loader,
         nflcom_loader=_stub_nflcom_loader,
+        sleeper_loader=_stub_sleeper_loader,
     )
-    qb = result["positions"]["QB"]
-
-    # Same-sample: only P4,P5,P6 overlap, across 2 weeks ⇒ 6 matched rows
-    # (P1..P3 are model-only, P7..P9 expert-only and must be excluded).
-    assert qb["n_matched"] == 6
-    assert qb["model_col"] == "pred_attn_nn_total"
-
-    # Both sides scored; head-to-head + significance blocks present.
-    for side in ("model", "expert"):
-        assert set(qb[side]) >= {"mae", "rmse", "r2", "top_k_hit_rate", "spearman"}
-    assert set(qb["delta_mae"]) == {"value", "ci_lo", "ci_hi"}
-    assert set(qb["dm_mae"]) >= {"dm_stat", "p_value", "favored"}
-    assert "bootstrap_rmse" in qb and "wilcoxon_abs_error" in qb
-
-    # delta = model - expert; sign must agree between the bootstrap point estimate
-    # and the raw MAE difference.
-    assert (qb["delta_mae"]["value"] < 0) == (qb["model"]["mae"] < qb["expert"]["mae"])
+    defaults.update(kw)
+    return mod.main(**defaults)
 
 
-def test_dst_is_skipped(tmp_path) -> None:
-    result = mod.main(
-        eval_seasons=(2025,),
-        positions=("DST",),
-        output_dir=str(tmp_path),
-        n_boot=10,
-        model_preds_loader=_stub_model_loader,
-        nflcom_loader=_stub_nflcom_loader,
-    )
-    assert result["positions"]["DST"]["skipped"] is True
+def test_module_imports_cleanly() -> None:
+    for attr in (
+        "main",
+        "_compare_one_position",
+        "_default_model_preds",
+        "_build_experts",
+        "_project_sleeper_to_ppr",
+        "ExpertSource",
+    ):
+        assert hasattr(mod, attr)
+    assert mod._MODEL_PRED_COLS[0] == "pred_attn_nn_total"
 
 
-def test_writes_parseable_json(tmp_path) -> None:
-    mod.main(
-        eval_seasons=(2025,),
-        positions=("QB",),
-        output_dir=str(tmp_path),
-        n_boot=20,
-        model_preds_loader=_stub_model_loader,
-        nflcom_loader=_stub_nflcom_loader,
-    )
+def test_two_experts_each_same_sample_and_significance(tmp_path) -> None:
+    result = _run(tmp_path, positions=("QB", "DST"))
+
+    # Nested per-expert output.
+    assert set(result["experts"]) == {"nflcom", "sleeper"}
+    nflcom_qb = result["experts"]["nflcom"]["positions"]["QB"]
+    sleeper_qb = result["experts"]["sleeper"]["positions"]["QB"]
+
+    # Per-expert same-sample intersection differs by source coverage:
+    #   NFL.com P4..P9 ∩ model P1..P6 = {P4,P5,P6} × 2 weeks = 6
+    #   Sleeper P3..P8 ∩ model P1..P6 = {P3,P4,P5,P6} × 2 weeks = 8
+    assert nflcom_qb["n_matched"] == 6
+    assert sleeper_qb["n_matched"] == 8
+
+    for block in (nflcom_qb, sleeper_qb):
+        assert block["model_col"] == "pred_attn_nn_total"
+        for side in ("model", "expert"):
+            assert set(block[side]) >= {"mae", "rmse", "r2", "top_k_hit_rate", "spearman"}
+        assert set(block["delta_mae"]) == {"value", "ci_lo", "ci_hi"}
+        assert set(block["dm_mae"]) >= {"dm_stat", "p_value", "favored"}
+        assert "bootstrap_rmse" in block and "wilcoxon_abs_error" in block
+        # delta = model - expert; sign agrees with the raw MAE difference.
+        assert (block["delta_mae"]["value"] < 0) == (block["model"]["mae"] < block["expert"]["mae"])
+
+
+def test_dst_skipped_for_both_experts(tmp_path) -> None:
+    result = _run(tmp_path, positions=("DST",), n_boot=10)
+    assert result["experts"]["nflcom"]["positions"]["DST"]["skipped"] is True
+    assert result["experts"]["sleeper"]["positions"]["DST"]["skipped"] is True
+
+
+def test_sleeper_skips_kicker_offense_only(tmp_path) -> None:
+    result = _run(tmp_path, positions=("K",), n_boot=10)
+    # NFL.com covers K (totals-only); Sleeper is offense-only ⇒ K skipped.
+    assert result["experts"]["sleeper"]["positions"]["K"]["skipped"] is True
+
+
+def test_writes_parseable_nested_json(tmp_path) -> None:
+    _run(tmp_path, positions=("QB",), n_boot=20)
     out = tmp_path / "expert_comparison.json"
     assert out.exists()
     payload = json.loads(out.read_text())
-    assert payload["expert_source"] == "nflcom"
-    assert payload["positions"]["QB"]["n_matched"] == 6
+    assert set(payload["experts"]) == {"nflcom", "sleeper"}
+    assert payload["experts"]["nflcom"]["positions"]["QB"]["n_matched"] == 6
+    assert payload["experts"]["sleeper"]["positions"]["QB"]["n_matched"] == 8
+    # The Sleeper provenance caveat rides along in the output.
+    assert "provenance" in payload["experts"]["sleeper"]["note"].lower()
 
 
 def test_missing_model_column_is_skipped(tmp_path) -> None:
@@ -154,29 +185,26 @@ def test_missing_model_column_is_skipped(tmp_path) -> None:
             {"player_id": ["P4"], "season": [2025], "week": [1], "fantasy_points": [10.0]}
         )
 
-    # No pred_* column ⇒ _compare_one_position's model-column check short-circuits
-    # to a skip (rather than raising).
-    result = mod.main(
-        eval_seasons=(2025,),
-        positions=("QB",),
-        output_dir=str(tmp_path),
-        n_boot=10,
-        model_preds_loader=bad_loader,
-        nflcom_loader=_stub_nflcom_loader,
-    )
-    assert result["positions"]["QB"]["skipped"] is True
+    # No pred_* column ⇒ each expert's QB block short-circuits to a skip.
+    result = _run(tmp_path, positions=("QB",), n_boot=10, model_preds_loader=bad_loader)
+    assert result["experts"]["nflcom"]["positions"]["QB"]["skipped"] is True
+    assert result["experts"]["sleeper"]["positions"]["QB"]["skipped"] is True
+
+
+def test_failed_expert_load_is_skipped_not_fatal(tmp_path) -> None:
+    """A loader that raises (e.g. Sleeper network/RuntimeError) skips that expert
+    but the other expert still produces a comparison."""
+
+    def boom(seasons):
+        raise RuntimeError("sleeper unavailable")
+
+    result = _run(tmp_path, positions=("QB",), n_boot=10, sleeper_loader=boom)
+    assert result["experts"]["nflcom"]["positions"]["QB"]["n_matched"] == 6
+    assert result["experts"]["sleeper"]["positions"]["QB"]["skipped"] is True
 
 
 def test_no_scoring_warning_with_injected_loader(tmp_path, capsys) -> None:
-    """Injected loaders control their own scoring, so the non-PPR model/expert
-    mismatch warning must NOT fire for them (it is scoped to the default loader)."""
-    mod.main(
-        eval_seasons=(2025,),
-        scoring_format="half_ppr",
-        positions=("QB",),
-        output_dir=str(tmp_path),
-        n_boot=10,
-        model_preds_loader=_stub_model_loader,
-        nflcom_loader=_stub_nflcom_loader,
-    )
+    """Injected loaders control their own scoring, so the non-PPR mismatch warning
+    must NOT fire for them (it is scoped to the default model loader)."""
+    _run(tmp_path, scoring_format="half_ppr", positions=("QB",), n_boot=10)
     assert "WARNING: --scoring-format" not in capsys.readouterr().out

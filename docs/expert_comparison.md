@@ -117,7 +117,7 @@ The QB gap is consistent with the structural QB limitation noted under "Position
 
 ### Significance-tested head-to-head (`analysis_expert_comparison.py`)
 
-The baseline table above scores NFL.com against actuals across every NFL.com-matched row. A second script — [`src/analysis/analysis_expert_comparison.py`](../src/analysis/analysis_expert_comparison.py) — runs the stricter, decision-relevant comparison. It joins our model's held-out per-player-week predictions to NFL.com on the **intersection** where both project, scores both against the same ground-truth `fantasy_points` column (genuinely *paired* errors), and adds:
+The baseline table above scores NFL.com against actuals across every NFL.com-matched row. A second script — [`src/analysis/analysis_expert_comparison.py`](../src/analysis/analysis_expert_comparison.py) — runs the stricter, decision-relevant comparison against **each expert** (NFL.com and Sleeper/RotoWire — see below). For a given expert it joins our model's held-out per-player-week predictions to that expert on the **intersection** where both project, scores both against the same ground-truth `fantasy_points` column (genuinely *paired* errors), and adds:
 
 - **MAE and RMSE** for each side (see the loss-vs-metric caveat above for why both).
 - **Ranking** quality — top-K hit-rate and Spearman ρ — because fantasy is a selection problem and rank metrics are loss-agnostic.
@@ -134,7 +134,24 @@ Because it restricts to the model ∩ NFL.com sample, its per-position N and NFL
 | Top-12 hit rate | 0.468 | 0.491 | — | — | — |
 | Spearman ρ | 0.480 | 0.536 | — | — | — |
 
-The ΔMAE CI excludes zero and DM p ≪ 0.05, so NFL.com's QB edge is **statistically real**, not benchmark-snapshot noise — and it holds on RMSE too (the metric tilted *toward* the expert's squared-error objective) and on both ranking metrics. This is the rigorous version of the QB gap discussed above. Run it with `python -m src.analysis.analysis_expert_comparison` (defaults to PPR / `TEST_SEASONS` / all positions; writes `analysis_output/expert_comparison.json`, regenerated on demand and not committed).
+The ΔMAE CI excludes zero and DM p ≪ 0.05, so NFL.com's QB edge is **statistically real**, not benchmark-snapshot noise — and it holds on RMSE too (the metric tilted *toward* the expert's squared-error objective) and on both ranking metrics. This is the rigorous version of the QB gap discussed above. Run it with `python -m src.analysis.analysis_expert_comparison` (defaults to PPR / `TEST_SEASONS` / all positions; writes both experts to the nested `experts` block of `analysis_output/expert_comparison.json`, regenerated on demand and not committed).
+
+### Second expert: Sleeper (RotoWire)
+
+A second expert is wired into the same tool: **RotoWire projections via Sleeper's API** ([`src/analysis/sleeper_loader.py`](../src/analysis/sleeper_loader.py)), offense only (QB/RB/WR/TE), joined to actuals through the nflverse `sleeper_id → gsis_id` crosswalk. It's a *single provider* (not a consensus), and Sleeper's unofficial API is use-at-your-own-risk.
+
+**Provenance check (the gate before trusting it).** Sleeper doesn't document whether its historical projections are the as-of-kickoff snapshot or a later backfill — and a backfill would inflate RotoWire's apparent accuracy via look-ahead. So we score RotoWire against 2025 actuals — on the players it *actually* projects (Sleeper returns a row for every rostered player; the unprojected placeholders are dropped, else they'd be scored as confident 0.0s and deflate the MAE) — and confirm the error sits in the *plausible expert range*: MAE **QB 6.21, RB 4.32, WR 4.20, TE 3.57** — close to NFL.com's (5.71 / 4.11 / 3.98 / 3.39), a touch higher (RotoWire is marginally less accurate and projects a more selective pool). A backfill would show near-zero error; instead these are genuine pre-game projections (e.g. Lamar Jackson, 2025 Wk1: a fractional **1.78** projected passing TDs, not an integer actual).
+
+**Model vs RotoWire (PPR, 2025), offense** (model = production Attention NN; MAEs are on RotoWire's own — more selective — player pool, so the N and model MAE differ from the NFL.com illustration above):
+
+| Pos | n | Model MAE | RW MAE | ΔMAE | 95% CI | DM p |
+|-----|---:|---:|---:|---:|:--:|---:|
+| QB | 545 | 6.362 | 6.243 | +0.119 | [-0.17, 0.43] | 0.38 |
+| RB | 1447 | 4.545 | 4.328 | +0.217 | [0.06, 0.37] | 0.003 |
+| WR | 2295 | 4.360 | 4.228 | +0.132 | [0.03, 0.23] | 0.002 |
+| TE | 1165 | 3.629 | 3.611 | +0.018 | [-0.07, 0.12] | 0.71 |
+
+RotoWire is marginally *less* accurate than NFL.com (QB 6.24 vs 5.76). Both experts agree the model **trails on RB and WR** (CIs exclude zero) and **ties on TE** (CI spans zero). They differ on **QB**: the model trails NFL.com (Δ +0.90, significant) but **ties RotoWire** (Δ +0.12, CI [−0.17, 0.43], p = 0.38) — because RotoWire is itself weaker on QB, the model matches it there. Two experts converging on the RB/WR/TE verdict — and bracketing the QB result — is a more robust read than either alone.
 
 ---
 
@@ -220,7 +237,7 @@ DST landed via [commit `cc0c627`](../) with a 10-target attention model (sacks, 
 
 2. **No single architecture wins everywhere.** Multi-Head NN wins QB; Attention NN wins RB / TE / DST; LightGBM wins WR; Ridge wins K. This is the strongest signal yet that maintaining a diverse model portfolio is worth the training cost — the per-position routing in `src.benchmarking.benchmark` picks the actual best architecture per position rather than locking in one family.
 
-3. **NFL.com gives us a direct, significance-tested head-to-head.** The only mainstream source publishing scoring-grade raw projections we can join to actuals. On 2025: QB is the only position where NFL.com beats us by a meaningful margin (~0.8 MAE pts — and that gap is statistically significant, with the ΔMAE bootstrap CI excluding zero and DM p ≪ 0.05); RB / WR / TE are within run-to-run variance; K we beat cleanly. Two scripts back this: `src/analysis/analysis_nflcom_baseline.py` (NFL.com vs actuals, per-target + weekly breakouts) and `src/analysis/analysis_expert_comparison.py` (same-sample model-vs-NFL.com with ranking + paired bootstrap / Diebold-Mariano significance). Both regenerate on demand; neither report is committed.
+3. **The experts beat the model on RB/WR; QB depends on which expert; TE is a tie.** NFL.com and RotoWire (via Sleeper) both publish scoring-grade raw projections we can join to actuals. On 2025 the paired significance test (player-clustered bootstrap CI + Diebold-Mariano) shows the model **trails both experts on RB and WR** (CIs exclude zero) and **ties both on TE** (CIs span zero). On **QB the experts split**: the model trails the stronger NFL.com (Δ +0.90, significant) but **ties the weaker RotoWire** (Δ +0.12, p = 0.38) — RotoWire is less accurate at QB, so the model matches it there. We beat NFL.com on K (Sleeper K is out of scope). Three scripts back this: `src/analysis/analysis_nflcom_baseline.py` (NFL.com vs actuals), `src/analysis/sleeper_loader.py` (RotoWire ingest + a provenance/look-ahead gate), and `src/analysis/analysis_expert_comparison.py` (same-sample model-vs-each-expert with ranking + paired bootstrap / Diebold-Mariano significance). Reports regenerate on demand; none is committed.
 
 4. **Other expert sites largely publish relative rankings, not per-game error.** FantasyPros ranks experts 1st/2nd/3rd by position — its "accuracy gap" is converted to z-scores before aggregation, so no raw MAE/RMSE is surfaced. FFA *does* compute the full error suite: its [2013 post](https://fantasyfootballanalytics.net/2013/05/the-best-fantasy-football-projections.html) published raw R²/MAE/RMSE (e.g., NFL.com RMSE 62.47, FantasyPros 45.36), but those are **single-league, full-season totals** (not per-game), and its current per-game MAE/RMSE lives behind the FFA Insider paywall. So a like-for-like *per-game* numeric comparison against those sources isn't possible from free, citable data — though our results fall within the ranges where professional projection systems operate. (DFS/industry sources — 4for4, Establish The Run, Subvertadown, PFF — publish "most accurate" marketing with no citable raw error metric.)
 
