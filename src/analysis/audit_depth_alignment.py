@@ -39,6 +39,8 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import glob
+from pathlib import Path
 
 import pandas as pd
 
@@ -134,6 +136,111 @@ def classify(rates: dict, margin: float = _VERDICT_MARGIN) -> str:
     if prev - cur > margin:
         return "SHIFTED_BACK_1 — chart reflects the PRIOR week (W-1); stale by one game"
     return "AMBIGUOUS"
+
+
+# ── CI guards (read the data/raw caches; warn-first, called from refresh-splits.yml) ──
+# Validate the depth the loader EMITS so the PR #595 off-by-1 can't silently return.
+# Mirrors src/analysis/covariate_shift.py's gate_check shape.
+# Post-fix overall chart==current-starter match is ~0.91; a reverted/re-broken fix both
+# flips transitions to prior-dominant (-> SHIFTED_BACK_1) AND drops overall below this.
+_OVERALL_MIN = 0.80
+
+
+def _read_cache(raw_dir: str, pattern: str) -> pd.DataFrame | None:
+    """Concat the parquet cache(s) matching ``pattern`` under ``raw_dir`` (``None`` if
+    none). In CI the workspace is clean so the glob matches the single fresh cache."""
+    paths = sorted(glob.glob(str(Path(raw_dir) / pattern)))
+    if not paths:
+        return None
+    return pd.concat([pd.read_parquet(p) for p in paths], ignore_index=True)
+
+
+def chart_rank1_from_caches(depth: pd.DataFrame, rosters: pd.DataFrame) -> pd.DataFrame:
+    """Rank-1 QB per (team, season, week) from the canonical depth cache + rosters.
+
+    The canonical depth cache (the loader's POST-fix output) carries only
+    ``gsis_id, season, week, depth_team`` — no position/team — so those come from the
+    weekly ``rosters`` cache, which lists *rostered* players (incl. benched), recovering
+    the chart's true rank-1 QB even when he didn't play that week. That fixes the
+    who-played bias that made a splits-based check false-negative; week-level roster team
+    handles trades. (Only the 4 needed depth cols are selected, so this is robust to both
+    the 5-col canonical cache and an older raw-schema cache.)
+    """
+    ros = rosters.drop_duplicates(subset=["player_id", "season", "week"])[
+        ["player_id", "season", "week", "team", "position"]
+    ]
+    d = depth[["gsis_id", "season", "week", "depth_team"]].merge(
+        ros,
+        left_on=["gsis_id", "season", "week"],
+        right_on=["player_id", "season", "week"],
+        how="inner",
+    )
+    d = d[d["position"] == "QB"].copy()
+    d["team"] = d["team"].replace(_NORM)
+    d["rank"] = pd.to_numeric(d["depth_team"], errors="coerce")
+    d = d[d["rank"] >= 1]
+    if d.empty:
+        return pd.DataFrame(columns=["team", "season", "week", "chart_qb_id"])
+    idx = d.groupby(["team", "season", "week"])["rank"].idxmin()
+    return d.loc[idx, ["team", "season", "week", "gsis_id"]].rename(
+        columns={"gsis_id": "chart_qb_id"}
+    )
+
+
+def alignment_from_caches(raw_dir: str = "data/raw") -> dict | None:
+    """QB starter-consistency on the loader's emitted depth (canonical depth ⋈ rosters)
+    vs actual starters (weekly attempts). Returns ``None`` if a required cache is absent,
+    so the CI step logs a loud skip instead of crashing."""
+    depth = _read_cache(raw_dir, "depth_charts_*.parquet")
+    rosters = _read_cache(raw_dir, "rosters_*.parquet")
+    weekly = _read_cache(raw_dir, "weekly_*.parquet")
+    if depth is None or rosters is None or weekly is None:
+        return None
+    return alignment_rates(qb_starters(weekly), chart_rank1_from_caches(depth, rosters))
+
+
+def gate_check_alignment(rates: dict) -> tuple[bool, str]:
+    """``(ok, reason)``. Fails ONLY on the stale fingerprint, not on post-fix inertia.
+
+    Post-fix the verdict is AMBIGUOUS (``transition_current`` ~0.50 ≈ ``transition_prev``
+    ~0.44, bounded by depth-chart inertia) with overall ~0.91 — healthy, so AMBIGUOUS
+    passes. A reverted fix flips transitions to prior-dominant (SHIFTED_BACK_1) and drops
+    overall; either trips the gate.
+    """
+    verdict = classify(rates)
+    if verdict.startswith("SHIFTED_BACK_1"):
+        return False, verdict
+    overall = rates.get("overall_current", float("nan"))
+    if pd.notna(overall) and overall < _OVERALL_MIN:
+        return False, f"overall chart==current-starter {overall:.3f} < {_OVERALL_MIN}"
+    return True, verdict
+
+
+def depth_week_range_check(raw_dir: str = "data/raw") -> tuple[bool, list[dict]]:
+    """Structural canary: the (post-fix) canonical depth cache's MAX week must not overrun
+    the schedule's REG max week per season — the 1–19-for-18-games off-by-1 fingerprint and
+    what a reverted ``week-=1`` produces. ``(ok, offenders)``; graceful skip ``(True, [])``
+    if a cache is absent. Upper-bound only: the relabel leaves an expected week-0 row in the
+    cache and 2014's missing trailing label legitimately under-covers — neither is a
+    regression, so a min-week check would only false-positive.
+    """
+    depth = _read_cache(raw_dir, "depth_charts_*.parquet")
+    sched = _read_cache(raw_dir, "schedules_*.parquet")
+    if depth is None or sched is None:
+        return True, []
+    sched = sched[sched["game_type"] == "REG"]
+    depth = depth.assign(week=pd.to_numeric(depth["week"], errors="coerce"))
+    sched = sched.assign(week=pd.to_numeric(sched["week"], errors="coerce"))
+    sched_max = sched.groupby("season")["week"].max()
+    offenders = []
+    for season, sub in depth.groupby("season"):
+        smax = sched_max.get(season)
+        dmax = sub["week"].max()
+        if smax is not None and pd.notna(smax) and pd.notna(dmax) and dmax > smax:
+            offenders.append(
+                {"season": int(season), "depth_max_week": int(dmax), "schedule_max_week": int(smax)}
+            )
+    return (len(offenders) == 0, offenders)
 
 
 def _print_rates(label: str, rates: dict) -> None:
