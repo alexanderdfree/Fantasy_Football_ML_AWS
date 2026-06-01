@@ -1,4 +1,4 @@
-# GPU launch-bound optimization — levers & plans (not yet built)
+# GPU launch-bound optimization — CUDA graph built; streams planned
 
 Planning doc for making **local 6-position parallel training faster**, written after the
 core-pool work (#670) established that the bottleneck is the GPU, not the CPU. **Lever A is
@@ -55,9 +55,9 @@ NVIDIA MPS would give true multi-process kernel co-residency — but it is **Lin
 | Deterministic stop (`FF_NN_FIXED_EPOCHS=N`) | No — 0.077 worst | 1.84× | drift is model-state divergence, not best-epoch *selection* |
 | BN running-stat recalibration (implied) | No | — | learnable weights also diverge (0.074), not just BN buffers |
 
-**Decision (2026-05-31):** ship `FF_CUDA_GRAPH` as an **opt-in local-iteration speed knob** with the non-inertness documented — per-step math is exact and the model is equivalent quality, but it is **not** suitable for bit-comparable benchmark A/Bs. Off by default ⇒ AWS / CI / production byte-identical (the commit is training-skippable; Ridge MAE unchanged). The investigation knobs (`FF_NN_NORM`, `FF_FORCE_DROPOUT_ZERO`, `FF_NN_FIXED_EPOCHS`) are **kept** for a follow-up. Note `FF_NN_NORM` overlaps [src/tuning/ablate_backbone_norm.py](../src/tuning/ablate_backbone_norm.py) (which monkeypatches the same BN→LN swap) but composes with the graph env knobs in a single `benchmark` invocation.
+**Decision (2026-05-31):** ship `FF_CUDA_GRAPH` as an **opt-in local-iteration speed knob** with the non-inertness documented — per-step math is exact and the model is equivalent quality, but it is **not** suitable for bit-comparable benchmark A/Bs against eager baselines. Off by default ⇒ AWS / CI / production byte-identical (the commit is training-skippable; Ridge MAE unchanged). The investigation knobs (`FF_NN_NORM`, `FF_FORCE_DROPOUT_ZERO`, `FF_NN_FIXED_EPOCHS`) are **kept** for a follow-up. Note `FF_NN_NORM` overlaps [src/tuning/ablate_backbone_norm.py](../src/tuning/ablate_backbone_norm.py) (which monkeypatches the same BN→LN swap) but composes with the graph env knobs in a single `benchmark` invocation.
 
-**Follow-up directions (open):** the only route to fast + bit-inert sidesteps the FP16+GradScaler amplifier — e.g. graph **forward-only** (bit-inert but marginal: the backward holds most of the launches), or a scheme that avoids the dynamic loss scaler. Not pursued.
+**Follow-up directions (open):** the only route to fast + bit-inert sidesteps the FP16+GradScaler amplifier — e.g. graph **forward-only** (bit-inert but marginal: the backward holds most of the launches), or a scheme that avoids the dynamic loss scaler. See [cuda_graph_gradscale_ab_priority.md](cuda_graph_gradscale_ab_priority.md) for the WSL/RTX 5080 pickup plan: graph-vs-graph sentinel, BN warmup snapshot/restore, and GradScaler scale-schedule diff.
 
 ---
 
