@@ -11,6 +11,8 @@ pytestmark = pytest.mark.unit
 
 
 def test_attention_knob_inventory_is_the_issue_720_eight():
+    assert ake.DEFAULT_SEEDS == (42, 43, 44)
+    assert ake.DEFAULT_N_JOBS == 2
     assert ake.KNOB_NAMES == (
         "attn_d_model",
         "attn_n_heads",
@@ -147,17 +149,55 @@ def test_dry_run_prints_design_without_training(capsys):
 
 
 def test_doe_cli_threads_ridge_sentinel_flag(monkeypatch):
-    seen: list[bool] = []
+    seen: list[tuple[bool, int]] = []
 
-    def fake_run_doe(position, seeds, *, ridge_sentinel):
+    def fake_run_doe(position, seeds, *, ridge_sentinel, n_jobs):
         assert position == "RB"
         assert seeds == [42]
-        seen.append(ridge_sentinel)
+        seen.append((ridge_sentinel, n_jobs))
         return {"ok": True}
 
     monkeypatch.setattr(ake, "run_doe", fake_run_doe)
 
     ake.main(["doe", "--seeds", "42", "--no-history"])
-    ake.main(["doe", "--seeds", "42", "--ridge-sentinel", "--no-history"])
+    ake.main(["doe", "--seeds", "42", "--ridge-sentinel", "--n-jobs", "3", "--no-history"])
 
-    assert seen == [False, True]
+    assert seen == [(False, 2), (True, 3)]
+
+
+def test_fanova_cli_threads_n_jobs(monkeypatch):
+    seen: list[tuple[int, int, bool, int]] = []
+
+    def fake_run_fanova(
+        position,
+        seeds,
+        *,
+        n_trials,
+        sampler_seed,
+        ridge_sentinel,
+        n_jobs,
+    ):
+        assert position == "RB"
+        assert seeds == [42]
+        seen.append((n_trials, sampler_seed, ridge_sentinel, n_jobs))
+        return {"ok": True}
+
+    monkeypatch.setattr(ake, "run_fanova", fake_run_fanova)
+
+    ake.main(
+        [
+            "fanova",
+            "--seeds",
+            "42",
+            "--n-trials",
+            "7",
+            "--sampler-seed",
+            "99",
+            "--ridge-sentinel",
+            "--n-jobs",
+            "3",
+            "--no-history",
+        ]
+    )
+
+    assert seen == [(7, 99, True, 3)]

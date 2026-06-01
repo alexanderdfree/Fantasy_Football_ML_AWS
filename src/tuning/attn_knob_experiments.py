@@ -26,6 +26,7 @@ import copy
 import importlib
 import statistics
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,7 +37,8 @@ from optuna.trial import TrialState
 
 from src.tuning.history import append_tuning_run
 
-DEFAULT_SEEDS = (42, 43, 44, 45, 46, 47, 48, 49)
+DEFAULT_SEEDS = (42, 43, 44)
+DEFAULT_N_JOBS = 2
 
 
 @dataclass(frozen=True)
@@ -193,17 +195,45 @@ def ridge_sentinel_ok(rows: list[dict], *, atol: float = 1e-9) -> bool:
     return True
 
 
-def run_doe(position: str, seeds: list[int], *, ridge_sentinel: bool) -> dict:
+def run_doe(position: str, seeds: list[int], *, ridge_sentinel: bool, n_jobs: int) -> dict:
     design = plackett_burman_design(len(ATTN_KNOBS))
     rows = []
-    for seed in seeds:
-        for run_idx, signs in enumerate(design, start=1):
-            overrides = doe_overrides(signs)
+    tasks = [
+        (seed, run_idx, signs, doe_overrides(signs))
+        for seed in seeds
+        for run_idx, signs in enumerate(design, start=1)
+    ]
+
+    def finish_row(run_idx: int, signs: list[int], row: dict) -> dict:
+        row["run_idx"] = run_idx
+        row["signs"] = dict(zip(KNOB_NAMES, signs, strict=True))
+        return row
+
+    if n_jobs <= 1:
+        for seed, run_idx, signs, overrides in tasks:
             print(f"[doe] {position.upper()} seed={seed} run={run_idx}/{len(design)} {overrides}")
             row = _run_one(position, seed, overrides, ridge_sentinel=ridge_sentinel)
-            row["run_idx"] = run_idx
-            row["signs"] = dict(zip(KNOB_NAMES, signs, strict=True))
-            rows.append(row)
+            rows.append(finish_row(run_idx, signs, row))
+    else:
+        with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+            futures = {}
+            for seed, run_idx, signs, overrides in tasks:
+                print(
+                    f"[doe] {position.upper()} seed={seed} run={run_idx}/{len(design)} {overrides}"
+                )
+                fut = pool.submit(
+                    _run_one,
+                    position,
+                    seed,
+                    overrides,
+                    ridge_sentinel=ridge_sentinel,
+                )
+                futures[fut] = (seed, run_idx, signs)
+            for fut in as_completed(futures):
+                _seed, run_idx, signs = futures[fut]
+                rows.append(finish_row(run_idx, signs, fut.result()))
+        rows.sort(key=lambda r: (r["seed"], r["run_idx"]))
+
     return {
         "design": "plackett_burman_12",
         "knobs": [knob.__dict__ for knob in ATTN_KNOBS],
@@ -220,6 +250,7 @@ def run_fanova(
     n_trials: int,
     sampler_seed: int,
     ridge_sentinel: bool,
+    n_jobs: int,
 ) -> dict:
     seed_results = {}
     for idx, seed in enumerate(seeds):
@@ -230,14 +261,33 @@ def run_fanova(
             study_name=f"{position}-{seed}",
         )
 
-        def objective(trial: optuna.Trial, *, seed: int = seed) -> float:
-            overrides = _sample_attention_overrides(trial)
-            print(f"[fanova] {position.upper()} seed={seed} trial={trial.number} {overrides}")
-            row = _run_one(position, seed, overrides, ridge_sentinel=ridge_sentinel)
-            trial.set_user_attr("ridge_mae", row["ridge_mae"])
-            return row["attn_test_mae"]
+        def make_objective(executor, seed_value: int):
+            def objective(trial: optuna.Trial) -> float:
+                overrides = _sample_attention_overrides(trial)
+                print(
+                    f"[fanova] {position.upper()} seed={seed_value} "
+                    f"trial={trial.number} {overrides}"
+                )
+                if executor is None:
+                    row = _run_one(position, seed_value, overrides, ridge_sentinel=ridge_sentinel)
+                else:
+                    row = executor.submit(
+                        _run_one,
+                        position,
+                        seed_value,
+                        overrides,
+                        ridge_sentinel=ridge_sentinel,
+                    ).result()
+                trial.set_user_attr("ridge_mae", row["ridge_mae"])
+                return row["attn_test_mae"]
 
-        study.optimize(objective, n_trials=n_trials)
+            return objective
+
+        if n_jobs <= 1:
+            study.optimize(make_objective(None, seed), n_trials=n_trials)
+        else:
+            with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+                study.optimize(make_objective(executor, seed), n_trials=n_trials, n_jobs=n_jobs)
         completed = [t for t in study.trials if t.state == TrialState.COMPLETE]
         importances = {}
         if len(completed) >= 2:
@@ -291,10 +341,19 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--seeds",
         default=",".join(str(s) for s in DEFAULT_SEEDS),
-        help="Comma-separated seeds (default: 42..49)",
+        help="Comma-separated seeds (default: 42,43,44)",
     )
     parser.add_argument("--n-trials", type=int, default=30, help="fANOVA trials per seed")
     parser.add_argument("--sampler-seed", type=int, default=42, help="Optuna sampler seed")
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=DEFAULT_N_JOBS,
+        help=(
+            "Concurrent pipeline runs (default: 2, matching local GPU NN tuning). "
+            "Use 1 for strictly serial seed-controlled diagnostics."
+        ),
+    )
     parser.add_argument(
         "--ridge-sentinel",
         action="store_true",
@@ -306,6 +365,8 @@ def main(argv: list[str] | None = None) -> None:
 
     position = args.position.upper()
     seeds = _parse_seeds(args.seeds)
+    if args.n_jobs < 1:
+        parser.error("--n-jobs must be >= 1")
     if args.dry_run:
         print_dry_run(args.mode, position, seeds, args.n_trials)
         return
@@ -317,9 +378,15 @@ def main(argv: list[str] | None = None) -> None:
             n_trials=args.n_trials,
             sampler_seed=args.sampler_seed,
             ridge_sentinel=args.ridge_sentinel,
+            n_jobs=args.n_jobs,
         )
     else:
-        results = run_doe(position, seeds, ridge_sentinel=args.ridge_sentinel)
+        results = run_doe(
+            position,
+            seeds,
+            ridge_sentinel=args.ridge_sentinel,
+            n_jobs=args.n_jobs,
+        )
 
     print(results)
     if not args.no_history:
