@@ -13,21 +13,22 @@ Read `AGENTS.md` first, especially stop-rules, worktree workflow, large-cleanup 
 
 Resolve the target issues:
 
-- If `ISSUES` is supplied, expand the numbers or range and fetch those issues.
+- If `ISSUES` is supplied, expand one issue, a range such as `#338-348`, or a comma list such as `#338,#341`.
 - Otherwise enumerate the open actionable backlog:
   `gh issue list --label claude-audit --state open --json number,title,labels,updatedAt --limit 400 --jq '.[] | select(any(.labels[]; .name=="severity-high" or .name=="severity-medium"))'`
 - Fetch each target with `gh issue view <N> --json number,title,body,labels,comments`.
 
 Parse each issue into finding records:
 
-- Prefer the final fenced JSON block with `schema=="claude-audit/v1"`. It carries `file`, `line`, `severity`, `area`, `category`, and `first_seen_sha`.
-- Strip CRLF before parsing. Fall back to prose fields such as `**File**:` only when JSON is absent or malformed.
-- Use the GitHub issue number as the finding id. FIX PR bodies must cite `Closes #N`; LEAVE issues are closed directly.
+- Per-finding issue: one GitHub issue equals one finding. Read `severity` and `area` from labels. Prefer the final fenced JSON block with `schema=="claude-audit/v1"`; it carries `file`, `line`, `category`, and `first_seen_sha`. Strip CRLF before slicing/parsing. Fall back to prose fields such as `**File**:` only when JSON is absent or malformed.
+- Explicit legacy or split issue: if the issue is a dated `[claude-audit] <date> - N findings` batch, a `#NNN split`, or has area sections such as `### QB` / `### Shared`, parse each `#### ...` finding block into its own record. Use the parent issue plus an area/index suffix as the finding id, but close the parent issue only when all of its findings are confirmed.
+- FIX PR bodies must cite `Closes #N` for per-finding issues. LEAVE per-finding issues are closed directly; legacy/split parent issues follow the Mode B close rules.
 
-Choose the mode after reading issue comments:
+Check freshness and choose the mode:
 
-- **Mode A: triage-and-fix** when findings are open and not already remediated.
-- **Mode B: verify-and-close** when comments map the findings to merged fix PRs or categorized LEAVE decisions and those PRs are present on `origin/main`.
+- Compare each finding's `first_seen_sha` or title `@<sha>` to `git rev-parse origin/main`. If it is more than a handful of commits behind, note that the finding may already be stale or remediated and look for remediation comments before assuming it is open.
+- **Mode B: verify-and-close** only when comments map every finding to a merged fix PR or categorized LEAVE decision, and the cited PRs are present on `origin/main` (`git log origin/main --grep=<marker>` or equivalent).
+- Otherwise use **Mode A: triage-and-fix**.
 
 ## Mode A: Triage And Fix
 
@@ -37,15 +38,21 @@ For each finding:
 
 - Read the cited `file:line` in this worktree.
 - Re-confirm the claim with the cheapest decisive check: targeted test, caller grep, config-layer read, `origin/main:<path>` read, or direct code inspection as appropriate.
+- For behavioral, shared-code, or infra claims, use the same depth as the Claude workflow: targeted tests for behavior, grep every caller for shared-code contracts, and check all Batch/ECS/workflow config layers.
 - Classify as `FIX`, `LEAVE`, or `UNCERTAIN`.
 
 Use these LEAVE categories:
 
 - `stale`: cited code no longer matches the claim or was already changed.
 - `false_positive`: current code is correct as written.
-- `feature_drift`: suggestion violates stop-rules or is model tuning/design, not a defect.
+- `feature_drift`: suggestion violates stop-rules or is model tuning/design, not a defect. Cite the relevant `AGENTS.md` stop-rule by section name.
 - `out_of_scope`: real concern, but it belongs in a separate effort.
 - `speculative`: no concrete trigger or reproducible failure mode.
+
+Important closure rule:
+
+- `stale`, `false_positive`, `feature_drift`, and `speculative` are noise categories and may be labeled `leave` and closed after plan approval.
+- `out_of_scope` and unresolved `UNCERTAIN` findings stay open unless the user explicitly decides otherwise. Do not label them `leave`.
 
 Ask the user before proceeding if any `UNCERTAIN` finding would materially change the plan. Do not hide uncertain calls inside a PR.
 
@@ -53,64 +60,75 @@ Partition the `FIX` findings by risk tier:
 
 - **Tier A**: docs, tests, dead-symbol cleanup, operator tools, and local scripts with no production behavior change.
 - **Tier B**: behavior-equivalent or localized production fixes with low blast radius.
-- **Tier C**: training, serving, shared pipeline, feature, target, cache, data-leakage, or model-output changes. Requires benchmark or pipeline evidence.
+- **Tier C**: training, serving, shared pipeline, feature, target, cache, data-leakage, GPU-guarded, or model-output changes. Requires benchmark, pipeline, or Batch dry-run evidence appropriate to the touched path.
 
 For more than ten fixes, use file-disjoint bundles:
 
 - Use Codex subagents when available. Workers draft commits only; they do not push or open PRs.
 - If subagents are unavailable, work tier by tier manually in the same file-disjoint order.
+- Target one PR per non-empty tier, 2-3 PRs total. If Tier C has more than about ten bundles, split it into C1/C2 by file area, but keep the total at four PRs or fewer.
 - If a bundle changes a shared function signature, grep every caller before committing. Re-bundle or add an orchestrator bridge commit if needed.
 
-Before editing, write a compact plan:
+Before editing or closing issues, write a compact plan and stop for user approval:
 
-- Master backlog: severity, area, issue, title, verdict, and tier.
-- LEAVE rationale and issue-close list.
-- FIX bundles by tier with files touched and worker brief.
-- File-disjointness verification.
-- Execution order and any user questions.
+- Master backlog sorted HIGH first: severity, area, issue/finding id, title, verdict, and tier.
+- Triage table with `file:line`, LEAVE category, and evidence.
+- LEAVE rationale and exact issue-close list, excluding `out_of_scope` and unresolved `UNCERTAIN`.
+- FIX bundles by tier with files touched, worker brief, and file-disjointness verification.
+- Execution order, test/benchmark requirements, and any user questions.
 
-If `DRY_RUN=1`, stop here.
+If `DRY_RUN=1`, stop here. Otherwise, do not mutate until the user approves the plan.
 
-After plan approval, retire LEAVE issues first:
+After plan approval, retire noise LEAVE issues first:
 
 `gh label create leave --color CCCCCC --description "Audit finding triaged as noise (false positive / stale / stop-rule drift)" 2>/dev/null || true`
 
-Then for each LEAVE issue:
+Then for each closeable LEAVE per-finding issue:
 
 - `gh issue edit <N> --add-label leave`
-- `gh issue close <N> --reason "not planned" --comment "Triaged LEAVE (<category>): <reason>. Not a fix target."`
+- `gh issue close <N> --reason "not planned" --comment "Triaged LEAVE (<category>): <reason / stop-rule section>. Not a fix target."`
 
-For each non-empty tier:
+For each non-empty tier, execute sequentially:
 
 1. Create a staging branch from latest `origin/main`, named `audit-<issue-or-batch>/tier-<A|B|C>`.
-2. Apply or cherry-pick the bundle commits for that tier.
-3. Run `ruff check .`, `ruff format --check .`, and `pytest -m unit -q`.
-4. For Tier C, run the affected position pipeline or benchmark and record the evidence.
-5. Run `.codex/hooks/pre-pr.sh` indirectly by opening the PR, or run the same deterministic gate manually first if needed.
-6. Run `/prompts:pre-pr-judge` before `gh pr create`.
-7. Open one PR for the tier. Include summary, `Closes #N` lines, bundles, risk, test plan, and Tier C metric evidence when applicable.
-8. Wait for green CI with `gh pr checks <N> --watch`.
-9. For `audit-*/tier-*` PRs, show the final `gh pr diff <N>` and ask for explicit merge sign-off. Do not auto-merge on green CI alone.
-10. After approval, merge with `gh pr merge <N> --squash`, then delete the remote branch with `git push origin --delete <branch>`.
+2. Apply or cherry-pick the bundle commits for that tier in bundle order. After any conflict resolution, verify `grep -c '<<<<<<<' <file>` is zero before staging.
+3. Add an orchestrator bridge commit if cross-bundle test-contract gaps or shared-signature changes require it.
+4. Run `ruff check .`, `ruff format --check .`, and `pytest -m unit -q` in the foreground.
+5. For Tier C, run the affected position pipeline or benchmark and record deltas. If a bundle touches GPU-guarded code, include a mandatory Batch dry-run callout.
+6. Rebase onto latest `origin/main` before judging/opening: `git fetch origin main --quiet` then `git rebase origin/main`.
+7. Run `/prompts:pre-pr-judge` before `gh pr create`.
+8. Open one PR for the tier. Include summary, `Closes #N` lines, bundles, risk, deferred items, test plan, and Tier C metric evidence when applicable.
+9. Wait for green CI with `gh pr checks <N> --watch` before opening the next tier PR.
+10. For `audit-*/tier-*` PRs, show the final `gh pr diff <N>` and any Tier C benchmark deltas, then ask for explicit merge sign-off. Do not auto-merge on green CI alone.
+11. After approval, merge with `gh pr merge <N> --squash`, then delete the remote branch with `git push origin --delete <branch>`. Do not use `--delete-branch` from a worktree.
+12. Confirm closure: spot-check fixed finding issues with `gh issue view <N> --json state`; manually close only if GitHub did not process a valid `Closes #N`.
+
+After all tier PRs land, the open severity-labeled backlog should contain only `out_of_scope` and unresolved/deferred findings.
 
 ## Mode B: Verify And Close
 
-Use this when issues already carry remediation comments.
+Use this when issues already carry remediation comments. The goal is confirm, then close; do not re-fix unless a GAP appears.
 
 For each finding:
 
-- If claimed FIXED, confirm the cited PR is merged to `origin/main` and the relevant code/doc/test change is actually present.
-- If claimed LEAVE, re-validate the category against current code and `AGENTS.md` stop-rules.
+- If claimed FIXED, confirm the cited PR is merged to `origin/main` and the relevant code/doc/test change is actually present. Do not treat "PR merged" as sufficient evidence by itself.
+- If claimed LEAVE, re-validate the category against current code and `AGENTS.md` stop-rules. A claimed LEAVE that is actually a real unfixed bug is a `GAP`.
 - For behavioral, shared-code, or infra claims, rerun the same depth checks as Mode A.
 
 Return a confirmation table:
 
 `id | area | claim | verdict CONFIRMED/GAP | evidence`
 
-If there are no GAPs:
+Write a close plan and stop for user approval before mutating:
 
-- For each confirmed FIXED issue, post a confirmation comment and close with `gh issue close <N> --reason completed`.
-- For each confirmed LEAVE issue, preserve the noise accounting: ensure the `leave` label exists, apply it, and close with `gh issue close <N> --reason "not planned"` plus a one-line LEAVE reason.
+- Per-issue close list, including fix PR list or LEAVE category to cite in comments.
+- Any GAP findings and their Mode A tier/bundle plan.
+- Legacy/split parent issue closure only when all child findings are confirmed.
+
+If there are no GAPs and the user approves:
+
+- For each confirmed FIXED finite issue, post a confirmation comment and close with `gh issue close <N> --reason completed`.
+- For each confirmed noise LEAVE per-finding issue, preserve the noise accounting: ensure the `leave` label exists, apply it, and close with `gh issue close <N> --reason "not planned"` plus a one-line LEAVE reason.
 - Verify the issues no longer appear in the open actionable backlog.
 
 If any GAP remains:
