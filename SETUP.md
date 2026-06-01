@@ -323,6 +323,14 @@ scripts/agent-memory-sync.sh all push --prune # mirror-delete, opt-in only
 
 Codex project hooks are version-controlled under [`.codex/`](.codex/) and load when the repo is trusted. After hook changes, open `/hooks` in Codex, review the changed commands, and trust them.
 
+Start local Codex sessions through the fresh-worktree launcher:
+
+```bash
+scripts/codex-fresh-worktree.sh
+```
+
+It reuses the current directory only when it is already a clean Codex-owned worktree under `${CODEX_HOME:-~/.codex}/worktrees/*/Final-Project`. Otherwise it fetches `origin/main`, creates a fresh `codex/session-<id>` worktree under `${CODEX_HOME:-~/.codex}/worktrees/<id>/Final-Project`, best-effort links ignored `data/raw` and `data/splits` from the main checkout, and starts Codex with `--cd` pointed at the fresh worktree. Useful launcher options: `--force-new`, `--base <ref>`, `--branch <name>`, `--no-fetch`, and `--print-path`.
+
 Codex custom slash prompts are local-user files, not repo-scoped files. The repo keeps templates in [`.codex/prompts/`](.codex/prompts/); install or refresh the actual `~/.codex/prompts/*.md` copies with:
 
 ```bash
@@ -331,4 +339,4 @@ scripts/bootstrap-codex-local.sh
 
 Restart Codex after installing prompts. They appear as `/prompts:pre-pr-judge`, `/prompts:pre-pr-gate`, `/prompts:post-pr-followup`, `/prompts:post-session-critique`, and `/prompts:solve-issues`.
 
-Known difference from Claude Code: Codex `SessionStart` hooks can add model-visible context, but they cannot persist environment exports like Claude's `CLAUDE_ENV_FILE` flow. Use the normal setup instructions above for the Python environment; the Codex pre-PR hook will probe the main worktree's `.venv` when the current worktree lacks one.
+Known difference from Claude Code: Codex `SessionStart` hooks can add model-visible context, but they cannot persist environment exports like Claude's `CLAUDE_ENV_FILE` flow or move the active session into a new worktree. Use the normal setup instructions above for the Python environment; the Codex pre-PR hook will probe the main worktree's `.venv` when the current worktree lacks one.
