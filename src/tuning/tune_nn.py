@@ -131,6 +131,7 @@ _DEFAULT_N_TRIALS = 15
 # rather than the configured epoch ceiling.
 _HYPERBAND_MIN_RESOURCE = 8
 _HYPERBAND_REDUCTION_FACTOR = 3
+_SEARCH_SPACE_VERSION = "scheduler_v2"
 
 # Backbone-layer presets keyed by an integer index. Optuna's persistent storage
 # (SQLite, JSON) only round-trips scalar categorical choices (None/bool/int/
@@ -170,6 +171,25 @@ _SCHEDULER_PARAM_KEYS: dict[str, frozenset[str]] = {
 _TUNED_OVERRIDE_KEYS: frozenset[str] = _BASE_TUNED_OVERRIDE_KEYS | frozenset().union(
     *_SCHEDULER_PARAM_KEYS.values()
 )
+
+
+def _study_name(pos: str) -> str:
+    """Return the Optuna study name for the current NN search space.
+
+    The scheduler-expanded search requires params that older ``nn_{pos}``
+    studies do not have. Versioning the study name/path prevents stale COMPLETE
+    trials from counting toward ``--n-trials`` or failing ``_trial_to_params``.
+    """
+
+    return f"nn_{_SEARCH_SPACE_VERSION}_{pos.lower()}"
+
+
+def _study_db_path(pos: str) -> str:
+    return f"tune_nn_{_SEARCH_SPACE_VERSION}_{pos.lower()}.db"
+
+
+def _s3_key_prefix(pos: str) -> str:
+    return f"tune_nn/{_SEARCH_SPACE_VERSION}/{pos.lower()}"
 
 
 # ---------------------------------------------------------------------------
@@ -516,7 +536,7 @@ class _S3Checkpoint:
     """Round-trip the Optuna SQLite study DB to S3 so a Spot interruption
     can be resumed on Batch's retry.
 
-    Layout: ``s3://{bucket}/tune_nn/{pos}/study.db`` (+ ``results.json``
+    Layout: ``s3://{bucket}/tune_nn/{search-space-version}/{pos}/study.db`` (+ ``results.json``
     after the run completes). On startup we pull the DB if it exists;
     Optuna's ``load_if_exists=True`` then picks up every trial already
     completed and the next attempt only runs ``n_trials - already_done``
@@ -535,7 +555,7 @@ class _S3Checkpoint:
         self.pos = pos
         self.db_path = db_path
         self.s3 = boto3.client("s3")
-        self.key_prefix = f"tune_nn/{pos.lower()}"
+        self.key_prefix = _s3_key_prefix(pos)
 
     def _study_key(self) -> str:
         return f"{self.key_prefix}/study.db"
@@ -662,12 +682,12 @@ def main():
         action="store_true",
         help=(
             "Batch/Spot mode: round-trip the SQLite study DB to "
-            "s3://$S3_BUCKET/tune_nn/{pos}/study.db so a Spot interruption "
-            "can be resumed on Batch's retry. On startup we pull the DB if it "
-            "exists; after each trial completes we re-upload it; a SIGTERM "
-            "handler does a final upload before exit. Requires S3_BUCKET in "
-            "the env (matches the convention used by src/tuning/tune_lgbm.py "
-            "and src/batch/train.py)."
+            f"s3://$S3_BUCKET/tune_nn/{_SEARCH_SPACE_VERSION}/{{pos}}/study.db "
+            "so a Spot interruption can be resumed on Batch's retry. On startup "
+            "we pull the DB if it exists; after each trial completes we "
+            "re-upload it; a SIGTERM handler does a final upload before exit. "
+            "Requires S3_BUCKET in the env (matches the convention used by "
+            "src/tuning/tune_lgbm.py and src/batch/train.py)."
         ),
     )
     args = parser.parse_args()
@@ -680,8 +700,8 @@ def main():
     all_results: dict[str, dict] = {}
 
     for pos in positions:
-        study_name = f"nn_{pos.lower()}"
-        db_path = f"tune_nn_{pos.lower()}.db"
+        study_name = _study_name(pos)
+        db_path = _study_db_path(pos)
 
         if args.print_best:
             try:

@@ -396,6 +396,12 @@ def test_trial_to_params_rejects_stale_scheduler_mismatch():
         tune_nn._trial_to_params(frozen)
 
 
+def test_study_storage_is_versioned_for_scheduler_search_space():
+    assert tune_nn._study_name("RB") == "nn_scheduler_v2_rb"
+    assert tune_nn._study_db_path("RB") == "tune_nn_scheduler_v2_rb.db"
+    assert tune_nn._s3_key_prefix("RB") == "tune_nn/scheduler_v2/rb"
+
+
 # ---------------------------------------------------------------------------
 # Objective end-to-end (no real training — runner is stubbed)
 # ---------------------------------------------------------------------------
