@@ -25,6 +25,8 @@ from src.shared.training import (
     MultiHeadHistoryWithOppTrainer,
     MultiHeadTrainer,
     MultiTargetLoss,
+    _restore_batchnorm_state,
+    _snapshot_batchnorm_state,
     make_history_dataloaders,
 )
 from src.shared.utils import cuda_graph_enabled
@@ -128,6 +130,34 @@ def test_graph_inputs_with_opp():
     args = tr._graph_inputs((xs, xh, m, xo, om, {"y": torch.randn(4)}))
     assert len(args) == 5
     assert torch.equal(args[3], xo) and torch.equal(args[4], om)
+
+
+@pytest.mark.unit
+def test_batchnorm_snapshot_restore_covers_running_buffers():
+    bn = nn.BatchNorm1d(3)
+    bn.train()
+    _ = bn(torch.randn(8, 3) + 3.0)
+    snapshot = _snapshot_batchnorm_state(bn)
+
+    original_mean = bn.running_mean.clone()
+    original_var = bn.running_var.clone()
+    original_batches = bn.num_batches_tracked.clone()
+
+    bn.running_mean.add_(10)
+    bn.running_var.mul_(2)
+    bn.num_batches_tracked.add_(5)
+    _restore_batchnorm_state(snapshot)
+
+    assert torch.equal(bn.running_mean, original_mean)
+    assert torch.equal(bn.running_var, original_var)
+    assert torch.equal(bn.num_batches_tracked, original_batches)
+
+
+@pytest.mark.unit
+def test_fixed_amp_scale_env_is_trainer_local(monkeypatch):
+    monkeypatch.setenv("FF_AMP_FIXED_SCALE", "1")
+    tr = _bare_trainer(MultiHeadTrainer, nn.Linear(3, 2), targets=["y"])
+    assert tr._fixed_amp_scale is True
 
 
 # ---------------------------------------------------------------------------

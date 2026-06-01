@@ -10,8 +10,8 @@ starters, making those games unrepresentative for fantasy?
   fantasy week and it is high-variance rest noise. **Keep week 17** (the championship).
 - **Never** a flat `week == 18` cut — it is era-wrong (see below).
 
-Run with `python -m src.analysis.analysis_late_week_effect` (`--stage1` /
-`--stage2` / `--ablation`).
+Run with `python -m src.analysis.cohort_analysis late_week --deep-dive`
+(stage 1), `--with-model-error` (stage 2), or `--ablation`.
 
 ## Why "the final week", not "weeks 17–18"
 

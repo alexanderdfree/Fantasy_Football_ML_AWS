@@ -1,6 +1,7 @@
 """Generic training infrastructure: loss, dataset, dataloaders, and trainer."""
 
 import contextlib
+import json
 import os
 import time
 
@@ -14,6 +15,12 @@ from torch.utils.data import DataLoader, Dataset
 from src.shared.utils import amp_dtype, cuda_enabled, cuda_graph_enabled
 
 SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
+_TRUE_ENV = {"1", "true", "yes", "on"}
+_FIXED_SCALE_ENV = "FF_AMP_FIXED_SCALE"
+_INIT_SCALE_ENV = "FF_AMP_INIT_SCALE"
+_GRADSCALER_TRACE_PATH_ENV = "FF_GRADSCALER_TRACE_PATH"
+_GRADSCALER_TRACE_LABEL_ENV = "FF_GRADSCALER_TRACE_LABEL"
+_CUDA_GRAPH_RESTORE_BN_ENV = "FF_CUDA_GRAPH_RESTORE_BN"
 
 # DataLoader worker count is fixed at 0 (the PyTorch default). PR #309's
 # GPU-resident batcher path takes over on CUDA hosts, so DataLoader is only
@@ -24,6 +31,44 @@ SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin", "hurdle_poisso
 # obsoleted; the Batch job-definition still sets ``NN_DATALOADER_NUM_WORKERS=3``
 # in batch-image.yml but it is now a no-op the orchestrator can clear at
 # leisure.
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in _TRUE_ENV
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _snapshot_batchnorm_state(module: nn.Module) -> list[tuple[nn.Module, dict[str, torch.Tensor]]]:
+    """Clone BatchNorm running buffers so CUDA-graph warmup can be made symmetric."""
+    snapshot: list[tuple[nn.Module, dict[str, torch.Tensor]]] = []
+    for child in module.modules():
+        if not isinstance(child, nn.modules.batchnorm._BatchNorm):
+            continue
+        state = {
+            name: buf.detach().clone()
+            for name in ("running_mean", "running_var", "num_batches_tracked")
+            if (buf := getattr(child, name, None)) is not None
+        }
+        if state:
+            snapshot.append((child, state))
+    return snapshot
+
+
+def _restore_batchnorm_state(
+    snapshot: list[tuple[nn.Module, dict[str, torch.Tensor]]],
+) -> None:
+    for module, state in snapshot:
+        for name, saved in state.items():
+            getattr(module, name).copy_(saved)
 
 
 def negbin2_log_prob(y: torch.Tensor, mu: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
@@ -603,9 +648,24 @@ class MultiHeadTrainer:
             amp_dtype() if (bool(use_amp) and getattr(device, "type", None) == "cuda") else None
         )
         self._use_amp = self._amp_dtype is not None
+        self._fixed_amp_scale = _env_truthy(_FIXED_SCALE_ENV)
+        scaler_kwargs = {}
+        if self._fixed_amp_scale:
+            scaler_kwargs = {
+                "init_scale": _env_float(_INIT_SCALE_ENV, 65536.0),
+                # Keep the normal initial scale but prevent growth. Any overflow
+                # is treated as an invalid diagnostic run below rather than
+                # silently changing the scale schedule.
+                "growth_interval": 2**31 - 1,
+            }
         self._scaler = torch.amp.GradScaler(
-            "cuda", enabled=self._use_amp and self._amp_dtype is torch.float16
+            "cuda",
+            enabled=self._use_amp and self._amp_dtype is torch.float16,
+            **scaler_kwargs,
         )
+        self._scaler_trace_path = os.environ.get(_GRADSCALER_TRACE_PATH_ENV, "").strip()
+        self._scaler_trace_label = os.environ.get(_GRADSCALER_TRACE_LABEL_ENV, "").strip()
+        self._scaler_trace_fh = None
         # Flipped True once make_graphed_callables has wrapped self.model
         # (FF_CUDA_GRAPH path); guards _maybe_graph_model against re-capturing.
         self._graphed = False
@@ -622,6 +682,43 @@ class MultiHeadTrainer:
         if self._use_amp:
             return torch.amp.autocast(device_type="cuda", dtype=self._amp_dtype)
         return contextlib.nullcontext()
+
+    def _open_scaler_trace(self) -> None:
+        if not self._scaler_trace_path:
+            return
+        parent = os.path.dirname(self._scaler_trace_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        self._scaler_trace_fh = open(  # noqa: SIM115 - kept open across the batch loop
+            self._scaler_trace_path,
+            "w",
+            encoding="utf-8",
+            buffering=1,
+        )
+        self._write_scaler_trace(
+            {
+                "kind": "meta",
+                "label": self._scaler_trace_label,
+                "amp_dtype": str(self._amp_dtype),
+                "enabled": bool(self._scaler.is_enabled()),
+                "fixed_scale": bool(self._fixed_amp_scale),
+                "initial_scale": (
+                    float(self._scaler.get_scale()) if self._scaler.is_enabled() else None
+                ),
+                "graphed": bool(self._graphed),
+            }
+        )
+
+    def _close_scaler_trace(self) -> None:
+        if self._scaler_trace_fh is None:
+            return
+        self._scaler_trace_fh.close()
+        self._scaler_trace_fh = None
+
+    def _write_scaler_trace(self, row: dict) -> None:
+        if self._scaler_trace_fh is None:
+            return
+        self._scaler_trace_fh.write(json.dumps(row, sort_keys=True) + "\n")
 
     def _forward_batch(self, batch) -> tuple[dict, dict]:
         """Unpack a DataLoader batch, move to device, and run the forward pass.
@@ -682,16 +779,25 @@ class MultiHeadTrainer:
             if self._use_amp
             else contextlib.nullcontext()
         )
-        with capture_ctx:
-            # Patches model.forward in place and returns the same module.
-            # allow_unused_input=True: per-position gated/plain head mixes leave
-            # some params unused for a given graph's outputs.
-            self.model = torch.cuda.make_graphed_callables(
-                self.model,
-                sample_args,
-                num_warmup_iters=3,
-                allow_unused_input=True,
-            )
+        bn_snapshot = (
+            _snapshot_batchnorm_state(self.model)
+            if _env_truthy(_CUDA_GRAPH_RESTORE_BN_ENV)
+            else None
+        )
+        try:
+            with capture_ctx:
+                # Patches model.forward in place and returns the same module.
+                # allow_unused_input=True: per-position gated/plain head mixes leave
+                # some params unused for a given graph's outputs.
+                self.model = torch.cuda.make_graphed_callables(
+                    self.model,
+                    sample_args,
+                    num_warmup_iters=3,
+                    allow_unused_input=True,
+                )
+        finally:
+            if bn_snapshot is not None:
+                _restore_batchnorm_state(bn_snapshot)
         self._graphed = True
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
@@ -728,6 +834,10 @@ class MultiHeadTrainer:
         # method is a fixed attribute; only the *call* (which reads the latest
         # attention weights) needs to happen per batch.
         entropy_fn = getattr(self.model, "attention_entropy_loss", None)
+        trace_scaler = bool(self._scaler_trace_path)
+        need_scale_state = self.scheduler_per_batch or trace_scaler or self._fixed_amp_scale
+        global_step = 0
+        self._open_scaler_trace()
 
         for epoch in range(n_epochs):
             if _cuda:
@@ -781,15 +891,44 @@ class MultiHeadTrainer:
                 # get_scale() syncs (was 2/batch here, both discarded). When the
                 # scaler is disabled (BF16 / CPU / use_amp=False) get_scale() is
                 # a constant 1.0 anyway, so behaviour is identical either way.
-                if self.scheduler_per_batch:
-                    scale_before = self._scaler.get_scale()
-                    self._scaler.step(self.optimizer)
-                    self._scaler.update()
-                    if self._scaler.get_scale() >= scale_before:
-                        self.scheduler.step()
-                else:
-                    self._scaler.step(self.optimizer)
-                    self._scaler.update()
+                scale_before = self._scaler.get_scale() if need_scale_state else None
+                self._scaler.step(self.optimizer)
+                self._scaler.update()
+                scale_after = self._scaler.get_scale() if need_scale_state else None
+                skipped_step = (
+                    bool(scale_after < scale_before)
+                    if scale_before is not None and scale_after is not None
+                    else False
+                )
+                if trace_scaler:
+                    self._write_scaler_trace(
+                        {
+                            "kind": "step",
+                            "label": self._scaler_trace_label,
+                            "epoch": epoch,
+                            "batch": n_train_batches,
+                            "step": global_step,
+                            "scale": float(scale_before) if scale_before is not None else None,
+                            "next_scale": float(scale_after) if scale_after is not None else None,
+                            "skipped": skipped_step,
+                            "scale_changed": (
+                                bool(scale_after != scale_before)
+                                if scale_before is not None and scale_after is not None
+                                else False
+                            ),
+                            "graphed": bool(self._graphed),
+                            "fixed_scale": bool(self._fixed_amp_scale),
+                        }
+                    )
+                if self._fixed_amp_scale and skipped_step:
+                    self._close_scaler_trace()
+                    raise RuntimeError(
+                        "FF_AMP_FIXED_SCALE detected an overflow/skip; fixed-scale "
+                        "diagnostic run is invalid."
+                    )
+                if self.scheduler_per_batch and not skipped_step:
+                    self.scheduler.step()
+                global_step += 1
 
                 # ``loss.detach().float()`` keeps the accumulator on-GPU and
                 # in FP32; no host sync per batch (cf. ``loss.item()``).
@@ -948,6 +1087,7 @@ class MultiHeadTrainer:
             if not _fixed_epochs and self.best_model_state is not None:
                 self.model.load_state_dict(self.best_model_state)
 
+        self._close_scaler_trace()
         return history
 
 

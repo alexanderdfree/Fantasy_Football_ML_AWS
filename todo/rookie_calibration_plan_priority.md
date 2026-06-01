@@ -1,12 +1,13 @@
 # Rookie calibration — implementation plan (next priority)
 
 A pick-up plan for a future session. The diagnosis is done and the evaluation
-harness exists; this is the *fix*. Read [rookie_cohort_findings_priority.md](rookie_cohort_findings_priority.md)
+harness exists; this is the *fix*. Read
+[src/analysis/rookie_cohort_findings.md](../src/analysis/rookie_cohort_findings.md)
 first — it has the numbers this plan refers to.
 
 ## Context (what we know)
 
-- The tracked rookie-subgroup metric now exists: [rookie_cohort_metrics.py](../src/analysis/rookie_cohort_metrics.py)
+- The tracked rookie-subgroup metric now exists in [cohort_analysis.py](../src/analysis/cohort_analysis.py) (`rookie`; legacy wrapper [rookie_cohort_metrics.py](../src/analysis/rookie_cohort_metrics.py))
   (PR #620). This satisfies the precondition the #519 draft-capital rejection set
   (`TODO.md` `[TESTED, REJECTED] Draft-capital / combine rookie cold-start features`).
 - **Rookies are NOT a high-MAE cohort** — they score fewer points, so smaller
@@ -49,7 +50,7 @@ leakage; `years_exp`/`draft_number` already flow through `src/data/loader.py` pe
 
 1. `is_rookie` — 1 if the player's first NFL season is the current season
    (`years_exp == 0` / first-season-in-data). Reuse the labeling logic in
-   [rookie_cohort_metrics.py](../src/analysis/rookie_cohort_metrics.py) `label_rookie_rows` for parity.
+   [cohort_analysis.py](../src/analysis/cohort_analysis.py) `label_rookie_rows` for parity.
 2. `rookie_early` (or a decaying `rookie_game_phase`) — 1 for the first ~3 games of
    the rookie season, else 0.
 
@@ -69,7 +70,7 @@ Wire-up (QB first; this is CLAUDE.md "eligible reach #1: non-temporal features i
   fixture (`tests/qb/conftest.py`). Ridge will learn a negative coefficient on
   `rookie_early` ≈ −bias, directly cancelling the over-prediction.
 - Rebuild splits (`build_features`), retrain QB (`python -m src.qb.run_pipeline`),
-  then **evaluate with `python -m src.analysis.rookie_cohort_metrics --positions QB`**.
+  then **evaluate with `python -m src.analysis.cohort_analysis rookie --positions QB --with-model-error`**.
 
 **Success criteria** (vs the baselines below): `rookie_early` bias shrinks toward 0,
 `MAEbc ≈ MAE` for `rookie_early` (the systematic part is gone), and top-12 hit rate
@@ -90,7 +91,7 @@ flat-or-up. Overall MAE flat is expected and fine.
 - Check **training vs serving** feature parity: confirm `years_exp`/first-season is
   available for 2025 inference in `src/serving/app.py`, not just training.
 
-## Baselines to beat (seed 42, from rookie_cohort_findings_priority.md)
+## Baselines to beat (seed 42, from src/analysis/rookie_cohort_findings.md)
 
 - **QB Ridge `rookie_early`**: bias **+3.619**, MAE 6.222, MAEbc 5.172 (→ ~1.05 recoverable).
 - Cross-model QB `rookie_early` bias all strongly positive (+2.9 to +4.4).

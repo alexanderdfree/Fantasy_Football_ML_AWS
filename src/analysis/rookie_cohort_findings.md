@@ -1,6 +1,6 @@
 # Rookie cohort metric — findings
 
-Output of `python -m src.analysis.rookie_cohort_metrics` (seed 42, 2025 test
+Output of `python -m src.analysis.cohort_analysis rookie --with-model-error` (seed 42, 2025 test
 season, four skill positions). This is the *tracked rookie-subgroup metric* whose
 absence was the stated precondition for ever revisiting draft-capital features
 (see `TODO.md` `[TESTED, REJECTED] Draft-capital / combine rookie cold-start
@@ -58,7 +58,7 @@ Two systematic patterns:
 2. **RB: under-prediction throughout**, worst on `rookie_rest` (−1.0 to −1.6) —
    the same lagged-input structural under-prediction the RB-ascension diagnostic
    found (`src/analysis/rb_ascension.py`): a rookie back who seizes a workhorse
-   role is scored off backup-level lagged inputs.
+  role is scored off backup-level lagged inputs.
 
 So "handling rookies" is a **calibration/bias** problem, position-specific in
 sign, not an overall-MAE problem — and it is invisible to the MAE benchmark the
@@ -122,5 +122,5 @@ rookies are to be addressed, the candidate levers and how to judge them:
 - **The MAE Δ is confounded by scoring magnitude** (rookies score less ⇒ lower
   absolute error). The bias column is the de-confounded read.
 
-Reproduce: `python -m src.analysis.rookie_cohort_metrics` (add `--no-model` for
-instant cohort sizes, `--positions RB` to scope).
+Reproduce: `python -m src.analysis.cohort_analysis rookie --with-model-error`
+(add `--no-model` for instant cohort sizes, `--positions RB` to scope).
