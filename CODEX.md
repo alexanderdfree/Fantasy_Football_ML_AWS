@@ -12,7 +12,7 @@ Codex loads project hooks from `.codex/hooks.json` when the project is trusted. 
 - `.codex/hooks/guard-worktree-path.sh` blocks `apply_patch`/edit-style tool calls that target the main checkout while Codex is running in a worktree.
 - `.codex/hooks/ruff-format.sh` formats touched Python files after `apply_patch`.
 - `.codex/hooks/pre-pr.sh` wraps the repo's existing `.claude/hooks/pre-pr.sh` with `CLAUDE_PROJECT_DIR` set to the Codex project root, so the deterministic PR gate stays single-sourced.
-- `.codex/hooks/post-pr-create.sh` injects Codex's post-PR review/CI/merge workflow after `gh pr create`.
+- `.codex/hooks/post-pr-create.sh` emits a compact pointer to the prompt-backed post-PR review/CI/merge workflow after `gh pr create`.
 - `.codex/hooks/memory-sync-stop.sh` runs a best-effort `scripts/agent-memory-sync.sh all push` on `Stop`, pushing changed local Claude/Codex memory trees to their separate S3 prefixes.
 
 Known limitation: Codex hooks are guardrails, not a complete enforcement boundary. They cover `apply_patch`, simple Bash hook events, and MCP calls that Codex exposes to hooks; they do not reliably intercept every possible shell-side file write. Keep using `apply_patch` for edits.

@@ -10,7 +10,7 @@ jq_bin="$(codex_find_jq)" || exit 0
 input="$(cat)"
 cmd="$(codex_hook_command "$input" "$jq_bin")"
 
-if ! [[ "$cmd" =~ (^|[[:space:]&|;\(])gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$|[&|;\)]) ]]; then
+if ! codex_command_invokes_gh_pr_create "$cmd"; then
   exit 0
 fi
 

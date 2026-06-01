@@ -149,6 +149,45 @@ def _current_branch(path: Path) -> str:
     ).stdout.strip()
 
 
+def _matcher_result(command: str) -> bool:
+    script = f'. "{PROJECT_ROOT / ".codex/hooks/lib.sh"}"; codex_command_invokes_gh_pr_create "$1"'
+    result = subprocess.run(
+        [_bash(), "-c", script, "codex-hook-test", command],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gh pr create --fill",
+        "GH_TOKEN=example gh pr create --fill",
+        "git status --short && gh pr create --fill",
+        "/opt/homebrew/bin/gh pr create --fill",
+    ],
+)
+def test_pr_create_matcher_accepts_real_top_level_invocations(command: str):
+    assert _matcher_result(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo gh pr create",
+        'rg -n "post-pr|gh pr create|codex review" .codex',
+        "rg -n 'gh pr create' .codex",
+        "# gh pr create\n git status --short",
+        "git status --short",
+        "bash -lc 'gh pr create --fill'",
+    ],
+)
+def test_pr_create_matcher_rejects_quoted_or_argument_text(command: str):
+    assert not _matcher_result(command)
+
+
 def test_codex_json_context_uses_resolved_jq_path(tmp_path: Path):
     fake_jq = tmp_path / "jq-not-on-path"
     fake_jq.write_text(
@@ -347,17 +386,42 @@ class TestCodexHooks:
         assert _current_branch(target) == "codex/session-custom"
 
     def test_pre_pr_hook_ignores_non_pr_create_commands(self):
-        result = _run_hook(
-            ".codex/hooks/pre-pr.sh",
-            {"cwd": str(PROJECT_ROOT), "tool_input": {"command": "git status --short"}},
-            PROJECT_ROOT,
-        )
+        for command in (
+            "git status --short",
+            "echo gh pr create",
+            'rg -n "post-pr|gh pr create|codex review" .codex',
+            "# gh pr create\n git status --short",
+            "bash -lc 'gh pr create --fill'",
+        ):
+            result = _run_hook(
+                ".codex/hooks/pre-pr.sh",
+                {"cwd": str(PROJECT_ROOT), "tool_input": {"command": command}},
+                PROJECT_ROOT,
+            )
 
-        assert result.returncode == 0
-        assert result.stdout == ""
-        assert result.stderr == ""
+            assert result.returncode == 0
+            assert result.stdout == ""
+            assert result.stderr == ""
 
-    def test_post_pr_hook_injects_codex_review_workflow(self):
+    def test_post_pr_hook_ignores_non_pr_create_commands(self):
+        for command in (
+            "git status --short",
+            "echo gh pr create",
+            'rg -n "post-pr|gh pr create|codex review" .codex',
+            "# gh pr create\n git status --short",
+            "bash -lc 'gh pr create --fill'",
+        ):
+            result = _run_hook(
+                ".codex/hooks/post-pr-create.sh",
+                {"cwd": str(PROJECT_ROOT), "tool_input": {"command": command}},
+                PROJECT_ROOT,
+            )
+
+            assert result.returncode == 0
+            assert result.stdout == ""
+            assert result.stderr == ""
+
+    def test_post_pr_hook_injects_compact_codex_review_workflow(self):
         result = _run_hook(
             ".codex/hooks/post-pr-create.sh",
             {"cwd": str(PROJECT_ROOT), "tool_input": {"command": "gh pr create --fill"}},
@@ -367,5 +431,10 @@ class TestCodexHooks:
         assert result.returncode == 0
         context = json.loads(result.stdout)["hookSpecificOutput"]
         assert context["hookEventName"] == "PostToolUse"
-        assert "codex review --base origin/main" in context["additionalContext"]
-        assert "Do not use `--delete-branch`" in context["additionalContext"]
+        additional_context = context["additionalContext"]
+        assert "post-pr-followup" in additional_context
+        assert "codex review --base origin/main" in additional_context
+        assert "audit/tier explicit merge sign-off" in additional_context
+        assert "post-session-critique" in additional_context
+        assert "Run this Codex post-create workflow now, in order" not in additional_context
+        assert "1. Rebase onto latest main" not in additional_context
