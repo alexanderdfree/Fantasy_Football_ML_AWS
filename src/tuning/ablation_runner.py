@@ -2,9 +2,10 @@
 
 This module is intentionally small and lives under ``src/tuning`` so ablation
 scripts can share seed/variant loops without moving experiment-only machinery
-into ``src/shared``. The default runner is serial because several ablations
-measure wall-clock. ``max_workers > 1`` is available for non-timing sweeps and
-uses process workers so model training stays isolated per run.
+into ``src/shared``. ``max_workers=1`` is available when an ablation needs clean
+per-job timing; local CUDA sweeps can use ``resolve_max_workers("auto", ...)`` to
+fan out small NN jobs across the single GPU while keeping worker processes
+isolated.
 """
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ import statistics
 import traceback
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from src.shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso
@@ -24,8 +26,10 @@ _THREAD_CAP_VARS = (
     "OPENBLAS_NUM_THREADS",
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
     "VECLIB_MAXIMUM_THREADS",
 )
+_LOCAL_CUDA_WORKERS = 6
 
 
 @dataclass(frozen=True)
@@ -156,7 +160,37 @@ def format_dry_run_table(jobs: list[AblationJob]) -> str:
 
 def _cap_worker_threads() -> None:
     for name in _THREAD_CAP_VARS:
-        os.environ.setdefault(name, "1")
+        os.environ[name] = "1"
+    os.environ["LOKY_MAX_CPU_COUNT"] = "1"
+
+
+def resolve_max_workers(raw: str | int, *, job_count: int) -> int:
+    """Resolve a CLI worker count.
+
+    ``auto`` is intentionally conservative off the many-core local CUDA box:
+    serial keeps timing clean on CPU/MPS/small AWS GPU hosts, while the RTX 5080
+    development box can run several tiny attention-NN ablation jobs at once
+    without VRAM pressure.
+    """
+
+    if isinstance(raw, int):
+        workers = raw
+    elif str(raw).strip().lower() == "auto":
+        workers = 1
+        try:
+            from src.shared.platform_detect import detect_platform
+
+            plat = detect_platform()
+            if plat.backend == "cuda" and (plat.cpu_count or 0) >= 12:
+                workers = _LOCAL_CUDA_WORKERS
+        except Exception:  # noqa: BLE001 - platform detection is best-effort
+            workers = 1
+    else:
+        workers = int(str(raw))
+
+    if workers < 1:
+        raise ValueError("max_workers must be >= 1")
+    return min(workers, max(1, int(job_count)))
 
 
 def _error_result(job: AblationJob, exc: BaseException, *, tb: str | None = None) -> AblationResult:
@@ -189,12 +223,37 @@ def _coerce_result(job: AblationJob, payload: dict[str, Any] | AblationResult) -
     )
 
 
-def _run_job(job: AblationJob) -> AblationResult:
+def _safe_log_name(job: AblationJob, idx: int) -> str:
+    parts = [
+        f"{idx:04d}",
+        job.position.upper(),
+        str(job.seed),
+        job.variant,
+        str(job.metadata.get("run_kind", "experiment")),
+    ]
+    return "_".join(part.replace(os.sep, "-") for part in parts) + ".log"
+
+
+def _with_log_path(result: AblationResult, log_path: str | None) -> AblationResult:
+    if not log_path:
+        return result
+    metadata = dict(result.metadata)
+    metadata["log_path"] = log_path
+    return replace(result, metadata=metadata)
+
+
+def _run_job(job: AblationJob, log_path: str | None = None) -> AblationResult:
     _cap_worker_threads()
     try:
-        return _coerce_result(job, job.run_fn(job))
+        if log_path:
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, "w") as logf, redirect_stdout(logf), redirect_stderr(logf):
+                result = _coerce_result(job, job.run_fn(job))
+        else:
+            result = _coerce_result(job, job.run_fn(job))
+        return _with_log_path(result, log_path)
     except Exception as exc:  # noqa: BLE001 - ablation runners should capture per-job failures
-        return _error_result(job, exc, tb=traceback.format_exc())
+        return _with_log_path(_error_result(job, exc, tb=traceback.format_exc()), log_path)
 
 
 def run_grid(
@@ -202,6 +261,8 @@ def run_grid(
     *,
     max_workers: int = 1,
     preserve_order: bool = True,
+    log_dir: str | None = None,
+    progress: bool = False,
 ) -> list[AblationResult]:
     """Run an ablation grid and return one result per job.
 
@@ -211,19 +272,46 @@ def run_grid(
 
     if max_workers < 1:
         raise ValueError("max_workers must be >= 1")
+    log_paths = [
+        os.path.join(log_dir, _safe_log_name(job, idx)) if log_dir else None
+        for idx, job in enumerate(jobs)
+    ]
     if max_workers == 1:
-        return [_run_job(job) for job in jobs]
+        results = []
+        for idx, job in enumerate(jobs):
+            result = _run_job(job, log_paths[idx])
+            if progress:
+                status = "ERROR" if result.error else "ok"
+                suffix = f" log={log_paths[idx]}" if log_paths[idx] else ""
+                print(
+                    f"[ablation] {idx + 1}/{len(jobs)} {job.position} "
+                    f"seed={job.seed} variant={job.variant} {status}{suffix}",
+                    flush=True,
+                )
+            results.append(result)
+        return results
 
     ordered: list[AblationResult | None] = [None] * len(jobs)
     completed: list[AblationResult] = []
     with ProcessPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_run_job, job): (idx, job) for idx, job in enumerate(jobs)}
+        futures = {
+            pool.submit(_run_job, job, log_paths[idx]): (idx, job) for idx, job in enumerate(jobs)
+        }
         for future in as_completed(futures):
             idx, job = futures[future]
             try:
                 result = future.result()
             except Exception as exc:  # noqa: BLE001 - include process/bootstrap failures per job
                 result = _error_result(job, exc)
+            result = _with_log_path(result, log_paths[idx])
+            if progress:
+                status = "ERROR" if result.error else "ok"
+                suffix = f" log={log_paths[idx]}" if log_paths[idx] else ""
+                print(
+                    f"[ablation] {idx + 1}/{len(jobs)} {job.position} "
+                    f"seed={job.seed} variant={job.variant} {status}{suffix}",
+                    flush=True,
+                )
             if preserve_order:
                 ordered[idx] = result
             else:

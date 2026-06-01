@@ -17,8 +17,10 @@ from __future__ import annotations
 import argparse
 import copy
 import math
+import os
 import statistics
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,12 +32,14 @@ from src.tuning.ablation_runner import (
     mean_std,
     paired_deltas,
     parse_seed_list,
+    resolve_max_workers,
     run_grid,
     select_variants,
     write_history,
 )
 
 ABLATION_NAME = "batch_lr_attention"
+DEFAULT_LOG_DIR = os.path.join("logs", "ablations", ABLATION_NAME)
 DEFAULT_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 DEFAULT_SEEDS = (42, 43, 44, 45, 46, 47, 48, 49)
 DEFAULT_VARIANTS = ("baseline", "b2_lr1", "b2_lrsqrt", "b2_lrlin", "b4_lrsqrt")
@@ -188,6 +192,27 @@ def _execute_batch_lr_job(job: AblationJob) -> dict[str, Any]:
     run_fn = get_runner(job.position)
     result = run_fn(seed=job.seed, config=cfg)
     return _extract_run_payload(result, targets=cfg["targets"], metadata=run_metadata)
+
+
+def _prime_feature_cache(position: str, *, log_dir: str | None = None) -> None:
+    """Warm seed/variant-independent feature data before process fan-out."""
+
+    base_cfg = get_config(position)
+    cfg = copy.deepcopy(base_cfg)
+    cfg["train_attention_nn"] = False
+    cfg["train_base_nn"] = False
+    cfg["train_elasticnet"] = False
+    cfg["train_lightgbm"] = False
+    cfg["train_ridge"] = False
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, f"cache_prime_{position.upper()}.log")
+        print(f"[cache] priming {position.upper()} feature cache (log: {log_path})")
+        with open(log_path, "w") as logf, redirect_stdout(logf), redirect_stderr(logf):
+            get_runner(position)(seed=0, config=cfg)
+    else:
+        print(f"[cache] priming {position.upper()} feature cache before parallel ablation jobs")
+        get_runner(position)(seed=0, config=cfg)
 
 
 def _build_jobs(
@@ -436,9 +461,16 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--no-history", action="store_true", help="Do not write history JSON")
     parser.add_argument(
         "--max-workers",
-        type=int,
-        default=1,
-        help="Process workers for experiment jobs (default: 1 for clean timing)",
+        default="auto",
+        help=(
+            "Process workers for experiment jobs. Use an integer or 'auto' "
+            "(default: local many-core CUDA -> 6, otherwise 1; pass 1 for clean timing)."
+        ),
+    )
+    parser.add_argument(
+        "--log-dir",
+        default=DEFAULT_LOG_DIR,
+        help=f"Directory for per-job logs (default: {DEFAULT_LOG_DIR})",
     )
     parser.add_argument(
         "--ridge-sentinel-preflight",
@@ -453,8 +485,6 @@ def main(argv: list[str] | None = None) -> None:
         variants = select_variants(args.variants, VARIANTS, DEFAULT_VARIANTS)
     except ValueError as exc:
         parser.error(str(exc))
-    if args.max_workers < 1:
-        parser.error("--max-workers must be >= 1")
     if BASELINE not in variants:
         parser.error("baseline must be included so paired deltas can be computed")
 
@@ -465,17 +495,29 @@ def main(argv: list[str] | None = None) -> None:
         ridge_sentinel_preflight=args.ridge_sentinel_preflight,
     )
     all_jobs = preflight_jobs + experiment_jobs
+    try:
+        max_workers = resolve_max_workers(args.max_workers, job_count=len(experiment_jobs))
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.dry_run:
         print(format_dry_run_table(all_jobs))
+        print(f"\nExperiment workers: {max_workers} ({args.max_workers})")
+        print(f"Job logs: {args.log_dir}")
         return
 
     results: list[AblationResult] = []
     if preflight_jobs:
         print("\nRunning Ridge sentinel preflight serially...")
-        results.extend(run_grid(preflight_jobs, max_workers=1))
+        results.extend(run_grid(preflight_jobs, max_workers=1, log_dir=args.log_dir, progress=True))
+
+    if max_workers > 1:
+        for position in positions:
+            _prime_feature_cache(position, log_dir=args.log_dir)
 
     print("\nRunning batch/LR experiment jobs...")
-    results.extend(run_grid(experiment_jobs, max_workers=args.max_workers))
+    results.extend(
+        run_grid(experiment_jobs, max_workers=max_workers, log_dir=args.log_dir, progress=True)
+    )
 
     sentinels = ridge_sentinel_by_position(results)
     summary = summarize_results(results, variants=variants, sentinels=sentinels)
@@ -489,6 +531,8 @@ def main(argv: list[str] | None = None) -> None:
                 "positions": positions,
                 "seeds": seeds,
                 "variants": variants,
+                "max_workers": max_workers,
+                "log_dir": args.log_dir,
                 "ridge_sentinel_preflight": bool(args.ridge_sentinel_preflight),
                 "summary": summary,
             },
