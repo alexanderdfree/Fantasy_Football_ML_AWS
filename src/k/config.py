@@ -189,7 +189,7 @@ POSITION_CONFIG = PositionConfig(
     loss_weights={t: 1.0 for t in _TARGETS},
     huber_deltas={t: 2.0 for t in _TARGETS},
     scheduler_type="onecycle",
-    onecycle_max_lr=2e-3,
+    onecycle_max_lr=1e-3,
     onecycle_pct_start=0.3,
     # === Attention NN (nested: per-kick inner pool, per-game outer) ===
     # Outer attention mirrors RB's proven d_model=32 / n_heads=2.
@@ -204,6 +204,7 @@ POSITION_CONFIG = PositionConfig(
     attn_weight_decay=5e-5,
     attn_batch_size=512,
     attn_patience=20,
+    attn_onecycle_max_lr=2e-3,
     attn_static_features=list(_CONTEXTUAL_FEATURES),
     attn_history_stats=_ATTN_HISTORY_STATS,
     attn_project_kv=False,

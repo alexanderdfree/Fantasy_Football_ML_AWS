@@ -245,6 +245,10 @@ def build_pipeline_config(
     cfg["attn_weight_decay"] = pc.attn_weight_decay
     cfg["attn_batch_size"] = pc.attn_batch_size
     cfg["attn_patience"] = pc.attn_patience
+    if pc.attn_cosine_eta_min is not None:
+        cfg["attn_cosine_eta_min"] = pc.attn_cosine_eta_min
+    if pc.attn_onecycle_max_lr is not None:
+        cfg["attn_onecycle_max_lr"] = pc.attn_onecycle_max_lr
     # attn_project_kv is plumbed by RB/K/DST (matches original CONFIG dicts);
     # the skill positions skip it because their flat attention path defaults False.
     if pos in (Position.RB, Position.K, Position.DST):

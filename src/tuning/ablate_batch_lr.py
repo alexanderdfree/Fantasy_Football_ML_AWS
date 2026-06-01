@@ -71,9 +71,9 @@ def _scheduler_fields(cfg: dict[str, Any]) -> dict[str, Any]:
     sched_type = cfg.get("scheduler_type")
     keys = ["scheduler_type"]
     if sched_type == "onecycle":
-        keys.extend(["onecycle_max_lr", "onecycle_pct_start"])
+        keys.extend(["onecycle_max_lr", "attn_onecycle_max_lr", "onecycle_pct_start"])
     elif sched_type == "cosine_warm_restarts":
-        keys.extend(["cosine_t0", "cosine_t_mult", "cosine_eta_min"])
+        keys.extend(["cosine_t0", "cosine_t_mult", "cosine_eta_min", "attn_cosine_eta_min"])
     elif sched_type == "plateau":
         keys.extend(["plateau_factor", "plateau_patience"])
     return {key: cfg.get(key) for key in keys if key in cfg}
@@ -101,9 +101,9 @@ def _make_cfg(
 
     sched_type = cfg.get("scheduler_type")
     if sched_type == "onecycle" and "onecycle_max_lr" in cfg:
-        cfg["onecycle_max_lr"] = float(cfg["onecycle_max_lr"]) * variant.lr_scale
+        cfg["attn_onecycle_max_lr"] = float(cfg["onecycle_max_lr"]) * variant.lr_scale
     elif sched_type == "cosine_warm_restarts" and "cosine_eta_min" in cfg:
-        cfg["cosine_eta_min"] = float(cfg["cosine_eta_min"]) * variant.lr_scale
+        cfg["attn_cosine_eta_min"] = float(cfg["cosine_eta_min"]) * variant.lr_scale
 
     cfg["train_attention_nn"] = True
     cfg["train_base_nn"] = False

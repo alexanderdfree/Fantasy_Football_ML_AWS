@@ -215,7 +215,7 @@ POSITION_CONFIG = PositionConfig(
     scheduler_type="cosine_warm_restarts",
     cosine_t0=30,  # Longer first cycle for wider backbone
     cosine_t_mult=2,
-    cosine_eta_min=2e-5,
+    cosine_eta_min=1e-5,
     # === Attention NN (game history variant) ===
     # Shares RB's attention architecture (d_model=32, n_heads=2, encoder
     # hidden=32) with heavier regularization; the 2026-06 batch/LR ablation
@@ -242,6 +242,7 @@ POSITION_CONFIG = PositionConfig(
     attn_weight_decay=3e-4,
     attn_batch_size=256,
     attn_patience=20,
+    attn_cosine_eta_min=2e-5,
     # Per-game stats fed into the attention sequence. The 10 raw target
     # stats plus 4 opponent-side per-game values (not rolling) so attention
     # can weigh recent games against recent opponent strength. Derived

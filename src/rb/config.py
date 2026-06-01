@@ -285,7 +285,7 @@ POSITION_CONFIG = PositionConfig(
     scheduler_type="cosine_warm_restarts",
     cosine_t0=40,
     cosine_t_mult=2,
-    cosine_eta_min=1.4142135623730952e-5,
+    cosine_eta_min=1e-5,
     # === Attention NN (game history variant) ===
     # d_model=32 (proven baseline), n_heads=2 (larger overfits on 15K samples).
     train_attention_nn=True,
@@ -309,6 +309,7 @@ POSITION_CONFIG = PositionConfig(
     attn_weight_decay=5e-5,
     attn_batch_size=512,
     attn_patience=20,
+    attn_cosine_eta_min=1.4142135623730952e-5,
     # Per-game stats fed into the attention sequence. fantasy_points
     # intentionally excluded — its scoring components are already in the
     # sequence. Game-script context + team box score are per-historical-
