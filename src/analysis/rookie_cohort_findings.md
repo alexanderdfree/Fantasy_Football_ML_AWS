@@ -58,7 +58,7 @@ Two systematic patterns:
 2. **RB: under-prediction throughout**, worst on `rookie_rest` (−1.0 to −1.6) —
    the same lagged-input structural under-prediction the RB-ascension diagnostic
    found (`src/analysis/rb_ascension.py`): a rookie back who seizes a workhorse
-   role is scored off backup-level lagged inputs.
+  role is scored off backup-level lagged inputs.
 
 So "handling rookies" is a **calibration/bias** problem, position-specific in
 sign, not an overall-MAE problem — and it is invisible to the MAE benchmark the

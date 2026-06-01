@@ -1,7 +1,8 @@
 """CUDA graph vs eager MAE/GradScaler analysis for the local RTX 5080 path.
 
-This is the runnable companion to ``todo/cuda_graph_gradscale_ab_priority.md``.
-It runs the real position attention pipeline under a paired seed and compares:
+This is the runnable companion to the CUDA-graph benchmarkability notes in
+``todo/gpu_launch_bound_levers.md``. It runs the real position attention
+pipeline under a paired seed and compares:
 
 * graph-vs-graph reproducibility (same code/settings twice),
 * eager-vs-graph MAE drift,
