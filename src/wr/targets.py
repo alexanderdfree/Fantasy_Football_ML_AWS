@@ -46,7 +46,14 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
             df["rushing_yards"].fillna(0) * SCORING["rushing_yards"]
             + df["rushing_tds"].fillna(0) * SCORING["rushing_tds"]
         )
-        discrepancy = (df["fantasy_points"] - wr_component - rushing_component).abs()
+        passing_component = (
+            df["passing_yards"].fillna(0) * SCORING["passing_yards"]
+            + df["passing_tds"].fillna(0) * SCORING["passing_tds"]
+            + df["interceptions"].fillna(0) * SCORING["interceptions"]
+        )
+        discrepancy = (
+            df["fantasy_points"] - wr_component - rushing_component - passing_component
+        ).abs()
         if (discrepancy > 0.01).any():
             n_bad = (discrepancy > 0.01).sum()
             print(f"WARNING: {n_bad} WR rows have target decomposition discrepancy > 0.01 pts")

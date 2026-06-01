@@ -77,3 +77,8 @@ class TestComputeWRTargets:
         assert result["receiving_yards"].iloc[0] == 0.0
         assert result["receptions"].iloc[0] == 0.0
         assert result["fumbles_lost"].iloc[0] == 0.0
+
+    def test_decomposition_allows_trick_play_passing(self, capsys):
+        df = _make_row(passing_yards=25, passing_tds=1, interceptions=1)
+        compute_targets(df)
+        assert "target decomposition discrepancy" not in capsys.readouterr().out

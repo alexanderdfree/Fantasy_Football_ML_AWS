@@ -163,6 +163,11 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 - **Files:** `src/rb/features.py:96`, `src/wr/features.py:60`, `src/te/features.py:59`
 - **What:** Team carry/target shares are computed within each split independently (`compute_team_*_totals` runs on each split's own data). A player's share could differ between train and test if their teammates are distributed differently across splits. By design (prevents leakage), but the share values won't be globally consistent.
 
+### [LOW] Drop `RidgeMultiTarget.predict_total` / `ElasticNetMultiTarget.predict_total`
+- **Files:** `src/shared/models.py:350-352, 464-466`; consumers in `tests/{qb,rb,wr,te,k,dst}/test_models.py`, `tests/shared/test_elasticnet.py`.
+- **What:** `predict_total` returns an unweighted raw-stat sum (yards + TDs + receptions, all summed as if commensurate). No production callers in `src/`; only tests reference it. A future caller using it for ranking would regress the ~1.9 pt/game double-count fix in the Fixed archive.
+- **Why not now:** Deletion touches shared model helpers and per-position model tests, tripping the benchmark-freshness gate; this Tier A pass intentionally avoided pipeline/benchmark evidence.
+
 ### [LOW] Defer per-position `CONFIG = build_pipeline_config(...)` to function level
 - **Files:** All `src/{pos}/run_pipeline.py`.
 - **What:** Each position builds its `CONFIG` at module import, which eagerly imports `data.py` / `features.py` / `targets.py` before `run_pipeline()` is called. Import-time failures surface in confusing places (the importing test, not the position's own module). Move to a function-local build or `functools.cached_property`.
