@@ -1,19 +1,28 @@
-# [PRIORITY] Shared ablation runner with intelligent multithreading (NOT implemented)
+# [PRIORITY] Shared ablation runner with intelligent multithreading (foundation built)
 
-**Priority handoff — design note only, no code yet.** Every ablation script under `src/tuning/`
-(`ablate_attn_arch.py`, `ablate_backbone_norm.py`, `ablate_rb_gate.py`, `ablate_ridge_pca.py`,
-`ablate_min_games.py`, `ablate_injury_features.py`) re-implements the same **sequential**
-`for seed: for variant: run()` loop. A proper ≥8-seed sweep is therefore `N_variants × N_seeds ×
-~1.5 min` wall-clock, serial — e.g. the attention sweep (9 variants × 8 seeds) is ~1.8 h on RB.
-There is no shared parallel executor. Build one.
+**Status update:** the shared runner foundation now exists at
+[`src/tuning/ablation_runner.py`](../src/tuning/ablation_runner.py), with
+[`src/tuning/ablate_batch_lr.py`](../src/tuning/ablate_batch_lr.py) as the first consumer.
+Older ablation scripts have not been migrated yet.
 
-## Proposed
-A shared helper, e.g. `src/tuning/ablation_runner.py`, exposing something like
-`run_grid(position, variants, seeds, *, max_workers=None) -> list[row]` that fans the
-`(variant, seed)` grid out across workers and returns the same per-run rows the scripts already
-print. Each existing `ablate_*` keeps its own variant definitions + decision-table printing and
-just calls the runner instead of its hand-rolled loop.
+## Built
+- `AblationJob` / `AblationResult` dataclasses for one position x seed x variant run.
+- `run_grid(jobs, max_workers=1, preserve_order=True)`, serial by default for timing-sensitive
+  ablations, with `ProcessPoolExecutor` support for non-timing sweeps.
+- Per-worker BLAS/joblib thread caps, dry-run table formatting, seed/variant parsing,
+  paired-delta mean/std helpers, and `benchmark_history/ablations/` writing.
+- Unit tests in [`tests/tuning/test_ablation_runner.py`](../tests/tuning/test_ablation_runner.py).
 
+## Still To Do
+- Migrate existing `src/tuning/ablate_*.py` scripts one at a time; keep each script's variant
+  definitions and decision table local.
+- Add an explicit feature-cache warmup hook only when migrating a script that can safely prime
+  features without changing the measured quantity. The batch/LR ablation keeps timing clean by
+  defaulting to serial execution.
+- Add a CUDA-aware worker cap when a future non-timing GPU sweep needs parallel workers. Timing
+  ablations should stay `max_workers=1`.
+
+## Original Design Constraints
 **"Intelligent" = contention-aware, not a blind thread pool:**
 - **CPU-bound stages** (Ridge/ElasticNet alpha-CV + LightGBM) are joblib/BLAS-heavy. The runner
   must cap per-worker math threads (`OPENBLAS_NUM_THREADS=OMP_NUM_THREADS=MKL_NUM_THREADS=
@@ -47,12 +56,7 @@ across **positions** (six independent pipelines at once); this parallelizes the 
 grid *within a single ablation* on one position. Same contention primitives (thread caps, VRAM
 budget, `ProcessPoolExecutor`) — factor them into one shared util both can import.
 
-## Verify (when implemented)
-- A parallel run and a serial run on the same `(position, variants, seeds)` must produce
-  byte-identical rows (re-seed determinism) — assert it in a smoke test.
-- Wall-clock < serial by ~min(cores, N_runs)× on CPU-only, with the Ridge sentinel still OK.
-- `ruff check . && ruff format --check .` + a `tests/tuning/test_ablation_runner.py` smoke test
-  (mock `run` to avoid a real train) following the existing `tests/tuning/test_ablate_*` pattern.
-
-**Status:** NOT implemented — design/handoff note. A future session builds the runner, then
-migrates the `ablate_*` scripts onto it one at a time.
+## Verify
+- `ruff check . && ruff format --check .`
+- `pytest tests/tuning/test_ablation_runner.py tests/tuning/test_ablate_batch_lr.py -m unit`
+- `python -m src.tuning.ablate_batch_lr --dry-run --positions QB RB WR TE K DST`

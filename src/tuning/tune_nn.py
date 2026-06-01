@@ -14,7 +14,7 @@ Mirrors src/tuning/tune_lgbm.py's shape: per-position SQLite study, paste-ready
 config output via `_format_config_lines`, BEST_PARAMS_JSON markers for CI log
 capture. Differences vs the LightGBM tuner:
 
-* Search space targets the **attention NN** (architecture + optimizer knobs).
+* Search space targets the **attention NN** (architecture + optimizer + scheduler knobs).
 * Pruner is HyperbandPruner, fed by the `epoch_callback` hook on
   `MultiHeadTrainer` — kills clearly-bad trials at low epoch counts.
 * Trial objective is `min(result["attn_history"]["val_loss"])` — val-only, no
@@ -30,11 +30,6 @@ Out of scope (v1)
   coupling, not two independent axes. Searching deltas + deriving weights also
   blows up search dimensionality past what ~30 trials resolve. Hand-tune loss
   config via the `ablate_rb_gate.py` pattern.
-* **`scheduler_type` search**: switching between `cosine_warm_restarts` and
-  `onecycle` requires the matching scheduler-specific cfg keys to be present
-  (`onecycle_max_lr`, `cosine_t0`, etc.). Out of scope until the cfg builder
-  guarantees both sets — for v1, we keep whatever scheduler the position
-  config already uses.
 * **`ATTN_STATIC_FEATURES` / `ATTN_HISTORY_STATS`**: structural feature
   choices, not hyperparams. CLAUDE.md's stop-rule on rolling-features-in-
   static still applies.
@@ -151,7 +146,7 @@ _BACKBONE_PRESETS: list[list[int]] = [
     [128, 32],
 ]
 
-_TUNED_OVERRIDE_KEYS: frozenset[str] = frozenset(
+_BASE_TUNED_OVERRIDE_KEYS: frozenset[str] = frozenset(
     {
         "attn_d_model",
         "attn_n_heads",
@@ -159,6 +154,7 @@ _TUNED_OVERRIDE_KEYS: frozenset[str] = frozenset(
         "attn_dropout",
         "attn_lr",
         "attn_batch_size",
+        "scheduler_type",
         "nn_backbone_layers",
         "nn_head_hidden",
         "nn_dropout",
@@ -166,6 +162,13 @@ _TUNED_OVERRIDE_KEYS: frozenset[str] = frozenset(
         "nn_weight_decay",
         "nn_batch_size",
     }
+)
+_SCHEDULER_PARAM_KEYS: dict[str, frozenset[str]] = {
+    "cosine_warm_restarts": frozenset({"cosine_t0", "cosine_t_mult", "cosine_eta_min"}),
+    "onecycle": frozenset({"onecycle_max_lr", "onecycle_pct_start"}),
+}
+_TUNED_OVERRIDE_KEYS: frozenset[str] = _BASE_TUNED_OVERRIDE_KEYS | frozenset().union(
+    *_SCHEDULER_PARAM_KEYS.values()
 )
 
 
@@ -191,7 +194,11 @@ def _validate_overrides(overrides: dict) -> None:
     """
     errors: list[str] = []
 
-    missing = sorted(_TUNED_OVERRIDE_KEYS - overrides.keys())
+    unknown = sorted(set(overrides) - _TUNED_OVERRIDE_KEYS)
+    if unknown:
+        errors.append(f"unknown keys: {unknown}")
+
+    missing = sorted(_BASE_TUNED_OVERRIDE_KEYS - overrides.keys())
     if missing:
         errors.append(f"missing keys: {missing}")
 
@@ -236,6 +243,45 @@ def _validate_overrides(overrides: dict) -> None:
         if not _is_positive_int(overrides.get(key)):
             errors.append(f"{key} must be a positive int")
 
+    sched_type = overrides.get("scheduler_type")
+    if sched_type not in _SCHEDULER_PARAM_KEYS:
+        errors.append(
+            f"scheduler_type must be one of {sorted(_SCHEDULER_PARAM_KEYS)}, got {sched_type!r}"
+        )
+    else:
+        required = _SCHEDULER_PARAM_KEYS[sched_type]
+        missing_sched = sorted(required - overrides.keys())
+        if missing_sched:
+            errors.append(f"{sched_type} missing scheduler keys: {missing_sched}")
+        irrelevant = sorted(
+            (set().union(*_SCHEDULER_PARAM_KEYS.values()) - required) & overrides.keys()
+        )
+        if irrelevant:
+            errors.append(f"{sched_type} overrides include irrelevant scheduler keys: {irrelevant}")
+
+        if sched_type == "cosine_warm_restarts":
+            for key in ("cosine_t0", "cosine_t_mult"):
+                if not _is_positive_int(overrides.get(key)):
+                    errors.append(f"{key} must be a positive int")
+            eta_min = overrides.get("cosine_eta_min")
+            if not _is_positive_number(eta_min):
+                errors.append("cosine_eta_min must be positive")
+            elif _is_positive_number(overrides.get("attn_lr")) and eta_min >= overrides["attn_lr"]:
+                errors.append("cosine_eta_min must be less than attn_lr")
+            elif _is_positive_number(overrides.get("nn_lr")) and eta_min >= overrides["nn_lr"]:
+                errors.append("cosine_eta_min must be less than nn_lr")
+        elif sched_type == "onecycle":
+            max_lr = overrides.get("onecycle_max_lr")
+            pct_start = overrides.get("onecycle_pct_start")
+            if not _is_positive_number(max_lr):
+                errors.append("onecycle_max_lr must be positive")
+            if (
+                not isinstance(pct_start, (int, float))
+                or isinstance(pct_start, bool)
+                or not 0.0 < pct_start < 1.0
+            ):
+                errors.append("onecycle_pct_start must be in (0, 1)")
+
     if errors:
         raise ValueError("Invalid tune_nn overrides: " + "; ".join(errors))
 
@@ -253,6 +299,25 @@ def _sample_overrides(trial: optuna.Trial) -> dict:
         "nn_backbone_layers_idx", list(range(len(_BACKBONE_PRESETS)))
     )
 
+    attn_lr = trial.suggest_float("attn_lr", 1e-4, 5e-3, log=True)
+    nn_lr = trial.suggest_float("nn_lr", 1e-4, 5e-3, log=True)
+    scheduler_type = trial.suggest_categorical(
+        "scheduler_type", ["cosine_warm_restarts", "onecycle"]
+    )
+    scheduler_overrides: dict
+    if scheduler_type == "cosine_warm_restarts":
+        scheduler_overrides = {
+            "cosine_t0": trial.suggest_categorical("cosine_t0", [10, 20, 30, 40, 60]),
+            "cosine_t_mult": trial.suggest_categorical("cosine_t_mult", [1, 2]),
+            "cosine_eta_min": trial.suggest_float("cosine_eta_min", 1e-6, 5e-5, log=True),
+        }
+    else:
+        onecycle_max_lr = trial.suggest_float("onecycle_max_lr", 1e-4, 1e-2, log=True)
+        scheduler_overrides = {
+            "onecycle_max_lr": onecycle_max_lr,
+            "onecycle_pct_start": trial.suggest_float("onecycle_pct_start", 0.1, 0.4),
+        }
+
     return {
         "attn_d_model": d_model,
         "attn_n_heads": n_heads,
@@ -260,12 +325,14 @@ def _sample_overrides(trial: optuna.Trial) -> dict:
             "attn_encoder_hidden_dim", [0, 16, 32, 64]
         ),
         "attn_dropout": trial.suggest_float("attn_dropout", 0.0, 0.3),
-        "attn_lr": trial.suggest_float("attn_lr", 1e-4, 5e-3, log=True),
+        "attn_lr": attn_lr,
         "attn_batch_size": trial.suggest_categorical("attn_batch_size", [128, 256, 512]),
+        "scheduler_type": scheduler_type,
+        **scheduler_overrides,
         "nn_backbone_layers": list(_BACKBONE_PRESETS[backbone_idx]),
         "nn_head_hidden": trial.suggest_categorical("nn_head_hidden", [16, 24, 32, 48, 64]),
         "nn_dropout": trial.suggest_float("nn_dropout", 0.0, 0.4),
-        "nn_lr": trial.suggest_float("nn_lr", 1e-4, 5e-3, log=True),
+        "nn_lr": nn_lr,
         "nn_weight_decay": trial.suggest_float("nn_weight_decay", 1e-5, 1e-3, log=True),
         "nn_batch_size": trial.suggest_categorical("nn_batch_size", [128, 256, 512]),
     }
@@ -367,6 +434,12 @@ _PARAM_TO_CONST = {
     "attn_dropout": "ATTN_DROPOUT",
     "attn_lr": "ATTN_LR",
     "attn_batch_size": "ATTN_BATCH_SIZE",
+    "scheduler_type": "SCHEDULER_TYPE",
+    "cosine_t0": "COSINE_T0",
+    "cosine_t_mult": "COSINE_T_MULT",
+    "cosine_eta_min": "COSINE_ETA_MIN",
+    "onecycle_max_lr": "ONECYCLE_MAX_LR",
+    "onecycle_pct_start": "ONECYCLE_PCT_START",
     "nn_backbone_layers": "NN_BACKBONE_LAYERS",
     "nn_head_hidden": "NN_HEAD_HIDDEN",
     "nn_dropout": "NN_DROPOUT",
