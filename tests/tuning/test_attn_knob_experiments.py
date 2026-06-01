@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import optuna
 import pytest
 
@@ -139,6 +141,54 @@ def test_ridge_sentinel_flags_attention_only_data_drift():
     ]
     assert ake.ridge_sentinel_ok(rows[:2]) is True
     assert ake.ridge_sentinel_ok(rows) is False
+
+
+def test_fanova_importance_uses_core_pool_lease(monkeypatch):
+    seen: list[tuple[str, object]] = []
+
+    @contextmanager
+    def fake_lease(stage, *, default=None):
+        seen.append(("lease", stage))
+        seen.append(("default", default))
+        yield 3
+
+    def fake_get_param_importances(study, *, evaluator):
+        seen.append(("n_jobs", evaluator._evaluator._forest.n_jobs))
+        return {"attn_lr": 1.0}
+
+    monkeypatch.setattr(ake, "lease_cores", fake_lease)
+    monkeypatch.setattr(ake, "get_param_importances", fake_get_param_importances)
+
+    study = optuna.create_study()
+    importances = ake._fanova_param_importances(study, seed=123)
+
+    assert importances == {"attn_lr": 1.0}
+    assert seen == [
+        ("lease", "fanova_importance"),
+        ("default", None),
+        ("n_jobs", 3),
+    ]
+
+
+def test_fanova_importance_no_pool_preserves_rf_default(monkeypatch):
+    seen: list[int | None] = []
+
+    @contextmanager
+    def fake_lease(stage, *, default=None):
+        assert stage == "fanova_importance"
+        assert default is None
+        yield None
+
+    def fake_get_param_importances(study, *, evaluator):
+        seen.append(evaluator._evaluator._forest.n_jobs)
+        return {"attn_dropout": 1.0}
+
+    monkeypatch.setattr(ake, "lease_cores", fake_lease)
+    monkeypatch.setattr(ake, "get_param_importances", fake_get_param_importances)
+
+    study = optuna.create_study()
+    assert ake._fanova_param_importances(study, seed=123) == {"attn_dropout": 1.0}
+    assert seen == [None]
 
 
 def test_dry_run_prints_design_without_training(capsys):
