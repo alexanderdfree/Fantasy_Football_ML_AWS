@@ -247,7 +247,7 @@ POSITION_CONFIG = PositionConfig(
     scheduler_type="cosine_warm_restarts",
     cosine_t0=40,
     cosine_t_mult=2,
-    cosine_eta_min=1e-5,
+    cosine_eta_min=2e-5,
     # === Attention NN (game history variant) ===
     train_attention_nn=True,
     # Learned embedding for empty-history (season-opener) rows — reduces the
@@ -260,9 +260,9 @@ POSITION_CONFIG = PositionConfig(
     attn_max_seq_len=17,
     attn_positional_encoding=True,
     attn_dropout=0.05,
-    attn_lr=1e-3,
+    attn_lr=2e-3,
     attn_weight_decay=5e-5,
-    attn_batch_size=256,
+    attn_batch_size=512,
     attn_patience=20,
     attn_history_stats=[
         "passing_yards",
