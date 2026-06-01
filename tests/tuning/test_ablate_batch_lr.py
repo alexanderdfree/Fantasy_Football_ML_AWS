@@ -205,5 +205,6 @@ def test_cli_dry_run_all_six_positions_does_not_train(monkeypatch, capsys):
     out = capsys.readouterr().out
 
     assert "Planned ablation jobs: 240" in out
+    assert "Experiment workers:" in out
     for position in ("QB", "RB", "WR", "TE", "K", "DST"):
         assert position in out

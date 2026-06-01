@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 
 import pytest
 
@@ -12,6 +14,7 @@ pytestmark = pytest.mark.unit
 
 
 def _ok_job(job: ar.AblationJob) -> dict:
+    print(f"running {job.position} {job.variant}")
     return {
         "metrics": {"value": float(job.seed), "nested": {"mae": float(job.seed) + 0.5}},
         "timings": {"elapsed": float(job.seed) / 10.0},
@@ -66,8 +69,30 @@ def test_run_grid_captures_job_errors():
     assert "traceback" in result.metadata
 
 
+def test_run_grid_can_capture_job_logs(tmp_path):
+    result = ar.run_grid([_job(42, "logged")], log_dir=str(tmp_path), progress=True)[0]
+
+    log_path = result.metadata["log_path"]
+    assert log_path.startswith(str(tmp_path))
+    with open(log_path) as f:
+        assert "running QB logged" in f.read()
+
+
+def test_run_grid_writes_job_errors_to_logs(tmp_path):
+    result = ar.run_grid([_job(42, "bad", _bad_job)], log_dir=str(tmp_path))[0]
+
+    log_path = result.metadata["log_path"]
+    with open(log_path) as f:
+        text = f.read()
+
+    assert result.error == "RuntimeError: boom bad"
+    assert "=== Job error ===" in text
+    assert "RuntimeError: boom bad" in text
+
+
 def test_run_grid_parallel_path_can_preserve_or_completion_order(monkeypatch):
     submitted = []
+    pool_kwargs = []
 
     class FakeFuture:
         def __init__(self, result):
@@ -77,8 +102,9 @@ def test_run_grid_parallel_path_can_preserve_or_completion_order(monkeypatch):
             return self._result
 
     class FakePool:
-        def __init__(self, max_workers):
+        def __init__(self, max_workers, **kwargs):
             self.max_workers = max_workers
+            pool_kwargs.append(kwargs)
 
         def __enter__(self):
             return self
@@ -86,9 +112,9 @@ def test_run_grid_parallel_path_can_preserve_or_completion_order(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-        def submit(self, fn, job):
+        def submit(self, fn, job, log_path=None):
             submitted.append((self.max_workers, job.seed))
-            return FakeFuture(fn(job))
+            return FakeFuture(fn(job, log_path))
 
     monkeypatch.setattr(ar, "ProcessPoolExecutor", FakePool)
     monkeypatch.setattr(ar, "as_completed", lambda futures: list(reversed(list(futures))))
@@ -100,6 +126,7 @@ def test_run_grid_parallel_path_can_preserve_or_completion_order(monkeypatch):
     assert [(r.seed, r.variant) for r in preserved] == [(1, "a"), (2, "b")]
     assert [(r.seed, r.variant) for r in completed] == [(2, "b"), (1, "a")]
     assert submitted[:2] == [(2, 1), (2, 2)]
+    assert pool_kwargs[0]["mp_context"].get_start_method() == "spawn"
 
 
 def test_mean_std_and_paired_deltas():
@@ -144,6 +171,28 @@ def test_format_dry_run_table_contains_grouped_counts():
     assert "Planned ablation jobs: 2" in text
     assert "QB" in text
     assert "alt,baseline" in text
+
+
+def test_resolve_max_workers_auto_uses_many_core_cuda(monkeypatch):
+    platform_mod = types.SimpleNamespace(
+        detect_platform=lambda: types.SimpleNamespace(backend="cuda", cpu_count=32)
+    )
+    monkeypatch.setitem(sys.modules, "src.shared.platform_detect", platform_mod)
+
+    assert ar.resolve_max_workers("auto", job_count=20) == 6
+    assert ar.resolve_max_workers("auto", job_count=3) == 3
+
+
+def test_resolve_max_workers_auto_keeps_cpu_serial(monkeypatch):
+    platform_mod = types.SimpleNamespace(
+        detect_platform=lambda: types.SimpleNamespace(backend="cpu", cpu_count=32)
+    )
+    monkeypatch.setitem(sys.modules, "src.shared.platform_detect", platform_mod)
+
+    assert ar.resolve_max_workers("auto", job_count=20) == 1
+    assert ar.resolve_max_workers("2", job_count=20) == 2
+    with pytest.raises(ValueError, match="max_workers"):
+        ar.resolve_max_workers("0", job_count=20)
 
 
 def test_write_history_payload_shape(tmp_path):
