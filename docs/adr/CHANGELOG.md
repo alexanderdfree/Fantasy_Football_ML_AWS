@@ -4,6 +4,7 @@ Terse, chronological log of architecture changes — one line each: `YYYY-MM-DD 
 files in this directory; pre-split detail is in [../architecture-history.md](../architecture-history.md).
 
 - 2026-06-01 · D1: benchmark-history CLIs' `--cv` is now a deprecated alias for rolling-origin walk-forward reporting; internal expanding-window CV remains for ad-hoc/tuning callers; no retrain · → ADR-0001
+- 2026-06-01 · D15: issue #720 attention-knob experiment runner adds test-MAE fANOVA and Plackett-Burman DoE screens over eight attention-only knobs; tuner-only, no retrain · → ADR-0015
 - 2026-05-31 · D4: newest-first attention history ordering (index 0 = most-recent game) across all 3 sequence builders, so the learned positional embedding is recency-indexed; ALiBi formula kept correct (games_ago == position); 6-position retrain · → ADR-0004
 - 2026-06-01 · Corrected stale ADR references after config consolidation, unused display constants, and EC2 rollback sequencing docs; documentation-only · → ADR-0002/0004/0006/0007/0009
 - 2026-06-01 · Corrected D13 g6 Spot per-run cost estimate to match operator runbook math; documentation-only · → ADR-0013
