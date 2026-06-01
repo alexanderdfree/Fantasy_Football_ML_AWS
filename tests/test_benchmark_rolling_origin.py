@@ -33,6 +33,22 @@ def _summary(pos, ridge_mae, nn_mae, *, with_lgbm=False):
     return s
 
 
+def _rolling_summary(pos="RB"):
+    s = _summary(pos, 4.7, 4.6)
+    s["rolling_origin"] = b._aggregate_rolling_origin([(2025, dict(s))])
+    return s
+
+
+def _patch_benchmark_io(monkeypatch, tmp_path):
+    monkeypatch.setattr(b, "RESULTS_FILE", str(tmp_path / "benchmark_results.json"))
+    monkeypatch.setattr(b, "HISTORY_DIR", str(tmp_path / "history"))
+    monkeypatch.setattr(b, "collect_global_config", lambda: {"test": True})
+    monkeypatch.setattr(b, "collect_pos_config", lambda pos: {"position": pos})
+    monkeypatch.setattr(b, "get_git_hash", lambda: "abc1234")
+    monkeypatch.setattr(b, "utc_now_iso", lambda: "2026-06-01T12:00:00")
+    monkeypatch.setattr(b, "_maybe_upload_to_s3", lambda path: pytest.fail("unexpected S3 sync"))
+
+
 def test_module_exposes_rolling_origin_api():
     for fn in (
         "run_rolling_origin",
@@ -100,3 +116,53 @@ def test_run_rolling_origin_assembles_block_and_keeps_flat_keys(monkeypatch):
     assert ro["aggregate"]["ridge"]["mae_mean"] == round(statistics.mean([4.9, 4.8, 4.7]), 4)
     # Whole summary (flat keys + nested rolling_origin block) is JSON-serializable.
     json.dumps(s)
+
+
+def test_main_cv_alias_routes_to_rolling_origin_and_marks_history(tmp_path, monkeypatch, capsys):
+    _patch_benchmark_io(monkeypatch, tmp_path)
+    calls = []
+
+    def fake_rolling_origin(pos):
+        calls.append(pos)
+        return _rolling_summary(pos)
+
+    monkeypatch.setattr(b, "run_rolling_origin", fake_rolling_origin)
+    monkeypatch.setattr(b, "run_one", lambda *a, **k: pytest.fail("run_one must not handle --cv"))
+
+    b.main(["RB", "--cv", "--no-sync"])
+
+    out = capsys.readouterr().out
+    assert "DEPRECATED: benchmark --cv now aliases --rolling-origin" in out
+    assert "# BENCHMARKING RB (ROLLING-ORIGIN)" in out
+    assert calls == ["RB"]
+
+    history_files = list((tmp_path / "history").glob("*.json"))
+    assert len(history_files) == 1
+    with open(history_files[0]) as f:
+        entry = json.load(f)
+    assert entry["mode"] == "rolling_origin"
+    assert entry["results"][0]["rolling_origin"]["test_seasons"] == [2025]
+
+
+def test_main_rolling_origin_with_cv_runs_once_without_deprecation(tmp_path, monkeypatch, capsys):
+    _patch_benchmark_io(monkeypatch, tmp_path)
+    calls = []
+
+    def fake_rolling_origin(pos):
+        calls.append(pos)
+        return _rolling_summary(pos)
+
+    monkeypatch.setattr(b, "run_rolling_origin", fake_rolling_origin)
+    monkeypatch.setattr(b, "run_one", lambda *a, **k: pytest.fail("run_one must not handle --cv"))
+
+    b.main(["RB", "--rolling-origin", "--cv", "--no-sync"])
+
+    out = capsys.readouterr().out
+    assert "DEPRECATED" not in out
+    assert calls == ["RB"]
+
+    history_files = list((tmp_path / "history").glob("*.json"))
+    assert len(history_files) == 1
+    with open(history_files[0]) as f:
+        entry = json.load(f)
+    assert entry["mode"] == "rolling_origin"

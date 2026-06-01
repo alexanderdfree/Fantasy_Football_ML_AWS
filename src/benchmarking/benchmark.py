@@ -363,7 +363,7 @@ def _print_rolling_origin_table(summaries):
     print("=" * 72)
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Benchmark NN pipelines")
     parser.add_argument(
         "positions",
@@ -372,7 +372,11 @@ if __name__ == "__main__":
         help="Positions to benchmark (e.g. RB QB)",
     )
     parser.add_argument("--note", default="", help="Describe what changed in this run")
-    parser.add_argument("--cv", action="store_true", help="Use expanding-window cross-validation")
+    parser.add_argument(
+        "--cv",
+        action="store_true",
+        help="Deprecated benchmark-reporting alias for --rolling-origin.",
+    )
     parser.add_argument(
         "--no-sync",
         action="store_true",
@@ -392,22 +396,20 @@ if __name__ == "__main__":
         "[..T-2] / val T-1 / test T per origin); reports per-model MAE/R2/top-12 as mean±std. "
         "~N_origins x the single-split cost — headline eval, not per-PR. Overrides --cv.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    rolling_origin_mode = args.rolling_origin or args.cv
+    if args.cv and not args.rolling_origin:
+        print("DEPRECATED: benchmark --cv now aliases --rolling-origin walk-forward reporting.")
 
     positions = args.positions
     summaries = []
     for pos in positions:
         t0 = time.time()
-        if args.rolling_origin:
-            mode = "ROLLING-ORIGIN"
-        elif args.cv:
-            mode = "CV"
-        else:
-            mode = "SINGLE-SPLIT"
+        mode = "ROLLING-ORIGIN" if rolling_origin_mode else "SINGLE-SPLIT"
         print(f"\n{'#' * 60}")
         print(f"# BENCHMARKING {pos} ({mode})")
         print(f"{'#' * 60}")
-        if args.rolling_origin:
+        if rolling_origin_mode:
             s = run_rolling_origin(pos)
         else:
             result = run_one(pos, cv=args.cv)
@@ -421,7 +423,7 @@ if __name__ == "__main__":
         summaries.append(s)
         print(f"\n  [{pos}] Completed in {elapsed:.1f}s")
 
-    if args.rolling_origin:
+    if rolling_origin_mode:
         _print_rolling_origin_table(summaries)
     print_comparison_table(summaries, header="MAE Comparison (test set)", show_time=True)
 
@@ -447,7 +449,7 @@ if __name__ == "__main__":
     }
     # Additive marker so the History tab can badge walk-forward runs; old
     # readers (and single-split runs) simply lack the key.
-    if args.rolling_origin:
+    if rolling_origin_mode:
         entry["mode"] = "rolling_origin"
     written_path = append_to_history(HISTORY_DIR, entry)
 
@@ -455,3 +457,7 @@ if __name__ == "__main__":
         _maybe_upload_to_s3(written_path)
 
     print_history_comparison(HISTORY_DIR, summaries, exclude_path=written_path)
+
+
+if __name__ == "__main__":
+    main()

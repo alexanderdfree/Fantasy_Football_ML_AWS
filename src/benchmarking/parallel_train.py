@@ -19,18 +19,22 @@ per-slice ``LGBM_N_JOBS`` was immutable post-spawn, so freed cores were stranded
 fixes that.) When ``-j`` is below the position count, the next queued position dispatches
 into the freed slot.
 
-Outputs are identical to a sequential ``benchmark QB RB …`` run: each worker trains its
-position once (which writes ``{pos}/outputs/`` artifacts via the shared pipeline's
-unconditional save block) and emits its metrics summary to a unique temp file — **no
-shared-file writes during the parallel phase**. The orchestrator then merges the
+By default, outputs are identical to a sequential ``benchmark QB RB …`` run: each worker
+trains its position once (which writes ``{pos}/outputs/`` artifacts via the shared
+pipeline's unconditional save block) and emits its metrics summary to a unique temp file
+— **no shared-file writes during the parallel phase**. The orchestrator then merges the
 summaries into one ``benchmark_results.json`` + one ``benchmark_history/{run_id}.json``
 entry and mirrors it to S3 (the website History tab), reusing ``benchmark.py``'s helpers.
+``--rolling-origin`` switches the worker summaries and history mode to the same
+walk-forward reporting path as ``benchmark --rolling-origin``; deprecated ``--cv`` is an
+alias for that reporting mode.
 
 Usage::
 
     python -m src.benchmarking.parallel_train                 # all 6, -j auto
     python -m src.benchmarking.parallel_train QB RB WR        # subset
     python -m src.benchmarking.parallel_train -j 4            # cap concurrency
+    python -m src.benchmarking.parallel_train --rolling-origin # walk-forward report
     python -m src.benchmarking.parallel_train --dry-run       # show the plan, launch nothing
     python -m src.benchmarking.parallel_train --no-sync       # don't touch the website
 
@@ -55,10 +59,12 @@ from src.benchmarking.benchmark import (  # noqa: E402 — after sys.path bootst
     HISTORY_DIR,
     RESULTS_FILE,
     _maybe_upload_to_s3,
+    _print_rolling_origin_table,
     _significance_block,
     collect_global_config,
     collect_pos_config,
     run_one,
+    run_rolling_origin,
 )
 from src.shared.benchmark_utils import (  # noqa: E402
     append_to_history,
@@ -193,18 +199,21 @@ def _default_jobs(n_positions: int) -> int:
 # ----------------------------------------------------------------------- worker
 
 
-def _run_worker(pos: str, summary_out: str, cv: bool, significance: bool) -> int:
+def _run_worker(pos: str, summary_out: str, rolling_origin: bool, significance: bool) -> int:
     """Train one position, write only its metrics summary to ``summary_out`` (JSON).
 
     No ``benchmark_results.json`` / history / S3 writes here — those are the
     orchestrator's single-threaded merge step, so concurrent workers never collide.
     """
-    result = run_one(pos, cv=cv)
-    summary = summarize_pipeline_result(pos, result)
-    if significance and not cv:
-        sig = _significance_block(pos, result)
-        if sig is not None:
-            summary["significance"] = sig
+    if rolling_origin:
+        summary = run_rolling_origin(pos)
+    else:
+        result = run_one(pos, cv=False)
+        summary = summarize_pipeline_result(pos, result)
+        if significance:
+            sig = _significance_block(pos, result)
+            if sig is not None:
+                summary["significance"] = sig
     with open(summary_out, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"[{pos}] worker complete — summary -> {summary_out}")
@@ -269,6 +278,7 @@ def _record_and_sync(
     note: str,
     no_sync: bool,
     total_wall_sec: float | None = None,
+    rolling_origin: bool = False,
 ) -> None:
     """Mirror of ``benchmark.py``'s post-loop block: table, results file, history, S3.
 
@@ -277,6 +287,8 @@ def _record_and_sync(
     parallel-run wall-clock is captured automatically, without an external stopwatch. It
     differs from each position's ``elapsed_sec`` (which only sums to the total at ``-j``
     ≥ position count, where every worker launches at once)."""
+    if rolling_origin:
+        _print_rolling_origin_table(summaries)
     print_comparison_table(summaries, header="MAE Comparison (test set)", show_time=True)
     with open(RESULTS_FILE, "w") as f:
         json.dump(summaries, f, indent=2)
@@ -297,13 +309,15 @@ def _record_and_sync(
         "results": summaries,
         "total_wall_sec": total_wall_sec,
     }
+    if rolling_origin:
+        entry["mode"] = "rolling_origin"
     written_path = append_to_history(HISTORY_DIR, entry)
     if not no_sync:
         _maybe_upload_to_s3(written_path)
     print_history_comparison(HISTORY_DIR, summaries, exclude_path=written_path)
 
 
-def orchestrate(positions, jobs, passthrough, note, no_sync, dry_run) -> int:
+def orchestrate(positions, jobs, passthrough, note, no_sync, dry_run, rolling_origin=False) -> int:
     phys = physical_cores()
     order = _sort_by_cost(positions)
     jobs = max(1, min(jobs, len(positions)))
@@ -382,7 +396,14 @@ def orchestrate(positions, jobs, passthrough, note, no_sync, dry_run) -> int:
     if not ordered:
         print("[parallel_train] all positions failed — nothing recorded.", file=sys.stderr)
         return 1
-    _record_and_sync([results[p] for p in ordered], ordered, note, no_sync, total_wall_sec)
+    _record_and_sync(
+        [results[p] for p in ordered],
+        ordered,
+        note,
+        no_sync,
+        total_wall_sec,
+        rolling_origin=rolling_origin,
+    )
     if failed:
         print(f"\n[parallel_train] FAILED positions (not recorded): {failed}", file=sys.stderr)
         for p in failed:
@@ -410,7 +431,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Max concurrent positions (default: autodetect)",
     )
     p.add_argument("--note", default="", help="Describe what changed in this run")
-    p.add_argument("--cv", action="store_true", help="Use expanding-window CV per position")
+    p.add_argument(
+        "--cv",
+        action="store_true",
+        help="Deprecated local-benchmark alias for --rolling-origin.",
+    )
+    p.add_argument(
+        "--rolling-origin",
+        action="store_true",
+        help="Walk-forward multi-season TEST eval per position; reports rolling-origin history.",
+    )
     p.add_argument(
         "--significance", action="store_true", help="Attach paired-bootstrap CI (single-split only)"
     )
@@ -429,8 +459,19 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = _build_parser().parse_args(argv)
 
+    rolling_origin_mode = args.rolling_origin or args.cv
+    if args.cv and not args.rolling_origin:
+        print(
+            "DEPRECATED: parallel_train --cv now aliases --rolling-origin walk-forward reporting."
+        )
+
     if args.worker:
-        return _run_worker(args.worker.upper(), args.summary_out, args.cv, args.significance)
+        return _run_worker(
+            args.worker.upper(),
+            args.summary_out,
+            rolling_origin_mode,
+            args.significance,
+        )
 
     requested = [p.upper() for p in (args.positions or ALL_POSITIONS)]
     unknown = [p for p in requested if p not in ALL_POSITIONS]
@@ -443,11 +484,19 @@ def main(argv=None) -> int:
 
     jobs = args.jobs if args.jobs else _default_jobs(len(positions))
     passthrough = []
-    if args.cv:
-        passthrough.append("--cv")
+    if rolling_origin_mode:
+        passthrough.append("--rolling-origin")
     if args.significance:
         passthrough.append("--significance")
-    return orchestrate(positions, jobs, passthrough, args.note, args.no_sync, args.dry_run)
+    return orchestrate(
+        positions,
+        jobs,
+        passthrough,
+        args.note,
+        args.no_sync,
+        args.dry_run,
+        rolling_origin=rolling_origin_mode,
+    )
 
 
 if __name__ == "__main__":
