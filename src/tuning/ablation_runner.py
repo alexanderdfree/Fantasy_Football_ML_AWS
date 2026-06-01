@@ -10,6 +10,7 @@ isolated.
 
 from __future__ import annotations
 
+import multiprocessing as mp
 import os
 import statistics
 import traceback
@@ -242,6 +243,15 @@ def _with_log_path(result: AblationResult, log_path: str | None) -> AblationResu
     return replace(result, metadata=metadata)
 
 
+def _append_error_to_log(log_path: str | None, tb: str) -> None:
+    if not log_path:
+        return
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    with open(log_path, "a") as logf:
+        print("\n=== Job error ===", file=logf)
+        print(tb, file=logf)
+
+
 def _run_job(job: AblationJob, log_path: str | None = None) -> AblationResult:
     _cap_worker_threads()
     try:
@@ -253,7 +263,9 @@ def _run_job(job: AblationJob, log_path: str | None = None) -> AblationResult:
             result = _coerce_result(job, job.run_fn(job))
         return _with_log_path(result, log_path)
     except Exception as exc:  # noqa: BLE001 - ablation runners should capture per-job failures
-        return _with_log_path(_error_result(job, exc, tb=traceback.format_exc()), log_path)
+        tb = traceback.format_exc()
+        _append_error_to_log(log_path, tb)
+        return _with_log_path(_error_result(job, exc, tb=tb), log_path)
 
 
 def run_grid(
@@ -293,7 +305,8 @@ def run_grid(
 
     ordered: list[AblationResult | None] = [None] * len(jobs)
     completed: list[AblationResult] = []
-    with ProcessPoolExecutor(max_workers=max_workers) as pool:
+    mp_context = mp.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_context) as pool:
         futures = {
             pool.submit(_run_job, job, log_paths[idx]): (idx, job) for idx, job in enumerate(jobs)
         }
