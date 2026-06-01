@@ -379,6 +379,7 @@ class TestComputeTestShards:
         [
             ["README.md"],
             ["docs/batch_design.md"],
+            ["benchmark_history/2026-05-21T05-00-00Z.json"],
             [".gitignore"],
             ["LICENSE"],
             [".github/ISSUE_TEMPLATE/bug.md"],
@@ -387,6 +388,9 @@ class TestComputeTestShards:
     )
     def test_docs_only_returns_empty(self, files):
         assert scope_positions.compute_test_shards(files) == []
+
+    def test_benchmark_history_markdown_is_docs_only_not_all_shards(self):
+        assert scope_positions.compute_test_shards(["benchmark_history/README.md"]) == []
 
     @pytest.mark.parametrize(
         "path",
@@ -453,6 +457,8 @@ class TestComputeTestShards:
             "src/analysis/error_analysis.py",
             "tests/batch/test_foo.py",
             "tests/scripts/test_foo.py",
+            "tests/analysis/test_foo.py",
+            "tests/tuning/test_foo.py",
             "tests/integration/test_foo.py",
             "tests/shared/test_foo.py",
             "tests/test_top_level.py",

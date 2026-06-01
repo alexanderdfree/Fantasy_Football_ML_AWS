@@ -65,7 +65,7 @@ def _fake_manifest(pos: str, current_key: str | None = None, stable_key: str | N
     reason="download_metrics' temp-file reopen raises PermissionError on Windows; the AWS benchmark-download path is Linux-only",
 )
 def test_download_metrics_happy_path(tmp_path, monkeypatch):
-    """Manifest's ``current`` resolves → tar fetched from history key → metrics dict."""
+    """No stable slot: manifest's ``current`` resolves → metrics dict."""
     import src.batch.benchmark as bb
 
     tar_path = _make_tarfile_with_metrics(tmp_path, {"position": "QB", "mae": 6.2})
@@ -139,18 +139,16 @@ def test_download_metrics_absent_manifest_returns_none(monkeypatch):
     sys.platform == "win32",
     reason="download_metrics' temp-file reopen raises PermissionError on Windows; the AWS benchmark-download path is Linux-only",
 )
-def test_download_metrics_falls_through_to_stable_on_current_failure(tmp_path, monkeypatch):
-    """``current`` download fails → falls through to ``stable``."""
+def test_download_metrics_prefers_stable_over_current(tmp_path, monkeypatch):
+    """``stable`` is smoke-tested, so it wins even when ``current`` exists."""
     import src.batch.benchmark as bb
 
     tar_path = _make_tarfile_with_metrics(tmp_path, {"position": "TE", "mae": 3.5})
-    current_key = "models/TE/history/2026-05-21T06-00-00Z-bad9999/model.tar.gz"
-    stable_key = "models/TE/history/2026-05-21T05-30-00Z-good777/model.tar.gz"
+    current_key = "models/TE/history/2026-05-21T06-00-00Z-new9999/model.tar.gz"
+    stable_key = "models/TE/history/2026-05-21T05-30-00Z-stab777/model.tar.gz"
 
     class _FakeS3:
         def download_file(self, bucket, key, dest):
-            if key == current_key:
-                raise RuntimeError("simulated current-key failure")
             assert key == stable_key
             with open(tar_path, "rb") as src, open(dest, "wb") as dst:
                 dst.write(src.read())
@@ -164,6 +162,26 @@ def test_download_metrics_falls_through_to_stable_on_current_failure(tmp_path, m
 
     result = bb.download_metrics(["TE"])
     assert result == {"TE": {"position": "TE", "mae": 3.5}}
+
+
+@pytest.mark.unit
+def test_download_metrics_reads_model_prefix_at_call_time(monkeypatch):
+    """FF_MODEL_S3_PREFIX is read lazily so tests/operators can override it
+    after module import."""
+    import src.batch.benchmark as bb
+
+    seen: list[str] = []
+
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "alt/models/")
+    monkeypatch.setattr(bb.boto3, "client", lambda *a, **k: object())
+
+    def _load_manifest(s3, bucket, prefix, pos):
+        seen.append(prefix)
+        return None
+
+    monkeypatch.setattr(bb, "load_manifest", _load_manifest)
+    assert bb.download_metrics(["QB"]) == {}
+    assert seen == ["alt/models"]
 
 
 # --------------------------------------------------------------------------

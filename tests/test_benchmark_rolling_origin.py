@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import statistics
 
+import pandas as pd
 import pytest
 
 import src.benchmarking.benchmark as b
@@ -166,3 +167,40 @@ def test_main_rolling_origin_with_cv_runs_once_without_deprecation(tmp_path, mon
     with open(history_files[0]) as f:
         entry = json.load(f)
     assert entry["mode"] == "rolling_origin"
+
+
+def test_k_rolling_origin_reuses_run_pipeline_kick_history_closure(monkeypatch):
+    import src.k.data as k_data
+    import src.k.features as k_features
+    import src.k.run_pipeline as k_run
+    import src.k.targets as k_targets
+
+    weekly = pd.DataFrame(
+        {
+            "player_id": ["K1", "K1", "K1"],
+            "season": [2023, 2024, 2025],
+            "week": [1, 1, 1],
+            "team": ["KC", "KC", "KC"],
+        }
+    )
+    kicks = pd.DataFrame({"player_id": ["K1"], "kick_distance": [33]})
+    sentinel = object()
+    seen: dict = {}
+
+    monkeypatch.setattr(k_data, "load_data", lambda: weekly.copy())
+    monkeypatch.setattr(k_data, "load_kicks", lambda df: kicks)
+    monkeypatch.setattr(k_targets, "compute_targets", lambda df: df)
+    monkeypatch.setattr(k_features, "compute_features", lambda df: None)
+
+    def _fake_closure(cfg, kicks_df):
+        seen["cfg"] = cfg
+        seen["kicks_df"] = kicks_df
+        return sentinel
+
+    monkeypatch.setattr(k_run, "_build_kick_history_closure", _fake_closure)
+
+    frame, cfg = b._self_load_full_frame_and_cfg("K")
+    assert frame.equals(weekly)
+    assert cfg["attn_history_builder_fn"] is sentinel
+    assert seen["cfg"] is cfg
+    assert seen["kicks_df"] is kicks

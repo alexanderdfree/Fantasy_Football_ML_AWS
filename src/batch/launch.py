@@ -12,8 +12,9 @@ Usage:
 Config (environment variables, all optional):
     FF_S3_BUCKET        (default: ff-predictor-training)
     FF_JOB_QUEUE        (default: ff-training-queue)
-    FF_JOB_DEFINITION   (default: ff-training-job)          GPU queue/def
-    FF_JOB_DEFINITION_CPU  (optional)                       CPU queue/def
+    FF_JOB_QUEUE_CPU    (optional)                          CPU-only queue
+    FF_JOB_DEFINITION   (default: ff-training-job)          GPU job definition
+    FF_JOB_DEFINITION_CPU  (optional)                       CPU job definition
         If set, K and DST are submitted with this job definition instead —
         a cheap CPU Spot pool for the non-NN positions.
     FF_WAIT_TIMEOUT     (default: 10800, i.e. 3h)
@@ -36,6 +37,7 @@ from botocore.exceptions import ClientError
 # --- Configuration (env-var overridable) ---------------------------------
 S3_BUCKET = os.environ.get("FF_S3_BUCKET", "ff-predictor-training")
 JOB_QUEUE = os.environ.get("FF_JOB_QUEUE", "ff-training-queue")
+JOB_QUEUE_CPU = os.environ.get("FF_JOB_QUEUE_CPU", "") or None
 JOB_DEFINITION = os.environ.get("FF_JOB_DEFINITION", "ff-training-job")
 # Optional CPU-only job definition. When set, K and DST route here instead of
 # the default GPU definition so we don't waste g6 Spot-hours on Ridge/LGBM.
@@ -181,6 +183,18 @@ def _job_definition_for(position: str) -> str:
     return base
 
 
+def _job_queue_for(position: str) -> str:
+    """Pick the right Batch queue for a position.
+
+    CPU-only positions can route to a separate CPU queue when both the CPU job
+    definition and queue are configured. If either is absent, keep the old
+    default queue behaviour so a partial rollout remains safe.
+    """
+    if position in CPU_ONLY_POSITIONS and JOB_DEFINITION_CPU and JOB_QUEUE_CPU:
+        return JOB_QUEUE_CPU
+    return JOB_QUEUE
+
+
 def submit_job(position, seed=42, batch_client=None):
     """Submit a single Batch job for one position. Returns (position, job_id)."""
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
@@ -189,6 +203,7 @@ def submit_job(position, seed=42, batch_client=None):
     timestamp = int(time.time())
     suffix = uuid.uuid4().hex[:6]
     job_definition = _job_definition_for(position)
+    job_queue = _job_queue_for(position)
     environment = [
         {"name": "S3_BUCKET", "value": S3_BUCKET},
         {"name": "S3_DATA_PREFIX", "value": "data"},
@@ -200,7 +215,7 @@ def submit_job(position, seed=42, batch_client=None):
         environment.append({"name": "FF_TRAIN_GIT_SHA", "value": TRAIN_GIT_SHA})
     response = batch.submit_job(
         jobName=f"ff-{position.lower()}-{timestamp}-{suffix}",
-        jobQueue=JOB_QUEUE,
+        jobQueue=job_queue,
         jobDefinition=job_definition,
         retryStrategy=RETRY_STRATEGY,
         containerOverrides={
@@ -209,7 +224,7 @@ def submit_job(position, seed=42, batch_client=None):
         },
     )
     job_id = response["jobId"]
-    print(f"[{position}] Submitted job {job_id} (definition: {job_definition})")
+    print(f"[{position}] Submitted job {job_id} (queue: {job_queue}, definition: {job_definition})")
     return position, job_id
 
 
@@ -290,7 +305,7 @@ def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
     Resolves the per-position artifact via ``models/{POS}/manifest.json`` rather
     than the legacy ``models/{POS}/model.tar.gz`` mirror, which was removed in
     the parallel-train-batch race fix (two concurrent runs writing the same
-    legacy key were last-write-wins). Walks ``current → stable → previous``,
+    legacy key were last-write-wins). Walks ``stable → current → previous``,
     matching the ``src/batch/benchmark.py::download_metrics`` chain so a
     post-train ``launch.py`` invocation pulls the same artifact CI just
     benchmarked.
@@ -329,7 +344,7 @@ def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
         # benchmarked. Skip entries with no resolvable key.
         tried: list[tuple[str, str, str]] = []
         extracted = False
-        for label in ("current", "stable", "previous"):
+        for label in ("stable", "current", "previous"):
             entry = manifest.get(label)
             if not entry or not entry.get("key"):
                 continue
@@ -385,6 +400,8 @@ def _print_plan(positions, seed):
     print(f"  queue:        {JOB_QUEUE}")
     print(f"  definition:   {JOB_DEFINITION}")
     if JOB_DEFINITION_CPU:
+        if JOB_QUEUE_CPU:
+            print(f"  cpu queue:    {JOB_QUEUE_CPU} (K, DST route here)")
         print(f"  cpu def:      {JOB_DEFINITION_CPU} (K, DST route here)")
     print(f"  wait timeout: {WAIT_TIMEOUT_SECONDS}s")
     print(f"  seed:         {seed}")

@@ -206,12 +206,10 @@ def _self_load_full_frame_and_cfg(position):
         compute_features(df)
         return df, CONFIG
     if position == "K":
-        import functools
-
         from src.k.config import POSITION_CONFIG
         from src.k.data import load_data, load_kicks
-        from src.k.features import build_nested_kick_history, compute_features
-        from src.k.run_pipeline import CONFIG
+        from src.k.features import compute_features
+        from src.k.run_pipeline import CONFIG, _build_kick_history_closure
         from src.k.targets import compute_targets
 
         df = load_data()
@@ -219,15 +217,10 @@ def _self_load_full_frame_and_cfg(position):
         compute_features(df)
         kicks_df = load_kicks(df)
         cfg = dict(CONFIG)
-        cfg["attn_history_builder_fn"] = functools.partial(
-            build_nested_kick_history,
-            kicks_df=kicks_df,
-            kick_stats=cfg.get("attn_kick_stats", POSITION_CONFIG.attn_kick_stats),
-            max_games=cfg.get("attn_max_games", POSITION_CONFIG.attn_max_games),
-            max_kicks_per_game=cfg.get(
-                "attn_max_kicks_per_game", POSITION_CONFIG.attn_max_kicks_per_game
-            ),
-        )
+        cfg.setdefault("attn_kick_stats", POSITION_CONFIG.attn_kick_stats)
+        cfg.setdefault("attn_max_games", POSITION_CONFIG.attn_max_games)
+        cfg.setdefault("attn_max_kicks_per_game", POSITION_CONFIG.attn_max_kicks_per_game)
+        cfg["attn_history_builder_fn"] = _build_kick_history_closure(cfg, kicks_df)
         return df, cfg
     raise ValueError(f"_self_load_full_frame_and_cfg: unexpected position {position!r}")
 

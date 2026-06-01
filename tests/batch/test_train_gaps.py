@@ -382,19 +382,16 @@ def test_main_raises_when_pipeline_returns_none(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
-def test_main_warns_when_src_model_dir_missing(tmp_path, monkeypatch, capsys):
-    """If ``{pos}/outputs/models/`` doesn't exist, main prints a warning
-    but still proceeds (until the None-result guard trips)."""
+def test_main_raises_when_src_model_dir_missing(tmp_path, monkeypatch):
+    """If ``{pos}/outputs/models/`` doesn't exist, main refuses to upload."""
     from src.batch import train as t
 
     monkeypatch.setenv("MODEL_OUTPUT_DIR", str(tmp_path / "out"))
     monkeypatch.setenv("REQUIRE_GPU", "0")
     monkeypatch.chdir(tmp_path)  # isolate cwd so QB/outputs/models doesn't exist
 
-    _stub_main_io(t, monkeypatch, runner_returns=None)
+    _stub_main_io(t, monkeypatch, runner_returns={"ridge_metrics": {"total": {"mae": 1.0}}})
 
     with mock.patch("sys.argv", ["train.py", "--position", "QB"]):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="No model directory found"):
             t.main()
-
-    assert "No model directory found" in capsys.readouterr().out

@@ -129,6 +129,7 @@ docker run --rm --gpus all \\
   -e REQUIRE_GPU=1 \\
   -e AWS_DEFAULT_REGION=${REGION} \\
   -e FF_FORCE_REFRESH="\${FF_FORCE_REFRESH:-0}" \\
+  -e FF_TRAIN_GIT_SHA="\${FF_TRAIN_GIT_SHA:-}" \\
   -v /opt/ff/scratch/input:/opt/ml/input/data/training \\
   -v /opt/ff/scratch/model:/opt/ml/model \\
   -v /opt/ff/scratch/raw:/opt/ml/code/data/raw \\

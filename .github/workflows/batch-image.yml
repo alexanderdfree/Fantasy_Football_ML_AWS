@@ -17,11 +17,6 @@ on:
       - "src/**"
       - "requirements.txt"
       - ".github/workflows/batch-image.yml"
-      # infra/batch/** is included so retry strategy / timeout edits in
-      # setup.sh propagate to the deployed job definition on next merge —
-      # the registration step below pins canonical values, so setup.sh
-      # alone never updates a live account.
-      - "infra/batch/**"
       - "!**/tests/**"
       - "!**/*.md"
   workflow_dispatch: {}
@@ -64,12 +59,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
       - id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
           MERGE_SHA: ${{ github.event.head_commit.id }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -eu
           if [ "$EVENT_NAME" != "push" ]; then
@@ -77,12 +73,18 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git log -1 --format=%B "$MERGE_SHA" | awk 'NR==1 || /^\* /' | grep -qF '[docs-only]'; then
-            echo "[docs-only] detected in subject line of $MERGE_SHA — skipping image rebuild."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+          range="${MERGE_SHA}^..${MERGE_SHA}"
+          if [ -n "$BEFORE_SHA" ] && ! echo "$BEFORE_SHA" | grep -q '^0000000000000000000000000000000000000000$'; then
+            range="${BEFORE_SHA}..${MERGE_SHA}"
           fi
+          for sha in $(git log --format=%H "$range"); do
+            if git log -1 --format=%B "$sha" | awk 'NR==1 || /^\* /' | grep -qF '[docs-only]'; then
+              echo "[docs-only] detected in subject line of $sha — skipping image rebuild."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "skip=false" >> "$GITHUB_OUTPUT"
 
   # Tests run in tests.yml (matrix across positions). Branch protection on
   # main requires those checks to pass before a PR can merge, so we trust

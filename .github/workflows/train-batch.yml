@@ -22,6 +22,9 @@ on:
       seed:
         description: "Random seed"
         default: "42"
+      image_sha:
+        description: "Optional image SHA whose Batch job-definition revision should be pinned"
+        default: ""
 
 concurrency:
   # Group keyed by the SHA the upstream image was built from (workflow_run)
@@ -38,7 +41,7 @@ concurrency:
   # ~1 min on detect/dedup-API-call rather than the full ~15 min. The
   # constrained warm-EC2 path keeps its own `train-ec2` cancel-in-progress
   # group; that decision lives with the constrained path.
-  group: train-batch-${{ github.event.workflow_run.head_sha || github.sha }}
+  group: train-batch-${{ github.event_name }}-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 env:
@@ -217,13 +220,18 @@ jobs:
         # so two parallel train-batch runs (image A and image B, both
         # registered in the same window) submit against the same (latest)
         # revision, and the run triggered by image A can silently train image
-        # B's code. workflow_dispatch (smoke-test break-glass) has no upstream
-        # workflow_run, so it falls back to bare-name resolution.
+        # B's code. Manual dispatch can opt into the same pin by passing
+        # image_sha; omitted image_sha intentionally preserves break-glass
+        # bare-name resolution.
         id: revision
-        if: github.event_name != 'workflow_dispatch'
         env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
         run: |
+          if [ -z "$HEAD_SHA" ]; then
+            echo "No image SHA supplied; falling back to bare job-definition resolution."
+            echo "revision=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           REVISION=$(aws s3 cp \
             "s3://${S3_BUCKET}/job-def-revisions/${HEAD_SHA}.txt" - \
             --region "$AWS_REGION" \
@@ -294,10 +302,9 @@ jobs:
           # The SHA the image being trained was built from. Threads through
           # launch.py → containerOverrides → train.py → benchmark_metrics.json,
           # so benchmark.py can warn when any position's recorded SHA diverges
-          # from the run's expected SHA. Empty under workflow_dispatch (no
-          # upstream image build); benchmark.py treats empty as "skip the
-          # coherency check."
-          FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha }}
+          # from the run's expected SHA. Manual dispatch stamps the dispatch
+          # ref SHA unless image_sha was provided for a specific image.
+          FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
@@ -324,6 +331,7 @@ jobs:
         # whose artifact predates this run.
         env:
           POSITIONS: ${{ needs.detect.outputs.positions }}
+          FF_MODEL_S3_PREFIX: models
         run: |
           train_started_at="${{ steps.train.outputs.started_at }}"
           # An empty anchor means the train step never recorded started_at
@@ -341,6 +349,10 @@ jobs:
           fi
           echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
           echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
+          model_prefix="${FF_MODEL_S3_PREFIX:-models}"
+          model_prefix="${model_prefix#/}"
+          model_prefix="${model_prefix%/}"
+          if [ -z "$model_prefix" ]; then model_prefix="models"; fi
           fail=0
           for POS in $POSITIONS; do
             # Anchor on manifest.json — it's the atomic last write of
@@ -349,7 +361,7 @@ jobs:
             # f65bcbe + be56b0d); checking it would trip STALE on every run.
             META=$(aws s3api head-object \
               --bucket "$S3_BUCKET" \
-              --key "models/$POS/manifest.json" \
+              --key "${model_prefix}/$POS/manifest.json" \
               --region "$AWS_REGION" 2>/dev/null || echo '{}')
             LM=$(echo "$META" | jq -r '.LastModified // empty')
             SZ=$(echo "$META" | jq -r '.ContentLength // 0')

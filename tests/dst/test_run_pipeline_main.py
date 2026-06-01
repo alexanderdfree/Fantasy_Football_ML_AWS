@@ -8,6 +8,7 @@ hitting the nflverse parquet reads.
 
 from __future__ import annotations
 
+import os
 import runpy
 import sys
 from pathlib import Path
@@ -108,3 +109,22 @@ def test_main_block_invokes_run_dst_pipeline(monkeypatch):
     assert len(calls) == 1
     assert calls[0]["position"] == "DST"
     assert calls[0]["seed"] == 42
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("device", ["auto", "cpu", "cuda", "mps"])
+def test_main_device_flag_exports_ff_device(monkeypatch, device):
+    _patch_all(monkeypatch)
+    monkeypatch.setenv("FF_DEVICE", "sentinel")
+    monkeypatch.setattr(sys, "argv", ["run.py", "--device", device])
+    runpy.run_path(str(_MODULE_PATH), run_name="__main__")
+    assert os.environ["FF_DEVICE"] == device
+
+
+@pytest.mark.unit
+def test_main_without_device_flag_leaves_ff_device_untouched(monkeypatch):
+    _patch_all(monkeypatch)
+    monkeypatch.setenv("FF_DEVICE", "cpu")
+    monkeypatch.setattr(sys, "argv", ["run.py"])
+    runpy.run_path(str(_MODULE_PATH), run_name="__main__")
+    assert os.environ["FF_DEVICE"] == "cpu"

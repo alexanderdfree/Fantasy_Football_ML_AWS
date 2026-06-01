@@ -203,6 +203,17 @@ class TestAuxiliaryEndpoints:
             assert "overall" in body[model_name]
             assert "by_position" in body[model_name]
 
+    def test_get_data_missing_scoring_fallback_is_empty_metrics(self, app_module, monkeypatch):
+        """A partial metrics cache should not KeyError when the requested
+        scoring format and PPR alias are both absent."""
+        monkeypatch.setattr(app_module, "_ensure_metrics", lambda: None)
+        app_module._cache["results"] = "rows"
+        app_module._cache["metrics_by_format"] = {"half_ppr": {"ok": True}}
+
+        rows, metrics = app_module._get_data("standard")
+        assert rows == "rows"
+        assert metrics == {}
+
     def test_position_details_covers_all_positions(self, client_with_data):
         r = client_with_data.get("/api/position_details")
         assert r.status_code == 200
@@ -213,6 +224,15 @@ class TestAuxiliaryEndpoints:
         assert qb["label"] == "Quarterback"
         assert "targets" in qb
         assert "architecture" in qb
+
+    def test_position_details_fumble_formulas_include_all_loss_sources(self, client_with_data):
+        r = client_with_data.get("/api/position_details")
+        assert r.status_code == 200
+        body = r.get_json()
+        expected = "sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost"
+        for pos in ("QB", "RB", "WR"):
+            target = next(t for t in body[pos]["targets"] if t["key"] == "fumbles_lost")
+            assert target["formula"] == expected
 
     def test_top_players_returns_list(self, client_with_data):
         r = client_with_data.get("/api/top_players")

@@ -82,5 +82,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="DST pipeline")
     parser.add_argument("--cv", action="store_true", help="Use expanding-window cross-validation")
+    parser.add_argument(
+        "--device",
+        choices=("auto", "cpu", "cuda", "mps"),
+        default=None,
+        help="Set FF_DEVICE for this run; omitted leaves the environment unchanged.",
+    )
     args = parser.parse_args()
+    if args.device is not None:
+        os.environ["FF_DEVICE"] = args.device
     (run_cv if args.cv else run)()

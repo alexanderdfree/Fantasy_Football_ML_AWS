@@ -138,11 +138,10 @@ jobs:
 
       - name: Ensure feature-cache mount in ff-train
         # user-data.sh only runs on first boot, so existing warm instances
-        # have the pre-feature-cache ff-train. Idempotently patch in the
-        # bind mount + cache dir so src/shared/feature_cache.py persists
-        # across stop/start cycles. ``/opt/ff/cache`` lives on the root EBS
-        # volume (NOT /opt/ff/scratch which is NVMe instance store wiped
-        # on stop), so the cache survives the auto-shutdown timer.
+        # may have an older ff-train. Idempotently patch in the bind mount +
+        # cache dir and FF_TRAIN_GIT_SHA passthrough so src/shared/feature_cache.py
+        # persists across stop/start cycles and EC2 metrics carry the trained
+        # image SHA.
         run: |
           read -r -d '' SCRIPT <<'BASH' || true
           set -eu
@@ -154,6 +153,21 @@ jobs:
             sed -i 's|-v /opt/ff/scratch/raw:/opt/ml/code/data/raw \\|-v /opt/ff/scratch/raw:/opt/ml/code/data/raw \\\n  -v /opt/ff/cache:/opt/ml/code/.cache \\|' /usr/local/bin/ff-train
             grep -A1 'data/raw' /usr/local/bin/ff-train | head -3
             echo "ff-train patched with feature-cache mount"
+          fi
+          if grep -q 'FF_TRAIN_GIT_SHA' /usr/local/bin/ff-train; then
+            echo "ff-train already passes FF_TRAIN_GIT_SHA"
+          else
+            tmp=$(mktemp)
+            awk '
+              { print }
+              /-e FF_FORCE_REFRESH=/ && ! inserted {
+                print "  -e FF_TRAIN_GIT_SHA=\"${FF_TRAIN_GIT_SHA:-}\" \\"
+                inserted=1
+              }
+            ' /usr/local/bin/ff-train > "$tmp"
+            install -m 755 "$tmp" /usr/local/bin/ff-train
+            rm -f "$tmp"
+            echo "ff-train patched with FF_TRAIN_GIT_SHA passthrough"
           fi
           BASH
           PARAMS=$(jq -n --arg s "$SCRIPT" '{commands: [$s]}')
@@ -224,15 +238,23 @@ jobs:
         id: train
         env:
           POSITIONS: ${{ needs.detect.outputs.positions }}
+          SEED: ${{ github.event.inputs.seed || '42' }}
+          FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
-          SEED="${{ github.event.inputs.seed || '42' }}"
+          case "$SEED" in
+            ""|*[!0-9]*)
+              echo "Invalid seed: $SEED" >&2
+              exit 1
+              ;;
+          esac
           # Sequential loop inside a single SSM command so we get one command
           # ID to poll. Parallel runs would OOM the single T4.
-          # Positions are letters only — safe to interpolate unquoted in the
-          # remote shell. JSON-encode via jq so quoting can't bite us.
-          jq -n --arg cmd "set -eu; for POS in $POSITIONS; do /usr/local/bin/ff-train \$POS $SEED; done" \
+          # Positions are emitted by the detect helper as position symbols.
+          # JSON-encode via jq so command quoting can't bite us.
+          REMOTE_CMD="set -eu; for POS in $POSITIONS; do FF_TRAIN_GIT_SHA='$FF_TRAIN_GIT_SHA' /usr/local/bin/ff-train \"\$POS\" '$SEED'; done"
+          jq -n --arg cmd "$REMOTE_CMD" \
             '{commands: [$cmd]}' > /tmp/ssm-params.json
           CMD_ID=$(aws ssm send-command \
             --targets "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
@@ -252,7 +274,7 @@ jobs:
           # though the SSM command succeeded on the instance.
           CMD_ID="${{ steps.train.outputs.command_id }}"
           INST="${{ steps.inst.outputs.id }}"
-          deadline=$(( $(date +%s) + 1800 ))
+          deadline=$(( $(date +%s) + 7800 ))
           while [ "$(date +%s)" -lt "$deadline" ]; do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$CMD_ID" \
@@ -266,7 +288,7 @@ jobs:
               *)                          echo "Unknown status: $STATUS"; exit 1 ;;
             esac
           done
-          echo "Timed out after 30 min"
+          echo "Timed out after 130 min"
           exit 1
 
       - name: Cancel SSM training command on cancel/failure
@@ -296,6 +318,7 @@ jobs:
       - name: Verify model artifact freshness
         env:
           POSITIONS: ${{ needs.detect.outputs.positions }}
+          FF_MODEL_S3_PREFIX: models
         run: |
           # Anchor on when training STARTED, not "now": a long sequential
           # run would otherwise trip the threshold on early positions'
@@ -310,6 +333,10 @@ jobs:
           fi
           echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
           echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
+          model_prefix="${FF_MODEL_S3_PREFIX:-models}"
+          model_prefix="${model_prefix#/}"
+          model_prefix="${model_prefix%/}"
+          if [ -z "$model_prefix" ]; then model_prefix="models"; fi
           fail=0
           for POS in $POSITIONS; do
             # Anchor on manifest.json — it's the atomic last write of
@@ -318,7 +345,7 @@ jobs:
             # f65bcbe + be56b0d); checking it would trip STALE on every run.
             META=$(aws s3api head-object \
               --bucket "$S3_BUCKET" \
-              --key "models/$POS/manifest.json" \
+              --key "${model_prefix}/$POS/manifest.json" \
               --region "$AWS_REGION" 2>/dev/null || echo '{}')
             LM=$(echo "$META" | jq -r '.LastModified // empty')
             SZ=$(echo "$META" | jq -r '.ContentLength // 0')
