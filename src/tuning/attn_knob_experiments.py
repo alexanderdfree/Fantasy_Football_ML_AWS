@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import copy
 import importlib
+import os
 import statistics
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -134,6 +135,18 @@ def _run_one(position: str, seed: int, overrides: dict[str, Any], *, ridge_senti
     }
 
 
+def _prime_feature_cache(position: str) -> None:
+    """Warm seed/knob-independent feature cache before process fan-out."""
+
+    if os.environ.get("FF_FEATURE_CACHE_DISABLE") == "1":
+        return
+    base_cfg, run_fn = _load_position(position)
+    cfg = _make_cfg(base_cfg, {}, ridge_sentinel=False)
+    cfg["train_attention_nn"] = False
+    print(f"[cache] priming {position.upper()} feature cache before parallel runs")
+    run_fn(seed=0, config=cfg)
+
+
 def plackett_burman_design(n_factors: int) -> list[list[int]]:
     """Return the 12-run PB design for up to 11 factors, trimmed to n_factors."""
 
@@ -215,6 +228,7 @@ def run_doe(position: str, seeds: list[int], *, ridge_sentinel: bool, n_jobs: in
             row = _run_one(position, seed, overrides, ridge_sentinel=ridge_sentinel)
             rows.append(finish_row(run_idx, signs, row))
     else:
+        _prime_feature_cache(position)
         with ProcessPoolExecutor(max_workers=n_jobs) as pool:
             futures = {}
             for seed, run_idx, signs, overrides in tasks:
@@ -253,6 +267,8 @@ def run_fanova(
     n_jobs: int,
 ) -> dict:
     seed_results = {}
+    if n_jobs > 1:
+        _prime_feature_cache(position)
     for idx, seed in enumerate(seeds):
         study_seed = sampler_seed + idx
         study = optuna.create_study(
