@@ -4,6 +4,12 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 
 ---
 
+### [FIXED] Codex static model catalog verified for 1M WSL local context accounting
+- **File(s):** [TODO.md](../TODO.md) (removed the completed Open item), [codex_static_model_catalog_1m_priority.md](codex_static_model_catalog_1m_priority.md) (handoff retained as historical setup notes). Machine-local Codex files (`~/.codex/config.toml`, `models_cache.json`, `my_catalog.json`) remain outside git.
+- **What:** The Open item tracked a community-documented `model_catalog_json` workaround for WSL Codex: point startup at a static model catalog JSON so local `gpt-5.4` / `gpt-5.5` context-window accounting stays at 1M instead of being overwritten by upstream metadata on restart. The only remaining task was manual restart/backend smoke verification.
+- **Fix:** User manually confirmed the WSL static-catalog setup is implemented and the local 1M context accounting survives startup, so the priority item is closed. No repository code or committed machine-local config changed.
+- **Lesson:** Tool-local config work belongs in TODO only until the actual environment has been restarted and smoke-checked. Keep the operational caveat attached to the historical note: a static local catalog can fix Codex-side accounting, but it is still not an official OpenAI guarantee that every backend call will accept a 1M-token request.
+
 ### [FIXED] QB rookie early-game calibration added as a phase-only static feature
 - **File(s):** [src/qb/features.py](../src/qb/features.py) (split-aware rookie phase labels), [src/qb/config.py](../src/qb/config.py) (whitelist `rookie_early` for QB models and attention static), [tests/qb/test_features.py](../tests/qb/test_features.py) and [tests/qb/test_feature_contract.py](../tests/qb/test_feature_contract.py) (contract coverage), [src/analysis/rookie_cohort_findings.md](../src/analysis/rookie_cohort_findings.md) (seed-42/43 subgroup evidence).
 - **What:** The rookie cohort metric showed QB rookies were systematically over-predicted in their first three games, but overall MAE hid it because the subgroup is small and low-scoring. The stale implementation plan also assumed Ridge was the current best QB model; after the latest mainline run the served model is LightGBM, so the ship decision had to be made on LightGBM's subgroup metrics.
