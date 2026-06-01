@@ -1,10 +1,11 @@
 """Aggregate per-position ``tune_nn`` results from S3 into one summary.
 
-Each Batch tune job writes ``s3://$S3_BUCKET/tune_nn/{pos}/results.json``
-with a single-key dict like ``{"RB": {"best_trial": ..., "best_params":
-{...}, ...}}``. This script pulls every per-position file and merges them
-into a unified ``tune_nn_results.json`` + a markdown summary table suitable
-for ``$GITHUB_STEP_SUMMARY``. Re-emits ``BEST_PARAMS_JSON_START/END``
+Each Batch tune job writes
+``s3://$S3_BUCKET/tune_nn/{search-space-version}/{pos}/results.json`` with a
+single-key dict like ``{"RB": {"best_trial": ..., "best_params": {...}, ...}}``.
+This script pulls every per-position file and merges them into a unified
+``tune_nn_results.json`` + a markdown summary table suitable for
+``$GITHUB_STEP_SUMMARY``. Re-emits ``BEST_PARAMS_JSON_START/END``
 markers so the existing log-extraction tooling (modeled on
 ``src/tuning/tune_lgbm.py``'s convention) keeps working.
 
@@ -25,7 +26,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-ALL_TUNABLE_POSITIONS = ("QB", "RB", "WR", "TE")
+from src.tuning.tune_nn_storage import S3_PREFIX, s3_key_prefix  # noqa: E402
+
+ALL_TUNABLE_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
 
 def _download_from_s3(bucket: str, positions: list[str], dest_dir: str) -> list[str]:
@@ -42,7 +45,7 @@ def _download_from_s3(bucket: str, positions: list[str], dest_dir: str) -> list[
     os.makedirs(dest_dir, exist_ok=True)
     downloaded: list[str] = []
     for pos in positions:
-        key = f"tune_nn/{pos.lower()}/results.json"
+        key = f"{s3_key_prefix(pos)}/results.json"
         local_path = os.path.join(dest_dir, f"tune_nn_{pos.lower()}_results.json")
         try:
             s3.download_file(bucket, key, local_path)
@@ -136,12 +139,15 @@ def main():
         nargs="+",
         default=list(ALL_TUNABLE_POSITIONS),
         choices=list(ALL_TUNABLE_POSITIONS),
-        help="Positions to aggregate (default: all 4 tunable)",
+        help=f"Positions to aggregate (default: all {len(ALL_TUNABLE_POSITIONS)} tunable)",
     )
     parser.add_argument(
         "--bucket",
         default=os.environ.get("S3_BUCKET", "ff-predictor-training"),
-        help="S3 bucket holding the per-position results.json (default: $S3_BUCKET or ff-predictor-training)",
+        help=(
+            "S3 bucket holding the per-position results.json under "
+            f"{S3_PREFIX}/{{pos}}/ (default: $S3_BUCKET or ff-predictor-training)"
+        ),
     )
     parser.add_argument(
         "--no-s3",

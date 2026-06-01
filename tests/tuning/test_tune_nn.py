@@ -44,13 +44,14 @@ def _ask_overrides(study: optuna.Study) -> tuple[optuna.Trial, dict]:
     return trial, overrides
 
 
-_EXPECTED_KEYS = {
+_EXPECTED_BASE_KEYS = {
     "attn_d_model",
     "attn_n_heads",
     "attn_encoder_hidden_dim",
     "attn_dropout",
     "attn_lr",
     "attn_batch_size",
+    "scheduler_type",
     "nn_backbone_layers",
     "nn_head_hidden",
     "nn_dropout",
@@ -58,16 +59,19 @@ _EXPECTED_KEYS = {
     "nn_weight_decay",
     "nn_batch_size",
 }
+_COSINE_KEYS = {"cosine_t0", "cosine_t_mult", "cosine_eta_min"}
+_ONECYCLE_KEYS = {"onecycle_max_lr", "onecycle_pct_start"}
 
 
-def _base_valid_overrides() -> dict:
-    return {
+def _base_valid_overrides(*, scheduler_type: str = "cosine_warm_restarts") -> dict:
+    overrides = {
         "attn_d_model": 32,
         "attn_n_heads": 2,
         "attn_encoder_hidden_dim": 0,
         "attn_dropout": 0.1,
         "attn_lr": 1e-3,
         "attn_batch_size": 128,
+        "scheduler_type": scheduler_type,
         "nn_backbone_layers": [64],
         "nn_head_hidden": 32,
         "nn_dropout": 0.2,
@@ -75,6 +79,22 @@ def _base_valid_overrides() -> dict:
         "nn_weight_decay": 1e-4,
         "nn_batch_size": 128,
     }
+    if scheduler_type == "cosine_warm_restarts":
+        overrides.update(
+            {
+                "cosine_t0": 40,
+                "cosine_t_mult": 2,
+                "cosine_eta_min": 1e-5,
+            }
+        )
+    elif scheduler_type == "onecycle":
+        overrides.update(
+            {
+                "onecycle_max_lr": 2e-3,
+                "onecycle_pct_start": 0.3,
+            }
+        )
+    return overrides
 
 
 def test_sample_overrides_returns_every_cfg_key():
@@ -82,16 +102,24 @@ def test_sample_overrides_returns_every_cfg_key():
     study = optuna.create_study(sampler=optuna.samplers.TPESampler(seed=0))
     # Drive a handful of trials so we exercise more of the search space
     # than the first TPE sample (which is effectively random init).
-    seen: set[str] = set()
-    for _ in range(8):
+    valid_trials = 0
+    for _ in range(30):
         try:
             _, overrides = _ask_overrides(study)
         except optuna.TrialPruned:
             continue
-        seen.update(overrides.keys())
-    assert seen == _EXPECTED_KEYS, (
-        f"sample_overrides should produce exactly {_EXPECTED_KEYS}, got {seen}"
-    )
+        assert overrides.keys() >= _EXPECTED_BASE_KEYS
+        if overrides["scheduler_type"] == "cosine_warm_restarts":
+            assert overrides.keys() >= _COSINE_KEYS
+            assert not (_ONECYCLE_KEYS & overrides.keys())
+        elif overrides["scheduler_type"] == "onecycle":
+            assert overrides.keys() >= _ONECYCLE_KEYS
+            assert not (_COSINE_KEYS & overrides.keys())
+        else:  # pragma: no cover - validation below would fail first
+            raise AssertionError(overrides["scheduler_type"])
+        tune_nn._validate_overrides(overrides)
+        valid_trials += 1
+    assert valid_trials > 0
 
 
 def test_sample_overrides_d_model_divisible_by_n_heads():
@@ -122,6 +150,18 @@ def test_sample_overrides_ranges():
             continue
         assert 0.0 <= o["attn_dropout"] <= 0.3
         assert 1e-4 <= o["attn_lr"] <= 5e-3
+        assert o["scheduler_type"] in ("cosine_warm_restarts", "onecycle")
+        if o["scheduler_type"] == "cosine_warm_restarts":
+            assert o["cosine_t0"] in (10, 20, 30, 40, 60)
+            assert o["cosine_t_mult"] in (1, 2)
+            assert 1e-6 <= o["cosine_eta_min"] <= 5e-5
+            assert o["cosine_eta_min"] < o["attn_lr"]
+            assert o["cosine_eta_min"] < o["nn_lr"]
+            assert not (_ONECYCLE_KEYS & o.keys())
+        else:
+            assert 1e-4 <= o["onecycle_max_lr"] <= 1e-2
+            assert 0.1 <= o["onecycle_pct_start"] <= 0.4
+            assert not (_COSINE_KEYS & o.keys())
         assert 0.0 <= o["nn_dropout"] <= 0.4
         assert 1e-4 <= o["nn_lr"] <= 5e-3
         assert 1e-5 <= o["nn_weight_decay"] <= 1e-3
@@ -165,6 +205,41 @@ def test_validate_overrides_allows_only_encoder_hidden_zero_sentinel():
         bad[key] = 0
         with pytest.raises(ValueError, match=key):
             tune_nn._validate_overrides(bad)
+
+
+@pytest.mark.parametrize(
+    ("bad_update", "match"),
+    [
+        ({"scheduler_type": "plateau"}, "scheduler_type"),
+        ({"cosine_t0": 0}, "cosine_t0"),
+        ({"cosine_t_mult": 0}, "cosine_t_mult"),
+        ({"cosine_eta_min": 1e-2}, "cosine_eta_min"),
+        ({"onecycle_max_lr": 0.0}, "irrelevant scheduler keys"),
+        ({"unexpected": 1}, "unknown keys"),
+    ],
+)
+def test_validate_overrides_rejects_bad_cosine_scheduler_configs(bad_update, match):
+    overrides = _base_valid_overrides()
+    overrides.update(bad_update)
+
+    with pytest.raises(ValueError, match=match):
+        tune_nn._validate_overrides(overrides)
+
+
+@pytest.mark.parametrize(
+    ("bad_update", "match"),
+    [
+        ({"onecycle_max_lr": 0.0}, "onecycle_max_lr"),
+        ({"onecycle_pct_start": 0.0}, "onecycle_pct_start"),
+        ({"cosine_t0": 40}, "irrelevant scheduler keys"),
+    ],
+)
+def test_validate_overrides_rejects_bad_onecycle_scheduler_configs(bad_update, match):
+    overrides = _base_valid_overrides(scheduler_type="onecycle")
+    overrides.update(bad_update)
+
+    with pytest.raises(ValueError, match=match):
+        tune_nn._validate_overrides(overrides)
 
 
 def test_sample_overrides_invalid_combo_raises_pruned(monkeypatch):
@@ -248,6 +323,9 @@ def test_format_config_lines_roundtrips_through_eval():
         "attn_dropout": 0.1,
         "attn_lr": 0.001,
         "attn_batch_size": 256,
+        "scheduler_type": "onecycle",
+        "onecycle_max_lr": 0.002,
+        "onecycle_pct_start": 0.3,
         "nn_backbone_layers": [128, 64],
         "nn_head_hidden": 32,
         "nn_dropout": 0.2,
@@ -265,6 +343,8 @@ def test_format_config_lines_roundtrips_through_eval():
     # Verify a representative subset round-trips correctly.
     assert namespace["RB_ATTN_D_MODEL"] == 32
     assert namespace["RB_ATTN_LR"] == 0.001
+    assert namespace["RB_SCHEDULER_TYPE"] == "onecycle"
+    assert namespace["RB_ONECYCLE_MAX_LR"] == 0.002
     assert namespace["RB_NN_BACKBONE_LAYERS"] == [128, 64]
     assert namespace["RB_NN_DROPOUT"] == 0.2
 
@@ -305,6 +385,21 @@ def test_trial_to_params_rejects_unknown_backbone_preset_index():
 
     with pytest.raises(ValueError, match="nn_backbone_layers_idx"):
         tune_nn._trial_to_params(frozen)
+
+
+def test_trial_to_params_rejects_stale_scheduler_mismatch():
+    frozen = MagicMock()
+    frozen.params = _base_valid_overrides(scheduler_type="onecycle")
+    frozen.params["cosine_t0"] = 40
+
+    with pytest.raises(ValueError, match="irrelevant scheduler keys"):
+        tune_nn._trial_to_params(frozen)
+
+
+def test_study_storage_is_versioned_for_scheduler_search_space():
+    assert tune_nn._study_name("RB") == "nn_scheduler_v2_rb"
+    assert tune_nn._study_db_path("RB") == "tune_nn_scheduler_v2_rb.db"
+    assert tune_nn._s3_key_prefix("RB") == "tune_nn/scheduler_v2/rb"
 
 
 # ---------------------------------------------------------------------------

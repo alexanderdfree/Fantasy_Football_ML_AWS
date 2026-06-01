@@ -95,20 +95,19 @@ extension of D15, not a new decision. No `TODO.md` archive entry (enhancement, n
 
 ## Not in this plan (answers to "anything else?")
 
-- **Most valuable next axis:** the *existing* scheduler's hyperparams (cosine positions:
-  `cosine_t0`/`cosine_eta_min`; onecycle positions: `onecycle_max_lr`/`onecycle_pct_start`).
-  Conditional-per-position (+2 dims, a per-position branch). Distinct from tuning
-  `scheduler_type` itself, which is blocked on the cfg-builder/conditional-sampling work
-  described above.
+- **Scheduler search is done elsewhere:** `src/tuning/tune_nn.py` now samples
+  `scheduler_type` plus matching conditional keys (`cosine_t0`/`cosine_t_mult`/
+  `cosine_eta_min` or `onecycle_max_lr`/`onecycle_pct_start`) and validates stale or
+  mismatched scheduler payloads before training/config output. Do not duplicate that work here.
 - **Cheap toggles:** `attn_positional_encoding`, `attn_project_kv` (1 categorical dim each).
 - **`attn_max_seq_len`** (history window) — real capacity knob, borderline-structural, needs
   a shape-handling check first.
 - **Excluded by stop-rule/coupling/correctness (do not add):** loss-config
   (`huber_deltas`, `loss_weights`, `head_losses`, `gated_targets`, `attn_gate_weight`),
   structural features (`attn_static_features`, `attn_history_stats`), `nn_non_negative_targets`.
-- **Dimensionality budget:** 12 → 14 dims is fine for ~30 trials + HyperbandPruner. Adding
-  the scheduler axis too would argue for bumping `--n-trials` (Batch gives a dedicated GPU
-  per position, so wall-clock budget exists).
+- **Dimensionality budget:** 12 → 14 dims is fine for ~30 trials + HyperbandPruner. The
+  scheduler axis now lives in the tuner, so revisit `--n-trials` before combining all axes in a
+  production retune.
 
 ## Verification
 

@@ -138,8 +138,16 @@ def test_download_skips_404(tmp_path, capsys):
         paths = aggregate_results._download_from_s3("bucket", ["QB", "RB"], str(tmp_path))
     assert len(paths) == 1
     assert "rb" in paths[0]
+    assert calls == [
+        "tune_nn/scheduler_v2/qb/results.json",
+        "tune_nn/scheduler_v2/rb/results.json",
+    ]
     out = capsys.readouterr().out
     assert "no results at s3" in out
+
+
+def test_aggregate_defaults_cover_all_attention_positions():
+    assert aggregate_results.ALL_TUNABLE_POSITIONS == ("QB", "RB", "WR", "TE", "K", "DST")
 
 
 def test_main_writes_merged_and_summary(tmp_path, monkeypatch):
