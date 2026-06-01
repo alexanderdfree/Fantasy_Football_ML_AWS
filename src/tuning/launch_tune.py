@@ -226,7 +226,7 @@ def main():
     )
     parser.add_argument(
         "--parallel-backend",
-        choices=["thread", "mps"],
+        choices=["thread", "mps", "auto"],
         default=DEFAULT_PARALLEL_BACKEND,
         help=(
             "Trial concurrency backend inside each position job. auto resolves inside "

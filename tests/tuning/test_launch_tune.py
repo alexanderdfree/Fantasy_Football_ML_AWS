@@ -119,7 +119,10 @@ def test_submit_tune_job_works_for_all_supported_positions(pos):
 def test_dry_run_does_not_call_aws(monkeypatch, capsys):
     """--dry-run must print the plan and exit before any AWS call. Asserted
     by ensuring boto3.client is never invoked."""
-    monkeypatch.setattr("sys.argv", ["launch_tune", "--positions", "QB", "--dry-run"])
+    monkeypatch.setattr(
+        "sys.argv",
+        ["launch_tune", "--positions", "QB", "--parallel-backend", "auto", "--dry-run"],
+    )
     with patch("src.tuning.launch_tune.boto3") as mock_boto3:
         launch_tune.main()
         mock_boto3.client.assert_not_called()
