@@ -35,7 +35,11 @@ if [[ "$branch" =~ ^audit-.*/tier- ]]; then
 else
   step5='
 
-5. Otherwise, wait for green CI with `gh pr checks <N> --watch`. If checks fail, surface the failure. If they pass, merge with `gh pr merge <N> --squash`, then delete the remote branch with `git push origin --delete <branch-name>`. Do not use `--delete-branch` from a worktree.'
+5. Otherwise, auto-merge:
+   a. Resolve the PR number with `gh pr view --json number` and the branch name with `git branch --show-current`. Hold onto both before merging in case the worktree HEAD changes.
+   b. Wait for green CI with `gh pr checks <N> --watch`. If any check fails, surface the failure to the user; do not retry the merge or use `--admin`. Exception: the documented `Run Tests` silent-stop anomaly from AGENTS.md/CLAUDE.md; fall back to local `pytest` plus manual `gh pr merge <N> --squash --admin` only if the user confirms.
+   c. Merge with `gh pr merge <N> --squash`.
+   d. Delete the remote branch with `git push origin --delete <branch-name>`. Do not use `--delete-branch` from a worktree.'
 fi
 
 ctx_tail='
