@@ -26,12 +26,14 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.tuning.tune_nn_storage import S3_PREFIX, s3_key_prefix  # noqa: E402
+from src.tuning.tune_nn_storage import SEARCH_SPACE_VERSION, s3_key_prefix, s3_prefix  # noqa: E402
 
 ALL_TUNABLE_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
 
-def _download_from_s3(bucket: str, positions: list[str], dest_dir: str) -> list[str]:
+def _download_from_s3(
+    bucket: str, positions: list[str], dest_dir: str, search_space_version: str
+) -> list[str]:
     """Download per-position results.json from S3 into ``dest_dir``.
 
     Returns the list of local paths actually downloaded (missing positions
@@ -45,7 +47,7 @@ def _download_from_s3(bucket: str, positions: list[str], dest_dir: str) -> list[
     os.makedirs(dest_dir, exist_ok=True)
     downloaded: list[str] = []
     for pos in positions:
-        key = f"{s3_key_prefix(pos)}/results.json"
+        key = f"{s3_key_prefix(pos, search_space_version)}/results.json"
         local_path = os.path.join(dest_dir, f"tune_nn_{pos.lower()}_results.json")
         try:
             s3.download_file(bucket, key, local_path)
@@ -146,7 +148,16 @@ def main():
         default=os.environ.get("S3_BUCKET", "ff-predictor-training"),
         help=(
             "S3 bucket holding the per-position results.json under "
-            f"{S3_PREFIX}/{{pos}}/ (default: $S3_BUCKET or ff-predictor-training)"
+            f"{s3_prefix(SEARCH_SPACE_VERSION)}/{{pos}}/ "
+            "(default: $S3_BUCKET or ff-predictor-training)"
+        ),
+    )
+    parser.add_argument(
+        "--search-space-version",
+        default=os.environ.get("TUNE_NN_STORAGE_VERSION", SEARCH_SPACE_VERSION),
+        help=(
+            "Storage namespace under tune_nn/ to aggregate. Batch MPS+graph tuning "
+            "passes scheduler_v2_mps_graph."
         ),
     )
     parser.add_argument(
@@ -176,7 +187,7 @@ def main():
     if args.no_s3:
         paths = _collect_local_files(args.local_dir, positions)
     else:
-        paths = _download_from_s3(args.bucket, positions, args.local_dir)
+        paths = _download_from_s3(args.bucket, positions, args.local_dir, args.search_space_version)
 
     merged = _merge_results(paths)
 

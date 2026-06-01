@@ -26,11 +26,38 @@ Measured on the WSL2 / 9950X3D / RTX 5080 box, all 6 positions, pool ON:
 ### Stop-rule (don't relitigate without a benchmark)
 - **`torch.compile` is measured-rejected** (`#641`, **+169% on the 5080**) — dynamic-shape recompiles. A hand-rolled CUDA graph sidesteps that (train shapes are static via `drop_last`), but anything touching this area must clear a per-position A/B.
 
-## Why not MPS (researched 2026-05-31, rejected on both OSes)
+## Why not MPS locally (researched 2026-05-31, rejected on both OSes)
 NVIDIA MPS would give true multi-process kernel co-residency — but it is **Linux/QNX-only**. MPS Overview r590 (Dec 2025), verbatim: *"MPS is only supported on the Linux and QNX operating systems. The MPS server will fail to start when launched on an operating system other than Linux."*
 - **WSL2:** binaries not shipped, `/dev/nvidiactl` absent (only `/dev/dxg` paravirt). NVIDIA moderator (Apr 2026) confirms WDDM blocks it.
 - **Native Windows 11:** no Windows MPS build exists on any GPU; **TCC** is not available on consumer GeForce (and wouldn't help — MPS is OS-gated, not driver-gated); WDDM only time-slices; MIG is datacenter-only.
 - **Only bare-metal Linux** unlocks MPS on the 5080 — not worth dual-booting (reintroduces the native-Windows `OPENBLAS_NUM_THREADS=1` segfault, and WSL2 is the tuned toolchain). So the substitute for MPS is the in-process **CUDA-streams** lever below, which works identically on WSL2/Windows.
+
+## AWS Batch tuning exception — NVIDIA MPS is available on g6/Linux
+
+The local rejection above does **not** apply to the active AWS Batch tune host:
+g6.xlarge runs Linux on an L4 (`sm_89`). The NN tuner now has a true
+process-backed MPS backend for that environment:
+
+- `src.tuning.launch_tune` defaults Batch tune jobs to
+  `--parallel-backend auto --n-jobs 3`, preserving the outer six-position
+  fan-out (one g6.xlarge per position). The container resolves `auto` through
+  `detect_platform()`: native-Linux L4/g6 -> MPS; Mac/MPS, WSL/native 5080, and
+  non-L4 CUDA hosts -> the existing thread backend.
+- `src.tuning.tune_nn` starts `nvidia-cuda-mps-control` inside the container,
+  launches worker subprocesses via `spawn`, and uses the existing core pool to
+  lease CPU affinity for each whole trial while BLAS stays capped at one thread.
+- Optuna SQLite studies use WAL + a longer busy timeout in MPS mode; S3
+  checkpoints are parent-owned and uploaded from SQLite backup snapshots so
+  concurrent workers do not race the checkpoint file.
+- Batch tune jobs set `FF_CUDA_GRAPH=1`, `FF_DEVICE=cuda`,
+  `FF_AMP_DTYPE=auto`, and `FF_COMPILE=0`. The graph-on study namespace is
+  `scheduler_v2_mps_graph`, separate from eager `scheduler_v2`.
+- K's nested-history attention trainer explicitly no-ops CUDA graph capture;
+  flat-history positions use graph capture, and all six positions can run under
+  the same graph-on tune workflow.
+
+This is tuner-only. Production training keeps the same default graph-off path
+unless an operator explicitly opts into `FF_CUDA_GRAPH=1`.
 
 ---
 

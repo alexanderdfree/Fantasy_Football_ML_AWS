@@ -41,7 +41,7 @@ def test_mode_tune_delegates_to_tune_nn_with_forwarded_args(monkeypatch):
     ):
         train.main()
 
-    mock_assert_gpu.assert_called_once_with("RB")
+    mock_assert_gpu.assert_called_once_with("RB", force=True)
     mock_tune_main.assert_called_once_with()
     # Verify sys.argv was rewritten to the tune CLI shape (tune_nn.main reads
     # it via argparse). --checkpoint-s3 must always be set in Batch dispatch.
@@ -72,6 +72,39 @@ def test_mode_tune_without_n_trials_or_timeout(monkeypatch):
     import sys as _sys
 
     assert _sys.argv == ["tune_nn", "QB", "--checkpoint-s3", "--seed", "42"]
+
+
+def test_mode_tune_forwards_parallel_backend_and_n_jobs(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "train",
+            "--position",
+            "K",
+            "--mode",
+            "tune",
+            "--parallel-backend",
+            "auto",
+            "--n-jobs",
+            "3",
+        ],
+    )
+    with patch("src.batch.train._assert_gpu") as mock_assert_gpu, patch("src.tuning.tune_nn.main"):
+        train.main()
+    import sys as _sys
+
+    mock_assert_gpu.assert_called_once_with("K", force=True)
+    assert _sys.argv == [
+        "tune_nn",
+        "K",
+        "--checkpoint-s3",
+        "--seed",
+        "42",
+        "--parallel-backend",
+        "auto",
+        "--n-jobs",
+        "3",
+    ]
 
 
 @pytest.mark.parametrize(

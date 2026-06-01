@@ -245,6 +245,16 @@ class TestAssertGpu:
             with pytest.raises(RuntimeError, match="REQUIRE_GPU=1"):
                 _assert_gpu("RB")
 
+    def test_force_gpu_assertion_applies_to_cpu_only_positions(self):
+        from src.batch.train import _assert_gpu
+
+        with (
+            mock.patch.dict(os.environ, {"REQUIRE_GPU": "1"}),
+            mock.patch("src.batch.train.torch.cuda.is_available", return_value=False),
+        ):
+            with pytest.raises(RuntimeError, match="REQUIRE_GPU=1"):
+                _assert_gpu("K", force=True)
+
     def test_gpu_position_passes_when_require_gpu_off(self, capsys):
         """REQUIRE_GPU=0 lets GPU positions run on CPU without raising — local
         sanity checks on non-GPU boxes rely on this. The "not CPU-only skip"

@@ -51,14 +51,24 @@ instead of the current
 A `--checkpoint-s3` flag added here will periodically upload the SQLite study
 DB to `s3://$S3_BUCKET/tune_nn/{search-space-version}/{pos}/` and trap SIGTERM
 so a Spot interruption can resume the search on Batch's retry.
+
+The Batch launcher passes `--parallel-backend auto`: native-Linux L4/g6 hosts
+resolve to NVIDIA MPS; Mac/MPS and RTX 5080 local hosts keep the historical
+thread backend unless an operator explicitly forces `--parallel-backend mps`.
 """
 
 import argparse
+import contextlib
 import copy
 import json
+import multiprocessing as mp
 import os
+import shutil
 import signal
+import sqlite3
+import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -68,10 +78,18 @@ from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
 
 from src.config import SPLITS_DIR
+from src.shared.core_pool import ENV_ADDR as _CORE_POOL_ADDR_ENV
+from src.shared.core_pool import ENV_POS as _CORE_POOL_POS_ENV
+from src.shared.core_pool import lease_cores as _lease_cores
+from src.shared.core_pool import start_coordinator as _start_core_pool
+from src.shared.platform_detect import detect_platform
 from src.shared.registry import get_config, get_runner
 from src.tuning.history import append_tuning_run
 from src.tuning.tune_nn_storage import (
-    SEARCH_SPACE_VERSION as _SEARCH_SPACE_VERSION,
+    SEARCH_SPACE_VERSION as _DEFAULT_SEARCH_SPACE_VERSION,
+)
+from src.tuning.tune_nn_storage import (
+    resolve_search_space_version as _resolve_search_space_version,
 )
 from src.tuning.tune_nn_storage import (
     s3_key_prefix as _s3_key_prefix,
@@ -131,6 +149,15 @@ def _ensure_data_from_s3() -> None:
 # "5–10 min locally, 1–2 min on Batch" design figures are stale — remeasure
 # rather than relying on them.
 _DEFAULT_N_TRIALS = 15
+_DEFAULT_PARALLEL_BACKEND = "thread"
+_DEFAULT_N_JOBS = 2
+_DEFAULT_SQLITE_TIMEOUT_SECONDS = 120
+_DEFAULT_CHECKPOINT_INTERVAL_SECONDS = 60
+_AUTO_BACKEND = "auto"
+_MPS_BACKEND = "mps"
+_THREAD_BACKEND = "thread"
+_PARALLEL_BACKENDS = (_THREAD_BACKEND, _MPS_BACKEND, _AUTO_BACKEND)
+_TRUTHY = {"1", "true", "yes", "on"}
 
 # HyperbandPruner: `min_resource` is the minimum epoch count a trial must
 # complete before it's eligible for pruning. We pick 8 to give the trial a
@@ -181,6 +208,139 @@ _SCHEDULER_PARAM_KEYS: dict[str, frozenset[str]] = {
 _TUNED_OVERRIDE_KEYS: frozenset[str] = _BASE_TUNED_OVERRIDE_KEYS | frozenset().union(
     *_SCHEDULER_PARAM_KEYS.values()
 )
+
+
+# ---------------------------------------------------------------------------
+# Storage / process backend helpers
+# ---------------------------------------------------------------------------
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in _TRUTHY
+
+
+def _is_g6_l4_linux(platform_info) -> bool:
+    gpu_name = (platform_info.gpu_name or "").lower()
+    return (
+        platform_info.backend == "cuda"
+        and platform_info.os == "Linux"
+        and not platform_info.is_wsl
+        and (platform_info.compute_capability == (8, 9) or "l4" in gpu_name)
+    )
+
+
+def _resolve_parallel_backend(requested: str) -> str:
+    """Resolve auto without changing local 5080/Mac defaults."""
+    if requested != _AUTO_BACKEND:
+        return requested
+    info = detect_platform()
+    if _is_g6_l4_linux(info):
+        print(f"[tune_nn] parallel backend auto -> mps ({info.summary()})", flush=True)
+        return _MPS_BACKEND
+    print(f"[tune_nn] parallel backend auto -> thread ({info.summary()})", flush=True)
+    return _THREAD_BACKEND
+
+
+def _make_storage(db_path: str, sqlite_timeout: int = _DEFAULT_SQLITE_TIMEOUT_SECONDS):
+    """Optuna RDB storage with a SQLite busy timeout for concurrent workers."""
+    return optuna.storages.RDBStorage(
+        url=f"sqlite:///{db_path}",
+        engine_kwargs={
+            "connect_args": {"timeout": int(sqlite_timeout)},
+            "pool_pre_ping": True,
+        },
+    )
+
+
+def _configure_sqlite_for_parallel(
+    db_path: str, sqlite_timeout: int = _DEFAULT_SQLITE_TIMEOUT_SECONDS
+) -> None:
+    """Make a local SQLite study DB friendlier to multi-process workers."""
+    timeout_ms = int(sqlite_timeout * 1000)
+    conn = sqlite3.connect(db_path, timeout=sqlite_timeout)
+    try:
+        conn.execute(f"PRAGMA busy_timeout={timeout_ms}")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    finally:
+        conn.close()
+
+
+def _study_state_counts(study: optuna.Study) -> dict[str, int]:
+    counts = {state.name.lower(): 0 for state in optuna.trial.TrialState}
+    for trial in study.trials:
+        counts[trial.state.name.lower()] = counts.get(trial.state.name.lower(), 0) + 1
+    counts["total"] = len(study.trials)
+    return counts
+
+
+def _completed_trials(study: optuna.Study) -> int:
+    return _study_state_counts(study).get("complete", 0)
+
+
+def _current_cpu_ids() -> list[int]:
+    with contextlib.suppress(AttributeError, OSError):
+        return sorted(os.sched_getaffinity(0))
+    return list(range(os.cpu_count() or 1))
+
+
+class _NvidiaMPS:
+    """Per-job NVIDIA CUDA MPS daemon wrapper.
+
+    Batch tune jobs run a single container per g6.xlarge. Starting MPS inside
+    that container gives the worker subprocesses one shared CUDA scheduling
+    context without changing the outer six-position AWS Batch fan-out.
+    """
+
+    def __init__(self, enabled: bool):
+        self.enabled = enabled
+        self.pipe_dir: str | None = None
+        self.log_dir: str | None = None
+        self._old_pipe: str | None = None
+        self._old_log: str | None = None
+
+    def __enter__(self):
+        if not self.enabled:
+            return self
+        if shutil.which("nvidia-cuda-mps-control") is None:
+            raise RuntimeError(
+                "parallel-backend=mps requires nvidia-cuda-mps-control in the Batch "
+                "container. Confirm the ECS GPU AMI exposes the NVIDIA MPS utilities."
+            )
+        self.pipe_dir = tempfile.mkdtemp(prefix="ff-mps-pipe-", dir="/tmp")
+        self.log_dir = tempfile.mkdtemp(prefix="ff-mps-log-", dir="/tmp")
+        self._old_pipe = os.environ.get("CUDA_MPS_PIPE_DIRECTORY")
+        self._old_log = os.environ.get("CUDA_MPS_LOG_DIRECTORY")
+        os.environ["CUDA_MPS_PIPE_DIRECTORY"] = self.pipe_dir
+        os.environ["CUDA_MPS_LOG_DIRECTORY"] = self.log_dir
+        subprocess.run(["nvidia-cuda-mps-control", "-d"], check=True)
+        print(f"[mps] started nvidia-cuda-mps-control (pipe={self.pipe_dir})", flush=True)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if not self.enabled:
+            return False
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["nvidia-cuda-mps-control"],
+                input="quit\n",
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        if self._old_pipe is None:
+            os.environ.pop("CUDA_MPS_PIPE_DIRECTORY", None)
+        else:
+            os.environ["CUDA_MPS_PIPE_DIRECTORY"] = self._old_pipe
+        if self._old_log is None:
+            os.environ.pop("CUDA_MPS_LOG_DIRECTORY", None)
+        else:
+            os.environ["CUDA_MPS_LOG_DIRECTORY"] = self._old_log
+        for path in (self.pipe_dir, self.log_dir):
+            if path:
+                shutil.rmtree(path, ignore_errors=True)
+        print("[mps] stopped nvidia-cuda-mps-control", flush=True)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +570,8 @@ def _make_objective(pos: str, base_cfg: dict, seed: int):
 
         cfg["epoch_callback"] = epoch_callback
 
-        result = runner(seed=seed, config=cfg)
+        with _lease_cores("tune_nn_trial", default=None):
+            result = runner(seed=seed, config=cfg)
 
         # Belt + suspenders: prefer the captured trajectory (always present
         # for attention trainers), fall back to the result dict's
@@ -523,6 +684,24 @@ def _trial_to_params(trial: optuna.trial.FrozenTrial) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _sqlite_backup(db_path: str, sqlite_timeout: int = _DEFAULT_SQLITE_TIMEOUT_SECONDS) -> str:
+    """Return a temporary consistent SQLite backup path for S3 upload."""
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(db_path)
+    fd, tmp_path = tempfile.mkstemp(prefix=os.path.basename(db_path) + ".", suffix=".backup")
+    os.close(fd)
+    src = sqlite3.connect(
+        f"file:{os.path.abspath(db_path)}?mode=ro", uri=True, timeout=sqlite_timeout
+    )
+    dst = sqlite3.connect(tmp_path)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    return tmp_path
+
+
 class _S3Checkpoint:
     """Round-trip the Optuna SQLite study DB to S3 so a Spot interruption
     can be resumed on Batch's retry.
@@ -537,7 +716,7 @@ class _S3Checkpoint:
     gives a 2-minute warning that Batch propagates to the container.
     """
 
-    def __init__(self, bucket: str, pos: str, db_path: str):
+    def __init__(self, bucket: str, pos: str, db_path: str, storage_version: str):
         # Local import — boto3 is only required when --checkpoint-s3 is set,
         # so the local CLI form runs without it.
         import boto3
@@ -546,7 +725,7 @@ class _S3Checkpoint:
         self.pos = pos
         self.db_path = db_path
         self.s3 = boto3.client("s3")
-        self.key_prefix = _s3_key_prefix(pos)
+        self.key_prefix = _s3_key_prefix(pos, storage_version)
 
     def _study_key(self) -> str:
         return f"{self.key_prefix}/study.db"
@@ -574,8 +753,13 @@ class _S3Checkpoint:
         if not os.path.exists(self.db_path):
             return
         key = self._study_key()
-        self.s3.upload_file(self.db_path, self.bucket, key)
-        print(f"[checkpoint] uploaded s3://{self.bucket}/{key}")
+        snapshot_path = _sqlite_backup(self.db_path)
+        try:
+            self.s3.upload_file(snapshot_path, self.bucket, key)
+            print(f"[checkpoint] uploaded s3://{self.bucket}/{key}")
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(snapshot_path)
 
     def upload_results(self, results_path: str) -> None:
         if not os.path.exists(results_path):
@@ -620,6 +804,170 @@ def _install_sigterm_handler(checkpoint: "_S3Checkpoint") -> None:
     signal.signal(signal.SIGTERM, _handler)
 
 
+def _create_or_load_study(
+    pos: str,
+    *,
+    storage_version: str,
+    sqlite_timeout: int,
+    base_cfg: dict | None = None,
+    sampler_seed: int = 42,
+) -> optuna.Study:
+    return optuna.create_study(
+        study_name=_study_name(pos, storage_version),
+        storage=_make_storage(_study_db_path(pos, storage_version), sqlite_timeout),
+        load_if_exists=True,
+        direction="minimize",
+        sampler=TPESampler(seed=sampler_seed),
+        pruner=HyperbandPruner(
+            min_resource=_HYPERBAND_MIN_RESOURCE,
+            reduction_factor=_HYPERBAND_REDUCTION_FACTOR,
+            max_resource=int((base_cfg or get_config(pos))["nn_epochs"]),
+        ),
+    )
+
+
+def _mps_worker_entry(
+    pos: str,
+    worker_idx: int,
+    target_completed_trials: int,
+    seed: int,
+    storage_version: str,
+    sqlite_timeout: int,
+    deadline_epoch: float | None,
+    env_overrides: dict[str, str],
+) -> None:
+    os.environ.update(env_overrides)
+    os.environ[_CORE_POOL_POS_ENV] = f"{pos}-tune-{worker_idx}"
+    for key in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ.setdefault(key, "1")
+
+    db_path = _study_db_path(pos, storage_version)
+    _configure_sqlite_for_parallel(db_path, sqlite_timeout)
+    base_cfg = get_config(pos)
+    objective = _make_objective(pos, base_cfg, seed)
+
+    while True:
+        study = _create_or_load_study(
+            pos,
+            storage_version=storage_version,
+            sqlite_timeout=sqlite_timeout,
+            base_cfg=base_cfg,
+            sampler_seed=42 + worker_idx,
+        )
+        if _completed_trials(study) >= target_completed_trials:
+            return
+        timeout = None
+        if deadline_epoch is not None:
+            timeout = max(0.0, deadline_epoch - time.time())
+            if timeout <= 0:
+                return
+        study.optimize(objective, n_trials=1, timeout=timeout, show_progress_bar=False)
+
+
+def _run_mps_optimize(
+    pos: str,
+    *,
+    n_jobs: int,
+    n_trials: int,
+    seed: int,
+    timeout: int | None,
+    storage_version: str,
+    sqlite_timeout: int,
+    checkpoint: "_S3Checkpoint | None",
+    checkpoint_interval: int,
+) -> None:
+    n_jobs = max(1, int(n_jobs))
+    deadline = time.time() + timeout if timeout is not None else None
+    db_path = _study_db_path(pos, storage_version)
+    _configure_sqlite_for_parallel(db_path, sqlite_timeout)
+
+    cpu_ids = _current_cpu_ids()
+    core_pool_dir = tempfile.mkdtemp(prefix="ff-tune-core-pool-", dir="/tmp")
+    core_pool_addr, set_active_count, stop_core_pool = _start_core_pool(cpu_ids, core_pool_dir)
+    set_active_count(n_jobs)
+
+    ctx = mp.get_context("spawn")
+    env_overrides = {
+        _CORE_POOL_ADDR_ENV: core_pool_addr,
+        "FF_DEVICE": os.environ.get("FF_DEVICE", "cuda"),
+        "CUDA_MPS_PIPE_DIRECTORY": os.environ.get("CUDA_MPS_PIPE_DIRECTORY", ""),
+        "CUDA_MPS_LOG_DIRECTORY": os.environ.get("CUDA_MPS_LOG_DIRECTORY", ""),
+    }
+    if "FF_CUDA_GRAPH" in os.environ:
+        env_overrides["FF_CUDA_GRAPH"] = os.environ["FF_CUDA_GRAPH"]
+    if "FF_AMP_DTYPE" in os.environ:
+        env_overrides["FF_AMP_DTYPE"] = os.environ["FF_AMP_DTYPE"]
+    if "FF_COMPILE" in os.environ:
+        env_overrides["FF_COMPILE"] = os.environ["FF_COMPILE"]
+
+    workers = [
+        ctx.Process(
+            target=_mps_worker_entry,
+            args=(
+                pos,
+                idx,
+                n_trials,
+                seed,
+                storage_version,
+                sqlite_timeout,
+                deadline,
+                env_overrides,
+            ),
+            name=f"tune-nn-{pos.lower()}-{idx}",
+        )
+        for idx in range(n_jobs)
+    ]
+
+    print(
+        f"[mps] launching {n_jobs} Optuna worker processes for {pos} "
+        f"(target complete trials={n_trials})",
+        flush=True,
+    )
+    last_checkpoint = time.monotonic()
+    try:
+        for worker in workers:
+            worker.start()
+
+        while True:
+            alive = [worker for worker in workers if worker.is_alive()]
+            failed = [worker for worker in workers if worker.exitcode not in (None, 0)]
+            if failed:
+                for worker in alive:
+                    worker.terminate()
+                raise RuntimeError(
+                    f"{pos}: MPS tune worker failed: "
+                    + ", ".join(f"{w.name} exit={w.exitcode}" for w in failed)
+                )
+
+            now = time.monotonic()
+            if (
+                checkpoint is not None
+                and checkpoint_interval > 0
+                and now - last_checkpoint >= checkpoint_interval
+            ):
+                checkpoint.upload_study_db()
+                last_checkpoint = now
+
+            if not alive:
+                break
+            time.sleep(2.0)
+    finally:
+        for worker in workers:
+            worker.join(timeout=5)
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+        stop_core_pool()
+        shutil.rmtree(core_pool_dir, ignore_errors=True)
+        if checkpoint is not None:
+            checkpoint.upload_study_db()
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -655,12 +1003,41 @@ def main():
     parser.add_argument(
         "--n-jobs",
         type=int,
-        default=2,
+        default=_DEFAULT_N_JOBS,
         help=(
             "Concurrent Optuna trials (thread-based; safe with the SQLite storage). "
             "NN trials are GPU-bound and share the single GPU, so this is bounded by "
             "GPU memory, not CPU cores — default 2 fits a 16 GB card (T4 / RTX 5080); "
             "raising it gives diminishing returns since trials time-slice one GPU."
+        ),
+    )
+    parser.add_argument(
+        "--parallel-backend",
+        choices=list(_PARALLEL_BACKENDS),
+        default=_DEFAULT_PARALLEL_BACKEND,
+        help=(
+            "Trial concurrency backend. 'thread' uses Optuna's in-process n_jobs "
+            "path for local compatibility. 'mps' starts true subprocess workers. "
+            "'auto' resolves to mps only on native-Linux L4/g6 hosts; Mac and "
+            "5080 hosts keep thread mode unless mps is explicitly requested."
+        ),
+    )
+    parser.add_argument(
+        "--sqlite-timeout",
+        type=int,
+        default=_DEFAULT_SQLITE_TIMEOUT_SECONDS,
+        help=(
+            "SQLite busy timeout in seconds for the Optuna study DB. MPS mode uses "
+            "multi-process writers, so keep this high enough to ride out short locks."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=_DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
+        help=(
+            "Seconds between parent-owned S3 checkpoint uploads in MPS mode. "
+            "Thread mode still checkpoints after each trial via Optuna callback."
         ),
     )
     parser.add_argument(
@@ -673,7 +1050,7 @@ def main():
         action="store_true",
         help=(
             "Batch/Spot mode: round-trip the SQLite study DB to "
-            f"s3://$S3_BUCKET/tune_nn/{_SEARCH_SPACE_VERSION}/{{pos}}/study.db "
+            f"s3://$S3_BUCKET/tune_nn/{_DEFAULT_SEARCH_SPACE_VERSION}/{{pos}}/study.db "
             "so a Spot interruption can be resumed on Batch's retry. On startup "
             "we pull the DB if it exists; after each trial completes we "
             "re-upload it; a SIGTERM handler does a final upload before exit. "
@@ -684,6 +1061,13 @@ def main():
     args = parser.parse_args()
 
     positions = [p.upper() for p in args.positions]
+    if args.n_jobs < 1:
+        raise SystemExit("--n-jobs must be >= 1")
+    requested_backend = args.parallel_backend
+    parallel_backend = _resolve_parallel_backend(requested_backend)
+    storage_version = _resolve_search_space_version(
+        parallel_backend, cuda_graph=_env_truthy("FF_CUDA_GRAPH")
+    )
 
     if not args.print_best:
         _ensure_data_from_s3()
@@ -691,12 +1075,15 @@ def main():
     all_results: dict[str, dict] = {}
 
     for pos in positions:
-        study_name = _study_name(pos)
-        db_path = _study_db_path(pos)
+        study_name = _study_name(pos, storage_version)
+        db_path = _study_db_path(pos, storage_version)
 
         if args.print_best:
             try:
-                study = optuna.load_study(study_name=study_name, storage=f"sqlite:///{db_path}")
+                study = optuna.load_study(
+                    study_name=study_name,
+                    storage=_make_storage(db_path, args.sqlite_timeout),
+                )
                 best = _trial_to_params(study.best_trial)
                 print(
                     f"\n{pos} best trial #{study.best_trial.number} "
@@ -723,34 +1110,19 @@ def main():
                     "--checkpoint-s3 requires the S3_BUCKET environment variable "
                     "(matches src/batch/train.py + src/tuning/tune_lgbm.py)."
                 )
-            checkpoint = _S3Checkpoint(bucket, pos, db_path)
+            checkpoint = _S3Checkpoint(bucket, pos, db_path, storage_version)
             checkpoint.download_study_db()
             _install_sigterm_handler(checkpoint)
 
         t0 = time.time()
-        study = optuna.create_study(
-            study_name=study_name,
-            storage=f"sqlite:///{db_path}",
-            load_if_exists=True,
-            direction="minimize",
-            # The literal 42 here is the SAMPLER's reproducibility seed —
-            # fixed so two invocations with the same n_trials propose the
-            # same trials in the same order. Deliberately INDEPENDENT from
-            # ``args.seed`` (the pipeline seed, also 42 by default but
-            # caller-controllable): pipeline seed affects ML training
-            # determinism inside a trial; sampler seed affects which trials
-            # get explored. Changing the pipeline seed shouldn't reshuffle
-            # the search trajectory.
-            sampler=TPESampler(seed=42),
-            pruner=HyperbandPruner(
-                min_resource=_HYPERBAND_MIN_RESOURCE,
-                reduction_factor=_HYPERBAND_REDUCTION_FACTOR,
-                # Pin to the cfg's epoch ceiling so an early-stopped trial 1
-                # can't establish a too-low rung ladder for the rest of the
-                # search (see _HYPERBAND_MIN_RESOURCE comment).
-                max_resource=int(base_cfg["nn_epochs"]),
-            ),
+        study = _create_or_load_study(
+            pos,
+            storage_version=storage_version,
+            sqlite_timeout=args.sqlite_timeout,
+            base_cfg=base_cfg,
         )
+        if parallel_backend == _MPS_BACKEND:
+            _configure_sqlite_for_parallel(db_path, args.sqlite_timeout)
 
         completed = sum(1 for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE)
         remaining = max(0, args.n_trials - completed)
@@ -770,31 +1142,57 @@ def main():
             f"  Tuning {pos} attention NN — {completed}/{args.n_trials} done, "
             f"running {remaining} more"
         )
+        print(
+            f"  backend={parallel_backend} requested_backend={requested_backend} n_jobs={args.n_jobs} "
+            f"storage={storage_version} cuda_graph={_env_truthy('FF_CUDA_GRAPH')}"
+        )
         print(f"{'=' * 70}")
 
         if remaining > 0:
-            study.optimize(
-                objective,
-                n_trials=remaining,
-                timeout=args.timeout,
-                show_progress_bar=True,
-                # Concurrent-trial count via --n-jobs (default 2). Trials are
-                # attention-NN-only (Ridge / base NN / LGBM skipped via the cfg
-                # overrides in _make_objective), so the CPU branch is idle and a
-                # 16 GB card (T4 / RTX 5080) easily holds two small attention
-                # models. NN trials are GPU-bound and time-slice the single GPU,
-                # so raising --n-jobs is bounded by GPU memory, not CPU cores;
-                # above ~2-3 risks CPU-side contention from FE / data loading.
-                n_jobs=args.n_jobs,
-                callbacks=callbacks,
-            )
+            if parallel_backend == _MPS_BACKEND:
+                with _NvidiaMPS(enabled=True):
+                    _run_mps_optimize(
+                        pos,
+                        n_jobs=args.n_jobs,
+                        n_trials=args.n_trials,
+                        seed=args.seed,
+                        timeout=args.timeout,
+                        storage_version=storage_version,
+                        sqlite_timeout=args.sqlite_timeout,
+                        checkpoint=checkpoint,
+                        checkpoint_interval=args.checkpoint_interval,
+                    )
+                study = _create_or_load_study(
+                    pos,
+                    storage_version=storage_version,
+                    sqlite_timeout=args.sqlite_timeout,
+                    base_cfg=base_cfg,
+                )
+            else:
+                study.optimize(
+                    objective,
+                    n_trials=remaining,
+                    timeout=args.timeout,
+                    show_progress_bar=True,
+                    # Concurrent-trial count via --n-jobs (default 2). Trials are
+                    # attention-NN-only (Ridge / base NN / LGBM skipped via the cfg
+                    # overrides in _make_objective), so the CPU branch is idle and a
+                    # 16 GB card (T4 / RTX 5080) easily holds two small attention
+                    # models. NN trials are GPU-bound and time-slice the single GPU,
+                    # so raising --n-jobs is bounded by GPU memory, not CPU cores;
+                    # above ~2-3 risks CPU-side contention from FE / data loading.
+                    n_jobs=args.n_jobs,
+                    callbacks=callbacks,
+                )
         else:
             print(f"[{pos}] all {args.n_trials} trials already completed; skipping optimize()")
 
         elapsed = time.time() - t0
         best = _trial_to_params(study.best_trial)
+        state_counts = _study_state_counts(study)
         print(f"\n{pos} tuning complete in {elapsed:.0f}s")
         print(f"  Best trial #{study.best_trial.number}: val_loss = {study.best_value:.4f}")
+        print(f"  Trial states: {state_counts}")
         print(f"\n{_format_config_lines(pos, best)}")
 
         all_results[pos] = {
@@ -802,6 +1200,12 @@ def main():
             "best_val_loss": study.best_value,
             "best_params": best,
             "n_trials": len(study.trials),
+            "trial_state_counts": state_counts,
+            "storage_version": storage_version,
+            "parallel_backend": parallel_backend,
+            "requested_parallel_backend": requested_backend,
+            "n_jobs": args.n_jobs,
+            "cuda_graph": _env_truthy("FF_CUDA_GRAPH"),
             "elapsed_seconds": round(elapsed, 1),
         }
 

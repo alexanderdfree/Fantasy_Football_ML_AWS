@@ -184,7 +184,7 @@ def _stop_nvidia_smi_sidecar(proc: subprocess.Popen | None) -> None:
     print(f"[gpu-profile] sidecar pid={proc.pid} stopped")
 
 
-def _assert_gpu(position: str):
+def _assert_gpu(position: str, *, force: bool = False):
     """Log GPU status and fail fast if REQUIRE_GPU=1 and CUDA is unavailable.
 
     This catches the silent-CPU-on-GPU-billed-instance failure mode where
@@ -200,7 +200,7 @@ def _assert_gpu(position: str):
     if available:
         print(f"[gpu] device count              = {torch.cuda.device_count()}")
         print(f"[gpu] device 0 name             = {torch.cuda.get_device_name(0)}")
-    if is_cpu_only(position):
+    if is_cpu_only(position) and not force:
         print(f"[gpu] {position} is CPU-only; skipping REQUIRE_GPU assertion")
         return
     require_gpu = os.environ.get("REQUIRE_GPU", "1") == "1"
@@ -637,6 +637,18 @@ def main():
         default=None,
         help="(--mode=tune only) Per-position wall-clock cap in seconds.",
     )
+    parser.add_argument(
+        "--parallel-backend",
+        choices=["thread", "mps", "auto"],
+        default=None,
+        help="(--mode=tune only) Trial concurrency backend forwarded to src.tuning.tune_nn.",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=None,
+        help="(--mode=tune only) Concurrent trial workers forwarded to src.tuning.tune_nn.",
+    )
     args = parser.parse_args()
 
     pos = args.position
@@ -661,12 +673,16 @@ def main():
             tune_argv += ["--n-trials", str(args.n_trials)]
         if args.timeout is not None:
             tune_argv += ["--timeout", str(args.timeout)]
+        if args.parallel_backend is not None:
+            tune_argv += ["--parallel-backend", args.parallel_backend]
+        if args.n_jobs is not None:
+            tune_argv += ["--n-jobs", str(args.n_jobs)]
         # _assert_gpu and seed_everything below are training-path setup; tune
         # mode handles its own seeding inside tune_nn.main(). But REQUIRE_GPU
         # still matters — attention training is the bulk of each trial. Run
         # _assert_gpu here so a misconfigured GPU job fails before Optuna
         # spends 10 minutes per CPU-bound trial.
-        _assert_gpu(pos)
+        _assert_gpu(pos, force=True)
         sys.argv = tune_argv
         tune_nn.main()
         return

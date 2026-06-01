@@ -3,9 +3,10 @@ name: Retune NN on Batch (Spot)
 # Manually-triggered Optuna sweep of the attention-NN hyperparameters across
 # all six positions. Mirrors train-batch.yml's per-position fan-out — one
 # Spot g6.xlarge per position via AWS Batch, saturating the 24-vCPU Spot
-# G+VT quota (4 vCPU × 6 positions = 24 vCPU). NN training is GPU-bound;
-# running multiple trials on the same GPU would oversubscribe, so each
-# container does Optuna n_jobs=1.
+# G+VT quota (4 vCPU × 6 positions = 24 vCPU). Inside each position job, the
+# tuner passes --parallel-backend auto; inside the g6/L4 Linux container the
+# detect-platform path resolves that to NVIDIA CUDA MPS. Default is 3 workers
+# plus FF_CUDA_GRAPH=1.
 #
 # NO ECS refresh, NO benchmark_history commit: tuning produces config
 # *recommendations* (printed as paste-ready QB_ATTN_* / QB_NN_* constants),
@@ -25,6 +26,15 @@ on:
       timeout_seconds:
         description: "Per-position wall-clock cap in seconds (blank = no cap; Batch wait timeout still applies)"
         default: ""
+      mps_workers:
+        description: "Concurrent MPS worker processes per Batch GPU"
+        default: "3"
+      cuda_graph:
+        description: "Enable FF_CUDA_GRAPH for Batch tuning (true/false)"
+        default: "true"
+      attempt_timeout_seconds:
+        description: "AWS Batch attempt timeout in seconds"
+        default: "7200"
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -68,6 +78,14 @@ jobs:
           if [ "$N_TRIALS" -gt 100 ]; then
             echo "n_trials=$N_TRIALS exceeds the 100-trials-per-position ceiling" >&2
             echo "(probable operator typo; bump the ceiling in this workflow if you really want it)" >&2
+            exit 1
+          fi
+          if ! [[ "${{ github.event.inputs.mps_workers }}" =~ ^[0-9]+$ ]] || [ "${{ github.event.inputs.mps_workers }}" -lt 1 ]; then
+            echo "mps_workers must be a positive integer" >&2
+            exit 1
+          fi
+          if ! [[ "${{ github.event.inputs.attempt_timeout_seconds }}" =~ ^[0-9]+$ ]] || [ "${{ github.event.inputs.attempt_timeout_seconds }}" -lt 60 ]; then
+            echo "attempt_timeout_seconds must be an integer >= 60" >&2
             exit 1
           fi
           MATRIX=$(printf '%s\n' "$POS_LIST" | jq -Rc 'split(" ") | map(select(length > 0))')
@@ -119,9 +137,12 @@ jobs:
           POS: ${{ matrix.position }}
           N_TRIALS: ${{ github.event.inputs.n_trials }}
           TIMEOUT_SECONDS: ${{ github.event.inputs.timeout_seconds }}
+          MPS_WORKERS: ${{ github.event.inputs.mps_workers }}
+          CUDA_GRAPH: ${{ github.event.inputs.cuda_graph }}
+          ATTEMPT_TIMEOUT_SECONDS: ${{ github.event.inputs.attempt_timeout_seconds }}
         run: |
           set -eu
-          ARGS="--positions $POS --n-trials $N_TRIALS"
+          ARGS="--positions $POS --n-trials $N_TRIALS --parallel-backend auto --n-jobs $MPS_WORKERS --cuda-graph $CUDA_GRAPH --attempt-timeout $ATTEMPT_TIMEOUT_SECONDS"
           if [ -n "$TIMEOUT_SECONDS" ]; then
             ARGS="$ARGS --timeout $TIMEOUT_SECONDS"
           fi
@@ -162,8 +183,13 @@ jobs:
       - name: Aggregate per-position results from S3
         env:
           POSITIONS: ${{ needs.parse.outputs.positions }}
+          CUDA_GRAPH: ${{ github.event.inputs.cuda_graph }}
         run: |
           set -eu
+          STORAGE_VERSION="scheduler_v2_mps"
+          case "$(printf '%s' "$CUDA_GRAPH" | tr '[:upper:]' '[:lower:]')" in
+            1|true|yes|on) STORAGE_VERSION="scheduler_v2_mps_graph" ;;
+          esac
           mkdir -p tune_results
           # $POSITIONS is intentionally unquoted — argparse `nargs="+"` needs
           # the values as separate argv entries (e.g. "QB" "RB" "WR"), and
@@ -173,6 +199,7 @@ jobs:
           python -m src.tuning.aggregate_results \
             --positions $POSITIONS \
             --bucket "$S3_BUCKET" \
+            --search-space-version "$STORAGE_VERSION" \
             --local-dir ./tune_results \
             --output tune_nn_results.json \
             --summary-output "$GITHUB_STEP_SUMMARY"

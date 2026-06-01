@@ -135,7 +135,9 @@ def test_download_skips_404(tmp_path, capsys):
     fake_s3.download_file = _download
 
     with patch("boto3.client", return_value=fake_s3):
-        paths = aggregate_results._download_from_s3("bucket", ["QB", "RB"], str(tmp_path))
+        paths = aggregate_results._download_from_s3(
+            "bucket", ["QB", "RB"], str(tmp_path), "scheduler_v2"
+        )
     assert len(paths) == 1
     assert "rb" in paths[0]
     assert calls == [
@@ -144,6 +146,25 @@ def test_download_skips_404(tmp_path, capsys):
     ]
     out = capsys.readouterr().out
     assert "no results at s3" in out
+
+
+def test_download_from_s3_uses_requested_search_space_version(tmp_path):
+    fake_s3 = type("FakeS3", (), {})()
+    calls = []
+
+    def _download(bucket, key, local_path):
+        calls.append(key)
+        with open(local_path, "w") as f:
+            json.dump({"QB": {"best_val_loss": 1.0}}, f)
+
+    fake_s3.download_file = _download
+
+    with patch("boto3.client", return_value=fake_s3):
+        aggregate_results._download_from_s3(
+            "bucket", ["QB"], str(tmp_path), "scheduler_v2_mps_graph"
+        )
+
+    assert calls == ["tune_nn/scheduler_v2_mps_graph/qb/results.json"]
 
 
 def test_aggregate_defaults_cover_all_attention_positions():

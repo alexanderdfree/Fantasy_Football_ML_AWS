@@ -1436,6 +1436,17 @@ class MultiHeadNestedHistoryTrainer(MultiHeadTrainer):
     and feeds it through to the model as ``x_game_history``.
     """
 
+    def _maybe_graph_model(self, train_loader) -> None:
+        """Nested K-style attention intentionally stays eager under FF_CUDA_GRAPH.
+
+        The generic graph wrapper only supports positional tensor arguments.
+        This trainer calls the model with the optional ``x_game_history`` kwarg,
+        and Batch tune jobs enable FF_CUDA_GRAPH globally across all six
+        positions. Treat nested history as an explicit no-op so K tuning runs
+        correctly while the flat-history positions use graph capture.
+        """
+        return
+
     def _forward_batch(self, batch) -> tuple[dict, dict]:
         if len(batch) == 5:
             X_static, X_kicks, outer_mask, inner_mask, y_batch = batch
