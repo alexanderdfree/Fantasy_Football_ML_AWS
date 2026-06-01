@@ -101,9 +101,11 @@ def _make_cfg(
 
     sched_type = cfg.get("scheduler_type")
     if sched_type == "onecycle" and "onecycle_max_lr" in cfg:
-        cfg["attn_onecycle_max_lr"] = float(cfg["onecycle_max_lr"]) * variant.lr_scale
+        base_max_lr = cfg.get("attn_onecycle_max_lr", cfg["onecycle_max_lr"])
+        cfg["attn_onecycle_max_lr"] = float(base_max_lr) * variant.lr_scale
     elif sched_type == "cosine_warm_restarts" and "cosine_eta_min" in cfg:
-        cfg["attn_cosine_eta_min"] = float(cfg["cosine_eta_min"]) * variant.lr_scale
+        base_eta_min = cfg.get("attn_cosine_eta_min", cfg["cosine_eta_min"])
+        cfg["attn_cosine_eta_min"] = float(base_eta_min) * variant.lr_scale
 
     cfg["train_attention_nn"] = True
     cfg["train_base_nn"] = False

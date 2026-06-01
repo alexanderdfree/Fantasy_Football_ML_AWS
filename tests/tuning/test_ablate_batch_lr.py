@@ -87,6 +87,19 @@ def test_make_cfg_scales_onecycle_max_lr():
     assert meta["effective_scheduler"]["attn_onecycle_max_lr"] == pytest.approx(4e-3)
 
 
+def test_make_cfg_preserves_attention_scheduler_override_as_baseline():
+    cfg, meta = abl._make_cfg(
+        _base_cfg(attn_cosine_eta_min=2e-5),
+        abl.VARIANTS["baseline"],
+        ridge_sentinel=False,
+    )
+
+    assert cfg["cosine_eta_min"] == pytest.approx(1e-5)
+    assert cfg["attn_cosine_eta_min"] == pytest.approx(2e-5)
+    assert meta["base_scheduler"]["attn_cosine_eta_min"] == pytest.approx(2e-5)
+    assert meta["effective_scheduler"]["attn_cosine_eta_min"] == pytest.approx(2e-5)
+
+
 def test_build_jobs_adds_one_seed_ridge_preflight(monkeypatch):
     monkeypatch.setattr(abl, "get_config", lambda position: _base_cfg())
 
