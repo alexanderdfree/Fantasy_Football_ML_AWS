@@ -199,6 +199,68 @@ def test_record_and_sync_no_sync_skips_s3(tmp_path, monkeypatch):
     assert called == []
 
 
+def test_run_worker_rolling_origin_uses_rolling_runner(tmp_path, monkeypatch):
+    calls = []
+
+    def _fake_rolling_origin(pos):
+        calls.append(pos)
+        return {
+            "position": pos,
+            "ridge_mae": 4.5,
+            "rolling_origin": {"test_seasons": [2025], "n_origins": 1},
+        }
+
+    monkeypatch.setattr(pt, "run_rolling_origin", _fake_rolling_origin)
+    monkeypatch.setattr(pt, "run_one", lambda *a, **k: pytest.fail("run_one must not handle --cv"))
+
+    out_path = tmp_path / "RB.json"
+    rc = pt._run_worker("RB", str(out_path), rolling_origin=True, significance=True)
+
+    assert rc == 0
+    assert calls == ["RB"]
+    assert json.loads(out_path.read_text()) == {
+        "position": "RB",
+        "ridge_mae": 4.5,
+        "rolling_origin": {"test_seasons": [2025], "n_origins": 1},
+    }
+
+
+def test_record_and_sync_rolling_origin_marks_history(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    captured = {}
+    printed_rolling = []
+
+    monkeypatch.setattr(pt, "_print_rolling_origin_table", lambda s: printed_rolling.append(s))
+    monkeypatch.setattr(pt, "print_comparison_table", lambda *a, **k: None)
+    monkeypatch.setattr(pt, "print_history_comparison", lambda *a, **k: None)
+    monkeypatch.setattr(pt, "collect_global_config", lambda: {})
+    monkeypatch.setattr(pt, "collect_pos_config", lambda p: {})
+    monkeypatch.setattr(pt, "get_git_hash", lambda: "abc1234")
+    monkeypatch.setattr(pt, "utc_now_iso", lambda: "2026-06-01T00:00:00")
+    monkeypatch.setattr(pt, "_maybe_upload_to_s3", lambda p: pytest.fail("unexpected S3 sync"))
+
+    def _fake_append(history_dir, entry):
+        captured["entry"] = entry
+        return f"{history_dir}/{entry['run_id']}.json"
+
+    monkeypatch.setattr(pt, "append_to_history", _fake_append)
+
+    summary = _fake_summary("RB", 4.5)
+    summary["rolling_origin"] = {"test_seasons": [2025], "n_origins": 1}
+    pt._record_and_sync(
+        [summary],
+        ["RB"],
+        note="rolling run",
+        no_sync=True,
+        total_wall_sec=42.0,
+        rolling_origin=True,
+    )
+
+    assert printed_rolling == [[summary]]
+    assert captured["entry"]["mode"] == "rolling_origin"
+    assert captured["entry"]["results"] == [summary]
+
+
 # ----------------------------------------------------------------------- dry run
 
 
@@ -215,3 +277,67 @@ def test_dry_run_launches_nothing(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "dry-run" in out
     assert "QB" in out and "K" in out
+
+
+def test_main_cv_alias_routes_parallel_runner_to_rolling_origin(monkeypatch, capsys):
+    captured = {}
+
+    def _fake_orchestrate(positions, jobs, passthrough, note, no_sync, dry_run, rolling_origin):
+        captured.update(
+            {
+                "positions": positions,
+                "jobs": jobs,
+                "passthrough": passthrough,
+                "note": note,
+                "no_sync": no_sync,
+                "dry_run": dry_run,
+                "rolling_origin": rolling_origin,
+            }
+        )
+        return 0
+
+    monkeypatch.setattr(pt, "_default_jobs", lambda n: 1)
+    monkeypatch.setattr(pt, "orchestrate", _fake_orchestrate)
+
+    rc = pt.main(["QB", "--cv", "--dry-run", "--note", "check", "--no-sync"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "DEPRECATED: parallel_train --cv now aliases --rolling-origin" in out
+    assert captured == {
+        "positions": ["QB"],
+        "jobs": 1,
+        "passthrough": ["--rolling-origin"],
+        "note": "check",
+        "no_sync": True,
+        "dry_run": True,
+        "rolling_origin": True,
+    }
+
+
+def test_main_rolling_origin_with_cv_runs_once_without_deprecation(monkeypatch, capsys):
+    captured = {}
+
+    def _fake_orchestrate(positions, jobs, passthrough, note, no_sync, dry_run, rolling_origin):
+        captured.update(
+            {
+                "positions": positions,
+                "passthrough": passthrough,
+                "rolling_origin": rolling_origin,
+            }
+        )
+        return 0
+
+    monkeypatch.setattr(pt, "_default_jobs", lambda n: 1)
+    monkeypatch.setattr(pt, "orchestrate", _fake_orchestrate)
+
+    rc = pt.main(["RB", "--rolling-origin", "--cv"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "DEPRECATED" not in out
+    assert captured == {
+        "positions": ["RB"],
+        "passthrough": ["--rolling-origin"],
+        "rolling_origin": True,
+    }

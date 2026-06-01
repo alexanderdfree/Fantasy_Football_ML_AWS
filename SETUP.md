@@ -221,6 +221,7 @@ source scripts/wsl-env.sh
 scripts/train-local-parallel.sh            # all 6, concurrency autodetected
 scripts/train-local-parallel.sh QB RB WR   # a subset
 scripts/train-local-parallel.sh -j 4       # cap concurrency
+scripts/train-local-parallel.sh --rolling-origin  # walk-forward report
 scripts/train-local-parallel.sh --dry-run  # print the core plan, launch nothing
 scripts/train-local-parallel.sh --no-sync  # don't mirror to the website
 ```

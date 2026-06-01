@@ -15,6 +15,7 @@
 #   scripts/train-local-parallel.sh                 # all 6, concurrency autodetected
 #   scripts/train-local-parallel.sh QB RB WR        # subset
 #   scripts/train-local-parallel.sh -j 4            # cap concurrency
+#   scripts/train-local-parallel.sh --rolling-origin # walk-forward report
 #   scripts/train-local-parallel.sh --dry-run       # show the plan, launch nothing
 #   scripts/train-local-parallel.sh --no-sync       # don't touch the website
 #
