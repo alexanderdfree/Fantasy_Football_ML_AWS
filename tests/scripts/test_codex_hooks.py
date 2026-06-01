@@ -165,6 +165,7 @@ def _matcher_result(command: str) -> bool:
     [
         "gh pr create --fill",
         "GH_TOKEN=example gh pr create --fill",
+        "env GH_TOKEN=example gh pr create --fill",
         "git status --short && gh pr create --fill",
         "/opt/homebrew/bin/gh pr create --fill",
     ],
@@ -403,6 +404,33 @@ class TestCodexHooks:
             assert result.stdout == ""
             assert result.stderr == ""
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "/opt/homebrew/bin/gh pr create --fill",
+            "env GH_TOKEN=example gh pr create --fill",
+        ],
+    )
+    def test_pre_pr_hook_normalizes_delegated_pr_create_command(
+        self, git_worktree_pair: tuple[Path, Path], tmp_path: Path, command: str
+    ):
+        _, worktree = git_worktree_pair
+        marker = tmp_path / "delegated-input.json"
+        fake_hook = worktree / ".claude/hooks/pre-pr.sh"
+        fake_hook.parent.mkdir(parents=True)
+        fake_hook.write_text(f"#!/bin/sh\ncat > {marker}\nexit 43\n")
+        fake_hook.chmod(0o755)
+
+        result = _run_hook(
+            ".codex/hooks/pre-pr.sh",
+            {"cwd": str(worktree), "tool_input": {"command": command}},
+            worktree,
+        )
+
+        assert result.returncode == 43
+        delegated_payload = json.loads(marker.read_text())
+        assert delegated_payload["tool_input"]["command"] == "gh pr create"
+
     def test_post_pr_hook_ignores_non_pr_create_commands(self):
         for command in (
             "git status --short",
@@ -421,10 +449,17 @@ class TestCodexHooks:
             assert result.stdout == ""
             assert result.stderr == ""
 
-    def test_post_pr_hook_injects_compact_codex_review_workflow(self):
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "gh pr create --fill",
+            "env GH_TOKEN=example gh pr create --fill",
+        ],
+    )
+    def test_post_pr_hook_injects_compact_codex_review_workflow(self, command: str):
         result = _run_hook(
             ".codex/hooks/post-pr-create.sh",
-            {"cwd": str(PROJECT_ROOT), "tool_input": {"command": "gh pr create --fill"}},
+            {"cwd": str(PROJECT_ROOT), "tool_input": {"command": command}},
             PROJECT_ROOT,
         )
 

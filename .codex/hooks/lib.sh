@@ -77,6 +77,30 @@ codex_pr_create_segment_matches() {
     idx=$((idx + 1))
   done
 
+  if [ "$idx" -lt "${#words[@]}" ]; then
+    case "${words[$idx]}" in
+      env | */env)
+        idx=$((idx + 1))
+        while [ "$idx" -lt "${#words[@]}" ]; do
+          case "${words[$idx]}" in
+            -u | --unset | -C | --chdir | -S | --split-string)
+              idx=$((idx + 2))
+              ;;
+            -*)
+              idx=$((idx + 1))
+              ;;
+            *=*)
+              idx=$((idx + 1))
+              ;;
+            *)
+              break
+              ;;
+          esac
+        done
+        ;;
+    esac
+  fi
+
   if [ $((idx + 2)) -ge "${#words[@]}" ]; then
     return 1
   fi

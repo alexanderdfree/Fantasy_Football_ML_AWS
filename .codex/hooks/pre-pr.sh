@@ -19,7 +19,9 @@ export CLAUDE_PROJECT_DIR="$root"
 export CODEX_PRE_PR_WRAPPER=1
 
 if [ -x "$root/.claude/hooks/pre-pr.sh" ]; then
-  printf '%s' "$input" | "$root/.claude/hooks/pre-pr.sh"
+  printf '%s' "$input" \
+    | "$jq_bin" '.tool_input.command = "gh pr create"' \
+    | "$root/.claude/hooks/pre-pr.sh"
   exit $?
 fi
 
