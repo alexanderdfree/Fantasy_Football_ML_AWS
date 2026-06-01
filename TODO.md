@@ -8,6 +8,12 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 
 ## Open
 
+### [PRIORITY] Verify Codex static model catalog for 1M WSL local context
+- **Note:** [todo/codex_static_model_catalog_1m_priority.md](todo/codex_static_model_catalog_1m_priority.md) - community-documented `model_catalog_json` workaround, WSL pickup steps, and caveats.
+- **What:** Research found a Codex config key that points startup at a static model catalog JSON, reportedly bypassing the upstream metadata refresh that can restore `gpt-5.5`'s `max_context_window = 272000`. The handoff is to clone `~/.codex/models_cache.json`, set the target model window fields to `1000000`, add `model_catalog_json = "/home/alex/.codex/my_catalog.json"` to WSL `~/.codex/config.toml`, then restart and verify the local accounting survives.
+- **Caveat:** Community workaround only, not an official OpenAI guarantee; the backend may still reject or truncate calls even if local Codex accounting accepts 1M tokens.
+- **Status:** Research note only. Do not commit machine-local Codex config/cache files.
+
 ### [PRIORITY] Extend NN Optuna grid: add batch-size rung 1024 + widen LR ceiling
 - **Plan doc:** [todo/increase_batch_size_plan_priority.md](todo/increase_batch_size_plan_priority.md) — full rationale (VRAM math, per-position steps/epoch + drop_last table, accepted consequences). Read it before starting.
 - **File(s):** [src/tuning/tune_nn.py](src/tuning/tune_nn.py) `_sample_overrides` (lines ~179–186); [tests/tuning/test_tune_nn.py](tests/tuning/test_tune_nn.py) (assertions at lines 105, 107, 109, 110).
