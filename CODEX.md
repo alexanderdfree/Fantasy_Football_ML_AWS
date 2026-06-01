@@ -12,7 +12,7 @@ Codex loads project hooks from `.codex/hooks.json` when the project is trusted. 
 - `.codex/hooks/guard-worktree-path.sh` blocks `apply_patch`/edit-style tool calls that target the main checkout while Codex is running in a worktree.
 - `.codex/hooks/ruff-format.sh` formats touched Python files after `apply_patch`.
 - `.codex/hooks/pre-pr.sh` wraps the repo's existing `.claude/hooks/pre-pr.sh` with `CLAUDE_PROJECT_DIR` set to the Codex project root, so the deterministic PR gate stays single-sourced.
-- `.codex/hooks/post-pr-create.sh` emits a compact pointer to the prompt-backed post-PR review/CI/merge workflow after `gh pr create`.
+- `.codex/hooks/post-pr-create.sh` emits a compact pointer to the prompt-backed post-PR review/CI/merge workflow after `gh pr create`; the workflow runs `scripts/codex-review-quiet.sh` so Codex/plugin loader warnings do not flood the chat context.
 - `.codex/hooks/memory-sync-stop.sh` runs a best-effort `scripts/agent-memory-sync.sh all push` on `Stop`, pushing changed local Claude/Codex memory trees to their separate S3 prefixes.
 
 Known limitation: Codex hooks are guardrails, not a complete enforcement boundary. They cover `apply_patch`, simple Bash hook events, and MCP calls that Codex exposes to hooks; they do not reliably intercept every possible shell-side file write. Keep using `apply_patch` for edits.
@@ -52,7 +52,7 @@ OpenAI now marks custom prompts deprecated in favor of skills, but prompts are s
 - Claude has project-local slash skills under `.claude/skills/`; Codex custom prompts only load from `$CODEX_HOME/prompts`, so the repo tracks templates plus a bootstrap installer.
 - Claude's `SessionStart` can mutate the remote session environment through `CLAUDE_ENV_FILE`; Codex hooks can add context but cannot persist `VIRTUAL_ENV`, `PATH`, `PYTHONPATH`, or a new working directory for later shell tools.
 - Claude's worktree guard sees explicit `file_path` fields from Edit/Write tools. Codex primarily edits through `apply_patch`, so the guard parses patch headers and does not attempt broad Bash write detection.
-- Claude's `/review` skill is an interactive tool. Codex's closest local equivalent is `codex review --base origin/main`.
+- Claude's `/review` skill is an interactive tool. Codex's closest local equivalent is `scripts/codex-review-quiet.sh --base origin/main`, a wrapper around `codex review` that filters known loader-warning noise.
 - Claude's scheduled audit routine is a claude.ai cloud routine. Codex has no matching scheduled local routine in this repo yet; Codex can consume the resulting `claude-audit` issue backlog through `/prompts:solve-issues`.
 
 ## Auto-memory

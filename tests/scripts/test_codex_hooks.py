@@ -189,6 +189,38 @@ def test_pr_create_matcher_rejects_quoted_or_argument_text(command: str):
     assert not _matcher_result(command)
 
 
+def test_codex_review_quiet_filters_known_loader_noise(tmp_path: Path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_codex = fake_bin / "codex"
+    fake_codex.write_text(
+        """#!/bin/sh
+printf '%s\\n' 'review finding'
+printf '%s\\n' "2026-06-01T07:56:46Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/" >&2
+printf '%s\\n' "2026-06-01T07:56:46Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/" >&2
+printf '%s\\n' "2026-06-01T07:56:46Z ERROR codex_core::session::session: failed to load skill /tmp/SKILL.md: invalid name: exceeds maximum length of 64 characters" >&2
+printf '%s\\n' 'real stderr problem' >&2
+exit 7
+"""
+    )
+    fake_codex.chmod(0o755)
+
+    env = {**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"}
+    result = subprocess.run(
+        [str(PROJECT_ROOT / "scripts/codex-review-quiet.sh"), "--base", "origin/main"],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 7
+    assert result.stdout == "review finding\n"
+    assert "real stderr problem" in result.stderr
+    assert "codex_core_skills::loader" not in result.stderr
+    assert "failed to load skill" not in result.stderr
+
+
 def test_codex_json_context_uses_resolved_jq_path(tmp_path: Path):
     fake_jq = tmp_path / "jq-not-on-path"
     fake_jq.write_text(
@@ -468,7 +500,7 @@ class TestCodexHooks:
         assert context["hookEventName"] == "PostToolUse"
         additional_context = context["additionalContext"]
         assert "post-pr-followup" in additional_context
-        assert "codex review --base origin/main" in additional_context
+        assert "scripts/codex-review-quiet.sh --base origin/main" in additional_context
         assert "audit/tier explicit merge sign-off" in additional_context
         assert "post-session-critique" in additional_context
         assert "Run this Codex post-create workflow now, in order" not in additional_context
