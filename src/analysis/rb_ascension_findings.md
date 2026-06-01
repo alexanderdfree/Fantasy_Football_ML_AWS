@@ -1,9 +1,9 @@
 # RB models vs backups ascending into a workhorse role
 
 **Date:** 2026-05-30 · **Verdict: structural blind spot — the model reacts, it cannot anticipate.**
-**Reproduce:** `python -m src.analysis.rb_ascension` (data-only; no splits/torch).
-Literal per-model MAE/bias on the cohort: `python -m src.analysis.rb_ascension --with-model-error`
-(runs the RB pipeline; not run for this writeup).
+**Reproduce:** `python -m src.analysis.cohort_analysis ascension --deep-dive` (data-only; no splits/torch).
+Literal per-model MAE/bias on the cohort: `python -m src.analysis.cohort_analysis ascension --positions RB --with-model-error`
+(runs the RB pipeline).
 
 ## The question
 
@@ -22,6 +22,25 @@ targets) over the prior 3 games who posts **≥ 18 opportunities** in week W.
 with the team's prior lead RB being Out/Doubtful or inactive** (the rest: committee
 shake-ups, ejections, game-script). ~1% of RB-weeks (≈3% of startable) — small
 enough that any fix is invisible in aggregate MAE (see Honest note).
+
+## Literal model undershoot on the 2025 test cohort
+
+Measured 2026-06-01 with the production RB pipeline and the corrected ascension
+label (`min_prior_games=2`, so season openers are not counted as backup-to-workhorse
+events). The test cohort is **14 RB games**. Every model under-predicts every
+ascension row, so MAE and absolute signed bias are identical:
+
+| Model | Ascension N | Ascension MAE | Ascension bias | Established MAE | ΔMAE vs global |
+|---|---:|---:|---:|---:|---:|
+| Ridge | 14 | 11.846 | −11.846 | 4.181 | +7.600 |
+| NN | 14 | 12.096 | −12.096 | 3.992 | +8.035 |
+| Attention NN | 14 | 12.188 | −12.188 | 3.906 | +8.212 |
+| LightGBM | 14 | 12.462 | −12.462 | 3.895 | +8.494 |
+
+Takeaway: the trained models do **not** claw back the role-change information
+bound; the production-best LightGBM is still about **12.5 FP low** on the breakout
+week. Treat NN/Attention numbers as directional only (single seed, n=14), but the
+Ridge/LightGBM undershoot is deterministic and large.
 
 ## Why the model can't see it coming
 

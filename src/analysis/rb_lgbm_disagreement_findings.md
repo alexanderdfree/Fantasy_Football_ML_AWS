@@ -1,7 +1,7 @@
 # RB model comparison — LGBM "underprediction" + NN/attention by history depth
 
 **Date:** 2026-05-30 · **Verdict: EXPECTED behaviour, not a bug** (both parts).
-**Reproduce:** `python -m src.analysis.analysis_rb_lgbm_disagreement`
+**Reproduce:** `python -m src.analysis.cohort_analysis sparse_history --positions RB --with-model-error --deep-dive`
 (2025 test set, 1643 RB player-weeks; local CPU retrain reproduces the serving-UI numbers).
 
 ## The question

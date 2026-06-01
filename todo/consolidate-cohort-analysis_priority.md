@@ -1,8 +1,9 @@
 # Consolidate cohort/subgroup analysis scripts into one comprehensive script
 
-> **Status: PLANNED (not yet implemented).** Checkpointed 2026-05-31 from a planning session.
-> Decisions are locked (see "Context"); a future session can implement directly from this file.
-> Tracked by the `[PLANNED]` entry in [TODO.md](../TODO.md).
+> **Status: IMPLEMENTED 2026-06-01.** The registry CLI lives at
+> [`src/analysis/cohort_analysis.py`](../src/analysis/cohort_analysis.py).
+> The old module names remain as compatibility wrappers so existing imports and
+> reproduce commands do not break.
 
 ## Context
 
@@ -17,7 +18,7 @@ its own data-loading, and its own per-model-error table:
 The goal is to fold these into **one comprehensive cohort-analysis script** that also adds the
 named cohorts that have no script yet. Per the clarifying answers from the planning session:
 
-1. **Full single-file replacement** — migrate all cohort logic (incl. bespoke deep-dives) into the new module and **delete** the three old files, migrating their tests.
+1. **Full single-file replacement** — migrate all cohort logic (incl. bespoke deep-dives) into the new module. The implementation kept thin compatibility wrappers instead of hard-deleting old module names because tuning scripts and old tests import their pure helpers.
 2. **All feasible cohorts** — unify the three existing cohorts **and** build net-new predicates for **rookies**, **one-two-punch (RB committee)**, **mid-season trade**, and **injury-return**.
 3. **Suspension return** — documented as **infeasible** (no nflverse suspension data source); a registry stub prints why rather than fabricating data.
 

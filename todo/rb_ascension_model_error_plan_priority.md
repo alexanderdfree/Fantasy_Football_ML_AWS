@@ -1,8 +1,9 @@
 # RB ascension — measure the literal per-model undershoot (continuation note)
 
-**Status:** deferred (heavy local run not yet executed). This is a ready-to-run
-plan for a future session. Tracked in [TODO.md](../TODO.md) under
-`[NEXT] Measure literal RB-model undershoot on ascension games`.
+**Status:** executed 2026-06-01 via
+`python -m src.analysis.cohort_analysis ascension --positions RB --with-model-error`.
+The measured result is recorded in
+[rb_ascension_findings.md](../src/analysis/rb_ascension_findings.md).
 
 ## The question
 
@@ -28,7 +29,7 @@ the trained ensemble. This task gets the real per-model number.
 ## What's left — run it
 
 ```
-/Users/alex/miniforge3/bin/python -m src.analysis.rb_ascension --with-model-error
+python -m src.analysis.cohort_analysis ascension --positions RB --with-model-error
 ```
 
 This calls `src.rb.run_pipeline.run()` — self-builds the 2025 splits from scratch
