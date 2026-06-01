@@ -5,14 +5,21 @@ Usage:
     python tune_lgbm.py QB RB WR TE K DST      # tune all LGBM-enabled positions
     python tune_lgbm.py RB --n-trials 100      # more trials
     python tune_lgbm.py RB --timeout 3600      # time limit in seconds
+    python tune_lgbm.py RB --seeds 42          # quick single-seed smoke run
     python tune_lgbm.py RB --print-best        # print best params from saved study
 """
 
 import argparse
+import contextlib
 import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
+import threading
 import time
+from collections.abc import Callable, Iterator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -28,6 +35,10 @@ from src.shared.evaluation import compute_ranking_metrics, compute_target_metric
 from src.shared.models import LightGBMMultiTarget
 from src.shared.pipeline import _prepare_position_data
 from src.tuning.history import append_tuning_run
+
+_DEFAULT_SEEDS = (42, 43, 44)
+_OBJECTIVE_VERSION = "seedavg_v1"
+_OBJECTIVE_NAME = "mean_cv_mae_across_folds_and_seeds"
 
 
 def _ensure_data_from_s3():
@@ -77,6 +88,145 @@ def _get_position_config(pos):
     from src.shared.registry import get_config
 
     return get_config(pos.upper())
+
+
+# ---------------------------------------------------------------------------
+# Seeded objective + local core-pool helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_seeds(raw: str) -> tuple[int, ...]:
+    """Parse a comma/space separated seed list for multi-seed certainty."""
+    parts = [part.strip() for part in raw.replace(",", " ").split() if part.strip()]
+    if not parts:
+        raise argparse.ArgumentTypeError("--seeds must contain at least one integer seed")
+
+    seeds: list[int] = []
+    for part in parts:
+        try:
+            seed = int(part)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(f"invalid seed {part!r}") from exc
+        if seed < 0:
+            raise argparse.ArgumentTypeError(f"seed must be non-negative, got {seed}")
+        if seed in seeds:
+            raise argparse.ArgumentTypeError(f"duplicate seed {seed}")
+        seeds.append(seed)
+    return tuple(seeds)
+
+
+def _seed_key(seeds: tuple[int, ...]) -> str:
+    return "s" + "-".join(str(seed) for seed in seeds)
+
+
+def _study_name(pos: str, seeds: tuple[int, ...]) -> str:
+    return f"lgbm_{_OBJECTIVE_VERSION}_{_seed_key(seeds)}_{pos.lower()}"
+
+
+def _study_db_path(pos: str, seeds: tuple[int, ...]) -> str:
+    return f"tune_lgbm_{_OBJECTIVE_VERSION}_{_seed_key(seeds)}_{pos.lower()}.db"
+
+
+def _physical_core_ids() -> list[int]:
+    """Return one logical CPU id per physical core, matching parallel_train."""
+    try:
+        out = subprocess.run(
+            ["lscpu", "-p=CPU,CORE"], capture_output=True, text=True, check=True
+        ).stdout
+        first_cpu_of_core: dict[int, int] = {}
+        for line in out.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            cpu_s, core_s = line.split(",")[:2]
+            core = int(core_s)
+            if core not in first_cpu_of_core:
+                first_cpu_of_core[core] = int(cpu_s)
+        cores = sorted(first_cpu_of_core.values())
+        if cores:
+            return cores
+    except Exception:  # noqa: BLE001 - best-effort; fall through to heuristic
+        pass
+    n = os.cpu_count() or 2
+    return list(range(max(1, n // 2)))
+
+
+@contextlib.contextmanager
+def _lease_lgbm_cores(stage: str) -> Iterator[int | None]:
+    """Lease LightGBM threads when a core pool is active; otherwise no-op."""
+    try:
+        from src.shared.core_pool import lease_cores
+    except (AttributeError, ImportError):
+        yield None
+        return
+
+    with lease_cores(stage, default=None) as n_jobs:
+        yield n_jobs
+
+
+class _TrialActivity:
+    """Track active Optuna trial threads so the core-pool fair-share cap widens."""
+
+    def __init__(self, set_active_count: Callable[[int], None]):
+        self._set_active_count = set_active_count
+        self._lock = threading.Lock()
+        self._active = 0
+
+    @contextlib.contextmanager
+    def active(self) -> Iterator[None]:
+        with self._lock:
+            self._active += 1
+            self._set_active_count(self._active)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._active = max(0, self._active - 1)
+                self._set_active_count(max(1, self._active))
+
+
+@contextlib.contextmanager
+def _maybe_local_core_pool(
+    n_jobs: int, disabled: bool
+) -> Iterator[tuple[_TrialActivity | None, str]]:
+    """Start a process-local core pool for parallel local LGBM trials when possible."""
+    if disabled or n_jobs <= 1:
+        _guard_lgbm_threads(n_jobs)
+        yield None, "disabled" if disabled else "not needed"
+        return
+
+    tmpdir = tempfile.mkdtemp(prefix="ff-lgbm-tune-")
+    try:
+        from src.shared.core_pool import ENV_ADDR, ENV_POS, start_coordinator
+
+        phys = _physical_core_ids()
+        pool_addr, set_active_count, pool_stop = start_coordinator(phys, tmpdir)
+    except Exception as exc:  # noqa: BLE001 - optimization fallback, not a hard dependency
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        _guard_lgbm_threads(n_jobs)
+        yield None, f"fallback: {exc!r}"
+        return
+
+    old_addr = os.environ.get(ENV_ADDR)
+    old_pos = os.environ.get(ENV_POS)
+    os.environ[ENV_ADDR] = pool_addr
+    os.environ[ENV_POS] = "tune_lgbm"
+    try:
+        yield (
+            _TrialActivity(set_active_count),
+            f"enabled ({len(phys)} physical cores at {pool_addr})",
+        )
+    finally:
+        if old_addr is None:
+            os.environ.pop(ENV_ADDR, None)
+        else:
+            os.environ[ENV_ADDR] = old_addr
+        if old_pos is None:
+            os.environ.pop(ENV_POS, None)
+        else:
+            os.environ[ENV_POS] = old_pos
+        pool_stop()
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +300,13 @@ def _prepare_cv_folds(pos, cfg):
 # ---------------------------------------------------------------------------
 
 
-def _make_objective(folds_data, targets, lgbm_objective):
+def _make_objective(
+    folds_data,
+    targets,
+    lgbm_objective,
+    seeds: tuple[int, ...] = _DEFAULT_SEEDS,
+    trial_activity: _TrialActivity | None = None,
+):
     """Return an Optuna objective function that evaluates LightGBM on CV folds.
 
     ``lgbm_objective`` is the fixed loss family (``"huber"``, ``"fair"``, etc.)
@@ -163,43 +319,60 @@ def _make_objective(folds_data, targets, lgbm_objective):
     """
 
     def objective(trial):
-        # --- Sample hyperparameters ---
-        use_max_depth = trial.suggest_categorical("use_max_depth", [True, False])
-        max_depth = trial.suggest_int("max_depth", 3, 10) if use_max_depth else -1
+        ctx = trial_activity.active() if trial_activity is not None else contextlib.nullcontext()
+        with ctx:
+            # --- Sample hyperparameters ---
+            use_max_depth = trial.suggest_categorical("use_max_depth", [True, False])
+            max_depth = trial.suggest_int("max_depth", 3, 10) if use_max_depth else -1
 
-        params = dict(
-            num_leaves=trial.suggest_int("num_leaves", 8, 64),
-            max_depth=max_depth,
-            learning_rate=trial.suggest_float("learning_rate", 0.005, 0.1, log=True),
-            n_estimators=trial.suggest_int("n_estimators", 300, 2000, step=100),
-            min_child_samples=trial.suggest_int("min_child_samples", 10, 80),
-            subsample=trial.suggest_float("subsample", 0.5, 1.0),
-            colsample_bytree=trial.suggest_float("colsample_bytree", 0.4, 1.0),
-            reg_lambda=trial.suggest_float("reg_lambda", 0.01, 10.0, log=True),
-            reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 5.0, log=True),
-            min_split_gain=trial.suggest_float("min_split_gain", 0.0, 0.5),
-            objective=lgbm_objective,
-        )
+            params = dict(
+                num_leaves=trial.suggest_int("num_leaves", 8, 64),
+                max_depth=max_depth,
+                learning_rate=trial.suggest_float("learning_rate", 0.005, 0.1, log=True),
+                n_estimators=trial.suggest_int("n_estimators", 300, 2000, step=100),
+                min_child_samples=trial.suggest_int("min_child_samples", 10, 80),
+                subsample=trial.suggest_float("subsample", 0.5, 1.0),
+                colsample_bytree=trial.suggest_float("colsample_bytree", 0.4, 1.0),
+                reg_lambda=trial.suggest_float("reg_lambda", 0.01, 10.0, log=True),
+                reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 5.0, log=True),
+                min_split_gain=trial.suggest_float("min_split_gain", 0.0, 0.5),
+                objective=lgbm_objective,
+            )
 
-        # --- Evaluate across CV folds ---
-        fold_maes = []
-        for fold_i, (X_train, X_val, y_train_dict, y_val_dict, feature_cols) in enumerate(
-            folds_data
-        ):
-            model = LightGBMMultiTarget(target_names=targets, seed=42, **params)
-            model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
+            # --- Evaluate across CV folds and seeds ---
+            fold_maes = []
+            for fold_i, (X_train, X_val, y_train_dict, y_val_dict, feature_cols) in enumerate(
+                folds_data
+            ):
+                seed_maes = []
+                for seed in seeds:
+                    with _lease_lgbm_cores("tune_lgbm_cv") as leased_n_jobs:
+                        model = LightGBMMultiTarget(
+                            target_names=targets,
+                            seed=seed,
+                            n_jobs=leased_n_jobs,
+                            **params,
+                        )
+                        model.fit(
+                            X_train,
+                            y_train_dict,
+                            X_val,
+                            y_val_dict,
+                            feature_names=feature_cols,
+                        )
 
-            preds = model.predict(X_val)
-            metrics = compute_target_metrics(y_val_dict, preds, targets)
-            total_mae = metrics["total"]["mae"]
-            fold_maes.append(total_mae)
+                    preds = model.predict(X_val)
+                    metrics = compute_target_metrics(y_val_dict, preds, targets)
+                    seed_maes.append(metrics["total"]["mae"])
 
-            # Report intermediate value for pruning
-            trial.report(np.mean(fold_maes), fold_i)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
+                fold_maes.append(float(np.mean(seed_maes)))
 
-        return np.mean(fold_maes)
+                # Report once per fold so pruning semantics stay fold-level.
+                trial.report(float(np.mean(fold_maes)), fold_i)
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
+
+            return float(np.mean(fold_maes))
 
     return objective
 
@@ -209,10 +382,70 @@ def _make_objective(folds_data, targets, lgbm_objective):
 # ---------------------------------------------------------------------------
 
 
-def _run_comparison(pos, cfg, best_params):
-    """Train with old and new params on final split, print comparison."""
+def _mean_std(values: list[float]) -> dict[str, float]:
+    arr = np.asarray(values, dtype=float)
+    return {
+        "mean": float(np.mean(arr)) if len(arr) else float("nan"),
+        "std": float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0,
+    }
+
+
+def _aggregate_metric_records(records: list[dict], key: str, metric_keys: list[str]) -> dict:
+    out: dict[str, dict] = {}
+    for metric_key in metric_keys:
+        metrics = records[0][key][metric_key].keys()
+        out[metric_key] = {
+            metric: _mean_std([float(record[key][metric_key][metric]) for record in records])
+            for metric in metrics
+        }
+    return out
+
+
+def _aggregate_ranking_records(records: list[dict], key: str) -> dict:
+    metrics = records[0][key].keys()
+    return {
+        metric: _mean_std([float(record[key][metric]) for record in records]) for metric in metrics
+    }
+
+
+def _delta_metric_records(records: list[dict], metric_keys: list[str]) -> dict:
+    out: dict[str, dict] = {}
+    for metric_key in metric_keys:
+        metrics = records[0]["new_metrics"][metric_key].keys()
+        out[metric_key] = {
+            metric: _mean_std(
+                [
+                    float(record["new_metrics"][metric_key][metric])
+                    - float(record["old_metrics"][metric_key][metric])
+                    for record in records
+                ]
+            )
+            for metric in metrics
+        }
+    return out
+
+
+def _delta_ranking_records(records: list[dict]) -> dict:
+    metrics = records[0]["new_ranking"].keys()
+    return {
+        metric: _mean_std(
+            [
+                float(record["new_ranking"][metric]) - float(record["old_ranking"][metric])
+                for record in records
+            ]
+        )
+        for metric in metrics
+    }
+
+
+def _fmt_mean_std(summary: dict[str, float]) -> str:
+    return f"{summary['mean']:.3f}+/-{summary['std']:.3f}"
+
+
+def _run_comparison(pos, cfg, best_params, seeds: tuple[int, ...] = _DEFAULT_SEEDS):
+    """Train with old and new params on final split, print multi-seed comparison."""
     print(f"\n{'=' * 70}")
-    print(f"  {pos} Before/After Comparison on Holdout Test (2025)")
+    print(f"  {pos} Before/After Comparison on Holdout Test (2025), seeds={list(seeds)}")
     print(f"{'=' * 70}")
 
     if pos == "K":
@@ -264,67 +497,113 @@ def _run_comparison(pos, cfg, best_params):
     }
     old_params["objective"] = cfg.get("lgbm_objective", "huber")
 
-    old_model = LightGBMMultiTarget(target_names=targets, seed=42, **old_params)
-    old_model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
-    old_preds = old_model.predict(X_test)
-    old_metrics = compute_target_metrics(y_test_dict, old_preds, targets)
-
     agg = cfg.get("aggregate_fn")
 
     def _total(preds):
         return agg(preds) if agg is not None else sum(preds[t] for t in targets)
 
-    pos_test_old = pos_test.copy()
-    pos_test_old["pred_lgbm_total"] = _total(old_preds)
-    old_ranking = compute_ranking_metrics(pos_test_old, pred_col="pred_lgbm_total")
+    per_seed = []
+    for seed in seeds:
+        with _lease_lgbm_cores("tune_lgbm_compare") as leased_n_jobs:
+            old_model = LightGBMMultiTarget(
+                target_names=targets,
+                seed=seed,
+                n_jobs=leased_n_jobs,
+                **old_params,
+            )
+            old_model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
+        old_preds = old_model.predict(X_test)
+        old_metrics = compute_target_metrics(y_test_dict, old_preds, targets)
 
-    # --- New (tuned) params ---
-    new_model = LightGBMMultiTarget(target_names=targets, seed=42, **best_params)
-    new_model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
-    new_preds = new_model.predict(X_test)
-    new_metrics = compute_target_metrics(y_test_dict, new_preds, targets)
+        pos_test_old = pos_test.copy()
+        pos_test_old["pred_lgbm_total"] = _total(old_preds)
+        old_ranking_raw = compute_ranking_metrics(pos_test_old, pred_col="pred_lgbm_total")
+        old_ranking = {
+            "hit_rate": old_ranking_raw["season_avg_hit_rate"],
+            "spearman": old_ranking_raw["season_avg_spearman"],
+        }
 
-    pos_test_new = pos_test.copy()
-    pos_test_new["pred_lgbm_total"] = _total(new_preds)
-    new_ranking = compute_ranking_metrics(pos_test_new, pred_col="pred_lgbm_total")
+        with _lease_lgbm_cores("tune_lgbm_compare") as leased_n_jobs:
+            new_model = LightGBMMultiTarget(
+                target_names=targets,
+                seed=seed,
+                n_jobs=leased_n_jobs,
+                **best_params,
+            )
+            new_model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
+        new_preds = new_model.predict(X_test)
+        new_metrics = compute_target_metrics(y_test_dict, new_preds, targets)
+
+        pos_test_new = pos_test.copy()
+        pos_test_new["pred_lgbm_total"] = _total(new_preds)
+        new_ranking_raw = compute_ranking_metrics(pos_test_new, pred_col="pred_lgbm_total")
+        new_ranking = {
+            "hit_rate": new_ranking_raw["season_avg_hit_rate"],
+            "spearman": new_ranking_raw["season_avg_spearman"],
+        }
+
+        per_seed.append(
+            {
+                "seed": seed,
+                "old_metrics": {k: v for k, v in old_metrics.items()},
+                "new_metrics": {k: v for k, v in new_metrics.items()},
+                "old_ranking": old_ranking,
+                "new_ranking": new_ranking,
+            }
+        )
+
+    metric_keys = ["total"] + targets
+    aggregate = {
+        "old_metrics": _aggregate_metric_records(per_seed, "old_metrics", metric_keys),
+        "new_metrics": _aggregate_metric_records(per_seed, "new_metrics", metric_keys),
+        "delta_metrics": _delta_metric_records(per_seed, metric_keys),
+        "old_ranking": _aggregate_ranking_records(per_seed, "old_ranking"),
+        "new_ranking": _aggregate_ranking_records(per_seed, "new_ranking"),
+        "delta_ranking": _delta_ranking_records(per_seed),
+    }
 
     # --- Print comparison ---
-    print(f"\n{'Metric':<25} {'Old':>10} {'Tuned':>10} {'Delta':>10}")
-    print("-" * 57)
+    print(
+        f"\n{'Metric':<25} {'Old mean+/-std':>17} {'Tuned mean+/-std':>19} {'Delta mean+/-std':>19}"
+    )
+    print("-" * 82)
 
     for key in ["total"] + targets:
         label = key.replace("_", " ").title()
-        old_mae = old_metrics[key]["mae"]
-        new_mae = new_metrics[key]["mae"]
-        delta = new_mae - old_mae
-        sign = "+" if delta > 0 else ""
-        print(f"  {label + ' MAE':<23} {old_mae:>10.3f} {new_mae:>10.3f} {sign}{delta:>9.3f}")
+        print(
+            f"  {label + ' MAE':<23} "
+            f"{_fmt_mean_std(aggregate['old_metrics'][key]['mae']):>17} "
+            f"{_fmt_mean_std(aggregate['new_metrics'][key]['mae']):>19} "
+            f"{_fmt_mean_std(aggregate['delta_metrics'][key]['mae']):>19}"
+        )
 
-    old_r2 = old_metrics["total"]["r2"]
-    new_r2 = new_metrics["total"]["r2"]
-    delta_r2 = new_r2 - old_r2
-    sign_r2 = "+" if delta_r2 > 0 else ""
-    print(f"  {'Total R2':<23} {old_r2:>10.3f} {new_r2:>10.3f} {sign_r2}{delta_r2:>9.3f}")
-
-    old_hit = old_ranking["season_avg_hit_rate"]
-    new_hit = new_ranking["season_avg_hit_rate"]
-    delta_hit = new_hit - old_hit
-    sign_hit = "+" if delta_hit > 0 else ""
     print(
-        f"  {'Top-12 Hit Rate':<23} {old_hit:>10.3f} {new_hit:>10.3f} {sign_hit}{delta_hit:>9.3f}"
+        f"  {'Total R2':<23} "
+        f"{_fmt_mean_std(aggregate['old_metrics']['total']['r2']):>17} "
+        f"{_fmt_mean_std(aggregate['new_metrics']['total']['r2']):>19} "
+        f"{_fmt_mean_std(aggregate['delta_metrics']['total']['r2']):>19}"
+    )
+    print(
+        f"  {'Top-12 Hit Rate':<23} "
+        f"{_fmt_mean_std(aggregate['old_ranking']['hit_rate']):>17} "
+        f"{_fmt_mean_std(aggregate['new_ranking']['hit_rate']):>19} "
+        f"{_fmt_mean_std(aggregate['delta_ranking']['hit_rate']):>19}"
+    )
+    print(
+        f"  {'Spearman rho':<23} "
+        f"{_fmt_mean_std(aggregate['old_ranking']['spearman']):>17} "
+        f"{_fmt_mean_std(aggregate['new_ranking']['spearman']):>19} "
+        f"{_fmt_mean_std(aggregate['delta_ranking']['spearman']):>19}"
     )
 
-    old_sp = old_ranking["season_avg_spearman"]
-    new_sp = new_ranking["season_avg_spearman"]
-    delta_sp = new_sp - old_sp
-    sign_sp = "+" if delta_sp > 0 else ""
-    print(f"  {'Spearman rho':<23} {old_sp:>10.3f} {new_sp:>10.3f} {sign_sp}{delta_sp:>9.3f}")
-
     return {
-        "old_metrics": {k: v for k, v in old_metrics.items()},
-        "new_metrics": {k: v for k, v in new_metrics.items()},
-        "old_ranking": {"hit_rate": old_hit, "spearman": old_sp},
-        "new_ranking": {"hit_rate": new_hit, "spearman": new_sp},
+        "seeds": list(seeds),
+        "per_seed": per_seed,
+        "aggregate": aggregate,
+        "old_metrics": aggregate["old_metrics"],
+        "new_metrics": aggregate["new_metrics"],
+        "old_ranking": aggregate["old_ranking"],
+        "new_ranking": aggregate["new_ranking"],
     }
 
 
@@ -390,13 +669,11 @@ def _trial_to_params(trial):
 def _default_n_jobs() -> int:
     """Default parallel-trial count: all CPU cores, capped at 16.
 
-    LightGBM tuning is CPU-bound and each trial runs single-threaded (see
-    ``_guard_lgbm_threads``), so the throughput-optimal setting is one trial
-    per core. ``min(os.cpu_count(), 16)`` delivers that on a workstation
-    (e.g. 16 on a 16-core box — measured ~16x faster trial phase than serial)
-    while auto-scaling down on small CI / AWS-Batch hosts so the default never
-    oversubscribes. The 16 cap matches the measured point of diminishing
-    returns and bounds runaway on large servers. ``--n-jobs`` still overrides.
+    LightGBM tuning is CPU-bound. Parallel local runs start the shared core-pool
+    coordinator so each model fit leases a bounded thread count; if that pool is
+    disabled/unavailable, ``_guard_lgbm_threads`` keeps each trial
+    single-threaded. ``min(os.cpu_count(), 16)`` auto-scales down on small
+    hosts and caps runaway on large servers. ``--n-jobs`` still overrides.
     """
     return min(os.cpu_count() or 1, 16)
 
@@ -420,17 +697,33 @@ def main():
     parser.add_argument("--n-trials", type=int, default=50, help="Number of Optuna trials")
     parser.add_argument("--timeout", type=int, default=None, help="Timeout in seconds per position")
     parser.add_argument(
+        "--seeds",
+        type=_parse_seeds,
+        default=_DEFAULT_SEEDS,
+        help=(
+            "Comma- or space-separated LightGBM seeds to evaluate for each trial "
+            f"(default: {','.join(str(s) for s in _DEFAULT_SEEDS)}). Use --seeds 42 "
+            "for the old quick single-seed smoke shape."
+        ),
+    )
+    parser.add_argument(
         "--n-jobs",
         type=int,
         default=_default_n_jobs(),
         help=(
             "Number of Optuna trials to run in parallel (thread-based; safe with "
-            "the SQLite storage used here). Defaults to min(CPU count, 16) — one "
-            "trial per core, the throughput-optimal setting for CPU-bound LightGBM "
-            "tuning (e.g. 16 on a 16-core box, auto-scaled down on small hosts). "
-            "Each parallel trial is pinned to a single LightGBM thread "
-            "(LGBM_N_JOBS=1, via setdefault) so n_jobs x per-trial-threads cannot "
-            "oversubscribe."
+            "the SQLite storage used here). Defaults to min(CPU count, 16), "
+            "auto-scaled down on small hosts. Parallel local runs self-start a "
+            "core pool and lease LightGBM thread counts per fit; if disabled or "
+            "unavailable, LGBM_N_JOBS=1 is used as the fallback guard."
+        ),
+    )
+    parser.add_argument(
+        "--no-core-pool",
+        action="store_true",
+        help=(
+            "Disable the local core-pool coordinator. With parallel trials this "
+            "falls back to LGBM_N_JOBS=1 via the existing thread guard."
         ),
     )
     parser.add_argument(
@@ -439,11 +732,7 @@ def main():
         help="Print best params from saved study without running new trials",
     )
     args = parser.parse_args()
-
-    # When parallelizing trials, pin each trial to one LightGBM thread so
-    # n_jobs parallel trials cannot stack into n_jobs x per-trial-threads
-    # oversubscription. setdefault respects an explicitly-set LGBM_N_JOBS.
-    _guard_lgbm_threads(args.n_jobs)
+    seeds = args.seeds
 
     # Pull splits + raw data from S3 when running in the container. No-op
     # locally if the files already exist.
@@ -452,77 +741,97 @@ def main():
 
     all_results = {}
 
-    for pos in args.positions:
-        pos = pos.upper()
-        study_name = f"lgbm_{pos.lower()}"
-        db_path = f"tune_lgbm_{pos.lower()}.db"
+    core_pool_ctx = (
+        contextlib.nullcontext((None, "disabled"))
+        if args.print_best
+        else _maybe_local_core_pool(args.n_jobs, args.no_core_pool)
+    )
+    with core_pool_ctx as (trial_activity, core_pool_status):
+        for pos in args.positions:
+            pos = pos.upper()
+            study_name = _study_name(pos, seeds)
+            db_path = _study_db_path(pos, seeds)
 
-        if args.print_best:
-            # Load existing study and print
-            try:
-                study = optuna.load_study(
-                    study_name=study_name,
-                    storage=f"sqlite:///{db_path}",
-                )
-                best = _trial_to_params(study.best_trial)
-                print(
-                    f"\n{pos} best trial #{study.best_trial.number} "
-                    f"(CV MAE = {study.best_value:.4f}):"
-                )
-                print(_format_config_lines(pos, best))
-            except Exception as e:
-                print(f"No saved study for {pos}: {e}")
-            continue
+            if args.print_best:
+                # Load existing study and print
+                try:
+                    study = optuna.load_study(
+                        study_name=study_name,
+                        storage=f"sqlite:///{db_path}",
+                    )
+                    best = _trial_to_params(study.best_trial)
+                    print(
+                        f"\n{pos} best trial #{study.best_trial.number} "
+                        f"(CV MAE = {study.best_value:.4f}, seeds={list(seeds)}):"
+                    )
+                    print(_format_config_lines(pos, best))
+                except Exception as e:
+                    print(f"No saved study for {pos}: {e}")
+                continue
 
-        cfg = _get_position_config(pos)
-        t0 = time.time()
+            cfg = _get_position_config(pos)
+            t0 = time.time()
 
-        # Prepare data once
-        folds_data, targets = _prepare_cv_folds(pos, cfg)
+            # Prepare data once
+            folds_data, targets = _prepare_cv_folds(pos, cfg)
 
-        # Create or resume study
-        study = optuna.create_study(
-            study_name=study_name,
-            storage=f"sqlite:///{db_path}",
-            load_if_exists=True,
-            direction="minimize",
-            sampler=TPESampler(seed=42),
-            pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=1),
-        )
+            # Create or resume study
+            study = optuna.create_study(
+                study_name=study_name,
+                storage=f"sqlite:///{db_path}",
+                load_if_exists=True,
+                direction="minimize",
+                sampler=TPESampler(seed=42),
+                pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=1),
+            )
 
-        lgbm_objective = cfg.get("lgbm_objective", "huber")
-        objective = _make_objective(folds_data, targets, lgbm_objective)
+            lgbm_objective = cfg.get("lgbm_objective", "huber")
+            objective = _make_objective(
+                folds_data,
+                targets,
+                lgbm_objective,
+                seeds=seeds,
+                trial_activity=trial_activity,
+            )
 
-        print(f"\n{'=' * 70}")
-        print(f"  Tuning {pos} LightGBM — {args.n_trials} trials (objective={lgbm_objective})")
-        print(f"{'=' * 70}")
+            print(f"\n{'=' * 70}")
+            print(
+                f"  Tuning {pos} LightGBM — {args.n_trials} trials "
+                f"(objective={lgbm_objective}, seeds={list(seeds)})"
+            )
+            print(f"  Study: {study_name} ({db_path})")
+            print(f"  Core pool: {core_pool_status}")
+            print(f"{'=' * 70}")
 
-        study.optimize(
-            objective,
-            n_trials=args.n_trials,
-            timeout=args.timeout,
-            show_progress_bar=True,
-            n_jobs=args.n_jobs,
-        )
+            study.optimize(
+                objective,
+                n_trials=args.n_trials,
+                timeout=args.timeout,
+                show_progress_bar=True,
+                n_jobs=args.n_jobs,
+            )
 
-        elapsed = time.time() - t0
-        best = _trial_to_params(study.best_trial)
+            elapsed = time.time() - t0
+            best = _trial_to_params(study.best_trial)
 
-        print(f"\n{pos} tuning complete in {elapsed:.0f}s")
-        print(f"  Best trial #{study.best_trial.number}: CV MAE = {study.best_value:.4f}")
-        print(f"\n{_format_config_lines(pos, best)}")
+            print(f"\n{pos} tuning complete in {elapsed:.0f}s")
+            print(f"  Best trial #{study.best_trial.number}: CV MAE = {study.best_value:.4f}")
+            print(f"\n{_format_config_lines(pos, best)}")
 
-        # Before/after holdout comparison
-        comparison = _run_comparison(pos, cfg, best)
+            # Before/after holdout comparison
+            comparison = _run_comparison(pos, cfg, best, seeds=seeds)
 
-        all_results[pos] = {
-            "best_trial": study.best_trial.number,
-            "best_cv_mae": study.best_value,
-            "best_params": best,
-            "n_trials": len(study.trials),
-            "elapsed_seconds": round(elapsed, 1),
-            "comparison": comparison,
-        }
+            all_results[pos] = {
+                "best_trial": study.best_trial.number,
+                "best_cv_mae": study.best_value,
+                "best_params": best,
+                "n_trials": len(study.trials),
+                "elapsed_seconds": round(elapsed, 1),
+                "seeds": list(seeds),
+                "seed_count": len(seeds),
+                "objective": _OBJECTIVE_NAME,
+                "comparison": comparison,
+            }
 
     # Save results (atomic: tmp file then rename so a crash mid-write can't
     # leave tune_lgbm_results.json partially written).
