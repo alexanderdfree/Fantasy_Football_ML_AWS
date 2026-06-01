@@ -109,7 +109,7 @@ $env:OPENBLAS_NUM_THREADS = "1"   # REQUIRED on Windows (cmd: set OPENBLAS_NUM_T
 python -m src.qb.run_pipeline                       # one position, full pipeline
 python -m src.benchmarking.benchmark RB --no-sync   # benchmark one position
 python -m src.tuning.tune_nn RB --n-trials 30       # Optuna NN tuning
-python -m src.tuning.tune_lgbm RB                   # Optuna LightGBM tuning
+python -m src.tuning.tune_lgbm RB                   # Optuna LightGBM tuning (3 seeds)
 ```
 
 Each `tune_nn` / `tune_lgbm` run also appends a git-tracked history entry under
@@ -151,19 +151,23 @@ hyperthreading, and `-1` means "all 32 logical". Quick A/B on your box: time
 **Parallel tuning — match the knob to the bottleneck:**
 
 ```powershell
-# LightGBM tuning is CPU-bound: parallelize TRIALS, keep each trial single-threaded.
-$env:LGBM_N_JOBS = "1"
+# LightGBM tuning is CPU-bound: parallelize trials. The tuner self-starts
+# the core pool when available and evaluates each trial on seeds 42,43,44 by default.
 python -m src.tuning.tune_lgbm RB --n-jobs 16
+python -m src.tuning.tune_lgbm RB --n-jobs 16 --seeds 42  # quick smoke shape
+python -m src.tuning.tune_lgbm RB --n-jobs 16 --no-core-pool  # fallback to LGBM_N_JOBS=1
 
 # NN tuning is GPU-bound: trials share the one GPU. --n-jobs default is 2 (fits 16 GB);
 # try 3 if VRAM allows — diminishing past that.
 python -m src.tuning.tune_nn RB --n-jobs 2
 ```
 
-Don't stack the two — many parallel LightGBM-tuning trials *and* `LGBM_N_JOBS=16` is 16×16 thread
-oversubscription (the `--n-jobs` help flags this). And unset `LGBM_N_JOBS` (or use a separate shell)
-when running the full `pytest` suite — with `-n auto` xdist workers a high per-process thread count
-oversubscribes the runner.
+The LightGBM tuner versions its SQLite studies by seed list (for example,
+`tune_lgbm_seedavg_v1_s42-43-44_rb.db`), so single-seed smoke studies never mix with the default
+3-seed objective. Avoid explicitly setting `LGBM_N_JOBS=16` for `tune_lgbm`: the normal path leases
+cores per Optuna trial, and `--no-core-pool` falls back to one LightGBM thread per parallel trial.
+Unset `LGBM_N_JOBS` (or use a separate shell) when running the full `pytest` suite — with `-n auto`
+xdist workers a high per-process thread count oversubscribes the runner.
 
 ## WSL2 (Linux on Windows) + RTX 5080
 
@@ -198,8 +202,7 @@ source scripts/wsl-env.sh                 # OMP/MKL/OPENBLAS/NUMEXPR=1, LGBM_N_J
 python -m src.qb.run_pipeline             # single position, full pipeline
 python -m src.benchmarking.benchmark RB   # benchmark one position
 
-# Tuning — the script prints the reminder, but: unset LGBM_N_JOBS first so the
-# Optuna trials (not each LightGBM model) get the cores.
+# Tuning — unset LGBM_N_JOBS first so the tuner can lease cores per Optuna trial.
 unset LGBM_N_JOBS
 python -m src.tuning.tune_lgbm RB --n-jobs 16   # CPU-bound: parallel trials
 python -m src.tuning.tune_nn   RB --n-jobs 2    # GPU-bound: 2 trials share the 5080

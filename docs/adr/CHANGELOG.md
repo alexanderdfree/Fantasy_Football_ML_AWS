@@ -5,6 +5,7 @@ files in this directory; pre-split detail is in [../architecture-history.md](../
 
 - 2026-06-01 · D1: benchmark-history CLIs' `--cv` is now a deprecated alias for rolling-origin walk-forward reporting; internal expanding-window CV remains for ad-hoc/tuning callers; no retrain · → ADR-0001
 - 2026-06-01 · Batch NN tuner: six-position g6 fan-out retained, `--parallel-backend auto` resolves native-Linux L4/g6 to 3 NVIDIA MPS workers with `FF_CUDA_GRAPH=1` while Mac/5080 stay on thread mode; study namespace split to `scheduler_v2_mps_graph`; tuner-only, production defaults unchanged · → ADR-0017
+- 2026-06-01 · D17: LightGBM Optuna tuner self-starts core-pool leasing for parallel local trials and defaults to seed-averaged trial scoring over 42,43,44 with seed-versioned study storage; tuner-only, no retrain · → ADR-0017
 - 2026-06-01 · D15: issue #720 attention-knob experiment runner adds test-MAE fANOVA and Plackett-Burman DoE screens over eight attention-only knobs; tuner-only, no retrain · → ADR-0015
 - 2026-05-31 · D4: newest-first attention history ordering (index 0 = most-recent game) across all 3 sequence builders, so the learned positional embedding is recency-indexed; ALiBi formula kept correct (games_ago == position); 6-position retrain · → ADR-0004
 - 2026-06-01 · Corrected stale ADR references after config consolidation, unused display constants, and EC2 rollback sequencing docs; documentation-only · → ADR-0002/0004/0006/0007/0009
