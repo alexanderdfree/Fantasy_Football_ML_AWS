@@ -36,6 +36,7 @@ from optuna.importance import FanovaImportanceEvaluator, get_param_importances
 from optuna.samplers import TPESampler
 from optuna.trial import TrialState
 
+from src.shared.core_pool import lease_cores
 from src.tuning.history import append_tuning_run
 
 DEFAULT_SEEDS = (42, 43, 44)
@@ -208,6 +209,29 @@ def ridge_sentinel_ok(rows: list[dict], *, atol: float = 1e-9) -> bool:
     return True
 
 
+def _set_fanova_rf_n_jobs(evaluator: FanovaImportanceEvaluator, n_jobs: int) -> None:
+    """Thread Optuna fANOVA's sklearn random forest through the core-pool lease."""
+
+    fanova = getattr(evaluator, "_evaluator", None)
+    forest = getattr(fanova, "_forest", None)
+    if forest is None or not hasattr(forest, "set_params"):
+        raise RuntimeError(
+            "Optuna FanovaImportanceEvaluator internals changed; cannot set "
+            "RandomForestRegressor.n_jobs"
+        )
+    forest.set_params(n_jobs=int(n_jobs))
+
+
+def _fanova_param_importances(study: optuna.Study, *, seed: int) -> dict[str, float]:
+    """Compute fANOVA importances using the dynamic CPU core pool when active."""
+
+    evaluator = FanovaImportanceEvaluator(seed=seed)
+    with lease_cores("fanova_importance", default=None) as n_jobs:
+        if n_jobs is not None and n_jobs > 0:
+            _set_fanova_rf_n_jobs(evaluator, n_jobs)
+        return get_param_importances(study, evaluator=evaluator)
+
+
 def run_doe(position: str, seeds: list[int], *, ridge_sentinel: bool, n_jobs: int) -> dict:
     design = plackett_burman_design(len(ATTN_KNOBS))
     rows = []
@@ -307,9 +331,7 @@ def run_fanova(
         completed = [t for t in study.trials if t.state == TrialState.COMPLETE]
         importances = {}
         if len(completed) >= 2:
-            importances = get_param_importances(
-                study, evaluator=FanovaImportanceEvaluator(seed=study_seed)
-            )
+            importances = _fanova_param_importances(study, seed=study_seed)
         seed_results[str(seed)] = {
             "best_trial": study.best_trial.number if completed else None,
             "best_attn_test_mae": study.best_value if completed else None,
