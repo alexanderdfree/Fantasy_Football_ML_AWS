@@ -44,5 +44,5 @@ ctx_tail='
 
 Separately, if this session had a non-routine lesson, run `/prompts:post-session-critique` before finishing.'
 
-codex_json_context "PostToolUse" "${ctx_head}${step5}${ctx_tail}"
+codex_json_context "PostToolUse" "${ctx_head}${step5}${ctx_tail}" "$jq_bin"
 exit 0

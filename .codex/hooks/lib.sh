@@ -71,7 +71,11 @@ codex_abs_path() {
 codex_json_context() {
   local event="$1"
   local context="$2"
-  jq -n --arg event "$event" --arg context "$context" '{
+  local jq_bin="${3:-}"
+  if [ -z "$jq_bin" ]; then
+    jq_bin="$(codex_find_jq)" || return 0
+  fi
+  "$jq_bin" -n --arg event "$event" --arg context "$context" '{
     hookSpecificOutput: {
       hookEventName: $event,
       additionalContext: $context

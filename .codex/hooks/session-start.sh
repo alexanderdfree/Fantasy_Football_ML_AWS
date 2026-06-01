@@ -23,4 +23,4 @@ if [ ! -d "$root/.venv" ]; then
   fi
 fi
 
-codex_json_context "SessionStart" "$context"
+codex_json_context "SessionStart" "$context" "$jq_bin"
