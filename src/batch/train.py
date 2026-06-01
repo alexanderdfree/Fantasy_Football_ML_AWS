@@ -446,7 +446,7 @@ def _extract_metrics(position, result):
     if git_sha:
         metrics["git_sha"] = git_sha
 
-    for model_key in ["ridge", "nn", "attn_nn", "lgbm"]:
+    for model_key in ["ridge", "elasticnet", "nn", "attn_nn", "lgbm"]:
         m_key = f"{model_key}_metrics"
         r_key = f"{model_key}_ranking"
         if m_key not in result:
@@ -754,13 +754,21 @@ def main():
         finally:
             _stop_nvidia_smi_sidecar(gpu_sidecar)
     else:
-        # K/DST: self-contained data loading
+        # K/DST: self-contained raw-data loaders. They still use the
+        # sync_raw_data() pull above, but they intentionally do not consume the
+        # train/val/test split parquet artifacts used by QB/RB/WR/TE.
         gpu_sidecar = _start_nvidia_smi_sidecar(gpu_profile_csv)
         try:
             with _timed("run_pipeline", store=phase_seconds):
                 result = run_fn(seed=args.seed)
         finally:
             _stop_nvidia_smi_sidecar(gpu_sidecar)
+
+    if result is None:
+        raise RuntimeError(
+            f"Pipeline for {pos} returned None — cannot extract metrics. "
+            "Refusing to upload incomplete artifacts."
+        )
 
     # Copy model artifacts to output dir FIRST so a later metrics write cannot
     # be clobbered by a same-named file under src_model_dir.
@@ -770,25 +778,11 @@ def main():
         with _timed("copy_artifacts", store=phase_seconds):
             _replace_model_dir_contents(src_model_dir, model_dir)
     else:
-        print(f"WARNING: No model directory found at {src_model_dir}")
-
-    # Copy the sidecar CSV into model_dir so it tars up alongside
-    # benchmark_metrics.json. MUST come AFTER _replace_model_dir_contents —
-    # that helper wipes model_dir before copytree, so a copy placed earlier
-    # gets deleted before upload (K job at 06:50Z lost its CSV this way).
-    # Cheap (~15 KB for a 2-min run); the single tarball download exposes both
-    # training metrics and GPU utilisation.
-    if os.path.exists(gpu_profile_csv):
-        shutil.copy2(gpu_profile_csv, os.path.join(model_dir, f"gpu_profile_{pos}.csv"))
+        raise RuntimeError(f"No model directory found at {src_model_dir}; refusing upload.")
 
     # Save benchmark metrics as JSON (after artifacts so it can't be overwritten).
     # upload_artifacts() requires benchmark_metrics.json, so this must come
     # before the upload.
-    if result is None:
-        raise RuntimeError(
-            f"Pipeline for {pos} returned None — cannot extract metrics. "
-            "Refusing to upload incomplete artifacts."
-        )
     metrics = _extract_metrics(pos, result)
     # Fold the inner pipeline breakdown (ridge_tune, nn_train, attn_nn_train,
     # lgbm_train, etc.) into the outer phase dict under a ``pipeline.`` prefix
@@ -807,6 +801,11 @@ def main():
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"Saved benchmark metrics to {metrics_path}")
+
+    # Copy the sidecar CSV into model_dir after metrics write and before upload
+    # so the tarball contains both artifacts and benchmark_metrics.json.
+    if os.path.exists(gpu_profile_csv):
+        shutil.copy2(gpu_profile_csv, os.path.join(model_dir, f"gpu_profile_{pos}.csv"))
 
     # Upload artifacts to S3 (raises if model_dir is empty or metrics missing)
     with _timed("upload_artifacts", store=phase_seconds):

@@ -263,7 +263,7 @@ POSITION_INFO = {
             {
                 "key": "fumbles_lost",
                 "label": "Fumbles Lost",
-                "formula": "sack_fumbles_lost + rushing_fumbles_lost",
+                "formula": ("sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost"),
             },
         ],
         "adjustments": "None - penalties are now direct targets (interceptions, fumbles_lost).",
@@ -288,7 +288,7 @@ POSITION_INFO = {
             {
                 "key": "fumbles_lost",
                 "label": "Fumbles Lost",
-                "formula": "rushing_fumbles_lost + receiving_fumbles_lost",
+                "formula": ("sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost"),
             },
         ],
         "adjustments": "None - fumbles_lost is now a direct target.",
@@ -311,7 +311,7 @@ POSITION_INFO = {
             {
                 "key": "fumbles_lost",
                 "label": "Fumbles Lost",
-                "formula": "rushing_fumbles_lost + receiving_fumbles_lost",
+                "formula": ("sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost"),
             },
         ],
         "adjustments": "None - fumbles_lost is now a direct target.",
@@ -768,9 +768,10 @@ def _apply_position_models(train, val, test, pos, results):
     pos_val = reg["filter_fn"](val)
     pos_test = reg["filter_fn"](test)
 
-    pos_train = reg["compute_targets_fn"](pos_train)
-    pos_val = reg["compute_targets_fn"](pos_val)
-    pos_test = reg["compute_targets_fn"](pos_test)
+    if pos not in ("K", "DST"):
+        pos_train = reg["compute_targets_fn"](pos_train)
+        pos_val = reg["compute_targets_fn"](pos_val)
+        pos_test = reg["compute_targets_fn"](pos_test)
 
     feature_cols = reg["get_feature_columns_fn"]()
     pos_train, pos_val, pos_test = build_position_features(
@@ -856,7 +857,7 @@ def _apply_position_models(train, val, test, pos, results):
         ridge_preds = ridge.predict(X_test_pos)
         ridge_totals = _per_format_totals(ridge_preds)
     except Exception as e:
-        errors[f"{pos}_ridge"] = str(e)
+        errors[f"{pos}_ridge"] = repr(e)
         print(f"[app] {pos} ridge load failed: {e!r} — NaN'ing ridge_pred")
 
     # NN predictions — integrity-check scaler+weights before running inference.
@@ -887,7 +888,7 @@ def _apply_position_models(train, val, test, pos, results):
         nn_preds = nn_model.predict_numpy(X_test_scaled, device)
         nn_totals = _per_format_totals(nn_preds)
     except Exception as e:
-        errors[f"{pos}_nn"] = str(e)
+        errors[f"{pos}_nn"] = repr(e)
         print(f"[app] {pos} nn load failed: {e!r} — NaN'ing nn_pred")
 
     # Attention NN — gated per-position via ``reg["train_attention_nn"]``.
@@ -1049,7 +1050,7 @@ def _apply_position_models(train, val, test, pos, results):
                     )
             attn_nn_totals = _per_format_totals(attn_nn_preds)
         except Exception as e:
-            errors[f"{pos}_attn_nn"] = str(e)
+            errors[f"{pos}_attn_nn"] = repr(e)
             print(f"[app] {pos} attn_nn load failed: {e!r} — leaving attn_nn_pred NaN")
             attn_nn_preds = None
             attn_nn_totals = None
@@ -1068,7 +1069,7 @@ def _apply_position_models(train, val, test, pos, results):
             lgbm_preds = lgbm_model.predict(X_test_pos)
             lgbm_totals = _per_format_totals(lgbm_preds)
         except Exception as e:
-            errors[f"{pos}_lgbm"] = str(e)
+            errors[f"{pos}_lgbm"] = repr(e)
             print(f"[app] {pos} lgbm load failed: {e!r} — leaving lgbm_pred NaN")
             lgbm_preds = None
             lgbm_totals = None
@@ -1077,7 +1078,9 @@ def _apply_position_models(train, val, test, pos, results):
     # frontend renders "--" instead of a misleading 0.0 (the DataFrame
     # initializes every per-format column to NaN in _load_base_data_locked).
     # We write three format-specific columns per model AND the legacy unsuffixed
-    # column (a PPR alias) so existing fixtures / tests keep working.
+    # column. The unsuffixed columns are intentionally PPR-only compatibility
+    # aliases; endpoints must use _pred_col(prefix, scoring) for scoring-aware
+    # reads.
     #
     # Local-then-merge semantics: the per-model totals dicts above
     # (``ridge_totals``, ``nn_totals``, ``attn_nn_totals``, ``lgbm_totals``)
@@ -1315,8 +1318,8 @@ def _load_base_data_locked():
         results[_pred_col("nn", fmt)] = np.nan
         results[_pred_col("attn_nn", fmt)] = np.nan
         results[_pred_col("lgbm", fmt)] = np.nan
-    # Legacy unsuffixed columns kept as a PPR alias so existing tests / code
-    # that reads results["ridge_pred"] doesn't break.
+    # Legacy unsuffixed columns kept as PPR-only compatibility aliases. New
+    # endpoint code must read the scoring-suffixed columns via _pred_col().
     results["ridge_pred"] = np.nan
     results["nn_pred"] = np.nan
     results["attn_nn_pred"] = np.nan
@@ -2084,7 +2087,8 @@ def _compute_metrics_locked():
 def _get_data(scoring="ppr"):
     """Full load: all positions + metrics for the requested scoring format."""
     _ensure_metrics()
-    metrics = _cache["metrics_by_format"].get(scoring, _cache["metrics_by_format"]["ppr"])
+    metrics_by_format = _cache["metrics_by_format"]
+    metrics = metrics_by_format.get(scoring) or metrics_by_format.get("ppr", {})
     return _cache["results"], metrics
 
 
@@ -2593,7 +2597,12 @@ def api_model_architecture():
                 "overview": {
                     "framework": "PyTorch 2.11 + CUDA 12.6 (AWS Batch)",
                     "device": "CUDA if available, else CPU",
-                    "data_splits": "Train 2012-2023, Val 2024, Test 2025 (K uses 2015+)",
+                    "data_splits": (
+                        f"Train {min(TRAIN_SEASONS)}-{max(TRAIN_SEASONS)}, "
+                        f"Val {', '.join(map(str, VAL_SEASONS))}, "
+                        f"Test {', '.join(map(str, TEST_SEASONS))} "
+                        "(K uses 2015+)"
+                    ),
                     "ensemble": [
                         "Season-average baseline",
                         "Ridge multi-target",

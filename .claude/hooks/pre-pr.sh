@@ -289,19 +289,6 @@ fi
 # file changes still require *that* position's evidence — handled by the
 # ``positions`` loop unchanged.
 
-# [docs-only] opt-in: any commit in base..HEAD whose subject line contains
-# the `[docs-only]` literal signals the author asserts the diff has no
-# behavioural impact (comment/docstring/import-reorder only). Skips the B2
-# benchmark freshness gate. Mirrors `.github/workflows/tests.yml`'s
-# detect-job opt-in (same tag, same trust contract). The hook cannot
-# verify the assertion — author owns correctness. Subject-line scan via
-# the `docs_only_in_range` helper defined near top of file.
-if [ -n "$base" ] && { [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; } && \
-   docs_only_in_range "$base..HEAD"; then
-  positions=""
-  shared_changed=0
-fi
-
 if [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; then
   positions=$(printf '%s\n' $positions | sort -u | tr '\n' ' ')
 

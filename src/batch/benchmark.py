@@ -44,15 +44,15 @@ from src.shared.model_sync import load_manifest
 RESULTS_FILE = "benchmark_results.json"
 HISTORY_DIR = "benchmark_history"
 
-# Same default as src/batch/train.py — the producer side writes manifest +
-# history keys under ``${S3_PREFIX}/${POS}/...``; env override stays available
-# for any future bucket-layout migration.
-S3_PREFIX = os.environ.get("FF_MODEL_S3_PREFIX", "models")
-
 # Repo root, so record_benchmark_run() resolves HISTORY_DIR / RESULTS_FILE
 # independent of cwd. main() chdirs here, but src/batch/launch.py's auto-append
 # calls record_benchmark_run() without chdir-ing.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def _model_s3_prefix() -> str:
+    """Return the current model-artifact prefix, normalized for manifest reads."""
+    return os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/") or "models"
 
 
 def download_metrics(positions):
@@ -66,7 +66,7 @@ def download_metrics(positions):
     key, so each consumer reads exactly the artifact the producer's manifest
     write committed to.
 
-    Falls through ``current`` -> ``stable`` -> ``previous`` (the same chain
+    Falls through ``stable`` -> ``current`` -> ``previous`` (the same chain
     src/shared/model_sync.py uses on the serving side). Manifest-absent and
     "all entries failed" both surface a per-position WARNING and skip that
     position in the aggregated output rather than raising — one bad position
@@ -75,23 +75,24 @@ def download_metrics(positions):
     which was the source of the cross-run pollution this layer fixes.
     """
     s3 = boto3.client("s3", region_name=AWS_REGION)
+    s3_prefix = _model_s3_prefix()
 
     def _fetch_one(pos):
-        manifest = load_manifest(s3, S3_BUCKET, S3_PREFIX, pos)
+        manifest = load_manifest(s3, S3_BUCKET, s3_prefix, pos)
         if manifest is None:
             # Treated as soft error here (returns None metrics, lets the rest
             # of the aggregation proceed) rather than raising — the caller
             # already prints a per-position WARNING when metrics are missing,
             # and one stale position shouldn't kill a six-position aggregation.
             print(
-                f"[{pos}] WARNING: no manifest at s3://{S3_BUCKET}/{S3_PREFIX}/{pos}/manifest.json"
+                f"[{pos}] WARNING: no manifest at s3://{S3_BUCKET}/{s3_prefix}/{pos}/manifest.json"
             )
             return pos, None
 
         # Resolve in priority order; serving uses the same chain in
         # src/shared/model_sync.py::_sync_one.
         tried = []
-        for label in ("current", "stable", "previous"):
+        for label in ("stable", "current", "previous"):
             entry = manifest.get(label)
             if not entry or not entry.get("key"):
                 continue
@@ -138,9 +139,9 @@ def find_git_sha_divergence(all_metrics: dict, expected_sha: str | None) -> list
         return []
     expected_short = expected_sha[:7]
     return [
-        (pos, (metrics.get("git_sha") or "")[:7])
+        (pos, metrics["git_sha"][:7])
         for pos, metrics in all_metrics.items()
-        if metrics.get("git_sha") and (metrics.get("git_sha") or "")[:7] != expected_short
+        if metrics.get("git_sha") and metrics["git_sha"][:7] != expected_short
     ]
 
 

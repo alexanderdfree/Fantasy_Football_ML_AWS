@@ -609,6 +609,17 @@ class TestMetricExtraction:
         assert "nn_metrics" not in metrics
         assert "attn_nn_metrics" not in metrics
 
+    def test_extracts_elasticnet_metrics(self):
+        from src.batch.train import _extract_metrics
+
+        result = {
+            "elasticnet_metrics": {"total": {"mae": 4.25, "r2": 0.35}},
+            "elasticnet_ranking": {"season_avg_hit_rate": 0.51},
+        }
+        metrics = _extract_metrics("RB", result)
+        assert metrics["elasticnet_metrics"]["total"]["mae"] == 4.25
+        assert metrics["elasticnet_ranking"]["season_avg_hit_rate"] == 0.51
+
     def test_stamps_git_sha_when_env_set(self, monkeypatch):
         """FF_TRAIN_GIT_SHA env var (passed by launch.py via containerOverrides)
         lands in benchmark_metrics.json so benchmark.py can verify per-position
@@ -727,9 +738,21 @@ class TestMainIntegration:
     @mock.patch("src.batch.train.download_data")
     @mock.patch("src.batch.train.pd.read_parquet")
     def test_main_standard_position(
-        self, mock_parquet, mock_download, mock_copytree, mock_upload, mock_sync, tmp_path
+        self,
+        mock_parquet,
+        mock_download,
+        mock_copytree,
+        mock_upload,
+        mock_sync,
+        tmp_path,
+        monkeypatch,
     ):
         import pandas as pd
+
+        monkeypatch.chdir(tmp_path)
+        src_model_dir = tmp_path / "rb" / "outputs" / "models"
+        src_model_dir.mkdir(parents=True)
+        (src_model_dir / "ridge_model.pkl").write_text("fake rb model")
 
         mock_df = pd.DataFrame({"col": [1, 2, 3]})
         mock_parquet.return_value = mock_df
@@ -792,12 +815,17 @@ class TestMainIntegration:
     @mock.patch("src.batch.train.upload_artifacts")
     @mock.patch("src.batch.train.shutil.copytree")
     def test_main_special_position_no_download(
-        self, mock_copytree, mock_upload, mock_sync, tmp_path
+        self, mock_copytree, mock_upload, mock_sync, tmp_path, monkeypatch
     ):
         """main() for K/DST should skip download_data() (train/val/test splits) and
         REQUIRE_GPU. sync_raw_data() still runs for all positions — K/DST's
         self-contained loaders (and weather features) read from data/raw/.
         """
+        monkeypatch.chdir(tmp_path)
+        src_model_dir = tmp_path / "k" / "outputs" / "models"
+        src_model_dir.mkdir(parents=True)
+        (src_model_dir / "ridge_model.pkl").write_text("fake k model")
+
         # main() clears model_dir's contents then copytree's into it before
         # writing metrics, so the mock must recreate the destination dir.
         mock_copytree.side_effect = lambda src, dst, **kw: Path(dst).mkdir(

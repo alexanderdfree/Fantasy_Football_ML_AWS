@@ -92,7 +92,9 @@ def compute_positions(changed_files: Iterable[str]) -> list[str]:
 
 ALL_TEST_SHARDS: tuple[str, ...] = (*ALL_POSITIONS, "shared")
 
-_TEST_DOCS_REGEX = re.compile(r"\.md$|^docs/|^\.github/ISSUE_TEMPLATE/|^\.gitignore$|^LICENSE")
+_TEST_DOCS_REGEX = re.compile(
+    r"\.md$|^docs/|^benchmark_history/|^\.github/ISSUE_TEMPLATE/|^\.gitignore$|^LICENSE"
+)
 _TEST_GLOBAL_REGEX = re.compile(
     r"^src/(shared|data|features)/"
     r"|^src/(__init__|config)\.py$"
@@ -105,7 +107,7 @@ _TEST_GLOBAL_REGEX = re.compile(
 _TEST_SHARED_REGEX = re.compile(
     r"^src/(serving|batch|scripts|benchmarking|tuning|analysis)/"
     r"|^tests/[^/]+\.py$"
-    r"|^tests/(batch|scripts|integration|shared)/"
+    r"|^tests/(analysis|batch|scripts|integration|shared|tuning)/"
 )
 _TEST_PER_POSITION_REGEX = {
     pos: re.compile(rf"^(src/{pos.lower()}/|tests/{pos.lower()}/)") for pos in ALL_POSITIONS
@@ -120,8 +122,8 @@ def compute_test_shards(changed_files: Iterable[str]) -> list[str]:
       2. Any global trigger (shared code, infra, deps, test plumbing) → all 7.
       3. Per-position: src/{pos}/ or tests/{pos}/ → that position.
       4. Cross-cutting dirs (src/serving, src/batch, src/scripts, src/benchmarking,
-         src/tuning, src/analysis, top-level tests/*.py, tests/{batch,scripts,
-         integration,shared}/) → 'shared'.
+         src/tuning, src/analysis, top-level tests/*.py, tests/{analysis,batch,
+         scripts,integration,shared,tuning}/) → 'shared'.
       5. Fallback: if no rule matched, run all 7 (conservative).
     """
     files = [f for f in changed_files if f]

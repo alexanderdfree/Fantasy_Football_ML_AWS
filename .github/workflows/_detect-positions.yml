@@ -29,19 +29,10 @@ jobs:
           # workflow_run: the merged SHA on main. workflow_dispatch: the
           # ref we were dispatched on.
           #
-          # fetch-depth: 2 is the minimum to resolve ``HEAD^`` for both
-          # the [docs-only] commit-subject walk and ``git diff HEAD^ HEAD``
-          # (the workflow_run paths below). It is also safe for
-          # workflow_dispatch: that branch returns early at
-          # ``echo positions=$ALL`` before ever touching git history, so
-          # the dispatch flow never needs more than HEAD itself. Were a
-          # future refactor to reorder the dispatch handling below the
-          # diff, the ``if ! git rev-parse --verify HEAD^`` guard further
-          # down would fall through to the "default to all positions"
-          # branch rather than crashing — bump this to 0 (full clone)
-          # only if a future change actually needs deeper history.
+          # Full history keeps the [docs-only] subject walk and diff base
+          # robust across multi-commit pushes and non-linear merge shapes.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          fetch-depth: 2
+          fetch-depth: 0
           # The detect job only reads the diff and shells out to a pure-stdlib
           # python helper — never pushes commits, opens PRs, or otherwise calls
           # the GitHub API. Drop the auth token from the checked-out repo so

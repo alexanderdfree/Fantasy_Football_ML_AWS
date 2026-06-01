@@ -51,15 +51,15 @@ on:
     # data/splits/, so their config edits are out of scope for this
     # workflow. The smart-skip step below mirrors the same scoping.
     #
-    # The path list intentionally excludes ``src/features/`` — engineer.py
-    # builds features FROM the split parquet, it doesn't change what the
-    # parquet's column set looks like.
     paths:
       - "src/qb/config.py"
       - "src/rb/config.py"
       - "src/wr/config.py"
       - "src/te/config.py"
       - "src/data/**"
+      # engineer.py can change the split parquet column set consumed by
+      # position configs, so feature-pipeline edits must refresh S3 splits.
+      - "src/features/**"
       # Self-edit trigger: a path-filter change in this file takes effect on
       # its own merge, no separate manual dispatch needed.
       - ".github/workflows/refresh-splits.yml"

@@ -81,6 +81,15 @@ class TestEnvVarOverrides:
             assert mod.JOB_QUEUE == "alt-queue"
         self._reload()
 
+    def test_cpu_job_queue_optional(self):
+        with mock.patch.dict(os.environ, {"FF_JOB_QUEUE_CPU": ""}):
+            mod = self._reload()
+            assert mod.JOB_QUEUE_CPU is None
+        with mock.patch.dict(os.environ, {"FF_JOB_QUEUE_CPU": "cpu-queue"}):
+            mod = self._reload()
+            assert mod.JOB_QUEUE_CPU == "cpu-queue"
+        self._reload()
+
     def test_job_definition_override(self):
         with mock.patch.dict(os.environ, {"FF_JOB_DEFINITION": "alt-def"}):
             mod = self._reload()
@@ -360,6 +369,39 @@ class TestSubmitJob:
         assert defs[0] == "cpu-def"  # K routed to CPU
         assert defs[1] == mod.JOB_DEFINITION  # QB stays on GPU
 
+    def test_routes_to_cpu_queue_when_configured(self):
+        """K/DST can use a CPU queue when both CPU def + queue are configured."""
+        import src.batch.launch as mod
+
+        mock_batch = mock.MagicMock()
+        mock_batch.submit_job.return_value = {"jobId": "id"}
+
+        with (
+            mock.patch.object(mod, "JOB_DEFINITION_CPU", "cpu-def"),
+            mock.patch.object(mod, "JOB_QUEUE_CPU", "cpu-queue"),
+        ):
+            mod.submit_job("K", batch_client=mock_batch)
+            mod.submit_job("QB", batch_client=mock_batch)
+
+        queues = [c.kwargs["jobQueue"] for c in mock_batch.submit_job.call_args_list]
+        assert queues[0] == "cpu-queue"
+        assert queues[1] == mod.JOB_QUEUE
+
+    def test_cpu_queue_falls_back_without_cpu_def(self):
+        """A CPU queue alone is not enough to route K/DST off the default queue."""
+        import src.batch.launch as mod
+
+        mock_batch = mock.MagicMock()
+        mock_batch.submit_job.return_value = {"jobId": "id"}
+
+        with (
+            mock.patch.object(mod, "JOB_DEFINITION_CPU", None),
+            mock.patch.object(mod, "JOB_QUEUE_CPU", "cpu-queue"),
+        ):
+            mod.submit_job("K", batch_client=mock_batch)
+
+        assert mock_batch.submit_job.call_args.kwargs["jobQueue"] == mod.JOB_QUEUE
+
     def test_falls_back_to_default_when_cpu_def_unset(self):
         """If no CPU def is configured, K/DST still run on the default queue."""
         import src.batch.launch as mod
@@ -455,22 +497,25 @@ class TestWaitForJobs:
 class TestDownloadArtifacts:
     """Manifest-based artifact download.
 
-    download_artifacts walks ``current → stable → previous`` from
+    download_artifacts walks ``stable → current → previous`` from
     ``models/{POS}/manifest.json`` (see src/batch/launch.py:download_artifacts).
     The legacy ``models/{POS}/model.tar.gz`` mirror was removed in the
     parallel-train-batch race fix.
     """
 
     @staticmethod
-    def _make_manifest_body(history_key: str) -> "mock.MagicMock":
+    def _make_manifest_body(history_key: str, stable_key: str | None = None) -> "mock.MagicMock":
         """Build a get_object response whose Body.read() returns manifest JSON."""
         import json
 
         body = mock.MagicMock()
+        stable = None
+        if stable_key is not None:
+            stable = {"key": stable_key, "sha7": "stable1", "bytes": 2048}
         body.read.return_value = json.dumps(
             {
                 "current": {"key": history_key, "sha7": "deadbee", "bytes": 1024},
-                "stable": None,
+                "stable": stable,
                 "previous": None,
             }
         ).encode("utf-8")
@@ -509,6 +554,37 @@ class TestDownloadArtifacts:
         call_args = mock_s3.download_file.call_args.args
         assert call_args[0] == S3_BUCKET
         assert call_args[1] == history_key
+
+    def test_download_prefers_stable_manifest_entry(self, tmp_path, monkeypatch):
+        from src.batch.launch import download_artifacts
+
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        (staging / "ridge_model.pkl").write_text("stable")
+
+        tar_path = tmp_path / "model.tar.gz"
+        with tarfile.open(str(tar_path), "w:gz") as tar:
+            tar.add(str(staging / "ridge_model.pkl"), arcname="ridge_model.pkl")
+
+        current_key = "models/RB/history/20260520-123456-current/model.tar.gz"
+        stable_key = "models/RB/history/20260520-123456-stable/model.tar.gz"
+        mock_s3 = mock.MagicMock()
+        mock_s3.get_object.return_value = self._make_manifest_body(current_key, stable_key)
+        mock_s3.head_object.return_value = {
+            "LastModified": datetime.datetime(2023, 11, 14, 22, 13, 30, tzinfo=datetime.UTC),
+        }
+
+        def fake_download(bucket, key, filename):
+            import shutil
+
+            shutil.copy(str(tar_path), filename)
+
+        mock_s3.download_file.side_effect = fake_download
+
+        monkeypatch.chdir(tmp_path)
+        download_artifacts(["RB"], s3_client=mock_s3)
+
+        assert mock_s3.download_file.call_args.args[1] == stable_key
 
     def test_warns_on_stale_artifact(self, tmp_path, monkeypatch, capsys):
         """If LastModified < stoppedAt, download_artifacts should print a WARNING."""

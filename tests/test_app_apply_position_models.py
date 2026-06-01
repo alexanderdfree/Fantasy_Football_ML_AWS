@@ -642,6 +642,9 @@ def test_apply_position_models_ridge_load_failure_records_and_nan_fills(_mocked_
 
     # Error recorded under the per-model key used by _degraded_positions().
     assert "QB_ridge" in _mocked_app._cache["position_load_errors"]
+    assert _mocked_app._cache["position_load_errors"]["QB_ridge"] == (
+        "RuntimeError('ridge artifact missing')"
+    )
     # Ridge column NaN'd for this position's rows so the frontend renders "--"
     # instead of misleading 0.0 (the DataFrame's init value for ridge_pred).
     assert results["ridge_pred"].isna().all()
