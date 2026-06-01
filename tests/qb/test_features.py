@@ -10,7 +10,7 @@ in this file.
 import pandas as pd
 import pytest
 
-from src.qb.features import _compute_features, fill_nans
+from src.qb.features import _compute_features, add_specific_features, fill_nans
 from tests.shared.parameterized_features import (
     PositionFeatureSpec,
     install_parameterized_features,
@@ -193,3 +193,34 @@ class TestComputeQBRates:
         week3 = df[df["week"] == 3]
         # 60 / 660 = 0.0909
         assert pytest.approx(week3["qb_rushing_share_L3"].iloc[0], abs=0.01) == 60 / 660
+
+    def test_rookie_phase_features_are_split_aware(self):
+        train = pd.concat(
+            [
+                _make_player_games(player_id="VET", season=2022, n_weeks=4),
+                _make_player_games(player_id="ROOK_TRAIN", season=2023, n_weeks=4),
+            ],
+            ignore_index=True,
+        )
+        val = _make_player_games(player_id="ROOK_VAL", season=2024, n_weeks=4)
+        test = pd.concat(
+            [
+                _make_player_games(player_id="VET", season=2025, n_weeks=2),
+                _make_player_games(player_id="ROOK_TEST", season=2025, n_weeks=4),
+            ],
+            ignore_index=True,
+        )
+
+        train, val, test = add_specific_features(train, val, test)
+
+        # First data season is ambiguous; do not label 2022 rows as rookies.
+        assert train.loc[train["player_id"].eq("VET"), "is_rookie"].eq(0.0).all()
+        assert test.loc[test["player_id"].eq("VET"), "is_rookie"].eq(0.0).all()
+
+        train_rook = train[train["player_id"].eq("ROOK_TRAIN")].sort_values("week")
+        assert train_rook["is_rookie"].tolist() == [1.0, 1.0, 1.0, 1.0]
+        assert train_rook["rookie_early"].tolist() == [1.0, 1.0, 1.0, 0.0]
+
+        test_rook = test[test["player_id"].eq("ROOK_TEST")].sort_values("week")
+        assert test_rook["is_rookie"].tolist() == [1.0, 1.0, 1.0, 1.0]
+        assert test_rook["rookie_early"].tolist() == [1.0, 1.0, 1.0, 0.0]
