@@ -369,7 +369,7 @@ def test_format_config_lines_roundtrips_through_eval():
     assert namespace["RB_ATTN_D_MODEL"] == 32
     assert namespace["RB_ATTN_LR"] == 0.001
     assert namespace["RB_SCHEDULER_TYPE"] == "onecycle"
-    assert namespace["RB_ONECYCLE_MAX_LR"] == 0.002
+    assert namespace["RB_ATTN_ONECYCLE_MAX_LR"] == 0.002
     assert namespace["RB_NN_BACKBONE_LAYERS"] == [128, 64]
     assert namespace["RB_NN_DROPOUT"] == 0.2
 
@@ -563,6 +563,41 @@ def test_objective_validates_overrides_before_training(monkeypatch):
 
     with pytest.raises(ValueError, match="nn_head_hidden"):
         objective(trial)
+
+
+@pytest.mark.parametrize(
+    ("scheduler_type", "sampled_key", "attn_key", "base_value", "sampled_value"),
+    [
+        ("cosine_warm_restarts", "cosine_eta_min", "attn_cosine_eta_min", 2e-5, 3e-5),
+        ("onecycle", "onecycle_max_lr", "attn_onecycle_max_lr", 4e-3, 7e-3),
+    ],
+)
+def test_objective_maps_sampled_scheduler_lr_to_attention_override(
+    monkeypatch,
+    scheduler_type,
+    sampled_key,
+    attn_key,
+    base_value,
+    sampled_value,
+):
+    overrides = _base_valid_overrides(scheduler_type=scheduler_type)
+    overrides[sampled_key] = sampled_value
+
+    def fake_runner(seed, config):
+        assert config[attn_key] == pytest.approx(sampled_value)
+        assert config[attn_key] != pytest.approx(base_value)
+        config["epoch_callback"](0, 0.5)
+        return {"attn_history": {"val_loss": [0.5]}}
+
+    base_cfg = {"train_attention_nn": True, "scheduler_type": scheduler_type, attn_key: base_value}
+    monkeypatch.setattr(tune_nn, "_sample_overrides", lambda trial: dict(overrides))
+    monkeypatch.setattr(tune_nn, "get_runner", lambda pos: fake_runner)
+
+    study = optuna.create_study(direction="minimize")
+    objective = tune_nn._make_objective("QB", base_cfg, seed=42)
+    study.optimize(objective, n_trials=1)
+
+    assert study.best_value == pytest.approx(0.5)
 
 
 def test_objective_propagates_pruned_trial(monkeypatch):

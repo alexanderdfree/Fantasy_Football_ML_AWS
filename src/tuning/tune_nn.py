@@ -548,6 +548,7 @@ def _make_objective(pos: str, base_cfg: dict, seed: int):
         # shallow-copy + per-key strategy at that point.
         cfg = copy.deepcopy(base_cfg)
         cfg.update(overrides)
+        _apply_attention_scheduler_overrides(cfg, overrides)
 
         # The objective only reads result["attn_history"]["val_loss"] (below),
         # so Ridge / ElasticNet / LightGBM / base NN are wasted compute per
@@ -609,8 +610,11 @@ _PARAM_TO_CONST = {
     "scheduler_type": "SCHEDULER_TYPE",
     "cosine_t0": "COSINE_T0",
     "cosine_t_mult": "COSINE_T_MULT",
-    "cosine_eta_min": "COSINE_ETA_MIN",
-    "onecycle_max_lr": "ONECYCLE_MAX_LR",
+    # The tuner objective trains attention only, so scheduler LR scale params
+    # must be pasted into the attention-specific config fields. The shared
+    # scheduler fields still exist for the regular NN path.
+    "cosine_eta_min": "ATTN_COSINE_ETA_MIN",
+    "onecycle_max_lr": "ATTN_ONECYCLE_MAX_LR",
     "onecycle_pct_start": "ONECYCLE_PCT_START",
     "nn_backbone_layers": "NN_BACKBONE_LAYERS",
     "nn_head_hidden": "NN_HEAD_HIDDEN",
@@ -619,6 +623,22 @@ _PARAM_TO_CONST = {
     "nn_weight_decay": "NN_WEIGHT_DECAY",
     "nn_batch_size": "NN_BATCH_SIZE",
 }
+
+
+def _apply_attention_scheduler_overrides(cfg: dict, overrides: dict) -> None:
+    """Route sampled scheduler LR scale params to attention-specific keys.
+
+    Production configs now carry ``attn_cosine_eta_min`` /
+    ``attn_onecycle_max_lr`` so attention training can use scaled scheduler
+    values without changing the regular NN schedule. ``tune_nn`` still samples
+    the historical unprefixed Optuna params for study compatibility; mirror
+    those onto the attention keys before running the attention-only objective.
+    """
+    sched_type = cfg.get("scheduler_type")
+    if sched_type == "cosine_warm_restarts" and "cosine_eta_min" in overrides:
+        cfg["attn_cosine_eta_min"] = overrides["cosine_eta_min"]
+    elif sched_type == "onecycle" and "onecycle_max_lr" in overrides:
+        cfg["attn_onecycle_max_lr"] = overrides["onecycle_max_lr"]
 
 
 def _format_value(val) -> str:
