@@ -11,6 +11,8 @@ pytestmark = pytest.mark.unit
 
 
 def test_attention_knob_inventory_is_the_issue_720_eight():
+    assert ake.DEFAULT_SEEDS == (42, 43, 44)
+    assert ake.DEFAULT_N_JOBS == 2
     assert ake.KNOB_NAMES == (
         "attn_d_model",
         "attn_n_heads",
@@ -147,17 +149,129 @@ def test_dry_run_prints_design_without_training(capsys):
 
 
 def test_doe_cli_threads_ridge_sentinel_flag(monkeypatch):
-    seen: list[bool] = []
+    seen: list[tuple[bool, int]] = []
 
-    def fake_run_doe(position, seeds, *, ridge_sentinel):
+    def fake_run_doe(position, seeds, *, ridge_sentinel, n_jobs):
         assert position == "RB"
         assert seeds == [42]
-        seen.append(ridge_sentinel)
+        seen.append((ridge_sentinel, n_jobs))
         return {"ok": True}
 
     monkeypatch.setattr(ake, "run_doe", fake_run_doe)
 
     ake.main(["doe", "--seeds", "42", "--no-history"])
-    ake.main(["doe", "--seeds", "42", "--ridge-sentinel", "--no-history"])
+    ake.main(["doe", "--seeds", "42", "--ridge-sentinel", "--n-jobs", "3", "--no-history"])
 
-    assert seen == [False, True]
+    assert seen == [(False, 2), (True, 3)]
+
+
+def test_doe_primes_feature_cache_before_parallel_pool(monkeypatch):
+    calls: list[tuple[str, int | str]] = []
+
+    class FakeFuture:
+        def __init__(self, row):
+            self._row = row
+
+        def result(self):
+            return self._row
+
+    class FakePool:
+        def __init__(self, max_workers):
+            calls.append(("pool", max_workers))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, position, seed, overrides, *, ridge_sentinel):
+            return FakeFuture(
+                {
+                    "position": position,
+                    "seed": seed,
+                    "overrides": dict(overrides),
+                    "attn_test_mae": 1.0,
+                    "ridge_mae": None,
+                }
+            )
+
+    monkeypatch.setattr(
+        ake, "_prime_feature_cache", lambda position: calls.append(("prime", position))
+    )
+    monkeypatch.setattr(ake, "ProcessPoolExecutor", FakePool)
+    monkeypatch.setattr(ake, "as_completed", lambda futures: list(futures))
+
+    result = ake.run_doe("RB", [42], ridge_sentinel=False, n_jobs=2)
+
+    assert calls[:2] == [("prime", "RB"), ("pool", 2)]
+    assert len(result["rows"]) == 12
+
+
+def test_fanova_cli_threads_n_jobs(monkeypatch):
+    seen: list[tuple[int, int, bool, int]] = []
+
+    def fake_run_fanova(
+        position,
+        seeds,
+        *,
+        n_trials,
+        sampler_seed,
+        ridge_sentinel,
+        n_jobs,
+    ):
+        assert position == "RB"
+        assert seeds == [42]
+        seen.append((n_trials, sampler_seed, ridge_sentinel, n_jobs))
+        return {"ok": True}
+
+    monkeypatch.setattr(ake, "run_fanova", fake_run_fanova)
+
+    ake.main(
+        [
+            "fanova",
+            "--seeds",
+            "42",
+            "--n-trials",
+            "7",
+            "--sampler-seed",
+            "99",
+            "--ridge-sentinel",
+            "--n-jobs",
+            "3",
+            "--no-history",
+        ]
+    )
+
+    assert seen == [(7, 99, True, 3)]
+
+
+def test_fanova_primes_feature_cache_before_parallel_pool(monkeypatch):
+    calls: list[tuple[str, int | str]] = []
+
+    class FakePool:
+        def __init__(self, max_workers):
+            calls.append(("pool", max_workers))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        ake, "_prime_feature_cache", lambda position: calls.append(("prime", position))
+    )
+    monkeypatch.setattr(ake, "ProcessPoolExecutor", FakePool)
+
+    result = ake.run_fanova(
+        "RB",
+        [42],
+        n_trials=0,
+        sampler_seed=42,
+        ridge_sentinel=False,
+        n_jobs=2,
+    )
+
+    assert calls == [("prime", "RB"), ("pool", 2)]
+    assert result["seeds"]["42"]["completed_trials"] == 0
