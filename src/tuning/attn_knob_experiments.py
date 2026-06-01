@@ -319,7 +319,7 @@ def main(argv: list[str] | None = None) -> None:
             ridge_sentinel=args.ridge_sentinel,
         )
     else:
-        results = run_doe(position, seeds, ridge_sentinel=True)
+        results = run_doe(position, seeds, ridge_sentinel=args.ridge_sentinel)
 
     print(results)
     if not args.no_history:

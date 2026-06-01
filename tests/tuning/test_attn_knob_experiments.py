@@ -144,3 +144,20 @@ def test_dry_run_prints_design_without_training(capsys):
     out = capsys.readouterr().out
     assert "planned pipeline runs: 12" in out
     assert "plackett_burman_12" in out
+
+
+def test_doe_cli_threads_ridge_sentinel_flag(monkeypatch):
+    seen: list[bool] = []
+
+    def fake_run_doe(position, seeds, *, ridge_sentinel):
+        assert position == "RB"
+        assert seeds == [42]
+        seen.append(ridge_sentinel)
+        return {"ok": True}
+
+    monkeypatch.setattr(ake, "run_doe", fake_run_doe)
+
+    ake.main(["doe", "--seeds", "42", "--no-history"])
+    ake.main(["doe", "--seeds", "42", "--ridge-sentinel", "--no-history"])
+
+    assert seen == [False, True]
