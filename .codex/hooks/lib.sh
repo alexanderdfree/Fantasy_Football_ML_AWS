@@ -33,6 +33,28 @@ codex_main_worktree() {
     | tr -d '\r'
 }
 
+codex_worktrees_dir() {
+  printf '%s/worktrees\n' "${CODEX_HOME:-$HOME/.codex}"
+}
+
+codex_is_clean_codex_worktree() {
+  local root="$1"
+  local main_worktree="${2:-}"
+  local worktrees_dir repo_name
+
+  [ -n "$main_worktree" ] || return 1
+  [ "$root" != "$main_worktree" ] || return 1
+
+  worktrees_dir="$(codex_worktrees_dir)"
+  repo_name="$(basename "$main_worktree")"
+  case "$root" in
+    "$worktrees_dir"/*/"$repo_name") ;;
+    *) return 1 ;;
+  esac
+
+  [ -z "$(git -C "$root" status --porcelain 2>/dev/null)" ]
+}
+
 codex_hook_command() {
   local input="$1"
   local jq_bin="$2"

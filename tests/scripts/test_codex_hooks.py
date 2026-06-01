@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -56,7 +57,10 @@ def git_worktree_pair(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _run_hook(
-    script: str, payload: dict[str, object], cwd: Path
+    script: str,
+    payload: dict[str, object],
+    cwd: Path,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     for key in (
@@ -67,6 +71,8 @@ def _run_hook(
         "GIT_WORK_TREE",
     ):
         env.pop(key, None)
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         [str(PROJECT_ROOT / script)],
         input=json.dumps(payload),
@@ -76,6 +82,71 @@ def _run_hook(
         env=env,
         check=False,
     )
+
+
+def _run_fresh_worktree(
+    args: list[str],
+    cwd: Path,
+    codex_home: Path,
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["CODEX_HOME"] = str(codex_home)
+    return subprocess.run(
+        [str(PROJECT_ROOT / "scripts/codex-fresh-worktree.sh"), *args],
+        text=True,
+        capture_output=True,
+        cwd=cwd,
+        env=env,
+        check=False,
+    )
+
+
+@pytest.fixture
+def launcher_repo(tmp_path: Path) -> tuple[Path, Path]:
+    main = tmp_path / "Final-Project"
+    remote = tmp_path / "remote.git"
+
+    subprocess.run(["git", "init", "-b", "main", str(main)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(main), "config", "user.email", "codex-hooks@example.test"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(main), "config", "user.name", "Codex Hooks"], check=True)
+    (main / ".gitignore").write_text("data/raw/\ndata/splits/\n.venv/\n")
+    (main / "README.md").write_text("test repo\n")
+    subprocess.run(["git", "-C", str(main), "add", ".gitignore", "README.md"], check=True)
+    subprocess.run(
+        ["git", "-C", str(main), "commit", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(main), "remote", "add", "origin", str(remote)], check=True)
+    subprocess.run(
+        ["git", "-C", str(main), "push", "-u", "origin", "main"],
+        check=True,
+        capture_output=True,
+    )
+    return main, remote
+
+
+def _add_codex_worktree(main: Path, codex_home: Path, short_id: str, branch: str) -> Path:
+    worktree = codex_home / "worktrees" / short_id / "Final-Project"
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-b", branch, str(worktree), "main"],
+        check=True,
+        capture_output=True,
+    )
+    return worktree
+
+
+def _current_branch(path: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(path), "branch", "--show-current"],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
 
 
 def test_codex_json_context_uses_resolved_jq_path(tmp_path: Path):
@@ -164,6 +235,116 @@ class TestCodexHooks:
         context = json.loads(result.stdout)["hookSpecificOutput"]
         assert context["hookEventName"] == "SessionStart"
         assert "read AGENTS.md" in context["additionalContext"]
+
+    def test_session_start_mentions_launcher_for_non_reusable_cwd(
+        self, git_worktree_pair: tuple[Path, Path], tmp_path: Path
+    ):
+        main, _ = git_worktree_pair
+
+        result = _run_hook(
+            ".codex/hooks/session-start.sh",
+            {"cwd": str(main)},
+            main,
+            {"CODEX_HOME": str(tmp_path / "codex-home")},
+        )
+
+        assert result.returncode == 0
+        context = json.loads(result.stdout)["hookSpecificOutput"]
+        assert "scripts/codex-fresh-worktree.sh" in context["additionalContext"]
+
+    def test_session_start_omits_launcher_for_clean_codex_worktree(
+        self, launcher_repo: tuple[Path, Path], tmp_path: Path
+    ):
+        main, _ = launcher_repo
+        codex_home = tmp_path / "codex-home"
+        worktree = _add_codex_worktree(main, codex_home, "abcd", "codex/existing")
+
+        result = _run_hook(
+            ".codex/hooks/session-start.sh",
+            {"cwd": str(worktree)},
+            worktree,
+            {"CODEX_HOME": str(codex_home)},
+        )
+
+        assert result.returncode == 0
+        context = json.loads(result.stdout)["hookSpecificOutput"]
+        assert "scripts/codex-fresh-worktree.sh" not in context["additionalContext"]
+
+    def test_fresh_worktree_reuses_clean_codex_worktree(
+        self, launcher_repo: tuple[Path, Path], tmp_path: Path
+    ):
+        main, _ = launcher_repo
+        codex_home = tmp_path / "codex-home"
+        worktree = _add_codex_worktree(main, codex_home, "abcd", "codex/existing")
+
+        result = _run_fresh_worktree(["--print-path"], worktree, codex_home)
+
+        assert result.returncode == 0, result.stderr
+        assert Path(result.stdout.strip()) == worktree
+
+    def test_fresh_worktree_creates_from_main_and_links_data(
+        self, launcher_repo: tuple[Path, Path], tmp_path: Path
+    ):
+        main, _ = launcher_repo
+        codex_home = tmp_path / "codex-home"
+        (main / "data/raw").mkdir(parents=True)
+        (main / "data/splits").mkdir(parents=True)
+
+        result = _run_fresh_worktree(["--print-path"], main, codex_home)
+
+        assert result.returncode == 0, result.stderr
+        target = Path(result.stdout.strip())
+        assert target.parent.parent == codex_home / "worktrees"
+        assert target.name == "Final-Project"
+        assert re.fullmatch(r"codex/session-[0-9a-f]{4}", _current_branch(target))
+        assert (target / "data/raw").is_symlink()
+        assert (target / "data/raw").resolve() == main / "data/raw"
+        assert (target / "data/splits").is_symlink()
+        assert (target / "data/splits").resolve() == main / "data/splits"
+        assert not (target / ".venv").exists()
+
+    def test_fresh_worktree_creates_when_codex_worktree_is_dirty(
+        self, launcher_repo: tuple[Path, Path], tmp_path: Path
+    ):
+        main, _ = launcher_repo
+        codex_home = tmp_path / "codex-home"
+        dirty_worktree = _add_codex_worktree(main, codex_home, "abcd", "codex/existing")
+        (dirty_worktree / "README.md").write_text("dirty\n")
+
+        result = _run_fresh_worktree(["--print-path"], dirty_worktree, codex_home)
+
+        assert result.returncode == 0, result.stderr
+        target = Path(result.stdout.strip())
+        assert target != dirty_worktree
+        assert target.parent.parent == codex_home / "worktrees"
+        assert re.fullmatch(r"codex/session-[0-9a-f]{4}", _current_branch(target))
+
+    def test_fresh_worktree_force_new_base_branch_no_fetch_print_path(
+        self, launcher_repo: tuple[Path, Path], tmp_path: Path
+    ):
+        main, _ = launcher_repo
+        codex_home = tmp_path / "codex-home"
+        clean_worktree = _add_codex_worktree(main, codex_home, "abcd", "codex/existing")
+
+        result = _run_fresh_worktree(
+            [
+                "--force-new",
+                "--no-fetch",
+                "--base",
+                "main",
+                "--branch",
+                "codex/session-custom",
+                "--print-path",
+            ],
+            clean_worktree,
+            codex_home,
+        )
+
+        assert result.returncode == 0, result.stderr
+        target = Path(result.stdout.strip())
+        assert target == codex_home / "worktrees" / "session-custom" / "Final-Project"
+        assert target != clean_worktree
+        assert _current_branch(target) == "codex/session-custom"
 
     def test_pre_pr_hook_ignores_non_pr_create_commands(self):
         result = _run_hook(

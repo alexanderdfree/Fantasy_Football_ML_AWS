@@ -8,7 +8,7 @@ Everything imported from `AGENTS.md` is the shared project brain. This file docu
 
 Codex loads project hooks from `.codex/hooks.json` when the project is trusted. Review and trust them with `/hooks` after a hook file changes.
 
-- `.codex/hooks/session-start.sh` adds project-specific startup context and runs a best-effort Codex memory pull from S3 via `scripts/agent-memory-sync.sh codex pull`. It cannot persist shell exports the way Claude's remote `SessionStart` hook writes `CLAUDE_ENV_FILE`, so environment bootstrap remains a SETUP.md/manual step.
+- `.codex/hooks/session-start.sh` adds project-specific startup context, warns when the session did not start from a clean Codex worktree, and runs a best-effort Codex memory pull from S3 via `scripts/agent-memory-sync.sh codex pull`. It cannot persist shell exports the way Claude's remote `SessionStart` hook writes `CLAUDE_ENV_FILE`, and it cannot move an already-running Codex session into a new worktree, so environment bootstrap remains a SETUP.md/manual step and fresh-worktree startup belongs in `scripts/codex-fresh-worktree.sh`.
 - `.codex/hooks/guard-worktree-path.sh` blocks `apply_patch`/edit-style tool calls that target the main checkout while Codex is running in a worktree.
 - `.codex/hooks/ruff-format.sh` formats touched Python files after `apply_patch`.
 - `.codex/hooks/pre-pr.sh` wraps the repo's existing `.claude/hooks/pre-pr.sh` with `CLAUDE_PROJECT_DIR` set to the Codex project root, so the deterministic PR gate stays single-sourced.
@@ -16,6 +16,18 @@ Codex loads project hooks from `.codex/hooks.json` when the project is trusted. 
 - `.codex/hooks/memory-sync-stop.sh` runs a best-effort `scripts/agent-memory-sync.sh all push` on `Stop`, pushing changed local Claude/Codex memory trees to their separate S3 prefixes.
 
 Known limitation: Codex hooks are guardrails, not a complete enforcement boundary. They cover `apply_patch`, simple Bash hook events, and MCP calls that Codex exposes to hooks; they do not reliably intercept every possible shell-side file write. Keep using `apply_patch` for edits.
+
+## Fresh Worktree Launcher
+
+Start new local Codex sessions for this repo through:
+
+```bash
+scripts/codex-fresh-worktree.sh
+```
+
+The launcher reuses the current checkout only when it is a clean Codex-owned worktree under `${CODEX_HOME:-$HOME/.codex}/worktrees/*/Final-Project`. From the main checkout, a dirty worktree, or any other checkout shape, it creates `${CODEX_HOME:-$HOME/.codex}/worktrees/<id>/Final-Project` on `codex/session-<id>` from `origin/main`, best-effort links ignored `data/raw` and `data/splits` from the main checkout, and then runs `codex --cd <that-worktree>`.
+
+Useful options: `--force-new`, `--base <ref>`, `--branch <name>`, `--no-fetch`, and `--print-path`. Use `--` before Codex arguments when a prompt or Codex option could be confused with a launcher option.
 
 ## Slash Prompts
 
@@ -38,7 +50,7 @@ OpenAI now marks custom prompts deprecated in favor of skills, but prompts are s
 ## Gaps Versus Claude Code
 
 - Claude has project-local slash skills under `.claude/skills/`; Codex custom prompts only load from `$CODEX_HOME/prompts`, so the repo tracks templates plus a bootstrap installer.
-- Claude's `SessionStart` can mutate the remote session environment through `CLAUDE_ENV_FILE`; Codex hooks can add context but cannot persist `VIRTUAL_ENV`, `PATH`, or `PYTHONPATH` for later shell tools.
+- Claude's `SessionStart` can mutate the remote session environment through `CLAUDE_ENV_FILE`; Codex hooks can add context but cannot persist `VIRTUAL_ENV`, `PATH`, `PYTHONPATH`, or a new working directory for later shell tools.
 - Claude's worktree guard sees explicit `file_path` fields from Edit/Write tools. Codex primarily edits through `apply_patch`, so the guard parses patch headers and does not attempt broad Bash write detection.
 - Claude's `/review` skill is an interactive tool. Codex's closest local equivalent is `codex review --base origin/main`.
 - Claude's scheduled audit routine is a claude.ai cloud routine. Codex has no matching scheduled local routine in this repo yet; Codex can consume the resulting `claude-audit` issue backlog through `/prompts:solve-issues`.
