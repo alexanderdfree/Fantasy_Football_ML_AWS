@@ -293,22 +293,30 @@ Pushes to `main` trigger one of two training workflows, selected by the `BATCH_A
 
 Flip with `gh variable set BATCH_ACTIVE --body "true"` or `--body "false"`; the new value takes effect on the next push. `workflow_dispatch` on either workflow bypasses the gate for smoke-testing the inactive path. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
 
-## Sync Claude auto-memory across machines (owner only)
+## Sync agent auto-memory across machines (owner only)
 
-Claude Code's per-project auto-memory lives at `~/.claude/projects/<slug>/memory/` (the `MEMORY.md` index plus one markdown file per remembered fact) — outside this repo, and deliberately **not** committed (the repo is public). [scripts/claude-memory-sync.sh](scripts/claude-memory-sync.sh) syncs just that `memory/` subtree between machines (e.g. the Mac and the WSL box) through the private `ff-predictor-training` S3 bucket, under a machine-independent key (`claude-memory/<repo>/`) derived from the git remote — so each box's divergent local project path converges on one location. Session transcripts and subagent metadata are never touched.
+Agent memories live outside this public repo and are deliberately **not** committed. [scripts/agent-memory-sync.sh](scripts/agent-memory-sync.sh) syncs the markdown memory trees through the private `ff-predictor-training` S3 bucket, using separate prefixes for each agent:
+
+- Claude Code: `~/.claude/projects/<slug>/memory/` -> `s3://ff-predictor-training/claude-memory/<repo>/memory/`
+- Codex: `${CODEX_HOME:-~/.codex}/memories/` -> `s3://ff-predictor-training/codex-memory/<repo>/memories/`
+
+Claude session transcripts/subagent metadata and Codex SQLite runtime files are never synced.
 
 ```bash
-scripts/claude-memory-sync.sh status          # dry-run both directions; changes nothing
-scripts/claude-memory-sync.sh pull            # S3 -> local   (start of a work block)
-scripts/claude-memory-sync.sh push            # local -> S3   (end of a work block)
-scripts/claude-memory-sync.sh push --prune    # mirror: also delete S3 files removed locally
+scripts/agent-memory-sync.sh all status       # dry-run both agents; writes nothing
+scripts/claude-memory-sync.sh pull            # S3 -> local Claude memory
+scripts/codex-memory-sync.sh pull             # S3 -> local Codex memories
+scripts/agent-memory-sync.sh all push         # local -> S3 for both local trees
+scripts/agent-memory-sync.sh all push --prune # mirror-delete, opt-in only
 ```
 
-- **Discipline:** pull at the start, push at the end. You work one machine at a time, so this keeps the lone conflict hotspot (`MEMORY.md`) clean.
+- **Discipline:** pull at session start, push at session stop. You work one machine at a time, so this keeps the conflict hotspots (`MEMORY.md` / `memory_summary.md`) clean.
+- **Separate remotes:** Claude and Codex never share an S3 folder. Override with `FF_CLAUDE_MEMORY_S3_PREFIX` or `FF_CODEX_MEMORY_S3_PREFIX`; the legacy `FF_MEMORY_S3_PREFIX` remains a Claude-only alias. `FF_MEMORY_S3_BUCKET` overrides the bucket for both.
 - **Additive by default:** a memory created on the other box is never silently dropped; `--prune` opts into mirror-delete (the bucket has versioning enabled as the recovery net).
-- **Credentials:** needs AWS creds (env or `~/.aws/credentials`); it cleanly no-ops when the `aws` CLI or creds are absent, so it is safe in a hook. Override the location with `FF_MEMORY_S3_BUCKET` / `FF_MEMORY_S3_PREFIX`.
-- **Full-auto:** `bash scripts/bootstrap-claude-wsl.sh --with-memory-sync` installs `SessionStart` (pull) + `Stop` (push) hooks into your global `~/.claude/settings.json` (async, non-blocking) and does one initial pull — so sync happens hands-off. The hooks self-scope to repos containing the script, so they no-op everywhere else.
-- **Durable vs incidental:** this syncs Claude's *incidental, machine-local* recall across your boxes. **Durable, share-worthy project knowledge belongs in version-controlled [AGENTS.md](AGENTS.md)** — the cross-agent source of truth both Claude Code and Codex read — not in synced auto-memory. (This S3 sync is **Claude-only by design**; Codex keeps its own *global, local-by-design* memory with no official cross-machine sync — see [AGENTS.md](AGENTS.md) § "Codex specifics".)
+- **Credentials:** needs AWS creds (env or `~/.aws/credentials`); it cleanly no-ops when the `aws` CLI or creds are absent, so it is safe in a hook.
+- **Full-auto hooks:** tracked Claude and Codex `SessionStart` hooks pull the respective agent memory. Tracked `Stop` hooks push both local memory trees, so a cross-agent memory update made on a machine reaches both S3 prefixes when both local stores exist.
+- **Fresh-machine seed:** `bash scripts/bootstrap-claude-wsl.sh --with-memory-sync` does an initial Claude pull while installing Claude global conveniences; `bash scripts/bootstrap-codex-local.sh --with-memory-sync` installs Codex prompt templates and does an initial Codex pull.
+- **Durable vs incidental:** this syncs incidental, machine-local recall across your boxes. **Durable, share-worthy project knowledge belongs in version-controlled [AGENTS.md](AGENTS.md)**, the cross-agent source of truth both Claude Code and Codex read.
 
 ## Bootstrap Codex local prompts (owner only)
 

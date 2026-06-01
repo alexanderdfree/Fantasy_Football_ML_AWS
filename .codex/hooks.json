@@ -12,6 +12,17 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/memory-sync-stop.sh\"",
+            "statusMessage": "Syncing agent memories to S3"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "apply_patch|Edit|Write|MultiEdit|NotebookEdit",

@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.unit
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_agent_memory_sync_uses_separate_remote_prefixes(tmp_path: Path) -> None:
+    call_log = tmp_path / "aws-calls.txt"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_aws = fake_bin / "aws"
+    fake_aws.write_text(
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$AWS_CALL_LOG"\n',
+        encoding="utf-8",
+    )
+    fake_aws.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "AWS_CALL_LOG": str(call_log),
+        "AWS_PROFILE": "dummy",
+        "CODEX_HOME": str(tmp_path / "codex-home"),
+        "FF_CLAUDE_MEMORY_S3_PREFIX": "claude-memory/test-repo",
+        "FF_CODEX_MEMORY_S3_PREFIX": "codex-memory/test-repo",
+        "FF_MEMORY_S3_BUCKET": "test-bucket",
+        "HOME": str(tmp_path / "home"),
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+    }
+
+    subprocess.run(
+        ["bash", "scripts/agent-memory-sync.sh", "all", "status"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = call_log.read_text(encoding="utf-8").splitlines()
+    joined = "\n".join(calls)
+
+    assert "s3://test-bucket/claude-memory/test-repo/memory" in joined
+    assert "s3://test-bucket/codex-memory/test-repo/memories" in joined
+    assert "--exclude .git --exclude .git/*" in joined
+
+    claude_calls = [
+        call for call in calls if "s3://test-bucket/claude-memory/test-repo/memory" in call
+    ]
+    assert claude_calls
+    assert all("--exclude .git" not in call for call in claude_calls)

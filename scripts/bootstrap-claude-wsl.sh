@@ -10,9 +10,10 @@
 #   2. ~/.claude/hooks/worktree-parent-guard.sh -- the global PreToolUse hook the
 #                                            settings above reference.
 #
-# Optional add-on (--with-memory-sync): also installs SessionStart/Stop hooks
-# that sync Claude's auto-memory to private S3 via scripts/claude-memory-sync.sh
-# (off by default; see that script + SETUP.md's memory-sync section).
+# Optional add-on (--with-memory-sync): also installs global SessionStart/Stop
+# hooks that sync Claude's auto-memory to private S3 via the agent memory sync
+# script. Project hooks also do this for this repo; the global hooks are kept as
+# a WSL bootstrap convenience.
 #
 # What this does NOT touch (deliberately):
 #   * The PROJECT config -- .claude/settings.json and .claude/hooks/*.sh are
@@ -32,8 +33,8 @@
 # overwrite any existing same-named arrays -- the backup is your safety net.)
 set -euo pipefail
 
-# Optional add-on: also install the Claude-memory <-> S3 sync hooks
-# (scripts/claude-memory-sync.sh). Off by default; enable with --with-memory-sync.
+# Optional add-on: also install the Claude-memory <-> S3 sync hooks. Off by
+# default; enable with --with-memory-sync.
 WITH_MEMORY_SYNC=0
 for arg in "$@"; do
   case "$arg" in
@@ -153,9 +154,8 @@ JSON_EOF
 
 # Optional: fold the memory-sync SessionStart(pull)+Stop(push) hooks into the
 # desired settings so the same jq merge below installs them. Requires jq (the
-# merge does). The hook command self-scopes via a `[ -x ]` guard — it no-ops in
-# any project lacking scripts/claude-memory-sync.sh — so a GLOBAL hook is
-# harmless everywhere but this repo and its worktrees.
+# merge does). The hook command self-scopes via a `[ -x ]` guard, so a GLOBAL
+# hook is harmless everywhere but this repo and its worktrees.
 if [ "$WITH_MEMORY_SYNC" -eq 1 ]; then
   if command -v jq >/dev/null 2>&1; then
     read -r -d '' MEMSYNC_HOOKS <<'JSON_EOF' || true
@@ -166,7 +166,7 @@ if [ "$WITH_MEMORY_SYNC" -eq 1 ]; then
         "hooks": [
           {
             "type": "command",
-            "command": "[ -x \"$CLAUDE_PROJECT_DIR/scripts/claude-memory-sync.sh\" ] && bash \"$CLAUDE_PROJECT_DIR/scripts/claude-memory-sync.sh\" pull || true",
+            "command": "[ -x \"$CLAUDE_PROJECT_DIR/scripts/agent-memory-sync.sh\" ] && bash \"$CLAUDE_PROJECT_DIR/scripts/agent-memory-sync.sh\" claude pull || true",
             "async": true,
             "timeout": 20,
             "statusMessage": "Pulling Claude memory from S3"
@@ -179,7 +179,7 @@ if [ "$WITH_MEMORY_SYNC" -eq 1 ]; then
         "hooks": [
           {
             "type": "command",
-            "command": "[ -x \"$CLAUDE_PROJECT_DIR/scripts/claude-memory-sync.sh\" ] && bash \"$CLAUDE_PROJECT_DIR/scripts/claude-memory-sync.sh\" push || true",
+            "command": "[ -x \"$CLAUDE_PROJECT_DIR/scripts/agent-memory-sync.sh\" ] && bash \"$CLAUDE_PROJECT_DIR/scripts/agent-memory-sync.sh\" all push || true",
             "async": true,
             "statusMessage": "Syncing Claude memory to S3"
           }
@@ -227,7 +227,7 @@ fi
 if [ "$WITH_MEMORY_SYNC" -eq 1 ]; then
   echo "[bootstrap] memory-sync hooks installed (SessionStart pull + Stop push)."
   echo "[bootstrap] doing an initial memory pull from S3 (best-effort)..."
-  bash "$REPO_ROOT/scripts/claude-memory-sync.sh" pull || true
+  bash "$REPO_ROOT/scripts/agent-memory-sync.sh" claude pull || true
 fi
 
 # --- Summary -----------------------------------------------------------------
