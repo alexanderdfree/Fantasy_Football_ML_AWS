@@ -240,8 +240,8 @@ def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch):
     def fake_target_metrics(y_true, preds, targets):
         mae = float(preds["points"][0])
         return {
-            "total": {"mae": mae, "r2": mae * 2},
-            "points": {"mae": mae + 1, "r2": mae * 3},
+            "total": {"mae": mae, "rmse": mae + 0.5, "r2": mae * 2, "unit": "pts"},
+            "points": {"mae": mae + 1, "rmse": mae + 1.5, "r2": mae * 3, "unit": "pts"},
         }
 
     def fake_ranking(df, pred_col):
@@ -272,7 +272,10 @@ def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch):
         "std": pytest.approx(0.70710678),
     }
     assert result["aggregate"]["new_metrics"]["total"]["mae"]["mean"] == pytest.approx(11.5)
+    assert result["aggregate"]["old_metrics"]["total"]["rmse"]["mean"] == pytest.approx(2.0)
     assert result["aggregate"]["delta_metrics"]["total"]["mae"]["mean"] == pytest.approx(10.0)
+    assert "unit" not in result["aggregate"]["old_metrics"]["total"]
+    assert result["per_seed"][0]["old_metrics"]["total"]["unit"] == "pts"
     assert result["aggregate"]["old_ranking"]["hit_rate"]["mean"] == pytest.approx(101.5)
     assert all(call["n_jobs"] == 5 for call in calls)
 

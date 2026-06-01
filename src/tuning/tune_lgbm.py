@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
+from numbers import Real
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -390,10 +391,23 @@ def _mean_std(values: list[float]) -> dict[str, float]:
     }
 
 
+def _is_numeric_metric(value) -> bool:
+    return isinstance(value, Real) and not isinstance(value, bool)
+
+
+def _numeric_metric_names(*metric_dicts: dict) -> tuple[str, ...]:
+    return tuple(
+        metric
+        for metric, value in metric_dicts[0].items()
+        if _is_numeric_metric(value)
+        and all(_is_numeric_metric(metric_dict.get(metric)) for metric_dict in metric_dicts[1:])
+    )
+
+
 def _aggregate_metric_records(records: list[dict], key: str, metric_keys: list[str]) -> dict:
     out: dict[str, dict] = {}
     for metric_key in metric_keys:
-        metrics = records[0][key][metric_key].keys()
+        metrics = _numeric_metric_names(records[0][key][metric_key])
         out[metric_key] = {
             metric: _mean_std([float(record[key][metric_key][metric]) for record in records])
             for metric in metrics
@@ -411,7 +425,10 @@ def _aggregate_ranking_records(records: list[dict], key: str) -> dict:
 def _delta_metric_records(records: list[dict], metric_keys: list[str]) -> dict:
     out: dict[str, dict] = {}
     for metric_key in metric_keys:
-        metrics = records[0]["new_metrics"][metric_key].keys()
+        metrics = _numeric_metric_names(
+            records[0]["new_metrics"][metric_key],
+            records[0]["old_metrics"][metric_key],
+        )
         out[metric_key] = {
             metric: _mean_std(
                 [
@@ -701,7 +718,7 @@ def main():
         type=_parse_seeds,
         default=_DEFAULT_SEEDS,
         help=(
-            "Comma- or space-separated LightGBM seeds to evaluate for each trial "
+            "Comma-separated LightGBM seeds to evaluate for each trial "
             f"(default: {','.join(str(s) for s in _DEFAULT_SEEDS)}). Use --seeds 42 "
             "for the old quick single-seed smoke shape."
         ),
