@@ -107,7 +107,7 @@ class TestQBFeatureContract:
         missing = [c for c in SPECIFIC_FEATURES if c not in all_cols]
         assert not missing, (
             f"SPECIFIC_FEATURES entries missing from get_feature_columns(): "
-            f"{missing}. INCLUDE_FEATURES['specific'] must list them."
+            f"{missing}. They must be whitelisted in INCLUDE_FEATURES."
         )
 
     def test_no_duplicate_feature_columns(self):
@@ -115,6 +115,15 @@ class TestQBFeatureContract:
         cols = get_feature_columns()
         duplicates = [c for c in set(cols) if cols.count(c) > 1]
         assert not duplicates, f"Duplicate feature columns: {duplicates}"
+
+    def test_rookie_phase_static_contract(self):
+        """QB exposes only the phase-specific rookie signal to models."""
+        feature_cols = get_feature_columns()
+        static_cols = get_attn_static_columns(feature_cols, ATTN_STATIC_FEATURES)
+        assert "rookie_early" in feature_cols
+        assert "rookie_early" in SPECIFIC_FEATURES
+        assert "rookie_early" in static_cols
+        assert "is_rookie" not in feature_cols
 
     def test_rate_features_non_negative(self, qb_feature_df):
         """Rate features are non-negative — division by zero is guarded."""
@@ -133,13 +142,15 @@ class TestQBFeatureContract:
             values = qb_feature_df[col]
             assert values.min() >= 0.0, f"{col} has negative values (min={values.min()})"
 
-    def test_specific_features_excluded_from_attn_static(self):
-        """SPECIFIC_FEATURES are per-game signals consumed by the attention
-        branch via ATTN_HISTORY_STATS — they must not leak into the
-        attention NN's static-feature branch (the old blacklist missed them)."""
+    def test_temporal_specific_features_excluded_from_attn_static(self):
+        """Temporal QB-specific features are per-game signals consumed by the
+        attention branch via ATTN_HISTORY_STATS. Rookie phase is owned by
+        add_specific_features too, but it is contextual/static and is allowed
+        in the attention NN's static branch."""
         static_cols = get_attn_static_columns(get_feature_columns(), ATTN_STATIC_FEATURES)
-        leaks = set(SPECIFIC_FEATURES) & set(static_cols)
-        assert not leaks, f"QB specific features leaked into attention static: {sorted(leaks)}"
+        temporal_specific = set(INCLUDE_FEATURES["specific"])
+        leaks = temporal_specific & set(static_cols)
+        assert not leaks, f"QB temporal features leaked into attention static: {sorted(leaks)}"
 
     def test_feature_categories_documented(self):
         """INCLUDE_FEATURES dict contains every documented category."""

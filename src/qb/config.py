@@ -47,6 +47,8 @@ _TARGETS = [
     "fumbles_lost",
 ]
 
+_ROOKIE_PHASE_FEATURES = ["rookie_early"]
+
 # Explicit feature whitelist — new columns must be opted in, preventing
 # silent leakage. L5 mean/std/max dropped (>0.97 corr with L3/L8) except
 # snap_pct; passing_yards EWMA kept (others >0.98 corr with rolling means).
@@ -107,6 +109,10 @@ _INCLUDE_FEATURES = {
         "contract_guaranteed",
         "contract_years_remaining",
         "contract_age",
+        # Roster/data-availability phase indicators. These are non-temporal
+        # static context, used to cancel the measured early-rookie QB
+        # overprediction without reintroducing draft-capital pedigree features.
+        *_ROOKIE_PHASE_FEATURES,
     ],
     "weather_vegas": [
         "implied_team_total",
@@ -175,7 +181,10 @@ CONFIG_TINY = {
 POSITION_CONFIG = PositionConfig(
     name="QB",
     targets=_TARGETS,
-    specific_features=_INCLUDE_FEATURES["specific"],
+    # ``specific_features`` is the set add_specific_features owns/fills and
+    # keys into the feature cache. Rookie phase is categorized as contextual
+    # above so the attention static branch may consume it.
+    specific_features=_INCLUDE_FEATURES["specific"] + _ROOKIE_PHASE_FEATURES,
     include_features=_INCLUDE_FEATURES,
     # Yards on (-2,3) grid; counts on (-1,4) per target scale.
     ridge_alpha_grids={

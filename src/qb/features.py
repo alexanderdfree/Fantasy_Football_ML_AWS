@@ -16,9 +16,55 @@ def get_feature_columns() -> list[str]:
 
 def add_specific_features(train_df, val_df, test_df):
     """Add QB-specific engineered features (see ``POSITION_CONFIG.specific_features``) to each split."""
-    for df in [train_df, val_df, test_df]:
+    dfs = [train_df, val_df, test_df]
+    for df in dfs:
         _compute_features(df)
+    _add_rookie_phase_features(dfs)
     return train_df, val_df, test_df
+
+
+def _add_rookie_phase_features(dfs: list[pd.DataFrame], early_games: int = 3) -> None:
+    """Add split-aware rookie phase indicators in-place.
+
+    ``_compute_features`` receives one split at a time, but rookie status needs
+    the player's first season across the train/val/test set. The first season
+    available in the whole dataset is deliberately treated as unknown/veteran:
+    the data starts mid-career for many players, so labeling 2012 rows as
+    rookies would inject noise into training.
+    """
+    required = {"player_id", "season", "week"}
+    if any(not required.issubset(df.columns) for df in dfs):
+        for df in dfs:
+            df["is_rookie"] = 0.0
+            df["rookie_early"] = 0.0
+        return
+
+    parts = []
+    for split_idx, df in enumerate(dfs):
+        part = df[["player_id", "season", "week"]].copy()
+        part["_split_idx"] = split_idx
+        part["_row_pos"] = range(len(df))
+        parts.append(part)
+
+    all_rows = pd.concat(parts, ignore_index=True)
+    debut_season = all_rows.groupby("player_id")["season"].min()
+    first_data_season = all_rows["season"].min()
+
+    ordered = all_rows.sort_values(["player_id", "season", "week"], kind="stable").copy()
+    ordered["_game_idx"] = ordered.groupby(["player_id", "season"]).cumcount()
+    ordered["is_rookie"] = (
+        ordered["season"].eq(ordered["player_id"].map(debut_season))
+        & ordered["season"].gt(first_data_season)
+    ).astype(float)
+    ordered["rookie_early"] = (
+        ordered["is_rookie"].eq(1.0) & ordered["_game_idx"].lt(early_games)
+    ).astype(float)
+
+    restored = ordered.sort_values(["_split_idx", "_row_pos"], kind="stable")
+    for split_idx, df in enumerate(dfs):
+        values = restored[restored["_split_idx"].eq(split_idx)]
+        df["is_rookie"] = values["is_rookie"].to_numpy(dtype=float)
+        df["rookie_early"] = values["rookie_early"].to_numpy(dtype=float)
 
 
 def _compute_features(df: pd.DataFrame) -> None:

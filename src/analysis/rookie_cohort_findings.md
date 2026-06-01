@@ -96,6 +96,31 @@ Net: a rookie **calibration** (not a draft-capital feature) is worth ~1 FP/game 
 QB and helps the weaker WR/TE models, but does nothing for the best RB model — and
 none of it moves overall MAE. Judge any such fix on MAEbc / bias + ranking.
 
+## QB calibration follow-up (2026-06-01)
+
+The QB follow-up shipped the narrow phase-aware feature, not a pedigree prior:
+`is_rookie` is computed as an internal label, while only `rookie_early` is
+whitelisted for QB models and the attention static branch. The flat `is_rookie`
+feature was tested with `rookie_early` and rejected because the pooled rookie
+offset washed out the sign flip between early and later rookie games.
+
+Current mainline now selects LightGBM as QB's best model, so the ship decision
+uses LightGBM rather than the older Ridge baseline above. Cache-disabled QB
+pipeline runs plus the rookie subgroup metric gave:
+
+| seed | feature | overall MAE | backtest MAE | top-12 | rookie_early MAE | rookie_early MAEbc | rookie_early bias |
+|------|---------|------------:|-------------:|-------:|-----------------:|-------------------:|------------------:|
+| 42 | baseline | 5.891 | 5.918 | 0.532 | 3.625 | 3.416 | +0.882 |
+| 42 | `rookie_early` | 5.895 | 5.924 | 0.514 | 3.526 | 3.438 | +0.619 |
+| 43 | baseline | 5.928 | 5.928 | 0.519 | 3.611 | 3.441 | +0.849 |
+| 43 | `rookie_early` | 5.921 | 5.921 | 0.523 | 3.573 | 3.440 | +0.626 |
+
+The kept cut reduces LightGBM's systematic first-three-game QB rookie
+over-prediction by about 0.22-0.26 FP/game and improves `rookie_early` MAE in both
+seeds. Overall/backtest MAE is flat by construction. Top-12 is mixed at
+single-seed resolution (`-0.018`, `+0.005`), so treat ranking as neutral rather
+than a separate win.
+
 ## Implication for draft capital (#519)
 
 The precondition is now satisfied: a tracked rookie metric exists. But it argues
