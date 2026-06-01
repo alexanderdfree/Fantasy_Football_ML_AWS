@@ -19,6 +19,13 @@ is to clone the current `models_cache.json` into `my_catalog.json`, edit the
 target model window fields to the desired 1M values, then point `config.toml` at
 that static catalog.
 
+Current local WSL state: both `~/.codex/my_catalog.json` and
+`~/.codex/models_cache.json` have `gpt-5.4` and `gpt-5.5` patched to
+`context_window = 1000000` and `max_context_window = 1000000`, and
+`~/.codex/config.toml` points at the static catalog. Restart Codex before
+calling this verified, because the active session may still reflect the model
+catalog loaded at process start.
+
 This should prevent a restart from overwriting the local window values, because
 the upstream metadata endpoint is not queried while the static catalog is
 configured.
@@ -46,8 +53,9 @@ override to test, not proof that the backend will honor 1M on every model.
    cp ~/.codex/models_cache.json ~/.codex/my_catalog.json
    ```
 
-3. Edit only the target model entries in `~/.codex/my_catalog.json`, setting the
-   relevant context-window fields to `1000000`.
+3. Edit only the target model entries in both `~/.codex/my_catalog.json` and
+   `~/.codex/models_cache.json`, setting the relevant context-window fields to
+   `1000000`.
 4. Add the static catalog path to `~/.codex/config.toml`:
 
    ```toml
