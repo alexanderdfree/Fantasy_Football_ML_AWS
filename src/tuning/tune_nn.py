@@ -49,8 +49,8 @@ instead of the current
     ["--position", "RB", "--seed", "42"].
 
 A `--checkpoint-s3` flag added here will periodically upload the SQLite study
-DB to `s3://$S3_BUCKET/tune_nn/{pos}/` and trap SIGTERM so a Spot
-interruption can resume the search on Batch's retry.
+DB to `s3://$S3_BUCKET/tune_nn/{search-space-version}/{pos}/` and trap SIGTERM
+so a Spot interruption can resume the search on Batch's retry.
 """
 
 import argparse
@@ -70,6 +70,18 @@ from optuna.samplers import TPESampler
 from src.config import SPLITS_DIR
 from src.shared.registry import get_config, get_runner
 from src.tuning.history import append_tuning_run
+from src.tuning.tune_nn_storage import (
+    SEARCH_SPACE_VERSION as _SEARCH_SPACE_VERSION,
+)
+from src.tuning.tune_nn_storage import (
+    s3_key_prefix as _s3_key_prefix,
+)
+from src.tuning.tune_nn_storage import (
+    study_db_path as _study_db_path,
+)
+from src.tuning.tune_nn_storage import (
+    study_name as _study_name,
+)
 
 
 def _ensure_data_from_s3() -> None:
@@ -131,8 +143,6 @@ _DEFAULT_N_TRIALS = 15
 # rather than the configured epoch ceiling.
 _HYPERBAND_MIN_RESOURCE = 8
 _HYPERBAND_REDUCTION_FACTOR = 3
-_SEARCH_SPACE_VERSION = "scheduler_v2"
-
 # Backbone-layer presets keyed by an integer index. Optuna's persistent storage
 # (SQLite, JSON) only round-trips scalar categorical choices (None/bool/int/
 # float/str); a tuple like ``(128, 64)`` triggers a UserWarning and may not
@@ -171,25 +181,6 @@ _SCHEDULER_PARAM_KEYS: dict[str, frozenset[str]] = {
 _TUNED_OVERRIDE_KEYS: frozenset[str] = _BASE_TUNED_OVERRIDE_KEYS | frozenset().union(
     *_SCHEDULER_PARAM_KEYS.values()
 )
-
-
-def _study_name(pos: str) -> str:
-    """Return the Optuna study name for the current NN search space.
-
-    The scheduler-expanded search requires params that older ``nn_{pos}``
-    studies do not have. Versioning the study name/path prevents stale COMPLETE
-    trials from counting toward ``--n-trials`` or failing ``_trial_to_params``.
-    """
-
-    return f"nn_{_SEARCH_SPACE_VERSION}_{pos.lower()}"
-
-
-def _study_db_path(pos: str) -> str:
-    return f"tune_nn_{_SEARCH_SPACE_VERSION}_{pos.lower()}.db"
-
-
-def _s3_key_prefix(pos: str) -> str:
-    return f"tune_nn/{_SEARCH_SPACE_VERSION}/{pos.lower()}"
 
 
 # ---------------------------------------------------------------------------

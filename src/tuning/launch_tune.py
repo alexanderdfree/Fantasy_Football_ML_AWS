@@ -52,6 +52,7 @@ from src.batch.launch import (  # noqa: E402
     WAIT_TIMEOUT_SECONDS,
     wait_for_jobs,
 )
+from src.tuning.tune_nn_storage import S3_PREFIX  # noqa: E402
 
 # All six positions now have ``run(config=...)``; argparse choices still pin
 # the input to known names so a typo fails locally instead of submitting a
@@ -215,7 +216,7 @@ def main():
 
     if not wait:
         print("\nJobs submitted. Use 'aws batch describe-jobs' to check status.")
-        print(f"Results land at s3://{S3_BUCKET}/tune_nn/{{pos}}/results.json per position.")
+        print(f"Results land at s3://{S3_BUCKET}/{S3_PREFIX}/{{pos}}/results.json per position.")
         return
 
     print(
@@ -234,8 +235,10 @@ def main():
         print(f"\nTimed-out positions: {timed_out}")
     if succeeded:
         print(f"\nSucceeded positions: {succeeded}")
-        print(f"  Per-position results: s3://{S3_BUCKET}/tune_nn/{{pos}}/results.json")
-        print(f"  Per-position study DBs (resumable): s3://{S3_BUCKET}/tune_nn/{{pos}}/study.db")
+        print(f"  Per-position results: s3://{S3_BUCKET}/{S3_PREFIX}/{{pos}}/results.json")
+        print(
+            f"  Per-position study DBs (resumable): s3://{S3_BUCKET}/{S3_PREFIX}/{{pos}}/study.db"
+        )
         print("  Run `python -m src.tuning.aggregate_results` to merge per-position JSONs.")
 
     print("\nAll done.")
