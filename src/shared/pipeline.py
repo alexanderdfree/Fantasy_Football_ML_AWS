@@ -756,7 +756,7 @@ def _train_attention_nn(
     # Filter to the per-position whitelist of static-branch features — the
     # attention branch learns its own temporal representation from raw game
     # stats, so rolling / EWMA / trend / share / specific categories are
-    # excluded by config (``{POS}_ATTN_STATIC_FEATURES``).
+    # excluded by config (``POSITION_CONFIG.attn_static_features``).
     if feature_cols is not None:
         static_whitelist = cfg["attn_static_features"]
         static_cols = get_attn_static_columns(feature_cols, static_whitelist)

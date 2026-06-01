@@ -23,7 +23,7 @@ The architecture changelog lives under [docs/adr/](adr/): recent changes in [adr
 
 **Constraints.**
 - Solo personal project, ~2 weeks of initial execution.
-- Small-sample ML regime: after position filtering and ≥8-games-per-season minimum, roughly 200–600 player-seasons per position — orders of magnitude smaller than datasets most modern NN architectures assume.
+- Small-sample ML regime: after position filtering and the per-position games-per-season minimum (global default ≥6, with position overrides), roughly 200–600 player-seasons per position — orders of magnitude smaller than datasets most modern NN architectures assume.
 - Public data only — `nflreadpy` ([nflverse](https://github.com/nflverse)) weekly stats, rosters, schedules, snap counts. Snap count coverage starts 2012, which bounds the training window.
 - Documenting design decisions with technical trade-offs is what this ADR satisfies.
 
@@ -52,7 +52,7 @@ The architecture changelog lives under [docs/adr/](adr/): recent changes in [adr
                     │  │ Ridge  │ │ Multi-  │ │ Attention NN │ │
                     │  │ (base) │ │ HeadNet │ │ (all pos.)   │ │
                     │  └────────┘ └─────────┘ └──────────────┘ │
-                    │  + LightGBM (selective positions)        │
+                    │  + LightGBM (all positions)              │
                     └──────────────────────────────────────────┘
                                          │
                        Compared, not     │
@@ -175,7 +175,7 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 | `4145257`, `8a50eec` | Infra | Batch cold-start stack (D9) |
 | `ffb3119` | Infra | CI/CD + test gating + final batch infra (D10) |
 | `cc0c627` | Modeling | DST attention NN + migrate DST targets from 5 mixed-bucket heads to 10 raw stats (D2, D4, D5) |
-| `2500ecc` | Modeling | Per-position `{POS}_ATTN_STATIC_FEATURES` allowlist — rolling/EWMA/trend features blocked from the attention-NN static branch (D4, D6) |
+| `2500ecc` | Modeling | Per-position `POSITION_CONFIG.attn_static_features` allowlist — rolling/EWMA/trend features blocked from the attention-NN static branch (D4, D6) |
 | `801b61a` | Modeling | K nested attention — outer over games + inner per-kick pool; attention now covers all six positions (D4) |
 | `c7fa2d7` | Infra | Smoke-test gate + manifest v2 (stable/current/previous + history[5]) + S3 bucket versioning (D11) |
 | `8c42e88` | Infra | ECS force-rollover after train so promoted artifacts get loaded (D11 closure) |

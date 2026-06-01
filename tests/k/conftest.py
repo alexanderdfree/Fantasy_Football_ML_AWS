@@ -199,9 +199,6 @@ def _build_tiny_dataset(
                 # Q4 and clutch subsets: draw counts so that made <= att <= total.
                 q4_fg_att = int(rng.integers(0, fg_att + 1))
                 q4_fg_made = int(rng.binomial(q4_fg_att, player_skill))
-                clutch_fg_att = int(rng.integers(0, fg_att + 1))
-                clutch_fg_made = int(rng.binomial(clutch_fg_att, player_skill))
-
                 # Long (40+) subset: the made counts in the 40-49/50-59/60+
                 # buckets by definition sum to at most fg_made. The attempted
                 # long FGs are the made-longs plus some fraction of misses.
@@ -247,10 +244,7 @@ def _build_tiny_dataset(
                         "pat_missed": pat_missed,
                         # PBP-derived columns (feature inputs)
                         "avg_fg_distance": float(rng.normal(38, 4)) if fg_att else 0.0,
-                        "max_fg_distance": float(rng.normal(48, 5)) if fg_att else 0.0,
                         "avg_fg_prob": float(np.clip(rng.normal(0.82, 0.05), 0, 1)),
-                        "clutch_fg_att": clutch_fg_att,
-                        "clutch_fg_made": clutch_fg_made,
                         "q4_fg_att": q4_fg_att,
                         "q4_fg_made": q4_fg_made,
                         "long_fg_att": long_fg_att_val,
@@ -264,14 +258,6 @@ def _build_tiny_dataset(
                         "is_home": int(rng.integers(0, 2)),
                         "total_line": float(rng.normal(45, 5)),
                         "implied_team_total": float(rng.normal(22, 4)),
-                        "implied_opp_total": float(rng.normal(22, 4)),
-                        "is_grass": 1,
-                        "temp_adjusted": 65.0,
-                        "wind_adjusted": 0.0,
-                        "is_divisional": 0,
-                        "days_rest_improved": 7,
-                        "rest_advantage": 0,
-                        "implied_total_x_wind": 22.0,
                         "_schedule_merged": True,
                     }
                 )

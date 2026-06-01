@@ -1,6 +1,6 @@
 """Coverage tests for ``src/k/data.py``.
 
-Mocks ``nfl.import_pbp_data`` with synthetic per-play DataFrames so the
+Mocks the ``src.data.nfl_source.pbp_data`` shim with synthetic per-play DataFrames so the
 full PBP → weekly-kicker aggregation pipeline runs in-process. Also tests
 the cache-hit shortcut (pre-written parquet) and the 2025 weekly+backfill
 branch via tmp-path parquet fixtures.
@@ -77,7 +77,7 @@ def _kicker_pbp_cache_row(player_id: str, season: int, week: int, recent_team: s
 
 
 def _synthetic_pbp(season: int, n_fg: int = 6, n_xp: int = 4) -> pd.DataFrame:
-    """Build a PBP-shaped DataFrame matching what ``nfl.import_pbp_data`` emits."""
+    """Build a PBP-shaped DataFrame matching what ``nfl_source.pbp_data`` emits."""
     rng = np.random.default_rng(season)
     rows = []
     # Field goal attempts (alternate made/missed so every distance bucket + clutch branch fires)
@@ -277,7 +277,7 @@ def test_reconstruct_weekly_from_pbp_cache_hit(tmp_path, monkeypatch):
     pd.DataFrame([_kicker_pbp_cache_row("K01", 2021, 1)]).to_parquet(cache_path)
 
     def _should_not_be_called(*args, **kwargs):
-        raise AssertionError("import_pbp_data was called despite cache hit")
+        raise AssertionError("pbp_data was called despite cache hit")
 
     monkeypatch.setattr(k_data.nfl_source, "pbp_data", _should_not_be_called)
 
@@ -504,7 +504,7 @@ def test_reconstruct_weekly_from_pbp_pre_xp_venue_cache_rejected(tmp_path, monke
 
 @pytest.mark.unit
 def test_reconstruct_weekly_pbp_skips_failing_seasons(tmp_path, monkeypatch, capsys):
-    """If ``import_pbp_data`` throws (e.g. upstream 502), the per-year body is
+    """If ``pbp_data`` throws (e.g. upstream 502), the per-year body is
     skipped, a WARNING is logged, and the partial result is NOT cached so the
     next call doesn't treat a partial frame as authoritative."""
     import src.k.data as k_data
@@ -596,7 +596,7 @@ def test_reconstruct_kicks_from_pbp_cache_hit(tmp_path, monkeypatch):
     ).to_parquet(cache_path)
 
     def _should_not_be_called(*a, **k):
-        raise AssertionError("import_pbp_data was called despite cache hit")
+        raise AssertionError("pbp_data was called despite cache hit")
 
     monkeypatch.setattr(k_data.nfl_source, "pbp_data", _should_not_be_called)
     out = k_data.reconstruct_kicker_kicks_from_pbp([2022], cache_dir=str(tmp_path))
@@ -635,7 +635,7 @@ def test_reconstruct_kicks_from_pbp_stale_cache_regenerates(tmp_path, monkeypatc
 
 @pytest.mark.unit
 def test_reconstruct_kicks_pbp_skips_failing_seasons(tmp_path, monkeypatch, capsys):
-    """If ``import_pbp_data`` throws for a season, we log and continue."""
+    """If ``pbp_data`` throws for a season, we log and continue."""
     import src.k.data as k_data
 
     def _bad(seasons, cols):
@@ -671,7 +671,7 @@ def _cached_pbp(tmp_path, monkeypatch):
     # guard, a default-arg pitfall on cache_dir silently caused cache misses
     # and the test passed only because nflverse usually returned valid data.
     def _no_network(*args, **kwargs):
-        raise AssertionError("nfl.import_pbp_data must not be called when the PBP cache hits")
+        raise AssertionError("nfl_source.pbp_data must not be called when the PBP cache hits")
 
     monkeypatch.setattr(k_data.nfl_source, "pbp_data", _no_network)
 
@@ -756,7 +756,7 @@ def test_load_kicker_data_fills_missing_is_home_with_zero(tmp_path, monkeypatch)
     monkeypatch.setattr(k_data, "MIN_GAMES", 1)
 
     def _no_network(*args, **kwargs):
-        raise AssertionError("import_pbp_data must not be called when the cache hits")
+        raise AssertionError("pbp_data must not be called when the cache hits")
 
     monkeypatch.setattr(k_data.nfl_source, "pbp_data", _no_network)
 
@@ -887,7 +887,7 @@ def test_backfill_2025_pbp_columns_updates_in_place(monkeypatch):
 
 @pytest.mark.unit
 def test_backfill_2025_pbp_logs_warning_on_failure(monkeypatch, capsys):
-    """If ``import_pbp_data`` raises, _backfill logs a warning and leaves
+    """If ``pbp_data`` raises, _backfill logs a warning and leaves
     k_df untouched (swallowed by the outer try/except)."""
     import src.k.data as k_data
 
@@ -940,7 +940,7 @@ def test_load_kicker_data_includes_2025_weekly_branch(tmp_path, monkeypatch):
     # (stubbed below) should reach the network.
     def _no_network(*args, **kwargs):
         raise AssertionError(
-            "nfl.import_pbp_data must not be called: 2024 must hit cache, "
+            "nfl_source.pbp_data must not be called: 2024 must hit cache, "
             "and the 2025 backfill is stubbed to no-op"
         )
 
@@ -1012,7 +1012,7 @@ def test_load_data_backfills_venue_for_xp_only_games(tmp_path, monkeypatch):
     monkeypatch.setattr(k_data, "MIN_GAMES", 1)
 
     def _no_network(*args, **kwargs):
-        raise AssertionError("import_pbp_data must not be called when the cache hits")
+        raise AssertionError("pbp_data must not be called when the cache hits")
 
     monkeypatch.setattr(k_data.nfl_source, "pbp_data", _no_network)
 
@@ -1086,7 +1086,7 @@ def test_load_data_treats_empty_string_surface_as_missing(tmp_path, monkeypatch)
     monkeypatch.setattr(k_data, "MIN_GAMES", 1)
 
     def _no_network(*args, **kwargs):
-        raise AssertionError("import_pbp_data must not be called when the cache hits")
+        raise AssertionError("pbp_data must not be called when the cache hits")
 
     monkeypatch.setattr(k_data.nfl_source, "pbp_data", _no_network)
 

@@ -1,7 +1,8 @@
 """Coverage smoke test for ``src/te/run_pipeline.py``'s ``__main__`` block.
 
-TE's CLI only has the ``--tiny`` flag (no ``--cv`` split), so this file
-only asserts the default and tiny paths plus the module-level wrapper.
+TE's CLI exposes both ``--tiny`` and ``--cv``. This file asserts the default
+and tiny paths plus the module-level wrapper; ``test_run_cv_pipeline.py`` covers
+the CV path.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Tests for src.shared.weather_features — get_weather_feature_columns and merge_schedule_features."""
+"""Tests for src.shared.weather_features.merge_schedule_features."""
 
 from unittest.mock import patch
 
@@ -6,9 +6,7 @@ import numpy as np
 import pytest
 
 from src.shared.weather_features import (
-    WEATHER_DROPS_BY_POSITION,
     WEATHER_FEATURES_ALL,
-    get_weather_feature_columns,
     merge_schedule_features,
 )
 
@@ -21,42 +19,6 @@ def _clear_schedule_cache():
     wf._schedule_cache = None
     yield
     wf._schedule_cache = None
-
-
-# ---------------------------------------------------------------------------
-# get_weather_feature_columns
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestGetWeatherFeatureColumns:
-    def test_drops_is_grass(self):
-        result = get_weather_feature_columns("QB", [])
-        assert "is_grass" not in result
-        assert "is_dome" in result
-
-    def test_drops_five_features(self):
-        result = get_weather_feature_columns("RB", [])
-        for dropped in WEATHER_DROPS_BY_POSITION["RB"]:
-            assert dropped not in result
-        # Remaining weather features should be present
-        remaining = set(WEATHER_FEATURES_ALL) - WEATHER_DROPS_BY_POSITION["RB"]
-        for col in remaining:
-            assert col in result
-
-    def test_drops(self):
-        result = get_weather_feature_columns("TE", [])
-        for dropped in WEATHER_DROPS_BY_POSITION["TE"]:
-            assert dropped not in result
-
-    def test_no_duplicates_with_base_cols(self):
-        base = ["total_line", "feat_a"]
-        result = get_weather_feature_columns("QB", base)
-        assert result.count("total_line") == 1
-
-    def test_unknown_position_no_drops(self):
-        result = get_weather_feature_columns("FLEX", [])
-        assert set(result) == set(WEATHER_FEATURES_ALL)
 
 
 # ---------------------------------------------------------------------------

@@ -739,7 +739,7 @@ def load_kicks(k_df: pd.DataFrame) -> pd.DataFrame:
 
     Called separately from `load_data` so the serving path (app.py)
     doesn't pay the PBP re-parse cost. Returns a DataFrame restricted to the
-    (player_id, season) pairs that survive the MIN_GAMES filter, with
+    (player_id, season) pairs present in the caller's weekly frame, with
     `is_home` merged from the schedule-joined weekly DataFrame.
     """
     kicks_df = reconstruct_kicker_kicks_from_pbp(SEASONS)

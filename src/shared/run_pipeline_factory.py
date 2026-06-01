@@ -107,7 +107,7 @@ def cli_main(
         The position's ``run(...)`` wrapper. Must accept ``config=`` kwarg.
     run_cv_fn:
         Optional CV wrapper. When supplied, the ``--cv`` flag is added to the
-        parser. TE has no CV path so it leaves this ``None``.
+        parser. Positions without a CV path leave this ``None``.
     """
     parser = argparse.ArgumentParser()
     if run_cv_fn is not None:

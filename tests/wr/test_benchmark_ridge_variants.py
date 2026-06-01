@@ -150,8 +150,9 @@ def _stub_main(monkeypatch, tmp_path):
         _fake_frame().to_parquet(splits_dir / f"{name}.parquet")
 
     monkeypatch.setattr(bench, "SPLITS_DIR", str(splits_dir))
-    # MIN_GAMES_PER_SEASON filter would wipe the fake data — drop the threshold.
-    monkeypatch.setattr(bench, "MIN_GAMES_PER_SEASON", 0)
+    # The benchmark reads the per-position override first; drop it so the fake
+    # one-row-per-player frame survives the min-games filter.
+    monkeypatch.setattr(bench.POSITION_CONFIG, "min_games_per_season", 0)
 
     # Feature helpers: pass through so main() keeps the full frame.
     monkeypatch.setattr(bench, "filter_to_position", lambda df: df)

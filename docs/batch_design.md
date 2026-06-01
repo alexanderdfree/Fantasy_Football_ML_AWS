@@ -313,7 +313,7 @@ docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/ff-training:latest
 
 | Resource | Estimate |
 |---|---|
-| Compute per full run (6 positions x ~2 min) | ~$0.03 (Spot) |
+| Batch GPU compute per full run (6 g6 Spot hosts x measured ~10 min wait) | ~$0.35 (Spot) |
 | Idle cost | $0 (scales to zero) |
 | Service fee | Free (pay only EC2) |
 | ECR image storage | ~$0.50/month for 5 GB |
@@ -520,4 +520,3 @@ provisioning on G-family Spot (g4dn pre-migration, g6 now) is ~120 s floor regar
 addressed by Option B; the achievable post-Option-B total is ~135 s,
 not 60–90 s, but that's still the single largest realizable win on
 this path.
-

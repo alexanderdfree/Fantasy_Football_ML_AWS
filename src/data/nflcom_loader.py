@@ -137,8 +137,6 @@ TEAM_CODE_MAP: dict[str, str] = {
     "JAC": "JAX",
     "LA": "LAR",
 }
-# Back-compat alias for the original private name.
-_TEAM_CANONICAL = TEAM_CODE_MAP
 
 
 def normalize_team_code(code: str | None) -> str:

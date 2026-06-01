@@ -183,8 +183,8 @@ def _compute_features(df: pd.DataFrame) -> None:
     # carry in their prior season) produce pathological rate values when
     # both numerator and denominator are small — an empirical sanity check
     # found pre-guard YPC values in [-8, +29], well outside any plausible RB
-    # season range. The thresholds below require ≥0.5 carries/game (~3 over
-    # the MIN_GAMES_PER_SEASON=6 floor) and ≥0.5 targets/game before
+    # season range. The thresholds below require ≥0.5 carries/game and
+    # ≥0.5 targets/game before
     # computing the rate. Below that, the rate is NaN and fill_nans (called
     # downstream) substitutes the train mean.
     _min_per_game_volume = 0.5

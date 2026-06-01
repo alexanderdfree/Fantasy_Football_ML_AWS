@@ -17,4 +17,4 @@ Produce under 200 words:
 
 **Proposed change**: either a concrete AGENTS.md/CODEX.md snippet or a Codex memory note.
 
-Durable cross-agent lessons belong in `AGENTS.md`. Codex-only local recall may go to memory only when this command is invoked with `WRITE_MEMORY=1`; otherwise propose the memory text without writing it. If writing memory, follow the active Codex memory rules and put the note under `/Users/alex/.codex/memories/extensions/ad_hoc/notes/`.
+Durable cross-agent lessons belong in `AGENTS.md`. Codex-only local recall may go to memory only when this command is invoked with `WRITE_MEMORY=1`; otherwise propose the memory text without writing it. If writing memory, follow the active Codex memory rules and write under `$CODEX_HOME/memories/extensions/ad_hoc/notes/`, falling back to `~/.codex/memories/extensions/ad_hoc/notes/` when `CODEX_HOME` is unset.

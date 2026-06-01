@@ -32,6 +32,7 @@ import torch
 
 from src.config import SPLITS_DIR
 from src.qb.run_pipeline import CONFIG
+from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import RidgeMultiTarget
 from src.shared.pipeline import (
@@ -478,8 +479,8 @@ def main():
     nn_scaler = bundle["nn_scaler"]
     device = bundle["device"]
 
-    ridge_total = sum(ridge_preds[t] for t in targets)
-    nn_total = sum(nn_preds[t] for t in targets)
+    ridge_total = predictions_to_fantasy_points("QB", ridge_preds, "ppr")
+    nn_total = predictions_to_fantasy_points("QB", nn_preds, "ppr")
 
     md = ["# QB Outlier Diagnostic\n"]
     json_out = {"rows": [], "contamination": None, "summary": {}}

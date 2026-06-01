@@ -166,7 +166,7 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 ### [LOW] Drop `RidgeMultiTarget.predict_total` / `ElasticNetMultiTarget.predict_total`
 - **Files:** `src/shared/models.py:350-352, 464-466`; consumers in `tests/{qb,rb,wr,te,k,dst}/test_models.py`, `tests/shared/test_elasticnet.py`.
 - **What:** `predict_total` returns an unweighted raw-stat sum (yards + TDs + receptions, all summed as if commensurate). No production callers in `src/`; only tests reference it. A future caller using it for ranking would regress the ~1.9 pt/game double-count fix in the Fixed archive.
-- **Why not now:** Deletion requires modifying per-position `test_models.py` files atomically; the W.SHARED-A worker that opened PR #314 couldn't touch them under its strict file-ownership boundary. Carry-over from `code_review_findings.md` finding L-S1 (deleted in PR #314 — see archive entry below).
+- **Why not now:** Deletion touches shared model helpers and per-position model tests, tripping the benchmark-freshness gate; this Tier A pass intentionally avoided pipeline/benchmark evidence.
 
 ### [LOW] Defer per-position `CONFIG = build_pipeline_config(...)` to function level
 - **Files:** All `src/{pos}/run_pipeline.py`.

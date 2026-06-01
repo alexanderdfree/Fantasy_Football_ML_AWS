@@ -193,10 +193,10 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     # accepts (career-cumulative is deliberately kept in the history domain; see
     # tests/test_attn_static_columns.py, which forbids career_* from static).
     # ff_opp is skill-position-only and QBR is QB-only, so guard each column
-    # with ``in``; groupby.mean() skips NaN, so positions/seasons lacking the
-    # source resolve to NaN and only whitelisting positions consume the result.
-    # NaN here is the same rookie-first-season shape as every other
-    # prior_season_* feature and is handled by the same downstream fill.
+    # with ``in``. ff_opportunity is zero-filled upstream for no-opportunity
+    # weeks; QBR remains NaN for missing QB weeks and non-QB rows, then groupby
+    # mean skips those gaps. NaN here is the same rookie-first-season shape as
+    # every other prior_season_* feature and is handled by the downstream fill.
     external_prior_stats = [c for c in EXTERNAL_PRIOR_STATS if c in df.columns]
     if external_prior_stats:
         prior_external = (

@@ -118,28 +118,6 @@ TARGET_UNITS = {
     "xp_misses": "misses",
 }
 
-# Targets whose MAE should be rendered in both raw units and fantasy-point-equivalent
-# (MAE × |scoring weight|) for readability. Applied by the frontend/evaluation
-# report layer. DST's tier-mapped PA/YA don't have a single scoring weight, so
-# they're omitted here; the report layer falls back to raw units for those.
-POINT_EQUIVALENT_MULTIPLIER = {
-    "passing_tds": 4.0,
-    "rushing_tds": 6.0,
-    "receiving_tds": 6.0,
-    "interceptions": 2.0,
-    "fumbles_lost": 2.0,
-    "receptions": 1.0,  # only in PPR
-    # DST linear-scoring contributions
-    "def_sacks": 1.0,
-    "def_ints": 2.0,
-    "def_fumble_rec": 2.0,
-    "def_fumbles_forced": 1.0,
-    "def_safeties": 2.0,
-    "def_tds": 6.0,
-    "def_blocked_kicks": 2.0,
-    "special_teams_tds": 6.0,
-}
-
 
 # Precomputed boundary/bonus tables for the two DST tier lookups.
 # boundaries = lo of each tier after the first (used for bucketize/digitize).

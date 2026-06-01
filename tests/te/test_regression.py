@@ -28,10 +28,13 @@ from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
+from src.shared.training import MultiTargetLoss
 from src.te.config import CONFIG_TINY, POSITION_CONFIG
 
 LGBM_MIN_CHILD_SAMPLES = POSITION_CONFIG.lgbm_min_child_samples
 LGBM_NUM_LEAVES = POSITION_CONFIG.lgbm_num_leaves
+LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 TARGETS = POSITION_CONFIG.targets
 from src.te.data import filter_to_position
 from src.te.features import (
@@ -71,8 +74,7 @@ def te_training_tensors(tiny_splits):
     feature_cols = get_feature_columns()
     for df in (pos_train, pos_val, pos_test):
         missing = [c for c in feature_cols if c not in df.columns]
-        for col in missing:
-            df[col] = 0.0
+        assert not missing, f"TE feature columns missing from split: {missing}"
         df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
     X_train = pos_train[feature_cols].values.astype(np.float32)
@@ -213,6 +215,8 @@ class TestTERegressionThresholds:
             backbone_layers=[32, 16],
             head_hidden=8,
             dropout=0.0,
+            head_hidden_overrides=POSITION_CONFIG.nn_head_hidden_overrides,
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
 
@@ -225,7 +229,12 @@ class TestTERegressionThresholds:
         for _ in range(50):
             optimizer.zero_grad()
             out = model(X_train_t)
-            loss = sum(((out[k] - y_train_t[k]) ** 2).mean() for k in TARGETS)
+            loss_fn = MultiTargetLoss(
+                target_names=TARGETS,
+                loss_weights=LOSS_WEIGHTS,
+                huber_deltas=HUBER_DELTAS,
+            )
+            loss, _ = loss_fn(out, y_train_t)
             loss.backward()
             optimizer.step()
 

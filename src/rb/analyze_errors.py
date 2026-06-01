@@ -50,6 +50,7 @@ def build_model_pred_cols(df, targets):
         ("pred_ridge_", "Ridge"),
         ("pred_nn_", "NN"),
         ("pred_attn_nn_", "Attention NN"),
+        ("pred_lgbm_", "LightGBM"),
     ]:
         pred_map = {}
         for t in targets + ["total"]:
@@ -73,8 +74,9 @@ def main():
     result = run()
     df = result["test_df"].copy()
 
-    # Compute actual total from target columns (not fantasy_points, which includes fumbles)
-    df["actual_total"] = sum(df[t] for t in targets)
+    # ``pred_*_total`` columns are fantasy points, so compare them to the
+    # pipeline's actual fantasy-point total rather than a raw-stat sum.
+    df["actual_total"] = df["fantasy_points"]
 
     # Add stratification columns
     add_stratification_columns(df, targets)

@@ -59,7 +59,7 @@ L5 rolling means of the opponent defense's allowed stats: `opp_def_sacks_L5`, `o
 `is_home`, `week`, `days_rest`, `practice_status`, `game_status`, `depth_chart_rank`. `is_returning_from_absence` was dropped (r=0.934 with `days_rest`) — see the change log.
 
 #### `weather_vegas` — 4 columns
-`implied_team_total`, `implied_opp_total`, `is_dome`, `rest_advantage`. (Other weather features dropped per-position; see [src/shared/weather_features.py](../src/shared/weather_features.py) `WEATHER_DROPS_BY_POSITION["RB"]`.)
+`implied_team_total`, `implied_opp_total`, `is_dome`, `rest_advantage`. (The old Weather-NN-only per-position drop helper was removed after it lost production callers; this list is the live RB allowlist.)
 
 #### `specific` — 14 columns (after PR-#190 audit drops)
 Defined in `_SPECIFIC_FEATURES` at [config.py:28-43](../src/rb/config.py:28):
@@ -232,7 +232,7 @@ After: `AttentionPool` carries `[n_targets, n_heads, d_model]` queries and retur
 
 The pre-restructure history is a sequence of terse-message commits (`weather`, `binary gate on NN, added features to attention`, `do it`, `more`, `goat`, `a`) that landed the original feature scaffolding before commit-message hygiene was enforced. The relevant adds visible in the diff trail:
 
-- **Weather/Vegas** (`7c4e560` "added weather to all", `1d501fe` "weather"): first introduction of `is_dome`, `is_grass`, `temp_adjusted`, `wind_adjusted`, `implied_team_total`, `implied_opp_total`, `total_line`, `implied_total_x_wind`, `is_divisional`, `days_rest_improved`, `rest_advantage`. Subsequently pruned per-position (see [docs/archive/design_weather_and_odds.md](archive/design_weather_and_odds.md) and [src/shared/weather_features.py:WEATHER_DROPS_BY_POSITION](../src/shared/weather_features.py)).
+- **Weather/Vegas** (`7c4e560` "added weather to all", `1d501fe` "weather"): first introduction of `is_dome`, `is_grass`, `temp_adjusted`, `wind_adjusted`, `implied_team_total`, `implied_opp_total`, `total_line`, `implied_total_x_wind`, `is_divisional`, `days_rest_improved`, `rest_advantage`. Subsequently pruned per-position into the live config allowlists (historical design notes remain in [docs/archive/design_weather_and_odds.md](archive/design_weather_and_odds.md)).
 - **Attention features** (`18170a6` "binary gate on NN, added features to attention"): introduced `ATTN_HISTORY_STATS` for RB.
 - **PCA** (`39349da` "PCA on WR, RB"): introduced `ridge_pca_components=80` for RB. Dropped Ridge condition number from 1.8e8 (after `is_home` removal) to 49.8; both yards targets improved by ~0.002 MAE ([config.py:212-214](../src/rb/config.py:212)).
 - **Depth chart + injuries** (`c399c12`): introduced `depth_chart_rank`, `is_returning_from_absence`, `practice_status`, `game_status`, `days_rest`.

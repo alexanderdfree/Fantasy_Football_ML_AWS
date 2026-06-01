@@ -77,12 +77,6 @@ def _build_te_row(**overrides) -> pd.DataFrame:
 
 
 @pytest.fixture(scope="session")
-def make_te_row():
-    """Factory for single-row TE target inputs."""
-    return _build_te_row
-
-
-@pytest.fixture(scope="session")
 def te_player_games_factory():
     """Factory for multi-week TE game DataFrames used by feature-compute tests."""
 
@@ -195,6 +189,9 @@ def _build_tiny_splits(seed: int = 42):
                         "receiving_yards_after_catch": rec_yac,
                         "receiving_epa": receiving_epa,
                         "receiving_first_downs": receiving_first_downs,
+                        "total_fantasy_points_exp": fp,
+                        "rec_yards_gained_exp": receiving_yards,
+                        "receptions_exp": base_rec,
                         "passing_yards": 0.0,
                         "passing_tds": 0,
                         "attempts": 0,
@@ -211,6 +208,12 @@ def _build_tiny_splits(seed: int = 42):
                         "practice_status": 0,
                         "game_status": 0,
                         "depth_chart_rank": 1,
+                        "contract_apy_cap_pct": 0.02,
+                        "contract_guaranteed": 5_000_000.0,
+                        "contract_years_remaining": 2.0,
+                        "contract_age": 26.0,
+                        "implied_opp_total": 21.0,
+                        "is_dome": 0,
                     }
                 )
 

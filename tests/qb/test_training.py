@@ -7,6 +7,8 @@ import torch
 from src.qb.config import POSITION_CONFIG
 
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+HUBER_DELTAS = POSITION_CONFIG.huber_deltas
+HEAD_LOSSES = POSITION_CONFIG.head_losses
 TARGETS = POSITION_CONFIG.targets
 from src.shared.neural_net import MultiHeadNet
 from src.shared.training import (
@@ -26,6 +28,9 @@ class TestMultiTargetLoss:
     def test_output_types(self, make_tensors):
         loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
         preds, targets = make_tensors()
+        for name in ("passing_tds", "rushing_tds", "interceptions", "fumbles_lost"):
+            preds[name] = preds[name].abs() + 0.1
+            targets[name] = targets[name].abs()
         combined, components = loss_fn(preds, targets)
         assert isinstance(combined, torch.Tensor)
         assert isinstance(components, dict)
@@ -97,6 +102,22 @@ class TestMultiTargetLoss:
         preds["passing_tds_gate_logit"] = torch.randn(next(iter(preds.values())).shape[0])
         _, components = loss_fn(preds, targets)
         assert not any(k.startswith("loss_gate") for k in components)
+
+    def test_production_head_losses_are_wired(self, make_tensors):
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+            head_losses=HEAD_LOSSES,
+        )
+        preds, targets = make_tensors()
+        for name in ("passing_tds", "rushing_tds", "interceptions", "fumbles_lost"):
+            preds[name] = preds[name].abs() + 0.1
+            targets[name] = targets[name].abs()
+        combined, components = loss_fn(preds, targets)
+        assert torch.isfinite(combined)
+        assert loss_fn.head_losses == HEAD_LOSSES
+        assert set(components) == {f"loss_{t}" for t in TARGETS} | {"loss_combined"}
 
 
 # ---------------------------------------------------------------------------
@@ -196,10 +217,16 @@ class TestMultiHeadTrainer:
             backbone_layers=[16, 8],
             head_hidden=4,
             dropout=0.1,
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
-        criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        criterion = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+            head_losses=HEAD_LOSSES,
+        )
         device = torch.device("cpu")
 
         trainer = MultiHeadTrainer(
@@ -256,10 +283,16 @@ class TestMultiHeadTrainer:
             backbone_layers=[256, 128],
             head_hidden=64,
             dropout=0.0,
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, factor=0.5)
-        criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        criterion = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+            head_losses=HEAD_LOSSES,
+        )
 
         trainer = MultiHeadTrainer(
             model,

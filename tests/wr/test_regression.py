@@ -27,6 +27,7 @@ from src.shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataload
 from src.wr.config import POSITION_CONFIG
 
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 TARGETS = POSITION_CONFIG.targets
 
 
@@ -229,10 +230,16 @@ def _train_tiny_nn_mae(X_train, X_val, y_train, y_val) -> float:
         backbone_layers=[32, 16],
         head_hidden=8,
         dropout=0.0,
+        head_hidden_overrides=POSITION_CONFIG.nn_head_hidden_overrides,
+        non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
-    criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+    criterion = MultiTargetLoss(
+        target_names=TARGETS,
+        loss_weights=LOSS_WEIGHTS,
+        huber_deltas=HUBER_DELTAS,
+    )
     device = torch.device("cpu")
     trainer = MultiHeadTrainer(
         model,
