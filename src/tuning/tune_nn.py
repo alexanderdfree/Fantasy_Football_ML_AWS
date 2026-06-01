@@ -151,10 +151,93 @@ _BACKBONE_PRESETS: list[list[int]] = [
     [128, 32],
 ]
 
+_TUNED_OVERRIDE_KEYS: frozenset[str] = frozenset(
+    {
+        "attn_d_model",
+        "attn_n_heads",
+        "attn_encoder_hidden_dim",
+        "attn_dropout",
+        "attn_lr",
+        "attn_batch_size",
+        "nn_backbone_layers",
+        "nn_head_hidden",
+        "nn_dropout",
+        "nn_lr",
+        "nn_weight_decay",
+        "nn_batch_size",
+    }
+)
+
 
 # ---------------------------------------------------------------------------
 # Search space
 # ---------------------------------------------------------------------------
+
+
+def _is_positive_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _is_positive_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0.0
+
+
+def _validate_overrides(overrides: dict) -> None:
+    """Validate sampled tune_nn overrides before training or reporting them.
+
+    ``attn_encoder_hidden_dim == 0`` is the one intentional zero sentinel: it
+    selects the single-layer game encoder in ``_build_game_encoder``. Every real
+    dimension, width, batch size, and optimizer scale must be positive.
+    """
+    errors: list[str] = []
+
+    missing = sorted(_TUNED_OVERRIDE_KEYS - overrides.keys())
+    if missing:
+        errors.append(f"missing keys: {missing}")
+
+    d_model = overrides.get("attn_d_model")
+    n_heads = overrides.get("attn_n_heads")
+    if not _is_positive_int(d_model):
+        errors.append("attn_d_model must be a positive int")
+    if not _is_positive_int(n_heads):
+        errors.append("attn_n_heads must be a positive int")
+    if _is_positive_int(d_model) and _is_positive_int(n_heads) and d_model % n_heads != 0:
+        errors.append("attn_d_model must be divisible by attn_n_heads")
+
+    encoder_hidden = overrides.get("attn_encoder_hidden_dim")
+    if (
+        not isinstance(encoder_hidden, int)
+        or isinstance(encoder_hidden, bool)
+        or encoder_hidden < 0
+    ):
+        errors.append(
+            "attn_encoder_hidden_dim must be 0 (single-layer encoder sentinel) or a positive int"
+        )
+
+    backbone_layers = overrides.get("nn_backbone_layers")
+    if not isinstance(backbone_layers, list) or not backbone_layers:
+        errors.append("nn_backbone_layers must be a non-empty list of positive ints")
+    elif any(not _is_positive_int(v) for v in backbone_layers):
+        errors.append("nn_backbone_layers entries must be positive ints")
+
+    if not _is_positive_int(overrides.get("nn_head_hidden")):
+        errors.append("nn_head_hidden must be a positive int")
+
+    for key in ("attn_dropout", "nn_dropout"):
+        value = overrides.get(key)
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0.0 <= value < 1.0:
+            errors.append(f"{key} must be in [0, 1)")
+
+    for key in ("attn_lr", "nn_lr", "nn_weight_decay"):
+        if not _is_positive_number(overrides.get(key)):
+            errors.append(f"{key} must be positive")
+
+    for key in ("attn_batch_size", "nn_batch_size"):
+        if not _is_positive_int(overrides.get(key)):
+            errors.append(f"{key} must be a positive int")
+
+    if errors:
+        raise ValueError("Invalid tune_nn overrides: " + "; ".join(errors))
 
 
 def _sample_overrides(trial: optuna.Trial) -> dict:
@@ -163,7 +246,7 @@ def _sample_overrides(trial: optuna.Trial) -> dict:
     """
     d_model = trial.suggest_categorical("attn_d_model", [16, 24, 32, 48, 64])
     n_heads = trial.suggest_categorical("attn_n_heads", [1, 2, 4])
-    if d_model % n_heads != 0:
+    if _is_positive_int(d_model) and _is_positive_int(n_heads) and d_model % n_heads != 0:
         raise optuna.TrialPruned()
 
     backbone_idx = trial.suggest_categorical(
@@ -216,6 +299,7 @@ def _make_objective(pos: str, base_cfg: dict, seed: int):
 
     def objective(trial: optuna.Trial) -> float:
         overrides = _sample_overrides(trial)
+        _validate_overrides(overrides)
         # Deep-copy so per-trial mutations (overrides + epoch_callback
         # installation + K's runner-side `attn_history_builder_fn`
         # injection) don't leak across trials. Assumes cfg values are
@@ -311,7 +395,10 @@ def _format_config_lines(pos: str, best_params: dict) -> str:
     ``src/{pos}/config.py``.
     """
     prefix = pos.upper()
-    lines = [f"# Tuned attention-NN params for {pos} — paste into src/{pos.lower()}/config.py:"]
+    lines = [
+        f"# Tuned attention-NN params for {pos} — paste into src/{pos.lower()}/config.py:",
+        "# ATTN_ENCODER_HIDDEN_DIM=0 means single-layer encoder, not zero-width hidden.",
+    ]
     for param, const_suffix in _PARAM_TO_CONST.items():
         if param not in best_params:
             continue
@@ -333,7 +420,17 @@ def _trial_to_params(trial: optuna.trial.FrozenTrial) -> dict:
     p = dict(trial.params)
     if "nn_backbone_layers_idx" in p:
         idx = p.pop("nn_backbone_layers_idx")
+        if (
+            not isinstance(idx, int)
+            or isinstance(idx, bool)
+            or not 0 <= idx < len(_BACKBONE_PRESETS)
+        ):
+            raise ValueError(
+                "Invalid tune_nn overrides: nn_backbone_layers_idx must map to "
+                "a known backbone preset"
+            )
         p["nn_backbone_layers"] = list(_BACKBONE_PRESETS[idx])
+    _validate_overrides(p)
     return p
 
 

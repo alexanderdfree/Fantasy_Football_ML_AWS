@@ -19,7 +19,9 @@ from unittest.mock import MagicMock
 
 import optuna
 import pytest
+import torch
 
+from src.shared.neural_net import build_multihead_net_with_history
 from src.tuning import tune_nn
 
 pytestmark = pytest.mark.unit
@@ -56,6 +58,23 @@ _EXPECTED_KEYS = {
     "nn_weight_decay",
     "nn_batch_size",
 }
+
+
+def _base_valid_overrides() -> dict:
+    return {
+        "attn_d_model": 32,
+        "attn_n_heads": 2,
+        "attn_encoder_hidden_dim": 0,
+        "attn_dropout": 0.1,
+        "attn_lr": 1e-3,
+        "attn_batch_size": 128,
+        "nn_backbone_layers": [64],
+        "nn_head_hidden": 32,
+        "nn_dropout": 0.2,
+        "nn_lr": 1e-3,
+        "nn_weight_decay": 1e-4,
+        "nn_batch_size": 128,
+    }
 
 
 def test_sample_overrides_returns_every_cfg_key():
@@ -109,11 +128,43 @@ def test_sample_overrides_ranges():
         assert o["attn_batch_size"] in (128, 256, 512)
         assert o["nn_batch_size"] in (128, 256, 512)
         assert o["attn_d_model"] in (16, 24, 32, 48, 64)
+        assert o["attn_d_model"] > 0
         assert o["attn_n_heads"] in (1, 2, 4)
+        assert o["attn_n_heads"] > 0
         assert o["nn_head_hidden"] in (16, 24, 32, 48, 64)
+        assert o["nn_head_hidden"] > 0
         assert o["attn_encoder_hidden_dim"] in (0, 16, 32, 64)
+        assert o["attn_encoder_hidden_dim"] == 0 or o["attn_encoder_hidden_dim"] > 0
         assert isinstance(o["nn_backbone_layers"], list)
         assert all(isinstance(v, int) for v in o["nn_backbone_layers"])
+        assert all(v > 0 for v in o["nn_backbone_layers"])
+        tune_nn._validate_overrides(o)
+
+
+@pytest.mark.parametrize(
+    ("bad_update", "match"),
+    [
+        ({"nn_head_hidden": 0}, "nn_head_hidden"),
+        ({"nn_backbone_layers": [0]}, "nn_backbone_layers"),
+    ],
+)
+def test_validate_overrides_rejects_nonpositive_model_dimensions(bad_update, match):
+    overrides = _base_valid_overrides()
+    overrides.update(bad_update)
+
+    with pytest.raises(ValueError, match=match):
+        tune_nn._validate_overrides(overrides)
+
+
+def test_validate_overrides_allows_only_encoder_hidden_zero_sentinel():
+    overrides = _base_valid_overrides()
+    tune_nn._validate_overrides(overrides)
+
+    for key in ("attn_d_model", "attn_n_heads", "nn_head_hidden", "attn_batch_size"):
+        bad = _base_valid_overrides()
+        bad[key] = 0
+        with pytest.raises(ValueError, match=key):
+            tune_nn._validate_overrides(bad)
 
 
 def test_sample_overrides_invalid_combo_raises_pruned(monkeypatch):
@@ -129,6 +180,47 @@ def test_sample_overrides_invalid_combo_raises_pruned(monkeypatch):
     fake_trial.suggest_float.return_value = 0.1
     with pytest.raises(optuna.TrialPruned):
         tune_nn._sample_overrides(fake_trial)
+
+
+def test_sampled_overrides_build_attention_model_and_forward():
+    """Sampled configs should construct the attention model and produce finite
+    outputs before a real tuning run spends epochs on them."""
+    study = optuna.create_study(sampler=optuna.samplers.TPESampler(seed=3))
+    sampled: list[dict] = []
+    while len(sampled) < 4:
+        try:
+            _, overrides = _ask_overrides(study)
+        except optuna.TrialPruned:
+            continue
+        tune_nn._validate_overrides(overrides)
+        sampled.append(overrides)
+
+    targets = ["target_a", "target_b"]
+    x_static = torch.randn(3, 5)
+    x_history = torch.randn(3, 4, 2)
+    history_mask = torch.tensor(
+        [
+            [True, True, False, False],
+            [True, True, True, False],
+            [True, False, False, False],
+        ]
+    )
+
+    for overrides in sampled:
+        model = build_multihead_net_with_history(
+            overrides,
+            static_dim=x_static.shape[1],
+            game_dim=x_history.shape[2],
+            targets=targets,
+        )
+        model.eval()
+        with torch.no_grad():
+            preds = model(x_static, x_history, history_mask)
+
+        assert set(preds) == set(targets)
+        for pred in preds.values():
+            assert pred.shape == (len(x_static),)
+            assert torch.isfinite(pred).all()
 
 
 # ---------------------------------------------------------------------------
@@ -183,11 +275,9 @@ def test_trial_to_params_resolves_backbone_idx_to_preset():
     should resolve the index back to the concrete preset list and rename the
     key so downstream consumers see the user-facing shape."""
     frozen = MagicMock()
-    frozen.params = {
-        "attn_d_model": 32,
-        "nn_backbone_layers_idx": 3,  # _BACKBONE_PRESETS[3] == [128, 64]
-        "attn_lr": 0.001,
-    }
+    frozen.params = _base_valid_overrides()
+    frozen.params.pop("nn_backbone_layers")
+    frozen.params["nn_backbone_layers_idx"] = 3  # _BACKBONE_PRESETS[3] == [128, 64]
     p = tune_nn._trial_to_params(frozen)
     assert p["nn_backbone_layers"] == [128, 64]
     assert isinstance(p["nn_backbone_layers"], list)
@@ -196,6 +286,25 @@ def test_trial_to_params_resolves_backbone_idx_to_preset():
     # Other params left untouched.
     assert p["attn_d_model"] == 32
     assert p["attn_lr"] == 0.001
+
+
+def test_trial_to_params_rejects_stale_invalid_best_trial():
+    frozen = MagicMock()
+    frozen.params = _base_valid_overrides()
+    frozen.params["nn_head_hidden"] = 0
+
+    with pytest.raises(ValueError, match="nn_head_hidden"):
+        tune_nn._trial_to_params(frozen)
+
+
+def test_trial_to_params_rejects_unknown_backbone_preset_index():
+    frozen = MagicMock()
+    frozen.params = _base_valid_overrides()
+    frozen.params.pop("nn_backbone_layers")
+    frozen.params["nn_backbone_layers_idx"] = 999
+
+    with pytest.raises(ValueError, match="nn_backbone_layers_idx"):
+        tune_nn._trial_to_params(frozen)
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +338,24 @@ def test_objective_returns_min_of_captured_val_losses(monkeypatch, pos):
     study.optimize(objective, n_trials=1)
 
     assert study.best_value == pytest.approx(0.6)
+
+
+def test_objective_validates_overrides_before_training(monkeypatch):
+    def fail_runner(seed, config):  # pragma: no cover - assertion is that this is never called
+        raise AssertionError("runner should not be called for invalid overrides")
+
+    bad_overrides = _base_valid_overrides()
+    bad_overrides["nn_head_hidden"] = 0
+
+    monkeypatch.setattr(tune_nn, "_sample_overrides", lambda trial: bad_overrides)
+    monkeypatch.setattr(tune_nn, "get_runner", lambda pos: fail_runner)
+
+    study = optuna.create_study(direction="minimize")
+    objective = tune_nn._make_objective("QB", {"train_attention_nn": True}, seed=42)
+    trial = study.ask()
+
+    with pytest.raises(ValueError, match="nn_head_hidden"):
+        objective(trial)
 
 
 def test_objective_propagates_pruned_trial(monkeypatch):
