@@ -38,7 +38,8 @@ def test_make_cfg_deep_copies_and_scales_cosine_scheduler():
 
     assert cfg["attn_batch_size"] == 512
     assert cfg["attn_lr"] == pytest.approx(1e-3 * 2**0.5)
-    assert cfg["cosine_eta_min"] == pytest.approx(1e-5 * 2**0.5)
+    assert cfg["cosine_eta_min"] == pytest.approx(1e-5)
+    assert cfg["attn_cosine_eta_min"] == pytest.approx(1e-5 * 2**0.5)
     assert cfg["cosine_t0"] == 40
     assert cfg["cosine_t_mult"] == 2
     assert cfg["train_ridge"] is False
@@ -80,9 +81,23 @@ def test_make_cfg_scales_onecycle_max_lr():
     cfg, meta = abl._make_cfg(base, abl.VARIANTS["b2_lrlin"], ridge_sentinel=False)
 
     assert cfg["attn_lr"] == pytest.approx(2e-3)
-    assert cfg["onecycle_max_lr"] == pytest.approx(4e-3)
+    assert cfg["onecycle_max_lr"] == pytest.approx(2e-3)
+    assert cfg["attn_onecycle_max_lr"] == pytest.approx(4e-3)
     assert cfg["onecycle_pct_start"] == 0.3
-    assert meta["effective_scheduler"]["onecycle_max_lr"] == pytest.approx(4e-3)
+    assert meta["effective_scheduler"]["attn_onecycle_max_lr"] == pytest.approx(4e-3)
+
+
+def test_make_cfg_preserves_attention_scheduler_override_as_baseline():
+    cfg, meta = abl._make_cfg(
+        _base_cfg(attn_cosine_eta_min=2e-5),
+        abl.VARIANTS["baseline"],
+        ridge_sentinel=False,
+    )
+
+    assert cfg["cosine_eta_min"] == pytest.approx(1e-5)
+    assert cfg["attn_cosine_eta_min"] == pytest.approx(2e-5)
+    assert meta["base_scheduler"]["attn_cosine_eta_min"] == pytest.approx(2e-5)
+    assert meta["effective_scheduler"]["attn_cosine_eta_min"] == pytest.approx(2e-5)
 
 
 def test_build_jobs_adds_one_seed_ridge_preflight(monkeypatch):

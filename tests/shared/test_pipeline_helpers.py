@@ -83,6 +83,24 @@ def test_build_scheduler_cosine_warm_restarts():
 
 
 @pytest.mark.unit
+def test_build_scheduler_prefers_attention_overrides():
+    from src.shared.pipeline import _build_scheduler
+
+    opt, loader = _dummy_optim_and_loader()
+    cfg = {
+        "scheduler_type": "cosine_warm_restarts",
+        "cosine_t0": 5,
+        "cosine_t_mult": 2,
+        "cosine_eta_min": 1e-5,
+        "attn_cosine_eta_min": 2e-5,
+    }
+    sched, per_batch = _build_scheduler(opt, cfg, loader, scheduler_prefix="attn_")
+    assert per_batch is False
+    assert isinstance(sched, torch.optim.lr_scheduler.CosineAnnealingWarmRestarts)
+    assert sched.eta_min == pytest.approx(2e-5)
+
+
+@pytest.mark.unit
 def test_build_scheduler_plateau():
     from src.shared.pipeline import _build_scheduler
 

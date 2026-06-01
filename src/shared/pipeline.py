@@ -237,6 +237,7 @@ def _run_nn_training(
     weight_decay: float,
     patience: int,
     loss_kwargs: dict | None = None,
+    scheduler_prefix: str = "",
 ) -> dict:
     """Build optimizer / scheduler / loss / trainer, run ``trainer.train``.
 
@@ -255,7 +256,9 @@ def _run_nn_training(
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=lr, weight_decay=weight_decay, fused=_fused
     )
-    scheduler, scheduler_per_batch = _build_scheduler(optimizer, cfg, train_loader)
+    scheduler, scheduler_per_batch = _build_scheduler(
+        optimizer, cfg, train_loader, scheduler_prefix=scheduler_prefix
+    )
     # If the model has no GatedHead, hurdle families are not supported (no
     # value_mu / value_log_alpha emissions). Transparently downgrade those
     # entries to huber so base NN / nested-attention paths run cleanly without
@@ -505,23 +508,32 @@ def _tune_enet_cv(
     return best
 
 
-def _build_scheduler(optimizer, cfg, train_loader):
+def _scheduler_value(cfg: dict, key: str, scheduler_prefix: str):
+    """Return a scheduler value, preferring an optional prefixed override."""
+    if scheduler_prefix:
+        override_key = f"{scheduler_prefix}{key}"
+        if cfg.get(override_key) is not None:
+            return cfg[override_key]
+    return cfg[key]
+
+
+def _build_scheduler(optimizer, cfg, train_loader, *, scheduler_prefix: str = ""):
     """Create the LR scheduler from config."""
     sched_type = cfg["scheduler_type"]
     if sched_type == "onecycle":
         return torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
-            max_lr=cfg["onecycle_max_lr"],
+            max_lr=_scheduler_value(cfg, "onecycle_max_lr", scheduler_prefix),
             epochs=cfg["nn_epochs"],
             steps_per_epoch=len(train_loader),
-            pct_start=cfg["onecycle_pct_start"],
+            pct_start=_scheduler_value(cfg, "onecycle_pct_start", scheduler_prefix),
         ), True  # scheduler_per_batch=True
     elif sched_type == "cosine_warm_restarts":
         return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer,
-            T_0=cfg["cosine_t0"],
-            T_mult=cfg["cosine_t_mult"],
-            eta_min=cfg["cosine_eta_min"],
+            T_0=_scheduler_value(cfg, "cosine_t0", scheduler_prefix),
+            T_mult=_scheduler_value(cfg, "cosine_t_mult", scheduler_prefix),
+            eta_min=_scheduler_value(cfg, "cosine_eta_min", scheduler_prefix),
         ), False  # scheduler_per_batch=False
     elif sched_type == "plateau":
         return torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -821,6 +833,7 @@ def _train_attention_nn(
         lr=cfg.get("attn_lr", cfg["nn_lr"]),
         weight_decay=cfg.get("attn_weight_decay", cfg["nn_weight_decay"]),
         patience=cfg.get("attn_patience", cfg["nn_patience"]),
+        scheduler_prefix="attn_",
         loss_kwargs={
             "gate_weight": cfg.get("attn_gate_weight", 1.0),
             "gated_targets": cfg.get("gated_targets"),
@@ -922,6 +935,7 @@ def _train_nested_attention_nn(
         lr=cfg.get("attn_lr", cfg["nn_lr"]),
         weight_decay=cfg.get("attn_weight_decay", cfg["nn_weight_decay"]),
         patience=cfg.get("attn_patience", cfg["nn_patience"]),
+        scheduler_prefix="attn_",
     )
 
     test_preds = model.predict_numpy(

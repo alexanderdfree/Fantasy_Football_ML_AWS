@@ -305,10 +305,11 @@ POSITION_CONFIG = PositionConfig(
     # (npg==0 bias +1.13). Give that case a learned per-target embedding instead.
     attn_no_history_embedding=True,
     attn_dropout=0.05,
-    attn_lr=1e-3,
+    attn_lr=1.4142135623730952e-3,
     attn_weight_decay=5e-5,
-    attn_batch_size=256,
+    attn_batch_size=512,
     attn_patience=20,
+    attn_cosine_eta_min=1.4142135623730952e-5,
     # Per-game stats fed into the attention sequence. fantasy_points
     # intentionally excluded — its scoring components are already in the
     # sequence. Game-script context + team box score are per-historical-

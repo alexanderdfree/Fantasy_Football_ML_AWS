@@ -192,6 +192,12 @@ class PositionConfig:
     attn_weight_decay: float = 5e-5
     attn_batch_size: int = 256
     attn_patience: int = 35
+    # Optional attention-only scheduler overrides. Unset means the attention
+    # trainer uses the shared scheduler values above; set these when an
+    # attention-specific LR ablation scales the LR floor / max LR without
+    # changing the regular NN schedule.
+    attn_cosine_eta_min: float | None = None
+    attn_onecycle_max_lr: float | None = None
     attn_history_stats: list[str] = field(default_factory=list)
     attn_static_features: list[str] = field(default_factory=list)
     attn_project_kv: bool = False
