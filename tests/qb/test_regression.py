@@ -26,6 +26,8 @@ from sklearn.preprocessing import StandardScaler
 from src.qb.config import POSITION_CONFIG
 
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+HUBER_DELTAS = POSITION_CONFIG.huber_deltas
+HEAD_LOSSES = POSITION_CONFIG.head_losses
 TARGETS = POSITION_CONFIG.targets
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
@@ -194,6 +196,7 @@ class TestQBRegression:
             backbone_layers=[32, 16],
             head_hidden=8,
             dropout=0.1,
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=3e-3)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -204,6 +207,8 @@ class TestQBRegression:
         criterion = MultiTargetLoss(
             target_names=TARGETS,
             loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+            head_losses=HEAD_LOSSES,
         )
         trainer = MultiHeadTrainer(
             model,

@@ -64,6 +64,7 @@ def _build_player_games(
     receiving_epa: float = 1.5,
     receiving_air_yards: int = 20,
     recent_team: str = "KC",
+    career_carries: int = 0,
 ) -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -82,6 +83,7 @@ def _build_player_games(
             "receiving_epa": [receiving_epa] * n_weeks,
             "receiving_air_yards": [receiving_air_yards] * n_weeks,
             "recent_team": [recent_team] * n_weeks,
+            "career_carries": [career_carries] * n_weeks,
         }
     )
 
@@ -175,7 +177,7 @@ def _build_synthetic_dataset(
     """Build a synthetic RB-style DataFrame the pipeline can train on.
 
     Designed for the E2E smoke: small enough to run in ~5-15s, large enough to
-    satisfy MIN_GAMES_PER_SEASON=6 after filtering.
+    survive RB's per-position min-games filter after feature construction.
 
     Fields mirror the raw `weekly` schema the pipeline expects. Values are
     drawn from plausible RB distributions so compute_targets, feature

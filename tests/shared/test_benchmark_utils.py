@@ -386,7 +386,7 @@ def test_print_comparison_with_all_variants(capsys):
         cv_ridge_mae_std=0.25,
         cv_nn_mae_mean=4.6,
         cv_nn_mae_std=0.3,
-        best_cv_alpha=10.0,
+        best_cv_alphas={"yards": 10.0},
     )
     print_comparison_table([s], header="AllModels", show_time=False)
     out = capsys.readouterr().out

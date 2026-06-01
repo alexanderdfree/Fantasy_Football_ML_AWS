@@ -15,6 +15,6 @@ def filter_to_position(df: pd.DataFrame) -> pd.DataFrame:
     return _filter_to_position(df, "WR")
 
 
-def compute_team_wr_totals(full_wr_df: pd.DataFrame) -> pd.DataFrame:
+def compute_team_wr_totals(wr_df: pd.DataFrame) -> pd.DataFrame:
     """Compute team-level WR totals (targets) for share features."""
-    return compute_team_position_totals(full_wr_df, _TEAM_WR_AGGREGATIONS)
+    return compute_team_position_totals(wr_df, _TEAM_WR_AGGREGATIONS)

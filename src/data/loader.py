@@ -446,11 +446,10 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
     # depth ranks are 1+). Previously these were filled with 3 (third string),
     # which conflated "no data" with "third-string player" and biased every
     # downstream feature that uses depth_chart_rank to treat unknown players
-    # as buried on the depth chart. The clip upper bound is loosened to 10 so
+    # as buried on the depth chart. Consumers treat -1 as the explicit
+    # "unlisted / unavailable depth chart" category. The clip upper bound is loosened to 10 so
     # legitimate deeper ranks survive intact; depth chart rows beyond 10 are
     # exceedingly rare (and almost certainly noise) so they still get capped.
-    # NOTE: downstream features may interpret -1 as "missing" — that
-    # remediation is a follow-up (no consumer code is updated in this commit).
     weekly["depth_chart_rank"] = weekly["depth_chart_rank"].fillna(-1).clip(lower=-1, upper=10)
 
     # --- Merge red-zone PBP aggregates ---

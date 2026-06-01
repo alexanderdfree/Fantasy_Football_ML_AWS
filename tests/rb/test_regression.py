@@ -24,6 +24,7 @@ from sklearn.preprocessing import StandardScaler
 from src.rb.config import POSITION_CONFIG
 
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 TARGETS = POSITION_CONFIG.targets
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
@@ -171,6 +172,8 @@ def trained_nn(regression_data):
         backbone_layers=[64, 32],
         head_hidden=16,
         dropout=0.1,
+        head_hidden_overrides=POSITION_CONFIG.nn_head_hidden_overrides,
+        non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -178,7 +181,11 @@ def trained_nn(regression_data):
         patience=3,
         factor=0.5,
     )
-    criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+    criterion = MultiTargetLoss(
+        target_names=TARGETS,
+        loss_weights=LOSS_WEIGHTS,
+        huber_deltas=HUBER_DELTAS,
+    )
 
     trainer = MultiHeadTrainer(
         model,

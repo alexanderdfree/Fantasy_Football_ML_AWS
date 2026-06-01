@@ -63,8 +63,8 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
     df = raw_df.copy()
 
     # Filter to regular season. ``season_type`` is part of the nflverse
-    # weekly schema (both ``import_weekly_data`` and the 2025+ stats_player
-    # parquet emit it), so its absence indicates a malformed upstream frame
+    # weekly schema (via the ``src.data.nfl_source`` shim), so its absence
+    # indicates a malformed upstream frame
     # rather than an older-dataset path that should be tolerated. Fail loudly.
     assert "season_type" in df.columns, (
         "preprocess() requires 'season_type'; upstream loader (src/data/loader.py) "

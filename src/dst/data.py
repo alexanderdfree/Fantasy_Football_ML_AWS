@@ -422,7 +422,7 @@ def build_data() -> pd.DataFrame:
     dst_df["recent_team"] = dst_df["team"]
     dst_df["position"] = "DST"
 
-    # Team logos from nfl_data_py
+    # Team logos from nflreadpy via the nfl_source shim.
     try:
         team_desc = nfl_source.teams()
         logo_map = team_desc.set_index("team_abbr")["team_logo_espn"].to_dict()

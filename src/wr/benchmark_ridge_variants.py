@@ -242,7 +242,13 @@ def main():
     # ``fumbles_lost``) render; pre-2024 versions hardcoded three stale
     # fantasy-points-era column labels (recv_fl/rush_fl/td_pts) whose data
     # rows actually printed receiving_tds/receiving_yards/receptions MAEs.
-    target_header = " ".join(f"{t[:8]:>8}" for t in TARGETS)
+    label_map = {
+        "receiving_tds": "rec_tds",
+        "receiving_yards": "rec_yds",
+        "receptions": "recs",
+        "fumbles_lost": "fum_lost",
+    }
+    target_header = " ".join(f"{label_map.get(t, t[:8]):>8}" for t in TARGETS)
     header = (
         f"{'Variant':<28} {'Feats':>5} {'PCA':>4} {'Cond#':>10} "
         f"{'Total MAE':>10} {'Total R2':>9} "
@@ -275,7 +281,7 @@ def main():
     # ``fumbles_lost``) renders. Pre-2024 versions hardcoded three columns
     # (recv_td/recv_yd/recs) and dropped fumbles_lost (M18 fix was incomplete
     # here \u2014 the MAE table above was migrated but this R2 table was missed).
-    r2_target_header = " ".join(f"{t[:8]:>8}" for t in TARGETS)
+    r2_target_header = " ".join(f"{label_map.get(t, t[:8]):>8}" for t in TARGETS)
     r2_hdr = f"{'Variant':<28} {'Total':>8} {r2_target_header}"
     r2_width = len(r2_hdr)
     print(f"\n{'=' * r2_width}")

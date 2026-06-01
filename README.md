@@ -134,7 +134,7 @@ src/                                All Python source code
   analysis/                         Post-hoc data + model analysis scripts
   scripts/                          Operator CLIs (artifact promote, scope positions)
   config.py                         Shared seasons, scoring, rolling windows
-  data/                             loader, nflcom_loader, preprocessing, redzone_pbp, split
+  data/                             loader, nfl_source, nflcom_loader, preprocessing, redzone_pbp, split
   features/engineer.py              Feature engineering coordinator
 
 data/README.md                      Pointer to nflverse loaders + gitignored caches
@@ -206,7 +206,7 @@ GitHub Actions
 deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS ──▶ alexfree.me
 ```
 
-- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six g6.xlarge Spot instances via AWS Batch (one position per host, parallel; ~15 min wall-clock, ~$0.35/run estimate on g6 — migrated from g4dn 2026-05-31). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
+- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six g6.xlarge Spot instances via AWS Batch (one position per host, parallel; ~15 min wall-clock, ~$0.35/run GPU-compute estimate on g6 at the measured ~10 min Batch wait — migrated from g4dn 2026-05-31). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
 - **Artifact safety** — S3 manifest schema v2 tracks `stable` / `current` / `previous` plus a 5-version `history`. New artifacts must clear a smoke-test gate before being promoted to `stable`. [src/scripts/promote.py](src/scripts/promote.py) supports manual rollback to any history entry; bucket versioning is defense-in-depth.
 - **Serving** — ECS Fargate (arm64, 1 vCPU / 2 GB) sits behind an ALB with ACM-terminated HTTPS. The slim Flask image fetches models from S3 at boot rather than baking them in — keeps the image roughly 3× smaller and lets prod track new artifacts without a full redeploy.
 - **IAM** — the serving task role is scoped to `s3:GetObject` on `ff-predictor-training/models/*` only.

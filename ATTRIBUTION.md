@@ -1,6 +1,6 @@
 # Attribution
 
-_Last verified: 2026-05-19._
+_Last verified: 2026-06-01._
 
 Sources, libraries, and AI-tool usage for this project.
 
@@ -23,6 +23,7 @@ Canonical version pins live in [requirements.txt](requirements.txt) (serving), [
 | Flask + gunicorn | 3.1.3 / 25.3.0 | Serving dashboard | Matches the CPU-only ECS deploy target; gunicorn for multi-worker WSGI ([src/serving/app.py](src/serving/app.py), [Dockerfile](Dockerfile)). |
 | boto3 | 1.42.89 | S3 + SSM calls in training orchestration | Required by AWS SDK; used in [src/batch/launch.py](src/batch/launch.py) and [src/batch/train.py](src/batch/train.py). |
 | pandas / numpy / pyarrow | 3.0.2 / 2.4.4 / 23.0.1 | Data manipulation, parquet I/O | Standard; parquet because every split is cache-friendly and ~10× smaller than CSV. |
+| Polars | 1.41.1 | nflreadpy boundary conversion | `nflreadpy` returns Polars frames; [src/data/nfl_source.py](src/data/nfl_source.py) converts them to pandas at the project boundary. |
 | pytest, ruff | 9.0.3 / 0.15.0 | Test runner, lint | Only in [requirements-dev.txt](requirements-dev.txt). Config in [pyproject.toml](pyproject.toml). |
 
 ## AI development tools

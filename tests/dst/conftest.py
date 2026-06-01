@@ -423,17 +423,3 @@ def _build_synthetic_full_schedules(team_df: pd.DataFrame) -> pd.DataFrame:
     sched["wind"] = 5.0
     sched = sched.drop_duplicates(subset=["season", "week", "home_team", "away_team"])
     return sched.reset_index(drop=True)
-
-
-@pytest.fixture(scope="session")
-def synthetic_player_weekly(tiny_dataset):
-    """Player-week frame derived from ``tiny_dataset``. Session-scoped so
-    repeated tests don't repeatedly synthesize the same rows."""
-    return _build_synthetic_player_weekly(tiny_dataset, seed=42)
-
-
-@pytest.fixture(scope="session")
-def synthetic_full_schedules(tiny_dataset):
-    """Schedules frame derived from ``tiny_dataset`` with the full column set
-    the on-disk loader expects (home_score, away_score, game_type, roof, ...)."""
-    return _build_synthetic_full_schedules(tiny_dataset)

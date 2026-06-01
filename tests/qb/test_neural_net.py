@@ -20,6 +20,7 @@ class TestMultiHeadNet:
             backbone_layers=[32, 16],
             head_hidden=8,
             dropout=0.1,
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
 
     def test_output_keys(self, model):
@@ -39,6 +40,7 @@ class TestMultiHeadNet:
             input_dim=5,
             target_names=TARGETS,
             backbone_layers=[64, 32, 16],
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         x = torch.randn(2, 5)
         out = model(x)
@@ -51,6 +53,7 @@ class TestMultiHeadNet:
             input_dim=10,
             target_names=TARGETS,
             backbone_layers=[16, 8],
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         model.eval()
         with torch.no_grad():
@@ -64,6 +67,7 @@ class TestMultiHeadNet:
             input_dim=10,
             target_names=TARGETS,
             backbone_layers=[16, 8],
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         X = np.random.randn(5, 10).astype(np.float32)
         device = torch.device("cpu")
@@ -79,6 +83,7 @@ class TestMultiHeadNet:
             input_dim=5,
             target_names=TARGETS,
             backbone_layers=[8, 4],
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         X = np.random.randn(1, 5).astype(np.float32)
         device = torch.device("cpu")
@@ -106,6 +111,7 @@ class TestMultiHeadNet:
             backbone_layers=[16],
             head_hidden=4,
             dropout=0.0,
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         model.train()
         x = torch.randn(4, 5) * 0.01
@@ -125,6 +131,7 @@ class TestMultiHeadNet:
             backbone_layers=[128],
             head_hidden=32,
             dropout=0.2,
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         model.eval()
         x = torch.randn(4, 10)
@@ -141,6 +148,7 @@ class TestMultiHeadNet:
             target_names=TARGETS,
             backbone_layers=[32, 16],
             dropout=0.5,
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         x = torch.randn(8, 10)
 
@@ -198,6 +206,7 @@ class TestMultiHeadNet:
             backbone_layers=[32, 16],
             head_hidden=8,
             head_hidden_overrides={"passing_tds": 32},
+            non_negative_targets=POSITION_CONFIG.nn_non_negative_targets,
         )
         x = torch.randn(4, 10)
         out = model(x)

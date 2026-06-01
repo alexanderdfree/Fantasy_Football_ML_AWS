@@ -82,12 +82,6 @@ def _build_wr_row(**overrides) -> pd.DataFrame:
     return pd.DataFrame([defaults])
 
 
-@pytest.fixture(scope="session")
-def make_wr_row():
-    """Factory for single-row WR target inputs."""
-    return _build_wr_row
-
-
 def make_wr_player_games(
     player_id: str = "W1",
     season: int = 2023,

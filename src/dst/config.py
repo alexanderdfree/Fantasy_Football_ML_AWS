@@ -95,9 +95,10 @@ _POISSON_TARGETS = [
 
 
 # ===========================================================================
-# CONFIG_TINY — shrunk config for E2E smoke tests. 2 backbone layers × 8
-# units, 1 epoch, no LightGBM, attention off by default. Tests that need to
-# exercise the attention path override ``train_attention_nn`` to True.
+# CONFIG_TINY — shrunk config for E2E smoke tests. 2 backbone layers x 8
+# units, 1 epoch, no LightGBM, attention off by default for the baseline
+# bit-identity test. Dedicated attention tests override ``train_attention_nn``
+# to True and exercise the attention branch directly.
 # ===========================================================================
 CONFIG_TINY = {
     "nn_backbone_layers": [8, 8],

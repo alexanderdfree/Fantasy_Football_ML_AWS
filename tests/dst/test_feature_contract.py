@@ -223,3 +223,9 @@ class TestDSTFeatureContract:
         assert len(SPECIFIC_FEATURES) == 21
         assert len(CONTEXTUAL_FEATURES) == 17
         assert len(all_cols) == 38
+
+    def test_ridge_pca_components_stay_below_feature_count(self):
+        """DST's fixed PCA dimension must remain valid for the feature list."""
+        all_cols = get_feature_columns()
+        assert POSITION_CONFIG.ridge_pca_components is not None
+        assert 0 < POSITION_CONFIG.ridge_pca_components < len(all_cols)

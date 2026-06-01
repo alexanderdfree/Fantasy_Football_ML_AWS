@@ -14,7 +14,7 @@ Design choices
   does not wipe rows.
 * **Config** — ``CONFIG_TINY`` in src/dst/config.py: 2-layer 8-unit NN,
   1 epoch, no LightGBM, no attention.  The rest of the production config
-  (targets, ridge grids, loss weights) is kept so the test exercises
+  (targets, ridge grids, loss weights, head losses) is kept so the test exercises
   representative code.
 * **CWD override** — ``run_pipeline`` writes artifacts to ``dst/outputs``
   (a relative path).  We ``chdir`` into ``tmp_path`` so the real repo
@@ -42,6 +42,7 @@ from src.dst.config import CONFIG_TINY, POSITION_CONFIG
 ATTN_HISTORY_STATS = POSITION_CONFIG.attn_history_stats
 ATTN_STATIC_FEATURES = POSITION_CONFIG.attn_static_features
 HUBER_DELTAS = POSITION_CONFIG.huber_deltas
+HEAD_LOSSES = POSITION_CONFIG.head_losses
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
 OPP_ATTN_HISTORY_STATS = POSITION_CONFIG.opp_attn_history_stats
 OPP_ATTN_KIND = POSITION_CONFIG.opp_attn_kind
@@ -134,6 +135,7 @@ def _make_dst_tiny_cfg() -> dict:
         "compute_adjustment_fn": None,
         "loss_weights": LOSS_WEIGHTS,
         "huber_deltas": HUBER_DELTAS,
+        "head_losses": HEAD_LOSSES,
         "poisson_targets": POISSON_TARGETS,
         "aggregate_fn": aggregate_fn_for("DST"),
     }

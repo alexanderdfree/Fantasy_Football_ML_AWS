@@ -111,7 +111,7 @@ Triggers:
 - `workflow_dispatch` with inputs `positions`, `seed` — break-glass for re-runs.
 
 A `detect` job runs first and scopes which positions to train:
-- On `workflow_run`, `git diff --name-only HEAD^ HEAD` on the merged commit. Changes under `src/shared/`, `src/batch/`, `src/data/`, `src/features/`, `src/config.py`, or `requirements.txt` are treated as global triggers and retrain all six positions; changes under a single `src/{POS}/` subtree retrain only that position. Edits scoped to non-training subtrees (e.g. `src/serving/`, `src/tuning/`, `src/analysis/`, `src/benchmarking/`, `src/scripts/`, `src/**/tests/`) do not trigger retraining. No model-relevant changes → `train` job skipped.
+- On `workflow_run`, `git diff --name-only HEAD^ HEAD` on the merged commit. The detect job delegates to [src/scripts/scope_positions.py](../src/scripts/scope_positions.py): changes under `src/shared/`, `src/data/`, `src/features/`, `src/config.py`, `requirements.txt`, or training-owned files under `src/batch/` are treated as global triggers and retrain all six positions. `src/batch/` tune/ablate files and the exact helper basenames `launch.py` / `benchmark.py` are exempt; changes under a single `src/{POS}/` subtree retrain only that position. Edits scoped to non-training subtrees (e.g. `src/serving/`, `src/tuning/`, `src/analysis/`, `src/benchmarking/`, `src/scripts/`, `src/**/tests/`) do not trigger retraining. No model-relevant changes → `train` job skipped.
 - On `workflow_dispatch`, the explicit `positions` input is honored verbatim. Empty input falls back to all six (legacy semantics for "retrain after data refresh").
 
 Depends on `batch-image.yml` via `workflow_run` — training only fires after the new image has been pushed for the same commit.

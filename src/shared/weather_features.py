@@ -1,8 +1,6 @@
-"""Weather, venue, and Vegas implied-odds features for the Weather NN model.
+"""Weather, venue, and Vegas implied-odds feature merge helpers.
 
 Merges schedule data onto player DataFrames and computes 11 derived features.
-Used by the Weather NN — an exact copy of each position's NN except with
-these additional features appended to the input.
 """
 
 import threading
@@ -30,14 +28,6 @@ WEATHER_FEATURES_ALL = [
     "rest_advantage",
     "implied_total_x_wind",
 ]
-
-# Per-position drops (from docs/archive/design_weather_and_odds.md feature table)
-WEATHER_DROPS_BY_POSITION = {
-    "QB": {"is_grass"},
-    "RB": {"is_dome", "temp_adjusted", "wind_adjusted", "implied_total_x_wind"},
-    "WR": {"is_grass"},
-    "TE": {"is_grass", "temp_adjusted", "wind_adjusted", "implied_total_x_wind"},
-}
 
 # Module-level cache for schedule data. Lock guards concurrent first-read
 # races (parallel CV folds / threaded callers) — mirrors the precedent in
@@ -310,28 +300,3 @@ def merge_schedule_features(df: pd.DataFrame, label: str | None = None) -> pd.Da
 
     df["_schedule_merged"] = True
     return df
-
-
-# ---------------------------------------------------------------------------
-# Feature column selection
-# ---------------------------------------------------------------------------
-
-
-def get_weather_feature_columns(position: str, base_cols: list[str]) -> list[str]:
-    """Return base feature columns plus position-appropriate weather features.
-
-    This enforces the Weather NN invariant: same base features as the regular
-    NN, with weather/venue/Vegas features appended.
-
-    Args:
-        position: Position abbreviation (QB, RB, WR, TE).
-        base_cols: Feature columns from the regular NN's get_feature_columns_fn.
-
-    Returns:
-        Extended feature list = base_cols + weather features (minus position drops).
-    """
-    drops = WEATHER_DROPS_BY_POSITION.get(position, set())
-    weather_cols = [c for c in WEATHER_FEATURES_ALL if c not in drops]
-    # Avoid duplicates if any weather feature is already in base_cols
-    weather_cols = [c for c in weather_cols if c not in base_cols]
-    return base_cols + weather_cols

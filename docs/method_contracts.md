@@ -10,13 +10,13 @@ Function signatures, data schemas, and implementation contracts for every module
 
 #### `load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) -> pd.DataFrame`
 
-**nflverse data calls (in order)** — now routed through the [`src/data/nfl_source.py`](../src/data/nfl_source.py) shim (`nfl_source.weekly_data` wraps `nflreadpy.load_player_stats`, `nfl_source.pbp_data` wraps `load_pbp`, etc.). The legacy `nfl_data_py` call names below are retained as a reference mapping:
+**nflverse data calls (in order)** — routed through the [`src/data/nfl_source.py`](../src/data/nfl_source.py) shim. The shim is the only module that imports `nflreadpy`; it converts Polars outputs to pandas so downstream code and tests keep one boundary to patch.
 
 ```python
-import nfl_data_py as nfl
+from src.data import nfl_source
 
 # 1. Weekly player stats — primary data source
-weekly = nfl.import_weekly_data(seasons)
+weekly = nfl_source.weekly_data(seasons)
 # Seasons: 2012-2025 (must match config.SEASONS)
 # Columns: player_id, player_name, position, recent_team, season, week,
 #   completions, attempts, passing_yards, passing_tds, interceptions,
@@ -25,17 +25,17 @@ weekly = nfl.import_weekly_data(seasons)
 #   target_share (may exist), air_yards_share (may exist), wopr (may exist)
 
 # 2. Roster data — reliable position labels
-rosters = nfl.import_rosters(seasons)
+rosters = nfl_source.rosters(seasons)
 # Columns: player_id, season, position, team, ...
 # Use to override weekly.position (which can be inconsistent)
 
 # 3. Schedule data — for opponent info
-schedules = nfl.import_schedules(seasons)
+schedules = nfl_source.schedules(seasons)
 # Columns: season, week, home_team, away_team, ...
 # Used to determine each player's opponent for matchup features
 
 # 4. Snap counts — snap percentage feature
-snap_counts = nfl.import_snap_counts(seasons)
+snap_counts = nfl_source.snap_counts(seasons)
 # Columns: pfr_player_id, player, team, season, week, offense_snaps, offense_pct, ...
 # WARNING: snap_counts uses pfr_player_id (Pro Football Reference ID), NOT
 # the GSIS player_id used in weekly data. Merge strategy:
@@ -234,7 +234,8 @@ for stat in ROLL_STATS:
             )
 # NOTE: rolling std with min_periods=1 returns NaN for single observations
 # (std of one value is undefined). The first valid row per player per season
-# will have NaN for all std features. This is handled by fill_nans_safe().
+# will have NaN for all std features. This is handled post-split by
+# fill_nans_with_train_means().
 ```
 
 ##### Prior-Season Summary Features (30 features)
@@ -253,7 +254,8 @@ prior.columns = [f"prior_season_{agg}_{stat}" for stat, agg in prior.columns]
 prior = prior.reset_index()
 prior["season"] = prior["season"] + 1  # align S-1 stats with season S rows
 df = df.merge(prior, on=["player_id", "season"], how="left")
-# Rookies / first-year players will have NaN here → handled by fill_nans_safe()
+# Rookies / first-year players will have NaN here → handled post-split by
+# fill_nans_with_train_means()
 ```
 
 ##### EWMA Features (14 features)
@@ -310,8 +312,11 @@ for stat in TREND_STATS:
 | `snap_pct` | Direct from data (already exists) | Not a derived feature |
 | `air_yards_share` | rolling_sum(player_air_yards, L5) / rolling_sum(team_air_yards, L5), both shifted | If column available; drop if not |
 
-**NOTE:** `redzone_targets_share` is removed — nfl_data_py does not provide redzone
-target data in weekly stats. An all-zero feature adds no signal.
+**NOTE:** red-zone usage is reconstructed from PBP in
+[`src/data/redzone_pbp.py`](../src/data/redzone_pbp.py), then merged by
+`load_raw_data()`. RB currently consumes per-game `redzone_carries`,
+`redzone_targets`, `inside10_carries`, `inside5_carries`, and
+`redzone_target_share` in its attention history.
 
 **Team-level aggregation pattern (computed BEFORE min-games filter):**
 ```python
@@ -535,43 +540,25 @@ def get_feature_columns() -> list[str]:
     return cols
 ```
 
-#### `fill_nans_safe(train_df, val_df, test_df, feature_cols) -> (train_df, val_df, test_df)`
+#### `fill_nans_with_train_means(train_df, val_df, test_df, feature_cols) -> (train_df, val_df, test_df, train_means)`
 
 **CRITICAL: Called AFTER `temporal_split()`, NOT inside `build_features()`.
 Uses ONLY training set statistics for fill values to prevent data leakage.**
 
 Steps:
-1. **Player prior season mean:** For each player + feature, fill NaN with that player's full prior-season mean for that feature (safe: prior season is always known data)
-2. **Position-level training set mean:** Fill remaining NaNs with the mean of that feature across all players of the same position **in the training set only**
-3. **Zero fill:** Fill any still-remaining NaNs with 0
+1. **Training means:** Compute one mean per feature from the training split only.
+2. **Split fill:** Fill train / val / test NaNs with those training means.
+3. **Zero fill:** Fill any still-remaining NaNs with 0 and return the training means for serving parity.
 
 ```python
-def fill_nans_safe(train_df, val_df, test_df, feature_cols):
-    """Fill NaNs using ONLY training set statistics. Must be called AFTER temporal_split."""
+from src.shared.feature_build import fill_nans_with_train_means
 
-    # Step 1: Player prior-season mean (computed per player from train data)
-    # This is safe for val/test too — prior-season data is always historical
-    player_feature_means = train_df.groupby("player_id")[feature_cols].mean()
-    for split_df in [train_df, val_df, test_df]:
-        for col in feature_cols:
-            mask = split_df[col].isna()
-            split_df.loc[mask, col] = split_df.loc[mask, "player_id"].map(
-                player_feature_means[col]
-            )
-
-    # Step 2: Position-level mean from TRAINING SET ONLY
-    pos_means = train_df.groupby("position")[feature_cols].mean()
-    for split_df in [train_df, val_df, test_df]:
-        for col in feature_cols:
-            for pos in ["QB", "RB", "WR", "TE", "K", "DST"]:
-                mask = (split_df[col].isna()) & (split_df["position"] == pos)
-                split_df.loc[mask, col] = pos_means.loc[pos, col]
-
-    # Step 3: Zero fill for any remaining NaNs (e.g., rookies with no history)
-    for split_df in [train_df, val_df, test_df]:
-        split_df[feature_cols] = split_df[feature_cols].fillna(0)
-
-    return train_df, val_df, test_df
+train_df, val_df, test_df, train_means = fill_nans_with_train_means(
+    train_df,
+    val_df,
+    test_df,
+    feature_cols,
+)
 ```
 
 ---
@@ -710,7 +697,8 @@ class LightGBMMultiTarget:
 class MultiHeadNet(nn.Module):
     def __init__(self, input_dim: int, target_names: list[str],
                  backbone_layers: list[int], head_hidden: int = 32,
-                 dropout: float = 0.3, head_hidden_overrides: dict = None):
+                 dropout: float = 0.3, head_hidden_overrides: dict = None,
+                 non_negative_targets: set | None = None):
         # Shared backbone: [Linear → BatchNorm → ReLU → Dropout] × len(backbone_layers)
         # Per-target heads: Linear(backbone_out, head_hidden) → ReLU → Linear(head_hidden, 1)
         pass
@@ -740,8 +728,9 @@ Input (N features) → Linear(N, 128) → BatchNorm(128) → ReLU → Dropout(0.
 ```
 
 **Note:** `non_negative_targets` controls which heads are clamped (per-head, not global).
-By default all targets are clamped to >= 0. DST overrides this to leave `pts_allowed_bonus`
-unconstrained (range: -4 to +10).
+By default all targets are clamped to >= 0. All current positions pass the full target
+set explicitly; DST now predicts 10 raw non-negative stat heads and computes points-
+allowed / yards-allowed bonuses downstream in `aggregate_targets.py`.
 
 **Note:** sparse count heads are wrapped by `GatedHead`, a zero-inflated hurdle head:
 a sigmoid gate predicts `P(stat > 0)` and a Softplus branch predicts `E[stat | stat > 0]`;

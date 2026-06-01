@@ -32,6 +32,7 @@ import src.te.features as te_features
 import src.wr.config as wr_cfg
 import src.wr.features as wr_features
 from src.features.engineer import get_attn_static_columns
+from src.shared.position_config import derive_attn_static_features
 
 # Per-position resolvers — keyed by uppercase position label so the test
 # parametrize values stay as data, not symbol references.
@@ -212,6 +213,17 @@ class TestAttnStaticWhitelistShape:
         forbidden = {"rolling", "ewma", "trend", "share", "specific"}
         bad = set(categories) & forbidden
         assert not bad, f"{pos}_ATTN_STATIC_CATEGORIES includes forbidden bucket: {sorted(bad)}"
+
+    @pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE"])
+    def test_category_derivation_matches_position_config(self, pos):
+        """Skill-position configs derive attention statics from the category
+        whitelist, not a hand-maintained duplicate list."""
+        cfg, _ = _POSITION_CFG[pos]
+        expected = derive_attn_static_features(
+            cfg.POSITION_CONFIG.include_features,
+            cfg.ATTN_STATIC_CATEGORIES,
+        )
+        assert cfg.POSITION_CONFIG.attn_static_features == expected
 
 
 @pytest.mark.unit

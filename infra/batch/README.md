@@ -278,7 +278,7 @@ manually if you want a complete wipe.
 
 See [`docs/batch_design.md`](../../docs/batch_design.md). Short version: warm
 EC2 forced sequential training because one T4 can't host six concurrent NN
-jobs; Spot fanout gives each position its own T4, parallelizing the workload.
+jobs; Spot fanout gives each position its own g6.xlarge L4 host, parallelizing the workload.
 Cold-start (the original blocker) is mitigated by SOCI lazy-loading on the
 Spot host via `ff-batch-lt` launch template + [userdata.sh](userdata.sh)
 (Option B, default since 2026-05-21). Baseline 2026-05-20 cold-start was

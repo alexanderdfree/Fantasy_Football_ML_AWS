@@ -14,34 +14,51 @@ from src.shared.training import (
 from src.wr.config import POSITION_CONFIG
 
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
+HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 TARGETS = POSITION_CONFIG.targets
 
 
 @pytest.mark.unit
 class TestMultiTargetLoss:
     def test_output_types(self, make_tensors):
-        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+        )
         preds, targets = make_tensors()
         combined, components = loss_fn(preds, targets)
         assert isinstance(combined, torch.Tensor)
         assert isinstance(components, dict)
 
     def test_component_keys(self, make_tensors):
-        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+        )
         preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
         expected = {f"loss_{t}" for t in TARGETS} | {"loss_combined"}
         assert set(components.keys()) == expected
 
     def test_components_are_scalars(self, make_tensors):
-        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+        )
         preds, targets = make_tensors()
         _, components = loss_fn(preds, targets)
         for key, val in components.items():
             assert isinstance(val, float), f"{key} is not a float"
 
     def test_zero_loss_on_perfect_prediction(self):
-        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+        )
         targets = {
             "receiving_tds": torch.tensor([1.0, 0.0]),
             "receiving_yards": torch.tensor([80.0, 40.0]),
@@ -68,13 +85,21 @@ class TestMultiTargetLoss:
         assert c1.item() != c2.item()
 
     def test_combined_loss_is_positive(self, make_tensors):
-        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+        )
         preds, targets = make_tensors()
         combined, _ = loss_fn(preds, targets)
         assert combined.item() >= 0
 
     def test_backward_pass(self):
-        loss_fn = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+        )
         preds = {k: torch.randn(5, requires_grad=True) for k in TARGETS}
         targets = {k: torch.randn(5) for k in preds}
         combined, _ = loss_fn(preds, targets)
@@ -168,7 +193,11 @@ class TestMultiHeadTrainer:
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
-        criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        criterion = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+        )
         device = torch.device("cpu")
 
         trainer = MultiHeadTrainer(
@@ -224,7 +253,11 @@ class TestMultiHeadTrainer:
         )
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, factor=0.5)
-        criterion = MultiTargetLoss(target_names=TARGETS, loss_weights=LOSS_WEIGHTS)
+        criterion = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            huber_deltas=HUBER_DELTAS,
+        )
 
         trainer = MultiHeadTrainer(
             model,
