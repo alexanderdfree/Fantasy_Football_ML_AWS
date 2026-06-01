@@ -15,6 +15,8 @@ These tests exercise:
 
 from __future__ import annotations
 
+import os
+import sqlite3
 from unittest.mock import MagicMock
 
 import optuna
@@ -22,6 +24,7 @@ import pytest
 import torch
 
 from src.shared.neural_net import build_multihead_net_with_history
+from src.shared.platform_detect import PlatformInfo
 from src.tuning import tune_nn
 
 pytestmark = pytest.mark.unit
@@ -95,6 +98,28 @@ def _base_valid_overrides(*, scheduler_type: str = "cosine_warm_restarts") -> di
             }
         )
     return overrides
+
+
+def _platform_info(
+    *,
+    backend: str,
+    os_name: str,
+    is_wsl: bool = False,
+    gpu_name: str | None = None,
+    compute_capability: tuple[int, int] | None = None,
+) -> PlatformInfo:
+    return PlatformInfo(
+        os=os_name,
+        is_wsl=is_wsl,
+        arch="x86_64" if os_name != "macOS" else "arm64",
+        backend=backend,
+        gpu_name=gpu_name,
+        compute_capability=compute_capability,
+        sm=f"sm_{compute_capability[0]}{compute_capability[1]}" if compute_capability else None,
+        supports_bf16=bool(compute_capability and compute_capability >= (8, 0)),
+        cpu_count=4,
+        recommended_cuda_wheel="cu126" if compute_capability else None,
+    )
 
 
 def test_sample_overrides_returns_every_cfg_key():
@@ -400,6 +425,93 @@ def test_study_storage_is_versioned_for_scheduler_search_space():
     assert tune_nn._study_name("RB") == "nn_scheduler_v2_rb"
     assert tune_nn._study_db_path("RB") == "tune_nn_scheduler_v2_rb.db"
     assert tune_nn._s3_key_prefix("RB") == "tune_nn/scheduler_v2/rb"
+
+
+def test_mps_graph_storage_profile_is_separate_from_eager():
+    version = tune_nn._resolve_search_space_version("mps", cuda_graph=True)
+    assert version == "scheduler_v2_mps_graph"
+    assert tune_nn._study_name("RB", version) == "nn_scheduler_v2_mps_graph_rb"
+    assert tune_nn._study_db_path("RB", version) == "tune_nn_scheduler_v2_mps_graph_rb.db"
+    assert tune_nn._s3_key_prefix("RB", version) == "tune_nn/scheduler_v2_mps_graph/rb"
+
+
+def test_auto_parallel_backend_selects_mps_only_on_g6_l4_linux(monkeypatch):
+    monkeypatch.setattr(
+        tune_nn,
+        "detect_platform",
+        lambda: _platform_info(
+            backend="cuda",
+            os_name="Linux",
+            gpu_name="NVIDIA L4",
+            compute_capability=(8, 9),
+        ),
+    )
+    assert tune_nn._resolve_parallel_backend("auto") == "mps"
+
+
+@pytest.mark.parametrize(
+    "info",
+    [
+        _platform_info(backend="mps", os_name="macOS", gpu_name="Apple MPS"),
+        _platform_info(
+            backend="cuda",
+            os_name="Linux",
+            is_wsl=True,
+            gpu_name="NVIDIA GeForce RTX 5080",
+            compute_capability=(12, 0),
+        ),
+        _platform_info(
+            backend="cuda",
+            os_name="Linux",
+            gpu_name="NVIDIA GeForce RTX 5080",
+            compute_capability=(12, 0),
+        ),
+    ],
+)
+def test_auto_parallel_backend_preserves_mac_and_5080_paths(monkeypatch, info):
+    monkeypatch.setattr(tune_nn, "detect_platform", lambda: info)
+    assert tune_nn._resolve_parallel_backend("auto") == "thread"
+
+
+def test_sqlite_backup_captures_wal_state(tmp_path):
+    db_path = tmp_path / "study.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("create table t (v integer)")
+    conn.execute("insert into t values (7)")
+    conn.commit()
+    conn.close()
+
+    backup_path = tune_nn._sqlite_backup(str(db_path))
+    try:
+        copy = sqlite3.connect(backup_path)
+        try:
+            assert copy.execute("select v from t").fetchone() == (7,)
+        finally:
+            copy.close()
+    finally:
+        os.remove(backup_path)
+
+
+def test_mps_context_fails_loudly_when_binary_missing(monkeypatch):
+    monkeypatch.setattr(tune_nn.shutil, "which", lambda name: None)
+    with pytest.raises(RuntimeError, match="nvidia-cuda-mps-control"):
+        with tune_nn._NvidiaMPS(enabled=True):
+            pass
+
+
+def test_mps_context_noop_when_disabled(monkeypatch):
+    called = False
+
+    def fake_which(name):
+        nonlocal called
+        called = True
+        return "/usr/bin/nvidia-cuda-mps-control"
+
+    monkeypatch.setattr(tune_nn.shutil, "which", fake_which)
+    with tune_nn._NvidiaMPS(enabled=False):
+        pass
+    assert called is False
 
 
 # ---------------------------------------------------------------------------

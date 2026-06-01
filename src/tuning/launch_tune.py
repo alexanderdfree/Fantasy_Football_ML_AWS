@@ -28,7 +28,10 @@ Config (env vars, all optional — same names as ``launch.py``):
 All six positions are now supported — K/DST were added once their ``run()``
 signatures accepted a ``config=`` kwarg. The 24-vCPU Spot quota tolerates
 six concurrent g6.xlarge jobs exactly; concurrent local launches will
-queue at ``RUNNABLE`` instead of pushing over-quota.
+queue at ``RUNNABLE`` instead of pushing over-quota. The default
+``--parallel-backend auto`` is resolved inside the Batch container by
+``detect_platform()``: g6/L4 Linux uses NVIDIA MPS, while Mac and 5080 hosts
+keep the existing thread backend.
 """
 
 import argparse
@@ -52,7 +55,7 @@ from src.batch.launch import (  # noqa: E402
     WAIT_TIMEOUT_SECONDS,
     wait_for_jobs,
 )
-from src.tuning.tune_nn_storage import S3_PREFIX  # noqa: E402
+from src.tuning.tune_nn_storage import resolve_search_space_version, s3_prefix  # noqa: E402
 
 # All six positions now have ``run(config=...)``; argparse choices still pin
 # the input to known names so a typo fails locally instead of submitting a
@@ -69,6 +72,15 @@ SUPPORTED_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 # divergence only matters for someone invoking ``launch_tune`` locally
 # without that flag — which is the right ceiling for the Batch context.
 DEFAULT_N_TRIALS = 30
+DEFAULT_N_JOBS = 3
+DEFAULT_PARALLEL_BACKEND = "auto"
+DEFAULT_CUDA_GRAPH = True
+DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 7200
+
+
+def _batch_storage_backend(parallel_backend: str) -> str:
+    """The remote Batch target is g6/L4, so auto resolves to MPS there."""
+    return "mps" if parallel_backend == "auto" else parallel_backend
 
 
 def submit_tune_job(
@@ -76,6 +88,10 @@ def submit_tune_job(
     n_trials: int = DEFAULT_N_TRIALS,
     timeout: int | None = None,
     seed: int = 42,
+    n_jobs: int = DEFAULT_N_JOBS,
+    parallel_backend: str = DEFAULT_PARALLEL_BACKEND,
+    cuda_graph: bool = DEFAULT_CUDA_GRAPH,
+    attempt_timeout: int = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
     batch_client=None,
 ) -> tuple[str, str]:
     """Submit one Batch tuning job. Returns (position, job_id).
@@ -100,10 +116,17 @@ def submit_tune_job(
         str(seed),
         "--n-trials",
         str(n_trials),
+        "--parallel-backend",
+        parallel_backend,
+        "--n-jobs",
+        str(n_jobs),
     ]
     if timeout is not None:
         command += ["--timeout", str(timeout)]
 
+    storage_version = resolve_search_space_version(
+        _batch_storage_backend(parallel_backend), cuda_graph=cuda_graph
+    )
     response = batch.submit_job(
         jobName=f"ff-tune-{position.lower()}-{timestamp}-{suffix}",
         jobQueue=JOB_QUEUE,
@@ -115,11 +138,17 @@ def submit_tune_job(
         # always trains the attention NN.
         jobDefinition=JOB_DEFINITION,
         retryStrategy=RETRY_STRATEGY,
+        timeout={"attemptDurationSeconds": int(attempt_timeout)},
         containerOverrides={
             "command": command,
             "environment": [
                 {"name": "S3_BUCKET", "value": S3_BUCKET},
                 {"name": "S3_DATA_PREFIX", "value": "data"},
+                {"name": "FF_DEVICE", "value": "cuda"},
+                {"name": "FF_CUDA_GRAPH", "value": "1" if cuda_graph else "0"},
+                {"name": "FF_AMP_DTYPE", "value": "auto"},
+                {"name": "FF_COMPILE", "value": "0"},
+                {"name": "TUNE_NN_STORAGE_VERSION", "value": storage_version},
                 # Quieter than training (default LOG_EVERY=1). Tuning runs N
                 # trials × ~200 epochs each — 1 line per epoch would flood
                 # CloudWatch with ~6000 lines/trial × 30 trials = 180k lines.
@@ -132,19 +161,39 @@ def submit_tune_job(
     return position, job_id
 
 
-def _print_plan(positions: list[str], n_trials: int, timeout: int | None, seed: int) -> None:
+def _print_plan(
+    positions: list[str],
+    n_trials: int,
+    timeout: int | None,
+    seed: int,
+    n_jobs: int,
+    parallel_backend: str,
+    cuda_graph: bool,
+    attempt_timeout: int,
+) -> None:
+    storage_version = resolve_search_space_version(
+        _batch_storage_backend(parallel_backend), cuda_graph=cuda_graph
+    )
     print("DRY RUN — no AWS calls will be made.")
     print(f"  region:       {AWS_REGION}")
     print(f"  bucket:       {S3_BUCKET}")
     print(f"  queue:        {JOB_QUEUE}")
     print(f"  definition:   {JOB_DEFINITION}")
     print(f"  wait timeout: {WAIT_TIMEOUT_SECONDS}s")
+    print(f"  attempt cap:  {attempt_timeout}s")
     print(f"  n_trials:     {n_trials}")
+    print(f"  n_jobs:       {n_jobs}")
+    print(f"  backend:      {parallel_backend}")
+    print(f"  cuda graph:   {cuda_graph}")
+    print(f"  storage:      {storage_version}")
     print(f"  timeout:      {timeout if timeout is not None else 'no cap'}")
     print(f"  seed:         {seed}")
     print("  jobs:")
     for pos in positions:
-        print(f"    - {pos:<4} -> --mode=tune --n-trials={n_trials}")
+        print(
+            f"    - {pos:<4} -> --mode=tune --n-trials={n_trials} "
+            f"--parallel-backend={parallel_backend} --n-jobs={n_jobs}"
+        )
 
 
 def main():
@@ -170,6 +219,35 @@ def main():
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=DEFAULT_N_JOBS,
+        help=f"Concurrent trials per Batch GPU (default: {DEFAULT_N_JOBS})",
+    )
+    parser.add_argument(
+        "--parallel-backend",
+        choices=["thread", "mps"],
+        default=DEFAULT_PARALLEL_BACKEND,
+        help=(
+            "Trial concurrency backend inside each position job. auto resolves inside "
+            "the Batch container: g6/L4 Linux -> mps, Mac/5080/non-L4 -> thread."
+        ),
+    )
+    parser.add_argument(
+        "--cuda-graph",
+        default="true" if DEFAULT_CUDA_GRAPH else "false",
+        help="Enable FF_CUDA_GRAPH inside tune jobs (true/false; default true)",
+    )
+    parser.add_argument(
+        "--attempt-timeout",
+        type=int,
+        default=DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
+        help=(
+            "AWS Batch attemptDurationSeconds for tune jobs "
+            f"(default: {DEFAULT_ATTEMPT_TIMEOUT_SECONDS})"
+        ),
+    )
+    parser.add_argument(
         "--wait",
         default="true",
         help="Wait for jobs to complete (true/false)",
@@ -190,9 +268,23 @@ def main():
     positions = [p.upper() for p in args.positions]
     wait = args.wait.lower() == "true"
     wait_timeout = args.wait_timeout if args.wait_timeout is not None else WAIT_TIMEOUT_SECONDS
+    cuda_graph = args.cuda_graph.strip().lower() in {"1", "true", "yes", "on"}
+    if args.n_jobs < 1:
+        raise SystemExit("--n-jobs must be >= 1")
+    if args.attempt_timeout <= 0:
+        raise SystemExit("--attempt-timeout must be > 0")
 
     if args.dry_run:
-        _print_plan(positions, args.n_trials, args.timeout, args.seed)
+        _print_plan(
+            positions,
+            args.n_trials,
+            args.timeout,
+            args.seed,
+            args.n_jobs,
+            args.parallel_backend,
+            cuda_graph,
+            args.attempt_timeout,
+        )
         return
 
     batch_client = boto3.client("batch", region_name=AWS_REGION)
@@ -202,7 +294,16 @@ def main():
     with ThreadPoolExecutor(max_workers=len(positions)) as pool:
         futures = {
             pool.submit(
-                submit_tune_job, pos, args.n_trials, args.timeout, args.seed, batch_client
+                submit_tune_job,
+                position=pos,
+                n_trials=args.n_trials,
+                timeout=args.timeout,
+                seed=args.seed,
+                n_jobs=args.n_jobs,
+                parallel_backend=args.parallel_backend,
+                cuda_graph=cuda_graph,
+                attempt_timeout=args.attempt_timeout,
+                batch_client=batch_client,
             ): pos
             for pos in positions
         }
@@ -216,7 +317,13 @@ def main():
 
     if not wait:
         print("\nJobs submitted. Use 'aws batch describe-jobs' to check status.")
-        print(f"Results land at s3://{S3_BUCKET}/{S3_PREFIX}/{{pos}}/results.json per position.")
+        storage_version = resolve_search_space_version(
+            _batch_storage_backend(args.parallel_backend), cuda_graph=cuda_graph
+        )
+        print(
+            f"Results land at s3://{S3_BUCKET}/{s3_prefix(storage_version)}/"
+            "{pos}/results.json per position."
+        )
         return
 
     print(
@@ -235,11 +342,21 @@ def main():
         print(f"\nTimed-out positions: {timed_out}")
     if succeeded:
         print(f"\nSucceeded positions: {succeeded}")
-        print(f"  Per-position results: s3://{S3_BUCKET}/{S3_PREFIX}/{{pos}}/results.json")
-        print(
-            f"  Per-position study DBs (resumable): s3://{S3_BUCKET}/{S3_PREFIX}/{{pos}}/study.db"
+        storage_version = resolve_search_space_version(
+            _batch_storage_backend(args.parallel_backend), cuda_graph=cuda_graph
         )
-        print("  Run `python -m src.tuning.aggregate_results` to merge per-position JSONs.")
+        print(
+            f"  Per-position results: s3://{S3_BUCKET}/{s3_prefix(storage_version)}/"
+            "{pos}/results.json"
+        )
+        print(
+            f"  Per-position study DBs (resumable): s3://{S3_BUCKET}/"
+            f"{s3_prefix(storage_version)}/{{pos}}/study.db"
+        )
+        print(
+            "  Run `python -m src.tuning.aggregate_results "
+            f"--search-space-version {storage_version}` to merge per-position JSONs."
+        )
 
     print("\nAll done.")
 

@@ -23,6 +23,7 @@ from src.shared.pipeline import _maybe_force_dropout_zero
 from src.shared.training import (
     MultiHeadHistoryTrainer,
     MultiHeadHistoryWithOppTrainer,
+    MultiHeadNestedHistoryTrainer,
     MultiHeadTrainer,
     MultiTargetLoss,
     _restore_batchnorm_state,
@@ -130,6 +131,18 @@ def test_graph_inputs_with_opp():
     args = tr._graph_inputs((xs, xh, m, xo, om, {"y": torch.randn(4)}))
     assert len(args) == 5
     assert torch.equal(args[3], xo) and torch.equal(args[4], om)
+
+
+@pytest.mark.unit
+def test_nested_history_trainer_graph_noop_even_when_enabled(monkeypatch):
+    """K's nested attention path is explicitly eager when FF_CUDA_GRAPH=1."""
+    monkeypatch.setenv("FF_CUDA_GRAPH", "1")
+    monkeypatch.setattr("src.shared.training.cuda_graph_enabled", lambda: True)
+    model = nn.Linear(3, 2)
+    tr = _bare_trainer(MultiHeadNestedHistoryTrainer, model)
+    tr._maybe_graph_model(train_loader=object())
+    assert tr.model is model
+    assert tr._graphed is False
 
 
 @pytest.mark.unit

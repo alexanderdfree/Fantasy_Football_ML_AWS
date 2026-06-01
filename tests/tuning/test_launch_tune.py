@@ -42,6 +42,10 @@ def test_submit_tune_job_builds_expected_command():
         "42",
         "--n-trials",
         "30",
+        "--parallel-backend",
+        "auto",
+        "--n-jobs",
+        "3",
         "--timeout",
         "600",
     ]
@@ -49,7 +53,22 @@ def test_submit_tune_job_builds_expected_command():
     # _ensure_data_from_s3 can populate data/splits + data/raw inside the
     # container.
     env_keys = {e["name"] for e in overrides["environment"]}
-    assert {"S3_BUCKET", "S3_DATA_PREFIX", "LOG_EVERY"} <= env_keys
+    assert {
+        "S3_BUCKET",
+        "S3_DATA_PREFIX",
+        "LOG_EVERY",
+        "FF_DEVICE",
+        "FF_CUDA_GRAPH",
+        "FF_AMP_DTYPE",
+        "FF_COMPILE",
+        "TUNE_NN_STORAGE_VERSION",
+    } <= env_keys
+    env = {e["name"]: e["value"] for e in overrides["environment"]}
+    assert env["FF_DEVICE"] == "cuda"
+    assert env["FF_CUDA_GRAPH"] == "1"
+    assert env["FF_COMPILE"] == "0"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v2_mps_graph"
+    assert kwargs["timeout"] == {"attemptDurationSeconds": 7200}
     # Retry strategy comes from launch.py — Spot interruptions retry, other
     # errors exit fast.
     assert kwargs["retryStrategy"] == launch_tune.RETRY_STRATEGY
@@ -67,6 +86,8 @@ def test_submit_tune_job_omits_timeout_when_none():
     assert "--timeout" not in cmd
     assert "--n-trials" in cmd
     assert cmd[cmd.index("--n-trials") + 1] == "15"
+    assert cmd[cmd.index("--parallel-backend") + 1] == "auto"
+    assert cmd[cmd.index("--n-jobs") + 1] == "3"
 
 
 def test_cli_rejects_unknown_position_name(monkeypatch):
@@ -92,6 +113,7 @@ def test_submit_tune_job_works_for_all_supported_positions(pos):
     assert job_id == f"fake-{pos.lower()}"
     cmd = batch.submit_job.call_args.kwargs["containerOverrides"]["command"]
     assert cmd[:6] == ["--position", pos, "--mode", "tune", "--seed", "42"]
+    assert "--parallel-backend" in cmd
 
 
 def test_dry_run_does_not_call_aws(monkeypatch, capsys):
@@ -104,3 +126,29 @@ def test_dry_run_does_not_call_aws(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "DRY RUN" in out
     assert "QB" in out
+    assert "backend:      auto" in out
+    assert "cuda graph:   True" in out
+
+
+def test_submit_tune_job_can_disable_cuda_graph_and_change_workers():
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "fake"}
+
+    launch_tune.submit_tune_job(
+        "QB",
+        n_trials=6,
+        n_jobs=2,
+        parallel_backend="thread",
+        cuda_graph=False,
+        attempt_timeout=900,
+        batch_client=batch,
+    )
+
+    kwargs = batch.submit_job.call_args.kwargs
+    cmd = kwargs["containerOverrides"]["command"]
+    assert cmd[cmd.index("--parallel-backend") + 1] == "thread"
+    assert cmd[cmd.index("--n-jobs") + 1] == "2"
+    env = {e["name"]: e["value"] for e in kwargs["containerOverrides"]["environment"]}
+    assert env["FF_CUDA_GRAPH"] == "0"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v2"
+    assert kwargs["timeout"] == {"attemptDurationSeconds": 900}

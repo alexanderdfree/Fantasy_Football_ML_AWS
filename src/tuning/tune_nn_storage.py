@@ -6,16 +6,37 @@ and pulling in Optuna.
 """
 
 SEARCH_SPACE_VERSION = "scheduler_v2"
+MPS_GRAPH_SEARCH_SPACE_VERSION = f"{SEARCH_SPACE_VERSION}_mps_graph"
+MPS_SEARCH_SPACE_VERSION = f"{SEARCH_SPACE_VERSION}_mps"
 S3_PREFIX = f"tune_nn/{SEARCH_SPACE_VERSION}"
 
 
-def study_name(pos: str) -> str:
-    return f"nn_{SEARCH_SPACE_VERSION}_{pos.lower()}"
+def resolve_search_space_version(
+    parallel_backend: str = "thread", *, cuda_graph: bool = False
+) -> str:
+    """Storage namespace for the execution profile.
+
+    The sampled search space is still scheduler_v2, but CUDA-graph/MPS tuning
+    follows a different training trajectory from the eager local default. Keep
+    those studies separate so Batch graph-enabled results never resume from an
+    older eager study DB.
+    """
+    if parallel_backend == "mps":
+        return MPS_GRAPH_SEARCH_SPACE_VERSION if cuda_graph else MPS_SEARCH_SPACE_VERSION
+    return SEARCH_SPACE_VERSION
 
 
-def study_db_path(pos: str) -> str:
-    return f"tune_nn_{SEARCH_SPACE_VERSION}_{pos.lower()}.db"
+def s3_prefix(version: str = SEARCH_SPACE_VERSION) -> str:
+    return f"tune_nn/{version}"
 
 
-def s3_key_prefix(pos: str) -> str:
-    return f"{S3_PREFIX}/{pos.lower()}"
+def study_name(pos: str, version: str = SEARCH_SPACE_VERSION) -> str:
+    return f"nn_{version}_{pos.lower()}"
+
+
+def study_db_path(pos: str, version: str = SEARCH_SPACE_VERSION) -> str:
+    return f"tune_nn_{version}_{pos.lower()}.db"
+
+
+def s3_key_prefix(pos: str, version: str = SEARCH_SPACE_VERSION) -> str:
+    return f"{s3_prefix(version)}/{pos.lower()}"
