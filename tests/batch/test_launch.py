@@ -338,6 +338,41 @@ class TestSubmitJob:
             assert not any(e["name"] == "FF_TRAIN_GIT_SHA" for e in env_vars)
         importlib.reload(__import__("src.batch.launch", fromlist=[""]))
 
+    def test_submit_forwards_cuda_graph_when_set(self):
+        """FF_CUDA_GRAPH is forwarded to the container environment so the
+        per-position trainer can opt into CUDA-graph capture. train-batch.yml
+        sources it from the FF_BATCH_CUDA_GRAPH repo variable."""
+        import importlib
+
+        with mock.patch.dict(os.environ, {"FF_CUDA_GRAPH": "1"}):
+            import src.batch.launch as mod
+
+            mod = importlib.reload(mod)
+            mock_batch = mock.MagicMock()
+            mock_batch.submit_job.return_value = {"jobId": "x"}
+            mod.submit_job("QB", seed=42, batch_client=mock_batch)
+            env_vars = mock_batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+            entry = next((e for e in env_vars if e["name"] == "FF_CUDA_GRAPH"), None)
+            assert entry == {"name": "FF_CUDA_GRAPH", "value": "1"}
+        importlib.reload(__import__("src.batch.launch", fromlist=[""]))
+
+    def test_submit_omits_cuda_graph_when_unset(self):
+        """Empty FF_CUDA_GRAPH (the default — repo variable unset) → no env
+        entry, so cuda_graph_enabled() returns False in the container and the
+        production path stays byte-identical to the eager baseline."""
+        import importlib
+
+        with mock.patch.dict(os.environ, {"FF_CUDA_GRAPH": ""}):
+            import src.batch.launch as mod
+
+            mod = importlib.reload(mod)
+            mock_batch = mock.MagicMock()
+            mock_batch.submit_job.return_value = {"jobId": "x"}
+            mod.submit_job("QB", seed=42, batch_client=mock_batch)
+            env_vars = mock_batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+            assert not any(e["name"] == "FF_CUDA_GRAPH" for e in env_vars)
+        importlib.reload(__import__("src.batch.launch", fromlist=[""]))
+
     def test_job_names_are_unique_within_same_second(self):
         """Two rapid submissions must not collide on job name."""
         from src.batch.launch import submit_job

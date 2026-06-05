@@ -305,6 +305,15 @@ jobs:
           # from the run's expected SHA. Manual dispatch stamps the dispatch
           # ref SHA unless image_sha was provided for a specific image.
           FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
+          # Opt-in CUDA-graph capture for the per-position NN training (sm_80+;
+          # the g6/L4 qualifies). Sourced from the FF_BATCH_CUDA_GRAPH repo
+          # variable — unset by default, so launch.py forwards nothing and the
+          # container's cuda_graph_enabled() returns False (byte-identical to
+          # today). Set `gh variable set FF_BATCH_CUDA_GRAPH --body "1"` to flip
+          # the whole fan-out to graph-on AFTER the L4 quality A/B passes; graphs
+          # are ~1.5-1.8x on the GPU branch but not bit-identical to eager, so
+          # the flip requires a benchmark rebaseline (graphed-vs-graphed).
+          FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
@@ -423,10 +432,19 @@ jobs:
           # Spread the warm across the desiredCount=2 tasks' gunicorn workers;
           # the ALB distributes these GETs, so each call may land on a
           # different not-yet-warm worker and trigger its recompute + upload.
+          # Fire them CONCURRENTLY: same 12-call coverage, but the step's
+          # wall-clock collapses from sum(calls) to ~max(call). gunicorn's
+          # per-worker request serialization still bounds in-flight recomputes
+          # to the worker count, so concurrency doesn't add memory pressure —
+          # it only removes the round-trip serialization on a best-effort
+          # post-train step that just holds the CI runner. Each curl keeps its
+          # own --max-time + `|| true`, and `wait` reaps them all (this step is
+          # continue-on-error, so a slow worker can't fail the workflow).
           for _ in $(seq 1 12); do
             curl -fsS --max-time 150 "$warm_url" \
-              | jq -c '{fingerprint, rows, elapsed_s, degraded_positions}' || true
+              | jq -c '{fingerprint, rows, elapsed_s, degraded_positions}' || true &
           done
+          wait
 
       - name: Append Batch run to benchmark_history/
         # Mirrors the JSON to s3://{bucket}/models/benchmark_history/ (see
@@ -441,6 +459,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
           FF_MODEL_S3_PREFIX: models
+          # Graphed runs self-identify in the History tab (via the instance-type
+          # label below) so the rebaseline stays clean — graphed and eager rows
+          # aren't bit-comparable. Empty by default → label unchanged. Mirrors
+          # the tuner's separate graph study namespace.
+          FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
           POSITIONS: ${{ needs.detect.outputs.positions }}
           # Branch + head SHA come from a workflow_run trigger whose payload
           # is attacker-controllable (e.g. a fork that happens to share a
@@ -484,10 +507,17 @@ jobs:
           # workspace HEAD via get_git_hash(), which is correct for a
           # manual run. See TODO.md "Benchmark git_hash recorded the wrong
           # SHA on rapid back-to-back merges" archive entry.
+          # Graphed runs carry a distinct instance-type label so the History
+          # tab keeps graphed and eager benchmark rows separate (they aren't
+          # bit-comparable). FF_CUDA_GRAPH is empty by default → label unchanged.
+          INSTANCE_TYPE="g6.xlarge (Spot)"
+          if [ -n "$FF_CUDA_GRAPH" ]; then
+            INSTANCE_TYPE="g6.xlarge (Spot, CUDA-graph)"
+          fi
           python -m src.batch.benchmark \
             --download-only \
             --backend batch \
-            --instance-type "g6.xlarge (Spot)" \
+            --instance-type "$INSTANCE_TYPE" \
             --positions $POSITIONS \
             --note "Batch Spot auto-run (${NOTE_SHA})" \
             --git-hash "$HEAD_SHA" \

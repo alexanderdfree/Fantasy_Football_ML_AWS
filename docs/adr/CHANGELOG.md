@@ -3,6 +3,7 @@
 Terse, chronological log of architecture changes — one line each: `YYYY-MM-DD · summary · (PR #N) · → ADR-00NN`. Full rationale lives in the per-decision
 files in this directory; pre-split detail is in [../architecture-history.md](../architecture-history.md).
 
+- 2026-06-05 · Plumbed the production-Batch opt-in for `FF_CUDA_GRAPH` (new `FF_BATCH_CUDA_GRAPH` repo variable → `train-batch.yml` → `launch.py` forwards it into each position's `containerOverrides`); unset by default so production stays eager/byte-identical pending an L4 quality A/B; graphed benchmark rows self-label `g6.xlarge (Spot, CUDA-graph)` for a clean rebaseline; no retrain · → ADR-0017
 - 2026-06-05 · D4: per-game game-script + final-score tokens added to WR/QB/TE/K attention history (RB already carried them) — closes the environment-blind history gap so the NN can learn matchup-driven week-to-week variance; config-only (columns already train-time-merged by build_position_features, no splits regen); retrains WR/QB/TE/K · → ADR-0004
 - 2026-06-01 · D1: benchmark-history CLIs' `--cv` is now a deprecated alias for rolling-origin walk-forward reporting; internal expanding-window CV remains for ad-hoc/tuning callers; no retrain · → ADR-0001
 - 2026-06-01 · Batch NN tuner: six-position g6 fan-out retained, `--parallel-backend auto` resolves native-Linux L4/g6 to 3 NVIDIA MPS workers with `FF_CUDA_GRAPH=1` while Mac/5080 stay on thread mode; study namespace split to `scheduler_v2_mps_graph`; tuner-only, production defaults unchanged · → ADR-0017
