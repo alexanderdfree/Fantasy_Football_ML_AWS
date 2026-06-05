@@ -288,6 +288,23 @@ POSITION_CONFIG = PositionConfig(
         "rush_touchdown_exp",
         "qbr_total",
         "pts_added",
+        # Per-game game-script context + realized final score, merged onto
+        # every player-week row by build_position_features (schedule +
+        # team_box_score merges). Lets attention learn this QB's conditional
+        # response to matchup/script — the boom/bust signal the player-only
+        # history was blind to. team_pass_attempts/team_passing_yards are
+        # omitted (near-collinear with the QB's own attempts/passing_yards
+        # already in this sequence); team_rush_* carry the run/pass game-script
+        # the QB's own line doesn't. Mirrors RB; current-week counterparts live
+        # on the static branch. Leakage-safe via build_game_history_arrays.
+        "implied_team_total",
+        "implied_opp_total",
+        "is_home",
+        "days_rest",
+        "team_points_scored",
+        "opp_team_points_scored",
+        "team_rush_attempts",
+        "team_rushing_yards",
     ],
     attn_static_features=derive_attn_static_features(_INCLUDE_FEATURES, ATTN_STATIC_CATEGORIES),
     # Gated hurdle heads disabled for QB — QBs throw so many TDs that the
