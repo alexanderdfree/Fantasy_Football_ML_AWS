@@ -13,7 +13,7 @@ lightgbm==4.6.0
 mord==0.7
 shap>=0.47,<0.50
 appdirs==1.4.4
-requests==2.33.0
+requests==2.34.2
 boto3==1.42.89
 markdown==3.8.1
 bleach==6.1.0
