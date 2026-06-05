@@ -234,6 +234,23 @@ POSITION_CONFIG = PositionConfig(
         "rec_touchdown_exp",
         "receptions_exp",
         "rec_first_down_exp",
+        # Per-game game-script context + realized final score, already merged
+        # onto every player-week row by build_position_features (schedule +
+        # team_box_score merges). Gives the attention history the game
+        # environment of each prior game so the NN can learn this TE's
+        # conditional response to matchup/script — the boom/bust signal the
+        # player-only history was blind to. Mirrors RB; current-week
+        # counterparts live on the static branch (weather_vegas/contextual).
+        # Leakage-safe via build_game_history_arrays (prior in-season games).
+        "implied_team_total",
+        "implied_opp_total",
+        "is_home",
+        "days_rest",
+        "team_points_scored",
+        "opp_team_points_scored",
+        "team_pass_attempts",
+        "team_passing_yards",
+        "team_rush_attempts",
     ],
     attn_static_features=derive_attn_static_features(_INCLUDE_FEATURES, ATTN_STATIC_CATEGORIES),
     attn_gated=True,

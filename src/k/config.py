@@ -75,6 +75,16 @@ _ATTN_HISTORY_STATS = [
     "is_dome",
     "implied_team_total",
     "game_wind",
+    # Realized team score of each prior game, merged onto every row by
+    # build_position_features (the team_box_score merge runs for K — its
+    # _schedule_merged sentinel only blocks the schedule merge, not this one).
+    # K's kicking opportunity scales with its own team's scoring, so the
+    # per-game team score lets attention condition on game environment.
+    # Only team_points_scored is added: opp_team_points_scored is omitted
+    # (K's frame carries no schedule-matching opponent_team, so the opp-side
+    # merge leaves it constant-zero / dead), and implied_opp_total / days_rest
+    # are absent because K short-circuits the schedule merge (src/k/data.py).
+    "team_points_scored",
 ]
 
 _ATTN_KICK_STATS = [
