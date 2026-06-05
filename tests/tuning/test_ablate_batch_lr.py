@@ -219,7 +219,10 @@ def test_cli_dry_run_all_six_positions_does_not_train(monkeypatch, capsys):
     abl.main(["--dry-run", "--positions", "QB", "RB", "WR", "TE", "K", "DST"])
     out = capsys.readouterr().out
 
-    assert "Planned ablation jobs: 240" in out
+    # 6 positions × variants × seeds — derive from the module constants so a
+    # change to DEFAULT_SEEDS (e.g. 8 → 3 per AGENTS.md) doesn't re-break this.
+    expected_jobs = 6 * len(abl.DEFAULT_VARIANTS) * len(abl.DEFAULT_SEEDS)
+    assert f"Planned ablation jobs: {expected_jobs}" in out
     assert "Experiment workers:" in out
     for position in ("QB", "RB", "WR", "TE", "K", "DST"):
         assert position in out
