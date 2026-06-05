@@ -120,7 +120,7 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 | `LOG_EVERY` | `1` (batch) / `10` (default) | Epoch logging frequency; read by `shared.pipeline._resolve_nn_log_every` |
 | `S3_BUCKET` | (required) | S3 bucket for data and artifacts |
 | `S3_DATA_PREFIX` | `data` | S3 key prefix for training data |
-| `REQUIRE_GPU` | `1` | Fail fast if CUDA unavailable. **Auto-skipped for K/DST** (CPU-only pipelines). |
+| `REQUIRE_GPU` | `1` | Fail fast if CUDA unavailable. **Auto-skipped for K/DST** — relaxes the *assertion* only; K/DST still train a GPU attention NN when one is present (see the stale "CPU-only Queue" caveat below). |
 
 ### Launcher Environment Variables (`src/batch/launch.py`)
 
@@ -336,9 +336,24 @@ The existing Flask Dockerfile and `src/serving/app.py` inference code are comple
 CUDA auto-detection in `src/shared/pipeline.py` falls back to CPU. Local pipeline scripts
 (`python -m src.qb.run_pipeline`) work identically without any AWS dependencies.
 
-## CPU-only Queue for K/DST (optional)
+## CPU-only Queue for K/DST (optional) — ⚠️ STALE, DO NOT ENABLE
 
-K and DST pipelines are Ridge/LGBM only — they never touch CUDA. Running them on
+> **Superseded (2026-06): do not enable this.** The premise below is no longer
+> true. All six positions — **including K and DST** — now train an attention NN
+> (`train_attention_nn=True` in their `POSITION_CONFIG`; K landed via `801b61a`,
+> DST via `cc0c627`). The `cpu_only=True` flag on K/DST now only relaxes the
+> `REQUIRE_GPU` *assertion* in `src/batch/train.py::_assert_gpu`; it does **not**
+> mean the pipeline skips CUDA. Routing K/DST to a GPU-less CPU Spot pool would
+> push their attention-NN training onto the CPU, where the launch-bound trainer
+> craters (DST is already a top long-pole even on the L4) — and because the
+> sweep waits for all six positions, that **regresses** the whole-run wall-clock
+> instead of saving anything. The `FF_JOB_DEFINITION_CPU` / `FF_JOB_QUEUE_CPU`
+> plumbing below stays in the code as dormant-and-unset; revisit only if K/DST
+> ever drop their NN heads.
+
+The original (now-obsolete) rationale and mechanism, kept for reference:
+
+K and DST pipelines were Ridge/LGBM only — they never touched CUDA. Running them on
 g6.xlarge Spot costs ~$0.35/hr of GPU time they won't use (higher than the g4dn
 era's ~$0.16/hr; the gap is now bigger so the CPU-queue optimization is more
 worthwhile). To route them to a cheaper CPU Spot pool:
