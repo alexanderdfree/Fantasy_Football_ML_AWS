@@ -503,6 +503,10 @@ tbody tr:last-child td {
     justify-content: center;
     gap: 6px;
     margin-top: 16px;
+    /* Many pages (the full dataset is thousands of player-weeks) produce a long
+       button run; wrap to additional rows on narrow screens instead of pushing
+       the whole page wider than the viewport. */
+    flex-wrap: wrap;
 }
 
 .page-btn {
