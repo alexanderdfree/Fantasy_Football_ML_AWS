@@ -510,8 +510,13 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                     <input type="checkbox" id="history-group-by-model-toggle">
                     Group by model
                 </label>
+                <span class="history-legend">
+                    <span class="history-legend-swatch history-pill-improve"></span> better than prior run
+                    <span class="history-legend-swatch history-pill-regress"></span> worse
+                    <span class="history-legend-best">bold</span> = best model
+                </span>
             </div>
-            <div class="table-container">
+            <div class="table-container" id="history-table-container">
                 <table id="history-table">
                     <thead id="history-head"></thead>
                     <tbody id="history-body">
