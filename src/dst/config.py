@@ -178,26 +178,24 @@ POSITION_CONFIG = PositionConfig(
     nn_epochs=300,
     nn_batch_size=128,
     nn_patience=35,
-    head_losses={t: ("poisson_nll" if t in _POISSON_TARGETS else "huber") for t in _TARGETS},
-    # Huber heads: scaled inversely to each target's Huber delta per the
-    # CLAUDE.md rule (≈ 2.0/delta). Without this, PA (delta=5) and YA
-    # (delta=30) would dominate the count heads by 10-60x per sample.
-    # Poisson heads: picked so the *expected weighted per-sample loss*
-    # sits in the same ~1.0 band as the Huber heads. At small lambda,
-    # E[PoissonNLL] is dominated by the rare y>=1 samples and evaluates
-    # to lambda + P(y>=1)*|log(lambda)| ~ 0.14-0.28 for these four
-    # targets, so w ≈ 5.0 lands the weighted contribution near 1.0.
+    head_losses={t: ("poisson_nll" if t in _POISSON_TARGETS else "mse") for t in _TARGETS},
+    # Non-Poisson heads switched Huber -> MSE to chase the upper tail. Weight =
+    # 1/delta (gradient-matched to the old 2.0/delta Huber at e~delta; half the
+    # Huber weight). Without per-head scaling, PA (delta=5) and YA (delta=30)
+    # would dominate the count heads. Poisson heads keep w ≈ 5.0 — picked so the
+    # expected weighted per-sample PoissonNLL (~0.14-0.28 at these small lambdas)
+    # sits in the same band as the MSE heads.
     loss_weights={
-        "def_sacks": 2.0,  # 2.0 / 1.0
-        "def_ints": 4.0,  # 2.0 / 0.5
-        "def_fumble_rec": 4.0,
-        "def_fumbles_forced": 4.0,
+        "def_sacks": 1.0,  # 1 / 1.0 (MSE)
+        "def_ints": 2.0,  # 1 / 0.5 (MSE)
+        "def_fumble_rec": 2.0,
+        "def_fumbles_forced": 2.0,
         "def_safeties": 5.0,  # Poisson NLL; lambda=0.030
         "def_tds": 5.0,  # Poisson NLL; lambda=0.084
         "def_blocked_kicks": 5.0,  # Poisson NLL; lambda=0.052
         "special_teams_tds": 5.0,  # Poisson NLL; lambda=0.044
-        "points_allowed": 0.4,  # 2.0 / 5.0
-        "yards_allowed": 0.067,  # 2.0 / 30.0
+        "points_allowed": 0.2,  # 1 / 5.0 (MSE)
+        "yards_allowed": 0.0333,  # 1 / 30.0 (MSE)
     },
     # Deltas roughly match each target's typical variance. Very-rare
     # targets moved to Poisson NLL (see poisson_targets) and are absent
@@ -329,7 +327,8 @@ POSITION_CONFIG = PositionConfig(
     # objective, and the ensemble averages the two estimators' outputs
     # rather than requiring matched objectives. Threading per-target
     # Poisson into LGBM was evaluated and is not worth the complexity here.
-    lgbm_objective="huber",
+    # Switched "huber" → "regression" (L2/MSE) to chase the elite tail.
+    lgbm_objective="regression",
     accepts_dataframes=False,
     cpu_only=True,
     has_cv_runner=True,

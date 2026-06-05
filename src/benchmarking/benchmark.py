@@ -56,11 +56,20 @@ def collect_pos_config(pos):
 
     mod = importlib.import_module(f"src.{pos.lower()}.config")
     prefix = f"{pos}_"
-    return {
+    cfg = {
         k[len(prefix) :].lower(): v
         for k, v in vars(mod).items()
         if k.startswith(prefix) and not k.endswith("FEATURES") and k != f"{prefix}RIDGE_ALPHA_GRIDS"
     }
+    # The loss machinery now lives on POSITION_CONFIG (not module-level
+    # constants), so surface the loss-objective knobs explicitly — this is what
+    # records a Huber<->MSE objective switch in the benchmark history entry.
+    pc = getattr(mod, "POSITION_CONFIG", None)
+    if pc is not None:
+        cfg["lgbm_objective"] = getattr(pc, "lgbm_objective", None)
+        cfg["head_losses"] = dict(getattr(pc, "head_losses", {}) or {})
+        cfg["loss_weights"] = dict(getattr(pc, "loss_weights", {}) or {})
+    return cfg
 
 
 def run_one(position, cv=False):

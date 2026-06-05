@@ -163,8 +163,8 @@ CONFIG_TINY = {
     "targets": _TARGETS,
     "ridge_alpha_grids": {t: [1.0] for t in _TARGETS},
     "loss_weights": {
-        "passing_yards": 0.08,  # 2.0 / 25 (Huber)
-        "rushing_yards": 0.133,  # 2.0 / 15 (Huber)
+        "passing_yards": 0.04,  # 1 / 25 (MSE)
+        "rushing_yards": 0.0667,  # 1 / 15 (MSE)
         "passing_tds": 1.0,  # Poisson NLL
         "rushing_tds": 1.0,  # Poisson NLL
         "interceptions": 1.0,  # Poisson NLL
@@ -220,26 +220,29 @@ POSITION_CONFIG = PositionConfig(
     # heads regressing to the mean under yards-dominated gradients) is
     # avoided without needing wider heads.
     head_losses={
-        "passing_yards": "huber",
-        "rushing_yards": "huber",
+        "passing_yards": "mse",
+        "rushing_yards": "mse",
         "passing_tds": "poisson_nll",
         "rushing_tds": "poisson_nll",
         "interceptions": "poisson_nll",
         "fumbles_lost": "poisson_nll",
     },
-    # Yards heads keep the 2.0/delta rebalance (without it, FP MAE regressed
-    # 6.33 -> 6.63; fumbles_lost R² = -0.34). Poisson NLL heads use weight
-    # 1.0 — at QB-scale rates (~1.5 TDs, ~0.7 INTs, ~0.4 fumbles) the
-    # Poisson NLL is O(1), matching weighted yards.
+    # Yards heads switched Huber -> MSE to stop discounting the elite upper tail
+    # (Huber's flat large-error gradient systematically under-projected top QBs).
+    # Weight = 1/delta (gradient-matched to the old 2.0/delta Huber weighting at
+    # the characteristic error e~delta; half the Huber weight since MSE's 2e
+    # gradient replaces Huber's flat delta). Poisson NLL heads stay at 1.0.
     loss_weights={
-        "passing_yards": 0.08,  # 2.0 / 25  (Huber)
-        "rushing_yards": 0.133,  # 2.0 / 15  (Huber)
+        "passing_yards": 0.04,  # 1 / 25  (MSE)
+        "rushing_yards": 0.0667,  # 1 / 15  (MSE)
         "passing_tds": 1.0,  # Poisson NLL
         "rushing_tds": 1.0,  # Poisson NLL
         "interceptions": 1.0,  # Poisson NLL
         "fumbles_lost": 1.0,  # Poisson NLL
     },
-    # Only Huber heads need a delta — count heads moved to Poisson NLL.
+    # Retained as the characteristic error scale the MSE weights (1/delta) are
+    # derived from; MSE heads ignore the delta at loss time (count heads are
+    # Poisson NLL).
     huber_deltas={
         "passing_yards": 25.0,
         "rushing_yards": 15.0,
@@ -342,7 +345,9 @@ POSITION_CONFIG = PositionConfig(
     lgbm_reg_alpha=0.00309259,
     lgbm_min_child_samples=59,
     lgbm_min_split_gain=0.0632242,
-    lgbm_objective="fair",
+    # Switched fair -> regression (L2/MSE): chase the elite upper tail instead of
+    # the robust/outlier-tolerant fair loss that under-projected top scorers.
+    lgbm_objective="regression",
     accepts_dataframes=True,
     cpu_only=False,
     has_cv_runner=True,
