@@ -99,7 +99,7 @@ jobs:
       # (moby/buildkit#1512), so we run both in parallel — same pattern as
       # batch-image.yml.
       - name: Cache BuildKit state
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/.buildx-cache
           key: buildx-${{ runner.os }}-${{ hashFiles('requirements.txt', 'Dockerfile') }}
