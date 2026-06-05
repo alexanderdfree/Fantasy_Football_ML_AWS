@@ -1261,14 +1261,18 @@ body.model-lgbm .attn-nn-col { display: none; }
 .wiki-content img { max-width: 100%; height: auto; }
 
 @media (max-width: 768px) {
-    .wiki-layout { flex-direction: column; }
+    /* Stretch (not the desktop flex-start) so the stacked content fills the
+       column width; flex-start sized .wiki-content to its widest child (a long
+       <pre>/table line) and overflowed the page. min-width:0 + the children's
+       own overflow-x:auto then keep wide blocks scrolling inside the card. */
+    .wiki-layout { flex-direction: column; align-items: stretch; }
     .wiki-sidebar {
         flex: 1 1 auto;
         position: static;
         max-height: none;
         width: 100%;
     }
-    .wiki-content { padding: 16px; }
+    .wiki-content { width: 100%; padding: 16px; }
 }
 
 /* === Benchmark History tab === */
