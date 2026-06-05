@@ -305,14 +305,12 @@ jobs:
           # from the run's expected SHA. Manual dispatch stamps the dispatch
           # ref SHA unless image_sha was provided for a specific image.
           FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
-          # Opt-in CUDA-graph capture for the per-position NN training (sm_80+;
-          # the g6/L4 qualifies). Sourced from the FF_BATCH_CUDA_GRAPH repo
-          # variable — unset by default, so launch.py forwards nothing and the
-          # container's cuda_graph_enabled() returns False (byte-identical to
-          # today). Set `gh variable set FF_BATCH_CUDA_GRAPH --body "1"` to flip
-          # the whole fan-out to graph-on AFTER the L4 quality A/B passes; graphs
-          # are ~1.5-1.8x on the GPU branch but not bit-identical to eager, so
-          # the flip requires a benchmark rebaseline (graphed-vs-graphed).
+          # CUDA graphs autodetect ON in the container on the g6/L4 (sm_89) —
+          # cuda_graph_enabled() defaults on for sm_80+, so the fan-out is
+          # graphed by default. This repo variable is an optional FLEET OVERRIDE,
+          # not the trigger: leave it unset for the autodetect default, or set
+          # FF_BATCH_CUDA_GRAPH=0 to force the whole fan-out back to the eager
+          # path. launch.py forwards it to the container only when set.
           FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
         run: |
           STARTED_AT=$(date +%s)
@@ -459,10 +457,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
           FF_MODEL_S3_PREFIX: models
-          # Graphed runs self-identify in the History tab (via the instance-type
-          # label below) so the rebaseline stays clean — graphed and eager rows
-          # aren't bit-comparable. Empty by default → label unchanged. Mirrors
-          # the tuner's separate graph study namespace.
+          # The L4 Batch path autodetects graphs ON, so rows are labeled graphed
+          # below (keeps them separate from the pre-cutover eager baseline —
+          # graphed and eager rows aren't bit-comparable). This optional fleet
+          # override (FF_BATCH_CUDA_GRAPH=0) forces eager + the plain label.
           FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
           POSITIONS: ${{ needs.detect.outputs.positions }}
           # Branch + head SHA come from a workflow_run trigger whose payload
@@ -507,13 +505,14 @@ jobs:
           # workspace HEAD via get_git_hash(), which is correct for a
           # manual run. See TODO.md "Benchmark git_hash recorded the wrong
           # SHA on rapid back-to-back merges" archive entry.
-          # Graphed runs carry a distinct instance-type label so the History
-          # tab keeps graphed and eager benchmark rows separate (they aren't
-          # bit-comparable). FF_CUDA_GRAPH is empty by default → label unchanged.
-          INSTANCE_TYPE="g6.xlarge (Spot)"
-          if [ -n "$FF_CUDA_GRAPH" ]; then
-            INSTANCE_TYPE="g6.xlarge (Spot, CUDA-graph)"
-          fi
+          # The Batch path runs on sm_89 L4, where CUDA graphs autodetect ON
+          # (src/shared/utils.cuda_graph_enabled), so default the row label to
+          # graphed — keeping it separate from the pre-cutover eager baseline.
+          # FF_CUDA_GRAPH is the force-off override: a falsy value → eager → plain.
+          INSTANCE_TYPE="g6.xlarge (Spot, CUDA-graph)"
+          case "$(echo "${FF_CUDA_GRAPH:-}" | tr 'A-Z' 'a-z')" in
+            0|false|no|off) INSTANCE_TYPE="g6.xlarge (Spot)" ;;
+          esac
           python -m src.batch.benchmark \
             --download-only \
             --backend batch \
