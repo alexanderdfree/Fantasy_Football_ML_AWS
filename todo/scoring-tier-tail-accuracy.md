@@ -72,4 +72,27 @@ Ridge data-identity sentinel).
 
 `python -m src.analysis.tier_expert_comparison --positions QB RB WR TE --tier-topn 24`
 (read-only; runs each pipeline once, joins expert projections on matched player-weeks,
-slices by the same a-priori tier). Results: _filled in after the run below._
+slices by the same a-priori tier). Run on TEST_SEASONS (2025), PPR, CPU/FP32 (CI-identical), seed 42.
+
+**Elite tier — our best model vs NFL.com** (Sleeper tells the same story; bias = mean(pred−actual), negative = under-prediction):
+
+| Pos | Our best (MAE / bias) | NFL.com (MAE / bias) | Takeaway |
+|-----|-----------------------|----------------------|----------|
+| QB | LightGBM 6.05 / **+0.47** | 6.23 / +0.96 | We win MAE **and** are better calibrated — QB needs nothing |
+| RB | Attn NN 5.95 / −0.63 (LGBM 6.05 / **−2.12**) | 6.20 / **+0.28** | We win MAE, but expert is ~unbiased while we under-predict — gap is recoverable |
+| WR | Attn NN 6.40 / **−1.19** | 6.48 / +0.61 | We edge MAE; expert is +biased, our NN-family under-predicts elite |
+| TE | LightGBM 5.00 / **−1.52** | 5.15 / **−0.30** | We win MAE; expert much better calibrated on elite |
+
+**The decisive finding:** on the elite slice our models **match or beat both experts on MAE at
+every position**, but the experts are **near-unbiased on elite RB/TE/WR (+0.3 / −0.3 / +0.6)
+while we carry a consistent −0.6…−2.1 under-prediction.** Since the experts forecast the *same*
+player-weeks without that bias, the elite under-prediction is a **removable training artifact
+(regression-to-the-mean), not an inherent property of the problem** — and the expert's ~0 bias
+is the concrete **target** for Phase 2's acceptance metric. QB is the exception (we already beat
+experts on both MAE and calibration). Caveats: one season, one seed, CPU/FP32 — fine for bias
+*direction*; Phase-2 8-seed A/Bs belong on the GPU production path.
+
+All-models note: the under-prediction spans the whole family; on this matched elite slice the
+**Attention NN** is both lowest-MAE and least-biased for RB (−0.63), while **LightGBM** — best
+*overall* on RB — is the most under-biased on elite RB (−2.12). Best-model identity shifts on the
+tail, reinforcing that interventions must be judged per-model, not on the served best alone.
