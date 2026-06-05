@@ -56,8 +56,16 @@ process-backed MPS backend for that environment:
   flat-history positions use graph capture, and all six positions can run under
   the same graph-on tune workflow.
 
-This is tuner-only. Production training keeps the same default graph-off path
-unless an operator explicitly opts into `FF_CUDA_GRAPH=1`.
+This is tuner-only by default, but the **production Batch opt-in is now plumbed
+end-to-end**: `train-batch.yml` threads the `FF_BATCH_CUDA_GRAPH` repo variable →
+`launch.py` forwards `FF_CUDA_GRAPH` into each position's `containerOverrides` →
+the container's `cuda_graph_enabled()` re-gates on sm_80+ (K's nested trainer
+no-ops capture). The variable is **unset by default**, so production stays on the
+byte-identical eager path. Flip it on (`gh variable set FF_BATCH_CUDA_GRAPH
+--body "1"`) only after an L4 quality A/B — graphed-vs-eager overall MAE within
+the seed band, ~3 seeds per AGENTS.md — and treat the first graph-on run as the
+new graphed benchmark baseline (the History tab labels graphed rows
+`g6.xlarge (Spot, CUDA-graph)` so they don't get compared to eager).
 
 ---
 
