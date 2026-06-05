@@ -15,12 +15,19 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 - **Also records two subagent-flagged "bugs" as verified false positives** (empty-batch checkpoint; batcher seeding) so they don't get re-raised.
 - **Status:** audit complete + committed (docs-only). Leads are candidates, not scheduled changes.
 
+### Tail accuracy for top-drafted players (scoring-tier diagnostic shipped; Huber→MSE switch in flight)
+- **Plan/findings doc:** [todo/scoring-tier-tail-accuracy.md](todo/scoring-tier-tail-accuracy.md) — read it first.
+- **What:** Added a read-only `scoring_tier` cohort (PR #870) to measure model error on the a-priori elite/top-drafted slice. Baseline shows **elite RB (−2.12 FP) and TE (−1.52 FP) are systematically under-predicted by all four models** (driven by the yardage heads); QB is calibrated and WR is variance-not-bias. The defect is **bias, not MAE** (elite `dMAE` is large everywhere only because elites score more).
+- **Next:** Phase 2 levers ranked by the evidence — per-sample loss weighting first (reaches LightGBM, the best model for RB/TE, *and* every other model), then asymmetric/quantile loss, then role/volume static features. Each default-off, A/B'd on per-model elite bias with overall MAE held flat.
+- **Standing guidance:** **all models matter** here — judge interventions on the tail across Ridge/NN/Attn/LightGBM, not just the served best model.
+- **Status:** Phase 1 diagnostic + expert-tier comparison shipped; Huber→MSE switch (PR #870) being measured on a GPU benchmark.
+
 ### [ANALYSIS] ATTN week-by-week & subgroup accuracy — patterns + leads
 - **Findings doc:** [todo/attn_accuracy_findings.md](todo/attn_accuracy_findings.md); reusable diagnostic [src/analysis/attn_weekly_accuracy.py](src/analysis/attn_weekly_accuracy.py) (read-only, multi-seed). Rerun: `python -m src.analysis.attn_weekly_accuracy --report report.md --figdir figs`.
 - **What (robust across seeds 42+123, 7,177 test rows/seed):** the four models are ~tied overall (LightGBM 4.142 ≈ ATTN 4.158 < NN 4.198 < Ridge 4.307); the trustworthy signal is **per-position direction** — ATTN is the **best model on DST** and the **worst-of-the-learned-models on K** (Ridge wins K cleanly), loses by a hair on QB/RB/TE, and is a seed-coin-flip on WR. The dominant error structure is **regression-to-the-mean shared by all models** (over-predict Q1 by +2.7–3.5, under-predict Q4 ceiling games by −7 to −8); ATTN is the best-calibrated *learned* model at both tails.
 - **Expert benchmark (`--experts`):** on the offense matched subset (QB/RB/WR/TE, rows both NFL.com & Sleeper project), season-long MAE ranks **LightGBM 4.293 < Sleeper 4.324 ≈ ATTN 4.325 < NN 4.369 < NFL.com 4.397 < Ridge 4.470** — our best model beats both experts, ATTN ties Sleeper, everything beats NFL.com except Ridge. Per-week wins: LightGBM 8 / Sleeper 6 / ATTN 2 / NN 1 / NFL.com 1.
 - **Leads (not yet acted on):** (1) K should not headline the attention NN — Ridge is robustly better; (2) the universal Q4 under-shoot dwarfs any model choice — a ceiling-aware/quantile loss head (tuned per the `LOSS_WEIGHTS ≈ 2.0/δ` coupling, not independently) would move accuracy more than swapping models; (3) DST is where attention genuinely pays off.
-- **Status:** analysis complete + committed (docs-only). Leads above are candidates, not scheduled changes.
+- **Status:** analysis complete + committed (docs-only). Leads above are candidates, not scheduled changes. (Related: the Huber→MSE switch above directly attacks lead (2)'s Q4 under-shoot.)
 
 ### [PRIORITY] Extend NN Optuna grid: add batch-size rung 1024 + widen LR ceiling
 - **Plan doc:** [todo/increase_batch_size_plan_priority.md](todo/increase_batch_size_plan_priority.md) — full rationale (VRAM math, per-position steps/epoch + drop_last table, accepted consequences). Read it before starting.
