@@ -8,6 +8,13 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 
 ## Open
 
+### [AUDIT] Attention NN architecture audit — verified-sound + live/dormant map
+- **Doc:** [todo/attention_nn_architecture_audit.md](todo/attention_nn_architecture_audit.md) — read-only correctness/design audit of the production attention NN across all six positions (`src/shared/neural_net.py`, `src/shared/training.py`, six `config.py`).
+- **What:** **No confirmed correctness bugs.** Architecture is learned-query attention pooling (not a transformer; `attn_self_layers=0` everywhere), numerically careful (`clamp(min=0)` non-negativity, all-padding `nan_to_num` guards, season-opener handling), and cross-position-consistent (`nn_non_negative_targets`, `attn_d_model=32/n_heads=2` everywhere). Headline finding is a **live-vs-dormant capability map**: ALiBi / learned-temperature / self-attention / query-conditioning / gated-fusion / entropy-reg / K-V-projection / opp-history are all implemented + test-covered but enabled by **no** `POSITION_CONFIG`.
+- **Leads (not scheduled):** (1) adopt-or-delete the dormant extensions — already tracked as the PR #662 ablation-harness item below; (2) one low-risk numerical note: `GatedHead.value_log_alpha` is unbounded (`neural_net.py:268`) with no max clamp on `alpha` — optional `log_alpha`-clamp hardening, but it edits `src/shared/` → 6-position retrain (not `[docs-only]`).
+- **Also records two subagent-flagged "bugs" as verified false positives** (empty-batch checkpoint; batcher seeding) so they don't get re-raised.
+- **Status:** audit complete + committed (docs-only). Leads are candidates, not scheduled changes.
+
 ### [ANALYSIS] ATTN week-by-week & subgroup accuracy — patterns + leads
 - **Findings doc:** [todo/attn_accuracy_findings.md](todo/attn_accuracy_findings.md); reusable diagnostic [src/analysis/attn_weekly_accuracy.py](src/analysis/attn_weekly_accuracy.py) (read-only, multi-seed). Rerun: `python -m src.analysis.attn_weekly_accuracy --report report.md --figdir figs`.
 - **What (robust across seeds 42+123, 7,177 test rows/seed):** the four models are ~tied overall (LightGBM 4.142 ≈ ATTN 4.158 < NN 4.198 < Ridge 4.307); the trustworthy signal is **per-position direction** — ATTN is the **best model on DST** and the **worst-of-the-learned-models on K** (Ridge wins K cleanly), loses by a hair on QB/RB/TE, and is a seed-coin-flip on WR. The dominant error structure is **regression-to-the-mean shared by all models** (over-predict Q1 by +2.7–3.5, under-predict Q4 ceiling games by −7 to −8); ATTN is the best-calibrated *learned* model at both tails.
