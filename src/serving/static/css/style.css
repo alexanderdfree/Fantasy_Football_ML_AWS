@@ -137,7 +137,14 @@ body {
     padding: 0 24px;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
+    /* Seven tabs overflow narrow screens; scroll horizontally instead of
+       wrapping into a ragged second row. */
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
 }
+
+.nav-tabs::-webkit-scrollbar { display: none; }
 
 .tab {
     padding: 12px 20px;
@@ -149,6 +156,8 @@ body {
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
+    white-space: nowrap;
+    flex: 0 0 auto;
 }
 
 .tab:hover {
@@ -600,6 +609,20 @@ tbody tr:last-child td {
     margin-bottom: 28px;
 }
 
+/* Modal player chart: fixed-height box so the canvas (maintainAspectRatio:false)
+   fills it at a readable height on every screen size instead of collapsing to a
+   thin width/2 strip. */
+.modal .chart-box {
+    position: relative;
+    height: 340px;
+    padding: 16px;
+}
+
+.modal .chart-box canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+
 /* === Modal === */
 .modal {
     display: none;
@@ -701,6 +724,7 @@ tbody tr:last-child td {
         flex-direction: column;
         gap: 12px;
         align-items: stretch;
+        padding: 12px 16px;
     }
     .header-right {
         flex-direction: column;
@@ -712,6 +736,23 @@ tbody tr:last-child td {
     .filter-meta { margin-left: 0; }
     .charts-row { grid-template-columns: 1fr; }
     .subtitle { display: none; }
+
+    /* Tighter gutters so tables/cards use the full narrow width. */
+    .nav-tabs { padding: 0 12px; }
+    .main-content { padding: 16px 12px 48px; }
+    .filters-bar { padding: 12px; }
+
+    /* Denser table cells so more columns fit before horizontal scroll kicks in. */
+    thead th { padding: 10px 10px; }
+    tbody td { padding: 9px 10px; font-size: 13px; }
+    .col-player { min-width: 150px; }
+    .player-headshot { width: 26px; height: 26px; }
+
+    /* Modal: use nearly the full viewport and a slightly shorter chart. */
+    .modal-content { width: 95%; padding: 20px 16px; max-height: 90vh; }
+    .modal-header h2 { font-size: 19px; }
+    .modal-stat-value { font-size: 20px; }
+    .modal .chart-box { height: 280px; padding: 12px; }
 }
 
 /* === Approach Banner === */

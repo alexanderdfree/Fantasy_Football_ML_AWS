@@ -977,6 +977,10 @@ async function openPlayerModal(playerId) {
             data: { labels: weeks, datasets: chartDatasets },
             options: {
                 responsive: true,
+                // The modal chart lives in a fixed-height container (.modal .chart-box);
+                // let the canvas fill it instead of Chart.js's default 2:1 aspect ratio,
+                // which renders too short/squished in the modal (and worse on mobile).
+                maintainAspectRatio: false,
                 plugins: { title: { display: true, text: "Weekly Fantasy Points: Actual vs Predicted", color: "#e8eaed" } },
                 scales: {
                     y: { beginAtZero: true, grid: { color: "#2e3347" }, title: { display: true, text: "Fantasy Points", color: "#9aa0b0" } },
