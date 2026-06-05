@@ -118,9 +118,9 @@
                     <thead>
                         <tr>
                             <th class="col-rank">#</th>
-                            <th class="col-player">Player</th>
-                            <th class="col-pos">Pos</th>
-                            <th class="col-team">Team</th>
+                            <th class="col-player sortable" data-sort="name">Player <span class="sort-arrow"></span></th>
+                            <th class="col-pos sortable" data-sort="position">Pos <span class="sort-arrow"></span></th>
+                            <th class="col-team sortable" data-sort="team">Team <span class="sort-arrow"></span></th>
                             <th class="col-week sortable" data-sort="week">Wk <span class="sort-arrow"></span></th>
                             <th class="col-actual sortable active-sort" data-sort="actual">
                                 Actual <span class="sort-arrow">&#9660;</span>
@@ -137,10 +137,10 @@
                             <th class="col-pred sortable lgbm-col" data-sort="lgbm_pred">
                                 LGBM <span class="sort-arrow"></span>
                             </th>
-                            <th class="col-delta ridge-col">Ridge Err</th>
-                            <th class="col-delta nn-col">NN Err</th>
-                            <th class="col-delta attn-nn-col">Attn Err</th>
-                            <th class="col-delta lgbm-col">LGBM Err</th>
+                            <th class="col-delta sortable ridge-col" data-sort="ridge_err">Ridge Err <span class="sort-arrow"></span></th>
+                            <th class="col-delta sortable nn-col" data-sort="nn_err">NN Err <span class="sort-arrow"></span></th>
+                            <th class="col-delta sortable attn-nn-col" data-sort="attn_err">Attn Err <span class="sort-arrow"></span></th>
+                            <th class="col-delta sortable lgbm-col" data-sort="lgbm_err">LGBM Err <span class="sort-arrow"></span></th>
                         </tr>
                     </thead>
                     <tbody id="predictions-body">

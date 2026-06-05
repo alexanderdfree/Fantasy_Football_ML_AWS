@@ -466,12 +466,37 @@ function getFilteredPlayers() {
     });
 }
 
+// Value a row sorts by for a given column key. Most keys map straight to a
+// field; the "*_err" keys are the prediction-minus-actual deltas shown in the
+// "* Err" columns (computed, not stored), so sorting matches the cell value.
+function sortValue(p, key) {
+    switch (key) {
+        case "ridge_err": return errDelta(p.ridge_pred, p.actual);
+        case "nn_err":    return errDelta(p.nn_pred, p.actual);
+        case "attn_err":  return errDelta(p.attn_nn_pred, p.actual);
+        case "lgbm_err":  return errDelta(p.lgbm_pred, p.actual);
+        default:          return p[key];
+    }
+}
+
+function errDelta(pred, actual) {
+    return (pred != null && actual != null) ? pred - actual : null;
+}
+
 function renderTable() {
-    // Sort locally for instant re-sorting
+    // Sort locally for instant re-sorting. Handles numeric columns (preds,
+    // errors, week), string columns (name/position/team), and pushes
+    // missing/null values to the bottom regardless of sort direction.
     const sorted = [...getFilteredPlayers()].sort((a, b) => {
-        const va = a[currentSort] ?? 0;
-        const vb = b[currentSort] ?? 0;
-        return currentOrder === "desc" ? vb - va : va - vb;
+        const va = sortValue(a, currentSort);
+        const vb = sortValue(b, currentSort);
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        const cmp = (typeof va === "string" || typeof vb === "string")
+            ? String(va).localeCompare(String(vb))
+            : va - vb;
+        return currentOrder === "desc" ? -cmp : cmp;
     });
 
     const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
