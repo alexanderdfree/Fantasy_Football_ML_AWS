@@ -230,6 +230,13 @@ def submit_job(position, seed=42, batch_client=None):
         # trainer no-ops capture regardless; cuda_graph_enabled() re-checks
         # compute capability so a value on an ineligible GPU is inert.
         environment.append({"name": "FF_CUDA_GRAPH", "value": FF_CUDA_GRAPH})
+    # Forward the model-artifact prefix into the container so an isolated
+    # benchmark run (FF_MODEL_S3_PREFIX=experiments/...) writes its tarball +
+    # manifest under that prefix instead of prod ``models/`` — the serving site
+    # only polls ``models/``, so an experiment can never hot-swap into prod.
+    model_prefix = os.environ.get("FF_MODEL_S3_PREFIX", "").strip()
+    if model_prefix:
+        environment.append({"name": "FF_MODEL_S3_PREFIX", "value": model_prefix})
     response = batch.submit_job(
         jobName=f"ff-{position.lower()}-{timestamp}-{suffix}",
         jobQueue=job_queue,
