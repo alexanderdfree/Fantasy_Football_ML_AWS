@@ -1,0 +1,24 @@
+# Dependabot configuration — version updates as code.
+# Security *alerts* and *security updates* are enabled separately in
+# Settings -> Code security (account-level toggle, not a repo file).
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates
+version: 2
+updates:
+  # Python deps — pinned in requirements*.txt at repo root.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+
+  # GitHub Actions used by the CI / training / deploy workflows.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
