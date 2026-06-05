@@ -96,3 +96,55 @@ All-models note: the under-prediction spans the whole family; on this matched el
 **Attention NN** is both lowest-MAE and least-biased for RB (−0.63), while **LightGBM** — best
 *overall* on RB — is the most under-biased on elite RB (−2.12). Best-model identity shifts on the
 tail, reinforcing that interventions must be judged per-model, not on the served best alone.
+
+## Root cause of the 1–2 pt elite under-projection
+
+Ranked by contribution:
+
+1. **Robust regression objective (Huber / Fair) discounts the tail.** Beyond its delta, Huber
+   penalizes a miss *linearly*, not quadratically, so a big miss on a monster elite game produces
+   far less gradient than under squared error — the optimizer is told "don't chase the big weeks,"
+   which are exactly the elite weeks. Confirmed by **Ridge** (the only model on squared error)
+   being the least-biased on elites everywhere (even over-projects elite WR, +0.46), matching the
+   MSE-oriented experts. The objective is **per-position** (`lgbm_objective`, read at
+   `src/shared/pipeline.py:1161`), and the NN yardage heads use `"huber"` via `head_losses`:
+
+   | Position | LightGBM `lgbm_objective` | NN yardage heads (`head_losses`) |
+   |----------|---------------------------|----------------------------------|
+   | QB | `fair` | `huber` (passing_yards, rushing_yards) |
+   | RB | `huber` | `huber` (rushing_yards, receiving_yards) |
+   | WR | `huber` | `huber` (receiving_yards) |
+   | TE | `huber` | `huber` (receiving_yards) |
+   | K  | `huber` | — |
+   | DST| `huber` | — |
+
+   The resulting under-projection scales with **objective × target skew**: severe on RB/TE
+   (huber + right-skewed yardage), absent on QB (fair + a higher-floor, less-skewed target).
+
+2. **Regression to the mean × extrapolation ability.** Trees (**LightGBM**) cannot predict above
+   the training max — a leaf emits the average of its targets — so elite weeks get capped/averaged
+   down (worst bias). Linear (**Ridge**) extrapolates → least biased. NN sits between. This
+   compounds with (1) in LightGBM and is absent in Ridge.
+
+3. **Raw-stat decomposition stacks the shrinkage.** Each head shrinks toward its own mean and the
+   heads are summed to FP, so an elite RB's `rushing_yards` (−10.5) + `receiving_yards` (−5.3)
+   under-projections **add up** in the total.
+
+4. **Count heads (Poisson NLL) mean-revert on TDs** — expected-rate predictions sit below what
+   actual TD-scorers do; at 6 pts/TD even −0.1 TD/gm = −0.6 FP. Secondary, additive.
+
+5. **Sample imbalance** — elites are ~13–26% of rows, so the average loss is dominated by the
+   mid/low bulk and the tail is under-served in fitting.
+
+Mirror image (sanity check): the same shrinkage + the ≥0 non-negativity clamp pushes the *bottom*
+up, so bias flows out of the tail and into the middle.
+
+## Decision: switch the regression objective Huber/Fair → MSE (in progress)
+
+Directly attacks cause (1): squared error chases the tail like the experts. **Trade-off to
+measure:** FP is heavy-tailed (errors ~Laplacian), so MSE is theoretically mismatched for the
+*bulk* and may **raise overall MAE** even as it shrinks elite bias — exactly the tension this work
+must adjudicate. The NN switch additionally breaks the documented `LOSS_WEIGHTS ≈ 2.0/HUBER_DELTAS`
+coupling (dropping it once regressed QB FP MAE 6.33→6.63), so NN loss weights must be re-derived,
+not left at the Huber-tuned values. Acceptance: report per-position overall MAE **and** elite bias
+(toward the expert ~0) before/after; keep if tail improves without an unacceptable overall hit.
