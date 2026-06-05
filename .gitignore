@@ -23,6 +23,9 @@ tune_*_results.json
 # Feature-engineering disk cache (see src/shared/feature_cache.py)
 .cache/
 
+# Per-run test_df cache for src/analysis/attn_weekly_accuracy.py
+.attn_cache/
+
 # Analysis output
 analysis_output/
 
