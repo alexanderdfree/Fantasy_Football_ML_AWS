@@ -586,10 +586,39 @@ def _run_rb_gate_ablation(train_df, val_df, test_df, seed: int) -> None:
     print_summary(rows)
 
 
+def _run_scheduler_type_ablation(pos, seeds, s3_bucket, frames=None):
+    """Container-side LR-scheduler-type A/B runner.
+
+    Delegates to ``src.tuning.ablate_scheduler_type.run_position`` so this path
+    stays in sync with the operator CLI (``python -m
+    src.tuning.ablate_scheduler_type``). Runs the 3-way (onecycle / cosine /
+    plateau) A/B for one position across ``seeds`` and uploads the result JSON to
+    ``s3://{s3_bucket}/ablate_scheduler/{POS}/result.json``. No model artifact
+    upload — this is a diagnostic. ``frames`` (train/val/test) is passed through
+    for QB/RB/WR/TE to avoid a re-read per variant; K/DST pass ``None`` and let
+    their self-contained loaders run. ``FF_CUDA_GRAPH=0`` (set by the launcher)
+    keeps the A/B bit-comparable and eager.
+    """
+    from src.tuning.ablate_scheduler_type import run_position
+
+    result = run_position(pos, seeds, frames=frames)
+    key = f"ablate_scheduler/{pos.upper()}/result.json"
+    boto3.client("s3").put_object(
+        Bucket=s3_bucket, Key=key, Body=json.dumps(result, indent=2).encode()
+    )
+    print(f"Uploaded scheduler-type ablation result to s3://{s3_bucket}/{key}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--position", required=True, choices=ALL_POSITIONS)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--seeds",
+        default=None,
+        help="(--ablation scheduler-type only) comma-separated seeds "
+        "(default: the single --seed value).",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -599,11 +628,14 @@ def main():
     )
     parser.add_argument(
         "--ablation",
-        choices=["rb-gate"],
+        choices=["rb-gate", "scheduler-type"],
         default=None,
         help="Run a named ablation instead of a standard training run. "
         "'rb-gate' requires --position RB; runs the six-variant TD-gate "
-        "ablation and prints the decision table. Skips S3 upload.",
+        "ablation and prints the decision table. 'scheduler-type' runs the "
+        "LR-scheduler-type A/B (onecycle/cosine/plateau) for --position over "
+        "--seeds and uploads the per-position result JSON to "
+        "s3://$S3_BUCKET/ablate_scheduler/{pos}/result.json. Skips model upload.",
     )
     parser.add_argument(
         "--sweep",
@@ -652,6 +684,7 @@ def main():
     args = parser.parse_args()
 
     pos = args.position
+    seeds = [int(s) for s in args.seeds.split(",") if s.strip()] if args.seeds else [args.seed]
     if args.ablation == "rb-gate" and pos != "RB":
         parser.error("--ablation rb-gate requires --position RB")
     if args.sweep and pos != "WR":
@@ -750,6 +783,13 @@ def main():
                 _run_rb_gate_ablation(train_df, val_df, test_df, seed=args.seed)
             print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
             return
+        if args.ablation == "scheduler-type":
+            with _timed("run_ablation", store=phase_seconds):
+                _run_scheduler_type_ablation(
+                    pos, seeds, s3_bucket, frames=(train_df, val_df, test_df)
+                )
+            print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
+            return
         if args.sweep:
             # Sweep runs the WR pipeline N times with attn_batch_size overrides
             # and prints a wall-clock table. No S3 artifact upload — diagnostic.
@@ -773,6 +813,11 @@ def main():
         # K/DST: self-contained raw-data loaders. They still use the
         # sync_raw_data() pull above, but they intentionally do not consume the
         # train/val/test split parquet artifacts used by QB/RB/WR/TE.
+        if args.ablation == "scheduler-type":
+            with _timed("run_ablation", store=phase_seconds):
+                _run_scheduler_type_ablation(pos, seeds, s3_bucket, frames=None)
+            print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
+            return
         gpu_sidecar = _start_nvidia_smi_sidecar(gpu_profile_csv)
         try:
             with _timed("run_pipeline", store=phase_seconds):

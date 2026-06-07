@@ -128,9 +128,11 @@ jobs:
           cache: "pip"
 
       - name: Install launch deps
-        # boto3 is the only runtime dep launch_tune.py needs — everything
-        # else (the Batch job's container deps) lives in the ECR image.
-        run: pip install boto3
+        # launch_tune imports src.batch.launch, whose top-level
+        # `from src.shared.registry import ...` pulls numpy via position_config;
+        # boto3 covers the Batch submit + wait_for_jobs. (Without numpy this step
+        # ImportError'd before submitting any job.) The container deps live in ECR.
+        run: pip install boto3 numpy
 
       - name: Submit + wait for tune job (${{ matrix.position }})
         env:
