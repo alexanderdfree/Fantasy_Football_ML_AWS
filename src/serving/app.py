@@ -1132,14 +1132,18 @@ def _ensure_base_data():
         _load_base_data_locked()
 
 
+def _load_reg(path):
+    """Read a split parquet, filtering to REG-season rows. Module-level so the
+    boot path (``_load_base_data_locked``) and the hydrated-container refresh
+    path (``_load_splits_locked``) share one definition of a loaded split."""
+    df = pd.read_parquet(path)
+    if "season_type" in df.columns:
+        df = df[df["season_type"] == "REG"].copy()
+    return df
+
+
 def _load_base_data_locked():
     print("Loading data...")
-
-    def _load_reg(path):
-        df = pd.read_parquet(path)
-        if "season_type" in df.columns:
-            df = df[df["season_type"] == "REG"].copy()
-        return df
 
     train = _load_reg("data/splits/train.parquet")
     val = _load_reg("data/splits/val.parquet")
@@ -1321,6 +1325,100 @@ def _refresh_k_data_locked():
         )
 
 
+def _load_splits_locked(results):
+    """Populate ``_cache["splits"]`` + ``_cache["k_kicks_df"]`` WITHOUT rebuilding
+    ``_cache["results"]``. Caller must hold ``_cache_lock``.
+
+    ``_try_hydrate_from_disk`` restores ``results`` + metrics from the on-disk
+    cache and sets ``base_loaded=True`` but deliberately skips the heavy
+    ``_load_base_data_locked`` — so a hydrated container has NO ``splits``. The
+    first in-flight refresh on such a container then needs the per-position
+    splits to re-apply a model; without them ``_ensure_position_loaded`` marked
+    every position failed (#550) and ``_ensure_all_positions_loaded`` silently
+    recomputed metrics over the stale hydrated preds and re-persisted them under
+    a fresh fingerprint (#789). Derive splits here from current on-disk data and
+    reindex the appended K/DST test frames onto the EXISTING K/DST rows of the
+    hydrated ``results`` (QB/RB/WR/TE rows keep their parquet index, which
+    already matches ``results``) — the same alignment contract as
+    ``_refresh_k_data_locked``. Best-effort: a load failure leaves ``splits``
+    unset and the caller marks the position failed.
+
+    Mirrors ``_load_base_data_locked``'s split-loading + ``_refresh_k_data_locked``'s
+    reindex; keep them in sync (training/inference-path drift, see AGENTS.md).
+    """
+    try:
+        train = _load_reg("data/splits/train.parquet")
+        val = _load_reg("data/splits/val.parquet")
+        test = _load_reg("data/splits/test.parquet")
+        for df in [train, val, test]:
+            _compute_scoring_formats(df)
+        k_train, k_val, k_test, k_kicks_df = _load_k_splits()
+        dst_train, dst_val, dst_test = _load_dst_splits()
+    except Exception as e:  # noqa: BLE001 — best-effort; caller marks failed
+        print(f"[app] _load_splits_locked failed: {e!r} — splits unavailable")
+        return
+    reindexed = {"K": k_test, "DST": dst_test}
+    for pos_label in ("K", "DST"):
+        pos_test = reindexed[pos_label]
+        existing_index = results.index[results["position"] == pos_label]
+        if len(existing_index) == len(pos_test):
+            pos_test = pos_test.copy()
+            pos_test.index = existing_index
+            reindexed[pos_label] = pos_test
+        else:
+            print(
+                f"[{pos_label}] _load_splits_locked: row-count mismatch "
+                f"({len(existing_index)} cached rows vs {len(pos_test)} fresh) — "
+                f"keeping fresh index (unaligned pred writes may be skipped)"
+            )
+    _cache["splits"] = {
+        "QB": (train, val, test),
+        "RB": (train, val, test),
+        "WR": (train, val, test),
+        "TE": (train, val, test),
+        "K": (k_train, k_val, reindexed["K"]),
+        "DST": (dst_train, dst_val, reindexed["DST"]),
+    }
+    _cache["k_kicks_df"] = k_kicks_df
+
+
+def _refresh_dst_data_locked():
+    """Re-derive DST's split from current on-disk data. Mirror of
+    ``_refresh_k_data_locked`` (#441).
+
+    DST, like K, builds its split from LIVE raw data (``dst_data.build_data`` via
+    ``_load_dst_splits``) rather than the static ``data/splits/*.parquet`` — so
+    its boot-cached split goes stale when a refresh swaps in a DST model trained
+    on freshly-synced data. (QB/RB/WR/TE read the static parquets, so a model
+    swap alone leaves their cached splits valid.) Caller holds ``_cache_lock``.
+    Best-effort: a reload failure keeps the boot-cached split.
+
+    DST has no separate per-kick records, so only the split frame is refreshed;
+    the fresh ``dst_test`` is reindexed onto the EXISTING DST rows in
+    ``_cache["results"]`` so ``_apply_position_models``' ``pos_index`` write
+    stays aligned. A row-count change keeps the existing split index.
+    """
+    if _cache.get("results") is None or "splits" not in _cache:
+        return
+    try:
+        dst_train, dst_val, dst_test = _load_dst_splits()
+    except Exception as e:  # noqa: BLE001 — refresh is best-effort
+        print(f"[DST] data refresh failed: {e!r} — reusing boot-cached splits")
+        return
+    results = _cache["results"]
+    existing_dst_index = results.index[results["position"] == "DST"]
+    if len(existing_dst_index) == len(dst_test):
+        dst_test = dst_test.copy()
+        dst_test.index = existing_dst_index
+        _cache["splits"]["DST"] = (dst_train, dst_val, dst_test)
+    else:
+        print(
+            f"[DST] refreshed split but row count changed "
+            f"({len(existing_dst_index)} cached DST rows vs {len(dst_test)} fresh) — "
+            f"keeping existing split index to preserve results-row alignment"
+        )
+
+
 def _ensure_position_loaded(pos):
     """Apply position-specific model. Idempotent, thread-safe, degrade-aware.
 
@@ -1357,18 +1455,28 @@ def _ensure_position_loaded(pos):
         # and the slow path below invalidates the failed state.
         return
     with _cache_lock:
+        if "splits" not in _cache and _cache.get("results") is not None:
+            # Hydrated container (#550/#789): ``_try_hydrate_from_disk`` restored
+            # ``results`` + metrics from the on-disk cache and set
+            # ``base_loaded=True`` but skipped ``_load_base_data_locked``, so
+            # there are no ``splits``. A refresh now needs them to re-apply this
+            # position — derive them on demand (reindexed onto the hydrated
+            # results) instead of marking the position failed.
+            print(
+                f"[{pos}] splits absent on hydrated container — loading splits "
+                f"for in-flight refresh",
+                flush=True,
+            )
+            _load_splits_locked(_cache["results"])
         if "splits" not in _cache:
-            # ``_ensure_base_data`` ran above; if "splits" is still missing
-            # something is wrong with the load (e.g. parquet read failed and
-            # the base-loaded path was force-set elsewhere). Previously this
-            # silently early-returned and the position cached as failed-with-
-            # no-explanation. Log loudly so the failure surfaces in container
+            # Genuine load failure (results never built, or the on-demand split
+            # load above raised). Log loudly so the failure surfaces in container
             # logs + register an error so /health and /api/predictions
             # degraded_positions reflect the state.
             err_msg = (
                 f"_ensure_position_loaded({pos}) called but _cache has no "
-                f"'splits' entry — _ensure_base_data did not populate the "
-                f"per-position split index. Marking {pos} as failed."
+                f"'splits' entry — base data did not populate the per-position "
+                f"split index. Marking {pos} as failed."
             )
             print(f"[app] {err_msg}", flush=True)
             _cache.setdefault("positions_failed", set()).add(pos)
@@ -1411,8 +1519,13 @@ def _ensure_position_loaded(pos):
             # kicks_df feeds the new model an inference tensor from the OLD data —
             # silent divergence. Re-derive both from the current on-disk data so
             # the new model sees the data distribution it was trained against.
+            # DST is the same shape — its split comes from live
+            # ``dst_data.build_data`` (not the static parquets) — so it needs the
+            # same re-derivation (#441).
             if pos == "K":
                 _refresh_k_data_locked()
+            elif pos == "DST":
+                _refresh_dst_data_locked()
             _invalidate_metrics_cache(reason=f"in-flight-refresh:{pos}")
             print(f"[{pos}] in-flight refresh detected (sentinel mtime advanced) — re-loading")
         if pos in _cache.get("positions_loaded", set()):
@@ -1467,6 +1580,12 @@ def _ensure_all_positions_loaded():
     here in the calling thread after each future completes.
     """
     _ensure_base_data()
+    if "splits" not in _cache and _cache.get("results") is not None:
+        # Hydrated container: derive splits on demand so the aggregate rebuild
+        # can re-apply advanced positions instead of silently recomputing
+        # metrics over the stale hydrated preds and re-persisting them under a
+        # fresh fingerprint (#789).
+        _load_splits_locked(_cache["results"])
     if "splits" not in _cache:
         return
     splits = _cache["splits"]
@@ -1499,6 +1618,8 @@ def _ensure_all_positions_loaded():
             details.pop(pos, None)
             if pos == "K":
                 _refresh_k_data_locked()
+            elif pos == "DST":
+                _refresh_dst_data_locked()
             print(f"[{pos}] sentinel advanced post-prewarm — re-applying in aggregate rebuild")
     pending = [p for p in _ALL_POSITIONS if p not in loaded and p not in failed]
 
