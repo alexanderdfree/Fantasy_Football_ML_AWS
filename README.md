@@ -176,7 +176,7 @@ Beyond the ML core, the project ships a production deploy at [alexfree.me](https
 ```
 GitHub Actions
    │ push to main
-   ├──▶ batch-image.yml ──▶ ECR (training image, ECR pull-through + SOCI v2)
+   ├──▶ batch-image.yml ──▶ ECR (training image, ECR pull-through cache)
    │                              │
    │                              ▼ workflow_run
    │        ┌──────────────────────────────────────────────┐
@@ -241,7 +241,7 @@ push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov ·
 
 - Seven production workflows ([tests.yml](.github/workflows/tests.yml), [batch-image.yml](.github/workflows/batch-image.yml), [train-batch.yml](.github/workflows/train-batch.yml), [train-ec2.yml](.github/workflows/train-ec2.yml), [deploy.yml](.github/workflows/deploy.yml), [refresh-splits.yml](.github/workflows/refresh-splits.yml) — auto-rebuilds `data/splits` in S3 on config/`src.data` changes, [skip-sentinel.yml](.github/workflows/skip-sentinel.yml) — writes placeholder benchmark rows for non-training commits) plus three diagnostic ones ([ablate-rb-gate.yml](.github/workflows/ablate-rb-gate.yml), [retune-lgbm.yml](.github/workflows/retune-lgbm.yml), [retune-nn-batch.yml](.github/workflows/retune-nn-batch.yml)) for one-click experiments on the GPU host. The reusable [_detect-positions.yml](.github/workflows/_detect-positions.yml) is shared by the two training workflows.
 - **`tests.yml`** — 7-shard pytest matrix (QB / RB / WR / TE / K / DST / shared) with per-shard Codecov flags and an 80% per-component target enforced via [codecov.yml](codecov.yml). Within-shard parallelism via `pytest-xdist`.
-- **`batch-image.yml` → `train-batch.yml` *or* `train-ec2.yml`** — the image build is gated by path filters and pushes to ECR with both an ECR pull-through-cache-routed base layer and a SOCI v2 index for fast Spot cold-start. The `detect` job (shared by both training workflows) diffs `HEAD^..HEAD` and retrains *only* the positions whose code changed; cross-cutting changes (`src/shared/`, `src/batch/`, shared `src/` modules, `requirements.txt`) retrain all six. `BATCH_ACTIVE` selects which training workflow fires; `workflow_dispatch` on either bypasses the gate.
+- **`batch-image.yml` → `train-batch.yml` *or* `train-ec2.yml`** — the image build is gated by path filters and pushes to ECR with an ECR pull-through-cache-routed base layer for fast Spot cold-start. The `detect` job (shared by both training workflows) diffs `HEAD^..HEAD` and retrains *only* the positions whose code changed; cross-cutting changes (`src/shared/`, `src/batch/`, shared `src/` modules, `requirements.txt`) retrain all six. `BATCH_ACTIVE` selects which training workflow fires; `workflow_dispatch` on either bypasses the gate.
 - **`deploy.yml`** — native `arm64` runner (no QEMU emulation), BuildKit cache persisted across runs, path-filtered to the serving surface so docs-only or test-only changes don't trigger a deploy.
 - All Python installs use `uv` for ~10× faster cold starts than pip.
 
