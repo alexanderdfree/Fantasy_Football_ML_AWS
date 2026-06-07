@@ -2494,7 +2494,7 @@ def _categorize_features(features):
     return {k: v for k, v in categories.items() if v}
 
 
-def _position_arch_payload(pos, pc, include_features, attn_history=None):
+def _position_arch_payload(pc, include_features, attn_history=None):
     """Build the per-position JSON payload for /api/model_architecture.
 
     ``pc`` is the position's :class:`~src.shared.position_config.PositionConfig`;
@@ -2558,36 +2558,30 @@ def api_model_architecture():
     try:
         positions = {
             "QB": _position_arch_payload(
-                "QB",
                 qb_cfg.POSITION_CONFIG,
                 qb_cfg.POSITION_CONFIG.include_features,
                 qb_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "RB": _position_arch_payload(
-                "RB",
                 rb_cfg.POSITION_CONFIG,
                 rb_cfg.POSITION_CONFIG.include_features,
                 rb_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "WR": _position_arch_payload(
-                "WR",
                 wr_cfg.POSITION_CONFIG,
                 wr_cfg.POSITION_CONFIG.include_features,
                 wr_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "TE": _position_arch_payload(
-                "TE",
                 te_cfg.POSITION_CONFIG,
                 te_cfg.POSITION_CONFIG.include_features,
                 te_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "K": _position_arch_payload(
-                "K",
                 k_cfg.POSITION_CONFIG,
                 k_cfg.POSITION_CONFIG.contextual_features,
             ),
             "DST": _position_arch_payload(
-                "DST",
                 dst_cfg.POSITION_CONFIG,
                 dst_cfg.POSITION_CONFIG.contextual_features,
             ),

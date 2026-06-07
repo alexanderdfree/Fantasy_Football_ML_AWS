@@ -49,6 +49,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import src.shared.neural_net as nn_mod  # noqa: E402
 from src.shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso  # noqa: E402
+from src.tuning.ablation_runner import fmt_mean_std  # noqa: E402
 
 ABLATION_NAME = "backbone_norm"
 HISTORY_DIR = "benchmark_history"
@@ -136,14 +137,6 @@ def _extract(result: dict, variant: str, seed: int, targets: list[str]) -> dict:
     }
 
 
-def _fmt_mean_std(vals: list[float]) -> str:
-    if not vals:
-        return "n/a"
-    mean = statistics.mean(vals)
-    sd = statistics.stdev(vals) if len(vals) > 1 else 0.0
-    return f"{mean:.4f}±{sd:.4f}"
-
-
 def print_summary(rows: list[dict], targets: list[str]) -> bool:
     """Print the decision table. Returns the data-identity sentinel result."""
     seeds = sorted({r["seed"] for r in rows})
@@ -192,8 +185,8 @@ def print_summary(rows: list[dict], targets: list[str]) -> bool:
             if ("ln", s) in by and ("bn", s) in by
         ]
         print(
-            f"  {model:<8} BN={_fmt_mean_std(bn_vals)}  LN={_fmt_mean_std(ln_vals)}  "
-            f"Δ(LN-BN)={_fmt_mean_std(deltas)}"
+            f"  {model:<8} BN={fmt_mean_std(bn_vals)}  LN={fmt_mean_std(ln_vals)}  "
+            f"Δ(LN-BN)={fmt_mean_std(deltas)}"
         )
 
     # --- Per-target attention-NN MAE (mean across seeds) ---

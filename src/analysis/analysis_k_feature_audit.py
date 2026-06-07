@@ -79,7 +79,6 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless-safe; this script writes PNGs, no GUI needed
 
-import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from scipy.stats import spearmanr  # noqa: E402
@@ -90,6 +89,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.analysis.analysis_feature_audit import (  # noqa: E402
+    _print_top,
+    _print_vif,
+    _save_static_heatmap,
+)
 from src.k.config import POSITION_CONFIG  # noqa: E402
 from src.k.data import load_data, season_split  # noqa: E402
 from src.k.features import compute_features  # noqa: E402
@@ -251,51 +255,6 @@ def _pre_registered_table(df: pd.DataFrame, pairs: list[tuple[str, str, str]]) -
         s = float(sub[a].corr(sub[b], method="spearman"))
         out.append({"a": a, "b": b, "why": why, "pearson": p, "spearman": s, "n": int(len(sub))})
     return out
-
-
-def _save_static_heatmap(corr: pd.DataFrame, path: Path) -> None:
-    """Save a Pearson-r heatmap of the static feature block.
-
-    Uses ``matplotlib.imshow`` directly rather than ``seaborn.heatmap`` so the
-    audit script doesn't pull in ``seaborn`` as a dependency.
-    """
-    if corr.empty:
-        return
-    n = len(corr)
-    fig, ax = plt.subplots(figsize=(max(8, 0.32 * n), max(7, 0.32 * n)))
-    im = ax.imshow(
-        corr.to_numpy(),
-        cmap="RdBu_r",
-        vmin=-1.0,
-        vmax=1.0,
-        aspect="equal",
-        interpolation="nearest",
-    )
-    ax.set_xticks(range(n))
-    ax.set_yticks(range(n))
-    ax.set_xticklabels(corr.columns, rotation=70, ha="right", fontsize=7)
-    ax.set_yticklabels(corr.index, fontsize=7)
-    ax.set_title("K ATTN_STATIC_FEATURES correlation (training split)")
-    cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
-    cbar.set_label("Pearson r")
-    plt.tight_layout()
-    plt.savefig(path, dpi=150)
-    plt.close(fig)
-
-
-def _print_top(pairs: list[tuple[str, str, float]], k: int, label: str) -> None:
-    print(f"\n  Top {min(k, len(pairs))} pairs by |Pearson| ({label}):")
-    print(f"    {'a':<46s} {'b':<46s} {'r':>7s}")
-    for a, b, r in pairs[:k]:
-        print(f"    {a[:46]:<46s} {b[:46]:<46s} {r:>7.3f}")
-
-
-def _print_vif(vif: dict[str, float], k: int = 15) -> None:
-    items = sorted(vif.items(), key=lambda kv: kv[1], reverse=True)[:k]
-    print(f"\n  Top {len(items)} VIF (≥ 5 is a smell, ≥ 10 is bad):")
-    print(f"    {'feature':<48s} {'VIF':>10s}")
-    for name, v in items:
-        print(f"    {name[:48]:<48s} {v:>10.2f}")
 
 
 def _classify_condition_number(cond: float) -> str:
@@ -527,7 +486,7 @@ def main() -> int:
     OUT_JSON.write_text(json.dumps(payload, indent=2, sort_keys=False))
     print(f"\n✔ wrote {OUT_JSON.relative_to(PROJECT_ROOT)}")
 
-    _save_static_heatmap(static_pearson, OUT_HEATMAP)
+    _save_static_heatmap(static_pearson, OUT_HEATMAP, "K")
     print(f"✔ wrote {OUT_HEATMAP.relative_to(PROJECT_ROOT)}")
 
     return 0

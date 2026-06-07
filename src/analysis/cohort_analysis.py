@@ -115,7 +115,6 @@ NON_COMMITTEE = "non_committee"
 TRADED = "midseason_trade"
 STABLE_TEAM = "stable_team"
 SUSPENSION_RETURN = "suspension_return"
-NOT_SUSPENSION_RETURN = "not_suspension_return"
 
 
 @dataclass(frozen=True)
