@@ -1,4 +1,4 @@
-# GPU launch-bound optimization — CUDA graph built; streams planned
+# GPU launch-bound optimization — CUDA graph built; streams prototyped
 
 Planning doc for making **local 6-position parallel training faster**, written after the
 core-pool work (#670) established that the bottleneck is the GPU, not the CPU. **Lever A is
@@ -117,6 +117,26 @@ rebaseline. K's nested trainer still no-ops capture, and CPU/CI/T4 stay eager
 **Benchmark gate:** total wall-clock of the single-process-streams run vs the current `-j6` subprocess run (~242s), same inertness assertion. Only pursue if Lever A's per-position win is insufficient and the total-wall-clock ceiling is worth the refactor.
 
 **Effort:** multi-session; architectural. Highest ceiling, highest risk.
+
+**Prototype (2026-06-07) — runs the benchmark gate, no production change:** a standalone,
+no-retrain measurement harness for the single-process round-robin is built —
+[src/analysis/streams_6pos_prototype.py](../src/analysis/streams_6pos_prototype.py). It
+reuses the *real* per-position construction (it runs `_train_attention_holdout` with
+`MultiHeadTrainer.train` monkeypatched to **capture** the fully-built trainer + GPU-resident
+loaders instead of training them — so only the ~30-line per-step body is copied, not the
+construction) and drives the 6 attention NNs **one step per position per round on per-position
+`torch.cuda.Stream`s** from a single thread. It reports the sequential→streams speedup, a
+per-position contention factor, and per-position prediction parity (re-seeding per
+(position, epoch) + `--force-dropout-zero` keeps the two arms bit-comparable despite the
+shared global RNG). It composes with CUDA graphs (`--graph`/`--no-graph`) and degrades to a
+serial no-stream run off-CUDA. The gate itself is still **unrun** (no local GPU in this
+environment / CI); run it on a CUDA box:
+`for s in 42 1337 2024; do python -m src.analysis.streams_6pos_prototype --seed $s --fixed-epochs 30; done`,
+then compare its `streams wall-clock` to `python -m src.benchmarking.parallel_train -j 6`.
+**Honest expectation:** the win is bounded — graphs already collapsed the launch storm, the
+single thread only overlaps *device-side* work (the GIL serialises launches), and `-j6`
+already fills some idle gaps; so the incremental win over graphed `-j6` may be modest. The
+harness exists to replace that estimate with a number.
 
 ### Lever B′ — within-position overlap (base NN ∥ attention NN) — PROTOTYPE (2026-06-07)
 
