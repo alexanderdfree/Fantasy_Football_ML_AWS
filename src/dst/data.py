@@ -4,6 +4,7 @@ import pandas as pd
 from src.config import CACHE_DIR, SEASONS, TRAIN_SEASONS
 from src.data import nfl_source
 from src.data.loader import load_team_week_stats
+from src.shared.weather_features import _TEAM_CODE_NORMALIZATION
 
 
 def build_data() -> pd.DataFrame:
@@ -24,6 +25,15 @@ def build_data() -> pd.DataFrame:
     schedules = pd.read_parquet(f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
     team_stats = load_team_week_stats(SEASONS)
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
+    # Normalize historical team codes (OAK/SD/STL → LV/LAC/LA) at the source so
+    # every downstream ``team`` / ``opponent_team`` derived from the schedule
+    # matches the modern-coded weekly frame's ``recent_team`` (verified: weekly
+    # carries LV for 2018-19 Raiders, schedules still carries OAK). Without this,
+    # pre-relocation DST rows miss every merge below and the fillna(0) loop
+    # silently zeros their defensive + special-teams stats. Mirrors src/k/data.py
+    # (distinct from #971's away-row spread_line SIGN fix). (#728)
+    schedules_reg["home_team"] = schedules_reg["home_team"].replace(_TEAM_CODE_NORMALIZATION)
+    schedules_reg["away_team"] = schedules_reg["away_team"].replace(_TEAM_CODE_NORMALIZATION)
 
     # --- 1. Points allowed from schedule scores ---
     away_pts = schedules_reg[["season", "week", "away_team", "home_score"]].copy()
