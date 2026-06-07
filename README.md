@@ -160,7 +160,7 @@ Tests live under the top-level `tests/` tree, mirroring the `src/` layout (`test
 - [docs/expert_comparison.md](docs/expert_comparison.md) — error analysis
 - [docs/archive/](docs/archive/) — historical design docs folded into ADR-001 (LSTM proposal, XGBoost ensemble, weather/Vegas features)
 - [infra/ec2/README.md](infra/ec2/README.md), [infra/aws/README.md](infra/aws/README.md) — operator runbooks
-- [TODO.md](TODO.md) — issue log, open items, and a "Fixed" archive that doubles as a lessons-learned catalog
+- [TODO.md](TODO.md) — issue log and open items; the **Fixed** archive (a lessons-learned catalog) lives in [todo/fixed-archive.md](todo/fixed-archive.md)
 - [ATTRIBUTION.md](ATTRIBUTION.md) — data, libraries, and AI tool usage
 
 ## Individual Contributions

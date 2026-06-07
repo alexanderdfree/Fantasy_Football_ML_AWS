@@ -72,6 +72,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso  # noqa: E402
+from src.tuning.ablation_runner import fmt_mean_std  # noqa: E402
 
 ABLATION_NAME = "attn_arch"
 HISTORY_DIR = "benchmark_history"
@@ -165,14 +166,6 @@ def _extract(result: dict, variant: str, seed: int, targets: list[str]) -> dict:
     }
 
 
-def _fmt_mean_std(vals: list[float]) -> str:
-    if not vals:
-        return "n/a"
-    mean = statistics.mean(vals)
-    sd = statistics.stdev(vals) if len(vals) > 1 else 0.0
-    return f"{mean:.4f}±{sd:.4f}"
-
-
 def _vals(by: dict, variant: str, seeds: list[int], key: str) -> list[float]:
     return [by[(variant, s)][key] for s in seeds if (variant, s) in by]
 
@@ -204,17 +197,17 @@ def print_summary(rows: list[dict], targets: list[str], variants_run: list[str])
     print(f"  {'variant':<12}{'FP MAE':>16}{'Δ vs baseline':>20}  label")
     print("  " + "-" * 86)
     for v in variants_run:
-        abs_str = _fmt_mean_std(_vals(by, v, seeds, "attn_fp_mae"))
+        abs_str = fmt_mean_std(_vals(by, v, seeds, "attn_fp_mae"))
         if v == BASELINE:
             delta_str = "—"
         else:
-            delta_str = _fmt_mean_std(_paired_deltas(by, v, seeds, "attn_fp_mae"))
+            delta_str = fmt_mean_std(_paired_deltas(by, v, seeds, "attn_fp_mae"))
         print(f"  {v:<12}{abs_str:>16}{delta_str:>20}  {VARIANTS[v][0]}")
 
     # --- Base MLP NN (attention-free) — should also be ~flat across variants ---
     print("\nBase NN — FP MAE (mean±std):  ", end="")
     print(
-        "  ".join(f"{v}={_fmt_mean_std(_vals(by, v, seeds, 'base_fp_mae'))}" for v in variants_run)
+        "  ".join(f"{v}={fmt_mean_std(_vals(by, v, seeds, 'base_fp_mae'))}" for v in variants_run)
     )
 
     # --- Data-identity sentinel: Ridge is attention-free → identical per seed ---

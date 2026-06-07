@@ -123,7 +123,7 @@ jobs:
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
         # major version comment. SHA = aws-actions/configure-aws-credentials v4
         # tip as of 2026-05-21.
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b  # v6.2.0
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -179,7 +179,7 @@ jobs:
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
         # major version comment. SHA = aws-actions/configure-aws-credentials v4
         # tip as of 2026-05-21.
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b  # v6.2.0
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -202,7 +202,7 @@ jobs:
       - name: Set up uv
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
         # major version comment. SHA = astral-sh/setup-uv v6.8.0.
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true
           cache-dependency-glob: "requirements*.txt"
@@ -305,6 +305,13 @@ jobs:
           # from the run's expected SHA. Manual dispatch stamps the dispatch
           # ref SHA unless image_sha was provided for a specific image.
           FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
+          # CUDA graphs autodetect ON in the container on the g6/L4 (sm_89) —
+          # cuda_graph_enabled() defaults on for sm_80+, so the fan-out is
+          # graphed by default. This repo variable is an optional FLEET OVERRIDE,
+          # not the trigger: leave it unset for the autodetect default, or set
+          # FF_BATCH_CUDA_GRAPH=0 to force the whole fan-out back to the eager
+          # path. launch.py forwards it to the container only when set.
+          FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
@@ -423,10 +430,19 @@ jobs:
           # Spread the warm across the desiredCount=2 tasks' gunicorn workers;
           # the ALB distributes these GETs, so each call may land on a
           # different not-yet-warm worker and trigger its recompute + upload.
+          # Fire them CONCURRENTLY: same 12-call coverage, but the step's
+          # wall-clock collapses from sum(calls) to ~max(call). gunicorn's
+          # per-worker request serialization still bounds in-flight recomputes
+          # to the worker count, so concurrency doesn't add memory pressure —
+          # it only removes the round-trip serialization on a best-effort
+          # post-train step that just holds the CI runner. Each curl keeps its
+          # own --max-time + `|| true`, and `wait` reaps them all (this step is
+          # continue-on-error, so a slow worker can't fail the workflow).
           for _ in $(seq 1 12); do
             curl -fsS --max-time 150 "$warm_url" \
-              | jq -c '{fingerprint, rows, elapsed_s, degraded_positions}' || true
+              | jq -c '{fingerprint, rows, elapsed_s, degraded_positions}' || true &
           done
+          wait
 
       - name: Append Batch run to benchmark_history/
         # Mirrors the JSON to s3://{bucket}/models/benchmark_history/ (see
@@ -441,6 +457,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
           FF_MODEL_S3_PREFIX: models
+          # The L4 Batch path autodetects graphs ON, so rows are labeled graphed
+          # below (keeps them separate from the pre-cutover eager baseline —
+          # graphed and eager rows aren't bit-comparable). This optional fleet
+          # override (FF_BATCH_CUDA_GRAPH=0) forces eager + the plain label.
+          FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
           POSITIONS: ${{ needs.detect.outputs.positions }}
           # Branch + head SHA come from a workflow_run trigger whose payload
           # is attacker-controllable (e.g. a fork that happens to share a
@@ -484,10 +505,24 @@ jobs:
           # workspace HEAD via get_git_hash(), which is correct for a
           # manual run. See TODO.md "Benchmark git_hash recorded the wrong
           # SHA on rapid back-to-back merges" archive entry.
+          # Hardware label for the History tab is DERIVED AT RUNTIME by
+          # src/batch/benchmark.py from the gpu_name + cuda_graph_active fields
+          # src/batch/train.py stamps into each position's benchmark_metrics.json,
+          # so it tracks the live CE with no edit here (g6.xlarge / L4 sm_89 +
+          # ", CUDA-graph" today; auto-updates if the CE ever changes again) —
+          # the silent-drift the old hardcoded string risked is gone. The value
+          # below is only a FALLBACK, used when a run carries no GPU metadata
+          # (pre-stamping artifacts / all-CPU run); it mirrors the current g6/L4
+          # graphed reality, and the force-off case keeps the fallback honest
+          # when FF_CUDA_GRAPH disables capture.
+          INSTANCE_TYPE="g6.xlarge (Spot, CUDA-graph)"
+          case "$(echo "${FF_CUDA_GRAPH:-}" | tr 'A-Z' 'a-z')" in
+            0|false|no|off) INSTANCE_TYPE="g6.xlarge (Spot)" ;;
+          esac
           python -m src.batch.benchmark \
             --download-only \
             --backend batch \
-            --instance-type "g6.xlarge (Spot)" \
+            --instance-type "$INSTANCE_TYPE" \
             --positions $POSITIONS \
             --note "Batch Spot auto-run (${NOTE_SHA})" \
             --git-hash "$HEAD_SHA" \

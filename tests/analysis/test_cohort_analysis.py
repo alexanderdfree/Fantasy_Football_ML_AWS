@@ -21,8 +21,59 @@ def test_registry_covers_expected_cohorts_and_import_is_cheap():
         "sparse_history",
         "late_week",
         "suspension_return",
+        "scoring_tier",
     } <= set(ca.COHORTS)
     assert ca.COHORTS["suspension_return"].feasible is False
+
+
+def test_prior_season_fp_attaches_S_minus_1_mean_to_season_S():
+    frame = pd.DataFrame(
+        {
+            "player_id": ["A", "A", "B", "B"],
+            "season": [2023, 2023, 2023, 2023],
+            "fantasy_points": [10.0, 20.0, 4.0, 6.0],
+        }
+    )
+    prior = ca.player_prior_season_fp([frame])
+    # 2023 mean attaches to 2024.
+    assert prior.loc[("A", 2024)] == pytest.approx(15.0)
+    assert prior.loc[("B", 2024)] == pytest.approx(5.0)
+    # No prior expectation exists for the first observed season.
+    assert ("A", 2023) not in prior.index
+
+
+def test_scoring_tier_labels_top_n_per_position_season_as_elite():
+    # Two QBs and two RBs in 2024; top-1 per (season, position) is elite.
+    df = pd.DataFrame(
+        {
+            "player_id": ["A", "B", "C", "D", "ROOK"],
+            "season": [2024, 2024, 2024, 2024, 2024],
+            "position": ["QB", "QB", "RB", "RB", "QB"],
+            "week": [1, 1, 1, 1, 1],
+        }
+    )
+    prior = pd.Series(
+        {("A", 2024): 22.0, ("B", 2024): 9.0, ("C", 2024): 18.0, ("D", 2024): 7.0},
+        name="prior_season_fp",
+    )
+    labels = ca.label_scoring_tier_rows(df, prior, top_n=1)
+    assert labels.tolist() == [
+        ca.TIER_ELITE,  # A: top QB
+        ca.TIER_FIELD,  # B: lower QB
+        ca.TIER_ELITE,  # C: top RB
+        ca.TIER_FIELD,  # D: lower RB
+        "unknown",  # ROOK: no prior-season expectation
+    ]
+
+
+def test_scoring_tier_guards_missing_proxy_and_columns():
+    df = pd.DataFrame({"player_id": ["A"], "season": [2024], "position": ["QB"]})
+    assert ca.label_scoring_tier_rows(df, None, top_n=1).tolist() == ["unknown"]
+    empty = pd.Series(dtype=float)
+    assert ca.label_scoring_tier_rows(df, empty, top_n=1).tolist() == ["unknown"]
+    no_pos = df.drop(columns=["position"])
+    prior = pd.Series({("A", 2024): 22.0})
+    assert ca.label_scoring_tier_rows(no_pos, prior, top_n=1).tolist() == ["unknown"]
 
 
 def test_committee_label_requires_two_mid_share_backs():

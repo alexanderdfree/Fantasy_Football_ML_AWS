@@ -584,3 +584,29 @@ class TestTinyQBModelFixture:
         preds = ridge.predict(scaler.transform(X))
         assert preds.shape == (3,)
         assert np.isfinite(preds).all()
+
+
+# ===========================================================================
+# Front-end assets — no external CDN dependency
+# ===========================================================================
+
+
+class TestStaticAssets:
+    """Guard the self-hosted Chart.js: app.js references ``Chart`` at init, so a
+    blocked/failed external <script> left the global undefined and threw, taking
+    the whole UI's event wiring down with it. Keep every script same-origin.
+    """
+
+    def test_index_has_no_external_scripts(self, client):
+        import re
+
+        html = client.get("/").get_data(as_text=True)
+        srcs = re.findall(r'<script[^>]+src=["\']([^"\']+)["\']', html)
+        assert srcs, "index page should load at least one script"
+        external = [s for s in srcs if s.startswith(("http://", "https://", "//"))]
+        assert not external, f"index must not load scripts from a CDN: {external}"
+
+    def test_vendored_chartjs_is_served(self, client):
+        r = client.get("/static/js/vendor/chart.umd.min.js")
+        assert r.status_code == 200
+        assert b"Chart.js v4.4.0" in r.get_data()

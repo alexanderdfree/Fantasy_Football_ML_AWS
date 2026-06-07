@@ -15,8 +15,10 @@ Config (environment variables, all optional):
     FF_JOB_QUEUE_CPU    (optional)                          CPU-only queue
     FF_JOB_DEFINITION   (default: ff-training-job)          GPU job definition
     FF_JOB_DEFINITION_CPU  (optional)                       CPU job definition
-        If set, K and DST are submitted with this job definition instead —
-        a cheap CPU Spot pool for the non-NN positions.
+        STALE — DO NOT ENABLE: K and DST now train an attention NN on GPU, so
+        routing them to a CPU pool craters wall-clock instead of saving. If set,
+        K/DST submit with this definition; unset, they use the GPU definition.
+        See docs/batch_design.md.
     FF_WAIT_TIMEOUT     (default: 10800, i.e. 3h)
 """
 
@@ -59,6 +61,17 @@ JOB_DEFINITION_REVISION = os.environ.get("FF_JOB_DEFINITION_REVISION", "") or No
 # manifest-write race when two train-batch runs land in quick succession,
 # even after Layer A pins the job-def revision). Empty -> not passed.
 TRAIN_GIT_SHA = os.environ.get("FF_TRAIN_GIT_SHA", "") or None
+# Optional CUDA-graph OVERRIDE, forwarded to the container only when
+# FF_CUDA_GRAPH is set in this launcher's environment. The container's
+# cuda_graph_enabled() (src/shared/utils.py) AUTODETECTS graphs ON for sm_80+
+# (the g6/L4 qualifies), so the production fan-out is graphed by default with no
+# value here. train-batch.yml threads the FF_BATCH_CUDA_GRAPH repo variable as a
+# fleet override: leave it unset for the autodetect default, or set it to 0 to
+# force the whole fan-out back to the eager path (e.g. a bit-comparable A/B).
+# Graphs are ~1.5-1.8x on the launch-bound GPU branch (both the base/control NN
+# and the attention NN) but NOT bit-identical to eager (see
+# todo/gpu_launch_bound_levers.md, Lever A).
+FF_CUDA_GRAPH = os.environ.get("FF_CUDA_GRAPH", "") or None
 
 from src.shared.registry import ALL_POSITIONS, CPU_ONLY_POSITIONS  # noqa: E402
 
@@ -213,6 +226,19 @@ def submit_job(position, seed=42, batch_client=None):
         # Stamped into benchmark_metrics.json by train.py; benchmark.py uses
         # it to surface per-position SHA divergence across a single run.
         environment.append({"name": "FF_TRAIN_GIT_SHA", "value": TRAIN_GIT_SHA})
+    if FF_CUDA_GRAPH:
+        # Override only — graphs autodetect ON for sm_80+ in the container, so a
+        # value is needed only to force the eager path (forward "0"). K's nested
+        # trainer no-ops capture regardless; cuda_graph_enabled() re-checks
+        # compute capability so a value on an ineligible GPU is inert.
+        environment.append({"name": "FF_CUDA_GRAPH", "value": FF_CUDA_GRAPH})
+    # Forward the model-artifact prefix into the container so an isolated
+    # benchmark run (FF_MODEL_S3_PREFIX=experiments/...) writes its tarball +
+    # manifest under that prefix instead of prod ``models/`` — the serving site
+    # only polls ``models/``, so an experiment can never hot-swap into prod.
+    model_prefix = os.environ.get("FF_MODEL_S3_PREFIX", "").strip()
+    if model_prefix:
+        environment.append({"name": "FF_MODEL_S3_PREFIX", "value": model_prefix})
     response = batch.submit_job(
         jobName=f"ff-{position.lower()}-{timestamp}-{suffix}",
         jobQueue=job_queue,

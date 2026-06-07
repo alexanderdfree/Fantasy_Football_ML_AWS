@@ -563,3 +563,84 @@ def test_record_benchmark_run_returns_none_when_no_metrics(monkeypatch):
 
     assert bb.record_benchmark_run(["QB"]) is None
     assert appended == []
+
+
+# --------------------------------------------------------------------------
+# _derive_instance_label — runtime hardware label (T4->L4 drift fix)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_derive_instance_label_t4_batch_is_eager():
+    """T4 on the Spot fan-out → ``g4dn.xlarge (T4, Spot)`` (no CUDA-graph
+    suffix, sm_75 < sm_80) — byte-identical to the old hardcoded string."""
+    import src.batch.benchmark as bb
+
+    metrics = {
+        "QB": {"gpu_name": "Tesla T4", "sm": "sm_75", "cuda_graph_active": False},
+        "RB": {"gpu_name": "Tesla T4", "sm": "sm_75", "cuda_graph_active": False},
+    }
+    label = bb._derive_instance_label(metrics, backend="batch", fallback="FB")
+    assert label == "g4dn.xlarge (T4, Spot)"
+
+
+@pytest.mark.unit
+def test_derive_instance_label_l4_batch_adds_cuda_graph():
+    """L4 on the Spot fan-out with capture active → family auto-tracks to
+    ``g6.xlarge`` and the ``, CUDA-graph`` suffix appears, no workflow edit."""
+    import src.batch.benchmark as bb
+
+    metrics = {
+        "QB": {"gpu_name": "NVIDIA L4", "sm": "sm_89", "cuda_graph_active": True},
+        "RB": {"gpu_name": "NVIDIA L4", "sm": "sm_89", "cuda_graph_active": True},
+    }
+    label = bb._derive_instance_label(metrics, backend="batch", fallback="FB")
+    assert label == "g6.xlarge (L4, Spot, CUDA-graph)"
+
+
+@pytest.mark.unit
+def test_derive_instance_label_ec2_is_on_demand():
+    """``backend=ec2`` (warm rollback box) → On-Demand provisioning."""
+    import src.batch.benchmark as bb
+
+    metrics = {"QB": {"gpu_name": "Tesla T4", "sm": "sm_75", "cuda_graph_active": False}}
+    label = bb._derive_instance_label(metrics, backend="ec2", fallback="FB")
+    assert label == "g4dn.xlarge (T4, On-Demand)"
+
+
+@pytest.mark.unit
+def test_derive_instance_label_graph_active_if_any_gpu_position_captured():
+    """Run-level flag: CPU-only K/DST stamp no GPU; the GPU positions still
+    fix the identity and the graph flag (``any``)."""
+    import src.batch.benchmark as bb
+
+    metrics = {
+        "QB": {"gpu_name": "NVIDIA L4", "sm": "sm_89", "cuda_graph_active": True},
+        "K": {"gpu_name": None, "sm": None, "cuda_graph_active": False},
+    }
+    label = bb._derive_instance_label(metrics, backend="batch", fallback="FB")
+    assert label == "g6.xlarge (L4, Spot, CUDA-graph)"
+
+
+@pytest.mark.unit
+def test_derive_instance_label_falls_back_without_gpu_metadata():
+    """Pre-stamping artifacts / all-CPU run → no gpu_name anywhere → the
+    passed --instance-type fallback is used unchanged."""
+    import src.batch.benchmark as bb
+
+    metrics = {"QB": {"position": "QB", "mae": 6.2}, "RB": {"position": "RB", "mae": 4.3}}
+    fallback = "g4dn.xlarge (T4, Spot)"
+    assert bb._derive_instance_label(metrics, backend="batch", fallback=fallback) == fallback
+
+
+@pytest.mark.unit
+def test_derive_instance_label_unknown_gpu_leads_with_gpu_name():
+    """An unmapped GPU degrades to its own short name rather than guessing a
+    wrong instance family."""
+    import src.batch.benchmark as bb
+
+    metrics = {
+        "QB": {"gpu_name": "NVIDIA A100-SXM4-40GB", "sm": "sm_80", "cuda_graph_active": True}
+    }
+    label = bb._derive_instance_label(metrics, backend="batch", fallback="FB")
+    assert label == "A100-SXM4-40GB (Spot, CUDA-graph)"

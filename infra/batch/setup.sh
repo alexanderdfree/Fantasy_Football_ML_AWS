@@ -28,6 +28,12 @@ LOG_GROUP="/aws/batch/job"
 # "All G and VT Spot Instance Requests" — service quota code.
 SPOT_QUOTA_CODE="L-3819A6DF"
 MAX_VCPUS=24
+# GPU Spot instance type for the fan-out. g6.xlarge = L4 (Ada, sm_89): unlocks
+# CUDA-graph capture (sm_80+) that the older g4dn/T4 (sm_75) gates off. Same
+# 4 vCPU as g4dn, so the 24-vCPU "All G and VT Spot" quota covers six in
+# parallel either way. Single source of truth for the CE-create + reconcile
+# paths below.
+INSTANCE_TYPE="g6.xlarge"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { echo "[batch-setup] $*"; }
@@ -236,7 +242,7 @@ if [ "$CE_STATUS" = "None" ] || [ -z "$CE_STATUS" ] || [ "$CE_STATUS" = "null" ]
       \"allocationStrategy\": \"SPOT_PRICE_CAPACITY_OPTIMIZED\",
       \"minvCpus\": 0,
       \"maxvCpus\": $MAX_VCPUS,
-      \"instanceTypes\": [\"g6.xlarge\"],
+      \"instanceTypes\": [\"$INSTANCE_TYPE\"],
       \"subnets\": [$SUBNETS_JSON],
       \"securityGroupIds\": [\"$SG_ID\"],
       \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\",
@@ -270,19 +276,30 @@ if [ "$CE_STATUS" = "None" ] || [ -z "$CE_STATUS" ] || [ "$CE_STATUS" = "null" ]
   done
 else
   log "Compute Environment $COMPUTE_ENV already exists (status: $CE_STATUS)"
-  # Live-account migration: attach the launch template if the CE was
-  # provisioned before Option B landed. update-compute-environment with
+  # Live-account reconcile: bring an existing CE in line with the desired
+  # launch template AND instance type. update-compute-environment with
   # --compute-resources requires the CE to be DISABLED first; cycle
   # state DISABLED → UPDATE → ENABLED, polling VALID between steps.
   # CE has minvCpus=0 so no in-flight instances are disrupted — the next
-  # provisioning picks up the new launch template.
+  # provisioning picks up the change.
+  #
+  # Reconciling instanceTypes (not just the launch template) is load-bearing:
+  # the 2026-05-31 g4dn→g6 migration silently no-op'd on the live CE because
+  # this branch only reconciled the launch template, so re-running setup.sh
+  # could never migrate the instance type in place — the live CE stayed g4dn
+  # until 2026-06-07. See todo/fixed-archive.md.
   CURRENT_LT=$(aws batch describe-compute-environments \
     --compute-environments "$COMPUTE_ENV" \
     --region "$REGION" \
     --query 'computeEnvironments[0].computeResources.launchTemplate.launchTemplateName' \
     --output text 2>/dev/null || echo "None")
-  if [ "$CURRENT_LT" != "$LAUNCH_TEMPLATE_NAME" ]; then
-    log "Attaching launch template $LAUNCH_TEMPLATE_NAME to existing CE (current: $CURRENT_LT)..."
+  CURRENT_INSTANCE_TYPE=$(aws batch describe-compute-environments \
+    --compute-environments "$COMPUTE_ENV" \
+    --region "$REGION" \
+    --query 'computeEnvironments[0].computeResources.instanceTypes[0]' \
+    --output text 2>/dev/null || echo "None")
+  if [ "$CURRENT_LT" != "$LAUNCH_TEMPLATE_NAME" ] || [ "$CURRENT_INSTANCE_TYPE" != "$INSTANCE_TYPE" ]; then
+    log "Reconciling CE (launchTemplate: $CURRENT_LT -> $LAUNCH_TEMPLATE_NAME, instanceType: $CURRENT_INSTANCE_TYPE -> $INSTANCE_TYPE)..."
     log "  step 1/3: DISABLE"
     aws batch update-compute-environment \
       --compute-environment "$COMPUTE_ENV" \
@@ -297,10 +314,10 @@ else
       [ "$STATUS" = "VALID" ] && break
       sleep 5
     done
-    log "  step 2/3: UPDATE launchTemplate"
+    log "  step 2/3: UPDATE instanceTypes + launchTemplate"
     aws batch update-compute-environment \
       --compute-environment "$COMPUTE_ENV" \
-      --compute-resources "{\"launchTemplate\": {\"launchTemplateName\": \"$LAUNCH_TEMPLATE_NAME\", \"version\": \"\$Latest\"}}" \
+      --compute-resources "{\"instanceTypes\": [\"$INSTANCE_TYPE\"], \"launchTemplate\": {\"launchTemplateName\": \"$LAUNCH_TEMPLATE_NAME\", \"version\": \"\$Latest\"}}" \
       --region "$REGION" >/dev/null
     for i in $(seq 1 30); do
       STATUS=$(aws batch describe-compute-environments \
@@ -325,9 +342,9 @@ else
       [ "$STATUS" = "VALID" ] && break
       sleep 5
     done
-    log "CE launch template reconciled — next Spot host gets SOCI userdata."
+    log "CE reconciled — instanceTypes=[$INSTANCE_TYPE], launchTemplate=$LAUNCH_TEMPLATE_NAME. Next Spot host picks up both."
   else
-    log "CE already references launch template $LAUNCH_TEMPLATE_NAME."
+    log "CE already matches desired launch template ($LAUNCH_TEMPLATE_NAME) and instance type ($INSTANCE_TYPE)."
   fi
 fi
 

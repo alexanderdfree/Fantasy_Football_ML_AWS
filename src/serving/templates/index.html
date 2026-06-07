@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fantasy Football Predictor</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Self-hosted (was cdn.jsdelivr.net/npm/chart.js@4.4.0). A blocked CDN
+         left `Chart` undefined, and app.js references it at init, so the whole
+         UI's event wiring threw and died. Vendored under static/ to remove the
+         external dependency; bump by re-downloading the pinned dist file. -->
+    <script src="/static/js/vendor/chart.umd.min.js"></script>
 </head>
 <body>
     <!-- Header -->
@@ -510,8 +514,13 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                     <input type="checkbox" id="history-group-by-model-toggle">
                     Group by model
                 </label>
+                <span class="history-legend">
+                    <span class="history-legend-swatch history-pill-improve"></span> better than prior run
+                    <span class="history-legend-swatch history-pill-regress"></span> worse
+                    <span class="history-legend-best">bold</span> = best model
+                </span>
             </div>
-            <div class="table-container">
+            <div class="table-container" id="history-table-container">
                 <table id="history-table">
                     <thead id="history-head"></thead>
                     <tbody id="history-body">

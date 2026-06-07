@@ -125,7 +125,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 
 ## 5. Open Issues / Follow-Ups
 
-From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
+Standing follow-ups, mapped to decisions (item 1 is also tracked in the [TODO.md](../TODO.md) "Open" list):
 
 1. **K cross-season rolling leakage** — related to D1 (temporal split) and D5 (per-position non-negative targets). Requires either collecting more K games or accepting the bias.
 2. **PPR-only training** — related to D2 (multi-target). Needs a training-matrix flag for scoring format and re-running six position pipelines.
@@ -157,7 +157,7 @@ From [TODO.md](../TODO.md) "Open" section, mapped to decisions:
 - [docs/archive/design_lstm_multihead.md](archive/design_lstm_multihead.md) — LSTM exploration, kept as artifact of the rejection under D4.
 - [docs/archive/design_xgboost_ensemble.md](archive/design_xgboost_ensemble.md) — ensembling consideration, rejected under D3.
 - [docs/expert_comparison.md](expert_comparison.md) — benchmark against published projections (evaluation evidence).
-- [TODO.md](../TODO.md) — issue log (fixed + open).
+- [TODO.md](../TODO.md) — open issue log; the Fixed archive is at [todo/fixed-archive.md](../todo/fixed-archive.md).
 
 ### Commit timeline of inflection points
 

@@ -1352,6 +1352,52 @@ tr.history-row-expandable.expanded .history-caret { transform: rotate(90deg); }
 .history-detail-pos { margin-bottom: 6px; }
 .history-detail-block .pos-model-table { width: auto; min-width: 380px; }
 
+/* Regression highlighting: tint a pill vs the same pos+model's prior run. */
+.history-pill-improve { border-color: var(--accent); background: var(--accent-dim); }
+.history-pill-regress { border-color: var(--red); background: var(--red-dim); }
+.history-pill-best { font-weight: 700; }
+
+/* Legend in the history controls. */
+.history-legend {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.history-legend-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+}
+.history-legend-best { font-weight: 700; color: var(--text-primary); }
+
+/* Retry button on the error state. */
+.history-retry {
+    margin-left: 8px;
+    padding: 3px 10px;
+    font-size: 12px;
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    cursor: pointer;
+}
+.history-retry:hover { background: var(--accent-dim); }
+
+@media (max-width: 768px) {
+    .history-controls { gap: 12px; }
+    #history-table { font-size: 13px; }
+    #history-table .col-history-pr,
+    #history-table .col-history-ts,
+    #history-table .col-history-time { width: auto; }
+    .history-pill { font-size: 11px; padding: 2px 6px; margin: 2px 3px 2px 0; }
+    .history-detail-block .pos-model-table { min-width: 320px; }
+}
+
 /* Predictions tab: expandable row + per-stat breakdown sub-table */
 tr.predictions-row-expandable { cursor: pointer; }
 tr.predictions-row-expandable:hover { background: var(--bg-primary); }
