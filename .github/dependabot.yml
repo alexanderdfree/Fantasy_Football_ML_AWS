@@ -21,6 +21,14 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
+    # torch is intentionally NOT auto-bumped: its pins carry per-platform local
+    # version labels (+cpu / +cu130 in requirements-dev.txt / requirements-gpu.txt
+    # / the Dockerfiles) that Dependabot rewrites incorrectly — it broke the GPU
+    # wheel twice (#880 flipped +cu128 -> +cpu; #964 flipped the CPU pin to
+    # +cu130, uninstallable from the CPU index). torch upgrades are done by hand
+    # (see #957). Security alerts still surface in Settings -> Code security.
+    ignore:
+      - dependency-name: "torch"
     groups:
       # Group all pip updates so a shared package bumps in requirements.txt and
       # src/batch/requirements.txt within the same PR (keeps the drift guard
