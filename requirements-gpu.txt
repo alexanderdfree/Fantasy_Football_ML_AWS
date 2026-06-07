@@ -1,11 +1,13 @@
 # Local NVIDIA-CUDA dev + training environment (Windows 11 / Linux + NVIDIA GPU).
-# GPU analog of requirements-dev.txt: same tooling, but pulls the CUDA 12.8 torch
+# GPU analog of requirements-dev.txt: same tooling, but pulls the CUDA 13.0 torch
 # build (Blackwell / sm_120, e.g. RTX 5080) instead of the CPU wheel.
 # Use ONLY on a CUDA box. macOS/CPU dev and CI keep using requirements-dev.txt.
 # Keep the tool pins below in sync with requirements-dev.txt.
+# NOTE: torch 2.12.0 dropped the cu128 wheel; cu130 (CUDA 13.0) is its
+# Blackwell-capable successor (sm_120), so the index + local label move cu128 -> cu130.
 -r requirements.txt
---extra-index-url https://download.pytorch.org/whl/cu128
-torch==2.11.0+cu128
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.12.0+cu130
 pytest==9.0.3
 pytest-timeout>=2.0
 pytest-cov>=4.0

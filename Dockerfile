@@ -26,7 +26,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system \
         --index-url https://download.pytorch.org/whl/cpu \
         --extra-index-url https://pypi.org/simple \
-        torch==2.11.0 && \
+        torch==2.12.0 && \
     uv pip install --system -r requirements.txt
 
 # All Python source, Flask templates/static, and per-position assets live

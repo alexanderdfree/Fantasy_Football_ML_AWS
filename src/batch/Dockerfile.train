@@ -10,7 +10,7 @@
 #   --build-arg PULL_THROUGH_PREFIX=123456789012.dkr.ecr.<region>.amazonaws.com/dockerhub/
 # Leave unset to pull directly from Docker Hub (original behavior).
 ARG PULL_THROUGH_PREFIX=
-FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
+FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime
 
 # torch.compile (added in PR #183 via _maybe_compile) lazy-compiles graphs at
 # first forward pass. Inductor's CPU vec-ISA probe (pick_vec_isa →
