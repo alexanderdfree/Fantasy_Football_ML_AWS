@@ -152,6 +152,7 @@ def load_team_week_stats(
         return pd.read_parquet(path)
 
     parts = []
+    skipped = []
     for s in seasons:
         url = (
             "https://github.com/nflverse/nflverse-data/releases/download/"
@@ -162,12 +163,22 @@ def load_team_week_stats(
         except Exception as e:
             # nflverse release for the current season can 404 mid-season;
             # skip so cache build succeeds on older seasons.
+            skipped.append(s)
             print(f"WARNING: team_stats fetch failed for {s} ({e}); skipping")
 
     if not parts:
         # Don't poison the cache with an empty frame — let the next call retry.
         return pd.DataFrame()
     df = pd.concat(parts, ignore_index=True)
+    if skipped:
+        # Partial coverage: some seasons failed to fetch. Return what we have for
+        # THIS call, but do NOT persist a partial frame as the authoritative cache
+        # — a cache-hit on the next call would serve the incomplete frame forever,
+        # and downstream fillna(0) would silently zero the missing seasons' team
+        # stats (the cache-survives-gap failure mode this codebase guards against
+        # in redzone_pbp / k.data). (#807)
+        print(f"WARNING: team_stats partial coverage (skipped seasons {skipped}); not caching")
+        return df
     df.to_parquet(path)
     return df
 

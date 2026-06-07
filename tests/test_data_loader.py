@@ -59,16 +59,15 @@ def test_load_team_week_stats_default_seasons_fallback(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
-def test_load_team_week_stats_network_fetches_and_caches(tmp_path, monkeypatch, capsys):
-    """Fresh fetch: 2 of 3 seasons succeed, 1 raises — result merges + caches,
-    the failure is logged via WARNING."""
+def test_load_team_week_stats_partial_fetch_returns_but_does_not_cache(
+    tmp_path, monkeypatch, capsys
+):
+    """Partial fetch: 2 of 3 seasons succeed, 1 raises — the merged frame is
+    returned for THIS call but is NOT cached. Caching a partial frame would let
+    a cache-hit serve the incomplete data forever and downstream fillna(0) would
+    silently zero the missing season's team stats; not caching lets the next call
+    retry once the missing release lands. (#807)"""
     import src.data.loader as loader
-
-    # Capture the real read_parquet for cache round-trip verification — the
-    # monkeypatch below replaces loader.pd.read_parquet, which is the same
-    # object as pd.read_parquet, so the test itself can't call the real one
-    # by name.
-    real_read_parquet = pd.read_parquet
 
     def _fake_read_parquet(path, *args, **kwargs):
         s = str(path)
@@ -81,16 +80,33 @@ def test_load_team_week_stats_network_fetches_and_caches(tmp_path, monkeypatch, 
     monkeypatch.setattr(loader.pd, "read_parquet", _fake_read_parquet)
 
     out = loader.load_team_week_stats([2021, 2022, 2023], cache_dir=str(tmp_path))
-    assert len(out) == 2  # 2021 + 2023 survived
+    assert len(out) == 2  # 2021 + 2023 survived, returned for this call
     assert set(out["season"].tolist()) == {2021, 2023}
-    # Cache file must be written and round-trip the merged frame.
-    cache_path = tmp_path / "team_stats_2021_2023.parquet"
-    assert cache_path.exists()
-    cached = real_read_parquet(cache_path)
-    assert len(cached) == 2
-    assert set(cached["season"].tolist()) == {2021, 2023}
-    # Warning printed for the failing season
-    assert "team_stats fetch failed for 2022" in capsys.readouterr().out
+    # Partial coverage → NOT cached (so the next call retries the missing season).
+    assert not (tmp_path / "team_stats_2021_2023.parquet").exists()
+    out_err = capsys.readouterr().out
+    assert "team_stats fetch failed for 2022" in out_err
+    assert "partial coverage" in out_err
+
+
+@pytest.mark.unit
+def test_load_team_week_stats_full_fetch_caches(tmp_path, monkeypatch):
+    """All seasons succeed → the merged frame IS cached. The #807 no-cache guard
+    only suppresses caching on PARTIAL coverage, so full coverage still persists
+    the authoritative frame for fast subsequent calls."""
+    import src.data.loader as loader
+
+    def _fake_read_parquet(path, *args, **kwargs):
+        s = str(path)
+        yr = 2021 if "2021" in s else 2022
+        return pd.DataFrame({"team": ["KC"], "season": [yr], "week": [1]})
+
+    monkeypatch.setattr(loader.pd, "read_parquet", _fake_read_parquet)
+
+    out = loader.load_team_week_stats([2021, 2022], cache_dir=str(tmp_path))
+    assert len(out) == 2
+    # Full coverage (no skipped seasons) → cache written.
+    assert (tmp_path / "team_stats_2021_2022.parquet").exists()
 
 
 @pytest.mark.unit
