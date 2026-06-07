@@ -432,6 +432,11 @@ jobs:
           # the TODO.md "Benchmark git_hash" archive entry for the failure mode.
           NOTE_SHA="${HEAD_SHA:-$GITHUB_SHA}"
           NOTE_SHA="${NOTE_SHA::7}"
+          # --instance-type is now a FALLBACK: src/batch/benchmark.py derives the
+          # History-tab label at runtime from the gpu_name + cuda_graph_active
+          # fields src/batch/train.py stamps into benchmark_metrics.json (the EC2
+          # warm box is a g4dn/T4, sm_75 < sm_80, so it derives "...(T4, On-Demand)"
+          # and never CUDA-graph). This value only shows if GPU metadata is absent.
           python -m src.batch.benchmark \
             --download-only \
             --backend ec2 \

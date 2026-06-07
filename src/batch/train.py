@@ -39,6 +39,7 @@ from src.shared.model_sync import (
     new_history_key,
     write_manifest,
 )
+from src.shared.platform_detect import detect_platform
 from src.shared.registry import (
     ALL_POSITIONS,
     INFERENCE_REGISTRY,
@@ -47,7 +48,7 @@ from src.shared.registry import (
     is_cpu_only,
 )
 from src.shared.smoke_test import SmokeTestFailed, run_smoke_test
-from src.shared.utils import seed_everything
+from src.shared.utils import cuda_graph_enabled, seed_everything
 from src.shared.utils import timed as _timed
 
 
@@ -430,6 +431,29 @@ def upload_artifacts(s3_bucket, position, model_dir):
         print("Artifact upload complete.")
     finally:
         os.unlink(tmp_path)
+
+
+def _hardware_metadata() -> dict:
+    """Runtime GPU facts for the History-tab hardware label.
+
+    Stamped into ``benchmark_metrics.json`` so ``src/batch/benchmark.py`` builds
+    the instance label from what the job ACTUALLY ran on — ``gpu_name`` and
+    whether CUDA-graph capture was active (``cuda_graph_active``) — instead of a
+    hardcoded workflow string that silently drifts when the compute environment
+    migrates (e.g. T4/g4dn -> L4/g6). ``sm`` records the compute capability that
+    gates capture, so a reader can see *why* it was on/off (sm_75 < sm_80 -> off).
+
+    On a non-CUDA box (CPU-only positions in a CPU container, dry-run, dev/CI)
+    ``gpu_name``/``sm`` are ``None`` and ``cuda_graph_active`` is ``False``;
+    benchmark.py treats a run with no GPU-bearing position as "no metadata" and
+    falls back to its ``--instance-type`` argument.
+    """
+    info = detect_platform()
+    return {
+        "gpu_name": info.gpu_name,
+        "sm": info.sm,
+        "cuda_graph_active": cuda_graph_enabled(),
+    }
 
 
 def _extract_metrics(position, result):
@@ -858,6 +882,10 @@ def main():
     # the S3 upload, matching local benchmark.py's wrap around run_one().
     metrics["elapsed_sec"] = round(time.monotonic() - _t_total, 1)
     metrics["phase_seconds"] = phase_seconds
+    # Stamp the GPU the job ran on + whether CUDA-graph capture was active so
+    # benchmark.py derives the History-tab hardware label at runtime instead of
+    # a hardcoded workflow string (auto-tracks a T4->L4 CE migration).
+    metrics.update(_hardware_metadata())
     metrics_path = os.path.join(model_dir, "benchmark_metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)

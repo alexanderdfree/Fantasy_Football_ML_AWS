@@ -651,6 +651,67 @@ class TestMetricExtraction:
 
 
 # ---------------------------------------------------------------------------
+# Hardware metadata stamping (drives benchmark.py's History-tab label)
+# ---------------------------------------------------------------------------
+
+
+class TestHardwareMetadata:
+    """``_hardware_metadata`` stamps the runtime GPU facts benchmark.py turns
+    into the History-tab instance label (see ``_derive_instance_label``)."""
+
+    def test_stamps_gpu_name_sm_and_graph_active(self, monkeypatch):
+        """L4/sm_89 with capture on → fields benchmark.py renders as a
+        ``g6.xlarge (L4, Spot, CUDA-graph)`` label."""
+        from types import SimpleNamespace
+
+        import src.batch.train as train
+
+        monkeypatch.setattr(
+            train, "detect_platform", lambda: SimpleNamespace(gpu_name="NVIDIA L4", sm="sm_89")
+        )
+        monkeypatch.setattr(train, "cuda_graph_enabled", lambda: True)
+        assert train._hardware_metadata() == {
+            "gpu_name": "NVIDIA L4",
+            "sm": "sm_89",
+            "cuda_graph_active": True,
+        }
+
+    def test_t4_reports_eager(self, monkeypatch):
+        """T4/sm_75 < sm_80 → capture off; benchmark.py omits the CUDA-graph
+        suffix (current production reality)."""
+        from types import SimpleNamespace
+
+        import src.batch.train as train
+
+        monkeypatch.setattr(
+            train, "detect_platform", lambda: SimpleNamespace(gpu_name="Tesla T4", sm="sm_75")
+        )
+        monkeypatch.setattr(train, "cuda_graph_enabled", lambda: False)
+        assert train._hardware_metadata() == {
+            "gpu_name": "Tesla T4",
+            "sm": "sm_75",
+            "cuda_graph_active": False,
+        }
+
+    def test_cpu_box_reports_none(self, monkeypatch):
+        """Non-CUDA box (CPU-only position / dev / CI) → no GPU identity, so
+        benchmark.py falls back to its --instance-type arg."""
+        from types import SimpleNamespace
+
+        import src.batch.train as train
+
+        monkeypatch.setattr(
+            train, "detect_platform", lambda: SimpleNamespace(gpu_name=None, sm=None)
+        )
+        monkeypatch.setattr(train, "cuda_graph_enabled", lambda: False)
+        assert train._hardware_metadata() == {
+            "gpu_name": None,
+            "sm": None,
+            "cuda_graph_active": False,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Artifact copy logic
 # ---------------------------------------------------------------------------
 
