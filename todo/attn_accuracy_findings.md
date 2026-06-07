@@ -6,6 +6,8 @@ Regenerate with:
 
 ```bash
 python -m src.analysis.attn_weekly_accuracy --report report.md --figdir figs --cache .attn_cache
+# add NFL.com + Sleeper expert lines to the weekly chart (network on first fetch):
+python -m src.analysis.attn_weekly_accuracy --experts --report report.md --figdir figs --cache .attn_cache
 ```
 
 ## TL;DR
@@ -54,6 +56,42 @@ head. RB/TE/WR are effectively a wash with LightGBM.
   harder than Ridge — the price of their lower variance.
 
 ![weekly MAE and bias](attn_weekly_accuracy.png)
+
+## 2b. Week-by-week vs the experts (NFL.com + Sleeper)
+
+`--experts` overlays NFL.com and Sleeper (RotoWire) projections on the weekly
+chart. Both are re-scored to the **same PPR `fantasy_points`** the models target
+(via `predictions_to_fantasy_points`) and inherit the loaders' placeholder
+filtering, so a matched row is a *genuine* projection, not a 0.0 stand-in.
+Coverage differs — **NFL.com has no DST, Sleeper has no K** — so the only fair
+single all-lines-comparable chart is the **offense skill positions (QB/RB/WR/TE)**
+on the subset where *both* experts project (5,452 matched player-weeks/seed).
+**Every line is recomputed on that identical subset**, so its MAE runs higher
+than §1's full-population numbers (experts only cover high-volume startable
+players, which are intrinsically higher-variance).
+
+**Season-long MAE on the matched offense subset (lower = better):**
+
+| rank | source | MAE |
+|---|---|---|
+| 1 | **LightGBM** | **4.293** |
+| 2 | Sleeper *(expert)* | 4.324 |
+| 3 | Attention NN | 4.325 |
+| 4 | NN | 4.369 |
+| 5 | NFL.com *(expert)* | 4.397 |
+| 6 | Ridge | 4.470 |
+
+- **Our best model (LightGBM) beats both experts**; **ATTN ties Sleeper** to the
+  thousandth and beats NFL.com. Only Ridge trails NFL.com.
+- Per-week, **LightGBM is best in 8/18 weeks, Sleeper 6, ATTN 2, NN 1, NFL.com
+  1** — Sleeper is a genuinely strong baseline (clearly ahead of NFL.com), but
+  the model ensemble is competitive-to-better head-to-head on the players the
+  experts actually bother to project.
+- Caveat: this is the *hard* population (startable players only); on the full
+  slate including deep bench/streamers the models' lead would widen, but no
+  public expert line exists there to compare against.
+
+![weekly: models vs NFL.com & Sleeper](weekly_models_vs_experts.png)
 
 ## 3. Subgroup: actual-score tier (judged by signed bias)
 
