@@ -65,7 +65,7 @@ src/batch/
   benchmark.py          ← Batch-side benchmark runner (downloads metrics from S3)
   Dockerfile.train      ← GPU training image
   Dockerfile.train.dockerignore
-  build_and_push.sh     ← ECR login + buildx + SOCI index publish
+  build_and_push.sh     ← ECR login + buildx + push
   requirements.txt      ← container-only deps (no torch — base image provides it)
 
 tests/batch/            ← Batch tests live under the top-level tests/ tree
@@ -549,24 +549,18 @@ and [batch-image.yml](../.github/workflows/batch-image.yml) (index
 publisher) MUST stay aligned. SOCI manifest format evolves between
 minor releases; publisher/consumer skew breaks lazy-load silently.
 
-One-time developer setup for local builds: install the `soci` CLI from
-[soci-snapshotter releases](https://github.com/awslabs/soci-snapshotter/releases).
-
 ### Build & push
 
-`src/batch/build_and_push.sh` wires all three together:
+`src/batch/build_and_push.sh` wires the pull-through build + push together:
 
 ```bash
 ./src/batch/build_and_push.sh                        # defaults: us-east-1, ff-training:latest
 IMAGE_TAG=$(git rev-parse --short HEAD) ./src/batch/build_and_push.sh
 USE_PULL_THROUGH=0 ./src/batch/build_and_push.sh     # bypass pull-through (for debugging)
-SKIP_SOCI=1 ./src/batch/build_and_push.sh            # skip SOCI index even if soci is installed
 ```
 
-The script logs in to ECR, builds with the pull-through base, pushes the
-image, and then (if `soci` is present) creates and pushes the SOCI index
-next to the image tag. If `soci` isn't installed, the script warns and
-exits cleanly — image still works, cold starts just aren't accelerated.
+The script logs in to ECR, builds with the pull-through base, and pushes the
+image.
 
 ### Cold-start (baseline 2026-05-20 and Option B target)
 
