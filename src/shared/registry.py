@@ -43,13 +43,6 @@ def get_runner(pos: str):
     return _import_runner_module(pos).run
 
 
-def get_cv_runner(pos: str):
-    pc = _position_config(pos)
-    if not pc.has_cv_runner:
-        raise ValueError(f"CV pipeline not implemented for position: {pos}")
-    return _import_runner_module(pos).run_cv
-
-
 def get_config(pos: str) -> dict:
     """Return the position runner's CONFIG dict (the one passed into
     ``src.shared.pipeline.run_pipeline``). Use ``POSITION_CONFIG`` directly if

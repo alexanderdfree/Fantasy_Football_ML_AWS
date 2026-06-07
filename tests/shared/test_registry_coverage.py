@@ -19,7 +19,6 @@ from src.shared.registry import (
     _flat_attn_kwargs_static,
     accepts_dataframes,
     get_config,
-    get_cv_runner,
     get_inference_spec,
     get_runner,
     is_cpu_only,
@@ -67,7 +66,7 @@ def test_is_cpu_only_raises_on_unknown_position():
 
 
 # --------------------------------------------------------------------------
-# Runner / CV runner / config lookups — triggers lazy import per position
+# Runner / config lookups — triggers lazy import per position
 # --------------------------------------------------------------------------
 
 
@@ -77,19 +76,6 @@ def test_get_runner_returns_callable(pos):
     fn = get_runner(pos)
     assert callable(fn)
     assert fn.__name__ == "run"
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])  # all six now have cv runners
-def test_get_cv_runner_returns_callable(pos):
-    fn = get_cv_runner(pos)
-    assert callable(fn)
-
-
-@pytest.mark.unit
-def test_get_cv_runner_raises_on_unknown_position():
-    with pytest.raises(ValueError, match="Unknown position"):
-        get_cv_runner("XYZ")
 
 
 @pytest.mark.unit

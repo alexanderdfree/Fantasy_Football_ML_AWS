@@ -251,8 +251,7 @@ class TestQBRunCVPipelineWithLGBM:
 
 @pytest.mark.unit
 def test_run_qb_cv_pipeline_wrapper_dispatches_to_run_cv_pipeline(monkeypatch):
-    """``QB.run.run_cv`` is the wrapper called by
-    ``--cv`` and ``src.shared.registry.get_cv_runner('QB')``. Verify it forwards
+    """``QB.run.run_cv`` is the wrapper called by ``--cv``. Verify it forwards
     to ``run_cv_pipeline`` with the QB position + config — without paying for
     the real CV training.
     """

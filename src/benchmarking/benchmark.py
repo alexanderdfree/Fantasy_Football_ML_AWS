@@ -78,7 +78,8 @@ def run_one(position):
     The single-split path only; ``--cv`` was collapsed into ``--rolling-origin``
     (PR #719), so the rolling-origin branch in ``main`` calls
     ``run_rolling_origin`` and never reaches here with a CV request — the old
-    ``cv``/``get_cv_runner`` parameter was unreachable and has been removed.
+    ``cv`` parameter (which dispatched to each position's ``run_cv``) was
+    unreachable and has been removed.
     """
     from src.shared.registry import get_runner
     from src.shared.utils import seed_everything
