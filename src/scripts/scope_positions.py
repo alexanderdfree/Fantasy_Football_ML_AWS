@@ -46,10 +46,11 @@ ALL_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
 #      production models. New tuner/ablation files should live in
 #      ``src/tuning/`` (not in this regex at all); the lookahead is
 #      belt-and-suspenders against a future ``src/batch/`` placement.
-#   2. Exactly ``launch.py`` and ``benchmark.py`` — job-submission
-#      orchestration and read-only post-hoc benchmark aggregation. Neither
-#      changes a model artifact, so editing them shouldn't burn a 6-position
-#      GPU retrain. Matched by exact basename (``(?:launch|benchmark)\.py$``),
+#   2. Exactly ``launch.py``, ``benchmark.py``, and ``build_and_push.sh`` —
+#      job-submission orchestration, read-only post-hoc benchmark aggregation,
+#      and the local image build/push helper. None changes a model artifact, so
+#      editing them shouldn't burn a 6-position GPU retrain. Matched by exact
+#      basename (``(?:launch|benchmark)\.py$`` / ``build_and_push\.sh$``),
 #      NOT substring, so a future ``benchmark_runner.py`` / ``relaunch.py``
 #      still triggers conservatively. ACCEPTED RISK: ``launch.py`` also owns
 #      the seed default, job-definition dispatch, and data-split upload — a
@@ -66,7 +67,7 @@ ALL_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
 # silently scoped to no positions and skipped the retrain.
 _GLOBAL_REGEX = re.compile(
     r"^src/(shared|data|features)/"
-    r"|^src/batch/(?!.*(?:tune|ablate)|(?:launch|benchmark)\.py$)"
+    r"|^src/batch/(?!.*(?:tune|ablate)|(?:launch|benchmark)\.py$|build_and_push\.sh$)"
     r"|^src/(__init__|config)\.py$"
     r"|^requirements\.txt$"
 )

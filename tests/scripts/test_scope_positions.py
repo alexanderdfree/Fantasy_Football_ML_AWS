@@ -219,7 +219,15 @@ class TestSrcBatchTuneAblateExcluded:
     def test_src_batch_real_training_still_triggers(self, path):
         assert scope_positions.compute_positions([path]) == ALL_SIX
 
-    @pytest.mark.parametrize("path", ["src/batch/launch.py", "src/batch/benchmark.py"])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/batch/launch.py",
+            "src/batch/benchmark.py",
+            # the local image build/push helper — packaging only, never trains (#362 F13)
+            "src/batch/build_and_push.sh",
+        ],
+    )
     def test_src_batch_orchestration_files_excluded(self, path):
         # launch.py (job submission) and benchmark.py (read-only post-hoc
         # benchmark aggregation) never change a model artifact, so editing them
