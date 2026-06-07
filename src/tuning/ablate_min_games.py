@@ -58,11 +58,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from src.config import SPLITS_DIR  # noqa: E402
-from src.shared.benchmark_utils import (  # noqa: E402
-    append_to_history,
-    get_git_hash,
-    utc_now_iso,
-)
+from src.tuning.history import append_ablation_run  # noqa: E402
 
 ABLATION_NAME = "min_games_filter"
 HISTORY_DIR = "benchmark_history"
@@ -285,22 +281,18 @@ def print_position_summary(
 
 
 def _write_ablation(args, all_results: dict) -> None:
-    now = utc_now_iso()
-    git_hash = get_git_hash()
-    entry = {
-        "run_id": f"{now}_{git_hash}_{ABLATION_NAME}",
-        "timestamp": now,
-        "git_hash": git_hash,
-        "kind": "ablation",
-        "name": ABLATION_NAME,
-        "thresholds": args.thresholds,
-        "baseline_threshold": args.baseline_threshold,
-        "seeds": [BASE_SEED + i for i in range(args.seeds)],
-        "skip_nn": args.skip_nn,
-        "positions": args.positions,
-        "results": all_results,
-    }
-    append_to_history(os.path.join(HISTORY_DIR, "ablations"), entry)
+    append_ablation_run(
+        ABLATION_NAME,
+        {
+            "thresholds": args.thresholds,
+            "baseline_threshold": args.baseline_threshold,
+            "seeds": [BASE_SEED + i for i in range(args.seeds)],
+            "skip_nn": args.skip_nn,
+            "positions": args.positions,
+            "results": all_results,
+        },
+        history_dir=HISTORY_DIR,
+    )
 
 
 def parse_args(argv=None) -> argparse.Namespace:

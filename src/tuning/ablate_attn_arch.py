@@ -71,8 +71,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso  # noqa: E402
 from src.tuning.ablation_runner import fmt_mean_std  # noqa: E402
+from src.tuning.history import append_ablation_run
 
 ABLATION_NAME = "attn_arch"
 HISTORY_DIR = "benchmark_history"
@@ -300,20 +300,11 @@ def _verdict(
 def _write_ablation(
     rows: list[dict], position: str, seeds: list[int], variants_run: list[str]
 ) -> None:
-    now = utc_now_iso()
-    git_hash = get_git_hash()
-    entry = {
-        "run_id": f"{now}_{git_hash}_{ABLATION_NAME}",
-        "timestamp": now,
-        "git_hash": git_hash,
-        "kind": "ablation",
-        "name": ABLATION_NAME,
-        "position": position,
-        "seeds": seeds,
-        "variants_run": variants_run,
-        "results": rows,
-    }
-    append_to_history(os.path.join(HISTORY_DIR, "ablations"), entry)
+    append_ablation_run(
+        ABLATION_NAME,
+        {"position": position, "seeds": seeds, "variants_run": variants_run, "results": rows},
+        history_dir=HISTORY_DIR,
+    )
 
 
 def main() -> None:

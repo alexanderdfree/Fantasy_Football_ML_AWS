@@ -50,7 +50,6 @@ position (minutes). ``--positions`` subsets the work.
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import os
 from collections.abc import Callable, Sequence
@@ -83,6 +82,7 @@ from src.shared.aggregate_targets import (
     predictions_to_fantasy_points,
 )
 from src.shared.evaluation import compute_metrics, compute_ranking_metrics
+from src.shared.registry import get_runner
 
 EVAL_SEASONS_DEFAULT: tuple[int, ...] = tuple(TEST_SEASONS) if TEST_SEASONS else (2025,)
 TARGET_POSITIONS_DEFAULT: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
@@ -194,8 +194,7 @@ def _default_model_preds(
     is honored downstream by filtering the join, so passing a season the pipeline
     didn't test on simply yields an empty overlap (surfaced as a skip).
     """
-    module = importlib.import_module(f"src.{pos.lower()}.run_pipeline")
-    result = module.run()
+    result = get_runner(pos)()
     test_df = result.get("test_df")
     if test_df is None:
         raise KeyError(f"{pos} run() result has no 'test_df'")

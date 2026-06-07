@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
-import importlib
 import json
 import os
 import statistics
@@ -38,6 +37,7 @@ from typing import Any
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso  # noqa: E402
+from src.shared.registry import get_config, get_runner
 
 ANALYSIS_NAME = "cuda_graph_gradscale"
 HISTORY_DIR = Path("benchmark_history") / "ablations"
@@ -402,8 +402,7 @@ def main() -> None:
         fixed_variant_env[INIT_SCALE_ENV] = str(args.fixed_scale_init)
 
     position = args.position.upper()
-    mod = importlib.import_module(f"src.{position.lower()}.run_pipeline")
-    base_cfg, run_fn = mod.CONFIG, mod.run
+    base_cfg, run_fn = get_config(position), get_runner(position)
     targets = base_cfg["targets"]
 
     run_id = f"{utc_now_iso().replace(':', '-')}_{get_git_hash()}_{position.lower()}"

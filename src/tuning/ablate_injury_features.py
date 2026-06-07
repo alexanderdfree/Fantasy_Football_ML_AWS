@@ -48,11 +48,7 @@ from src.analysis.analysis_rb_lgbm_disagreement import (  # noqa: E402  reuse pu
     per_model_metrics,
 )
 from src.analysis.injury_subgroup_error import SMALL_N, SUBGROUP_SPECS  # noqa: E402
-from src.shared.benchmark_utils import (  # noqa: E402
-    append_to_history,
-    get_git_hash,
-    utc_now_iso,
-)
+from src.tuning.history import append_ablation_run  # noqa: E402
 
 ABLATION_NAME = "injury_features"
 HISTORY_DIR = "benchmark_history"
@@ -210,18 +206,7 @@ def _print_cross_summary(records: list[dict]) -> None:
 
 
 def _write_ablation(records: list[dict], seed: int) -> None:
-    now = utc_now_iso()
-    git_hash = get_git_hash()
-    entry = {
-        "run_id": f"{now}_{git_hash}_{ABLATION_NAME}",
-        "timestamp": now,
-        "git_hash": git_hash,
-        "kind": "ablation",
-        "name": ABLATION_NAME,
-        "seed": seed,
-        "results": records,
-    }
-    append_to_history(os.path.join(HISTORY_DIR, "ablations"), entry)
+    append_ablation_run(ABLATION_NAME, {"seed": seed, "results": records}, history_dir=HISTORY_DIR)
 
 
 def main() -> None:
