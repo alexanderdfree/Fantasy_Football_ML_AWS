@@ -2918,16 +2918,18 @@ def _benchmark_history_dir() -> str:
     return os.path.join(repo_root, "benchmark_history")
 
 
-def _extract_per_target(raw) -> dict:
-    """Flatten a stored ``{model}_per_target`` block to ``{target: mae}``.
+def _extract_per_target(raw, metric: str = "mae") -> dict:
+    """Flatten a stored ``{model}_per_target`` block to ``{target: <metric>}``.
 
     The benchmark files store per-target metrics as
-    ``{target: {"mae": float, "r2": float}}`` (see
+    ``{target: {"mae": float, "rmse": float, "r2": float}}`` (see
     ``src/shared/benchmark_utils.py::_per_target``). The History tab's detailed
-    mode only needs MAE, so we drop r2. Targets whose MAE is NaN/None (scrubbed
-    by ``_safe_num``) are dropped so the frontend never renders ``undefined``.
-    Returns ``{}`` when ``raw`` is absent or not a dict — callers treat empty as
-    "no detail" and omit the ``per_target`` key entirely, which keeps the
+    mode renders one metric at a time, so ``metric`` ("mae" or "rmse") selects
+    which value to pull; r2 is never surfaced here. Targets whose value is
+    NaN/None (scrubbed by ``_safe_num``) are dropped so the frontend never
+    renders ``undefined``. Returns ``{}`` when ``raw`` is absent/not a dict, or
+    when no target carries the requested metric (runs predating rmse) — callers
+    treat empty as "no detail" and omit the key entirely, which keeps the
     existing exact-equality pill assertions green.
     """
     if not isinstance(raw, dict):
@@ -2936,9 +2938,9 @@ def _extract_per_target(raw) -> dict:
     for target, v in raw.items():
         if not isinstance(v, dict):
             continue
-        mae = _safe_num(v.get("mae"))
-        if mae is not None:
-            out[target] = round(mae, 3)
+        val = _safe_num(v.get(metric))
+        if val is not None:
+            out[target] = round(val, 3)
     return out
 
 
@@ -2963,12 +2965,22 @@ def _benchmark_row(entry: dict) -> dict:
         for m in _BENCHMARK_MODELS:
             mae = _safe_num(r.get(f"{m}_mae"))
             pill = {"position": pos, "mae": round(mae, 3) if mae is not None else None}
-            # Detailed mode (History tab) reads this per-target MAE breakdown.
-            # Omit the key when there's no detail so the at-a-glance pill stays
-            # exactly {position, mae} (untrained positions, old-format runs).
+            # rmse powers the History tab's MAE/RMSE toggle. Additive and omitted
+            # when absent (runs predating rmse) so the at-a-glance pill stays
+            # exactly {position, mae} and the frontend renders the RMSE view as
+            # "--" for those rows.
+            rmse = _safe_num(r.get(f"{m}_rmse"))
+            if rmse is not None:
+                pill["rmse"] = round(rmse, 3)
+            # Detailed mode reads these per-target breakdowns — one map per
+            # metric. Omit when there's no detail so the pill stays minimal
+            # (untrained positions, old-format runs).
             per_target = _extract_per_target(r.get(f"{m}_per_target"))
             if per_target:
                 pill["per_target"] = per_target
+            per_target_rmse = _extract_per_target(r.get(f"{m}_per_target"), "rmse")
+            if per_target_rmse:
+                pill["per_target_rmse"] = per_target_rmse
             pills[m].append(pill)
         elapsed = _safe_num(r.get("elapsed_sec"))
         if elapsed is not None:

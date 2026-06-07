@@ -502,18 +502,22 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                 </div>
                 <div>
                     <div class="approach-title">Benchmark History</div>
-                    <div class="approach-desc">One row per CI training run, newest first. Each MAE cell lists every position trained in that run, on the position's raw-stat scale. PRs that only touch a subset of positions retrain just those.</div>
+                    <div class="approach-desc">One row per CI training run, newest first. Each cell lists every position trained in that run, on the position's raw-stat scale; toggle MAE/RMSE to switch the error metric. PRs that only touch a subset of positions retrain just those.</div>
                 </div>
             </div>
             <div class="history-controls">
                 <label class="history-check">
                     <input type="checkbox" id="history-detailed-toggle">
-                    Detailed mode <span class="history-check-hint">(click a run for per-target MAE)</span>
+                    Detailed mode <span class="history-check-hint">(click a run for the per-target breakdown)</span>
                 </label>
                 <label class="history-check">
                     <input type="checkbox" id="history-group-by-model-toggle">
                     Group by model
                 </label>
+                <span class="pill-group history-metric-toggle" id="history-metric-toggle">
+                    <button class="pill active" type="button" data-metric="mae">MAE</button>
+                    <button class="pill" type="button" data-metric="rmse">RMSE</button>
+                </span>
                 <span class="history-legend">
                     <span class="history-legend-swatch history-pill-improve"></span> better than prior run
                     <span class="history-legend-swatch history-pill-regress"></span> worse

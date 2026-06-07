@@ -1618,6 +1618,9 @@ const HISTORY_MODEL_LABELS = { ridge: "Ridge", nn: "NN", attn_nn: "Attn NN", lgb
 const HISTORY_MODEL_COL_CLASS = { ridge: "ridge-col", nn: "nn-col", attn_nn: "attn-nn-col", lgbm: "lgbm-col" };
 const HISTORY_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"];
 let historyData = null;
+// Active error metric for the History tab (MAE/RMSE toggle, mirrors the
+// Comparison tab). Re-renders from cached historyData on change — never refetches.
+let historyMetric = "mae";
 
 function formatTrainingTime(seconds) {
     if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return "--";
@@ -1636,29 +1639,30 @@ function formatHistoryDelta(delta) {
 }
 
 function renderSummaryPills(entries) {
-    // Generic pill list: each entry is {label, mae, deltaClass?, delta?, isBest?}.
-    // label is a position (group-by-model layout) or a model name
-    // (group-by-position). mae=null renders as "--" (that position-model pair
-    // didn't train in this run); empty list renders an em-dash. deltaClass tints
-    // the pill green/red vs the prior run for that pos+model; isBest bolds the
-    // best model in a group-by-position cell. The optional per_target field
+    // Generic pill list: each entry is {label, value, deltaClass?, delta?, isBest?}.
+    // `value` is the active metric (MAE or RMSE). label is a position
+    // (group-by-model layout) or a model name (group-by-position). value=null
+    // renders as "--" (that position-model pair didn't train in this run, or has
+    // no value for the active metric); empty list renders an em-dash. deltaClass
+    // tints the pill green/red vs the prior run for that pos+model; isBest bolds
+    // the best model in a group-by-position cell. The optional per_target field
     // carried on pills is ignored here — it only drives the detailed-mode expansion.
     if (!Array.isArray(entries) || entries.length === 0) return '<span class="history-empty">—</span>';
     return entries
         .map(e => {
-            const value = e.mae == null
+            const display = e.value == null
                 ? '<span class="history-pill-skip">--</span>'
-                : fmt(e.mae, 2);
+                : fmt(e.value, 2);
             const cls = ["history-pill", e.deltaClass, e.isBest ? "history-pill-best" : null]
                 .filter(Boolean)
                 .join(" ");
-            const title = e.mae == null ? "" : formatHistoryDelta(e.delta);
-            return `<span class="${cls}"${title}><span class="history-pill-pos">${escapeHtml(e.label)}</span> ${value}</span>`;
+            const title = e.value == null ? "" : formatHistoryDelta(e.delta);
+            return `<span class="${cls}"${title}><span class="history-pill-pos">${escapeHtml(e.label)}</span> ${display}</span>`;
         })
         .join("");
 }
 
-function historyColumns(groupByPosition) {
+function historyColumns(groupByPosition, metric) {
     // Group-by-position (default): one column per position. These carry no
     // .{model}-col class, so the page-wide #model-display hide rule is
     // intentionally inert here (model becomes an inner dimension). Group-by-model:
@@ -1666,30 +1670,31 @@ function historyColumns(groupByPosition) {
     if (groupByPosition) {
         return HISTORY_POSITIONS.map(pos => ({ key: pos, label: pos, cls: "col-history-mae" }));
     }
+    const metricLabel = metric === "rmse" ? "RMSE" : "MAE";
     return HISTORY_MODELS.map(m => ({
         key: m,
-        label: `${HISTORY_MODEL_LABELS[m]} MAE`,
+        label: `${HISTORY_MODEL_LABELS[m]} ${metricLabel}`,
         cls: `col-history-mae ${HISTORY_MODEL_COL_CLASS[m]}`,
     }));
 }
 
-function historyCellEntries(row, columnKey, groupByPosition) {
+function historyCellEntries(row, columnKey, groupByPosition, metric) {
     if (groupByPosition) {
         // Column is a position; inner entries are the four models at that position.
-        // The four MAEs share a scale here, so we can flag the best (lowest) one.
+        // The four values share a scale here, so we can flag the best (lowest) one.
         const posIdx = HISTORY_POSITIONS.indexOf(columnKey);
         const entries = HISTORY_MODELS.map(m => {
             const p = row[m] && row[m][posIdx];
             return {
                 label: HISTORY_MODEL_LABELS[m],
-                mae: p ? p.mae : null,
+                value: p ? (p[metric] ?? null) : null,
                 deltaClass: p ? p.deltaClass : null,
                 delta: p ? p.delta : null,
             };
         });
         let bestIdx = -1;
         entries.forEach((e, i) => {
-            if (e.mae != null && (bestIdx < 0 || e.mae < entries[bestIdx].mae)) bestIdx = i;
+            if (e.value != null && (bestIdx < 0 || e.value < entries[bestIdx].value)) bestIdx = i;
         });
         if (bestIdx >= 0) entries[bestIdx].isBest = true;
         return entries;
@@ -1698,7 +1703,7 @@ function historyCellEntries(row, columnKey, groupByPosition) {
     // No best-flag: positions sit on different raw-stat scales (not comparable).
     return (row[columnKey] || []).map(p => ({
         label: p.position,
-        mae: p.mae,
+        value: p[metric] ?? null,
         deltaClass: p.deltaClass,
         delta: p.delta,
     }));
@@ -1740,24 +1745,34 @@ function formatHistoryTimestamp(ts) {
 
 const HISTORY_DELTA_EPS = 0.005; // only color a change the 2-decimal display reflects
 
-function annotateHistoryDeltas(rows) {
+function annotateHistoryDeltas(rows, metric) {
     // Tag each pill with a deltaClass (improve/regress) vs the most recent
-    // EARLIER run that trained the same position+model. Runs only retrain a
-    // subset of positions, so the baseline is not the adjacent table row — a
-    // lastSeen map keyed by `${position}|${model}` carries it across the gaps.
-    // Walk oldest→newest (rows arrive newest-first) so lastSeen is always the
-    // prior value. First appearance of a pos+model stays neutral (no baseline).
+    // EARLIER run that trained the same position+model, on the active metric.
+    // Runs only retrain a subset of positions, so the baseline is not the
+    // adjacent table row — a lastSeen map keyed by `${position}|${model}` carries
+    // it across the gaps. Walk oldest→newest (rows arrive newest-first) so
+    // lastSeen is always the prior value. First appearance of a pos+model stays
+    // neutral (no baseline). Recomputed on every render so the tints track the
+    // toggle; pills with no value for the active metric (e.g. RMSE on a run that
+    // predates it) get their delta/deltaClass cleared so a prior metric's tint
+    // doesn't linger.
     if (!Array.isArray(rows)) return;
     const lastSeen = {};
     for (let i = rows.length - 1; i >= 0; i--) {
         const row = rows[i];
         for (const m of HISTORY_MODELS) {
             for (const p of row[m] || []) {
-                if (!p || p.mae == null) continue;
+                if (!p) continue;
+                const cur = p[metric];
+                if (cur == null) {
+                    p.delta = null;
+                    p.deltaClass = null;
+                    continue;
+                }
                 const key = `${p.position}|${m}`;
                 const prev = lastSeen[key];
                 if (prev != null) {
-                    const delta = p.mae - prev;
+                    const delta = cur - prev;
                     p.delta = delta;
                     p.deltaClass =
                         delta <= -HISTORY_DELTA_EPS
@@ -1769,7 +1784,7 @@ function annotateHistoryDeltas(rows) {
                     p.delta = null;
                     p.deltaClass = null;
                 }
-                lastSeen[key] = p.mae;
+                lastSeen[key] = cur;
             }
         }
     }
@@ -1787,7 +1802,6 @@ async function loadHistory() {
             targetLabels: data.target_labels || {},
             targetUnits: data.target_units || {},
         };
-        annotateHistoryDeltas(historyData.rows);
         renderHistory();
     } catch (e) {
         console.error("Failed to load benchmark history:", e);
@@ -1816,7 +1830,11 @@ function renderHistory() {
     // Checkbox is "Group by model"; default (unchecked) groups by position.
     const groupByPosition = !document.getElementById("history-group-by-model-toggle").checked;
     const detailed = document.getElementById("history-detailed-toggle").checked;
-    const columns = historyColumns(groupByPosition);
+    const metric = historyMetric;
+    // Deltas (and their green/red tints) are metric-specific, so recompute on
+    // every render rather than once at fetch time.
+    annotateHistoryDeltas(historyData.rows, metric);
+    const columns = historyColumns(groupByPosition, metric);
     const colSpan = columns.length + 3; // PR + Timestamp + variable cols + Training time
 
     head.innerHTML = `<tr>
@@ -1840,7 +1858,7 @@ function renderHistory() {
         .map(row => {
             const expandable = detailed && historyRowHasDetail(row);
             const cells = columns
-                .map(c => `<td class="${c.cls}">${renderSummaryPills(historyCellEntries(row, c.key, groupByPosition))}</td>`)
+                .map(c => `<td class="${c.cls}">${renderSummaryPills(historyCellEntries(row, c.key, groupByPosition, metric))}</td>`)
                 .join("");
             const caret = expandable ? '<span class="history-caret">▸</span>' : "";
             const mainRow = `<tr${expandable ? ' class="history-row-expandable"' : ""}>
@@ -1849,21 +1867,26 @@ function renderHistory() {
                 ${cells}
                 <td class="col-history-time">${formatTrainingTime(row.total_elapsed_sec)}</td>
             </tr>`;
-            return mainRow + (expandable ? renderHistoryDetail(row, colSpan) : "");
+            return mainRow + (expandable ? renderHistoryDetail(row, colSpan, metric) : "");
         })
         .join("");
 }
 
-function renderHistoryDetail(row, colSpan) {
+function renderHistoryDetail(row, colSpan, metric) {
     // One block per trained position: a target(rows) x model(cols) table that
     // mirrors the Model Performance tab's renderPositionModelDetail, reusing
     // formatTargetMae for units + fantasy-point equivalents. Orientation is
     // fixed (per-position blocks) regardless of the group-by-position toggle —
     // targets are position-specific, so model-as-column is the only clean layout.
     const { targetLabels, targetUnits } = historyData;
+    // Values come from the metric-specific per-target map; the RMSE map is
+    // absent on runs predating it, so those cells render "--".
+    const ptKey = metric === "rmse" ? "per_target_rmse" : "per_target";
     const blocks = HISTORY_POSITIONS.map((pos, posIdx) => {
-        // Target set/order comes from the first model that has detail for this
-        // position (every model shares a position's targets).
+        // Target set/order always comes from the MAE map (per_target), which is
+        // present whenever a cell has detail — so a run with no per-target RMSE
+        // still lists its targets (rendered "--" under the RMSE view) rather than
+        // collapsing the block.
         let targets = null;
         for (const m of HISTORY_MODELS) {
             const pt = row[m] && row[m][posIdx] && row[m][posIdx].per_target;
@@ -1875,7 +1898,7 @@ function renderHistoryDetail(row, colSpan) {
                 const label = targetLabels[tkey] || tkey;
                 const unit = targetUnits[tkey];
                 const cells = HISTORY_MODELS.map(m => {
-                    const pt = row[m] && row[m][posIdx] && row[m][posIdx].per_target;
+                    const pt = row[m] && row[m][posIdx] && row[m][posIdx][ptKey];
                     const val = pt ? pt[tkey] : null;
                     return `<td class="tm-val">${escapeHtml(formatTargetMae(val, tkey, unit, currentScoring))}</td>`;
                 }).join("");
@@ -1901,6 +1924,20 @@ function setupHistoryControls() {
         const el = document.getElementById(id);
         if (el) el.addEventListener("change", renderHistory);
     });
+    // MAE/RMSE segmented toggle (mirrors setupComparisonToggle): set the active
+    // metric and re-render from cached historyData — no refetch.
+    const metricToggle = document.getElementById("history-metric-toggle");
+    if (metricToggle) {
+        metricToggle.querySelectorAll(".pill").forEach(pill => {
+            pill.addEventListener("click", () => {
+                historyMetric = pill.dataset.metric;
+                metricToggle
+                    .querySelectorAll(".pill")
+                    .forEach(p => p.classList.toggle("active", p === pill));
+                renderHistory();
+            });
+        });
+    }
     // Delegated expand/collapse: click a detailed-mode row to toggle its detail
     // row (the immediate next sibling). Clicks on the PR/commit link still work.
     const tbody = document.getElementById("history-body");
