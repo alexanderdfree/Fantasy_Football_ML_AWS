@@ -1,0 +1,157 @@
+name: Ablate LR-scheduler type (Batch)
+
+# Manually-triggered LR-scheduler-type A/B across positions. Mirrors
+# retune-nn-batch.yml's per-position Spot fan-out — one Batch job per position
+# (g4dn.xlarge / T4 is the live compute environment) — but runs
+# `--ablation scheduler-type` instead of `--mode tune`. Each container runs the
+# 3-way (onecycle / cosine_warm_restarts / plateau) A/B across SEEDS and uploads
+# s3://$S3_BUCKET/ablate_scheduler/{pos}/result.json; the aggregate job merges
+# them into a step-summary table + an artifact.
+#
+# Eager by design: the launcher forces FF_CUDA_GRAPH=0 so the scheduler deltas
+# are bit-comparable (on the T4 graphs are gated off anyway; on a future sm_80+
+# CE this keeps the A/B clean). No model artifact upload, no benchmark_history
+# commit — diagnostic only, like ablate-rb-gate.yml. Read an UNTUNED alternative
+# beating tuned production as the strong signal; confirm with >=5 seeds + a tuned
+# sweep before changing any POSITION_CONFIG.
+#
+# Trigger: Actions → "Ablate LR-scheduler type (Batch)" → Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      positions:
+        description: "Space-separated positions (subset of QB RB WR TE K DST)"
+        default: "QB RB WR TE K DST"
+      seeds:
+        description: "Comma-separated seeds per position"
+        default: "42,43,44"
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  S3_BUCKET: ff-predictor-training
+
+permissions:
+  contents: read
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    outputs:
+      positions: ${{ steps.parse.outputs.positions }}
+      matrix: ${{ steps.parse.outputs.matrix }}
+      seeds: ${{ steps.parse.outputs.seeds }}
+    steps:
+      - id: parse
+        env:
+          POS_INPUT: ${{ github.event.inputs.positions }}
+          SEEDS_INPUT: ${{ github.event.inputs.seeds }}
+        run: |
+          set -eu
+          POS_LIST=$(printf '%s' "$POS_INPUT" | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
+          if [ -z "$POS_LIST" ]; then
+            echo "positions input is empty" >&2
+            exit 1
+          fi
+          SEEDS=$(printf '%s' "$SEEDS_INPUT" | tr -d '[:space:]')
+          if [ -z "$SEEDS" ]; then
+            SEEDS="42,43,44"
+          fi
+          if ! printf '%s' "$SEEDS" | grep -qE '^[0-9]+(,[0-9]+)*$'; then
+            echo "seeds must be comma-separated integers, got: $SEEDS" >&2
+            exit 1
+          fi
+          MATRIX=$(printf '%s\n' "$POS_LIST" | jq -Rc 'split(" ") | map(select(length > 0))')
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "positions=$POS_LIST" >> "$GITHUB_OUTPUT"
+          echo "seeds=$SEEDS" >> "$GITHUB_OUTPUT"
+          echo "Positions: $POS_LIST   Seeds: $SEEDS   Matrix: $MATRIX"
+
+  submit:
+    needs: parse
+    runs-on: ubuntu-latest
+    strategy:
+      # Independent positions — one Spot failure shouldn't cancel the rest.
+      fail-fast: false
+      matrix:
+        position: ${{ fromJson(needs.parse.outputs.matrix) }}
+    # N seeds x 3 schedulers runs/position, no LightGBM; ~15-40 min on the T4,
+    # Spot retries can extend it. 3h ceiling matches the launcher wait timeout.
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        # Pinned per CodeQL actions/unpinned-tag — SHA = aws-actions/configure-aws-credentials v4.
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install launch deps
+        # launch_ablate_scheduler imports src.batch.launch, whose top-level
+        # `from src.shared.registry import ...` pulls numpy via position_config;
+        # boto3 covers the Batch submit + wait_for_jobs. Container deps live in ECR.
+        run: pip install boto3 numpy
+
+      - name: Submit + wait for ablation job (${{ matrix.position }})
+        env:
+          POS: ${{ matrix.position }}
+          SEEDS: ${{ needs.parse.outputs.seeds }}
+        run: |
+          set -eu
+          echo "Submitting scheduler-type ablation for $POS (seeds $SEEDS)"
+          python -m src.tuning.launch_ablate_scheduler --positions "$POS" --seeds "$SEEDS"
+
+  aggregate:
+    needs: [parse, submit]
+    runs-on: ubuntu-latest
+    # always(): aggregate whatever made it to S3 even if some positions failed.
+    if: always() && needs.parse.result == 'success'
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install aggregator deps
+        run: pip install boto3
+
+      - name: Aggregate per-position results from S3
+        env:
+          POSITIONS: ${{ needs.parse.outputs.positions }}
+        run: |
+          set -eu
+          # $POSITIONS intentionally unquoted — argparse nargs="+" needs separate argv entries.
+          python -m src.tuning.aggregate_scheduler \
+            --positions $POSITIONS \
+            --bucket "$S3_BUCKET" \
+            --output scheduler_ablation_results.json \
+            --summary-output "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload merged results JSON
+        uses: actions/upload-artifact@v7
+        with:
+          name: scheduler_ablation_results
+          path: scheduler_ablation_results.json
+          if-no-files-found: warn

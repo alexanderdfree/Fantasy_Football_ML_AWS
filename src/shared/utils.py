@@ -23,8 +23,9 @@ _VALID_DEVICES = ("auto", "cpu", "cuda", "mps")
 _AMP_DTYPE_ENV = "FF_AMP_DTYPE"
 _VALID_AMP = ("auto", "bf16", "fp16", "fp32")
 
-# Operator-facing CUDA-graph capture toggle, analogous to FF_COMPILE. Opt-in
-# (off unless explicitly set) and sm_80+ only — see ``cuda_graph_enabled``.
+# Operator-facing CUDA-graph capture override (NOT the trigger): capture
+# autodetects ON for CUDA sm_80+; set this falsy to force the eager path —
+# see ``cuda_graph_enabled``.
 _CUDA_GRAPH_ENV = "FF_CUDA_GRAPH"
 
 
@@ -142,32 +143,42 @@ def mps_enabled() -> bool:
 
 
 def cuda_graph_enabled() -> bool:
-    """Whether hand-rolled CUDA graph capture is requested for NN training.
+    """Whether hand-rolled CUDA graph capture is active for NN training.
 
-    Opt-in speed knob, mirroring :func:`_maybe_compile`'s ``FF_COMPILE`` gate
-    (src/shared/pipeline.py): **off unless ``$FF_CUDA_GRAPH`` is truthy**, and
-    then only on CUDA sm_80+. Capturing the NN's forward+backward once and
-    replaying it collapses the hundreds of thousands of microsecond kernel
-    launches the tiny attention model is bottlenecked on (it is GPU-launch-
-    bound, not compute-bound). Unlike ``FF_COMPILE`` (torch.compile), graph
-    replay runs the *eager* kernels unchanged — no Inductor fusion — so it does
-    not perturb the metric path the way fusion did (the "WR flip", #641).
+    **Autodetect-on for CUDA sm_80+** (g6/L4 ``sm_89``, RTX 5080 ``sm_120``):
+    capturing the NN's forward+backward once and replaying it collapses the
+    hundreds of thousands of microsecond kernel launches the tiny attention
+    model is bottlenecked on (it is GPU-launch-bound, not compute-bound) —
+    ~1.5-1.8× on the GPU branch, speeding up both the base/control NN and the
+    attention NN. ``$FF_CUDA_GRAPH`` is an **override, not the trigger**: set it
+    to a falsy value (``0``/``false``/``no``/``off``) to force the eager path —
+    e.g. for a bit-comparable A/B against an eager baseline.
 
-    Gated to sm_80+ for parity with ``FF_COMPILE`` and because the win is a
-    local-dev optimisation on the Blackwell box; the default-off path keeps AWS
-    (T4/L4) and CPU/CI byte-identical to today.
+    **Deliberately per-arch / NOT byte-identical** (reverses the original
+    off-by-default; ADR-0017). Unlike ``FF_COMPILE``/TF32, graph replay is not
+    numerically inert: a single fwd+bwd step is bitwise-exact, but the
+    FP16+GradScaler path amplifies sub-ULP graph kernel-ordering differences
+    over many steps into a ~0.5% worst-target *eval* drift. So the sm_80+
+    training path is intentionally non-byte-identical to CPU/CI, and benchmark
+    history rebaselines (graphed-vs-graphed) from the cutover — the speedup was
+    prioritised over comparability by owner decision (see ADR-0017 and
+    todo/gpu_launch_bound_levers.md). CPU/MPS and the T4 (sm_75, EC2 rollback)
+    can't capture, so they always take the eager path: CI stays eager and the
+    divergence is confined to sm_80+.
     """
-    if os.environ.get(_CUDA_GRAPH_ENV, "").strip().lower() not in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
+    # Hardware floor: capture only runs on CUDA sm_80+. CPU/MPS and the T4
+    # (sm_75) short-circuit to False here, so an explicit FF_CUDA_GRAPH=1 can't
+    # force it on unsupported hardware. ``cuda_enabled()`` is evaluated first so
+    # ``get_device_capability()`` is never called on a CPU/MPS box.
+    if not cuda_enabled() or torch.cuda.get_device_capability()[0] < 8:
         return False
-    if not cuda_enabled():
-        return False
-    # sm_80+ only, same gate as _maybe_compile (T4 sm_75 stays on the eager path).
-    return torch.cuda.get_device_capability()[0] >= 8
+    # Autodetect ON for capable hardware; FF_CUDA_GRAPH is the force-off knob.
+    return os.environ.get(_CUDA_GRAPH_ENV, "").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
 
 
 def seed_everything(seed: int) -> None:

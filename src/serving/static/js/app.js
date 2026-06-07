@@ -61,9 +61,9 @@ const COLORS = {
     lgbmBg: "rgba(245, 158, 11, 0.2)",
 };
 
-// Per-target fantasy-point-equivalent multipliers. Mirror of
-// shared/aggregate_targets.py:POINT_EQUIVALENT_MULTIPLIER, but `receptions`
-// depends on scoring format (1.0 / 0.5 / 0.0). Applied only to count-style
+// Per-target fantasy-point-equivalent multipliers. Display-only, JS-local
+// (the Python POINT_EQUIVALENT_MULTIPLIER constant this once mirrored has been
+// removed); `receptions` depends on scoring format (1.0 / 0.5 / 0.0). Applied only to count-style
 // targets where the raw MAE would be dominated by the scoring coefficient
 // (e.g. 0.4 TDs = 2.4 points).
 const RECEPTION_WEIGHT = { ppr: 1.0, half_ppr: 0.5, standard: 0.0 };
@@ -1627,19 +1627,33 @@ function formatTrainingTime(seconds) {
     return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function formatHistoryDelta(delta) {
+    // Signed 2-decimal delta vs the prior run for the pill's title tooltip;
+    // U+2212 minus matches the displayed glyphs. Lower MAE is better.
+    if (delta == null || !Number.isFinite(delta)) return "";
+    const sign = delta < 0 ? "−" : "+";
+    return ` title="${sign}${fmt(Math.abs(delta), 2)} vs prev run"`;
+}
+
 function renderSummaryPills(entries) {
-    // Generic pill list: each entry is {label, mae}. label is a position
-    // (group-by-model layout) or a model name (group-by-position). mae=null
-    // renders as "--" (that position-model pair didn't train in this run);
-    // empty list renders an em-dash. The optional per_target field carried on
-    // pills is ignored here — it only drives the detailed-mode expansion.
+    // Generic pill list: each entry is {label, mae, deltaClass?, delta?, isBest?}.
+    // label is a position (group-by-model layout) or a model name
+    // (group-by-position). mae=null renders as "--" (that position-model pair
+    // didn't train in this run); empty list renders an em-dash. deltaClass tints
+    // the pill green/red vs the prior run for that pos+model; isBest bolds the
+    // best model in a group-by-position cell. The optional per_target field
+    // carried on pills is ignored here — it only drives the detailed-mode expansion.
     if (!Array.isArray(entries) || entries.length === 0) return '<span class="history-empty">—</span>';
     return entries
         .map(e => {
             const value = e.mae == null
                 ? '<span class="history-pill-skip">--</span>'
                 : fmt(e.mae, 2);
-            return `<span class="history-pill"><span class="history-pill-pos">${escapeHtml(e.label)}</span> ${value}</span>`;
+            const cls = ["history-pill", e.deltaClass, e.isBest ? "history-pill-best" : null]
+                .filter(Boolean)
+                .join(" ");
+            const title = e.mae == null ? "" : formatHistoryDelta(e.delta);
+            return `<span class="${cls}"${title}><span class="history-pill-pos">${escapeHtml(e.label)}</span> ${value}</span>`;
         })
         .join("");
 }
@@ -1662,14 +1676,32 @@ function historyColumns(groupByPosition) {
 function historyCellEntries(row, columnKey, groupByPosition) {
     if (groupByPosition) {
         // Column is a position; inner entries are the four models at that position.
+        // The four MAEs share a scale here, so we can flag the best (lowest) one.
         const posIdx = HISTORY_POSITIONS.indexOf(columnKey);
-        return HISTORY_MODELS.map(m => ({
-            label: HISTORY_MODEL_LABELS[m],
-            mae: row[m] && row[m][posIdx] ? row[m][posIdx].mae : null,
-        }));
+        const entries = HISTORY_MODELS.map(m => {
+            const p = row[m] && row[m][posIdx];
+            return {
+                label: HISTORY_MODEL_LABELS[m],
+                mae: p ? p.mae : null,
+                deltaClass: p ? p.deltaClass : null,
+                delta: p ? p.delta : null,
+            };
+        });
+        let bestIdx = -1;
+        entries.forEach((e, i) => {
+            if (e.mae != null && (bestIdx < 0 || e.mae < entries[bestIdx].mae)) bestIdx = i;
+        });
+        if (bestIdx >= 0) entries[bestIdx].isBest = true;
+        return entries;
     }
     // Column is a model; inner entries are the six positions in canonical order.
-    return (row[columnKey] || []).map(p => ({ label: p.position, mae: p.mae }));
+    // No best-flag: positions sit on different raw-stat scales (not comparable).
+    return (row[columnKey] || []).map(p => ({
+        label: p.position,
+        mae: p.mae,
+        deltaClass: p.deltaClass,
+        delta: p.delta,
+    }));
 }
 
 function historyRowHasDetail(row) {
@@ -1706,8 +1738,47 @@ function formatHistoryTimestamp(ts) {
     return match ? `${match[1]} ${match[2]}` : escapeHtml(String(ts));
 }
 
+const HISTORY_DELTA_EPS = 0.005; // only color a change the 2-decimal display reflects
+
+function annotateHistoryDeltas(rows) {
+    // Tag each pill with a deltaClass (improve/regress) vs the most recent
+    // EARLIER run that trained the same position+model. Runs only retrain a
+    // subset of positions, so the baseline is not the adjacent table row — a
+    // lastSeen map keyed by `${position}|${model}` carries it across the gaps.
+    // Walk oldest→newest (rows arrive newest-first) so lastSeen is always the
+    // prior value. First appearance of a pos+model stays neutral (no baseline).
+    if (!Array.isArray(rows)) return;
+    const lastSeen = {};
+    for (let i = rows.length - 1; i >= 0; i--) {
+        const row = rows[i];
+        for (const m of HISTORY_MODELS) {
+            for (const p of row[m] || []) {
+                if (!p || p.mae == null) continue;
+                const key = `${p.position}|${m}`;
+                const prev = lastSeen[key];
+                if (prev != null) {
+                    const delta = p.mae - prev;
+                    p.delta = delta;
+                    p.deltaClass =
+                        delta <= -HISTORY_DELTA_EPS
+                            ? "history-pill-improve"
+                            : delta >= HISTORY_DELTA_EPS
+                              ? "history-pill-regress"
+                              : null;
+                } else {
+                    p.delta = null;
+                    p.deltaClass = null;
+                }
+                lastSeen[key] = p.mae;
+            }
+        }
+    }
+}
+
 async function loadHistory() {
     const tbody = document.getElementById("history-body");
+    const container = document.getElementById("history-table-container");
+    if (container) container.classList.add("loading");
     try {
         const data = await fetchJSON("/api/benchmark_history");
         historyData = {
@@ -1716,6 +1787,7 @@ async function loadHistory() {
             targetLabels: data.target_labels || {},
             targetUnits: data.target_units || {},
         };
+        annotateHistoryDeltas(historyData.rows);
         renderHistory();
     } catch (e) {
         console.error("Failed to load benchmark history:", e);
@@ -1723,7 +1795,13 @@ async function loadHistory() {
         const head = document.getElementById("history-head");
         if (head) head.innerHTML = "";
         // colspan 9 = the widest layout (group-by-position); harmless when fewer.
-        tbody.innerHTML = '<tr><td colspan="9" class="error-message">Failed to load benchmark history.</td></tr>';
+        tbody.innerHTML =
+            '<tr><td colspan="9" class="error-message">Failed to load benchmark history. ' +
+            '<button id="history-retry" class="history-retry" type="button">Retry</button></td></tr>';
+        const retry = document.getElementById("history-retry");
+        if (retry) retry.addEventListener("click", loadHistory);
+    } finally {
+        if (container) container.classList.remove("loading");
     }
 }
 

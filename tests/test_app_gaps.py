@@ -406,7 +406,7 @@ def test_position_arch_payload_cosine_warm_restarts_scheduler():
         cosine_t_mult=2,
         cosine_eta_min=1e-5,
     )
-    payload = app_mod._position_arch_payload("QB", pc, include_features=["a", "b"])
+    payload = app_mod._position_arch_payload(pc, include_features=["a", "b"])
     assert "CosineAnnealingWarmRestarts" in payload["scheduler"]
 
 
@@ -415,7 +415,7 @@ def test_position_arch_payload_onecycle_scheduler():
     import src.serving.app as app_mod
 
     pc = _arch_pc(scheduler_type="onecycle", onecycle_max_lr=0.01, onecycle_pct_start=0.3)
-    payload = app_mod._position_arch_payload("QB", pc, include_features=["a"])
+    payload = app_mod._position_arch_payload(pc, include_features=["a"])
     assert "OneCycleLR" in payload["scheduler"]
 
 
@@ -424,7 +424,7 @@ def test_position_arch_payload_plateau_scheduler():
     import src.serving.app as app_mod
 
     pc = _arch_pc(scheduler_type="plateau")
-    payload = app_mod._position_arch_payload("QB", pc, include_features=["a"])
+    payload = app_mod._position_arch_payload(pc, include_features=["a"])
     assert payload["scheduler"] == "ReduceLROnPlateau"
 
 
@@ -436,7 +436,7 @@ def test_position_arch_payload_include_features_as_dict():
 
     pc = _arch_pc(specific_features=["pos_specific"])
     payload = app_mod._position_arch_payload(
-        "QB", pc, include_features={"rolling": ["r1", "r2"], "ewma": ["e1"]}
+        pc, include_features={"rolling": ["r1", "r2"], "ewma": ["e1"]}
     )
     features = payload["features"]
     assert "rolling" in features
@@ -817,7 +817,7 @@ def test_position_arch_payload_unknown_scheduler_falls_back_to_str():
     import src.serving.app as app_mod
 
     pc = _arch_pc(scheduler_type="constant")
-    payload = app_mod._position_arch_payload("QB", pc, include_features=["a"])
+    payload = app_mod._position_arch_payload(pc, include_features=["a"])
     assert payload["scheduler"] == "constant"
 
 
@@ -828,7 +828,6 @@ def test_position_arch_payload_attn_history_appended_when_provided():
 
     pc = _arch_pc(scheduler_type="plateau")
     payload = app_mod._position_arch_payload(
-        "QB",
         pc,
         include_features=["a"],
         attn_history=["passing_yards", "rushing_yards"],

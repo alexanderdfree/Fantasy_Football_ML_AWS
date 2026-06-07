@@ -38,7 +38,7 @@ jobs:
           python-version: "3.12"
       # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
       # major version comment. SHA = astral-sh/setup-uv v6.8.0.
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true
           cache-dependency-glob: "requirements*.txt"
@@ -162,7 +162,7 @@ jobs:
       - name: Set up uv
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
         # major version comment. SHA = astral-sh/setup-uv v6.8.0.
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true
           cache-dependency-glob: "requirements*.txt"
@@ -226,7 +226,12 @@ jobs:
       # codecov-action doesn't emit "WARNING: This key is not certified
       # with a trusted signature!" on every upload. The action imports the
       # key but never assigns ownertrust; we do that here once per job.
+      # continue-on-error: this is purely cosmetic (warning suppression) and
+      # depends on keybase.io being reachable — the codecov uploads it supports
+      # are already fail_ci_if_error:false, so a keybase outage must NOT fail
+      # the whole test job (it was blocking every PR during a 2026-06 outage).
       - name: Trust Codecov CLI verification key
+        continue-on-error: true
         run: |
           set -euo pipefail
           KEY=$(curl -fsSL https://keybase.io/codecovsecurity/pgp_keys.asc)

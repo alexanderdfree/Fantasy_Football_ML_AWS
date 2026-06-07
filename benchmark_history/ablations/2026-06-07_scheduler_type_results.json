@@ -1,0 +1,1536 @@
+{
+  "positions": [
+    "QB",
+    "RB",
+    "WR",
+    "TE",
+    "K",
+    "DST"
+  ],
+  "results": {
+    "QB": {
+      "summary": {
+        "position": "QB",
+        "production_type": "cosine_warm_restarts",
+        "seeds": [
+          42,
+          43,
+          44
+        ],
+        "sentinel_ok": true,
+        "aggregated": {
+          "onecycle": {
+            "attn_fp_mae_mean": 6.049876511960357,
+            "attn_fp_mae_std": 0.03075515096152085,
+            "base_fp_mae_mean": 6.038057444254395,
+            "base_fp_mae_std": 0.029478827512940217,
+            "attn_targets_mean": {
+              "passing_yards": 62.03561019897461,
+              "rushing_yards": 11.21166706085205,
+              "passing_tds": 0.817453145980835,
+              "rushing_tds": 0.2632027169068654,
+              "interceptions": 0.6121179858843485,
+              "fumbles_lost": 0.2812924385070801
+            }
+          },
+          "cosine_warm_restarts": {
+            "attn_fp_mae_mean": 6.040527611287528,
+            "attn_fp_mae_std": 0.051767541226330906,
+            "base_fp_mae_mean": 6.190212694835248,
+            "base_fp_mae_std": 0.06666236994457049,
+            "attn_targets_mean": {
+              "passing_yards": 61.92496236165365,
+              "rushing_yards": 11.117999076843262,
+              "passing_tds": 0.8189055919647217,
+              "rushing_tds": 0.24988609552383423,
+              "interceptions": 0.6174196402231852,
+              "fumbles_lost": 0.2711632251739502
+            }
+          },
+          "plateau": {
+            "attn_fp_mae_mean": 6.014016366184633,
+            "attn_fp_mae_std": 0.07681648111768238,
+            "base_fp_mae_mean": 6.260161861298529,
+            "base_fp_mae_std": 0.0660600282333595,
+            "attn_targets_mean": {
+              "passing_yards": 61.95366287231445,
+              "rushing_yards": 11.109508832295736,
+              "passing_tds": 0.8157780369122823,
+              "rushing_tds": 0.25052058200041455,
+              "interceptions": 0.6135634779930115,
+              "fumbles_lost": 0.2882131040096283
+            }
+          }
+        },
+        "verdict": {
+          "winner": "plateau",
+          "winner_attn_fp_mae": 6.014016366184633,
+          "production_attn_fp_mae": 6.040527611287528,
+          "margin_vs_production": 0.026511245102895487,
+          "pooled_std": 0.09263179851391812,
+          "note": "alt_ahead_flat"
+        }
+      },
+      "rows": [
+        {
+          "position": "QB",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.002,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 42,
+          "attn_fp_mae": 6.084789752151223,
+          "base_fp_mae": 6.071097450502128,
+          "ridge_fp_mae": 6.1803791554862935,
+          "attn_targets": {
+            "passing_yards": 61.887516021728516,
+            "rushing_yards": 11.231714248657227,
+            "passing_tds": 0.8214505910873413,
+            "rushing_tds": 0.2703634798526764,
+            "interceptions": 0.6139150857925415,
+            "fumbles_lost": 0.28024059534072876
+          }
+        },
+        {
+          "position": "QB",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 42,
+          "attn_fp_mae": 6.034393844633479,
+          "base_fp_mae": 6.113933961119437,
+          "ridge_fp_mae": 6.1803791554862935,
+          "attn_targets": {
+            "passing_yards": 61.32428741455078,
+            "rushing_yards": 11.194845199584961,
+            "passing_tds": 0.8215084671974182,
+            "rushing_tds": 0.26733076572418213,
+            "interceptions": 0.6133349537849426,
+            "fumbles_lost": 0.2567735016345978
+          }
+        },
+        {
+          "position": "QB",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 42,
+          "attn_fp_mae": 6.010076861181214,
+          "base_fp_mae": 6.193378624190857,
+          "ridge_fp_mae": 6.1803791554862935,
+          "attn_targets": {
+            "passing_yards": 61.794437408447266,
+            "rushing_yards": 11.411741256713867,
+            "passing_tds": 0.8154401779174805,
+            "rushing_tds": 0.2593419551849365,
+            "interceptions": 0.6159297823905945,
+            "fumbles_lost": 0.26686379313468933
+          }
+        },
+        {
+          "position": "QB",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.002,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 43,
+          "attn_fp_mae": 6.038048262428162,
+          "base_fp_mae": 6.028627558329842,
+          "ridge_fp_mae": 6.1803791554862935,
+          "attn_targets": {
+            "passing_yards": 61.56215286254883,
+            "rushing_yards": 10.963458061218262,
+            "passing_tds": 0.814003586769104,
+            "rushing_tds": 0.25151410698890686,
+            "interceptions": 0.613554835319519,
+            "fumbles_lost": 0.2831015884876251
+          }
+        },
+        {
+          "position": "QB",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 43,
+          "attn_fp_mae": 6.095088775895051,
+          "base_fp_mae": 6.237298438259174,
+          "ridge_fp_mae": 6.1803791554862935,
+          "attn_targets": {
+            "passing_yards": 62.482688903808594,
+            "rushing_yards": 11.165518760681152,
+            "passing_tds": 0.8186365365982056,
+            "rushing_tds": 0.2560417950153351,
+            "interceptions": 0.6204472184181213,
+            "fumbles_lost": 0.284568190574646
+          }
+        },
+        {
+          "position": "QB",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 43,
+          "attn_fp_mae": 6.092726798879765,
+          "base_fp_mae": 6.325474112071317,
+          "ridge_fp_mae": 6.1803791554862935,
+          "attn_targets": {
+            "passing_yards": 62.28457260131836,
+            "rushing_yards": 11.128705024719238,
+            "passing_tds": 0.821658730506897,
+            "rushing_tds": 0.25689300894737244,
+            "interceptions": 0.6114988327026367,
+            "fumbles_lost": 0.3118734061717987
+          }
+        },
+        {
+          "position": "QB",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.002,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 44,
+          "attn_fp_mae": 6.0267915213016865,
+          "base_fp_mae": 6.014447323931215,
+          "ridge_fp_mae": 6.1803791554862935,
+          "attn_targets": {
+            "passing_yards": 62.657161712646484,
+            "rushing_yards": 11.439828872680664,
+            "passing_tds": 0.8169052600860596,
+            "rushing_tds": 0.26773056387901306,
+            "interceptions": 0.6088840365409851,
+            "fumbles_lost": 0.28053513169288635
+          }
+        },
+        {
+          "position": "QB",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 44,
+          "attn_fp_mae": 5.992100213334053,
+          "base_fp_mae": 6.219405685127134,
+          "ridge_fp_mae": 6.1803791554862935,
+          "attn_targets": {
+            "passing_yards": 61.96791076660156,
+            "rushing_yards": 10.993633270263672,
+            "passing_tds": 0.8165717720985413,
+            "rushing_tds": 0.22628572583198547,
+            "interceptions": 0.6184767484664917,
+            "fumbles_lost": 0.2721479833126068
+          }
+        },
+        {
+          "position": "QB",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 44,
+          "attn_fp_mae": 5.939245438492918,
+          "base_fp_mae": 6.261632847633412,
+          "ridge_fp_mae": 6.1803791554862935,
+          "attn_targets": {
+            "passing_yards": 61.781978607177734,
+            "rushing_yards": 10.788080215454102,
+            "passing_tds": 0.8102352023124695,
+            "rushing_tds": 0.23532678186893463,
+            "interceptions": 0.6132618188858032,
+            "fumbles_lost": 0.28590211272239685
+          }
+        }
+      ]
+    },
+    "RB": {
+      "summary": {
+        "position": "RB",
+        "production_type": "cosine_warm_restarts",
+        "seeds": [
+          42,
+          43,
+          44
+        ],
+        "sentinel_ok": true,
+        "aggregated": {
+          "onecycle": {
+            "attn_fp_mae_mean": 4.012381938201723,
+            "attn_fp_mae_std": 0.007386254379980205,
+            "base_fp_mae_mean": 4.097083477914366,
+            "base_fp_mae_std": 0.025752107405818087,
+            "attn_targets_mean": {
+              "rushing_tds": 0.31133833527565,
+              "receiving_tds": 0.10609762122233708,
+              "rushing_yards": 17.558156967163086,
+              "receiving_yards": 9.181222279866537,
+              "receptions": 0.9501547813415527,
+              "fumbles_lost": 0.061908040195703506
+            }
+          },
+          "cosine_warm_restarts": {
+            "attn_fp_mae_mean": 4.036669294857126,
+            "attn_fp_mae_std": 0.04651731676108211,
+            "base_fp_mae_mean": 4.129008312777726,
+            "base_fp_mae_std": 0.04822650578757163,
+            "attn_targets_mean": {
+              "rushing_tds": 0.31370866298675537,
+              "receiving_tds": 0.10006558398405711,
+              "rushing_yards": 17.959747314453125,
+              "receiving_yards": 9.234739939371744,
+              "receptions": 0.953420619169871,
+              "fumbles_lost": 0.05349677801132202
+            }
+          },
+          "plateau": {
+            "attn_fp_mae_mean": 4.057619748731006,
+            "attn_fp_mae_std": 0.03781020415686129,
+            "base_fp_mae_mean": 4.140337267615389,
+            "base_fp_mae_std": 0.01658497399037549,
+            "attn_targets_mean": {
+              "rushing_tds": 0.3164508541425069,
+              "receiving_tds": 0.10623455544312795,
+              "rushing_yards": 17.884647369384766,
+              "receiving_yards": 9.298097292582193,
+              "receptions": 0.9512127637863159,
+              "fumbles_lost": 0.051222942769527435
+            }
+          }
+        },
+        "verdict": {
+          "winner": "onecycle",
+          "winner_attn_fp_mae": 4.012381938201723,
+          "production_attn_fp_mae": 4.036669294857126,
+          "margin_vs_production": 0.02428735665540316,
+          "pooled_std": 0.04710007974957821,
+          "note": "alt_ahead_flat"
+        }
+      },
+      "rows": [
+        {
+          "position": "RB",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.004,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 42,
+          "attn_fp_mae": 4.004556733963765,
+          "base_fp_mae": 4.086219083591479,
+          "ridge_fp_mae": 4.240791140837065,
+          "attn_targets": {
+            "rushing_tds": 0.30819419026374817,
+            "receiving_tds": 0.11233426630496979,
+            "rushing_yards": 17.556974411010742,
+            "receiving_yards": 9.214644432067871,
+            "receptions": 0.9494006037712097,
+            "fumbles_lost": 0.0713520497083664
+          }
+        },
+        {
+          "position": "RB",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 42,
+          "attn_fp_mae": 4.007876084215641,
+          "base_fp_mae": 4.092379795117004,
+          "ridge_fp_mae": 4.240791140837065,
+          "attn_targets": {
+            "rushing_tds": 0.3140220046043396,
+            "receiving_tds": 0.09183712303638458,
+            "rushing_yards": 18.184532165527344,
+            "receiving_yards": 9.252716064453125,
+            "receptions": 0.9475587010383606,
+            "fumbles_lost": 0.08623591810464859
+          }
+        },
+        {
+          "position": "RB",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 42,
+          "attn_fp_mae": 4.036695428123064,
+          "base_fp_mae": 4.151312246700104,
+          "ridge_fp_mae": 4.240791140837065,
+          "attn_targets": {
+            "rushing_tds": 0.3139292597770691,
+            "receiving_tds": 0.10197210311889648,
+            "rushing_yards": 18.176679611206055,
+            "receiving_yards": 9.423346519470215,
+            "receptions": 0.9419849514961243,
+            "fumbles_lost": 0.07941441237926483
+          }
+        },
+        {
+          "position": "RB",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.004,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 43,
+          "attn_fp_mae": 4.013356617969539,
+          "base_fp_mae": 4.126487423819663,
+          "ridge_fp_mae": 4.240791140837065,
+          "attn_targets": {
+            "rushing_tds": 0.3120044469833374,
+            "receiving_tds": 0.10021498799324036,
+            "rushing_yards": 17.634315490722656,
+            "receiving_yards": 9.20595932006836,
+            "receptions": 0.9469711184501648,
+            "fumbles_lost": 0.07724486291408539
+          }
+        },
+        {
+          "position": "RB",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 43,
+          "attn_fp_mae": 4.090335150544627,
+          "base_fp_mae": 4.183648314972295,
+          "ridge_fp_mae": 4.240791140837065,
+          "attn_targets": {
+            "rushing_tds": 0.32240214943885803,
+            "receiving_tds": 0.11094805598258972,
+            "rushing_yards": 17.829425811767578,
+            "receiving_yards": 9.230544090270996,
+            "receptions": 0.9647324681282043,
+            "fumbles_lost": 0.03712720796465874
+          }
+        },
+        {
+          "position": "RB",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 43,
+          "attn_fp_mae": 4.101266862608933,
+          "base_fp_mae": 4.148441089188189,
+          "ridge_fp_mae": 4.240791140837065,
+          "attn_targets": {
+            "rushing_tds": 0.32423830032348633,
+            "receiving_tds": 0.113287553191185,
+            "rushing_yards": 17.696556091308594,
+            "receiving_yards": 9.254597663879395,
+            "receptions": 0.9629558324813843,
+            "fumbles_lost": 0.03712720796465874
+          }
+        },
+        {
+          "position": "RB",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.004,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 44,
+          "attn_fp_mae": 4.019232462671865,
+          "base_fp_mae": 4.078543926331958,
+          "ridge_fp_mae": 4.240791140837065,
+          "attn_targets": {
+            "rushing_tds": 0.3138163685798645,
+            "receiving_tds": 0.10574360936880112,
+            "rushing_yards": 17.48318099975586,
+            "receiving_yards": 9.123063087463379,
+            "receptions": 0.9540926218032837,
+            "fumbles_lost": 0.03712720796465874
+          }
+        },
+        {
+          "position": "RB",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 44,
+          "attn_fp_mae": 4.01179664981111,
+          "base_fp_mae": 4.11099682824388,
+          "ridge_fp_mae": 4.240791140837065,
+          "attn_targets": {
+            "rushing_tds": 0.3047018349170685,
+            "receiving_tds": 0.09741157293319702,
+            "rushing_yards": 17.865283966064453,
+            "receiving_yards": 9.220959663391113,
+            "receptions": 0.9479706883430481,
+            "fumbles_lost": 0.03712720796465874
+          }
+        },
+        {
+          "position": "RB",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 44,
+          "attn_fp_mae": 4.034896955461022,
+          "base_fp_mae": 4.121258466957875,
+          "ridge_fp_mae": 4.240791140837065,
+          "attn_targets": {
+            "rushing_tds": 0.31118500232696533,
+            "receiving_tds": 0.10344401001930237,
+            "rushing_yards": 17.78070640563965,
+            "receiving_yards": 9.216347694396973,
+            "receptions": 0.9486975073814392,
+            "fumbles_lost": 0.03712720796465874
+          }
+        }
+      ]
+    },
+    "WR": {
+      "summary": {
+        "position": "WR",
+        "production_type": "cosine_warm_restarts",
+        "seeds": [
+          42,
+          43,
+          44
+        ],
+        "sentinel_ok": true,
+        "aggregated": {
+          "onecycle": {
+            "attn_fp_mae_mean": 3.9716049447034987,
+            "attn_fp_mae_std": 0.0300498862469707,
+            "base_fp_mae_mean": 4.131199501391798,
+            "base_fp_mae_std": 0.10004723771493189,
+            "attn_targets_mean": {
+              "receiving_tds": 0.2650931179523468,
+              "receiving_yards": 19.225358963012695,
+              "receptions": 1.3162619670232136,
+              "fumbles_lost": 0.011208967305719852
+            }
+          },
+          "cosine_warm_restarts": {
+            "attn_fp_mae_mean": 4.017190463118571,
+            "attn_fp_mae_std": 0.012210041036853799,
+            "base_fp_mae_mean": 4.1196566412809466,
+            "base_fp_mae_std": 0.08925670031323958,
+            "attn_targets_mean": {
+              "receiving_tds": 0.2718793451786041,
+              "receiving_yards": 19.628827412923176,
+              "receptions": 1.300508936246236,
+              "fumbles_lost": 0.011208967305719852
+            }
+          },
+          "plateau": {
+            "attn_fp_mae_mean": 4.01717035273952,
+            "attn_fp_mae_std": 0.017363193927480272,
+            "base_fp_mae_mean": 4.090685139587216,
+            "base_fp_mae_std": 0.06349078093027573,
+            "attn_targets_mean": {
+              "receiving_tds": 0.2751246988773346,
+              "receiving_yards": 19.705982208251953,
+              "receptions": 1.2942586342493694,
+              "fumbles_lost": 0.011208967305719852
+            }
+          }
+        },
+        "verdict": {
+          "winner": "onecycle",
+          "winner_attn_fp_mae": 3.9716049447034987,
+          "production_attn_fp_mae": 4.017190463118571,
+          "margin_vs_production": 0.045585518415072634,
+          "pooled_std": 0.032435794511273076,
+          "note": "alt_candidate_multiseed"
+        }
+      },
+      "rows": [
+        {
+          "position": "WR",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.004,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 42,
+          "attn_fp_mae": 3.94109721270146,
+          "base_fp_mae": 4.016576978960354,
+          "ridge_fp_mae": 4.172692045632651,
+          "attn_targets": {
+            "receiving_tds": 0.26263347268104553,
+            "receiving_yards": 19.105178833007812,
+            "receptions": 1.3096860647201538,
+            "fumbles_lost": 0.011208967305719852
+          }
+        },
+        {
+          "position": "WR",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 42,
+          "attn_fp_mae": 4.030180825668874,
+          "base_fp_mae": 4.0200850742210665,
+          "ridge_fp_mae": 4.172692045632651,
+          "attn_targets": {
+            "receiving_tds": 0.2605665624141693,
+            "receiving_yards": 19.652423858642578,
+            "receptions": 1.311333417892456,
+            "fumbles_lost": 0.011208967305719852
+          }
+        },
+        {
+          "position": "WR",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 42,
+          "attn_fp_mae": 4.032546987961769,
+          "base_fp_mae": 4.01769293160368,
+          "ridge_fp_mae": 4.172692045632651,
+          "attn_targets": {
+            "receiving_tds": 0.28053608536720276,
+            "receiving_yards": 19.813282012939453,
+            "receptions": 1.3047409057617188,
+            "fumbles_lost": 0.011208967305719852
+          }
+        },
+        {
+          "position": "WR",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.004,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 43,
+          "attn_fp_mae": 3.972542582865987,
+          "base_fp_mae": 4.1760324699367235,
+          "ridge_fp_mae": 4.172692045632651,
+          "attn_targets": {
+            "receiving_tds": 0.27133917808532715,
+            "receiving_yards": 19.01091957092285,
+            "receptions": 1.3210505247116089,
+            "fumbles_lost": 0.011208967305719852
+          }
+        },
+        {
+          "position": "WR",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 43,
+          "attn_fp_mae": 4.0154411182007355,
+          "base_fp_mae": 4.14640146507095,
+          "ridge_fp_mae": 4.172692045632651,
+          "attn_targets": {
+            "receiving_tds": 0.2811252772808075,
+            "receiving_yards": 19.597686767578125,
+            "receptions": 1.291474461555481,
+            "fumbles_lost": 0.011208967305719852
+          }
+        },
+        {
+          "position": "WR",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 43,
+          "attn_fp_mae": 3.998339781303666,
+          "base_fp_mae": 4.133112722602162,
+          "ridge_fp_mae": 4.172692045632651,
+          "attn_targets": {
+            "receiving_tds": 0.2687668204307556,
+            "receiving_yards": 19.53632164001465,
+            "receptions": 1.2897700071334839,
+            "fumbles_lost": 0.011208967305719852
+          }
+        },
+        {
+          "position": "WR",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.004,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 44,
+          "attn_fp_mae": 4.001175038543049,
+          "base_fp_mae": 4.200989055278315,
+          "ridge_fp_mae": 4.172692045632651,
+          "attn_targets": {
+            "receiving_tds": 0.2613067030906677,
+            "receiving_yards": 19.559978485107422,
+            "receptions": 1.3180493116378784,
+            "fumbles_lost": 0.011208967305719852
+          }
+        },
+        {
+          "position": "WR",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 44,
+          "attn_fp_mae": 4.005949445486104,
+          "base_fp_mae": 4.1924833845508225,
+          "ridge_fp_mae": 4.172692045632651,
+          "attn_targets": {
+            "receiving_tds": 0.27394619584083557,
+            "receiving_yards": 19.636371612548828,
+            "receptions": 1.2987189292907715,
+            "fumbles_lost": 0.011208967305719852
+          }
+        },
+        {
+          "position": "WR",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 44,
+          "attn_fp_mae": 4.020624288953125,
+          "base_fp_mae": 4.121249764555807,
+          "ridge_fp_mae": 4.172692045632651,
+          "attn_targets": {
+            "receiving_tds": 0.2760711908340454,
+            "receiving_yards": 19.768342971801758,
+            "receptions": 1.2882649898529053,
+            "fumbles_lost": 0.011208967305719852
+          }
+        }
+      ]
+    },
+    "TE": {
+      "summary": {
+        "position": "TE",
+        "production_type": "onecycle",
+        "seeds": [
+          42,
+          43,
+          44
+        ],
+        "sentinel_ok": true,
+        "aggregated": {
+          "onecycle": {
+            "attn_fp_mae_mean": 3.385119589975949,
+            "attn_fp_mae_std": 0.027394792517551655,
+            "base_fp_mae_mean": 3.3779712726505755,
+            "base_fp_mae_std": 0.02635477387980653,
+            "attn_targets_mean": {
+              "receiving_tds": 0.2761323054631551,
+              "receiving_yards": 14.39513905843099,
+              "receptions": 1.2046489318211873,
+              "fumbles_lost": 0.012490241788327694
+            }
+          },
+          "cosine_warm_restarts": {
+            "attn_fp_mae_mean": 3.357216680652845,
+            "attn_fp_mae_std": 0.006122542420884469,
+            "base_fp_mae_mean": 3.369579989692444,
+            "base_fp_mae_std": 0.007105788114994867,
+            "attn_targets_mean": {
+              "receiving_tds": 0.2670138478279114,
+              "receiving_yards": 14.42972469329834,
+              "receptions": 1.2206077178319295,
+              "fumbles_lost": 0.012511541446050009
+            }
+          },
+          "plateau": {
+            "attn_fp_mae_mean": 3.3682175114859434,
+            "attn_fp_mae_std": 0.012278448892143535,
+            "base_fp_mae_mean": 3.36701230595168,
+            "base_fp_mae_std": 0.011884979276523431,
+            "attn_targets_mean": {
+              "receiving_tds": 0.2738748987515767,
+              "receiving_yards": 14.360220909118652,
+              "receptions": 1.21403968334198,
+              "fumbles_lost": 0.012499691608051458
+            }
+          }
+        },
+        "verdict": {
+          "winner": "cosine_warm_restarts",
+          "winner_attn_fp_mae": 3.357216680652845,
+          "production_attn_fp_mae": 3.385119589975949,
+          "margin_vs_production": 0.02790290932310402,
+          "pooled_std": 0.028070628471326287,
+          "note": "alt_ahead_flat"
+        }
+      },
+      "rows": [
+        {
+          "position": "TE",
+          "scheduler_type": "onecycle",
+          "is_production": true,
+          "params": {
+            "onecycle_max_lr": 0.002,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 42,
+          "attn_fp_mae": 3.4151528701756173,
+          "base_fp_mae": 3.3602006363645374,
+          "ridge_fp_mae": 3.4375429686512238,
+          "attn_targets": {
+            "receiving_tds": 0.2766174376010895,
+            "receiving_yards": 14.65461254119873,
+            "receptions": 1.201250433921814,
+            "fumbles_lost": 0.012490241788327694
+          }
+        },
+        {
+          "position": "TE",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": false,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 42,
+          "attn_fp_mae": 3.362392593041982,
+          "base_fp_mae": 3.3754557941082766,
+          "ridge_fp_mae": 3.4375429686512238,
+          "attn_targets": {
+            "receiving_tds": 0.27340999245643616,
+            "receiving_yards": 14.385210990905762,
+            "receptions": 1.2102513313293457,
+            "fumbles_lost": 0.012490241788327694
+          }
+        },
+        {
+          "position": "TE",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 42,
+          "attn_fp_mae": 3.36258456755159,
+          "base_fp_mae": 3.3804126714096694,
+          "ridge_fp_mae": 3.4375429686512238,
+          "attn_targets": {
+            "receiving_tds": 0.27735579013824463,
+            "receiving_yards": 14.347352981567383,
+            "receptions": 1.2058744430541992,
+            "fumbles_lost": 0.012490241788327694
+          }
+        },
+        {
+          "position": "TE",
+          "scheduler_type": "onecycle",
+          "is_production": true,
+          "params": {
+            "onecycle_max_lr": 0.002,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 43,
+          "attn_fp_mae": 3.378703892697449,
+          "base_fp_mae": 3.4082511571773226,
+          "ridge_fp_mae": 3.4375429686512238,
+          "attn_targets": {
+            "receiving_tds": 0.2750428020954132,
+            "receiving_yards": 14.267582893371582,
+            "receptions": 1.2085641622543335,
+            "fumbles_lost": 0.012490241788327694
+          }
+        },
+        {
+          "position": "TE",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": false,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 43,
+          "attn_fp_mae": 3.358799212906949,
+          "base_fp_mae": 3.361682408403643,
+          "ridge_fp_mae": 3.4375429686512238,
+          "attn_targets": {
+            "receiving_tds": 0.2628491222858429,
+            "receiving_yards": 14.442312240600586,
+            "receptions": 1.2356313467025757,
+            "fumbles_lost": 0.012554140761494637
+          }
+        },
+        {
+          "position": "TE",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 43,
+          "attn_fp_mae": 3.382301758928843,
+          "base_fp_mae": 3.35774787155843,
+          "ridge_fp_mae": 3.4375429686512238,
+          "attn_targets": {
+            "receiving_tds": 0.27512994408607483,
+            "receiving_yards": 14.427830696105957,
+            "receptions": 1.2232236862182617,
+            "fumbles_lost": 0.012518591247498989
+          }
+        },
+        {
+          "position": "TE",
+          "scheduler_type": "onecycle",
+          "is_production": true,
+          "params": {
+            "onecycle_max_lr": 0.002,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 44,
+          "attn_fp_mae": 3.3615020070547805,
+          "base_fp_mae": 3.365462024409867,
+          "ridge_fp_mae": 3.4375429686512238,
+          "attn_targets": {
+            "receiving_tds": 0.27673667669296265,
+            "receiving_yards": 14.263221740722656,
+            "receptions": 1.2041321992874146,
+            "fumbles_lost": 0.012490241788327694
+          }
+        },
+        {
+          "position": "TE",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": false,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 44,
+          "attn_fp_mae": 3.3504582360096036,
+          "base_fp_mae": 3.3716017665654117,
+          "ridge_fp_mae": 3.4375429686512238,
+          "attn_targets": {
+            "receiving_tds": 0.2647824287414551,
+            "receiving_yards": 14.461650848388672,
+            "receptions": 1.2159404754638672,
+            "fumbles_lost": 0.012490241788327694
+          }
+        },
+        {
+          "position": "TE",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 44,
+          "attn_fp_mae": 3.3597662079773967,
+          "base_fp_mae": 3.3628763748869406,
+          "ridge_fp_mae": 3.4375429686512238,
+          "attn_targets": {
+            "receiving_tds": 0.26913896203041077,
+            "receiving_yards": 14.305479049682617,
+            "receptions": 1.213020920753479,
+            "fumbles_lost": 0.012490241788327694
+          }
+        }
+      ]
+    },
+    "K": {
+      "summary": {
+        "position": "K",
+        "production_type": "onecycle",
+        "seeds": [
+          42,
+          43,
+          44
+        ],
+        "sentinel_ok": true,
+        "aggregated": {
+          "onecycle": {
+            "attn_fp_mae_mean": 4.2238874435424805,
+            "attn_fp_mae_std": 0.027869699048100893,
+            "base_fp_mae_mean": 4.103318532307942,
+            "base_fp_mae_std": 0.021743052225570433,
+            "attn_targets_mean": {
+              "fg_yard_points": 4.11955467859904,
+              "pat_points": 1.0957366625467937,
+              "fg_misses": 0.3994119167327881,
+              "xp_misses": 0.16118687887986502
+            }
+          },
+          "cosine_warm_restarts": {
+            "attn_fp_mae_mean": 4.200188000996907,
+            "attn_fp_mae_std": 0.02459501785691249,
+            "base_fp_mae_mean": 4.116533279418945,
+            "base_fp_mae_std": 0.023528094764445603,
+            "attn_targets_mean": {
+              "fg_yard_points": 4.105376402537028,
+              "pat_points": 1.088929295539856,
+              "fg_misses": 0.39993200699488324,
+              "xp_misses": 0.1633357654015223
+            }
+          },
+          "plateau": {
+            "attn_fp_mae_mean": 4.188477675120036,
+            "attn_fp_mae_std": 0.02013761883528739,
+            "base_fp_mae_mean": 4.118885199228923,
+            "base_fp_mae_std": 0.027343871430612312,
+            "attn_targets_mean": {
+              "fg_yard_points": 4.099533398946126,
+              "pat_points": 1.08526607354482,
+              "fg_misses": 0.4049258232116699,
+              "xp_misses": 0.16739198565483093
+            }
+          }
+        },
+        "verdict": {
+          "winner": "plateau",
+          "winner_attn_fp_mae": 4.188477675120036,
+          "production_attn_fp_mae": 4.2238874435424805,
+          "margin_vs_production": 0.035409768422444365,
+          "pooled_std": 0.03438377258805434,
+          "note": "alt_candidate_multiseed"
+        }
+      },
+      "rows": [
+        {
+          "position": "K",
+          "scheduler_type": "onecycle",
+          "is_production": true,
+          "params": {
+            "onecycle_max_lr": 0.001,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 42,
+          "attn_fp_mae": 4.19172477722168,
+          "base_fp_mae": 4.128291606903076,
+          "ridge_fp_mae": 4.007809638977051,
+          "attn_targets": {
+            "fg_yard_points": 4.107317924499512,
+            "pat_points": 1.0869697332382202,
+            "fg_misses": 0.40907013416290283,
+            "xp_misses": 0.1740572303533554
+          }
+        },
+        {
+          "position": "K",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": false,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 42,
+          "attn_fp_mae": 4.201054096221924,
+          "base_fp_mae": 4.123950481414795,
+          "ridge_fp_mae": 4.007809638977051,
+          "attn_targets": {
+            "fg_yard_points": 4.093715190887451,
+            "pat_points": 1.0922635793685913,
+            "fg_misses": 0.3960065245628357,
+            "xp_misses": 0.172251895070076
+          }
+        },
+        {
+          "position": "K",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 42,
+          "attn_fp_mae": 4.16693115234375,
+          "base_fp_mae": 4.110208511352539,
+          "ridge_fp_mae": 4.007809638977051,
+          "attn_targets": {
+            "fg_yard_points": 4.0928754806518555,
+            "pat_points": 1.0814493894577026,
+            "fg_misses": 0.40878725051879883,
+            "xp_misses": 0.18241260945796967
+          }
+        },
+        {
+          "position": "K",
+          "scheduler_type": "onecycle",
+          "is_production": true,
+          "params": {
+            "onecycle_max_lr": 0.001,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 43,
+          "attn_fp_mae": 4.240913391113281,
+          "base_fp_mae": 4.088591575622559,
+          "ridge_fp_mae": 4.007809638977051,
+          "attn_targets": {
+            "fg_yard_points": 4.131643295288086,
+            "pat_points": 1.1021887063980103,
+            "fg_misses": 0.40333831310272217,
+            "xp_misses": 0.1336144059896469
+          }
+        },
+        {
+          "position": "K",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": false,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 43,
+          "attn_fp_mae": 4.175171375274658,
+          "base_fp_mae": 4.090190410614014,
+          "ridge_fp_mae": 4.007809638977051,
+          "attn_targets": {
+            "fg_yard_points": 4.096169471740723,
+            "pat_points": 1.0878381729125977,
+            "fg_misses": 0.39938291907310486,
+            "xp_misses": 0.1485576033592224
+          }
+        },
+        {
+          "position": "K",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 43,
+          "attn_fp_mae": 4.191679000854492,
+          "base_fp_mae": 4.096932411193848,
+          "ridge_fp_mae": 4.007809638977051,
+          "attn_targets": {
+            "fg_yard_points": 4.099761962890625,
+            "pat_points": 1.0937063694000244,
+            "fg_misses": 0.4136683940887451,
+            "xp_misses": 0.13588844239711761
+          }
+        },
+        {
+          "position": "K",
+          "scheduler_type": "onecycle",
+          "is_production": true,
+          "params": {
+            "onecycle_max_lr": 0.001,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 44,
+          "attn_fp_mae": 4.2390241622924805,
+          "base_fp_mae": 4.093072414398193,
+          "ridge_fp_mae": 4.007809638977051,
+          "attn_targets": {
+            "fg_yard_points": 4.1197028160095215,
+            "pat_points": 1.0980515480041504,
+            "fg_misses": 0.38582730293273926,
+            "xp_misses": 0.1758890002965927
+          }
+        },
+        {
+          "position": "K",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": false,
+          "params": {
+            "cosine_t0": 40.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 44,
+          "attn_fp_mae": 4.224338531494141,
+          "base_fp_mae": 4.135458946228027,
+          "ridge_fp_mae": 4.007809638977051,
+          "attn_targets": {
+            "fg_yard_points": 4.12624454498291,
+            "pat_points": 1.086686134338379,
+            "fg_misses": 0.4044065773487091,
+            "xp_misses": 0.16919779777526855
+          }
+        },
+        {
+          "position": "K",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 44,
+          "attn_fp_mae": 4.206822872161865,
+          "base_fp_mae": 4.149514675140381,
+          "ridge_fp_mae": 4.007809638977051,
+          "attn_targets": {
+            "fg_yard_points": 4.105962753295898,
+            "pat_points": 1.0806424617767334,
+            "fg_misses": 0.3923218250274658,
+            "xp_misses": 0.18387490510940552
+          }
+        }
+      ]
+    },
+    "DST": {
+      "summary": {
+        "position": "DST",
+        "production_type": "cosine_warm_restarts",
+        "seeds": [
+          42,
+          43,
+          44
+        ],
+        "sentinel_ok": true,
+        "aggregated": {
+          "onecycle": {
+            "attn_fp_mae_mean": 5.028003754422945,
+            "attn_fp_mae_std": 0.009069896707892525,
+            "base_fp_mae_mean": 5.1397039478316024,
+            "base_fp_mae_std": 0.035431564036871616,
+            "attn_targets_mean": {
+              "def_sacks": 1.4089228709538777,
+              "def_ints": 0.6839731733004252,
+              "def_fumble_rec": 0.5401525696118673,
+              "def_fumbles_forced": 0.6920069257418314,
+              "def_safeties": 0.040193733448783554,
+              "def_tds": 0.12046195815006892,
+              "def_blocked_kicks": 0.09934876362482707,
+              "special_teams_tds": 0.06275392075379689,
+              "points_allowed": 7.321548144022624,
+              "yards_allowed": 60.02129618326823
+            }
+          },
+          "cosine_warm_restarts": {
+            "attn_fp_mae_mean": 5.010758459860203,
+            "attn_fp_mae_std": 0.034471544402103,
+            "base_fp_mae_mean": 5.1966140728955175,
+            "base_fp_mae_std": 0.046953897852502834,
+            "attn_targets_mean": {
+              "def_sacks": 1.422740896542867,
+              "def_ints": 0.6840920448303223,
+              "def_fumble_rec": 0.5535309116045634,
+              "def_fumbles_forced": 0.6919964750607809,
+              "def_safeties": 0.022058824077248573,
+              "def_tds": 0.0965837873518467,
+              "def_blocked_kicks": 0.11023891965548198,
+              "special_teams_tds": 0.06399709234635036,
+              "points_allowed": 7.307166576385498,
+              "yards_allowed": 60.14315287272135
+            }
+          },
+          "plateau": {
+            "attn_fp_mae_mean": 5.015240308846913,
+            "attn_fp_mae_std": 0.03700814396658731,
+            "base_fp_mae_mean": 5.279035047865381,
+            "base_fp_mae_std": 0.08668230784612527,
+            "attn_targets_mean": {
+              "def_sacks": 1.4187429745992024,
+              "def_ints": 0.6836363275845846,
+              "def_fumble_rec": 0.5611204306284586,
+              "def_fumbles_forced": 0.6934706370035807,
+              "def_safeties": 0.022058824077248573,
+              "def_tds": 0.11806522806485494,
+              "def_blocked_kicks": 0.1075546865661939,
+              "special_teams_tds": 0.06206772724787394,
+              "points_allowed": 7.304494222005208,
+              "yards_allowed": 59.68467585245768
+            }
+          }
+        },
+        "verdict": {
+          "winner": "cosine_warm_restarts",
+          "winner_attn_fp_mae": 5.010758459860203,
+          "production_attn_fp_mae": 5.010758459860203,
+          "margin_vs_production": 0.0,
+          "pooled_std": 0.04875012560940041,
+          "note": "production_best_flat"
+        }
+      },
+      "rows": [
+        {
+          "position": "DST",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.0012,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 42,
+          "attn_fp_mae": 5.0305289073902015,
+          "base_fp_mae": 5.145239483784227,
+          "ridge_fp_mae": 5.203087080050917,
+          "attn_targets": {
+            "def_sacks": 1.3932785987854004,
+            "def_ints": 0.6850594878196716,
+            "def_fumble_rec": 0.5409092307090759,
+            "def_fumbles_forced": 0.6904463768005371,
+            "def_safeties": 0.04729493334889412,
+            "def_tds": 0.1253558099269867,
+            "def_blocked_kicks": 0.09814129024744034,
+            "special_teams_tds": 0.08899705857038498,
+            "points_allowed": 7.368367671966553,
+            "yards_allowed": 59.99236297607422
+          }
+        },
+        {
+          "position": "DST",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 30.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 42,
+          "attn_fp_mae": 5.049859284478075,
+          "base_fp_mae": 5.190998671685948,
+          "ridge_fp_mae": 5.203087080050917,
+          "attn_targets": {
+            "def_sacks": 1.4314143657684326,
+            "def_ints": 0.6862621307373047,
+            "def_fumble_rec": 0.5609853267669678,
+            "def_fumbles_forced": 0.6944212913513184,
+            "def_safeties": 0.022058824077248573,
+            "def_tds": 0.05147058889269829,
+            "def_blocked_kicks": 0.10956765711307526,
+            "special_teams_tds": 0.09272657334804535,
+            "points_allowed": 7.332874298095703,
+            "yards_allowed": 59.97891616821289
+          }
+        },
+        {
+          "position": "DST",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 42,
+          "attn_fp_mae": 5.05792477201013,
+          "base_fp_mae": 5.35598126185291,
+          "ridge_fp_mae": 5.203087080050917,
+          "attn_targets": {
+            "def_sacks": 1.4339309930801392,
+            "def_ints": 0.6851338148117065,
+            "def_fumble_rec": 0.5623278021812439,
+            "def_fumbles_forced": 0.6933162808418274,
+            "def_safeties": 0.022058824077248573,
+            "def_tds": 0.11433035135269165,
+            "def_blocked_kicks": 0.10724159330129623,
+            "special_teams_tds": 0.08693847805261612,
+            "points_allowed": 7.34414005279541,
+            "yards_allowed": 59.7238883972168
+          }
+        },
+        {
+          "position": "DST",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.0012,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 43,
+          "attn_fp_mae": 5.035543491735178,
+          "base_fp_mae": 5.172041935955777,
+          "ridge_fp_mae": 5.203087080050917,
+          "attn_targets": {
+            "def_sacks": 1.4187207221984863,
+            "def_ints": 0.68571937084198,
+            "def_fumble_rec": 0.5315425992012024,
+            "def_fumbles_forced": 0.6926853060722351,
+            "def_safeties": 0.05122744292020798,
+            "def_tds": 0.11446309834718704,
+            "def_blocked_kicks": 0.09036538004875183,
+            "special_teams_tds": 0.04963235184550285,
+            "points_allowed": 7.2986369132995605,
+            "yards_allowed": 60.46537399291992
+          }
+        },
+        {
+          "position": "DST",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 30.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 43,
+          "attn_fp_mae": 4.997660295928226,
+          "base_fp_mae": 5.24612315437373,
+          "ridge_fp_mae": 5.203087080050917,
+          "attn_targets": {
+            "def_sacks": 1.428482174873352,
+            "def_ints": 0.6859984397888184,
+            "def_fumble_rec": 0.5490418672561646,
+            "def_fumbles_forced": 0.6897150874137878,
+            "def_safeties": 0.022058824077248573,
+            "def_tds": 0.12307413667440414,
+            "def_blocked_kicks": 0.10747190564870834,
+            "special_teams_tds": 0.04963235184550285,
+            "points_allowed": 7.302175521850586,
+            "yards_allowed": 59.717803955078125
+          }
+        },
+        {
+          "position": "DST",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 43,
+          "attn_fp_mae": 4.992128847714732,
+          "base_fp_mae": 5.185124745702042,
+          "ridge_fp_mae": 5.203087080050917,
+          "attn_targets": {
+            "def_sacks": 1.4069422483444214,
+            "def_ints": 0.6832115054130554,
+            "def_fumble_rec": 0.5596590638160706,
+            "def_fumbles_forced": 0.6926249265670776,
+            "def_safeties": 0.022058824077248573,
+            "def_tds": 0.12190990149974823,
+            "def_blocked_kicks": 0.10557643324136734,
+            "special_teams_tds": 0.04963235184550285,
+            "points_allowed": 7.261102199554443,
+            "yards_allowed": 59.33000946044922
+          }
+        },
+        {
+          "position": "DST",
+          "scheduler_type": "onecycle",
+          "is_production": false,
+          "params": {
+            "onecycle_max_lr": 0.0012,
+            "onecycle_pct_start": 0.3
+          },
+          "seed": 44,
+          "attn_fp_mae": 5.0179388641434555,
+          "base_fp_mae": 5.101830423754804,
+          "ridge_fp_mae": 5.203087080050917,
+          "attn_targets": {
+            "def_sacks": 1.4147692918777466,
+            "def_ints": 0.681140661239624,
+            "def_fumble_rec": 0.5480058789253235,
+            "def_fumbles_forced": 0.6928890943527222,
+            "def_safeties": 0.022058824077248573,
+            "def_tds": 0.12156696617603302,
+            "def_blocked_kicks": 0.10953962057828903,
+            "special_teams_tds": 0.04963235184550285,
+            "points_allowed": 7.297639846801758,
+            "yards_allowed": 59.60615158081055
+          }
+        },
+        {
+          "position": "DST",
+          "scheduler_type": "cosine_warm_restarts",
+          "is_production": true,
+          "params": {
+            "cosine_t0": 30.0,
+            "cosine_t_mult": 2.0,
+            "cosine_eta_min": 1e-05
+          },
+          "seed": 44,
+          "attn_fp_mae": 4.984755799174309,
+          "base_fp_mae": 5.1527203926268745,
+          "ridge_fp_mae": 5.203087080050917,
+          "attn_targets": {
+            "def_sacks": 1.4083261489868164,
+            "def_ints": 0.6800155639648438,
+            "def_fumble_rec": 0.5505655407905579,
+            "def_fumbles_forced": 0.6918530464172363,
+            "def_safeties": 0.022058824077248573,
+            "def_tds": 0.11520663648843765,
+            "def_blocked_kicks": 0.11367719620466232,
+            "special_teams_tds": 0.04963235184550285,
+            "points_allowed": 7.286449909210205,
+            "yards_allowed": 60.73273849487305
+          }
+        },
+        {
+          "position": "DST",
+          "scheduler_type": "plateau",
+          "is_production": false,
+          "params": {
+            "plateau_factor": 0.5,
+            "plateau_patience": 8.0
+          },
+          "seed": 44,
+          "attn_fp_mae": 4.995667306815877,
+          "base_fp_mae": 5.295999136041193,
+          "ridge_fp_mae": 5.203087080050917,
+          "attn_targets": {
+            "def_sacks": 1.4153556823730469,
+            "def_ints": 0.6825636625289917,
+            "def_fumble_rec": 0.5613744258880615,
+            "def_fumbles_forced": 0.6944707036018372,
+            "def_safeties": 0.022058824077248573,
+            "def_tds": 0.11795543134212494,
+            "def_blocked_kicks": 0.10984603315591812,
+            "special_teams_tds": 0.04963235184550285,
+            "points_allowed": 7.3082404136657715,
+            "yards_allowed": 60.00012969970703
+          }
+        }
+      ]
+    }
+  }
+}

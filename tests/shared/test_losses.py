@@ -204,6 +204,20 @@ class TestMultiTargetLossDispatch:
                 head_losses={"a": "not_a_real_loss"},
             )
 
+    def test_mse_head_dispatches_as_squared_error(self):
+        """head_losses={'a':'mse'} routes through nn.MSELoss and equals mean(e^2)."""
+        loss_fn = MultiTargetLoss(
+            target_names=["a"],
+            loss_weights={"a": 1.0},
+            head_losses={"a": "mse"},
+        )
+        preds = {"a": torch.tensor([1.0, 2.0, 3.0])}
+        targets = {"a": torch.tensor([1.5, 0.0, 3.0])}
+        combined, comps = loss_fn(preds, targets)
+        expected = torch.mean((preds["a"] - targets["a"]) ** 2)
+        assert comps["loss_a"] == pytest.approx(expected.item())
+        assert combined.item() == pytest.approx(expected.item())
+
     def test_poisson_targets_alias_maps_to_head_losses(self):
         """poisson_targets=['a'] should be equivalent to head_losses={'a': 'poisson_nll'}."""
         loss_a = MultiTargetLoss(

@@ -124,7 +124,7 @@ CONFIG_TINY = {
     "nn_batch_size": 32,
     "nn_patience": 1,
     "nn_log_every": 1,
-    "loss_weights": {t: 1.0 for t in _TARGETS},
+    "loss_weights": {t: 0.5 for t in _TARGETS},  # 1/delta (MSE), matches production
     "huber_deltas": {t: 2.0 for t in _TARGETS},
     "scheduler_type": "onecycle",
     "onecycle_max_lr": 1e-3,
@@ -193,10 +193,12 @@ POSITION_CONFIG = PositionConfig(
     nn_epochs=250,
     nn_batch_size=128,
     nn_patience=30,
-    # All heads on "huber" — no behavior change vs the default.
-    head_losses={t: "huber" for t in _TARGETS},
-    # Equal per-target weights — Huber delta harmonized to 2.0 across targets.
-    loss_weights={t: 1.0 for t in _TARGETS},
+    # All heads switched Huber -> MSE to chase the elite tail uniformly.
+    head_losses={t: "mse" for t in _TARGETS},
+    # Weight = 1/delta = 0.5 (delta harmonized to 2.0); gradient-matched to the
+    # old 2.0/delta=1.0 Huber weighting at e~delta.
+    loss_weights={t: 0.5 for t in _TARGETS},
+    # Characteristic error scale the MSE weights (1/delta) derive from.
     huber_deltas={t: 2.0 for t in _TARGETS},
     scheduler_type="onecycle",
     onecycle_max_lr=1e-3,
@@ -234,7 +236,7 @@ POSITION_CONFIG = PositionConfig(
     lgbm_reg_alpha=0.1,
     lgbm_min_child_samples=30,
     lgbm_min_split_gain=0.0,
-    lgbm_objective="huber",
+    lgbm_objective="regression",
     seasons=_SEASONS,
     # Cross-season split, matching other positions.
     min_games=4,

@@ -120,7 +120,7 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 | `LOG_EVERY` | `1` (batch) / `10` (default) | Epoch logging frequency; read by `shared.pipeline._resolve_nn_log_every` |
 | `S3_BUCKET` | (required) | S3 bucket for data and artifacts |
 | `S3_DATA_PREFIX` | `data` | S3 key prefix for training data |
-| `REQUIRE_GPU` | `1` | Fail fast if CUDA unavailable. **Auto-skipped for K/DST** (CPU-only pipelines). |
+| `REQUIRE_GPU` | `1` | Fail fast if CUDA unavailable. **Auto-skipped for K/DST** — relaxes the *assertion* only; K/DST still train a GPU attention NN when one is present (see the stale "CPU-only Queue" caveat below). |
 
 ### Launcher Environment Variables (`src/batch/launch.py`)
 
@@ -129,7 +129,7 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 | `FF_S3_BUCKET` | `ff-predictor-training` | Override bucket name (for staging accounts) |
 | `FF_JOB_QUEUE` | `ff-training-queue` | Override Batch job queue |
 | `FF_JOB_DEFINITION` | `ff-training-job` | Override Batch job definition (GPU) |
-| `FF_JOB_DEFINITION_CPU` | (unset) | **Optional CPU job definition for K/DST.** When set, K/DST jobs submit here instead of the GPU queue — saves ~60% of Spot spend on those positions. Falls back to the GPU definition when unset. |
+| `FF_JOB_DEFINITION_CPU` | (unset) | **Optional CPU job definition for K/DST. ⚠️ STALE — DO NOT ENABLE** (see *CPU-only Queue for K/DST* below): K/DST now train an attention NN on GPU, so CPU routing craters wall-clock instead of saving. When set, K/DST jobs submit here instead of the GPU queue; falls back to the GPU definition when unset. |
 | `FF_WAIT_TIMEOUT` | `10800` (3h) | Wall-clock cap for `wait_for_jobs` |
 
 ### Container Dependencies (`src/batch/requirements.txt`)
@@ -140,17 +140,13 @@ Derived from root `requirements.txt`:
 
 ## Position Pipeline Invocation
 
-Pipeline registry in `src/batch/train.py`:
+Pipeline dispatch lives in `src/shared/registry.py` (the single source of truth, consumed by `train.py`, `app.py`, and `benchmark.py`). Positions come from the `Position` StrEnum in `src/shared/position.py` (`ALL_POSITIONS = Position.values()`); each position's runner module and `accepts_dataframes` flag live on its `POSITION_CONFIG`. `train.py` calls `get_runner(pos)` and reads `INFERENCE_REGISTRY[pos]` — there is no `POSITIONS` dict in `train.py` (the legacy `_POSITION_META` table is gone):
 
 ```python
-POSITIONS = {
-    "QB":  ("src.qb.run_pipeline",  "run", True),
-    "RB":  ("src.rb.run_pipeline",  "run", True),
-    "WR":  ("src.wr.run_pipeline",  "run", True),
-    "TE":  ("src.te.run_pipeline",  "run", True),
-    "K":   ("src.k.run_pipeline",   "run", False),
-    "DST": ("src.dst.run_pipeline", "run", False),
-}
+# src/shared/registry.py
+ALL_POSITIONS = Position.values()          # ["QB", "RB", "WR", "TE", "K", "DST"]
+run_fn = get_runner(pos)                   # lazy-imports src.{pos}.run_pipeline.run
+accepts_df = _position_config(pos).accepts_dataframes  # True for QB/RB/WR/TE, False for K/DST
 ```
 
 - **Standard (QB, RB, WR, TE)**: `accepts_df=True` — train.py downloads parquets from S3, passes DataFrames
@@ -336,9 +332,24 @@ The existing Flask Dockerfile and `src/serving/app.py` inference code are comple
 CUDA auto-detection in `src/shared/pipeline.py` falls back to CPU. Local pipeline scripts
 (`python -m src.qb.run_pipeline`) work identically without any AWS dependencies.
 
-## CPU-only Queue for K/DST (optional)
+## CPU-only Queue for K/DST (optional) — ⚠️ STALE, DO NOT ENABLE
 
-K and DST pipelines are Ridge/LGBM only — they never touch CUDA. Running them on
+> **Superseded (2026-06): do not enable this.** The premise below is no longer
+> true. All six positions — **including K and DST** — now train an attention NN
+> (`train_attention_nn=True` in their `POSITION_CONFIG`; K landed via `801b61a`,
+> DST via `cc0c627`). The `cpu_only=True` flag on K/DST now only relaxes the
+> `REQUIRE_GPU` *assertion* in `src/batch/train.py::_assert_gpu`; it does **not**
+> mean the pipeline skips CUDA. Routing K/DST to a GPU-less CPU Spot pool would
+> push their attention-NN training onto the CPU, where the launch-bound trainer
+> craters (DST is already a top long-pole even on the L4) — and because the
+> sweep waits for all six positions, that **regresses** the whole-run wall-clock
+> instead of saving anything. The `FF_JOB_DEFINITION_CPU` / `FF_JOB_QUEUE_CPU`
+> plumbing below stays in the code as dormant-and-unset; revisit only if K/DST
+> ever drop their NN heads.
+
+The original (now-obsolete) rationale and mechanism, kept for reference:
+
+K and DST pipelines were Ridge/LGBM only — they never touched CUDA. Running them on
 g6.xlarge Spot costs ~$0.35/hr of GPU time they won't use (higher than the g4dn
 era's ~$0.16/hr; the gap is now bigger so the CPU-queue optimization is more
 worthwhile). To route them to a cheaper CPU Spot pool:

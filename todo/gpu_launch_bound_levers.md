@@ -56,8 +56,18 @@ process-backed MPS backend for that environment:
   flat-history positions use graph capture, and all six positions can run under
   the same graph-on tune workflow.
 
-This is tuner-only. Production training keeps the same default graph-off path
-unless an operator explicitly opts into `FF_CUDA_GRAPH=1`.
+**Production now autodetects graphs ON (2026-06-05, owner decision).**
+`cuda_graph_enabled()` defaults ON for **any** CUDA sm_80+ box (g6/L4 `sm_89`,
+5080 `sm_120`), so the production Batch fan-out and local sm_80+ runs are graphed
+with no env opt-in; `FF_CUDA_GRAPH=0` is the force-off override. `train-batch.yml`
+still threads the `FF_BATCH_CUDA_GRAPH` repo variable as an optional fleet
+override (set it to `0` to force eager), and labels Batch benchmark rows
+`g6.xlarge (Spot, CUDA-graph)` so the graphed era stays separate from the
+pre-cutover eager baseline. This was shipped **without** a pre-merge A/B (owner
+chose speed-now); the first post-merge 6-position retrain *is* the graphed
+rebaseline. K's nested trainer still no-ops capture, and CPU/CI/T4 stay eager
+(byte-identical). To run a bit-comparable eager A/B locally, set `FF_CUDA_GRAPH=0`
+(~3 seeds per AGENTS.md).
 
 ---
 
@@ -84,6 +94,8 @@ unless an operator explicitly opts into `FF_CUDA_GRAPH=1`.
 
 **Decision (2026-05-31):** ship `FF_CUDA_GRAPH` as an **opt-in local-iteration speed knob** with the non-inertness documented — per-step math is exact and the model is equivalent quality, but it is **not** suitable for bit-comparable benchmark A/Bs against eager baselines. Off by default ⇒ AWS / CI / production byte-identical (the commit is training-skippable; Ridge MAE unchanged). The investigation knobs (`FF_NN_NORM`, `FF_FORCE_DROPOUT_ZERO`, `FF_NN_FIXED_EPOCHS`) are **kept** for a follow-up. Note `FF_NN_NORM` overlaps [src/tuning/ablate_backbone_norm.py](../src/tuning/ablate_backbone_norm.py) (which monkeypatches the same BN→LN swap) but composes with the graph env knobs in a single `benchmark` invocation.
 
+**Decision SUPERSEDED (2026-06-05, owner call):** `cuda_graph_enabled()` now **autodetects ON for sm_80+** (graphs are the default on g6/L4 + 5080); `FF_CUDA_GRAPH` is demoted to a force-off override. This deliberately makes the sm_80+ training path non-byte-identical to CPU/CI — the launch-bound speedup was prioritised over benchmark comparability, and benchmark history rebaselines graphed-vs-graphed from the cutover (Batch rows self-label `g6.xlarge (Spot, CUDA-graph)`). Shipped **without** a pre-merge A/B; the first post-merge retrain is the new graphed baseline. The "off by default ⇒ production byte-identical" property above no longer holds for sm_80+ — use `FF_CUDA_GRAPH=0` to recover the eager path for a bit-comparable A/B. See ADR-0017.
+
 **Benchmarkability follow-up (2026-06-01):** [src/analysis/cuda_graph_gradscale.py](../src/analysis/cuda_graph_gradscale.py) resolved the GradScaler question. Graph-vs-graph is clean (identical metrics + scale schedule), BN warmup snapshot/restore is inert, and eager-vs-graph first diverges in `GradScaler` at step 1. Fixed normal-scale mode is invalid because the default initial scale 65536 overflows at step 0.
 
 **Fixed-scale follow-up (2026-06-01):** lower explicit scales were tested on RB with fixed 30 epochs, dropout disabled, deterministic mode on, and graph BN warmup restored. `init_scale=2048` and `1024` still overflowed in the graph arm; `512` completed both graph and eager with identical scale/skip traces (2130 steps, 0 scale changes) but still produced a graph-vs-eager MAE delta (`4.044157` vs `4.060941`). That isolates the remaining difference to the expected multi-step FP16 trajectory drift from graph replay/kernel ordering. Fixed scale is not a bit-comparable bridge to eager and is its own worse-quality training regime, so the decision is: **graphed runs compare to graphed runs, not to eager baselines**; use a graphed local rebaseline for `FF_CUDA_GRAPH=1` A/Bs.
@@ -105,6 +117,33 @@ unless an operator explicitly opts into `FF_CUDA_GRAPH=1`.
 **Benchmark gate:** total wall-clock of the single-process-streams run vs the current `-j6` subprocess run (~242s), same inertness assertion. Only pursue if Lever A's per-position win is insufficient and the total-wall-clock ceiling is worth the refactor.
 
 **Effort:** multi-session; architectural. Highest ceiling, highest risk.
+
+### Lever B′ — within-position overlap (base NN ∥ attention NN) — PROTOTYPE (2026-06-07)
+
+A smaller, lower-risk slice of B scoped to **one position**: the pipeline trains
+the base NN then the attention NN *sequentially* in `_gpu_branch`, but they are
+independent (no stacking) and each is launch-bound, so overlapping them as **two
+processes sharing one GPU** collapses the GPU branch from `nn_train + attn_nn_train`
+→ `max(...)` (~2× for balanced positions like DST 98+94 / QB 36+36). Two
+processes (not threads) because host launch dispatch is GIL-bound, and each child
+re-seeds its own RNG so solo and concurrent runs stay bitwise-identical (the
+harness asserts per-target prediction-fingerprint parity). **GPU-arch-independent**
+(fills idle gaps on T4/L4/5080 alike — measurable on the current T4 fleet, no L4
+migration needed) and **composes with CUDA graphs** (graph each model AND overlap).
+
+Standalone benchmark harness (does NOT touch the production pipeline ⇒ no
+retrain): [src/analysis/overlap_base_attn_prototype.py](../src/analysis/overlap_base_attn_prototype.py).
+Run on a CUDA box with `data/splits`:
+`python -m src.analysis.overlap_base_attn_prototype --position QB --seed 42` — it
+reports solo-vs-concurrent per-model train time, the contention factor, the
+overlap speedup, and prediction parity. If the win holds, productionize by
+overlapping the two trainers in `_gpu_branch` behind an `FF_*` flag (default off).
+
+**AWS cousin:** the same "pack all six on one GPU" idea, but via **real NVIDIA MPS on a
+warm Linux L4** (MPS is available there, unlike WSL2/Windows) instead of in-process CUDA
+streams, is sketched in [proposed-adr-warm-mps-packed-training.md](proposed-adr-warm-mps-packed-training.md)
+(Option B; start/stop warm host, benchmark-gated before any build). The two could share a
+per-position worker entry.
 
 ---
 

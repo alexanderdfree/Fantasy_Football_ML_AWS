@@ -137,7 +137,7 @@ CONFIG_TINY = {
     "nn_log_every": 1,
     "loss_weights": {
         "receiving_tds": 1.0,
-        "receiving_yards": 0.133,
+        "receiving_yards": 0.0667,  # 1 / 15 (MSE)
         "receptions": 1.0,
         "fumbles_lost": 1.0,
     },
@@ -196,18 +196,20 @@ POSITION_CONFIG = PositionConfig(
     # hurdle (see GatedHead + hurdle_negbin_value_loss).
     head_losses={
         "receiving_tds": "poisson_nll",
-        "receiving_yards": "huber",
+        "receiving_yards": "mse",
         "receptions": "hurdle_negbin",
         "fumbles_lost": "poisson_nll",
     },
-    # Yards head keeps 2.0/delta rebalance; Poisson/hurdle heads use 1.0
-    # (their losses already sit near ~1.0 at typical rates).
+    # receiving_yards switched Huber -> MSE to chase the elite tail; weight
+    # = 1/delta (gradient-matched to the old 2.0/delta Huber, half its value).
+    # Poisson/hurdle heads stay 1.0.
     loss_weights={
         "receiving_tds": 1.0,
-        "receiving_yards": 0.133,  # 2.0 / 15
+        "receiving_yards": 0.0667,  # 1 / 15 (MSE)
         "receptions": 1.0,
         "fumbles_lost": 1.0,
     },
+    # Characteristic error scale the MSE weight (1/delta) derives from.
     huber_deltas={"receiving_yards": 15.0},
     # Hurdle gate on receptions + BCE gate on receiving_tds. Mirrors RB's
     # "Variant C" — the BCE gate restores per-target access to the
@@ -280,6 +282,7 @@ POSITION_CONFIG = PositionConfig(
     opp_attn_history_stats=list(DEFAULT_OPP_DEF_HISTORY_STATS),
     opp_attn_max_seq_len=17,
     # === LightGBM (Optuna retune, 50 trials, CV MAE 4.6876) ===
+    # Switched "huber" → "regression" (L2/MSE) to chase the elite tail; was
     # "fair" → "huber" via PR 3 LGBM unification. Holdout: Total MAE
     # 4.203 → 4.221 (+0.018, well inside ±0.05 tolerance), top-12 hit
     # rate +0.004, Spearman +0.004.
@@ -294,7 +297,7 @@ POSITION_CONFIG = PositionConfig(
     lgbm_reg_alpha=1.2740795,
     lgbm_min_child_samples=63,
     lgbm_min_split_gain=0.2346478,
-    lgbm_objective="huber",
+    lgbm_objective="regression",
     accepts_dataframes=True,
     cpu_only=False,
     has_cv_runner=True,

@@ -163,8 +163,8 @@ CONFIG_TINY = {
     "targets": _TARGETS,
     "ridge_alpha_grids": {t: [1.0] for t in _TARGETS},
     "loss_weights": {
-        "passing_yards": 0.08,  # 2.0 / 25 (Huber)
-        "rushing_yards": 0.133,  # 2.0 / 15 (Huber)
+        "passing_yards": 0.04,  # 1 / 25 (MSE)
+        "rushing_yards": 0.0667,  # 1 / 15 (MSE)
         "passing_tds": 1.0,  # Poisson NLL
         "rushing_tds": 1.0,  # Poisson NLL
         "interceptions": 1.0,  # Poisson NLL
@@ -220,26 +220,29 @@ POSITION_CONFIG = PositionConfig(
     # heads regressing to the mean under yards-dominated gradients) is
     # avoided without needing wider heads.
     head_losses={
-        "passing_yards": "huber",
-        "rushing_yards": "huber",
+        "passing_yards": "mse",
+        "rushing_yards": "mse",
         "passing_tds": "poisson_nll",
         "rushing_tds": "poisson_nll",
         "interceptions": "poisson_nll",
         "fumbles_lost": "poisson_nll",
     },
-    # Yards heads keep the 2.0/delta rebalance (without it, FP MAE regressed
-    # 6.33 -> 6.63; fumbles_lost R² = -0.34). Poisson NLL heads use weight
-    # 1.0 — at QB-scale rates (~1.5 TDs, ~0.7 INTs, ~0.4 fumbles) the
-    # Poisson NLL is O(1), matching weighted yards.
+    # Yards heads switched Huber -> MSE to stop discounting the elite upper tail
+    # (Huber's flat large-error gradient systematically under-projected top QBs).
+    # Weight = 1/delta (gradient-matched to the old 2.0/delta Huber weighting at
+    # the characteristic error e~delta; half the Huber weight since MSE's 2e
+    # gradient replaces Huber's flat delta). Poisson NLL heads stay at 1.0.
     loss_weights={
-        "passing_yards": 0.08,  # 2.0 / 25  (Huber)
-        "rushing_yards": 0.133,  # 2.0 / 15  (Huber)
+        "passing_yards": 0.04,  # 1 / 25  (MSE)
+        "rushing_yards": 0.0667,  # 1 / 15  (MSE)
         "passing_tds": 1.0,  # Poisson NLL
         "rushing_tds": 1.0,  # Poisson NLL
         "interceptions": 1.0,  # Poisson NLL
         "fumbles_lost": 1.0,  # Poisson NLL
     },
-    # Only Huber heads need a delta — count heads moved to Poisson NLL.
+    # Retained as the characteristic error scale the MSE weights (1/delta) are
+    # derived from; MSE heads ignore the delta at loss time (count heads are
+    # Poisson NLL).
     huber_deltas={
         "passing_yards": 25.0,
         "rushing_yards": 15.0,
@@ -322,16 +325,13 @@ POSITION_CONFIG = PositionConfig(
     opp_attn_history_stats=list(DEFAULT_OPP_DEF_HISTORY_STATS),
     opp_attn_max_seq_len=17,
     # === LightGBM (Optuna-tuned, 50 trials, CV MAE 5.7415) ===
-    # QB is the one position that keeps Fair after PR 3's unification attempt.
-    # 50-trial Huber retune regressed QB total MAE 6.269 -> 6.479
-    # (+0.210 pts/game), with passing_yards MAE jumping 66.1 -> 71.2.
-    # Root cause: LightGBM's Huber uses alpha=0.9 as a *quantile* — the 90th
-    # percentile of residuals demarcates the quadratic-to-linear transition.
-    # On QB passing_yards (typical residuals 0-100 yards, tail to 200+),
-    # that puts 90% of residuals in Huber's quadratic zone. Fair's
-    # log-curvature-everywhere downweights the tail smoothly and beats
-    # Huber by 0.21 pts on QB holdout. RB/WR/TE/K/DST don't have a
-    # passing_yards-like heavy tail and tolerate Huber.
+    # PR #870 switched all six positions (QB included) to MSE (`regression`,
+    # see lgbm_objective below). Historical note: QB previously kept LightGBM
+    # `fair` — a 50-trial Huber retune had regressed QB total MAE 6.269 -> 6.479
+    # (+0.210 pts/game, passing_yards 66.1 -> 71.2) because LightGBM's Huber
+    # alpha=0.9 quantile puts ~90% of QB passing_yards residuals in the
+    # quadratic zone, while Fair's smooth log-curvature downweighted the heavy
+    # tail. The #870 unification to MSE supersedes that Fair-vs-Huber tuning.
     train_lightgbm=True,
     lgbm_n_estimators=1500,
     lgbm_learning_rate=0.0612763,
@@ -342,7 +342,9 @@ POSITION_CONFIG = PositionConfig(
     lgbm_reg_alpha=0.00309259,
     lgbm_min_child_samples=59,
     lgbm_min_split_gain=0.0632242,
-    lgbm_objective="fair",
+    # Switched fair -> regression (L2/MSE): chase the elite upper tail instead of
+    # the robust/outlier-tolerant fair loss that under-projected top scorers.
+    lgbm_objective="regression",
     accepts_dataframes=True,
     cpu_only=False,
     has_cv_runner=True,

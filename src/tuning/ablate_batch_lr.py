@@ -41,7 +41,11 @@ from src.tuning.ablation_runner import (
 ABLATION_NAME = "batch_lr_attention"
 DEFAULT_LOG_DIR = os.path.join("logs", "ablations", ABLATION_NAME)
 DEFAULT_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
-DEFAULT_SEEDS = (42, 43, 44, 45, 46, 47, 48, 49)
+# 3 seeds by default (AGENTS.md "Default to 3 seeds for FP-MAE A/Bs"): 8 was too
+# slow for a full six-position × five-variant sweep. Bump via --seeds (e.g.
+# 42,43,44,45,46) when a variant's MAE delta lands inside the seed band and the
+# decision hinges on it.
+DEFAULT_SEEDS = (42, 43, 44)
 DEFAULT_VARIANTS = ("baseline", "b2_lr1", "b2_lrsqrt", "b2_lrlin", "b4_lrsqrt")
 BASELINE = "baseline"
 SENTINEL_VARIANTS = ("baseline", "b2_lrsqrt")
@@ -452,7 +456,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--seeds",
         default=",".join(str(seed) for seed in DEFAULT_SEEDS),
-        help="Comma-separated seeds (default: 42..49)",
+        help="Comma-separated seeds (default: 42,43,44; add more for borderline deltas)",
     )
     parser.add_argument(
         "--variants",

@@ -39,6 +39,7 @@ from src.shared.model_sync import (
     new_history_key,
     write_manifest,
 )
+from src.shared.platform_detect import detect_platform
 from src.shared.registry import (
     ALL_POSITIONS,
     INFERENCE_REGISTRY,
@@ -47,7 +48,7 @@ from src.shared.registry import (
     is_cpu_only,
 )
 from src.shared.smoke_test import SmokeTestFailed, run_smoke_test
-from src.shared.utils import seed_everything
+from src.shared.utils import cuda_graph_enabled, seed_everything
 from src.shared.utils import timed as _timed
 
 
@@ -190,8 +191,10 @@ def _assert_gpu(position: str, *, force: bool = False):
     This catches the silent-CPU-on-GPU-billed-instance failure mode where
     the Batch job definition forgets `resourceRequirements: [{type: GPU, ...}]`.
 
-    For CPU-only positions (K, DST) we don't enforce REQUIRE_GPU even if the
-    env var is set — those pipelines never touch CUDA.
+    For positions flagged ``cpu_only`` (K, DST) we skip the REQUIRE_GPU
+    assertion so they can still run on a CPU box — but K/DST now train an
+    attention NN and DO use CUDA when it's available; the flag only relaxes the
+    hard GPU requirement, it does not mean the pipeline avoids CUDA.
     """
     available = torch.cuda.is_available()
     print(f"[gpu] torch.cuda.is_available() = {available}")
@@ -432,6 +435,29 @@ def upload_artifacts(s3_bucket, position, model_dir):
         os.unlink(tmp_path)
 
 
+def _hardware_metadata() -> dict:
+    """Runtime GPU facts for the History-tab hardware label.
+
+    Stamped into ``benchmark_metrics.json`` so ``src/batch/benchmark.py`` builds
+    the instance label from what the job ACTUALLY ran on — ``gpu_name`` and
+    whether CUDA-graph capture was active (``cuda_graph_active``) — instead of a
+    hardcoded workflow string that silently drifts when the compute environment
+    migrates (e.g. T4/g4dn -> L4/g6). ``sm`` records the compute capability that
+    gates capture, so a reader can see *why* it was on/off (sm_75 < sm_80 -> off).
+
+    On a non-CUDA box (CPU-only positions in a CPU container, dry-run, dev/CI)
+    ``gpu_name``/``sm`` are ``None`` and ``cuda_graph_active`` is ``False``;
+    benchmark.py treats a run with no GPU-bearing position as "no metadata" and
+    falls back to its ``--instance-type`` argument.
+    """
+    info = detect_platform()
+    return {
+        "gpu_name": info.gpu_name,
+        "sm": info.sm,
+        "cuda_graph_active": cuda_graph_enabled(),
+    }
+
+
 def _extract_metrics(position, result):
     """Extract JSON-serializable benchmark metrics from pipeline result."""
     metrics: dict = {"position": position}
@@ -586,10 +612,39 @@ def _run_rb_gate_ablation(train_df, val_df, test_df, seed: int) -> None:
     print_summary(rows)
 
 
+def _run_scheduler_type_ablation(pos, seeds, s3_bucket, frames=None):
+    """Container-side LR-scheduler-type A/B runner.
+
+    Delegates to ``src.tuning.ablate_scheduler_type.run_position`` so this path
+    stays in sync with the operator CLI (``python -m
+    src.tuning.ablate_scheduler_type``). Runs the 3-way (onecycle / cosine /
+    plateau) A/B for one position across ``seeds`` and uploads the result JSON to
+    ``s3://{s3_bucket}/ablate_scheduler/{POS}/result.json``. No model artifact
+    upload — this is a diagnostic. ``frames`` (train/val/test) is passed through
+    for QB/RB/WR/TE to avoid a re-read per variant; K/DST pass ``None`` and let
+    their self-contained loaders run. ``FF_CUDA_GRAPH=0`` (set by the launcher)
+    keeps the A/B bit-comparable and eager.
+    """
+    from src.tuning.ablate_scheduler_type import run_position
+
+    result = run_position(pos, seeds, frames=frames)
+    key = f"ablate_scheduler/{pos.upper()}/result.json"
+    boto3.client("s3").put_object(
+        Bucket=s3_bucket, Key=key, Body=json.dumps(result, indent=2).encode()
+    )
+    print(f"Uploaded scheduler-type ablation result to s3://{s3_bucket}/{key}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--position", required=True, choices=ALL_POSITIONS)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--seeds",
+        default=None,
+        help="(--ablation scheduler-type only) comma-separated seeds "
+        "(default: the single --seed value).",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -599,11 +654,14 @@ def main():
     )
     parser.add_argument(
         "--ablation",
-        choices=["rb-gate"],
+        choices=["rb-gate", "scheduler-type"],
         default=None,
         help="Run a named ablation instead of a standard training run. "
         "'rb-gate' requires --position RB; runs the six-variant TD-gate "
-        "ablation and prints the decision table. Skips S3 upload.",
+        "ablation and prints the decision table. 'scheduler-type' runs the "
+        "LR-scheduler-type A/B (onecycle/cosine/plateau) for --position over "
+        "--seeds and uploads the per-position result JSON to "
+        "s3://$S3_BUCKET/ablate_scheduler/{pos}/result.json. Skips model upload.",
     )
     parser.add_argument(
         "--sweep",
@@ -652,6 +710,7 @@ def main():
     args = parser.parse_args()
 
     pos = args.position
+    seeds = [int(s) for s in args.seeds.split(",") if s.strip()] if args.seeds else [args.seed]
     if args.ablation == "rb-gate" and pos != "RB":
         parser.error("--ablation rb-gate requires --position RB")
     if args.sweep and pos != "WR":
@@ -750,6 +809,13 @@ def main():
                 _run_rb_gate_ablation(train_df, val_df, test_df, seed=args.seed)
             print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
             return
+        if args.ablation == "scheduler-type":
+            with _timed("run_ablation", store=phase_seconds):
+                _run_scheduler_type_ablation(
+                    pos, seeds, s3_bucket, frames=(train_df, val_df, test_df)
+                )
+            print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
+            return
         if args.sweep:
             # Sweep runs the WR pipeline N times with attn_batch_size overrides
             # and prints a wall-clock table. No S3 artifact upload — diagnostic.
@@ -773,6 +839,11 @@ def main():
         # K/DST: self-contained raw-data loaders. They still use the
         # sync_raw_data() pull above, but they intentionally do not consume the
         # train/val/test split parquet artifacts used by QB/RB/WR/TE.
+        if args.ablation == "scheduler-type":
+            with _timed("run_ablation", store=phase_seconds):
+                _run_scheduler_type_ablation(pos, seeds, s3_bucket, frames=None)
+            print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
+            return
         gpu_sidecar = _start_nvidia_smi_sidecar(gpu_profile_csv)
         try:
             with _timed("run_pipeline", store=phase_seconds):
@@ -813,6 +884,10 @@ def main():
     # the S3 upload, matching local benchmark.py's wrap around run_one().
     metrics["elapsed_sec"] = round(time.monotonic() - _t_total, 1)
     metrics["phase_seconds"] = phase_seconds
+    # Stamp the GPU the job ran on + whether CUDA-graph capture was active so
+    # benchmark.py derives the History-tab hardware label at runtime instead of
+    # a hardcoded workflow string (auto-tracks a T4->L4 CE migration).
+    metrics.update(_hardware_metadata())
     metrics_path = os.path.join(model_dir, "benchmark_metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)

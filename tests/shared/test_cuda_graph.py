@@ -37,18 +37,43 @@ _WEIGHTS = {t: 1.0 for t in _TARGETS}
 
 
 # ---------------------------------------------------------------------------
-# cuda_graph_enabled() — same gating contract as _maybe_compile (sm_80+, opt-in)
+# cuda_graph_enabled() — autodetect-ON for CUDA sm_80+; FF_CUDA_GRAPH force-off override
 # ---------------------------------------------------------------------------
 @pytest.mark.unit
-def test_cuda_graph_disabled_by_default(monkeypatch):
+def test_cuda_graph_off_without_cuda(monkeypatch):
+    """No CUDA (CPU/CI) → always off, with FF_CUDA_GRAPH unset OR forced on:
+    the hardware floor keeps CPU/CI byte-identical to the eager path."""
+    monkeypatch.setenv("FF_DEVICE", "cpu")
     monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
+    assert cuda_graph_enabled() is False
+    monkeypatch.setenv("FF_CUDA_GRAPH", "1")
     assert cuda_graph_enabled() is False
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("flag", ["0", "false", "no", "off", ""])
-def test_cuda_graph_falsy_values(monkeypatch, flag):
+@pytest.mark.parametrize("env", ["unset", ""])
+def test_cuda_graph_autodetect_on_sm80plus_when_unset(monkeypatch, env):
+    """New default: sm_80+ with FF_CUDA_GRAPH unset/empty → graphs ON via
+    device autodetect (no manual opt-in)."""
+    if env == "unset":
+        monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
+    else:
+        monkeypatch.setenv("FF_CUDA_GRAPH", env)
+    monkeypatch.delenv("FF_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, **k: (8, 9))
+    assert cuda_graph_enabled() is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("flag", ["0", "false", "no", "off"])
+def test_cuda_graph_force_off_override_on_sm80plus(monkeypatch, flag):
+    """On capable hardware graphs autodetect ON; a falsy FF_CUDA_GRAPH is the
+    force-off override (e.g. for a bit-comparable eager A/B)."""
     monkeypatch.setenv("FF_CUDA_GRAPH", flag)
+    monkeypatch.delenv("FF_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, **k: (8, 9))
     assert cuda_graph_enabled() is False
 
 
@@ -96,8 +121,13 @@ def _bare_trainer(cls, model, targets=_TARGETS):
 
 @pytest.mark.unit
 def test_maybe_graph_model_noop_when_disabled(monkeypatch):
-    """Flag off → _maybe_graph_model leaves self.model untouched (same object)."""
-    monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
+    """Force-off override → _maybe_graph_model leaves self.model untouched (same object).
+
+    Post-#889, ``FF_CUDA_GRAPH`` is a force-off override over the sm_80+ autodetect,
+    not the trigger — so "disabled" is ``=0``, not unset (unset autodetects ON on a
+    local sm_80+ box and would attempt capture on this CPU trainer).
+    """
+    monkeypatch.setenv("FF_CUDA_GRAPH", "0")
     model = nn.Linear(3, 2)
     tr = _bare_trainer(MultiHeadTrainer, model, targets=["y"])
     assert tr._graphed is False

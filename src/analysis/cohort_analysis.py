@@ -15,6 +15,7 @@ Usage:
     python -m src.analysis.cohort_analysis rookie --no-model
     python -m src.analysis.cohort_analysis ascension --positions RB --with-model-error
     python -m src.analysis.cohort_analysis sparse_history --positions RB --with-model-error --deep-dive
+    python -m src.analysis.cohort_analysis scoring_tier --with-model-error --tier-topn 24 --deep-dive
 """
 
 from __future__ import annotations
@@ -98,19 +99,33 @@ DAYS_REST = "days_rest"
 GAME_STATUS = "game_status"
 INJURY_RETURN_BUCKET = "injury_return_bucket"
 
+# Scoring-tier (a-priori "commonly drafted" elite) constants. The tier is defined
+# by prior-season mean fantasy points (an ADP-like, known-before-kickoff proxy)
+# ranked within (season, position), NOT by points actually scored that week — so
+# the slice is what you would have *drafted*, free of hindsight leakage.
+TIER_ELITE = "elite_top_drafted"
+TIER_FIELD = "field"
+TIER_BUCKET = "tier_bucket"
+DEFAULT_TIER_TOPN = 24
+TIER_POSITIONS = ["QB", "RB", "WR", "TE"]
+
 # New consolidated cohorts.
 COMMITTEE = "committee"
 NON_COMMITTEE = "non_committee"
 TRADED = "midseason_trade"
 STABLE_TEAM = "stable_team"
 SUSPENSION_RETURN = "suspension_return"
-NOT_SUSPENSION_RETURN = "not_suspension_return"
 
 
 @dataclass(frozen=True)
 class CohortContext:
     min_season: pd.Series | None = None
     early_games: int = EARLY_GAMES
+    # (player_id, season) -> prior-season mean fantasy points; the a-priori
+    # scoring-tier proxy, precomputed from all split frames so a position's
+    # test_df (test seasons only) can still see each player's S-1 expectation.
+    prior_season_fp: pd.Series | None = None
+    tier_topn: int = DEFAULT_TIER_TOPN
 
 
 @dataclass(frozen=True)
@@ -583,6 +598,74 @@ def player_min_season(frames: list[pd.DataFrame | None]) -> pd.Series:
     if not parts:
         return pd.Series(dtype="int64", name="season")
     return pd.concat(parts, ignore_index=True).groupby("player_id")["season"].min()
+
+
+def player_prior_season_fp(frames: list[pd.DataFrame | None]) -> pd.Series:
+    """Map ``(player_id, season)`` to the player's PRIOR-season mean fantasy points.
+
+    This is the a-priori "commonly drafted" expectation proxy: it aggregates each
+    player's season-(S-1) mean ``fantasy_points`` and attaches it to season S, so a
+    test-season row can be ranked by what was known before the season started. It
+    reconstructs the signal that ``prior_season_mean_fantasy_points`` carried before
+    PR #191 dropped it as a model feature; here it is used only for slicing, never
+    fed to a model.
+    """
+    needed = ["player_id", "season", "fantasy_points"]
+    parts = [f[needed] for f in frames if f is not None and all(c in f.columns for c in needed)]
+    if not parts:
+        return pd.Series(dtype=float, name="prior_season_fp")
+    allrows = pd.concat(parts, ignore_index=True)
+    season_fp = allrows.groupby(["player_id", "season"], as_index=False)["fantasy_points"].mean()
+    # Shift each season's mean forward one year: S-1's mean is S's prior expectation.
+    season_fp["season"] = season_fp["season"] + 1
+    out = season_fp.set_index(["player_id", "season"])["fantasy_points"]
+    out.name = "prior_season_fp"
+    return out
+
+
+def label_scoring_tier_rows(
+    df: pd.DataFrame,
+    prior_season_fp: pd.Series | None,
+    *,
+    top_n: int = DEFAULT_TIER_TOPN,
+) -> pd.Series:
+    """Label rows ``elite_top_drafted`` / ``field`` / ``unknown`` by a-priori rank.
+
+    A player-season is ``elite_top_drafted`` when its prior-season mean fantasy
+    points ranks in the top ``top_n`` within its ``(season, position)``; players
+    with a prior season but a lower rank are ``field``; rows with no prior-season
+    expectation (rookies / first observed season) are ``unknown`` rather than being
+    forced into ``field``, so the elite-vs-field contrast stays a veteran comparison.
+    """
+    needed = ["player_id", "season", "position"]
+    if (
+        prior_season_fp is None
+        or len(prior_season_fp) == 0
+        or any(c not in df.columns for c in needed)
+    ):
+        return pd.Series([UNKNOWN] * len(df), index=df.index, dtype=object)
+
+    keys = pd.MultiIndex.from_arrays([df["player_id"], df["season"]])
+    proxy = pd.Series(prior_season_fp.reindex(keys).to_numpy(), index=df.index)
+
+    labels = pd.Series(UNKNOWN, index=df.index, dtype=object)
+    valid = proxy.notna()
+    if not valid.any():
+        return labels
+
+    # Rank once per player-season (not per game) so a player's number of test rows
+    # does not bias the cutoff; ascending=False puts the highest scorers at rank 1.
+    ps = df.loc[valid, ["player_id", "season", "position"]].copy()
+    ps["_proxy"] = proxy[valid]
+    ps = ps.drop_duplicates(["player_id", "season"])
+    ps["_rank"] = ps.groupby(["season", "position"])["_proxy"].rank(method="first", ascending=False)
+    elite_keys = set(map(tuple, ps.loc[ps["_rank"] <= top_n, ["player_id", "season"]].to_numpy()))
+
+    row_keys = list(zip(df["player_id"], df["season"], strict=True))
+    is_elite = pd.Series([k in elite_keys for k in row_keys], index=df.index)
+    labels[valid & ~is_elite] = TIER_FIELD
+    labels[valid & is_elite] = TIER_ELITE
+    return labels
 
 
 def label_rookie_rows(
@@ -1433,7 +1516,20 @@ def _ctx_suspension(df: pd.DataFrame, _ctx: CohortContext) -> pd.Series:
     return label_suspension_return_rows(df)
 
 
+def _ctx_scoring_tier(df: pd.DataFrame, ctx: CohortContext) -> pd.Series:
+    return label_scoring_tier_rows(df, ctx.prior_season_fp, top_n=ctx.tier_topn)
+
+
 COHORTS: dict[str, CohortSpec] = {
+    "scoring_tier": CohortSpec(
+        "scoring_tier",
+        "A-priori elite/top-drafted slice: prior-season mean FP rank per (season, "
+        "position) vs the veteran field. Diagnoses tail under-prediction.",
+        tuple(TIER_POSITIONS),
+        TIER_BUCKET,
+        TIER_ELITE,
+        _ctx_scoring_tier,
+    ),
     "ascension": CohortSpec(
         "ascension",
         "RB backup-to-workhorse jump: prior-3 opportunities <=8 and current opportunities >=18.",
@@ -1537,6 +1633,42 @@ def _print_uniform_model_report(pos: str, spec: CohortSpec, df: pd.DataFrame, to
             for bucket, sub in df.groupby(spec.label_col, observed=True, sort=True):
                 hit, spear = _avg_weekly_ranking(sub, col, top_k)
                 print(f"  {name:<14}{str(bucket):<18}{hit:>8.2f}{spear:>8.2f}")
+
+
+def _discover_targets(df: pd.DataFrame) -> list[str]:
+    """Raw-stat target names from the ``pred_ridge_<target>`` per-target columns."""
+    prefix = "pred_ridge_"
+    return sorted(
+        c[len(prefix) :] for c in df.columns if c.startswith(prefix) and c != "pred_ridge_total"
+    )
+
+
+def _print_tier_target_bias(pos: str, spec: CohortSpec, df: pd.DataFrame) -> None:
+    """Localize the tail gap: signed bias per (model, raw target) x {elite, field}.
+
+    Total-FP bias says *whether* the elite slice is mis-predicted; this pins it to
+    the specific raw-stat head (e.g. passing_yards) and model that drive it, which
+    is what scopes a Phase-2 loss/feature intervention.
+    """
+    models = _prediction_columns(df)
+    targets = _discover_targets(df)
+    if not models or not targets or spec.label_col not in df.columns:
+        return
+
+    _hr(f"{pos}: {spec.name} per-target signed bias (deep dive)")
+    print("  bias = mean(pred - actual); negative on elite = under-prediction.")
+    print(f"  {'model':<14}{'target':<26}{'elite_bias':>12}{'field_bias':>12}")
+    stem = {name: col[len("pred_") : -len("_total")] for name, col in models.items()}
+    for name in models:
+        for target in targets:
+            pred_col = f"pred_{stem[name]}_{target}"
+            if pred_col not in df.columns or target not in df.columns:
+                continue
+            metrics = compute_stratum_metrics(df, target, pred_col, spec.label_col)
+            by_bucket = metrics.set_index(spec.label_col)["bias"]
+            elite = by_bucket.get(TIER_ELITE, float("nan"))
+            field = by_bucket.get(TIER_FIELD, float("nan"))
+            print(f"  {name:<14}{target:<26}{elite:>+12.3f}{field:>+12.3f}")
 
 
 def _print_injury_detailed(pos: str, df: pd.DataFrame) -> dict:
@@ -1644,7 +1776,7 @@ def _selected_cohorts(parser: argparse.ArgumentParser, names: list[str]) -> list
 
 
 def _load_context(
-    splits_dir: str | Path, early_games: int
+    splits_dir: str | Path, early_games: int, tier_topn: int = DEFAULT_TIER_TOPN
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, CohortContext]:
     train_df, val_df, test_df = _load_splits(splits_dir)
     return (
@@ -1654,16 +1786,20 @@ def _load_context(
         CohortContext(
             min_season=player_min_season([train_df, val_df, test_df]),
             early_games=early_games,
+            prior_season_fp=player_prior_season_fp([train_df, val_df, test_df]),
+            tier_topn=tier_topn,
         ),
     )
 
 
 def _run_data_only(args: argparse.Namespace, specs: list[CohortSpec], positions: list[str]) -> None:
     train_df = val_df = test_df = None
-    ctx = CohortContext(early_games=args.early_games)
+    ctx = CohortContext(early_games=args.early_games, tier_topn=args.tier_topn)
     needs_splits = any(s.name != "ascension" for s in specs)
     if needs_splits:
-        train_df, val_df, test_df, ctx = _load_context(args.splits_dir, args.early_games)
+        train_df, val_df, test_df, ctx = _load_context(
+            args.splits_dir, args.early_games, args.tier_topn
+        )
 
     for spec in specs:
         if not spec.feasible:
@@ -1695,7 +1831,9 @@ def _run_data_only(args: argparse.Namespace, specs: list[CohortSpec], positions:
 def _run_model_reports(
     args: argparse.Namespace, specs: list[CohortSpec], positions: list[str]
 ) -> None:
-    train_df, val_df, test_df, ctx = _load_context(args.splits_dir, args.early_games)
+    train_df, val_df, test_df, ctx = _load_context(
+        args.splits_dir, args.early_games, args.tier_topn
+    )
     needed_positions: list[str] = []
     for spec in specs:
         for pos in _applicable_positions(spec, positions):
@@ -1731,6 +1869,9 @@ def _run_model_reports(
             else:
                 _print_uniform_model_report(pos, spec, df, args.top_k)
 
+            if spec.name == "scoring_tier" and args.deep_dive:
+                _print_tier_target_bias(pos, spec, df)
+
             if spec.name == "sparse_history" and pos == "RB" and args.deep_dive:
                 sparse_history_deep_dive(df, no_plots=args.no_plots)
 
@@ -1764,6 +1905,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--splits-dir", default=SPLITS_DIR)
     parser.add_argument("--established-games", type=int, default=DEFAULT_ESTABLISHED_GAMES)
     parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
+    parser.add_argument(
+        "--tier-topn",
+        type=int,
+        default=DEFAULT_TIER_TOPN,
+        help="scoring_tier only: top-N players per (season, position) counted as elite",
+    )
     parser.add_argument("--eval-max-week", type=int, default=17)
     parser.add_argument("--early-games", type=int, default=EARLY_GAMES)
     parser.add_argument("--seed", type=int, default=42)
