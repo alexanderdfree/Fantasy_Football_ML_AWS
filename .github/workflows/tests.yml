@@ -240,6 +240,13 @@ jobs:
           echo "${FPR}:6:" | gpg --import-ownertrust
 
       - name: Upload coverage to Codecov
+        # Codecov uploads must never fail the test job: dependabot branches get
+        # no CODECOV_TOKEN (the CLI's "commit creating" auth step then errors on
+        # protected branches), codecov infra can also flake, and the real
+        # coverage gate is codecov's own commit status, not this step's exit
+        # code. fail_ci_if_error:false does NOT cover that auth error, so guard
+        # the whole step (mirrors the "Trust Codecov CLI verification key" step).
+        continue-on-error: true
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
         # major version comment. SHA = codecov/codecov-action v6 tip as of
         # 2026-05-21.
@@ -254,6 +261,9 @@ jobs:
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
+        # Same rationale as the coverage upload above: never fail the job on a
+        # Codecov upload/auth error (dependabot has no token; infra can flake).
+        continue-on-error: true
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
         # major version comment. SHA = codecov/codecov-action v6 tip as of
         # 2026-05-21.

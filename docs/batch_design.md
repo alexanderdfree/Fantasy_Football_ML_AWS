@@ -1,6 +1,6 @@
 # AWS Batch Training Design Doc
 
-> **Status (2026-05-31): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g6.xlarge Spot instances, one position per host (migrated from g4dn.xlarge 2026-05-31 — T4 → L4 for BF16 + torch.compile re-eligibility; see ARCHITECTURE.md Update history). **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself), which is now train-batch.yml's dominant wall-clock cost — PR #330 removed the forced "Refresh ECS service" (`update-service --force-new-deployment`) step from train-batch.yml (per-position in-flight model refresh via `src/shared/model_sync.py` makes new artifacts live within one ~30s poll interval; ECS rolling redeploy via deploy.yml's ALB-tuned ~3 min path is now decoupled from the train workflow). The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate.** Warm-EC2 rollback path: ~120-min sequential loop. Cold-start mitigation: SOCI v2 indexes published by PR #216 + `soci-snapshotter-grpc` v0.13.0 installed on the AL2 Spot host via the `ff-batch-lt` launch template (Option B, this PR — see §2a for the active configuration). Image kept ~5–6 GB via aggressive `.dockerignore` + explicit `COPY`. Baseline 2026-05-20 cold-start ~258 s; expected ~135 s once the launch template is attached to the live CE (post-merge `bash infra/batch/setup.sh` reconciles). See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
+> **Status (2026-05-31): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g6.xlarge Spot instances, one position per host (migrated from g4dn.xlarge 2026-05-31 — T4 → L4 for BF16 + torch.compile re-eligibility; see ARCHITECTURE.md Update history). **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself), which is now train-batch.yml's dominant wall-clock cost — PR #330 removed the forced "Refresh ECS service" (`update-service --force-new-deployment`) step from train-batch.yml (per-position in-flight model refresh via `src/shared/model_sync.py` makes new artifacts live within one ~30s poll interval; ECS rolling redeploy via deploy.yml's ALB-tuned ~3 min path is now decoupled from the train workflow). The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate.** Warm-EC2 rollback path: ~120-min sequential loop. Cold-start: ~120 s image pull on a fresh Spot host (3.8 GB image). **SOCI lazy-loading was REMOVED 2026-06-07 — it never worked and cannot work on AWS Batch: Batch runs on ECS-managed EC2 and the `amazon-ecs-agent` does not pull through the soci snapshotter (Fargate-only; [containers-roadmap#1832](https://github.com/aws/containers-roadmap/issues/1832)). See §2a + [todo/fixed-archive.md](../todo/fixed-archive.md).** Image kept ~5–6 GB via aggressive `.dockerignore` + explicit `COPY`. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
 >
 > Rollback: `gh variable set BATCH_ACTIVE --body "false"` returns push-driven training to the warm-EC2 path ([docs/ec2_design.md](ec2_design.md)) on the next push to `main`. Both paths remain provisioned.
 
@@ -418,6 +418,21 @@ After the first pull seeds the cache, every subsequent Batch instance in the
 region pulls the base layers from ECR's local endpoints instead of Docker Hub.
 
 ### 2a. SOCI (Seekable OCI) lazy loading
+
+> **⚠️ REMOVED / DOES NOT WORK ON BATCH (2026-06-07).** AWS Batch runs on
+> **ECS-managed EC2**, and the `amazon-ecs-agent` does not pull images through
+> the soci snapshotter — SOCI on ECS is **Fargate-only**
+> ([containers-roadmap#1832](https://github.com/aws/containers-roadmap/issues/1832),
+> open since 2022), and Fargate has no GPU, so GPU training can never use it.
+> Verified empirically: with a fully-correct soci config (transfer-service
+> snapshotter selection + ECR credential helper + `soci_v1` pull mode — validated
+> to lazy-load a `ctr` pull in 7 s / 9 KiB on a fresh AL2023 host), a prod K Batch
+> job still pulled in **103 s** (overlayfs) because the agent ignored the config.
+> The launch template, the CI index-publish step, and the userdata daemon were all
+> removed; the CE uses the default ECS AMI and pays the ~120 s pull. This holds on
+> g6/L4 too (the limitation is the ECS agent, not the GPU arch). Full root-cause:
+> [todo/fixed-archive.md](../todo/fixed-archive.md). **Text below is retained for
+> history only.**
 
 SOCI v2 lazy-loading lets a container start executing before its full
 image is pulled — essential files stream first, the rest loads in the
