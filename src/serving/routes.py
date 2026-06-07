@@ -84,6 +84,13 @@ def api_predictions():
     rows = _records_to_player_rows(df, scoring=scoring)
 
     reverse = order == "desc"
+    # "fantasy_points" (the default sort) maps to "actual" — the per-player rows
+    # expose the realized fantasy total as "actual", not a separate
+    # "fantasy_points" key. Without this alias the default silently fell through
+    # to the else-branch (which also sorts by "actual", so same result, but the
+    # whitelist no longer hides the default). (#498)
+    if sort_by == "fantasy_points":
+        sort_by = "actual"
     if sort_by in ("actual", "ridge_pred", "nn_pred", "attn_nn_pred", "lgbm_pred", "week"):
         rows.sort(key=lambda x: x.get(sort_by) or 0, reverse=reverse)
     else:
