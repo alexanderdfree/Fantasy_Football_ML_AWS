@@ -312,6 +312,11 @@ def test_apply_position_models_lgbm_load_failure_leaves_lgbm_pred_nan(monkeypatc
         {
             "player_id": ["P"] * 4,
             "position": ["QB"] * 4,
+            # season + week are always present on real split frames; serving now
+            # applies the training-time min-games filter (groupby player_id,season)
+            # in _apply_position_models, so the stub frame must carry them too.
+            "season": [2025] * 4,
+            "week": [1, 2, 3, 4],
             "fantasy_points": [10.0] * 4,
             "passing_yards": [250.0] * 4,
             "f0": [1.0] * 4,
