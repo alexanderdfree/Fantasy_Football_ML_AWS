@@ -23,8 +23,9 @@ _VALID_DEVICES = ("auto", "cpu", "cuda", "mps")
 _AMP_DTYPE_ENV = "FF_AMP_DTYPE"
 _VALID_AMP = ("auto", "bf16", "fp16", "fp32")
 
-# Operator-facing CUDA-graph capture toggle, analogous to FF_COMPILE. Opt-in
-# (off unless explicitly set) and sm_80+ only — see ``cuda_graph_enabled``.
+# Operator-facing CUDA-graph capture override (NOT the trigger): capture
+# autodetects ON for CUDA sm_80+; set this falsy to force the eager path —
+# see ``cuda_graph_enabled``.
 _CUDA_GRAPH_ENV = "FF_CUDA_GRAPH"
 
 

@@ -357,9 +357,11 @@ class TestSubmitJob:
         importlib.reload(__import__("src.batch.launch", fromlist=[""]))
 
     def test_submit_omits_cuda_graph_when_unset(self):
-        """Empty FF_CUDA_GRAPH (the default — repo variable unset) → no env
-        entry, so cuda_graph_enabled() returns False in the container and the
-        production path stays byte-identical to the eager baseline."""
+        """Empty FF_CUDA_GRAPH (the default — repo variable unset) → the submit
+        step adds no FF_CUDA_GRAPH env entry, leaving the container to autodetect
+        via cuda_graph_enabled() (#889: ON for CUDA sm_80+, so the live g6/L4
+        (sm_89) Batch CE is graphed; eager only on the T4 (sm_75) EC2 rollback
+        and CPU). The env var is a force-OFF override, not the trigger."""
         import importlib
 
         with mock.patch.dict(os.environ, {"FF_CUDA_GRAPH": ""}):

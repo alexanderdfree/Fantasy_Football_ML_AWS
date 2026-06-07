@@ -191,8 +191,10 @@ def _assert_gpu(position: str, *, force: bool = False):
     This catches the silent-CPU-on-GPU-billed-instance failure mode where
     the Batch job definition forgets `resourceRequirements: [{type: GPU, ...}]`.
 
-    For CPU-only positions (K, DST) we don't enforce REQUIRE_GPU even if the
-    env var is set — those pipelines never touch CUDA.
+    For positions flagged ``cpu_only`` (K, DST) we skip the REQUIRE_GPU
+    assertion so they can still run on a CPU box — but K/DST now train an
+    attention NN and DO use CUDA when it's available; the flag only relaxes the
+    hard GPU requirement, it does not mean the pipeline avoids CUDA.
     """
     available = torch.cuda.is_available()
     print(f"[gpu] torch.cuda.is_available() = {available}")
