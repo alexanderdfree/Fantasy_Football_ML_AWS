@@ -1,9 +1,8 @@
 """Launch AWS Batch training for all positions and collect benchmark metrics.
 
 Runs the same pipelines as benchmark.py but on AWS Batch GPU instances
-(g4dn.xlarge / Tesla T4 Spot as of 2026-06-07 — the live CE instance type;
-the docs' g6/L4 migration is not deployed). Downloads benchmark_metrics.json
-from each job's model artifacts and prints a unified comparison table.
+(g6.xlarge Spot).  Downloads benchmark_metrics.json from each job's model
+artifacts and prints a unified comparison table.
 
 Usage:
     python src/batch/benchmark.py                          # all 6 positions
@@ -150,7 +149,7 @@ def record_benchmark_run(
     positions,
     *,
     backend="batch",
-    instance_type="g4dn.xlarge (T4, Spot)",
+    instance_type="g6.xlarge (Spot)",
     note="",
     pr_number=None,
     git_hash=None,
@@ -276,7 +275,7 @@ def main():
     )
     parser.add_argument(
         "--instance-type",
-        default="g4dn.xlarge (T4, Spot)",
+        default="g6.xlarge (Spot)",
         help="Instance-type label recorded in benchmark_history/",
     )
     parser.add_argument(
