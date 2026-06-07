@@ -225,6 +225,37 @@ def test_run_worker_rolling_origin_uses_rolling_runner(tmp_path, monkeypatch):
     }
 
 
+def test_run_worker_single_split_calls_run_one_with_real_signature(tmp_path, monkeypatch):
+    """Regression for the parallel-trainer ``run_one(cv=...)`` drift: PR #719
+    removed ``run_one``'s ``cv`` param but this caller still passed ``cv=False``
+    (CI never exercises the parallel trainer, so it broke silently). The stub
+    mirrors ``benchmark.run_one``'s REAL signature ``run_one(position)`` so any
+    stray kwarg raises TypeError — the rolling-origin test above uses
+    ``lambda *a, **k`` and cannot catch a signature drift."""
+    calls = []
+
+    def _fake_run_one(position):  # must mirror benchmark.run_one's real signature
+        calls.append(position)
+        return {"position": position, "ridge_mae": 4.2}
+
+    monkeypatch.setattr(pt, "run_one", _fake_run_one)
+    monkeypatch.setattr(
+        pt, "summarize_pipeline_result", lambda pos, result: {"position": pos, "summarized": True}
+    )
+    monkeypatch.setattr(
+        pt,
+        "run_rolling_origin",
+        lambda pos: pytest.fail("single-split path must not call run_rolling_origin"),
+    )
+
+    out_path = tmp_path / "RB.json"
+    rc = pt._run_worker("RB", str(out_path), rolling_origin=False, significance=False)
+
+    assert rc == 0
+    assert calls == ["RB"]
+    assert json.loads(out_path.read_text()) == {"position": "RB", "summarized": True}
+
+
 def test_record_and_sync_rolling_origin_marks_history(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     captured = {}
