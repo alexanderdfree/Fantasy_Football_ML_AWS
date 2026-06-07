@@ -117,7 +117,7 @@ def _make_team_stats(seed: int = 1) -> pd.DataFrame:
 def synthetic_parquets(tmp_path, monkeypatch):
     """Write the three parquets build_data expects + patch CACHE_DIR/SEASONS.
 
-    Also stubs ``load_team_week_stats`` + ``nfl.import_team_desc`` so no
+    Also stubs ``load_team_week_stats`` + ``nfl_source.teams`` so no
     network traffic happens. Returns the tmp cache directory for debugging.
     """
     import src.dst.data as dst_data
@@ -136,9 +136,9 @@ def synthetic_parquets(tmp_path, monkeypatch):
     monkeypatch.setattr(dst_data, "SEASONS", _SEASONS)
     monkeypatch.setattr(dst_data, "load_team_week_stats", lambda seasons: team_stats)
 
-    # Stub nfl_data_py import_team_desc so the logo lookup branch runs without
+    # Stub nfl_source.teams so the logo lookup branch runs without
     # a network call. The except-Exception fallback branch is covered by a
-    # separate test that forces import_team_desc to raise.
+    # separate test that forces nfl_source.teams to raise.
     fake_team_desc = pd.DataFrame(
         {"team_abbr": _TEAMS, "team_logo_espn": [f"https://logo/{t}.png" for t in _TEAMS]}
     )
@@ -264,7 +264,7 @@ def test_build_dst_data_is_dome_maps_roof(synthetic_parquets):
 
 @pytest.mark.unit
 def test_build_dst_data_logo_fallback_on_nfl_error(synthetic_parquets, monkeypatch):
-    """If ``nfl.import_team_desc`` raises, headshot_url defaults to empty str
+    """If ``nfl_source.teams`` raises, headshot_url defaults to empty str
     (covers the ``except Exception`` branch at the bottom of build_data)."""
     import src.dst.data as dst_data
 
