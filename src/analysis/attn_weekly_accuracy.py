@@ -55,6 +55,18 @@ MODELS = {
 ATTN = "Attention NN"
 PEERS = ["Ridge", "NN", "LightGBM"]
 
+# Expert projection sources (opt-in via --experts). NFL.com covers QB/RB/WR/TE/K
+# (no DST); Sleeper covers QB/RB/WR/TE/DST (no K). Both are re-scored to the same
+# PPR fantasy_points the models target. Columns are attached by attach_experts().
+EXPERTS = {
+    "NFL.com": "pred_nflcom_total",
+    "Sleeper": "pred_sleeper_total",
+}
+MODELS_AND_EXPERTS = {**MODELS, **EXPERTS}
+# Offense skill positions are the only ones BOTH experts project, so they are the
+# fair common ground for a single all-lines-comparable weekly chart.
+OFFENSE = ["QB", "RB", "WR", "TE"]
+
 # Week-phase buckets across an 18-game regular season + playoffs.
 EARLY, MID, LATE = "early (W1-4)", "mid (W5-13)", "late (W14+)"
 
@@ -98,18 +110,73 @@ def collect(positions, seeds, cache_dir: str | None) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
+# Expert projections (NFL.com + Sleeper), opt-in
+# --------------------------------------------------------------------------- #
+def attach_experts(df: pd.DataFrame, scoring_format: str = "ppr") -> pd.DataFrame:
+    """Left-merge NFL.com + Sleeper projected totals (same PPR scoring) onto df.
+
+    Reuses the project repo's expert loaders/projectors so the projections land
+    in the exact fantasy_points scale the models target, and inherit their
+    placeholder filtering (unprojected roster rows are already dropped, so a
+    non-null expert column means a genuine projection). Adds ``pred_nflcom_total``
+    and ``pred_sleeper_total``; rows a source does not project stay NaN.
+    """
+    from src.analysis.analysis_expert_comparison import (
+        _project_nflcom_expert,
+        _project_sleeper_to_ppr,
+    )
+    from src.analysis.sleeper_loader import load_sleeper_with_gsis_id
+    from src.data.nflcom_loader import load_nflcom_with_gsis_id
+
+    seasons = sorted(int(s) for s in df["season"].unique())
+    print(f"  loading expert projections for seasons {seasons} ...", flush=True)
+    nfl_raw = load_nflcom_with_gsis_id(seasons=seasons)
+    sleeper_raw = load_sleeper_with_gsis_id(seasons=seasons)
+
+    def _projected(raw, project_fn, out_col):
+        parts = []
+        for pos in df["position"].unique():
+            proj = project_fn(raw, pos, scoring_format)
+            if proj is None or proj.empty:
+                continue
+            parts.append(proj.rename(columns={"expert_pred_total": out_col}))
+        if not parts:
+            return pd.DataFrame(columns=["player_id", "season", "week", out_col])
+        out = pd.concat(parts, ignore_index=True)[["player_id", "season", "week", out_col]]
+        out["player_id"] = out["player_id"].astype(str)
+        out["season"] = out["season"].astype(int)
+        out["week"] = out["week"].astype(int)
+        return out.drop_duplicates(["player_id", "season", "week"])
+
+    df = df.copy()
+    df["player_id"] = df["player_id"].astype(str)
+    df["season"] = df["season"].astype(int)
+    df["week"] = df["week"].astype(int)
+    nfl = _projected(nfl_raw, _project_nflcom_expert, EXPERTS["NFL.com"])
+    sleeper = _projected(sleeper_raw, _project_sleeper_to_ppr, EXPERTS["Sleeper"])
+    df = df.merge(nfl, on=["player_id", "season", "week"], how="left")
+    df = df.merge(sleeper, on=["player_id", "season", "week"], how="left")
+    n_nfl = int(df[EXPERTS["NFL.com"]].notna().sum())
+    n_sl = int(df[EXPERTS["Sleeper"]].notna().sum())
+    print(f"  matched: NFL.com {n_nfl}/{len(df)} rows, Sleeper {n_sl}/{len(df)} rows")
+    return df
+
+
+# --------------------------------------------------------------------------- #
 # Aggregation helpers (seed-aware)
 # --------------------------------------------------------------------------- #
-def _models_in(df: pd.DataFrame) -> dict[str, str]:
-    return available_models(df, MODELS)
+def _models_in(df: pd.DataFrame, models: dict[str, str] | None = None) -> dict[str, str]:
+    return available_models(df, models or MODELS)
 
 
-def _metric_by(df: pd.DataFrame, by, metric: str) -> pd.DataFrame:
+def _metric_by(
+    df: pd.DataFrame, by, metric: str, models: dict[str, str] | None = None
+) -> pd.DataFrame:
     """Per-seed per-model `metric` grouped by `by`, then mean+/-std over seeds.
 
     Returns a tidy frame: columns [*by, model, mean, std, n].
     """
-    models = _models_in(df)
+    models = _models_in(df, models)
     rows = []
     by = list(by)
     for keys, sub in df.groupby(["seed", *by], observed=True):
@@ -260,36 +327,100 @@ def _section_attn_position(df, out):
     out.append("")
 
 
-def _plot_weekly(agg_mae, agg_bias, figdir, out):
+def _plot_weekly(
+    agg_mae, agg_bias, figdir, out, *, models=None, fname="attn_weekly_accuracy.png", title=""
+):
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    models = models or MODELS
     Path(figdir).mkdir(parents=True, exist_ok=True)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     mwide = _pivot(agg_mae, "week", "mean")
     bwide = _pivot(agg_bias, "week", "mean")
-    for m in MODELS:
+    for m in models:
         if m in mwide.columns:
-            lw = 2.5 if m == ATTN else 1.2
-            ax1.plot(mwide.index, mwide[m], marker="o", ms=3, lw=lw, label=m)
-            ax2.plot(bwide.index, bwide[m], marker="o", ms=3, lw=lw, label=m)
-    ax1.set_title("Week-by-week MAE")
+            # Experts dashed, ATTN bold, other models thin solid.
+            is_expert = m in EXPERTS
+            lw = 2.5 if m == ATTN else (2.0 if is_expert else 1.2)
+            ls = "--" if is_expert else "-"
+            ax1.plot(mwide.index, mwide[m], marker="o", ms=3, lw=lw, ls=ls, label=m)
+            ax2.plot(bwide.index, bwide[m], marker="o", ms=3, lw=lw, ls=ls, label=m)
+    suffix = f" — {title}" if title else ""
+    ax1.set_title(f"Week-by-week MAE{suffix}")
     ax1.set_xlabel("week")
     ax1.set_ylabel("MAE (fantasy pts)")
     ax1.legend()
     ax2.axhline(0, color="k", lw=0.6)
-    ax2.set_title("Week-by-week signed bias")
+    ax2.set_title(f"Week-by-week signed bias{suffix}")
     ax2.set_xlabel("week")
     ax2.set_ylabel("mean(pred - actual)")
     ax2.legend()
     fig.tight_layout()
-    path = Path(figdir) / "attn_weekly_accuracy.png"
+    path = Path(figdir) / fname
     fig.savefig(path, dpi=140)
     plt.close(fig)
     out.append(f"![weekly]({path})\n")
     print(f"  figure -> {path}")
+
+
+def _section_experts_weekly(df, out, figdir):
+    """Week-by-week chart of the 4 models + NFL.com + Sleeper on the common subset.
+
+    Experts only project startable players, so MAE here runs higher than the
+    full-population numbers above; every line is computed on the identical
+    matched subset (offense skill positions, rows BOTH experts project) so the
+    six lines are directly comparable.
+    """
+    out.append("## Week-by-week: 4 models + NFL.com + Sleeper (matched subset)\n")
+    n_col, s_col = EXPERTS["NFL.com"], EXPERTS["Sleeper"]
+    if n_col not in df.columns or s_col not in df.columns:
+        out.append("_Expert columns absent — run with `--experts`._\n")
+        return
+    sub = df[df["position"].isin(OFFENSE)].dropna(subset=[n_col, s_col]).copy()
+    if sub.empty:
+        out.append("_No player-weeks with both NFL.com and Sleeper projections._\n")
+        return
+    out.append(
+        f"Common ground = offense skill positions {OFFENSE} where both experts "
+        f"project (NFL.com has no DST, Sleeper has no K). "
+        f"Matched rows/seed: {len(sub) // sub['seed'].nunique()}. "
+        "MAE is higher than the full-population sections because experts only "
+        "cover high-volume startable players.\n"
+    )
+    agg = _metric_by(sub, ["week"], "mae", MODELS_AND_EXPERTS)
+    bias = _metric_by(sub, ["week"], "bias", MODELS_AND_EXPERTS)
+    mwide = _pivot(agg, "week", "mean")
+    order = [m for m in MODELS_AND_EXPERTS if m in mwide.columns]
+    out.append("### Per-week MAE\n")
+    out.append("| week | " + " | ".join(order) + " | best |")
+    out.append("|---|" + "---|" * (len(order) + 1))
+    for wk in mwide.index:
+        cells = " | ".join(_fmt(mwide.loc[wk, m]) for m in order)
+        best = min(order, key=lambda m: mwide.loc[wk, m])
+        out.append(f"| {wk} | {cells} | {best} |")
+    # Season-long matched-subset MAE per source.
+    overall = _metric_by(sub, [], "mae", MODELS_AND_EXPERTS).set_index("model")["mean"]
+    out.append("\n### Season-long MAE on the matched subset (lower = better)\n")
+    ranked = overall.sort_values()
+    out.append("| rank | source | MAE |")
+    out.append("|---|---|---|")
+    for i, (name, v) in enumerate(ranked.items(), 1):
+        tag = " *(expert)*" if name in EXPERTS else ""
+        out.append(f"| {i} | {name}{tag} | {_fmt(v)} |")
+    out.append("")
+    if figdir:
+        _plot_weekly(
+            agg,
+            bias,
+            figdir,
+            out,
+            models=MODELS_AND_EXPERTS,
+            fname="weekly_models_vs_experts.png",
+            title="models vs NFL.com & Sleeper (matched offense subset)",
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -302,6 +433,14 @@ def main() -> None:
     p.add_argument("--cache", default=None, help="dir to cache/reuse per-run test_dfs")
     p.add_argument("--report", default=None, help="write markdown report here")
     p.add_argument("--figdir", default=None, help="dir for the weekly figure")
+    p.add_argument(
+        "--experts",
+        action="store_true",
+        help="also overlay NFL.com + Sleeper projections (needs network on first fetch)",
+    )
+    p.add_argument(
+        "--scoring", default="ppr", help="scoring format for experts (ppr/half_ppr/standard)"
+    )
     args = p.parse_args()
 
     positions = [x.upper() for x in args.positions]
@@ -310,6 +449,8 @@ def main() -> None:
 
     df = collect(positions, seeds, args.cache)
     print(f"Collected {len(df)} prediction rows across {df['position'].nunique()} positions.")
+    if args.experts:
+        df = attach_experts(df, args.scoring)
 
     out: list[str] = [
         "# Week-by-week & subgroup accuracy — Attention NN focus\n",
@@ -319,6 +460,8 @@ def main() -> None:
     _section_overall(df, out)
     _section_attn_position(df, out)
     _section_weekly(df, out, args.figdir)
+    if args.experts:
+        _section_experts_weekly(df, out, args.figdir)
     _section_score_tier(df, out)
     _section_week_phase(df, out)
 

@@ -82,3 +82,46 @@ def test_attn_vs_best_peer_flags_win_and_loss():
 def test_fmt_handles_nan():
     assert awa._fmt(float("nan")) == "nan"
     assert awa._fmt(1.23456) == "1.235"
+
+
+# --------------------------------------------------------------------------- #
+# Expert-overlay path (NFL.com + Sleeper) — pure helpers, no network
+# --------------------------------------------------------------------------- #
+def test_expert_constants():
+    assert awa.EXPERTS == {"NFL.com": "pred_nflcom_total", "Sleeper": "pred_sleeper_total"}
+    assert awa.MODELS_AND_EXPERTS["Sleeper"] == "pred_sleeper_total"
+    assert set(awa.MODELS).issubset(awa.MODELS_AND_EXPERTS)
+    assert awa.OFFENSE == ["QB", "RB", "WR", "TE"]
+
+
+def _synthetic_with_experts() -> pd.DataFrame:
+    df = _synthetic()
+    # Sleeper closest, NFL.com worst — and only on offense (QB/RB here).
+    df["pred_sleeper_total"] = df["fantasy_points"] + 0.2
+    df["pred_nflcom_total"] = df["fantasy_points"] + 5.0
+    return df
+
+
+def test_metric_by_accepts_explicit_expert_models():
+    df = _synthetic_with_experts()
+    agg = awa._metric_by(df, ["position"], "mae", awa.MODELS_AND_EXPERTS)
+    sleeper = agg[agg["model"] == "Sleeper"]
+    assert not sleeper.empty
+    assert sleeper["mean"].iloc[0] == pytest.approx(0.2, abs=1e-9)
+
+
+def test_experts_section_ranks_sources_on_matched_subset():
+    df = _synthetic_with_experts()
+    out: list[str] = []
+    awa._section_experts_weekly(df, out, figdir=None)
+    text = "\n".join(out)
+    assert "NFL.com" in text and "Sleeper" in text
+    # In the season-long ranking, Sleeper (+0.2) outranks NFL.com (+5.0); both
+    # names also appear in the header, so compare their last (ranking) positions.
+    assert text.rfind("Sleeper") < text.rfind("NFL.com")
+
+
+def test_experts_section_handles_missing_columns():
+    out: list[str] = []
+    awa._section_experts_weekly(_synthetic(), out, figdir=None)
+    assert "run with `--experts`" in "\n".join(out)
