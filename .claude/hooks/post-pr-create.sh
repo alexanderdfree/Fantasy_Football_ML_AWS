@@ -11,6 +11,10 @@
 # guards, so unconditional firing on `gh pr create` is fine.
 set -eu
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.claude/hooks/lib.sh
+. "$script_dir/lib.sh"
+
 # Resolve jq: prefer PATH, fall back to common absolute install locations so the
 # hook works whether or not jq lives at /usr/bin (WSL/dev boxes differ from CI).
 jq_bin=""
@@ -22,8 +26,11 @@ done
 input=$(cat)
 cmd=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.command // empty')
 
-# Match `gh pr create` at a word boundary; skip otherwise.
-if ! [[ "$cmd" =~ (^|[[:space:]&|;\(])gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$|[&|;\)]) ]]; then
+# Only fire on an ACTUAL `gh pr create` invocation. The shell-parser-aware
+# matcher strips quotes/heredocs/comments and splits on ; | & before testing,
+# so quoting the literal text 'gh pr create' (a log grep, echoed release notes,
+# a `#` comment) no longer injects the post-PR workflow with no PR opened (#893).
+if ! claude_command_invokes_gh_pr_create "$cmd"; then
   exit 0
 fi
 
