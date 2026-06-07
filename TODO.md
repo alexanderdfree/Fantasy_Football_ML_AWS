@@ -118,7 +118,7 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 - **To pick up:** decide per-*target* (not per-position) — relax QB only where the served model is regression-free (Ridge/nn), or pair it with a fix for the attention `kept` regression (the rookie early-game calibration entry above targets the same early-career QB rows). Judge `would_filter` vs `kept` per served model, ≥8 seeds. The `min_games_per_season` `PositionConfig` knob already exists — set QB's once clean.
 
 ### [ACKNOWLEDGED] K features use cross-season rolling windows
-- **File:** `src/k/features.py:27`
+- **File:** `src/k/features.py:43`
 - **What:** Kicker features group by `["player_id"]` only (no season reset), so rolling windows span across seasons. A kicker's late-season 2024 stats influence early-2025 predictions.
 - **Rationale:** Kickers have stable multi-year careers and small per-season sample sizes (~17 games), so cross-season windows provide more signal. Comment above the `grp` assignment records this rationale.
 - **Risk:** If a kicker changes teams or role between seasons, stale cross-season features could mislead the model. Likely small impact.
@@ -140,15 +140,15 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 - **What:** Pattern like `(a / b).fillna(0)` followed by `df.loc[b == 0, col] = 0` is redundant — fillna already handled the division-by-zero case. Not wrong, just noisy.
 
 ### [UNCERTAIN] K/DST index collision in `_get_data()`
-- **File:** `src/serving/app.py:1223`
+- **File:** `src/serving/core.py:659`
 - **What:** K/DST test rows are appended to `results` with `offset = results.index.max() + 1`. Assumes the general test data has a well-behaved index. If the general test parquet has gaps, K/DST indices could collide. Probably safe in practice since parquet preserves sequential indices.
 
 ### [UNCERTAIN] Team share features computed per-split
-- **Files:** `src/rb/features.py:96`, `src/wr/features.py:60`, `src/te/features.py:59`
+- **Files:** `src/rb/features.py:113`, `src/wr/features.py:72`, `src/te/features.py:64`
 - **What:** Team carry/target shares are computed within each split independently (`compute_team_*_totals` runs on each split's own data). A player's share could differ between train and test if their teammates are distributed differently across splits. By design (prevents leakage), but the share values won't be globally consistent.
 
 ### [LOW] Drop `RidgeMultiTarget.predict_total` / `ElasticNetMultiTarget.predict_total`
-- **Files:** `src/shared/models.py:350-352, 464-466`; consumers in `tests/{qb,rb,wr,te,k,dst}/test_models.py`, `tests/shared/test_elasticnet.py`.
+- **Files:** `src/shared/models.py:568` (inherited `predict_total` on `_MultiTargetLinear`); consumers in `tests/{qb,rb,wr,te,k,dst}/test_models.py`, `tests/shared/test_elasticnet.py`.
 - **What:** `predict_total` returns an unweighted raw-stat sum (yards + TDs + receptions, all summed as if commensurate). No production callers in `src/`; only tests reference it. A future caller using it for ranking would regress the ~1.9 pt/game double-count fix in the Fixed archive.
 - **Why not now:** Deletion touches shared model helpers and per-position model tests, tripping the benchmark-freshness gate; this Tier A pass intentionally avoided pipeline/benchmark evidence.
 

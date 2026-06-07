@@ -79,6 +79,8 @@ snap_counts = nfl_source.snap_counts(seasons)
 - `data/raw/rosters_2012_2025.parquet`
 - `data/raw/schedules_2012_2025.parquet`
 - `data/raw/snap_counts_2012_2025.parquet`
+- `data/raw/injuries_2012_2025.parquet`
+- `data/raw/depth_charts_2012_2025.parquet`
 - Check `os.path.exists()` before pulling; delete file to force refresh
 
 #### `compute_fantasy_points(df: pd.DataFrame, scoring: dict = None) -> pd.Series`
@@ -153,7 +155,7 @@ for share features. Filtering before team totals would inflate target_share and
 carry_share for remaining players.
 
 **Expected output:** ~35-40K rows with all stat columns + fantasy points columns for all three scoring formats (standard, half-PPR, full PPR).
-Rows are reduced to ~30-35K after the min-games filter in `build_features()`.
+Rows are reduced to ~30-35K after the min-games filter in the per-position pipeline (`src/shared/pipeline.py`, `_prepare_position_data`).
 
 ---
 

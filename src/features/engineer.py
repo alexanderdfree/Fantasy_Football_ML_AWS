@@ -228,7 +228,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         )
         df[f"trend_{stat}"] = short - long
 
-    # --- Share / Usage Features (6) ---
+    # --- Share / Usage Features (5) ---
     team_totals = (
         df.groupby(["recent_team", "season", "week"])
         .agg(
