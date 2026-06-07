@@ -53,12 +53,6 @@ def _build_k_row(**overrides) -> pd.DataFrame:
     return pd.DataFrame([defaults])
 
 
-@pytest.fixture(scope="session")
-def make_k_row():
-    """Factory for single-row K target inputs."""
-    return _build_k_row
-
-
 def _build_games(
     player_id: str = "K1",
     n_weeks: int = 6,
