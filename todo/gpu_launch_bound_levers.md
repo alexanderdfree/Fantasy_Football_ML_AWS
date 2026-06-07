@@ -139,6 +139,12 @@ reports solo-vs-concurrent per-model train time, the contention factor, the
 overlap speedup, and prediction parity. If the win holds, productionize by
 overlapping the two trainers in `_gpu_branch` behind an `FF_*` flag (default off).
 
+**AWS cousin:** the same "pack all six on one GPU" idea, but via **real NVIDIA MPS on a
+warm Linux L4** (MPS is available there, unlike WSL2/Windows) instead of in-process CUDA
+streams, is sketched in [proposed-adr-warm-mps-packed-training.md](proposed-adr-warm-mps-packed-training.md)
+(Option B; start/stop warm host, benchmark-gated before any build). The two could share a
+per-position worker entry.
+
 ---
 
 ## Recommended sequencing
