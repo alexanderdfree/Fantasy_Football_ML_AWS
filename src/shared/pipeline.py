@@ -1806,15 +1806,23 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     cv_special = set(cfg.get("two_stage_targets", {})) | set(cfg.get("classification_targets", {}))
     cv_ridge_targets = [t for t in targets if t not in cv_special]
     cv_ridge_grids = {t: cfg["ridge_alpha_grids"][t] for t in cv_ridge_targets}
-    best_alphas = _tune_ridge_alphas_cv(
-        X_alpha,
-        y_alpha_dict,
-        pos_alpha[cv_col].values,
-        targets=cv_ridge_targets,
-        alpha_grids=cv_ridge_grids,
-        n_cv_folds=cfg.get("ridge_cv_folds", 4),
-        refine_points=cfg.get("ridge_refine_points", 5),
-    )
+    # Lease cores around the parallel alpha CV (mirrors run_pipeline's
+    # ``lease_cores("ridge_cv")``) and tune on the SAME PCA basis the fold +
+    # final Ridge models are fit on — without ``pca_n_components`` the alphas
+    # were selected on the raw-feature basis while the models use PCA, so for
+    # PCA positions (RB/WR/DST) CV picked alphas for the wrong basis (#386).
+    with lease_cores("ridge_cv") as _nj:
+        best_alphas = _tune_ridge_alphas_cv(
+            X_alpha,
+            y_alpha_dict,
+            pos_alpha[cv_col].values,
+            targets=cv_ridge_targets,
+            alpha_grids=cv_ridge_grids,
+            n_cv_folds=cfg.get("ridge_cv_folds", 4),
+            refine_points=cfg.get("ridge_refine_points", 5),
+            pca_n_components=cfg.get("ridge_pca_components"),
+            n_jobs=_nj,
+        )
 
     # --- Per-fold training ---
     fold_nn_metrics = []
@@ -1877,23 +1885,31 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
 
         # LightGBM for this fold
         if cfg.get("train_lightgbm", False):
-            lgbm_fold = LightGBMMultiTarget(
-                target_names=targets,
-                n_estimators=cfg.get("lgbm_n_estimators", 500),
-                learning_rate=cfg.get("lgbm_learning_rate", 0.05),
-                num_leaves=cfg.get("lgbm_num_leaves", 31),
-                max_depth=cfg.get("lgbm_max_depth", -1),
-                subsample=cfg.get("lgbm_subsample", 0.8),
-                colsample_bytree=cfg.get("lgbm_colsample_bytree", 0.8),
-                reg_lambda=cfg.get("lgbm_reg_lambda", 1.0),
-                reg_alpha=cfg.get("lgbm_reg_alpha", 0.0),
-                min_child_samples=cfg.get("lgbm_min_child_samples", 20),
-                min_split_gain=cfg.get("lgbm_min_split_gain", 0.0),
-                objective=cfg.get("lgbm_objective", "huber"),
-                seed=seed,
+            # Lease cores + thread n_jobs/LGBM_N_JOBS like the holdout path
+            # (#818/#819); clamp the val preds with non_negative_targets so the
+            # CV-fold metrics match the holdout predict, which supplies it
+            # (#479/#787).
+            with lease_cores("lgbm", default=None) as _nj:
+                lgbm_fold = LightGBMMultiTarget(
+                    target_names=targets,
+                    n_estimators=cfg.get("lgbm_n_estimators", 500),
+                    learning_rate=cfg.get("lgbm_learning_rate", 0.05),
+                    num_leaves=cfg.get("lgbm_num_leaves", 31),
+                    max_depth=cfg.get("lgbm_max_depth", -1),
+                    subsample=cfg.get("lgbm_subsample", 0.8),
+                    colsample_bytree=cfg.get("lgbm_colsample_bytree", 0.8),
+                    reg_lambda=cfg.get("lgbm_reg_lambda", 1.0),
+                    reg_alpha=cfg.get("lgbm_reg_alpha", 0.0),
+                    min_child_samples=cfg.get("lgbm_min_child_samples", 20),
+                    min_split_gain=cfg.get("lgbm_min_split_gain", 0.0),
+                    objective=cfg.get("lgbm_objective", "huber"),
+                    seed=seed,
+                    n_jobs=_nj,
+                )
+                lgbm_fold.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
+            lgbm_val_preds = lgbm_fold.predict(
+                X_val, non_negative_targets=cfg.get("nn_non_negative_targets")
             )
-            lgbm_fold.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
-            lgbm_val_preds = lgbm_fold.predict(X_val)
             fold_lgbm_metrics.append(compute_target_metrics(y_val_dict, lgbm_val_preds, targets))
 
     # --- Aggregate CV results ---
@@ -1986,20 +2002,21 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         print(f"\n=== {pos} ElasticNet Multi-Target (Final Holdout) ===")
         enet_tune_grids = {t: cfg["ridge_alpha_grids"][t] for t in cv_ridge_targets}
         enet_l1_ratios = cfg.get("enet_l1_ratios", [0.3, 0.5, 0.7])
-        enet_best = (
-            _tune_enet_cv(
-                X_train,
-                y_train_dict,
-                pos_train[cv_col].values,
-                targets=cv_ridge_targets,
-                alpha_grids=enet_tune_grids,
-                l1_ratios=enet_l1_ratios,
-                n_cv_folds=cfg.get("ridge_cv_folds", 4),
-                refine_points=cfg.get("ridge_refine_points", 5),
-            )
-            if cv_ridge_targets
-            else {}
-        )
+        if cv_ridge_targets:
+            with lease_cores("enet_cv") as _nj:
+                enet_best = _tune_enet_cv(
+                    X_train,
+                    y_train_dict,
+                    pos_train[cv_col].values,
+                    targets=cv_ridge_targets,
+                    alpha_grids=enet_tune_grids,
+                    l1_ratios=enet_l1_ratios,
+                    n_cv_folds=cfg.get("ridge_cv_folds", 4),
+                    refine_points=cfg.get("ridge_refine_points", 5),
+                    n_jobs=_nj,
+                )
+        else:
+            enet_best = {}
         enet_model, enet_test_preds, enet_metrics = _train_elasticnet(
             X_train,
             X_test,
@@ -2070,18 +2087,21 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     lgbm_model = None
     if cfg.get("train_lightgbm", False):
         print(f"\n=== {pos} LightGBM Multi-Target (Final Holdout) ===")
-        lgbm_model, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
-            X_train,
-            X_val,
-            X_test,
-            y_train_dict,
-            y_val_dict,
-            y_test_dict,
-            cfg,
-            targets,
-            feature_cols,
-            seed,
-        )
+        # Lease cores + thread n_jobs like the holdout path (#818/#819).
+        with lease_cores("lgbm", default=None) as _nj:
+            lgbm_model, lgbm_test_preds, lgbm_metrics = _train_lightgbm(
+                X_train,
+                X_val,
+                X_test,
+                y_train_dict,
+                y_val_dict,
+                y_test_dict,
+                cfg,
+                targets,
+                feature_cols,
+                seed,
+                n_jobs=_nj,
+            )
 
     # Comparison
     comparison = {
