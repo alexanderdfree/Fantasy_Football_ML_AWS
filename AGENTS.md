@@ -128,7 +128,7 @@ These have all been attempted, shipped, and reverted. Re-proposing them costs a 
 ## Running code
 
 Commands live in [SETUP.md](SETUP.md). Shortcuts:
-- `python -m src.benchmarking.benchmark [POS ...]` — benchmark & refresh artifacts (writes a `{run_id}.json` file under `benchmark_history/`).
+- `python -m src.benchmarking.benchmark [POS ...]` — benchmark & refresh artifacts (writes a `{run_id}.json` file under `benchmark_history/`); **autodetects parallel multi-position fan-out on a many-core CUDA box** (delegates to `parallel_train`), sequential elsewhere — `-j N` / `--sequential` override.
 - `python -m src.{pos}.run_pipeline` — single position, full local run.
 - `pytest -m unit` — fast subset, runs in seconds. `pytest` for the full suite (requires `data/splits/*.parquet`).
 - `ruff check . && ruff format --check .` — lint/format gate used by CI.
