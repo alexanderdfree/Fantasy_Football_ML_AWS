@@ -386,64 +386,6 @@ jobs:
           done
           exit $fail
 
-      - name: Warm serving cache
-        # Move the post-retrain recompute off the user request path. The
-        # in-flight refresh poller (FF_MODEL_REFRESH_INTERVAL_S, default 30s)
-        # swaps the freshly-trained models into the running tasks; the next
-        # /warm (the same _ensure_metrics() the first /api/predictions a user
-        # makes would run) recomputes predictions + re-uploads the S3 cache
-        # (D14). Probing /warm here means a CI runner eats that 30-60s, not a
-        # real visitor — and guarantees the fresh cache exists in S3 before
-        # traffic, so any later container hydrates instantly.
-        #
-        # Best-effort: a warm miss must never fail the train workflow. The
-        # existing post_fork pre-warm + lazy compute paths are the backstop.
-        continue-on-error: true
-        run: |
-          warm_url="${SERVICE_URL%/}/warm"
-          echo "Warming $warm_url"
-          # Baseline fingerprint before the running tasks swap in the new
-          # models. This first probe may itself take 30-60s if it lands on a
-          # cold / just-refreshed worker — that's the point: a runner pays it.
-          baseline=$(curl -fsS --max-time 150 "$warm_url" | jq -r '.fingerprint // empty' || true)
-          echo "baseline fingerprint: ${baseline:-<none>}"
-          # Poll until the content-based fingerprint advances past baseline
-          # (confirms the poller swapped the freshly-trained models and a
-          # worker recomputed + re-uploaded the S3 cache), bounded so a no-op
-          # run (e.g. baseline already current) can't hang the job.
-          deadline=$(( $(date +%s) + 180 ))
-          advanced=""
-          while [ "$(date +%s)" -lt "$deadline" ]; do
-            sleep 15
-            current=$(curl -fsS --max-time 150 "$warm_url" | jq -r '.fingerprint // empty' || true)
-            echo "  probe fingerprint: ${current:-<none>}"
-            if [ -n "$current" ] && [ -n "$baseline" ] && [ "$current" != "$baseline" ]; then
-              advanced="$current"
-              break
-            fi
-          done
-          if [ -n "$advanced" ]; then
-            echo "fingerprint advanced to $advanced — new models live, cache rebuilt."
-          else
-            echo "fingerprint stable at ${baseline:-<none>} (already current, or no model change) — spreading warm anyway."
-          fi
-          # Spread the warm across the desiredCount=2 tasks' gunicorn workers;
-          # the ALB distributes these GETs, so each call may land on a
-          # different not-yet-warm worker and trigger its recompute + upload.
-          # Fire them CONCURRENTLY: same 12-call coverage, but the step's
-          # wall-clock collapses from sum(calls) to ~max(call). gunicorn's
-          # per-worker request serialization still bounds in-flight recomputes
-          # to the worker count, so concurrency doesn't add memory pressure —
-          # it only removes the round-trip serialization on a best-effort
-          # post-train step that just holds the CI runner. Each curl keeps its
-          # own --max-time + `|| true`, and `wait` reaps them all (this step is
-          # continue-on-error, so a slow worker can't fail the workflow).
-          for _ in $(seq 1 12); do
-            curl -fsS --max-time 150 "$warm_url" \
-              | jq -c '{fingerprint, rows, elapsed_s, degraded_positions}' || true &
-          done
-          wait
-
       - name: Append Batch run to benchmark_history/
         # Mirrors the JSON to s3://{bucket}/models/benchmark_history/ (see
         # src/batch/benchmark.py::_maybe_upload_to_s3) so the serving
@@ -588,3 +530,76 @@ jobs:
             "s3://${S3_BUCKET}/train-success-markers/${HEAD_SHA}.txt" \
             --region "$AWS_REGION" \
             --no-cli-pager
+
+  # Post-train serving-cache warm — split out of the `train` job (was its
+  # next-to-last step) so its up-to-180s fingerprint poll no longer sits on
+  # the critical path ahead of the benchmark-history commit and the dedup
+  # success-marker write. Those now land ~3 min sooner (History tab + the
+  # marker that gates the next push's retrain), while this best-effort warm
+  # runs in parallel and `needs: train` so it only fires after a clean train.
+  # It needs nothing AWS-side (no creds / no checkout) — just an HTTPS GET to
+  # SERVICE_URL/warm through the ALB, exactly like a user request — so a bare
+  # ubuntu runner with the inherited workflow-level SERVICE_URL env suffices.
+  warm_cache:
+    needs: train
+    runs-on: ubuntu-latest
+    steps:
+      - name: Warm serving cache
+        # Move the post-retrain recompute off the user request path. The
+        # in-flight refresh poller (FF_MODEL_REFRESH_INTERVAL_S, default 30s)
+        # swaps the freshly-trained models into the running tasks; the next
+        # /warm (the same _ensure_metrics() the first /api/predictions a user
+        # makes would run) recomputes predictions + re-uploads the S3 cache
+        # (D14). Probing /warm here means a CI runner eats that 30-60s, not a
+        # real visitor — and guarantees the fresh cache exists in S3 before
+        # traffic, so any later container hydrates instantly.
+        #
+        # Best-effort: a warm miss must never fail the train workflow. The
+        # existing post_fork pre-warm + lazy compute paths are the backstop.
+        # As its own job this is doubly decoupled — even a hung poll can't
+        # delay the marker/commit, which already completed in `train`.
+        continue-on-error: true
+        run: |
+          warm_url="${SERVICE_URL%/}/warm"
+          echo "Warming $warm_url"
+          # Baseline fingerprint before the running tasks swap in the new
+          # models. This first probe may itself take 30-60s if it lands on a
+          # cold / just-refreshed worker — that's the point: a runner pays it.
+          baseline=$(curl -fsS --max-time 150 "$warm_url" | jq -r '.fingerprint // empty' || true)
+          echo "baseline fingerprint: ${baseline:-<none>}"
+          # Poll until the content-based fingerprint advances past baseline
+          # (confirms the poller swapped the freshly-trained models and a
+          # worker recomputed + re-uploaded the S3 cache), bounded so a no-op
+          # run (e.g. baseline already current) can't hang the job.
+          deadline=$(( $(date +%s) + 180 ))
+          advanced=""
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            sleep 15
+            current=$(curl -fsS --max-time 150 "$warm_url" | jq -r '.fingerprint // empty' || true)
+            echo "  probe fingerprint: ${current:-<none>}"
+            if [ -n "$current" ] && [ -n "$baseline" ] && [ "$current" != "$baseline" ]; then
+              advanced="$current"
+              break
+            fi
+          done
+          if [ -n "$advanced" ]; then
+            echo "fingerprint advanced to $advanced — new models live, cache rebuilt."
+          else
+            echo "fingerprint stable at ${baseline:-<none>} (already current, or no model change) — spreading warm anyway."
+          fi
+          # Spread the warm across the desiredCount=2 tasks' gunicorn workers;
+          # the ALB distributes these GETs, so each call may land on a
+          # different not-yet-warm worker and trigger its recompute + upload.
+          # Fire them CONCURRENTLY: same 12-call coverage, but the step's
+          # wall-clock collapses from sum(calls) to ~max(call). gunicorn's
+          # per-worker request serialization still bounds in-flight recomputes
+          # to the worker count, so concurrency doesn't add memory pressure —
+          # it only removes the round-trip serialization on a best-effort
+          # post-train step that just holds the CI runner. Each curl keeps its
+          # own --max-time + `|| true`, and `wait` reaps them all (this step is
+          # continue-on-error, so a slow worker can't fail the workflow).
+          for _ in $(seq 1 12); do
+            curl -fsS --max-time 150 "$warm_url" \
+              | jq -c '{fingerprint, rows, elapsed_s, degraded_positions}' || true &
+          done
+          wait

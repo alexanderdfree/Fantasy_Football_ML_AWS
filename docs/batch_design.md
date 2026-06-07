@@ -417,6 +417,24 @@ can be routed through ECR:
 After the first pull seeds the cache, every subsequent Batch instance in the
 region pulls the base layers from ECR's local endpoints instead of Docker Hub.
 
+**Verify the rule is active** (the per-job pull-time win is entirely contingent
+on it — `batch-image.yml`'s build step auto-detects the rule and only routes the
+base through ECR when it exists, else falls back to Docker Hub silently):
+
+```bash
+# 1. The rule exists in the training region (non-empty list = active):
+aws ecr describe-pull-through-cache-rules \
+  --ecr-repository-prefixes dockerhub --region us-east-1 \
+  --query 'pullThroughCacheRules[].ecrRepositoryPrefix' --output text
+
+# 2. The most recent image build actually used it — the build log line should read
+#    "Pull-through cache 'dockerhub' detected; base image routed through ECR."
+#    (the alternative "...pulls from dockerhub directly" means the rule is missing).
+```
+
+If step 1 is empty, run the `create-pull-through-cache-rule` command above once;
+no code change is needed — the next `batch-image.yml` build picks it up automatically.
+
 ### 2a. SOCI (Seekable OCI) lazy loading
 
 > **⚠️ REMOVED / DOES NOT WORK ON BATCH (2026-06-07).** AWS Batch runs on
