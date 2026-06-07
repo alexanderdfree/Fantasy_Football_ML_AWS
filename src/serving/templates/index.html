@@ -379,8 +379,8 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                     </svg>
                 </div>
                 <div>
-                    <div class="approach-title">Our Model vs Expert Projections</div>
-                    <div class="approach-desc">Weekly fantasy-point accuracy on the 2025 test season, by position. Lower MAE / RMSE is better; higher R² is better. Our model's column updates live from the deployed models; the expert columns are scored offline against the same actuals.</div>
+                    <div class="approach-title">Our Models vs Expert Projections</div>
+                    <div class="approach-desc">Weekly fantasy-point accuracy on the 2025 test season, by position. Lower MAE / RMSE is better; higher R² is better. Each of our four model architectures has its own column, updated live from the deployed models; the expert columns are scored offline against the same actuals. The best cell in each row is highlighted.</div>
                 </div>
             </div>
 
@@ -401,13 +401,16 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                         <thead>
                             <tr>
                                 <th>Position</th>
-                                <th class="comparison-num">Our Model</th>
+                                <th class="comparison-num">Ridge</th>
+                                <th class="comparison-num">Neural Net</th>
+                                <th class="comparison-num">Attention NN</th>
+                                <th class="comparison-num">LightGBM</th>
                                 <th class="comparison-num">NFL.com</th>
                                 <th class="comparison-num">RotoWire</th>
                             </tr>
                         </thead>
                         <tbody id="comparison-all-body">
-                            <tr><td colspan="4" class="arch-loading">Loading comparison…</td></tr>
+                            <tr><td colspan="7" class="arch-loading">Loading comparison…</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -420,13 +423,16 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                         <thead>
                             <tr>
                                 <th>Position</th>
-                                <th class="comparison-num">Our Model</th>
+                                <th class="comparison-num">Ridge</th>
+                                <th class="comparison-num">Neural Net</th>
+                                <th class="comparison-num">Attention NN</th>
+                                <th class="comparison-num">LightGBM</th>
                                 <th class="comparison-num">NFL.com</th>
                                 <th class="comparison-num">RotoWire</th>
                             </tr>
                         </thead>
                         <tbody id="comparison-top30-body">
-                            <tr><td colspan="4" class="arch-loading">Loading comparison…</td></tr>
+                            <tr><td colspan="7" class="arch-loading">Loading comparison…</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -437,8 +443,8 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                 <div class="comparison-reliability-sub">
                     How noisy each source's weekly projection is around the actual outcome on the
                     <span id="comparison-reliability-span">2025 test season</span>. σ is the spread of
-                    (value − actual); <strong>lower σ = steadier</strong>. <strong>Our Model</strong> is
-                    computed live and updates each retrain; experts are scored on the same season. Hover a
+                    (value − actual); <strong>lower σ = steadier</strong>. <strong>Our models</strong> are
+                    computed live and update each retrain; experts are scored on the same season. Hover a
                     cell for its bias (+ ⇒ over-projects), sample size, and each expert's full 2018–2025 σ.
                 </div>
                 <div class="table-container">
@@ -446,13 +452,16 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                         <thead>
                             <tr>
                                 <th>Position</th>
-                                <th class="comparison-num">Our Model</th>
+                                <th class="comparison-num">Ridge</th>
+                                <th class="comparison-num">Neural Net</th>
+                                <th class="comparison-num">Attention NN</th>
+                                <th class="comparison-num">LightGBM</th>
                                 <th class="comparison-num">NFL.com</th>
                                 <th class="comparison-num">RotoWire</th>
                             </tr>
                         </thead>
                         <tbody id="comparison-reliability-body">
-                            <tr><td colspan="4" class="arch-loading">Loading reliability…</td></tr>
+                            <tr><td colspan="7" class="arch-loading">Loading reliability…</td></tr>
                         </tbody>
                     </table>
                 </div>

@@ -627,24 +627,26 @@ def api_comparison():
         for pos in _ALL_POSITIONS:
             cell = pos_experts.get(pos) or {}
             id_filter = set(map(str, top30_ids.get(pos, []))) if subset == "top30" else None
-            model_block = (
-                comparison._model_block_from_results(results, scoring, pos, id_filter)
+            # One block per model (ridge/nn/attn_nn/lgbm), each None when that model
+            # has no predictions for the slice; spread alongside the static experts.
+            blocks = (
+                comparison._model_blocks_from_results(results, scoring, pos, id_filter)
                 if model_source == "live"
-                else None
+                else {}
             )
             out_subsets[subset][pos] = {
-                "model": model_block,
+                **blocks,
                 "nflcom": cell.get("nflcom"),
                 "rotowire": cell.get("rotowire"),
             }
 
-    # Live model residual σ on the 2025 test rows — the model-side counterpart to the
-    # static expert_reliability block. Computed fresh each request (auto-updates on
-    # retrain); None per position when models aren't loaded, so the tab degrades to
-    # the expert columns alone.
+    # Live per-model residual σ on the 2025 test rows — the model-side counterpart to
+    # the static expert_reliability block. Computed fresh each request (auto-updates on
+    # retrain); each position maps to a per-model dict (or None when models aren't
+    # loaded), so the tab degrades to the expert columns alone.
     model_reliability = {
         pos: (
-            comparison._model_reliability_from_results(results, scoring, pos)
+            comparison._model_reliabilities_from_results(results, scoring, pos)
             if model_source == "live"
             else None
         )

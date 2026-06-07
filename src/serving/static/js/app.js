@@ -1154,10 +1154,11 @@ async function loadModelArchitecture() {
 }
 
 // ---------------------------------------------------------------------------
-// Comparison — our model (live) vs expert projection sources (NFL.com,
-// RotoWire), by position, on two player subsets (all + top-30/position). One
-// /api/comparison fetch; the MAE/RMSE/R² toggle re-renders from the cached
-// payload. Lower is better for MAE/RMSE, higher for R².
+// Comparison — our four model architectures (live) vs expert projection sources
+// (NFL.com, RotoWire), by position, on two player subsets (all + top-30/position).
+// One /api/comparison fetch; the MAE/RMSE/R² toggle re-renders from the cached
+// payload. Lower is better for MAE/RMSE, higher for R²; best cell per row is
+// highlighted.
 // ---------------------------------------------------------------------------
 let comparisonLoaded = false;
 let comparisonToggleWired = false;
@@ -1165,11 +1166,21 @@ let comparisonData = null;
 let comparisonMetric = "mae";
 
 const COMPARISON_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"];
-const COMPARISON_SOURCES = [
-    { key: "model", label: "Our Model" },
+// Our four model architectures, then the static expert sources. Keys match the
+// per-model blocks in the /api/comparison payload (model prefixes) and the expert
+// cell keys. Shared by the accuracy tables and the residual-σ reliability table.
+const MODEL_SOURCES = [
+    { key: "ridge", label: "Ridge" },
+    { key: "nn", label: "Neural Net" },
+    { key: "attn_nn", label: "Attention NN" },
+    { key: "lgbm", label: "LightGBM" },
+];
+const EXPERT_SOURCES = [
     { key: "nflcom", label: "NFL.com" },
     { key: "rotowire", label: "RotoWire" },
 ];
+const MODEL_KEYS = new Set(MODEL_SOURCES.map(s => s.key));
+const COMPARISON_SOURCES = [...MODEL_SOURCES, ...EXPERT_SOURCES];
 const COMPARISON_METRIC_HINTS = {
     mae: "Mean absolute error — lower is better",
     rmse: "Root mean squared error — lower is better",
@@ -1191,7 +1202,7 @@ async function loadComparison() {
         renderIntervals();
     } catch (e) {
         console.error("Failed to load comparison:", e);
-        const msg = `<tr><td colspan="4" class="arch-error">Failed to load: ${escapeHtml(e.message)}</td></tr>`;
+        const msg = `<tr><td colspan="7" class="arch-error">Failed to load: ${escapeHtml(e.message)}</td></tr>`;
         if (allBody) allBody.innerHTML = msg;
         if (top30Body) top30Body.innerHTML = msg;
     }
@@ -1238,11 +1249,7 @@ function renderComparisonRows(posMap) {
             if (v === null) return `<td class="comparison-num comparison-empty">—</td>`;
             const isBest = best !== null && Math.abs(v - best) < 1e-9;
             const cls = "comparison-num" + (isBest ? " comparison-best" : "");
-            const arch =
-                s.key === "model" && cell && cell.best_arch
-                    ? `<span class="comparison-arch">${escapeHtml(cell.best_arch)}</span>`
-                    : "";
-            return `<td class="${cls}">${formatComparisonValue(v)}${arch}</td>`;
+            return `<td class="${cls}">${formatComparisonValue(v)}</td>`;
         }).join("");
         return `<tr><td class="comparison-pos">${pos}</td>${tds}</tr>`;
     }).join("");
@@ -1261,24 +1268,22 @@ function renderComparisonTables() {
 // side is live (auto-updates on retrain); experts are scored on the same season,
 // with their full 2018–2025 archive σ shown on hover. One table, always σ
 // (independent of the MAE/RMSE/R² toggle); lower σ = steadier.
-const RELIABILITY_COLS = [
-    { key: "model", label: "Our Model" },
-    { key: "nflcom", label: "NFL.com" },
-    { key: "rotowire", label: "RotoWire" },
-];
+const RELIABILITY_COLS = [...MODEL_SOURCES, ...EXPERT_SOURCES];
 
 function _validSigma(v) {
     return v !== null && v !== undefined && !Number.isNaN(v);
 }
 
-// Resolve one (position, source) reliability cell on the 2025 basis. The model
-// comes from the live model_reliability map; experts come from the committed
-// block's per_season["2025"] slice, carrying the pooled multi-season σ for hover.
+// Resolve one (position, source) reliability cell on the 2025 basis. Each model
+// column reads its per-model block from the live model_reliability map; experts
+// come from the committed block's per_season["2025"] slice, carrying the pooled
+// multi-season σ for hover.
 function reliabilityCell(pos, key) {
-    if (key === "model") {
-        const m = comparisonData.model_reliability && comparisonData.model_reliability[pos];
+    if (MODEL_KEYS.has(key)) {
+        const byModel = comparisonData.model_reliability && comparisonData.model_reliability[pos];
+        const m = byModel && byModel[key];
         if (!m || !_validSigma(m.sigma)) return null;
-        return { sigma: m.sigma, bias: m.bias, n: m.n, arch: m.best_arch, kind: "model" };
+        return { sigma: m.sigma, bias: m.bias, n: m.n, kind: "model" };
     }
     const rel = comparisonData.expert_reliability;
     const pooled = rel && rel.positions && rel.positions[pos] && rel.positions[pos][key];
@@ -1320,7 +1325,6 @@ function renderComparisonReliability() {
             const dir = c.bias >= 0 ? "over" : "under";
             const verb = c.kind === "model" ? "predicts" : "projects";
             let title = `bias ${biasTxt} pts (${dir}-${verb}) · n=${c.n} · 2025`;
-            if (c.kind === "model" && c.arch) title += ` · ${c.arch}`;
             if (c.kind === "expert" && _validSigma(c.archiveSigma)) {
                 title += ` · 2018–2025 σ ${c.archiveSigma.toFixed(2)} (n=${c.archiveN})`;
             }
@@ -1343,13 +1347,13 @@ function renderComparisonNotes() {
     const rwNote = (meta.rotowire && meta.rotowire.note) || "";
     const modelLine = unavailable
         ? "Currently unavailable (models not loaded). "
-        : "Computed live from the deployed models (best architecture per position), so it tracks the latest retrain. ";
+        : "Each of our four architectures is computed live from the deployed models, one column per architecture, so they track the latest retrain. ";
     el.innerHTML = `
         <div class="section-header">About this comparison</div>
         <ul class="comparison-note-list">
             <li><strong>Seasons.</strong> Our model trains on 2012–2023, validates on 2024, and is tested on <strong>2025</strong>; every number here is on the held-out 2025 season, and the experts are scored on 2025 too.</li>
             <li><strong>Scoring.</strong> Full PPR (1 pt / reception). Projections and actuals run through the same scoring formula, so it's apples-to-apples. RMSE is shown alongside MAE because expert projections implicitly target squared error.</li>
-            <li><strong>Our Model.</strong> ${modelLine}MAE/RMSE/R² are on weekly fantasy-point totals.</li>
+            <li><strong>Our models.</strong> ${modelLine}MAE/RMSE/R² are on weekly fantasy-point totals; the best cell in each row is highlighted.</li>
             <li><strong>NFL.com.</strong> ${escapeHtml(nflNote)}</li>
             <li><strong>RotoWire.</strong> ${escapeHtml(rwNote)}</li>
             <li><strong>Top 30.</strong> The second table restricts to the top 30 players per position by actual 2025 fantasy points — the fantasy-relevant starters.</li>
