@@ -59,16 +59,16 @@ JOB_DEFINITION_REVISION = os.environ.get("FF_JOB_DEFINITION_REVISION", "") or No
 # manifest-write race when two train-batch runs land in quick succession,
 # even after Layer A pins the job-def revision). Empty -> not passed.
 TRAIN_GIT_SHA = os.environ.get("FF_TRAIN_GIT_SHA", "") or None
-# Opt-in CUDA-graph capture for the per-position NN training, forwarded to the
-# container only when FF_CUDA_GRAPH is set in this launcher's environment.
-# train-batch.yml threads it from the FF_BATCH_CUDA_GRAPH repo variable (unset
-# by default), so production stays byte-identical until an operator opts in. The
-# container's cuda_graph_enabled() (src/shared/utils.py) re-gates the actual
-# capture on sm_80+ (the g6/L4 qualifies), so an empty value here is a no-op.
-# Graphs collapse the launch-bound NN's per-step kernel storm into one replay
-# (~1.5-1.8x on the GPU branch, helping both the base/control NN and the
-# attention NN) but are NOT bit-identical to eager — flipping the repo var on
-# requires a benchmark rebaseline (see todo/gpu_launch_bound_levers.md, Lever A).
+# Optional CUDA-graph OVERRIDE, forwarded to the container only when
+# FF_CUDA_GRAPH is set in this launcher's environment. The container's
+# cuda_graph_enabled() (src/shared/utils.py) AUTODETECTS graphs ON for sm_80+
+# (the g6/L4 qualifies), so the production fan-out is graphed by default with no
+# value here. train-batch.yml threads the FF_BATCH_CUDA_GRAPH repo variable as a
+# fleet override: leave it unset for the autodetect default, or set it to 0 to
+# force the whole fan-out back to the eager path (e.g. a bit-comparable A/B).
+# Graphs are ~1.5-1.8x on the launch-bound GPU branch (both the base/control NN
+# and the attention NN) but NOT bit-identical to eager (see
+# todo/gpu_launch_bound_levers.md, Lever A).
 FF_CUDA_GRAPH = os.environ.get("FF_CUDA_GRAPH", "") or None
 
 from src.shared.registry import ALL_POSITIONS, CPU_ONLY_POSITIONS  # noqa: E402
@@ -225,10 +225,10 @@ def submit_job(position, seed=42, batch_client=None):
         # it to surface per-position SHA divergence across a single run.
         environment.append({"name": "FF_TRAIN_GIT_SHA", "value": TRAIN_GIT_SHA})
     if FF_CUDA_GRAPH:
-        # Opt-in launch-overhead lever (sm_80+ only; the g6/L4 qualifies, K's
-        # nested trainer no-ops capture). cuda_graph_enabled() in the container
-        # re-checks compute capability, so forwarding a value on an ineligible
-        # GPU stays a safe no-op.
+        # Override only — graphs autodetect ON for sm_80+ in the container, so a
+        # value is needed only to force the eager path (forward "0"). K's nested
+        # trainer no-ops capture regardless; cuda_graph_enabled() re-checks
+        # compute capability so a value on an ineligible GPU is inert.
         environment.append({"name": "FF_CUDA_GRAPH", "value": FF_CUDA_GRAPH})
     response = batch.submit_job(
         jobName=f"ff-{position.lower()}-{timestamp}-{suffix}",

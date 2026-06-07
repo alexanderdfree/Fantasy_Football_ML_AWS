@@ -56,16 +56,18 @@ process-backed MPS backend for that environment:
   flat-history positions use graph capture, and all six positions can run under
   the same graph-on tune workflow.
 
-This is tuner-only by default, but the **production Batch opt-in is now plumbed
-end-to-end**: `train-batch.yml` threads the `FF_BATCH_CUDA_GRAPH` repo variable →
-`launch.py` forwards `FF_CUDA_GRAPH` into each position's `containerOverrides` →
-the container's `cuda_graph_enabled()` re-gates on sm_80+ (K's nested trainer
-no-ops capture). The variable is **unset by default**, so production stays on the
-byte-identical eager path. Flip it on (`gh variable set FF_BATCH_CUDA_GRAPH
---body "1"`) only after an L4 quality A/B — graphed-vs-eager overall MAE within
-the seed band, ~3 seeds per AGENTS.md — and treat the first graph-on run as the
-new graphed benchmark baseline (the History tab labels graphed rows
-`g6.xlarge (Spot, CUDA-graph)` so they don't get compared to eager).
+**Production now autodetects graphs ON (2026-06-05, owner decision).**
+`cuda_graph_enabled()` defaults ON for **any** CUDA sm_80+ box (g6/L4 `sm_89`,
+5080 `sm_120`), so the production Batch fan-out and local sm_80+ runs are graphed
+with no env opt-in; `FF_CUDA_GRAPH=0` is the force-off override. `train-batch.yml`
+still threads the `FF_BATCH_CUDA_GRAPH` repo variable as an optional fleet
+override (set it to `0` to force eager), and labels Batch benchmark rows
+`g6.xlarge (Spot, CUDA-graph)` so the graphed era stays separate from the
+pre-cutover eager baseline. This was shipped **without** a pre-merge A/B (owner
+chose speed-now); the first post-merge 6-position retrain *is* the graphed
+rebaseline. K's nested trainer still no-ops capture, and CPU/CI/T4 stay eager
+(byte-identical). To run a bit-comparable eager A/B locally, set `FF_CUDA_GRAPH=0`
+(~3 seeds per AGENTS.md).
 
 ---
 
@@ -91,6 +93,8 @@ new graphed benchmark baseline (the History tab labels graphed rows
 | BN running-stat recalibration (implied) | No | — | learnable weights also diverge (0.074), not just BN buffers |
 
 **Decision (2026-05-31):** ship `FF_CUDA_GRAPH` as an **opt-in local-iteration speed knob** with the non-inertness documented — per-step math is exact and the model is equivalent quality, but it is **not** suitable for bit-comparable benchmark A/Bs against eager baselines. Off by default ⇒ AWS / CI / production byte-identical (the commit is training-skippable; Ridge MAE unchanged). The investigation knobs (`FF_NN_NORM`, `FF_FORCE_DROPOUT_ZERO`, `FF_NN_FIXED_EPOCHS`) are **kept** for a follow-up. Note `FF_NN_NORM` overlaps [src/tuning/ablate_backbone_norm.py](../src/tuning/ablate_backbone_norm.py) (which monkeypatches the same BN→LN swap) but composes with the graph env knobs in a single `benchmark` invocation.
+
+**Decision SUPERSEDED (2026-06-05, owner call):** `cuda_graph_enabled()` now **autodetects ON for sm_80+** (graphs are the default on g6/L4 + 5080); `FF_CUDA_GRAPH` is demoted to a force-off override. This deliberately makes the sm_80+ training path non-byte-identical to CPU/CI — the launch-bound speedup was prioritised over benchmark comparability, and benchmark history rebaselines graphed-vs-graphed from the cutover (Batch rows self-label `g6.xlarge (Spot, CUDA-graph)`). Shipped **without** a pre-merge A/B; the first post-merge retrain is the new graphed baseline. The "off by default ⇒ production byte-identical" property above no longer holds for sm_80+ — use `FF_CUDA_GRAPH=0` to recover the eager path for a bit-comparable A/B. See ADR-0017.
 
 **Benchmarkability follow-up (2026-06-01):** [src/analysis/cuda_graph_gradscale.py](../src/analysis/cuda_graph_gradscale.py) resolved the GradScaler question. Graph-vs-graph is clean (identical metrics + scale schedule), BN warmup snapshot/restore is inert, and eager-vs-graph first diverges in `GradScaler` at step 1. Fixed normal-scale mode is invalid because the default initial scale 65536 overflows at step 0.
 
