@@ -20,17 +20,27 @@ def add_specific_features(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
+    full_train: pd.DataFrame | None = None,
 ) -> tuple:
     """Add the RB-specific engineered features to each split.
 
     Emits 19 columns per split via :func:`_compute_features` (see its
     docstring for the breakdown). Features are computed independently per
-    split to prevent leakage. Team RB totals are computed from each split's
-    own data.
+    split to prevent leakage.
+
+    Team RB totals, per-game carry/target shares + HHI, and ``career_carries``
+    aggregate over the players in each split's games. When ``full_train`` (the
+    pre-min-games-filter train) is supplied, those aggregates are computed over
+    it — not the filtered ``train_df`` — so dropped low-volume RBs don't
+    undercount the denominators / share-sums / career totals (#574). Only the
+    min-games-filtered rows are returned; ``fill_nans`` + the StandardScaler
+    still fit on those filtered rows in ``build_position_features`` (#569).
     """
+    base_train = train_df if full_train is None else full_train
+
     # Career carries: cumulative across all seasons, shifted to prevent leakage.
     # Must combine splits to capture cross-season history (e.g., 2024 val needs 2018-2023 carries).
-    combined = pd.concat([train_df, val_df, test_df], ignore_index=True)
+    combined = pd.concat([base_train, val_df, test_df], ignore_index=True)
     combined = combined.sort_values(["player_id", "season", "week"])
     combined["career_carries"] = (
         combined.groupby("player_id")["carries"]
@@ -38,13 +48,20 @@ def add_specific_features(
         .fillna(0)
     )
     lookup = combined.groupby(["player_id", "season", "week"])["career_carries"].first()
-    for df in [train_df, val_df, test_df]:
+    for df in [base_train, val_df, test_df]:
         keys = pd.MultiIndex.from_arrays([df["player_id"], df["season"], df["week"]])
         df["career_carries"] = lookup.reindex(keys).values
 
-    for df in [train_df, val_df, test_df]:
+    for df in [base_train, val_df, test_df]:
         _compute_features(df)
-    return train_df, val_df, test_df
+
+    if full_train is None:
+        return base_train, val_df, test_df
+    # Return only the min-games-filtered train rows (features already computed
+    # over the full player set in base_train). Boolean mask by index label is
+    # robust to the sort _compute_features applied.
+    train_out = base_train[base_train.index.isin(train_df.index)]
+    return train_out, val_df, test_df
 
 
 def _compute_features(df: pd.DataFrame) -> None:

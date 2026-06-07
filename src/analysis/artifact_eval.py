@@ -140,12 +140,18 @@ def build_test_df_from_artifacts(
     min_games = reg.get("min_games_per_season")
     if min_games is None:
         min_games = MIN_GAMES_PER_SEASON
+    # Capture the pre-filter train so RB/WR's team-total / share / HHI / career
+    # features see the full player set, then return only the filtered rows —
+    # exactly as training + serving do (#574/#531). fill_nans + the scaler still
+    # fit on the filtered train (#569), so this stays faithful to the served
+    # artifacts (this module's contract).
+    full_train = pos_train
     games_per_season = pos_train.groupby(["player_id", "season"])["week"].transform("count")
     pos_train = pos_train[games_per_season >= min_games].copy()
 
     feature_cols = reg["get_feature_columns_fn"]()
     pos_train, pos_val, pos_test = build_position_features(
-        pos_train, pos_val, pos_test, reg, feature_cols
+        pos_train, pos_val, pos_test, reg, feature_cols, full_train=full_train
     )
     pos_test = pos_test.copy()
     X_test = pos_test[feature_cols].values.astype(np.float32)

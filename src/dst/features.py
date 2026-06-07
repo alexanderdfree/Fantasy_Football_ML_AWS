@@ -147,8 +147,13 @@ def add_specific_features(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
+    full_train: pd.DataFrame | None = None,
 ) -> tuple:
-    """No-op — D/ST features are pre-computed on the full dataset before splitting."""
+    """No-op — D/ST features are pre-computed on the full dataset before splitting.
+
+    ``full_train`` is accepted for the shared ``add_features_fn`` contract
+    (#574/#531) but unused.
+    """
     return train_df, val_df, test_df
 
 

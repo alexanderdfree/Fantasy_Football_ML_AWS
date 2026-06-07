@@ -15,8 +15,13 @@ def get_feature_columns() -> list[str]:
     return flatten_include_features(POSITION_CONFIG.include_features)
 
 
-def add_specific_features(train_df, val_df, test_df):
-    """Add 8 TE-specific engineered features to each split."""
+def add_specific_features(train_df, val_df, test_df, full_train=None):
+    """Add 8 TE-specific engineered features to each split.
+
+    ``full_train`` is accepted for the shared ``add_features_fn`` contract
+    (#574/#531) but unused — none of the 8 TE features are team-share
+    denominators that the MIN_GAMES train filter would undercount.
+    """
     for df in [train_df, val_df, test_df]:
         _compute_features(df)
     return train_df, val_df, test_df

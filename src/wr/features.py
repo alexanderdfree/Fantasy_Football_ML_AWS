@@ -15,11 +15,23 @@ def get_feature_columns() -> list[str]:
     return flatten_include_features(POSITION_CONFIG.include_features)
 
 
-def add_specific_features(train_df, val_df, test_df):
-    """Add 8 WR-specific engineered features to each split."""
-    for df in [train_df, val_df, test_df]:
+def add_specific_features(train_df, val_df, test_df, full_train=None):
+    """Add 8 WR-specific engineered features to each split.
+
+    ``team_wr_target_share_L3`` divides player targets by the team's WR-target
+    total per game. When ``full_train`` (the pre-min-games-filter train) is
+    supplied, those totals are computed over it — not the filtered ``train_df`` —
+    so dropped low-volume WRs don't undercount the denominator (#531). Only the
+    min-games-filtered rows are returned; ``fill_nans`` + the StandardScaler
+    still fit on those filtered rows in ``build_position_features`` (#569).
+    """
+    base_train = train_df if full_train is None else full_train
+    for df in [base_train, val_df, test_df]:
         _compute_features(df)
-    return train_df, val_df, test_df
+    if full_train is None:
+        return base_train, val_df, test_df
+    train_out = base_train[base_train.index.isin(train_df.index)]
+    return train_out, val_df, test_df
 
 
 def _compute_features(df: pd.DataFrame) -> None:

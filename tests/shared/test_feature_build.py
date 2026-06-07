@@ -62,7 +62,7 @@ class TestScaleAndClip:
 def _make_cfg(features: list[str]):
     """Minimal config stubbing add_features_fn / fill_nans_fn."""
 
-    def _add(train, val, test):
+    def _add(train, val, test, full_train=None):
         for df in (train, val, test):
             for f in features:
                 if f not in df.columns:
@@ -137,7 +137,7 @@ class TestBuildPositionFeatures:
             )
 
     def test_inf_and_nan_replaced_with_zero_in_feature_cols(self):
-        def _add(train, val, test):
+        def _add(train, val, test, full_train=None):
             train = train.copy()
             train["feat_a"] = [1.0, np.inf, -np.inf]
             val = val.copy()

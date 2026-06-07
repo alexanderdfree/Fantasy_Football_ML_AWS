@@ -14,8 +14,13 @@ def get_feature_columns() -> list[str]:
     return flatten_include_features(POSITION_CONFIG.include_features)
 
 
-def add_specific_features(train_df, val_df, test_df):
-    """Add QB-specific engineered features (see ``POSITION_CONFIG.specific_features``) to each split."""
+def add_specific_features(train_df, val_df, test_df, full_train=None):
+    """Add QB-specific engineered features (see ``POSITION_CONFIG.specific_features``) to each split.
+
+    ``full_train`` is accepted for the shared ``add_features_fn`` contract
+    (#574/#531) but unused — QB has no team-level per-game share/HHI features
+    whose denominators the MIN_GAMES train filter would undercount.
+    """
     dfs = [train_df, val_df, test_df]
     for df in dfs:
         _compute_features(df)

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.rb.features import _compute_features, fill_nans
+from src.rb.features import _compute_features, add_specific_features, fill_nans
 from tests.rb.conftest import _build_player_games
 from tests.shared.parameterized_features import (
     PositionFeatureSpec,
@@ -141,3 +141,61 @@ class TestFillRBNansSpecific:
         captured = capsys.readouterr().out
         assert "feat1" in captured
         assert "entirely NaN in training" in captured
+
+
+@pytest.mark.unit
+class TestFullTrainTeamTotals:
+    """#574: team-total denominators (carry/target share, HHI, career) must be
+    computed over the pre-MIN_GAMES-filter train so a surviving RB's share is
+    measured against the FULL team — including teammates the train filter drops
+    — matching what the (unfiltered) val/test splits see."""
+
+    def test_full_train_denominator_includes_dropped_players(self, make_player_games):
+        """RB_A survives the filter; RB_B (sub-min-games) is dropped from the
+        filtered train but present in ``full_train``. With ``full_train`` the
+        per-game carry share for RB_A is 0.5 in the weeks RB_B also played
+        (10 / (10 + 10)); without it the denominator undercounts and the share
+        reads 1.0."""
+        # MIN_GAMES_PER_SEASON == 6: 7 games survives, 3 games is dropped.
+        rb_a = make_player_games("RB_A", season=2023, n_weeks=7, carries=10, recent_team="KC")
+        rb_b = make_player_games("RB_B", season=2023, n_weeks=3, carries=10, recent_team="KC")
+        full_train = pd.concat([rb_a, rb_b], ignore_index=True)
+        # The pipeline passes the post-filter frame as train_df; build it by
+        # selecting from full_train so the index labels line up (the new path
+        # selects ``full_train`` rows by ``train_df.index`` membership).
+        filtered_train = full_train[full_train["player_id"] == "RB_A"].copy()
+        val = make_player_games("RB_A", season=2024, n_weeks=2, carries=10, recent_team="KC")
+        test = make_player_games("RB_A", season=2024, n_weeks=2, carries=10, recent_team="KC")
+
+        # New path — denominator includes RB_B for the weeks it played (1-3).
+        train_new, _, _ = add_specific_features(
+            filtered_train.copy(), val.copy(), test.copy(), full_train=full_train.copy()
+        )
+        a_new = train_new[train_new["player_id"] == "RB_A"].sort_values("week")
+        assert set(a_new["week"]) == set(range(1, 8))  # all 7 surviving rows returned
+        wk123 = a_new[a_new["week"].isin([1, 2, 3])]["game_carry_share"].to_numpy()
+        wk4plus = a_new[a_new["week"] >= 4]["game_carry_share"].to_numpy()
+        np.testing.assert_allclose(wk123, 0.5, atol=1e-9)
+        np.testing.assert_allclose(wk4plus, 1.0, atol=1e-9)  # RB_B gone after wk3
+
+        # Old path (full_train=None) — denominator is the filtered train only.
+        train_old, _, _ = add_specific_features(filtered_train.copy(), val.copy(), test.copy())
+        a_old = train_old[train_old["player_id"] == "RB_A"].sort_values("week")
+        np.testing.assert_allclose(a_old["game_carry_share"].to_numpy(), 1.0, atol=1e-9)
+
+    def test_full_train_none_is_back_compatible(self, make_player_games):
+        """``full_train=None`` must reproduce the legacy single-frame behaviour
+        exactly (the default for QB/TE/K/DST and any caller not yet threading
+        the unfiltered frame)."""
+        df = pd.concat(
+            [
+                make_player_games("P1", n_weeks=5, carries=10, targets=3, recent_team="KC"),
+                make_player_games("P2", n_weeks=5, carries=10, targets=3, recent_team="KC"),
+            ],
+            ignore_index=True,
+        )
+        val = make_player_games("P1", season=2024, n_weeks=2, recent_team="KC")
+        test = make_player_games("P1", season=2024, n_weeks=2, recent_team="KC")
+        out_default, _, _ = add_specific_features(df.copy(), val.copy(), test.copy())
+        out_none, _, _ = add_specific_features(df.copy(), val.copy(), test.copy(), full_train=None)
+        pd.testing.assert_frame_equal(out_default, out_none)

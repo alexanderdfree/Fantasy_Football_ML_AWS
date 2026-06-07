@@ -7,11 +7,12 @@ yards/reception, yards/target, air-yards/target computation, team
 target-share assertions) stay in this file.
 """
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from src.wr.config import POSITION_CONFIG
-from src.wr.features import _compute_features, fill_nans
+from src.wr.features import _compute_features, add_specific_features, fill_nans
 from tests.shared.parameterized_features import (
     PositionFeatureSpec,
     install_parameterized_features,
@@ -120,3 +121,56 @@ class TestComputeWRRates:
         shares = later["team_wr_target_share_L3"].dropna()
         assert len(shares) == 3
         assert all(0.4 <= s <= 0.6 for s in shares)
+
+
+@pytest.mark.unit
+class TestFullTrainTeamTotals:
+    """#531: the WR team-target-share denominator must be computed over the
+    pre-MIN_GAMES-filter train so a surviving WR's share is measured against
+    the FULL team — including teammates the train filter drops — matching what
+    the (unfiltered) val/test splits see."""
+
+    def test_full_train_denominator_includes_dropped_players(self):
+        """WR_A survives the filter; WR_B (sub-min-games) is dropped from the
+        filtered train but present in ``full_train``. With ``full_train`` the
+        rolling team-target share for WR_A is 0.5 in the weeks whose 3-game
+        window lies inside WR_B's tenure (10 / (10 + 10)); without it the
+        denominator undercounts and the share reads 1.0."""
+        # MIN_GAMES_PER_SEASON == 6: 7 games survives, 3 games is dropped.
+        wr_a = make_wr_player_games("WR_A", season=2023, n_weeks=7, targets=10, recent_team="KC")
+        wr_b = make_wr_player_games("WR_B", season=2023, n_weeks=3, targets=10, recent_team="KC")
+        full_train = pd.concat([wr_a, wr_b], ignore_index=True)
+        filtered_train = full_train[full_train["player_id"] == "WR_A"].copy()
+        val = make_wr_player_games("WR_A", season=2024, n_weeks=2, targets=10, recent_team="KC")
+        test = make_wr_player_games("WR_A", season=2024, n_weeks=2, targets=10, recent_team="KC")
+
+        # New path — weeks 2-4 roll over windows fully inside WR_B's tenure
+        # (wk2←{1}, wk3←{1,2}, wk4←{1,2,3}), so the denominator includes WR_B.
+        train_new, _, _ = add_specific_features(
+            filtered_train.copy(), val.copy(), test.copy(), full_train=full_train.copy()
+        )
+        a_new = train_new[train_new["player_id"] == "WR_A"].sort_values("week")
+        assert set(a_new["week"]) == set(range(1, 8))
+        wk234 = a_new[a_new["week"].isin([2, 3, 4])]["team_wr_target_share_L3"].to_numpy()
+        np.testing.assert_allclose(wk234, 0.5, atol=1e-9)
+
+        # Old path (full_train=None) — denominator is the filtered train only.
+        train_old, _, _ = add_specific_features(filtered_train.copy(), val.copy(), test.copy())
+        a_old = train_old[train_old["player_id"] == "WR_A"].sort_values("week")
+        wk234_old = a_old[a_old["week"].isin([2, 3, 4])]["team_wr_target_share_L3"].to_numpy()
+        np.testing.assert_allclose(wk234_old, 1.0, atol=1e-9)
+
+    def test_full_train_none_is_back_compatible(self):
+        """``full_train=None`` reproduces the legacy single-frame behaviour."""
+        df = pd.concat(
+            [
+                make_wr_player_games("W1", n_weeks=5, targets=8, recent_team="KC"),
+                make_wr_player_games("W2", n_weeks=5, targets=8, recent_team="KC"),
+            ],
+            ignore_index=True,
+        )
+        val = make_wr_player_games("W1", season=2024, n_weeks=2, recent_team="KC")
+        test = make_wr_player_games("W1", season=2024, n_weeks=2, recent_team="KC")
+        out_default, _, _ = add_specific_features(df.copy(), val.copy(), test.copy())
+        out_none, _, _ = add_specific_features(df.copy(), val.copy(), test.copy(), full_train=None)
+        pd.testing.assert_frame_equal(out_default, out_none)

@@ -33,6 +33,7 @@ def build_position_features(
     pos_test: pd.DataFrame | None,
     cfg: dict,
     feature_cols: list[str],
+    full_train: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame | None]:
     """Merge schedule features, add position-specific features, backfill missing
     whitelist columns, and clean inf/NaN values.
@@ -54,17 +55,31 @@ def build_position_features(
         # stats; other positions ignore the columns via their own
         # ``ATTN_HISTORY_STATS`` whitelist.
         merge_team_box_score_features(df, label=label)
+    # ``full_train`` is the pre-min-games-filter train: RB/WR compute their
+    # per-game team-total / share / HHI / career features over it (so dropped
+    # low-volume players don't undercount those aggregates) and return only the
+    # filtered rows. Those rows must carry the same schedule + box-score columns,
+    # so merge them here too. label="train" — it IS train data. Other positions
+    # ignore ``full_train``. fill_nans + the scaler still fit on the FILTERED
+    # train below, preserving #569. (#574/#531)
+    if full_train is not None:
+        merge_schedule_features(full_train, label="train")
+        merge_team_box_score_features(full_train, label="train")
 
     # Position-specific feature engineering + fill_nans. Both take three
     # splits; when test is None, pass an empty stub so the signatures line up.
     if pos_test is not None:
-        pos_train, pos_val, pos_test = cfg["add_features_fn"](pos_train, pos_val, pos_test)
+        pos_train, pos_val, pos_test = cfg["add_features_fn"](
+            pos_train, pos_val, pos_test, full_train=full_train
+        )
         pos_train, pos_val, pos_test = cfg["fill_nans_fn"](
             pos_train, pos_val, pos_test, cfg["specific_features"]
         )
     else:
         empty = pos_val.iloc[:0].copy()
-        pos_train, pos_val, _ = cfg["add_features_fn"](pos_train, pos_val, empty)
+        pos_train, pos_val, _ = cfg["add_features_fn"](
+            pos_train, pos_val, empty, full_train=full_train
+        )
         pos_train, pos_val, _ = cfg["fill_nans_fn"](
             pos_train, pos_val, empty, cfg["specific_features"]
         )
