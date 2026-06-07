@@ -1,10 +1,11 @@
 # Serving `app.py` decomposition — continuation spec
 
-**Status:** leaf-module wave shipped — `serialization.py` (#990) plus
-`metadata.py` / `wiki.py` / `comparison.py` / `benchmark_history.py` (this PR).
-app.py is down to ~869 LOC after the core extraction (this PR). The only remaining
-work is the **routes Blueprint + composition-root `app.py`** split (increment 5 below). This doc is the precise spec so the follow-up
-isn't a re-discovery.
+**Status: COMPLETE.** All increments shipped — `serialization.py` (#990),
+`metadata.py`/`wiki.py`/`comparison.py`/`benchmark_history.py` (#998),
+`core.py` (#1005), and `routes.py` + composition-root `app.py` (this PR).
+**`app.py` is now ~107 LOC** (Flask app + shared `_cache`/locks + errorhandler +
+explicit re-exports + bottom routes import) — down from 3085. The serving package
+is 8 cohesive modules. This doc is retained as the record of how it was done.
 
 **Key decision (revised from the original plan): there is no `state.py`.** The
 shared mutable serving state — `_cache`, `_cache_lock`, `_results_write_lock`,
@@ -119,11 +120,17 @@ imported by no one, so no cycle.
    `upload_predictions_cache_to_s3`, `refresh_sentinel_mtime`, `_apply_position_models`,
    `_ensure_metrics`, `_get_data`, `_compute_models_fingerprint`, the ensure/load/hydrate
    helpers, `_position_arch_payload`(route helper → moves with routes in inc.5).
-5. ⬜ **`routes.py` Blueprint + composition-root `app.py`** — REMAINING. Move the 18
+5. ✅ **`routes.py` + composition-root `app.py`** — DONE (this PR). Moved the 19
    handlers + route helpers (`_results_for_position`, `_categorize_features`,
-   `_position_arch_payload`) to a Blueprint; `app.py` keeps the Flask app, the shared
-   state, the errorhandler, and registers the blueprint. Re-export the names tests import
-   directly. Use the comprehensive 137-patch inventory + multi-line-aware
+   `_position_arch_payload`) to `routes.py`. Used the **classic Flask pattern, not a
+   Blueprint** (a Blueprint's `bp`-registration is import-order-fragile across the
+   app↔routes cycle): `routes.py` does `from src.serving.app import app` for the
+   `@app.route` decorators + `app_pkg` for state; `app.py` imports `routes` at the
+   bottom (`# noqa: E402,F401`), which registers the handlers as a side effect —
+   cycle-safe in both import orders (verified). `app.py` keeps the Flask app, shared
+   `_cache`/locks, the errorhandler, and explicit `X as X` re-exports of the test-facing
+   names. Only 7 test repoints needed (`_position_arch_payload`, `_categorize_features`)
+   since tests exercise routes through the Flask test client, not by patching handlers. Use the comprehensive 137-patch inventory + multi-line-aware
    `monkeypatch.setattr` enumeration (a single-line grep undercounts — several patches
    span two lines).
 

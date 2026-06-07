@@ -30,6 +30,7 @@ import pytest
 import torch
 
 import src.serving.core as core
+import src.serving.routes as routes
 
 # Reuse QB as the canonical "flat-history" position + DST for adjustment_fn.
 # The function's per-position branches are structurally identical aside from
@@ -598,7 +599,7 @@ def test_categorize_features_buckets_known_prefixes():
         "is_home",  # contextual
         "something_random",
     ]
-    cats = app_mod._categorize_features(feats)
+    cats = routes._categorize_features(feats)
     assert "rolling_mean_yards" in cats.get("rolling", [])
     assert "prior_season_max_yards" in cats.get("prior_season", [])
     assert "ewma_3_yards" in cats.get("ewma", [])
