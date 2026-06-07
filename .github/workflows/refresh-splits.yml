@@ -141,7 +141,14 @@ jobs:
           cache-dependency-glob: "requirements*.txt"
 
       - name: Install dependencies
-        run: uv pip install --system -r requirements.txt
+        # requirements-dev.txt (= requirements.txt + CPU torch) — NOT the lean
+        # requirements.txt: the "Verify train->test covariate shift" step below
+        # imports src.analysis.covariate_shift -> registry.get_config ->
+        # src.{pos}.run_pipeline -> src.shared.pipeline -> ``import torch``, so a
+        # torch-less env crashes that step at import time (before its warn-only
+        # guard runs), failing the job before the S3 upload and skipping the
+        # split refresh entirely. Matches tests.yml's install.
+        run: uv pip install --system -r requirements-dev.txt
 
       - name: Regenerate splits from nflverse + PBP
         # ``load_raw_data`` pulls weekly stats / rosters / schedules / snap
