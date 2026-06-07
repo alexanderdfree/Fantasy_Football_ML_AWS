@@ -176,3 +176,16 @@ POSITION_INFO = {
 # the parquet persist/hydrate round-trip. POSITION_INFO is the single source for
 # target identity + display order used by /api/predictions/breakdown.
 _ALL_TARGETS = sorted({t["key"] for info in POSITION_INFO.values() for t in info["targets"]})
+
+
+# Canonical position order for the UI / orchestration loops.
+_ALL_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
+
+# Positions sourced from their own dedicated splits (``_load_k_splits`` /
+# ``_load_dst_splits``) and appended to ``results`` separately in
+# ``_load_base_data_locked``. They MUST be excluded from the skill-position
+# ``test.parquet`` base copy: kickers ALSO appear in the offensive player table
+# (with ~0 offensive fantasy_points), so copying them there would double every
+# kicker row once the K split is appended — a phantom twin with actual≈0 and
+# null preds. See TODO.md Fixed archive ("Kicker rows duplicated in serving").
+_APPENDED_POSITIONS = ("K", "DST")

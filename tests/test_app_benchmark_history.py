@@ -424,7 +424,7 @@ class TestCaching:
         def _boom(*args, **kwargs):
             raise AssertionError("cache miss — json.load should not be called")
 
-        monkeypatch.setattr(app_mod.json, "load", _boom)
+        monkeypatch.setattr(benchmark_history.json, "load", _boom)
         second = client.get("/api/benchmark_history").get_json()
         assert second == first
 

@@ -44,6 +44,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import src.serving.core as core
+
 pytestmark = pytest.mark.integration
 
 
@@ -260,7 +262,7 @@ def boot_env(tmp_path, monkeypatch):
     k_kicks = _make_k_kicks()
 
     monkeypatch.setattr(
-        app_mod,
+        core,
         "_load_k_splits",
         lambda: (
             _make_k_split(seed=10, season=2023),
@@ -270,7 +272,7 @@ def boot_env(tmp_path, monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        app_mod,
+        core,
         "_load_dst_splits",
         lambda: (
             _make_dst_split(seed=20, season=2023),
@@ -314,7 +316,7 @@ class TestLoadBaseDataLocked:
         app_mod = boot_env["app"]
         assert app_mod._cache.get("base_loaded") is not True
 
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         assert app_mod._cache["base_loaded"] is True
 
@@ -323,7 +325,7 @@ class TestLoadBaseDataLocked:
         ``_records_to_player_rows`` reads plus every per-model per-format
         pred column the API endpoints touch."""
         app_mod = boot_env["app"]
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         results = app_mod._cache["results"]
         assert isinstance(results, pd.DataFrame)
@@ -364,7 +366,7 @@ class TestLoadBaseDataLocked:
         now the uniform "no result" sentinel; a row only carries a real value
         after _apply_position_models successfully overwrites it."""
         app_mod = boot_env["app"]
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         results = app_mod._cache["results"]
         for fmt in ("ppr", "half_ppr", "standard"):
@@ -382,7 +384,7 @@ class TestLoadBaseDataLocked:
         ``(train, val, test)`` 3-tuple. ``_apply_position_models`` reads
         ``_cache["splits"][pos]`` so a missing key would crash inference."""
         app_mod = boot_env["app"]
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         splits = app_mod._cache["splits"]
         assert set(splits.keys()) == {"QB", "RB", "WR", "TE", "K", "DST"}
@@ -402,7 +404,7 @@ class TestLoadBaseDataLocked:
         manifest as K rows missing entirely (the import crashed before any K
         data landed in results)."""
         app_mod = boot_env["app"]
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         results = app_mod._cache["results"]
         positions_seen = set(results["position"].dropna().unique())
@@ -416,7 +418,7 @@ class TestLoadBaseDataLocked:
         carries — those are dropped by the base copy because K/DST are appended
         from their own splits) plus the K/DST test row counts."""
         app_mod = boot_env["app"]
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         results = app_mod._cache["results"]
         expected = (
@@ -442,7 +444,7 @@ class TestLoadBaseDataLocked:
         kicker (player_id, week) appears exactly once and the K-row count equals
         the appended K split (the phantom rows are filtered out)."""
         app_mod = boot_env["app"]
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         results = app_mod._cache["results"]
         k_rows = results[results["position"] == "K"]
@@ -462,7 +464,7 @@ class TestLoadBaseDataLocked:
         plants exactly one POST row in the skill-position test split; assert
         no row with the matching player_id + week survives."""
         app_mod = boot_env["app"]
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         # Fixture plants POST at: position=QB, player_id=QB000, week=3
         post_match = app_mod._cache["results"].query(
@@ -475,7 +477,7 @@ class TestLoadBaseDataLocked:
         kick history at inference. Required by the runtime guard in
         ``_apply_position_models`` line 706-708."""
         app_mod = boot_env["app"]
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         kicks_df = app_mod._cache.get("k_kicks_df")
         assert kicks_df is not None
@@ -488,7 +490,7 @@ class TestLoadBaseDataLocked:
         DataFrame, not models, so the set must start empty - otherwise
         ``_ensure_position_loaded`` would skip the model load."""
         app_mod = boot_env["app"]
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         assert app_mod._cache["positions_loaded"] == set()
 
@@ -499,7 +501,7 @@ class TestLoadBaseDataLocked:
         breaks ``results.loc[pos_index, col] = ...`` writes in
         ``_apply_position_models``."""
         app_mod = boot_env["app"]
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         results = app_mod._cache["results"]
         assert results.index.is_unique, "results.index has duplicate values"
@@ -519,7 +521,7 @@ class TestLoadBaseDataLocked:
         (their scoring is format-invariant), so the value should still be
         finite for every skill-position row."""
         app_mod = boot_env["app"]
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         results = app_mod._cache["results"]
         skill_mask = results["position"].isin(["QB", "RB", "WR", "TE"])
@@ -532,18 +534,17 @@ class TestLoadBaseDataLocked:
         Flask's per-request handler doesn't re-read parquets every call. This
         catches a regression of the ``base_loaded`` flag not being set after
         ``_load_base_data_locked`` returns."""
-        app_mod = boot_env["app"]
         call_count = {"n": 0}
-        real_loader = app_mod._load_base_data_locked
+        real_loader = core._load_base_data_locked
 
         def counting_loader():
             call_count["n"] += 1
             return real_loader()
 
-        with mock.patch.object(app_mod, "_load_base_data_locked", side_effect=counting_loader):
-            app_mod._ensure_base_data()
-            app_mod._ensure_base_data()
-            app_mod._ensure_base_data()
+        with mock.patch.object(core, "_load_base_data_locked", side_effect=counting_loader):
+            core._ensure_base_data()
+            core._ensure_base_data()
+            core._ensure_base_data()
 
         assert call_count["n"] == 1, (
             f"_ensure_base_data ran the loader {call_count['n']} times; "
@@ -581,9 +582,9 @@ class TestLoadBaseDataLocked:
             )
             return base.copy(), base.copy(), base.copy(), _make_k_kicks()
 
-        monkeypatch.setattr(app_mod, "_load_k_splits", minimal_k)
+        monkeypatch.setattr(core, "_load_k_splits", minimal_k)
         monkeypatch.setattr(
-            app_mod,
+            core,
             "_load_dst_splits",
             lambda: (
                 _make_dst_split(seed=4, season=2023),
@@ -594,7 +595,7 @@ class TestLoadBaseDataLocked:
         monkeypatch.setattr(app_mod, "_cache", {})
         monkeypatch.chdir(tmp_path)
 
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
 
         results = app_mod._cache["results"]
         k_rows = results[results["position"] == "K"]

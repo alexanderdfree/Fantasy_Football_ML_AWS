@@ -23,6 +23,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import src.serving.core as core
+
 pytestmark = pytest.mark.integration
 
 
@@ -87,22 +89,20 @@ def _stub_app(monkeypatch):
     dummy_scaler = StandardScaler()
     dummy_scaler.fit(np.zeros((2, 1), dtype=np.float32))
 
-    monkeypatch.setattr(app_mod, "RidgeMultiTarget", _FakeMultiTarget)
-    monkeypatch.setattr(app_mod, "LightGBMMultiTarget", _FakeMultiTarget)
-    monkeypatch.setattr(app_mod.joblib, "load", lambda path: dummy_scaler)
+    monkeypatch.setattr(core, "RidgeMultiTarget", _FakeMultiTarget)
+    monkeypatch.setattr(core, "LightGBMMultiTarget", _FakeMultiTarget)
+    monkeypatch.setattr(core.joblib, "load", lambda path: dummy_scaler)
     monkeypatch.setattr(
-        app_mod.torch,
+        core.torch,
         "load",
         lambda *a, **k: {"model_state": {}, "feature_columns_hash": "h"},
     )
-    monkeypatch.setattr(app_mod, "assert_scaler_matches", lambda *a, **k: None)
-    monkeypatch.setattr(app_mod, "read_scaler_meta", lambda *a, **k: {})
+    monkeypatch.setattr(core, "assert_scaler_matches", lambda *a, **k: None)
+    monkeypatch.setattr(core, "read_scaler_meta", lambda *a, **k: {})
     monkeypatch.setattr(
-        app_mod, "unwrap_state_dict", lambda checkpoint: (checkpoint.get("model_state", {}), "h")
+        core, "unwrap_state_dict", lambda checkpoint: (checkpoint.get("model_state", {}), "h")
     )
-    monkeypatch.setattr(
-        app_mod, "scale_and_clip", lambda scaler, X: np.asarray(X, dtype=np.float32)
-    )
+    monkeypatch.setattr(core, "scale_and_clip", lambda scaler, X: np.asarray(X, dtype=np.float32))
 
     class _FakeNN:
         def __init__(self, *args, **kwargs):
@@ -119,12 +119,12 @@ def _stub_app(monkeypatch):
             n = len(X)
             return {t: np.zeros(n, dtype=np.float32) for t in self.target_names}
 
-    monkeypatch.setattr(app_mod, "MultiHeadNet", _FakeNN)
-    monkeypatch.setattr(app_mod, "MultiHeadNetWithHistory", _FakeNN)
-    monkeypatch.setattr(app_mod, "MultiHeadNetWithNestedHistory", _FakeNN)
+    monkeypatch.setattr(core, "MultiHeadNet", _FakeNN)
+    monkeypatch.setattr(core, "MultiHeadNetWithHistory", _FakeNN)
+    monkeypatch.setattr(core, "MultiHeadNetWithNestedHistory", _FakeNN)
 
     monkeypatch.setattr(
-        app_mod,
+        core,
         "build_position_features",
         lambda tr, va, te, reg, fc: (tr, va, te),
     )
@@ -133,7 +133,7 @@ def _stub_app(monkeypatch):
     # to our stub (the bare name is no longer an attribute on app_mod after
     # the cross-position-collision cleanup in PR2).
     monkeypatch.setattr(
-        app_mod.k_features,
+        core.k_features,
         "build_nested_kick_history",
         lambda df, **kw: (
             np.zeros((len(df), 2, 3, 4), dtype=np.float32),
@@ -142,7 +142,7 @@ def _stub_app(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        app_mod,
+        core,
         "build_game_history_arrays",
         lambda df, history_stats, max_seq_len: (
             np.zeros((len(df), max_seq_len, max(1, len(history_stats))), dtype=np.float32),
@@ -150,7 +150,7 @@ def _stub_app(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        app_mod,
+        core,
         "get_attn_static_columns",
         lambda feature_cols, allow: feature_cols[:1] if feature_cols else [],
     )
@@ -197,7 +197,7 @@ def test_apply_position_models_k_nested_attention_branch(_stub_app, monkeypatch)
         def __contains__(self, pos):
             return True
 
-    monkeypatch.setattr(_stub_app, "POSITION_REGISTRY", _Stub())
+    monkeypatch.setattr(core, "POSITION_REGISTRY", _Stub())
     # K nested attention reads k_kicks_df out of _cache; stub with an empty DF
     # so build_nested_kick_history has something to close over (our helper
     # stub doesn't actually use the contents).
@@ -206,7 +206,7 @@ def test_apply_position_models_k_nested_attention_branch(_stub_app, monkeypatch)
 
     results = _make_results_frame(n=6)
     df = _make_k_df(n=6)
-    _stub_app._apply_position_models(df, df, df, "K", results)
+    core._apply_position_models(df, df, df, "K", results)
 
     # K's attention must populate attn_nn_pred for every row.
     assert results["attn_nn_pred"].notna().all()
@@ -247,13 +247,13 @@ def test_apply_position_models_k_nested_attention_missing_kicks_df_raises(_stub_
         def __contains__(self, pos):
             return True
 
-    monkeypatch.setattr(_stub_app, "POSITION_REGISTRY", _Stub())
+    monkeypatch.setattr(core, "POSITION_REGISTRY", _Stub())
     _stub_app._cache.clear()
     # Intentionally NOT setting k_kicks_df.
 
     results = _make_results_frame(n=4)
     df = _make_k_df(n=4)
-    _stub_app._apply_position_models(df, df, df, "K", results)
+    core._apply_position_models(df, df, df, "K", results)
 
     # Ridge + NN still populated (their paths succeeded); attn NaN'd.
     assert results["attn_nn_pred"].isna().all()
@@ -271,7 +271,7 @@ def test_apply_position_models_lgbm_load_failure_leaves_lgbm_pred_nan(monkeypatc
         def load(self, path):
             raise RuntimeError("lgbm missing")
 
-    monkeypatch.setattr(app_mod, "LightGBMMultiTarget", _BadLGBM)
+    monkeypatch.setattr(core, "LightGBMMultiTarget", _BadLGBM)
 
     reg = {
         "targets": ["passing_yards"],
@@ -296,7 +296,7 @@ def test_apply_position_models_lgbm_load_failure_leaves_lgbm_pred_nan(monkeypatc
         def __contains__(self, pos):
             return True
 
-    monkeypatch.setattr(app_mod, "POSITION_REGISTRY", _Stub())
+    monkeypatch.setattr(core, "POSITION_REGISTRY", _Stub())
 
     results = pd.DataFrame(
         {
@@ -323,7 +323,7 @@ def test_apply_position_models_lgbm_load_failure_leaves_lgbm_pred_nan(monkeypatc
         }
     )
     app_mod._cache.clear()
-    app_mod._apply_position_models(df, df, df, "QB", results)
+    core._apply_position_models(df, df, df, "QB", results)
     # Ridge + NN succeeded (fake returns zeros); lgbm NaN due to load failure.
     assert results["ridge_pred"].notna().all()
     assert results["nn_pred"].notna().all()
@@ -346,11 +346,11 @@ def test_ensure_position_loaded_noop_if_already_loaded(monkeypatch):
 
     # apply would raise if called — assert it isn't.
     monkeypatch.setattr(
-        app_mod,
+        core,
         "_apply_position_models",
         lambda *a, **k: pytest.fail("_apply_position_models fired despite cached load"),
     )
-    app_mod._ensure_position_loaded("QB")
+    core._ensure_position_loaded("QB")
 
 
 @pytest.mark.integration
@@ -364,11 +364,11 @@ def test_ensure_position_loaded_noop_if_in_failed_set(monkeypatch):
     app_mod._cache["positions_failed"] = {"QB"}
 
     monkeypatch.setattr(
-        app_mod,
+        core,
         "_apply_position_models",
         lambda *a, **k: pytest.fail("retried a cached-failed position"),
     )
-    app_mod._ensure_position_loaded("QB")
+    core._ensure_position_loaded("QB")
 
 
 # --------------------------------------------------------------------------
@@ -488,9 +488,9 @@ def test_ensure_position_loaded_records_hard_failure(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("feature build exploded")
 
-    monkeypatch.setattr(app_mod, "_apply_position_models", _boom)
+    monkeypatch.setattr(core, "_apply_position_models", _boom)
 
-    app_mod._ensure_position_loaded("QB")
+    core._ensure_position_loaded("QB")
     assert "QB" in app_mod._cache["positions_failed"]
     assert "feature build exploded" in app_mod._cache["position_load_errors"]["QB"]
 
@@ -506,11 +506,11 @@ def test_ensure_position_loaded_returns_when_splits_missing(monkeypatch):
     app_mod._cache["positions_loaded"] = set()
     # No 'splits' key.
     monkeypatch.setattr(
-        app_mod,
+        core,
         "_apply_position_models",
         lambda *a, **k: pytest.fail("shouldn't run without splits"),
     )
-    app_mod._ensure_position_loaded("QB")
+    core._ensure_position_loaded("QB")
 
 
 # --------------------------------------------------------------------------
@@ -535,10 +535,10 @@ def test_ensure_all_positions_raises_when_every_position_fails(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("everything broken")
 
-    monkeypatch.setattr(app_mod, "_apply_position_models", _boom)
+    monkeypatch.setattr(core, "_apply_position_models", _boom)
 
     with pytest.raises(RuntimeError, match="All positions failed"):
-        app_mod._ensure_all_positions_loaded()
+        core._ensure_all_positions_loaded()
 
 
 @pytest.mark.integration
@@ -559,16 +559,16 @@ def test_ensure_all_positions_tolerates_partial_failure(monkeypatch):
             raise RuntimeError("QB only")
         # success: populate nothing
 
-    monkeypatch.setattr(app_mod, "_apply_position_models", _only_qb_fails)
+    monkeypatch.setattr(core, "_apply_position_models", _only_qb_fails)
     # Why: must not raise. Partial-failure contract — failed positions are
     # recorded and the wrapper still returns so /health can flag degradation
     # without taking the request down.
-    app_mod._ensure_all_positions_loaded()
+    core._ensure_all_positions_loaded()
     assert app_mod._cache["positions_failed"] == {"QB"}
     assert "QB only" in app_mod._cache["position_load_errors"]["QB"]
     expected_loaded = set(app_mod._ALL_POSITIONS) - {"QB"}
     assert app_mod._cache["positions_loaded"] == expected_loaded
-    assert "QB" in app_mod._degraded_positions()
+    assert "QB" in core._degraded_positions()
 
 
 @pytest.mark.integration
@@ -576,7 +576,7 @@ def test_degraded_positions_empty_when_no_errors():
     import src.serving.app as app_mod
 
     app_mod._cache.clear()
-    assert app_mod._degraded_positions() == []
+    assert core._degraded_positions() == []
 
 
 @pytest.mark.integration
@@ -592,7 +592,7 @@ def test_degraded_positions_dedupes_across_per_model_and_pos_keys():
         "RB": "all broken",
         "WR_attn_nn": "missing",
     }
-    assert app_mod._degraded_positions() == ["QB", "RB", "WR"]
+    assert core._degraded_positions() == ["QB", "RB", "WR"]
 
 
 # --------------------------------------------------------------------------
@@ -609,23 +609,23 @@ def test_load_k_splits_delegates_to_k_data_helpers(monkeypatch):
 
     # K data + features live on the module aliases after the PR2 collision
     # cleanup (load_data is no longer a bare attribute on app_mod).
-    monkeypatch.setattr(app_mod.k_data, "load_data", lambda: k_df)
-    monkeypatch.setattr(app_mod.k_data, "load_kicks", lambda df: kicks_df)
+    monkeypatch.setattr(core.k_data, "load_data", lambda: k_df)
+    monkeypatch.setattr(core.k_data, "load_kicks", lambda df: kicks_df)
     monkeypatch.setattr(
-        app_mod.k_data,
+        core.k_data,
         "season_split",
         lambda df: (df.iloc[:0], df.iloc[:0], df),
     )
-    monkeypatch.setattr(app_mod.k_features, "compute_features", lambda df: None)
+    monkeypatch.setattr(core.k_features, "compute_features", lambda df: None)
 
     # POSITION_REGISTRY['K']['compute_targets_fn'] — stub to pass-through.
     class _StubReg:
         def __getitem__(self, k):
             return {"compute_targets_fn": lambda df: df}
 
-    monkeypatch.setattr(app_mod, "POSITION_REGISTRY", _StubReg())
+    monkeypatch.setattr(core, "POSITION_REGISTRY", _StubReg())
 
-    train, val, test, out_kicks = app_mod._load_k_splits()
+    train, val, test, out_kicks = core._load_k_splits()
     assert out_kicks is kicks_df
     assert len(test) == 1
 
@@ -642,16 +642,16 @@ def test_load_dst_splits_filters_by_season(monkeypatch):
         }
     )
     # DST data + features live on module aliases after PR2's collision cleanup.
-    monkeypatch.setattr(app_mod.dst_data, "build_data", lambda: dst_df)
-    monkeypatch.setattr(app_mod.dst_features, "compute_features", lambda df: None)
+    monkeypatch.setattr(core.dst_data, "build_data", lambda: dst_df)
+    monkeypatch.setattr(core.dst_features, "compute_features", lambda df: None)
 
     class _StubReg:
         def __getitem__(self, k):
             return {"compute_targets_fn": lambda df: df}
 
-    monkeypatch.setattr(app_mod, "POSITION_REGISTRY", _StubReg())
+    monkeypatch.setattr(core, "POSITION_REGISTRY", _StubReg())
 
-    train, val, test = app_mod._load_dst_splits()
+    train, val, test = core._load_dst_splits()
     # 2025 is TEST_SEASONS
     assert len(test) == 1
     assert test.iloc[0]["season"] == 2025

@@ -24,6 +24,8 @@ import math
 import numpy as np
 import pytest
 
+import src.serving.core as core
+
 pytestmark = pytest.mark.integration
 
 
@@ -206,11 +208,11 @@ class TestAuxiliaryEndpoints:
     def test_get_data_missing_scoring_fallback_is_empty_metrics(self, app_module, monkeypatch):
         """A partial metrics cache should not KeyError when the requested
         scoring format and PPR alias are both absent."""
-        monkeypatch.setattr(app_module, "_ensure_metrics", lambda: None)
+        monkeypatch.setattr(core, "_ensure_metrics", lambda: None)
         app_module._cache["results"] = "rows"
         app_module._cache["metrics_by_format"] = {"half_ppr": {"ok": True}}
 
-        rows, metrics = app_module._get_data("standard")
+        rows, metrics = core._get_data("standard")
         assert rows == "rows"
         assert metrics == {}
 
@@ -368,7 +370,7 @@ class TestGracefulDegradation:
         def _boom(*_args, **_kwargs):
             raise RuntimeError("simulated model load failure")
 
-        monkeypatch.setattr(app_module, "_get_data", _boom)
+        monkeypatch.setattr(core, "_get_data", _boom)
 
         r = client.get("/api/predictions")
         # Must be JSON, not an HTML 500 page

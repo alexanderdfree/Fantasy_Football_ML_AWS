@@ -33,6 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import src.serving.core as core
 import src.serving.wiki as wiki
 
 pytestmark = pytest.mark.unit
@@ -123,7 +124,7 @@ def _stub_base_data_loaders(monkeypatch, app_mod, n_skill=4, n_k=3, n_dst=3):
             }
         )
 
-    monkeypatch.setattr(app_mod.pd, "read_parquet", lambda path: _skill_frame(path))
+    monkeypatch.setattr(core.pd, "read_parquet", lambda path: _skill_frame(path))
     # _compute_scoring_formats is a no-op when the suffixed cols already exist.
 
     def _k_frame(n):
@@ -159,9 +160,9 @@ def _stub_base_data_loaders(monkeypatch, app_mod, n_skill=4, n_k=3, n_dst=3):
     k_df = _k_frame(n_k)
     dst_df = _dst_frame(n_dst)
     monkeypatch.setattr(
-        app_mod, "_load_k_splits", lambda: (k_df, k_df, k_df, pd.DataFrame({"x": [1]}))
+        core, "_load_k_splits", lambda: (k_df, k_df, k_df, pd.DataFrame({"x": [1]}))
     )
-    monkeypatch.setattr(app_mod, "_load_dst_splits", lambda: (dst_df, dst_df, dst_df))
+    monkeypatch.setattr(core, "_load_dst_splits", lambda: (dst_df, dst_df, dst_df))
 
 
 class TestKDstScoringColumns:
@@ -172,10 +173,10 @@ class TestKDstScoringColumns:
         import src.serving.app as app_mod
 
         monkeypatch.setattr(app_mod, "_cache", {})
-        monkeypatch.setattr(app_mod, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "sc"))
+        monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "sc"))
         _stub_base_data_loaders(monkeypatch, app_mod)
 
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
         results = app_mod._cache["results"]
 
         for pos in ("K", "DST"):
@@ -194,10 +195,10 @@ class TestKDstScoringColumns:
         import src.serving.app as app_mod
 
         monkeypatch.setattr(app_mod, "_cache", {})
-        monkeypatch.setattr(app_mod, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "sc"))
+        monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "sc"))
         _stub_base_data_loaders(monkeypatch, app_mod)
 
-        app_mod._load_base_data_locked()
+        core._load_base_data_locked()
         results = app_mod._cache["results"]
         for prefix in ("ridge", "nn", "attn_nn", "lgbm"):
             assert results[f"{prefix}_pred"].isna().all()
@@ -283,10 +284,10 @@ def _wire_all_positions(monkeypatch, app_mod, mtimes):
     def _fake_apply(train, val, test, pos, results):
         counts[pos] = counts.get(pos, 0) + 1
 
-    monkeypatch.setattr(app_mod, "_apply_position_models", _fake_apply)
-    monkeypatch.setattr(app_mod, "refresh_sentinel_mtime", lambda pos: mtimes.get(pos, 0.0))
-    monkeypatch.setattr(app_mod, "_ensure_base_data", lambda: None)
-    monkeypatch.setattr(app_mod, "_invalidate_metrics_cache", lambda **k: None)
+    monkeypatch.setattr(core, "_apply_position_models", _fake_apply)
+    monkeypatch.setattr(core, "refresh_sentinel_mtime", lambda pos: mtimes.get(pos, 0.0))
+    monkeypatch.setattr(core, "_ensure_base_data", lambda: None)
+    monkeypatch.setattr(core, "_invalidate_metrics_cache", lambda **k: None)
     app_mod._cache.clear()
     app_mod._cache["splits"] = {p: (None, None, None) for p in app_mod._ALL_POSITIONS}
     app_mod._cache["results"] = pd.DataFrame({"position": list(app_mod._ALL_POSITIONS)})
@@ -302,18 +303,18 @@ class TestAllPositionsSentinelRecheck:
         counts = _wire_all_positions(monkeypatch, app_mod, mtimes)
 
         # First pass: every position loads once.
-        app_mod._ensure_all_positions_loaded()
+        core._ensure_all_positions_loaded()
         assert counts == {p: 1 for p in app_mod._ALL_POSITIONS}
 
         # No advance → second pass is a no-op (pending empty).
-        app_mod._ensure_all_positions_loaded()
+        core._ensure_all_positions_loaded()
         assert counts == {p: 1 for p in app_mod._ALL_POSITIONS}
 
         # WR's sentinel advances post-prewarm. The orchestrator must evict + re-
         # apply ONLY WR (the bug: pending stayed empty so the stale aggregate
         # survived).
         mtimes["WR"] = 99.0
-        app_mod._ensure_all_positions_loaded()
+        core._ensure_all_positions_loaded()
         assert counts["WR"] == 2
         assert all(counts[p] == 1 for p in app_mod._ALL_POSITIONS if p != "WR")
 
@@ -324,16 +325,16 @@ class TestAllPositionsSentinelRecheck:
         _wire_all_positions(monkeypatch, app_mod, mtimes)
         refreshed = {"n": 0}
         monkeypatch.setattr(
-            app_mod,
+            core,
             "_refresh_k_data_locked",
             lambda: refreshed.__setitem__("n", refreshed["n"] + 1),
         )
 
-        app_mod._ensure_all_positions_loaded()
+        core._ensure_all_positions_loaded()
         assert refreshed["n"] == 0  # first load doesn't trigger the refresh path
 
         mtimes["K"] = 50.0
-        app_mod._ensure_all_positions_loaded()
+        core._ensure_all_positions_loaded()
         assert refreshed["n"] == 1, "K sentinel advance must refresh k_kicks_df/splits"
 
 
@@ -351,7 +352,7 @@ class TestEnsureMetricsNoHydrateOnSentinelAdvance:
         app_mod._cache["metrics_by_format"] = {"ppr": "STALE"}
         app_mod._cache["positions_loaded"] = {"QB"}
         app_mod._cache["positions_mtime"] = {"QB": 1.0}
-        monkeypatch.setattr(app_mod, "refresh_sentinel_mtime", lambda pos: 2.0)
+        monkeypatch.setattr(core, "refresh_sentinel_mtime", lambda pos: 2.0)
 
         hydrate_calls = {"n": 0}
 
@@ -359,16 +360,16 @@ class TestEnsureMetricsNoHydrateOnSentinelAdvance:
             hydrate_calls["n"] += 1
             return True  # simulate the stale cache surviving a failed unlink
 
-        monkeypatch.setattr(app_mod, "_try_hydrate_from_disk", _fake_hydrate)
-        monkeypatch.setattr(app_mod, "_invalidate_metrics_cache", lambda **k: None)
+        monkeypatch.setattr(core, "_try_hydrate_from_disk", _fake_hydrate)
+        monkeypatch.setattr(core, "_invalidate_metrics_cache", lambda **k: None)
 
         applied = {"n": 0}
         monkeypatch.setattr(
-            app_mod, "_ensure_all_positions_loaded", lambda: applied.__setitem__("n", 1)
+            core, "_ensure_all_positions_loaded", lambda: applied.__setitem__("n", 1)
         )
-        monkeypatch.setattr(app_mod, "_compute_metrics_locked", lambda: None)
+        monkeypatch.setattr(core, "_compute_metrics_locked", lambda: None)
 
-        app_mod._ensure_metrics()
+        core._ensure_metrics()
 
         # The sentinel-advance path must NOT consult the disk cache (which could
         # re-load the stale aggregate); it recomputes from per-position preds.
@@ -381,16 +382,16 @@ class TestEnsureMetricsNoHydrateOnSentinelAdvance:
         import src.serving.app as app_mod
 
         app_mod._cache.clear()
-        monkeypatch.setattr(app_mod, "refresh_sentinel_mtime", lambda pos: 0.0)
+        monkeypatch.setattr(core, "refresh_sentinel_mtime", lambda pos: 0.0)
 
         hydrate_calls = {"n": 0}
         monkeypatch.setattr(
-            app_mod,
+            core,
             "_try_hydrate_from_disk",
             lambda: hydrate_calls.__setitem__("n", hydrate_calls["n"] + 1) or True,
         )
-        monkeypatch.setattr(app_mod, "_ensure_all_positions_loaded", lambda: None)
-        monkeypatch.setattr(app_mod, "_compute_metrics_locked", lambda: None)
+        monkeypatch.setattr(core, "_ensure_all_positions_loaded", lambda: None)
+        monkeypatch.setattr(core, "_compute_metrics_locked", lambda: None)
 
-        app_mod._ensure_metrics()
+        core._ensure_metrics()
         assert hydrate_calls["n"] == 1

@@ -22,6 +22,7 @@ import pandas as pd
 import pytest
 
 import src.serving.comparison as comparison
+import src.serving.core as core
 
 _POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 _ARCHES = {"Ridge Regression", "Neural Network", "Attention NN", "LightGBM"}
@@ -303,7 +304,7 @@ def test_comparison_model_unavailable_when_no_results(app_module, monkeypatch):
     and ``model_source`` reports the degraded state — the tab never 500s."""
     monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
     # Don't let _ensure_metrics try to load real models off disk/S3.
-    monkeypatch.setattr(app_module, "_ensure_metrics", lambda: None)
+    monkeypatch.setattr(core, "_ensure_metrics", lambda: None)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         body = c.get("/api/comparison").get_json()

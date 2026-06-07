@@ -40,6 +40,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import src.serving.core as core
+
 pytestmark = pytest.mark.unit
 
 
@@ -91,7 +93,7 @@ def cache_dir(tmp_path, monkeypatch):
 
     target = tmp_path / "serving_cache"
     target.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(app_mod, "_PREDICTIONS_CACHE_DIR", str(target))
+    monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(target))
     monkeypatch.setattr(app_mod, "_cache", {})
     return target
 
@@ -117,7 +119,7 @@ def fingerprint_files(tmp_path, monkeypatch):
     def _iter():
         yield from files
 
-    monkeypatch.setattr(app_mod, "_iter_fingerprint_paths", _iter)
+    monkeypatch.setattr(core, "_iter_fingerprint_paths", _iter)
     return files
 
 
@@ -136,7 +138,7 @@ def test_fingerprint_stable_across_mtime_bump_when_content_unchanged(fingerprint
     """
     import src.serving.app as app_mod
 
-    sha1, files1 = app_mod._compute_models_fingerprint()
+    sha1, files1 = core._compute_models_fingerprint()
     assert isinstance(sha1, str) and len(sha1) == 64
     assert len(files1) == 3
 
@@ -145,7 +147,7 @@ def test_fingerprint_stable_across_mtime_bump_when_content_unchanged(fingerprint
     new_mtime = os.stat(target).st_mtime + 10.0
     os.utime(target, (new_mtime, new_mtime))
 
-    sha2, _ = app_mod._compute_models_fingerprint()
+    sha2, _ = core._compute_models_fingerprint()
     assert sha2 == sha1, "fingerprint must NOT change when only mtime changes (content-hash bug)"
 
 
@@ -157,23 +159,23 @@ def test_fingerprint_changes_on_content_change(fingerprint_files):
     """
     import src.serving.app as app_mod
 
-    sha1, _ = app_mod._compute_models_fingerprint()
+    sha1, _ = core._compute_models_fingerprint()
     # Mutate content (same length so size doesn't carry the signal).
     target = Path(fingerprint_files[1])
     original = target.read_bytes()
     target.write_bytes(b"X" * len(original))
 
-    sha2, _ = app_mod._compute_models_fingerprint()
+    sha2, _ = core._compute_models_fingerprint()
     assert sha2 != sha1, "fingerprint must change when file content changes"
 
 
 def test_fingerprint_changes_on_size_change(fingerprint_files):
     import src.serving.app as app_mod
 
-    sha1, _ = app_mod._compute_models_fingerprint()
+    sha1, _ = core._compute_models_fingerprint()
     # Rewrite one file with different content (different size).
     Path(fingerprint_files[0]).write_bytes(b"alpha-extended")
-    sha2, _ = app_mod._compute_models_fingerprint()
+    sha2, _ = core._compute_models_fingerprint()
     assert sha2 != sha1
 
 
@@ -192,8 +194,8 @@ def test_fingerprint_skips_missing_paths(tmp_path, monkeypatch):
         yield str(real)
         yield str(ghost)
 
-    monkeypatch.setattr(app_mod, "_iter_fingerprint_paths", _iter)
-    sha, files = app_mod._compute_models_fingerprint()
+    monkeypatch.setattr(core, "_iter_fingerprint_paths", _iter)
+    sha, files = core._compute_models_fingerprint()
     assert isinstance(sha, str)
     rels = {f["path"] for f in files}
     assert any("real.pkl" in r for r in rels)
@@ -212,7 +214,7 @@ def test_persist_then_hydrate_round_trips_results_and_metrics(
 
     # Avoid touching real S3 — upload helper is best-effort but still issues
     # a print; replacing with a no-op keeps the test output clean.
-    monkeypatch.setattr(app_mod, "upload_predictions_cache_to_s3", lambda: None)
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
 
     results = _fake_results()
     metrics = _fake_metrics()
@@ -220,7 +222,7 @@ def test_persist_then_hydrate_round_trips_results_and_metrics(
     app_mod._cache["metrics_by_format"] = metrics
     app_mod._cache["metrics"] = metrics["ppr"]
 
-    app_mod._persist_cache_to_disk()
+    core._persist_cache_to_disk()
 
     # All three artifacts present after persist.
     for name in ("predictions.parquet", "metrics.json", "fingerprint.json"):
@@ -228,7 +230,7 @@ def test_persist_then_hydrate_round_trips_results_and_metrics(
 
     # Clear the in-memory cache and hydrate from disk.
     app_mod._cache.clear()
-    assert app_mod._try_hydrate_from_disk() is True
+    assert core._try_hydrate_from_disk() is True
 
     assert "results" in app_mod._cache
     assert "metrics_by_format" in app_mod._cache
@@ -245,17 +247,17 @@ def test_persist_then_hydrate_round_trips_results_and_metrics(
 def test_hydrate_returns_false_on_fingerprint_mismatch(cache_dir, fingerprint_files, monkeypatch):
     import src.serving.app as app_mod
 
-    monkeypatch.setattr(app_mod, "upload_predictions_cache_to_s3", lambda: None)
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     app_mod._cache["results"] = _fake_results()
     app_mod._cache["metrics_by_format"] = _fake_metrics()
-    app_mod._persist_cache_to_disk()
+    core._persist_cache_to_disk()
 
     # Mutate a fingerprint input — live fingerprint will diverge from the
     # one written into fingerprint.json.
     Path(fingerprint_files[0]).write_bytes(b"changed-content")
 
     app_mod._cache.clear()
-    assert app_mod._try_hydrate_from_disk() is False
+    assert core._try_hydrate_from_disk() is False
     # Cache stayed empty — no partial state.
     assert "results" not in app_mod._cache
     assert "metrics_by_format" not in app_mod._cache
@@ -270,14 +272,14 @@ def test_hydrate_returns_false_when_any_cache_file_missing(
 ):
     import src.serving.app as app_mod
 
-    monkeypatch.setattr(app_mod, "upload_predictions_cache_to_s3", lambda: None)
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     app_mod._cache["results"] = _fake_results()
     app_mod._cache["metrics_by_format"] = _fake_metrics()
-    app_mod._persist_cache_to_disk()
+    core._persist_cache_to_disk()
 
     (cache_dir / drop).unlink()
     app_mod._cache.clear()
-    assert app_mod._try_hydrate_from_disk() is False
+    assert core._try_hydrate_from_disk() is False
 
 
 def test_hydrate_returns_false_when_fingerprint_unreadable(
@@ -286,14 +288,14 @@ def test_hydrate_returns_false_when_fingerprint_unreadable(
     """A corrupt fingerprint.json must not crash the boot path."""
     import src.serving.app as app_mod
 
-    monkeypatch.setattr(app_mod, "upload_predictions_cache_to_s3", lambda: None)
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     app_mod._cache["results"] = _fake_results()
     app_mod._cache["metrics_by_format"] = _fake_metrics()
-    app_mod._persist_cache_to_disk()
+    core._persist_cache_to_disk()
 
     (cache_dir / "fingerprint.json").write_text("not-valid-json")
     app_mod._cache.clear()
-    assert app_mod._try_hydrate_from_disk() is False
+    assert core._try_hydrate_from_disk() is False
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +310,7 @@ def test_atomic_write_survives_concurrent_persist(cache_dir, fingerprint_files, 
     """
     import src.serving.app as app_mod
 
-    monkeypatch.setattr(app_mod, "upload_predictions_cache_to_s3", lambda: None)
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
 
     app_mod._cache["results"] = _fake_results()
     app_mod._cache["metrics_by_format"] = _fake_metrics()
@@ -319,7 +321,7 @@ def test_atomic_write_survives_concurrent_persist(cache_dir, fingerprint_files, 
     def _writer():
         try:
             barrier.wait(timeout=5)
-            app_mod._persist_cache_to_disk()
+            core._persist_cache_to_disk()
         except BaseException as e:  # noqa: BLE001 — record + re-raise outside thread
             errors.append(e)
 
@@ -377,7 +379,7 @@ def test_post_fork_starts_daemon_thread_and_returns_quickly(monkeypatch):
         # async to post_fork.
         release.wait(timeout=5)
 
-    monkeypatch.setattr(app_mod, "_ensure_metrics", _slow_warm)
+    monkeypatch.setattr(core, "_ensure_metrics", _slow_warm)
 
     fake_worker = mock.MagicMock()
     fake_server = mock.MagicMock()
@@ -409,7 +411,7 @@ def test_post_fork_swallows_warm_exception(monkeypatch):
         raised.set()
         raise RuntimeError("simulated warm failure")
 
-    monkeypatch.setattr(app_mod, "_ensure_metrics", _boom)
+    monkeypatch.setattr(core, "_ensure_metrics", _boom)
 
     fake_worker = mock.MagicMock()
     fake_server = mock.MagicMock()
@@ -439,12 +441,12 @@ def test_persist_writes_browser_snapshot(cache_dir, fingerprint_files, monkeypat
     """
     import src.serving.app as app_mod
 
-    monkeypatch.setattr(app_mod, "upload_predictions_cache_to_s3", lambda: None)
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     results = _fake_results()
     app_mod._cache["results"] = results
     app_mod._cache["metrics_by_format"] = _fake_metrics()
 
-    app_mod._persist_cache_to_disk()
+    core._persist_cache_to_disk()
 
     snap_path = cache_dir / "snapshot.json"
     assert snap_path.is_file()
@@ -464,17 +466,17 @@ def test_hydrate_regenerates_snapshot_when_absent(cache_dir, fingerprint_files, 
     """
     import src.serving.app as app_mod
 
-    monkeypatch.setattr(app_mod, "upload_predictions_cache_to_s3", lambda: None)
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     app_mod._cache["results"] = _fake_results()
     app_mod._cache["metrics_by_format"] = _fake_metrics()
-    app_mod._persist_cache_to_disk()
+    core._persist_cache_to_disk()
 
     # Simulate the pre-snapshot cache shape: drop the snapshot, keep the triple.
     (cache_dir / "snapshot.json").unlink()
     assert not (cache_dir / "snapshot.json").exists()
 
     app_mod._cache.clear()
-    assert app_mod._try_hydrate_from_disk() is True
+    assert core._try_hydrate_from_disk() is True
     assert (cache_dir / "snapshot.json").is_file(), "hydrate should regenerate the missing snapshot"
 
 
@@ -487,7 +489,7 @@ def test_snapshot_route_serves_file_without_triggering_compute(cache_dir, monkey
     def _boom():
         raise AssertionError("/api/snapshot must not call _ensure_metrics")
 
-    monkeypatch.setattr(app_mod, "_ensure_metrics", _boom)
+    monkeypatch.setattr(core, "_ensure_metrics", _boom)
 
     payload = {
         "weeks": [1, 2],
@@ -511,7 +513,7 @@ def test_snapshot_route_404_when_absent(cache_dir, monkeypatch):
     def _boom():
         raise AssertionError("/api/snapshot must not call _ensure_metrics")
 
-    monkeypatch.setattr(app_mod, "_ensure_metrics", _boom)
+    monkeypatch.setattr(core, "_ensure_metrics", _boom)
 
     resp = app_mod.app.test_client().get("/api/snapshot")
     assert resp.status_code == 404
