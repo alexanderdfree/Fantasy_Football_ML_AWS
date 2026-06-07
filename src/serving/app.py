@@ -5,21 +5,15 @@ No general cross-position model is used.
 """
 
 import contextlib
-import glob
 import hashlib
 import json
-import logging
 import os
-import re
 import sys
 import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-
-import bleach
-import markdown
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -60,11 +54,14 @@ from src.features.engineer import (
     build_opp_defense_history_arrays,
     get_attn_static_columns,
 )
+from src.serving import benchmark_history, comparison
+from src.serving.metadata import _ALL_TARGETS, POSITION_INFO
 
 # Pure serialization / scoring-column helpers live in serialization.py; imported
 # here (and thus re-exported as ``src.serving.app.<name>``) so route handlers and
 # existing ``from src.serving.app import _safe_num`` call sites keep working.
 from src.serving.serialization import (
+    _MODEL_PRED_COLUMNS,
     _MODEL_PRED_PREFIXES,
     _VALID_SCORING,
     _actual_col,
@@ -74,6 +71,16 @@ from src.serving.serialization import (
     _safe_num,
     _safe_str,
     _validate_scoring,
+)
+from src.serving.wiki import (
+    _WIKI_GITHUB_BLOB_BASE as _WIKI_GITHUB_BLOB_BASE,
+)
+from src.serving.wiki import (
+    WIKI_DOCS,
+    _render_wiki_doc,
+)
+from src.serving.wiki import (
+    _wiki_rewrite_href as _wiki_rewrite_href,
 )
 from src.shared.aggregate_targets import TARGET_UNITS, predictions_to_fantasy_points
 from src.shared.artifact_integrity import (
@@ -147,463 +154,6 @@ def handle_api_error(e):
         traceback.print_exc()
         return jsonify({"error": "Internal server error"}), 500
     raise e
-
-
-# ---------------------------------------------------------------------------
-# Position model metadata (static, for the UI)
-# ---------------------------------------------------------------------------
-POSITION_INFO = {
-    "QB": {
-        "label": "Quarterback",
-        "targets": [
-            {"key": "passing_yards", "label": "Passing Yards", "formula": "raw passing yards"},
-            {"key": "rushing_yards", "label": "Rushing Yards", "formula": "raw rushing yards"},
-            {"key": "passing_tds", "label": "Passing TDs", "formula": "raw passing TD count"},
-            {"key": "rushing_tds", "label": "Rushing TDs", "formula": "raw rushing TD count"},
-            {"key": "interceptions", "label": "Interceptions", "formula": "raw interception count"},
-            {
-                "key": "fumbles_lost",
-                "label": "Fumbles Lost",
-                "formula": ("sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost"),
-            },
-        ],
-        "adjustments": "None - penalties are now direct targets (interceptions, fumbles_lost).",
-        "specific_features": qb_cfg.POSITION_CONFIG.specific_features,
-        "architecture": {
-            "backbone": list(qb_cfg.POSITION_CONFIG.nn_backbone_layers),
-            "head_hidden": qb_cfg.POSITION_CONFIG.nn_head_hidden,
-        },
-    },
-    "RB": {
-        "label": "Running Back",
-        "targets": [
-            {"key": "rushing_tds", "label": "Rushing TDs", "formula": "raw rushing TD count"},
-            {"key": "receiving_tds", "label": "Receiving TDs", "formula": "raw receiving TD count"},
-            {"key": "rushing_yards", "label": "Rushing Yards", "formula": "raw rushing yards"},
-            {
-                "key": "receiving_yards",
-                "label": "Receiving Yards",
-                "formula": "raw receiving yards",
-            },
-            {"key": "receptions", "label": "Receptions", "formula": "raw reception count"},
-            {
-                "key": "fumbles_lost",
-                "label": "Fumbles Lost",
-                "formula": ("sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost"),
-            },
-        ],
-        "adjustments": "None - fumbles_lost is now a direct target.",
-        "specific_features": list(rb_cfg.POSITION_CONFIG.specific_features),
-        "architecture": {
-            "backbone": list(rb_cfg.POSITION_CONFIG.nn_backbone_layers),
-            "head_hidden": rb_cfg.POSITION_CONFIG.nn_head_hidden,
-        },
-    },
-    "WR": {
-        "label": "Wide Receiver",
-        "targets": [
-            {"key": "receiving_tds", "label": "Receiving TDs", "formula": "raw receiving TD count"},
-            {
-                "key": "receiving_yards",
-                "label": "Receiving Yards",
-                "formula": "raw receiving yards",
-            },
-            {"key": "receptions", "label": "Receptions", "formula": "raw reception count"},
-            {
-                "key": "fumbles_lost",
-                "label": "Fumbles Lost",
-                "formula": ("sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost"),
-            },
-        ],
-        "adjustments": "None - fumbles_lost is now a direct target.",
-        "specific_features": list(wr_cfg.POSITION_CONFIG.specific_features),
-        "architecture": {
-            "backbone": list(wr_cfg.POSITION_CONFIG.nn_backbone_layers),
-            "head_hidden": wr_cfg.POSITION_CONFIG.nn_head_hidden,
-        },
-    },
-    "TE": {
-        "label": "Tight End",
-        "targets": [
-            {"key": "receiving_tds", "label": "Receiving TDs", "formula": "raw count"},
-            {"key": "receiving_yards", "label": "Receiving Yards", "formula": "raw count"},
-            {"key": "receptions", "label": "Receptions", "formula": "raw count"},
-            {"key": "fumbles_lost", "label": "Fumbles Lost", "formula": "raw count"},
-        ],
-        "adjustments": "None - fumbles_lost is now a direct target.",
-        "specific_features": list(te_cfg.POSITION_CONFIG.specific_features),
-        "architecture": {
-            "backbone": list(te_cfg.POSITION_CONFIG.nn_backbone_layers),
-            "head_hidden": te_cfg.POSITION_CONFIG.nn_head_hidden,
-        },
-    },
-    "K": {
-        "label": "Kicker",
-        "targets": [
-            {
-                "key": "fg_yard_points",
-                "label": "FG Yard Points",
-                "formula": "FG yards made × 0.1",
-            },
-            {"key": "pat_points", "label": "PAT Points", "formula": "PAT made × 1"},
-            {
-                "key": "fg_misses",
-                "label": "FG Misses",
-                "formula": "FG missed (−1 each in total)",
-            },
-            {
-                "key": "xp_misses",
-                "label": "XP Misses",
-                "formula": "PAT missed (−1 each in total)",
-            },
-        ],
-        "adjustments": "None",
-        "formula": "fg_yard_points + pat_points − fg_misses − xp_misses",
-        "specific_features": list(k_cfg.POSITION_CONFIG.specific_features),
-        "architecture": {
-            "backbone": list(k_cfg.POSITION_CONFIG.nn_backbone_layers),
-            "head_hidden": k_cfg.POSITION_CONFIG.nn_head_hidden,
-        },
-    },
-    "DST": {
-        "label": "Defense/Special Teams",
-        "targets": [
-            {"key": "def_sacks", "label": "Sacks", "formula": "sacks x 1"},
-            {"key": "def_ints", "label": "Interceptions", "formula": "INT x 2"},
-            {"key": "def_fumble_rec", "label": "Fumble Recoveries", "formula": "fum_rec x 2"},
-            {"key": "def_fumbles_forced", "label": "Forced Fumbles", "formula": "forced_fum x 1"},
-            {"key": "def_safeties", "label": "Safeties", "formula": "safeties x 2"},
-            {"key": "def_tds", "label": "Defensive TDs", "formula": "def_TD x 6"},
-            {"key": "def_blocked_kicks", "label": "Blocked Kicks", "formula": "blocked x 2"},
-            {"key": "special_teams_tds", "label": "Special Teams TDs", "formula": "ST_TD x 6"},
-            {
-                "key": "points_allowed",
-                "label": "Points Allowed",
-                "formula": (
-                    "raw PA, tier-mapped at inference "
-                    "(0=+10, 1-6=+7, 7-13=+4, 14-20=+1, 21-27=0, 28-34=-1, 35+=-4)"
-                ),
-            },
-            {
-                "key": "yards_allowed",
-                "label": "Yards Allowed",
-                "formula": (
-                    "raw YA, tier-mapped at inference "
-                    "(<100=+5, 100-199=+3, 200-299=+2, 300-349=0, 350-399=-1, 400-449=-3, 450+=-5)"
-                ),
-            },
-        ],
-        "adjustments": "None (PA/YA tier bonuses applied at inference to regressed raw values)",
-        "formula": (
-            "def_sacks*1 + def_ints*2 + def_fumble_rec*2 + def_fumbles_forced*1 "
-            "+ def_safeties*2 + def_tds*6 + def_blocked_kicks*2 + special_teams_tds*6 "
-            "+ tier_pa(points_allowed) + tier_ya(yards_allowed)"
-        ),
-        "specific_features": list(dst_cfg.POSITION_CONFIG.specific_features),
-        "architecture": {
-            "backbone": list(dst_cfg.POSITION_CONFIG.nn_backbone_layers),
-            "head_hidden": dst_cfg.POSITION_CONFIG.nn_head_hidden,
-        },
-    },
-}
-
-
-# Union of every position's raw-stat target keys (deduped, sorted). Drives the
-# per-target breakdown columns pre-declared in the results frame so they survive
-# the parquet persist/hydrate round-trip. POSITION_INFO is the single source for
-# target identity + display order used by /api/predictions/breakdown.
-_ALL_TARGETS = sorted({t["key"] for info in POSITION_INFO.values() for t in info["targets"]})
-
-
-# ---------------------------------------------------------------------------
-# Wiki — render committed markdown docs as in-app HTML pages.
-# Slug is the only public identifier; raw paths are never accepted from the
-# client, so a path-traversal slug like "../etc/passwd" simply misses the
-# registry and 404s. Order in the dict drives sidebar order.
-# ---------------------------------------------------------------------------
-WIKI_DOCS: dict[str, dict] = {
-    "readme": {"name": "Project Overview", "group": "Overview", "path": "README.md"},
-    "setup": {"name": "Setup & Local Run", "group": "Overview", "path": "SETUP.md"},
-    "attribution": {
-        "name": "Data & Tool Attribution",
-        "group": "Overview",
-        "path": "ATTRIBUTION.md",
-    },
-    "todo": {"name": "TODO & Bug Archive", "group": "Overview", "path": "TODO.md"},
-    "architecture": {
-        "name": "ADR-001: System Architecture",
-        "group": "Architecture",
-        "path": "docs/ARCHITECTURE.md",
-    },
-    "architecture-history": {
-        "name": "ADR Update History (archived)",
-        "group": "Architecture",
-        "path": "docs/architecture-history.md",
-    },
-    "ec2-design": {
-        "name": "EC2 Training Design",
-        "group": "Architecture",
-        "path": "docs/ec2_design.md",
-    },
-    "expert-comparison": {
-        "name": "Expert Projection Comparison",
-        "group": "Architecture",
-        "path": "docs/expert_comparison.md",
-    },
-    "batch-design": {
-        "name": "AWS Batch Design (standby)",
-        "group": "Design History",
-        "path": "docs/batch_design.md",
-    },
-    "design-lstm-multihead": {
-        "name": "LSTM Multi-Head Proposal",
-        "group": "Design History",
-        "path": "docs/archive/design_lstm_multihead.md",
-    },
-    "design-weather-and-odds": {
-        "name": "Weather & Odds Features",
-        "group": "Design History",
-        "path": "docs/archive/design_weather_and_odds.md",
-    },
-    "design-xgboost-ensemble": {
-        "name": "XGBoost Ensemble (rejected)",
-        "group": "Design History",
-        "path": "docs/archive/design_xgboost_ensemble.md",
-    },
-    "method-contracts": {
-        "name": "Method Contracts",
-        "group": "Specification",
-        "path": "docs/method_contracts.md",
-    },
-    "infra-ec2": {
-        "name": "EC2 Infrastructure",
-        "group": "Infrastructure",
-        "path": "infra/ec2/README.md",
-    },
-    "infra-aws": {
-        "name": "AWS Serving Infrastructure",
-        "group": "Infrastructure",
-        "path": "infra/aws/README.md",
-    },
-}
-
-# Auto-register per-decision ADR files (docs/adr/*.md) so a new ADR shows up in
-# the wiki without a manual WIKI_DOCS entry. Slug = filename stem (e.g.
-# "0017-platform-autodetection-…"); display name = the file's first markdown
-# heading; grouped under "Architecture Decisions"; sorted for stable order.
-_ADR_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-for _adr_path in sorted(glob.glob(os.path.join(_ADR_REPO_ROOT, "docs", "adr", "*.md"))):
-    _stem = os.path.splitext(os.path.basename(_adr_path))[0]
-    _adr_slug = _stem if _stem[:1].isdigit() else f"adr-{_stem.lower()}"
-    try:
-        with open(_adr_path, encoding="utf-8") as _f:
-            _adr_name = _f.readline().lstrip("# ").strip() or _stem
-    except OSError:
-        _adr_name = _stem
-    WIKI_DOCS.setdefault(
-        _adr_slug,
-        {
-            "name": _adr_name,
-            "group": "Architecture Decisions",
-            "path": os.path.relpath(_adr_path, _ADR_REPO_ROOT),
-        },
-    )
-
-# Reverse map: normalized repo-relative path -> slug. Used to rewrite intra-wiki
-# markdown links (e.g. "[ARCH](docs/ARCHITECTURE.md)") into in-app `#wiki:slug`
-# anchors so the JS can swap content without a full reload.
-_WIKI_PATH_TO_SLUG = {os.path.normpath(d["path"]): slug for slug, d in WIKI_DOCS.items()}
-
-_WIKI_HREF_RE = re.compile(r'href="([^"]+)"')
-
-# Repo-relative links that resolve to a real file but aren't in WIKI_DOCS
-# (e.g. `[shared/aggregate_targets.py](../shared/aggregate_targets.py)` from
-# inside docs/ARCHITECTURE.md) get rewritten to a GitHub blob URL so clicking
-# them in-app shows the source on github.com instead of a Flask 404.
-_WIKI_GITHUB_BLOB_BASE = "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/blob/main/"
-
-# Schemes a sanitizer would normally block; we neutralize them at the rewriter
-# level too so a malicious or careless `[link](javascript:...)` in committed
-# markdown can't survive into the rendered HTML even if the bleach allowlist
-# regresses. data:/vbscript: are included for the same defense-in-depth reason.
-_WIKI_DANGEROUS_SCHEMES = ("javascript:", "data:", "vbscript:")
-
-# bleach allowlist for rendered wiki HTML. Permits the markup that
-# python-markdown produces (headings, lists, tables, fenced code, blockquotes,
-# inline emphasis) plus `id` attributes — the toc extension adds `id` to every
-# heading and same-doc TOC links rely on those anchors. `class` is allowed so
-# python-markdown's `codehilite` extension (and any future syntax-highlight
-# wiring) renders correctly. Disallowed tags like <script>, <iframe>, <style>,
-# <object>, <embed>, <form>, <input>, and <meta> are stripped.
-_WIKI_ALLOWED_TAGS = frozenset(
-    {
-        "a",
-        "abbr",
-        "b",
-        "blockquote",
-        "br",
-        "cite",
-        "code",
-        "dd",
-        "details",
-        "div",
-        "dl",
-        "dt",
-        "em",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "hr",
-        "i",
-        "img",
-        "kbd",
-        "li",
-        "mark",
-        "ol",
-        "p",
-        "pre",
-        "q",
-        "s",
-        "samp",
-        "span",
-        "strong",
-        "sub",
-        "summary",
-        "sup",
-        "table",
-        "tbody",
-        "td",
-        "tfoot",
-        "th",
-        "thead",
-        "tr",
-        "u",
-        "ul",
-        "var",
-    }
-)
-_WIKI_ALLOWED_ATTRS = {
-    "*": ["id", "class"],
-    "a": ["href", "title", "target", "rel"],
-    "img": ["src", "alt", "title", "width", "height"],
-    "th": ["colspan", "rowspan", "align", "scope"],
-    "td": ["colspan", "rowspan", "align"],
-    "abbr": ["title"],
-}
-_WIKI_ALLOWED_PROTOCOLS = frozenset({"http", "https", "mailto"})
-
-
-def _wiki_rewrite_href(href: str, doc_path: str) -> str:
-    """Rewrite a markdown link inside a wiki doc to a safe in-app or GitHub URL.
-
-    Outcomes:
-    - Empty / pure anchor (`#section`) → unchanged (handled client-side).
-    - Absolute URL (`http(s)://...`) or `mailto:` → unchanged.
-    - Dangerous scheme (`javascript:`, `data:`, `vbscript:`) → neutralized to
-      `#` so the link is inert (bleach also strips these as defense in depth).
-    - Relative path that resolves to a registered wiki doc → `#wiki:slug[:anchor]`.
-    - Relative path that doesn't resolve to a wiki doc but points at a real
-      repo file → GitHub blob URL so the link still works (opens externally
-      via the JS click handler).
-    - Anything else relative → unchanged.
-    """
-    if not href or href.startswith("#") or "://" in href or href.startswith("mailto:"):
-        return href
-    if href.lower().startswith(_WIKI_DANGEROUS_SCHEMES):
-        return "#"
-    target, _, anchor = href.partition("#")
-    if not target:
-        return href
-    # Reject absolute targets up front. ``os.path.join(doc_dir, target)``
-    # silently DISCARDS doc_dir when ``target`` is absolute (e.g. "/etc/passwd"),
-    # so the ``..``-prefix guard below never sees it and we'd emit a malformed
-    # ``<blob_base>//etc/passwd`` external link. Author-controlled markdown is the
-    # trust boundary, but a copy/pasted fragment from external docs can slip an
-    # absolute path past defense-in-depth — make it inert.
-    if os.path.isabs(target):
-        return "#"
-    doc_dir = os.path.dirname(doc_path)
-    resolved = os.path.normpath(os.path.join(doc_dir, target))
-    target_slug = _WIKI_PATH_TO_SLUG.get(resolved)
-    if target_slug:
-        return f"#wiki:{target_slug}:{anchor}" if anchor else f"#wiki:{target_slug}"
-    # Path resolved into the parent directory (e.g. ../etc/passwd) — refuse it.
-    if resolved.startswith(".."):
-        return "#"
-    blob_url = _WIKI_GITHUB_BLOB_BASE + resolved.replace(os.sep, "/")
-    return f"{blob_url}#{anchor}" if anchor else blob_url
-
-
-def _render_wiki_doc(slug: str) -> str:
-    """Return cached, rendered HTML for the doc at WIKI_DOCS[slug].
-
-    Uses ``_wiki_cache_lock`` (separate from ``_cache_lock``) so a wiki GET
-    can never serialize behind a slow ``_ensure_metrics`` model-load. Cache
-    entries still live in the shared ``_cache`` dict, but writes go through
-    a dedicated lock — safe because no other code path mutates the
-    ``("wiki", slug)`` keys, and Python dict insert/get for distinct keys
-    is atomic at the bytecode level.
-    """
-    cache_key = ("wiki", slug)
-    meta = WIKI_DOCS[slug]
-    # WIKI_DOCS paths are relative to repo root (e.g. "docs/ARCHITECTURE.md").
-    # After the src/ migration this module lives at src/serving/app.py, so
-    # repo root is two parents up. The Dockerfile copies the same .md files
-    # into /app at the same relative paths, so this resolves correctly in
-    # both local dev and the deployed container.
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    abs_path = os.path.join(repo_root, meta["path"])
-    # mtime-keyed cache: the wiki docs are rendered from on-disk markdown that a
-    # docs-only deploy or an in-place edit can change under a long-lived worker.
-    # Caching the HTML indefinitely (the original behaviour) served the stale
-    # render until a container restart. Stat the source and store ``(mtime, html)``
-    # so an edit (newer mtime) re-renders. ``os.stat`` is cheap (~µs); the render
-    # + bleach pass is the expensive part we still skip on the common hit.
-    try:
-        current_mtime = os.stat(abs_path).st_mtime
-    except OSError:
-        # File vanished (shouldn't happen for a registered doc) — fall through to
-        # ``open`` below, which raises a clear error the route turns into a 500.
-        current_mtime = None
-    with _wiki_cache_lock:
-        cached = _cache.get(cache_key)
-        if cached is not None and current_mtime is not None and cached[0] == current_mtime:
-            return cached[1]
-    with open(abs_path, encoding="utf-8") as f:
-        text = f.read()
-    html = markdown.markdown(
-        text,
-        extensions=["fenced_code", "tables", "toc", "sane_lists"],
-        output_format="html",
-    )
-    doc_path = meta["path"]
-    html = _WIKI_HREF_RE.sub(
-        lambda m: f'href="{_wiki_rewrite_href(m.group(1), doc_path)}"',
-        html,
-    )
-    # Defense in depth: even though committed markdown is author-controlled,
-    # strip raw <script>/<iframe>/event-handler attrs/non-http(s)-mailto URLs
-    # so an inadvertent bad link in a doc can't execute in a viewer's browser.
-    html = bleach.clean(
-        html,
-        tags=_WIKI_ALLOWED_TAGS,
-        attributes=_WIKI_ALLOWED_ATTRS,
-        protocols=_WIKI_ALLOWED_PROTOCOLS,
-        strip=True,
-    )
-    # Re-stat right before caching so the stored mtime matches the bytes we just
-    # rendered (the file could have been rewritten between the read above and
-    # here); a subsequent edit then still produces a newer mtime and re-renders.
-    with _wiki_cache_lock:
-        try:
-            render_mtime = os.stat(abs_path).st_mtime
-        except OSError:
-            render_mtime = current_mtime
-        _cache[cache_key] = (render_mtime, html)
-    return html
 
 
 def _compute_scoring_formats(df):
@@ -1679,14 +1229,6 @@ def _degraded_positions() -> list[str]:
     return sorted(degraded)
 
 
-_MODEL_PRED_COLUMNS = [
-    ("Ridge Regression", "ridge"),
-    ("Neural Network", "nn"),
-    ("Attention NN", "attn_nn"),
-    ("LightGBM", "lgbm"),
-]
-
-
 # ---------------------------------------------------------------------------
 # Predictions disk cache
 # ---------------------------------------------------------------------------
@@ -2667,148 +2209,13 @@ def api_wiki_page(slug):
     return jsonify({"slug": slug, "name": meta["name"], "group": meta["group"], "html": html})
 
 
-# ---------------------------------------------------------------------------
-# Comparison tab: our model vs expert projection sources
-# ---------------------------------------------------------------------------
-#
-# The expert (NFL.com / RotoWire) numbers are static — generated offline by
-# ``src.analysis.build_comparison_summary`` and committed beside this file. Our
-# model's column is computed LIVE from the loaded models (same metrics path as
-# the Model Performance tab), so it auto-updates on every retrain. The committed
-# JSON also carries the top-30-per-position ``player_id`` sets so the live model
-# column is sliced on the *same* players the experts were scored on.
-_COMPARISON_EXPERTS_PATH = os.path.join(os.path.dirname(__file__), "comparison_experts.json")
-# Per-projection prediction intervals (80% floor–ceiling bands) for the expert
-# sources, generated offline by ``src.analysis.expert_intervals`` and committed
-# beside this file. Same committed-JSON + live-endpoint pattern as the expert
-# summary above; surfaced under the Comparison tab's "Prediction intervals" block.
-_EXPERT_INTERVALS_PATH = os.path.join(os.path.dirname(__file__), "expert_intervals.json")
-
-
-def _load_comparison_experts():
-    """Read the committed expert-summary JSON. Returns ``None`` on any read error."""
-    try:
-        with open(_COMPARISON_EXPERTS_PATH, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        traceback.print_exc()
-        return None
-
-
-def _load_expert_intervals():
-    """Read the committed expert-intervals JSON. Returns ``None`` on any read error.
-
-    Optional: a missing/unreadable file degrades to ``None`` so the Comparison tab
-    still renders its accuracy tables without the intervals block.
-    """
-    try:
-        with open(_EXPERT_INTERVALS_PATH, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        traceback.print_exc()
-        return None
-
-
-def _best_model_arrays(results, scoring, pos, id_filter=None):
-    """Best-MAE architecture for ``pos`` from the cached per-row predictions.
-
-    Returns ``(best_arch, actual, pred)`` masked to the rows where that model has a
-    prediction, or ``None`` when no model has predictions for the slice. ``id_filter``
-    (a set of ``player_id`` strings) restricts to a subset (e.g. top-30); ``None`` = all
-    rows. Shared selection for ``_model_block_from_results`` /
-    ``_model_reliability_from_results`` so both report the *same* architecture (mirrors
-    the per-position routing in ``src.benchmarking.benchmark``). The ranking MAE is
-    ``mean(|pred-actual|)`` == ``compute_metrics`` mae.
-    """
-    if results is None or "position" not in results.columns:
-        return None
-    actual_col = _actual_col(scoring)
-    if actual_col not in results.columns:
-        return None
-    sub = results[results["position"] == pos]
-    if id_filter is not None:
-        sub = sub[sub["player_id"].astype(str).isin(id_filter)]
-    if sub.empty:
-        return None
-    actual = sub[actual_col].to_numpy()
-    best = None  # (mae, name, actual_masked, pred_masked)
-    for name, prefix in _MODEL_PRED_COLUMNS:
-        pred_col = _pred_col(prefix, scoring)
-        if pred_col not in sub.columns:
-            continue
-        pred = sub[pred_col]
-        mask = pred.notna().to_numpy()
-        if not mask.any():
-            continue
-        a = actual[mask]
-        p = pred.to_numpy()[mask]
-        mae = float(np.mean(np.abs(p.astype(float) - a.astype(float))))
-        if best is None or mae < best[0]:
-            best = (mae, name, a, p)
-    if best is None:
-        return None
-    return best[1], best[2], best[3]
-
-
-def _model_block_from_results(results, scoring, pos, id_filter=None):
-    """Live model {mae,rmse,r2,n,best_arch} for one position, computed from the
-    cached per-row predictions. Picks the best-MAE architecture (mirrors the
-    per-position routing in ``src.benchmarking.benchmark``). ``id_filter`` (a set
-    of ``player_id`` strings) restricts to the top-30 subset; ``None`` = all rows.
-    Returns ``None`` when no model has predictions for this slice.
-    """
-    picked = _best_model_arrays(results, scoring, pos, id_filter)
-    if picked is None:
-        return None
-    name, actual, pred = picked
-    m = compute_metrics(actual, pred)
-    r2 = m["r2"]
-    r2 = None if (r2 is None or (isinstance(r2, float) and np.isnan(r2))) else round(float(r2), 4)
-    return {
-        "mae": round(float(m["mae"]), 4),
-        "rmse": round(float(m["rmse"]), 4),
-        "r2": r2,
-        "n": int(len(actual)),
-        "best_arch": name,
-    }
-
-
-def _model_reliability_from_results(results, scoring, pos):
-    """Live model residual σ + bias for one position on the held-out 2025 test rows.
-
-    Computed from the same cached per-row predictions as ``_model_block_from_results``
-    (so it auto-updates on every retrain) and picks the same best-MAE architecture,
-    then reports ``sigma = std(pred − actual, ddof=1)`` and ``bias = mean(pred − actual)``
-    for it — the model-side counterpart to the experts' ``expert_reliability``. Residual
-    convention matches ``src.analysis.expert_uncertainty``: **bias > 0 ⇒ over-predicts**.
-    The model is leakage-free only on its test split, so this is 2025-only by design
-    (the whole Comparison tab is the 2025 test season). ``None`` when no model has
-    predictions for this position.
-    """
-    picked = _best_model_arrays(results, scoring, pos)
-    if picked is None:
-        return None
-    name, actual, pred = picked
-    a = actual.astype(float)
-    p = pred.astype(float)
-    resid = p - a
-    n = int(len(resid))
-    return {
-        "n": n,
-        "mae": round(float(np.mean(np.abs(resid))), 4),
-        "bias": round(float(np.mean(resid)), 4),
-        "sigma": round(float(np.std(resid, ddof=1)) if n > 1 else 0.0, 4),
-        "best_arch": name,
-    }
-
-
 @app.route("/api/comparison")
 def api_comparison():
     """Our model (live) vs NFL.com / RotoWire (static), by position, for two
     subsets (all rostered players + top-30 per position). MAE/RMSE/R² each.
     """
     scoring = _validate_scoring(request.args.get("scoring", "ppr"))
-    experts = _load_comparison_experts()
+    experts = comparison._load_comparison_experts()
     if experts is None:
         return jsonify({"error": "Comparison data unavailable"}), 500
 
@@ -2836,7 +2243,7 @@ def api_comparison():
             cell = pos_experts.get(pos) or {}
             id_filter = set(map(str, top30_ids.get(pos, []))) if subset == "top30" else None
             model_block = (
-                _model_block_from_results(results, scoring, pos, id_filter)
+                comparison._model_block_from_results(results, scoring, pos, id_filter)
                 if model_source == "live"
                 else None
             )
@@ -2852,7 +2259,7 @@ def api_comparison():
     # the expert columns alone.
     model_reliability = {
         pos: (
-            _model_reliability_from_results(results, scoring, pos)
+            comparison._model_reliability_from_results(results, scoring, pos)
             if model_source == "live"
             else None
         )
@@ -2860,7 +2267,7 @@ def api_comparison():
     }
     # Per-projection prediction intervals (static, optional) ride along on the
     # same payload so the Comparison tab needs only one fetch.
-    intervals = _load_expert_intervals()
+    intervals = comparison._load_expert_intervals()
 
     return jsonify(
         {
@@ -2881,195 +2288,6 @@ def api_comparison():
     )
 
 
-# Env-overridable so a rename or fork doesn't silently break every History
-# row's GitHub link. Defense-in-depth: validate the format before trusting
-# it, since the slug ends up interpolated into an href in the frontend.
-# Hostile env vars are above the user-input threat model, but cheap to guard.
-_BENCHMARK_REPO_SLUG_DEFAULT = "alexanderdfree/Fantasy_Football_ML_AWS"
-# Conservative subset of GitHub's actual allowed characters — enough for
-# every real owner/repo combo while rejecting anything that could break out
-# of the href context (quotes, angle brackets, whitespace).
-_REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
-
-
-def _resolve_repo_slug(env_value: str | None) -> str:
-    """Return the env value if it parses as ``owner/repo``, else the default.
-
-    Empty / whitespace / unset → silent fallback (the common no-override case).
-    Non-empty but malformed → fallback + a warning log so an operator notices
-    they typo'd the env var instead of seeing broken links in prod.
-    """
-    candidate = (env_value or "").strip()
-    if not candidate:
-        return _BENCHMARK_REPO_SLUG_DEFAULT
-    if _REPO_SLUG_RE.match(candidate):
-        return candidate
-    logging.getLogger(__name__).warning(
-        "BENCHMARK_REPO_SLUG=%r does not match owner/repo — falling back to %r",
-        candidate,
-        _BENCHMARK_REPO_SLUG_DEFAULT,
-    )
-    return _BENCHMARK_REPO_SLUG_DEFAULT
-
-
-_BENCHMARK_REPO_SLUG = _resolve_repo_slug(os.environ.get("BENCHMARK_REPO_SLUG"))
-_BENCHMARK_MODELS = ("ridge", "nn", "attn_nn", "lgbm")
-# Canonical position order for History-tab MAE cells. Every cell renders six
-# pills in this sequence; positions absent from a run's ``results`` array
-# produce ``mae=None`` pills that the frontend renders as ``--``. The order
-# mirrors the rest of the UI (POSITION_INFO iteration in /api/position_details).
-_BENCHMARK_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
-
-# Flat {target_key: label} merged across positions, served alongside the History
-# rows so the detailed-mode per-target breakdown can render "Passing Yards" (not
-# the raw "passing_yards" key) without a second /api/position_details round-trip.
-# Labels are consistent per key across positions (e.g. fumbles_lost, receiving_yards
-# share one label wherever they appear), so a flat merge is unambiguous. Paired
-# with TARGET_UNITS (also served top-level) for the unit suffix.
-_TARGET_LABELS = {t["key"]: t["label"] for info in POSITION_INFO.values() for t in info["targets"]}
-
-# (mtime, rows) — invalidated whenever sync_benchmark_history_from_s3 (or a
-# manual write) touches benchmark_history/. Lock keeps two concurrent
-# /api/benchmark_history requests from re-parsing in parallel after an
-# invalidation. RLock is overkill (no nesting), Lock is sufficient.
-_BENCHMARK_HISTORY_CACHE: tuple[float, list[dict]] | None = None
-_BENCHMARK_HISTORY_LOCK = threading.Lock()
-
-
-def _benchmark_history_dir() -> str:
-    # Mirrors _render_wiki_doc's repo-root resolution: src/serving/app.py is
-    # two parents deep, so the Dockerfile-copied benchmark_history/ sits at
-    # <repo_root>/benchmark_history/ in both local dev and the container.
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    return os.path.join(repo_root, "benchmark_history")
-
-
-def _extract_per_target(raw, metric: str = "mae") -> dict:
-    """Flatten a stored ``{model}_per_target`` block to ``{target: <metric>}``.
-
-    The benchmark files store per-target metrics as
-    ``{target: {"mae": float, "rmse": float, "r2": float}}`` (see
-    ``src/shared/benchmark_utils.py::_per_target``). The History tab's detailed
-    mode renders one metric at a time, so ``metric`` ("mae" or "rmse") selects
-    which value to pull; r2 is never surfaced here. Targets whose value is
-    NaN/None (scrubbed by ``_safe_num``) are dropped so the frontend never
-    renders ``undefined``. Returns ``{}`` when ``raw`` is absent/not a dict, or
-    when no target carries the requested metric (runs predating rmse) — callers
-    treat empty as "no detail" and omit the key entirely, which keeps the
-    existing exact-equality pill assertions green.
-    """
-    if not isinstance(raw, dict):
-        return {}
-    out: dict[str, float] = {}
-    for target, v in raw.items():
-        if not isinstance(v, dict):
-            continue
-        val = _safe_num(v.get(metric))
-        if val is not None:
-            out[target] = round(val, 3)
-    return out
-
-
-def _benchmark_row(entry: dict) -> dict:
-    """Project one benchmark_history JSON into the row payload the UI consumes.
-
-    Each model's pill list always has six entries in ``_BENCHMARK_POSITIONS``
-    order. A pair (position, model) whose MAE is missing from ``results``
-    (untrained position on a partial run, sentinel file for a [docs-only]
-    commit, or NaN scrubbed by ``_safe_num``) carries ``mae=None``; the
-    frontend renders those as ``--``. ``training_skipped`` is true when the
-    file is a no-train sentinel (``results=[]`` or an explicit flag from the
-    CI sentinel workflow) so the UI can style the row distinctively if it
-    wants.
-    """
-    results = entry.get("results") or []
-    by_pos = {r.get("position"): r for r in results if r.get("position")}
-    pills = {m: [] for m in _BENCHMARK_MODELS}
-    total_elapsed = 0.0
-    for pos in _BENCHMARK_POSITIONS:
-        r = by_pos.get(pos, {})
-        for m in _BENCHMARK_MODELS:
-            mae = _safe_num(r.get(f"{m}_mae"))
-            pill = {"position": pos, "mae": round(mae, 3) if mae is not None else None}
-            # rmse powers the History tab's MAE/RMSE toggle. Additive and omitted
-            # when absent (runs predating rmse) so the at-a-glance pill stays
-            # exactly {position, mae} and the frontend renders the RMSE view as
-            # "--" for those rows.
-            rmse = _safe_num(r.get(f"{m}_rmse"))
-            if rmse is not None:
-                pill["rmse"] = round(rmse, 3)
-            # Detailed mode reads these per-target breakdowns — one map per
-            # metric. Omit when there's no detail so the pill stays minimal
-            # (untrained positions, old-format runs).
-            per_target = _extract_per_target(r.get(f"{m}_per_target"))
-            if per_target:
-                pill["per_target"] = per_target
-            per_target_rmse = _extract_per_target(r.get(f"{m}_per_target"), "rmse")
-            if per_target_rmse:
-                pill["per_target_rmse"] = per_target_rmse
-            pills[m].append(pill)
-        elapsed = _safe_num(r.get("elapsed_sec"))
-        if elapsed is not None:
-            total_elapsed += elapsed
-    pr_number = entry.get("pr_number")
-    return {
-        "timestamp": entry.get("timestamp"),
-        "git_hash": entry.get("git_hash"),
-        "pr_number": int(pr_number) if isinstance(pr_number, int) else None,
-        "training_skipped": bool(entry.get("training_skipped")) or len(by_pos) == 0,
-        "positions": [r.get("position") for r in results if r.get("position")],
-        "ridge": pills["ridge"],
-        "nn": pills["nn"],
-        "attn_nn": pills["attn_nn"],
-        "lgbm": pills["lgbm"],
-        "total_elapsed_sec": round(total_elapsed, 1),
-    }
-
-
-def _load_benchmark_history_rows() -> list[dict]:
-    """Return the cached, projected, newest-first list of benchmark rows.
-
-    Cache key is the directory mtime: any file landing (S3 sync at boot,
-    manual write) bumps it and forces a reparse. Per-request, this is O(1)
-    in the steady state instead of O(N_files * parse). Returns ``[]`` if the
-    dir doesn't exist (fresh container before any sync has happened).
-
-    INVARIANT: this cache assumes writes are atomic-rename (the .tmp +
-    os.replace pattern in src/shared/benchmark_utils.py::append_to_history),
-    NOT in-place edits. A rename ticks the parent-directory mtime; rewriting
-    an existing file in place would not, and the cache would serve stale
-    rows. If a future backfill or migration script ever rewrites entries in
-    place, swap the key to ``(dir_mtime, file_count, max(file_mtimes))``.
-    """
-    global _BENCHMARK_HISTORY_CACHE
-    history_dir = _benchmark_history_dir()
-    try:
-        mtime = os.path.getmtime(history_dir)
-    except OSError:
-        return []
-    with _BENCHMARK_HISTORY_LOCK:
-        cached = _BENCHMARK_HISTORY_CACHE
-        if cached is not None and cached[0] == mtime:
-            return cached[1]
-        rows: list[dict] = []
-        for fn in os.listdir(history_dir):
-            if not fn.endswith(".json"):
-                continue
-            path = os.path.join(history_dir, fn)
-            if not os.path.isfile(path):
-                continue
-            try:
-                with open(path) as f:
-                    entry = json.load(f)
-            except (OSError, ValueError):
-                # A malformed file shouldn't poison the whole tab.
-                continue
-            rows.append(_benchmark_row(entry))
-        rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
-        _BENCHMARK_HISTORY_CACHE = (mtime, rows)
-        return rows
-
-
 @app.route("/api/benchmark_history")
 def api_benchmark_history():
     """Return per-run summary rows for the History tab, newest first.
@@ -3088,9 +2306,9 @@ def api_benchmark_history():
     """
     return jsonify(
         {
-            "repo_slug": _BENCHMARK_REPO_SLUG,
-            "rows": _load_benchmark_history_rows(),
-            "target_labels": _TARGET_LABELS,
+            "repo_slug": benchmark_history._BENCHMARK_REPO_SLUG,
+            "rows": benchmark_history._load_benchmark_history_rows(),
+            "target_labels": benchmark_history._TARGET_LABELS,
             "target_units": TARGET_UNITS,
         }
     )

@@ -15,6 +15,8 @@ import json
 
 import pytest
 
+import src.serving.benchmark_history as benchmark_history
+
 pytestmark = pytest.mark.integration
 
 
@@ -41,11 +43,11 @@ def history_client(app_module, tmp_path, monkeypatch):
     """Flask test client wired to a tmp benchmark_history/ dir."""
     history_dir = tmp_path / "benchmark_history"
     history_dir.mkdir()
-    monkeypatch.setattr(app_module, "_benchmark_history_dir", lambda: str(history_dir))
+    monkeypatch.setattr(benchmark_history, "_benchmark_history_dir", lambda: str(history_dir))
     # Clear the mtime-keyed cache so a previous test's load doesn't shadow
     # this one (cache is module-global; mtime usually differs across tmp
     # dirs anyway but resetting is explicit and cheap).
-    monkeypatch.setattr(app_module, "_BENCHMARK_HISTORY_CACHE", None)
+    monkeypatch.setattr(benchmark_history, "_BENCHMARK_HISTORY_CACHE", None)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         yield c, history_dir
@@ -62,7 +64,9 @@ class TestEmpty:
 
     def test_returns_200_when_dir_missing(self, app_module, monkeypatch):
         # Simulate a brand-new container that hasn't synced yet.
-        monkeypatch.setattr(app_module, "_benchmark_history_dir", lambda: "/nonexistent/path")
+        monkeypatch.setattr(
+            benchmark_history, "_benchmark_history_dir", lambda: "/nonexistent/path"
+        )
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as c:
             r = c.get("/api/benchmark_history")
@@ -356,17 +360,26 @@ class TestRepoSlugResolution:
     link without a log line; the warning surfaces that to the operator."""
 
     def test_unset_falls_back_to_default(self, app_module):
-        assert app_module._resolve_repo_slug(None) == app_module._BENCHMARK_REPO_SLUG_DEFAULT
+        assert (
+            benchmark_history._resolve_repo_slug(None)
+            == benchmark_history._BENCHMARK_REPO_SLUG_DEFAULT
+        )
 
     def test_empty_string_falls_back_to_default(self, app_module):
-        assert app_module._resolve_repo_slug("") == app_module._BENCHMARK_REPO_SLUG_DEFAULT
-        assert app_module._resolve_repo_slug("   ") == app_module._BENCHMARK_REPO_SLUG_DEFAULT
+        assert (
+            benchmark_history._resolve_repo_slug("")
+            == benchmark_history._BENCHMARK_REPO_SLUG_DEFAULT
+        )
+        assert (
+            benchmark_history._resolve_repo_slug("   ")
+            == benchmark_history._BENCHMARK_REPO_SLUG_DEFAULT
+        )
 
     def test_well_formed_slug_passes_through(self, app_module):
-        assert app_module._resolve_repo_slug("alice/foo-bar") == "alice/foo-bar"
-        assert app_module._resolve_repo_slug("Org_42/repo.name") == "Org_42/repo.name"
+        assert benchmark_history._resolve_repo_slug("alice/foo-bar") == "alice/foo-bar"
+        assert benchmark_history._resolve_repo_slug("Org_42/repo.name") == "Org_42/repo.name"
         # Whitespace is stripped before matching.
-        assert app_module._resolve_repo_slug("  alice/foo  ") == "alice/foo"
+        assert benchmark_history._resolve_repo_slug("  alice/foo  ") == "alice/foo"
 
     @pytest.mark.parametrize(
         "hostile",
@@ -383,8 +396,8 @@ class TestRepoSlugResolution:
     )
     def test_malformed_slug_falls_back_with_warning(self, app_module, hostile, caplog):
         with caplog.at_level("WARNING", logger="src.serving.app"):
-            resolved = app_module._resolve_repo_slug(hostile)
-        assert resolved == app_module._BENCHMARK_REPO_SLUG_DEFAULT
+            resolved = benchmark_history._resolve_repo_slug(hostile)
+        assert resolved == benchmark_history._BENCHMARK_REPO_SLUG_DEFAULT
         assert any("BENCHMARK_REPO_SLUG" in rec.message for rec in caplog.records)
 
 

@@ -1,8 +1,25 @@
 # Serving `app.py` decomposition — continuation spec
 
-**Status:** increment 1 of N shipped (PR #990 — `serialization.py` extracted). The
-heavy core/routes split below is the remaining, deliberately-deferred work. This doc
-is the precise spec so the follow-up isn't a re-discovery.
+**Status:** leaf-module wave shipped — `serialization.py` (#990) plus
+`metadata.py` / `wiki.py` / `comparison.py` / `benchmark_history.py` (this PR).
+app.py is down to ~2303 LOC. The remaining work is the heavy **core + routes**
+split (the two big sections below). This doc is the precise spec so the follow-up
+isn't a re-discovery.
+
+**Key decision (revised from the original plan): there is no `state.py`.** The
+shared mutable serving state — `_cache`, `_cache_lock`, `_results_write_lock`,
+`_wiki_cache_lock`, and the cache-dir path constants (`_PREDICTIONS_CACHE_DIR`,
+…) — **stays in `app.py`**. Extracted modules that need it reach it via a
+lazy `import src.serving.app as app_pkg` (call-time attribute access:
+`app_pkg._cache`), which breaks the cycle. Rationale: `_cache` is rebound by
+~9 monkeypatches and read via ~136 references across fixtures (`_stub_app`,
+`_mocked_app`, `degraded_mode_app` all yield the real app module), so moving it
+to a `state.py` would force repointing all of them — high-risk churn — whereas
+production never *reassigns* `_cache` (only mutates), so call-time attribute
+access on `app.py`'s binding is correct and keeps every `_cache` patch working
+unchanged. Same treatment for the cache-dir constants. So core/routes keep
+`app_pkg.<state>` and their `_cache`/`_PREDICTIONS_CACHE_DIR` patches stay
+`app_mod.*` (no repoint).
 
 ## Goal
 
@@ -17,6 +34,28 @@ behavior-preserving.** Guarded by the serving test suite (`tests/test_app*.py`,
   (`_safe_num/_safe_str/_round_or_none`, `_validate_scoring`, `_actual_col/_pred_col`,
   `_records_to_player_rows`, `_VALID_SCORING/_MODEL_PRED_PREFIXES/_PLAYER_ROW_COLS`).
   `app.py` imports + re-exports them. Zero patch repoints (none were monkeypatched).
+  This PR also moved `_MODEL_PRED_COLUMNS` here (the `(display_name, prefix)` pairs,
+  shared by `comparison._best_model_arrays` and core `_compute_metrics_locked`).
+- **`src/serving/metadata.py`** (this PR): `POSITION_INFO` + `_ALL_TARGETS` (static
+  UI metadata; imports the 6 position config modules). Re-exported by `app.py`;
+  not monkeypatched → zero repoints.
+- **`src/serving/wiki.py`** (this PR): in-app markdown wiki (`WIKI_DOCS`, the ADR
+  auto-register loop, `_WIKI_*` constants, `_wiki_rewrite_href`, `_render_wiki_doc`).
+  Uses `app_pkg._cache`/`_wiki_cache_lock` via the lazy import. `app.py` re-exports
+  `WIKI_DOCS`/`_render_wiki_doc`/`_wiki_rewrite_href`/`_WIKI_GITHUB_BLOB_BASE`; the
+  `/api/wiki/*` routes stay in `app.py`. Repointed `WIKI_DOCS`/`__file__`/`markdown`
+  patches (test_app_audit320.py, test_app_gaps.py) to `wiki`.
+- **`src/serving/comparison.py`** (this PR): model-vs-expert helpers
+  (`_load_comparison_experts`, `_load_expert_intervals`, `_best_model_arrays`,
+  `_model_block_from_results`, `_model_reliability_from_results` + the two committed-JSON
+  path constants). Pure over the `results` frame — no app state. `/api/comparison`
+  stays in `app.py`, calling `comparison.<fn>`. Repointed 19 refs in test_app_comparison.py.
+- **`src/serving/benchmark_history.py`** (this PR): History-tab JSON parsing/projection
+  (`_resolve_repo_slug`, `_benchmark_*`, `_load_benchmark_history_rows`, `_TARGET_LABELS`,
+  the module-local `_BENCHMARK_HISTORY_CACHE`). No app state. `/api/benchmark_history`
+  stays in `app.py`, calling `benchmark_history.<fn>`. Repointed 14 refs in
+  test_app_benchmark_history.py. (`app_mod.json.load` patch needs no repoint — json is a
+  shared singleton and `app.py` still imports it.)
 
 ## The hard constraint (why this is not "just move code")
 
@@ -60,15 +99,29 @@ imported by no one, so no cycle.
 
 ## Recommended increments (each lands green against all 235 tests)
 
-1. **`metadata.py`** — static, re-export only, ~0 repoints (warm-up, like #990).
-2. **`state.py`** — extract shared state; convert `_cache`→`state._cache`; repoint the
-   `_cache`/`_PREDICTIONS_CACHE_DIR` patches. **The critical enabler; do carefully.**
-3. **`wiki.py` + `comparison.py` + `benchmark_history.py`** — leaf-ish clusters that
-   import `state`; repoint their handful of patches (`markdown`, `_load_comparison_experts`,
-   `_benchmark_history_dir`, `_compute_models_fingerprint`).
-4. **`core.py`** — the big one; repoint the ~40 heavy patches. Bulk of the work.
-5. **`routes.py` Blueprint + composition-root `app.py`** — move the 18 handlers; re-export
-   the 8 names; register the blueprint + errorhandler.
+1. ✅ **`metadata.py`** — DONE (this PR). Static, re-export only, ~0 repoints.
+2. ~~`state.py`~~ — **DROPPED.** State stays in `app.py` (see Key decision above);
+   no `_cache`→`state._cache` conversion, no `_cache`/`_PREDICTIONS_CACHE_DIR` repoints.
+3. ✅ **`wiki.py` + `comparison.py` + `benchmark_history.py`** — DONE (this PR). Leaf
+   clusters; repointed `markdown`/`WIKI_DOCS`/`__file__` (wiki), `_load_comparison_experts`
+   et al. (comparison), `_benchmark_history_dir`/`_BENCHMARK_HISTORY_CACHE` (benchmark).
+   `_compute_models_fingerprint` is a *core* symbol (not benchmark) — its 3 patches stay
+   `app_mod.*` until increment 4.
+4. ⬜ **`core.py`** — REMAINING, the big one; repoint the ~40 heavy patches. Bulk of the
+   work. Uses `app_pkg.<state>` for `_cache`/locks/cache-dir consts (those patches stay
+   `app_mod.*`). Heavy patches to repoint to `core`: model classes, `joblib`/`torch`/`pd`
+   (library singletons — repoint only the LHS module ref), `build_position_features`,
+   scaler IO, `k_data`/`k_features`/`dst_data`/`dst_features`, `POSITION_REGISTRY`,
+   `upload_predictions_cache_to_s3`, `refresh_sentinel_mtime`, `_apply_position_models`,
+   `_ensure_metrics`, `_get_data`, `_compute_models_fingerprint`, the ensure/load/hydrate
+   helpers, `_position_arch_payload`(route helper → moves with routes in inc.5).
+5. ⬜ **`routes.py` Blueprint + composition-root `app.py`** — REMAINING. Move the 18
+   handlers + route helpers (`_results_for_position`, `_categorize_features`,
+   `_position_arch_payload`) to a Blueprint; `app.py` keeps the Flask app, the shared
+   state, the errorhandler, and registers the blueprint. Re-export the names tests import
+   directly. Use the comprehensive 137-patch inventory + multi-line-aware
+   `monkeypatch.setattr` enumeration (a single-line grep undercounts — several patches
+   span two lines).
 
 ## Repoint workflow (per increment)
 
