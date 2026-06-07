@@ -376,7 +376,7 @@ jobs:
         # cancellation, which is the right behaviour: cancellation usually
         # means the operator killed the run on purpose.
         if: success() || failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: data-splits
           path: data/splits/*.parquet
