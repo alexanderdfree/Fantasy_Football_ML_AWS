@@ -348,15 +348,18 @@ def _plot_weekly(
             ls = "--" if is_expert else "-"
             ax1.plot(mwide.index, mwide[m], marker="o", ms=3, lw=lw, ls=ls, label=m)
             ax2.plot(bwide.index, bwide[m], marker="o", ms=3, lw=lw, ls=ls, label=m)
+    weeks = [int(w) for w in mwide.index]
     suffix = f" — {title}" if title else ""
     ax1.set_title(f"Week-by-week MAE{suffix}")
     ax1.set_xlabel("week")
     ax1.set_ylabel("MAE (fantasy pts)")
+    ax1.set_xticks(weeks)
     ax1.legend()
     ax2.axhline(0, color="k", lw=0.6)
     ax2.set_title(f"Week-by-week signed bias{suffix}")
     ax2.set_xlabel("week")
     ax2.set_ylabel("mean(pred - actual)")
+    ax2.set_xticks(weeks)
     ax2.legend()
     fig.tight_layout()
     path = Path(figdir) / fname
