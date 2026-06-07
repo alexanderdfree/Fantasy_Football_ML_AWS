@@ -185,9 +185,10 @@ def test_main_failed_jobs_branch(monkeypatch, capsys):
 
 @pytest.mark.unit
 def test_main_submit_exception_is_logged(monkeypatch, capsys):
-    """Exception from submit_job is caught, printed, and other submissions
-    still proceed (no global abort). The successful position is downloaded;
-    the failed one is silently absent from job_ids and never waited on."""
+    """Exception from submit_job is caught and printed, other submissions still
+    proceed (no global abort mid-loop), and the succeeded position is still
+    downloaded — but main() now exits non-zero so the workflow surfaces the
+    failed submit instead of false-greening (#758)."""
     from src.batch import launch as lm
 
     monkeypatch.setattr(lm.boto3, "client", lambda *a, **k: mock.MagicMock())
@@ -214,15 +215,18 @@ def test_main_submit_exception_is_logged(monkeypatch, capsys):
     monkeypatch.setattr(lm, "download_artifacts", _download)
     monkeypatch.setattr(lm, "_append_benchmark_history", lambda *a, **k: None)
     monkeypatch.setattr("sys.argv", ["launch.py", "--positions", "QB", "RB"])
-    lm.main()
+    with pytest.raises(SystemExit) as exc_info:
+        lm.main()
+    assert exc_info.value.code == 1
 
     out = capsys.readouterr().out
     # The exception is logged with the failing position and the original message
     # (must include both — a generic "something failed" line wouldn't be enough).
     assert "[QB] FAILED to submit" in out
     assert "transient aws fault" in out
-    # Loop did not abort: RB was submitted, waited on, and downloaded. QB,
-    # whose submit raised, never made it into job_ids and is absent from both.
+    # Loop did not abort mid-flight: RB was submitted, waited on, and downloaded
+    # (the non-zero exit fires only after). QB, whose submit raised, never made
+    # it into job_ids and is absent from both.
     assert waited_for_ids == [{"RB": "j-RB"}]
     assert downloaded == [["RB"]]
 

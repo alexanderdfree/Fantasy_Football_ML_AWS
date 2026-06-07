@@ -93,20 +93,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
-      # major version comment. SHA = astral-sh/setup-uv v6.8.0.
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: "requirements*.txt"
-
-      - name: Install dependencies
-        run: uv pip install --system -r requirements.txt
-
+      # AWS creds + the pending race-gate marker go FIRST (right after checkout)
+      # so the marker lands ~30s in. Sitting behind setup-python + the uv
+      # install (~2-3 min) re-opened the train-batch race: the batch-image
+      # build (~9 min) could let Batch jobs download stale splits before the
+      # marker existed (#857).
       # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
       # major version comment. SHA = aws-actions/configure-aws-credentials v4
       # tip as of 2026-05-21.
@@ -134,6 +125,23 @@ jobs:
           printf '%s\n' "${GITHUB_RUN_ID}" | aws s3 cp - \
             "s3://${S3_BUCKET}/splits-rebuild-markers/pending/${GITHUB_SHA}.txt" \
             --region "${AWS_REGION}" --no-cli-pager || true
+
+      # Python toolchain comes after the race-gate marker (above) so the marker
+      # isn't blocked behind the ~2-3 min install; the regenerate step below is
+      # the first consumer of the deps.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
+      # major version comment. SHA = astral-sh/setup-uv v6.8.0.
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements*.txt"
+
+      - name: Install dependencies
+        run: uv pip install --system -r requirements.txt
 
       - name: Regenerate splits from nflverse + PBP
         # ``load_raw_data`` pulls weekly stats / rosters / schedules / snap

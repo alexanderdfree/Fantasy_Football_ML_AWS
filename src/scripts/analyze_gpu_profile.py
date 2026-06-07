@@ -13,7 +13,7 @@ Usage:
     python -m src.scripts.analyze_gpu_profile --csv-dir /tmp/profiles/
 
     # Resolve each position's latest artifact via models/{POS}/manifest.json
-    # (current → stable → previous) and extract the embedded gpu_profile_{POS}.csv
+    # (stable → current → previous) and extract the embedded gpu_profile_{POS}.csv
     python -m src.scripts.analyze_gpu_profile --s3 \
         --positions QB RB WR TE K DST \
         --s3-bucket ff-predictor-training
@@ -175,7 +175,7 @@ def _download_from_s3(positions: list[str], bucket: str) -> list[tuple[str, str]
         if manifest is None:
             print(f"  [s3] {pos}: no manifest — skipping")
             continue
-        entry = manifest.get("current") or manifest.get("stable") or manifest.get("previous")
+        entry = manifest.get("stable") or manifest.get("current") or manifest.get("previous")
         if not entry or not entry.get("key"):
             print(f"  [s3] {pos}: manifest has no resolvable artifact entry — skipping")
             continue

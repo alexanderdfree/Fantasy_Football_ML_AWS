@@ -312,10 +312,15 @@ jobs:
           # FF_BATCH_CUDA_GRAPH=0 to force the whole fan-out back to the eager
           # path. launch.py forwards it to the container only when set.
           FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
+          SEED: ${{ github.event.inputs.seed || '42' }}
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
-          SEED="${{ github.event.inputs.seed || '42' }}"
+          # SEED arrives via env (above) to avoid splicing workflow_dispatch
+          # input into the shell at templating time; validate it's an integer.
+          case "$SEED" in
+            ""|*[!0-9]*) echo "Invalid seed: $SEED" >&2; exit 1 ;;
+          esac
           # launch.py blocks on wait_for_jobs(); returns 0 only if all
           # positions reach SUCCEEDED. --skip-upload because CI has no local
           # data/splits/*.parquet — the splits in s3://ff-predictor-training/data/
@@ -412,7 +417,7 @@ jobs:
           # path filters look safe; routing through env vars makes the value
           # a normal shell variable that downstream commands can quote.
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
         run: |
           PR_NUMBER=""
           if [ -n "$HEAD_SHA" ]; then
@@ -474,6 +479,7 @@ jobs:
         env:
           # Same env-indirection rationale as the previous step.
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -489,7 +495,11 @@ jobs:
             echo "$unexpected"
             exit 1
           fi
-          git commit -m "chore(ci): append Batch benchmark run ${GITHUB_SHA::7}"
+          # Label the commit with the image/head SHA the benchmark JSON pins
+          # (HEAD_SHA), not the run-level GITHUB_SHA which diverges on rapid
+          # merges — keeps `git log --grep <sha>` correlation intact.
+          MSG_SHA="${HEAD_SHA:-$GITHUB_SHA}"
+          git commit -m "chore(ci): append Batch benchmark run ${MSG_SHA::7}"
           for attempt in 1 2 3; do
             if git push origin HEAD:"refs/heads/$BRANCH"; then
               echo "Push succeeded on attempt $attempt"

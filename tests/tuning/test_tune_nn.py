@@ -359,22 +359,25 @@ def test_format_config_lines_roundtrips_through_eval():
         "nn_batch_size": 256,
     }
     rendered = tune_nn._format_config_lines("RB", best)
-    # First line is a comment; rest are `RB_<X> = <value>` assignments.
-    namespace: dict = {}
-    for line in rendered.splitlines():
-        if not line or line.startswith("#"):
-            continue
-        exec(line, namespace)
-    # Verify a representative subset round-trips correctly.
-    assert namespace["RB_ATTN_D_MODEL"] == 32
-    assert namespace["RB_ATTN_LR"] == 0.001
-    # Scheduler params now emit to ATTN_* (not the shared SCHEDULER_*/ONECYCLE_*)
-    # so pasting tuned attention values can't re-schedule the regular NN (#792).
-    assert namespace["RB_ATTN_SCHEDULER_TYPE"] == "onecycle"
-    assert namespace["RB_ATTN_ONECYCLE_MAX_LR"] == 0.002
-    assert namespace["RB_ATTN_ONECYCLE_PCT_START"] == 0.3
-    assert namespace["RB_NN_BACKBONE_LAYERS"] == [128, 64]
-    assert namespace["RB_NN_DROPOUT"] == 0.2
+    # Comment lines start with '#'; the rest are `    <kwarg>=<value>,` lines
+    # meant to paste into a PositionConfig(...) call. Wrap them in dict(...) so
+    # they round-trip back to a params dict (and prove they're valid Python).
+    kwarg_lines = [
+        ln for ln in rendered.splitlines() if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    cfg = eval("dict(\n" + "\n".join(kwarg_lines) + "\n)")  # noqa: S307 — test-only
+    # Verify a representative subset round-trips correctly, attention-namespaced
+    # (attn_*, not the shared scheduler_*/onecycle_* the regular NN reads, #792).
+    assert cfg["attn_d_model"] == 32
+    assert cfg["attn_lr"] == 0.001
+    assert cfg["attn_scheduler_type"] == "onecycle"
+    assert cfg["attn_onecycle_max_lr"] == 0.002
+    assert cfg["attn_onecycle_pct_start"] == 0.3
+    assert cfg["nn_backbone_layers"] == [128, 64]
+    assert cfg["nn_dropout"] == 0.2
+    # The retired UPPER_CASE module-constant form must be gone (#826).
+    assert "RB_ATTN_D_MODEL" not in rendered
+    assert "attn_d_model=32," in rendered
 
 
 def test_trial_to_params_resolves_backbone_idx_to_preset():

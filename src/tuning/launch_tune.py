@@ -291,6 +291,7 @@ def main():
 
     print(f"Submitting {len(positions)} tune jobs: {positions}")
     job_ids: dict[str, str] = {}
+    submit_failures: list[str] = []  # positions whose submit raised — absent from results
     with ThreadPoolExecutor(max_workers=len(positions)) as pool:
         futures = {
             pool.submit(
@@ -314,9 +315,13 @@ def main():
                 job_ids[pos] = job_id
             except Exception as e:
                 print(f"[{pos}] FAILED to submit: {e}")
+                submit_failures.append(pos)
 
     if not wait:
         print("\nJobs submitted. Use 'aws batch describe-jobs' to check status.")
+        if submit_failures:
+            print(f"ERROR: {len(submit_failures)} positions failed to submit: {submit_failures}")
+            sys.exit(1)
         storage_version = resolve_search_space_version(
             _batch_storage_backend(args.parallel_backend), cuda_graph=cuda_graph
         )
@@ -359,6 +364,12 @@ def main():
         )
 
     print("\nAll done.")
+
+    # Exit non-zero so the retune-nn-batch step surfaces failures instead of
+    # false-greening — failed/timed-out positions, plus any that never
+    # submitted (absent from results), mirror src/batch/launch.py.
+    if failed or timed_out or submit_failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

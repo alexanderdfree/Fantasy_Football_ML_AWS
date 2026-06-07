@@ -41,6 +41,8 @@ For each finding:
 - For behavioral, shared-code, or infra claims, use the same depth as the Claude workflow: targeted tests for behavior, grep every caller for shared-code contracts, and check all Batch/ECS/workflow config layers.
 - Classify as `FIX`, `LEAVE`, or `UNCERTAIN`.
 
+> **Blanket scope rule:** any finding that would change a design choice, feature selection, model architecture/hyperparameters, scoring, or otherwise move model accuracy as a matter of tuning or judgment (not fixing a defect) is **LEAVE** — `feature_drift` (cite the stop-rule if one applies; else note "design/tuning choice, not a defect"). **UNLESS IT IS A CLEAR, NON-CONTROVERSIAL CORRECTNESS BUG.**
+
 Use these LEAVE categories:
 
 - `stale`: cited code no longer matches the claim or was already changed.

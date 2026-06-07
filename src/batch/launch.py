@@ -527,6 +527,7 @@ def main():
     # Submit all positions in parallel
     print(f"Submitting {len(args.positions)} Batch jobs: {args.positions}")
     job_ids = {}  # position -> job_id
+    submit_failures = []  # positions whose submit_job raised — never enter job_ids
     with ThreadPoolExecutor(max_workers=len(args.positions)) as pool:
         futures = {
             pool.submit(submit_job, pos, args.seed, batch_client): pos for pos in args.positions
@@ -538,9 +539,15 @@ def main():
                 job_ids[pos] = job_id
             except Exception as e:
                 print(f"[{pos}] FAILED to submit: {e}")
+                submit_failures.append(pos)
 
     if not wait:
         print("\nJobs submitted. Use 'aws batch describe-jobs' to check status.")
+        # A submit failure leaves the position out of job_ids (and out of the
+        # wait-path results below), so it must fail loudly here too.
+        if submit_failures:
+            print(f"ERROR: {len(submit_failures)} positions failed to submit: {submit_failures}")
+            sys.exit(1)
         return
 
     # Wait for all jobs to complete
@@ -580,8 +587,10 @@ def main():
     # manifests but not the case where a stale prior-run artifact happens
     # to satisfy the freshness window. Exit non-zero so the workflow's
     # post-step actually surfaces failed positions; succeeded artifacts
-    # have already been downloaded above for forensics.
-    if failed or timed_out:
+    # have already been downloaded above for forensics. ``submit_failures``
+    # covers positions that never reached the wait loop (submit_job raised),
+    # which are otherwise absent from ``results`` and silently ignored.
+    if failed or timed_out or submit_failures:
         sys.exit(1)
 
 
