@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from src.config import MIN_GAMES_PER_SEASON
 from src.features.engineer import (
     OPP_ATTN_PER_GAME_BUILDERS,
     build_game_history_arrays,
@@ -129,6 +130,18 @@ def build_test_df_from_artifacts(
         pos_train = reg["compute_targets_fn"](pos_train)
         pos_val = reg["compute_targets_fn"](pos_val)
         pos_test = reg["compute_targets_fn"](pos_test)
+
+    # Mirror the train-only min-games filter that training + serving apply to
+    # pos_train BEFORE feature-building (src.serving.app._apply_position_models /
+    # src.shared.pipeline._prepare_position_data): the fill-means + StandardScaler
+    # are fit on pos_train, so an unfiltered train frame drifts those stats from
+    # the served artifacts and these preds stop reproducing the served numbers —
+    # this module's whole contract. val/test stay unfiltered, as in training. (#977)
+    min_games = reg.get("min_games_per_season")
+    if min_games is None:
+        min_games = MIN_GAMES_PER_SEASON
+    games_per_season = pos_train.groupby(["player_id", "season"])["week"].transform("count")
+    pos_train = pos_train[games_per_season >= min_games].copy()
 
     feature_cols = reg["get_feature_columns_fn"]()
     pos_train, pos_val, pos_test = build_position_features(

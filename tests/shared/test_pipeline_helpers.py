@@ -101,6 +101,58 @@ def test_build_scheduler_prefers_attention_overrides():
 
 
 @pytest.mark.unit
+def test_build_scheduler_prefers_attention_scheduler_type():
+    """#792: the attention path (scheduler_prefix='attn_') uses attn_scheduler_type
+    over the shared scheduler_type, so a tuned attention scheduler can no longer
+    re-schedule the regular NN. The regular path (no prefix) is unchanged."""
+    from src.shared.pipeline import _build_scheduler
+
+    opt, loader = _dummy_optim_and_loader()
+    cfg = {
+        # Shared (regular NN) schedule = cosine.
+        "scheduler_type": "cosine_warm_restarts",
+        "cosine_t0": 5,
+        "cosine_t_mult": 2,
+        "cosine_eta_min": 1e-5,
+        "nn_epochs": 2,
+        # Attention-only overrides = onecycle with its own shape.
+        "attn_scheduler_type": "onecycle",
+        "attn_onecycle_max_lr": 0.02,
+        "attn_onecycle_pct_start": 0.25,
+    }
+    sched, per_batch = _build_scheduler(opt, cfg, loader, scheduler_prefix="attn_")
+    assert per_batch is True
+    assert isinstance(sched, torch.optim.lr_scheduler.OneCycleLR)
+    # Regular NN path still uses the shared type (cosine) — Δ0 vs pre-#792.
+    sched2, per_batch2 = _build_scheduler(opt, cfg, loader)
+    assert per_batch2 is False
+    assert isinstance(sched2, torch.optim.lr_scheduler.CosineAnnealingWarmRestarts)
+
+
+@pytest.mark.unit
+def test_build_scheduler_prefers_attention_cosine_shape():
+    """#792: attn-prefixed cosine T_0/T_mult override the shared values on the
+    attention path; the shared values still drive the regular NN."""
+    from src.shared.pipeline import _build_scheduler
+
+    opt, loader = _dummy_optim_and_loader()
+    cfg = {
+        "scheduler_type": "cosine_warm_restarts",
+        "cosine_t0": 5,
+        "cosine_t_mult": 1,
+        "cosine_eta_min": 1e-5,
+        "attn_cosine_t0": 30,
+        "attn_cosine_t_mult": 2,
+    }
+    sched, _ = _build_scheduler(opt, cfg, loader, scheduler_prefix="attn_")
+    assert sched.T_0 == 30
+    assert sched.T_mult == 2
+    sched2, _ = _build_scheduler(opt, cfg, loader)
+    assert sched2.T_0 == 5
+    assert sched2.T_mult == 1
+
+
+@pytest.mark.unit
 def test_build_scheduler_plateau():
     from src.shared.pipeline import _build_scheduler
 

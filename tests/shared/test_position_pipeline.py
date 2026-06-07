@@ -131,3 +131,36 @@ def test_build_pipeline_config_with_minimal_position_config() -> None:
     cfg = build_pipeline_config("QB", minimal_pc)
     # All required keys present
     assert REQUIRED_PIPELINE_CFG_KEYS.issubset(cfg.keys())
+
+
+def test_build_pipeline_config_routes_attn_scheduler_overrides() -> None:
+    """#792: the optional attn-scheduler overrides on PositionConfig are routed
+    into cfg only when set, so the attention path can read them while an unset
+    config falls back to the shared scheduler (Δ0 for every production config)."""
+    base = dict(
+        name="QB",
+        targets=["passing_yards"],
+        specific_features=[],
+        ridge_alpha_grids={"passing_yards": [1.0]},
+        nn_backbone_layers=[8],
+        loss_weights={"passing_yards": 1.0},
+        head_losses={"passing_yards": "huber"},
+        huber_deltas={"passing_yards": 1.0},
+    )
+    pc_with = PositionConfig(
+        **base,
+        attn_scheduler_type="onecycle",
+        attn_cosine_t0=30,
+        attn_cosine_t_mult=2,
+        attn_onecycle_pct_start=0.25,
+    )
+    cfg = build_pipeline_config("QB", pc_with)
+    assert cfg["attn_scheduler_type"] == "onecycle"
+    assert cfg["attn_cosine_t0"] == 30
+    assert cfg["attn_cosine_t_mult"] == 2
+    assert cfg["attn_onecycle_pct_start"] == 0.25
+
+    # Unset → not injected (attention falls back to the shared scheduler keys).
+    cfg2 = build_pipeline_config("QB", PositionConfig(**base))
+    assert "attn_scheduler_type" not in cfg2
+    assert "attn_cosine_t0" not in cfg2
