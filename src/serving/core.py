@@ -835,10 +835,23 @@ def _load_splits_locked(results):
             pos_test.index = existing_index
             reindexed[pos_label] = pos_test
         else:
+            # Row counts diverged, so the fresh frame's index can't be aligned
+            # to the shared results frame; writing preds against its range index
+            # would CREATE ghost rows in results (a ``.loc`` insert), not skip
+            # them. Mark the position failed instead so _apply_position_models
+            # never runs for it and /health surfaces the degradation (#1000).
             print(
                 f"[{pos_label}] _load_splits_locked: row-count mismatch "
                 f"({len(existing_index)} cached rows vs {len(pos_test)} fresh) — "
-                f"keeping fresh index (unaligned pred writes may be skipped)"
+                f"marking {pos_label} failed (cannot align pred writes)"
+            )
+            app_pkg._cache.setdefault("positions_failed", set()).add(pos_label)
+            app_pkg._cache.setdefault("positions_failed_mtime", {})[pos_label] = (
+                refresh_sentinel_mtime(pos_label)
+            )
+            app_pkg._cache.setdefault("position_load_errors", {})[pos_label] = (
+                f"{pos_label} split row-count mismatch on hydrated container "
+                f"({len(existing_index)} cached vs {len(pos_test)} fresh)"
             )
     app_pkg._cache["splits"] = {
         "QB": (train, val, test),
@@ -1077,7 +1090,12 @@ def _ensure_all_positions_loaded():
     # below. Mirrors the per-position cleanup (drop loaded/failed/mtime/errors/
     # details; refresh K's per-kick data).
     for pos in _ALL_POSITIONS:
-        stored = mtimes.get(pos, -1.0)
+        # Source the stored mtime from either map: a failed position has only
+        # ``failed_mtimes[pos]`` set (not ``mtimes[pos]``), so reading mtimes
+        # alone left ``stored == -1.0`` and this aggregate orchestrator never
+        # re-applied it after a redeploy fixed the model (the per-position path
+        # already handles it via separate loaded/failed advance checks).
+        stored = mtimes.get(pos, failed_mtimes.get(pos, -1.0))
         if stored != -1.0 and refresh_sentinel_mtime(pos) > stored:
             loaded.discard(pos)
             failed.discard(pos)
@@ -1142,7 +1160,10 @@ def _degraded_positions() -> list[str]:
     if not errs:
         return []
     degraded: set[str] = set()
-    for key in errs:
+    # Snapshot the keys: pre-warm workers insert ``{pos}_{model}`` error keys
+    # into the live dict without a lock, so iterating it directly can raise
+    # "dictionary changed size during iteration" during the cold-start window.
+    for key in list(errs):
         for p in _ALL_POSITIONS:
             if key == p or key.startswith(f"{p}_"):
                 degraded.add(p)
@@ -1373,7 +1394,13 @@ def _try_hydrate_from_disk():
     app_pkg._cache["results"] = results
     app_pkg._cache["metrics_by_format"] = metrics_by_format
     app_pkg._cache["metrics"] = metrics_by_format.get("ppr", {})
-    app_pkg._cache["positions_loaded"] = set(_ALL_POSITIONS)
+    # Exclude positions that carried over a load error: marking them loaded
+    # would let _ensure_position_loaded's fast-path skip the real load forever
+    # (hydrated_mtimes below seeds their mtime == current sentinel), so a failed
+    # position would never retry on a hydrated container (#834). Error keys are
+    # ``{pos}`` or ``{pos}_{model}``; take the position prefix.
+    errored_positions = {key.split("_", 1)[0] for key in position_load_errors}
+    app_pkg._cache["positions_loaded"] = set(_ALL_POSITIONS) - errored_positions
     # Seed positions_mtime from the current on-disk sentinel for each position.
     # Without this seed, ``_ensure_position_loaded``'s in-flight refresh path
     # is dead on hydrated containers: ``loaded_mtime`` defaults to -1.0, the
@@ -1521,7 +1548,7 @@ def _invalidate_metrics_cache(*, reason: str) -> None:
     """
     app_pkg._cache.pop("metrics_by_format", None)
     app_pkg._cache.pop("metrics", None)
-    for name in (_PREDICTIONS_PARQUET, _METRICS_JSON, _FINGERPRINT_JSON):
+    for name in (_PREDICTIONS_PARQUET, _METRICS_JSON, _FINGERPRINT_JSON, _SNAPSHOT_JSON):
         path = os.path.join(_PREDICTIONS_CACHE_DIR, name)
         with contextlib.suppress(OSError):
             os.unlink(path)

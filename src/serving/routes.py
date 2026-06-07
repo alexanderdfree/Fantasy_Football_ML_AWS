@@ -462,6 +462,12 @@ def _position_arch_payload(pc, include_features, attn_history=None):
         scheduler_str = (
             f"OneCycleLR(max_lr={pc.onecycle_max_lr}, pct_start={pc.onecycle_pct_start})"
         )
+        # The attention NN can train at a distinct max_lr (e.g. K) via the
+        # ``attn_`` scheduler prefix; the base string above only shows the dense
+        # NN's, so surface the attention override when it differs (#845).
+        attn_max_lr = getattr(pc, "attn_onecycle_max_lr", None)
+        if pc.train_attention_nn and attn_max_lr is not None and attn_max_lr != pc.onecycle_max_lr:
+            scheduler_str += f" · attention NN: OneCycleLR(max_lr={attn_max_lr})"
     elif scheduler == "plateau":
         scheduler_str = "ReduceLROnPlateau"
     else:
