@@ -358,8 +358,8 @@ def _position_verdict(
             note = "alt_candidate_single_seed"
         else:
             print(
-                f"    '{winner}' leads by {margin:.4f} > noise {pooled_sd:.4f} over {len(scheds)} "
-                f"types/{multi and 'multi' or '1'}-seed — strong candidate (and UNTUNED). Tune it, then ship."
+                f"    '{winner}' leads by {margin:.4f} > pooled σ {pooled_sd:.4f} across seeds — "
+                f"strong candidate (and UNTUNED). Tune it, then ship."
             )
             note = "alt_candidate_multiseed"
     return {
