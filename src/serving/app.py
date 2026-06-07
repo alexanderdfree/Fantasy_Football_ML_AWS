@@ -45,6 +45,7 @@ import src.te.config as te_cfg
 import src.wr.config as wr_cfg
 from src.config import (
     CACHE_DIR,
+    MIN_GAMES_PER_SEASON,
     SCORING_HALF_PPR,
     SCORING_STANDARD,
     SEASONS,
@@ -772,6 +773,19 @@ def _apply_position_models(train, val, test, pos, results):
         pos_train = reg["compute_targets_fn"](pos_train)
         pos_val = reg["compute_targets_fn"](pos_val)
         pos_test = reg["compute_targets_fn"](pos_test)
+
+    # Mirror the training-time min-games filter
+    # (``src/shared/pipeline.py::_prepare_position_data_uncached``): training
+    # drops low-volume player-seasons from ``pos_train`` BEFORE computing the
+    # ``fill_nans`` train-means and fitting the StandardScaler. Serving must
+    # replicate the exact same train frame or those imputation means + scaler
+    # stats drift from what the loaded models were trained on (audit #569).
+    # ``val``/``test`` stay unfiltered, exactly as in training.
+    min_games = reg.get("min_games_per_season")
+    if min_games is None:
+        min_games = MIN_GAMES_PER_SEASON
+    games_per_season = pos_train.groupby(["player_id", "season"])["week"].transform("count")
+    pos_train = pos_train[games_per_season >= min_games].copy()
 
     feature_cols = reg["get_feature_columns_fn"]()
     pos_train, pos_val, pos_test = build_position_features(

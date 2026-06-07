@@ -179,7 +179,16 @@ def get_inference_spec(pos: str) -> dict:
     spec = {
         # === Targets and per-position callables ===
         "targets": pc.targets,
-        "specific_features": pc.specific_features,
+        # K is the lone exception: pass ``all_features`` (specific + contextual)
+        # so serving's ``fill_nans`` train-mean-fills the PBP-derived
+        # ``game_wind`` / ``game_temp`` columns exactly as training does. For
+        # everyone else ``specific_features`` already isolates the position
+        # block. Mirrors ``build_pipeline_config`` in position_pipeline.py.
+        "specific_features": (pc.all_features if pos == Position.K else pc.specific_features),
+        # Per-position min-games threshold (None → global MIN_GAMES_PER_SEASON,
+        # applied by the caller). Serving must replicate training's train-frame
+        # filter or fill_nans means + the StandardScaler drift from the models.
+        "min_games_per_season": pc.min_games_per_season,
         "filter_fn": data_mod.filter_to_position,
         "compute_targets_fn": targets_mod.compute_targets,
         "add_features_fn": features_mod.add_specific_features,

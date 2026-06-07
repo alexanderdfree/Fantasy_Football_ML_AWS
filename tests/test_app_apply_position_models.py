@@ -283,6 +283,111 @@ def test_apply_position_models_qb_flat_path(_mocked_app, _qb_registry):
 
 
 @pytest.mark.integration
+def test_apply_position_models_applies_min_games_filter(monkeypatch):
+    """Serving must replicate training's min-games filter on ``pos_train`` so
+    the ``fill_nans`` train-means + the StandardScaler match what the loaded
+    models were trained on (audit #569). The filter drops low-volume
+    player-seasons from the TRAIN frame ONLY; val/test stay unfiltered.
+
+    Capture point is ``build_position_features`` — the frame it receives is
+    exactly the post-filter ``pos_train``. Pre-fix this frame still contains
+    the low-volume player (test fails); post-fix it is dropped.
+    """
+    import src.serving.app as app_mod
+
+    captured = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _capture_build(tr, va, te, reg, feature_cols):
+        captured["train_ids"] = list(tr["player_id"])
+        captured["val_ids"] = list(va["player_id"])
+        raise _Stop
+
+    monkeypatch.setattr(app_mod, "build_position_features", _capture_build)
+
+    reg = {
+        "targets": ["passing_yards"],
+        "specific_features": [],
+        "min_games_per_season": 2,
+        "filter_fn": lambda df: df[df["position"] == "QB"].copy(),
+        "compute_targets_fn": lambda df: df,
+        "add_features_fn": lambda tr, va, te: (tr, va, te),
+        "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
+        "get_feature_columns_fn": lambda: ["f0"],
+        "model_dir": "src/qb/outputs/models",
+        "nn_file": "qb_multihead_nn.pt",
+        "nn_kwargs": {},
+        "train_attention_nn": False,
+        "train_lightgbm": False,
+    }
+
+    class _Stub:
+        def __getitem__(self, pos):
+            return reg
+
+        def __contains__(self, pos):
+            return True
+
+    monkeypatch.setattr(app_mod, "POSITION_REGISTRY", _Stub())
+
+    # HIGH: 3 games in 2025 (>= min_games=2). LOW: 1 game (< 2, must be dropped
+    # from train). LOW appears in val with 1 game too — val must NOT be filtered.
+    train = pd.DataFrame(
+        {
+            "player_id": ["HIGH", "HIGH", "HIGH", "LOW"],
+            "position": ["QB"] * 4,
+            "recent_team": ["KC"] * 4,
+            "season": [2025] * 4,
+            "week": [1, 2, 3, 1],
+            "passing_yards": [300.0, 310.0, 290.0, 250.0],
+        }
+    )
+    val = pd.DataFrame(
+        {
+            "player_id": ["LOW"],
+            "position": ["QB"],
+            "recent_team": ["KC"],
+            "season": [2025],
+            "week": [1],
+            "passing_yards": [200.0],
+        }
+    )
+    app_mod._cache.clear()
+
+    with pytest.raises(_Stop):
+        app_mod._apply_position_models(train, val, train, "QB", pd.DataFrame())
+
+    # LOW's single-game 2025 season is filtered out of TRAIN.
+    assert captured["train_ids"] == ["HIGH", "HIGH", "HIGH"]
+    # val is NOT min-games-filtered (mirrors training: filter applies to train only).
+    assert captured["val_ids"] == ["LOW"]
+
+
+@pytest.mark.integration
+def test_inference_spec_min_games_and_k_all_features():
+    """``get_inference_spec`` exposes the per-position ``min_games_per_season``
+    (audit #569) and routes K through ``all_features`` so serving train-mean-
+    fills the PBP-derived weather columns exactly as training does (audit #672).
+    """
+    from src.k.config import POSITION_CONFIG as K_CFG
+    from src.rb.config import POSITION_CONFIG as RB_CFG
+    from src.shared.registry import get_inference_spec
+
+    # K: specific_features must equal all_features (specific + contextual).
+    k_spec = get_inference_spec("K")
+    assert list(k_spec["specific_features"]) == list(K_CFG.all_features)
+    assert k_spec["min_games_per_season"] == K_CFG.min_games_per_season
+
+    # Non-K (RB): specific_features stays the position-specific block; the
+    # per-position min-games override (1) is surfaced, not the global default.
+    rb_spec = get_inference_spec("RB")
+    assert list(rb_spec["specific_features"]) == list(RB_CFG.specific_features)
+    assert rb_spec["min_games_per_season"] == RB_CFG.min_games_per_season == 1
+
+
+@pytest.mark.integration
 def test_apply_position_models_with_attention(_mocked_app, monkeypatch):
     """When reg['train_attention_nn'] is True, the attention branch fires."""
     import src.serving.app as app_mod
