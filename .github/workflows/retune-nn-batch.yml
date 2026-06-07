@@ -36,6 +36,13 @@ on:
         description: "AWS Batch attempt timeout in seconds"
         default: "7200"
 
+concurrency:
+  # Serialize dispatches that share an Optuna SQLite study DB (the study
+  # version keys off cuda_graph); distinct cuda_graph runs use separate DBs
+  # and may proceed in parallel.
+  group: retune-nn-batch-${{ inputs.cuda_graph }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
@@ -57,6 +64,8 @@ jobs:
         env:
           POS_INPUT: ${{ github.event.inputs.positions }}
           N_TRIALS: ${{ github.event.inputs.n_trials }}
+          MPS_WORKERS: ${{ github.event.inputs.mps_workers }}
+          ATTEMPT_TIMEOUT_SECONDS: ${{ github.event.inputs.attempt_timeout_seconds }}
         run: |
           set -eu
           # Trim, collapse whitespace, reject empty input early.
@@ -80,11 +89,11 @@ jobs:
             echo "(probable operator typo; bump the ceiling in this workflow if you really want it)" >&2
             exit 1
           fi
-          if ! [[ "${{ github.event.inputs.mps_workers }}" =~ ^[0-9]+$ ]] || [ "${{ github.event.inputs.mps_workers }}" -lt 1 ]; then
+          if ! [[ "$MPS_WORKERS" =~ ^[0-9]+$ ]] || [ "$MPS_WORKERS" -lt 1 ]; then
             echo "mps_workers must be a positive integer" >&2
             exit 1
           fi
-          if ! [[ "${{ github.event.inputs.attempt_timeout_seconds }}" =~ ^[0-9]+$ ]] || [ "${{ github.event.inputs.attempt_timeout_seconds }}" -lt 60 ]; then
+          if ! [[ "$ATTEMPT_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$ATTEMPT_TIMEOUT_SECONDS" -lt 60 ]; then
             echo "attempt_timeout_seconds must be an integer >= 60" >&2
             exit 1
           fi

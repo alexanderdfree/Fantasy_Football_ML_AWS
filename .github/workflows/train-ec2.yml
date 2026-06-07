@@ -254,8 +254,11 @@ jobs:
           # Positions are emitted by the detect helper as position symbols.
           # JSON-encode via jq so command quoting can't bite us.
           REMOTE_CMD="set -eu; for POS in $POSITIONS; do FF_TRAIN_GIT_SHA='$FF_TRAIN_GIT_SHA' /usr/local/bin/ff-train \"\$POS\" '$SEED'; done"
+          # AWS-RunShellScript defaults executionTimeout to 3600s (1h); the
+          # sequential six-position loop runs ~120 min, so raise the SSM-side
+          # cap to match the wait-loop deadline below (mirrors retune-lgbm.yml).
           jq -n --arg cmd "$REMOTE_CMD" \
-            '{commands: [$cmd]}' > /tmp/ssm-params.json
+            '{commands: [$cmd], executionTimeout: ["7800"]}' > /tmp/ssm-params.json
           CMD_ID=$(aws ssm send-command \
             --targets "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
             --document-name AWS-RunShellScript \
@@ -446,6 +449,46 @@ jobs:
             --git-hash "$HEAD_SHA" \
             "${PR_ARGS[@]}"
 
+      - name: Commit and push benchmark_history/
+        # Runs BEFORE the ECS refresh so a ``wait services-stable`` timeout
+        # can't drop the in-repo benchmark record (the pre-pr freshness gate
+        # reads the git copy, not just the S3 mirror). The refresh step below
+        # keeps no continue-on-error, so a real ECS failure still fails the run.
+        env:
+          # Same env-indirection rationale as the previous step.
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add benchmark_history/
+          if git diff --cached --quiet -- benchmark_history/; then
+            echo "No history changes — skipping commit."
+            exit 0
+          fi
+          staged=$(git diff --cached --name-only)
+          unexpected=$(echo "$staged" | grep -v '^benchmark_history/' || true)
+          if [ -n "$unexpected" ]; then
+            echo "ERROR: unexpected staged paths (expected benchmark_history/ only):"
+            echo "$unexpected"
+            exit 1
+          fi
+          # Label with the image/head SHA the benchmark JSON pins, not the
+          # run-level GITHUB_SHA (diverges on rapid merges) — keeps
+          # `git log --grep <sha>` correlation intact.
+          MSG_SHA="${HEAD_SHA:-$GITHUB_SHA}"
+          git commit -m "chore(ci): append EC2 benchmark run ${MSG_SHA::7}"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:"refs/heads/$BRANCH"; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push attempt $attempt failed — rebasing and retrying"
+            git pull --rebase origin "$BRANCH"
+          done
+          echo "Push failed after 3 attempts"
+          exit 1
+
       - name: Refresh ECS service to pick up new model + benchmark artifacts
         # Boot-time sync_models_from_s3 / sync_data_from_s3 only run when an
         # ECS task starts, so freshly promoted stable pointers in S3 are
@@ -470,34 +513,3 @@ jobs:
             --cluster "$ECS_CLUSTER" \
             --services "$ECS_SERVICE" \
             --region "$AWS_REGION"
-
-      - name: Commit and push benchmark_history/
-        env:
-          # Same env-indirection rationale as the previous step.
-          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add benchmark_history/
-          if git diff --cached --quiet -- benchmark_history/; then
-            echo "No history changes — skipping commit."
-            exit 0
-          fi
-          staged=$(git diff --cached --name-only)
-          unexpected=$(echo "$staged" | grep -v '^benchmark_history/' || true)
-          if [ -n "$unexpected" ]; then
-            echo "ERROR: unexpected staged paths (expected benchmark_history/ only):"
-            echo "$unexpected"
-            exit 1
-          fi
-          git commit -m "chore(ci): append EC2 benchmark run ${GITHUB_SHA::7}"
-          for attempt in 1 2 3; do
-            if git push origin HEAD:"refs/heads/$BRANCH"; then
-              echo "Push succeeded on attempt $attempt"
-              exit 0
-            fi
-            echo "Push attempt $attempt failed — rebasing and retrying"
-            git pull --rebase origin "$BRANCH"
-          done
-          echo "Push failed after 3 attempts"
-          exit 1

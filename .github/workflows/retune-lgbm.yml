@@ -121,6 +121,22 @@ jobs:
             echo "Expected a comma-separated list of non-negative integers, e.g. 42,43,44."
             exit 1
           fi
+          # Validate the other inputs the same way before they're spliced into
+          # the remote SSM bash command below (positions/n_trials/timeout_sec).
+          if ! printf '%s' "$N_TRIALS" | grep -Eq '^[0-9]+$'; then
+            echo "Invalid n_trials: $N_TRIALS (expected a non-negative integer)"
+            exit 1
+          fi
+          if ! printf '%s' "$TIMEOUT_SEC" | grep -Eq '^[0-9]+$'; then
+            echo "Invalid timeout_sec: $TIMEOUT_SEC (expected a non-negative integer; 0 = no cap)"
+            exit 1
+          fi
+          for p in $POSITIONS; do
+            case "$p" in
+              QB|RB|WR|TE|K|DST) ;;
+              *) echo "Invalid position: $p (expected QB RB WR TE K DST)"; exit 1 ;;
+            esac
+          done
           TIMEOUT_ARG=""
           if [ "$TIMEOUT_SEC" != "0" ]; then
             TIMEOUT_ARG="--timeout $TIMEOUT_SEC"

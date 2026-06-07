@@ -40,6 +40,13 @@ on:
   # didn't roll the task because of an ECS-side hiccup.
   workflow_dispatch:
 
+concurrency:
+  # One ECS rollout at a time per ref — concurrent pushes to main would
+  # otherwise race on ``update-service``/``wait services-stable``. Let the
+  # in-flight deploy drain rather than cancelling it mid-rollout.
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY: fantasy-predictor
