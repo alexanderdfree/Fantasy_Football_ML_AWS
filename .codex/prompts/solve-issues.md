@@ -54,7 +54,7 @@ Important closure rule:
 - `stale`, `false_positive`, `feature_drift`, and `speculative` are noise categories and may be labeled `leave` and closed after plan approval.
 - `out_of_scope` and unresolved `UNCERTAIN` findings stay open unless the user explicitly decides otherwise. Do not label them `leave`.
 
-Ask the user before proceeding if any `UNCERTAIN` finding would materially change the plan. Do not hide uncertain calls inside a PR.
+Ask the user before proceeding if any `UNCERTAIN` finding would materially change the plan — batch all such questions into a single prompt (max 4 questions); do not spread them across turns. Do not hide uncertain calls inside a PR.
 
 Partition the `FIX` findings by risk tier:
 

@@ -7,6 +7,14 @@ Run the Final-Project pre-PR scope judge.
 
 Use `BASE` if supplied; otherwise use `origin/main`. If `ORIGINAL_TASK` is supplied, treat it as authoritative. Otherwise infer the original task from the current thread, including only scope refinements the user explicitly approved.
 
+Skip this judge entirely (the change is trivially in-scope) when:
+
+- it is a one-line typo, formatting-only fix, lockfile bump, or comment/docstring-only edit;
+- it is a mass mechanical sweep the user asked for (e.g. ruff autofixes across the tree, or a docs cross-ref sweep);
+- the user explicitly broadened scope mid-task ("while you're at it, also fix X") — that addition is in-scope by definition.
+
+Otherwise, run the judge.
+
 Steps:
 
 1. Resolve `BASE` to the supplied value or `origin/main`.

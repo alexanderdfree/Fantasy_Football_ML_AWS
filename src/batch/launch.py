@@ -15,8 +15,10 @@ Config (environment variables, all optional):
     FF_JOB_QUEUE_CPU    (optional)                          CPU-only queue
     FF_JOB_DEFINITION   (default: ff-training-job)          GPU job definition
     FF_JOB_DEFINITION_CPU  (optional)                       CPU job definition
-        If set, K and DST are submitted with this job definition instead —
-        a cheap CPU Spot pool for the non-NN positions.
+        STALE — DO NOT ENABLE: K and DST now train an attention NN on GPU, so
+        routing them to a CPU pool craters wall-clock instead of saving. If set,
+        K/DST submit with this definition; unset, they use the GPU definition.
+        See docs/batch_design.md.
     FF_WAIT_TIMEOUT     (default: 10800, i.e. 3h)
 """
 

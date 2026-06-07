@@ -129,7 +129,7 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 | `FF_S3_BUCKET` | `ff-predictor-training` | Override bucket name (for staging accounts) |
 | `FF_JOB_QUEUE` | `ff-training-queue` | Override Batch job queue |
 | `FF_JOB_DEFINITION` | `ff-training-job` | Override Batch job definition (GPU) |
-| `FF_JOB_DEFINITION_CPU` | (unset) | **Optional CPU job definition for K/DST.** When set, K/DST jobs submit here instead of the GPU queue — saves ~60% of Spot spend on those positions. Falls back to the GPU definition when unset. |
+| `FF_JOB_DEFINITION_CPU` | (unset) | **Optional CPU job definition for K/DST. ⚠️ STALE — DO NOT ENABLE** (see *CPU-only Queue for K/DST* below): K/DST now train an attention NN on GPU, so CPU routing craters wall-clock instead of saving. When set, K/DST jobs submit here instead of the GPU queue; falls back to the GPU definition when unset. |
 | `FF_WAIT_TIMEOUT` | `10800` (3h) | Wall-clock cap for `wait_for_jobs` |
 
 ### Container Dependencies (`src/batch/requirements.txt`)
@@ -140,17 +140,13 @@ Derived from root `requirements.txt`:
 
 ## Position Pipeline Invocation
 
-Pipeline registry in `src/batch/train.py`:
+Pipeline dispatch lives in `src/shared/registry.py` (the single source of truth, consumed by `train.py`, `app.py`, and `benchmark.py`). Positions come from the `Position` StrEnum in `src/shared/position.py` (`ALL_POSITIONS = Position.values()`); each position's runner module and `accepts_dataframes` flag live on its `POSITION_CONFIG`. `train.py` calls `get_runner(pos)` and reads `INFERENCE_REGISTRY[pos]` — there is no `POSITIONS` dict in `train.py` (the legacy `_POSITION_META` table is gone):
 
 ```python
-POSITIONS = {
-    "QB":  ("src.qb.run_pipeline",  "run", True),
-    "RB":  ("src.rb.run_pipeline",  "run", True),
-    "WR":  ("src.wr.run_pipeline",  "run", True),
-    "TE":  ("src.te.run_pipeline",  "run", True),
-    "K":   ("src.k.run_pipeline",   "run", False),
-    "DST": ("src.dst.run_pipeline", "run", False),
-}
+# src/shared/registry.py
+ALL_POSITIONS = Position.values()          # ["QB", "RB", "WR", "TE", "K", "DST"]
+run_fn = get_runner(pos)                   # lazy-imports src.{pos}.run_pipeline.run
+accepts_df = _position_config(pos).accepts_dataframes  # True for QB/RB/WR/TE, False for K/DST
 ```
 
 - **Standard (QB, RB, WR, TE)**: `accepts_df=True` — train.py downloads parquets from S3, passes DataFrames

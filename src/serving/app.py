@@ -1055,11 +1055,12 @@ def _apply_position_models(train, val, test, pos, results):
             attn_nn_preds = None
             attn_nn_totals = None
 
-    # LightGBM — the only model NOT trained for every position: QB/RB/WR/TE
-    # only (gated by ``reg["train_lightgbm"]``). K/DST leave lgbm_pred NaN so the
-    # frontend renders "--". (Attention NN, by contrast, IS trained for all six —
-    # see the attn_nn block above; an older comment here wrongly grouped attn_nn
-    # with lgbm as K/DST-absent.)
+    # LightGBM — gated by ``reg["train_lightgbm"]``. In production all six
+    # positions train LightGBM (K/DST included), so lgbm_pred is populated for
+    # every position; the gate stays defensive so that if a config ever sets
+    # train_lightgbm=False, that position's lgbm_pred is left NaN and the
+    # frontend renders "--". (Attention NN is likewise trained for all six —
+    # see the attn_nn block above.)
     lgbm_preds = None
     lgbm_totals = None
     if reg.get("train_lightgbm", False):

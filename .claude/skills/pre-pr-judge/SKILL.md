@@ -44,7 +44,7 @@ The judge never blocks on its own. It exists to make scope drift visible *to the
 
 ## What this catches that ruff/pytest don't
 
-Concrete project examples from [TODO.md](TODO.md)'s Fixed archive (PRs that shipped, then reverted):
+Concrete project examples from [todo/fixed-archive.md](todo/fixed-archive.md) (PRs that shipped, then reverted):
 - **Shared-venv CI optimization** ([#110](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/110) / [#111](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/111)) — fixing one CI issue, the agent also restructured venv handling. The restructure was the drift.
 - **Gunicorn `--preload` pre-warm** ([#148](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/148) / [#149](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/149)) — fixing cold-start latency, the agent added a pre-warm at module import that broke ALB health checks. The pre-warm location was the drift.
 
@@ -64,7 +64,7 @@ Both passed lint, tests, and benchmarks. Both were drift the human would have ca
 - src/wr/features.py — refactored an unrelated helper to use a list comprehension.
 
 **Missing**:
-- ATTN_STATIC_FEATURES not updated. CLAUDE.md ("Attention static-feature whitelist is separate per position") says adding to INCLUDE_FEATURES alone doesn't feed the attention branch. If the dropout knob was supposed to affect the attention NN's static branch, this is a real gap; if it was scalar-only, ignore.
+- ATTN_STATIC_FEATURES not updated. AGENTS.md ("Attention static-feature whitelist is separate per position") says adding to INCLUDE_FEATURES alone doesn't feed the attention branch. If the dropout knob was supposed to affect the attention NN's static branch, this is a real gap; if it was scalar-only, ignore.
 
 **Recommendation**: Split. Open the QB PR; revert the RB and WR changes and propose them separately if still desired.
 ```
