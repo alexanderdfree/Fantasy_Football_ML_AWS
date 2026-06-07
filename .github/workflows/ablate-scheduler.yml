@@ -150,7 +150,7 @@ jobs:
             --summary-output "$GITHUB_STEP_SUMMARY"
 
       - name: Upload merged results JSON
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: scheduler_ablation_results
           path: scheduler_ablation_results.json

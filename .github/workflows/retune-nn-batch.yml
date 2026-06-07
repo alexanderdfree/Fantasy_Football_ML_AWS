@@ -207,7 +207,7 @@ jobs:
             --summary-output "$GITHUB_STEP_SUMMARY"
 
       - name: Upload merged results JSON
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tune_nn_results
           path: tune_nn_results.json
