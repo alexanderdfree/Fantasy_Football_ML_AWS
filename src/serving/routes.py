@@ -69,6 +69,8 @@ def api_predictions():
     sort_by = request.args.get("sort", "fantasy_points")
     order = request.args.get("order", "desc")
     scoring = _validate_scoring(request.args.get("scoring", "ppr"))
+    if position != "ALL" and position not in POSITION_INFO:
+        return jsonify({"error": f"Unknown position: {position}"}), 400
 
     df = _results_for_position(position, scoring)
     if week != "ALL":
@@ -285,6 +287,8 @@ def api_predictions_breakdown():
 def api_top_players():
     position = request.args.get("position", "ALL")
     scoring = _validate_scoring(request.args.get("scoring", "ppr"))
+    if position != "ALL" and position not in POSITION_INFO:
+        return jsonify({"error": f"Unknown position: {position}"}), 400
 
     df = _results_for_position(position, scoring)
 
@@ -515,7 +519,9 @@ def api_model_architecture():
         for pos in _ALL_POSITIONS:
             pc = cfg_modules[pos].POSITION_CONFIG
             if pos in ("K", "DST"):
-                positions[pos] = _position_arch_payload(pc, pc.contextual_features)
+                positions[pos] = _position_arch_payload(
+                    pc, pc.contextual_features, pc.attn_history_stats
+                )
             else:
                 positions[pos] = _position_arch_payload(
                     pc, pc.include_features, pc.attn_history_stats
@@ -523,7 +529,7 @@ def api_model_architecture():
         return jsonify(
             {
                 "overview": {
-                    "framework": "PyTorch 2.11 + CUDA 12.6 (AWS Batch)",
+                    "framework": "PyTorch 2.12 + CUDA 12.6 (AWS Batch)",
                     "device": "CUDA if available, else CPU",
                     "data_splits": (
                         f"Train {min(TRAIN_SEASONS)}-{max(TRAIN_SEASONS)}, "

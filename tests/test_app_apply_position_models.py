@@ -281,6 +281,10 @@ def test_apply_position_models_qb_flat_path(_mocked_app, _qb_registry):
     assert details["n_features"] == 1
     assert details["n_samples_test"] == 12
     assert "total" in details["target_metrics"]
+    # Each per-target metrics dict carries its display unit (audit #902) so the
+    # Model Performance tab can suffix MAE (yds/TDs/…); the position-details path
+    # had been omitting it while the per-row breakdown set it.
+    assert "unit" in details["target_metrics"]["passing_yards"]
 
 
 @pytest.mark.integration

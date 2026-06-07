@@ -24,7 +24,7 @@ pip install --upgrade pip
 
 pip install -r requirements.txt
 
-pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cpu
 
 pip install -r requirements-dev.txt
 

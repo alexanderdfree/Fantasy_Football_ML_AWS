@@ -105,6 +105,17 @@ class TestModelArchitecture:
         assert "ensemble" in overview
         assert isinstance(overview["ensemble"], list)
 
+    def test_k_and_dst_expose_attention_history(self, client):
+        """K and DST train attention NNs, so the arch payload must list their
+        attention-history features — the calls had omitted the kwarg (audit
+        #774), leaving them attention-enabled with no disclosed inputs."""
+        r = client.get("/api/model_architecture")
+        body = r.get_json()
+        for pos in ("K", "DST"):
+            feats = body["positions"][pos]["features"]
+            assert "attention_history" in feats, f"{pos} missing attention_history"
+            assert len(feats["attention_history"]) > 0
+
 
 # ===========================================================================
 # GET /api/predictions — happy path + error paths
@@ -156,6 +167,14 @@ class TestPredictions:
 
     def test_invalid_week_returns_400(self, client_with_data):
         r = client_with_data.get("/api/predictions?week=notanumber")
+        assert r.status_code == 400
+        assert r.is_json
+        assert "error" in r.get_json()
+
+    def test_invalid_position_returns_400(self, client_with_data):
+        # Unknown position must be a clean 400, not a KeyError-driven 500
+        # (audit #910 / #578).
+        r = client_with_data.get("/api/predictions?position=FOO")
         assert r.status_code == 400
         assert r.is_json
         assert "error" in r.get_json()
@@ -256,6 +275,13 @@ class TestAuxiliaryEndpoints:
             ):
                 assert key in row
 
+    def test_top_players_invalid_position_returns_400(self, client_with_data):
+        # Same allowlist guard as /api/predictions (audit #910 / #578).
+        r = client_with_data.get("/api/top_players?position=FOO")
+        assert r.status_code == 400
+        assert r.is_json
+        assert "error" in r.get_json()
+
     def test_weekly_accuracy_parallel_arrays(self, client_with_data):
         r = client_with_data.get("/api/weekly_accuracy")
         assert r.status_code == 200
@@ -315,17 +341,29 @@ class TestIndexRoute:
         assert "text/html" in r.content_type
 
 
-# NOTE: `app.py`'s global `@app.errorhandler(Exception)` catches every
-# exception, including werkzeug HTTPExceptions (404 NotFound,
-# 405 MethodNotAllowed). For non-`/api/` paths it `raise e`s — which
-# prevents Flask's normal 404 response from ever being produced and
-# surfaces as a 500 at the WSGI layer. Re-enabling intuitive 404s would
-# require explicit error handlers for `NotFound` and `MethodNotAllowed`.
-# This test file records that behavior by omitting a "404 for unknown
-# route" assertion; callers exercising unknown routes should expect the
-# handler to surface a 500 JSON error for `/api/*` and a re-raise for
-# other paths. If app.py grows explicit HTTPException handlers, add
-# coverage here.
+# `app.py`'s global `@app.errorhandler(Exception)` catches every exception,
+# including werkzeug HTTPExceptions (404 NotFound, 405 MethodNotAllowed). For
+# `/api/*` paths it preserves the HTTPException's real status as JSON (audit
+# #909) — an unknown `/api/` route returns 404, a wrong method returns 405 — and
+# only genuine non-HTTP bugs collapse to a 500. For non-`/api/` paths it still
+# `raise e`s, deferring to Flask's default rendering. The `/api/*` status
+# contract is asserted below.
+
+
+class TestApiErrorStatus:
+    """`/api/*` errorhandler preserves real HTTP status codes (audit #909)."""
+
+    def test_unknown_api_route_returns_404_not_500(self, client):
+        r = client.get("/api/this-route-does-not-exist")
+        assert r.status_code == 404
+        assert r.is_json
+        assert "error" in r.get_json()
+
+    def test_wrong_method_on_api_route_returns_405(self, client):
+        # /api/model_architecture is GET-only; POST must surface 405, not 500.
+        r = client.post("/api/model_architecture")
+        assert r.status_code == 405
+        assert r.is_json
 
 
 # ===========================================================================

@@ -16,6 +16,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 from flask import Flask, jsonify, request
+from werkzeug.exceptions import HTTPException
 
 from src.serving.metadata import _ALL_POSITIONS as _ALL_POSITIONS
 from src.serving.metadata import _ALL_TARGETS as _ALL_TARGETS
@@ -85,9 +86,17 @@ _wiki_cache_lock = threading.Lock()
 def handle_api_error(e):
     """Return JSON errors for /api/ routes, default HTML for others."""
     if request.path.startswith("/api/"):
-        # Log the full traceback server-side; never echo exception text to the
-        # client. str(e) on a Python exception can leak filesystem paths,
-        # config values, or library internals (CodeQL py/stack-trace-exposure).
+        # HTTPExceptions (404 NotFound, 405 MethodNotAllowed, 400 BadRequest,
+        # ...) carry a real client-facing status — preserve it as JSON instead
+        # of masking every 4xx as a 500 (which distorts ALB/monitoring error
+        # counters). Their ``description`` is a safe, library-authored string,
+        # unlike ``str(e)`` on an arbitrary exception.
+        if isinstance(e, HTTPException):
+            return jsonify({"error": e.description}), e.code
+        # Unexpected server-side bug: log the full traceback server-side but
+        # never echo exception text to the client. str(e) on a Python exception
+        # can leak filesystem paths, config values, or library internals
+        # (CodeQL py/stack-trace-exposure).
         traceback.print_exc()
         return jsonify({"error": "Internal server error"}), 500
     raise e

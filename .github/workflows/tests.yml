@@ -42,7 +42,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "requirements*.txt"
-      - run: uv pip install --system ruff==0.15.0
+      - run: uv pip install --system ruff==0.15.16
       - name: ruff check
         run: ruff check .
       - name: ruff format --check

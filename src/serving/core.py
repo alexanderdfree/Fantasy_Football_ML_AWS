@@ -55,7 +55,7 @@ from src.serving.serialization import (
     _pred_col,
     _records_to_player_rows,
 )
-from src.shared.aggregate_targets import predictions_to_fantasy_points
+from src.shared.aggregate_targets import TARGET_UNITS, predictions_to_fantasy_points
 from src.shared.artifact_integrity import (
     assert_scaler_matches,
     read_scaler_meta,
@@ -549,6 +549,10 @@ def _apply_position_models(train, val, test, pos, results):
                 tm["attn_nn_mae"] = round(float(np.mean(np.abs(attn_nn_preds[t] - actual_t))), 3)
             if lgbm_preds is not None and t in lgbm_preds:
                 tm["lgbm_mae"] = round(float(np.mean(np.abs(lgbm_preds[t] - actual_t))), 3)
+            # Per-target unit (yds / TDs / ...) so the Model Performance tab can
+            # suffix each MAE. The per-row breakdown already sets this; the
+            # position-details path was the gap. "" → bare decimal (unchanged).
+            tm["unit"] = TARGET_UNITS.get(t, "")
             target_metrics[t] = tm
     total_by_format = {}
     for fmt in _VALID_SCORING:
