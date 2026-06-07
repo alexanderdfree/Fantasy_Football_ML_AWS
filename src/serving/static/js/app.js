@@ -61,9 +61,9 @@ const COLORS = {
     lgbmBg: "rgba(245, 158, 11, 0.2)",
 };
 
-// Per-target fantasy-point-equivalent multipliers. Mirror of
-// shared/aggregate_targets.py:POINT_EQUIVALENT_MULTIPLIER, but `receptions`
-// depends on scoring format (1.0 / 0.5 / 0.0). Applied only to count-style
+// Per-target fantasy-point-equivalent multipliers. Display-only, JS-local
+// (the Python POINT_EQUIVALENT_MULTIPLIER constant this once mirrored has been
+// removed); `receptions` depends on scoring format (1.0 / 0.5 / 0.0). Applied only to count-style
 // targets where the raw MAE would be dominated by the scoring coefficient
 // (e.g. 0.4 TDs = 2.4 points).
 const RECEPTION_WEIGHT = { ppr: 1.0, half_ppr: 0.5, standard: 0.0 };

@@ -1,5 +1,5 @@
 === MISSION ===
-Review my code in parallel for bugs/quirks — spawn a panel of Opus subagents — per-area location auditors plus standing cross-cutting lenses — each emitting HIGH/MED-only findings with verbatim evidence. The orchestrator verifies each cited line, dedupes against open and closed GitHub issues, drops anything already in CLAUDE.md Stop rules or the `todo/fixed-archive.md` Fixed archive, consolidates partial/full duplicates within this run's worker output, and files ONE GITHUB ISSUE PER SURVIVING FINDING — labeled by severity (`severity-high`/`severity-medium`) and area — plus one closed checkpoint issue recording the audited SHA. Watch for artifacts of unfinished (yet merged) PRs, semantic merge conflicts from concurrent PRs blind to each other's changes, cross-position inconsistencies, training-vs-inference drift, and orphan code under live test coverage.
+Review my code in parallel for bugs/quirks — spawn a panel of Opus subagents — per-area location auditors plus standing cross-cutting lenses — each emitting HIGH/MED-only findings with verbatim evidence. The orchestrator verifies each cited line, dedupes against open and closed GitHub issues, drops anything already in AGENTS.md Stop rules or the `todo/fixed-archive.md` Fixed archive, consolidates partial/full duplicates within this run's worker output, and files ONE GITHUB ISSUE PER SURVIVING FINDING — labeled by severity (`severity-high`/`severity-medium`) and area — plus one closed checkpoint issue recording the audited SHA. Watch for artifacts of unfinished (yet merged) PRs, semantic merge conflicts from concurrent PRs blind to each other's changes, cross-position inconsistencies, training-vs-inference drift, and orphan code under live test coverage.
 
 === IMPLEMENTATION ===
 You are the orchestrator for a scheduled code-audit run on the Fantasy_Football_ML_AWS repo. Working dir is the repo root. Time budget: 2 hours wall-clock. You are READ-ONLY on repo files. The ONLY write actions permitted are `gh label create` (the severity labels, idempotent), `gh issue create` (per-finding issues + the checkpoint), `gh issue comment` (only on issues YOU create in THIS same run), and `gh issue close` (only on the checkpoint issue YOU create in THIS run). Writing to /tmp/* is fine.
@@ -8,7 +8,7 @@ You are the orchestrator for a scheduled code-audit run on the Fantasy_Football_
 Each surviving finding becomes ONE GitHub issue:
   - **Title**: `[claude-audit] <area>: <title>` — `<area>` ∈ qb|rb|wr|te|k|dst|shared|data|serving|batch|ci|docs|cross-position; `<title>` is the finding title (<80 chars). Severity is NEVER in the title — it is a LABEL, so a HIGH↔MED reclassification doesn't mint a "new" title and break dedup.
   - **Labels**: `claude-audit`, the severity label (`severity-high` or `severity-medium`), and the area label.
-  - **Area** is derived from the finding's `file` path / the worker scope that produced it: `src/qb/*`→qb … `src/dst/*`→dst, `src/shared|models|training|evaluation/*`→shared, `src/data|features/*`→data, `src/serving/*`→serving, `src/batch/*`→batch, `.github/workflows|.claude/hooks|.codex/hooks/*`→ci, and `AGENTS.md|CLAUDE.md|CODEX.md|README.md|SETUP.md|TODO.md|docs/*|.claude/skills/*|.codex/prompts/*|.claude/routines/audit/*|scripts/bootstrap-codex-local.sh`→docs. The config-invariant/broken-ref lens (L4) findings take the area of the position they pertain to.
+  - **Area** is derived from the finding's `file` path / the worker scope that produced it: `src/qb/*`→qb … `src/dst/*`→dst, `src/shared|models|training|evaluation/*`→shared, `src/data|features/*`→data, `src/serving/*`→serving, `src/batch/*`→batch, `src/tuning|benchmarking/*`→batch, `src/analysis/*`→shared, `src/scripts/*`→ci, `src/config.py`→shared, `.github/workflows|.claude/hooks|.codex/hooks/*`→ci, and `AGENTS.md|CLAUDE.md|CODEX.md|README.md|SETUP.md|TODO.md|docs/*|.claude/skills/*|.codex/prompts/*|.claude/routines/audit/*|scripts/bootstrap-codex-local.sh`→docs. The config-invariant/broken-ref lens (L4) findings take the area of the position they pertain to.
   - **Body** (canonical long-form):
         - **File**: `<path>:<line>`
         - **Severity**: HIGH | MED
@@ -32,8 +32,8 @@ Ensure the severity labels exist (idempotent — safe to run every fire; area la
     gh label create severity-medium --color FBCA04 --description "Audit: unfinished-PR artifact / invariant / drift / orphan code" 2>/dev/null || true
 
 STEP 1 — Prep (sequential, ~2 min):
-  1a. Read CLAUDE.md "Stop rules" section verbatim. Hold it.
-  1b. grep "^### \[FIXED\]" TODO.md — capture every title line. Hold the list.
+  1a. Read AGENTS.md "Stop rules" section verbatim. Hold it.
+  1b. grep "^### \[FIXED\]" todo/fixed-archive.md — capture every title line. Hold the list.
   1c. Build the dedupe pool from existing PER-FINDING issues — open AND closed, those carrying a `severity-*` label (this naturally EXCLUDES checkpoint issues, which have no severity label):
         gh issue list --label claude-audit --state all --limit 400 --json number,title,labels \
           --jq '.[] | select(any(.labels[]; .name=="severity-high" or .name=="severity-medium")) | "\(.number)\t\(.title)"' > /tmp/known_issues.tsv
@@ -65,9 +65,9 @@ STEP 2 — Fanout (parallel): two layers, ALL workers spawned IN A SINGLE MESSAG
     #4  TE auditor          — src/te/, tests/te/
     #5  K auditor           — src/k/, tests/k/
     #6  DST auditor         — src/dst/, tests/dst/
-    #7  Shared auditor      — src/shared/, src/models/, src/training/, src/evaluation/, tests/shared/
+    #7  Shared auditor      — src/shared/ (models/training/evaluation/neural_net live here as files), tests/shared/
     #8  Data+features       — src/data/, src/features/
-    #9  Serving auditor     — src/serving/, tests/serving/ (focus: serving-internal correctness — request/feature handling, scaler & artifact loading; the train/serve PARITY comparison is lens L1's job)
+    #9  Serving auditor     — src/serving/, tests/test_app*.py (focus: serving-internal correctness — request/feature handling, scaler & artifact loading; the train/serve PARITY comparison is lens L1's job)
     #10 Batch+CI auditor    — src/batch/, .github/workflows/, .claude/hooks/, .codex/hooks/
     #11 Docs/tooling consistency — AGENTS.md, CLAUDE.md, CODEX.md, README.md, SETUP.md, TODO.md, docs/, .claude/skills/, .codex/prompts/, .claude/routines/audit/, scripts/bootstrap-codex-local.sh (FOCUS: substantive doc-vs-code mismatches — wrong module/symbol attribution, a documented feature/decision/count that doesn't exist or is miscounted, a stated invariant the code violates, a dead cross-ref to a deleted file, or checked-in agent-tooling instructions that no longer match the files/hooks/prompts they describe. Do NOT report a doc/comment whose ONLY error is a stale `file:line`/`file:lines X-Y` citation when the cited target is otherwise correct — line numbers drift as code is inserted above; that is cosmetic, not a finding.)
 
@@ -76,7 +76,7 @@ STEP 2 — Fanout (parallel): two layers, ALL workers spawned IN A SINGLE MESSAG
     L2  Cross-position consistency — SCOPE: src/qb|rb|wr|te|k|dst/ side-by-side. FOCUS: ONLY *unintended* divergence — a fix / rename / guard applied to 5 of 6 positions but missing in the 6th with NO per-position rationale. Intentional per-position differences (features, hyperparams, loss weights, NN dims, CONFIG_TINY) are NOT findings (see NOT FINDINGS). This is the most false-positive-prone lens: when a difference COULD be deliberate tuning/whitelist, DROP.
     L3  Recent-PR archaeology — SCOPE: the last ~30 commits / recently-merged PRs, tree-wide (`git log -p -n 30`, `gh pr list --state merged --limit 20`). FOCUS: unfinished-but-merged-PR artifacts and semantic merge conflicts between concurrent PRs blind to each other (categories unfinished_pr, merge_conflict).
     L4  Config-invariant + broken-reference — SCOPE: all six src/{pos}/config.py + their consumers. FOCUS: WITHIN-position invariant violations (LOSS_WEIGHTS ≈ 2.0/HUBER_DELTAS within one position's config; target-naming consistent within a position) AND broken-reference drift (a file in position X references a key/value X's own config.py doesn't define). DOES NOT FLAG per-position differences ACROSS positions — those are by design.
-    L5  Agent tooling parity — SCOPE: AGENTS.md, CLAUDE.md, CODEX.md, .claude/settings.json, .claude/hooks/, .claude/skills/, .claude/routines/audit/, .codex/hooks.json, .codex/hooks/, .codex/prompts/, scripts/bootstrap-codex-local.sh, scripts/bootstrap-claude-wsl.sh, scripts/claude-memory-sync.sh, SETUP.md. FOCUS: Claude/Codex equivalents promised in AGENTS.md or CODEX.md that are missing, stale, or point to the wrong provider's entrypoint; hook wrappers whose delegated messages no longer match the caller; prompt/skill workflows whose Codex version omits required decisions from the Claude source. NOT FINDINGS: intentional platform differences documented in AGENTS.md/CODEX.md, including Codex SessionStart being context-only, Codex memory sync being N/A by design, and Codex having no scheduled routine equivalent while consuming the `claude-audit` backlog.
+    L5  Agent tooling parity — SCOPE: AGENTS.md, CLAUDE.md, CODEX.md, .claude/settings.json, .claude/hooks/, .claude/skills/, .claude/routines/audit/, .codex/hooks.json, .codex/hooks/, .codex/prompts/, scripts/bootstrap-codex-local.sh, scripts/bootstrap-claude-wsl.sh, scripts/claude-memory-sync.sh, scripts/codex-memory-sync.sh, scripts/agent-memory-sync.sh, SETUP.md. FOCUS: Claude/Codex equivalents promised in AGENTS.md or CODEX.md that are missing, stale, or point to the wrong provider's entrypoint; hook wrappers whose delegated messages no longer match the caller; prompt/skill workflows whose Codex version omits required decisions from the Claude source. NOT FINDINGS: intentional platform differences documented in AGENTS.md/CODEX.md, including Codex SessionStart being context-only and Codex having no scheduled routine equivalent while consuming the `claude-audit` backlog.
 
   BUDGET — set each worker's {BUDGET} (minutes; SOFT pacing only — the run's 2h wall-clock is the sole HARD limit) from a base leverage tier, adjusted by per-area yield (/tmp/area_yield.tsv from STEP 1d; yield = (sample−noise)/sample):
     Base tier: HEAVY 30 → shared, serving, data, and all five lenses L1–L5. MEDIUM 20 → qb rb wr te k dst, batch/CI (#10). LIGHT 10 → docs.
@@ -106,7 +106,7 @@ STEP 2 — Fanout (parallel): two layers, ALL workers spawned IN A SINGLE MESSAG
       When in doubt, drop the finding.
 
     STOP RULES — drop anything overlapping:
-    <inline CLAUDE.md Stop rules + every TODO.md FIXED title from STEP 1>
+    <inline AGENTS.md Stop rules + every todo/fixed-archive.md FIXED title from STEP 1>
 
     SELF-VERIFY (mandatory — for EVERY candidate BEFORE you emit it; first-line filter, not the orchestrator's job):
       1. Re-open the cited file at the cited line. Confirm evidence_quote is VERBATIM-present (whitespace-normalized: collapse space/tab runs, ignore leading/trailing indent). If absent at (or within ±3 lines of) the cited line, DROP.
@@ -130,7 +130,7 @@ STEP 3 — Verify new findings (sequential, ~5 min):
   For each new finding from each worker:
     (Workers already self-verified per the per-worker SELF-VERIFY block; STEP 3 is the orchestrator BACKSTOP — re-run the cheap checks below; do not trust the worker's verification note blindly.)
     3a. Read file at cited line. Confirm evidence_quote matches (whitespace-normalized). DROP if mismatch.
-    3b. grep CLAUDE.md + TODO.md for 2-3 distinctive title keywords. DROP if matched.
+    3b. grep AGENTS.md + todo/fixed-archive.md for 2-3 distinctive title keywords. DROP if matched.
     3c. Dedupe against existing issues: a new finding is a DUPLICATE (DROP it) when some entry in /tmp/known_issues.tsv has the SAME area (its title prefix `[claude-audit] <area>:`) AND the SAME cited file (per /tmp/known_files.tsv) AND ≥2 shared distinctive title keywords. The pool already spans open AND closed — so a finding already filed, already triaged-closed, or already fixed is NOT re-filed.
     3d. For "unfinished PR" / "semantic merge conflict" claims: `git log -p -n 20 -- <file>` and confirm consistency. DROP if completed elsewhere.
     3e. If finding matches NOT FINDINGS patterns: DROP.

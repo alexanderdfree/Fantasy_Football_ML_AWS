@@ -1,8 +1,6 @@
 # AWS Batch Training Design Doc
 
-> **⚠️ Correction (2026-06-07): the live CE runs `g4dn.xlarge` (Tesla T4, sm_75), NOT g6/L4.** Verified via `aws batch describe-compute-environments --compute-environments ff-gpu-spot` → `instanceTypes:["g4dn.xlarge"]`, `allocationStrategy:SPOT_CAPACITY_OPTIMIZED`. The g6/L4 migration described below was **never applied to the live CE** (or was reverted). Consequence: on the T4 (sm_75) **CUDA graphs, `torch.compile`, and BF16 are all gated off** — production Batch trains eager FP16, and the `FF_CUDA_GRAPH` autodetect (PR #889) is inert until the CE actually moves to L4. An L4 migration (`g6.xlarge` full L4, or fractional **`g6f.xlarge`** — same 4 vCPU/sm_89, ~1/8 GPU, cheaper, ample for this ~9%-util workload) to unlock graphs is under evaluation; smoke-test graph capture on g6f's vGPU before committing. The rest of this doc describes the **intended** g6/L4 design.
->
-> **Status (2026-05-31): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g6.xlarge Spot instances, one position per host (migrated from g4dn.xlarge 2026-05-31 — T4 → L4 for BF16 + torch.compile re-eligibility; see ARCHITECTURE.md Update history). **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself), which is now train-batch.yml's dominant wall-clock cost — PR #330 removed the forced "Refresh ECS service" (`update-service --force-new-deployment`) step from train-batch.yml (per-position in-flight model refresh via `src/shared/model_sync.py` makes new artifacts live within one ~30s poll interval; ECS rolling redeploy via deploy.yml's ALB-tuned ~3 min path is now decoupled from the train workflow). The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate.** Warm-EC2 rollback path: ~120-min sequential loop. Cold-start mitigation: SOCI v2 indexes published by PR #216 + `soci-snapshotter-grpc` v0.13.0 installed on the AL2 Spot host via the `ff-batch-lt` launch template (Option B, this PR — see §2a for the active configuration). Image kept ~5–6 GB via aggressive `.dockerignore` + explicit `COPY`. Baseline 2026-05-20 cold-start ~258 s; expected ~135 s once the launch template is attached to the live CE (post-merge `bash infra/batch/setup.sh` reconciles). See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
+> **Status (2026-05-31): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g6.xlarge Spot instances, one position per host (migrated from g4dn.xlarge 2026-05-31 — T4 → L4 for BF16 + torch.compile re-eligibility; see ARCHITECTURE.md Update history). **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself), which is now train-batch.yml's dominant wall-clock cost — PR #330 removed the forced "Refresh ECS service" (`update-service --force-new-deployment`) step from train-batch.yml (per-position in-flight model refresh via `src/shared/model_sync.py` makes new artifacts live within one ~30s poll interval; ECS rolling redeploy via deploy.yml's ALB-tuned ~3 min path is now decoupled from the train workflow). The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate.** Warm-EC2 rollback path: ~120-min sequential loop. Cold-start: ~120 s image pull on a fresh Spot host (3.8 GB image). **SOCI lazy-loading was REMOVED 2026-06-07 — it never worked and cannot work on AWS Batch: Batch runs on ECS-managed EC2 and the `amazon-ecs-agent` does not pull through the soci snapshotter (Fargate-only; [containers-roadmap#1832](https://github.com/aws/containers-roadmap/issues/1832)). See §2a + [todo/fixed-archive.md](../todo/fixed-archive.md).** Image kept ~5–6 GB via aggressive `.dockerignore` + explicit `COPY`. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
 >
 > Rollback: `gh variable set BATCH_ACTIVE --body "false"` returns push-driven training to the warm-EC2 path ([docs/ec2_design.md](ec2_design.md)) on the next push to `main`. Both paths remain provisioned.
 
@@ -131,7 +129,7 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 | `FF_S3_BUCKET` | `ff-predictor-training` | Override bucket name (for staging accounts) |
 | `FF_JOB_QUEUE` | `ff-training-queue` | Override Batch job queue |
 | `FF_JOB_DEFINITION` | `ff-training-job` | Override Batch job definition (GPU) |
-| `FF_JOB_DEFINITION_CPU` | (unset) | **Optional CPU job definition for K/DST.** When set, K/DST jobs submit here instead of the GPU queue — saves ~60% of Spot spend on those positions. Falls back to the GPU definition when unset. |
+| `FF_JOB_DEFINITION_CPU` | (unset) | **Optional CPU job definition for K/DST. ⚠️ STALE — DO NOT ENABLE** (see *CPU-only Queue for K/DST* below): K/DST now train an attention NN on GPU, so CPU routing craters wall-clock instead of saving. When set, K/DST jobs submit here instead of the GPU queue; falls back to the GPU definition when unset. |
 | `FF_WAIT_TIMEOUT` | `10800` (3h) | Wall-clock cap for `wait_for_jobs` |
 
 ### Container Dependencies (`src/batch/requirements.txt`)
@@ -142,17 +140,13 @@ Derived from root `requirements.txt`:
 
 ## Position Pipeline Invocation
 
-Pipeline registry in `src/batch/train.py`:
+Pipeline dispatch lives in `src/shared/registry.py` (the single source of truth, consumed by `train.py`, `app.py`, and `benchmark.py`). Positions come from the `Position` StrEnum in `src/shared/position.py` (`ALL_POSITIONS = Position.values()`); each position's runner module and `accepts_dataframes` flag live on its `POSITION_CONFIG`. `train.py` calls `get_runner(pos)` and reads `INFERENCE_REGISTRY[pos]` — there is no `POSITIONS` dict in `train.py` (the legacy `_POSITION_META` table is gone):
 
 ```python
-POSITIONS = {
-    "QB":  ("src.qb.run_pipeline",  "run", True),
-    "RB":  ("src.rb.run_pipeline",  "run", True),
-    "WR":  ("src.wr.run_pipeline",  "run", True),
-    "TE":  ("src.te.run_pipeline",  "run", True),
-    "K":   ("src.k.run_pipeline",   "run", False),
-    "DST": ("src.dst.run_pipeline", "run", False),
-}
+# src/shared/registry.py
+ALL_POSITIONS = Position.values()          # ["QB", "RB", "WR", "TE", "K", "DST"]
+run_fn = get_runner(pos)                   # lazy-imports src.{pos}.run_pipeline.run
+accepts_df = _position_config(pos).accepts_dataframes  # True for QB/RB/WR/TE, False for K/DST
 ```
 
 - **Standard (QB, RB, WR, TE)**: `accepts_df=True` — train.py downloads parquets from S3, passes DataFrames
@@ -424,6 +418,21 @@ After the first pull seeds the cache, every subsequent Batch instance in the
 region pulls the base layers from ECR's local endpoints instead of Docker Hub.
 
 ### 2a. SOCI (Seekable OCI) lazy loading
+
+> **⚠️ REMOVED / DOES NOT WORK ON BATCH (2026-06-07).** AWS Batch runs on
+> **ECS-managed EC2**, and the `amazon-ecs-agent` does not pull images through
+> the soci snapshotter — SOCI on ECS is **Fargate-only**
+> ([containers-roadmap#1832](https://github.com/aws/containers-roadmap/issues/1832),
+> open since 2022), and Fargate has no GPU, so GPU training can never use it.
+> Verified empirically: with a fully-correct soci config (transfer-service
+> snapshotter selection + ECR credential helper + `soci_v1` pull mode — validated
+> to lazy-load a `ctr` pull in 7 s / 9 KiB on a fresh AL2023 host), a prod K Batch
+> job still pulled in **103 s** (overlayfs) because the agent ignored the config.
+> The launch template, the CI index-publish step, and the userdata daemon were all
+> removed; the CE uses the default ECS AMI and pays the ~120 s pull. This holds on
+> g6/L4 too (the limitation is the ECS agent, not the GPU arch). Full root-cause:
+> [todo/fixed-archive.md](../todo/fixed-archive.md). **Text below is retained for
+> history only.**
 
 SOCI v2 lazy-loading lets a container start executing before its full
 image is pulled — essential files stream first, the rest loads in the

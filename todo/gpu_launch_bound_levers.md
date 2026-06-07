@@ -118,6 +118,33 @@ rebaseline. K's nested trainer still no-ops capture, and CPU/CI/T4 stay eager
 
 **Effort:** multi-session; architectural. Highest ceiling, highest risk.
 
+### Lever B′ — within-position overlap (base NN ∥ attention NN) — PROTOTYPE (2026-06-07)
+
+A smaller, lower-risk slice of B scoped to **one position**: the pipeline trains
+the base NN then the attention NN *sequentially* in `_gpu_branch`, but they are
+independent (no stacking) and each is launch-bound, so overlapping them as **two
+processes sharing one GPU** collapses the GPU branch from `nn_train + attn_nn_train`
+→ `max(...)` (~2× for balanced positions like DST 98+94 / QB 36+36). Two
+processes (not threads) because host launch dispatch is GIL-bound, and each child
+re-seeds its own RNG so solo and concurrent runs stay bitwise-identical (the
+harness asserts per-target prediction-fingerprint parity). **GPU-arch-independent**
+(fills idle gaps on T4/L4/5080 alike — measurable on the current T4 fleet, no L4
+migration needed) and **composes with CUDA graphs** (graph each model AND overlap).
+
+Standalone benchmark harness (does NOT touch the production pipeline ⇒ no
+retrain): [src/analysis/overlap_base_attn_prototype.py](../src/analysis/overlap_base_attn_prototype.py).
+Run on a CUDA box with `data/splits`:
+`python -m src.analysis.overlap_base_attn_prototype --position QB --seed 42` — it
+reports solo-vs-concurrent per-model train time, the contention factor, the
+overlap speedup, and prediction parity. If the win holds, productionize by
+overlapping the two trainers in `_gpu_branch` behind an `FF_*` flag (default off).
+
+**AWS cousin:** the same "pack all six on one GPU" idea, but via **real NVIDIA MPS on a
+warm Linux L4** (MPS is available there, unlike WSL2/Windows) instead of in-process CUDA
+streams, is sketched in [proposed-adr-warm-mps-packed-training.md](proposed-adr-warm-mps-packed-training.md)
+(Option B; start/stop warm host, benchmark-gated before any build). The two could share a
+per-position worker entry.
+
 ---
 
 ## Recommended sequencing

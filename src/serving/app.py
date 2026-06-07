@@ -1055,11 +1055,12 @@ def _apply_position_models(train, val, test, pos, results):
             attn_nn_preds = None
             attn_nn_totals = None
 
-    # LightGBM — the only model NOT trained for every position: QB/RB/WR/TE
-    # only (gated by ``reg["train_lightgbm"]``). K/DST leave lgbm_pred NaN so the
-    # frontend renders "--". (Attention NN, by contrast, IS trained for all six —
-    # see the attn_nn block above; an older comment here wrongly grouped attn_nn
-    # with lgbm as K/DST-absent.)
+    # LightGBM — gated by ``reg["train_lightgbm"]``. In production all six
+    # positions train LightGBM (K/DST included), so lgbm_pred is populated for
+    # every position; the gate stays defensive so that if a config ever sets
+    # train_lightgbm=False, that position's lgbm_pred is left NaN and the
+    # frontend renders "--". (Attention NN is likewise trained for all six —
+    # see the attn_nn block above.)
     lgbm_preds = None
     lgbm_totals = None
     if reg.get("train_lightgbm", False):
@@ -2494,7 +2495,7 @@ def _categorize_features(features):
     return {k: v for k, v in categories.items() if v}
 
 
-def _position_arch_payload(pos, pc, include_features, attn_history=None):
+def _position_arch_payload(pc, include_features, attn_history=None):
     """Build the per-position JSON payload for /api/model_architecture.
 
     ``pc`` is the position's :class:`~src.shared.position_config.PositionConfig`;
@@ -2558,36 +2559,30 @@ def api_model_architecture():
     try:
         positions = {
             "QB": _position_arch_payload(
-                "QB",
                 qb_cfg.POSITION_CONFIG,
                 qb_cfg.POSITION_CONFIG.include_features,
                 qb_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "RB": _position_arch_payload(
-                "RB",
                 rb_cfg.POSITION_CONFIG,
                 rb_cfg.POSITION_CONFIG.include_features,
                 rb_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "WR": _position_arch_payload(
-                "WR",
                 wr_cfg.POSITION_CONFIG,
                 wr_cfg.POSITION_CONFIG.include_features,
                 wr_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "TE": _position_arch_payload(
-                "TE",
                 te_cfg.POSITION_CONFIG,
                 te_cfg.POSITION_CONFIG.include_features,
                 te_cfg.POSITION_CONFIG.attn_history_stats,
             ),
             "K": _position_arch_payload(
-                "K",
                 k_cfg.POSITION_CONFIG,
                 k_cfg.POSITION_CONFIG.contextual_features,
             ),
             "DST": _position_arch_payload(
-                "DST",
                 dst_cfg.POSITION_CONFIG,
                 dst_cfg.POSITION_CONFIG.contextual_features,
             ),

@@ -121,8 +121,13 @@ def _bare_trainer(cls, model, targets=_TARGETS):
 
 @pytest.mark.unit
 def test_maybe_graph_model_noop_when_disabled(monkeypatch):
-    """Flag off → _maybe_graph_model leaves self.model untouched (same object)."""
-    monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
+    """Force-off override → _maybe_graph_model leaves self.model untouched (same object).
+
+    Post-#889, ``FF_CUDA_GRAPH`` is a force-off override over the sm_80+ autodetect,
+    not the trigger — so "disabled" is ``=0``, not unset (unset autodetects ON on a
+    local sm_80+ box and would attempt capture on this CPU trainer).
+    """
+    monkeypatch.setenv("FF_CUDA_GRAPH", "0")
     model = nn.Linear(3, 2)
     tr = _bare_trainer(MultiHeadTrainer, model, targets=["y"])
     assert tr._graphed is False

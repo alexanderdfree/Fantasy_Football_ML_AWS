@@ -8,7 +8,6 @@ and pulling in Optuna.
 SEARCH_SPACE_VERSION = "scheduler_v2"
 MPS_GRAPH_SEARCH_SPACE_VERSION = f"{SEARCH_SPACE_VERSION}_mps_graph"
 MPS_SEARCH_SPACE_VERSION = f"{SEARCH_SPACE_VERSION}_mps"
-S3_PREFIX = f"tune_nn/{SEARCH_SPACE_VERSION}"
 
 
 def resolve_search_space_version(

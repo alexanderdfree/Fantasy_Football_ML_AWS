@@ -102,6 +102,15 @@ def mean_std(values: list[float]) -> dict[str, float | int | None]:
     }
 
 
+def fmt_mean_std(values: list[float]) -> str:
+    """Format a ``mean±std`` summary string for decision tables."""
+
+    summary = mean_std(values)
+    if not summary["n"]:
+        return "n/a"
+    return f"{summary['mean']:.4f}±{summary['std']:.4f}"
+
+
 def _metric_value(result: AblationResult, metric_key: str) -> float:
     cur: Any = result.metrics
     for part in metric_key.split("."):

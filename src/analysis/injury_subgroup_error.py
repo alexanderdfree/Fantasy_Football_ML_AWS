@@ -44,7 +44,6 @@ __all__ = [
 def main() -> None:
     parser = argparse.ArgumentParser(description="Injury / return-from-absence subgroup error")
     parser.add_argument("positions", nargs="*", default=None)
-    parser.add_argument("--no-history", action="store_true")
     args = parser.parse_args()
 
     positions = [p.upper() for p in (args.positions or DEFAULT_POSITIONS)]

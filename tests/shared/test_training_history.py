@@ -466,6 +466,18 @@ class TestAttentionEntropyRegulariserWiring:
     """Trainer must add ``model.attention_entropy_loss()`` to the criterion
     output when the model exposes it with a non-zero coefficient."""
 
+    @pytest.fixture(autouse=True)
+    def _force_eager_cuda_graph(self, monkeypatch):
+        # The entropy regulariser adds a second backward, incompatible with
+        # CUDA-graph capture (autodetect-ON for sm_80+ since #889). These tests
+        # build CPU-device trainers, but cuda_graph_enabled() keys off the host
+        # GPU, so on a local sm_80+ box capture is attempted and errors with
+        # "backward through the graph a second time". Force eager — production is
+        # unaffected (attn_entropy_coeff=0.0 in every config; the live Batch CE
+        # is T4/sm_75 with graphs off). Continues #571's test-side dev-box fix
+        # that #889's autodetect-ON re-broke.
+        monkeypatch.setenv("FF_CUDA_GRAPH", "0")
+
     def _build(self, history_data_factory, *, coeff: float):
         np.random.seed(0)
         torch.manual_seed(0)

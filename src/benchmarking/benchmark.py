@@ -72,13 +72,19 @@ def collect_pos_config(pos):
     return cfg
 
 
-def run_one(position, cv=False):
-    """Run a single position pipeline and return its metrics dict."""
-    from src.shared.registry import get_cv_runner, get_runner
+def run_one(position):
+    """Run a single position pipeline and return its metrics dict.
+
+    The single-split path only; ``--cv`` was collapsed into ``--rolling-origin``
+    (PR #719), so the rolling-origin branch in ``main`` calls
+    ``run_rolling_origin`` and never reaches here with a CV request — the old
+    ``cv``/``get_cv_runner`` parameter was unreachable and has been removed.
+    """
+    from src.shared.registry import get_runner
     from src.shared.utils import seed_everything
 
     seed_everything(42)
-    runner = get_cv_runner(position) if cv else get_runner(position)
+    runner = get_runner(position)
     return runner()
 
 
@@ -414,7 +420,7 @@ def main(argv=None):
         if rolling_origin_mode:
             s = run_rolling_origin(pos)
         else:
-            result = run_one(pos, cv=args.cv)
+            result = run_one(pos)
             s = summarize_pipeline_result(pos, result)
             if args.significance and not args.cv:
                 sig_block = _significance_block(pos, result)

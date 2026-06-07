@@ -4,14 +4,30 @@
 # Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates
 version: 2
 updates:
-  # Python deps — pinned in requirements*.txt at repo root.
+  # Python deps. Pinned in requirements*.txt at the repo root AND in
+  # src/batch/requirements.txt (the Batch training container's subset).
+  # tests/test_dependency_pins.py enforces that any package present in BOTH
+  # requirements.txt and src/batch/requirements.txt carries an identical pin,
+  # so the two files must move together. `directories` makes Dependabot watch
+  # both locations, and the group below combines a bump into ONE PR spanning
+  # both files — without this, Dependabot bumped only the root file and the
+  # per-PR drift guard failed (see #878 / #883).
   - package-ecosystem: "pip"
-    directory: "/"
+    directories:
+      - "/"
+      - "/src/batch"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
+    groups:
+      # Group all pip updates so a shared package bumps in requirements.txt and
+      # src/batch/requirements.txt within the same PR (keeps the drift guard
+      # green); root-only packages still ride along in the same grouped PR.
+      python-deps:
+        patterns:
+          - "*"
 
   # GitHub Actions used by the CI / training / deploy workflows.
   - package-ecosystem: "github-actions"
