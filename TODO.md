@@ -55,6 +55,14 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 - **Stop-rule:** `torch.compile` is measured-rejected (#641, +169% on 5080); a hand-rolled graph sidesteps the dynamic-shape recompile but still must clear the A/B.
 - **Status:** Lever A built/measured/**shipped autodetect-ON for sm_80+ production training (2026-06-05, PR #874 follow-up)**; AWS Batch tune path wires graph-on + NVIDIA MPS as a tuner-only profile. Lever B remains planned only for local Windows/WSL where NVIDIA MPS is unavailable.
 
+### [PROPOSAL] Warm single-GPU MPS-packed training (Option B) — benchmark-gated, not built
+- **Proposed ADR:** [todo/proposed-adr-warm-mps-packed-training.md](todo/proposed-adr-warm-mps-packed-training.md) — ADR-shaped sketch; promote to `docs/adr/0018-*` only on a green benchmark gate.
+- **What:** Pack all six positions onto **one warm `g6.4xlarge` (1× L4, 16 vCPU)** via real NVIDIA MPS (the AWS cousin of [gpu_launch_bound_levers.md](todo/gpu_launch_bound_levers.md) Lever B), **started/stopped per run — not always-on** (~$966/mo at 24/7 is rejected on cost). Iteration-*latency* play (kills Spot-acquisition + cold-start jitter), not throughput — the Spot fan-out's six dedicated GPUs finish *compute* faster (~2 min) and scale to zero.
+- **Reuses:** the tuner's proven MPS plumbing (`tune_nn._NvidiaMPS` / `_run_mps_optimize` / `_mps_worker_entry`); orchestrator goes in `src/scripts/` (**not** `src/batch/` — fires the 6-position retrain detect).
+- **Gate before any build:** metric parity (graphed-vs-graphed, ≥3 seeds) **and** wall-clock win measured **on the real L4** (the ~80%-idle headroom is a 5080 number; six-on-one-L4 efficiency is unproven) + MPS stability/OOM check. See the ADR's "Benchmark gate" section.
+- **Live-state caveat (verified 2026-06-07):** prod training is **not** MPS-packed (tuner-only), the warm-EC2 path is sequential (~120 min), and the `ff-gpu-spot` CE is still **g4dn/T4**, not the documented g6/L4 — measure the gate on whatever hardware is actually live.
+- **Status:** Proposal committed (docs-only). Not built; no code/infra change made.
+
 ### [PRIORITY] Tune `attn_weight_decay` (+ optional `attn_patience`) in the Optuna NN search space
 - **Plan:** [todo/tune-nn-attn-weight-decay-patience_priority.md](todo/tune-nn-attn-weight-decay-patience_priority.md) — full implementation plan (exact ranges, `_PARAM_TO_CONST` + test edits, verification). **Pick this up to execute** (line numbers there are approximate post-rebase — re-grep the symbols).
 - **File(s):** `src/tuning/tune_nn.py` (`_sample_overrides` search space + `_PARAM_TO_CONST`); `tests/tuning/test_tune_nn.py` (`_EXPECTED_KEYS`, range assertions, config-line round-trip).
