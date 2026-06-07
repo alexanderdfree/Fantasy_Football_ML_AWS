@@ -5,6 +5,10 @@
 # benchmark for the affected position(s) (B2).
 set -eu
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.claude/hooks/lib.sh
+. "$script_dir/lib.sh"
+
 # Resolve jq: prefer PATH, fall back to common absolute install locations so the
 # hook works whether or not jq lives at /usr/bin (WSL/dev boxes differ from CI).
 jq_bin=""
@@ -16,9 +20,12 @@ done
 input=$(cat)
 cmd=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.command // empty')
 
-# Only gate `gh pr create`. Match at word boundaries to avoid false positives
-# from substrings inside other commands' arguments.
-if ! [[ "$cmd" =~ (^|[[:space:]&|;\(])gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$|[&|;\)]) ]]; then
+# Only gate an ACTUAL `gh pr create` invocation. The shell-parser-aware matcher
+# strips quotes/heredocs/comments and splits on ; | & before testing each
+# segment, so the literal token sequence inside a quoted string or another
+# command's args does not trip the gate — a false positive here is a PreToolUse
+# blocker (exit 2) that wedges the session (#894).
+if ! claude_command_invokes_gh_pr_create "$cmd"; then
   exit 0
 fi
 
