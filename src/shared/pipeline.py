@@ -1981,6 +1981,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     # ElasticNet (optional parallel linear baseline with L1+L2) — mirrors
     # run_pipeline so CV mode reports the same model when train_elasticnet=True.
     enet_metrics = None
+    enet_test_preds = None
     if cfg.get("train_elasticnet", False):
         print(f"\n=== {pos} ElasticNet Multi-Target (Final Holdout) ===")
         enet_tune_grids = {t: cfg["ridge_alpha_grids"][t] for t in cv_ridge_targets}
@@ -1999,7 +2000,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             if cv_ridge_targets
             else {}
         )
-        enet_model, _enet_test_preds, enet_metrics = _train_elasticnet(
+        enet_model, enet_test_preds, enet_metrics = _train_elasticnet(
             X_train,
             X_test,
             y_train_dict,
@@ -2033,15 +2034,19 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     # All-position frames for the opponent-defense builder are the season-sliced
     # full frames + holdout test (they retain every position, unlike pos_*).
     attn_nn_metrics = None
+    attn_test_preds = None
+    attn_model = None
+    attn_nn_scaler = None
+    attn_static_cols = None
     if cfg.get("train_attention_nn", False):
         print(f"\n=== {pos} Attention Multi-Head Neural Net (Final Holdout) ===")
         (
-            _attn_model,
-            _attn_scaler,
-            _attn_test_preds,
+            attn_model,
+            attn_nn_scaler,
+            attn_test_preds,
             attn_nn_metrics,
             _attn_history,
-            _attn_cols,
+            attn_static_cols,
         ) = _train_attention_holdout(
             cfg,
             targets,
@@ -2114,6 +2119,27 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     print(f"\nRidge Top-12 Hit Rate:    {ridge_ranking['season_avg_hit_rate']:.3f}")
     print(f"NN Top-12 Hit Rate:       {nn_ranking['season_avg_hit_rate']:.3f}")
 
+    # ElasticNet + Attention NN rankings — mirror run_pipeline so CV mode reports
+    # their Top-12 hit rate (and backtests them) instead of silently dropping
+    # both (previously their test preds were discarded → attn_nn_top12 == 0).
+    enet_ranking = None
+    if enet_test_preds is not None:
+        pos_test["pred_enet_total"] = _total(enet_test_preds)
+        for t in targets:
+            pos_test[f"pred_enet_{t}"] = enet_test_preds[t]
+        backtest_pred_columns["ElasticNet"] = "pred_enet_total"
+        enet_ranking = compute_ranking_metrics(pos_test, pred_col="pred_enet_total")
+        print(f"ElasticNet Top-12 Hit Rate: {enet_ranking['season_avg_hit_rate']:.3f}")
+
+    attn_nn_ranking = None
+    if attn_test_preds is not None:
+        pos_test["pred_attn_nn_total"] = _total(attn_test_preds)
+        for t in targets:
+            pos_test[f"pred_attn_nn_{t}"] = attn_test_preds[t]
+        backtest_pred_columns["Attention NN"] = "pred_attn_nn_total"
+        attn_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_attn_nn_total")
+        print(f"Attention NN Top-12 Hit Rate: {attn_nn_ranking['season_avg_hit_rate']:.3f}")
+
     lgbm_ranking = None
     if lgbm_test_preds is not None:
         pos_test["pred_lgbm_total"] = _total(lgbm_test_preds)
@@ -2140,6 +2166,22 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     )
     joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
     write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
+
+    # Persist the attention NN too (mirrors run_pipeline) — without this a
+    # CV-built model dir is missing ``{pos}_attention_nn.pt`` and serving/upload
+    # for the attention model fails. ``attn_static_cols`` is the exact column
+    # list the attention scaler was fit on (returned by _train_attention_holdout).
+    if attn_model is not None:
+        torch.save(
+            wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
+            f"{output_dir}/models/{pos_lower}_attention_nn.pt",
+        )
+        joblib.dump(attn_nn_scaler, f"{output_dir}/models/attention_nn_scaler.pkl")
+        write_scaler_meta(
+            f"{output_dir}/models/attention_nn_scaler_meta.json",
+            attn_static_cols,
+            targets,
+        )
 
     if lgbm_model is not None:
         lgbm_model.save(f"{output_dir}/models")
@@ -2194,7 +2236,9 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         result["lgbm_metrics"] = lgbm_metrics
         result["lgbm_ranking"] = lgbm_ranking
     if enet_metrics is not None:
-        result["enet_metrics"] = enet_metrics
+        result["elasticnet_metrics"] = enet_metrics
+        result["elasticnet_ranking"] = enet_ranking
     if attn_nn_metrics is not None:
         result["attn_nn_metrics"] = attn_nn_metrics
+        result["attn_nn_ranking"] = attn_nn_ranking
     return result
