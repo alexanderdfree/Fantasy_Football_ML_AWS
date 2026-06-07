@@ -7,7 +7,7 @@ Reflect on the current Codex session only if it was non-routine: the user correc
 
 Skip with one sentence if the session was routine.
 
-Before proposing anything, check `AGENTS.md`, `CLAUDE.md`, and the current Codex memory summary for duplicates.
+Before proposing anything, check `AGENTS.md`, `CODEX.md`, and the current Codex memory summary for duplicates.
 
 Produce under 200 words:
 
