@@ -216,3 +216,107 @@ def test_first_load_with_existing_sentinel_does_not_log_refresh(monkeypatch, cap
 
     assert "in-flight refresh detected" not in out
     assert "Applying K-specific model" in out
+
+
+@pytest.mark.unit
+def test_hydrated_container_loads_splits_on_refresh(monkeypatch):
+    """#550/#789: a hydrated container has ``results`` but no ``splits``
+    (``_try_hydrate_from_disk`` skips ``_load_base_data_locked``). When a refresh
+    is detected, ``_ensure_position_loaded`` must derive splits on demand and
+    re-apply the position — NOT mark it failed."""
+    counts = _stub_apply(monkeypatch)
+    # Simulate hydration: results present, splits ABSENT, position pre-"loaded"
+    # at the hydration sentinel value.
+    del app._cache["splits"]
+    app._cache["results"] = object()
+    app._cache["positions_loaded"] = {"WR"}
+    app._cache["positions_mtime"] = {"WR": 100.0}
+    derived = {"called": False}
+
+    def fake_load_splits(results):
+        derived["called"] = True
+        app._cache["splits"] = {p: (None, None, None) for p in ("QB", "RB", "WR", "TE", "K", "DST")}
+
+    monkeypatch.setattr(app, "_load_splits_locked", fake_load_splits)
+    mtimes = {"WR": 200.0}  # sentinel advanced past the hydration value
+    _stub_sentinel(monkeypatch, mtimes)
+
+    app._ensure_position_loaded("WR")
+
+    assert derived["called"], "splits must be derived on demand for hydrated containers"
+    assert counts == {"WR": 1}, "WR must be re-applied, not skipped/failed"
+    assert "WR" not in app._cache.get("positions_failed", set())
+
+
+@pytest.mark.unit
+def test_ensure_all_positions_loads_splits_when_hydrated(monkeypatch):
+    """#789: ``_ensure_all_positions_loaded`` on a hydrated container (results
+    present, splits absent) must derive splits and re-apply any advanced position
+    instead of early-returning and leaving stale preds to be re-persisted under a
+    new fingerprint."""
+    counts = _stub_apply(monkeypatch)
+    del app._cache["splits"]
+    app._cache["results"] = object()
+    all_pos = ("QB", "RB", "WR", "TE", "K", "DST")
+    app._cache["positions_loaded"] = set(all_pos)
+    app._cache["positions_mtime"] = {p: 100.0 for p in all_pos}
+
+    def fake_load_splits(results):
+        app._cache["splits"] = {p: (None, None, None) for p in all_pos}
+
+    monkeypatch.setattr(app, "_load_splits_locked", fake_load_splits)
+    monkeypatch.setattr(app, "_refresh_k_data_locked", lambda: None)
+    monkeypatch.setattr(app, "_refresh_dst_data_locked", lambda: None)
+    mtimes = {p: 100.0 for p in all_pos}
+    mtimes["TE"] = 300.0  # only TE advanced
+    _stub_sentinel(monkeypatch, mtimes)
+
+    app._ensure_all_positions_loaded()
+
+    assert "splits" in app._cache, "splits must be derived, not early-returned"
+    assert counts.get("TE") == 1, "the advanced position must be re-applied"
+
+
+@pytest.mark.unit
+def test_dst_refresh_rederives_dst_data(monkeypatch):
+    """#441: a DST sentinel advance must re-derive DST's split (like K does),
+    because DST's split is built from live ``build_data``, not the static
+    parquets — so a model swap alone otherwise leaves the cached split stale."""
+    _stub_apply(monkeypatch)
+    k_calls = {"n": 0}
+    dst_calls = {"n": 0}
+    monkeypatch.setattr(
+        app, "_refresh_k_data_locked", lambda: k_calls.__setitem__("n", k_calls["n"] + 1)
+    )
+    monkeypatch.setattr(
+        app, "_refresh_dst_data_locked", lambda: dst_calls.__setitem__("n", dst_calls["n"] + 1)
+    )
+    mtimes = {"DST": 100.0}
+    _stub_sentinel(monkeypatch, mtimes)
+
+    app._ensure_position_loaded("DST")  # first load — no refresh
+    assert dst_calls["n"] == 0 and k_calls["n"] == 0
+
+    mtimes["DST"] = 200.0  # poller swaps in a new DST model
+    app._ensure_position_loaded("DST")
+
+    assert dst_calls["n"] == 1, "DST advance must re-derive DST data"
+    assert k_calls["n"] == 0, "K refresh must not fire for a DST advance"
+
+
+@pytest.mark.unit
+def test_splits_missing_without_results_marks_failed(monkeypatch):
+    """The #550 on-demand split load only kicks in when ``results`` is present
+    (hydrated container). With both splits AND results absent (a genuine
+    base-load failure), the position is still marked failed."""
+    _stub_apply(monkeypatch)
+    del app._cache["splits"]
+    app._cache.pop("results", None)
+    derived = {"called": False}
+    monkeypatch.setattr(app, "_load_splits_locked", lambda r: derived.__setitem__("called", True))
+    _stub_sentinel(monkeypatch, {"QB": 100.0})
+
+    app._ensure_position_loaded("QB")
+
+    assert not derived["called"], "_load_splits_locked must not run without results"
+    assert "QB" in app._cache.get("positions_failed", set())
