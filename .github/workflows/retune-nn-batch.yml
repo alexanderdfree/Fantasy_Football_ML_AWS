@@ -1,53 +1,43 @@
-name: Retune NN on Batch (Spot)
+name: Scheduler-type ablation (Batch, branch override)
 
-# Manually-triggered Optuna sweep of the attention-NN hyperparameters across
-# all six positions. Mirrors train-batch.yml's per-position fan-out — one
-# Spot g6.xlarge per position via AWS Batch, saturating the 24-vCPU Spot
-# G+VT quota (4 vCPU × 6 positions = 24 vCPU). Inside each position job, the
-# tuner passes --parallel-backend auto; inside the g6/L4 Linux container the
-# detect-platform path resolves that to NVIDIA CUDA MPS. Default is 3 workers
-# plus FF_CUDA_GRAPH=1.
+# ⚠️ BRANCH-ONLY OVERRIDE of retune-nn-batch.yml — DO NOT MERGE this file to main
+# (main's version is the real NN Optuna retune). This branch version exists so
+# the LR-scheduler-type A/B can be dispatched on AWS Batch WITHOUT merging:
 #
-# NO ECS refresh, NO benchmark_history commit: tuning produces config
-# *recommendations* (printed as paste-ready QB_ATTN_* / QB_NN_* constants),
-# not model artifacts. Operators hand-paste winning params into the
-# affected src/{pos}/config.py and let the normal training path produce
-# the actual model on the next push.
+#   gh workflow run retune-nn-batch.yml --ref claude/scheduler-type-ablation \
+#       -f positions="QB RB WR TE K DST"
+#
+# A new workflow file is not dispatchable until it's on the default branch, so we
+# overload this already-registered filename and run the branch's version via
+# --ref (workflow_dispatch runs the ref's job definitions; inputs validate
+# against main's set, where `positions` exists). The image is built separately
+# from this branch via `gh workflow run batch-image.yml --ref <branch>` — that
+# does NOT trigger train-batch (its workflow_run filter is branches:[main]).
+#
+# Per-position fan-out: one Spot g6.xlarge per position via AWS Batch (24-vCPU
+# Spot G+VT quota). Each container runs the 3-way (onecycle/cosine/plateau) A/B
+# across SEEDS, eager (FF_CUDA_GRAPH=0, set by the launcher) for bit-comparable
+# deltas, and uploads s3://$S3_BUCKET/ablate_scheduler/{pos}/result.json. The
+# aggregate job merges them into a step-summary table + an artifact. No model
+# artifact upload, no benchmark_history commit — diagnostic only.
 
 on:
   workflow_dispatch:
     inputs:
       positions:
-        description: "Space-separated positions to tune (subset of QB RB WR TE K DST)"
+        description: "Space-separated positions (subset of QB RB WR TE K DST)"
         default: "QB RB WR TE K DST"
-      n_trials:
-        description: "Optuna trials per position"
-        default: "30"
-      timeout_seconds:
-        description: "Per-position wall-clock cap in seconds (blank = no cap; Batch wait timeout still applies)"
-        default: ""
-      mps_workers:
-        description: "Concurrent MPS worker processes per Batch GPU"
-        default: "3"
-      cuda_graph:
-        description: "Enable FF_CUDA_GRAPH for Batch tuning (true/false)"
-        default: "true"
-      attempt_timeout_seconds:
-        description: "AWS Batch attempt timeout in seconds"
-        default: "7200"
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
+  SEEDS: "42,43,44"
 
 permissions:
   contents: read
 
 jobs:
   parse:
-    # Tiny job: split the space-delimited input into a JSON array the matrix
-    # job below can consume. Also re-exports the raw string for the aggregator
-    # job (which calls aggregate_results.py with --positions $POSITIONS).
     runs-on: ubuntu-latest
     outputs:
       positions: ${{ steps.parse.outputs.positions }}
@@ -56,67 +46,37 @@ jobs:
       - id: parse
         env:
           POS_INPUT: ${{ github.event.inputs.positions }}
-          N_TRIALS: ${{ github.event.inputs.n_trials }}
         run: |
           set -eu
-          # Trim, collapse whitespace, reject empty input early.
           POS_LIST=$(printf '%s' "$POS_INPUT" | tr -s '[:space:]' ' ' | sed 's/^ //;s/ $//')
           if [ -z "$POS_LIST" ]; then
-            echo "positions input is empty" >&2
-            exit 1
-          fi
-          # Cost-ceiling sanity guard: 6 positions × 100 trials × ~2 min × g6
-          # Spot ≈ ~$7 / run, which is fine. >100 trials/position usually means
-          # an operator typo (e.g. "3000" instead of "30"); fail the workflow
-          # before submitting six Spot jobs that would burn the budget. Bypass
-          # by raising this ceiling consciously in a PR if you ever need a
-          # bigger sweep.
-          if ! [[ "$N_TRIALS" =~ ^[0-9]+$ ]]; then
-            echo "n_trials must be a positive integer, got: $N_TRIALS" >&2
-            exit 1
-          fi
-          if [ "$N_TRIALS" -gt 100 ]; then
-            echo "n_trials=$N_TRIALS exceeds the 100-trials-per-position ceiling" >&2
-            echo "(probable operator typo; bump the ceiling in this workflow if you really want it)" >&2
-            exit 1
-          fi
-          if ! [[ "${{ github.event.inputs.mps_workers }}" =~ ^[0-9]+$ ]] || [ "${{ github.event.inputs.mps_workers }}" -lt 1 ]; then
-            echo "mps_workers must be a positive integer" >&2
-            exit 1
-          fi
-          if ! [[ "${{ github.event.inputs.attempt_timeout_seconds }}" =~ ^[0-9]+$ ]] || [ "${{ github.event.inputs.attempt_timeout_seconds }}" -lt 60 ]; then
-            echo "attempt_timeout_seconds must be an integer >= 60" >&2
-            exit 1
+            POS_LIST="QB RB WR TE K DST"
           fi
           MATRIX=$(printf '%s\n' "$POS_LIST" | jq -Rc 'split(" ") | map(select(length > 0))')
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "positions=$POS_LIST" >> "$GITHUB_OUTPUT"
-          echo "Parsed positions: $POS_LIST"
-          echo "Matrix JSON:      $MATRIX"
+          echo "Positions: $POS_LIST"
+          echo "Matrix:    $MATRIX"
 
   submit:
     needs: parse
     runs-on: ubuntu-latest
     strategy:
       # Independent positions — one Spot failure shouldn't cancel the rest.
-      # The aggregator runs unconditionally and collates what made it to S3.
       fail-fast: false
       matrix:
         position: ${{ fromJson(needs.parse.outputs.matrix) }}
-    # 30 trials × ~2 min/trial on g6.xlarge ≈ 60 min; Spot retries can
-    # bring per-position wall-clock to ~3 hr worst case. 4 hr ceiling
-    # catches a stuck job before it pins the runner indefinitely.
-    timeout-minutes: 240
+    # 3 seeds x 3 schedulers = 9 runs/position, no LightGBM; ~10-30 min on g6,
+    # Spot retries can extend it. 3h ceiling matches the launcher wait timeout.
+    timeout-minutes: 180
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v6
 
       - name: Configure AWS credentials
-        # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
-        # major version comment. SHA = aws-actions/configure-aws-credentials v4
-        # tip as of 2026-05-21.
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        # SHA = aws-actions/configure-aws-credentials v4 (matches the repo's other workflows).
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -128,33 +88,22 @@ jobs:
           cache: "pip"
 
       - name: Install launch deps
-        # boto3 is the only runtime dep launch_tune.py needs — everything
-        # else (the Batch job's container deps) lives in the ECR image.
+        # boto3 is the only runtime dep the launcher needs; the Batch container
+        # carries the heavy deps in the ECR image.
         run: pip install boto3
 
-      - name: Submit + wait for tune job (${{ matrix.position }})
+      - name: Submit + wait for ablation job (${{ matrix.position }})
         env:
           POS: ${{ matrix.position }}
-          N_TRIALS: ${{ github.event.inputs.n_trials }}
-          TIMEOUT_SECONDS: ${{ github.event.inputs.timeout_seconds }}
-          MPS_WORKERS: ${{ github.event.inputs.mps_workers }}
-          CUDA_GRAPH: ${{ github.event.inputs.cuda_graph }}
-          ATTEMPT_TIMEOUT_SECONDS: ${{ github.event.inputs.attempt_timeout_seconds }}
         run: |
           set -eu
-          ARGS="--positions $POS --n-trials $N_TRIALS --parallel-backend auto --n-jobs $MPS_WORKERS --cuda-graph $CUDA_GRAPH --attempt-timeout $ATTEMPT_TIMEOUT_SECONDS"
-          if [ -n "$TIMEOUT_SECONDS" ]; then
-            ARGS="$ARGS --timeout $TIMEOUT_SECONDS"
-          fi
-          echo "launch_tune args: $ARGS"
-          python -m src.tuning.launch_tune $ARGS
+          echo "Submitting scheduler-type ablation for $POS (seeds $SEEDS)"
+          python -m src.tuning.launch_ablate_scheduler --positions "$POS" --seeds "$SEEDS"
 
   aggregate:
     needs: [parse, submit]
     runs-on: ubuntu-latest
-    # always(): aggregate even if some positions failed, so the operator
-    # can still see the winners from the rest. The aggregator skips missing
-    # per-position files with a warning instead of erroring.
+    # always(): aggregate whatever made it to S3 even if some positions failed.
     if: always() && needs.parse.result == 'success'
     timeout-minutes: 10
     permissions:
@@ -163,10 +112,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Configure AWS credentials
-        # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
-        # major version comment. SHA = aws-actions/configure-aws-credentials v4
-        # tip as of 2026-05-21.
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -183,30 +129,18 @@ jobs:
       - name: Aggregate per-position results from S3
         env:
           POSITIONS: ${{ needs.parse.outputs.positions }}
-          CUDA_GRAPH: ${{ github.event.inputs.cuda_graph }}
         run: |
           set -eu
-          STORAGE_VERSION="scheduler_v2_mps"
-          case "$(printf '%s' "$CUDA_GRAPH" | tr '[:upper:]' '[:lower:]')" in
-            1|true|yes|on) STORAGE_VERSION="scheduler_v2_mps_graph" ;;
-          esac
-          mkdir -p tune_results
-          # $POSITIONS is intentionally unquoted — argparse `nargs="+"` needs
-          # the values as separate argv entries (e.g. "QB" "RB" "WR"), and
-          # the parse step already trimmed/normalised whitespace + rejected
-          # empty input. Quoting would pass the whole space-delimited string
-          # as a single argv entry and trip choices validation.
-          python -m src.tuning.aggregate_results \
+          # $POSITIONS intentionally unquoted — argparse nargs="+" needs separate argv entries.
+          python -m src.tuning.aggregate_scheduler \
             --positions $POSITIONS \
             --bucket "$S3_BUCKET" \
-            --search-space-version "$STORAGE_VERSION" \
-            --local-dir ./tune_results \
-            --output tune_nn_results.json \
+            --output scheduler_ablation_results.json \
             --summary-output "$GITHUB_STEP_SUMMARY"
 
       - name: Upload merged results JSON
         uses: actions/upload-artifact@v4
         with:
-          name: tune_nn_results
-          path: tune_nn_results.json
+          name: scheduler_ablation_results
+          path: scheduler_ablation_results.json
           if-no-files-found: warn
