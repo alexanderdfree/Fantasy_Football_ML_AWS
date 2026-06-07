@@ -200,7 +200,12 @@ ATTN_STATIC_CATEGORIES = DEFAULT_ATTN_STATIC_CATEGORIES
 CONFIG_TINY = {
     "targets": _TARGETS,
     "ridge_alpha_grids": {t: [1.0] for t in _TARGETS},
-    "loss_weights": {t: 1.0 for t in _TARGETS},
+    # Yard heads are MSE (1/delta) to match production; others equalized at 1.0.
+    "loss_weights": {
+        **{t: 1.0 for t in _TARGETS},
+        "rushing_yards": 0.0667,
+        "receiving_yards": 0.0667,
+    },
     "huber_deltas": {"rushing_yards": 15.0, "receiving_yards": 15.0},
 }
 
@@ -258,22 +263,25 @@ POSITION_CONFIG = PositionConfig(
     head_losses={
         "rushing_tds": "poisson_nll",
         "receiving_tds": "poisson_nll",
-        "rushing_yards": "huber",
-        "receiving_yards": "huber",
+        "rushing_yards": "mse",
+        "receiving_yards": "mse",
         "receptions": "hurdle_negbin",
         "fumbles_lost": "poisson_nll",
     },
-    # Yards heads: keep 2.0/delta rebalance (without it FP MAE regressed
-    # 4.23 -> 5.21). Poisson NLL heads use weight 1.0 (at mean-TD rate ~0.3,
-    # Poisson NLL ~ O(0.5)). hurdle_negbin value loss scaled internally.
+    # Yards heads switched Huber -> MSE to stop under-projecting elite RBs (the
+    # biggest tail bias measured, ~-2 FP). Weight = 1/delta (gradient-matched to
+    # the old 2.0/delta Huber weighting at e~delta; half the Huber weight).
+    # Poisson NLL heads stay 1.0; hurdle_negbin value loss scaled internally.
     loss_weights={
         "rushing_tds": 1.0,
         "receiving_tds": 1.0,
-        "rushing_yards": 0.133,  # 2.0 / 15
-        "receiving_yards": 0.133,
+        "rushing_yards": 0.0667,  # 1 / 15 (MSE)
+        "receiving_yards": 0.0667,  # 1 / 15 (MSE)
         "receptions": 1.0,
         "fumbles_lost": 1.0,
     },
+    # Characteristic error scale the MSE weights (1/delta) derive from; ignored
+    # at loss time by the MSE heads.
     huber_deltas={
         "rushing_yards": 15.0,
         "receiving_yards": 15.0,
@@ -375,7 +383,8 @@ POSITION_CONFIG = PositionConfig(
     attn_gate_hidden=16,
     attn_gate_weight=1.0,
     # === LightGBM (Optuna retune, 50 trials, CV MAE 4.5244) ===
-    # Flipped from "fair" → "huber" in PR 3 LGBM unification. Holdout vs old
+    # Switched "huber" → "regression" (L2/MSE) to chase the elite tail; was
+    # flipped from "fair" → "huber" in PR 3 LGBM unification. Holdout vs old
     # fair: Total MAE 4.479 → 4.155 (-0.325), big yards improvements
     # dominate small TD regression.
     train_lightgbm=True,
@@ -389,7 +398,7 @@ POSITION_CONFIG = PositionConfig(
     lgbm_reg_alpha=4.91934,
     lgbm_min_child_samples=20,
     lgbm_min_split_gain=0.315457,
-    lgbm_objective="huber",
+    lgbm_objective="regression",
     # === RB-only TD model variants ===
     # Production uses ``td_model_type="gated_ordinal"`` below — only
     # ``gated_ordinal_targets`` is read by ``_rb_classification_targets`` in

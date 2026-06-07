@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from src.shared.utils import amp_dtype, cuda_enabled, cuda_graph_enabled
 
-SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
+SUPPORTED_HEAD_LOSSES = ("huber", "mse", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
 _TRUE_ENV = {"1", "true", "yes", "on"}
 _FIXED_SCALE_ENV = "FF_AMP_FIXED_SCALE"
 _INIT_SCALE_ENV = "FF_AMP_INIT_SCALE"
@@ -157,6 +157,12 @@ class MultiTargetLoss(nn.Module):
     Each target is assigned a loss family via ``head_losses[name]``; supported
     values are in ``SUPPORTED_HEAD_LOSSES``:
       - ``"huber"`` — standard Huber loss with per-target delta.
+      - ``"mse"`` — plain ``MSELoss`` (squared error). Unlike Huber it does not
+        cap large-residual gradients, so it chases the heavy upper tail (elite
+        weeks) instead of shrinking toward the mean; ``huber_deltas`` is ignored
+        for these heads. Pair with a per-target ``loss_weights`` of ``1/delta``
+        (gradient-matched to the old ``2/delta`` Huber weighting at the
+        characteristic error) so the head does not dominate the combined loss.
       - ``"poisson_nll"`` — ``PoissonNLLLoss(log_input=False)``. Treats the head
         output as the rate lambda directly; requires a non-negative clamp on
         that head (``MultiHeadNet`` provides this via ``non_negative_targets``).
@@ -234,15 +240,18 @@ class MultiTargetLoss(nn.Module):
         # Hurdle families need the full preds dict (value_mu, optionally
         # value_log_alpha), so they're dispatched inline in ``forward`` rather
         # than through loss_fns.
+        def _plain_loss_fn(lt: str, name: str) -> nn.Module:
+            if lt == "poisson_nll":
+                return nn.PoissonNLLLoss(log_input=False, full=False)
+            if lt == "mse":
+                return nn.MSELoss()
+            return nn.HuberLoss(delta=huber_deltas.get(name, 1.0))
+
         self.loss_fns = nn.ModuleDict(
             {
-                name: (
-                    nn.PoissonNLLLoss(log_input=False, full=False)
-                    if lt == "poisson_nll"
-                    else nn.HuberLoss(delta=huber_deltas.get(name, 1.0))
-                )
+                name: _plain_loss_fn(lt, name)
                 for name, lt in self.head_losses.items()
-                if lt in ("huber", "poisson_nll")
+                if lt in ("huber", "mse", "poisson_nll")
             }
         )
 

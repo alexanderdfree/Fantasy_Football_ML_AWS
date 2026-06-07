@@ -125,7 +125,7 @@ CONFIG_TINY = {
     "nn_patience": 10,
     "loss_weights": {
         "receiving_tds": 1.0,
-        "receiving_yards": 0.133,
+        "receiving_yards": 0.0667,  # 1 / 15 (MSE)
         "receptions": 1.0,
         "fumbles_lost": 1.0,
     },
@@ -177,16 +177,20 @@ POSITION_CONFIG = PositionConfig(
     nn_patience=25,
     head_losses={
         "receiving_tds": "poisson_nll",
-        "receiving_yards": "huber",
+        "receiving_yards": "mse",
         "receptions": "hurdle_negbin",
         "fumbles_lost": "poisson_nll",
     },
+    # receiving_yards switched Huber -> MSE to chase the elite tail (elite TE was
+    # under-projected ~-1.5 FP); weight = 1/delta (half the old 2.0/delta Huber,
+    # gradient-matched at e~delta). Poisson/hurdle heads stay 1.0.
     loss_weights={
         "receiving_tds": 1.0,
-        "receiving_yards": 0.133,  # 2.0 / 15
+        "receiving_yards": 0.0667,  # 1 / 15 (MSE)
         "receptions": 1.0,
         "fumbles_lost": 1.0,
     },
+    # Characteristic error scale the MSE weight (1/delta) derives from.
     huber_deltas={"receiving_yards": 15.0},
     # Hurdle gate on receptions + BCE gate on receiving_tds. Mirrors RB's
     # "Variant C". PR #96 review flagged +0.052 per-target MAE regression
@@ -259,6 +263,7 @@ POSITION_CONFIG = PositionConfig(
     opp_attn_history_stats=list(DEFAULT_OPP_DEF_HISTORY_STATS),
     opp_attn_max_seq_len=17,
     # === LightGBM (Optuna retune, 50 trials, CV MAE 3.5942) ===
+    # Switched "huber" → "regression" (L2/MSE) to chase the elite tail; was
     # "fair" → "huber" in PR 3 LGBM unification. Holdout: Total MAE
     # 3.534 → 3.506 (-0.028), top-12 hit rate +0.008, Spearman +0.023.
     train_lightgbm=True,
@@ -272,7 +277,7 @@ POSITION_CONFIG = PositionConfig(
     lgbm_reg_alpha=1.2289840,
     lgbm_min_child_samples=51,
     lgbm_min_split_gain=0.16878265,
-    lgbm_objective="huber",
+    lgbm_objective="regression",
     accepts_dataframes=True,
     cpu_only=False,
     has_cv_runner=True,

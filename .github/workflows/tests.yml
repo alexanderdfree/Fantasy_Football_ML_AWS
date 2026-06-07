@@ -226,7 +226,12 @@ jobs:
       # codecov-action doesn't emit "WARNING: This key is not certified
       # with a trusted signature!" on every upload. The action imports the
       # key but never assigns ownertrust; we do that here once per job.
+      # continue-on-error: this is purely cosmetic (warning suppression) and
+      # depends on keybase.io being reachable — the codecov uploads it supports
+      # are already fail_ci_if_error:false, so a keybase outage must NOT fail
+      # the whole test job (it was blocking every PR during a 2026-06 outage).
       - name: Trust Codecov CLI verification key
+        continue-on-error: true
         run: |
           set -euo pipefail
           KEY=$(curl -fsSL https://keybase.io/codecovsecurity/pgp_keys.asc)

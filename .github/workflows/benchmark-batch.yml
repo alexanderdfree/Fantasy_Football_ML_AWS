@@ -1,0 +1,153 @@
+name: Benchmark on Batch (isolated)
+
+# Isolated GPU benchmark of an EXPERIMENT branch — runs the full per-position
+# pipelines on AWS Batch (g6.xlarge Spot) and collects benchmark metrics WITHOUT
+# touching production. Unlike train-batch.yml this:
+#   * writes model artifacts under an experiment prefix
+#     (s3://${S3_BUCKET}/experiments/benchmark/<sha>/models) via FF_MODEL_S3_PREFIX,
+#     never prod ``models/`` — the serving site only polls ``models/``, so an
+#     experiment can never hot-swap into the live site;
+#   * never pushes benchmark_history to ``main`` (results come back as a
+#     downloadable workflow artifact only);
+#   * is dispatch-only (no push/workflow_run trigger).
+#
+# Prereq: build a branch image first so the code under test is what runs in the
+# container — dispatch batch-image.yml on this branch, which pushes the image and
+# stashes the Batch job-definition revision at
+# s3://${S3_BUCKET}/job-def-revisions/<sha>.txt. Then dispatch this workflow with
+# image_sha = that commit SHA (defaults to the dispatch ref's HEAD SHA).
+
+on:
+  workflow_dispatch:
+    inputs:
+      positions:
+        description: "Space-separated positions to benchmark"
+        default: "QB RB WR TE K DST"
+      seed:
+        description: "Random seed"
+        default: "42"
+      image_sha:
+        description: "Commit SHA whose branch image + job-def revision to pin (blank = this ref's HEAD)"
+        default: ""
+      note:
+        description: "Note recorded in the benchmark_history artifact"
+        default: "isolated MSE-switch benchmark"
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  S3_BUCKET: ff-predictor-training
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    # launch.py blocks up to WAIT_TIMEOUT_SECONDS (180 min) on the Spot fan-out;
+    # give headroom for cold start + metric download + artifact upload.
+    timeout-minutes: 210
+    steps:
+      - name: Configure AWS credentials
+        # SHA-pinned per CodeQL actions/unpinned-tag (aws-actions/configure-aws-credentials v4).
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Checkout repo
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        # SHA-pinned per CodeQL actions/unpinned-tag (astral-sh/setup-uv v6).
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements*.txt"
+
+      - name: Install launch + benchmark deps
+        # requirements-dev.txt mirrors train-batch.yml — src/batch/benchmark.py's
+        # import chain pulls torch; launch.py needs boto3 (in requirements.txt).
+        run: uv pip install --system -r requirements-dev.txt
+
+      - name: Resolve image SHA + experiment prefix
+        id: ctx
+        env:
+          INPUT_SHA: ${{ github.event.inputs.image_sha }}
+        run: |
+          SHA="${INPUT_SHA:-${GITHUB_SHA}}"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "prefix=experiments/benchmark/${SHA}/models" >> "$GITHUB_OUTPUT"
+          echo "Experiment artifacts -> s3://${S3_BUCKET}/experiments/benchmark/${SHA}/models (NOT prod models/)"
+
+      - name: Resolve Batch job-definition revision for this image
+        # batch-image.yml stashes the job-def revision under the image's commit
+        # SHA. Pinning ensures the Batch jobs run THIS branch's image, not
+        # whatever 'latest' resolves to. Refuse to fall back (that would run
+        # main's code and silently invalidate the experiment).
+        id: revision
+        env:
+          HEAD_SHA: ${{ steps.ctx.outputs.sha }}
+        run: |
+          REVISION=$(aws s3 cp \
+            "s3://${S3_BUCKET}/job-def-revisions/${HEAD_SHA}.txt" - \
+            --region "$AWS_REGION" --no-cli-pager 2>/dev/null || true)
+          if [ -z "$REVISION" ]; then
+            echo "ERROR: no job-def revision at s3://${S3_BUCKET}/job-def-revisions/${HEAD_SHA}.txt" >&2
+            echo "Dispatch batch-image.yml on this branch first so the image under test exists." >&2
+            exit 1
+          fi
+          echo "Pinning job submissions to revision ${REVISION}"
+          echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
+
+      - name: Submit Batch jobs and wait (isolated experiment prefix)
+        env:
+          POSITIONS: ${{ github.event.inputs.positions }}
+          SEED: ${{ github.event.inputs.seed }}
+          FF_JOB_DEFINITION_REVISION: ${{ steps.revision.outputs.revision }}
+          FF_TRAIN_GIT_SHA: ${{ steps.ctx.outputs.sha }}
+          # The isolation lever: train.py uploads its tarball + manifest here
+          # instead of prod ``models/`` (forwarded into the container by
+          # src/batch/launch.py::submit_job).
+          FF_MODEL_S3_PREFIX: ${{ steps.ctx.outputs.prefix }}
+        run: |
+          # --skip-upload: CI has no local data/splits (the Batch jobs pull the
+          # S3 splits). --append-history false: the download step below writes
+          # the single history row.
+          python -m src.batch.launch \
+            --positions $POSITIONS \
+            --seed "$SEED" \
+            --skip-upload \
+            --append-history false
+
+      - name: Collect benchmark metrics from the experiment prefix
+        env:
+          POSITIONS: ${{ github.event.inputs.positions }}
+          FF_MODEL_S3_PREFIX: ${{ steps.ctx.outputs.prefix }}
+          # No FF_MODEL_S3_BUCKET -> benchmark.py does NOT mirror to the website
+          # History tab; the artifact below is the only output.
+        run: |
+          python -m src.batch.benchmark \
+            --download-only \
+            --positions $POSITIONS \
+            --backend batch \
+            --git-hash "${{ steps.ctx.outputs.sha }}" \
+            --note "${{ github.event.inputs.note }}"
+
+      - name: Upload benchmark results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ steps.ctx.outputs.sha }}
+          path: |
+            benchmark_history/*.json
+            benchmark_results.json
+          if-no-files-found: warn
