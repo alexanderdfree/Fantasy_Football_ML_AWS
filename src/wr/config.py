@@ -249,7 +249,7 @@ POSITION_CONFIG = PositionConfig(
         "receptions",
         "fumbles_lost",
         "carries",
-        "snap_pct",
+        "snap_pct_raw",
         # Per-game ff_opportunity expected receiving stats, merged by
         # src.data.external_sources. Leakage-safe via build_game_history_arrays
         # (prior in-season games only).

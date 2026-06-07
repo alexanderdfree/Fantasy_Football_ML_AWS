@@ -335,7 +335,7 @@ POSITION_CONFIG = PositionConfig(
         "targets",
         "receptions",
         "fumbles_lost",
-        "snap_pct",
+        "snap_pct_raw",
         "rushing_first_downs",
         "receiving_first_downs",
         "game_carry_share",

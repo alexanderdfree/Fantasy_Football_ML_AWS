@@ -5,7 +5,49 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.features.engineer import build_game_history_arrays
+from src.features.engineer import GAME_HISTORY_STATS, build_features, build_game_history_arrays
+
+
+def _traded_player_frame() -> pd.DataFrame:
+    """One WR, four 2023 games, traded KC->BUF after week 2 (a mid-season
+    ``stint`` change). snap_pct rises 0.5->0.8 across the weeks."""
+    rows = []
+    for wk, (team, snap) in enumerate([("KC", 0.5), ("KC", 0.6), ("BUF", 0.7), ("BUF", 0.8)], 1):
+        rows.append(
+            dict(
+                player_id="P1",
+                player_name="P1",
+                position="WR",
+                season=2023,
+                week=wk,
+                recent_team=team,
+                opponent_team="DAL",
+                snap_pct=snap,
+                targets=5,
+                carries=0,
+                receptions=3,
+                receiving_yards=40,
+                rushing_yards=0,
+                passing_yards=0,
+                attempts=0,
+                completions=0,
+                interceptions=0,
+                fumbles_lost=0,
+                passing_tds=0,
+                rushing_tds=0,
+                receiving_tds=0,
+                receiving_air_yards=50,
+                receiving_yards_after_catch=20,
+                receiving_first_downs=2,
+                receiving_epa=1.0,
+                rushing_epa=0.0,
+                rushing_first_downs=0,
+                sacks=0,
+                sack_yards=0,
+                fantasy_points=7.0,
+            )
+        )
+    return pd.DataFrame(rows)
 
 
 @pytest.mark.unit
@@ -113,3 +155,31 @@ def test_build_game_history_arrays_happy_path_unchanged():
     assert X_history.dtype == np.float32
     assert mask.shape == (3, 5)
     assert mask.dtype == np.bool_
+
+
+@pytest.mark.unit
+def test_snap_pct_static_lag_is_stint_aware():
+    """#677: the static ``snap_pct`` (prior week's snap %) must reset at a
+    mid-season team change. A traded player's first game with the new team must
+    NOT inherit the old team's snap share — the old non-stint-aware
+    ``groupby(player_id, season).shift(1)`` carried it over."""
+    out = build_features(_traded_player_frame()).sort_values("week")
+    # Raw per-game values preserved verbatim (these feed the attention history).
+    assert "snap_pct_raw" in out.columns
+    np.testing.assert_allclose(out["snap_pct_raw"].to_numpy(), [0.5, 0.6, 0.7, 0.8], atol=1e-9)
+    # Static feature = stint-aware prior-week snap %. Week 3 is the first BUF
+    # game: stint-aware -> 0.0 (no prior game in the BUF stint), NOT 0.6 (the
+    # KC week-2 carryover the non-stint-aware lag produced).
+    np.testing.assert_allclose(out["snap_pct"].to_numpy(), [0.0, 0.5, 0.0, 0.7], atol=1e-9)
+    week3 = out[out["week"] == 3]["snap_pct"].iloc[0]
+    assert week3 == 0.0  # explicit guard against the old carryover (would be 0.6)
+
+
+@pytest.mark.unit
+def test_snap_pct_history_uses_raw_not_prelagged():
+    """#788: the attention game-history default uses ``snap_pct_raw`` (un-lagged)
+    rather than the pre-lagged static ``snap_pct``. ``build_game_history_arrays``
+    applies its own leakage-safe shift, so feeding it the lagged column would
+    double-lag the snap-share signal in the sequence."""
+    assert "snap_pct_raw" in GAME_HISTORY_STATS
+    assert "snap_pct" not in GAME_HISTORY_STATS

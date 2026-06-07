@@ -1,5 +1,5 @@
 # === Data ===
-SEASONS = list(range(2012, 2026))  # 2012-2025 (snap counts available from 2012+)
+SEASONS = list(range(2012, 2026))  # load 2012 for prior-season/rolling CONTEXT only
 POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 MIN_GAMES_PER_SEASON = 6
 CACHE_DIR = "data/raw"
@@ -34,7 +34,7 @@ SCORING_PPR = {**_BASE_SCORING, "receptions": 1.0}
 SCORING = SCORING_PPR
 
 # === Split ===
-TRAIN_SEASONS = list(range(2012, 2024))
+TRAIN_SEASONS = list(range(2013, 2024))
 VAL_SEASONS = [2024]
 TEST_SEASONS = [2025]
 

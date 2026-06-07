@@ -285,9 +285,26 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df["air_yards_share"] = 0.0
 
-    # Lag snap_pct to prevent data leakage (use prior week's snap percentage)
+    # snap_pct gets two derived forms:
+    #   - ``snap_pct_raw``: the un-lagged per-game value, consumed by the
+    #     attention history sequence. ``build_game_history_arrays`` applies its
+    #     own leakage-safe ``shift(1)``, so feeding it the already-lagged
+    #     ``snap_pct`` double-lagged the sequence (#788).
+    #   - ``snap_pct`` (static feature): prior week's snap %, lagged
+    #     ``stint``-aware so a player traded mid-season doesn't inherit the old
+    #     team's snap share on his first game with the new team (#677). The
+    #     non-stint-aware ``groupby(player_id, season)`` lag carried it over.
+    # ``stint_id`` is still present here (dropped just below). The rolling / ewma
+    # / trend snap_pct features above were already computed off the raw value
+    # (before this block) with their own shift, so they are unaffected.
     if "snap_pct" in df.columns:
-        df["snap_pct"] = df.groupby(["player_id", "season"])["snap_pct"].shift(1).fillna(0)
+        # Raw per-game snap %, missing -> 0 (a missing snap row means the player
+        # didn't take snaps, the same 0-fill the old in-place lag applied). This
+        # is the history-sequence input; build_game_history_arrays lags it.
+        df["snap_pct_raw"] = df["snap_pct"].fillna(0)
+        df["snap_pct"] = (
+            df.groupby(["player_id", "season", "stint_id"])["snap_pct_raw"].shift(1).fillna(0)
+        )
 
     # Clean up intermediate columns
     drop_cols = ["team_targets", "team_carries", "team_changed", "stint_id"]
@@ -326,7 +343,7 @@ GAME_HISTORY_STATS = [
     "carries",
     "targets",
     "receptions",
-    "snap_pct",
+    "snap_pct_raw",
     "interceptions",
 ]
 
