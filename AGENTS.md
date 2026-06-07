@@ -48,8 +48,8 @@ This project is trained / tuned / benchmarked / tested across six environments. 
 | Apple Silicon MacBook | macOS (arm64) | CPU default · **MPS opt-in** | — | FP32 (no AMP) | `cpu` | M-series | MPS unproven for this small model; `FF_DEVICE=mps` to benchmark; CPU = CI-identical |
 | PC (RTX 5080) | Windows 11 | CUDA | Blackwell **sm_120** | FP16 def · BF16 opt-in | **cu128** | 9950X3D 16C/32T | `OPENBLAS_NUM_THREADS=1` **REQUIRED** (crash, not perf); `LGBM_N_JOBS=16` |
 | PC (RTX 5080) | WSL2 (Linux) | CUDA | Blackwell **sm_120** | FP16 def · BF16 opt-in | **cu128** | 9950X3D | no OPENBLAS crash; still cap BLAS for throughput; `scripts/wsl-env.sh` |
-| AWS g4dn.xlarge | Linux | CUDA | Turing **sm_75** (T4) | FP16 (BF16 opt-in→FP16) | cu126 | 4 vCPU | EC2 rollback path AND **the live AWS Batch fan-out as of 2026-06-07** (CE `instanceTypes=["g4dn.xlarge"]`, verified via describe-compute-environments) — so graphs/`torch.compile`/BF16 are all gated off (sm_75) on production Batch; the FP16 lowest-common-denominator |
-| AWS g6.xlarge | Linux | CUDA | Ada **sm_89** (L4) | FP16 def · BF16 opt-in | cu126 | 4 vCPU | **Intended** Batch fan-out per design docs, but **NOT deployed** — the live CE is still g4dn/T4 (see row above); an L4 migration (g6 or fractional **g6f**) to unlock CUDA graphs is under evaluation; BF16 measured-worse (#640) |
+| AWS g4dn.xlarge | Linux | CUDA | Turing **sm_75** (T4) | FP16 (BF16 opt-in→FP16) | cu126 | 4 vCPU | EC2 rollback path; the FP16 lowest-common-denominator |
+| AWS g6.xlarge | Linux | CUDA | Ada **sm_89** (L4) | FP16 def · BF16 opt-in | cu126 | 4 vCPU | Batch default fan-out; BF16 measured-worse (#640) |
 
 **Reuse these primitives — don't reinvent detection:**
 - **`detect_platform()`** ([src/shared/platform_detect.py](src/shared/platform_detect.py)) — the canonical capability report (`backend` cuda/mps/cpu, `gpu_name`, `compute_capability`, `sm`, `supports_bf16`, `os`, `is_wsl`, `cpu_count`, `recommended_cuda_wheel`). Reporting-only; branch new per-arch logic off this.

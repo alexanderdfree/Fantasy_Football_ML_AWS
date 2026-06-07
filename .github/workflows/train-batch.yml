@@ -3,10 +3,7 @@ name: Train on Batch (Spot)
 # Active training path when BATCH_ACTIVE=true. Fires after batch-image.yml
 # pushes a fresh image to ECR, then submits one Batch job per position to the
 # ff-gpu-spot Compute Environment. Each position trains in parallel on its own
-# Spot instance. NOTE: the live CE runs g4dn.xlarge (Tesla T4, sm_75) as of
-# 2026-06-07 — the docs' g6/L4 migration is not deployed (graphs gated off on
-# T4). An L4 (g6/g6f) migration to enable graphs is under evaluation. See
-# docs/batch_design.md.
+# Spot g6.xlarge. See docs/batch_design.md.
 #
 # When BATCH_ACTIVE != 'true' the gate on the `train` job below skips this
 # workflow on workflow_run; train-ec2.yml stays active. workflow_dispatch
@@ -308,12 +305,12 @@ jobs:
           # from the run's expected SHA. Manual dispatch stamps the dispatch
           # ref SHA unless image_sha was provided for a specific image.
           FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
-          # CUDA graphs autodetect ON for sm_80+ in the container — BUT the live
-          # CE currently runs g4dn.xlarge (Tesla T4, sm_75) as of 2026-06-07
-          # (verified via describe-compute-environments), so graphs are gated OFF
-          # and this has NO effect until the CE migrates to L4 (g6/g6f). Kept as
-          # an optional FLEET OVERRIDE for that future L4 fleet (set
-          # FF_BATCH_CUDA_GRAPH=0 to force eager); launch.py forwards it only when set.
+          # CUDA graphs autodetect ON in the container on the g6/L4 (sm_89) —
+          # cuda_graph_enabled() defaults on for sm_80+, so the fan-out is
+          # graphed by default. This repo variable is an optional FLEET OVERRIDE,
+          # not the trigger: leave it unset for the autodetect default, or set
+          # FF_BATCH_CUDA_GRAPH=0 to force the whole fan-out back to the eager
+          # path. launch.py forwards it to the container only when set.
           FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
         run: |
           STARTED_AT=$(date +%s)
@@ -460,6 +457,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
           FF_MODEL_S3_PREFIX: models
+          # The L4 Batch path autodetects graphs ON, so rows are labeled graphed
+          # below (keeps them separate from the pre-cutover eager baseline —
+          # graphed and eager rows aren't bit-comparable). This optional fleet
+          # override (FF_BATCH_CUDA_GRAPH=0) forces eager + the plain label.
+          FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
           POSITIONS: ${{ needs.detect.outputs.positions }}
           # Branch + head SHA come from a workflow_run trigger whose payload
           # is attacker-controllable (e.g. a fork that happens to share a
@@ -503,14 +505,14 @@ jobs:
           # workspace HEAD via get_git_hash(), which is correct for a
           # manual run. See TODO.md "Benchmark git_hash recorded the wrong
           # SHA on rapid back-to-back merges" archive entry.
-          # Hardware label for the History tab. The live CE runs g4dn.xlarge
-          # (Tesla T4, sm_75) as of 2026-06-07 — NOT the g6/L4 the design docs
-          # assume — so graphs are gated off (sm_75 < sm_80) and training is
-          # eager. Hardcoded to current reality. TODO(L4-migration): when the CE
-          # moves to L4 (g6/g6f), switch to a runtime-derived label (stamp
-          # gpu_name + cuda_graph_active in train.py's benchmark_metrics.json and
-          # let benchmark.py build the label) so it can't silently drift again.
-          INSTANCE_TYPE="g4dn.xlarge (T4, Spot)"
+          # The Batch path runs on sm_89 L4, where CUDA graphs autodetect ON
+          # (src/shared/utils.cuda_graph_enabled), so default the row label to
+          # graphed — keeping it separate from the pre-cutover eager baseline.
+          # FF_CUDA_GRAPH is the force-off override: a falsy value → eager → plain.
+          INSTANCE_TYPE="g6.xlarge (Spot, CUDA-graph)"
+          case "$(echo "${FF_CUDA_GRAPH:-}" | tr 'A-Z' 'a-z')" in
+            0|false|no|off) INSTANCE_TYPE="g6.xlarge (Spot)" ;;
+          esac
           python -m src.batch.benchmark \
             --download-only \
             --backend batch \
