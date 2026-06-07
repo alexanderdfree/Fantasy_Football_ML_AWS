@@ -81,11 +81,30 @@ def _json_default(obj):
 
 
 def _per_target(metrics: dict, exclude="total") -> dict:
-    return {
-        t: {"mae": round(v["mae"], 3), "r2": round(v["r2"], 3)}
-        for t, v in metrics.items()
-        if t != exclude
-    }
+    out: dict[str, dict] = {}
+    for t, v in metrics.items():
+        if t == exclude:
+            continue
+        entry = {"mae": round(v["mae"], 3), "r2": round(v["r2"], 3)}
+        # rmse is additive: real pipeline metrics (compute_metrics) always carry
+        # it, but synthetic test fixtures and the dry-run stub omit it — guard so
+        # those stay {mae, r2} (and the exact-equality tests keep passing) while
+        # production runs gain a per-target rmse for the History tab's toggle.
+        if v.get("rmse") is not None:
+            entry["rmse"] = round(v["rmse"], 3)
+        out[t] = entry
+    return out
+
+
+def _rmse_field(prefix: str, total: dict) -> dict:
+    """``{prefix}_rmse`` as a one-key dict, or empty when the block has no rmse.
+
+    Mirrors ``_per_target``'s additive guard so summaries built from synthetic
+    fixtures / the dry-run stub (no rmse) stay byte-identical, while production
+    summaries gain ``{model}_rmse`` for the History tab's MAE/RMSE toggle.
+    """
+    rmse = total.get("rmse")
+    return {f"{prefix}_rmse": round(rmse, 3)} if rmse is not None else {}
 
 
 def summarize_pipeline_result(position: str, result: dict) -> dict:
@@ -109,10 +128,13 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         "ridge_top12": round(result.get("ridge_ranking", {}).get("season_avg_hit_rate", 0), 3),
         "nn_top12": round(result.get("nn_ranking", {}).get("season_avg_hit_rate", 0), 3),
     }
+    summary.update(_rmse_field("ridge", ridge))
+    summary.update(_rmse_field("nn", nn))
     if "elasticnet_metrics" in result:
         enet = result["elasticnet_metrics"]["total"]
         summary["elasticnet_mae"] = round(enet["mae"], 3)
         summary["elasticnet_r2"] = round(enet["r2"], 3)
+        summary.update(_rmse_field("elasticnet", enet))
         summary["elasticnet_per_target"] = _per_target(result["elasticnet_metrics"])
         summary["elasticnet_top12"] = round(
             result.get("elasticnet_ranking", {}).get("season_avg_hit_rate", 0),
@@ -122,6 +144,7 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         attn = result["attn_nn_metrics"]["total"]
         summary["attn_nn_mae"] = round(attn["mae"], 3)
         summary["attn_nn_r2"] = round(attn["r2"], 3)
+        summary.update(_rmse_field("attn_nn", attn))
         summary["attn_nn_per_target"] = _per_target(result["attn_nn_metrics"])
         summary["attn_nn_top12"] = round(
             result.get("attn_nn_ranking", {}).get("season_avg_hit_rate", 0),
@@ -131,6 +154,7 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         lgbm = result["lgbm_metrics"]["total"]
         summary["lgbm_mae"] = round(lgbm["mae"], 3)
         summary["lgbm_r2"] = round(lgbm["r2"], 3)
+        summary.update(_rmse_field("lgbm", lgbm))
         summary["lgbm_per_target"] = _per_target(result["lgbm_metrics"])
         summary["lgbm_top12"] = round(
             result.get("lgbm_ranking", {}).get("season_avg_hit_rate", 0),

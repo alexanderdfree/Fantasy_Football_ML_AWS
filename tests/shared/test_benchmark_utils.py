@@ -207,7 +207,21 @@ def test_per_target_excludes_total_and_rounds():
     }
     out = _per_target(metrics)
     assert "total" not in out
+    # No rmse in the source → entry stays {mae, r2} (additive-omit contract).
     assert out["passing_yards"] == {"mae": 24.568, "r2": 0.712}
+    assert "rmse" not in out["passing_yards"]
+
+
+@pytest.mark.unit
+def test_per_target_includes_rmse_when_present():
+    """Real pipeline metrics (compute_metrics) carry rmse; _per_target surfaces
+    it rounded so the History tab's RMSE toggle has per-target detail."""
+    metrics = {
+        "passing_yards": {"mae": 24.56789, "rmse": 31.23456, "r2": 0.7123},
+        "total": {"mae": 99.9, "rmse": 120.0, "r2": 0.1},
+    }
+    out = _per_target(metrics)
+    assert out["passing_yards"] == {"mae": 24.568, "rmse": 31.235, "r2": 0.712}
 
 
 @pytest.mark.unit
@@ -248,6 +262,23 @@ def _basic_result() -> dict:
         "nn_metrics": {
             "total": {"mae": 4.5, "r2": 0.35},
             "yards": {"mae": 18.0, "r2": 0.3},
+        },
+        "ridge_ranking": {"season_avg_hit_rate": 0.42},
+        "nn_ranking": {"season_avg_hit_rate": 0.48},
+    }
+
+
+def _result_with_rmse() -> dict:
+    """Like ``_basic_result`` but the metrics carry rmse (matches the real
+    ``compute_metrics`` shape) so the summary gains ``{model}_rmse`` fields."""
+    return {
+        "ridge_metrics": {
+            "total": {"mae": 5.0, "rmse": 6.4, "r2": 0.3},
+            "yards": {"mae": 20.0, "rmse": 27.0, "r2": 0.25},
+        },
+        "nn_metrics": {
+            "total": {"mae": 4.5, "rmse": 5.9, "r2": 0.35},
+            "yards": {"mae": 18.0, "rmse": 24.0, "r2": 0.3},
         },
         "ridge_ranking": {"season_avg_hit_rate": 0.42},
         "nn_ranking": {"season_avg_hit_rate": 0.48},
@@ -316,6 +347,53 @@ def test_summarize_includes_cv_block():
     assert s["cv_ridge_mae_std"] == 0.25
     assert s["cv_nn_mae_mean"] == 4.6
     assert s["best_cv_alphas"] == {"passing_yards": 10.0, "passing_tds": 1.0}
+
+
+@pytest.mark.unit
+def test_summarize_includes_rmse_when_metrics_carry_it():
+    """Production metrics carry rmse → summary gains ``{model}_rmse`` (total) and
+    a per-target rmse, feeding the History tab's MAE/RMSE toggle."""
+    s = summarize_pipeline_result("QB", _result_with_rmse())
+    assert s["ridge_rmse"] == 6.4
+    assert s["nn_rmse"] == 5.9
+    assert s["ridge_per_target"]["yards"]["rmse"] == 27.0
+    assert s["nn_per_target"]["yards"]["rmse"] == 24.0
+
+
+@pytest.mark.unit
+def test_summarize_omits_rmse_when_metrics_lack_it():
+    """Synthetic / dry-run results have no rmse — the summary must not invent the
+    key (the frontend renders those rows' RMSE view as ``--``)."""
+    s = summarize_pipeline_result("QB", _basic_result())
+    assert "ridge_rmse" not in s
+    assert "nn_rmse" not in s
+    assert "rmse" not in s["ridge_per_target"]["yards"]
+
+
+@pytest.mark.unit
+def test_summarize_rmse_covers_all_optional_models():
+    """``_rmse_field`` fires for every optional model block (elasticnet / attn /
+    lgbm), not just ridge + nn."""
+    r = _result_with_rmse()
+    r["elasticnet_metrics"] = {
+        "total": {"mae": 4.8, "rmse": 6.1, "r2": 0.32},
+        "yards": {"mae": 19.0, "rmse": 25.0, "r2": 0.28},
+    }
+    r["elasticnet_ranking"] = {"season_avg_hit_rate": 0.45}
+    r["attn_nn_metrics"] = {
+        "total": {"mae": 4.3, "rmse": 5.6, "r2": 0.4},
+        "yards": {"mae": 17.0, "rmse": 22.0, "r2": 0.33},
+    }
+    r["attn_nn_ranking"] = {"season_avg_hit_rate": 0.5}
+    r["lgbm_metrics"] = {
+        "total": {"mae": 4.6, "rmse": 6.0, "r2": 0.34},
+        "yards": {"mae": 18.5, "rmse": 24.5, "r2": 0.29},
+    }
+    r["lgbm_ranking"] = {"season_avg_hit_rate": 0.47}
+    s = summarize_pipeline_result("WR", r)
+    assert s["elasticnet_rmse"] == 6.1
+    assert s["attn_nn_rmse"] == 5.6
+    assert s["lgbm_rmse"] == 6.0
 
 
 @pytest.mark.unit

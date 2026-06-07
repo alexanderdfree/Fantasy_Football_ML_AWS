@@ -563,6 +563,102 @@ class TestPerTargetDetail:
         assert "per_target" not in pill
 
 
+class TestRmseMetric:
+    """The History tab's MAE/RMSE toggle reads an additive ``rmse`` on each pill
+    plus a parallel ``per_target_rmse`` map. Both surface only when the source run
+    carries them — runs predating rmse omit them, so the at-a-glance pill stays
+    exactly ``{position, mae}`` and the frontend renders the RMSE view as ``--``."""
+
+    def test_rmse_attached_when_present(self, history_client):
+        client, history_dir = history_client
+        _write_run(
+            history_dir,
+            ts="2026-06-01T10:00:00",
+            sha="rms1111",
+            pr=300,
+            results=[{"position": "QB", "ridge_mae": 6.5, "ridge_rmse": 8.1}],
+        )
+        qb_ridge = client.get("/api/benchmark_history").get_json()["rows"][0]["ridge"][0]
+        assert qb_ridge == {"position": "QB", "mae": 6.5, "rmse": 8.1}
+
+    def test_rmse_omitted_when_absent(self, history_client):
+        """A run with mae but no rmse keeps the pill at exactly {position, mae} —
+        the backward-compat guard for the exact-equality tests in TestRowShape."""
+        client, history_dir = history_client
+        _write_run(
+            history_dir,
+            ts="2026-06-01T10:00:00",
+            sha="rms2222",
+            pr=300,
+            results=[{"position": "QB", "ridge_mae": 6.5}],
+        )
+        qb_ridge = client.get("/api/benchmark_history").get_json()["rows"][0]["ridge"][0]
+        assert qb_ridge == {"position": "QB", "mae": 6.5}
+        assert "rmse" not in qb_ridge
+
+    def test_nan_rmse_is_omitted(self, history_client):
+        """``float('nan')`` rmse is scrubbed by _safe_num and dropped (browsers
+        reject NaN), same as the mae path."""
+        client, history_dir = history_client
+        path = history_dir / "2026-06-01T10-00-00_rms3.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "timestamp": "2026-06-01T10:00:00",
+                    "git_hash": "rms3333",
+                    "results": [{"position": "QB", "ridge_mae": 6.5, "ridge_rmse": float("nan")}],
+                }
+            )
+        )
+        qb_ridge = client.get("/api/benchmark_history").get_json()["rows"][0]["ridge"][0]
+        assert qb_ridge == {"position": "QB", "mae": 6.5}
+
+    def test_per_target_rmse_attached_when_present(self, history_client):
+        client, history_dir = history_client
+        _write_run(
+            history_dir,
+            ts="2026-06-01T10:00:00",
+            sha="rms4444",
+            pr=300,
+            results=[
+                {
+                    "position": "QB",
+                    "ridge_mae": 6.5,
+                    "ridge_rmse": 8.1,
+                    "ridge_per_target": {
+                        "passing_yards": {"mae": 67.6, "rmse": 88.2, "r2": 0.35},
+                        "passing_tds": {"mae": 0.86, "rmse": 1.1, "r2": 0.09},
+                    },
+                }
+            ],
+        )
+        qb_ridge = client.get("/api/benchmark_history").get_json()["rows"][0]["ridge"][0]
+        # MAE map and the parallel RMSE map, both r2-stripped and rounded.
+        assert qb_ridge["per_target"] == {"passing_yards": 67.6, "passing_tds": 0.86}
+        assert qb_ridge["per_target_rmse"] == {"passing_yards": 88.2, "passing_tds": 1.1}
+
+    def test_per_target_rmse_omitted_when_absent(self, history_client):
+        """Old-format per_target ({mae, r2}, no rmse) yields the MAE map but no
+        rmse map, so detailed mode under the RMSE toggle renders ``--``."""
+        client, history_dir = history_client
+        _write_run(
+            history_dir,
+            ts="2026-06-01T10:00:00",
+            sha="rms5555",
+            pr=300,
+            results=[
+                {
+                    "position": "QB",
+                    "ridge_mae": 6.5,
+                    "ridge_per_target": {"passing_yards": {"mae": 67.6, "r2": 0.35}},
+                }
+            ],
+        )
+        qb_ridge = client.get("/api/benchmark_history").get_json()["rows"][0]["ridge"][0]
+        assert qb_ridge["per_target"] == {"passing_yards": 67.6}
+        assert "per_target_rmse" not in qb_ridge
+
+
 class TestTargetMaps:
     """The endpoint serves static {target_key: label} and {target_key: unit}
     lookups so detailed mode can render 'Passing Yards … yds' without a second
