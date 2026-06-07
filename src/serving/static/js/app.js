@@ -1120,7 +1120,6 @@ function renderArchFeatureAccordions(positions) {
 
         const meta = [
             `<span><strong>Targets:</strong> ${fmtList(p.targets)}</span>`,
-            `<span><strong>Huber δ (total):</strong> ${fmtNum(p.huber_delta_total)}</span>`,
             overrideStr ? `<span><strong>Head overrides:</strong> ${overrideStr}</span>` : "",
         ].filter(Boolean).join(" · ");
 
@@ -1829,6 +1828,11 @@ function renderHistory() {
     if (!historyData || !head || !tbody) return;
     // Checkbox is "Group by model"; default (unchecked) groups by position.
     const groupByPosition = !document.getElementById("history-group-by-model-toggle").checked;
+    // The "bold = best model" legend only applies when grouping by position
+    // (the group-by-model layout sets no best-flag — positions sit on different
+    // raw-stat scales), so hide that legend swatch when grouped by model (#921).
+    const bestLegend = document.getElementById("history-legend-best-wrap");
+    if (bestLegend) bestLegend.style.display = groupByPosition ? "" : "none";
     const detailed = document.getElementById("history-detailed-toggle").checked;
     const metric = historyMetric;
     // Deltas (and their green/red tints) are metric-specific, so recompute on

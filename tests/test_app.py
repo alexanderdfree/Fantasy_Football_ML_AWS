@@ -116,6 +116,14 @@ class TestModelArchitecture:
             assert "attention_history" in feats, f"{pos} missing attention_history"
             assert len(feats["attention_history"]) > 0
 
+    def test_k_scheduler_surfaces_distinct_attention_max_lr(self, client):
+        """K's attention NN trains at a distinct OneCycle max_lr (2e-3) from the
+        dense NN (1e-3); the scheduler string must surface that override, not
+        advertise only the dense NN's rate (#845)."""
+        r = client.get("/api/model_architecture")
+        sched = r.get_json()["positions"]["K"]["scheduler"]
+        assert "attention NN" in sched, sched
+
 
 # ===========================================================================
 # GET /api/predictions — happy path + error paths
@@ -251,7 +259,9 @@ class TestAuxiliaryEndpoints:
         assert r.status_code == 200
         body = r.get_json()
         expected = "sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost"
-        for pos in ("QB", "RB", "WR"):
+        # TE was the lone "raw count" outlier though it computes the same 3-source
+        # sum (src/te/targets.py) — locked in here (#835).
+        for pos in ("QB", "RB", "WR", "TE"):
             target = next(t for t in body[pos]["targets"] if t["key"] == "fumbles_lost")
             assert target["formula"] == expected
 

@@ -91,7 +91,11 @@ POSITION_INFO = {
             {"key": "receiving_tds", "label": "Receiving TDs", "formula": "raw count"},
             {"key": "receiving_yards", "label": "Receiving Yards", "formula": "raw count"},
             {"key": "receptions", "label": "Receptions", "formula": "raw count"},
-            {"key": "fumbles_lost", "label": "Fumbles Lost", "formula": "raw count"},
+            {
+                "key": "fumbles_lost",
+                "label": "Fumbles Lost",
+                "formula": ("sack_fumbles_lost + rushing_fumbles_lost + receiving_fumbles_lost"),
+            },
         ],
         "adjustments": "None - fumbles_lost is now a direct target.",
         "specific_features": list(te_cfg.POSITION_CONFIG.specific_features),
