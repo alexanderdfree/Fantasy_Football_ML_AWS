@@ -936,6 +936,16 @@ def _train_nested_attention_nn(
         weight_decay=cfg.get("attn_weight_decay", cfg["nn_weight_decay"]),
         patience=cfg.get("attn_patience", cfg["nn_patience"]),
         scheduler_prefix="attn_",
+        # Thread the gate/gated-target loss config like the flat attention path
+        # (_train_attention_nn) so a nested+gated config trains its gate head
+        # instead of silently dropping it (#392/#422). Inert for today's K
+        # config (no gated_targets → empty gate loop), but it removes the
+        # flat/nested asymmetry that would silently break a future gated
+        # nested head.
+        loss_kwargs={
+            "gate_weight": cfg.get("attn_gate_weight", 1.0),
+            "gated_targets": cfg.get("gated_targets"),
+        },
     )
 
     test_preds = model.predict_numpy(
