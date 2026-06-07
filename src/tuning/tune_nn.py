@@ -666,13 +666,18 @@ def _format_value(val) -> str:
 
 
 def _format_config_lines(pos: str, best_params: dict) -> str:
-    """Render best params as ``{POS}_NN_*`` constants ready to paste into
-    ``src/{pos}/config.py``.
+    """Render best params as ``PositionConfig`` kwargs ready to paste into the
+    ``POSITION_CONFIG = PositionConfig(...)`` call in ``src/{pos}/config.py``.
+
+    The old UPPER_CASE module-level constants were retired by the PositionConfig
+    migration (#826), so emit the snake_case kwargs the config object reads —
+    the kwarg name is the constant suffix lowercased, which keeps scheduler
+    params attention-namespaced (``attn_scheduler_type``, not ``scheduler_type``).
     """
-    prefix = pos.upper()
     lines = [
-        f"# Tuned attention-NN params for {pos} — paste into src/{pos.lower()}/config.py:",
-        "# ATTN_ENCODER_HIDDEN_DIM=0 means single-layer encoder, not zero-width hidden.",
+        f"# Tuned attention-NN params for {pos} — paste into the",
+        f"# POSITION_CONFIG = PositionConfig(...) call in src/{pos.lower()}/config.py:",
+        "# (attn_encoder_hidden_dim=0 means single-layer encoder, not zero-width hidden.)",
     ]
     for param, const_suffix in _PARAM_TO_CONST.items():
         if param not in best_params:
@@ -681,7 +686,7 @@ def _format_config_lines(pos: str, best_params: dict) -> str:
         if param == "nn_backbone_layers":
             # Stored as a tuple from suggest_categorical; render as a list.
             val = list(val)
-        lines.append(f"{prefix}_{const_suffix} = {_format_value(val)}")
+        lines.append(f"    {const_suffix.lower()}={_format_value(val)},")
     return "\n".join(lines)
 
 
