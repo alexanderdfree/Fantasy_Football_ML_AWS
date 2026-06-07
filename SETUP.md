@@ -275,6 +275,7 @@ Each run writes a `{run_id}.json` file under [benchmark_history/](benchmark_hist
 pytest                       # full suite — unit, integration, e2e
 pytest -m unit               # fast subset (<1 s per test)
 pytest tests/rb/             # just one position's tests
+scripts/pytest-fair.sh -m unit   # fair CPU share across concurrent runs (e.g. 2 windows); plain-pytest fallback elsewhere
 ```
 
 The e2e tests read `data/splits/*.parquet`, so the first-time data pull must have been done. Individual markers are defined in [pyproject.toml](pyproject.toml).
