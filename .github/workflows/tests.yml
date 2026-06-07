@@ -250,7 +250,7 @@ jobs:
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
         # major version comment. SHA = codecov/codecov-action v6 tip as of
         # 2026-05-21.
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354  # v6
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage-${{ matrix.shard }}.xml
@@ -267,7 +267,7 @@ jobs:
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
         # major version comment. SHA = codecov/codecov-action v6 tip as of
         # 2026-05-21.
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354  # v6
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./junit-${{ matrix.shard }}.xml
