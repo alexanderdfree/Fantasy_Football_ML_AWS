@@ -754,8 +754,9 @@ class MultiHeadTrainer:
         return (X_batch.to(self.device, non_blocking=True),)
 
     def _maybe_graph_model(self, train_loader) -> None:
-        """Opt-in (``FF_CUDA_GRAPH``, sm_80+): replace ``self.model`` with a CUDA
-        graph capture of its forward+backward, replayed each train step.
+        """Autodetect-ON for CUDA sm_80+ (``FF_CUDA_GRAPH`` is the force-off
+        override): replace ``self.model`` with a CUDA graph capture of its
+        forward+backward, replayed each train step.
 
         The tiny attention model is GPU-launch-bound; capturing collapses its
         per-step kernel launches into one replay. ``make_graphed_callables``
@@ -810,7 +811,7 @@ class MultiHeadTrainer:
         self._graphed = True
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
-        # Opt-in CUDA graph capture (FF_CUDA_GRAPH, sm_80+); no-op otherwise.
+        # CUDA graph capture: autodetect-ON for sm_80+ (FF_CUDA_GRAPH=0 forces eager); no-op otherwise.
         self._maybe_graph_model(train_loader)
         # FF_NN_FIXED_EPOCHS=<N> (test-only): train exactly N epochs, never
         # early-stop, keep last-epoch weights (skip best-val restore). Makes

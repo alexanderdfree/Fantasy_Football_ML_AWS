@@ -486,12 +486,18 @@ background. It requires both a SOCI index in ECR alongside the image
 **and** the `soci-snapshotter-grpc` plugin active on the ECS host's
 containerd.
 
-**Active configuration (2026-05-21, Option B)**: indexes are published
+> **⚠️ REMOVED 2026-06-07 — this section is historical.** SOCI never worked on
+> ECS-managed EC2 (the ECS agent ignores the snapshotter; SOCI-on-ECS is
+> Fargate-only). The `ff-batch-lt` launch template, `infra/batch/userdata.sh`,
+> and the SOCI-index publish step were deleted; cold-start is the ~120 s full
+> image pull. See the [ADR-0013 changelog](adr/0013-spot-fan-out-via-aws-batch.md).
+
+**Option B configuration (2026-05-21, since removed)**: indexes were published
 to the `ff-training` ECR repo by [batch-image.yml](../.github/workflows/batch-image.yml)'s
 `Publish SOCI index` step (`continue-on-error: false`, version-pinned
 to `0.13.0`). The `ff-gpu-spot` Compute Environment uses the
 `ff-batch-lt` EC2 launch template, whose UserData
-([infra/batch/userdata.sh](../infra/batch/userdata.sh)) installs
+(`infra/batch/userdata.sh`) installs
 `soci-snapshotter-grpc` v0.13.0 on the AL2 host pre-boot, registers it
 as a containerd proxy plugin, and starts it as a systemd unit ordered
 `Before=containerd.service` (ecs.service is transitively `After=containerd.service` on AL2, so no explicit `Before=ecs.service` is needed). Two gates guard the bootstrap:
@@ -538,7 +544,7 @@ returns to ~122 s. See [infra/batch/README.md](../infra/batch/README.md)
 "Rollback SOCI launch template" for the full sequence.
 
 **Version pin discipline**: `SOCI_VERSION` in
-[infra/batch/userdata.sh](../infra/batch/userdata.sh) (host snapshotter)
+`infra/batch/userdata.sh` (host snapshotter)
 and [batch-image.yml](../.github/workflows/batch-image.yml) (index
 publisher) MUST stay aligned. SOCI manifest format evolves between
 minor releases; publisher/consumer skew breaks lazy-load silently.
