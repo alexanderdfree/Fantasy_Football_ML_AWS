@@ -707,16 +707,18 @@ def test_wiki_page_returns_rendered_html(client):
 @pytest.mark.integration
 def test_wiki_render_doc_caches_html(app_module, monkeypatch):
     """Second call hits the cached HTML rather than re-rendering markdown."""
+    import src.serving.wiki as wiki
+
     slug = next(iter(app_module.WIKI_DOCS))
 
     calls = {"count": 0}
-    real_md = app_module.markdown.markdown
+    real_md = wiki.markdown.markdown
 
     def _counting_md(text, **kwargs):
         calls["count"] += 1
         return real_md(text, **kwargs)
 
-    monkeypatch.setattr(app_module.markdown, "markdown", _counting_md)
+    monkeypatch.setattr(wiki.markdown, "markdown", _counting_md)
 
     app_module._render_wiki_doc(slug)
     app_module._render_wiki_doc(slug)

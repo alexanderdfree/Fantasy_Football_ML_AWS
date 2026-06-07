@@ -12,6 +12,15 @@ import numpy as np
 _VALID_SCORING = ("ppr", "half_ppr", "standard")
 _MODEL_PRED_PREFIXES = ("ridge", "nn", "attn_nn", "lgbm")
 
+# (display_name, column_prefix) pairs — the best-MAE selection loop in
+# comparison._best_model_arrays and _compute_metrics_locked iterate these.
+_MODEL_PRED_COLUMNS = [
+    ("Ridge Regression", "ridge"),
+    ("Neural Network", "nn"),
+    ("Attention NN", "attn_nn"),
+    ("LightGBM", "lgbm"),
+]
+
 
 def _safe_num(v):
     """Convert NaN/inf to None so jsonify produces valid JSON (browsers reject NaN)."""

@@ -33,6 +33,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import src.serving.wiki as wiki
+
 pytestmark = pytest.mark.unit
 
 
@@ -217,14 +219,14 @@ class TestWikiRenderMtimeInvalidation:
 
         monkeypatch.setattr(app_mod, "_cache", {})
         monkeypatch.setattr(
-            app_mod,
+            wiki,
             "WIKI_DOCS",
             {"d": {"name": "Doc", "group": "G", "path": "doc.md"}},
         )
         # Point repo-root resolution at tmp_path by faking __file__ two levels up.
         fake_app_file = tmp_path / "src" / "serving" / "app.py"
         fake_app_file.parent.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setattr(app_mod, "__file__", str(fake_app_file))
+        monkeypatch.setattr(wiki, "__file__", str(fake_app_file))
 
         html1 = app_mod._render_wiki_doc("d")
         assert "First" in html1
@@ -249,21 +251,21 @@ class TestWikiRenderMtimeInvalidation:
         doc.write_text("# Stable\n", encoding="utf-8")
         monkeypatch.setattr(app_mod, "_cache", {})
         monkeypatch.setattr(
-            app_mod, "WIKI_DOCS", {"d": {"name": "Doc", "group": "G", "path": "doc.md"}}
+            wiki, "WIKI_DOCS", {"d": {"name": "Doc", "group": "G", "path": "doc.md"}}
         )
         fake_app_file = tmp_path / "src" / "serving" / "app.py"
         fake_app_file.parent.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setattr(app_mod, "__file__", str(fake_app_file))
+        monkeypatch.setattr(wiki, "__file__", str(fake_app_file))
 
         app_mod._render_wiki_doc("d")
         calls = {"n": 0}
-        real_markdown = app_mod.markdown.markdown
+        real_markdown = wiki.markdown.markdown
 
         def _counting_markdown(*a, **k):
             calls["n"] += 1
             return real_markdown(*a, **k)
 
-        monkeypatch.setattr(app_mod.markdown, "markdown", _counting_markdown)
+        monkeypatch.setattr(wiki.markdown, "markdown", _counting_markdown)
         app_mod._render_wiki_doc("d")  # mtime unchanged → cache hit
         assert calls["n"] == 0, "markdown re-rendered despite unchanged mtime"
 

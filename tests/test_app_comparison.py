@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import src.serving.comparison as comparison
+
 _POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 _ARCHES = {"Ridge Regression", "Neural Network", "Attention NN", "LightGBM"}
 
@@ -45,7 +47,7 @@ def test_model_block_picks_best_mae_arch(app_module):
         }
         for _ in range(5)
     ]
-    block = app_module._model_block_from_results(pd.DataFrame(rows), "ppr", "QB")
+    block = comparison._model_block_from_results(pd.DataFrame(rows), "ppr", "QB")
     assert block["best_arch"] == "Ridge Regression"
     assert block["mae"] == 0.0
     assert block["n"] == 5
@@ -66,7 +68,7 @@ def test_model_block_top30_filter_restricts_rows(app_module):
         }
         for pid in ("QB000", "QB001", "QB999")
     ]
-    block = app_module._model_block_from_results(
+    block = comparison._model_block_from_results(
         pd.DataFrame(rows), "ppr", "QB", id_filter={"QB000", "QB001"}
     )
     assert block["n"] == 2  # QB999 excluded by the id filter
@@ -89,7 +91,7 @@ def test_model_block_none_when_no_predictions(app_module):
             }
         ]
     )
-    assert app_module._model_block_from_results(df, "ppr", "K") is None
+    assert comparison._model_block_from_results(df, "ppr", "K") is None
 
 
 @pytest.mark.unit
@@ -97,7 +99,7 @@ def test_model_block_none_when_position_absent(app_module):
     df = pd.DataFrame(
         [{"player_id": "QB000", "position": "QB", "fantasy_points": 10.0, "ridge_pred_ppr": 10.0}]
     )
-    assert app_module._model_block_from_results(df, "ppr", "RB") is None
+    assert comparison._model_block_from_results(df, "ppr", "RB") is None
 
 
 # --------------------------------------------------------------------------- #
@@ -122,7 +124,7 @@ def test_model_reliability_sigma_bias(app_module):
         }
         for i in range(5)
     ]
-    block = app_module._model_reliability_from_results(pd.DataFrame(rows), "ppr", "QB")
+    block = comparison._model_reliability_from_results(pd.DataFrame(rows), "ppr", "QB")
     assert block["best_arch"] == "Ridge Regression"
     assert block["n"] == 5
     assert block["bias"] == 0.0
@@ -145,7 +147,7 @@ def test_model_reliability_none_when_no_predictions(app_module):
             }
         ]
     )
-    assert app_module._model_reliability_from_results(df, "ppr", "K") is None
+    assert comparison._model_reliability_from_results(df, "ppr", "K") is None
 
 
 # --------------------------------------------------------------------------- #
@@ -217,7 +219,7 @@ def _fake_experts():
 
 @pytest.mark.integration
 def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_cache, monkeypatch):
-    monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
+    monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
     app_module._cache.update(synthetic_cache)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -251,7 +253,7 @@ def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_
 def test_comparison_passes_expert_reliability_through(app_module, synthetic_cache, monkeypatch):
     """The per-source residual-σ block is forwarded verbatim from the committed JSON,
     including the position-coverage gaps (NFL.com no-DST, RotoWire no-K)."""
-    monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
+    monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
     app_module._cache.update(synthetic_cache)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -269,7 +271,7 @@ def test_comparison_passes_expert_reliability_through(app_module, synthetic_cach
 def test_comparison_includes_live_model_reliability(app_module, synthetic_cache, monkeypatch):
     """The model side of the reliability table is computed live per position from the
     cached test predictions (auto-updates on retrain), alongside the static experts."""
-    monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
+    monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
     app_module._cache.update(synthetic_cache)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -286,7 +288,7 @@ def test_comparison_includes_live_model_reliability(app_module, synthetic_cache,
 
 @pytest.mark.integration
 def test_comparison_scoring_param_passthrough(app_module, synthetic_cache, monkeypatch):
-    monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
+    monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
     app_module._cache.update(synthetic_cache)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -299,7 +301,7 @@ def test_comparison_scoring_param_passthrough(app_module, synthetic_cache, monke
 def test_comparison_model_unavailable_when_no_results(app_module, monkeypatch):
     """No loaded models (empty cache): experts still render; model cells are None
     and ``model_source`` reports the degraded state — the tab never 500s."""
-    monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
+    monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
     # Don't let _ensure_metrics try to load real models off disk/S3.
     monkeypatch.setattr(app_module, "_ensure_metrics", lambda: None)
     app_module.app.config["TESTING"] = True
@@ -316,7 +318,7 @@ def test_comparison_model_unavailable_when_no_results(app_module, monkeypatch):
 
 @pytest.mark.integration
 def test_comparison_500_when_expert_data_missing(app_module, monkeypatch):
-    monkeypatch.setattr(app_module, "_load_comparison_experts", lambda: None)
+    monkeypatch.setattr(comparison, "_load_comparison_experts", lambda: None)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         r = c.get("/api/comparison")
@@ -331,9 +333,8 @@ def test_comparison_500_when_expert_data_missing(app_module, monkeypatch):
 @pytest.mark.unit
 def test_committed_expert_summary_contract():
     """The generator's committed output has the shape the route + UI rely on."""
-    import src.serving.app as app_mod
 
-    with open(app_mod._COMPARISON_EXPERTS_PATH, encoding="utf-8") as f:
+    with open(comparison._COMPARISON_EXPERTS_PATH, encoding="utf-8") as f:
         data = json.load(f)
 
     assert set(data["subsets"]) == {"all", "top30"}
@@ -378,14 +379,14 @@ _INTERVAL_SOURCES = ("nflcom", "rotowire")
 
 @pytest.mark.unit
 def test_load_expert_intervals_missing_file_returns_none(app_module, monkeypatch, tmp_path):
-    monkeypatch.setattr(app_module, "_EXPERT_INTERVALS_PATH", str(tmp_path / "nope.json"))
-    assert app_module._load_expert_intervals() is None
+    monkeypatch.setattr(comparison, "_EXPERT_INTERVALS_PATH", str(tmp_path / "nope.json"))
+    assert comparison._load_expert_intervals() is None
 
 
 @pytest.mark.integration
 def test_comparison_includes_intervals_block(app_module, synthetic_cache, monkeypatch):
     """The intervals ride along on the /api/comparison payload (one fetch)."""
-    monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
+    monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
     app_module._cache.update(synthetic_cache)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -399,8 +400,8 @@ def test_comparison_includes_intervals_block(app_module, synthetic_cache, monkey
 @pytest.mark.integration
 def test_comparison_intervals_optional(app_module, synthetic_cache, monkeypatch):
     """A missing intervals file degrades to intervals=None; accuracy tables unaffected."""
-    monkeypatch.setattr(app_module, "_load_comparison_experts", _fake_experts)
-    monkeypatch.setattr(app_module, "_load_expert_intervals", lambda: None)
+    monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
+    monkeypatch.setattr(comparison, "_load_expert_intervals", lambda: None)
     app_module._cache.update(synthetic_cache)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
@@ -415,9 +416,8 @@ def test_committed_expert_intervals_contract():
     """The fitter's committed output has the shape the route + UI rely on, AND the
     nominal-80% bands empirically cover ≈80% of held-out actuals (the key check —
     pinned here so a regeneration that miscalibrates fails CI)."""
-    import src.serving.app as app_mod
 
-    with open(app_mod._EXPERT_INTERVALS_PATH, encoding="utf-8") as f:
+    with open(comparison._EXPERT_INTERVALS_PATH, encoding="utf-8") as f:
         data = json.load(f)
 
     assert data["nominal_coverage"] == 0.8
