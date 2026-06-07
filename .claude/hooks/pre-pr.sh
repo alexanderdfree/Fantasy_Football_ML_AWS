@@ -172,7 +172,7 @@ fi
 # mode is recoverable (run benchmark) while the false-negative mode (skip
 # benchmark when we shouldn't) is the dangerous one — keep the token list
 # generous and prefer to catch suspicious changes here.
-_RISKY_TOKENS='(loss_weights|huber_deltas|head_losses|gated_targets|LOSS_WEIGHTS|HUBER_DELTAS|INCLUDE_FEATURES|ATTN_STATIC_FEATURES|ATTN_HISTORY_STATS|TARGETS|attn_d_model|attn_n_heads|nn_backbone_layers|nn_head_hidden|nn_lr|attn_lr|nn_weight_decay|nn_dropout|attn_dropout|nn_epochs|nn_batch_size|attn_batch_size|nn_patience|attn_patience|attn_max_seq_len|attn_weight_decay|nn_non_negative_targets|gate_weight|attn_gate_weight|train_attention_nn|train_lightgbm|train_elasticnet|train_ridge|train_base_nn|attn_history_structure|attn_history_builder_fn|td_model_type|alpha_grids|ridge_alpha_grids|enet_alpha_grids|n_cv_folds|ridge_cv_folds|nn\.Linear|nn\.LayerNorm|nn\.Dropout|nn\.MultiheadAttention|MultiHeadNet|compute_target_metrics|aggregate_fn|aggregate_targets|predictions_to_fantasy_points|optimizer|learning_rate|criterion|HuberLoss|PoissonNLLLoss|scheduler_type|onecycle_max_lr|cosine_t0|cosine_t_mult|cosine_eta_min|np\.clip|torch\.clamp)'
+_RISKY_TOKENS='(loss_weights|huber_deltas|head_losses|gated_targets|include_features|specific_features|contextual_features|all_features|attn_static_features|attn_history_stats|attn_kick_stats|opp_attn_history_stats|SPECIFIC_FEATURES|CONTEXTUAL_FEATURES|ALL_FEATURES|ATTN_KICK_STATS|LOSS_WEIGHTS|HUBER_DELTAS|INCLUDE_FEATURES|ATTN_STATIC_FEATURES|ATTN_HISTORY_STATS|TARGETS|attn_d_model|attn_n_heads|nn_backbone_layers|nn_head_hidden|nn_lr|attn_lr|nn_weight_decay|nn_dropout|attn_dropout|nn_epochs|nn_batch_size|attn_batch_size|nn_patience|attn_patience|attn_max_seq_len|attn_weight_decay|nn_non_negative_targets|gate_weight|attn_gate_weight|train_attention_nn|train_lightgbm|train_elasticnet|train_ridge|train_base_nn|attn_history_structure|attn_history_builder_fn|td_model_type|alpha_grids|ridge_alpha_grids|enet_alpha_grids|n_cv_folds|ridge_cv_folds|nn\.Linear|nn\.LayerNorm|nn\.Dropout|nn\.MultiheadAttention|MultiHeadNet|compute_target_metrics|aggregate_fn|aggregate_targets|predictions_to_fantasy_points|optimizer|learning_rate|criterion|HuberLoss|PoissonNLLLoss|scheduler_type|onecycle_max_lr|cosine_t0|cosine_t_mult|cosine_eta_min|np\.clip|torch\.clamp)'
 
 is_additive_and_safe() {
   local f="$1"
@@ -257,17 +257,17 @@ skipped_files=""
 # position.py, position_data.py, run_pipeline_factory.py.
 for f in $changed; do
   case "$f" in
-    src/qb/config.py|src/qb/features.py|src/qb/targets.py|src/qb/run_pipeline.py)
+    src/qb/config.py|src/qb/features.py|src/qb/targets.py|src/qb/run_pipeline.py|src/qb/data.py)
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos QB; fi ;;
-    src/rb/config.py|src/rb/features.py|src/rb/targets.py|src/rb/run_pipeline.py)
+    src/rb/config.py|src/rb/features.py|src/rb/targets.py|src/rb/run_pipeline.py|src/rb/data.py)
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos RB; fi ;;
-    src/wr/config.py|src/wr/features.py|src/wr/targets.py|src/wr/run_pipeline.py)
+    src/wr/config.py|src/wr/features.py|src/wr/targets.py|src/wr/run_pipeline.py|src/wr/data.py)
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos WR; fi ;;
-    src/te/config.py|src/te/features.py|src/te/targets.py|src/te/run_pipeline.py)
+    src/te/config.py|src/te/features.py|src/te/targets.py|src/te/run_pipeline.py|src/te/data.py)
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos TE; fi ;;
-    src/k/config.py|src/k/features.py|src/k/targets.py|src/k/run_pipeline.py)
+    src/k/config.py|src/k/features.py|src/k/targets.py|src/k/run_pipeline.py|src/k/data.py)
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos K; fi ;;
-    src/dst/config.py|src/dst/features.py|src/dst/targets.py|src/dst/run_pipeline.py)
+    src/dst/config.py|src/dst/features.py|src/dst/targets.py|src/dst/run_pipeline.py|src/dst/data.py)
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos DST; fi ;;
     src/shared/*.py|src/data/*.py|src/features/*.py|src/config.py)
       if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else shared_changed=1; fi ;;
@@ -303,7 +303,7 @@ if [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; then
     [ -f "$pf" ] && pipeline_files+=("$pf")
   done
   for p in qb rb wr te k dst; do
-    for s in config features targets run_pipeline; do
+    for s in config features targets run_pipeline data; do
       pipeline_files+=("src/$p/$s.py")
     done
   done
