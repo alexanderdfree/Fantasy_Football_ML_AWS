@@ -1,12 +1,14 @@
 """Tests for the Comparison tab: /api/comparison + the committed expert summary.
 
-The route merges a LIVE model column (computed from ``_cache["results"]`` via the
-same ``compute_metrics`` path as Model Performance, so it auto-updates on retrain)
-with STATIC expert columns (NFL.com / RotoWire) read from the committed
-``src/serving/comparison_experts.json``. Coverage:
+The route merges LIVE per-model columns (one block per architecture — ridge / nn /
+attn_nn / lgbm — computed from ``_cache["results"]`` via the same ``compute_metrics``
+path as Model Performance, so they auto-update on retrain) with STATIC expert columns
+(NFL.com / RotoWire) read from the committed ``src/serving/comparison_experts.json``.
+Coverage:
 
-  - ``_model_block_from_results`` helper: best-MAE arch selection, top-30 id
-    filter, and the no-prediction / empty-slice → ``None`` paths (unit).
+  - ``_model_blocks_from_results`` / ``_model_reliabilities_from_results`` helpers:
+    per-model metric + residual-σ dicts, top-30 id filter, and the no-prediction /
+    empty-slice → all-``None`` paths (unit).
   - the route's merge, the model-unavailable fallback, and scoring passthrough
     (integration, via the Flask test client).
   - the committed JSON's data contract (six positions × two subsets, coverage
@@ -25,38 +27,42 @@ import src.serving.comparison as comparison
 import src.serving.core as core
 
 _POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
-_ARCHES = {"Ridge Regression", "Neural Network", "Attention NN", "LightGBM"}
+_MODEL_KEYS = {"ridge", "nn", "attn_nn", "lgbm"}
 
 
 # --------------------------------------------------------------------------- #
-# _model_block_from_results — pure helper (no Flask boundary)
+# _model_blocks_from_results — pure helper (no Flask boundary)
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.unit
-def test_model_block_picks_best_mae_arch(app_module):
-    """Across the four architectures, the lowest-MAE one is reported."""
+def test_model_blocks_returns_per_model_metrics(app_module):
+    """Every architecture gets its own {mae,rmse,r2,n} block, computed independently."""
     rows = [
         {
             "player_id": "QB000",
             "position": "QB",
             "fantasy_points": 10.0,
-            "ridge_pred_ppr": 10.0,  # perfect → MAE 0
-            "nn_pred_ppr": 14.0,
-            "attn_nn_pred_ppr": 15.0,
-            "lgbm_pred_ppr": 16.0,
+            "ridge_pred_ppr": 10.0,  # |10-10| → MAE 0
+            "nn_pred_ppr": 14.0,  # |14-10| → MAE 4
+            "attn_nn_pred_ppr": 15.0,  # |15-10| → MAE 5
+            "lgbm_pred_ppr": 16.0,  # |16-10| → MAE 6
         }
         for _ in range(5)
     ]
-    block = comparison._model_block_from_results(pd.DataFrame(rows), "ppr", "QB")
-    assert block["best_arch"] == "Ridge Regression"
-    assert block["mae"] == 0.0
-    assert block["n"] == 5
-    assert {"mae", "rmse", "r2", "n", "best_arch"} == set(block)
+    blocks = comparison._model_blocks_from_results(pd.DataFrame(rows), "ppr", "QB")
+    assert set(blocks) == _MODEL_KEYS
+    assert {"mae", "rmse", "r2", "n"} == set(blocks["ridge"])
+    assert blocks["ridge"]["mae"] == 0.0
+    assert blocks["ridge"]["n"] == 5
+    assert blocks["nn"]["mae"] == 4.0
+    assert blocks["attn_nn"]["mae"] == 5.0
+    assert blocks["lgbm"]["mae"] == 6.0
 
 
 @pytest.mark.unit
-def test_model_block_top30_filter_restricts_rows(app_module):
+def test_model_blocks_top30_filter_restricts_rows(app_module):
+    """id_filter restricts the rows; models with no prediction in the slice are None."""
     rows = [
         {
             "player_id": pid,
@@ -69,16 +75,16 @@ def test_model_block_top30_filter_restricts_rows(app_module):
         }
         for pid in ("QB000", "QB001", "QB999")
     ]
-    block = comparison._model_block_from_results(
+    blocks = comparison._model_blocks_from_results(
         pd.DataFrame(rows), "ppr", "QB", id_filter={"QB000", "QB001"}
     )
-    assert block["n"] == 2  # QB999 excluded by the id filter
-    assert block["best_arch"] == "Ridge Regression"
+    assert blocks["ridge"]["n"] == 2  # QB999 excluded by the id filter
+    assert blocks["nn"] is None and blocks["lgbm"] is None and blocks["attn_nn"] is None
 
 
 @pytest.mark.unit
-def test_model_block_none_when_no_predictions(app_module):
-    """K/DST have no ridge/lgbm in some configs; all-NaN preds → None."""
+def test_model_blocks_all_none_when_no_predictions(app_module):
+    """All-NaN preds → every model None, but the dict still carries all four keys."""
     df = pd.DataFrame(
         [
             {
@@ -92,25 +98,29 @@ def test_model_block_none_when_no_predictions(app_module):
             }
         ]
     )
-    assert comparison._model_block_from_results(df, "ppr", "K") is None
+    blocks = comparison._model_blocks_from_results(df, "ppr", "K")
+    assert set(blocks) == _MODEL_KEYS
+    assert all(v is None for v in blocks.values())
 
 
 @pytest.mark.unit
-def test_model_block_none_when_position_absent(app_module):
+def test_model_blocks_all_none_when_position_absent(app_module):
     df = pd.DataFrame(
         [{"player_id": "QB000", "position": "QB", "fantasy_points": 10.0, "ridge_pred_ppr": 10.0}]
     )
-    assert comparison._model_block_from_results(df, "ppr", "RB") is None
+    blocks = comparison._model_blocks_from_results(df, "ppr", "RB")
+    assert set(blocks) == _MODEL_KEYS
+    assert all(v is None for v in blocks.values())
 
 
 # --------------------------------------------------------------------------- #
-# _model_reliability_from_results — live model residual σ (2025 test rows)
+# _model_reliabilities_from_results — live per-model residual σ (2025 test rows)
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.unit
-def test_model_reliability_sigma_bias(app_module):
-    """σ + bias come from the best-MAE arch's residuals (pred − actual)."""
+def test_model_reliabilities_sigma_bias_per_model(app_module):
+    """σ + bias come from each model's residuals (pred − actual), independently."""
     fp = [10.0, 12.0, 14.0, 16.0, 18.0]
     ridge = [11.0, 11.0, 14.0, 17.0, 17.0]  # resid +1,-1,0,+1,-1 → bias 0, sample σ 1
     rows = [
@@ -119,22 +129,26 @@ def test_model_reliability_sigma_bias(app_module):
             "position": "QB",
             "fantasy_points": fp[i],
             "ridge_pred_ppr": ridge[i],
-            "nn_pred_ppr": fp[i] + 5.0,  # all worse → ridge wins on MAE
-            "attn_nn_pred_ppr": fp[i] + 6.0,
-            "lgbm_pred_ppr": fp[i] + 7.0,
+            "nn_pred_ppr": fp[i] + 2.0,  # constant +2 resid → bias +2, σ 0
+            "attn_nn_pred_ppr": np.nan,
+            "lgbm_pred_ppr": np.nan,
         }
         for i in range(5)
     ]
-    block = comparison._model_reliability_from_results(pd.DataFrame(rows), "ppr", "QB")
-    assert block["best_arch"] == "Ridge Regression"
-    assert block["n"] == 5
-    assert block["bias"] == 0.0
-    assert block["sigma"] == 1.0  # sample std (ddof=1) of [+1,-1,0,+1,-1]
-    assert {"n", "mae", "bias", "sigma", "best_arch"} == set(block)
+    rel = comparison._model_reliabilities_from_results(pd.DataFrame(rows), "ppr", "QB")
+    assert set(rel) == _MODEL_KEYS
+    assert {"n", "mae", "bias", "sigma"} == set(rel["ridge"])
+    assert rel["ridge"]["n"] == 5
+    assert rel["ridge"]["bias"] == 0.0
+    assert rel["ridge"]["sigma"] == 1.0  # sample std (ddof=1) of [+1,-1,0,+1,-1]
+    assert rel["nn"]["bias"] == 2.0
+    assert rel["nn"]["sigma"] == 0.0
+    # Models with no predictions for the slice are None.
+    assert rel["attn_nn"] is None and rel["lgbm"] is None
 
 
 @pytest.mark.unit
-def test_model_reliability_none_when_no_predictions(app_module):
+def test_model_reliabilities_all_none_when_no_predictions(app_module):
     df = pd.DataFrame(
         [
             {
@@ -148,7 +162,9 @@ def test_model_reliability_none_when_no_predictions(app_module):
             }
         ]
     )
-    assert comparison._model_reliability_from_results(df, "ppr", "K") is None
+    rel = comparison._model_reliabilities_from_results(df, "ppr", "K")
+    assert set(rel) == _MODEL_KEYS
+    assert all(v is None for v in rel.values())
 
 
 # --------------------------------------------------------------------------- #
@@ -230,21 +246,28 @@ def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_
     assert set(body["subsets"]) == {"all", "top30"}
 
     qb = body["subsets"]["all"]["QB"]
-    assert qb["model"] is not None
-    assert qb["model"]["best_arch"] in _ARCHES
-    assert {"mae", "rmse", "r2", "n"} <= set(qb["model"])
+    # Each architecture is its own block now (no single "Our Model" / best_arch).
+    assert "model" not in qb
+    assert set(qb) >= _MODEL_KEYS
+    for key in _MODEL_KEYS:  # QB has all four models in the synthetic cache
+        assert qb[key] is not None, key
+        assert {"mae", "rmse", "r2", "n"} <= set(qb[key])
     # Static experts passed through verbatim from the (faked) committed JSON.
     assert qb["nflcom"] == {"mae": 5.0, "rmse": 7.0, "r2": 0.3, "n": 100}
     assert qb["rotowire"] == {"mae": 5.5, "rmse": 7.5, "r2": 0.3, "n": 100}
+
+    # attn_nn / lgbm aren't in the synthetic K/DST rows → those cells null out.
+    assert body["subsets"]["all"]["K"]["attn_nn"] is None
+    assert body["subsets"]["all"]["K"]["lgbm"] is None
+    assert body["subsets"]["all"]["K"]["ridge"] is not None
 
     # Coverage holes survive the merge.
     assert body["subsets"]["all"]["DST"]["nflcom"] is None
     assert body["subsets"]["all"]["K"]["rotowire"] is None
 
-    # Top-30 model column is computed on the id-filtered slice (2 players × 7 wk).
+    # Top-30 model columns are computed on the id-filtered slice (2 players × 7 wk).
     top_qb = body["subsets"]["top30"]["QB"]
-    assert top_qb["model"] is not None
-    assert top_qb["model"]["n"] == 14
+    assert top_qb["ridge"]["n"] == 14
     assert top_qb["nflcom"]["mae"] == 5.5  # 5.0 * 1.1
 
     assert body["generated_at"] and "experts_meta" in body
@@ -280,11 +303,16 @@ def test_comparison_includes_live_model_reliability(app_module, synthetic_cache,
 
     mr = body["model_reliability"]
     assert set(mr) == set(_POSITIONS)
-    qb = mr["QB"]
+    qb = mr["QB"]  # per-model dict now, not a single best-arch block
     assert qb is not None
-    assert {"n", "mae", "bias", "sigma", "best_arch"} == set(qb)
-    assert qb["best_arch"] in _ARCHES
-    assert qb["sigma"] >= 0.0
+    assert set(qb) >= _MODEL_KEYS
+    for key in _MODEL_KEYS:  # QB has all four models in the synthetic cache
+        assert qb[key] is not None, key
+        assert {"n", "mae", "bias", "sigma"} == set(qb[key])
+        assert qb[key]["sigma"] >= 0.0
+    # K lacks attn_nn / lgbm predictions in the synthetic cache → null per model.
+    assert mr["K"]["attn_nn"] is None and mr["K"]["lgbm"] is None
+    assert mr["K"]["ridge"] is not None
 
 
 @pytest.mark.integration
@@ -311,9 +339,10 @@ def test_comparison_model_unavailable_when_no_results(app_module, monkeypatch):
 
     assert body["model_source"] == "unavailable"
     qb = body["subsets"]["all"]["QB"]
-    assert qb["model"] is None
+    # No live models → the per-model columns are absent; experts still render.
+    assert all(qb.get(key) is None for key in _MODEL_KEYS)
     assert qb["nflcom"] is not None  # experts unaffected
-    # The live model reliability column is also unavailable, per position.
+    # The live model reliability columns are also unavailable, per position.
     assert body["model_reliability"]["QB"] is None
 
 

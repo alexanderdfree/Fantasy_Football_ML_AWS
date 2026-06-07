@@ -12,7 +12,7 @@ import traceback
 
 import numpy as np
 
-from src.serving.serialization import _MODEL_PRED_COLUMNS, _actual_col, _pred_col
+from src.serving.serialization import _MODEL_PRED_PREFIXES, _actual_col, _pred_col
 from src.shared.evaluation import compute_metrics
 
 # ---------------------------------------------------------------------------
@@ -57,16 +57,13 @@ def _load_expert_intervals():
         return None
 
 
-def _best_model_arrays(results, scoring, pos, id_filter=None):
-    """Best-MAE architecture for ``pos`` from the cached per-row predictions.
+def _position_actuals(results, scoring, pos, id_filter=None):
+    """Sliced ``(sub_df, actual_array)`` for ``pos`` on this scoring, or ``None``.
 
-    Returns ``(best_arch, actual, pred)`` masked to the rows where that model has a
-    prediction, or ``None`` when no model has predictions for the slice. ``id_filter``
-    (a set of ``player_id`` strings) restricts to a subset (e.g. top-30); ``None`` = all
-    rows. Shared selection for ``_model_block_from_results`` /
-    ``_model_reliability_from_results`` so both report the *same* architecture (mirrors
-    the per-position routing in ``src.benchmarking.benchmark``). The ranking MAE is
-    ``mean(|pred-actual|)`` == ``compute_metrics`` mae.
+    Shared row-selection for the per-model block/reliability helpers below.
+    ``id_filter`` (a set of ``player_id`` strings) restricts to a subset (e.g.
+    top-30); ``None`` = all rows. Returns ``None`` when results are missing, the
+    actual column is absent, or the slice is empty.
     """
     if results is None or "position" not in results.columns:
         return None
@@ -78,73 +75,88 @@ def _best_model_arrays(results, scoring, pos, id_filter=None):
         sub = sub[sub["player_id"].astype(str).isin(id_filter)]
     if sub.empty:
         return None
-    actual = sub[actual_col].to_numpy()
-    best = None  # (mae, name, actual_masked, pred_masked)
-    for name, prefix in _MODEL_PRED_COLUMNS:
-        pred_col = _pred_col(prefix, scoring)
-        if pred_col not in sub.columns:
-            continue
-        pred = sub[pred_col]
-        mask = pred.notna().to_numpy()
-        if not mask.any():
-            continue
-        a = actual[mask]
-        p = pred.to_numpy()[mask]
-        mae = float(np.mean(np.abs(p.astype(float) - a.astype(float))))
-        if best is None or mae < best[0]:
-            best = (mae, name, a, p)
-    if best is None:
-        return None
-    return best[1], best[2], best[3]
+    return sub, sub[actual_col].to_numpy()
 
 
-def _model_block_from_results(results, scoring, pos, id_filter=None):
-    """Live model {mae,rmse,r2,n,best_arch} for one position, computed from the
-    cached per-row predictions. Picks the best-MAE architecture (mirrors the
-    per-position routing in ``src.benchmarking.benchmark``). ``id_filter`` (a set
-    of ``player_id`` strings) restricts to the top-30 subset; ``None`` = all rows.
-    Returns ``None`` when no model has predictions for this slice.
+def _model_residuals(sub, actual, prefix, scoring):
+    """``(actual_masked, pred_masked)`` for one model ``prefix``, or ``None``.
+
+    Masks to rows where this model has a prediction; ``None`` when the prediction
+    column is absent (model not trained for this position) or every value is NaN.
     """
-    picked = _best_model_arrays(results, scoring, pos, id_filter)
-    if picked is None:
+    pred_col = _pred_col(prefix, scoring)
+    if pred_col not in sub.columns:
         return None
-    name, actual, pred = picked
-    m = compute_metrics(actual, pred)
-    r2 = m["r2"]
-    r2 = None if (r2 is None or (isinstance(r2, float) and np.isnan(r2))) else round(float(r2), 4)
-    return {
-        "mae": round(float(m["mae"]), 4),
-        "rmse": round(float(m["rmse"]), 4),
-        "r2": r2,
-        "n": int(len(actual)),
-        "best_arch": name,
-    }
+    pred = sub[pred_col]
+    mask = pred.notna().to_numpy()
+    if not mask.any():
+        return None
+    return actual[mask], pred.to_numpy()[mask]
 
 
-def _model_reliability_from_results(results, scoring, pos):
-    """Live model residual σ + bias for one position on the held-out 2025 test rows.
+def _model_blocks_from_results(results, scoring, pos, id_filter=None):
+    """Per-model ``{mae,rmse,r2,n}`` for one position from the cached predictions.
 
-    Computed from the same cached per-row predictions as ``_model_block_from_results``
-    (so it auto-updates on every retrain) and picks the same best-MAE architecture,
-    then reports ``sigma = std(pred − actual, ddof=1)`` and ``bias = mean(pred − actual)``
-    for it — the model-side counterpart to the experts' ``expert_reliability``. Residual
-    convention matches ``src.analysis.expert_uncertainty``: **bias > 0 ⇒ over-predicts**.
-    The model is leakage-free only on its test split, so this is 2025-only by design
-    (the whole Comparison tab is the 2025 test season). ``None`` when no model has
-    predictions for this position.
+    Returns a dict keyed by every model prefix (``ridge``/``nn``/``attn_nn``/``lgbm``),
+    each value a metrics block or ``None`` (model not trained for this position / no
+    predictions / empty slice). ``id_filter`` (a set of ``player_id`` strings) restricts
+    to the top-30 subset; ``None`` = all rows. The frontend renders one column per model
+    and highlights the best cell, so no architecture is preselected here.
     """
-    picked = _best_model_arrays(results, scoring, pos)
-    if picked is None:
-        return None
-    name, actual, pred = picked
-    a = actual.astype(float)
-    p = pred.astype(float)
-    resid = p - a
-    n = int(len(resid))
-    return {
-        "n": n,
-        "mae": round(float(np.mean(np.abs(resid))), 4),
-        "bias": round(float(np.mean(resid)), 4),
-        "sigma": round(float(np.std(resid, ddof=1)) if n > 1 else 0.0, 4),
-        "best_arch": name,
-    }
+    out = {prefix: None for prefix in _MODEL_PRED_PREFIXES}
+    sliced = _position_actuals(results, scoring, pos, id_filter)
+    if sliced is None:
+        return out
+    sub, actual = sliced
+    for prefix in _MODEL_PRED_PREFIXES:
+        arr = _model_residuals(sub, actual, prefix, scoring)
+        if arr is None:
+            continue
+        a, p = arr
+        m = compute_metrics(a, p)
+        r2 = m["r2"]
+        r2 = (
+            None
+            if (r2 is None or (isinstance(r2, float) and np.isnan(r2)))
+            else round(float(r2), 4)
+        )
+        out[prefix] = {
+            "mae": round(float(m["mae"]), 4),
+            "rmse": round(float(m["rmse"]), 4),
+            "r2": r2,
+            "n": int(len(a)),
+        }
+    return out
+
+
+def _model_reliabilities_from_results(results, scoring, pos):
+    """Per-model residual σ + bias for one position on the held-out 2025 test rows.
+
+    Returns a dict keyed by every model prefix, each value ``{n,mae,bias,sigma}`` or
+    ``None``. Computed from the same cached per-row predictions as
+    ``_model_blocks_from_results`` (so it auto-updates on every retrain). Reports
+    ``sigma = std(pred − actual, ddof=1)`` and ``bias = mean(pred − actual)`` — the
+    model-side counterpart to the experts' ``expert_reliability``. Residual convention
+    matches ``src.analysis.expert_uncertainty``: **bias > 0 ⇒ over-predicts**. The model
+    is leakage-free only on its test split, so this is 2025-only by design (the whole
+    Comparison tab is the 2025 test season).
+    """
+    out = {prefix: None for prefix in _MODEL_PRED_PREFIXES}
+    sliced = _position_actuals(results, scoring, pos)
+    if sliced is None:
+        return out
+    sub, actual = sliced
+    for prefix in _MODEL_PRED_PREFIXES:
+        arr = _model_residuals(sub, actual, prefix, scoring)
+        if arr is None:
+            continue
+        a, p = arr
+        resid = p.astype(float) - a.astype(float)
+        n = int(len(resid))
+        out[prefix] = {
+            "n": n,
+            "mae": round(float(np.mean(np.abs(resid))), 4),
+            "bias": round(float(np.mean(resid)), 4),
+            "sigma": round(float(np.std(resid, ddof=1)) if n > 1 else 0.0, 4),
+        }
+    return out

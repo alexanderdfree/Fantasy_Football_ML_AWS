@@ -12,8 +12,9 @@ import numpy as np
 _VALID_SCORING = ("ppr", "half_ppr", "standard")
 _MODEL_PRED_PREFIXES = ("ridge", "nn", "attn_nn", "lgbm")
 
-# (display_name, column_prefix) pairs — the best-MAE selection loop in
-# comparison._best_model_arrays and _compute_metrics_locked iterate these.
+# (display_name, column_prefix) pairs — the per-model metrics loop in
+# core._compute_metrics_locked iterates these. (comparison.py keys its per-model
+# blocks by the bare prefixes in _MODEL_PRED_PREFIXES above.)
 _MODEL_PRED_COLUMNS = [
     ("Ridge Regression", "ridge"),
     ("Neural Network", "nn"),
