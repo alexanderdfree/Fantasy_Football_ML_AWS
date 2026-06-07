@@ -9,8 +9,8 @@
 --extra-index-url https://download.pytorch.org/whl/cu130
 torch==2.12.0+cu130
 pytest==9.0.3
-pytest-timeout>=2.0
-pytest-cov>=4.0
-pytest-xdist>=3.6
+pytest-timeout>=2.4.0
+pytest-cov>=7.1.0
+pytest-xdist>=3.8.0
 ruff==0.15.16
-optuna==4.8.0  # src/tuning/tune_lgbm.py + tune_nn.py + tests/tuning/ — matches requirements-dev.txt
+optuna==4.9.0  # src/tuning/tune_lgbm.py + tune_nn.py + tests/tuning/ — matches requirements-dev.txt
