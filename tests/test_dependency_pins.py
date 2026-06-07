@@ -1,17 +1,20 @@
-"""Automated parity check across the three Python-pins sources.
+"""Automated parity check across the Python-pins sources.
 
-The repo carries three sources of truth for Python package versions:
+The repo carries these sources of truth for Python package versions:
 
   1. ``requirements.txt``        — runtime deps for the Flask serving path
                                     (and the local-dev install via ``uv pip
                                     install -r``).
   2. ``src/batch/requirements.txt`` — the Batch training container deps;
                                     pinned identically to (1) for every
-                                    package that appears in both. Torch is
-                                    deliberately absent — it comes from the
-                                    base image.
-  3. ``src/batch/Dockerfile.train`` ``FROM`` line — torch + cuDNN base; the
-                                    only pin for ``torch`` in the repo.
+                                    package that appears in both. As of the
+                                    2026-06-07 cold-start image-slim, this file
+                                    also pins ``torch`` (the slim
+                                    ``nvidia/cuda:*-base`` base no longer ships
+                                    it) via an ``--extra-index-url`` to the
+                                    pytorch CUDA wheel index.
+  3. ``src/batch/Dockerfile.train`` ``FROM`` line — the slim CUDA base image,
+                                    pinned to an explicit tag.
 
 This module:
 
@@ -20,9 +23,8 @@ This module:
     contract that ``requirements.txt`` is the source of truth and
     ``src/batch/requirements.txt`` is its training-time subset.
 
-  * Asserts the torch line in the Dockerfile parses cleanly (the audit's
-    minimum bar is that the pin exists and is grep-able — semver-comparing
-    the cuDNN/cuda components is out of scope).
+  * Asserts the Dockerfile base image is pinned (not ``latest``) and that the
+    Batch requirements pin ``torch`` explicitly behind the CUDA extra index.
 
 L-B9 in code_review_findings.md notes "three sources of Python pins (root,
 Batch, and base-image torch). No automated parity check." This test is
@@ -54,14 +56,14 @@ _PIN_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9._-]*)\s*(.*)$")
 def _parse_requirements(path: Path) -> dict[str, str]:
     """Return ``{package_name_lower: version_spec_str}`` for a requirements file.
 
-    Skips blank lines and ``#``-prefixed comments. Inline ``;`` markers (env
-    markers) and ``--`` flags are not used in this repo so they aren't
-    handled here — a future addition will need to extend this.
+    Skips blank lines, ``#``-prefixed comments, and pip flag lines (those
+    starting with ``-``, e.g. ``--extra-index-url`` / ``-r``). Inline ``;``
+    markers (env markers) are not used in this repo so they aren't handled here.
     """
     out: dict[str, str] = {}
     for raw in path.read_text().splitlines():
         line = raw.split("#", 1)[0].strip()  # drop comments + trim
-        if not line:
+        if not line or line.startswith("-"):  # blank or pip flag (--extra-index-url, -r)
             continue
         m = _PIN_RE.match(line)
         if not m:
@@ -90,33 +92,60 @@ def test_shared_packages_have_identical_pins():
     )
 
 
-def test_dockerfile_torch_pin_is_grepable():
-    """The training Dockerfile must pin its torch base image explicitly.
+def test_dockerfile_base_image_is_pinned():
+    """The training Dockerfile must pin its base image to an explicit tag.
 
-    We don't compare the version against requirements.txt (top-level deps
-    don't include torch — it comes from the base image), only that the
-    pin exists and isn't a floating ``latest`` tag. Catches an accidental
-    ``pytorch:latest`` regression that would land an untested cuDNN/CUDA
-    combination on the next Batch run.
+    The base was slimmed from the conda ``pytorch/pytorch:*-runtime`` image to
+    ``nvidia/cuda:*-base`` (torch now installed via pip — see
+    src/batch/requirements.txt and docs/batch_design.md §"Cold-start" 2d). We
+    don't semver-compare the CUDA components, only that the pin exists and isn't
+    a floating ``latest`` tag (which would land an untested CUDA combo on the
+    next Batch run).
     """
     contents = DOCKERFILE_TRAIN.read_text()
-    # Match ``FROM ... pytorch/pytorch:<tag>`` allowing the optional
-    # ``${PULL_THROUGH_PREFIX}`` indirection in front.
-    from_re = re.compile(r"^FROM\s+(?:--platform=\S+\s+)?\S*pytorch/pytorch:(\S+)", re.MULTILINE)
+    # Match ``FROM <image>:<tag>`` allowing the optional ``--platform`` and
+    # ``${PULL_THROUGH_PREFIX}`` indirection in front of the image reference.
+    from_re = re.compile(
+        r"^FROM\s+(?:--platform=\S+\s+)?\S*?([A-Za-z0-9][A-Za-z0-9._/-]*):(\S+)",
+        re.MULTILINE,
+    )
     match = from_re.search(contents)
-    assert match, (
-        f"Expected a `FROM ... pytorch/pytorch:<tag>` line in {DOCKERFILE_TRAIN}; "
-        "did the base image source change?"
-    )
-    tag = match.group(1)
+    assert match, f"Expected a pinned `FROM <image>:<tag>` line in {DOCKERFILE_TRAIN}."
+    image, tag = match.group(1), match.group(2)
     assert tag != "latest", (
-        f"{DOCKERFILE_TRAIN}: torch base image is pinned to 'latest' — "
-        "use an explicit version tag (e.g. 2.11.0-cuda12.6-cudnn9-runtime)."
+        f"{DOCKERFILE_TRAIN}: base image {image!r} is pinned to 'latest' — use an "
+        "explicit version tag (e.g. nvidia/cuda:12.6.3-base-ubuntu24.04)."
     )
-    # Sanity: the tag should at least look like ``<major>.<minor>``.
-    assert re.match(r"^\d+\.\d+", tag), (
-        f"{DOCKERFILE_TRAIN}: torch tag {tag!r} doesn't start with a major.minor version."
+    assert re.search(r"\d+\.\d+", tag), (
+        f"{DOCKERFILE_TRAIN}: base tag {tag!r} doesn't contain a major.minor version."
     )
+
+
+def test_batch_requirements_pins_torch_and_omits_flask():
+    """The Batch image installs torch via pip now that the base is the slim
+    ``nvidia/cuda:*-base`` (it no longer ships torch). The pin must be explicit
+    and resolvable from the pytorch CUDA wheel index; flask/gunicorn stay out
+    (the trainer never serves Flask and would otherwise drag serving-only deps).
+    """
+    contents = BATCH_REQUIREMENTS_TXT.read_text()
+    batch = _parse_requirements(BATCH_REQUIREMENTS_TXT)
+
+    assert "torch" in batch, (
+        "src/batch/requirements.txt must pin torch — the slim nvidia/cuda base "
+        "ships no torch (see docs/batch_design.md §'Cold-start' 2d)."
+    )
+    spec = batch["torch"]
+    assert spec.startswith("=="), (
+        f"torch must be pinned with '==' (got {spec!r}); a floating torch would "
+        "land an untested build on the next Batch run."
+    )
+    assert "--extra-index-url" in contents and "download.pytorch.org/whl/" in contents, (
+        "src/batch/requirements.txt must carry the pytorch CUDA --extra-index-url "
+        "so the +cuXXX torch wheel resolves."
+    )
+
+    assert "flask" not in batch, "src/batch/requirements.txt should not include flask."
+    assert "gunicorn" not in batch, "src/batch/requirements.txt should not include gunicorn."
 
 
 def test_top_level_requirements_includes_runtime_essentials():
@@ -127,18 +156,3 @@ def test_top_level_requirements_includes_runtime_essentials():
     top = _parse_requirements(REQUIREMENTS_TXT)
     for essential in ("numpy", "pandas", "scikit-learn", "scipy", "lightgbm", "flask"):
         assert essential in top, f"{essential!r} missing from requirements.txt"
-
-
-def test_batch_requirements_omits_torch_and_flask():
-    """The Batch image inherits torch from the base image and never serves
-    Flask. Pinning either in src/batch/requirements.txt would silently
-    override or duplicate the base — and an accidental flask line would
-    drag in the serving-only deps the trainer doesn't need.
-    """
-    batch = _parse_requirements(BATCH_REQUIREMENTS_TXT)
-    assert "torch" not in batch, (
-        "src/batch/requirements.txt should not pin torch — comes from the "
-        "pytorch/pytorch base image in Dockerfile.train."
-    )
-    assert "flask" not in batch, "src/batch/requirements.txt should not include flask."
-    assert "gunicorn" not in batch, "src/batch/requirements.txt should not include gunicorn."

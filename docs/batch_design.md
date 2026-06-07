@@ -1,6 +1,6 @@
 # AWS Batch Training Design Doc
 
-> **Status (2026-05-31): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g6.xlarge Spot instances, one position per host (migrated from g4dn.xlarge 2026-05-31 — T4 → L4 for BF16 + torch.compile re-eligibility; see ARCHITECTURE.md Update history). **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself), which is now train-batch.yml's dominant wall-clock cost — PR #330 removed the forced "Refresh ECS service" (`update-service --force-new-deployment`) step from train-batch.yml (per-position in-flight model refresh via `src/shared/model_sync.py` makes new artifacts live within one ~30s poll interval; ECS rolling redeploy via deploy.yml's ALB-tuned ~3 min path is now decoupled from the train workflow). The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate.** Warm-EC2 rollback path: ~120-min sequential loop. Cold-start: ~120 s image pull on a fresh Spot host (3.8 GB image). **SOCI lazy-loading was REMOVED 2026-06-07 — it never worked and cannot work on AWS Batch: Batch runs on ECS-managed EC2 and the `amazon-ecs-agent` does not pull through the soci snapshotter (Fargate-only; [containers-roadmap#1832](https://github.com/aws/containers-roadmap/issues/1832)). See §2a + [todo/fixed-archive.md](../todo/fixed-archive.md).** Image kept ~5–6 GB via aggressive `.dockerignore` + explicit `COPY`. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
+> **Status (2026-05-31): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g6.xlarge Spot instances, one position per host (migrated from g4dn.xlarge 2026-05-31 — T4 → L4 for BF16 + torch.compile re-eligibility; see ARCHITECTURE.md Update history). **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself), which is now train-batch.yml's dominant wall-clock cost — PR #330 removed the forced "Refresh ECS service" (`update-service --force-new-deployment`) step from train-batch.yml (per-position in-flight model refresh via `src/shared/model_sync.py` makes new artifacts live within one ~30s poll interval; ECS rolling redeploy via deploy.yml's ALB-tuned ~3 min path is now decoupled from the train workflow). The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate.** Warm-EC2 rollback path: ~120-min sequential loop. Cold-start: ~120 s image pull on a fresh Spot host (was a ~3.7 GB conda base; slimmed to `nvidia/cuda:*-base` + pip torch 2026-06-07 to cut the pull — see §"Cold-start optimization" 2d; new pull window measured post-merge). **SOCI lazy-loading was REMOVED 2026-06-07 — it never worked and cannot work on AWS Batch: Batch runs on ECS-managed EC2 and the `amazon-ecs-agent` does not pull through the soci snapshotter (Fargate-only; [containers-roadmap#1832](https://github.com/aws/containers-roadmap/issues/1832)). See §2a + [todo/fixed-archive.md](../todo/fixed-archive.md).** Image size is now dominated by the torch CUDA wheel (the slim `nvidia/cuda:*-base` base is ~86 MB); `.dockerignore` + explicit `COPY` trim the app side. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
 >
 > Rollback: `gh variable set BATCH_ACTIVE --body "false"` returns push-driven training to the warm-EC2 path ([docs/ec2_design.md](ec2_design.md)) on the next push to `main`. Both paths remain provisioned.
 
@@ -93,23 +93,24 @@ src/benchmarking/benchmark.py ← Local multi-position benchmark runner (separat
 
 ### Dockerfile
 
+Simplified shape (the real file uses uv + a build-time import smoke + the
+`PULL_THROUGH_PREFIX` arg — see [src/batch/Dockerfile.train](../src/batch/Dockerfile.train)
+and §"Cold-start optimization" 2d):
+
 ```dockerfile
-FROM pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
-
+FROM nvidia/cuda:12.6.3-base-ubuntu24.04          # slim CUDA base (~86 MB), no torch
+RUN apt-get install -y python3 python3-dev g++ libgomp1 ca-certificates
 WORKDIR /opt/ml/code
-
 COPY src/batch/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
+RUN uv pip install --system -r requirements.txt   # incl. torch==2.12.0+cu126 (cu126 index)
 COPY src/ src/
-
 ENTRYPOINT ["python", "-m", "src.batch.train"]
 ```
 
-- Base image has PyTorch + CUDA pre-installed (~4 GB)
+- Slim `nvidia/cuda:*-base` base; **torch installed via pip** (`2.12.0+cu126`, the
+  wheel brings its own CUDA libs) rather than baked into a conda base (2d)
 - Project source baked into `/opt/ml/code/`
 - ENTRYPOINT runs train.py; Batch passes `["--position", "RB", "--seed", "42"]` as command override
-- Image size: ~5-6 GB total
 
 ### Container Environment Variables
 
@@ -135,7 +136,8 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 ### Container Dependencies (`src/batch/requirements.txt`)
 
 Derived from root `requirements.txt`:
-- **Excluded**: `torch` (in base image), `flask`, `gunicorn`, `pytest`
+- **Excluded**: `flask`, `gunicorn`, `pytest`
+- **Added (CUDA)**: `torch==2.12.0+cu126` via `--extra-index-url https://download.pytorch.org/whl/cu126` — the slim `nvidia/cuda:*-base` base ships no torch (was previously provided by the conda base; see §"Cold-start optimization" 2d)
 - **Added**: `boto3>=1.34` (S3 operations), `nflreadpy==0.1.5` + `polars==1.41.1` (nflverse data loading via the `src/data/nfl_source.py` shim; imported transitively by K/DST data modules even though no fetch happens at training time)
 
 ## Position Pipeline Invocation
@@ -379,8 +381,34 @@ Two workflows cover the training image and the inference service:
 ## Cold-start optimization (image pull acceleration)
 
 The largest chunk of per-job wall time on a cold Spot instance is pulling the
-~7–8 GB `pytorch/pytorch:*-cuda12.6-cudnn9-runtime` base image from a public
-registry. Three stacking optimizations target this:
+training image (decompress + extract to overlayfs), re-paid on every fresh Spot
+host. With SOCI dead on Batch (§2a) and the ~120 s Spot-provisioning half a fixed
+G-family floor, the live levers are **shrinking the image** (2d, below) and a
+**warm pre-pulled custom AMI** (deferred Stage 2 — not yet built; would reuse
+`infra/batch/setup.sh`'s `DISABLE → update-compute-environment → ENABLE` reconcile
+to host an AMI with the base layers pre-seeded into containerd). The stacking
+build-time optimizations:
+
+### 2d. Slim CUDA base + pip torch (primary image-size lever, 2026-06-07)
+
+`src/batch/Dockerfile.train` bases on `nvidia/cuda:12.6.3-base-ubuntu24.04`
+(~86 MB compressed) and installs `torch==2.12.0+cu126` via the uv layer, instead
+of the conda-based `pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime` (~3.7 GB
+compressed) that bundled torch+CUDA+mamba+MKL in one re-pulled layer. The `*-base`
+flavor ships **no** CUDA math libs, so the torch wheel brings its own — using a
+`*-cudnn-runtime` base (~2 GB) instead would double-count cudnn/cublas and erase
+the win. **torch version is held identical** (2.12.0 / cu126, the build the old
+base shipped) so this is packaging, not an upgrade: deterministic Ridge MAE stays
+byte-identical (data-identity tell) while NN/attn rows rebaseline within
+single-seed noise (different torch *distribution*). System deps the conda base
+provided are re-added explicitly (`python3`+`python3-dev`, `g++` for the Inductor
+probe, `libgomp1` for LightGBM/sklearn OpenMP, `ca-certificates`). A build-time
+`python -c "import torch, ..."` smoke fails the CI build on an incoherent install
+rather than on the first GPU job. **`batch-image.yml` builds only on
+push-to-`main`/dispatch (not PRs), so the new image is first built on merge** (or
+a `workflow_dispatch` branch build) — there is no PR-time or local build gate.
+Targets the image-pull half of cold-start; actual pull-window drop measured
+post-merge via `aws ecs describe-tasks` `pullStartedAt`/`pullStoppedAt`.
 
 ### 2b. Explicit COPYs in Dockerfile.train
 
