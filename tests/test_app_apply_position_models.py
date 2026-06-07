@@ -29,6 +29,8 @@ import pandas as pd
 import pytest
 import torch
 
+import src.serving.core as core
+
 # Reuse QB as the canonical "flat-history" position + DST for adjustment_fn.
 # The function's per-position branches are structurally identical aside from
 # the attention-history-structure fork (nested for K, flat for others).
@@ -114,8 +116,8 @@ def _mocked_app(monkeypatch):
             n = len(X)
             return {t: np.zeros(n, dtype=np.float32) for t in self.target_names}
 
-    monkeypatch.setattr(app_mod, "RidgeMultiTarget", _FakeMultiTarget)
-    monkeypatch.setattr(app_mod, "LightGBMMultiTarget", _FakeMultiTarget)
+    monkeypatch.setattr(core, "RidgeMultiTarget", _FakeMultiTarget)
+    monkeypatch.setattr(core, "LightGBMMultiTarget", _FakeMultiTarget)
 
     # Fake scaler loader — returns a StandardScaler fitted on a 1-feature dummy.
     from sklearn.preprocessing import StandardScaler
@@ -126,25 +128,23 @@ def _mocked_app(monkeypatch):
     def _fake_joblib_load(path):
         return dummy_scaler
 
-    monkeypatch.setattr(app_mod.joblib, "load", _fake_joblib_load)
+    monkeypatch.setattr(core.joblib, "load", _fake_joblib_load)
 
     # Fake torch.load — returns an empty state-dict checkpoint.
     monkeypatch.setattr(
-        app_mod.torch,
+        core.torch,
         "load",
         lambda *args, **kwargs: {"model_state": {}, "feature_columns_hash": "dead"},
     )
 
     # Skip scaler-matches integrity check (covered elsewhere).
-    monkeypatch.setattr(app_mod, "assert_scaler_matches", lambda *a, **k: None)
-    monkeypatch.setattr(app_mod, "read_scaler_meta", lambda *a, **k: {})
+    monkeypatch.setattr(core, "assert_scaler_matches", lambda *a, **k: None)
+    monkeypatch.setattr(core, "read_scaler_meta", lambda *a, **k: {})
     monkeypatch.setattr(
-        app_mod, "unwrap_state_dict", lambda checkpoint: (checkpoint.get("model_state", {}), "hash")
+        core, "unwrap_state_dict", lambda checkpoint: (checkpoint.get("model_state", {}), "hash")
     )
     # scale_and_clip just pads/clips the input — passthrough is fine here.
-    monkeypatch.setattr(
-        app_mod, "scale_and_clip", lambda scaler, X: np.asarray(X, dtype=np.float32)
-    )
+    monkeypatch.setattr(core, "scale_and_clip", lambda scaler, X: np.asarray(X, dtype=np.float32))
 
     # Fake NN classes: .predict_numpy returns target → zeros.
     class _FakeNN:
@@ -163,9 +163,9 @@ def _mocked_app(monkeypatch):
             n = len(X)
             return {t: np.zeros(n, dtype=np.float32) for t in self.target_names}
 
-    monkeypatch.setattr(app_mod, "MultiHeadNet", _FakeNN)
-    monkeypatch.setattr(app_mod, "MultiHeadNetWithHistory", _FakeNN)
-    monkeypatch.setattr(app_mod, "MultiHeadNetWithNestedHistory", _FakeNN)
+    monkeypatch.setattr(core, "MultiHeadNet", _FakeNN)
+    monkeypatch.setattr(core, "MultiHeadNetWithHistory", _FakeNN)
+    monkeypatch.setattr(core, "MultiHeadNetWithNestedHistory", _FakeNN)
 
     # Short-circuit build_position_features — keep the per-position DataFrame
     # as passed in, with a dummy numeric feature column.
@@ -176,11 +176,11 @@ def _mocked_app(monkeypatch):
                     df[col] = 0.0
         return tr, va, te
 
-    monkeypatch.setattr(app_mod, "build_position_features", _fake_build_features)
+    monkeypatch.setattr(core, "build_position_features", _fake_build_features)
 
     # Feature history builders (attention path)
     monkeypatch.setattr(
-        app_mod,
+        core,
         "build_game_history_arrays",
         lambda df, history_stats, max_seq_len: (
             np.zeros((len(df), max_seq_len, max(1, len(history_stats))), dtype=np.float32),
@@ -188,7 +188,7 @@ def _mocked_app(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        app_mod,
+        core,
         "get_attn_static_columns",
         lambda feature_cols, allow: (
             [c for c in feature_cols if c in set(allow)][:1] or feature_cols[:1]
@@ -224,7 +224,7 @@ def _qb_registry(monkeypatch):
         "train_lightgbm": True,
     }
 
-    # app_mod.POSITION_REGISTRY is a _LazyInferenceRegistry — stub the __getitem__.
+    # core.POSITION_REGISTRY is a _LazyInferenceRegistry — stub the __getitem__.
     class _StubRegistry:
         def __getitem__(self, pos):
             return reg if pos == "QB" else POSITION_REGISTRY[pos]
@@ -234,7 +234,7 @@ def _qb_registry(monkeypatch):
 
     from src.shared.registry import INFERENCE_REGISTRY as POSITION_REGISTRY
 
-    monkeypatch.setattr(app_mod, "POSITION_REGISTRY", _StubRegistry())
+    monkeypatch.setattr(core, "POSITION_REGISTRY", _StubRegistry())
     return reg
 
 
@@ -254,7 +254,7 @@ def test_apply_position_models_qb_flat_path(_mocked_app, _qb_registry):
     df = _make_df(n=12)
     _mocked_app._cache.clear()
 
-    _mocked_app._apply_position_models(df, df, df, "QB", results)
+    core._apply_position_models(df, df, df, "QB", results)
 
     # Every row's ridge/nn/lgbm_pred must be populated (zeros, per our stubs).
     assert results["ridge_pred"].notna().all()
@@ -305,7 +305,7 @@ def test_apply_position_models_applies_min_games_filter(monkeypatch):
         captured["val_ids"] = list(va["player_id"])
         raise _Stop
 
-    monkeypatch.setattr(app_mod, "build_position_features", _capture_build)
+    monkeypatch.setattr(core, "build_position_features", _capture_build)
 
     reg = {
         "targets": ["passing_yards"],
@@ -330,7 +330,7 @@ def test_apply_position_models_applies_min_games_filter(monkeypatch):
         def __contains__(self, pos):
             return True
 
-    monkeypatch.setattr(app_mod, "POSITION_REGISTRY", _Stub())
+    monkeypatch.setattr(core, "POSITION_REGISTRY", _Stub())
 
     # HIGH: 3 games in 2025 (>= min_games=2). LOW: 1 game (< 2, must be dropped
     # from train). LOW appears in val with 1 game too — val must NOT be filtered.
@@ -357,7 +357,7 @@ def test_apply_position_models_applies_min_games_filter(monkeypatch):
     app_mod._cache.clear()
 
     with pytest.raises(_Stop):
-        app_mod._apply_position_models(train, val, train, "QB", pd.DataFrame())
+        core._apply_position_models(train, val, train, "QB", pd.DataFrame())
 
     # LOW's single-game 2025 season is filtered out of TRAIN.
     assert captured["train_ids"] == ["HIGH", "HIGH", "HIGH"]
@@ -420,13 +420,13 @@ def test_apply_position_models_with_attention(_mocked_app, monkeypatch):
         def __contains__(self, pos):
             return True
 
-    monkeypatch.setattr(app_mod, "POSITION_REGISTRY", _Stub())
+    monkeypatch.setattr(core, "POSITION_REGISTRY", _Stub())
 
     results = _make_results_frame(n=6)
     df = _make_df(n=6)
     _mocked_app._cache.clear()
 
-    _mocked_app._apply_position_models(df, df, df, "QB", results)
+    core._apply_position_models(df, df, df, "QB", results)
 
     assert results["attn_nn_pred"].notna().all()
     assert results["lgbm_pred"].isna().all()  # lgbm disabled
@@ -460,13 +460,13 @@ def test_apply_position_models_with_adjustment_fn(_mocked_app, monkeypatch):
         def __contains__(self, pos):
             return True
 
-    monkeypatch.setattr(app_mod, "POSITION_REGISTRY", _Stub())
+    monkeypatch.setattr(core, "POSITION_REGISTRY", _Stub())
 
     results = _make_results_frame(n=6)
     df = _make_df(n=6)
     _mocked_app._cache.clear()
 
-    _mocked_app._apply_position_models(df, df, df, "QB", results)
+    core._apply_position_models(df, df, df, "QB", results)
     # With adjustment_fn adding 5 to predictions that would otherwise be 0.
     assert (results["ridge_pred"] == 5.0).all()
 
@@ -507,7 +507,7 @@ def test_compute_metrics_locked_populates_cache(monkeypatch):
         results[f"lgbm_pred_{fmt}"] = lgbm
     app_mod._cache["results"] = results
 
-    app_mod._compute_metrics_locked()
+    core._compute_metrics_locked()
     metrics = app_mod._cache["metrics"]
     metrics_by_format = app_mod._cache["metrics_by_format"]
     # Per-format cache populated for every scoring format.
@@ -572,7 +572,7 @@ def test_compute_scoring_formats_adds_both_columns():
             "receiving_fumbles_lost": [0, 0],
         }
     )
-    app_mod._compute_scoring_formats(df)
+    core._compute_scoring_formats(df)
     assert "fantasy_points_standard" in df.columns
     assert "fantasy_points_half_ppr" in df.columns
     # Standard scoring should differ from half_ppr only if reception counts > 0
@@ -707,13 +707,13 @@ def test_apply_position_models_ridge_load_failure_records_and_nan_fills(_mocked_
         def load(self, path):
             raise RuntimeError("ridge artifact missing")
 
-    monkeypatch.setattr(app_mod, "RidgeMultiTarget", _BadRidge)
+    monkeypatch.setattr(core, "RidgeMultiTarget", _BadRidge)
 
     # Minimal registry stub for QB. Attention + LGBM disabled so only Ridge
     # fails and NN still runs — confirms the function presses on after
     # recording Ridge's error.
     monkeypatch.setattr(
-        app_mod,
+        core,
         "POSITION_REGISTRY",
         type(
             "_R",
@@ -743,7 +743,7 @@ def test_apply_position_models_ridge_load_failure_records_and_nan_fills(_mocked_
     _mocked_app._cache.clear()
 
     # MUST NOT raise — the failure is absorbed per the Part B contract.
-    _mocked_app._apply_position_models(df, df, df, "QB", results)
+    core._apply_position_models(df, df, df, "QB", results)
 
     # Error recorded under the per-model key used by _degraded_positions().
     assert "QB_ridge" in _mocked_app._cache["position_load_errors"]
@@ -776,7 +776,7 @@ def test_apply_position_models_clears_stale_errors_for_this_position(_mocked_app
     # Minimal registry stub: same pattern as the ridge-failure test above,
     # keeps the registry-driven feature build cheap and deterministic.
     monkeypatch.setattr(
-        app_mod,
+        core,
         "POSITION_REGISTRY",
         type(
             "_R",
@@ -813,7 +813,7 @@ def test_apply_position_models_clears_stale_errors_for_this_position(_mocked_app
 
     results = _make_results_frame(n=4)
     df = _make_df(n=4)
-    _mocked_app._apply_position_models(df, df, df, "QB", results)
+    core._apply_position_models(df, df, df, "QB", results)
 
     errors_after = _mocked_app._cache.get("position_load_errors", {})
     # All QB entries are gone — both bare key and per-model keys.

@@ -343,9 +343,10 @@ def app_module(monkeypatch, tmp_path):
     and accidentally hydrate later tests.
     """
     import src.serving.app as app_mod
+    import src.serving.core as core
 
     monkeypatch.setattr(app_mod, "_cache", {})
-    monkeypatch.setattr(app_mod, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "serving_cache"))
+    monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "serving_cache"))
     return app_mod
 
 

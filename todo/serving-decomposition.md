@@ -2,8 +2,8 @@
 
 **Status:** leaf-module wave shipped — `serialization.py` (#990) plus
 `metadata.py` / `wiki.py` / `comparison.py` / `benchmark_history.py` (this PR).
-app.py is down to ~2303 LOC. The remaining work is the heavy **core + routes**
-split (the two big sections below). This doc is the precise spec so the follow-up
+app.py is down to ~869 LOC after the core extraction (this PR). The only remaining
+work is the **routes Blueprint + composition-root `app.py`** split (increment 5 below). This doc is the precise spec so the follow-up
 isn't a re-discovery.
 
 **Key decision (revised from the original plan): there is no `state.py`.** The
@@ -107,7 +107,11 @@ imported by no one, so no cycle.
    et al. (comparison), `_benchmark_history_dir`/`_BENCHMARK_HISTORY_CACHE` (benchmark).
    `_compute_models_fingerprint` is a *core* symbol (not benchmark) — its 3 patches stay
    `app_mod.*` until increment 4.
-4. ⬜ **`core.py`** — REMAINING, the big one; repoint the ~40 heavy patches. Bulk of the
+4. ✅ **`core.py`** — DONE (this PR). Extracted ~1585 LOC (model load / data / cache /
+   metrics); cache-dir consts moved with it; `_cache`+locks stay in app.py reached via a
+   module-level `import src.serving.app as app_pkg` (cycle-safe both import orders). The
+   ~224 test repoints used a `tokenize`-based NAME rewriter (state→`app_pkg`, core fns→`core`).
+   gunicorn.conf.py's pre-warm thread repointed to `core._ensure_metrics`. Original plan note:
    work. Uses `app_pkg.<state>` for `_cache`/locks/cache-dir consts (those patches stay
    `app_mod.*`). Heavy patches to repoint to `core`: model classes, `joblib`/`torch`/`pd`
    (library singletons — repoint only the LHS module ref), `build_position_features`,

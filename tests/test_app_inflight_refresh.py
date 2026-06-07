@@ -1,4 +1,4 @@
-"""Tests for the in-flight refresh branch in app._ensure_position_loaded.
+"""Tests for the in-flight refresh branch in core._ensure_position_loaded.
 
 When src.shared.model_sync's refresh poller swaps in a new model and touches
 the sentinel, _ensure_position_loaded must detect the advance, drop cached
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+import src.serving.core as core
 from src.serving import app
 
 
@@ -21,7 +22,7 @@ from src.serving import app
 def _reset_cache(monkeypatch):
     """Each test gets a fresh _cache and a no-op _ensure_base_data."""
     monkeypatch.setattr(app, "_cache", {})
-    monkeypatch.setattr(app, "_ensure_base_data", lambda: None)
+    monkeypatch.setattr(core, "_ensure_base_data", lambda: None)
     # Pre-populate the minimum cache shape _ensure_position_loaded expects.
     app._cache["splits"] = {pos: (None, None, None) for pos in ("QB", "RB", "WR", "TE", "K", "DST")}
     app._cache["results"] = None  # _apply is stubbed so the value is irrelevant.
@@ -36,7 +37,7 @@ def _stub_apply(monkeypatch):
     def fake_apply(train, val, test, pos, results):
         counts[pos] = counts.get(pos, 0) + 1
 
-    monkeypatch.setattr(app, "_apply_position_models", fake_apply)
+    monkeypatch.setattr(core, "_apply_position_models", fake_apply)
     return counts
 
 
@@ -44,7 +45,7 @@ def _stub_sentinel(monkeypatch, mtimes: dict[str, float]):
     """Replace refresh_sentinel_mtime with a lookup against ``mtimes``.
     Mutating ``mtimes`` between calls simulates the poller advancing the
     sentinel for one position."""
-    monkeypatch.setattr(app, "refresh_sentinel_mtime", lambda pos: mtimes.get(pos, 0.0))
+    monkeypatch.setattr(core, "refresh_sentinel_mtime", lambda pos: mtimes.get(pos, 0.0))
 
 
 @pytest.mark.unit
@@ -54,7 +55,7 @@ def test_fast_path_skip_after_first_load(monkeypatch):
     _stub_sentinel(monkeypatch, {})
 
     for _ in range(5):
-        app._ensure_position_loaded("QB")
+        core._ensure_position_loaded("QB")
 
     assert counts == {"QB": 1}
 
@@ -69,8 +70,8 @@ def test_no_sentinel_keeps_pre_refresh_behavior(monkeypatch):
     _stub_sentinel(monkeypatch, {})  # all sentinels return 0.0
 
     for _ in range(3):
-        app._ensure_position_loaded("RB")
-        app._ensure_position_loaded("WR")
+        core._ensure_position_loaded("RB")
+        core._ensure_position_loaded("WR")
 
     assert counts == {"RB": 1, "WR": 1}
 
@@ -83,20 +84,20 @@ def test_sentinel_advance_triggers_reload(monkeypatch):
     mtimes = {"WR": 100.0}
     _stub_sentinel(monkeypatch, mtimes)
 
-    app._ensure_position_loaded("WR")
+    core._ensure_position_loaded("WR")
     assert counts == {"WR": 1}
 
     # No advance → fast path, no re-load.
-    app._ensure_position_loaded("WR")
+    core._ensure_position_loaded("WR")
     assert counts == {"WR": 1}
 
     # Simulate the poller having swapped in a new model.
     mtimes["WR"] = 200.0
-    app._ensure_position_loaded("WR")
+    core._ensure_position_loaded("WR")
     assert counts == {"WR": 2}
 
     # Subsequent calls go back to the fast path against the new stored mtime.
-    app._ensure_position_loaded("WR")
+    core._ensure_position_loaded("WR")
     assert counts == {"WR": 2}
 
 
@@ -107,15 +108,15 @@ def test_sentinel_advance_only_reloads_changed_position(monkeypatch):
     mtimes = {"QB": 50.0, "WR": 50.0, "RB": 50.0}
     _stub_sentinel(monkeypatch, mtimes)
 
-    app._ensure_position_loaded("QB")
-    app._ensure_position_loaded("WR")
-    app._ensure_position_loaded("RB")
+    core._ensure_position_loaded("QB")
+    core._ensure_position_loaded("WR")
+    core._ensure_position_loaded("RB")
     assert counts == {"QB": 1, "WR": 1, "RB": 1}
 
     mtimes["WR"] = 999.0
-    app._ensure_position_loaded("QB")
-    app._ensure_position_loaded("WR")
-    app._ensure_position_loaded("RB")
+    core._ensure_position_loaded("QB")
+    core._ensure_position_loaded("WR")
+    core._ensure_position_loaded("RB")
 
     assert counts == {"QB": 1, "WR": 2, "RB": 1}
 
@@ -129,11 +130,11 @@ def test_refresh_invalidates_metrics_by_format(monkeypatch):
     mtimes = {"TE": 100.0}
     _stub_sentinel(monkeypatch, mtimes)
 
-    app._ensure_position_loaded("TE")
+    core._ensure_position_loaded("TE")
     app._cache["metrics_by_format"] = {"ppr": "stale-cached-value"}
 
     mtimes["TE"] = 200.0
-    app._ensure_position_loaded("TE")
+    core._ensure_position_loaded("TE")
 
     assert "metrics_by_format" not in app._cache
 
@@ -151,21 +152,21 @@ def test_refresh_clears_failed_state_and_retries(monkeypatch):
             raise RuntimeError("first load fails")
         # Subsequent loads succeed.
 
-    monkeypatch.setattr(app, "_apply_position_models", fake_apply)
+    monkeypatch.setattr(core, "_apply_position_models", fake_apply)
     mtimes = {"DST": 100.0}
     _stub_sentinel(monkeypatch, mtimes)
 
-    app._ensure_position_loaded("DST")
+    core._ensure_position_loaded("DST")
     assert "DST" in app._cache["positions_failed"]
     assert app._cache.get("position_load_errors", {}).get("DST") is not None
 
     # Without sentinel advance, the failed state persists.
-    app._ensure_position_loaded("DST")
+    core._ensure_position_loaded("DST")
     assert calls == ["DST"]
 
     # Poller swaps in a new (hopefully-fixed) model.
     mtimes["DST"] = 200.0
-    app._ensure_position_loaded("DST")
+    core._ensure_position_loaded("DST")
 
     assert "DST" not in app._cache["positions_failed"]
     assert "DST" in app._cache["positions_loaded"]
@@ -183,7 +184,7 @@ def test_ensure_all_positions_loaded_stamps_mtime_per_position(monkeypatch):
     mtimes = {"QB": 11.0, "RB": 22.0, "WR": 33.0, "TE": 44.0, "K": 55.0, "DST": 66.0}
     _stub_sentinel(monkeypatch, mtimes)
 
-    app._ensure_all_positions_loaded()
+    core._ensure_all_positions_loaded()
 
     # Every position is recorded with the mtime captured at load time.
     recorded = app._cache.get("positions_mtime", {})
@@ -191,7 +192,7 @@ def test_ensure_all_positions_loaded_stamps_mtime_per_position(monkeypatch):
         assert recorded.get(pos) == expected, f"{pos} mtime not stamped: {recorded.get(pos)}"
     # And subsequent _ensure_position_loaded takes the fast path (no re-apply).
     counts_before = dict(app._cache)  # snapshot for sanity
-    app._ensure_position_loaded("QB")
+    core._ensure_position_loaded("QB")
     assert "positions_mtime" in app._cache and app._cache["positions_mtime"]["QB"] == 11.0
     # _apply was called once per pos by _ensure_all_positions_loaded; no second call here.
     # (The counter from _stub_apply isn't easily reachable; the absence of a
@@ -211,7 +212,7 @@ def test_first_load_with_existing_sentinel_does_not_log_refresh(monkeypatch, cap
     _stub_apply(monkeypatch)
     _stub_sentinel(monkeypatch, {"K": 500.0})
 
-    app._ensure_position_loaded("K")
+    core._ensure_position_loaded("K")
     out = capsys.readouterr().out
 
     assert "in-flight refresh detected" not in out
@@ -237,11 +238,11 @@ def test_hydrated_container_loads_splits_on_refresh(monkeypatch):
         derived["called"] = True
         app._cache["splits"] = {p: (None, None, None) for p in ("QB", "RB", "WR", "TE", "K", "DST")}
 
-    monkeypatch.setattr(app, "_load_splits_locked", fake_load_splits)
+    monkeypatch.setattr(core, "_load_splits_locked", fake_load_splits)
     mtimes = {"WR": 200.0}  # sentinel advanced past the hydration value
     _stub_sentinel(monkeypatch, mtimes)
 
-    app._ensure_position_loaded("WR")
+    core._ensure_position_loaded("WR")
 
     assert derived["called"], "splits must be derived on demand for hydrated containers"
     assert counts == {"WR": 1}, "WR must be re-applied, not skipped/failed"
@@ -264,14 +265,14 @@ def test_ensure_all_positions_loads_splits_when_hydrated(monkeypatch):
     def fake_load_splits(results):
         app._cache["splits"] = {p: (None, None, None) for p in all_pos}
 
-    monkeypatch.setattr(app, "_load_splits_locked", fake_load_splits)
-    monkeypatch.setattr(app, "_refresh_k_data_locked", lambda: None)
-    monkeypatch.setattr(app, "_refresh_dst_data_locked", lambda: None)
+    monkeypatch.setattr(core, "_load_splits_locked", fake_load_splits)
+    monkeypatch.setattr(core, "_refresh_k_data_locked", lambda: None)
+    monkeypatch.setattr(core, "_refresh_dst_data_locked", lambda: None)
     mtimes = {p: 100.0 for p in all_pos}
     mtimes["TE"] = 300.0  # only TE advanced
     _stub_sentinel(monkeypatch, mtimes)
 
-    app._ensure_all_positions_loaded()
+    core._ensure_all_positions_loaded()
 
     assert "splits" in app._cache, "splits must be derived, not early-returned"
     assert counts.get("TE") == 1, "the advanced position must be re-applied"
@@ -286,19 +287,19 @@ def test_dst_refresh_rederives_dst_data(monkeypatch):
     k_calls = {"n": 0}
     dst_calls = {"n": 0}
     monkeypatch.setattr(
-        app, "_refresh_k_data_locked", lambda: k_calls.__setitem__("n", k_calls["n"] + 1)
+        core, "_refresh_k_data_locked", lambda: k_calls.__setitem__("n", k_calls["n"] + 1)
     )
     monkeypatch.setattr(
-        app, "_refresh_dst_data_locked", lambda: dst_calls.__setitem__("n", dst_calls["n"] + 1)
+        core, "_refresh_dst_data_locked", lambda: dst_calls.__setitem__("n", dst_calls["n"] + 1)
     )
     mtimes = {"DST": 100.0}
     _stub_sentinel(monkeypatch, mtimes)
 
-    app._ensure_position_loaded("DST")  # first load — no refresh
+    core._ensure_position_loaded("DST")  # first load — no refresh
     assert dst_calls["n"] == 0 and k_calls["n"] == 0
 
     mtimes["DST"] = 200.0  # poller swaps in a new DST model
-    app._ensure_position_loaded("DST")
+    core._ensure_position_loaded("DST")
 
     assert dst_calls["n"] == 1, "DST advance must re-derive DST data"
     assert k_calls["n"] == 0, "K refresh must not fire for a DST advance"
@@ -313,10 +314,10 @@ def test_splits_missing_without_results_marks_failed(monkeypatch):
     del app._cache["splits"]
     app._cache.pop("results", None)
     derived = {"called": False}
-    monkeypatch.setattr(app, "_load_splits_locked", lambda r: derived.__setitem__("called", True))
+    monkeypatch.setattr(core, "_load_splits_locked", lambda r: derived.__setitem__("called", True))
     _stub_sentinel(monkeypatch, {"QB": 100.0})
 
-    app._ensure_position_loaded("QB")
+    core._ensure_position_loaded("QB")
 
     assert not derived["called"], "_load_splits_locked must not run without results"
     assert "QB" in app._cache.get("positions_failed", set())

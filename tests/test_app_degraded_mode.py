@@ -24,6 +24,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import src.serving.core as core
+
 pytestmark = pytest.mark.integration
 
 
@@ -74,11 +76,11 @@ def degraded_mode_app(monkeypatch, tmp_path):
     monkeypatch.setattr(app_mod, "_cache", fake_cache)
     # Prevent the real base-data loader from running if the early-return
     # check on base_loaded ever flips.
-    monkeypatch.setattr(app_mod, "_load_base_data_locked", lambda: None)
+    monkeypatch.setattr(core, "_load_base_data_locked", lambda: None)
     # Redirect the serving disk cache to a per-test tmp dir so that
     # _compute_metrics_locked's write doesn't leak into the repo's
     # data/serving_cache/ and accidentally hydrate later tests.
-    monkeypatch.setattr(app_mod, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "serving_cache"))
+    monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "serving_cache"))
     return app_mod
 
 
@@ -96,20 +98,20 @@ def degraded_client(degraded_mode_app):
 
 class TestDegradedPositionsHelper:
     def test_empty_when_no_errors(self, degraded_mode_app):
-        assert degraded_mode_app._degraded_positions() == []
+        assert core._degraded_positions() == []
 
     def test_parses_per_model_keys(self, degraded_mode_app):
         degraded_mode_app._cache["position_load_errors"] = {
             "QB_ridge": "bad",
             "WR_nn": "bad",
         }
-        assert degraded_mode_app._degraded_positions() == ["QB", "WR"]
+        assert core._degraded_positions() == ["QB", "WR"]
 
     def test_parses_bare_position_key_from_outer_catch(self, degraded_mode_app):
         """_ensure_position_loaded's outer except writes a plain ``pos`` key
         (no suffix) when feature-building or data-loading blows up."""
         degraded_mode_app._cache["position_load_errors"] = {"DST": "setup boom"}
-        assert degraded_mode_app._degraded_positions() == ["DST"]
+        assert core._degraded_positions() == ["DST"]
 
     def test_mixed_outer_and_inner_keys_dedup(self, degraded_mode_app):
         degraded_mode_app._cache["position_load_errors"] = {
@@ -117,7 +119,7 @@ class TestDegradedPositionsHelper:
             "WR_nn": "inner",
             "QB_attn_nn": "inner",
         }
-        assert degraded_mode_app._degraded_positions() == ["QB", "WR"]
+        assert core._degraded_positions() == ["QB", "WR"]
 
     def test_prefix_does_not_absorb_other_positions(self, degraded_mode_app):
         """ "DST" doesn't contain an underscore; the parser must not false-match
@@ -126,7 +128,7 @@ class TestDegradedPositionsHelper:
             "DST_lgbm": "bad",
             "QB_nn": "bad",
         }
-        assert degraded_mode_app._degraded_positions() == ["DST", "QB"]
+        assert core._degraded_positions() == ["DST", "QB"]
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +147,7 @@ class TestOnePositionFailsOthersServe:
             if pos == "QB":
                 raise RuntimeError("QB boom (e.g. missing nn_scaler.pkl)")
 
-        with mock.patch.object(app_mod, "_apply_position_models", side_effect=fake_apply):
+        with mock.patch.object(core, "_apply_position_models", side_effect=fake_apply):
             r = client.get("/api/predictions")
 
         assert r.status_code == 200
@@ -166,7 +168,7 @@ class TestOnePositionFailsOthersServe:
                 app_mod._cache.setdefault("position_load_errors", {})["WR_nn"] = "nn load failed"
             # Not raising → _ensure_position_loaded adds WR to positions_loaded.
 
-        with mock.patch.object(app_mod, "_apply_position_models", side_effect=fake_apply):
+        with mock.patch.object(core, "_apply_position_models", side_effect=fake_apply):
             r = client.get("/api/predictions")
 
         assert r.status_code == 200
@@ -186,7 +188,7 @@ class TestOnePositionFailsOthersServe:
             if pos == "QB":
                 raise RuntimeError("QB boom")
 
-        with mock.patch.object(app_mod, "_apply_position_models", side_effect=fake_apply):
+        with mock.patch.object(core, "_apply_position_models", side_effect=fake_apply):
             r1 = client.get("/api/predictions")
             r2 = client.get("/api/predictions")
 
@@ -206,12 +208,12 @@ class TestAllPositionsFailPreservesFailLoud:
         ECS blocks the rollout. Preserves the existing fail-loud contract for
         the all-broken case documented in ``src/shared/model_sync.py``."""
         with mock.patch.object(
-            degraded_mode_app,
+            core,
             "_apply_position_models",
             side_effect=RuntimeError("apocalypse"),
         ):
             with pytest.raises(RuntimeError, match="All positions failed"):
-                degraded_mode_app._ensure_all_positions_loaded()
+                core._ensure_all_positions_loaded()
 
     def test_five_fail_one_succeeds_does_not_raise(self, degraded_mode_app):
         """Any successful position makes the fan-out non-fatal, matching the
@@ -221,12 +223,12 @@ class TestAllPositionsFailPreservesFailLoud:
             if pos != "QB":
                 raise RuntimeError(f"{pos} boom")
 
-        with mock.patch.object(degraded_mode_app, "_apply_position_models", side_effect=fake_apply):
-            degraded_mode_app._ensure_all_positions_loaded()  # MUST NOT raise
+        with mock.patch.object(core, "_apply_position_models", side_effect=fake_apply):
+            core._ensure_all_positions_loaded()  # MUST NOT raise
 
         assert degraded_mode_app._cache["positions_loaded"] == {"QB"}
         assert degraded_mode_app._cache["positions_failed"] == {"RB", "WR", "TE", "K", "DST"}
-        assert set(degraded_mode_app._degraded_positions()) == {"RB", "WR", "TE", "K", "DST"}
+        assert set(core._degraded_positions()) == {"RB", "WR", "TE", "K", "DST"}
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +239,7 @@ class TestAllPositionsFailPreservesFailLoud:
 class TestResponseShape:
     def test_degraded_positions_field_present_when_all_load(self, degraded_client):
         client, app_mod = degraded_client
-        with mock.patch.object(app_mod, "_apply_position_models", return_value=None):
+        with mock.patch.object(core, "_apply_position_models", return_value=None):
             r = client.get("/api/predictions?position=QB")
         body = r.get_json()
         assert "degraded_positions" in body

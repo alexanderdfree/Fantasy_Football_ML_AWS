@@ -68,9 +68,9 @@ def on_starting(server):
 def post_fork(server, worker):
     def _warm():
         try:
-            from src.serving import app as serving_app
+            from src.serving import core as serving_core
 
-            serving_app._ensure_metrics()
+            serving_core._ensure_metrics()
         except Exception as e:  # noqa: BLE001 — log + swallow; first user request will retry
             worker.log.warning("pre-warm thread failed: %r", e)
 
