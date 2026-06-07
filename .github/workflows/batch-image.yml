@@ -181,44 +181,12 @@ jobs:
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
-      - name: Publish SOCI index for cold-start lazy-loading
-        # Cold-start opt 2a (docs/batch_design.md §2a): SOCI v2 (Seekable OCI)
-        # lets Batch start the container before the full image is pulled.
-        # The ff-gpu-spot Compute Environment runs the soci-snapshotter
-        # daemon via the ff-batch-lt launch template (infra/batch/userdata.sh),
-        # so a missing/stale index now means a Spot host falls back to
-        # ~122s full pull — silent regression. Hence continue-on-error: false.
-        #
-        # SOCI_VERSION MUST match infra/batch/userdata.sh's pinned version;
-        # publisher/consumer version skew breaks lazy-load (manifest format
-        # evolves between minor releases).
-        continue-on-error: false
-        env:
-          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
-          SOCI_VERSION: "0.13.0"
-        run: |
-          set -euo pipefail
-
-          SOCI_TARBALL="soci-snapshotter-${SOCI_VERSION}-linux-amd64.tar.gz"
-          curl -sSL -o "/tmp/${SOCI_TARBALL}" \
-            "https://github.com/awslabs/soci-snapshotter/releases/download/v${SOCI_VERSION}/${SOCI_TARBALL}"
-          sudo tar -xzf "/tmp/${SOCI_TARBALL}" -C /usr/local/bin/ soci
-          sudo chmod +x /usr/local/bin/soci
-
-          # ubuntu-latest installs containerd as a Docker dep; systemd may
-          # not have started the service yet.
-          sudo systemctl start containerd || true
-
-          # soci reads from containerd's content store, not Docker's
-          # overlay store. Pull the freshly-pushed image back into
-          # containerd so soci can index it.
-          ECR_PASSWORD=$(aws ecr get-login-password --region "$AWS_REGION")
-          sudo ctr image pull --user "AWS:${ECR_PASSWORD}" "$IMAGE_URI"
-
-          sudo /usr/local/bin/soci create "$IMAGE_URI"
-          sudo /usr/local/bin/soci push --user "AWS:${ECR_PASSWORD}" "$IMAGE_URI"
-
-          echo "Published SOCI index for $IMAGE_URI"
+      # NOTE: a "Publish SOCI index" step was removed 2026-06-07. SOCI
+      # lazy-loading cannot work on AWS Batch — Batch runs on ECS-managed EC2
+      # and the amazon-ecs-agent does not pull through the soci snapshotter
+      # (Fargate-only; aws/containers-roadmap#1832). Publishing indexes was a
+      # no-op cold-start cost (and pushed soon-deprecated v1 indexes). See
+      # todo/fixed-archive.md + docs/batch_design.md §2a.
 
       - name: Register new job definition revision
         # Gated behind BATCH_ACTIVE so Batch can ride on the image path while
