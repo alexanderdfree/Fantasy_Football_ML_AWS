@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fantasy Football Predictor</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Self-hosted (was cdn.jsdelivr.net/npm/chart.js@4.4.0). A blocked CDN
+         left `Chart` undefined, and app.js references it at init, so the whole
+         UI's event wiring threw and died. Vendored under static/ to remove the
+         external dependency; bump by re-downloading the pinned dist file. -->
+    <script src="/static/js/vendor/chart.umd.min.js"></script>
 </head>
 <body>
     <!-- Header -->
