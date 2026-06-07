@@ -54,6 +54,16 @@ jobs:
           # e.g. "retrain after data refresh").
           if [ "$EVENT" = "workflow_dispatch" ]; then
             if [ -n "$INPUT_POSITIONS" ]; then
+              # Allow-list each token before emitting it: this output is consumed
+              # downstream as `for POS in $POSITIONS; do ff-train $POS` on the EC2
+              # trainer, so an unvalidated dispatch input (e.g. "QB; curl … | sh")
+              # would be shell-injected under the SSM document's IAM role (#350 F23).
+              for _pos in $INPUT_POSITIONS; do
+                case "$_pos" in
+                  QB|RB|WR|TE|K|DST) ;;
+                  *) echo "Invalid position in dispatch input: '$_pos'" >&2; exit 1 ;;
+                esac
+              done
               echo "Dispatch override: $INPUT_POSITIONS"
               echo "positions=$INPUT_POSITIONS" >> "$GITHUB_OUTPUT"
             else

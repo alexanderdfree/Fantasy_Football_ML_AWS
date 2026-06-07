@@ -54,6 +54,7 @@ from src.serving.serialization import (
     _actual_col,
     _pred_col,
     _records_to_player_rows,
+    _safe_num,
 )
 from src.shared.aggregate_targets import TARGET_UNITS, predictions_to_fantasy_points
 from src.shared.artifact_integrity import (
@@ -657,7 +658,9 @@ def _load_base_data_locked():
     k_test_reindexed = None
     dst_test_reindexed = None
     for pos_label, pos_test_df in (("k", k_test), ("dst", dst_test)):
-        offset = results.index.max() + 1
+        # ``results.index.max()`` is NaN on an empty frame → ``range(nan, ...)``
+        # raises TypeError; guard the cold-boot / empty-test-parquet case (#351 F19).
+        offset = (results.index.max() + 1) if len(results) else 0
         pos_rows = pd.DataFrame(index=range(offset, offset + len(pos_test_df)))
         for col in keep_cols:
             if col in pos_test_df.columns:
@@ -1605,12 +1608,16 @@ def _compute_metrics_locked():
                 # Round per-position metrics to 4 decimals to match the overall
                 # row below — without this, by_position dicts ship full
                 # double-precision floats while overall is pre-rounded.
-                pm = {k: round(v, 4) for k, v in pm.items()}
+                # _safe_num maps NaN/inf to None: compute_metrics returns
+                # r2=NaN for <2-sample slices (e.g. a thin position/week), and a
+                # literal NaN in the jsonified /api/metrics payload makes the
+                # browser's JSON.parse reject the whole response (#363 F7).
+                pm = {k: _safe_num(round(v, 4)) for k, v in pm.items()}
                 pm["position"] = pos
                 pm["n_samples"] = int(pos_mask.sum())
                 by_position.append(pm)
             per_format[name] = {
-                "overall": {k: round(v, 4) for k, v in overall.items()},
+                "overall": {k: _safe_num(round(v, 4)) for k, v in overall.items()},
                 "by_position": by_position,
             }
         metrics_by_format[fmt] = per_format
