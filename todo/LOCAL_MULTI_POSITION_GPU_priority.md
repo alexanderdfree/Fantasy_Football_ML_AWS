@@ -115,8 +115,13 @@ wait
 - `docs/batch_design.md` — AWS one-GPU-per-position design (contrast)
 
 ## Status
-- **Next session:** implement **Option B** (or C). No blockers found; the only
-  real design choice is the CPU-thread-capping policy.
+- **Implemented.** Option B shipped as `src/benchmarking/parallel_train.py` (subprocess
+  fan-out) + the work-conserving `src/shared/core_pool.py` (the CPU-thread-capping policy is
+  a lease-`ceil(cores/active)`-per-stage core pool, not a fixed split). As of **2026-06-07**
+  the `--parallel/--max-workers`-on-`benchmark.py` variant this note also floated is wired:
+  `python -m src.benchmarking.benchmark` **autodetects** the parallel fan-out on a many-core
+  CUDA box (sequential elsewhere; `-j N` / `--sequential` override), lazily delegating to
+  `parallel_train.orchestrate`. Option C (parallel tuning sweep) remains for a later session.
 - The original plan-mode scratch file lives outside the repo at
   `~/.claude/plans/can-multiple-positions-train-tune-cuddly-backus.md`
   (`.claude/plans/` is gitignored); this doc is the committed copy.

@@ -213,11 +213,14 @@ differs (`export FOO=bar` / `source` instead of `$env:FOO`).
 
 ### Parallel local training — all six positions at once
 
-Train every position concurrently instead of the sequential `benchmark` loop (the runner partitions
-the physical cores across positions and rebalances as each finishes). Each position trains once,
-writing its `src/{pos}/outputs/` artifacts and one consolidated `benchmark_history/` entry; with AWS
-creds present it mirrors that to the website History tab (metrics only). Per-position logs go to
-`logs/local-train-<POS>.log`.
+`python -m src.benchmarking.benchmark` now **autodetects** this: on a many-core CUDA box it fans the
+requested positions out in parallel (the runner partitions the physical cores across positions and
+rebalances as each finishes), and falls back to the sequential loop on any other host. Pass `-j N` to
+cap concurrency or `--sequential` to force the in-process loop. `scripts/train-local-parallel.sh` is the
+convenience wrapper that sources `scripts/wsl-env.sh` (BLAS caps + the History-sync bucket) first, then
+calls the parallel runner directly. Each position trains once, writing its `src/{pos}/outputs/` artifacts
+and one consolidated `benchmark_history/` entry; with AWS creds present it mirrors that to the website
+History tab (metrics only). Per-position logs go to `logs/local-train-<POS>.log`.
 
 ```bash
 source scripts/wsl-env.sh
@@ -227,6 +230,7 @@ scripts/train-local-parallel.sh -j 4       # cap concurrency
 scripts/train-local-parallel.sh --rolling-origin  # walk-forward report
 scripts/train-local-parallel.sh --dry-run  # print the core plan, launch nothing
 scripts/train-local-parallel.sh --no-sync  # don't mirror to the website
+python -m src.benchmarking.benchmark       # equivalent autodetect path (no wrapper); --sequential forces the loop
 ```
 
 ## First-time data pull and split

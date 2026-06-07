@@ -1,8 +1,17 @@
 """Benchmark script: runs the QB, RB, WR, TE, K, DST pipelines and prints a comparison table.
 
+By default this autodetects concurrency: on a many-core CUDA box (e.g. the 9950X3D / RTX
+5080 dev machine) it fans the requested positions out in parallel via
+``src.benchmarking.parallel_train`` — the measured-optimal local regime, since the small
+attention NN is GPU launch-bound and stacking processes fills the GPU's idle gaps
+(``todo/gpu_launch_bound_levers.md``). On any other host it runs the positions sequentially.
+Pass ``-j N`` to cap concurrency or ``--sequential`` to force the in-process loop.
+
 Usage:
-    python benchmark.py                          # run all 6 positions
-    python benchmark.py RB                       # run one position
+    python benchmark.py                          # all 6; parallel on a capable box, else sequential
+    python benchmark.py RB                       # run one position (always sequential)
+    python benchmark.py -j 3                      # cap concurrency at 3
+    python benchmark.py --sequential             # force the in-process sequential loop
     python benchmark.py --note "tuned WR dropout" # annotate the run
 """
 
@@ -405,12 +414,69 @@ def main(argv=None):
         "[..T-2] / val T-1 / test T per origin); reports per-model MAE/R2/top-12 as mean±std. "
         "~N_origins x the single-split cost — headline eval, not per-PR. Overrides --cv.",
     )
+    parser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=None,
+        help="Max positions to train concurrently. Default: autodetect — all positions on a "
+        "many-core CUDA box (the measured-optimal regime, see todo/gpu_launch_bound_levers.md), "
+        "else sequential. Reuses the parallel runner (src/benchmarking/parallel_train.py).",
+    )
+    parser.add_argument(
+        "--sequential",
+        action="store_true",
+        help="Force the in-process sequential loop (equivalent to -j 1), bypassing autodetect.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the run plan (core-pool layout + dispatch order) and launch nothing.",
+    )
     args = parser.parse_args(argv)
     rolling_origin_mode = args.rolling_origin or args.cv
     if args.cv and not args.rolling_origin:
         print("DEPRECATED: benchmark --cv now aliases --rolling-origin walk-forward reporting.")
 
     positions = args.positions
+
+    # Concurrency dispatch. By default autodetect: on a many-core CUDA box the
+    # measured-optimal regime is every position in parallel (the GPU is launch-bound, so
+    # stacking processes fills its idle gaps — todo/gpu_launch_bound_levers.md), elsewhere
+    # sequential. ``--sequential``/``-j 1`` forces the in-process loop below. The parallel
+    # engine lives in ``parallel_train`` (which imports from this module), so these imports
+    # are function-local to avoid a circular import at load time.
+    if args.sequential:
+        jobs = 1
+    elif args.jobs is not None:
+        jobs = args.jobs
+    else:
+        from src.benchmarking.parallel_train import _default_jobs
+
+        jobs = _default_jobs(len(positions))
+
+    if jobs > 1 and len(positions) > 1:
+        from src.benchmarking import parallel_train
+
+        passthrough = []
+        if rolling_origin_mode:
+            passthrough.append("--rolling-origin")
+        if args.significance:
+            passthrough.append("--significance")
+        return parallel_train.orchestrate(
+            positions,
+            jobs,
+            passthrough,
+            args.note,
+            args.no_sync,
+            args.dry_run,
+            rolling_origin=rolling_origin_mode,
+        )
+
+    if args.dry_run:
+        print(f"[dry-run] would run sequentially (-j 1): {positions}")
+        return 0
+
     summaries = []
     for pos in positions:
         t0 = time.time()
@@ -466,7 +532,8 @@ def main(argv=None):
         _maybe_upload_to_s3(written_path)
 
     print_history_comparison(HISTORY_DIR, summaries, exclude_path=written_path)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
