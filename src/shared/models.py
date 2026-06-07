@@ -1,7 +1,7 @@
 """Generic multi-target models for any position (Ridge, Ordinal, LightGBM).
 
 Single-target building blocks (``RidgeModel``, ``ElasticNetModel``,
-``SeasonAverageBaseline``, ``LastWeekBaseline``) used to live in
+``SeasonAverageBaseline``) used to live in
 ``src/models/``; they've been inlined here so the only "models" module is
 this one. The multi-target wrappers below loop the per-target classes;
 ``src/shared/pipeline.py`` also imports ``RidgeModel`` /
@@ -233,21 +233,6 @@ class SeasonAverageBaseline:
             .transform(lambda x: x.shift(1).expanding().mean())
             .fillna(0)
         )
-        return _baseline_scatter_back(preds, work["_pos"].to_numpy())
-
-
-class LastWeekBaseline:
-    """Predict each player scored the same as last week.
-
-    Sort is handled internally; predictions are returned in the caller's row order.
-    """
-
-    def predict(self, df: pd.DataFrame) -> np.ndarray:
-        work = _baseline_workframe(df)
-        grouped = work.groupby(["player_id", "season"])["fantasy_points"]
-        shifted = grouped.shift(1)
-        season_avg = grouped.transform(lambda x: x.shift(1).expanding().mean())
-        preds = shifted.fillna(season_avg).fillna(0)
         return _baseline_scatter_back(preds, work["_pos"].to_numpy())
 
 

@@ -262,7 +262,6 @@ class PositionConfig:
     # contract to use; PR #244 migrated the registry to read from here.
     accepts_dataframes: bool = True
     cpu_only: bool = False
-    has_cv_runner: bool = False
 
     def __post_init__(self) -> None:
         # Validate ``name`` against the canonical Position enum so typos in a

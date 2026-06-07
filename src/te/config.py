@@ -280,5 +280,4 @@ POSITION_CONFIG = PositionConfig(
     lgbm_objective="regression",
     accepts_dataframes=True,
     cpu_only=False,
-    has_cv_runner=True,
 )

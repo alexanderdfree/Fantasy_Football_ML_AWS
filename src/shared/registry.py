@@ -5,8 +5,8 @@ Consumers: app.py (inference), src/batch/train.py (training), benchmark.py
 
 Everything is lazily imported so loading this module is cheap.
 
-Position metadata (``runner_module``, ``accepts_dataframes``, ``cpu_only``,
-``has_cv_runner``) lives on each position's ``POSITION_CONFIG`` instance.
+Position metadata (``runner_module``, ``accepts_dataframes``, ``cpu_only``)
+lives on each position's ``POSITION_CONFIG`` instance.
 The legacy ``_POSITION_META`` dict is gone; we read the bundled config via a
 small lazy importer.
 """
