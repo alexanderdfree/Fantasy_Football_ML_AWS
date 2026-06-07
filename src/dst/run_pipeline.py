@@ -21,6 +21,7 @@ from src.dst.features import compute_features
 from src.dst.targets import compute_targets
 from src.shared.pipeline import run_cv_pipeline, run_pipeline
 from src.shared.position_pipeline import build_pipeline_config
+from src.shared.run_pipeline_factory import cli_main
 
 CONFIG = build_pipeline_config("DST", POSITION_CONFIG)
 
@@ -78,17 +79,9 @@ def run_cv(seed=42, config=None):
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="DST pipeline")
-    parser.add_argument("--cv", action="store_true", help="Use expanding-window cross-validation")
-    parser.add_argument(
-        "--device",
-        choices=("auto", "cpu", "cuda", "mps"),
-        default=None,
-        help="Set FF_DEVICE for this run; omitted leaves the environment unchanged.",
+    cli_main(
+        position_name="DST",
+        default_config=CONFIG,
+        run_fn=run,
+        run_cv_fn=run_cv,
     )
-    args = parser.parse_args()
-    if args.device is not None:
-        os.environ["FF_DEVICE"] = args.device
-    (run_cv if args.cv else run)()
