@@ -447,7 +447,6 @@ POSITION_CONFIG = PositionConfig(
     td_model_type="gated_ordinal",
     accepts_dataframes=True,
     cpu_only=False,
-    has_cv_runner=True,
 )
 
 

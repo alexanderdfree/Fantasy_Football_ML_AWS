@@ -252,5 +252,4 @@ POSITION_CONFIG = PositionConfig(
     },
     accepts_dataframes=False,
     cpu_only=True,
-    has_cv_runner=True,
 )

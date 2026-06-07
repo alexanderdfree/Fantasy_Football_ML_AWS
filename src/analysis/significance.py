@@ -57,8 +57,8 @@ OUT_DIR = PROJECT_ROOT / "analysis_output"
 # Canonical model-name -> prediction-column map written onto ``pos_test`` by
 # ``src/shared/pipeline.py`` (see ``backtest_pred_columns`` there). Only the
 # subset whose column is actually present is used — ElasticNet / Attention NN /
-# LightGBM are conditional on the position's config. ``LastWeekBaseline`` is NOT
-# wired into the pipeline, so only ``Season Avg`` appears as a baseline.
+# LightGBM are conditional on the position's config. Only ``Season Avg`` is
+# wired in as a baseline.
 CANONICAL_PRED_COLUMNS: dict[str, str] = {
     "Season Avg": "pred_baseline",
     "Ridge": "pred_ridge_total",
