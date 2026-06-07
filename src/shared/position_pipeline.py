@@ -249,6 +249,14 @@ def build_pipeline_config(
         cfg["attn_cosine_eta_min"] = pc.attn_cosine_eta_min
     if pc.attn_onecycle_max_lr is not None:
         cfg["attn_onecycle_max_lr"] = pc.attn_onecycle_max_lr
+    if pc.attn_scheduler_type is not None:
+        cfg["attn_scheduler_type"] = pc.attn_scheduler_type
+    if pc.attn_cosine_t0 is not None:
+        cfg["attn_cosine_t0"] = pc.attn_cosine_t0
+    if pc.attn_cosine_t_mult is not None:
+        cfg["attn_cosine_t_mult"] = pc.attn_cosine_t_mult
+    if pc.attn_onecycle_pct_start is not None:
+        cfg["attn_onecycle_pct_start"] = pc.attn_onecycle_pct_start
     # attn_project_kv is plumbed by RB/K/DST (matches original CONFIG dicts);
     # the skill positions skip it because their flat attention path defaults False.
     if pos in (Position.RB, Position.K, Position.DST):

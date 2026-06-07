@@ -368,8 +368,11 @@ def test_format_config_lines_roundtrips_through_eval():
     # Verify a representative subset round-trips correctly.
     assert namespace["RB_ATTN_D_MODEL"] == 32
     assert namespace["RB_ATTN_LR"] == 0.001
-    assert namespace["RB_SCHEDULER_TYPE"] == "onecycle"
+    # Scheduler params now emit to ATTN_* (not the shared SCHEDULER_*/ONECYCLE_*)
+    # so pasting tuned attention values can't re-schedule the regular NN (#792).
+    assert namespace["RB_ATTN_SCHEDULER_TYPE"] == "onecycle"
     assert namespace["RB_ATTN_ONECYCLE_MAX_LR"] == 0.002
+    assert namespace["RB_ATTN_ONECYCLE_PCT_START"] == 0.3
     assert namespace["RB_NN_BACKBONE_LAYERS"] == [128, 64]
     assert namespace["RB_NN_DROPOUT"] == 0.2
 

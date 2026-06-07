@@ -198,6 +198,14 @@ class PositionConfig:
     # changing the regular NN schedule.
     attn_cosine_eta_min: float | None = None
     attn_onecycle_max_lr: float | None = None
+    # Optional attention-only scheduler TYPE + shape overrides (cf. the LR-floor
+    # overrides above). Unset → the attention trainer falls back to the shared
+    # scheduler values. tune_nn emits these as ATTN_* so pasting tuned attention
+    # scheduler params no longer re-schedules the regular NN (#792 / PR #743).
+    attn_scheduler_type: str | None = None
+    attn_cosine_t0: int | None = None
+    attn_cosine_t_mult: int | None = None
+    attn_onecycle_pct_start: float | None = None
     attn_history_stats: list[str] = field(default_factory=list)
     attn_static_features: list[str] = field(default_factory=list)
     attn_project_kv: bool = False

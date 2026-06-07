@@ -519,7 +519,10 @@ def _scheduler_value(cfg: dict, key: str, scheduler_prefix: str):
 
 def _build_scheduler(optimizer, cfg, train_loader, *, scheduler_prefix: str = ""):
     """Create the LR scheduler from config."""
-    sched_type = cfg["scheduler_type"]
+    # Prefix-aware so the attention path (scheduler_prefix="attn_") can override
+    # the scheduler TYPE too, not just the LR-scale values — falls back to the
+    # shared ``scheduler_type`` when ``attn_scheduler_type`` is unset (#792).
+    sched_type = _scheduler_value(cfg, "scheduler_type", scheduler_prefix)
     if sched_type == "onecycle":
         return torch.optim.lr_scheduler.OneCycleLR(
             optimizer,

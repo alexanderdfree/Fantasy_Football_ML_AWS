@@ -576,6 +576,17 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
                 k_df.reset_index(inplace=True)
     except Exception as e:
         print(f"  WARNING: 2025 PBP backfill failed ({e}), PBP features will be NaN for 2025")
+        # #815: a swallowed failure that leaves fg_yards_made all-NaN silently
+        # zeros fg_yard_points for the WHOLE season (src.k.targets fillna(0)) —
+        # indistinguishable from "made no FGs" (the ~3-fpt K collapse; cf. the
+        # Apr-19 cache). Fail loud in that case. A venue-only failure that still
+        # populated fg_yards_made (the FG first-pass succeeded) is tolerated.
+        if "fg_yards_made" in k_df.columns and k_df.loc[mask, "fg_yards_made"].isna().all():
+            raise RuntimeError(
+                f"2025 PBP backfill failed and left fg_yards_made all-NaN for "
+                f"seasons {seasons} — fg_yard_points would silently zero the whole "
+                f"season. Check nfl_source PBP availability / schema."
+            ) from e
 
 
 _KICKS_SCHEMA = [

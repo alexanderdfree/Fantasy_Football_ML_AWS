@@ -607,15 +607,17 @@ _PARAM_TO_CONST = {
     "attn_dropout": "ATTN_DROPOUT",
     "attn_lr": "ATTN_LR",
     "attn_batch_size": "ATTN_BATCH_SIZE",
-    "scheduler_type": "SCHEDULER_TYPE",
-    "cosine_t0": "COSINE_T0",
-    "cosine_t_mult": "COSINE_T_MULT",
-    # The tuner objective trains attention only, so scheduler LR scale params
-    # must be pasted into the attention-specific config fields. The shared
-    # scheduler fields still exist for the regular NN path.
+    # The tuner objective trains ATTENTION only, so every sampled scheduler param
+    # (type + shape + LR scale) must be pasted into the attention-specific config
+    # fields (ATTN_*), never the shared SCHEDULER_*/COSINE_*/ONECYCLE_* fields the
+    # regular NN path also reads — else pasting tuned attention values silently
+    # re-schedules the regular NN (#792, completing PR #743's partial namespacing).
+    "scheduler_type": "ATTN_SCHEDULER_TYPE",
+    "cosine_t0": "ATTN_COSINE_T0",
+    "cosine_t_mult": "ATTN_COSINE_T_MULT",
     "cosine_eta_min": "ATTN_COSINE_ETA_MIN",
     "onecycle_max_lr": "ATTN_ONECYCLE_MAX_LR",
-    "onecycle_pct_start": "ONECYCLE_PCT_START",
+    "onecycle_pct_start": "ATTN_ONECYCLE_PCT_START",
     "nn_backbone_layers": "NN_BACKBONE_LAYERS",
     "nn_head_hidden": "NN_HEAD_HIDDEN",
     "nn_dropout": "NN_DROPOUT",
@@ -626,19 +628,27 @@ _PARAM_TO_CONST = {
 
 
 def _apply_attention_scheduler_overrides(cfg: dict, overrides: dict) -> None:
-    """Route sampled scheduler LR scale params to attention-specific keys.
+    """Route ALL sampled scheduler params to attention-specific keys.
 
-    Production configs now carry ``attn_cosine_eta_min`` /
-    ``attn_onecycle_max_lr`` so attention training can use scaled scheduler
-    values without changing the regular NN schedule. ``tune_nn`` still samples
-    the historical unprefixed Optuna params for study compatibility; mirror
-    those onto the attention keys before running the attention-only objective.
+    The tuner objective trains attention only, so every sampled scheduler param
+    (type + shape + LR scale) must land on the ``attn_*`` cfg keys the attention
+    trainer reads (via ``_scheduler_value(..., "attn_")``), never the shared keys
+    the regular NN path also reads. ``tune_nn`` samples the historical unprefixed
+    Optuna param names for study compatibility; mirror them onto the attention
+    keys here so the trial evaluates the same namespaced config that
+    ``_PARAM_TO_CONST`` later emits (#792).
     """
-    sched_type = cfg.get("scheduler_type")
-    if sched_type == "cosine_warm_restarts" and "cosine_eta_min" in overrides:
-        cfg["attn_cosine_eta_min"] = overrides["cosine_eta_min"]
-    elif sched_type == "onecycle" and "onecycle_max_lr" in overrides:
-        cfg["attn_onecycle_max_lr"] = overrides["onecycle_max_lr"]
+    sched_type = overrides.get("scheduler_type")
+    if sched_type is not None:
+        cfg["attn_scheduler_type"] = sched_type
+    if sched_type == "cosine_warm_restarts":
+        for k in ("cosine_t0", "cosine_t_mult", "cosine_eta_min"):
+            if k in overrides:
+                cfg[f"attn_{k}"] = overrides[k]
+    elif sched_type == "onecycle":
+        for k in ("onecycle_max_lr", "onecycle_pct_start"):
+            if k in overrides:
+                cfg[f"attn_{k}"] = overrides[k]
 
 
 def _format_value(val) -> str:

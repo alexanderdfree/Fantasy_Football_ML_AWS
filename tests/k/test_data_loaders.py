@@ -907,6 +907,35 @@ def test_backfill_2025_pbp_logs_warning_on_failure(monkeypatch, capsys):
 
 
 @pytest.mark.unit
+def test_backfill_2025_pbp_raises_when_failure_zeros_fg_yards_made(monkeypatch, capsys):
+    """#815: a swallowed backfill failure that leaves fg_yards_made all-NaN must
+    fail loud — otherwise src.k.targets fillna(0)'s fg_yard_points to 0 for the
+    whole 2025 season (a silent ~3-fpt K collapse). Production seeds fg_yards_made
+    before the backfill runs, so the column is present in this realistic frame."""
+    import src.k.data as k_data
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _boom)
+
+    k_df = pd.DataFrame(
+        {
+            "player_id": ["K01", "K02"],
+            "season": [2025, 2025],
+            "week": [1, 2],
+            "roof": [float("nan"), float("nan")],
+            "surface": [float("nan"), float("nan")],
+            "fg_yards_made": [float("nan"), float("nan")],  # seeded, as load_data does
+        }
+    )
+    with pytest.raises(RuntimeError, match="fg_yards_made all-NaN"):
+        k_data._backfill_2025_pbp_columns(k_df, [2025])
+    # The diagnostic warning still prints before the raise.
+    assert "2025 PBP backfill failed" in capsys.readouterr().out
+
+
+@pytest.mark.unit
 def test_backfill_2025_pbp_early_returns_when_no_matching_seasons():
     """``k_df`` without any rows matching ``seasons`` → no-op early return."""
     import src.k.data as k_data
