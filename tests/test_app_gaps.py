@@ -24,6 +24,7 @@ import pandas as pd
 import pytest
 
 import src.serving.core as core
+import src.serving.routes as routes
 
 pytestmark = pytest.mark.integration
 
@@ -411,7 +412,7 @@ def test_position_arch_payload_cosine_warm_restarts_scheduler():
         cosine_t_mult=2,
         cosine_eta_min=1e-5,
     )
-    payload = app_mod._position_arch_payload(pc, include_features=["a", "b"])
+    payload = routes._position_arch_payload(pc, include_features=["a", "b"])
     assert "CosineAnnealingWarmRestarts" in payload["scheduler"]
 
 
@@ -420,7 +421,7 @@ def test_position_arch_payload_onecycle_scheduler():
     import src.serving.app as app_mod
 
     pc = _arch_pc(scheduler_type="onecycle", onecycle_max_lr=0.01, onecycle_pct_start=0.3)
-    payload = app_mod._position_arch_payload(pc, include_features=["a"])
+    payload = routes._position_arch_payload(pc, include_features=["a"])
     assert "OneCycleLR" in payload["scheduler"]
 
 
@@ -429,7 +430,7 @@ def test_position_arch_payload_plateau_scheduler():
     import src.serving.app as app_mod
 
     pc = _arch_pc(scheduler_type="plateau")
-    payload = app_mod._position_arch_payload(pc, include_features=["a"])
+    payload = routes._position_arch_payload(pc, include_features=["a"])
     assert payload["scheduler"] == "ReduceLROnPlateau"
 
 
@@ -440,7 +441,7 @@ def test_position_arch_payload_include_features_as_dict():
     import src.serving.app as app_mod
 
     pc = _arch_pc(specific_features=["pos_specific"])
-    payload = app_mod._position_arch_payload(
+    payload = routes._position_arch_payload(
         pc, include_features={"rolling": ["r1", "r2"], "ewma": ["e1"]}
     )
     features = payload["features"]
@@ -805,7 +806,7 @@ def test_model_architecture_error_handler_returns_json_500(client, monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("arch payload exploded")
 
-    monkeypatch.setattr(app_mod, "_position_arch_payload", _boom)
+    monkeypatch.setattr(routes, "_position_arch_payload", _boom)
     resp = client.get("/api/model_architecture")
     # Why: the strategy doc requires structured JSON for /api/* errors so the
     # SPA can surface a message instead of rendering Flask's HTML 500 page.
@@ -824,7 +825,7 @@ def test_position_arch_payload_unknown_scheduler_falls_back_to_str():
     import src.serving.app as app_mod
 
     pc = _arch_pc(scheduler_type="constant")
-    payload = app_mod._position_arch_payload(pc, include_features=["a"])
+    payload = routes._position_arch_payload(pc, include_features=["a"])
     assert payload["scheduler"] == "constant"
 
 
@@ -834,7 +835,7 @@ def test_position_arch_payload_attn_history_appended_when_provided():
     import src.serving.app as app_mod
 
     pc = _arch_pc(scheduler_type="plateau")
-    payload = app_mod._position_arch_payload(
+    payload = routes._position_arch_payload(
         pc,
         include_features=["a"],
         attn_history=["passing_yards", "rushing_yards"],
