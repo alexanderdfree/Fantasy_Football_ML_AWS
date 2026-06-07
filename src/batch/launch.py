@@ -60,15 +60,15 @@ JOB_DEFINITION_REVISION = os.environ.get("FF_JOB_DEFINITION_REVISION", "") or No
 # even after Layer A pins the job-def revision). Empty -> not passed.
 TRAIN_GIT_SHA = os.environ.get("FF_TRAIN_GIT_SHA", "") or None
 # Optional CUDA-graph OVERRIDE, forwarded to the container only when
-# FF_CUDA_GRAPH is set in this launcher's environment. The container's
-# cuda_graph_enabled() (src/shared/utils.py) AUTODETECTS graphs ON for sm_80+
-# (the g6/L4 qualifies), so the production fan-out is graphed by default with no
-# value here. train-batch.yml threads the FF_BATCH_CUDA_GRAPH repo variable as a
-# fleet override: leave it unset for the autodetect default, or set it to 0 to
-# force the whole fan-out back to the eager path (e.g. a bit-comparable A/B).
-# Graphs are ~1.5-1.8x on the launch-bound GPU branch (both the base/control NN
-# and the attention NN) but NOT bit-identical to eager (see
-# todo/gpu_launch_bound_levers.md, Lever A).
+# FF_CUDA_GRAPH is set in this launcher's environment. cuda_graph_enabled()
+# (src/shared/utils.py) autodetects graphs ON for sm_80+ — BUT the live CE
+# currently runs g4dn.xlarge (Tesla T4, sm_75) as of 2026-06-07, so graphs are
+# gated OFF on the production fan-out (training is eager) until the CE migrates
+# to L4 (g6/g6f). train-batch.yml threads the FF_BATCH_CUDA_GRAPH repo variable
+# as a fleet override for that future L4 fleet (set it to 0 to force eager);
+# leave it unset otherwise. On L4, graphs are ~1.5-1.8x on the launch-bound GPU
+# branch (both the base/control NN and the attention NN) but NOT bit-identical
+# to eager (see todo/gpu_launch_bound_levers.md, Lever A).
 FF_CUDA_GRAPH = os.environ.get("FF_CUDA_GRAPH", "") or None
 
 from src.shared.registry import ALL_POSITIONS, CPU_ONLY_POSITIONS  # noqa: E402
