@@ -1483,6 +1483,12 @@ def _persist_cache_to_disk():
         for tmp in (parquet_tmp, metrics_tmp, fingerprint_tmp):
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
+        # A partial os.replace sequence may have committed a new parquet/metrics
+        # while leaving the OLD fingerprint.json in place — _try_hydrate_from_disk
+        # would then treat the mismatched triple as a valid cache. Drop the commit
+        # marker so the next boot recomputes instead of serving stale metrics. (#817)
+        with contextlib.suppress(OSError):
+            os.unlink(fingerprint_path)
         return
     print(f"[predcache] wrote cache to {_PREDICTIONS_CACHE_DIR} (sha={sha[:8]})")
     # Write the browser snapshot before uploading so the upload (which also
@@ -1534,7 +1540,10 @@ def _any_position_sentinel_advanced() -> bool:
     line of defense for ``_ensure_metrics`` — see comment there.
     """
     stored = app_pkg._cache.get("positions_mtime", {})
-    loaded = app_pkg._cache.get("positions_loaded", set())
+    # Snapshot to a tuple: another thread can add/discard positions_loaded under
+    # _cache_lock while this lock-free fast path iterates it, which would raise
+    # "Set changed size during iteration". (#1014)
+    loaded = tuple(app_pkg._cache.get("positions_loaded", ()))
     return any(refresh_sentinel_mtime(pos) > stored.get(pos, -1.0) for pos in loaded)
 
 

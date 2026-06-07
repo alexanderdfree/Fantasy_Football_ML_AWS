@@ -542,8 +542,8 @@ def _build_scheduler(optimizer, cfg, train_loader, *, scheduler_prefix: str = ""
         return torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
-            factor=cfg["plateau_factor"],
-            patience=cfg["plateau_patience"],
+            factor=_scheduler_value(cfg, "plateau_factor", scheduler_prefix),
+            patience=_scheduler_value(cfg, "plateau_patience", scheduler_prefix),
         ), False  # scheduler_per_batch=False
     else:
         raise ValueError(f"Unknown scheduler type: {sched_type}")

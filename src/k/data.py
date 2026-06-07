@@ -106,6 +106,10 @@ def reconstruct_kicker_weekly_from_pbp(
     # the value at function-definition time).
     if cache_dir is None:
         cache_dir = CACHE_DIR
+    if not seasons:
+        # Empty-seasons guard (mirrors reconstruct_kicker_kicks_from_pbp) so the
+        # seasons[0]/[-1] cache-path build below can't IndexError. (#409)
+        return pd.DataFrame()
     cache_path = f"{cache_dir}/kicker_pbp_{seasons[0]}_{seasons[-1]}.parquet"
     if os.path.exists(cache_path) and _cached_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
