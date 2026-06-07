@@ -208,7 +208,7 @@ def _run_worker(pos: str, summary_out: str, rolling_origin: bool, significance: 
     if rolling_origin:
         summary = run_rolling_origin(pos)
     else:
-        result = run_one(pos, cv=False)
+        result = run_one(pos)
         summary = summarize_pipeline_result(pos, result)
         if significance:
             sig = _significance_block(pos, result)
