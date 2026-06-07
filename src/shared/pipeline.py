@@ -1155,21 +1155,15 @@ def _train_attention_holdout(
     )
 
 
-def _train_lightgbm(
-    X_train,
-    X_val,
-    X_test,
-    y_train_dict,
-    y_val_dict,
-    y_test_dict,
-    cfg,
-    targets,
-    feature_cols,
-    seed,
-    n_jobs=None,
-):
-    """Train a LightGBM multi-target model. Returns (model, test_preds, metrics)."""
-    model = LightGBMMultiTarget(
+def _build_lgbm(targets, cfg, seed, n_jobs):
+    """Construct a ``LightGBMMultiTarget`` from cfg hyperparameters.
+
+    Single source of the 14-kwarg constructor shared by the holdout
+    (``_train_lightgbm``) and the per-fold CV path, so the two paths cannot
+    drift apart. ``n_jobs`` is threaded by the caller (holdout ``n_jobs`` param
+    vs the CV fold's ``lease_cores`` lease).
+    """
+    return LightGBMMultiTarget(
         target_names=targets,
         n_estimators=cfg.get("lgbm_n_estimators", 500),
         learning_rate=cfg.get("lgbm_learning_rate", 0.05),
@@ -1185,6 +1179,23 @@ def _train_lightgbm(
         seed=seed,
         n_jobs=n_jobs,
     )
+
+
+def _train_lightgbm(
+    X_train,
+    X_val,
+    X_test,
+    y_train_dict,
+    y_val_dict,
+    y_test_dict,
+    cfg,
+    targets,
+    feature_cols,
+    seed,
+    n_jobs=None,
+):
+    """Train a LightGBM multi-target model. Returns (model, test_preds, metrics)."""
+    model = _build_lgbm(targets, cfg, seed, n_jobs)
     model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
 
     # Mirror the NN/Ridge/ElasticNet paths: honor the position's per-head
@@ -1913,22 +1924,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             # CV-fold metrics match the holdout predict, which supplies it
             # (#479/#787).
             with lease_cores("lgbm", default=None) as _nj:
-                lgbm_fold = LightGBMMultiTarget(
-                    target_names=targets,
-                    n_estimators=cfg.get("lgbm_n_estimators", 500),
-                    learning_rate=cfg.get("lgbm_learning_rate", 0.05),
-                    num_leaves=cfg.get("lgbm_num_leaves", 31),
-                    max_depth=cfg.get("lgbm_max_depth", -1),
-                    subsample=cfg.get("lgbm_subsample", 0.8),
-                    colsample_bytree=cfg.get("lgbm_colsample_bytree", 0.8),
-                    reg_lambda=cfg.get("lgbm_reg_lambda", 1.0),
-                    reg_alpha=cfg.get("lgbm_reg_alpha", 0.0),
-                    min_child_samples=cfg.get("lgbm_min_child_samples", 20),
-                    min_split_gain=cfg.get("lgbm_min_split_gain", 0.0),
-                    objective=cfg.get("lgbm_objective", "huber"),
-                    seed=seed,
-                    n_jobs=_nj,
-                )
+                lgbm_fold = _build_lgbm(targets, cfg, seed, _nj)
                 lgbm_fold.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
             lgbm_val_preds = lgbm_fold.predict(
                 X_val, non_negative_targets=cfg.get("nn_non_negative_targets")
