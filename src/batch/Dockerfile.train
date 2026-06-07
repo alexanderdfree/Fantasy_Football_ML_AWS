@@ -1,62 +1,75 @@
 # syntax=docker/dockerfile:1.7
-# Base image served via an optional ECR pull-through cache (strategy 2c).
-# When PULL_THROUGH_PREFIX is set, the pytorch base is pulled from ECR
-# instead of Docker Hub — first pull in the region seeds the ECR cache,
-# every subsequent Batch instance pulls from the local AWS network.
+# Slim CUDA base + pip-installed torch — cold-start optimization: shrink the
+# per-Spot-host image pull (the dominant chunk of the ~258 s cold start; see
+# docs/batch_design.md §"Cold-start optimization"). Replaces the conda-based
+# pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime base (~3.7 GB compressed) with
+# nvidia/cuda:*-base (~86 MB) + the cu126 torch wheel, which bundles its own
+# CUDA libs — so we do NOT layer them on a *-cudnn-runtime base (~2 GB) that
+# would double-count cudnn/cublas and erase the win. torch VERSION is pinned
+# identical to the old base (2.12.0 / cu126) so training numerics stay
+# comparable: this is a packaging change, not a torch upgrade.
 #
-# Example (region is parameterized — batch-image.yml derives the registry
-# from the account + ``vars.AWS_REGION`` since PR #308, so this is illustrative
-# only; the build always overrides it with the live region's registry):
-#   --build-arg PULL_THROUGH_PREFIX=123456789012.dkr.ecr.<region>.amazonaws.com/dockerhub/
-# Leave unset to pull directly from Docker Hub (original behavior).
+# Base image served via an optional ECR pull-through cache (strategy 2c). When
+# PULL_THROUGH_PREFIX is set, the base is pulled from ECR instead of Docker Hub
+# — first pull in the region seeds the ECR cache, every subsequent Batch
+# instance pulls from the local AWS network. batch-image.yml derives the
+# registry from the account + vars.AWS_REGION and overrides this at build time;
+# leave unset to pull from Docker Hub directly. nvidia/cuda is an org image, so
+# it routes through the cache exactly like pytorch/pytorch did.
 ARG PULL_THROUGH_PREFIX=
-FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime
+FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}nvidia/cuda:12.6.3-base-ubuntu24.04
 
-# torch.compile (added in PR #183 via _maybe_compile) lazy-compiles graphs at
-# first forward pass. Inductor's CPU vec-ISA probe (pick_vec_isa →
-# cpp_compiler_search) needs a working C++ compiler to dry-build a vectorized
-# fingerprint, even when the model is on CUDA — attention masking / padding
-# / dtype casts can fall back to CPU codegen. The pytorch:*-runtime base is
-# intentionally minimal (no toolchain), so without g++ Inductor raises
-# ``InductorError: InvalidCxxCompiler`` on the first forward pass and kills
-# training (PR #185's train-ec2 run reproduced this). Place this layer before
-# the uv install so a Python-deps change doesn't invalidate it.
-# ``--no-install-recommends`` keeps the addition lean (~50 MB on a ~7 GB base).
+# System deps the conda base provided that the slim CUDA base lacks:
+#  - python3: Ubuntu 24.04 ships CPython 3.12, matching the project's cp312
+#    wheels (numpy/pandas/pyarrow/sklearn/lightgbm all resolve cp312 manylinux).
+#    The `python` symlink keeps the `python -m ...` ENTRYPOINT working without
+#    pulling python-is-python3 (and its universe dependency).
+#  - python3-dev + g++: g++ is needed by torch.compile's Inductor CPU vec-ISA
+#    probe on first forward pass (InvalidCxxCompiler otherwise, PR #185); the
+#    pair also covers any C-extension sdist lacking a cp312 wheel.
+#  - libgomp1: OpenMP runtime for LightGBM + scikit-learn (conda bundled it).
+#  - ca-certificates: HTTPS trust store for boto3 / S3.
+# --no-install-recommends keeps the layer lean. Placed before the uv install so
+# a requirements change doesn't invalidate it.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends g++ && \
+    apt-get install -y --no-install-recommends \
+        python3 python3-dev g++ libgomp1 ca-certificates && \
+    ln -sf /usr/bin/python3 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
 
-# uv: pinned single-binary installer (~10x faster than pip + parallel wheel
-# downloads). Pin to a specific minor so this COPY layer doesn't invalidate
-# every time astral publishes a new release.
+# uv: pinned single-binary installer (~10x faster than pip, parallel wheel
+# downloads). Pin a specific minor so this COPY layer doesn't invalidate every
+# time astral publishes a new release.
 COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /usr/local/bin/
 
 WORKDIR /opt/ml/code
 
-# uv defaults to hardlinking wheels from its cache into site-packages. The
-# BuildKit cache mount below lives on a different overlay than the image
-# root, so hardlinking always fails and falls back to copy — explicit copy
-# mode skips the failed probe and silences the warning in CI.
+# uv hardlinks wheels from its cache into site-packages by default; the BuildKit
+# cache mount lives on a different overlay, so hardlinking falls back to copy —
+# explicit copy mode skips the failed probe and silences the CI warning.
 ENV UV_LINK_MODE=copy
+# requirements.txt carries the cu126 torch wheel via an --extra-index-url
+# (mirrors requirements-gpu.txt). unsafe-best-match lets uv resolve torch +
+# its nvidia-*-cu12 deps from the pytorch index while everything else resolves
+# from PyPI (matches train-batch.yml's UV_INDEX_STRATEGY).
+ENV UV_INDEX_STRATEGY=unsafe-best-match
 
-# Single uv-install layer: any change to requirements.txt invalidates exactly
-# one cached layer. The cache mount on /root/.cache/uv persists wheel
-# downloads across builds (CI mirrors this via actions/cache — see
-# batch-image.yml). --break-system-packages is required because the pytorch
-# base image's system Python 3.12 is PEP 668 marked. The nflverse data feed
-# (nflreadpy + polars) installs cleanly from requirements.txt — no --no-deps
-# workaround or extra appdirs/fastparquet pins like the deprecated nfl_data_py
-# required. nflreadpy is imported transitively at startup (src.{k,dst}.data →
-# src.data.nfl_source) even though no nflverse fetch happens at training time.
+# Single uv-install layer: any requirements.txt change invalidates exactly one
+# cached layer. The cache mount on /root/.cache/uv persists wheel downloads
+# across builds (CI mirrors this via actions/cache — see batch-image.yml).
+# --break-system-packages: Ubuntu's system Python 3.12 is PEP 668 marked.
 COPY src/batch/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system --break-system-packages -r requirements.txt
 
-# All Python source lives under src/ after the layout migration.
-# .dockerignore handles the coarse exclusions (Flask UI, scratch scripts,
-# tests); src/ is the only Python copy needed. tune_lgbm.py is at
-# src/tuning/tune_lgbm.py and ships with the rest of src/ — retune-lgbm.yml
-# invokes it via ``python -m src.tuning.tune_lgbm``.
+# Fail the build (on the CPU CI runner) if the install is incoherent, instead of
+# discovering it on the first GPU Batch job. torch imports fine CPU-side, so this
+# catches unresolved deps / missing system libs (e.g. libgomp). GPU/CUDA-lib
+# loading is validated by the post-build Batch smoke run (docs/batch_design.md).
+RUN python -c "import torch, lightgbm, sklearn, scipy, pandas, numpy, pyarrow; print('import smoke OK; torch', torch.__version__)"
+
+# All Python source lives under src/. .dockerignore handles coarse exclusions
+# (Flask UI, scratch scripts, tests); src/ is the only Python copy needed.
 COPY src/ src/
 
 ENTRYPOINT ["python", "-m", "src.batch.train"]

@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 
-**Decision.** Build and deploy two separate Docker images: a slim `python:3.12-slim` image for the Flask inference service (~150 MB) and a `pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime` image for GPU training (~5–6 GB). The heavy image is consumed by AWS Batch on the active path (D13) and by the EC2 warm host on the D7 rollback path; both pull from the same ECR tag.
+**Decision.** Build and deploy two separate Docker images: a slim `python:3.12-slim` image for the Flask inference service (~150 MB) and a GPU training image. The training image was originally a conda-based `pytorch/pytorch:*-cuda12.6-cudnn9-runtime` (~5–6 GB); as of 2026-06-07 it was slimmed to a `nvidia/cuda:12.6.3-base-ubuntu24.04` base + a pip-installed `torch==2.12.0+cu126` wheel to cut the Spot cold-start image pull (see ADR-0013's changelog + [docs/batch_design.md](../batch_design.md) §"Cold-start optimization" 2d). The heavy image is consumed by AWS Batch on the active path (D13) and by the EC2 warm host on the D7 rollback path; both pull from the same ECR tag.
 
 **Context.** Inference runs CPU-only on ECS and does not need CUDA, `torch.cuda.*`, or the pytorch wheel's CUDA libs. Training needs all of them plus `nflreadpy`, `lightgbm`, and the training scripts. A single image would either bloat inference (slow ECS deploys, higher cold-start) or strip training capability.
 
@@ -16,8 +16,12 @@
 
 **Chosen: two images.** They have different requirements, different deploy cadences, and different failure modes. Keeping them separate means the Flask app can deploy without rebuilding torch, and a training dep bump doesn't ship to prod inference.
 
-The training Dockerfile ([src/batch/Dockerfile.train](../../src/batch/Dockerfile.train)) uses *explicit* COPYs rather than `COPY . .` to drop the Flask UI, scratch scripts, and analysis notebooks out of the image — see the comments on lines 25–38 of that file.
+The training Dockerfile ([src/batch/Dockerfile.train](../../src/batch/Dockerfile.train)) uses *explicit* COPYs rather than `COPY . .` to drop the Flask UI, scratch scripts, and analysis notebooks out of the image — see the comments in that file.
 
 **Rejected.** Multi-stage builds that share a base were considered but rejected as debug-hostile: when a training run fails on Batch, the fastest debug path is `docker run` the exact training image locally. A multi-stage build obscures that.
 
 **References.** [Dockerfile](../../Dockerfile) (Flask), [src/batch/Dockerfile.train](../../src/batch/Dockerfile.train) (Batch), [.dockerignore](../../.dockerignore). Landed in commit `0e814a1`.
+
+## Changelog
+
+- **2026-06-07** — Training image base slimmed from the conda `pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime` (~3.7 GB compressed) to `nvidia/cuda:12.6.3-base-ubuntu24.04` (~86 MB) + a pip `torch==2.12.0+cu126` wheel, to shrink the Spot cold-start image pull. The two-images decision is unchanged (the inference image is untouched); only the training base packaging changed. torch version is held identical, so deterministic Ridge MAE stays byte-identical and NN/attn rows rebaseline within single-seed noise. Full rationale + validation notes in [ADR-0013](0013-spot-fan-out-via-aws-batch.md)'s changelog and [docs/batch_design.md](../batch_design.md) §"Cold-start optimization" 2d.
