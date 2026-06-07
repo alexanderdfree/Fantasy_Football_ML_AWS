@@ -366,7 +366,7 @@ worthwhile). To route them to a cheaper CPU Spot pool:
 
 ## CI/CD
 
-Two workflows cover the training image and the inference service:
+Three workflows cover the training image and the inference service:
 
 - `.github/workflows/batch-image.yml` — builds `src/batch/Dockerfile.train`, pushes
   to ECR (`ff-training`), and registers a new revision of the `ff-training-job`

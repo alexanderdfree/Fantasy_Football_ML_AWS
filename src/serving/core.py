@@ -180,8 +180,9 @@ def _apply_position_models(train, val, test, pos, results):
         adj = reg["compute_adjustment_fn"](pos_test)
         adj_values = adj.values
     # ``target_signs`` is set only for K — it acts as the dispatch discriminator
-    # for ``_combine_total`` below. (The registry's ``aggregate_fn`` slot is no
-    # longer consumed here; see W.SHARED-PIPE for the registry-side cleanup.)
+    # for ``_combine_total`` below. (The registry's ``aggregate_fn`` slot is not
+    # consumed here; it is intentionally retained as a ``None`` compatibility
+    # stub in registry.py — no separate cleanup is pending.)
     target_signs = reg.get("target_signs")
 
     X_test_pos = pos_test[feature_cols].values.astype(np.float32)

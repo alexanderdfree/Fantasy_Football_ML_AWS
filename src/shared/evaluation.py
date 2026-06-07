@@ -259,8 +259,8 @@ def print_comparison_table(
 
     Two modes, picked by whether ``position`` is supplied:
     - ``position is None``: generic table of ``{model_name: {mae, rmse, r2}}``,
-      used by simple smoke runs / single-target callers (previously the
-      ``src/evaluation/metrics.py`` helper).
+      used by simple smoke runs / single-target callers (previously a dedicated
+      metrics helper module, now consolidated here).
     - ``position`` set: position-aware table with ``total``, per-target MAE,
       and optional gated-head diagnostics. ``target_names`` is required here.
     """
