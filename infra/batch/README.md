@@ -184,8 +184,9 @@ The CE's `minvCpus=0` means there are no in-flight instances to disrupt
    Expect: pull window **~1–2 s** (down from ~122 s baseline 2026-05-20). Anything
    over ~30 s means SOCI didn't activate on that host — run "Rollback SOCI launch
    template" below and inspect `/var/log/soci-userdata.log` on the failing host
-   via `aws ssm start-session --target <ec2InstanceId>` (requires
-   `AmazonSSMManagedInstanceCore` on `ecsInstanceRole`, not attached by default).
+   via `aws ssm start-session --target <ec2InstanceId>` (`ecsInstanceRole` carries
+   `AmazonSSMManagedInstanceCore`, attached by `setup.sh` §4; the SSM agent
+   registers at boot, so this works on any Batch host launched after setup).
 
 6. **Host-side plugin status** (when SSM is available on the host): the
    userdata.sh step-4 gate that prevents the race documented in §"SOCI
