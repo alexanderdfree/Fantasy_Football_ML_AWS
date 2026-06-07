@@ -159,71 +159,12 @@ aws logs put-retention-policy \
   --retention-in-days 7 \
   --region "$REGION"
 
-# --- 10. Launch Template (SOCI snapshotter userdata) --------------------
-# The ECS-optimized AL2 AMI Batch picks for ff-gpu-spot does NOT run
-# soci-snapshotter-grpc by default. Without it, SOCI indexes published
-# to ECR by .github/workflows/batch-image.yml are silently ignored —
-# every fresh Spot host pays ~122s full image pull instead of ~5–10s
-# lazy-load. The launch template's userdata installs the snapshotter
-# pre-boot. See infra/batch/userdata.sh + docs/batch_design.md §2a.
-LAUNCH_TEMPLATE_NAME="ff-batch-lt"
-USERDATA_PATH="$SCRIPT_DIR/userdata.sh"
-if [ ! -f "$USERDATA_PATH" ]; then
-  log "ERROR: $USERDATA_PATH missing — required for SOCI activation."
-  exit 1
-fi
-
-# AWS Batch requires launch-template UserData to be in MIME multipart
-# archive format — plain bash UserData causes the CE to go INVALID with
-# "CLIENT_ERROR - Launch Template UserData is not MIME multipart format".
-# Batch concatenates its own boot script as another MIME part at launch
-# time, so the user-supplied script must be a parseable MIME envelope.
-# See https://docs.aws.amazon.com/batch/latest/userguide/launch-templates.html
-USERDATA_BOUNDARY="==BATCH-USERDATA-BOUNDARY=="
-EXPECTED_USERDATA_B64=$(
-  {
-    printf 'MIME-Version: 1.0\n'
-    printf 'Content-Type: multipart/mixed; boundary="%s"\n\n' "$USERDATA_BOUNDARY"
-    printf -- '--%s\n' "$USERDATA_BOUNDARY"
-    printf 'Content-Type: text/x-shellscript; charset="us-ascii"\n\n'
-    cat "$USERDATA_PATH"
-    printf '\n--%s--\n' "$USERDATA_BOUNDARY"
-  } | base64 | tr -d '\n'
-)
-
-if ! aws ec2 describe-launch-templates \
-     --launch-template-names "$LAUNCH_TEMPLATE_NAME" \
-     --region "$REGION" >/dev/null 2>&1; then
-  log "Creating launch template $LAUNCH_TEMPLATE_NAME with SOCI userdata..."
-  aws ec2 create-launch-template \
-    --launch-template-name "$LAUNCH_TEMPLATE_NAME" \
-    --launch-template-data "{\"UserData\":\"${EXPECTED_USERDATA_B64}\"}" \
-    --region "$REGION" \
-    --query 'LaunchTemplate.LaunchTemplateId' \
-    --output text
-else
-  # Publish a new version only when userdata.sh content actually drifted.
-  # CE references $Latest so a new version is picked up next provisioning.
-  CURRENT_USERDATA_B64=$(aws ec2 describe-launch-template-versions \
-    --launch-template-name "$LAUNCH_TEMPLATE_NAME" \
-    --versions '$Latest' \
-    --region "$REGION" \
-    --query 'LaunchTemplateVersions[0].LaunchTemplateData.UserData' \
-    --output text 2>/dev/null || echo "")
-  if [ "$CURRENT_USERDATA_B64" != "$EXPECTED_USERDATA_B64" ]; then
-    log "userdata.sh changed since last version; publishing new launch template version..."
-    aws ec2 create-launch-template-version \
-      --launch-template-name "$LAUNCH_TEMPLATE_NAME" \
-      --launch-template-data "{\"UserData\":\"${EXPECTED_USERDATA_B64}\"}" \
-      --region "$REGION" \
-      --query 'LaunchTemplateVersion.VersionNumber' \
-      --output text
-  else
-    log "Launch template $LAUNCH_TEMPLATE_NAME up to date."
-  fi
-fi
-
-# --- 11. Compute Environment --------------------------------------------
+# --- 10. Compute Environment --------------------------------------------
+# NOTE: No launch template / custom UserData. SOCI lazy-loading was removed
+# (2026-06-07) — it cannot work on AWS Batch: Batch runs on ECS-managed EC2
+# and the amazon-ecs-agent does not pull through the soci snapshotter
+# (Fargate-only; aws/containers-roadmap#1832). The CE uses the default
+# ECS-optimized AMI. See todo/fixed-archive.md + docs/batch_design.md §2a.
 CE_STATUS=$(aws batch describe-compute-environments \
   --compute-environments "$COMPUTE_ENV" \
   --region "$REGION" \
@@ -245,11 +186,7 @@ if [ "$CE_STATUS" = "None" ] || [ -z "$CE_STATUS" ] || [ "$CE_STATUS" = "null" ]
       \"instanceTypes\": [\"$INSTANCE_TYPE\"],
       \"subnets\": [$SUBNETS_JSON],
       \"securityGroupIds\": [\"$SG_ID\"],
-      \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\",
-      \"launchTemplate\": {
-        \"launchTemplateName\": \"$LAUNCH_TEMPLATE_NAME\",
-        \"version\": \"\$Latest\"
-      }
+      \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\"
     }" \
     --region "$REGION"
   log "Waiting for CE to reach VALID..."
@@ -276,30 +213,25 @@ if [ "$CE_STATUS" = "None" ] || [ -z "$CE_STATUS" ] || [ "$CE_STATUS" = "null" ]
   done
 else
   log "Compute Environment $COMPUTE_ENV already exists (status: $CE_STATUS)"
-  # Live-account reconcile: bring an existing CE in line with the desired
-  # launch template AND instance type. update-compute-environment with
-  # --compute-resources requires the CE to be DISABLED first; cycle
-  # state DISABLED → UPDATE → ENABLED, polling VALID between steps.
-  # CE has minvCpus=0 so no in-flight instances are disrupted — the next
-  # provisioning picks up the change.
+  # Live-account reconcile: bring an existing CE's instanceTypes in line with
+  # the desired value. update-compute-environment with --compute-resources
+  # requires the CE to be DISABLED first; cycle DISABLED → UPDATE → ENABLED,
+  # polling VALID between steps. CE has minvCpus=0 so no in-flight instances
+  # are disrupted — the next provisioning picks up the change.
   #
-  # Reconciling instanceTypes (not just the launch template) is load-bearing:
-  # the 2026-05-31 g4dn→g6 migration silently no-op'd on the live CE because
-  # this branch only reconciled the launch template, so re-running setup.sh
-  # could never migrate the instance type in place — the live CE stayed g4dn
-  # until 2026-06-07. See todo/fixed-archive.md.
-  CURRENT_LT=$(aws batch describe-compute-environments \
-    --compute-environments "$COMPUTE_ENV" \
-    --region "$REGION" \
-    --query 'computeEnvironments[0].computeResources.launchTemplate.launchTemplateName' \
-    --output text 2>/dev/null || echo "None")
+  # Reconciling instanceTypes is load-bearing: the 2026-05-31 g4dn→g6 migration
+  # silently no-op'd on the live CE because the old reconcile only touched the
+  # (now-removed) launch template, so re-running setup.sh could never migrate
+  # the instance type in place — the live CE stayed g4dn until 2026-06-07.
+  # See todo/fixed-archive.md. (The SOCI launch template was removed 2026-06-07
+  # — see §10 — so there's no launchTemplate left to reconcile.)
   CURRENT_INSTANCE_TYPE=$(aws batch describe-compute-environments \
     --compute-environments "$COMPUTE_ENV" \
     --region "$REGION" \
     --query 'computeEnvironments[0].computeResources.instanceTypes[0]' \
     --output text 2>/dev/null || echo "None")
-  if [ "$CURRENT_LT" != "$LAUNCH_TEMPLATE_NAME" ] || [ "$CURRENT_INSTANCE_TYPE" != "$INSTANCE_TYPE" ]; then
-    log "Reconciling CE (launchTemplate: $CURRENT_LT -> $LAUNCH_TEMPLATE_NAME, instanceType: $CURRENT_INSTANCE_TYPE -> $INSTANCE_TYPE)..."
+  if [ "$CURRENT_INSTANCE_TYPE" != "$INSTANCE_TYPE" ]; then
+    log "Reconciling CE instanceType: $CURRENT_INSTANCE_TYPE -> $INSTANCE_TYPE..."
     log "  step 1/3: DISABLE"
     aws batch update-compute-environment \
       --compute-environment "$COMPUTE_ENV" \
@@ -314,10 +246,10 @@ else
       [ "$STATUS" = "VALID" ] && break
       sleep 5
     done
-    log "  step 2/3: UPDATE instanceTypes + launchTemplate"
+    log "  step 2/3: UPDATE instanceTypes"
     aws batch update-compute-environment \
       --compute-environment "$COMPUTE_ENV" \
-      --compute-resources "{\"instanceTypes\": [\"$INSTANCE_TYPE\"], \"launchTemplate\": {\"launchTemplateName\": \"$LAUNCH_TEMPLATE_NAME\", \"version\": \"\$Latest\"}}" \
+      --compute-resources "{\"instanceTypes\": [\"$INSTANCE_TYPE\"]}" \
       --region "$REGION" >/dev/null
     for i in $(seq 1 30); do
       STATUS=$(aws batch describe-compute-environments \
@@ -342,9 +274,9 @@ else
       [ "$STATUS" = "VALID" ] && break
       sleep 5
     done
-    log "CE reconciled — instanceTypes=[$INSTANCE_TYPE], launchTemplate=$LAUNCH_TEMPLATE_NAME. Next Spot host picks up both."
+    log "CE reconciled — instanceTypes=[$INSTANCE_TYPE]. Next Spot host picks it up."
   else
-    log "CE already matches desired launch template ($LAUNCH_TEMPLATE_NAME) and instance type ($INSTANCE_TYPE)."
+    log "CE already matches desired instance type ($INSTANCE_TYPE)."
   fi
 fi
 
