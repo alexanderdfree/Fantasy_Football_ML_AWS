@@ -119,6 +119,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--positions", nargs="*", default=DEFAULT_POSITIONS)
     parser.add_argument("--seasons", nargs="*", type=int, default=list(EVAL_SEASONS_DEFAULT))
     parser.add_argument("--tier-topn", type=int, default=24)
+    parser.add_argument(
+        "--from-artifacts",
+        action="store_true",
+        help="Evaluate the most-recent SAVED model artifacts on the test split instead of "
+        "retraining via run() — faster and reflects the served models "
+        "(see src.analysis.artifact_eval).",
+    )
+    parser.add_argument(
+        "--sync",
+        action="store_true",
+        help="With --from-artifacts: pull the latest artifacts from S3 before evaluating.",
+    )
     args = parser.parse_args(argv)
 
     positions = [p.upper() for p in args.positions]
@@ -126,6 +138,12 @@ def main(argv: list[str] | None = None) -> None:
 
     train_df, val_df, test_df_all = _load_splits()
     prior_fp = player_prior_season_fp([train_df, val_df, test_df_all])
+
+    if args.from_artifacts and args.sync:
+        from src.shared.model_sync import sync_models_from_s3
+
+        print("Syncing latest model artifacts from S3 ...", flush=True)
+        sync_models_from_s3()
 
     experts = _build_experts(None, None)
     expert_raws: dict = {}
@@ -138,9 +156,15 @@ def main(argv: list[str] | None = None) -> None:
             expert_raws[src.name] = None
 
     for pos in positions:
-        print(f"\nRunning {pos} pipeline ...", flush=True)
-        result = importlib.import_module(f"src.{pos.lower()}.run_pipeline").run()
-        test_df = result["test_df"]
+        if args.from_artifacts:
+            print(f"\nScoring {pos} from saved artifacts ...", flush=True)
+            from src.analysis.artifact_eval import build_test_df_from_artifacts
+
+            test_df = build_test_df_from_artifacts(pos, train_df, val_df, test_df_all)
+        else:
+            print(f"\nRunning {pos} pipeline ...", flush=True)
+            result = importlib.import_module(f"src.{pos.lower()}.run_pipeline").run()
+            test_df = result["test_df"]
         test_df = test_df[test_df["season"].astype(int).isin(eval_set)]
         compare_position(pos, test_df, prior_fp, experts, expert_raws, tier_topn=args.tier_topn)
 
