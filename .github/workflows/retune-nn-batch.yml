@@ -88,9 +88,11 @@ jobs:
           cache: "pip"
 
       - name: Install launch deps
-        # boto3 is the only runtime dep the launcher needs; the Batch container
-        # carries the heavy deps in the ECR image.
-        run: pip install boto3
+        # launch_ablate_scheduler imports src.batch.launch, whose top-level
+        # `from src.shared.registry import ...` pulls numpy via position_config.
+        # boto3 covers the Batch submit + wait_for_jobs; the container carries
+        # the heavy deps in the ECR image.
+        run: pip install boto3 numpy
 
       - name: Submit + wait for ablation job (${{ matrix.position }})
         env:
