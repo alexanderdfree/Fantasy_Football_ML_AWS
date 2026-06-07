@@ -2117,6 +2117,21 @@ def index():
     return render_template("index.html")
 
 
+def _results_for_position(position, scoring):
+    """Results rows for ``position`` ("ALL" → all positions).
+
+    A single position triggers its lazy per-position load and slices the shared
+    ``_cache["results"]``; "ALL" returns the full multi-position frame. Shared by
+    /api/predictions and /api/top_players.
+    """
+    if position != "ALL":
+        _ensure_position_loaded(position)
+        df = _cache["results"]
+        return df[df["position"] == position]
+    results, _ = _get_data(scoring)
+    return results
+
+
 @app.route("/api/predictions")
 def api_predictions():
     position = request.args.get("position", "ALL")
@@ -2126,13 +2141,7 @@ def api_predictions():
     order = request.args.get("order", "desc")
     scoring = _validate_scoring(request.args.get("scoring", "ppr"))
 
-    if position != "ALL":
-        _ensure_position_loaded(position)
-        df = _cache["results"]
-        df = df[df["position"] == position]
-    else:
-        results, _ = _get_data(scoring)
-        df = results
+    df = _results_for_position(position, scoring)
     if week != "ALL":
         try:
             df = df[df["week"] == int(week)]
@@ -2348,13 +2357,7 @@ def api_top_players():
     position = request.args.get("position", "ALL")
     scoring = _validate_scoring(request.args.get("scoring", "ppr"))
 
-    if position != "ALL":
-        _ensure_position_loaded(position)
-        df = _cache["results"]
-        df = df[df["position"] == position]
-    else:
-        results, _ = _get_data(scoring)
-        df = results
+    df = _results_for_position(position, scoring)
 
     agg_dict = {
         "avg_actual": (_actual_col(scoring), "mean"),
@@ -2571,36 +2574,23 @@ def _position_arch_payload(pc, include_features, attn_history=None):
 @app.route("/api/model_architecture")
 def api_model_architecture():
     try:
-        positions = {
-            "QB": _position_arch_payload(
-                qb_cfg.POSITION_CONFIG,
-                qb_cfg.POSITION_CONFIG.include_features,
-                qb_cfg.POSITION_CONFIG.attn_history_stats,
-            ),
-            "RB": _position_arch_payload(
-                rb_cfg.POSITION_CONFIG,
-                rb_cfg.POSITION_CONFIG.include_features,
-                rb_cfg.POSITION_CONFIG.attn_history_stats,
-            ),
-            "WR": _position_arch_payload(
-                wr_cfg.POSITION_CONFIG,
-                wr_cfg.POSITION_CONFIG.include_features,
-                wr_cfg.POSITION_CONFIG.attn_history_stats,
-            ),
-            "TE": _position_arch_payload(
-                te_cfg.POSITION_CONFIG,
-                te_cfg.POSITION_CONFIG.include_features,
-                te_cfg.POSITION_CONFIG.attn_history_stats,
-            ),
-            "K": _position_arch_payload(
-                k_cfg.POSITION_CONFIG,
-                k_cfg.POSITION_CONFIG.contextual_features,
-            ),
-            "DST": _position_arch_payload(
-                dst_cfg.POSITION_CONFIG,
-                dst_cfg.POSITION_CONFIG.contextual_features,
-            ),
+        cfg_modules = {
+            "QB": qb_cfg,
+            "RB": rb_cfg,
+            "WR": wr_cfg,
+            "TE": te_cfg,
+            "K": k_cfg,
+            "DST": dst_cfg,
         }
+        positions = {}
+        for pos in _ALL_POSITIONS:
+            pc = cfg_modules[pos].POSITION_CONFIG
+            if pos in ("K", "DST"):
+                positions[pos] = _position_arch_payload(pc, pc.contextual_features)
+            else:
+                positions[pos] = _position_arch_payload(
+                    pc, pc.include_features, pc.attn_history_stats
+                )
         return jsonify(
             {
                 "overview": {
@@ -2698,12 +2688,16 @@ def _load_expert_intervals():
         return None
 
 
-def _model_block_from_results(results, scoring, pos, id_filter=None):
-    """Live model {mae,rmse,r2,n,best_arch} for one position, computed from the
-    cached per-row predictions. Picks the best-MAE architecture (mirrors the
-    per-position routing in ``src.benchmarking.benchmark``). ``id_filter`` (a set
-    of ``player_id`` strings) restricts to the top-30 subset; ``None`` = all rows.
-    Returns ``None`` when no model has predictions for this slice.
+def _best_model_arrays(results, scoring, pos, id_filter=None):
+    """Best-MAE architecture for ``pos`` from the cached per-row predictions.
+
+    Returns ``(best_arch, actual, pred)`` masked to the rows where that model has a
+    prediction, or ``None`` when no model has predictions for the slice. ``id_filter``
+    (a set of ``player_id`` strings) restricts to a subset (e.g. top-30); ``None`` = all
+    rows. Shared selection for ``_model_block_from_results`` /
+    ``_model_reliability_from_results`` so both report the *same* architecture (mirrors
+    the per-position routing in ``src.benchmarking.benchmark``). The ranking MAE is
+    ``mean(|pred-actual|)`` == ``compute_metrics`` mae.
     """
     if results is None or "position" not in results.columns:
         return None
@@ -2716,7 +2710,7 @@ def _model_block_from_results(results, scoring, pos, id_filter=None):
     if sub.empty:
         return None
     actual = sub[actual_col].to_numpy()
-    best = None
+    best = None  # (mae, name, actual_masked, pred_masked)
     for name, prefix in _MODEL_PRED_COLUMNS:
         pred_col = _pred_col(prefix, scoring)
         if pred_col not in sub.columns:
@@ -2725,23 +2719,37 @@ def _model_block_from_results(results, scoring, pos, id_filter=None):
         mask = pred.notna().to_numpy()
         if not mask.any():
             continue
-        m = compute_metrics(actual[mask], pred.to_numpy()[mask])
-        mae = float(m["mae"])
-        if best is None or mae < best["mae"]:
-            r2 = m["r2"]
-            r2 = (
-                None
-                if (r2 is None or (isinstance(r2, float) and np.isnan(r2)))
-                else round(float(r2), 4)
-            )
-            best = {
-                "mae": round(mae, 4),
-                "rmse": round(float(m["rmse"]), 4),
-                "r2": r2,
-                "n": int(mask.sum()),
-                "best_arch": name,
-            }
-    return best
+        a = actual[mask]
+        p = pred.to_numpy()[mask]
+        mae = float(np.mean(np.abs(p.astype(float) - a.astype(float))))
+        if best is None or mae < best[0]:
+            best = (mae, name, a, p)
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
+
+
+def _model_block_from_results(results, scoring, pos, id_filter=None):
+    """Live model {mae,rmse,r2,n,best_arch} for one position, computed from the
+    cached per-row predictions. Picks the best-MAE architecture (mirrors the
+    per-position routing in ``src.benchmarking.benchmark``). ``id_filter`` (a set
+    of ``player_id`` strings) restricts to the top-30 subset; ``None`` = all rows.
+    Returns ``None`` when no model has predictions for this slice.
+    """
+    picked = _best_model_arrays(results, scoring, pos, id_filter)
+    if picked is None:
+        return None
+    name, actual, pred = picked
+    m = compute_metrics(actual, pred)
+    r2 = m["r2"]
+    r2 = None if (r2 is None or (isinstance(r2, float) and np.isnan(r2))) else round(float(r2), 4)
+    return {
+        "mae": round(float(m["mae"]), 4),
+        "rmse": round(float(m["rmse"]), 4),
+        "r2": r2,
+        "n": int(len(actual)),
+        "best_arch": name,
+    }
 
 
 def _model_reliability_from_results(results, scoring, pos):
@@ -2756,38 +2764,21 @@ def _model_reliability_from_results(results, scoring, pos):
     (the whole Comparison tab is the 2025 test season). ``None`` when no model has
     predictions for this position.
     """
-    if results is None or "position" not in results.columns:
+    picked = _best_model_arrays(results, scoring, pos)
+    if picked is None:
         return None
-    actual_col = _actual_col(scoring)
-    if actual_col not in results.columns:
-        return None
-    sub = results[results["position"] == pos]
-    if sub.empty:
-        return None
-    actual = sub[actual_col].to_numpy()
-    best = None
-    for name, prefix in _MODEL_PRED_COLUMNS:
-        pred_col = _pred_col(prefix, scoring)
-        if pred_col not in sub.columns:
-            continue
-        pred = sub[pred_col]
-        mask = pred.notna().to_numpy()
-        if not mask.any():
-            continue
-        a = actual[mask].astype(float)
-        p = pred.to_numpy()[mask].astype(float)
-        mae = float(np.mean(np.abs(p - a)))
-        if best is None or mae < best["mae"]:
-            resid = p - a
-            n = int(mask.sum())
-            best = {
-                "n": n,
-                "mae": round(mae, 4),
-                "bias": round(float(np.mean(resid)), 4),
-                "sigma": round(float(np.std(resid, ddof=1)) if n > 1 else 0.0, 4),
-                "best_arch": name,
-            }
-    return best
+    name, actual, pred = picked
+    a = actual.astype(float)
+    p = pred.astype(float)
+    resid = p - a
+    n = int(len(resid))
+    return {
+        "n": n,
+        "mae": round(float(np.mean(np.abs(resid))), 4),
+        "bias": round(float(np.mean(resid)), 4),
+        "sigma": round(float(np.std(resid, ddof=1)) if n > 1 else 0.0, 4),
+        "best_arch": name,
+    }
 
 
 @app.route("/api/comparison")
