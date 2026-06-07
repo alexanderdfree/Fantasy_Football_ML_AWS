@@ -1,26 +1,29 @@
-"""End-to-end smoke + compatibility test for ``src.shared.pipeline.run_cv_pipeline`` (WR).
+"""End-to-end smoke + compatibility test for ``src.shared.pipeline.run_cv_pipeline`` (RB).
 
 ``run_cv_pipeline`` is the expanding-window CV orchestrator wrapped by
-``src/wr/run_pipeline.py::run_cv``. The non-CV E2E test
-(``tests/wr/test_pipeline_e2e.py``) covers ``run_pipeline`` only — this file
-fills that gap. Mirrors ``tests/qb/test_run_cv_pipeline.py``: drive
-``run_cv_pipeline`` end-to-end, then assert the result dict carries the CV +
-holdout-evaluation metrics consumers (``benchmark.py``,
-``summarize_pipeline_result``) read.
+``src/rb/run_pipeline.py::run_cv``. The non-CV E2E test
+(``tests/rb/test_pipeline_e2e.py``) covers ``run_pipeline`` only — this file
+fills that gap so RB matches the other five positions (QB/WR/TE/K/DST all
+already ship a ``test_run_cv_pipeline.py``). Mirrors
+``tests/wr/test_run_cv_pipeline.py``: drive ``run_cv_pipeline`` end-to-end,
+then assert the result dict carries the CV + holdout-evaluation metrics
+consumers (``benchmark.py``, ``summarize_pipeline_result``) read.
 
 The same fixture also serves as a regression guard against drift between
 ``run_pipeline`` and ``run_cv_pipeline`` — they share most of the inner
 machinery (``_prepare_train_val``, ``_train_nn``, ``RidgeMultiTarget``) so
 config-key renames or new mandatory cfg entries surface here first.
 
-Unlike the QB CV test (which synthesizes data), WR slices the real
-engineered parquets — the WR pipeline expects 100+ upstream feature
-columns that would be impractical to synthesize. This mirrors WR's
-existing E2E pattern in ``tests/wr/test_pipeline_e2e.py``.
+Unlike the QB CV test (which synthesizes data), RB slices the real
+engineered parquets — the RB pipeline expects 100+ upstream feature columns
+that would be impractical to synthesize, and RB's gated-ordinal TD config
+flows from ``build_pipeline_config`` (so the config is assembled via the
+shared ``build_tiny_config`` helper, not a hand-rolled dict). This mirrors
+RB's existing real-data pattern in ``tests/_pipeline_e2e_utils.py``.
 
 Budget: < 180s on CPU (4 CV folds + final holdout NN training on a tiny
 real-data slice). Per-test timeout widened to 180s for the same xdist-
-threaded-timeout reason as the QB CV class (see its docstring).
+threaded-timeout reason as the QB/WR CV classes (see their docstrings).
 """
 
 from __future__ import annotations
@@ -34,36 +37,12 @@ import pandas as pd
 import pytest
 import torch
 
-from src.shared.aggregate_targets import aggregate_fn_for
+from src.rb.config import POSITION_CONFIG
 from src.shared.pipeline import run_cv_pipeline
-from src.wr.config import CONFIG_TINY, POSITION_CONFIG
-from src.wr.data import filter_to_position
-from src.wr.features import add_specific_features, fill_nans, get_feature_columns
-from src.wr.targets import compute_targets
+from tests._pipeline_e2e_utils import build_tiny_config
 from tests._skip_helpers import require_splits
 
 SPLITS_DIR = Path(__file__).resolve().parents[2] / "data" / "splits"
-
-
-def _build_tiny_cfg() -> dict:
-    """Assemble the tiny config with position-specific callables attached.
-
-    Mirrors ``tests/wr/test_pipeline_e2e.py::_build_tiny_cfg`` so the CV
-    path exercises the same shrunk hyperparameters the non-CV E2E uses
-    (1-epoch NN, no attention/LGBM, 2-fold ridge CV).
-    """
-    cfg = dict(CONFIG_TINY)
-    cfg.update(
-        {
-            "filter_fn": filter_to_position,
-            "compute_targets_fn": compute_targets,
-            "add_features_fn": add_specific_features,
-            "fill_nans_fn": fill_nans,
-            "get_feature_columns_fn": get_feature_columns,
-            "aggregate_fn": aggregate_fn_for("WR"),
-        }
-    )
-    return cfg
 
 
 def _load_cv_splits(n_players: int = 25) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -77,27 +56,31 @@ def _load_cv_splits(n_players: int = 25) -> tuple[pd.DataFrame, pd.DataFrame]:
     the 4-fold + final-holdout NN train budget under 180s on CPU.
     """
     train = pd.read_parquet(SPLITS_DIR / "train.parquet")
-    wr_train_all = train[train["position"] == "WR"]
+    rb_train_all = train[train["position"] == "RB"]
 
     # Top-n_players by game count — stable ordering for reproducible runs.
     top_players = (
-        wr_train_all.groupby("player_id").size().sort_values(ascending=False).head(n_players).index
+        rb_train_all.groupby("player_id")
+        .size()
+        .sort_values(ascending=False, kind="mergesort")
+        .head(n_players)
+        .index
     )
 
-    wr_train = wr_train_all[wr_train_all["player_id"].isin(top_players)].copy()
+    rb_train = rb_train_all[rb_train_all["player_id"].isin(top_players)].copy()
 
     val_full = pd.read_parquet(SPLITS_DIR / "val.parquet")
-    wr_val = val_full[
-        (val_full["position"] == "WR") & val_full["player_id"].isin(top_players)
+    rb_val = val_full[
+        (val_full["position"] == "RB") & val_full["player_id"].isin(top_players)
     ].copy()
 
     test_full = pd.read_parquet(SPLITS_DIR / "test.parquet")
-    wr_test = test_full[
-        (test_full["position"] == "WR") & test_full["player_id"].isin(top_players)
+    rb_test = test_full[
+        (test_full["position"] == "RB") & test_full["player_id"].isin(top_players)
     ].copy()
 
-    full_df = pd.concat([wr_train, wr_val], ignore_index=True)
-    return full_df, wr_test
+    full_df = pd.concat([rb_train, rb_val], ignore_index=True)
+    return full_df, rb_test
 
 
 @pytest.fixture(scope="module")
@@ -115,15 +98,17 @@ def cv_splits():
 def cv_pipeline_run(cv_splits, tmp_path_factory):
     """Single CV invocation; module-scoped so all assertions reuse it."""
     full_df, test_df = cv_splits
-    workdir = tmp_path_factory.mktemp("wr_cv_run")
-    cfg = _build_tiny_cfg()
+    workdir = tmp_path_factory.mktemp("rb_cv_run")
+    # ``build_tiny_config`` routes RB's POSITION_CONFIG (incl. the gated-ordinal
+    # TD targets) through ``build_pipeline_config`` then shrinks the heavy
+    # NN/ridge knobs and disables attention/LGBM, matching RB's run_pipeline E2E.
+    cfg = build_tiny_config("RB")
 
     cwd = os.getcwd()
     try:
         os.chdir(workdir)
-        # Symlink data/ so weather_features._load_schedules and friends
-        # can resolve ``data/raw/schedules_2012_2025.parquet`` relative to
-        # the new cwd.
+        # Symlink data/ so weather_features._load_schedules and friends can
+        # resolve ``data/raw/schedules_2012_2025.parquet`` relative to cwd.
         data_link = workdir / "data"
         if not data_link.exists():
             data_link.symlink_to(Path(cwd) / "data", target_is_directory=True)
@@ -131,7 +116,7 @@ def cv_pipeline_run(cv_splits, tmp_path_factory):
         np.random.seed(42)
         torch.manual_seed(42)
         t0 = time.time()
-        result = run_cv_pipeline("WR", cfg, full_df.copy(), test_df.copy(), seed=42)
+        result = run_cv_pipeline("RB", cfg, full_df.copy(), test_df.copy(), seed=42)
         result["_elapsed"] = time.time() - t0
         return result
     finally:
@@ -140,7 +125,7 @@ def cv_pipeline_run(cv_splits, tmp_path_factory):
 
 @pytest.mark.e2e
 @pytest.mark.timeout(180)
-class TestWRRunCVPipeline:
+class TestRBRunCVPipeline:
     """Per-test timeout bumped to 180s (vs the 60s global default) for the
     same xdist-threaded-timeout reason documented in
     ``tests/qb/test_run_cv_pipeline.py::TestQBRunCVPipeline``.
@@ -191,23 +176,25 @@ class TestWRRunCVPipeline:
             assert 0.0 <= hit_rate <= 1.0
 
     def test_best_cv_alphas_round_trip(self, cv_pipeline_run):
-        """``best_cv_alphas`` must carry one alpha per non-special CV target."""
+        """``best_cv_alphas`` must carry one alpha per non-special CV target.
+
+        RB declares ``classification_targets`` / ``two_stage_targets`` (the
+        gated-ordinal TD heads); ``run_cv_pipeline`` excludes those from Ridge
+        alpha tuning, so only the remaining targets should appear in
+        ``best_cv_alphas``.
+        """
         best = cv_pipeline_run["best_cv_alphas"]
-        # The tiny config doesn't declare two_stage / classification targets,
-        # so every TARGETS entry should land in best_cv_alphas with positive
-        # float alphas.
-        for target in POSITION_CONFIG.targets:
+        cfg = build_tiny_config("RB")
+        special = set(cfg.get("two_stage_targets", {})) | set(cfg.get("classification_targets", {}))
+        cv_ridge_targets = [t for t in POSITION_CONFIG.targets if t not in special]
+        assert cv_ridge_targets, "expected at least one non-special Ridge target"
+        for target in cv_ridge_targets:
             assert target in best
             assert best[target] > 0
 
     def test_artifacts_written(self, cv_pipeline_run):
-        """``run_cv_pipeline`` writes NN weights, scaler, ridge models, and
-        feature-importance figure under ``WR/outputs/`` relative to cwd.
-
-        Sentinel-style check: ``ridge_metrics`` / ``history`` / ``sim_results``
-        in the result dict imply the save block ran without raising. Asserting
-        exact paths isn't worth the bookkeeping given we chdir'd back.
-        """
+        """Sentinel-style check: ``history`` / ``sim_results`` in the result dict
+        imply the final-holdout train + save block ran without raising."""
         assert "history" in cv_pipeline_run
         assert "sim_results" in cv_pipeline_run
 
@@ -221,12 +208,12 @@ class TestWRRunCVPipeline:
 
 
 @pytest.mark.unit
-def test_run_wr_cv_pipeline_wrapper_dispatches_to_run_cv_pipeline(monkeypatch):
-    """``WR.run.run_cv`` is the wrapper called by ``--cv``. Verify it forwards to
-    ``run_cv_pipeline`` with the WR position + config — without paying for
+def test_run_rb_cv_pipeline_wrapper_dispatches_to_run_cv_pipeline(monkeypatch):
+    """``RB.run.run_cv`` is the wrapper called by ``--cv``. Verify it forwards
+    to ``run_cv_pipeline`` with the RB position + config — without paying for
     the real CV training.
     """
-    import src.wr.run_pipeline as wr_pipe
+    import src.rb.run_pipeline as rb_pipe
 
     seen: list[dict] = []
 
@@ -234,15 +221,15 @@ def test_run_wr_cv_pipeline_wrapper_dispatches_to_run_cv_pipeline(monkeypatch):
         seen.append({"position": position, "cfg": cfg, "args": args, "kwargs": kwargs})
         return {"cv_metrics": {"ridge": {}, "nn": {}}}
 
-    monkeypatch.setattr(wr_pipe, "run_cv_pipeline", _fake_cv)
-    wr_pipe.run_cv(full_df="full", test_df="test", seed=7)
+    monkeypatch.setattr(rb_pipe, "run_cv_pipeline", _fake_cv)
+    rb_pipe.run_cv(full_df="full", test_df="test", seed=7)
     assert len(seen) == 1
-    assert seen[0]["position"] == "WR"
-    assert seen[0]["cfg"] is wr_pipe.CONFIG
+    assert seen[0]["position"] == "RB"
+    assert seen[0]["cfg"] is rb_pipe.CONFIG
     # full_df, test_df, seed travel as positional args.
     assert seen[0]["args"][-1] == 7
 
     # Custom cfg overrides CONFIG via the ``or`` short-circuit.
     custom = {"custom": True, "targets": ["x"]}
-    wr_pipe.run_cv(full_df=None, test_df=None, seed=11, config=custom)
+    rb_pipe.run_cv(full_df=None, test_df=None, seed=11, config=custom)
     assert seen[1]["cfg"] == custom
