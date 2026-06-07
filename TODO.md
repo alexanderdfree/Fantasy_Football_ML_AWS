@@ -8,6 +8,12 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 
 ## Open
 
+### [REFACTOR] Serving `app.py` decomposition — split the 3085-line monolith into modules
+- **Spec:** [todo/serving-decomposition.md](todo/serving-decomposition.md) — target module layout, the ~137-monkeypatch repoint constraint (the reason this is more than a code move), per-increment plan, and the local test invocation that avoids the `-n auto` xdist crash.
+- **What:** Decompose `src/serving/app.py` (3085 LOC, 18 routes) into `serialization.py` (done) + `metadata.py` / `state.py` / `wiki.py` / `core.py` / `comparison.py` / `benchmark_history.py` + a routes `Blueprint` + a composition-root `app.py` that re-exports the 8 `from src.serving.app import …` names. Pure behavior-preserving relocation, guarded by the 235-test serving suite (`tests/test_app*.py`); no training-path files → no retrain.
+- **Done:** increment 1 — `serialization.py` extracted (PR #990). **Next:** `metadata.py` (re-export only), then the heavy `state.py` (`_cache`→`state._cache`) / `core.py` / routes split (~137 per-file patch repoints, circular-import handling).
+- **Status:** in progress — serialization shipped; heavy split deferred to a focused follow-up (the spec doc is the handoff).
+
 ### [AUDIT] Attention NN architecture audit — verified-sound + live/dormant map
 - **Doc:** [todo/attention_nn_architecture_audit.md](todo/attention_nn_architecture_audit.md) — read-only correctness/design audit of the production attention NN across all six positions (`src/shared/neural_net.py`, `src/shared/training.py`, six `config.py`).
 - **What:** **No confirmed correctness bugs.** Architecture is learned-query attention pooling (not a transformer; `attn_self_layers=0` everywhere), numerically careful (`clamp(min=0)` non-negativity, all-padding `nan_to_num` guards, season-opener handling), and cross-position-consistent (`nn_non_negative_targets`, `attn_d_model=32/n_heads=2` everywhere). Headline finding is a **live-vs-dormant capability map**: ALiBi / learned-temperature / self-attention / query-conditioning / gated-fusion / entropy-reg / K-V-projection / opp-history are all implemented + test-covered but enabled by **no** `POSITION_CONFIG`.
