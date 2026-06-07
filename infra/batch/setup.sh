@@ -106,6 +106,18 @@ aws iam attach-role-policy \
   --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role \
   2>/dev/null || true
 
+# SSM access so operators can `aws ssm start-session` / Run-Command into a Batch
+# host for diagnosis — the hosts are egress-only (no SSH ingress; ff-batch-sg) and
+# the SSM agent needs this to register with Systems Manager. The agent acquires
+# creds at boot, so a host launched after this is SSM-ready; already-running hosts
+# must be replaced (Batch is scale-to-zero, so that resolves itself). Idempotent
+# (re-attach is a no-op). Mirrors the warm-EC2 path (infra/ec2/launch-instance.sh).
+log "Attaching AmazonSSMManagedInstanceCore (host diagnosis via SSM)..."
+aws iam attach-role-policy \
+  --role-name "$INSTANCE_ROLE" \
+  --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore \
+  2>/dev/null || true
+
 # --- 5. Instance profile wrapping ecsInstanceRole -----------------------
 if ! aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE" >/dev/null 2>&1; then
   log "Creating instance profile $INSTANCE_PROFILE..."
