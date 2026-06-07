@@ -28,6 +28,7 @@ import os
 import statistics
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,6 +42,7 @@ from src.tuning.history import append_tuning_run
 
 DEFAULT_SEEDS = (42, 43, 44)
 DEFAULT_N_JOBS = 2
+_DEVICE_ENV = "FF_DEVICE"
 
 
 @dataclass(frozen=True)
@@ -123,10 +125,26 @@ def _load_position(position: str):
     return mod.CONFIG, mod.run
 
 
+@contextmanager
+def _force_cpu_device():
+    """Run this diagnostic without CUDA so forked local pools stay valid."""
+
+    previous = os.environ.get(_DEVICE_ENV)
+    os.environ[_DEVICE_ENV] = "cpu"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(_DEVICE_ENV, None)
+        else:
+            os.environ[_DEVICE_ENV] = previous
+
+
 def _run_one(position: str, seed: int, overrides: dict[str, Any], *, ridge_sentinel: bool) -> dict:
     base_cfg, run_fn = _load_position(position)
     cfg = _make_cfg(base_cfg, overrides, ridge_sentinel=ridge_sentinel)
-    result = run_fn(seed=seed, config=cfg)
+    with _force_cpu_device():
+        result = run_fn(seed=seed, config=cfg)
     return {
         "position": position.upper(),
         "seed": seed,
@@ -145,7 +163,8 @@ def _prime_feature_cache(position: str) -> None:
     cfg = _make_cfg(base_cfg, {}, ridge_sentinel=False)
     cfg["train_attention_nn"] = False
     print(f"[cache] priming {position.upper()} feature cache before parallel runs")
-    run_fn(seed=0, config=cfg)
+    with _force_cpu_device():
+        run_fn(seed=0, config=cfg)
 
 
 def plackett_burman_design(n_factors: int) -> list[list[int]]:

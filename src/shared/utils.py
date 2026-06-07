@@ -184,8 +184,11 @@ def cuda_graph_enabled() -> bool:
 def seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
+    # ``torch.manual_seed`` also schedules CUDA seeding, even when the caller
+    # forced ``FF_DEVICE=cpu``. Seed the CPU generator directly so CPU-only
+    # diagnostics can fork workers without touching CUDA state.
+    torch.random.default_generator.manual_seed(seed)
+    if cuda_enabled():
         torch.cuda.manual_seed_all(seed)
 
 

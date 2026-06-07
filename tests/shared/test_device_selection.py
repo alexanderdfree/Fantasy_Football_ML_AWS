@@ -19,6 +19,7 @@ from src.shared.utils import (
     mps_enabled,
     requested_amp_dtype,
     requested_device,
+    seed_everything,
 )
 
 
@@ -80,6 +81,36 @@ def test_cuda_enabled_cuda_raises_when_unavailable(monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     with pytest.raises(RuntimeError, match="device cuda"):
         cuda_enabled()
+
+
+@pytest.mark.unit
+def test_seed_everything_cpu_device_does_not_touch_cuda(monkeypatch):
+    """CPU-forced diagnostics must be able to fork without inheriting CUDA state."""
+    monkeypatch.setenv("FF_DEVICE", "cpu")
+    monkeypatch.setattr(
+        torch.cuda,
+        "is_available",
+        lambda: pytest.fail("FF_DEVICE=cpu should short-circuit the CUDA probe"),
+    )
+    monkeypatch.setattr(
+        torch.cuda,
+        "manual_seed_all",
+        lambda seed: pytest.fail("FF_DEVICE=cpu should not seed CUDA"),
+    )
+
+    seed_everything(123)
+
+
+@pytest.mark.unit
+def test_seed_everything_auto_cuda_still_seeds_cuda(monkeypatch):
+    monkeypatch.delenv("FF_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    calls: list[int] = []
+    monkeypatch.setattr(torch.cuda, "manual_seed_all", lambda seed: calls.append(seed))
+
+    seed_everything(456)
+
+    assert calls == [456]
 
 
 # --- amp_dtype: capability-gated mixed precision ----------------------------

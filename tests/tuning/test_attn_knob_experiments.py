@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 
 import optuna
@@ -69,6 +70,50 @@ def test_make_cfg_can_keep_ridge_sentinel():
     cfg = ake._make_cfg({}, {}, ridge_sentinel=True)
     assert cfg["train_ridge"] is True
     assert cfg["train_base_nn"] is False
+
+
+def test_run_one_forces_cpu_device_and_restores(monkeypatch):
+    seen: list[tuple[str | None, dict]] = []
+
+    def fake_run(*, seed, config):
+        seen.append((os.environ.get("FF_DEVICE"), config))
+        return {"attn_nn_metrics": {"total": {"mae": 3.2}}}
+
+    monkeypatch.setenv("FF_DEVICE", "cuda")
+    monkeypatch.setattr(ake, "_load_position", lambda position: ({}, fake_run))
+
+    row = ake._run_one("RB", 42, {"attn_lr": 0.001}, ridge_sentinel=False)
+
+    assert row["attn_test_mae"] == 3.2
+    assert seen == [
+        (
+            "cpu",
+            {
+                "attn_lr": 0.001,
+                "train_elasticnet": False,
+                "train_lightgbm": False,
+                "train_base_nn": False,
+                "train_ridge": False,
+            },
+        )
+    ]
+    assert os.environ["FF_DEVICE"] == "cuda"
+
+
+def test_prime_feature_cache_forces_cpu_device_and_restores(monkeypatch):
+    seen: list[tuple[str | None, dict]] = []
+
+    def fake_run(*, seed, config):
+        seen.append((os.environ.get("FF_DEVICE"), config))
+
+    monkeypatch.setenv("FF_DEVICE", "cuda")
+    monkeypatch.setattr(ake, "_load_position", lambda position: ({}, fake_run))
+
+    ake._prime_feature_cache("RB")
+
+    assert seen[0][0] == "cpu"
+    assert seen[0][1]["train_attention_nn"] is False
+    assert os.environ["FF_DEVICE"] == "cuda"
 
 
 def test_plackett_burman_design_shape_balance_and_orthogonality():
