@@ -515,25 +515,24 @@ class GatedOrdinalTDClassifier:
         self._ordinal_alpha = meta.get("ordinal_alpha", self._ordinal_alpha)
 
 
-class RidgeMultiTarget:
-    """Separate Ridge models for each target in a multi-target decomposition.
+class _MultiTargetLinear:
+    """Shared scaffolding for the per-target linear multi-target wrappers.
 
-    Works for any position — target names are passed at construction time.
-    Accepts a single alpha (shared) or a dict mapping target names to alphas.
+    Holds the common construction (alpha-dict validation + per-target model
+    dispatch over classification / two-stage / plain-linear heads), plus the
+    identical ``fit`` / ``predict`` / ``predict_total`` / ``get_feature_importance``
+    / ``save`` / ``load`` machinery. Subclasses supply only the plain-linear
+    estimator via :meth:`_build_estimator` (used at construction) and
+    :meth:`_default_estimator` (used by ``load`` to rebuild a plain head).
+    Two-stage and ordinal/gated classification heads are identical across
+    subclasses, so they live here.
     """
 
-    def __init__(
-        self,
-        target_names: list[str],
-        alpha: float | dict[str, float] = 1.0,
-        two_stage_targets: dict | None = None,
-        classification_targets: dict | None = None,
-        pca_n_components: int | None = None,
-        non_negative_targets: set | None = None,
+    def _init_common(
+        self, target_names, alpha, two_stage_targets, classification_targets, non_negative_targets
     ):
         self.target_names = target_names
         # Which targets are clamped to >= 0. Default: all targets.
-        # Override for targets that can be negative.
         self.non_negative_targets = (
             set(target_names) if non_negative_targets is None else non_negative_targets
         )
@@ -559,9 +558,13 @@ class RidgeMultiTarget:
             elif name in self._two_stage_targets:
                 self._models[name] = TwoStageRidge(**self._two_stage_targets[name])
             else:
-                self._models[name] = RidgeModel(
-                    alpha=self._alphas[name], pca_n_components=pca_n_components
-                )
+                self._models[name] = self._build_estimator(name)
+
+    def _build_estimator(self, name):
+        raise NotImplementedError
+
+    def _default_estimator(self):
+        raise NotImplementedError
 
     def fit(self, X_train: np.ndarray, y_train_dict: dict) -> None:
         for name, model in self._models.items():
@@ -625,8 +628,8 @@ class RidgeMultiTarget:
         for name, model in self._models.items():
             target_dir = f"{model_dir}/{name}"
             # Wipe any prior run's artifacts before saving. load() infers the
-            # model type from files on disk (td_classifier_meta.json → gated,
-            # pca.pkl → PCA-enabled), so a leftover sidecar from a previous
+            # model type from files on disk (td_classifier_meta.json -> gated,
+            # pca.pkl -> PCA-enabled), so a leftover sidecar from a previous
             # run with a different model type or feature count survives the
             # save and crashes at inference.
             if os.path.isdir(target_dir):
@@ -647,11 +650,39 @@ class RidgeMultiTarget:
             elif os.path.exists(f"{target_dir}/classifier.pkl"):
                 self._models[name] = TwoStageRidge()
             else:
-                self._models[name] = RidgeModel()
+                self._models[name] = self._default_estimator()
             self._models[name].load(target_dir)
 
 
-class ElasticNetMultiTarget:
+class RidgeMultiTarget(_MultiTargetLinear):
+    """Separate Ridge models for each target in a multi-target decomposition.
+
+    Works for any position — target names are passed at construction time.
+    Accepts a single alpha (shared) or a dict mapping target names to alphas.
+    """
+
+    def __init__(
+        self,
+        target_names: list[str],
+        alpha: float | dict[str, float] = 1.0,
+        two_stage_targets: dict | None = None,
+        classification_targets: dict | None = None,
+        pca_n_components: int | None = None,
+        non_negative_targets: set | None = None,
+    ):
+        self.pca_n_components = pca_n_components
+        self._init_common(
+            target_names, alpha, two_stage_targets, classification_targets, non_negative_targets
+        )
+
+    def _build_estimator(self, name):
+        return RidgeModel(alpha=self._alphas[name], pca_n_components=self.pca_n_components)
+
+    def _default_estimator(self):
+        return RidgeModel()
+
+
+class ElasticNetMultiTarget(_MultiTargetLinear):
     """ElasticNet parallel to RidgeMultiTarget (L1+L2 linear baseline).
 
     Replaces only the vanilla RidgeModel branch with ElasticNet; two-stage and
@@ -671,20 +702,7 @@ class ElasticNetMultiTarget:
         max_iter: int = 5000,
         tol: float = 1e-4,
     ):
-        self.target_names = target_names
-        self.non_negative_targets = (
-            set(target_names) if non_negative_targets is None else non_negative_targets
-        )
-        self._two_stage_targets = two_stage_targets or {}
-        self._classification_targets = classification_targets or {}
-        special = set(self._two_stage_targets) | set(self._classification_targets)
-        if isinstance(alpha, dict):
-            missing = set(target_names) - set(alpha) - special
-            if missing:
-                raise ValueError(f"alpha dict missing keys for targets: {missing}")
-            self._alphas = {name: alpha.get(name, 1.0) for name in target_names}
-        else:
-            self._alphas = {name: alpha for name in target_names}
+        special = set(two_stage_targets or {}) | set(classification_targets or {})
         if isinstance(l1_ratio, dict):
             missing = set(target_names) - set(l1_ratio) - special
             if missing:
@@ -692,65 +710,22 @@ class ElasticNetMultiTarget:
             self._l1_ratios = {name: l1_ratio.get(name, 0.5) for name in target_names}
         else:
             self._l1_ratios = {name: l1_ratio for name in target_names}
-        self._models = {}
-        for name in target_names:
-            if name in self._classification_targets:
-                cfg = dict(self._classification_targets[name])
-                model_type = cfg.pop("type", "ordinal")
-                if model_type == "gated_ordinal":
-                    self._models[name] = GatedOrdinalTDClassifier(**cfg)
-                else:
-                    self._models[name] = OrdinalTDClassifier(**cfg)
-            elif name in self._two_stage_targets:
-                self._models[name] = TwoStageRidge(**self._two_stage_targets[name])
-            else:
-                self._models[name] = ElasticNetModel(
-                    alpha=self._alphas[name],
-                    l1_ratio=self._l1_ratios[name],
-                    max_iter=max_iter,
-                    tol=tol,
-                )
+        self.max_iter = max_iter
+        self.tol = tol
+        self._init_common(
+            target_names, alpha, two_stage_targets, classification_targets, non_negative_targets
+        )
 
-    def fit(self, X_train: np.ndarray, y_train_dict: dict) -> None:
-        for name, model in self._models.items():
-            model.fit(X_train, y_train_dict[name])
+    def _build_estimator(self, name):
+        return ElasticNetModel(
+            alpha=self._alphas[name],
+            l1_ratio=self._l1_ratios[name],
+            max_iter=self.max_iter,
+            tol=self.tol,
+        )
 
-    def predict(self, X: np.ndarray) -> dict:
-        preds = {}
-        for name, model in self._models.items():
-            pred = model.predict(X)
-            if name in self.non_negative_targets:
-                pred = np.maximum(pred, 0)
-            preds[name] = pred
-        return preds
-
-    def predict_total(
-        self,
-        X: np.ndarray,
-        pos: str | None = None,
-        scoring_format: str = "ppr",
-    ) -> np.ndarray:
-        """Aggregate per-target predictions into a single total per row.
-
-        See :meth:`RidgeMultiTarget.predict_total` for the routing semantics —
-        ``pos=None`` returns the unweighted sum (back-compat default), and an
-        explicit ``pos`` routes through ``src.shared.aggregate_targets`` to
-        honor K's sign vector, DST's tier bonuses, or QB/RB/WR/TE's
-        scoring-format weights.
-        """
-        preds = self.predict(X)
-        if pos is None:
-            return sum(preds[t] for t in self.target_names)
-        from src.shared.aggregate_targets import predictions_to_fantasy_points
-
-        return predictions_to_fantasy_points(pos, preds, scoring_format=scoring_format)
-
-    def get_feature_importance(self, feature_names: list) -> dict:
-        return {
-            name: model.get_feature_importance(feature_names)
-            for name, model in self._models.items()
-            if hasattr(model, "get_feature_importance")
-        }
+    def _default_estimator(self):
+        return ElasticNetModel()
 
     def convergence_report(self) -> dict:
         """Per-target convergence status for ElasticNet heads.
@@ -764,33 +739,6 @@ class ElasticNetMultiTarget:
             for name, model in self._models.items()
             if isinstance(model, ElasticNetModel)
         }
-
-    def save(self, model_dir: str) -> None:
-        for name, model in self._models.items():
-            target_dir = f"{model_dir}/{name}"
-            # Match RidgeMultiTarget's guard: load() infers the model type from
-            # on-disk sidecars, so a prior run's stale files corrupt the inferred
-            # type. Wiping guarantees a clean state per save.
-            if os.path.isdir(target_dir):
-                shutil.rmtree(target_dir)
-            model.save(target_dir)
-
-    def load(self, model_dir: str) -> None:
-        for name in self.target_names:
-            target_dir = f"{model_dir}/{name}"
-            td_meta_path = f"{target_dir}/td_classifier_meta.json"
-            if os.path.exists(td_meta_path):
-                with open(td_meta_path) as f:
-                    meta = json.load(f)
-                if meta.get("gated"):
-                    self._models[name] = GatedOrdinalTDClassifier()
-                else:
-                    self._models[name] = OrdinalTDClassifier()
-            elif os.path.exists(f"{target_dir}/classifier.pkl"):
-                self._models[name] = TwoStageRidge()
-            else:
-                self._models[name] = ElasticNetModel()
-            self._models[name].load(target_dir)
 
 
 class LightGBMMultiTarget:
