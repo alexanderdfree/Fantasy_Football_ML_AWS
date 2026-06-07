@@ -411,6 +411,44 @@ def _gpu_resident_device() -> torch.device | None:
     return None
 
 
+def _to_gpu_float(arr, device: torch.device) -> torch.Tensor:
+    """Contiguous float tensor on ``device`` — matches the ``torch.FloatTensor``
+    dtype the ``MultiTarget*Dataset`` classes produce on the DataLoader path."""
+    return torch.from_numpy(np.ascontiguousarray(arr)).float().to(device)
+
+
+def _to_gpu_mask(arr, device: torch.device) -> torch.Tensor:
+    """Bool mask tensor on ``device`` — mirrors the Datasets' bool history/kick masks."""
+    return torch.from_numpy(np.asarray(arr, dtype=bool)).to(device)
+
+
+def _ydict_to_gpu(y_dict: dict, device: torch.device) -> dict:
+    """Move every target array in ``y_dict`` to ``device`` as a float tensor."""
+    return {k: _to_gpu_float(v, device) for k, v in y_dict.items()}
+
+
+def _resident_loader_pair(train_feats, y_train_dict, val_feats, y_val_dict, batch_size):
+    """Train/val :class:`_GPUResidentBatcher` pair shared by every CUDA branch:
+    train shuffles + drops the last partial batch; val keeps order and every row."""
+    return (
+        _GPUResidentBatcher(
+            tuple(train_feats), y_train_dict, batch_size=batch_size, shuffle=True, drop_last=True
+        ),
+        _GPUResidentBatcher(
+            tuple(val_feats), y_val_dict, batch_size=batch_size, shuffle=False, drop_last=False
+        ),
+    )
+
+
+def _dataloader_pair(train_ds, val_ds, batch_size):
+    """Train/val :class:`DataLoader` pair shared by every CPU/MPS branch
+    (``pin_memory`` preserved verbatim; a no-op under CPU-only runs)."""
+    return (
+        DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=True, drop_last=True),
+        DataLoader(val_ds, batch_size=batch_size, shuffle=False, pin_memory=True),
+    )
+
+
 class MultiTargetDataset(Dataset):
     """Dataset that returns features + dict of targets."""
 
@@ -490,49 +528,30 @@ def make_history_dataloaders(
     """
     gpu_device = _gpu_resident_device()
     if gpu_device is not None:
-        X_s_tr = torch.from_numpy(np.ascontiguousarray(X_train_static)).float().to(gpu_device)
-        X_h_tr = torch.from_numpy(np.ascontiguousarray(X_train_history)).float().to(gpu_device)
-        # Bool mask matches ``MultiTargetHistoryDataset.__init__``'s
+        # Bool masks match ``MultiTargetHistoryDataset.__init__``'s
         # ``torch.from_numpy(np.asarray(..., dtype=bool))``; the downstream
         # attention forward path expects ``bool``.
-        m_tr = torch.from_numpy(np.asarray(train_history_mask, dtype=bool)).to(gpu_device)
-        X_s_va = torch.from_numpy(np.ascontiguousarray(X_val_static)).float().to(gpu_device)
-        X_h_va = torch.from_numpy(np.ascontiguousarray(X_val_history)).float().to(gpu_device)
-        m_va = torch.from_numpy(np.asarray(val_history_mask, dtype=bool)).to(gpu_device)
-        ytr = {
-            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
-            for k, v in y_train_dict.items()
-        }
-        yva = {
-            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
-            for k, v in y_val_dict.items()
-        }
-        train_loader = _GPUResidentBatcher(
-            (X_s_tr, X_h_tr, m_tr), ytr, batch_size=batch_size, shuffle=True, drop_last=True
+        return _resident_loader_pair(
+            [
+                _to_gpu_float(X_train_static, gpu_device),
+                _to_gpu_float(X_train_history, gpu_device),
+                _to_gpu_mask(train_history_mask, gpu_device),
+            ],
+            _ydict_to_gpu(y_train_dict, gpu_device),
+            [
+                _to_gpu_float(X_val_static, gpu_device),
+                _to_gpu_float(X_val_history, gpu_device),
+                _to_gpu_mask(val_history_mask, gpu_device),
+            ],
+            _ydict_to_gpu(y_val_dict, gpu_device),
+            batch_size,
         )
-        val_loader = _GPUResidentBatcher(
-            (X_s_va, X_h_va, m_va), yva, batch_size=batch_size, shuffle=False, drop_last=False
-        )
-        return train_loader, val_loader
 
     train_ds = MultiTargetHistoryDataset(
         X_train_static, X_train_history, train_history_mask, y_train_dict
     )
     val_ds = MultiTargetHistoryDataset(X_val_static, X_val_history, val_history_mask, y_val_dict)
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        pin_memory=True,
-        drop_last=True,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        pin_memory=True,
-    )
-    return train_loader, val_loader
+    return _dataloader_pair(train_ds, val_ds, batch_size)
 
 
 def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
@@ -553,43 +572,19 @@ def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
     """
     gpu_device = _gpu_resident_device()
     if gpu_device is not None:
-        # One-time numpy → tensor → GPU move. Match the dtype the Dataset
-        # would have produced via ``torch.FloatTensor`` so downstream model
-        # ops see the same tensor types as the DataLoader path.
-        X_tr = torch.from_numpy(np.ascontiguousarray(X_train)).float().to(gpu_device)
-        X_va = torch.from_numpy(np.ascontiguousarray(X_val)).float().to(gpu_device)
-        ytr = {
-            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
-            for k, v in y_train_dict.items()
-        }
-        yva = {
-            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
-            for k, v in y_val_dict.items()
-        }
-        train_loader = _GPUResidentBatcher(
-            (X_tr,), ytr, batch_size=batch_size, shuffle=True, drop_last=True
+        # One-time numpy → tensor → GPU move (see ``_to_gpu_float`` for the
+        # dtype-match-the-Dataset rationale).
+        return _resident_loader_pair(
+            [_to_gpu_float(X_train, gpu_device)],
+            _ydict_to_gpu(y_train_dict, gpu_device),
+            [_to_gpu_float(X_val, gpu_device)],
+            _ydict_to_gpu(y_val_dict, gpu_device),
+            batch_size,
         )
-        val_loader = _GPUResidentBatcher(
-            (X_va,), yva, batch_size=batch_size, shuffle=False, drop_last=False
-        )
-        return train_loader, val_loader
 
     train_ds = MultiTargetDataset(X_train, y_train_dict)
     val_ds = MultiTargetDataset(X_val, y_val_dict)
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        pin_memory=True,
-        drop_last=True,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        pin_memory=True,
-    )
-    return train_loader, val_loader
+    return _dataloader_pair(train_ds, val_ds, batch_size)
 
 
 class MultiHeadTrainer:
@@ -1194,39 +1189,25 @@ def make_history_with_opp_dataloaders(
     """
     gpu_device = _gpu_resident_device()
     if gpu_device is not None:
-        X_s_tr = torch.from_numpy(np.ascontiguousarray(X_train_static)).float().to(gpu_device)
-        X_h_tr = torch.from_numpy(np.ascontiguousarray(X_train_history)).float().to(gpu_device)
-        m_tr = torch.from_numpy(np.asarray(train_history_mask, dtype=bool)).to(gpu_device)
-        X_o_tr = torch.from_numpy(np.ascontiguousarray(X_train_opp_history)).float().to(gpu_device)
-        m_o_tr = torch.from_numpy(np.asarray(train_opp_history_mask, dtype=bool)).to(gpu_device)
-        X_s_va = torch.from_numpy(np.ascontiguousarray(X_val_static)).float().to(gpu_device)
-        X_h_va = torch.from_numpy(np.ascontiguousarray(X_val_history)).float().to(gpu_device)
-        m_va = torch.from_numpy(np.asarray(val_history_mask, dtype=bool)).to(gpu_device)
-        X_o_va = torch.from_numpy(np.ascontiguousarray(X_val_opp_history)).float().to(gpu_device)
-        m_o_va = torch.from_numpy(np.asarray(val_opp_history_mask, dtype=bool)).to(gpu_device)
-        ytr = {
-            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
-            for k, v in y_train_dict.items()
-        }
-        yva = {
-            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
-            for k, v in y_val_dict.items()
-        }
-        train_loader = _GPUResidentBatcher(
-            (X_s_tr, X_h_tr, m_tr, X_o_tr, m_o_tr),
-            ytr,
-            batch_size=batch_size,
-            shuffle=True,
-            drop_last=True,
+        return _resident_loader_pair(
+            [
+                _to_gpu_float(X_train_static, gpu_device),
+                _to_gpu_float(X_train_history, gpu_device),
+                _to_gpu_mask(train_history_mask, gpu_device),
+                _to_gpu_float(X_train_opp_history, gpu_device),
+                _to_gpu_mask(train_opp_history_mask, gpu_device),
+            ],
+            _ydict_to_gpu(y_train_dict, gpu_device),
+            [
+                _to_gpu_float(X_val_static, gpu_device),
+                _to_gpu_float(X_val_history, gpu_device),
+                _to_gpu_mask(val_history_mask, gpu_device),
+                _to_gpu_float(X_val_opp_history, gpu_device),
+                _to_gpu_mask(val_opp_history_mask, gpu_device),
+            ],
+            _ydict_to_gpu(y_val_dict, gpu_device),
+            batch_size,
         )
-        val_loader = _GPUResidentBatcher(
-            (X_s_va, X_h_va, m_va, X_o_va, m_o_va),
-            yva,
-            batch_size=batch_size,
-            shuffle=False,
-            drop_last=False,
-        )
-        return train_loader, val_loader
 
     train_ds = MultiTargetHistoryWithOppDataset(
         X_train_static,
@@ -1244,20 +1225,7 @@ def make_history_with_opp_dataloaders(
         val_opp_history_mask,
         y_val_dict,
     )
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        pin_memory=True,
-        drop_last=True,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        pin_memory=True,
-    )
-    return train_loader, val_loader
+    return _dataloader_pair(train_ds, val_ds, batch_size)
 
 
 class MultiHeadHistoryWithOppTrainer(MultiHeadTrainer):
@@ -1370,40 +1338,30 @@ def make_nested_kick_dataloaders(
     """
     gpu_device = _gpu_resident_device()
     if gpu_device is not None:
-        X_s_tr = torch.from_numpy(np.ascontiguousarray(X_train_static)).float().to(gpu_device)
-        X_k_tr = torch.from_numpy(np.ascontiguousarray(X_train_kicks)).float().to(gpu_device)
         # Outer/inner masks are bool in ``MultiTargetNestedKickDataset.__init__``.
-        om_tr = torch.from_numpy(np.asarray(train_outer_mask, dtype=bool)).to(gpu_device)
-        im_tr = torch.from_numpy(np.asarray(train_inner_mask, dtype=bool)).to(gpu_device)
-        X_s_va = torch.from_numpy(np.ascontiguousarray(X_val_static)).float().to(gpu_device)
-        X_k_va = torch.from_numpy(np.ascontiguousarray(X_val_kicks)).float().to(gpu_device)
-        om_va = torch.from_numpy(np.asarray(val_outer_mask, dtype=bool)).to(gpu_device)
-        im_va = torch.from_numpy(np.asarray(val_inner_mask, dtype=bool)).to(gpu_device)
-        ytr = {
-            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
-            for k, v in y_train_dict.items()
-        }
-        yva = {
-            k: torch.from_numpy(np.ascontiguousarray(v)).float().to(gpu_device)
-            for k, v in y_val_dict.items()
-        }
-        train_feats = [X_s_tr, X_k_tr, om_tr, im_tr]
-        val_feats = [X_s_va, X_k_va, om_va, im_va]
+        train_feats = [
+            _to_gpu_float(X_train_static, gpu_device),
+            _to_gpu_float(X_train_kicks, gpu_device),
+            _to_gpu_mask(train_outer_mask, gpu_device),
+            _to_gpu_mask(train_inner_mask, gpu_device),
+        ]
+        val_feats = [
+            _to_gpu_float(X_val_static, gpu_device),
+            _to_gpu_float(X_val_kicks, gpu_device),
+            _to_gpu_mask(val_outer_mask, gpu_device),
+            _to_gpu_mask(val_inner_mask, gpu_device),
+        ]
         if X_train_history is not None:
-            train_feats.append(
-                torch.from_numpy(np.ascontiguousarray(X_train_history)).float().to(gpu_device)
-            )
+            train_feats.append(_to_gpu_float(X_train_history, gpu_device))
         if X_val_history is not None:
-            val_feats.append(
-                torch.from_numpy(np.ascontiguousarray(X_val_history)).float().to(gpu_device)
-            )
-        train_loader = _GPUResidentBatcher(
-            tuple(train_feats), ytr, batch_size=batch_size, shuffle=True, drop_last=True
+            val_feats.append(_to_gpu_float(X_val_history, gpu_device))
+        return _resident_loader_pair(
+            train_feats,
+            _ydict_to_gpu(y_train_dict, gpu_device),
+            val_feats,
+            _ydict_to_gpu(y_val_dict, gpu_device),
+            batch_size,
         )
-        val_loader = _GPUResidentBatcher(
-            tuple(val_feats), yva, batch_size=batch_size, shuffle=False, drop_last=False
-        )
-        return train_loader, val_loader
 
     train_ds = MultiTargetNestedKickDataset(
         X_train_static,
@@ -1421,20 +1379,7 @@ def make_nested_kick_dataloaders(
         y_val_dict,
         X_history=X_val_history,
     )
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        pin_memory=True,
-        drop_last=True,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        pin_memory=True,
-    )
-    return train_loader, val_loader
+    return _dataloader_pair(train_ds, val_ds, batch_size)
 
 
 class MultiHeadNestedHistoryTrainer(MultiHeadTrainer):

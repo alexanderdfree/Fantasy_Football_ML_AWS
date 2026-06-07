@@ -24,6 +24,7 @@ from src.k.features import build_nested_kick_history, compute_features
 from src.k.targets import compute_targets
 from src.shared.pipeline import run_cv_pipeline, run_pipeline
 from src.shared.position_pipeline import build_pipeline_config
+from src.shared.run_pipeline_factory import cli_main
 
 # K's CONFIG omits the runtime-injected attn_history_builder_fn; run() fills
 # it in after kicks_df is loaded.
@@ -116,17 +117,9 @@ def run_cv(seed=42, config=None):
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="K pipeline")
-    parser.add_argument("--cv", action="store_true", help="Use expanding-window cross-validation")
-    parser.add_argument(
-        "--device",
-        choices=("auto", "cpu", "cuda", "mps"),
-        default=None,
-        help="Set FF_DEVICE for this run; omitted leaves the environment unchanged.",
+    cli_main(
+        position_name="K",
+        default_config=CONFIG,
+        run_fn=run,
+        run_cv_fn=run_cv,
     )
-    args = parser.parse_args()
-    if args.device is not None:
-        os.environ["FF_DEVICE"] = args.device
-    (run_cv if args.cv else run)()
