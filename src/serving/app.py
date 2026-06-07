@@ -60,6 +60,21 @@ from src.features.engineer import (
     build_opp_defense_history_arrays,
     get_attn_static_columns,
 )
+
+# Pure serialization / scoring-column helpers live in serialization.py; imported
+# here (and thus re-exported as ``src.serving.app.<name>``) so route handlers and
+# existing ``from src.serving.app import _safe_num`` call sites keep working.
+from src.serving.serialization import (
+    _MODEL_PRED_PREFIXES,
+    _VALID_SCORING,
+    _actual_col,
+    _pred_col,
+    _records_to_player_rows,
+    _round_or_none,
+    _safe_num,
+    _safe_str,
+    _validate_scoring,
+)
 from src.shared.aggregate_targets import TARGET_UNITS, predictions_to_fantasy_points
 from src.shared.artifact_integrity import (
     assert_scaler_matches,
@@ -120,121 +135,6 @@ _wiki_cache_lock = threading.Lock()
 # discipline because its invalidation is mtime-driven rather than write-driven
 # and the cache structure is a tuple, not a dict slot. Documented at
 # ``_BENCHMARK_HISTORY_LOCK`` near the rendering helpers.
-
-
-def _safe_num(v):
-    """Convert NaN/inf to None so jsonify produces valid JSON (browsers reject NaN)."""
-    if v is None:
-        return None
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    if not np.isfinite(f):
-        return None
-    return f
-
-
-def _safe_str(v, default=""):
-    """Return default for NaN/None/non-string values."""
-    if v is None:
-        return default
-    if isinstance(v, float) and not np.isfinite(v):
-        return default
-    return str(v)
-
-
-_VALID_SCORING = ("ppr", "half_ppr", "standard")
-_MODEL_PRED_PREFIXES = ("ridge", "nn", "attn_nn", "lgbm")
-
-
-def _validate_scoring(arg):
-    """Return arg if it is a known scoring format, else 'ppr' (default).
-
-    Used at every endpoint that accepts ?scoring=. Silent fallback so a stale
-    bookmark doesn't error; bad clients are caught by the unit tests.
-    """
-    if arg in _VALID_SCORING:
-        return arg
-    return "ppr"
-
-
-def _actual_col(fmt):
-    """DataFrame column for the actual fantasy-point value in this scoring format.
-
-    PPR is canonical and stored under 'fantasy_points' (no suffix); the other
-    two are populated via compute_fantasy_points in _compute_scoring_formats.
-    """
-    return "fantasy_points" if fmt == "ppr" else f"fantasy_points_{fmt}"
-
-
-def _pred_col(prefix, fmt):
-    """DataFrame column for a model's aggregated prediction in this scoring format."""
-    return f"{prefix}_pred_{fmt}"
-
-
-_PLAYER_ROW_COLS = [
-    "player_id",
-    "player_display_name",
-    "position",
-    "recent_team",
-    "week",
-    "fantasy_points",
-    "fantasy_points_half_ppr",
-    "fantasy_points_standard",
-    "ridge_pred",
-    "nn_pred",
-    "attn_nn_pred",
-    "lgbm_pred",
-    "ridge_pred_ppr",
-    "ridge_pred_half_ppr",
-    "ridge_pred_standard",
-    "nn_pred_ppr",
-    "nn_pred_half_ppr",
-    "nn_pred_standard",
-    "attn_nn_pred_ppr",
-    "attn_nn_pred_half_ppr",
-    "attn_nn_pred_standard",
-    "lgbm_pred_ppr",
-    "lgbm_pred_half_ppr",
-    "lgbm_pred_standard",
-    "headshot_url",
-]
-
-
-def _round_or_none(v):
-    """Round a numeric to 2dp, returning None for NaN / missing / non-numeric."""
-    if v is None:
-        return None
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    if not np.isfinite(f):
-        return None
-    return round(f, 2)
-
-
-def _records_to_player_rows(df, scoring="ppr"):
-    cols = [c for c in _PLAYER_ROW_COLS if c in df.columns]
-    actual_key = _actual_col(scoring)
-    pred_keys = {prefix: _pred_col(prefix, scoring) for prefix in _MODEL_PRED_PREFIXES}
-    return [
-        {
-            "player_id": _safe_str(r.get("player_id")),
-            "name": _safe_str(r.get("player_display_name")),
-            "position": _safe_str(r.get("position")),
-            "team": _safe_str(r.get("recent_team")),
-            "week": int(r["week"]),
-            "actual": _round_or_none(r.get(actual_key)),
-            "ridge_pred": _safe_num(r.get(pred_keys["ridge"])),
-            "nn_pred": _safe_num(r.get(pred_keys["nn"])),
-            "attn_nn_pred": _safe_num(r.get(pred_keys["attn_nn"])),
-            "lgbm_pred": _safe_num(r.get(pred_keys["lgbm"])),
-            "headshot": _safe_str(r.get("headshot_url", "")),
-        }
-        for r in df[cols].to_dict(orient="records")
-    ]
 
 
 @app.errorhandler(Exception)
