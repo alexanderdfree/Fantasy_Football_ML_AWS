@@ -7,6 +7,7 @@ import pytest
 
 from src.shared.weather_features import (
     WEATHER_FEATURES_ALL,
+    _build_team_schedule_lookup,
     merge_schedule_features,
 )
 
@@ -24,6 +25,45 @@ def _clear_schedule_cache():
 # ---------------------------------------------------------------------------
 # merge_schedule_features
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_build_team_schedule_lookup_negates_away_spread_line():
+    """nflverse ``spread_line`` is home-perspective; the team-level lookup must
+    negate it on away rows so the merged-back feature consistently means "this
+    team is favored by N" (audit #414 / #598 / #849). DST is the sole consumer
+    of the bare ``spread_line`` feature, and ``merge_schedule_features``
+    re-merges it from this lookup — previously re-introducing the raw
+    home-perspective sign on away rows and undoing ``src/dst/data.py``'s flip.
+    """
+    import pandas as pd
+
+    sched = pd.DataFrame(
+        {
+            "season": [2025],
+            "week": [1],
+            "home_team": ["KC"],
+            "away_team": ["BUF"],
+            "spread_line": [-3.0],  # home (KC) favored by 3
+            "total_line": [47.0],
+            "roof": ["outdoors"],
+            "surface": ["grass"],
+            "temp": [60.0],
+            "wind": [5.0],
+            "home_rest": [7],
+            "away_rest": [7],
+            "div_game": [0],
+        }
+    )
+    lookup = _build_team_schedule_lookup(sched)
+    kc = lookup[lookup["recent_team"] == "KC"].iloc[0]
+    buf = lookup[lookup["recent_team"] == "BUF"].iloc[0]
+    # Home keeps the raw home-perspective sign; away is negated to own-team.
+    assert kc["spread_line"] == -3.0
+    assert buf["spread_line"] == 3.0
+    # implied_team_total stays sign-aware (unchanged by this fix).
+    assert kc["implied_team_total"] == pytest.approx(25.0)  # (47 - (-3)) / 2
+    assert buf["implied_team_total"] == pytest.approx(22.0)  # (47 + (-3)) / 2
 
 
 @pytest.mark.unit

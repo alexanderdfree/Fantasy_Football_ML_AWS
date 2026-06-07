@@ -158,6 +158,15 @@ def _build_team_schedule_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
     away["team_rest"] = away["away_rest"]
     away["opp_rest"] = away["home_rest"]
     away["implied_team_total"] = (away["total_line"] + away["spread_line"]) / 2
+    # nflverse ``spread_line`` is from the HOME team's perspective. Negate it for
+    # away rows so the merged-back value means "this team is favored by N" on
+    # both home and away rows — matching the sign-aware ``implied_team_total``
+    # split just above. ``merge_schedule_features`` drops + re-merges
+    # ``spread_line`` from this lookup, which previously re-introduced the raw
+    # home-perspective sign on away rows and silently undid the per-side flip
+    # that ``src/dst/data.py`` applies (DST is the only consumer of the bare
+    # ``spread_line`` feature). See audit #414 / #598 / #849.
+    away["spread_line"] = -away["spread_line"]
 
     lookup = pd.concat([home, away], ignore_index=True)
     keep = [
