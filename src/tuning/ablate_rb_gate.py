@@ -35,7 +35,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.rb.run_pipeline import CONFIG, run  # noqa: E402
-from src.shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso  # noqa: E402
+from src.tuning.history import append_ablation_run
 
 ABLATION_NAME = "rb_td_gate"
 HISTORY_DIR = "benchmark_history"
@@ -246,17 +246,7 @@ def print_summary(rows: list[dict]) -> None:
 
 
 def _write_ablation(rows: list[dict]) -> None:
-    now = utc_now_iso()
-    git_hash = get_git_hash()
-    entry = {
-        "run_id": f"{now}_{git_hash}_{ABLATION_NAME}",
-        "timestamp": now,
-        "git_hash": git_hash,
-        "kind": "ablation",
-        "name": ABLATION_NAME,
-        "variants": rows,
-    }
-    append_to_history(os.path.join(HISTORY_DIR, "ablations"), entry)
+    append_ablation_run(ABLATION_NAME, {"variants": rows}, history_dir=HISTORY_DIR)
 
 
 def main() -> None:

@@ -48,8 +48,8 @@ import torch.nn as nn
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import src.shared.neural_net as nn_mod  # noqa: E402
-from src.shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso  # noqa: E402
 from src.tuning.ablation_runner import fmt_mean_std  # noqa: E402
+from src.tuning.history import append_ablation_run
 
 ABLATION_NAME = "backbone_norm"
 HISTORY_DIR = "benchmark_history"
@@ -253,19 +253,11 @@ def _verdict(seeds: list[int], by: dict, sentinel_ok: bool, have_both: bool) -> 
 
 
 def _write_ablation(rows: list[dict], position: str, seeds: list[int]) -> None:
-    now = utc_now_iso()
-    git_hash = get_git_hash()
-    entry = {
-        "run_id": f"{now}_{git_hash}_{ABLATION_NAME}",
-        "timestamp": now,
-        "git_hash": git_hash,
-        "kind": "ablation",
-        "name": ABLATION_NAME,
-        "position": position,
-        "seeds": seeds,
-        "variants": rows,
-    }
-    append_to_history(os.path.join(HISTORY_DIR, "ablations"), entry)
+    append_ablation_run(
+        ABLATION_NAME,
+        {"position": position, "seeds": seeds, "variants": rows},
+        history_dir=HISTORY_DIR,
+    )
 
 
 def main() -> None:

@@ -43,19 +43,20 @@ matplotlib.use("Agg")  # headless-safe; this script writes PNGs, no GUI needed
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
-from scipy.stats import spearmanr  # noqa: E402
 from sklearn.decomposition import PCA  # noqa: E402
-from sklearn.linear_model import LinearRegression  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.analysis.analysis_feature_audit import (  # noqa: E402
+from src.analysis._feature_stats import (
+    _high_corr_pairs,
     _print_top,
     _print_vif,
     _save_static_heatmap,
+    _spearman_matrix,
+    _vif,
 )
 from src.rb.config import ATTN_STATIC_CATEGORIES, POSITION_CONFIG  # noqa: E402
 from src.rb.data import filter_to_position  # noqa: E402
@@ -132,46 +133,6 @@ def _present_numeric(df: pd.DataFrame, cols: list[str]) -> list[str]:
     return out
 
 
-def _high_corr_pairs(corr: pd.DataFrame, threshold: float) -> list[tuple[str, str, float]]:
-    """Return upper-triangle (a, b, r) pairs with |r| >= threshold, sorted by |r| desc."""
-    arr = corr.to_numpy()
-    rows, cols = np.triu_indices_from(arr, k=1)
-    pairs = []
-    for i, j in zip(rows, cols, strict=True):
-        r = arr[i, j]
-        if np.isnan(r):
-            continue
-        if abs(r) >= threshold:
-            pairs.append((corr.index[i], corr.columns[j], float(r)))
-    pairs.sort(key=lambda x: abs(x[2]), reverse=True)
-    return pairs
-
-
-def _vif(df: pd.DataFrame, cols: list[str]) -> dict[str, float]:
-    """VIF_i = 1 / (1 - R^2_i) via sklearn LinearRegression.
-
-    Drops rows with any NaN in ``cols`` first; standardises columns so the R²
-    is scale-invariant (matches statsmodels' default behaviour).
-    """
-    sub = df[cols].dropna()
-    if len(sub) < 50 or len(cols) < 2:
-        return {c: float("nan") for c in cols}
-
-    scaler = StandardScaler()
-    X = scaler.fit_transform(sub.to_numpy(dtype=float))
-    out: dict[str, float] = {}
-    lr = LinearRegression(n_jobs=1)
-    for i, c in enumerate(cols):
-        y = X[:, i]
-        Xi = np.delete(X, i, axis=1)
-        lr.fit(Xi, y)
-        r2 = lr.score(Xi, y)
-        # Numerical floor: r2 can creep slightly above 1.0 with rank-deficient X.
-        r2 = min(r2, 1.0 - 1e-12)
-        out[c] = float(1.0 / (1.0 - r2))
-    return out
-
-
 def _condition_number(df: pd.DataFrame, cols: list[str]) -> tuple[float, float]:
     """Return (pre-PCA, post-PCA) condition numbers of standardised ``df[cols]``."""
     sub = df[cols].dropna()
@@ -183,14 +144,6 @@ def _condition_number(df: pd.DataFrame, cols: list[str]) -> tuple[float, float]:
     Xp = PCA(n_components=n_components).fit_transform(X)
     cond_post = float(np.linalg.cond(Xp))
     return cond_pre, cond_post
-
-
-def _spearman_matrix(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-    sub = df[cols].dropna()
-    rho, _ = spearmanr(sub.to_numpy(dtype=float))
-    if np.isscalar(rho):  # only happens if n_cols == 2
-        rho = np.array([[1.0, rho], [rho, 1.0]])
-    return pd.DataFrame(rho, index=cols, columns=cols)
 
 
 def _pre_registered_table(df: pd.DataFrame, pairs: list[tuple[str, str, str]]) -> list[dict]:

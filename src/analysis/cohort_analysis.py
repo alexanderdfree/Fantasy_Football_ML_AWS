@@ -21,7 +21,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import importlib
 import os
 import sys
 import warnings
@@ -1747,7 +1746,9 @@ def _run_position(
     test_df: pd.DataFrame | None = None,
     seed: int = 42,
 ) -> dict:
-    run = importlib.import_module(f"src.{pos.lower()}.run_pipeline").run
+    from src.shared.registry import get_runner
+
+    run = get_runner(pos)
     if pos in {"K", "DST"}:
         return run(seed=seed)
     if train_df is not None and val_df is not None and test_df is not None:

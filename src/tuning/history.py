@@ -58,3 +58,34 @@ def append_tuning_run(
     if note:
         entry["note"] = note
     return append_to_history(history_dir, entry, pr_number=pr_number)
+
+
+def append_ablation_run(name, payload, *, history_dir=HISTORY_DIR, pr_number=None):
+    """Append one ablation run to the version-controlled history.
+
+    Mirrors :func:`append_tuning_run`: builds the common run envelope
+    (``run_id``/``timestamp``/``git_hash``/``kind="ablation"``/``name``) and merges
+    the experiment-specific ``payload`` dict (e.g. ``variants``/``results``/``seeds``/
+    ``position``). Each ``ablate_*`` script's ``_write_ablation`` assembles its payload
+    and calls this, so the envelope lives in one place.
+
+    Args:
+        name: Ablation name (the ``ABLATION_NAME`` constant); becomes the run_id suffix.
+        payload: Experiment-specific keys merged into the entry verbatim.
+        history_dir: Parent dir; the run lands under ``<history_dir>/ablations``.
+        pr_number: Forwarded to ``append_to_history`` for the PR badge.
+
+    Returns:
+        The path of the written JSON file.
+    """
+    now = utc_now_iso()
+    git_hash = get_git_hash()
+    entry = {
+        "run_id": f"{now}_{git_hash}_{name}",
+        "timestamp": now,
+        "git_hash": git_hash,
+        "kind": "ablation",
+        "name": name,
+        **payload,
+    }
+    return append_to_history(os.path.join(history_dir, "ablations"), entry, pr_number=pr_number)
