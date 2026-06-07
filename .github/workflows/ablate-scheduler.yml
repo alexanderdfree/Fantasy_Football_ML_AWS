@@ -2,15 +2,16 @@ name: Ablate LR-scheduler type (Batch)
 
 # Manually-triggered LR-scheduler-type A/B across positions. Mirrors
 # retune-nn-batch.yml's per-position Spot fan-out — one Batch job per position
-# (g4dn.xlarge / T4 is the live compute environment) — but runs
+# (g6.xlarge / L4 / sm_89 is the live compute environment, PR #952) — but runs
 # `--ablation scheduler-type` instead of `--mode tune`. Each container runs the
 # 3-way (onecycle / cosine_warm_restarts / plateau) A/B across SEEDS and uploads
 # s3://$S3_BUCKET/ablate_scheduler/{pos}/result.json; the aggregate job merges
 # them into a step-summary table + an artifact.
 #
 # Eager by design: the launcher forces FF_CUDA_GRAPH=0 so the scheduler deltas
-# are bit-comparable (on the T4 graphs are gated off anyway; on a future sm_80+
-# CE this keeps the A/B clean). No model artifact upload, no benchmark_history
+# are bit-comparable — the live L4 CE is sm_89, where CUDA graphs autodetect ON
+# and are NOT numerically inert (post-#889), so forcing them off keeps the A/B
+# clean. No model artifact upload, no benchmark_history
 # commit — diagnostic only, like ablate-rb-gate.yml. Read an UNTUNED alternative
 # beating tuned production as the strong signal; confirm with >=5 seeds + a tuned
 # sweep before changing any POSITION_CONFIG.
@@ -75,7 +76,7 @@ jobs:
       fail-fast: false
       matrix:
         position: ${{ fromJson(needs.parse.outputs.matrix) }}
-    # N seeds x 3 schedulers runs/position, no LightGBM; ~15-40 min on the T4,
+    # N seeds x 3 schedulers runs/position, no LightGBM; ~15-40 min on the L4,
     # Spot retries can extend it. 3h ceiling matches the launcher wait timeout.
     timeout-minutes: 180
     permissions:
