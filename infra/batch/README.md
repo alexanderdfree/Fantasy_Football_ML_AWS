@@ -81,7 +81,20 @@ ecr:GetDownloadUrlForLayer
 ecr:BatchGetImage
 ```
 
-### SOCI snapshotter (Option B, default since 2026-05-21)
+### SOCI snapshotter — ⚠️ REMOVED 2026-06-07 (did not work on Batch)
+
+> **SOCI lazy-loading was removed.** It cannot work on AWS Batch: Batch runs on
+> ECS-managed EC2 and the `amazon-ecs-agent` does not pull through the soci
+> snapshotter (SOCI on ECS is **Fargate-only** —
+> [containers-roadmap#1832](https://github.com/aws/containers-roadmap/issues/1832);
+> and Fargate has no GPU). Verified: with a fully-correct soci config a prod K
+> job still pulled in ~103 s (overlayfs) — same on g4dn and g6 (the limit is the
+> ECS agent, not the GPU arch). The `ff-batch-lt` launch template, its
+> `userdata.sh`, and the CI "Publish SOCI index" step were all removed; the CE
+> uses the default ECS-optimized AMI and pays the ~120 s pull. Full root-cause:
+> [../../docs/batch_design.md](../../docs/batch_design.md) §2a +
+> [../../todo/fixed-archive.md](../../todo/fixed-archive.md). **Text below is
+> retained for history only.**
 
 A SOCI index is published alongside the image by
 [batch-image.yml](../../.github/workflows/batch-image.yml)'s `Publish SOCI

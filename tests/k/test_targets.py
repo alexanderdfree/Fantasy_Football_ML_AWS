@@ -10,6 +10,7 @@ import pytest
 
 from src.k.config import POSITION_CONFIG
 from src.k.targets import compute_targets
+from src.shared.aggregate_targets import K_TARGETS
 from tests.k.conftest import _build_k_row as _make_row
 from tests.shared.parameterized_targets import (
     PositionTargetSpec,
@@ -32,6 +33,15 @@ install_parameterized_targets(
         nan_extra_assertions=(("fantasy_points", 0.0),),
     ),
 )
+
+
+def test_k_targets_match_aggregate_targets_contract():
+    """``src.k.config`` targets must stay in sync with ``K_TARGETS`` in
+    ``src.shared.aggregate_targets`` — the two are duplicated (config list +
+    routing tuple), and ``predictions_to_fantasy_points`` matches K by
+    ``set(K_TARGETS)``, so drift would silently misroute K's bespoke scoring.
+    """
+    assert tuple(POSITION_CONFIG.targets) == tuple(K_TARGETS)
 
 
 # ---------------------------------------------------------------------------
