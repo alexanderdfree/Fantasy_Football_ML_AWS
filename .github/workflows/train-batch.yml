@@ -505,10 +505,16 @@ jobs:
           # workspace HEAD via get_git_hash(), which is correct for a
           # manual run. See TODO.md "Benchmark git_hash recorded the wrong
           # SHA on rapid back-to-back merges" archive entry.
-          # The Batch path runs on sm_89 L4, where CUDA graphs autodetect ON
-          # (src/shared/utils.cuda_graph_enabled), so default the row label to
-          # graphed — keeping it separate from the pre-cutover eager baseline.
-          # FF_CUDA_GRAPH is the force-off override: a falsy value → eager → plain.
+          # Hardware label for the History tab is DERIVED AT RUNTIME by
+          # src/batch/benchmark.py from the gpu_name + cuda_graph_active fields
+          # src/batch/train.py stamps into each position's benchmark_metrics.json,
+          # so it tracks the live CE with no edit here (g6.xlarge / L4 sm_89 +
+          # ", CUDA-graph" today; auto-updates if the CE ever changes again) —
+          # the silent-drift the old hardcoded string risked is gone. The value
+          # below is only a FALLBACK, used when a run carries no GPU metadata
+          # (pre-stamping artifacts / all-CPU run); it mirrors the current g6/L4
+          # graphed reality, and the force-off case keeps the fallback honest
+          # when FF_CUDA_GRAPH disables capture.
           INSTANCE_TYPE="g6.xlarge (Spot, CUDA-graph)"
           case "$(echo "${FF_CUDA_GRAPH:-}" | tr 'A-Z' 'a-z')" in
             0|false|no|off) INSTANCE_TYPE="g6.xlarge (Spot)" ;;

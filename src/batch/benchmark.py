@@ -50,6 +50,56 @@ HISTORY_DIR = "benchmark_history"
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
+# GPU name -> AWS instance family, for the History-tab hardware label derived
+# from the runtime facts src/batch/train.py stamps into benchmark_metrics.json.
+# Each GPU ships on exactly one of these families in the project's AWS targets
+# (T4 -> g4dn.xlarge, L4 -> g6.xlarge); an unmapped GPU degrades to its own
+# short name so the label stays informative without a code change.
+_INSTANCE_FAMILY_BY_GPU = {
+    "Tesla T4": "g4dn.xlarge",
+    "NVIDIA L4": "g6.xlarge",
+}
+
+
+def _gpu_short(name: str) -> str:
+    """Drop the vendor prefix for a compact label (``Tesla T4`` -> ``T4``)."""
+    for prefix in ("NVIDIA ", "Tesla "):
+        if name.startswith(prefix):
+            return name[len(prefix) :]
+    return name
+
+
+def _derive_instance_label(all_metrics: dict, *, backend: str, fallback: str) -> str:
+    """Build the History-tab hardware label from runtime facts, or ``fallback``.
+
+    Reads the ``gpu_name`` / ``cuda_graph_active`` fields src/batch/train.py
+    stamps per position (``_hardware_metadata``). The shared compute environment
+    runs one GPU type, so any GPU-bearing position fixes the hardware identity;
+    ``cuda_graph_active`` is True for the run iff a GPU position captured graphs
+    (sm_80+, e.g. L4 — never the T4). Provisioning comes from ``backend``
+    (``batch`` -> Spot fan-out, ``ec2`` -> On-Demand rollback).
+
+    Falls back to ``fallback`` (the ``--instance-type`` arg) when no position
+    carries GPU metadata — pre-stamping artifacts or an all-CPU run — so old
+    runs and the degenerate case keep a sensible label. This is the fix for the
+    train-batch.yml hardcoded-label drift: the family auto-tracks a T4->L4 CE
+    migration with no workflow edit.
+    """
+    gpu_names = sorted({m["gpu_name"] for m in all_metrics.values() if m.get("gpu_name")})
+    if not gpu_names:
+        return fallback
+    gpu_name = gpu_names[0]
+    short = _gpu_short(gpu_name)
+    family = _INSTANCE_FAMILY_BY_GPU.get(gpu_name)
+    provisioning = "On-Demand" if backend == "ec2" else "Spot"
+    graph_active = any(m.get("cuda_graph_active") for m in all_metrics.values())
+    suffix = ", CUDA-graph" if graph_active else ""
+    if family:
+        return f"{family} ({short}, {provisioning}{suffix})"
+    # Unknown GPU: lead with the GPU name itself rather than guess a family.
+    return f"{short} ({provisioning}{suffix})"
+
+
 def _model_s3_prefix() -> str:
     """Return the current model-artifact prefix, normalized for manifest reads."""
     return os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/") or "models"
@@ -172,6 +222,13 @@ def record_benchmark_run(
     if not all_metrics:
         print("No metrics found. Skipping benchmark history append.")
         return None
+
+    # Derive the hardware label from what the jobs actually ran on (gpu_name +
+    # cuda_graph_active stamped by src/batch/train.py), falling back to the
+    # passed instance_type for pre-stamping artifacts. This is what lets the
+    # History tab track a T4->L4 CE migration without a workflow edit.
+    instance_type = _derive_instance_label(all_metrics, backend=backend, fallback=instance_type)
+    print(f"Hardware label: {instance_type}")
 
     # Per-position git_sha coherency check (see find_git_sha_divergence for
     # rationale). Defense-in-depth against the lingering manifest-write race
