@@ -30,7 +30,7 @@ def _toy_cfg(name: str = "fnA") -> dict:
 
     get_feature_columns_fn.__qualname__ = f"toy.{name}.get_feature_columns_fn"
 
-    def add_features_fn(*args):
+    def add_features_fn(*args, **kwargs):
         return args
 
     add_features_fn.__qualname__ = f"toy.{name}.add_features_fn"

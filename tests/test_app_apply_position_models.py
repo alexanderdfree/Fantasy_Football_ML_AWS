@@ -170,7 +170,7 @@ def _mocked_app(monkeypatch):
 
     # Short-circuit build_position_features — keep the per-position DataFrame
     # as passed in, with a dummy numeric feature column.
-    def _fake_build_features(tr, va, te, reg, feature_cols):
+    def _fake_build_features(tr, va, te, reg, feature_cols, full_train=None):
         for df in (tr, va, te):
             for col in feature_cols:
                 if col not in df.columns:
@@ -209,7 +209,7 @@ def _qb_registry(monkeypatch):
         "specific_features": [],
         "filter_fn": lambda df: df[df["position"] == "QB"].copy(),
         "compute_targets_fn": lambda df: df.assign(fumbles_lost=0.0),
-        "add_features_fn": lambda tr, va, te: (tr, va, te),
+        "add_features_fn": lambda tr, va, te, full_train=None: (tr, va, te),
         "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
         "get_feature_columns_fn": lambda: ["f0"],
         "aggregate_fn": lambda preds: sum(preds[t] for t in ("passing_yards", "rushing_yards")),
@@ -301,9 +301,10 @@ def test_apply_position_models_applies_min_games_filter(monkeypatch):
     class _Stop(Exception):
         pass
 
-    def _capture_build(tr, va, te, reg, feature_cols):
+    def _capture_build(tr, va, te, reg, feature_cols, full_train=None):
         captured["train_ids"] = list(tr["player_id"])
         captured["val_ids"] = list(va["player_id"])
+        captured["full_train_ids"] = None if full_train is None else list(full_train["player_id"])
         raise _Stop
 
     monkeypatch.setattr(core, "build_position_features", _capture_build)
@@ -314,7 +315,7 @@ def test_apply_position_models_applies_min_games_filter(monkeypatch):
         "min_games_per_season": 2,
         "filter_fn": lambda df: df[df["position"] == "QB"].copy(),
         "compute_targets_fn": lambda df: df,
-        "add_features_fn": lambda tr, va, te: (tr, va, te),
+        "add_features_fn": lambda tr, va, te, full_train=None: (tr, va, te),
         "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
         "get_feature_columns_fn": lambda: ["f0"],
         "model_dir": "src/qb/outputs/models",
@@ -364,6 +365,9 @@ def test_apply_position_models_applies_min_games_filter(monkeypatch):
     assert captured["train_ids"] == ["HIGH", "HIGH", "HIGH"]
     # val is NOT min-games-filtered (mirrors training: filter applies to train only).
     assert captured["val_ids"] == ["LOW"]
+    # full_train is the PRE-filter train (LOW retained) so RB/WR team-total
+    # denominators see the full player set — train/serve parity (#574/#531).
+    assert captured["full_train_ids"] == ["HIGH", "HIGH", "HIGH", "LOW"]
 
 
 @pytest.mark.integration
@@ -398,7 +402,7 @@ def test_apply_position_models_with_attention(_mocked_app, monkeypatch):
         "specific_features": [],
         "filter_fn": lambda df: df[df["position"] == "QB"].copy(),
         "compute_targets_fn": lambda df: df,
-        "add_features_fn": lambda tr, va, te: (tr, va, te),
+        "add_features_fn": lambda tr, va, te, full_train=None: (tr, va, te),
         "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
         "get_feature_columns_fn": lambda: ["f0"],
         "aggregate_fn": lambda preds: preds["passing_yards"],
@@ -443,7 +447,7 @@ def test_apply_position_models_with_adjustment_fn(_mocked_app, monkeypatch):
         "specific_features": [],
         "filter_fn": lambda df: df[df["position"] == "QB"].copy(),
         "compute_targets_fn": lambda df: df.assign(points_allowed=20.0),
-        "add_features_fn": lambda tr, va, te: (tr, va, te),
+        "add_features_fn": lambda tr, va, te, full_train=None: (tr, va, te),
         "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
         "get_feature_columns_fn": lambda: ["f0"],
         "compute_adjustment_fn": lambda df: pd.Series(np.ones(len(df)) * 5.0, index=df.index),
@@ -725,7 +729,7 @@ def test_apply_position_models_ridge_load_failure_records_and_nan_fills(_mocked_
                     "specific_features": [],
                     "filter_fn": lambda df: df,
                     "compute_targets_fn": lambda df: df,
-                    "add_features_fn": lambda tr, va, te: (tr, va, te),
+                    "add_features_fn": lambda tr, va, te, full_train=None: (tr, va, te),
                     "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
                     "get_feature_columns_fn": lambda: ["f0"],
                     "model_dir": "missing",
@@ -788,7 +792,7 @@ def test_apply_position_models_clears_stale_errors_for_this_position(_mocked_app
                     "specific_features": [],
                     "filter_fn": lambda df: df,
                     "compute_targets_fn": lambda df: df,
-                    "add_features_fn": lambda tr, va, te: (tr, va, te),
+                    "add_features_fn": lambda tr, va, te, full_train=None: (tr, va, te),
                     "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
                     "get_feature_columns_fn": lambda: ["f0"],
                     "model_dir": "missing",

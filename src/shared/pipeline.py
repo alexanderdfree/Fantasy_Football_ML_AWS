@@ -564,10 +564,28 @@ def _prepare_position_data_uncached(position, cfg, train_df, val_df, test_df=Non
     pos_val = cfg["filter_fn"](val_df)
     pos_test = cfg["filter_fn"](test_df) if test_df is not None else None
 
+    # Compute targets — raw-stat only, does not depend on schedule features, so it
+    # runs before the schedule merge inside build_position_features. Done BEFORE the
+    # min-games filter (it's per-row, so it commutes with the row filter → Δ0 for
+    # the surviving rows) so the UNFILTERED train captured below carries targets —
+    # RB/WR compute per-game share/HHI/career features over that full frame and
+    # select the filtered rows back, so the dropped low-volume players don't
+    # undercount those denominators/sums (#574/#531).
+    targets = cfg["targets"]
+    pos_train = cfg["compute_targets_fn"](pos_train)
+    pos_val = cfg["compute_targets_fn"](pos_val)
+    if pos_test is not None:
+        pos_test = cfg["compute_targets_fn"](pos_test)
+
     # Min-games filter: training only. Per-position via cfg["min_games_per_season"]
     # (None → the global MIN_GAMES_PER_SEASON). Relaxing it adds low-volume
     # player-seasons back to TRAIN, which helps the cold-start test subgroup the
     # model would otherwise never see (TODO.md min-games entry).
+    # ``full_train`` is the pre-filter (targeted) train: RB/WR's add_specific_features
+    # computes its per-game team-total / share / HHI / career features over it and
+    # returns only the filtered rows, so those aggregates see the full player set.
+    # fill_nans + the StandardScaler still fit on the FILTERED train below (#569).
+    full_train = pos_train
     min_games = cfg.get("min_games_per_season")
     if min_games is None:
         min_games = MIN_GAMES_PER_SEASON
@@ -581,17 +599,9 @@ def _prepare_position_data_uncached(position, cfg, train_df, val_df, test_df=Non
     )
     print(f"  {pos} splits: {sizes}")
 
-    # Compute targets — raw-stat only, does not depend on schedule features,
-    # so we do it before the schedule merge inside build_position_features.
-    targets = cfg["targets"]
-    pos_train = cfg["compute_targets_fn"](pos_train)
-    pos_val = cfg["compute_targets_fn"](pos_val)
-    if pos_test is not None:
-        pos_test = cfg["compute_targets_fn"](pos_test)
-
     feature_cols = cfg["get_feature_columns_fn"]()
     pos_train, pos_val, pos_test = build_position_features(
-        pos_train, pos_val, pos_test, cfg, feature_cols
+        pos_train, pos_val, pos_test, cfg, feature_cols, full_train=full_train
     )
 
     X_train = pos_train[feature_cols].values.astype(np.float32)

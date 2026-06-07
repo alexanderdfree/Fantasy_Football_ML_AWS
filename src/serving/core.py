@@ -154,12 +154,19 @@ def _apply_position_models(train, val, test, pos, results):
     min_games = reg.get("min_games_per_season")
     if min_games is None:
         min_games = MIN_GAMES_PER_SEASON
+    # Capture the pre-filter train: RB/WR compute their per-game team-total /
+    # share / HHI / career features over the FULL player set (so dropped
+    # low-volume teammates don't undercount the denominators) and return only
+    # the filtered rows. fill_nans + the StandardScaler still fit on the
+    # filtered train inside build_position_features (#569). Mirrors training
+    # (src/shared/pipeline.py) — keep all three paths identical (#574/#531).
+    full_train = pos_train
     games_per_season = pos_train.groupby(["player_id", "season"])["week"].transform("count")
     pos_train = pos_train[games_per_season >= min_games].copy()
 
     feature_cols = reg["get_feature_columns_fn"]()
     pos_train, pos_val, pos_test = build_position_features(
-        pos_train, pos_val, pos_test, reg, feature_cols
+        pos_train, pos_val, pos_test, reg, feature_cols, full_train=full_train
     )
 
     # No position currently uses a post-hoc adjustment: K encodes miss penalties

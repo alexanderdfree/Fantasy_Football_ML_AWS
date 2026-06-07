@@ -127,7 +127,7 @@ def _stub_app(monkeypatch):
     monkeypatch.setattr(
         core,
         "build_position_features",
-        lambda tr, va, te, reg, fc: (tr, va, te),
+        lambda tr, va, te, reg, fc, full_train=None: (tr, va, te),
     )
     # K nested path calls k_features.build_nested_kick_history — stub to tiny
     # tensors. Patch on the imported module alias so the call site resolves
@@ -167,7 +167,7 @@ def test_apply_position_models_k_nested_attention_branch(_stub_app, monkeypatch)
         "specific_features": [],
         "filter_fn": lambda df: df[df["position"] == "K"].copy(),
         "compute_targets_fn": lambda df: df,
-        "add_features_fn": lambda tr, va, te: (tr, va, te),
+        "add_features_fn": lambda tr, va, te, full_train=None: (tr, va, te),
         "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
         "get_feature_columns_fn": lambda: ["static_feat"],
         "target_signs": {
@@ -222,7 +222,7 @@ def test_apply_position_models_k_nested_attention_missing_kicks_df_raises(_stub_
         "specific_features": [],
         "filter_fn": lambda df: df[df["position"] == "K"].copy(),
         "compute_targets_fn": lambda df: df,
-        "add_features_fn": lambda tr, va, te: (tr, va, te),
+        "add_features_fn": lambda tr, va, te, full_train=None: (tr, va, te),
         "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
         "get_feature_columns_fn": lambda: ["static_feat"],
         "target_signs": {"fg_yard_points": 1.0},
@@ -279,7 +279,7 @@ def test_apply_position_models_lgbm_load_failure_leaves_lgbm_pred_nan(monkeypatc
         "specific_features": [],
         "filter_fn": lambda df: df,
         "compute_targets_fn": lambda df: df,
-        "add_features_fn": lambda tr, va, te: (tr, va, te),
+        "add_features_fn": lambda tr, va, te, full_train=None: (tr, va, te),
         "fill_nans_fn": lambda tr, va, te, specs: (tr, va, te),
         "get_feature_columns_fn": lambda: ["f0"],
         "aggregate_fn": lambda preds: preds["passing_yards"],

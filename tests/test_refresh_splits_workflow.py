@@ -255,7 +255,7 @@ def test_build_position_features_raises_on_missing_whitelist_cols():
     )
     feature_cols = ["should_have_been_engineered_by_build_features"]
     cfg = {
-        "add_features_fn": lambda a, b, c: (a, b, c),
+        "add_features_fn": lambda a, b, c, full_train=None: (a, b, c),
         "fill_nans_fn": lambda a, b, c, _cols: (a, b, c),
         "specific_features": [],
     }
