@@ -1,0 +1,10 @@
+{
+  "run_id": "2026-06-07T13:44:33_a16b0c4",
+  "timestamp": "2026-06-07T13:44:33",
+  "git_hash": "a16b0c4",
+  "note": "Training skipped — inert src/shared change (seed_everything CPU-fork-safety; byte-identical production RNG path, Ridge-identity holds). CI retrain cancelled.",
+  "results": [],
+  "positions": [],
+  "training_skipped": true,
+  "pr_number": 993
+}
