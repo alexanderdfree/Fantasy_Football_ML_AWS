@@ -278,7 +278,7 @@ POSITION_CONFIG = PositionConfig(
         "carries",
         "interceptions",
         "fumbles_lost",
-        "snap_pct",
+        "snap_pct_raw",
         "sacks",
         "sack_yards",
         # Per-game ff_opportunity expected stats (modeled from in-game
