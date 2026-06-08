@@ -217,22 +217,22 @@ jobs:
         id: shard
         run: |
           shard="${{ matrix.shard }}"
-          # Root cause of the "node down: Not properly terminated" flake (#1056): CUMULATIVE
-          # OOM, not a single bad test. Diagnosed via faulthandler + per-worker crash reports
-          # (PR #1057): crashes always land at ~99% (the heavy training/feature tests cluster
-          # at the tail), with NO faulthandler dump (so SIGKILL = kernel OOM, not a segfault or
-          # >180s hang), and on the `shared` shard TWO workers died within 2s of each other (a
-          # global memory-ceiling event). The driver is NESTED parallelism: each xdist worker
-          # that trains a pipeline spawns ~nproc joblib/loky CV worker processes (~0.6 GiB
-          # each, measured); `-n auto` = 4 xdist workers on a 4-vCPU runner, so 4 trainings can
-          # peak together (~18 GiB measured local extrapolation) and overrun the runner.
-          #
-          # Fix: run the training-heavy shards at `-n 2` so at most 2 trainings peak at once
-          # (~9 GiB), keeping headroom. (NOT the same as the earlier reverted `-n 2` attempt:
-          # that predated the serving-shard split, so `shared` still carried the heavy
-          # test_app* model-LOADING suite. Post-split, `-n 2` halves a now-isolated lighter
-          # training load -- local measurement: RB shard peak 3.57 GiB @ -n2 vs 5.49 GiB @ -n4.)
-          # conftest.py already caps math threads to 1/worker, so 2 workers don't oversubscribe.
+          # History of the "node down: Not properly terminated" flake (#1056):
+          #   * #1057 capped the training-heavy shards to `-n 2` (from `-n auto`). The crashes
+          #     were a cumulative per-worker OOM on the ~15 GiB runner (no faulthandler dump =
+          #     SIGKILL/OOM), worst on `shared` where workers peaked together at the tail.
+          #   * #1068 + #1070 then addressed the two real per-worker drivers, so the `-n 2` cap
+          #     is no longer needed and we restore `-n auto` for throughput:
+          #       - #1068 `COVERAGE_CORE=sysmon` — the default C-trace core held the whole `src`
+          #         coverage map per worker (the dominant per-worker cost); sysmon slashes it.
+          #       - #1070 atomic data-loader cache writes — the `ArrowInvalid` partial-parquet
+          #         read (one worker reading a cache another was mid-write) that surfaced as a
+          #         "node down" on the reader. (The earlier "nproc loky CV processes" note was a
+          #         misread: those `python -u -c ...` procs are the xdist workers themselves;
+          #         the alpha-CV is `prefer="threads"`, no loky in the train path.)
+          # conftest caps math threads to 1/worker, so `-n auto` (= nproc workers) x 1 thread ==
+          # vCPUs — no oversubscription. If `shared` (heaviest) regresses to OOM, drop just it
+          # back to `jobs=2`.
           if [ "$shard" = "serving" ]; then
             # Serving suite (tests/test_app*, ~219 Flask/model-LOADING tests), own shard
             # (#1056). No module-scoped trained fixtures and no pipeline TRAINING -> not an OOM
@@ -249,7 +249,7 @@ jobs:
             echo "paths=tests/ --ignore=tests/qb --ignore=tests/rb --ignore=tests/wr --ignore=tests/te --ignore=tests/k --ignore=tests/dst --ignore-glob=tests/test_app*.py" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src" >> "$GITHUB_OUTPUT"
             echo "dist=loadfile" >> "$GITHUB_OUTPUT"
-            echo "jobs=2" >> "$GITHUB_OUTPUT"
+            echo "jobs=auto" >> "$GITHUB_OUTPUT"
           else
             shard_lower=$(echo "$shard" | tr '[:upper:]' '[:lower:]')
             echo "paths=tests/${shard_lower}/" >> "$GITHUB_OUTPUT"
@@ -257,7 +257,7 @@ jobs:
             # loadfile: per-position module-scoped trained fixtures (test_regression.py +
             # test_pipeline_e2e.py) must stay on one worker.
             echo "dist=loadfile" >> "$GITHUB_OUTPUT"
-            echo "jobs=2" >> "$GITHUB_OUTPUT"
+            echo "jobs=auto" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Show runner CPU + memory topology
@@ -271,8 +271,9 @@ jobs:
           grep -E 'MemTotal|MemAvailable' /proc/meminfo || true
 
       - name: Run tests
-        # `-n ${jobs}` is the OOM fix (2 for training shards, auto for serving; see the shard
-        # step). The rest is retained safety instrumentation so any FUTURE worker death is
+        # `-n ${jobs}` is `auto` for all shards now (the #1057 `-n 2` training-shard cap was
+        # lifted after #1068/#1070 fixed the OOM + parquet-race drivers; see the shard step).
+        # The rest is retained safety instrumentation so any FUTURE worker death is
         # self-diagnosing instead of an opaque "node down":
         #   * PYTHONFAULTHANDLER=1 + faulthandler_timeout=180 -> dump C+Python thread stacks on
         #     a fatal signal or a >180s C-level hang (a clean SIGKILL/OOM leaves no dump, which
