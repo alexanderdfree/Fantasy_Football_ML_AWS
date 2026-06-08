@@ -3,18 +3,22 @@ description: Capture a non-routine Codex session lesson for AGENTS.md or memory
 argument-hint: [WRITE_MEMORY=0|1]
 ---
 
-Reflect on the current Codex session only if it was non-routine: the user corrected the approach, a project convention changed the right move, a stop-rule prevented wasted work, or a specific instruction made the session unusually efficient.
+Run the Final-Project Codex post-session critique wrapper.
 
-Skip with one sentence if the session was routine.
+The authoritative instructions are version-controlled at `agent-workflows/post-session-critique/instructions.md`. That file, not this wrapper, defines when to run, when to skip, the reflection shape, and where durable lessons belong.
 
-Before proposing anything, check `AGENTS.md`, `CODEX.md`, and the current Codex memory summary for duplicates.
+Codex runtime values:
 
-Produce under 200 words:
+- `WORKFLOW_PROVIDER=Codex`
+- `WORKFLOW_ENTRYPOINT=/prompts:post-session-critique`
+- `WORKFLOW_WRAPPER=.codex/prompts/post-session-critique.md`
+- `WORKFLOW_SHARED_INSTRUCTIONS=agent-workflows/post-session-critique/instructions.md`
+- `WORKFLOW_AGENT_DOC=CODEX.md`
+- `WORKFLOW_MEMORY_DESTINATION=$CODEX_HOME/memories/extensions/ad_hoc/notes/` with fallback to `~/.codex/memories/extensions/ad_hoc/notes/`
+- `WORKFLOW_WRITE_MEMORY=1 only when invoked with WRITE_MEMORY=1; otherwise propose memory text without writing`
 
-**What happened**: one sentence.
+Execution:
 
-**What was missing**: the missing rule, example, or setup note.
-
-**Proposed change**: either a concrete AGENTS.md/CODEX.md snippet or a Codex memory note.
-
-Durable cross-agent lessons belong in `AGENTS.md`. Codex-only local recall may go to memory only when this command is invoked with `WRITE_MEMORY=1`; otherwise propose the memory text without writing it. If writing memory, follow the active Codex memory rules and write under `$CODEX_HOME/memories/extensions/ad_hoc/notes/`, falling back to `~/.codex/memories/extensions/ad_hoc/notes/` when `CODEX_HOME` is unset.
+1. Read `agent-workflows/post-session-critique/instructions.md`.
+2. If it is missing or empty, STOP NOW: do not write memory and do not improvise a critique workflow.
+3. Otherwise, execute that file to completion using the Codex runtime values and supplied arguments above.

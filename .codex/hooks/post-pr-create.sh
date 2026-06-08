@@ -14,7 +14,7 @@ if ! codex_command_invokes_gh_pr_create "$cmd"; then
   exit 0
 fi
 
-ctx='PR opened. Continue with `/prompts:post-pr-followup` (template: `.codex/prompts/post-pr-followup.md`): rebase onto origin/main, run `scripts/codex-review-quiet.sh --base origin/main`, apply localized review fixes, wait for CI, then merge/delete the remote branch when allowed. The prompt preserves audit/tier explicit merge sign-off and the post-session-critique nudge.'
+ctx='PR opened. Continue with `/prompts:post-pr-followup` (template: `.codex/prompts/post-pr-followup.md`): rebase onto origin/main, run `scripts/codex-review-quiet.sh --base origin/main`, apply localized review fixes, wait for CI, then merge/delete the remote branch when allowed. The prompt preserves audit/tier explicit merge sign-off and the post-session-critique nudge; that nudge uses shared behavior from `agent-workflows/post-session-critique/instructions.md`.'
 
 codex_json_context "PostToolUse" "$ctx" "$jq_bin"
 exit 0

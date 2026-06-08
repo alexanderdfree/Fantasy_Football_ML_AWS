@@ -8,9 +8,10 @@ model regress-risk, and area — plus one closed
 `[claude-audit] checkpoint ...` issue per fire recording the audited SHA (a
 per-fire audit-trail entry; it carries no severity label, so it's excluded from
 the actionable backlog). The per-finding issues it produces are consumed by the
-[`solve-issues`](../../skills/solve-issues/SKILL.md) skill, which now triages
-both `claude-audit` and `codex-audit`, severity-orders, and bundles them into
-tier-by-risk PRs.
+[`solve-issues`](../../skills/solve-issues/SKILL.md) wrapper, which reads
+[`../../../agent-workflows/solve-issues/instructions.md`](../../../agent-workflows/solve-issues/instructions.md)
+to triage both `claude-audit` and `codex-audit`, severity-order, and bundle them
+into tier-by-risk PRs.
 
 | | |
 |---|---|

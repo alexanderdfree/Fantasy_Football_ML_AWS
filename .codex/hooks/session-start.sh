@@ -16,7 +16,7 @@ if [ -x "$root/scripts/agent-memory-sync.sh" ]; then
   (cd "$root" && bash scripts/agent-memory-sync.sh codex pull) || true
 fi
 
-context="Final-Project Codex context: read AGENTS.md before non-trivial edits. This repo has tracked Codex hooks under .codex/hooks; review/trust them with /hooks after changes. Custom prompt templates live in .codex/prompts but Codex only loads user-home prompts, so run scripts/bootstrap-codex-local.sh and restart Codex when those templates change."
+context="Final-Project Codex context: read AGENTS.md before non-trivial edits. This repo has tracked Codex hooks under .codex/hooks; review/trust them with /hooks after changes. Custom prompt wrappers live in .codex/prompts, shared cross-agent workflow behavior lives in agent-workflows, and Codex only loads user-home prompts, so run scripts/bootstrap-codex-local.sh and restart Codex when those templates change."
 main_worktree="$(codex_main_worktree "$root")"
 
 if [ ! -d "$root/.venv" ]; then
