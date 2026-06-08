@@ -34,9 +34,11 @@ predict itself. ff_opp expected fantasy points are used as a *feature*, never a
 
 from __future__ import annotations
 
+import hashlib
 import os
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 from src.config import CACHE_DIR
 from src.data import nfl_source
@@ -76,6 +78,40 @@ CONTRACT_FEATURE_COLUMNS: tuple[str, ...] = (
 EXTERNAL_PRIOR_STATS: tuple[str, ...] = (*FF_OPP_FEATURE_COLUMNS, *QBR_FEATURE_COLUMNS)
 
 
+def _seasons_cache_signature(seasons: list[int]) -> str:
+    """Filename-safe signature of a season selection for cache keys.
+
+    A contiguous range renders as ``{min}_{max}`` — byte-identical to the legacy
+    ``seasons[0]_seasons[-1]`` key, so the production full-range cache filename
+    (e.g. ``ff_opportunity_2012_2025.parquet``) is unchanged. A sparse /
+    non-contiguous selection adds ``_{len}_{8-hex}`` so two different selections
+    sharing min/max can't collide on one cache file. Order- and
+    duplicate-insensitive. Mirrors ``nflcom_loader._weeks_cache_signature``.
+    """
+    uniq = sorted(set(int(s) for s in seasons))
+    if not uniq:
+        return "none"
+    lo, hi = uniq[0], uniq[-1]
+    if uniq == list(range(lo, hi + 1)):
+        return f"{lo}_{hi}"
+    digest = hashlib.sha1(",".join(map(str, uniq)).encode()).hexdigest()[:8]
+    return f"{lo}_{hi}_{len(uniq)}_{digest}"
+
+
+def _cached_parquet_has_columns(path: str, required: tuple[str, ...]) -> bool:
+    """False (-> regenerate) if the cached parquet is missing any required
+    column. A column added to a feature tuple after the cache was written would
+    otherwise be left-merged then ``fillna(0)``'d to all-zeros downstream. Reads
+    only the parquet schema (no row data). Mirrors
+    ``redzone_pbp._cached_rz_pbp_is_current``.
+    """
+    missing = set(required) - set(pq.read_schema(path).names)
+    if missing:
+        print(f"  Stale cache at {path} missing {sorted(missing)}; regenerating")
+        return False
+    return True
+
+
 def _coerce_merge_keys(df: pd.DataFrame) -> pd.DataFrame:
     """Coerce ``(player_id, season, week)`` to the canonical nflverse-weekly
     dtypes (player_id str, season/week int) so the loader merges don't fail on
@@ -101,9 +137,9 @@ def load_ff_opportunity(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.Da
     failure (network boundary) returns an empty frame so the cold build still
     succeeds and the loader backfills the columns with 0.
     """
-    path = f"{cache_dir}/ff_opportunity_{seasons[0]}_{seasons[-1]}.parquet"
+    path = f"{cache_dir}/ff_opportunity_{_seasons_cache_signature(seasons)}.parquet"
     keep = ["player_id", "season", "week", *FF_OPP_FEATURE_COLUMNS]
-    if os.path.exists(path):
+    if os.path.exists(path) and _cached_parquet_has_columns(path, FF_OPP_FEATURE_COLUMNS):
         return _coerce_merge_keys(pd.read_parquet(path))
     try:
         df = nfl_source.ff_opportunity(list(seasons))
@@ -183,9 +219,9 @@ def load_qbr_weekly(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFr
     caches the bridged result. Returns ``[player_id, season, week]`` +
     ``QBR_FEATURE_COLUMNS`` (empty if the source is unavailable).
     """
-    path = f"{cache_dir}/qbr_weekly_{seasons[0]}_{seasons[-1]}.parquet"
+    path = f"{cache_dir}/qbr_weekly_{_seasons_cache_signature(seasons)}.parquet"
     keep = ["player_id", "season", "week", *QBR_FEATURE_COLUMNS]
-    if os.path.exists(path):
+    if os.path.exists(path) and _cached_parquet_has_columns(path, QBR_FEATURE_COLUMNS):
         return _coerce_merge_keys(pd.read_parquet(path))
     try:
         raw = _fetch_qbr_weekly_raw(seasons)
@@ -248,8 +284,8 @@ def derive_active_contracts(contracts: pd.DataFrame, seasons: list[int]) -> pd.D
 
 def load_contracts(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFrame:
     """Active-as-of-season contract attributes per (player_id, season), cached."""
-    path = f"{cache_dir}/contracts_{seasons[0]}_{seasons[-1]}.parquet"
-    if os.path.exists(path):
+    path = f"{cache_dir}/contracts_{_seasons_cache_signature(seasons)}.parquet"
+    if os.path.exists(path) and _cached_parquet_has_columns(path, CONTRACT_FEATURE_COLUMNS):
         return _coerce_merge_keys(pd.read_parquet(path))
     try:
         raw = nfl_source.contracts()

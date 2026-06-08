@@ -536,6 +536,11 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
                     "week": [1],
                     "position": ["QB"],
                     "recent_team": ["KC"],
+                    # Renamed columns the _fetch_weekly schema-gate now requires —
+                    # an incomplete-schema cache is regenerated, not served (#428).
+                    "interceptions": [0],
+                    "sacks": [0],
+                    "sack_yards": [0],
                 }
             ),
         ),

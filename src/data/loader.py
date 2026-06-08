@@ -16,6 +16,8 @@ from src.data.external_sources import (
     CONTRACT_FEATURE_COLUMNS,
     FF_OPP_FEATURE_COLUMNS,
     QBR_FEATURE_COLUMNS,
+    _cached_parquet_has_columns,
+    _seasons_cache_signature,
     load_contracts,
     load_ff_opportunity,
     load_qbr_weekly,
@@ -146,7 +148,7 @@ def load_team_week_stats(
         seasons = SEASONS
 
     os.makedirs(cache_dir, exist_ok=True)
-    path = f"{cache_dir}/team_stats_{seasons[0]}_{seasons[-1]}.parquet"
+    path = f"{cache_dir}/team_stats_{_seasons_cache_signature(seasons)}.parquet"
 
     if os.path.exists(path):
         return pd.read_parquet(path)
@@ -199,15 +201,23 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         seasons = SEASONS
 
     os.makedirs(cache_dir, exist_ok=True)
-    weekly_path = f"{cache_dir}/weekly_{seasons[0]}_{seasons[-1]}.parquet"
-    rosters_path = f"{cache_dir}/rosters_{seasons[0]}_{seasons[-1]}.parquet"
-    schedules_path = f"{cache_dir}/schedules_{seasons[0]}_{seasons[-1]}.parquet"
-    snap_path = f"{cache_dir}/snap_counts_{seasons[0]}_{seasons[-1]}.parquet"
-    injury_path = f"{cache_dir}/injuries_{seasons[0]}_{seasons[-1]}.parquet"
-    depth_path = f"{cache_dir}/depth_charts_{seasons[0]}_{seasons[-1]}.parquet"
+    _sig = _seasons_cache_signature(seasons)
+    weekly_path = f"{cache_dir}/weekly_{_sig}.parquet"
+    rosters_path = f"{cache_dir}/rosters_{_sig}.parquet"
+    schedules_path = f"{cache_dir}/schedules_{_sig}.parquet"
+    snap_path = f"{cache_dir}/snap_counts_{_sig}.parquet"
+    injury_path = f"{cache_dir}/injuries_{_sig}.parquet"
+    depth_path = f"{cache_dir}/depth_charts_{_sig}.parquet"
 
     def _fetch_weekly():
-        if os.path.exists(weekly_path):
+        # Schema-gate: regenerate if the cache predates the current
+        # nfl_source._WEEKLY_RENAME layer — a renamed column absent ⇒ stale schema,
+        # and downstream fillna would silently zero it. These four are guaranteed
+        # present after the rename. (#428)
+        _weekly_required = ("recent_team", "interceptions", "sacks", "sack_yards")
+        if os.path.exists(weekly_path) and _cached_parquet_has_columns(
+            weekly_path, _weekly_required
+        ):
             return pd.read_parquet(weekly_path)
         # All seasons come from nflreadpy's load_player_stats (the modern nflverse
         # stats_player release). Harmonisation of that schema to the legacy weekly

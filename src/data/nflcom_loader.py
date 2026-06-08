@@ -550,7 +550,13 @@ def load_nflcom_with_gsis_id(
         f"{cache_dir}/nflcom_projections_joined_{_CACHE_VERSION}"
         f"_{min(seasons)}_{max(seasons)}_{rate_sig}.parquet"
     )
-    if os.path.exists(cache_path) and not force_refresh:
+    # ``rosters`` is the one input not captured by the cache key (seasons +
+    # version + match-rate). A caller-supplied override must bypass the cache
+    # read so its result isn't shadowed by a default-rosters cache; with the
+    # default (``rosters is None``) the rosters are derived from ``seasons``, so
+    # the key is complete and the cache hit is correct. Read-only guard — the
+    # write below is left unconditional. (#439)
+    if os.path.exists(cache_path) and not force_refresh and rosters is None:
         return pd.read_parquet(cache_path)
 
     proj = load_nflcom_projections(

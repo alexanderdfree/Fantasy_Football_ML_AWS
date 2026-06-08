@@ -2,8 +2,8 @@
 
 Covers the two non-trivial bits without network: the contract
 "active-as-of-season" ``merge_asof`` derivation and the ESPN-id → gsis QBR
-bridge. The cached fetch wrappers (``load_*``) are exercised via mocks in
-``tests/test_data_loader.py``.
+bridge, plus the two cache-key/schema-gate helpers. The cached fetch wrappers
+(``load_*``) are exercised via mocks in ``tests/test_data_loader.py``.
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ import pytest
 from src.data.external_sources import (
     CONTRACT_FEATURE_COLUMNS,
     QBR_FEATURE_COLUMNS,
+    _cached_parquet_has_columns,
+    _seasons_cache_signature,
     bridge_qbr_to_gsis,
     derive_active_contracts,
 )
@@ -145,3 +147,65 @@ def test_bridge_qbr_to_gsis_no_fanout_on_duplicate_espn_ids():
     ids = pd.DataFrame({"espn_id": [100.0, 100.0], "gsis_id": ["00-A", "00-A"]})
     out = bridge_qbr_to_gsis(qbr, ids)
     assert len(out) == 1
+
+
+@pytest.mark.unit
+def test_seasons_cache_signature_contiguous_is_inert():
+    """A contiguous range renders the legacy ``{min}_{max}`` key verbatim.
+
+    This is the inertness linchpin for the season-cache rekey (#810/#488/#487):
+    the production full-range filename (``*_2012_2025.parquet``) and every
+    contiguous sub-range stay byte-identical, so load-bearing cache-path
+    literals in model_sync / CI / docs are unchanged.
+    """
+    # Production range — the exact literal the cache filenames depend on.
+    assert _seasons_cache_signature(list(range(2012, 2026))) == "2012_2025"
+    # Contiguous sub-ranges and single seasons are unchanged too. A single
+    # season renders ``{y}_{y}`` — identical to the legacy
+    # ``seasons[0]_seasons[-1]`` key, which also doubled the year.
+    assert _seasons_cache_signature([2020, 2021, 2022]) == "2020_2022"
+    assert _seasons_cache_signature([2023]) == "2023_2023"
+    # Order- and duplicate-insensitive (still contiguous as a set).
+    assert _seasons_cache_signature([2022, 2020, 2021, 2020]) == "2020_2022"
+    # Empty selection has its own sentinel rather than crashing on min/max.
+    assert _seasons_cache_signature([]) == "none"
+
+
+@pytest.mark.unit
+def test_seasons_cache_signature_sparse_disambiguates_shared_min_max():
+    """Two different non-contiguous selections sharing min/max must not collide.
+
+    The legacy ``seasons[0]_seasons[-1]`` key gave both ``{2018,2020}`` and
+    ``{2018,2019,2020}`` the file ``..._2018_2020.parquet`` — one would serve
+    the other's cached data. The signature appends ``_{len}_{8hex}`` for sparse
+    sets so the two render distinctly.
+    """
+    a = _seasons_cache_signature([2018, 2020])
+    b = _seasons_cache_signature([2018, 2019, 2020])  # contiguous → plain
+    assert a != b
+    assert a.startswith("2018_2020_") and a != "2018_2020"
+    assert b == "2018_2020"
+    # Deterministic and set-stable (order/dupes don't change the hash).
+    assert a == _seasons_cache_signature([2020, 2018, 2018])
+
+
+@pytest.mark.unit
+def test_cached_parquet_has_columns_gate(tmp_path):
+    """The schema-gate returns True only when every required column is present.
+
+    A parquet predating a feature-column add (#428/#548) must be rejected so the
+    caller regenerates rather than left-merging + ``fillna(0)``-ing the missing
+    column to all-zeros.
+    """
+    required = ("player_id", "season", "feat_a", "feat_b")
+
+    complete = tmp_path / "complete.parquet"
+    pd.DataFrame(
+        {"player_id": ["00-A"], "season": [2024], "feat_a": [1.0], "feat_b": [2.0]}
+    ).to_parquet(complete)
+    assert _cached_parquet_has_columns(str(complete), required) is True
+
+    # Missing ``feat_b`` (added after this cache was written) → regenerate.
+    stale = tmp_path / "stale.parquet"
+    pd.DataFrame({"player_id": ["00-A"], "season": [2024], "feat_a": [1.0]}).to_parquet(stale)
+    assert _cached_parquet_has_columns(str(stale), required) is False
