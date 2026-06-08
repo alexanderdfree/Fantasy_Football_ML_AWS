@@ -1,0 +1,10 @@
+{
+  "run_id": "2026-06-08T10:42:50_4e208ce",
+  "timestamp": "2026-06-08T10:42:50",
+  "git_hash": "4e208ce",
+  "note": "Training skipped — inert src/shared change (PR #1074: TabPFN dormant, default-off 5th model variant). Retrain deliberately cancelled; existing model artifacts unchanged (Ridge-identity holds).",
+  "results": [],
+  "positions": [],
+  "training_skipped": true,
+  "pr_number": 1074
+}
