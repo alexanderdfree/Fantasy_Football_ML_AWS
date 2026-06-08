@@ -227,6 +227,63 @@ def test_fill_current_week_context_live_signals_win():
 
 
 @pytest.mark.unit
+def test_fill_current_week_context_practice_and_contracts():
+    # vet: in history (carry-forward source) AND in the live contract derive;
+    # carryonly: history only; fresh: neither.
+    history = pd.DataFrame(
+        {
+            "player_id": ["vet", "carryonly"],
+            "season": [2024, 2024],
+            "week": [3, 3],
+            "contract_apy_cap_pct": [0.05, 0.07],
+            "contract_guaranteed": [10.0, 20.0],
+            "contract_years_remaining": [1.0, 2.0],
+            "contract_age": [3.0, 2.0],
+        }
+    )
+    slice_df = pd.DataFrame(
+        {
+            "player_id": ["vet", "carryonly", "fresh"],
+            "contract_apy_cap_pct": [np.nan, np.nan, np.nan],
+            "contract_guaranteed": [np.nan, np.nan, np.nan],
+            "contract_years_remaining": [np.nan, np.nan, np.nan],
+            "contract_age": [np.nan, np.nan, np.nan],
+            "game_status": [np.nan, np.nan, np.nan],
+            "practice_status": [np.nan, np.nan, np.nan],
+        }
+    )
+    contract_features = pd.DataFrame(
+        {
+            "contract_apy_cap_pct": [0.20],
+            "contract_guaranteed": [99.0],
+            "contract_years_remaining": [4.0],
+            "contract_age": [1.0],
+        },
+        index=pd.Index(["vet"], name="player_id"),
+    )
+    out = upcoming_week._fill_current_week_context(
+        slice_df,
+        history,
+        practice_status_map={"vet": 1.0},
+        contract_features=contract_features,
+    )
+    vet = out[out["player_id"] == "vet"].iloc[0]
+    carryonly = out[out["player_id"] == "carryonly"].iloc[0]
+    fresh = out[out["player_id"] == "fresh"].iloc[0]
+    # Live contract derive beats the carried-forward value.
+    assert vet["contract_apy_cap_pct"] == 0.20
+    assert vet["contract_age"] == 1.0
+    # No live contract → carry-forward from history.
+    assert carryonly["contract_apy_cap_pct"] == 0.07
+    # Neither live nor history → stays NaN (no contract default; build fills it).
+    assert pd.isna(fresh["contract_apy_cap_pct"])
+    # Live practice_status overrides the default; others stay healthy.
+    assert vet["practice_status"] == 1.0
+    assert carryonly["practice_status"] == 2.0
+    assert fresh["practice_status"] == 2.0
+
+
+@pytest.mark.unit
 def test_input_signature_changes_with_lines():
     slate = pd.DataFrame(
         {

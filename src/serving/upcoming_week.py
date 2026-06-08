@@ -31,7 +31,7 @@ from src.config import CACHE_DIR, SEASONS
 from src.data.loader import load_raw_data
 from src.data.preprocessing import preprocess
 from src.features.engineer import build_features
-from src.serving import core, espn_live
+from src.serving import core, espn_live, live_sources
 from src.serving.serialization import (
     _MODEL_PRED_PREFIXES,
     _pred_col,
@@ -179,22 +179,27 @@ def build_upcoming_week_frame(
     injuries_df: pd.DataFrame | None = None,
     depth_chart_ranks: dict[str, float] | None = None,
     game_status_map: dict[str, float] | None = None,
+    practice_status_map: dict[str, float] | None = None,
+    contract_features: pd.DataFrame | None = None,
 ):
     """Featurize the upcoming (season, week) via the real offline pipeline.
 
     Returns the ``build_features`` output rows for that (season, week) — the same
     engineered columns the training splits carry, so serving inference treats
     them identically. ``injuries_df`` feeds the role-inheritance feature
-    (``None`` → it degrades to 0). ``depth_chart_ranks`` / ``game_status_map`` are
-    the live ESPN role/health signals applied in ``_fill_current_week_context``
-    (``None`` → carry-forward / defaults only).
+    (``None`` → it degrades to 0). ``depth_chart_ranks`` / ``game_status_map`` /
+    ``practice_status_map`` / ``contract_features`` are the live role/health/
+    contract signals applied in ``_fill_current_week_context`` (``None`` →
+    carry-forward / defaults only).
     """
     history = _load_history()
     skel = _build_skeleton(season, week, slate, roster, history.columns)
     combined = pd.concat([history, skel], ignore_index=True)
     featurized = build_features(combined, injuries_df=injuries_df)
     sl = featurized[(featurized["season"] == season) & (featurized["week"] == week)].copy()
-    return _fill_current_week_context(sl, history, depth_chart_ranks, game_status_map)
+    return _fill_current_week_context(
+        sl, history, depth_chart_ranks, game_status_map, practice_status_map, contract_features
+    )
 
 
 def _fill_current_week_context(
@@ -202,21 +207,29 @@ def _fill_current_week_context(
     history: pd.DataFrame,
     depth_chart_ranks: dict[str, float] | None = None,
     game_status_map: dict[str, float] | None = None,
+    practice_status_map: dict[str, float] | None = None,
+    contract_features: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Populate the current-week contextual columns the synthetic rows lack.
 
-    Precedence per column: **live ESPN signal → carry-forward → default**.
-    ``depth_chart_rank`` is taken from the live depth chart (``depth_chart_ranks``)
-    when available, else carried forward from the player's most-recent historical
-    row, else defaulted. ``game_status`` is set from the live injury map
-    (``game_status_map``) for flagged players, else defaulted. The remaining
-    ``_CARRYFORWARD_ATTRS`` (contracts) carry forward. All are pass-through
-    features, so filling the built slice is equivalent to filling pre-build.
+    Precedence per column: **live signal → carry-forward → default**.
+    ``depth_chart_rank`` (live ESPN depth chart) and ``contract_*`` (live nflverse
+    OTC derive) win over the carried value; ``game_status`` (ESPN injuries) and
+    ``practice_status`` (nflverse injuries / Sleeper fallback) override the healthy
+    default for flagged players. The remaining ``_CARRYFORWARD_ATTRS`` carry
+    forward. All are pass-through features, so filling the built slice is
+    equivalent to filling pre-build.
     """
-    # Live depth chart wins over the (possibly 2-seasons-stale) carried value.
+    # --- live signals that should beat the (possibly stale) carry-forward ---
     if depth_chart_ranks and "depth_chart_rank" in slice_df.columns:
         live = slice_df["player_id"].map(depth_chart_ranks)
         slice_df["depth_chart_rank"] = live.where(live.notna(), slice_df["depth_chart_rank"])
+    if contract_features is not None and not contract_features.empty:
+        for col in live_sources.CONTRACT_FEATURE_COLUMNS:
+            if col in slice_df.columns and col in contract_features.columns:
+                live = slice_df["player_id"].map(contract_features[col])
+                slice_df[col] = live.where(live.notna(), slice_df[col])
+    # --- carry slowly-changing attrs forward for anything still missing ---
     present = [c for c in _CARRYFORWARD_ATTRS if c in history.columns and c in slice_df.columns]
     if present:
         latest = (
@@ -227,10 +240,13 @@ def _fill_current_week_context(
         for c in present:
             carried = slice_df["player_id"].map(latest[c])
             slice_df[c] = slice_df[c].where(slice_df[c].notna(), carried)
-    # Live injury status overrides the healthy default for flagged players.
+    # --- live current-week health overrides the healthy default ---
     if game_status_map and "game_status" in slice_df.columns:
         gs = slice_df["player_id"].map(game_status_map)
         slice_df["game_status"] = gs.where(gs.notna(), slice_df["game_status"])
+    if practice_status_map and "practice_status" in slice_df.columns:
+        ps = slice_df["player_id"].map(practice_status_map)
+        slice_df["practice_status"] = ps.where(ps.notna(), slice_df["practice_status"])
     for col, default in _CONTEXT_DEFAULTS.items():
         if col in slice_df.columns:
             slice_df[col] = slice_df[col].fillna(default)
@@ -364,10 +380,13 @@ def _input_signature(
     roster: pd.DataFrame,
     depth_chart_ranks: dict[str, float] | None = None,
     game_status_map: dict[str, float] | None = None,
+    practice_status_map: dict[str, float] | None = None,
+    contract_features: pd.DataFrame | None = None,
 ) -> str:
     """Stable hash of (models + slate lines + roster id-set + live depth chart +
-    injury statuses) — recompute only on a real change (model swap, line/roster
-    move, depth-chart shuffle, injury update)."""
+    injury/practice statuses + contracts) — recompute only on a real change
+    (model swap, line/roster move, depth-chart shuffle, injury/practice update,
+    contract change)."""
     try:
         model_fp = core._compute_models_fingerprint()
     except Exception:  # noqa: BLE001
@@ -378,7 +397,20 @@ def _input_signature(
     roster_part = ",".join(sorted(roster["player_id"].astype(str)))
     depth_part = ",".join(f"{k}:{v}" for k, v in sorted((depth_chart_ranks or {}).items()))
     inj_part = ",".join(f"{k}:{v}" for k, v in sorted((game_status_map or {}).items()))
-    blob = f"{season}|{week}|{model_fp}|{slate_part}|{roster_part}|{depth_part}|{inj_part}"
+    prac_part = ",".join(f"{k}:{v}" for k, v in sorted((practice_status_map or {}).items()))
+    if (
+        contract_features is not None
+        and not contract_features.empty
+        and "contract_apy_cap_pct" in contract_features.columns
+    ):
+        apy_sum = round(float(contract_features["contract_apy_cap_pct"].fillna(0).sum()), 4)
+        contract_part = f"{len(contract_features)}:{apy_sum}"
+    else:
+        contract_part = ""
+    blob = (
+        f"{season}|{week}|{model_fp}|{slate_part}|{roster_part}|"
+        f"{depth_part}|{inj_part}|{prac_part}|{contract_part}"
+    )
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
@@ -442,13 +474,24 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     if out_ids:
         roster = roster[~roster["player_id"].isin(out_ids)].copy()
 
-    # Live role + health signals the synthetic rows otherwise lack: the depth
-    # chart sets depth_chart_rank (else it's stale-carried-forward / defaulted to
-    # backup), and the injury map sets game_status for Questionable/Doubtful.
+    # Live role + health + contract signals the synthetic rows otherwise lack:
+    # ESPN sets depth_chart_rank + game_status; nflverse (Sleeper fallback) sets
+    # practice_status; nflverse OTC sets the current-season contract_* values.
     depth_chart_ranks = espn_live.fetch_depth_chart_ranks(season, team_id_to_code)
     game_status_map = espn_live.fetch_injury_status_map(season, week)
+    practice_status_map = live_sources.fetch_practice_status_map(season, week)
+    contract_features = live_sources.fetch_contract_features(season)
 
-    sig = _input_signature(season, week, slate, roster, depth_chart_ranks, game_status_map)
+    sig = _input_signature(
+        season,
+        week,
+        slate,
+        roster,
+        depth_chart_ranks,
+        game_status_map,
+        practice_status_map,
+        contract_features,
+    )
     with _state_lock:
         if not force and sig == _last_signature and read_cached_artifact() is not None:
             return read_cached_artifact()
@@ -462,6 +505,8 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         injuries_df=injuries_df,
         depth_chart_ranks=depth_chart_ranks,
         game_status_map=game_status_map,
+        practice_status_map=practice_status_map,
+        contract_features=contract_features,
     )
     results = run_upcoming_inference(featurized, roster, slate)
     payload = _build_artifact(season, week, results)
