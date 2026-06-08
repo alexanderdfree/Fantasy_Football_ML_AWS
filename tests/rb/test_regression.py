@@ -26,6 +26,14 @@ from src.rb.config import POSITION_CONFIG
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
 HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 TARGETS = POSITION_CONFIG.targets
+# Mirror production's flat-NN head_losses downgrade (hurdle_* -> "huber" when the
+# model has no GatedHead; poisson_nll/mse kept) — see src/shared/pipeline.py. The
+# regression test trains that same non-gated flat NN, so exercise its real loss
+# surface rather than defaulting every head to huber.
+HEAD_LOSSES = {
+    name: ("huber" if lt in ("hurdle_negbin", "hurdle_poisson") else lt)
+    for name, lt in POSITION_CONFIG.head_losses.items()
+}
 from src.shared.feature_build import scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet
@@ -185,6 +193,7 @@ def trained_nn(regression_data):
         target_names=TARGETS,
         loss_weights=LOSS_WEIGHTS,
         huber_deltas=HUBER_DELTAS,
+        head_losses=HEAD_LOSSES,
     )
 
     trainer = MultiHeadTrainer(

@@ -36,6 +36,14 @@ LGBM_NUM_LEAVES = POSITION_CONFIG.lgbm_num_leaves
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
 HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 TARGETS = POSITION_CONFIG.targets
+# Mirror production's flat-NN head_losses downgrade (hurdle_* -> "huber" when the
+# model has no GatedHead; poisson_nll/mse kept) — see src/shared/pipeline.py. The
+# regression test trains that same non-gated flat NN, so exercise its real loss
+# surface rather than defaulting every head to huber.
+HEAD_LOSSES = {
+    name: ("huber" if lt in ("hurdle_negbin", "hurdle_poisson") else lt)
+    for name, lt in POSITION_CONFIG.head_losses.items()
+}
 from src.te.data import filter_to_position
 from src.te.features import (
     add_specific_features,
@@ -233,6 +241,7 @@ class TestTERegressionThresholds:
                 target_names=TARGETS,
                 loss_weights=LOSS_WEIGHTS,
                 huber_deltas=HUBER_DELTAS,
+                head_losses=HEAD_LOSSES,
             )
             loss, _ = loss_fn(out, y_train_t)
             loss.backward()

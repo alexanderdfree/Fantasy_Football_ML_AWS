@@ -29,6 +29,15 @@ from src.wr.config import POSITION_CONFIG
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
 HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 TARGETS = POSITION_CONFIG.targets
+# Production downgrades hurdle_negbin/hurdle_poisson -> "huber" for the non-gated
+# flat MultiHeadNet (no GatedHead emissions), keeping poisson_nll/mse as-is —
+# see src/shared/pipeline.py. This test trains that same flat NN, so mirror the
+# downgrade to exercise the real flat-nn loss surface (poisson_nll TDs/fumbles,
+# mse yards, huber receptions) instead of defaulting every head to huber.
+HEAD_LOSSES = {
+    name: ("huber" if lt in ("hurdle_negbin", "hurdle_poisson") else lt)
+    for name, lt in POSITION_CONFIG.head_losses.items()
+}
 
 
 def _synthetic_wr_dataset(n: int = 800, n_features: int = 10, seed: int = 42):
@@ -239,6 +248,7 @@ def _train_tiny_nn_mae(X_train, X_val, y_train, y_val) -> float:
         target_names=TARGETS,
         loss_weights=LOSS_WEIGHTS,
         huber_deltas=HUBER_DELTAS,
+        head_losses=HEAD_LOSSES,
     )
     device = torch.device("cpu")
     trainer = MultiHeadTrainer(
