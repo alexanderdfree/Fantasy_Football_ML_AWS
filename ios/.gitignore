@@ -1,0 +1,10 @@
+# XcodeGen output (regenerate with `xcodegen generate`)
+*.xcodeproj
+# Xcode / SwiftPM
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.swiftpm/
+*.xcworkspace/xcuserdata/
+.DS_Store
