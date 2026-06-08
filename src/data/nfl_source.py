@@ -19,6 +19,10 @@ nflverse release schemas):
 - ``load_teams`` / ``load_schedules`` / ``load_snap_counts`` / ``load_injuries`` /
   ``load_depth_charts`` / ``load_ff_playerids`` already expose the columns the
   pipeline reads, so they pass through unchanged.
+- ``team_week_stats_release`` is the one wrapper that reads an nflverse release
+  parquet *directly* (not via an ``nflreadpy`` loader): DST needs the full
+  team-week defensive/ST schema the player-stats loaders don't expose. It lives
+  here anyway so every nflverse fetch stays centralized + monkeypatchable. (#397)
 """
 
 from __future__ import annotations
@@ -127,6 +131,23 @@ def player_ids() -> pd.DataFrame:
 
 def teams() -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_teams())
+
+
+def team_week_stats_release(season: int) -> pd.DataFrame:
+    """One season of team-week stats from the nflverse ``stats_team`` release.
+
+    The one wrapper that reads a release parquet *directly* rather than via an
+    ``nflreadpy`` loader: DST's ``build_data`` depends on the full team-week
+    defensive/ST schema (``def_tds``/``def_safeties``/``def_fumbles_forced``/
+    ``fg_blocked``/``pat_blocked``/...) the player-stats loaders don't expose. It
+    lives here so every nflverse fetch stays centralized and monkeypatchable in
+    tests (the loader read this URL inline before). (#397)
+    """
+    url = (
+        "https://github.com/nflverse/nflverse-data/releases/download/"
+        f"stats_team/stats_team_week_{season}.parquet"
+    )
+    return pd.read_parquet(url)
 
 
 def pbp_data(seasons: list[int], cols: tuple[str, ...]) -> pd.DataFrame:

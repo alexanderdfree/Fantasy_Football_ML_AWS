@@ -259,7 +259,7 @@ def test_load_raw_data_uses_cache_and_returns_fixture_schema(
             "practice_status": "object",
             "report_status": "object",
         },
-        f"depth_charts_{suffix}": {
+        f"depth_charts_v2_{suffix}": {  # _v2 cache-version sentinel (#616)
             "gsis_id": "object",
             "season": "int32",
             "week": "int32",

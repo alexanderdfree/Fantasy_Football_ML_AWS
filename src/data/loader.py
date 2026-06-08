@@ -156,12 +156,8 @@ def load_team_week_stats(
     parts = []
     skipped = []
     for s in seasons:
-        url = (
-            "https://github.com/nflverse/nflverse-data/releases/download/"
-            f"stats_team/stats_team_week_{s}.parquet"
-        )
         try:
-            parts.append(pd.read_parquet(url))
+            parts.append(nfl_source.team_week_stats_release(s))
         except Exception as e:
             # nflverse release for the current season can 404 mid-season;
             # skip so cache build succeeds on older seasons.
@@ -207,7 +203,12 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
     schedules_path = f"{cache_dir}/schedules_{_sig}.parquet"
     snap_path = f"{cache_dir}/snap_counts_{_sig}.parquet"
     injury_path = f"{cache_dir}/injuries_{_sig}.parquet"
-    depth_path = f"{cache_dir}/depth_charts_{_sig}.parquet"
+    # ``_v2`` cache-version sentinel: PR #595's REG-only ``week -= 1`` realignment
+    # only runs in _fetch_depth's cache-miss branch, so a pre-#595 ``depth_charts_*``
+    # parquet (stale-by-1 weeks) would be served verbatim and silently revert the
+    # fix. Bumping the filename makes any legacy cache unreachable, forcing a
+    # re-fetch through the realignment. (#616)
+    depth_path = f"{cache_dir}/depth_charts_v2_{_sig}.parquet"
 
     def _fetch_weekly():
         # Schema-gate: regenerate if the cache predates the current

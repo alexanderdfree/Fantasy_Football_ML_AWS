@@ -42,15 +42,16 @@ def test_load_team_week_stats_cache_hit(tmp_path):
 
 @pytest.mark.unit
 def test_load_team_week_stats_default_seasons_fallback(tmp_path, monkeypatch):
-    """``seasons=None`` uses ``SEASONS`` from config. We monkeypatch
-    ``pd.read_parquet`` inside the loader so the URL fetches return a stub."""
+    """``seasons=None`` uses ``SEASONS`` from config. We monkeypatch the
+    ``nfl_source.team_week_stats_release`` wrapper so the per-season fetches
+    return a stub."""
     import src.data.loader as loader
 
-    def _fake_read_parquet(path, *args, **kwargs):
-        # Every URL hit returns a single-row stub.
-        return pd.DataFrame({"team": ["X"], "season": [2020], "week": [1]})
+    def _fake_fetch(season):
+        # Every season fetch returns a single-row stub.
+        return pd.DataFrame({"team": ["X"], "season": [season], "week": [1]})
 
-    monkeypatch.setattr(loader.pd, "read_parquet", _fake_read_parquet)
+    monkeypatch.setattr(loader.nfl_source, "team_week_stats_release", _fake_fetch)
     monkeypatch.setattr(loader, "SEASONS", [2020, 2021])
 
     out = load_team_week_stats(cache_dir=str(tmp_path))
@@ -69,15 +70,12 @@ def test_load_team_week_stats_partial_fetch_returns_but_does_not_cache(
     retry once the missing release lands. (#807)"""
     import src.data.loader as loader
 
-    def _fake_read_parquet(path, *args, **kwargs):
-        s = str(path)
-        if "2022" in s:
+    def _fake_fetch(season):
+        if season == 2022:
             raise RuntimeError("404 missing")
-        return pd.DataFrame(
-            {"team": ["KC"], "season": [2021 if "2021" in s else 2023], "week": [1]}
-        )
+        return pd.DataFrame({"team": ["KC"], "season": [season], "week": [1]})
 
-    monkeypatch.setattr(loader.pd, "read_parquet", _fake_read_parquet)
+    monkeypatch.setattr(loader.nfl_source, "team_week_stats_release", _fake_fetch)
 
     out = loader.load_team_week_stats([2021, 2022, 2023], cache_dir=str(tmp_path))
     assert len(out) == 2  # 2021 + 2023 survived, returned for this call
@@ -96,12 +94,10 @@ def test_load_team_week_stats_full_fetch_caches(tmp_path, monkeypatch):
     the authoritative frame for fast subsequent calls."""
     import src.data.loader as loader
 
-    def _fake_read_parquet(path, *args, **kwargs):
-        s = str(path)
-        yr = 2021 if "2021" in s else 2022
-        return pd.DataFrame({"team": ["KC"], "season": [yr], "week": [1]})
+    def _fake_fetch(season):
+        return pd.DataFrame({"team": ["KC"], "season": [season], "week": [1]})
 
-    monkeypatch.setattr(loader.pd, "read_parquet", _fake_read_parquet)
+    monkeypatch.setattr(loader.nfl_source, "team_week_stats_release", _fake_fetch)
 
     out = loader.load_team_week_stats([2021, 2022], cache_dir=str(tmp_path))
     assert len(out) == 2
@@ -293,8 +289,11 @@ def test_load_raw_data_fresh_fetch_old_seasons_only(tmp_path, monkeypatch):
     # src/shared/weather_features.py::_load_schedules) — not attached via
     # df.attrs, which doesn't survive to_parquet.
     # Every parquet cache exists.
-    for name in ("weekly", "rosters", "schedules", "snap_counts", "injuries", "depth_charts"):
+    for name in ("weekly", "rosters", "schedules", "snap_counts", "injuries"):
         assert (tmp_path / f"{name}_2022_2023.parquet").exists()
+    # Depth cache carries the _v2 version sentinel so a pre-#595 stale cache is
+    # unreachable and the week-=1 realignment always reruns (#616).
+    assert (tmp_path / "depth_charts_v2_2022_2023.parquet").exists()
 
 
 @pytest.mark.unit
@@ -576,7 +575,7 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
             ),
         ),
         (
-            "depth_charts",
+            "depth_charts_v2",  # cache-version sentinel filename (#616)
             pd.DataFrame(
                 {
                     "gsis_id": ["P00"],
