@@ -42,7 +42,7 @@ JOB_QUEUE = os.environ.get("FF_JOB_QUEUE", "ff-training-queue")
 JOB_QUEUE_CPU = os.environ.get("FF_JOB_QUEUE_CPU", "") or None
 JOB_DEFINITION = os.environ.get("FF_JOB_DEFINITION", "ff-training-job")
 # Optional CPU-only job definition. When set, K and DST route here instead of
-# the default GPU definition so we don't waste g6 Spot-hours on Ridge/LGBM.
+# the default GPU definition so we don't waste GPU Spot-hours on Ridge/LGBM.
 # Set to an empty string to leave unset — we treat empty as "not configured".
 JOB_DEFINITION_CPU = os.environ.get("FF_JOB_DEFINITION_CPU", "") or None
 # Pin job submissions to a specific job-definition revision. batch-image.yml
@@ -64,10 +64,11 @@ TRAIN_GIT_SHA = os.environ.get("FF_TRAIN_GIT_SHA", "") or None
 # Optional CUDA-graph OVERRIDE, forwarded to the container only when
 # FF_CUDA_GRAPH is set in this launcher's environment. The container's
 # cuda_graph_enabled() (src/shared/utils.py) AUTODETECTS graphs ON for sm_80+
-# (the g6/L4 qualifies), so the production fan-out is graphed by default with no
-# value here. train-batch.yml threads the FF_BATCH_CUDA_GRAPH repo variable as a
-# fleet override: leave it unset for the autodetect default, or set it to 0 to
-# force the whole fan-out back to the eager path (e.g. a bit-comparable A/B).
+# (both g6/L4 and g5/A10G qualify), so the production fan-out is graphed by
+# default with no value here. train-batch.yml threads the FF_BATCH_CUDA_GRAPH
+# repo variable as a fleet override: leave it unset for the autodetect default,
+# or set it to 0 to force the whole fan-out back to the eager path (e.g. a
+# bit-comparable A/B).
 # Graphs are ~1.5-1.8x on the launch-bound GPU branch (both the base/control NN
 # and the attention NN) but NOT bit-identical to eager (see
 # todo/gpu_launch_bound_levers.md, Lever A).

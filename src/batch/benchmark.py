@@ -1,8 +1,8 @@
 """Launch AWS Batch training for all positions and collect benchmark metrics.
 
 Runs the same pipelines as benchmark.py but on AWS Batch GPU instances
-(g6.xlarge Spot).  Downloads benchmark_metrics.json from each job's model
-artifacts and prints a unified comparison table.
+(g6.xlarge primary, g5.xlarge fallback Spot). Downloads benchmark_metrics.json
+from each job's model artifacts and prints a unified comparison table.
 
 Usage:
     python src/batch/benchmark.py                          # all 6 positions
@@ -53,10 +53,13 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")
 # GPU name -> AWS instance family, for the History-tab hardware label derived
 # from the runtime facts src/batch/train.py stamps into benchmark_metrics.json.
 # Each GPU ships on exactly one of these families in the project's AWS targets
-# (T4 -> g4dn.xlarge, L4 -> g6.xlarge); an unmapped GPU degrades to its own
-# short name so the label stays informative without a code change.
+# (T4 -> g4dn.xlarge, A10G -> g5.xlarge, L4 -> g6.xlarge); an unmapped GPU
+# degrades to its own short name so the label stays informative without a code
+# change.
 _INSTANCE_FAMILY_BY_GPU = {
     "Tesla T4": "g4dn.xlarge",
+    "NVIDIA A10G": "g5.xlarge",
+    "NVIDIA A10": "g5.xlarge",
     "NVIDIA L4": "g6.xlarge",
 }
 
@@ -73,11 +76,12 @@ def _derive_instance_label(all_metrics: dict, *, backend: str, fallback: str) ->
     """Build the History-tab hardware label from runtime facts, or ``fallback``.
 
     Reads the ``gpu_name`` / ``cuda_graph_active`` fields src/batch/train.py
-    stamps per position (``_hardware_metadata``). The shared compute environment
-    runs one GPU type, so any GPU-bearing position fixes the hardware identity;
-    ``cuda_graph_active`` is True for the run iff a GPU position captured graphs
-    (sm_80+, e.g. L4 — never the T4). Provisioning comes from ``backend``
-    (``batch`` -> Spot fan-out, ``ec2`` -> On-Demand rollback).
+    stamps per position (``_hardware_metadata``). A diversified Batch compute
+    environment may place different positions on different GPU families in one
+    run, so the label preserves every observed GPU type. ``cuda_graph_active``
+    is True for the run iff any GPU position captured graphs (sm_80+, e.g. A10G
+    or L4 — never the T4). Provisioning comes from ``backend`` (``batch`` ->
+    Spot fan-out, ``ec2`` -> On-Demand rollback).
 
     Falls back to ``fallback`` (the ``--instance-type`` arg) when no position
     carries GPU metadata — pre-stamping artifacts or an all-CPU run — so old
@@ -88,16 +92,16 @@ def _derive_instance_label(all_metrics: dict, *, backend: str, fallback: str) ->
     gpu_names = sorted({m["gpu_name"] for m in all_metrics.values() if m.get("gpu_name")})
     if not gpu_names:
         return fallback
-    gpu_name = gpu_names[0]
-    short = _gpu_short(gpu_name)
-    family = _INSTANCE_FAMILY_BY_GPU.get(gpu_name)
+    shorts = [_gpu_short(gpu_name) for gpu_name in gpu_names]
+    families = [_INSTANCE_FAMILY_BY_GPU.get(gpu_name) for gpu_name in gpu_names]
     provisioning = "On-Demand" if backend == "ec2" else "Spot"
     graph_active = any(m.get("cuda_graph_active") for m in all_metrics.values())
     suffix = ", CUDA-graph" if graph_active else ""
-    if family:
-        return f"{family} ({short}, {provisioning}{suffix})"
-    # Unknown GPU: lead with the GPU name itself rather than guess a family.
-    return f"{short} ({provisioning}{suffix})"
+    short_label = "/".join(shorts)
+    if all(families):
+        return f"{'/'.join(families)} ({short_label}, {provisioning}{suffix})"
+    # Unknown GPU: lead with the GPU names themselves rather than guess families.
+    return f"{short_label} ({provisioning}{suffix})"
 
 
 def _model_s3_prefix() -> str:
@@ -199,7 +203,7 @@ def record_benchmark_run(
     positions,
     *,
     backend="batch",
-    instance_type="g6.xlarge (Spot)",
+    instance_type="g6.xlarge/g5.xlarge (Spot)",
     note="",
     pr_number=None,
     git_hash=None,
@@ -332,7 +336,7 @@ def main():
     )
     parser.add_argument(
         "--instance-type",
-        default="g6.xlarge (Spot)",
+        default="g6.xlarge/g5.xlarge (Spot)",
         help="Instance-type label recorded in benchmark_history/",
     )
     parser.add_argument(

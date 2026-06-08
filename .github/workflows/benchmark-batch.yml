@@ -1,7 +1,7 @@
 name: Benchmark on Batch (isolated)
 
 # Isolated GPU benchmark of an EXPERIMENT branch — runs the full per-position
-# pipelines on AWS Batch (g6.xlarge Spot) and collects benchmark metrics WITHOUT
+# pipelines on AWS Batch (g6.xlarge primary, g5.xlarge fallback Spot) and collects benchmark metrics WITHOUT
 # touching production. Unlike train-batch.yml this:
 #   * writes model artifacts under an experiment prefix
 #     (s3://${S3_BUCKET}/experiments/benchmark/<sha>/models) via FF_MODEL_S3_PREFIX,

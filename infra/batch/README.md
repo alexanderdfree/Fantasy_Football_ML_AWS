@@ -2,11 +2,13 @@
 
 _Last verified: 2026-05-21._
 
-Provisions an AWS Batch managed compute environment on Spot g6.xlarge so all
-six position pipelines train in parallel (one position per Spot instance). This
-is the **default push-driven trainer since 2026-05-20** — [train-batch.yml](../../.github/workflows/train-batch.yml)
-runs when the `BATCH_ACTIVE` repo variable is `true`; flipping it to `false`
-falls back to the warm-EC2 path ([infra/ec2/](../ec2/)).
+Provisions AWS Batch managed Spot compute environments so all six position
+pipelines train in parallel (one position per Spot instance). The job queue
+prefers `g6.xlarge`/L4 and falls back to `g5.xlarge`/A10G when g6 Spot capacity
+is unavailable. This is the **default push-driven trainer since 2026-05-20** —
+[train-batch.yml](../../.github/workflows/train-batch.yml) runs when the
+`BATCH_ACTIVE` repo variable is `true`; flipping it to `false` falls back to the
+warm-EC2 path ([infra/ec2/](../ec2/)).
 
 See [`docs/batch_design.md`](../../docs/batch_design.md) for the full design
 including cold-start optimizations (SOCI lazy loading + ECR pull-through
@@ -36,7 +38,8 @@ The script creates:
 | Instance profile | `ecsInstanceRole` |
 | Security group | `ff-batch-sg` (egress only) |
 | Launch template | `ff-batch-lt` (UserData = [infra/batch/userdata.sh](userdata.sh), installs `soci-snapshotter-grpc` v0.13.0) |
-| Compute environment | `ff-gpu-spot` (SPOT, max 24 vCPU, g6.xlarge, launchTemplate=`ff-batch-lt:$Latest`) |
+| Compute environment | `ff-gpu-spot` (SPOT, max 24 vCPU, g6.xlarge, queue order 1) |
+| Fallback compute environment | `ff-gpu-spot-g5` (SPOT, max 24 vCPU, g5.xlarge, queue order 2) |
 | Job queue | `ff-training-queue` |
 | Job definition | `ff-training-job` (rev 1; CI re-registers on every push) |
 | CloudWatch log group | `/aws/batch/job` (7-day retention) |
@@ -159,8 +162,8 @@ The CE's `minvCpus=0` means there are no in-flight instances to disrupt
    AWS_REGION=us-east-1 python -m src.batch.launch \
      --positions QB RB WR TE K DST --seed 42
    ```
-   All six should reach RUNNING simultaneously (six g6.xlarge instances,
-   exactly saturating the 24 vCPU Spot quota). Total wall-clock for the
+   All six should reach RUNNING simultaneously (six 4-vCPU GPU Spot hosts,
+   exactly saturating the 24 vCPU Spot quota; g6 preferred, g5 fallback). Total wall-clock for the
    "Submit Batch jobs and wait" step measured ~10 min on 2026-05-21
    — the slowest position dominates, not the sum.
 
@@ -257,9 +260,10 @@ stopped in parallel — flipping back is instant.
 
 Spot g6.xlarge in us-east-1: ~$0.35/hr × 6 positions × ~10 min ≈ **~$0.35 per
 full retrain** (estimate post-migration from g4dn; measured baseline was ~$0.16
-on g4dn 2026-05-21). Single-position retrains scale down linearly. At zero
-capacity when idle, the CE has no standing cost. CloudWatch logs and ECR storage
-are free-tier territory for this volume.
+on g4dn 2026-05-21). g5.xlarge fallback may cost more when used, but only when
+g6 cannot provide suitable capacity. Single-position retrains scale down
+linearly. At zero capacity when idle, the CEs have no standing cost. CloudWatch
+logs and ECR storage are free-tier territory for this volume.
 
 Compared to the warm-EC2 g4dn path's ~$8/mo idle EBS + ~$0.53/hr active OD,
 Spot fanout is still cheaper *and* faster. The g4dn → g6 swap was chosen for
@@ -292,7 +296,8 @@ manually if you want a complete wipe.
 
 See [`docs/batch_design.md`](../../docs/batch_design.md). Short version: warm
 EC2 forced sequential training because one T4 can't host six concurrent NN
-jobs; Spot fanout gives each position its own g6.xlarge L4 host, parallelizing the workload.
+jobs; Spot fanout gives each position its own g6.xlarge L4 host when available,
+or a g5.xlarge A10G fallback host when needed, parallelizing the workload.
 Cold-start (the original blocker) is mitigated by SOCI lazy-loading on the
 Spot host via `ff-batch-lt` launch template + [userdata.sh](userdata.sh)
 (Option B, default since 2026-05-21). Baseline 2026-05-20 cold-start was

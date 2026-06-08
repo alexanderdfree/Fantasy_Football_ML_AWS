@@ -1,9 +1,9 @@
 """Launch parallel AWS Batch tuning jobs for the attention NN.
 
 Mirrors ``src/batch/launch.py`` but submits ``--mode=tune`` jobs instead of
-training jobs. Each position runs in its own Spot g6.xlarge container so
-the six positions tune in parallel (matches the 24-vCPU Spot G+VT quota
-documented in the AWS-quota auto-memory).
+training jobs. Each position runs in its own Spot g6.xlarge/g5.xlarge
+container so the six positions tune in parallel (matches the 24-vCPU Spot
+G+VT quota documented in the AWS-quota auto-memory).
 
 Reuses ``submit_job`` / ``wait_for_jobs`` / ``RETRY_STRATEGY`` from
 ``launch.py`` by importing them — except ``submit_job`` itself, because
@@ -27,11 +27,11 @@ Config (env vars, all optional — same names as ``launch.py``):
 
 All six positions are now supported — K/DST were added once their ``run()``
 signatures accepted a ``config=`` kwarg. The 24-vCPU Spot quota tolerates
-six concurrent g6.xlarge jobs exactly; concurrent local launches will
+six concurrent 4-vCPU GPU Spot jobs exactly; concurrent local launches will
 queue at ``RUNNABLE`` instead of pushing over-quota. The default
 ``--parallel-backend auto`` is resolved inside the Batch container by
-``detect_platform()``: g6/L4 Linux uses NVIDIA MPS, while Mac and 5080 hosts
-keep the existing thread backend.
+``detect_platform()``: Batch g6/L4 or g5/A10G Linux uses NVIDIA MPS, while Mac
+and 5080 hosts keep the existing thread backend.
 """
 
 import argparse
@@ -63,7 +63,7 @@ from src.tuning.tune_nn_storage import resolve_search_space_version, s3_prefix  
 # Spot job that will fail on ``get_config()``.
 SUPPORTED_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
-# Default Optuna trial budget per position. On g6.xlarge each trial is
+# Default Optuna trial budget per position. On the Batch GPU pool each trial is
 # 1–2 min, so 30 trials ≈ 30–60 min per position — well under the 3h wait
 # timeout. **Intentionally diverges** from ``src/tuning/tune_nn.py``'s
 # ``_DEFAULT_N_TRIALS = 15``: that one is the local-laptop default (each
@@ -80,7 +80,7 @@ DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 7200
 
 
 def _batch_storage_backend(parallel_backend: str) -> str:
-    """The remote Batch target is g6/L4, so auto resolves to MPS there."""
+    """The remote Batch GPU pool resolves auto to MPS there."""
     return "mps" if parallel_backend == "auto" else parallel_backend
 
 
@@ -251,7 +251,7 @@ def main():
         default=DEFAULT_PARALLEL_BACKEND,
         help=(
             "Trial concurrency backend inside each position job. auto resolves inside "
-            "the Batch container: g6/L4 Linux -> mps, Mac/5080/non-L4 -> thread."
+            "the Batch container: g6/L4 or g5/A10G Linux -> mps, Mac/5080/non-Batch-GPU -> thread."
         ),
     )
     parser.add_argument(

@@ -4,8 +4,8 @@
 #
 # Prereqs:
 #   - AWS CLI v2 with credentials for the target account.
-#   - "All G and VT Spot Instance Requests" vCPU quota >= 24 (six g6.xlarge
-#     in parallel). Script refuses to proceed otherwise.
+#   - "All G and VT Spot Instance Requests" vCPU quota >= 24 (six 4-vCPU
+#     GPU Spot hosts in parallel). Script refuses to proceed otherwise.
 #   - S3 bucket ff-predictor-training exists (training uses it).
 #   - ECR repo ff-training exists (created by batch-image.yml's first run).
 #
@@ -16,6 +16,7 @@ set -euo pipefail
 REGION="${AWS_REGION:-us-east-1}"
 BUCKET="ff-predictor-training"
 COMPUTE_ENV="ff-gpu-spot"
+FALLBACK_COMPUTE_ENV="ff-gpu-spot-g5"
 JOB_QUEUE="ff-training-queue"
 JOB_DEF="ff-training-job"
 JOB_ROLE="BatchTrainingRole"
@@ -28,15 +29,32 @@ LOG_GROUP="/aws/batch/job"
 # "All G and VT Spot Instance Requests" — service quota code.
 SPOT_QUOTA_CODE="L-3819A6DF"
 MAX_VCPUS=24
-# GPU Spot instance type for the fan-out. g6.xlarge = L4 (Ada, sm_89): unlocks
-# CUDA-graph capture (sm_80+) that the older g4dn/T4 (sm_75) gates off. Same
-# 4 vCPU as g4dn, so the 24-vCPU "All G and VT Spot" quota covers six in
-# parallel either way. Single source of truth for the CE-create + reconcile
-# paths below.
-INSTANCE_TYPE="g6.xlarge"
+# GPU Spot instance types for the fan-out. Keep them in separate compute
+# environments so queue order can enforce preference: g6/L4 first, then g5/A10G
+# only when the primary CE can't provide suitable capacity. Both are 4 vCPU /
+# 16 GiB / 1 GPU with 24 GB GPU memory and both qualify for the sm_80+
+# CUDA-graph path, so the training container can run unchanged.
+PRIMARY_INSTANCE_TYPE="g6.xlarge"
+FALLBACK_INSTANCE_TYPE="g5.xlarge"
+ALL_GPU_INSTANCE_TYPES=("$PRIMARY_INSTANCE_TYPE" "$FALLBACK_INSTANCE_TYPE")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { echo "[batch-setup] $*"; }
+
+join_words() {
+  local IFS=" "
+  echo "$*"
+}
+
+json_array() {
+  local item json=""
+  for item in "$@"; do
+    json="${json}\"${item}\","
+  done
+  printf '[%s]' "${json%,}"
+}
+
+DESIRED_INSTANCE_TYPES="$(join_words "${ALL_GPU_INSTANCE_TYPES[@]}")"
 
 # --- 1. Account ID, VPC, subnets ----------------------------------------
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -46,31 +64,42 @@ if [ "$VPC_ID" = "None" ] || [ -z "$VPC_ID" ]; then
   log "ERROR: no default VPC in $REGION."
   exit 1
 fi
-# Default subnet per AZ, but ONLY in AZs that actually offer $INSTANCE_TYPE. Older AZs
-# (e.g. us-east-1e / use1-az3) don't carry newer GPU types like g6.xlarge; including such a
-# subnet makes the capacity-optimized Spot fleet throw "InvalidFleetConfiguration - instance
-# type not supported in your requested Availability Zone" for that AZ on every launch attempt
-# (it can never land an instance there). describe-instance-type-offerings is the source of
-# truth for which AZs can launch the type, so intersect it with the default subnets.
-OFFERING_AZS=$(aws ec2 describe-instance-type-offerings \
-  --location-type availability-zone \
-  --filters "Name=instance-type,Values=$INSTANCE_TYPE" \
-  --query 'InstanceTypeOfferings[].Location' --output text --region "$REGION")
-if [ -z "$OFFERING_AZS" ]; then
-  log "ERROR: $INSTANCE_TYPE is not offered in any AZ of $REGION."
-  exit 1
-fi
-OFFERING_AZS_CSV=$(echo $OFFERING_AZS | tr ' ' ',')
-SUBNET_IDS=$(aws ec2 describe-subnets \
-  --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" \
-            "Name=availability-zone,Values=$OFFERING_AZS_CSV" \
-  --query 'Subnets[].SubnetId' --output text --region "$REGION")
-SUBNET_COUNT=$(echo "$SUBNET_IDS" | wc -w | tr -d ' ')
-if [ "$SUBNET_COUNT" -lt 2 ]; then
-  log "ERROR: need >=2 default subnets in $INSTANCE_TYPE-offering AZs for Spot diversification; found $SUBNET_COUNT (offering AZs: $OFFERING_AZS)."
-  exit 1
-fi
-log "Account $ACCOUNT_ID, VPC $VPC_ID, $SUBNET_COUNT subnets in $INSTANCE_TYPE-offering AZs ($OFFERING_AZS)"
+resolve_default_subnets_for_instance_type() {
+  local instance_type="$1"
+  local offering_azs offering_azs_csv subnet_ids subnet_count
+
+  # Default subnet per AZ, but ONLY in AZs that actually offer this GPU type.
+  # Older AZs can lack newer GPU types; including such a subnet makes the Spot
+  # fleet throw "InvalidFleetConfiguration - instance type not supported in your
+  # requested Availability Zone" on every launch attempt.
+  offering_azs=$(aws ec2 describe-instance-type-offerings \
+    --location-type availability-zone \
+    --filters "Name=instance-type,Values=$instance_type" \
+    --query 'InstanceTypeOfferings[].Location' --output text --region "$REGION")
+  if [ -z "$offering_azs" ]; then
+    log "ERROR: $instance_type is not offered in any AZ of $REGION."
+    exit 1
+  fi
+  offering_azs=$(printf '%s\n' $offering_azs | sort -u)
+  offering_azs_csv=$(printf '%s\n' "$offering_azs" | paste -sd, -)
+  subnet_ids=$(aws ec2 describe-subnets \
+    --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" \
+              "Name=availability-zone,Values=$offering_azs_csv" \
+    --query 'Subnets[].SubnetId' --output text --region "$REGION")
+  subnet_count=$(echo "$subnet_ids" | wc -w | tr -d ' ')
+  if [ "$subnet_count" -lt 2 ]; then
+    log "ERROR: need >=2 default subnets in $instance_type-offering AZs for Spot diversification; found $subnet_count (offering AZs: $(printf '%s\n' "$offering_azs" | paste -sd' ' -))."
+    exit 1
+  fi
+
+  RESOLVED_SUBNET_IDS="$subnet_ids"
+  RESOLVED_SUBNETS_JSON=$(printf '"%s",' $subnet_ids | sed 's/,$//')
+  RESOLVED_SUBNETS_SORTED=$(printf '%s\n' $subnet_ids | sort | paste -sd' ' -)
+  RESOLVED_OFFERING_AZS_DISPLAY=$(printf '%s\n' "$offering_azs" | paste -sd' ' -)
+  RESOLVED_SUBNET_COUNT="$subnet_count"
+}
+
+log "Account $ACCOUNT_ID, VPC $VPC_ID, preferred GPU order: $PRIMARY_INSTANCE_TYPE -> $FALLBACK_INSTANCE_TYPE"
 
 # --- 2. Spot quota check ------------------------------------------------
 log "Checking Spot G+VT vCPU quota (need >= $MAX_VCPUS)..."
@@ -82,7 +111,7 @@ QUOTA=$(aws service-quotas get-service-quota \
   --output text)
 QUOTA_INT=${QUOTA%.*}
 if [ "$QUOTA_INT" -lt "$MAX_VCPUS" ]; then
-  log "ERROR: Spot G+VT quota is $QUOTA; need >= $MAX_VCPUS (6 x g6.xlarge x 4 vCPU)."
+  log "ERROR: Spot G+VT quota is $QUOTA; need >= $MAX_VCPUS (6 x 4-vCPU GPU Spot hosts: $DESIRED_INSTANCE_TYPES)."
   log "Request an increase:"
   log "  aws service-quotas request-service-quota-increase --service-code ec2 \\"
   log "    --quota-code $SPOT_QUOTA_CODE --desired-value $MAX_VCPUS --region $REGION"
@@ -187,128 +216,135 @@ aws logs put-retention-policy \
   --retention-in-days 7 \
   --region "$REGION"
 
-# --- 10. Compute Environment --------------------------------------------
+# --- 10. Compute Environments -------------------------------------------
 # NOTE: No launch template / custom UserData. SOCI lazy-loading was removed
 # (2026-06-07) — it cannot work on AWS Batch: Batch runs on ECS-managed EC2
 # and the amazon-ecs-agent does not pull through the soci snapshotter
 # (Fargate-only; aws/containers-roadmap#1832). The CE uses the default
 # ECS-optimized AMI. See todo/fixed-archive.md + docs/batch_design.md §2a.
-CE_STATUS=$(aws batch describe-compute-environments \
-  --compute-environments "$COMPUTE_ENV" \
-  --region "$REGION" \
-  --query 'computeEnvironments[0].status' \
-  --output text 2>/dev/null || echo "None")
-if [ "$CE_STATUS" = "None" ] || [ -z "$CE_STATUS" ] || [ "$CE_STATUS" = "null" ]; then
-  log "Creating Compute Environment $COMPUTE_ENV..."
-  # Build JSON array of subnet IDs from space-separated list.
-  SUBNETS_JSON=$(printf '"%s",' $SUBNET_IDS | sed 's/,$//')
-  aws batch create-compute-environment \
-    --compute-environment-name "$COMPUTE_ENV" \
-    --type MANAGED \
-    --state ENABLED \
-    --compute-resources "{
-      \"type\": \"SPOT\",
-      \"allocationStrategy\": \"SPOT_PRICE_CAPACITY_OPTIMIZED\",
-      \"minvCpus\": 0,
-      \"maxvCpus\": $MAX_VCPUS,
-      \"instanceTypes\": [\"$INSTANCE_TYPE\"],
-      \"subnets\": [$SUBNETS_JSON],
-      \"securityGroupIds\": [\"$SG_ID\"],
-      \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\"
-    }" \
-    --region "$REGION"
-  log "Waiting for CE to reach VALID..."
-  for i in $(seq 1 60); do
+wait_for_compute_environment_valid() {
+  local ce_name="$1"
+  local attempts="${2:-60}"
+  for i in $(seq 1 "$attempts"); do
     STATUS=$(aws batch describe-compute-environments \
-      --compute-environments "$COMPUTE_ENV" \
+      --compute-environments "$ce_name" \
       --region "$REGION" \
       --query 'computeEnvironments[0].status' \
       --output text)
     if [ "$STATUS" = "VALID" ]; then
-      log "CE is VALID"
-      break
+      return 0
     fi
     if [ "$STATUS" = "INVALID" ]; then
       REASON=$(aws batch describe-compute-environments \
-        --compute-environments "$COMPUTE_ENV" \
+        --compute-environments "$ce_name" \
         --region "$REGION" \
         --query 'computeEnvironments[0].statusReason' \
         --output text)
-      log "ERROR: CE is INVALID — $REASON"
+      log "ERROR: $ce_name is INVALID — $REASON"
       exit 1
     fi
     sleep 5
   done
-else
-  log "Compute Environment $COMPUTE_ENV already exists (status: $CE_STATUS)"
-  # Live-account reconcile: bring an existing CE's instanceTypes in line with
-  # the desired value. update-compute-environment with --compute-resources
-  # requires the CE to be DISABLED first; cycle DISABLED → UPDATE → ENABLED,
-  # polling VALID between steps. CE has minvCpus=0 so no in-flight instances
-  # are disrupted — the next provisioning picks up the change.
-  #
-  # Reconciling instanceTypes is load-bearing: the 2026-05-31 g4dn→g6 migration
-  # silently no-op'd on the live CE because the old reconcile only touched the
-  # (now-removed) launch template, so re-running setup.sh could never migrate
-  # the instance type in place — the live CE stayed g4dn until 2026-06-07.
-  # See todo/fixed-archive.md. (The SOCI launch template was removed 2026-06-07
-  # — see §10 — so there's no launchTemplate left to reconcile.)
-  CURRENT_INSTANCE_TYPE=$(aws batch describe-compute-environments \
-    --compute-environments "$COMPUTE_ENV" \
+  log "ERROR: $ce_name did not reach VALID after ~$((attempts * 5))s."
+  exit 1
+}
+
+ensure_compute_environment() {
+  local ce_name="$1"
+  local instance_type="$2"
+
+  resolve_default_subnets_for_instance_type "$instance_type"
+  local subnet_ids="$RESOLVED_SUBNET_IDS"
+  local subnets_json="$RESOLVED_SUBNETS_JSON"
+  local subnets_sorted="$RESOLVED_SUBNETS_SORTED"
+  log "$ce_name: $instance_type offered in AZs ($RESOLVED_OFFERING_AZS_DISPLAY); using $RESOLVED_SUBNET_COUNT default subnets"
+
+  CE_STATUS=$(aws batch describe-compute-environments \
+    --compute-environments "$ce_name" \
     --region "$REGION" \
-    --query 'computeEnvironments[0].computeResources.instanceTypes[0]' \
+    --query 'computeEnvironments[0].status' \
     --output text 2>/dev/null || echo "None")
-  if [ "$CURRENT_INSTANCE_TYPE" != "$INSTANCE_TYPE" ]; then
-    log "Reconciling CE instanceType: $CURRENT_INSTANCE_TYPE -> $INSTANCE_TYPE..."
-    log "  step 1/3: DISABLE"
-    aws batch update-compute-environment \
-      --compute-environment "$COMPUTE_ENV" \
-      --state DISABLED \
-      --region "$REGION" >/dev/null
-    for i in $(seq 1 30); do
-      STATUS=$(aws batch describe-compute-environments \
-        --compute-environments "$COMPUTE_ENV" \
-        --region "$REGION" \
-        --query 'computeEnvironments[0].status' \
-        --output text)
-      [ "$STATUS" = "VALID" ] && break
-      sleep 5
-    done
-    log "  step 2/3: UPDATE instanceTypes"
-    aws batch update-compute-environment \
-      --compute-environment "$COMPUTE_ENV" \
-      --compute-resources "{\"instanceTypes\": [\"$INSTANCE_TYPE\"]}" \
-      --region "$REGION" >/dev/null
-    for i in $(seq 1 30); do
-      STATUS=$(aws batch describe-compute-environments \
-        --compute-environments "$COMPUTE_ENV" \
-        --region "$REGION" \
-        --query 'computeEnvironments[0].status' \
-        --output text)
-      [ "$STATUS" = "VALID" ] && break
-      sleep 5
-    done
-    log "  step 3/3: ENABLE"
-    aws batch update-compute-environment \
-      --compute-environment "$COMPUTE_ENV" \
+  if [ "$CE_STATUS" = "None" ] || [ -z "$CE_STATUS" ] || [ "$CE_STATUS" = "null" ]; then
+    log "Creating Compute Environment $ce_name ($instance_type)..."
+    aws batch create-compute-environment \
+      --compute-environment-name "$ce_name" \
+      --type MANAGED \
       --state ENABLED \
-      --region "$REGION" >/dev/null
-    for i in $(seq 1 30); do
-      STATUS=$(aws batch describe-compute-environments \
-        --compute-environments "$COMPUTE_ENV" \
-        --region "$REGION" \
-        --query 'computeEnvironments[0].status' \
-        --output text)
-      [ "$STATUS" = "VALID" ] && break
-      sleep 5
-    done
-    log "CE reconciled — instanceTypes=[$INSTANCE_TYPE]. Next Spot host picks it up."
+      --compute-resources "{
+        \"type\": \"SPOT\",
+        \"allocationStrategy\": \"SPOT_PRICE_CAPACITY_OPTIMIZED\",
+        \"minvCpus\": 0,
+        \"maxvCpus\": $MAX_VCPUS,
+        \"instanceTypes\": [\"$instance_type\"],
+        \"subnets\": [$subnets_json],
+        \"securityGroupIds\": [\"$SG_ID\"],
+        \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\"
+      }" \
+      --region "$REGION"
+    log "Waiting for $ce_name to reach VALID..."
+    wait_for_compute_environment_valid "$ce_name"
+    log "$ce_name is VALID"
   else
-    log "CE already matches desired instance type ($INSTANCE_TYPE)."
+    log "Compute Environment $ce_name already exists (status: $CE_STATUS)"
+    # Live-account reconcile: bring an existing CE's instanceTypes/subnets in
+    # line with the desired value. update-compute-environment with
+    # --compute-resources requires the CE to be DISABLED first; cycle DISABLED →
+    # UPDATE → ENABLED, polling VALID between steps. CE has minvCpus=0 so no
+    # in-flight instances are disrupted — the next provisioning picks up the
+    # change.
+    CURRENT_INSTANCE_TYPES=$(aws batch describe-compute-environments \
+      --compute-environments "$ce_name" \
+      --region "$REGION" \
+      --query 'computeEnvironments[0].computeResources.instanceTypes' \
+      --output text 2>/dev/null || echo "None")
+    CURRENT_INSTANCE_TYPES_SORTED=$(printf '%s\n' $CURRENT_INSTANCE_TYPES | sort | paste -sd' ' -)
+    CURRENT_SUBNETS=$(aws batch describe-compute-environments \
+      --compute-environments "$ce_name" \
+      --region "$REGION" \
+      --query 'computeEnvironments[0].computeResources.subnets' \
+      --output text 2>/dev/null || echo "None")
+    CURRENT_SUBNETS_SORTED=$(printf '%s\n' $CURRENT_SUBNETS | sort | paste -sd' ' -)
+    if [ "$CURRENT_INSTANCE_TYPES_SORTED" != "$instance_type" ] || [ "$CURRENT_SUBNETS_SORTED" != "$subnets_sorted" ]; then
+      log "Reconciling $ce_name: instanceTypes ${CURRENT_INSTANCE_TYPES:-None} -> $instance_type; subnets refreshed for $instance_type offerings"
+      log "  step 1/3: DISABLE"
+      aws batch update-compute-environment \
+        --compute-environment "$ce_name" \
+        --state DISABLED \
+        --region "$REGION" >/dev/null
+      wait_for_compute_environment_valid "$ce_name" 30
+      log "  step 2/3: UPDATE instanceTypes/subnets"
+      aws batch update-compute-environment \
+        --compute-environment "$ce_name" \
+        --compute-resources "{\"instanceTypes\": [\"$instance_type\"], \"subnets\": [$subnets_json]}" \
+        --region "$REGION" >/dev/null
+      wait_for_compute_environment_valid "$ce_name" 30
+      log "  step 3/3: ENABLE"
+      aws batch update-compute-environment \
+        --compute-environment "$ce_name" \
+        --state ENABLED \
+        --region "$REGION" >/dev/null
+      wait_for_compute_environment_valid "$ce_name" 30
+      log "$ce_name reconciled — instanceTypes=[$instance_type]. Next Spot host picks it up."
+    else
+      log "$ce_name already matches desired instance type/subnets ($instance_type)."
+    fi
   fi
-fi
+
+  if [ "$ce_name" = "$COMPUTE_ENV" ]; then
+    PRIMARY_SUBNET_IDS="$subnet_ids"
+  else
+    FALLBACK_SUBNET_IDS="$subnet_ids"
+  fi
+}
+
+ensure_compute_environment "$COMPUTE_ENV" "$PRIMARY_INSTANCE_TYPE"
+ensure_compute_environment "$FALLBACK_COMPUTE_ENV" "$FALLBACK_INSTANCE_TYPE"
 
 # --- 12. Job Queue ------------------------------------------------------
+CE_ORDER_ARGS=(
+  "order=1,computeEnvironment=$COMPUTE_ENV"
+  "order=2,computeEnvironment=$FALLBACK_COMPUTE_ENV"
+)
 JQ_STATUS=$(aws batch describe-job-queues \
   --job-queues "$JOB_QUEUE" \
   --region "$REGION" \
@@ -320,7 +356,7 @@ if [ "$JQ_STATUS" = "None" ] || [ -z "$JQ_STATUS" ] || [ "$JQ_STATUS" = "null" ]
     --job-queue-name "$JOB_QUEUE" \
     --state ENABLED \
     --priority 1 \
-    --compute-environment-order "order=1,computeEnvironment=$COMPUTE_ENV" \
+    --compute-environment-order "${CE_ORDER_ARGS[@]}" \
     --region "$REGION"
   log "Waiting for JQ to reach VALID..."
   for i in $(seq 1 30); do
@@ -337,6 +373,25 @@ if [ "$JQ_STATUS" = "None" ] || [ -z "$JQ_STATUS" ] || [ "$JQ_STATUS" = "null" ]
   done
 else
   log "Job Queue $JOB_QUEUE already exists (status: $JQ_STATUS)"
+  log "Reconciling Job Queue compute environment order: $COMPUTE_ENV (g6 first), then $FALLBACK_COMPUTE_ENV (g5 fallback)"
+  aws batch update-job-queue \
+    --job-queue "$JOB_QUEUE" \
+    --state ENABLED \
+    --compute-environment-order "${CE_ORDER_ARGS[@]}" \
+    --region "$REGION" >/dev/null
+  log "Waiting for JQ to reach VALID..."
+  for i in $(seq 1 30); do
+    STATUS=$(aws batch describe-job-queues \
+      --job-queues "$JOB_QUEUE" \
+      --region "$REGION" \
+      --query 'jobQueues[0].status' \
+      --output text)
+    if [ "$STATUS" = "VALID" ]; then
+      log "JQ is VALID"
+      break
+    fi
+    sleep 5
+  done
 fi
 
 # --- 13. Job Definition (register rev 1 against :latest) ----------------
@@ -392,14 +447,16 @@ cat <<EOF
 ────────────────────────────────────────────────────────────────
 Batch + Spot infrastructure ready:
   Region:              $REGION
-  Compute environment: $COMPUTE_ENV (maxVcpus=$MAX_VCPUS, SPOT_PRICE_CAPACITY_OPTIMIZED)
+  Primary CE:          $COMPUTE_ENV ($PRIMARY_INSTANCE_TYPE, maxVcpus=$MAX_VCPUS, order=1)
+  Fallback CE:         $FALLBACK_COMPUTE_ENV ($FALLBACK_INSTANCE_TYPE, maxVcpus=$MAX_VCPUS, order=2)
   Job queue:           $JOB_QUEUE
   Job definition:      $JOB_DEF (image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$ECR_REPO:latest)
   Job role:            arn:aws:iam::$ACCOUNT_ID:role/$JOB_ROLE
   Instance role:       arn:aws:iam::$ACCOUNT_ID:role/$INSTANCE_ROLE
   Task exec role:      arn:aws:iam::$ACCOUNT_ID:role/$TASK_EXEC_ROLE
   Security group:      $SG_ID
-  Subnets:             $SUBNET_IDS
+  Primary subnets:     $PRIMARY_SUBNET_IDS
+  Fallback subnets:    $FALLBACK_SUBNET_IDS
 
 Next steps:
   1. (Cold-start opt) Create ECR pull-through cache for the PyTorch base image:
@@ -408,8 +465,8 @@ Next steps:
          --upstream-registry-url registry-1.docker.io \\
          --region $REGION
   2. Verify CE and JQ are VALID:
-       aws batch describe-compute-environments --compute-environments $COMPUTE_ENV \\
-         --query 'computeEnvironments[0].[state,status]' --region $REGION
+       aws batch describe-compute-environments --compute-environments $COMPUTE_ENV $FALLBACK_COMPUTE_ENV \\
+         --query 'computeEnvironments[].{name:computeEnvironmentName,state:state,status:status,instanceTypes:computeResources.instanceTypes}' --region $REGION
   3. Smoke test (single cheap position, ~2-3 min):
        AWS_REGION=$REGION python -m src.batch.launch --positions K --seed 42
   4. When ready to flip the active trainer from EC2 to Batch:

@@ -2,8 +2,8 @@
 
 Mirrors ``src/tuning/launch_tune.py`` but submits
 ``--ablation scheduler-type`` jobs instead of ``--mode tune`` jobs. Each
-position runs in its own Spot g6.xlarge container so the six positions ablate in
-parallel (24-vCPU Spot G+VT quota). Each container runs the 3-way
+position runs in its own Spot g6.xlarge/g5.xlarge container so the six positions
+ablate in parallel (24-vCPU Spot G+VT quota). Each container runs the 3-way
 (onecycle / cosine / plateau) A/B across ``--seeds`` and uploads its result JSON
 to ``s3://$S3_BUCKET/ablate_scheduler/{pos}/result.json``; merge them afterwards
 with ``src.tuning.aggregate_scheduler``.
@@ -46,7 +46,7 @@ from src.batch.launch import (  # noqa: E402
 SUPPORTED_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 DEFAULT_SEEDS = "42,43,44"
 # 3 seeds x 3 schedulers = 9 full pipeline runs/position (no LightGBM). On
-# g6.xlarge each run is ~1-3 min, so ~10-30 min/position. 2h attempt cap leaves
+# Batch GPU pool each run is ~1-3 min, so ~10-30 min/position. 2h attempt cap leaves
 # headroom and overrides the 30-min job-def default.
 DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 7200
 RESULT_PREFIX = "ablate_scheduler"

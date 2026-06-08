@@ -38,7 +38,8 @@ Out of scope (v1)
 Batch follow-up
 ---------------
 `src/tuning/launch_tune.py` and `.github/workflows/retune-nn-batch.yml` will
-fan out one Spot g6.xlarge per position (matching `train-batch.yml`). The
+fan out one Spot GPU host per position (preferring g6.xlarge, falling back to
+g5.xlarge; matching `train-batch.yml`). The
 container dispatches to this script via a new `--mode=tune` flag added to
 `src/batch/train.py` — the Batch job's `command` becomes:
 
@@ -52,9 +53,10 @@ A `--checkpoint-s3` flag added here will periodically upload the SQLite study
 DB to `s3://$S3_BUCKET/tune_nn/{search-space-version}/{pos}/` and trap SIGTERM
 so a Spot interruption can resume the search on Batch's retry.
 
-The Batch launcher passes `--parallel-backend auto`: native-Linux L4/g6 hosts
-resolve to NVIDIA MPS; Mac/MPS and RTX 5080 local hosts keep the historical
-thread backend unless an operator explicitly forces `--parallel-backend mps`.
+The Batch launcher passes `--parallel-backend auto`: native-Linux Batch L4/g6
+or A10G/g5 hosts resolve to NVIDIA MPS; Mac/MPS and RTX 5080 local hosts keep
+the historical thread backend unless an operator explicitly forces
+`--parallel-backend mps`.
 """
 
 import argparse
@@ -143,7 +145,7 @@ def _ensure_data_from_s3() -> None:
 
 
 # 15 trials per position is a laptop-friendly default; bump to 30 on Batch
-# g6.xlarge. Per-trial cost dropped substantially after 2026-05-21 from the
+# GPU hosts. Per-trial cost dropped substantially after 2026-05-21 from the
 # FP16 / sync-removal / GPU-resident-dataset wave and from skipping Ridge /
 # LGBM / base NN inside trials (see _make_objective below); the original
 # "5–10 min locally, 1–2 min on Batch" design figures are stale — remeasure
@@ -219,13 +221,17 @@ def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUTHY
 
 
-def _is_g6_l4_linux(platform_info) -> bool:
+def _is_batch_mps_gpu_linux(platform_info) -> bool:
     gpu_name = (platform_info.gpu_name or "").lower()
     return (
         platform_info.backend == "cuda"
         and platform_info.os == "Linux"
         and not platform_info.is_wsl
-        and (platform_info.compute_capability == (8, 9) or "l4" in gpu_name)
+        and (
+            platform_info.compute_capability in {(8, 6), (8, 9)}
+            or "a10g" in gpu_name
+            or "l4" in gpu_name
+        )
     )
 
 
@@ -234,7 +240,7 @@ def _resolve_parallel_backend(requested: str) -> str:
     if requested != _AUTO_BACKEND:
         return requested
     info = detect_platform()
-    if _is_g6_l4_linux(info):
+    if _is_batch_mps_gpu_linux(info):
         print(f"[tune_nn] parallel backend auto -> mps ({info.summary()})", flush=True)
         return _MPS_BACKEND
     print(f"[tune_nn] parallel backend auto -> thread ({info.summary()})", flush=True)
@@ -287,8 +293,8 @@ def _current_cpu_ids() -> list[int]:
 class _NvidiaMPS:
     """Per-job NVIDIA CUDA MPS daemon wrapper.
 
-    Batch tune jobs run a single container per g6.xlarge. Starting MPS inside
-    that container gives the worker subprocesses one shared CUDA scheduling
+    Batch tune jobs run a single container per 4-vCPU GPU host. Starting MPS
+    inside that container gives the worker subprocesses one shared CUDA scheduling
     context without changing the outer six-position AWS Batch fan-out.
     """
 
@@ -554,7 +560,7 @@ def _make_objective(pos: str, base_cfg: dict, seed: int):
         # so Ridge / ElasticNet / LightGBM / base NN are wasted compute per
         # trial. Disabling them drops trial wall-clock substantially and frees
         # the CPU branch, which is what makes n_jobs > 1 in study.optimize
-        # viable on the 4 vCPU g6.xlarge. Attention NN is independent of
+        # viable on the 4 vCPU Batch GPU hosts. Attention NN is independent of
         # the other branches (it builds its own scaler; no stacking).
         cfg["train_ridge"] = False
         cfg["train_elasticnet"] = False
@@ -1053,8 +1059,9 @@ def main():
         help=(
             "Trial concurrency backend. 'thread' uses Optuna's in-process n_jobs "
             "path for local compatibility. 'mps' starts true subprocess workers. "
-            "'auto' resolves to mps only on native-Linux L4/g6 hosts; Mac and "
-            "5080 hosts keep thread mode unless mps is explicitly requested."
+            "'auto' resolves to mps only on native-Linux Batch L4/g6 or "
+            "A10G/g5 hosts; Mac and 5080 hosts keep thread mode unless mps is "
+            "explicitly requested."
         ),
     )
     parser.add_argument(
