@@ -160,9 +160,13 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
     # the split-aware train-only fill in
     # ``src/data/split.py::{temporal_split,expanding_window_folds}`` (those
     # calls only ``fillna`` NaNs, so a frame whose NaNs were already filled
-    # here saw them as no-ops). snap_pct imputation is now performed
-    # exclusively POST-SPLIT with train-only medians via
-    # ``impute_snap_pct(frame, fit_on=train_df)``.
+    # here saw them as no-ops). The post-split ``impute_snap_pct(frame,
+    # fit_on=train_df)`` in split.py is the train-only fill for any frame that
+    # still carries raw NaN snap_pct — but in the canonical flow it is a NO-OP:
+    # build_features zero-fills snap_pct before the split (see below), so impute
+    # never sees a NaN there. (Whether a genuinely-missing week should be 0 vs
+    # the position-week median is a separate modeling call, not a leak this
+    # machinery prevents — #396.)
     #
     # No path is left with un-imputed snap_pct: the canonical production flow
     # (refresh-splits.yml + tests/qb/test_pipeline_e2e.py) is
