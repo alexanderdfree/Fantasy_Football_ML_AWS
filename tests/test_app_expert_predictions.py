@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -10,6 +13,18 @@ import src.serving.core as core
 from src.shared.aggregate_targets import DST_TARGETS, predictions_to_fantasy_points
 
 pytestmark = pytest.mark.unit
+
+
+def test_serving_core_does_not_import_analysis_package():
+    """Production Docker excludes src/analysis, so serving imports must not rely on it."""
+    tree = ast.parse(Path(core.__file__).read_text(encoding="utf-8"))
+    imported: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.append(node.module)
+    assert not any(name == "src.analysis" or name.startswith("src.analysis.") for name in imported)
 
 
 def _results_frame() -> pd.DataFrame:
