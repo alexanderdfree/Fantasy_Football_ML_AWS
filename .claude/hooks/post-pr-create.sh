@@ -15,13 +15,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.claude/hooks/lib.sh
 . "$script_dir/lib.sh"
 
-# Resolve jq: prefer PATH, fall back to common absolute install locations so the
-# hook works whether or not jq lives at /usr/bin (WSL/dev boxes differ from CI).
-jq_bin=""
-for _c in jq /usr/bin/jq /usr/local/bin/jq /opt/homebrew/bin/jq /home/linuxbrew/.linuxbrew/bin/jq; do
-  if command -v "$_c" >/dev/null 2>&1; then jq_bin="$_c"; break; fi
-done
-[ -n "$jq_bin" ] || exit 0  # no jq → cannot parse/emit; skip nudge injection
+# Resolve jq via the shared helper (parity with .codex/hooks/post-pr-create.sh,
+# which already uses codex_find_jq). No jq → cannot parse/emit; skip injection.
+jq_bin="$(claude_find_jq)" || exit 0
 
 input=$(cat)
 cmd=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.command // empty')
