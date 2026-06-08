@@ -20,7 +20,7 @@ import pandas as pd
 
 from src.config import CACHE_DIR, SEASONS
 from src.data.loader import load_team_week_stats
-from src.shared.weather_features import _TEAM_CODE_NORMALIZATION, _load_schedules
+from src.shared.weather_features import TEAM_CODE_NORMALIZATION, _load_schedules
 
 # Columns produced per (season, week, team) before the per-row merge.
 TEAM_BOX_SCORE_FEATURES: list[str] = [
@@ -81,7 +81,7 @@ def _build_team_box_score_lookup() -> pd.DataFrame:
     schedules_reg = schedules_reg.copy()
     for _col in ("home_team", "away_team"):
         if _col in schedules_reg.columns:
-            schedules_reg[_col] = schedules_reg[_col].replace(_TEAM_CODE_NORMALIZATION)
+            schedules_reg[_col] = schedules_reg[_col].replace(TEAM_CODE_NORMALIZATION)
 
     if {"home_score", "away_score"}.issubset(schedules_reg.columns):
         home_score = schedules_reg[

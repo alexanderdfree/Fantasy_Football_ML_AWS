@@ -54,7 +54,17 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
         + df["passing_tds"].fillna(0) * SCORING["passing_tds"]
         + df["interceptions"].fillna(0) * SCORING["interceptions"]
     )
-    discrepancy = (df["fantasy_points"] - fantasy_points_check - passing_component).abs()
+    # 2pt conversions (flat 2 pts each, no SCORING key) land in the upstream
+    # fantasy_points column but are NOT model targets — RB genuinely doesn't
+    # predict them. Add them to the expected-points side so this *diagnostic*
+    # check doesn't spuriously WARN on the 1-2 rows/season with a 2pt
+    # conversion. This touches only the discrepancy check, never the targets.
+    two_pt_component = (
+        df["rushing_2pt_conversions"].fillna(0) * 2 + df["receiving_2pt_conversions"].fillna(0) * 2
+    )
+    discrepancy = (
+        df["fantasy_points"] - fantasy_points_check - passing_component - two_pt_component
+    ).abs()
     if (discrepancy > 0.01).any():
         n_bad = int((discrepancy > 0.01).sum())
         print(f"WARNING: {n_bad} RB rows have target decomposition discrepancy > 0.01 pts")
