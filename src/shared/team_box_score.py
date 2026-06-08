@@ -171,7 +171,13 @@ def _build_team_box_score_lookup() -> pd.DataFrame:
         }
     )
 
-    merged = box.merge(points, on=["season", "week", "team"], how="outer")
+    # Left-merge onto the box-score frame (the authoritative set of played
+    # team-weeks) rather than outer. After the schedule-side code normalization
+    # above, every points row matches a box row for the production range, so
+    # left == outer today (#369 F24); left makes that invariant explicit and
+    # stops a points-only row (e.g. a schedule artifact with no box stats) from
+    # fabricating an all-NaN team-week that downstream fillna(0) would zero.
+    merged = box.merge(points, on=["season", "week", "team"], how="left")
     return merged[["season", "week", "team"] + TEAM_BOX_SCORE_FEATURES + OPP_BOX_SCORE_FEATURES]
 
 

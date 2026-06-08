@@ -90,6 +90,17 @@ def expanding_window_folds(
     Returns:
         List of (fold_idx, train_df, val_df) tuples.
     """
+    # Drop playoff rows, mirroring temporal_split / rolling_origin_folds — the
+    # CV folds must train/eval on the same REG-only population as production so
+    # the cross-validated estimate stays comparable. ``season_type`` is
+    # guaranteed by src/data/loader.py; fail loudly on absence rather than fold
+    # POST rows into the expanding windows (#773 / #363 F4).
+    assert "season_type" in df.columns, (
+        "expanding_window_folds() requires 'season_type'; upstream loader "
+        "(src/data/loader.py) must emit it. Absent column would silently "
+        "include POST rows in the CV folds."
+    )
+    df = df[df["season_type"] == "REG"].copy()
     if val_seasons is None:
         val_seasons = CV_VAL_SEASONS
 

@@ -426,9 +426,13 @@ def _print_plan(positions, seed):
     print(f"  queue:        {JOB_QUEUE}")
     print(f"  definition:   {JOB_DEFINITION}")
     if JOB_DEFINITION_CPU:
+        # Render the actual cpu-only set (the same one driving _job_*_for at
+        # L192/206) rather than a hardcoded "(K, DST)" that silently goes stale
+        # if a position's cpu_only flag changes (#351 F21).
+        _cpu_route = ", ".join(sorted(CPU_ONLY_POSITIONS)) or "none"
         if JOB_QUEUE_CPU:
-            print(f"  cpu queue:    {JOB_QUEUE_CPU} (K, DST route here)")
-        print(f"  cpu def:      {JOB_DEFINITION_CPU} (K, DST route here)")
+            print(f"  cpu queue:    {JOB_QUEUE_CPU} ({_cpu_route} route here)")
+        print(f"  cpu def:      {JOB_DEFINITION_CPU} ({_cpu_route} route here)")
     print(f"  wait timeout: {WAIT_TIMEOUT_SECONDS}s")
     print(f"  seed:         {seed}")
     print("  jobs:")
