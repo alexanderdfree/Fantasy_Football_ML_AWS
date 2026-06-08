@@ -258,3 +258,76 @@ claude_refresh_parent_main() {
   fi
   return 0
 }
+
+# Promote a worktree's locally-built data/splits to the parent/main checkout on
+# merge, so the parent (and every worktree symlinked to it) gets the fresh,
+# code-matching splits without a ~10 min rebuild or the ~12 min wait for
+# refresh-splits.yml to upload them to S3. data/splits is gitignored shared data,
+# so this is independent of the parent's git branch/cleanliness (unlike the main
+# fast-forward above). Acts ONLY when:
+#   - we're in a worktree (toplevel != parent), and
+#   - the worktree has its OWN data/splits (a real dir, not the parent symlink),
+#     with all three parquets — i.e. the dev rebuilt/pulled splits locally, and
+#   - the merge touched splits-affecting code, per the canonical mapping in
+#     src/scripts/scope_positions.py (pure-stdlib; runs on vanilla python3).
+# Copies only the parquets that differ. Emits a status line to STDOUT only when
+# it actually copies; benign skips go to STDERR (kept out of the injected note).
+claude_promote_worktree_splits() {
+  local parent wt wt_splits parent_splits f py changed positions copied=0
+  parent="$(claude_main_worktree)"
+  wt="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  { [ -n "$parent" ] && [ -d "$parent" ]; } || {
+    echo "splits promote: main checkout not found" >&2
+    return 0
+  }
+  [ -n "$wt" ] || {
+    echo "splits promote: not in a git worktree" >&2
+    return 0
+  }
+  [ "$wt" != "$parent" ] || {
+    echo "splits promote: running in the main checkout, nothing to promote" >&2
+    return 0
+  }
+  wt_splits="$wt/data/splits"
+  parent_splits="$parent/data/splits"
+  if [ -L "$wt_splits" ] || [ ! -d "$wt_splits" ]; then
+    echo "splits promote: worktree has no local data/splits (shares the parent's)" >&2
+    return 0
+  fi
+  for f in train val test; do
+    [ -f "$wt_splits/$f.parquet" ] || {
+      echo "splits promote: worktree data/splits missing $f.parquet" >&2
+      return 0
+    }
+  done
+  py="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+  [ -n "$py" ] || {
+    echo "splits promote: python3 not found; cannot check scope_positions" >&2
+    return 0
+  }
+  git -C "$wt" fetch origin main --quiet 2>/dev/null || true
+  changed="$(git -C "$wt" diff --name-only origin/main~1 origin/main 2>/dev/null || true)"
+  [ -n "$changed" ] || {
+    echo "splits promote: could not resolve the merged commit's changed files" >&2
+    return 0
+  }
+  positions="$(printf '%s\n' "$changed" | (cd "$wt" && "$py" -m src.scripts.scope_positions) 2>/dev/null || true)"
+  if [ -z "$positions" ]; then
+    echo "splits promote: merge did not touch splits-affecting code" >&2
+    return 0
+  fi
+  for f in train val test; do
+    if ! cmp -s "$wt_splits/$f.parquet" "$parent_splits/$f.parquet" 2>/dev/null; then
+      mkdir -p "$parent_splits"
+      if cp -f "$wt_splits/$f.parquet" "$parent_splits/$f.parquet"; then
+        copied=$((copied + 1))
+      fi
+    fi
+  done
+  if [ "$copied" -gt 0 ]; then
+    echo "splits promote: copied $copied parquet(s) from $wt_splits to $parent_splits (merge touched: $positions)"
+  else
+    echo "splits promote: parent splits already in sync with the worktree" >&2
+  fi
+  return 0
+}

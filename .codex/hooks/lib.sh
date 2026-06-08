@@ -65,6 +65,73 @@ codex_refresh_parent_main() {
   return 0
 }
 
+# Promote a worktree's locally-built data/splits to the parent/main checkout on
+# merge (parity twin of claude_promote_worktree_splits). data/splits is
+# gitignored shared data, so this is independent of the parent's git branch.
+# Acts ONLY when: $1 (worktree root) != parent, the worktree has its OWN
+# data/splits (real dir, not the parent symlink) with all three parquets, and the
+# merge touched splits-affecting code (src/scripts/scope_positions.py, pure
+# stdlib). Copies only differing parquets; STDOUT line on copy, STDERR on skip.
+codex_promote_worktree_splits() {
+  local wt="$1"
+  local parent wt_splits parent_splits f py changed positions copied=0
+  [ -n "$wt" ] || {
+    echo "splits promote: no worktree root" >&2
+    return 0
+  }
+  parent="$(codex_main_worktree "$wt")"
+  { [ -n "$parent" ] && [ -d "$parent" ]; } || {
+    echo "splits promote: main checkout not found" >&2
+    return 0
+  }
+  [ "$wt" != "$parent" ] || {
+    echo "splits promote: running in the main checkout, nothing to promote" >&2
+    return 0
+  }
+  wt_splits="$wt/data/splits"
+  parent_splits="$parent/data/splits"
+  if [ -L "$wt_splits" ] || [ ! -d "$wt_splits" ]; then
+    echo "splits promote: worktree has no local data/splits (shares the parent's)" >&2
+    return 0
+  fi
+  for f in train val test; do
+    [ -f "$wt_splits/$f.parquet" ] || {
+      echo "splits promote: worktree data/splits missing $f.parquet" >&2
+      return 0
+    }
+  done
+  py="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+  [ -n "$py" ] || {
+    echo "splits promote: python3 not found; cannot check scope_positions" >&2
+    return 0
+  }
+  git -C "$wt" fetch origin main --quiet 2>/dev/null || true
+  changed="$(git -C "$wt" diff --name-only origin/main~1 origin/main 2>/dev/null || true)"
+  [ -n "$changed" ] || {
+    echo "splits promote: could not resolve the merged commit's changed files" >&2
+    return 0
+  }
+  positions="$(printf '%s\n' "$changed" | (cd "$wt" && "$py" -m src.scripts.scope_positions) 2>/dev/null || true)"
+  if [ -z "$positions" ]; then
+    echo "splits promote: merge did not touch splits-affecting code" >&2
+    return 0
+  fi
+  for f in train val test; do
+    if ! cmp -s "$wt_splits/$f.parquet" "$parent_splits/$f.parquet" 2>/dev/null; then
+      mkdir -p "$parent_splits"
+      if cp -f "$wt_splits/$f.parquet" "$parent_splits/$f.parquet"; then
+        copied=$((copied + 1))
+      fi
+    fi
+  done
+  if [ "$copied" -gt 0 ]; then
+    echo "splits promote: copied $copied parquet(s) from $wt_splits to $parent_splits (merge touched: $positions)"
+  else
+    echo "splits promote: parent splits already in sync with the worktree" >&2
+  fi
+  return 0
+}
+
 codex_worktrees_dir() {
   printf '%s/worktrees\n' "${CODEX_HOME:-$HOME/.codex}"
 }
