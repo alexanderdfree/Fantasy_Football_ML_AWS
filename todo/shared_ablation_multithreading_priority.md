@@ -12,15 +12,24 @@ Older ablation scripts have not been migrated yet.
 - Per-worker BLAS/joblib thread caps, dry-run table formatting, seed/variant parsing,
   paired-delta mean/std helpers, and `benchmark_history/ablations/` writing.
 - Unit tests in [`tests/tuning/test_ablation_runner.py`](../tests/tuning/test_ablation_runner.py).
+- **Autodetect unified with the A/B harness** (the parallel-runner sibling, see below):
+  `resolve_max_workers("auto")` delegates to [`ab_harness.resolve_jobs`](../src/tuning/ab_harness.py)
+  — one source of truth for "how many jobs on this box" (CUDA→6 sharing the one GPU; **9950X3D→16
+  physical cores**, was serial before; MPS/small→1; `FF_AB_JOBS` override). Timing ablations pass an
+  explicit `--max-workers 1`.
+- **Output isolation** (`_isolated_outputs`): each job runs `chdir`-ed into a tmp dir with `data/`
+  **and `.cache/`** symlinked in, so the hardcoded `{pos}/outputs` writes never clobber served
+  artifacts while the warm-once/primed feature cache still pays off (the A/B harness disables the
+  cache instead; ablations keep it — only the model-artifact writes are redirected).
 
 ## Still To Do
 - Migrate existing `src/tuning/ablate_*.py` scripts one at a time; keep each script's variant
-  definitions and decision table local.
+  definitions and decision table local. (Longer-term, the cleanest convergence is to fold ablations
+  into [`ab_harness.py`](../src/tuning/ab_harness.py) as cfg-mutator variants and retire the
+  `ablation_runner.py` / `ab_harness.py` overlap — both now share the autodetect + isolation.)
 - Add an explicit feature-cache warmup hook only when migrating a script that can safely prime
   features without changing the measured quantity. The batch/LR ablation keeps timing clean by
   defaulting to serial execution.
-- Add a CUDA-aware worker cap when a future non-timing GPU sweep needs parallel workers. Timing
-  ablations should stay `max_workers=1`.
 
 ## Original Design Constraints
 **"Intelligent" = contention-aware, not a blind thread pool:**

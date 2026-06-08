@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
+import shutil
 import statistics
+import tempfile
 import traceback
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
@@ -30,7 +32,6 @@ _THREAD_CAP_VARS = (
     "NUMEXPR_NUM_THREADS",
     "VECLIB_MAXIMUM_THREADS",
 )
-_LOCAL_CUDA_WORKERS = 6
 
 
 @dataclass(frozen=True)
@@ -168,39 +169,41 @@ def format_dry_run_table(jobs: list[AblationJob]) -> str:
     return "\n".join(lines)
 
 
-def _cap_worker_threads() -> None:
+def _cap_worker_threads(lgbm_n_jobs: int | None = None) -> None:
     for name in _THREAD_CAP_VARS:
         os.environ[name] = "1"
     os.environ["LOKY_MAX_CPU_COUNT"] = "1"
+    # LightGBM has its own ``LGBM_N_JOBS`` (not covered by the BLAS/OMP caps). When fanning
+    # out (``max_workers > 1``) each worker must get a bounded share or N workers × an
+    # env-set ``LGBM_N_JOBS`` (e.g. 16 via wsl-env.sh) oversubscribes the box — the doc's
+    # "physical cores ÷ per-run thread budget" rule. Serial runs leave it untouched so one
+    # ablation still uses every core for LightGBM.
+    if lgbm_n_jobs is not None:
+        os.environ["LGBM_N_JOBS"] = str(max(1, lgbm_n_jobs))
 
 
 def resolve_max_workers(raw: str | int, *, job_count: int) -> int:
-    """Resolve a CLI worker count.
+    """Resolve a CLI worker count, sharing the A/B harness's device autodetect.
 
-    ``auto`` is intentionally conservative off the many-core local CUDA box:
-    serial keeps timing clean on CPU/MPS/small AWS GPU hosts, while the RTX 5080
-    development box can run several tiny attention-NN ablation jobs at once
-    without VRAM pressure.
+    ``auto`` delegates to :func:`src.tuning.ab_harness.resolve_jobs` so the ablation
+    runner and the A/B harness agree on parallelism on every box: CUDA ⇒ up to 6 jobs
+    sharing the one GPU (#670); the 9950X3D CPU box ⇒ one job per physical core (per-worker
+    BLAS pinned to 1, never SMT); MPS / small hosts ⇒ serial. ``FF_AB_JOBS`` overrides. An
+    explicit integer is honoured (clamped to ``job_count``); ``< 1`` raises.
+
+    Note ``auto`` now **parallelises on CPU too** (it used to stay serial there). A
+    timing-sensitive ablation that needs clean per-run wall-clock should pass an explicit
+    ``--max-workers 1`` rather than relying on ``auto``.
     """
+    from src.tuning.ab_harness import resolve_jobs
 
-    if isinstance(raw, int):
-        workers = raw
-    elif str(raw).strip().lower() == "auto":
-        workers = 1
-        try:
-            from src.shared.platform_detect import detect_platform
-
-            plat = detect_platform()
-            if plat.backend == "cuda" and (plat.cpu_count or 0) >= 12:
-                workers = _LOCAL_CUDA_WORKERS
-        except Exception:  # noqa: BLE001 - platform detection is best-effort
-            workers = 1
-    else:
-        workers = int(str(raw))
-
+    job_count = max(1, int(job_count))
+    if isinstance(raw, str) and raw.strip().lower() == "auto":
+        return resolve_jobs(job_count, None)  # shared autodetect (reads FF_AB_JOBS)
+    workers = int(raw)
     if workers < 1:
         raise ValueError("max_workers must be >= 1")
-    return min(workers, max(1, int(job_count)))
+    return resolve_jobs(job_count, workers)
 
 
 def _error_result(job: AblationJob, exc: BaseException, *, tb: str | None = None) -> AblationResult:
@@ -261,15 +264,55 @@ def _append_error_to_log(log_path: str | None, tb: str) -> None:
         print(tb, file=logf)
 
 
-def _run_job(job: AblationJob, log_path: str | None = None) -> AblationResult:
-    _cap_worker_threads()
+@contextmanager
+def _isolated_outputs(data_dir: str):
+    """chdir into a private tmp dir with ``data/`` and ``.cache/`` symlinked to the
+    originals, so the pipeline's hard-coded ``{pos}/outputs`` writes land in the tmp dir
+    and never clobber the served artifacts.
+
+    Unlike the A/B harness (which *disables* the feature cache for correctness), the
+    ablation runner symlinks ``.cache/`` through to the shared/primed cache so the
+    warm-once-before-fan-out optimisation (e.g. ``ablate_batch_lr._prime_feature_cache``)
+    still pays off — only the model-artifact writes are redirected. Mirrors the isolation
+    in ``src/tuning/ab_harness.run_cell``.
+    """
+    orig = os.getcwd()
+    tmp = tempfile.mkdtemp(prefix="ff-ablation-")
     try:
+        os.chdir(tmp)
+        os.symlink(data_dir, os.path.join(tmp, "data"))
+        os.symlink(os.path.join(orig, ".cache"), os.path.join(tmp, ".cache"))
+        yield
+    finally:
+        os.chdir(orig)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _run_job(
+    job: AblationJob,
+    log_path: str | None = None,
+    data_dir: str | None = None,
+    lgbm_n_jobs: int | None = None,
+) -> AblationResult:
+    """Run one job, capturing failures. When ``data_dir`` points at a real ``data/`` dir,
+    the job runs output-isolated (``log_path`` must be absolute so the log still lands in
+    the orchestrator's log dir, which ``run_grid`` guarantees). ``lgbm_n_jobs`` bounds
+    LightGBM's per-worker threads under fan-out (``run_grid`` sets it; ``None`` = serial)."""
+    _cap_worker_threads(lgbm_n_jobs)
+
+    def _body() -> AblationResult:
         if log_path:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             with open(log_path, "w") as logf, redirect_stdout(logf), redirect_stderr(logf):
-                result = _coerce_result(job, job.run_fn(job))
+                return _coerce_result(job, job.run_fn(job))
+        return _coerce_result(job, job.run_fn(job))
+
+    try:
+        if data_dir and os.path.isdir(data_dir):
+            with _isolated_outputs(data_dir):
+                result = _body()
         else:
-            result = _coerce_result(job, job.run_fn(job))
+            result = _body()
         return _with_log_path(result, log_path)
     except Exception as exc:  # noqa: BLE001 - ablation runners should capture per-job failures
         tb = traceback.format_exc()
@@ -293,14 +336,24 @@ def run_grid(
 
     if max_workers < 1:
         raise ValueError("max_workers must be >= 1")
+    # Absolute log paths survive each job's output-isolation chdir; data_dir is the real
+    # splits dir symlinked into every job's tmp cwd (see _isolated_outputs).
     log_paths = [
-        os.path.join(log_dir, _safe_log_name(job, idx)) if log_dir else None
+        os.path.abspath(os.path.join(log_dir, _safe_log_name(job, idx))) if log_dir else None
         for idx, job in enumerate(jobs)
     ]
+    data_dir = os.path.abspath("data")
+    # Under fan-out, bound LightGBM's per-worker threads to physical_cores ÷ workers so N
+    # workers don't oversubscribe (serial keeps the env default → all cores for one run).
+    lgbm_n_jobs: int | None = None
+    if max_workers > 1:
+        from src.benchmarking.parallel_train import physical_cores
+
+        lgbm_n_jobs = max(1, len(physical_cores()) // max_workers)
     if max_workers == 1:
         results = []
         for idx, job in enumerate(jobs):
-            result = _run_job(job, log_paths[idx])
+            result = _run_job(job, log_paths[idx], data_dir)
             if progress:
                 status = "ERROR" if result.error else "ok"
                 suffix = f" log={log_paths[idx]}" if log_paths[idx] else ""
@@ -317,7 +370,8 @@ def run_grid(
     mp_context = mp.get_context("spawn")
     with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_context) as pool:
         futures = {
-            pool.submit(_run_job, job, log_paths[idx]): (idx, job) for idx, job in enumerate(jobs)
+            pool.submit(_run_job, job, log_paths[idx], data_dir, lgbm_n_jobs): (idx, job)
+            for idx, job in enumerate(jobs)
         }
         for future in as_completed(futures):
             idx, job = futures[future]

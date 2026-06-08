@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import types
 
@@ -112,9 +113,9 @@ def test_run_grid_parallel_path_can_preserve_or_completion_order(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-        def submit(self, fn, job, log_path=None):
+        def submit(self, fn, job, log_path=None, data_dir=None, lgbm_n_jobs=None):
             submitted.append((self.max_workers, job.seed))
-            return FakeFuture(fn(job, log_path))
+            return FakeFuture(fn(job, log_path, data_dir, lgbm_n_jobs))
 
     monkeypatch.setattr(ar, "ProcessPoolExecutor", FakePool)
     monkeypatch.setattr(ar, "as_completed", lambda futures: list(reversed(list(futures))))
@@ -173,26 +174,73 @@ def test_format_dry_run_table_contains_grouped_counts():
     assert "alt,baseline" in text
 
 
-def test_resolve_max_workers_auto_uses_many_core_cuda(monkeypatch):
-    platform_mod = types.SimpleNamespace(
-        detect_platform=lambda: types.SimpleNamespace(backend="cuda", cpu_count=32)
+def _patch_jobs_platform(monkeypatch, *, cuda, backend="cuda", cpus=32, phys=16):
+    # resolve_max_workers now delegates to ab_harness.resolve_jobs, which reads
+    # cuda_enabled() + detect_platform() + physical_cores() — mock all three.
+    monkeypatch.delenv("FF_AB_JOBS", raising=False)
+    monkeypatch.setattr("src.shared.utils.cuda_enabled", lambda: cuda)
+    monkeypatch.setattr(
+        "src.shared.platform_detect.detect_platform",
+        lambda: types.SimpleNamespace(backend=backend, cpu_count=cpus),
     )
-    monkeypatch.setitem(sys.modules, "src.shared.platform_detect", platform_mod)
+    monkeypatch.setattr("src.benchmarking.parallel_train.physical_cores", lambda: list(range(phys)))
 
-    assert ar.resolve_max_workers("auto", job_count=20) == 6
+
+def test_resolve_max_workers_auto_uses_many_core_cuda(monkeypatch):
+    _patch_jobs_platform(monkeypatch, cuda=True)
+    assert ar.resolve_max_workers("auto", job_count=20) == 6  # share the one GPU (#670)
     assert ar.resolve_max_workers("auto", job_count=3) == 3
 
 
-def test_resolve_max_workers_auto_keeps_cpu_serial(monkeypatch):
-    platform_mod = types.SimpleNamespace(
-        detect_platform=lambda: types.SimpleNamespace(backend="cpu", cpu_count=32)
-    )
-    monkeypatch.setitem(sys.modules, "src.shared.platform_detect", platform_mod)
-
-    assert ar.resolve_max_workers("auto", job_count=20) == 1
-    assert ar.resolve_max_workers("2", job_count=20) == 2
+def test_resolve_max_workers_auto_parallel_on_many_core_cpu(monkeypatch):
+    # Unified with the A/B harness: 'auto' now fans out across physical cores on the CPU
+    # box (it used to stay serial). Timing ablations should pass --max-workers 1.
+    _patch_jobs_platform(monkeypatch, cuda=False, backend="cpu", cpus=32, phys=16)
+    assert ar.resolve_max_workers("auto", job_count=20) == 16  # one per physical core
+    assert ar.resolve_max_workers("auto", job_count=5) == 5  # clamped to job count
+    assert ar.resolve_max_workers("2", job_count=20) == 2  # explicit honoured
     with pytest.raises(ValueError, match="max_workers"):
         ar.resolve_max_workers("0", job_count=20)
+
+
+def test_resolve_max_workers_env_override(monkeypatch):
+    _patch_jobs_platform(monkeypatch, cuda=True)
+    monkeypatch.setenv("FF_AB_JOBS", "3")  # shared override with the A/B harness
+    assert ar.resolve_max_workers("auto", job_count=20) == 3
+
+
+def test_run_grid_isolates_pos_outputs(tmp_path, monkeypatch):
+    # A real data/ dir makes run_grid output-isolate each job: a job writing the hardcoded
+    # {pos}/outputs must land in a tmp cwd, never clobber the served artifacts.
+    (tmp_path / "data" / "splits").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    seen = {}
+
+    def writer(job):
+        seen["cwd"] = os.getcwd()
+        os.makedirs("qb/outputs/models", exist_ok=True)
+        with open("qb/outputs/models/sentinel.txt", "w") as f:
+            f.write("x")
+        assert os.path.isdir("data/splits")  # data symlinked into the isolated cwd
+        return {"metrics": {"v": 1.0}, "timings": {}, "metadata": {}}
+
+    results = ar.run_grid([_job(1, run_fn=writer)], max_workers=1)
+    assert results[0].error is None
+    assert seen["cwd"] != str(tmp_path)  # ran in an isolated tmp dir
+    assert os.getcwd() == str(tmp_path)  # cwd restored
+    assert not (tmp_path / "qb").exists()  # served {pos}/outputs untouched
+
+
+def test_cap_worker_threads_bounds_lgbm_only_under_fanout(monkeypatch):
+    # Serial leaves LGBM_N_JOBS to the env (one run uses all cores); fan-out bounds it per
+    # worker so N workers don't oversubscribe LightGBM (BLAS/OMP are always pinned to 1).
+    monkeypatch.setenv("LGBM_N_JOBS", "_restore_")  # registered for teardown restore
+    monkeypatch.delenv("LGBM_N_JOBS", raising=False)
+    ar._cap_worker_threads()
+    assert "LGBM_N_JOBS" not in os.environ
+    assert os.environ["OMP_NUM_THREADS"] == "1"
+    ar._cap_worker_threads(lgbm_n_jobs=4)
+    assert os.environ["LGBM_N_JOBS"] == "4"
 
 
 def test_write_history_payload_shape(tmp_path):
