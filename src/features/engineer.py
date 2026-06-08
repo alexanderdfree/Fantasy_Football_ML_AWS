@@ -682,6 +682,7 @@ def build_opp_defense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
         pts_allowed.rename(columns={"team": "opponent_team"}),
         on=["opponent_team", "season", "week"],
         how="left",
+        validate="many_to_one",
     )
     def_stats["def_pts_allowed"] = def_stats["def_pts_allowed"].fillna(0.0)
 
@@ -826,6 +827,7 @@ def build_opp_offense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
         pts_scored.rename(columns={"team": "opponent_team"}),
         on=["opponent_team", "season", "week"],
         how="left",
+        validate="many_to_one",
     )
     off_stats["off_pts_scored"] = off_stats["off_pts_scored"].fillna(0.0)
 
