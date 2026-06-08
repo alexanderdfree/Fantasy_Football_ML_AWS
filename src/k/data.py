@@ -67,6 +67,14 @@ _REQUIRED_PBP_COLUMNS = frozenset(
         # fallback) so the model doesn't see a different distribution at
         # train vs inference time.
         "_xp_venue_backfilled",
+        # Sentinel for the XP-weather backfill (#357 F2): game_wind/game_temp for
+        # outdoor XP-only kicker-weeks. The FG groupby was the sole weather
+        # source, so XP-only games left wind/temp NaN -> downstream train-mean
+        # fill, drifting train inputs from the same physical game's actual
+        # weather. Caches predating this fix lack the column -> schema check
+        # fails -> regenerated with the post-fix logic (mirrors the venue
+        # sentinel above).
+        "_xp_weather_backfilled",
     }
 )
 
@@ -180,11 +188,13 @@ def reconstruct_kicker_weekly_from_pbp(
             )
 
             # --- Extra points ---
-            # XP groupby pulls player_name/posteam/roof/surface alongside the
-            # XP counts so XP-only kicker-weeks (no FG attempts) still have
-            # those identity + venue fields populated after the outer join
-            # below — the FG groupby is the only other source and yields no
-            # row for XP-only games.
+            # XP groupby pulls player_name/posteam/roof/surface AND wind/temp
+            # alongside the XP counts so XP-only kicker-weeks (no FG attempts)
+            # still have those identity + venue + weather fields populated after
+            # the outer join below — the FG groupby is the only other source and
+            # yields no row for XP-only games. Weather is game-level (constant
+            # across a game's plays), so the XP plays carry the same wind/temp the
+            # FG plays would. (#357 F2)
             xp = pbp[pbp["extra_point_attempt"] == 1].copy()
             xp["xp_made"] = (xp["extra_point_result"] == "good").astype(int)
             xp["xp_missed"] = (xp["extra_point_result"] != "good").astype(int)
@@ -199,6 +209,8 @@ def reconstruct_kicker_weekly_from_pbp(
                     posteam_xp=("posteam", "first"),
                     roof_xp=("roof", "first"),
                     surface_xp=("surface", "first"),
+                    game_wind_xp=("wind", "first"),
+                    game_temp_xp=("temp", "first"),
                 )
                 .reset_index()
             )
@@ -209,8 +221,15 @@ def reconstruct_kicker_weekly_from_pbp(
             )
 
             # For XP-only games, FG columns are NaN — backfill identity + venue
-            # from the XP-side copies, then drop the auxiliary columns.
-            for col in ("kicker_player_name", "posteam", "roof", "surface"):
+            # + weather from the XP-side copies, then drop the auxiliary columns.
+            for col in (
+                "kicker_player_name",
+                "posteam",
+                "roof",
+                "surface",
+                "game_wind",
+                "game_temp",
+            ):
                 weekly_k[col] = weekly_k[col].fillna(weekly_k[f"{col}_xp"])
                 weekly_k.drop(columns=[f"{col}_xp"], inplace=True)
 
@@ -221,6 +240,11 @@ def reconstruct_kicker_weekly_from_pbp(
             # `is_dome=0` / `roof=NaN` defaults and the train distribution
             # would diverge from the post-fix test backfill.
             weekly_k["_xp_venue_backfilled"] = True
+            # Second sentinel for the XP-weather backfill (#357 F2): a cache
+            # written after the venue fix but before this weather fix carries
+            # `_xp_venue_backfilled` yet still has NaN wind/temp for outdoor
+            # XP-only games, so the venue sentinel alone wouldn't force its regen.
+            weekly_k["_xp_weather_backfilled"] = True
 
             all_weekly.append(weekly_k)
         except Exception as e:
