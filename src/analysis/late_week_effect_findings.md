@@ -8,6 +8,11 @@ starters, making those games unrepresentative for fantasy?
   help and slightly hurts the best model).
 - **Eval/reporting: exclude the season's *final* week** (season-aware) — it is not a
   fantasy week and it is high-variance rest noise. **Keep week 17** (the championship).
+  **Status: recommendation, NOT yet wired into production eval.** `src/shared/evaluation.py`
+  and `src/shared/backtest.py` still iterate every `test_df['week'].unique()` (incl. 2025
+  wk18), so the dashboard / `benchmark_history/` numbers currently grade against the final
+  week. Implementing the filter rebaselines every benchmark metric, so it is deferred to the
+  next retraining cycle and tracked in TODO.md rather than shipped silently here. (#615)
 - **Never** a flat `week == 18` cut — it is era-wrong (see below).
 
 Run with `python -m src.analysis.cohort_analysis late_week --deep-dive`
