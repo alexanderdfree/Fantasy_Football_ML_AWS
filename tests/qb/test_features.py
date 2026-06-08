@@ -220,7 +220,19 @@ class TestComputeQBRates:
         train_rook = train[train["player_id"].eq("ROOK_TRAIN")].sort_values("week")
         assert train_rook["is_rookie"].tolist() == [1.0, 1.0, 1.0, 1.0]
         assert train_rook["rookie_early"].tolist() == [1.0, 1.0, 1.0, 0.0]
+        # season_starts_to_date = count of prior in-season games (week 1 -> 0),
+        # leakage-safe and independent of the rookie label.
+        assert train_rook["season_starts_to_date"].tolist() == [0.0, 1.0, 2.0, 3.0]
 
         test_rook = test[test["player_id"].eq("ROOK_TEST")].sort_values("week")
         assert test_rook["is_rookie"].tolist() == [1.0, 1.0, 1.0, 1.0]
         assert test_rook["rookie_early"].tolist() == [1.0, 1.0, 1.0, 0.0]
+        assert test_rook["season_starts_to_date"].tolist() == [0.0, 1.0, 2.0, 3.0]
+
+        # season_starts_to_date resets each season: VET has 4 games in 2022
+        # (train) and 2 in 2025 (test); the counter restarts at 0 in 2025 even
+        # across the train/test split boundary.
+        vet_train = train[train["player_id"].eq("VET")].sort_values("week")
+        assert vet_train["season_starts_to_date"].tolist() == [0.0, 1.0, 2.0, 3.0]
+        vet_test = test[test["player_id"].eq("VET")].sort_values("week")
+        assert vet_test["season_starts_to_date"].tolist() == [0.0, 1.0]

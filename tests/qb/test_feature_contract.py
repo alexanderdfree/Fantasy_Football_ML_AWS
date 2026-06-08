@@ -125,6 +125,22 @@ class TestQBFeatureContract:
         assert "rookie_early" in static_cols
         assert "is_rookie" not in feature_cols
 
+    def test_current_role_static_contract(self):
+        """Current-role features reach every model + the attention static branch.
+
+        ``season_starts_to_date`` is owned by add_specific_features (so it is in
+        SPECIFIC_FEATURES); ``prior_season_games_played`` is built upstream by
+        src.features.engineer (so it is whitelisted via the prior_season category
+        but is NOT a QB-specific feature). Both are non-temporal → static-legal.
+        """
+        feature_cols = get_feature_columns()
+        static_cols = get_attn_static_columns(feature_cols, ATTN_STATIC_FEATURES)
+        for col in ("season_starts_to_date", "prior_season_games_played"):
+            assert col in feature_cols, f"{col} missing from get_feature_columns()"
+            assert col in static_cols, f"{col} missing from attention static branch"
+        assert "season_starts_to_date" in SPECIFIC_FEATURES
+        assert "prior_season_games_played" not in SPECIFIC_FEATURES
+
     def test_rate_features_non_negative(self, qb_feature_df):
         """Rate features are non-negative — division by zero is guarded."""
         rate_cols = [

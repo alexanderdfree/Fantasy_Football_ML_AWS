@@ -42,6 +42,7 @@ def _add_rookie_phase_features(dfs: list[pd.DataFrame], early_games: int = 3) ->
         for df in dfs:
             df["is_rookie"] = 0.0
             df["rookie_early"] = 0.0
+            df["season_starts_to_date"] = 0.0
         return
 
     parts = []
@@ -70,6 +71,11 @@ def _add_rookie_phase_features(dfs: list[pd.DataFrame], early_games: int = 3) ->
         values = restored[restored["_split_idx"].eq(split_idx)]
         df["is_rookie"] = values["is_rookie"].to_numpy(dtype=float)
         df["rookie_early"] = values["rookie_early"].to_numpy(dtype=float)
+        # Current-season games-to-date (entrenchment axis). ``_game_idx`` is the
+        # cumcount of the player's prior in-season games (0 in week 1 / at a
+        # later-season debut), leakage-safe by the same prior-games argument
+        # ``rookie_early`` relies on. See ``_CURRENT_ROLE_FEATURES`` in config.
+        df["season_starts_to_date"] = values["_game_idx"].to_numpy(dtype=float)
 
 
 def _compute_features(df: pd.DataFrame) -> None:
