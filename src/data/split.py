@@ -10,6 +10,7 @@ from src.config import (
     TRAIN_SEASONS,
     VAL_SEASONS,
 )
+from src.data.cache_io import atomic_write_parquet
 from src.data.preprocessing import impute_snap_pct
 
 
@@ -70,9 +71,9 @@ def temporal_split(
 
     # Save to disk
     os.makedirs(SPLITS_DIR, exist_ok=True)
-    train_df.to_parquet(f"{SPLITS_DIR}/train.parquet", index=False)
-    val_df.to_parquet(f"{SPLITS_DIR}/val.parquet", index=False)
-    test_df.to_parquet(f"{SPLITS_DIR}/test.parquet", index=False)
+    atomic_write_parquet(train_df, f"{SPLITS_DIR}/train.parquet", index=False)
+    atomic_write_parquet(val_df, f"{SPLITS_DIR}/val.parquet", index=False)
+    atomic_write_parquet(test_df, f"{SPLITS_DIR}/test.parquet", index=False)
 
     return train_df, val_df, test_df
 

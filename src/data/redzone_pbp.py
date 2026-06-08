@@ -23,6 +23,7 @@ import pyarrow.parquet as pq
 
 from src.config import CACHE_DIR
 from src.data import nfl_source
+from src.data.cache_io import atomic_write_parquet
 from src.data.external_sources import _seasons_cache_signature
 
 # Feature columns the current implementation produces (excluding the four
@@ -239,6 +240,6 @@ def reconstruct_redzone_from_pbp(
         return result
 
     os.makedirs(cache_dir, exist_ok=True)
-    result.to_parquet(cache_path)
+    atomic_write_parquet(result, cache_path)
     print(f"  Cached red-zone PBP aggregates: {len(result)} rows -> {cache_path}")
     return result
