@@ -22,7 +22,11 @@ from src.shared.weather_features import (
 logger = logging.getLogger(__name__)
 
 
-def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) -> pd.DataFrame:
+def build_features(
+    df: pd.DataFrame,
+    injuries_df: pd.DataFrame | None = None,
+    rosters_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Build the engineered feature columns from preprocessed data.
 
     Covers rolling / prior-season / EWMA / trend / share / opponent-defense
@@ -35,6 +39,12 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
     inherited are absent from the weekly frame, so the out-set must come from the injury
     report. Passed by the splits-building callers (refresh-splits); ``None`` (e.g. a
     diagnostic rebuild) degrades ``inherited_opportunity`` to 0 but still emits the columns.
+
+    ``rosters_df`` is the raw nflverse weekly rosters frame (``src.data.nfl_source.rosters``).
+    Players on injured reserve (``status == "RES"``) are absent from BOTH the weekly frame and
+    the injury report, so without it a starter lost to IR is invisible to the vacancy signal
+    (#1106 finding A; serving already sees IR because ESPN maps it to ``Out``). Passed alongside
+    ``injuries_df`` by the splits callers; ``None`` just means IR vacancies aren't counted.
     """
     df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
@@ -364,7 +374,7 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
     df = pd.concat([df, pd.DataFrame(pos_cols, index=df.index)], axis=1)
 
     # --- Role-inheritance features (RB/WR static branch) ---
-    df = _build_inheritance_features(df, injuries_df)
+    df = _build_inheritance_features(df, injuries_df, rosters_df)
 
     return df
 
@@ -394,14 +404,21 @@ _INHERITANCE_ROLE_COL = {
 }
 
 
-def _build_inheritance_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None) -> pd.DataFrame:
+def _build_inheritance_features(
+    df: pd.DataFrame,
+    injuries_df: pd.DataFrame | None,
+    rosters_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Add ``is_top_available`` + ``inherited_opportunity`` per (position, recent_team,
     season, week), within position.
 
     * role(player, W) = prior-to-W expanding mean of the position's opportunity proxy.
     * ``is_top_available`` = top prior-role among *present* same-position teammates that week.
     * ``inherited_opportunity`` = Σ prior-role of same-team, same-position OUT/Doubtful
-      teammates ranked above, only for the top-available one.
+      teammates ranked above, only for the top-available one. The out-set is the injury
+      report (Out/Doubtful) plus, when ``rosters_df`` is given, players on injured reserve
+      (``status == "RES"``) — absent from BOTH the weekly frame and the report, so a starter
+      lost to IR is otherwise invisible to the vacancy signal (#1106 finding A).
 
     Runs on the full pre-split frame; ``role_before`` indexes only weeks < W, so it stays
     leakage-safe despite future weeks being present. Mirrors the validated injector in
@@ -434,6 +451,28 @@ def _build_inheritance_features(df: pd.DataFrame, injuries_df: pd.DataFrame | No
                 out["team"],
                 out["week"].astype(int),
                 out["gsis_id"].astype(str),
+                strict=True,
+            ):
+                outmap.setdefault((pos, s, t, w), set()).add(g)
+
+    # IR / reserve players (rosters ``status == "RES"``) are absent from BOTH the weekly frame
+    # and the injury report, so a starter lost to IR is otherwise invisible to the vacancy
+    # signal (#1106 finding A). Fold them into the same out-set. ``RES`` only — game-day ``INA``
+    # is a same-day signal (leakage audit pending) and is excluded. The IR player's role_before
+    # resolves from their current-season games before the IR week (or the prior-season fallback).
+    if rosters_df is not None and len(rosters_df):
+        rcols = ("status", "position", "season", "team", "week", "player_id")
+        if all(c in rosters_df.columns for c in rcols):
+            ir = rosters_df[
+                (rosters_df["status"] == "RES")
+                & rosters_df["position"].isin(_INHERITANCE_POSITIONS)
+            ]
+            for pos, s, t, w, g in zip(
+                ir["position"],
+                ir["season"].astype(int),
+                ir["team"],
+                ir["week"].astype(int),
+                ir["player_id"].astype(str),
                 strict=True,
             ):
                 outmap.setdefault((pos, s, t, w), set()).add(g)
