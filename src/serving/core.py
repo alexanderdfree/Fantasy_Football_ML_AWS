@@ -29,8 +29,6 @@ import src.dst.features as dst_features
 import src.k.data as k_data
 import src.k.features as k_features
 import src.serving.app as app_pkg
-from src.analysis.analysis_nflcom_baseline import _project_nflcom_to_ppr
-from src.analysis.sleeper_loader import load_sleeper_with_gsis_id
 from src.config import (
     CACHE_DIR,
     MIN_GAMES_PER_SEASON,
@@ -48,6 +46,10 @@ from src.features.engineer import (
     build_game_history_arrays,
     build_opp_defense_history_arrays,
     get_attn_static_columns,
+)
+from src.serving.expert_sources import (
+    load_sleeper_with_gsis_id,
+    project_nflcom_to_fantasy,
 )
 from src.serving.metadata import _ALL_POSITIONS, _ALL_TARGETS, _APPENDED_POSITIONS
 from src.serving.serialization import (
@@ -251,7 +253,7 @@ def _apply_expert_predictions(
         for pos in _ALL_POSITIONS:
             if raw_nflcom is not None and pos != "DST":
                 try:
-                    nfl = _project_nflcom_to_ppr(raw_nflcom, pos, fmt)
+                    nfl = project_nflcom_to_fantasy(raw_nflcom, pos, fmt)
                     _assign_expert_totals(results, "nflcom", fmt, nfl, "nflcom_pred_total")
                 except Exception as e:  # noqa: BLE001 - one source/position can degrade
                     print(f"[experts] NFL.com {pos}/{fmt} projection failed: {e!r}")
