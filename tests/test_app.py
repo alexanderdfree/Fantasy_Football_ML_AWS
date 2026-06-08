@@ -643,6 +643,8 @@ class TestStaticAssets:
     the whole UI's event wiring down with it. Keep every script same-origin.
     """
 
+    pytestmark = pytest.mark.unit
+
     def test_index_has_no_external_scripts(self, client):
         import re
 
@@ -656,3 +658,9 @@ class TestStaticAssets:
         r = client.get("/static/js/vendor/chart.umd.min.js")
         assert r.status_code == 200
         assert b"Chart.js v4.4.0" in r.get_data()
+
+    def test_espn_headshot_resize_preserves_aspect_ratio(self, client):
+        """ESPN's combiner stretches when both width and height are forced."""
+        js = client.get("/static/js/app.js").get_data(as_text=True)
+        assert "combiner/i?img=${m[1]}&w=${size}`" in js
+        assert "combiner/i?img=${m[1]}&w=${size}&h=${size}" not in js

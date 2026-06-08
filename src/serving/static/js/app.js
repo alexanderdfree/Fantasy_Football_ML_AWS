@@ -60,7 +60,7 @@ function sizedHeadshot(url, size) {
     // ESPN full-size headshot → route through the resizing combiner.
     const m = url.match(/^https:\/\/a\.espncdn\.com(\/i\/headshots\/.+\.png)$/);
     if (m) {
-        return `https://a.espncdn.com/combiner/i?img=${m[1]}&w=${size}&h=${size}`;
+        return `https://a.espncdn.com/combiner/i?img=${m[1]}&w=${size}`;
     }
     return url;
 }
