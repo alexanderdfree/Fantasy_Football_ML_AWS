@@ -297,9 +297,9 @@ def test_snap_pct_history_uses_raw_not_prelagged():
 def test_inheritance_features_next_man_up():
     """``_build_inheritance_features`` (the production mirror of the validated A/B
     src/tuning/ab_history_token.py): when a higher-role same-position teammate is Out, the
-    top-available teammate inherits the vacated role. RB ranks on ``snap_pct_raw``, WR on
-    ``targets``; only same-position, same-team, higher-ranked OUT players count, and only
-    for the top-available player. Role is prior-to-W (leakage-safe)."""
+    top-available teammate inherits the vacated role. RB ranks on ``snap_pct_raw``, WR/TE on
+    ``targets``, QB on ff_opportunity ``total_fantasy_points_exp``; only same-position, same-team,
+    higher-ranked OUT players count, and only for the top-available player. Role is prior-to-W."""
     from src.features.engineer import _build_inheritance_features
 
     rows = []
@@ -354,11 +354,36 @@ def test_inheritance_features_next_man_up():
             targets=5.0,
         )  # fmt: skip
     )
+    # KC QBs weeks 1-2: P starter (exp-FP 18.0), Q backup (2.0). Week 3: P Out -> Q inherits via
+    # the ff_opportunity ``total_fantasy_points_exp`` proxy (a QB's role isn't snap%/targets).
+    for wk in (1, 2):
+        for pid, exp in (("P", 18.0), ("Q", 2.0)):
+            rows.append(
+                dict(
+                    player_id=pid,
+                    position="QB",
+                    recent_team="KC",
+                    season=2023,
+                    week=wk,
+                    total_fantasy_points_exp=exp,
+                )  # fmt: skip
+            )
+    rows.append(
+        dict(
+            player_id="Q",
+            position="QB",
+            recent_team="KC",
+            season=2023,
+            week=3,
+            total_fantasy_points_exp=2.5,
+        )  # fmt: skip
+    )
     df = pd.DataFrame(rows)
     inj = pd.DataFrame(
         [
             dict(gsis_id="A", position="RB", team="KC", season=2023, week=3, report_status="Out"),
             dict(gsis_id="D", position="WR", team="KC", season=2023, week=3, report_status="Out"),
+            dict(gsis_id="P", position="QB", team="KC", season=2023, week=3, report_status="Out"),
         ]
     )
 
@@ -376,6 +401,12 @@ def test_inheritance_features_next_man_up():
     # Week 3 WR: D Out (prior targets-role 9), E inherits via the `targets` proxy.
     assert g.loc[("E", 3), "is_top_available"] == 1.0
     assert g.loc[("E", 3), "inherited_opportunity"] == pytest.approx(9.0)
+    # Week 3 QB: P Out (prior exp-FP role 18.0), Q is now top-available and inherits via the
+    # ff_opportunity ``total_fantasy_points_exp`` proxy.
+    assert g.loc[("P", 2), "is_top_available"] == 1.0
+    assert g.loc[("Q", 2), "inherited_opportunity"] == 0.0
+    assert g.loc[("Q", 3), "is_top_available"] == 1.0
+    assert g.loc[("Q", 3), "inherited_opportunity"] == pytest.approx(18.0)
 
     # injuries_df=None -> columns still emitted, inherited_opportunity all zero (no out-set).
     none_out = _build_inheritance_features(df, None)
