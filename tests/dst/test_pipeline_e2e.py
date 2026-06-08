@@ -103,6 +103,11 @@ def _build_synthetic_schedules(df: pd.DataFrame) -> pd.DataFrame:
     sched["surface"] = "grass"
     sched["temp"] = 65.0
     sched["wind"] = 5.0
+    # Scores for the opp-offense/defense per-game points: build_opp_*_per_game_df
+    # now route through _load_schedules (#757) and read home_score/away_score, so
+    # the stub must carry them (it previously only served the weather/Vegas merge).
+    sched["home_score"] = 21
+    sched["away_score"] = 21
     # drop_duplicates because the source DST frame has both home+away rows
     sched = sched.drop_duplicates(subset=["season", "week", "home_team", "away_team"])
     return sched.reset_index(drop=True)
@@ -329,8 +334,9 @@ class TestDSTPipelineE2E:
 @pytest.fixture(scope="module")
 def tiny_cwd_with_offense_cache(tmp_path_factory, tiny_dataset):
     """Like ``tiny_cwd`` but ALSO writes synthetic weekly + schedules
-    parquets into ``tmp_path/data/raw/``. Required by the opp-OFFENSE branch
-    which reads those files directly (no in-memory monkeypatch hook)."""
+    parquets into ``tmp_path/data/raw/`` — read directly by ``dst/data.py``'s
+    ``build_data``. The opp-offense per-game points now route through
+    ``_load_schedules`` (#757), so the in-memory stub below carries scores too."""
     mp = pytest.MonkeyPatch()
     tmp_path = tmp_path_factory.mktemp("dst_e2e_opp_off")
     mp.chdir(tmp_path)

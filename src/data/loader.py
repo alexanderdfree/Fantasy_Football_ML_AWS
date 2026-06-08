@@ -323,7 +323,21 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
             # uniform relabel fixes.
             legacy = nfl_source.depth_charts(old_seasons)
             legacy = legacy[legacy["game_type"] == "REG"].copy()
-            legacy["week"] = pd.to_numeric(legacy["week"], errors="coerce") - 1
+            # Guard the coerce: errors="coerce" + dropna silently drops ANY
+            # non-numeric week. After the REG filter every week should be an
+            # integer, so a non-zero non-numeric count signals upstream schema
+            # drift (string week labels, or a renamed game_type letting playoff
+            # rows through) that would quietly shrink depth coverage. Warn loudly
+            # — the -1 sentinel + consumer-side impute still cover the gap. (#809)
+            _wk = pd.to_numeric(legacy["week"], errors="coerce")
+            _n_nonnumeric = int(_wk.isna().sum())
+            if _n_nonnumeric > 0:
+                print(
+                    f"WARNING: _fetch_depth dropped {_n_nonnumeric} legacy depth "
+                    f"rows with non-numeric 'week' after the REG filter — expected "
+                    f"0; suspect upstream nflverse depth_charts schema drift."
+                )
+            legacy["week"] = _wk - 1
             legacy = legacy.dropna(subset=["week"])
             legacy["week"] = legacy["week"].astype(int)
             parts.append(legacy[_DEPTH_CANONICAL_COLS])
@@ -415,7 +429,12 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         # player-week with NaN snap_pct (gracefully filled by the
         # position-week median imputation), strictly better than silently
         # double-counting.
-        pfr_to_gsis = pfr_to_gsis.drop_duplicates(subset=["pfr_id"], keep="first")
+        # Deterministic pre-sort before keep="first": player_ids() is polars-
+        # backed (no row-order guarantee), so without a sort the chosen gsis_id
+        # for a colliding pfr_id flips across library versions. (#811)
+        pfr_to_gsis = pfr_to_gsis.sort_values(["pfr_id", "gsis_id"]).drop_duplicates(
+            subset=["pfr_id"], keep="first"
+        )
         assert pfr_to_gsis["pfr_id"].is_unique, (
             "pfr_to_gsis must be unique on pfr_id after subset-dedup"
         )
