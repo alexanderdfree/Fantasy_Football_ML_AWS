@@ -200,39 +200,66 @@ jobs:
         id: shard
         run: |
           shard="${{ matrix.shard }}"
+          # Fewer-fatter workers on the model-TRAINING shards: give each training test
+          # (incl. the single-test tail) `threads` cores, and halve the worker count so
+          # peak memory halves (the OOM "node down" flake). half = vCPUs / 2 (so 2 workers
+          # x 2 threads on a 4-vCPU runner = all vCPUs, no oversubscription). The "Show
+          # runner CPU topology" step logs the real nproc/lscpu for tuning.
+          half=$(( $(nproc) / 2 )); [ "$half" -lt 1 ] && half=1
           if [ "$shard" = "serving" ]; then
-            # The serving suite (tests/test_app*, ~219 Flask/model-loading tests) is
-            # memory-heavy. Split out of `shared` (#1056) so neither shard sits at the
-            # 4-core/16GB runner's RAM edge under -n auto. worksteal: dynamic balancing
-            # keeps peak per-worker memory lower and sidesteps the loadfile
-            # replacement-worker KeyError on worker recycle. No module-scoped cross-test
-            # trained fixtures here -> worksteal-safe.
+            # Serving suite (tests/test_app*, ~219 Flask/model-LOADING tests): memory-heavy
+            # but NOT CPU-training and has no module-scoped trained fixtures. Keep -n auto +
+            # worksteal (proven green in #1057): loading-bound wants max test parallelism,
+            # and worksteal sidesteps the loadfile replacement-worker KeyError.
             echo "paths=tests/test_app*.py" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src.serving --cov=src" >> "$GITHUB_OUTPUT"
             echo "nproc=auto" >> "$GITHUB_OUTPUT"
+            echo "threads=1" >> "$GITHUB_OUTPUT"
             echo "dist=worksteal" >> "$GITHUB_OUTPUT"
           elif [ "$shard" = "shared" ]; then
-            # tests/ root + shared/batch/scripts; ignore the per-position dirs (own
-            # shards) AND the serving suite (now the `serving` shard). Lighter now the
-            # serving suite moved out; keep worksteal for robustness vs the loadfile
-            # replacement-worker KeyError.
+            # tests/ root + shared/batch/scripts; ignore per-position dirs (own shards) AND
+            # the serving suite (its own shard). The root tests/test_pipeline_e2e.py trains
+            # 6 pipelines (the tail); its module-scoped fixture must stay on ONE worker so
+            # each position trains ONCE -> loadfile (worksteal retrains per worker, which
+            # kept this shard OOMing). Fewer-fatter workers (-n half x 2 threads).
             echo "paths=tests/ --ignore=tests/qb --ignore=tests/rb --ignore=tests/wr --ignore=tests/te --ignore=tests/k --ignore=tests/dst --ignore-glob=tests/test_app*.py" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src" >> "$GITHUB_OUTPUT"
-            echo "nproc=auto" >> "$GITHUB_OUTPUT"
-            echo "dist=worksteal" >> "$GITHUB_OUTPUT"
+            echo "nproc=$half" >> "$GITHUB_OUTPUT"
+            echo "threads=2" >> "$GITHUB_OUTPUT"
+            echo "dist=loadfile" >> "$GITHUB_OUTPUT"
           else
             shard_lower=$(echo "$shard" | tr '[:upper:]' '[:lower:]')
             echo "paths=tests/${shard_lower}/" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src.${shard_lower} --cov=src" >> "$GITHUB_OUTPUT"
-            echo "nproc=auto" >> "$GITHUB_OUTPUT"
+            echo "nproc=$half" >> "$GITHUB_OUTPUT"
+            echo "threads=2" >> "$GITHUB_OUTPUT"
             # Per-position shards have module-scoped fixtures that TRAIN once and compare
-            # across tests in-file (tests/{rb,k,te,dst}/test_regression.py etc.). loadfile
-            # pins a file's tests to one worker (train once); worksteal would retrain per
-            # worker (slow + 60s-timeout risk). Keep loadfile here.
+            # across tests in-file (tests/{rb,k,te,dst}/test_regression.py + test_pipeline_e2e).
+            # loadfile pins a file's tests to one worker (train once); worksteal would retrain
+            # per worker (slow + 60s-timeout risk). Fewer-fatter workers (-n half x 2 threads).
             echo "dist=loadfile" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Show runner CPU topology
+        # Record the GHA runner's real vCPU/physical-core split so the fewer-fatter-worker
+        # math (nproc/threads above) is grounded and future-tunable. Physical-core pinning
+        # is a bare-metal-only optimization (src/benchmarking/parallel_train.physical_cores);
+        # GHA is a hypervised VM, so we just use all vCPUs.
+        run: |
+          echo "nproc=$(nproc)"
+          lscpu | grep -E 'Model name|^CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|Socket\(s\)' || true
+
       - name: Run tests
+        # Training shards run fewer-fatter workers: ${{ steps.shard.outputs.nproc }} xdist
+        # workers x ${{ steps.shard.outputs.threads }} math threads each, so each training
+        # test (incl. the single-test tail) gets `threads` cores and N*T == vCPUs (no
+        # oversubscription). conftest.py reads OMP_NUM_THREADS for the torch intra-op cap.
+        env:
+          OMP_NUM_THREADS: ${{ steps.shard.outputs.threads }}
+          MKL_NUM_THREADS: ${{ steps.shard.outputs.threads }}
+          OPENBLAS_NUM_THREADS: ${{ steps.shard.outputs.threads }}
+          NUMEXPR_NUM_THREADS: ${{ steps.shard.outputs.threads }}
+          LGBM_N_JOBS: ${{ steps.shard.outputs.threads }}
         run: >-
           python -m pytest
           ${{ steps.shard.outputs.paths }}
