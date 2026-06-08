@@ -135,6 +135,22 @@ def test_example_spec_resolves_as_dotted():
     assert "+season_recency" in spec.variants
 
 
+def test_history_token_spec_resolves_as_dotted():
+    """The history-token A/B spec imports + resolves and keeps its design shape:
+    both ``+`` arms carry a frame injector and declare ``expect_ridge_identical=
+    False`` (a real feature must move Ridge), and the history arm only *adds* the
+    NN-history token on top of the static arm's mutations."""
+    spec = H.resolve_spec("src.tuning.ab_history_token")
+    assert spec.dotted == "src.tuning.ab_history_token"
+    assert spec.positions == ["RB"]
+    assert set(spec.variants) == {"baseline", "+static", "+static+history"}
+    for name in ("+static", "+static+history"):
+        v = spec.variants[name]
+        assert v.frame_injector is not None
+        assert v.cfg_mutator is not None
+        assert v.expect_ridge_identical is False
+
+
 # --------------------------------------------------------------------------- #
 # cell grid
 # --------------------------------------------------------------------------- #
