@@ -8,6 +8,12 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 
 ## Open
 
+### [PRIORITY] Shared parallel A/B / ablation harness (device-autodetect)
+- **Plan doc:** [todo/ab_harness_priority.md](todo/ab_harness_priority.md) — read first.
+- **What:** Build `src/tuning/ab_harness.py` — one reusable harness that runs the position×variant×seed A/B grid **in parallel** (gated on `detect_platform()`: GPU-launch-bound fan-out on the 5080, 16-physical-core pool with capped BLAS on the 9950X3D; `FF_AB_JOBS` override, CPU-considerate), **artifact-isolated** (chdir+symlink `data/` so it never clobbers served `{pos}/outputs`), with a variant=(cfg-mutator, frame-injector) / metric=fn(result) abstraction and mean±std + Ridge-invariance aggregation. Composes the existing `parallel_train`/`core_pool`/`detect_platform` primitives — don't reinvent.
+- **Why:** the 2026-06-08 role-inheritance A/B was hand-rolled, **sequential** (5080 + 14 cores idle), and **clobbered the served RB artifacts 3×**. AGENTS.md now mandates the harness for A/Bs/ablations.
+- **Status:** planned, not built. Priority.
+
 ### [REFACTOR] Serving `app.py` decomposition — split the 3085-line monolith into modules
 - **Spec:** [todo/serving-decomposition.md](todo/serving-decomposition.md) — target module layout, the ~137-monkeypatch repoint constraint (the reason this is more than a code move), per-increment plan, and the local test invocation that avoids the `-n auto` xdist crash.
 - **What:** Decompose `src/serving/app.py` (3085 LOC, 18 routes) into `serialization.py` (done) + `metadata.py` / `state.py` / `wiki.py` / `core.py` / `comparison.py` / `benchmark_history.py` + a routes `Blueprint` + a composition-root `app.py` that re-exports the 8 `from src.serving.app import …` names. Pure behavior-preserving relocation, guarded by the 235-test serving suite (`tests/test_app*.py`); no training-path files → no retrain.
