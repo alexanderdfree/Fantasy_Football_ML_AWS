@@ -122,6 +122,32 @@ class TestComputeWRRates:
         assert len(shares) == 3
         assert all(0.4 <= s <= 0.6 for s in shares)
 
+    def test_team_target_share_stint_aware_on_trade(self):
+        """#674: the 3-week team-WR-target-share denominator must reset on a
+        mid-season trade, not mix the old and new team's WR-target volume.
+
+        WR_A plays weeks 1-4 on KC alongside teammate WR_B (each 8 targets →
+        KC WR total = 16/week, WR_A share ≈ 0.5), then is traded to SF for
+        weeks 5-7 where he's the lone WR (SF WR total = 8/week, share = 1.0).
+        At week 7 the rolling window (shift(1) → weeks 5,6) lies entirely
+        inside the SF stint, so the stint-aware share is exactly 1.0. The old
+        ``player×season`` grouping spanned the trade (window weeks 4,5,6 →
+        player 24 / team 16+8+8=32 = 0.75), so this value separates the fix
+        from the bug.
+        """
+        wr_a_kc = make_wr_player_games("WR_A", season=2023, n_weeks=4, targets=8, recent_team="KC")
+        wr_a_sf = make_wr_player_games("WR_A", season=2023, n_weeks=3, targets=8, recent_team="SF")
+        wr_a_sf["week"] = [5, 6, 7]
+        wr_b_kc = make_wr_player_games("WR_B", season=2023, n_weeks=4, targets=8, recent_team="KC")
+        df = pd.concat([wr_a_kc, wr_a_sf, wr_b_kc], ignore_index=True)
+        _compute_features(df)
+
+        a = df[df["player_id"] == "WR_A"].sort_values("week")
+        wk7 = a[a["week"] == 7]["team_wr_target_share_L3"].iloc[0]
+        # Stint-aware: window {5,6} fully inside the SF stint → 16/16 = 1.0.
+        # (A non-stint denominator would give 0.75, mixing KC's wk4 total.)
+        assert pytest.approx(wk7, abs=1e-9) == 1.0
+
 
 @pytest.mark.unit
 class TestFullTrainTeamTotals:
