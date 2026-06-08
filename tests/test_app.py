@@ -153,6 +153,8 @@ class TestPredictions:
             "actual",
             "ridge_pred",
             "nn_pred",
+            "nflcom_pred",
+            "rotowire_pred",
             "headshot",
         }
         assert expected_keys.issubset(row.keys())
@@ -491,10 +493,10 @@ class TestScoringFormats:
             if p["player_id"] == sample_row["player_id"] and p["week"] == int(sample_row["week"])
         )
         assert target_player["actual"] == pytest.approx(round(sample_row[actual_col], 2))
-        for prefix in ("ridge", "nn", "attn_nn", "lgbm"):
+        for prefix in ("ridge", "nn", "attn_nn", "lgbm", "nflcom", "rotowire"):
             expected = sample_row[f"{prefix}_pred_{scoring}"]
             actual = target_player[f"{prefix}_pred"]
-            if expected != expected:  # NaN check (K/DST attn/lgbm)
+            if expected != expected:  # NaN check (missing model/expert coverage)
                 assert actual is None
             else:
                 assert actual == pytest.approx(expected, rel=1e-3)
@@ -522,6 +524,13 @@ class TestScoringFormats:
         # weekly[0] mirrors the first row's actual under this format.
         first_week_row = rows.sort_values("week").iloc[0]
         assert body["weekly"][0]["actual"] == pytest.approx(round(first_week_row[actual_col], 2))
+        for prefix in ("nflcom", "rotowire"):
+            expected = first_week_row[f"{prefix}_pred_{scoring}"]
+            actual = body["weekly"][0][f"{prefix}_pred"]
+            if expected != expected:
+                assert actual is None
+            else:
+                assert actual == pytest.approx(expected, rel=1e-3)
 
     @pytest.mark.parametrize("scoring", ["ppr", "half_ppr", "standard"])
     def test_weekly_accuracy_uses_format_columns(self, client_with_data, scoring):

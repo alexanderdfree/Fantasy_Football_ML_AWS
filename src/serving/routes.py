@@ -27,6 +27,7 @@ from src.serving import benchmark_history, comparison, upcoming_week
 from src.serving.app import app
 from src.serving.metadata import _ALL_POSITIONS, POSITION_INFO
 from src.serving.serialization import (
+    _EXPERT_PRED_PREFIXES,
     _MODEL_PRED_PREFIXES,
     _actual_col,
     _pred_col,
@@ -105,7 +106,16 @@ def api_predictions():
     # whitelist no longer hides the default). (#498)
     if sort_by == "fantasy_points":
         sort_by = "actual"
-    if sort_by in ("actual", "ridge_pred", "nn_pred", "attn_nn_pred", "lgbm_pred", "week"):
+    if sort_by in (
+        "actual",
+        "ridge_pred",
+        "nn_pred",
+        "attn_nn_pred",
+        "lgbm_pred",
+        "nflcom_pred",
+        "rotowire_pred",
+        "week",
+    ):
         rows.sort(key=lambda x: x.get(sort_by) or 0, reverse=reverse)
     else:
         rows.sort(key=lambda x: x.get("actual") or 0, reverse=reverse)
@@ -202,7 +212,8 @@ def api_player(player_id):
     info = df.iloc[0]
     actual_col = _actual_col(scoring)
     pred_cols = {prefix: _pred_col(prefix, scoring) for prefix in _MODEL_PRED_PREFIXES}
-    weekly_cols = ["week", actual_col, *pred_cols.values()]
+    expert_cols = {prefix: _pred_col(prefix, scoring) for prefix in _EXPERT_PRED_PREFIXES}
+    weekly_cols = ["week", actual_col, *pred_cols.values(), *expert_cols.values()]
     weekly_cols = [c for c in weekly_cols if c in df.columns]
     weekly = [
         {
@@ -212,6 +223,8 @@ def api_player(player_id):
             "nn_pred": _safe_num(r.get(pred_cols["nn"])),
             "attn_nn_pred": _safe_num(r.get(pred_cols["attn_nn"])),
             "lgbm_pred": _safe_num(r.get(pred_cols["lgbm"])),
+            "nflcom_pred": _safe_num(r.get(expert_cols["nflcom"])),
+            "rotowire_pred": _safe_num(r.get(expert_cols["rotowire"])),
         }
         for r in df[weekly_cols].to_dict(orient="records")
     ]

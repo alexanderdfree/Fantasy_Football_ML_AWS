@@ -280,6 +280,8 @@ def boot_env(tmp_path, monkeypatch):
             dst_test,
         ),
     )
+    monkeypatch.setattr(core, "load_nflcom_with_gsis_id", lambda seasons: pd.DataFrame())
+    monkeypatch.setattr(core, "load_sleeper_with_gsis_id", lambda seasons: pd.DataFrame())
 
     # Reset the module cache so _load_base_data_locked actually runs (the
     # early-return on _cache["base_loaded"] would otherwise skip everything).
@@ -348,18 +350,25 @@ class TestLoadBaseDataLocked:
             f"missing identifier cols: {required_identifier_cols - set(results.columns)}"
         )
 
-        # Per-model per-format pred columns initialized in _load_base_data_locked
-        for prefix in ("ridge", "nn", "attn_nn", "lgbm"):
+        # Per-model and per-expert per-format pred columns initialized in _load_base_data_locked
+        for prefix in ("ridge", "nn", "attn_nn", "lgbm", "nflcom", "rotowire"):
             for fmt in ("ppr", "half_ppr", "standard"):
                 col = f"{prefix}_pred_{fmt}"
                 assert col in results.columns, f"missing pred column {col}"
 
         # Legacy unsuffixed alias columns (PPR aliases kept for old tests/code)
-        for col in ("ridge_pred", "nn_pred", "attn_nn_pred", "lgbm_pred"):
+        for col in (
+            "ridge_pred",
+            "nn_pred",
+            "attn_nn_pred",
+            "lgbm_pred",
+            "nflcom_pred",
+            "rotowire_pred",
+        ):
             assert col in results.columns
 
     def test_pred_columns_initialized_to_expected_sentinel_values(self, boot_env):
-        """ALL four model pred columns init to NaN (audit-320 F33). Previously
+        """ALL model/expert pred columns init to NaN (audit-320 F33). Previously
         ridge/nn defaulted to 0.0 while attn_nn/lgbm defaulted to NaN —
         inconsistent failure semantics that let a failed ridge/nn load silently
         serve 0.0 as if it were a real prediction (and skew overall MAE). NaN is
@@ -374,10 +383,14 @@ class TestLoadBaseDataLocked:
             assert results[f"nn_pred_{fmt}"].isna().all()
             assert results[f"attn_nn_pred_{fmt}"].isna().all()
             assert results[f"lgbm_pred_{fmt}"].isna().all()
+            assert results[f"nflcom_pred_{fmt}"].isna().all()
+            assert results[f"rotowire_pred_{fmt}"].isna().all()
         assert results["ridge_pred"].isna().all()
         assert results["nn_pred"].isna().all()
         assert results["attn_nn_pred"].isna().all()
         assert results["lgbm_pred"].isna().all()
+        assert results["nflcom_pred"].isna().all()
+        assert results["rotowire_pred"].isna().all()
 
     def test_splits_dict_keys_cover_all_six_positions(self, boot_env):
         """``_cache["splits"]`` is keyed by every position; each value is a

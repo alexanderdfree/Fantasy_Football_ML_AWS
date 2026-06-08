@@ -144,15 +144,12 @@
                         <label>Min Proj. Pts</label>
                         <input type="number" id="min-points-filter" min="0" step="any" placeholder="0" inputmode="decimal">
                     </div>
-                    <div class="filter-group">
-                        <label>Model</label>
-                        <select id="model-display">
-                            <option value="all">All Models</option>
-                            <option value="ridge">Ridge Regression</option>
-                            <option value="nn">Neural Network</option>
-                            <option value="attn_nn">Attention NN</option>
-                            <option value="lgbm">LightGBM</option>
-                        </select>
+                    <div class="filter-group column-filter-group">
+                        <label>Columns</label>
+                        <div class="column-filter" id="column-filter">
+                            <button type="button" id="column-filter-button" class="column-filter-button" aria-haspopup="true" aria-expanded="false">Columns</button>
+                            <div class="column-filter-menu" id="column-filter-menu" hidden></div>
+                        </div>
                     </div>
                     <div class="filter-meta">
                         <span class="meta-badge">2025 Season</span>
@@ -173,34 +170,7 @@
             <!-- Player Table -->
             <div class="table-container">
                 <table id="predictions-table">
-                    <thead>
-                        <tr>
-                            <th class="col-rank">#</th>
-                            <th class="col-player sortable" data-sort="name">Player <span class="sort-arrow"></span></th>
-                            <th class="col-pos sortable" data-sort="position">Pos <span class="sort-arrow"></span></th>
-                            <th class="col-team sortable" data-sort="team">Team <span class="sort-arrow"></span></th>
-                            <th class="col-week sortable" data-sort="week">Wk <span class="sort-arrow"></span></th>
-                            <th class="col-actual sortable active-sort" data-sort="actual">
-                                Actual <span class="sort-arrow">&#9660;</span>
-                            </th>
-                            <th class="col-pred sortable ridge-col" data-sort="ridge_pred">
-                                Ridge <span class="sort-arrow"></span>
-                            </th>
-                            <th class="col-pred sortable nn-col" data-sort="nn_pred">
-                                NN <span class="sort-arrow"></span>
-                            </th>
-                            <th class="col-pred sortable attn-nn-col" data-sort="attn_nn_pred">
-                                Attn NN <span class="sort-arrow"></span>
-                            </th>
-                            <th class="col-pred sortable lgbm-col" data-sort="lgbm_pred">
-                                LGBM <span class="sort-arrow"></span>
-                            </th>
-                            <th class="col-delta sortable ridge-col" data-sort="ridge_err">Ridge Err <span class="sort-arrow"></span></th>
-                            <th class="col-delta sortable nn-col" data-sort="nn_err">NN Err <span class="sort-arrow"></span></th>
-                            <th class="col-delta sortable attn-nn-col" data-sort="attn_err">Attn Err <span class="sort-arrow"></span></th>
-                            <th class="col-delta sortable lgbm-col" data-sort="lgbm_err">LGBM Err <span class="sort-arrow"></span></th>
-                        </tr>
-                    </thead>
+                    <thead id="predictions-head"></thead>
                     <tbody id="predictions-body">
                     </tbody>
                 </table>

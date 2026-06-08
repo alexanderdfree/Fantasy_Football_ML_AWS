@@ -29,6 +29,8 @@ import src.dst.features as dst_features
 import src.k.data as k_data
 import src.k.features as k_features
 import src.serving.app as app_pkg
+from src.analysis.analysis_nflcom_baseline import _project_nflcom_to_ppr
+from src.analysis.sleeper_loader import load_sleeper_with_gsis_id
 from src.config import (
     CACHE_DIR,
     MIN_GAMES_PER_SEASON,
@@ -40,6 +42,7 @@ from src.config import (
     VAL_SEASONS,
 )
 from src.data.loader import compute_fantasy_points
+from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.features.engineer import (
     OPP_ATTN_PER_GAME_BUILDERS,
     build_game_history_arrays,
@@ -48,6 +51,7 @@ from src.features.engineer import (
 )
 from src.serving.metadata import _ALL_POSITIONS, _ALL_TARGETS, _APPENDED_POSITIONS
 from src.serving.serialization import (
+    _EXPERT_PRED_PREFIXES,
     _MODEL_PRED_COLUMNS,
     _MODEL_PRED_PREFIXES,
     _VALID_SCORING,
@@ -56,7 +60,12 @@ from src.serving.serialization import (
     _records_to_player_rows,
     _safe_num,
 )
-from src.shared.aggregate_targets import TARGET_UNITS, predictions_to_fantasy_points
+from src.shared.aggregate_targets import (
+    DST_TARGETS,
+    POSITION_TARGET_MAP,
+    TARGET_UNITS,
+    predictions_to_fantasy_points,
+)
 from src.shared.artifact_integrity import (
     assert_scaler_matches,
     read_scaler_meta,
@@ -115,6 +124,146 @@ def _load_dst_splits():
     val = dst_df[dst_df["season"].isin(VAL_SEASONS)].copy()
     test = dst_df[dst_df["season"].isin(TEST_SEASONS)].copy()
     return train, val, test
+
+
+_EXPERT_KEY_COLS = ["player_id", "season", "week"]
+
+
+def _empty_expert_frame(value_col: str) -> pd.DataFrame:
+    return pd.DataFrame(columns=[*_EXPERT_KEY_COLS, value_col])
+
+
+def _project_rotowire_to_fantasy(
+    raw_df: pd.DataFrame | None, pos: str, scoring_format: str
+) -> pd.DataFrame:
+    """Project Sleeper/RotoWire raw-stat rows onto this app's fantasy-point scale."""
+    value_col = "rotowire_pred_total"
+    if raw_df is None or raw_df.empty or pos == "K":
+        return _empty_expert_frame(value_col)
+    if "position" not in raw_df.columns or "player_id" not in raw_df.columns:
+        return _empty_expert_frame(value_col)
+
+    pos_df = raw_df[(raw_df["position"] == pos) & raw_df["player_id"].notna()].copy()
+    if pos_df.empty:
+        return _empty_expert_frame(value_col)
+
+    targets = list(DST_TARGETS) if pos == "DST" else list(POSITION_TARGET_MAP.get(pos, {}))
+    if not targets:
+        return _empty_expert_frame(value_col)
+    pred_dict = {}
+    for target in targets:
+        if target in pos_df.columns:
+            pred_dict[target] = (
+                pd.to_numeric(pos_df[target], errors="coerce").fillna(0.0).to_numpy()
+            )
+        else:
+            pred_dict[target] = np.zeros(len(pos_df), dtype=float)
+
+    out = pos_df[_EXPERT_KEY_COLS].copy()
+    out[value_col] = predictions_to_fantasy_points(pos, pred_dict, scoring_format)
+    return out
+
+
+def _normalize_expert_frame(df: pd.DataFrame, value_col: str) -> pd.DataFrame:
+    """Normalize expert projection keys for a stable left-join onto ``results``."""
+    if df is None or df.empty or value_col not in df.columns:
+        return _empty_expert_frame(value_col)
+    cols = [*_EXPERT_KEY_COLS, value_col]
+    if any(c not in df.columns for c in cols):
+        return _empty_expert_frame(value_col)
+    out = df[cols].copy()
+    out["player_id"] = out["player_id"].astype(str)
+    out["season"] = pd.to_numeric(out["season"], errors="coerce")
+    out["week"] = pd.to_numeric(out["week"], errors="coerce")
+    out[value_col] = pd.to_numeric(out[value_col], errors="coerce")
+    out = out.dropna(subset=["player_id", "season", "week"])
+    out["season"] = out["season"].astype(int)
+    out["week"] = out["week"].astype(int)
+    return out.drop_duplicates(_EXPERT_KEY_COLS, keep="last")
+
+
+def _assign_expert_totals(
+    results: pd.DataFrame, source: str, scoring_format: str, df: pd.DataFrame, value_col: str
+) -> None:
+    projection = _normalize_expert_frame(df, value_col)
+    if projection.empty:
+        return
+
+    keys = results[_EXPERT_KEY_COLS].copy()
+    keys["player_id"] = keys["player_id"].astype(str)
+    keys["season"] = pd.to_numeric(keys["season"], errors="coerce")
+    keys["week"] = pd.to_numeric(keys["week"], errors="coerce")
+    joined = keys.merge(projection, on=_EXPERT_KEY_COLS, how="left", sort=False)
+    values = pd.to_numeric(joined[value_col], errors="coerce")
+    mask = values.notna().to_numpy()
+    if not mask.any():
+        return
+    results.loc[mask, _pred_col(source, scoring_format)] = np.round(
+        values.loc[mask].to_numpy(dtype=np.float64), 2
+    ).astype(np.float32)
+
+
+def _apply_expert_predictions(
+    results: pd.DataFrame,
+    *,
+    nflcom_loader=None,
+    rotowire_loader=None,
+) -> None:
+    """Add optional per-player expert projections to the serving results frame.
+
+    Expert feeds are an auxiliary UI comparison surface. Loader/projection failures
+    leave stable NaN columns instead of breaking model serving.
+    """
+    for source in _EXPERT_PRED_PREFIXES:
+        for fmt in _VALID_SCORING:
+            results[_pred_col(source, fmt)] = np.nan
+        results[f"{source}_pred"] = np.nan
+
+    if results.empty or "season" not in results.columns:
+        return
+    seasons = sorted(
+        pd.to_numeric(results["season"], errors="coerce").dropna().astype(int).unique()
+    )
+    if not seasons:
+        return
+    if nflcom_loader is None:
+        nflcom_loader = load_nflcom_with_gsis_id
+    if rotowire_loader is None:
+        rotowire_loader = load_sleeper_with_gsis_id
+
+    raw_nflcom = None
+    try:
+        raw_nflcom = nflcom_loader(seasons=seasons)
+    except Exception as e:  # noqa: BLE001 - expert data is optional in serving
+        print(f"[experts] NFL.com projections unavailable: {e!r}")
+    if raw_nflcom is not None and (raw_nflcom.empty or "position" not in raw_nflcom.columns):
+        raw_nflcom = None
+
+    raw_rotowire = None
+    try:
+        raw_rotowire = rotowire_loader(seasons)
+    except Exception as e:  # noqa: BLE001 - expert data is optional in serving
+        print(f"[experts] RotoWire projections unavailable: {e!r}")
+    if raw_rotowire is not None and (raw_rotowire.empty or "position" not in raw_rotowire.columns):
+        raw_rotowire = None
+
+    for fmt in _VALID_SCORING:
+        for pos in _ALL_POSITIONS:
+            if raw_nflcom is not None and pos != "DST":
+                try:
+                    nfl = _project_nflcom_to_ppr(raw_nflcom, pos, fmt)
+                    _assign_expert_totals(results, "nflcom", fmt, nfl, "nflcom_pred_total")
+                except Exception as e:  # noqa: BLE001 - one source/position can degrade
+                    print(f"[experts] NFL.com {pos}/{fmt} projection failed: {e!r}")
+            if raw_rotowire is not None and pos != "K":
+                try:
+                    rw = _project_rotowire_to_fantasy(raw_rotowire, pos, fmt)
+                    _assign_expert_totals(results, "rotowire", fmt, rw, "rotowire_pred_total")
+                except Exception as e:  # noqa: BLE001 - one source/position can degrade
+                    print(f"[experts] RotoWire {pos}/{fmt} projection failed: {e!r}")
+
+    for source in _EXPERT_PRED_PREFIXES:
+        results[f"{source}_pred"] = results[_pred_col(source, "ppr")]
 
 
 def _apply_position_models(train, val, test, pos, results):
@@ -748,6 +897,8 @@ def _load_base_data_locked():
         axis=1,
     )
 
+    _apply_expert_predictions(results)
+
     app_pkg._cache["splits"] = {
         "QB": (train, val, test),
         "RB": (train, val, test),
@@ -1203,6 +1354,7 @@ _PREDICTIONS_CACHE_DIR = os.path.join(_REPO_ROOT, "data", "serving_cache")
 _PREDICTIONS_PARQUET = "predictions.parquet"
 _METRICS_JSON = "metrics.json"
 _FINGERPRINT_JSON = "fingerprint.json"
+_PREDICTIONS_CACHE_SCHEMA_VERSION = 2
 # Browser-ready snapshot the frontend hydrates its first paint from (see
 # /api/snapshot + static/js/app.js). Auxiliary to the cache triple above —
 # its absence is non-fatal (frontend falls back to /api/predictions), so it is
@@ -1374,6 +1526,13 @@ def _try_hydrate_from_disk():
         print(f"[predcache] fingerprint read failed: {e!r} — will recompute")
         return False
     live_sha, _ = _compute_models_fingerprint()
+    if stored.get("schema_version") != _PREDICTIONS_CACHE_SCHEMA_VERSION:
+        print(
+            f"[predcache] schema mismatch "
+            f"(cache={stored.get('schema_version')!r}, "
+            f"live={_PREDICTIONS_CACHE_SCHEMA_VERSION}) — will recompute"
+        )
+        return False
     if stored.get("sha256") != live_sha:
         print(
             f"[predcache] fingerprint mismatch "
@@ -1488,7 +1647,14 @@ def _persist_cache_to_disk():
         with open(metrics_tmp, "w") as f:
             json.dump(metrics_payload, f)
         with open(fingerprint_tmp, "w") as f:
-            json.dump({"sha256": sha, "files": files}, f)
+            json.dump(
+                {
+                    "schema_version": _PREDICTIONS_CACHE_SCHEMA_VERSION,
+                    "sha256": sha,
+                    "files": files,
+                },
+                f,
+            )
         os.replace(parquet_tmp, parquet_path)
         os.replace(metrics_tmp, metrics_path)
         os.replace(fingerprint_tmp, fingerprint_path)
