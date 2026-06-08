@@ -33,6 +33,38 @@ codex_main_worktree() {
     | tr -d '\r'
 }
 
+# Best-effort fast-forward of the main/parent checkout's `main` branch to
+# origin/main. GUARDED so it never clobbers another agent's work: the parent can
+# hold a `codex/*` branch with uncommitted WIP (AGENTS.md "Worktree workflow").
+# Skips unless the parent is on `main` with a clean tree; uses `pull --ff-only`
+# so it can never create a merge commit. Echoes ONE status line; always succeeds.
+codex_refresh_parent_main() {
+  local root="$1"
+  local main_wt branch worktree_status short
+  main_wt="$(codex_main_worktree "$root")"
+  if [ -z "$main_wt" ] || [ ! -d "$main_wt" ]; then
+    echo "parent refresh skipped: main checkout not found"
+    return 0
+  fi
+  branch="$(git -C "$main_wt" branch --show-current 2>/dev/null || true)"
+  if [ "$branch" != "main" ]; then
+    echo "parent refresh skipped: $main_wt on '$branch' (not main)"
+    return 0
+  fi
+  worktree_status="$(git -C "$main_wt" status --porcelain 2>/dev/null || true)"
+  if [ -n "$worktree_status" ]; then
+    echo "parent refresh skipped: $main_wt has uncommitted changes"
+    return 0
+  fi
+  if git -C "$main_wt" pull --ff-only --quiet origin main >/dev/null 2>&1; then
+    short="$(git -C "$main_wt" rev-parse --short HEAD 2>/dev/null || true)"
+    echo "parent refresh: $main_wt fast-forwarded to origin/main ($short)"
+  else
+    echo "parent refresh skipped: ff-only pull failed (diverged or offline)"
+  fi
+  return 0
+}
+
 codex_worktrees_dir() {
   printf '%s/worktrees\n' "${CODEX_HOME:-$HOME/.codex}"
 }
@@ -65,7 +97,13 @@ codex_is_env_assignment() {
   [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]]
 }
 
-codex_pr_create_segment_matches() {
+codex_pr_subcommand_segment_matches() {
+  if [ "$#" -lt 1 ]; then
+    return 1
+  fi
+  local subcmd="$1"
+  shift
+
   if [ "$#" -eq 0 ]; then
     return 1
   fi
@@ -110,11 +148,17 @@ codex_pr_create_segment_matches() {
     *) return 1 ;;
   esac
 
-  [ "${words[$((idx + 1))]}" = "pr" ] && [ "${words[$((idx + 2))]}" = "create" ]
+  [ "${words[$((idx + 1))]}" = "pr" ] && [ "${words[$((idx + 2))]}" = "$subcmd" ]
 }
 
-codex_command_invokes_gh_pr_create() {
-  local cmd="$1"
+# Back-compat wrapper: `gh pr create` segment matcher.
+codex_pr_create_segment_matches() {
+  codex_pr_subcommand_segment_matches create "$@"
+}
+
+codex_command_invokes_gh_pr_subcommand() {
+  local subcmd="$1"
+  local cmd="$2"
   local ch next quote="" token=""
   local escaped=0
   local in_comment=0
@@ -127,7 +171,7 @@ codex_command_invokes_gh_pr_create() {
     if [ "$in_comment" -eq 1 ]; then
       if [ "$ch" = $'\n' ]; then
         in_comment=0
-        if [ "${#words[@]}" -gt 0 ] && codex_pr_create_segment_matches "${words[@]}"; then
+        if [ "${#words[@]}" -gt 0 ] && codex_pr_subcommand_segment_matches "$subcmd" "${words[@]}"; then
           return 0
         fi
         words=()
@@ -171,7 +215,7 @@ codex_command_invokes_gh_pr_create() {
           words+=("$token")
           token=""
         fi
-        if [ "${#words[@]}" -gt 0 ] && codex_pr_create_segment_matches "${words[@]}"; then
+        if [ "${#words[@]}" -gt 0 ] && codex_pr_subcommand_segment_matches "$subcmd" "${words[@]}"; then
           return 0
         fi
         words=()
@@ -187,7 +231,7 @@ codex_command_invokes_gh_pr_create() {
           words+=("$token")
           token=""
         fi
-        if [ "${#words[@]}" -gt 0 ] && codex_pr_create_segment_matches "${words[@]}"; then
+        if [ "${#words[@]}" -gt 0 ] && codex_pr_subcommand_segment_matches "$subcmd" "${words[@]}"; then
           return 0
         fi
         words=()
@@ -203,7 +247,7 @@ codex_command_invokes_gh_pr_create() {
           words+=("$token")
           token=""
         fi
-        if [ "${#words[@]}" -gt 0 ] && codex_pr_create_segment_matches "${words[@]}"; then
+        if [ "${#words[@]}" -gt 0 ] && codex_pr_subcommand_segment_matches "$subcmd" "${words[@]}"; then
           return 0
         fi
         words=()
@@ -222,7 +266,16 @@ codex_command_invokes_gh_pr_create() {
     words+=("$token")
   fi
 
-  [ "${#words[@]}" -gt 0 ] && codex_pr_create_segment_matches "${words[@]}"
+  [ "${#words[@]}" -gt 0 ] && codex_pr_subcommand_segment_matches "$subcmd" "${words[@]}"
+}
+
+# Public matchers: back-compat `create` + new `merge`.
+codex_command_invokes_gh_pr_create() {
+  codex_command_invokes_gh_pr_subcommand create "$1"
+}
+
+codex_command_invokes_gh_pr_merge() {
+  codex_command_invokes_gh_pr_subcommand merge "$1"
 }
 
 codex_patch_paths() {

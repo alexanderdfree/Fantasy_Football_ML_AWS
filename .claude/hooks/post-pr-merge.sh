@@ -1,0 +1,43 @@
+#!/bin/bash
+# PostToolUse hook: after `gh pr merge`, fast-forward the main/parent checkout's
+# `main` branch to origin/main so it tracks the squash-merge that just landed.
+# The parent never self-updates — worktrees branch from origin/main and
+# `gh pr merge` lands on the remote, so the parent's local `main` drifts stale.
+#
+# GUARDED in claude_refresh_parent_main: skips when the parent holds a non-main
+# branch or has uncommitted WIP (it can be another agent's `codex/*` checkout),
+# and uses `pull --ff-only` so it can never create a merge commit or clobber
+# work. Best-effort: a failed/skipped refresh never blocks anything.
+set -eu
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.claude/hooks/lib.sh
+. "$script_dir/lib.sh"
+
+jq_bin="$(claude_find_jq)" || exit 0  # no jq → cannot emit context; skip
+
+input=$(cat)
+cmd=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.command // empty')
+
+# Only fire on an ACTUAL `gh pr merge` invocation. The shell-parser-aware matcher
+# strips quotes/heredocs/comments and splits on ; | & before testing, so quoting
+# the literal text 'gh pr merge' (a log grep, an echo, a `#` comment) no longer
+# triggers a parent refresh.
+if ! claude_command_invokes_gh_pr_merge "$cmd"; then
+  exit 0
+fi
+
+# Run from a path inside the repo so `git worktree list` resolves the parent.
+cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
+status=$(claude_refresh_parent_main || true)
+[ -n "$status" ] || exit 0
+
+# Surface the outcome to the turn that ran the merge.
+"$jq_bin" -n --arg ctx "$status" '{
+  hookSpecificOutput: {
+    hookEventName: "PostToolUse",
+    additionalContext: $ctx
+  }
+}'
+
+exit 0

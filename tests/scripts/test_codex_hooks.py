@@ -155,8 +155,50 @@ def _current_branch(path: Path) -> str:
     ).stdout.strip()
 
 
-def _matcher_result(command: str) -> bool:
-    script = f'. "{PROJECT_ROOT / ".codex/hooks/lib.sh"}"; codex_command_invokes_gh_pr_create "$1"'
+def _head(path: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+
+
+@pytest.fixture
+def merge_scenario_codex(launcher_repo: tuple[Path, Path], tmp_path: Path) -> tuple[Path, Path]:
+    """launcher_repo (main + bare origin) + a feature worktree, with origin/main
+    advanced one commit beyond the parent — the post-pr-merge fast-forward case."""
+    main, remote = launcher_repo
+    worktree = tmp_path / "feature"
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-b", "feature", str(worktree), "main"],
+        check=True,
+        capture_output=True,
+    )
+    other = tmp_path / "other"
+    # -b main: origin/main exists (launcher_repo pushed it), but the bare's HEAD
+    # may be `master` in CI, which would otherwise leave `other` off `main`.
+    subprocess.run(
+        ["git", "clone", "-b", "main", str(remote), str(other)], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(other), "config", "user.email", "codex-hooks@example.test"], check=True
+    )
+    subprocess.run(["git", "-C", str(other), "config", "user.name", "Codex Hooks"], check=True)
+    subprocess.run(["git", "-C", str(other), "config", "commit.gpgsign", "false"], check=True)
+    (other / "NEW.md").write_text("more\n")
+    subprocess.run(["git", "-C", str(other), "add", "NEW.md"], check=True)
+    subprocess.run(
+        ["git", "-C", str(other), "commit", "-m", "advance"], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(other), "push", "origin", "main"], check=True, capture_output=True
+    )
+    return main, worktree
+
+
+def _matcher_result(command: str, fn: str = "codex_command_invokes_gh_pr_create") -> bool:
+    script = f'. "{PROJECT_ROOT / ".codex/hooks/lib.sh"}"; {fn} "$1"'
     result = subprocess.run(
         [_bash(), "-c", script, "codex-hook-test", command],
         text=True,
@@ -164,6 +206,10 @@ def _matcher_result(command: str) -> bool:
         check=False,
     )
     return result.returncode == 0
+
+
+def _merge_matcher_result(command: str) -> bool:
+    return _matcher_result(command, "codex_command_invokes_gh_pr_merge")
 
 
 @pytest.mark.parametrize(
@@ -193,6 +239,35 @@ def test_pr_create_matcher_accepts_real_top_level_invocations(command: str):
 )
 def test_pr_create_matcher_rejects_quoted_or_argument_text(command: str):
     assert not _matcher_result(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gh pr merge 5 --squash",
+        "gh pr merge 12 --squash --admin",
+        "git status --short && gh pr merge 7 --squash",
+        "env GH_TOKEN=example gh pr merge 7 --squash",
+        "/opt/homebrew/bin/gh pr merge 7 --squash",
+    ],
+)
+def test_pr_merge_matcher_accepts_real_top_level_invocations(command: str):
+    assert _merge_matcher_result(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo gh pr merge",
+        'rg -n "gh pr merge" .codex',
+        "# gh pr merge\n git status --short",
+        "git status --short",
+        "bash -lc 'gh pr merge 5 --squash'",
+        "gh pr create --fill",
+    ],
+)
+def test_pr_merge_matcher_rejects_quoted_or_argument_text(command: str):
+    assert not _merge_matcher_result(command)
 
 
 def test_codex_review_quiet_filters_known_loader_noise(tmp_path: Path):
@@ -511,3 +586,80 @@ class TestCodexHooks:
         assert "post-session-critique" in additional_context
         assert "Run this Codex post-create workflow now, in order" not in additional_context
         assert "1. Rebase onto latest main" not in additional_context
+
+    def test_post_pr_merge_hook_ignores_non_merge_commands(self):
+        for command in (
+            "git status --short",
+            "echo gh pr merge",
+            'rg -n "gh pr merge" .codex',
+            "# gh pr merge\n git status --short",
+            "bash -lc 'gh pr merge 1 --squash'",
+        ):
+            result = _run_hook(
+                ".codex/hooks/post-pr-merge.sh",
+                {"cwd": str(PROJECT_ROOT), "tool_input": {"command": command}},
+                PROJECT_ROOT,
+            )
+
+            assert result.returncode == 0
+            assert result.stdout == ""
+            assert result.stderr == ""
+
+    def test_post_pr_merge_fast_forwards_clean_main_parent(
+        self, merge_scenario_codex: tuple[Path, Path]
+    ):
+        main, worktree = merge_scenario_codex
+        before = _head(main)
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 1 --squash"}},
+            worktree,
+        )
+
+        assert result.returncode == 0, result.stderr
+        context = json.loads(result.stdout)["hookSpecificOutput"]
+        assert context["hookEventName"] == "PostToolUse"
+        assert "fast-forwarded" in context["additionalContext"]
+        after = _head(main)
+        assert after != before
+        assert (
+            after
+            == subprocess.run(
+                ["git", "-C", str(main), "rev-parse", "origin/main"],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.strip()
+        )
+
+    def test_post_pr_merge_skips_dirty_parent(self, merge_scenario_codex: tuple[Path, Path]):
+        main, worktree = merge_scenario_codex
+        (main / "README.md").write_text("dirty\n")
+        before = _head(main)
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 2 --squash"}},
+            worktree,
+        )
+
+        assert result.returncode == 0
+        context = json.loads(result.stdout)["hookSpecificOutput"]
+        assert "uncommitted changes" in context["additionalContext"]
+        assert _head(main) == before
+
+    def test_post_pr_merge_skips_non_main_parent(self, merge_scenario_codex: tuple[Path, Path]):
+        main, worktree = merge_scenario_codex
+        subprocess.run(
+            ["git", "-C", str(main), "checkout", "-b", "codex/wip"],
+            check=True,
+            capture_output=True,
+        )
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 3 --squash"}},
+            worktree,
+        )
+
+        assert result.returncode == 0
+        context = json.loads(result.stdout)["hookSpecificOutput"]
+        assert "not main" in context["additionalContext"]

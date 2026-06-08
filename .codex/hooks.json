@@ -63,6 +63,11 @@
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/post-pr-create.sh\"",
             "statusMessage": "Loading post-PR workflow"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/post-pr-merge.sh\"",
+            "statusMessage": "Refreshing parent main"
           }
         ]
       }
