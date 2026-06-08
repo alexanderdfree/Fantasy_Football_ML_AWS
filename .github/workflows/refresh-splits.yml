@@ -40,16 +40,18 @@ on:
   push:
     branches: [main]
     # Auto-fire on any merge that *could* change the required column set in
-    # data/splits/*.parquet. The smart-skip step inside the job reads the
-    # current S3 splits' parquet schema and short-circuits if S3 already has
-    # every column the configs ask for, so a path-filtered fire on a PR that
-    # only edited a hyperparameter / docstring / comment costs ~1-2 min of
-    # CI (checkout + uv install + footer read), not the full ~10 min regen.
+    # data/splits/*.parquet. Every triggered run does the full ~10 min regen —
+    # there is intentionally no "is regen needed?" smart-skip layer (see the
+    # header comment above for why a schema-diff short-circuit was permanently
+    # over-strict and removed in PR #334), so a path-filtered fire on a PR that
+    # only edited a hyperparameter / docstring / comment still pays the full
+    # regen.
     #
     # Skill-position configs only (QB/RB/WR/TE) — K and DST have their own
     # data paths (src/k/data.py, src/dst/data.py) that don't touch
     # data/splits/, so their config edits are out of scope for this
-    # workflow. The smart-skip step below mirrors the same scoping.
+    # workflow. The "Verify engineered columns present" step below mirrors the
+    # same scoping.
     #
     paths:
       - "src/qb/config.py"
@@ -238,6 +240,13 @@ jobs:
               | set(TEAM_BOX_SCORE_FEATURES)
               | set(OPP_BOX_SCORE_FEATURES)
           )
+          # ``spread_line`` / ``div_game`` are intermediate schedule-merge
+          # columns (see src/shared/weather_features.py): NOT in
+          # WEATHER_FEATURES_ALL, materialized at runtime and not carried into
+          # the skill-position parquet whitelists. No QB/RB/WR/TE config lists
+          # them today, so this is inert — a defensive allowlist entry so the
+          # check can't false-positive if a whitelist ever references them.
+          runtime_added |= {"spread_line", "div_game"}
 
           # Per-position cols computed by ``add_features_fn`` but
           # categorised in ``include_features`` under a non-"specific"

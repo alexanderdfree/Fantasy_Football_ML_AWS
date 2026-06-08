@@ -26,6 +26,7 @@ from src.rb.config import POSITION_CONFIG
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
 HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 TARGETS = POSITION_CONFIG.targets
+GATED_TARGETS = POSITION_CONFIG.gated_targets
 # Mirror production's flat-NN head_losses downgrade (hurdle_* -> "huber" when the
 # model has no GatedHead; poisson_nll/mse kept) — see src/shared/pipeline.py. The
 # regression test trains that same non-gated flat NN, so exercise its real loss
@@ -194,6 +195,7 @@ def trained_nn(regression_data):
         loss_weights=LOSS_WEIGHTS,
         huber_deltas=HUBER_DELTAS,
         head_losses=HEAD_LOSSES,
+        gated_targets=GATED_TARGETS,
     )
 
     trainer = MultiHeadTrainer(

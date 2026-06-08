@@ -8,6 +8,14 @@ from src.rb.config import POSITION_CONFIG
 
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
 TARGETS = POSITION_CONFIG.targets
+GATED_TARGETS = POSITION_CONFIG.gated_targets
+# Mirror production's flat-NN head_losses downgrade (hurdle_* -> "huber" when the
+# model has no GatedHead; poisson_nll/mse kept) — see src/shared/pipeline.py and
+# tests/rb/test_regression.py. The fumbles_lost head stays poisson_nll either way.
+HEAD_LOSSES = {
+    name: ("huber" if lt in ("hurdle_negbin", "hurdle_poisson") else lt)
+    for name, lt in POSITION_CONFIG.head_losses.items()
+}
 from src.shared.neural_net import MultiHeadNet
 from src.shared.training import (
     MultiHeadTrainer,
@@ -90,6 +98,31 @@ class TestMultiTargetLoss:
         _, components = loss_fn(preds, targets)
         assert "loss_gate_rushing_tds" in components
         assert "loss_gate_receiving_tds" in components
+
+    def test_fumbles_lost_head_loss_emitted(self):
+        """RB's ``fumbles_lost`` head (Poisson NLL, ungated) emits a finite loss
+        component under the production head-loss map.
+
+        Guards the sparse fumbles head specifically: it's the one count target
+        NOT in ``gated_targets``, so its loss flows only through the per-target
+        ``loss_{name}`` path, not the gate path. Mirrors
+        ``test_dual_gate_losses_emitted`` but for the value-loss surface."""
+        assert HEAD_LOSSES["fumbles_lost"] == "poisson_nll"
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights=LOSS_WEIGHTS,
+            head_losses=HEAD_LOSSES,
+            gated_targets=GATED_TARGETS,
+        )
+        # PoissonNLLLoss(log_input=False) needs non-negative rates + counts.
+        preds = {t: torch.rand(5, requires_grad=True) for t in TARGETS}
+        for gated in GATED_TARGETS:
+            preds[f"{gated}_gate_logit"] = torch.randn(5, requires_grad=True)
+        targets = {k: torch.randint(0, 3, (5,)).float() for k in TARGETS}
+        combined, components = loss_fn(preds, targets)
+        assert "loss_fumbles_lost" in components
+        assert np.isfinite(components["loss_fumbles_lost"])
+        assert np.isfinite(combined.item())
 
 
 # ---------------------------------------------------------------------------

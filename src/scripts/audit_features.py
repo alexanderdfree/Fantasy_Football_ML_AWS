@@ -218,7 +218,9 @@ def _audit_depth_chart(
         return
 
     print("\n  Distribution per position (% rows at each rank):")
-    print(f"    {'pos':<6}{'rank=1':>9}{'rank=2':>9}{'rank=3':>9}{'NaN':>9}{'rows':>12}")
+    print(
+        f"    {'pos':<6}{'rank=1':>9}{'rank=2':>9}{'rank=3':>9}{'rank=-1':>9}{'NaN':>9}{'rows':>12}"
+    )
     for pos in ["QB", "RB", "WR", "TE"]:
         sub = full[full["position"] == pos]
         if len(sub) == 0:
@@ -228,15 +230,20 @@ def _audit_depth_chart(
         pct1 = 100.0 * (rank == 1.0).sum() / n
         pct2 = 100.0 * (rank == 2.0).sum() / n
         pct3 = 100.0 * (rank == 3.0).sum() / n
+        # The loader coerces depth-chart-absent rows to the -1 sentinel
+        # (loader.py:490, ``fillna(-1)``), not NaN — so the missing-depth
+        # population lives in this bucket, and the NaN column is ~0 post-merge.
+        pct_neg1 = 100.0 * (rank == -1.0).sum() / n
         print(
             f"    {pos:<6}{pct1:8.2f}%{pct2:8.2f}%{pct3:8.2f}%"
-            f"{rank.isna().mean() * 100:8.2f}%{n:>12,}"
+            f"{pct_neg1:8.2f}%{rank.isna().mean() * 100:8.2f}%{n:>12,}"
         )
 
     print(
-        "\n  ↑ rank=3 includes both real third-string AND the loader's "
-        "fillna(3) default — high rank=3 % suggests merge misses or "
-        "non-numeric depth_team coercion."
+        "\n  ↑ rank=-1 is the loader's depth-chart-absent sentinel "
+        "(``fillna(-1)``, loader.py:490) — high rank=-1 % suggests merge "
+        "misses or non-numeric depth_team coercion (NaN is ~0 post-merge "
+        "because the fillna runs upstream)."
     )
 
     print("\n  Non-determinism surface area on the raw depth_charts cache:")

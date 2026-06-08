@@ -9,14 +9,21 @@ dataclass on each position's config module.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
+from src.shared.neural_net import (
+    MultiHeadNetWithHistory,
+    MultiHeadNetWithNestedHistory,
+)
 from src.shared.position_config import PositionConfig
 from src.shared.registry import (
     ALL_POSITIONS,
     CPU_ONLY_POSITIONS,
     INFERENCE_REGISTRY,
     _flat_attn_kwargs_static,
+    _nested_attn_kwargs_static,
     accepts_dataframes,
     get_config,
     get_inference_spec,
@@ -211,3 +218,121 @@ def test_flat_attn_kwargs_static_threads_non_negative_targets():
     nn = {"a", "b"}
     kwargs = _flat_attn_kwargs_static(_make_pc(nn_non_negative_targets=nn))
     assert kwargs["non_negative_targets"] == nn
+
+
+# --------------------------------------------------------------------------
+# Factory <-> registry-builder parity (audit #362 F9/F10).
+#
+# ``get_inference_spec`` rebuilds each served attention NN from
+# ``POSITION_CONFIG`` via ``_flat_attn_kwargs_static`` /
+# ``_nested_attn_kwargs_static``. The constructors those kwargs feed
+# (``MultiHeadNetWithHistory`` / ``MultiHeadNetWithNestedHistory`` — the
+# classes the ``build_multihead_net*`` factories forward to) accept knobs like
+# ``learn_attn_temperature``/``history_dropout``/``use_swiglu_encoder``/
+# ``attn_entropy_coeff``/``use_alibi_bias``/``self_attn_*``/
+# ``condition_queries_on_static`` that are currently latent (no PositionConfig
+# field drives them, so they sit at their constructor defaults).
+#
+# The drift these tests guard: someone promotes one of those latent knobs to a
+# PositionConfig field but forgets to forward it through the registry builder,
+# so production training (which reads the cfg dict in ``build_multihead_net*``)
+# diverges from serving (which reads the registry builder output) — the served
+# state_dict would no longer match. The assertion: every PositionConfig field
+# that maps to a constructor parameter MUST appear in the builder's output
+# keys. Both spellings are checked — the direct name overlap the task names
+# (``set(fields) & set(ctor_params)``) AND the ``attn_``-prefixed convention
+# (PositionConfig ``attn_d_model`` -> constructor ``d_model``), so the guard
+# covers the attention kwargs rather than only the two names that happen to be
+# spelled identically.
+# --------------------------------------------------------------------------
+
+
+def _ctor_param_names(ctor) -> set[str]:
+    """Keyword parameter names accepted by a net constructor (drops ``self``)."""
+    return set(inspect.signature(ctor.__init__).parameters) - {"self"}
+
+
+def _config_fields_mapped_to_ctor(ctor) -> set[str]:
+    """PositionConfig fields that map to a parameter of ``ctor``.
+
+    A field maps either by identical name (``gated_targets`` ->
+    ``gated_targets``) or by stripping the ``attn_`` prefix the config uses for
+    attention knobs (``attn_d_model`` -> ``d_model``). Returns the
+    *PositionConfig field names* so the failure message names the field a
+    contributor would have just added.
+
+    Constructor params ending in ``_dim`` (``kick_dim``/``opp_dim``/
+    ``history_dim``/``static_dim``/``input_dim``) are excluded: those are the
+    net's data-derived feature dimensions, injected at build time from the
+    actual array shapes (see ``build_multihead_net*``), NOT static knobs the
+    ``_*_attn_kwargs_static`` builders forward from config. K's config carries a
+    cached ``attn_kick_dim``, so without this exclusion the heuristic would
+    false-positive on ``attn_kick_dim`` -> ``kick_dim``.
+    """
+    params = {p for p in _ctor_param_names(ctor) if not p.endswith("_dim")}
+    fields = set(PositionConfig.__dataclass_fields__)
+    mapped = set()
+    for fld in fields:
+        if fld in params or fld.startswith("attn_") and fld[len("attn_") :] in params:
+            mapped.add(fld)
+    return mapped
+
+
+def _ctor_param_for_field(fld: str, ctor_params: set[str]) -> str:
+    """Constructor parameter name a PositionConfig field forwards to."""
+    if fld in ctor_params:
+        return fld
+    return fld[len("attn_") :]
+
+
+@pytest.mark.unit
+def test_flat_factory_params_overlap_is_non_empty():
+    """Sanity guard on the introspection itself: if the flat constructor or the
+    config schema is refactored such that NOTHING overlaps, the parity test
+    below would silently pass vacuously. Pin a non-empty mapped set so that
+    failure surfaces instead."""
+    mapped = _config_fields_mapped_to_ctor(MultiHeadNetWithHistory)
+    assert mapped, "no PositionConfig field maps to MultiHeadNetWithHistory params"
+
+
+@pytest.mark.unit
+def test_flat_attn_kwargs_static_forwards_every_mapped_config_field():
+    """Every PositionConfig field that maps to a ``MultiHeadNetWithHistory``
+    constructor parameter must be forwarded by ``_flat_attn_kwargs_static``.
+
+    Passes today; FAILS if someone adds a PositionConfig field the flat
+    registry builder forgets to forward."""
+    builder_keys = set(_flat_attn_kwargs_static(_make_pc()))
+    ctor_params = _ctor_param_names(MultiHeadNetWithHistory)
+    forwarded = {_ctor_param_for_field(f, ctor_params) for f in builder_keys & ctor_params}
+    # Account for the ``attn_``-prefix mapping on both sides: a field
+    # ``attn_d_model`` is "forwarded" iff the builder emits ``d_model``.
+    forwarded |= builder_keys
+
+    missing = []
+    for fld in _config_fields_mapped_to_ctor(MultiHeadNetWithHistory):
+        param = _ctor_param_for_field(fld, ctor_params)
+        if param not in builder_keys:
+            missing.append((fld, param))
+    assert not missing, (
+        "PositionConfig fields not forwarded by _flat_attn_kwargs_static "
+        f"(field -> expected builder key): {missing}"
+    )
+
+
+@pytest.mark.unit
+def test_nested_attn_kwargs_static_forwards_every_mapped_config_field():
+    """Same parity guard for K's nested-history builder /
+    ``MultiHeadNetWithNestedHistory`` constructor."""
+    builder_keys = set(_nested_attn_kwargs_static(_make_pc()))
+    ctor_params = _ctor_param_names(MultiHeadNetWithNestedHistory)
+
+    missing = []
+    for fld in _config_fields_mapped_to_ctor(MultiHeadNetWithNestedHistory):
+        param = _ctor_param_for_field(fld, ctor_params)
+        if param not in builder_keys:
+            missing.append((fld, param))
+    assert not missing, (
+        "PositionConfig fields not forwarded by _nested_attn_kwargs_static "
+        f"(field -> expected builder key): {missing}"
+    )

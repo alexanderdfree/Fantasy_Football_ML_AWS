@@ -237,7 +237,13 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         return weekly
 
     def _fetch_rosters():
-        if os.path.exists(rosters_path):
+        # Schema-gate (mirror _fetch_weekly): regenerate if the cache is missing
+        # the columns the position-override merge below keys on — a stale cache
+        # lacking ``position`` would left-merge then leave it NaN. (#350 F15b)
+        _rosters_required = ("player_id", "season", "position")
+        if os.path.exists(rosters_path) and _cached_parquet_has_columns(
+            rosters_path, _rosters_required
+        ):
             return pd.read_parquet(rosters_path)
         rosters = nfl_source.rosters(seasons)
         # Coerce mixed-type columns that break parquet serialization
@@ -249,14 +255,25 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         return rosters
 
     def _fetch_schedules():
-        if os.path.exists(schedules_path):
+        # Schema-gate (mirror _fetch_weekly): regenerate if the cache lacks the
+        # columns downstream consumers key on (the depth as-of join + the
+        # weather/points-allowed merges all read these). (#350 F15b)
+        _schedules_required = ("season", "week", "home_team")
+        if os.path.exists(schedules_path) and _cached_parquet_has_columns(
+            schedules_path, _schedules_required
+        ):
             return pd.read_parquet(schedules_path)
         schedules = nfl_source.schedules(seasons)
         atomic_write_parquet(schedules, schedules_path)
         return schedules
 
     def _fetch_snap_counts():
-        if os.path.exists(snap_path):
+        # Schema-gate (mirror _fetch_weekly): regenerate if the cache lacks the
+        # ID-bridge merge key (``pfr_player_id``) or its season/week keys — a
+        # stale cache missing these would silently zero snap_pct for every row.
+        # (#350 F15b)
+        _snap_required = ("pfr_player_id", "season", "week")
+        if os.path.exists(snap_path) and _cached_parquet_has_columns(snap_path, _snap_required):
             return pd.read_parquet(snap_path)
         snap_seasons = [s for s in seasons if s >= 2012]
         snap_counts = nfl_source.snap_counts(snap_seasons) if snap_seasons else pd.DataFrame()
@@ -264,7 +281,14 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         return snap_counts
 
     def _fetch_injuries():
-        if os.path.exists(injury_path):
+        # Schema-gate (mirror _fetch_weekly): regenerate if the cache lacks the
+        # merge keys the injury aggregation joins on — a stale cache missing
+        # ``gsis_id`` would leave practice/game status at their neutral fills for
+        # every row. (#350 F15b)
+        _injuries_required = ("gsis_id", "season", "week")
+        if os.path.exists(injury_path) and _cached_parquet_has_columns(
+            injury_path, _injuries_required
+        ):
             return pd.read_parquet(injury_path)
         injuries = nfl_source.injuries(seasons)
         atomic_write_parquet(injuries, injury_path)
