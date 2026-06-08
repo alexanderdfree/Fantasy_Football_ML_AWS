@@ -206,18 +206,31 @@ jobs:
         id: shard
         run: |
           shard="${{ matrix.shard }}"
-          # DIAGNOSTIC config: main's proven thread setup (-n auto, 1 math thread/worker via
-          # conftest) + the serving-shard split, plus crash/hang instrumentation in "Run
-          # tests" below. The OMP=2 "fewer-fatter" threading experiment is reverted -- it did
-          # NOT stop the worker crashes (they hit the e2e TRAINING tests regardless of -n/OMP)
-          # and added a 16-min post-crash hang. Goal now: reproduce + DUMP the crashing test.
+          # Root cause of the "node down: Not properly terminated" flake (#1056): CUMULATIVE
+          # OOM, not a single bad test. Diagnosed via faulthandler + per-worker crash reports
+          # (PR #1057): crashes always land at ~99% (the heavy training/feature tests cluster
+          # at the tail), with NO faulthandler dump (so SIGKILL = kernel OOM, not a segfault or
+          # >180s hang), and on the `shared` shard TWO workers died within 2s of each other (a
+          # global memory-ceiling event). The driver is NESTED parallelism: each xdist worker
+          # that trains a pipeline spawns ~nproc joblib/loky CV worker processes (~0.6 GiB
+          # each, measured); `-n auto` = 4 xdist workers on a 4-vCPU runner, so 4 trainings can
+          # peak together (~18 GiB measured local extrapolation) and overrun the runner.
+          #
+          # Fix: run the training-heavy shards at `-n 2` so at most 2 trainings peak at once
+          # (~9 GiB), keeping headroom. (NOT the same as the earlier reverted `-n 2` attempt:
+          # that predated the serving-shard split, so `shared` still carried the heavy
+          # test_app* model-LOADING suite. Post-split, `-n 2` halves a now-isolated lighter
+          # training load -- local measurement: RB shard peak 3.57 GiB @ -n2 vs 5.49 GiB @ -n4.)
+          # conftest.py already caps math threads to 1/worker, so 2 workers don't oversubscribe.
           if [ "$shard" = "serving" ]; then
             # Serving suite (tests/test_app*, ~219 Flask/model-LOADING tests), own shard
-            # (#1056). No module-scoped trained fixtures -> worksteal is safe + sidesteps the
-            # loadfile replacement-worker KeyError. Proven green.
+            # (#1056). No module-scoped trained fixtures and no pipeline TRAINING -> not an OOM
+            # source; -n auto + worksteal is safe (sidesteps the loadfile replacement-worker
+            # KeyError) and proven green.
             echo "paths=tests/test_app*.py" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src.serving --cov=src" >> "$GITHUB_OUTPUT"
             echo "dist=worksteal" >> "$GITHUB_OUTPUT"
+            echo "jobs=auto" >> "$GITHUB_OUTPUT"
           elif [ "$shard" = "shared" ]; then
             # tests/ root + shared/batch/scripts; ignore per-position dirs (own shards) AND
             # the serving suite (its own shard). loadfile keeps tests/test_pipeline_e2e.py
@@ -225,6 +238,7 @@ jobs:
             echo "paths=tests/ --ignore=tests/qb --ignore=tests/rb --ignore=tests/wr --ignore=tests/te --ignore=tests/k --ignore=tests/dst --ignore-glob=tests/test_app*.py" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src" >> "$GITHUB_OUTPUT"
             echo "dist=loadfile" >> "$GITHUB_OUTPUT"
+            echo "jobs=2" >> "$GITHUB_OUTPUT"
           else
             shard_lower=$(echo "$shard" | tr '[:upper:]' '[:lower:]')
             echo "paths=tests/${shard_lower}/" >> "$GITHUB_OUTPUT"
@@ -232,36 +246,38 @@ jobs:
             # loadfile: per-position module-scoped trained fixtures (test_regression.py +
             # test_pipeline_e2e.py) must stay on one worker.
             echo "dist=loadfile" >> "$GITHUB_OUTPUT"
+            echo "jobs=2" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Show runner CPU topology
-        # Record the GHA runner's real vCPU/physical-core split so the fewer-fatter-worker
-        # math (nproc/threads above) is grounded and future-tunable. Physical-core pinning
-        # is a bare-metal-only optimization (src/benchmarking/parallel_train.physical_cores);
-        # GHA is a hypervised VM, so we just use all vCPUs.
+      - name: Show runner CPU + memory topology
+        # Record the runner's real vCPU/core split AND total RAM so the -n2 OOM-headroom math
+        # (jobs above) is grounded and future-tunable. The flake is a memory ceiling, so RAM is
+        # the key number; nproc sets how many joblib/loky CV procs each training worker spawns.
         run: |
           echo "nproc=$(nproc)"
           lscpu | grep -E 'Model name|^CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|Socket\(s\)' || true
+          free -h || true
+          grep -E 'MemTotal|MemAvailable' /proc/meminfo || true
 
       - name: Run tests
-        # DIAGNOSTIC instrumentation for the "node down" worker crashes (which hit the e2e
-        # TRAINING tests):
-        #   * PYTHONFAULTHANDLER=1 -> dump C+Python traceback + the signal on a fatal crash
-        #     (SIGSEGV etc.). No dump on a clean SIGKILL == OOM, which is itself a signal.
-        #   * -o faulthandler_timeout=180 -> dump EVERY thread's stack if a test runs >180s
-        #     (catches a C-level hang the thread-method timeout can't preempt; names the test).
-        #   * --max-worker-restart=0 -> a crashed worker FAILS FAST (no 16-min post-crash
-        #     replacement hang) and xdist reports the test it was running.
-        #   * -v names each test as it resolves. Threads stay 1 (conftest), -n auto.
+        # `-n ${jobs}` is the OOM fix (2 for training shards, auto for serving; see the shard
+        # step). The rest is retained safety instrumentation so any FUTURE worker death is
+        # self-diagnosing instead of an opaque "node down":
+        #   * PYTHONFAULTHANDLER=1 + faulthandler_timeout=180 -> dump C+Python thread stacks on
+        #     a fatal signal or a >180s C-level hang (a clean SIGKILL/OOM leaves no dump, which
+        #     itself distinguishes OOM from segfault/hang).
+        #   * --max-worker-restart=0 -> a crashed worker fails fast (no replacement-restart
+        #     hang) and xdist names the test it was running.
+        # Threads stay 1/worker (conftest). The job-level timeout-minutes caps a true hang.
         env:
           PYTHONFAULTHANDLER: "1"
         run: >-
           python -m pytest
           ${{ steps.shard.outputs.paths }}
-          -n auto --dist=${{ steps.shard.outputs.dist }}
+          -n ${{ steps.shard.outputs.jobs }} --dist=${{ steps.shard.outputs.dist }}
           --max-worker-restart=0
           -o faulthandler_timeout=180
-          -v -ra
+          -ra
           --durations=25
           ${{ steps.shard.outputs.cov }}
           --cov-report=xml:coverage-${{ matrix.shard }}.xml

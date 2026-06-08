@@ -57,10 +57,6 @@ def pytest_configure(config):
     try:
         import torch
 
-        # Honor the per-shard thread budget: CI sets OMP_NUM_THREADS per shard
-        # (.github/workflows/tests.yml runs training-heavy shards as fewer xdist
-        # workers x more threads each). The BLAS vars are setdefault'd to "1" at
-        # module top, so this is 1 locally / under -n auto unless CI raised it.
-        torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "1")))
-    except (ImportError, ValueError):
+        torch.set_num_threads(1)
+    except ImportError:
         pass
