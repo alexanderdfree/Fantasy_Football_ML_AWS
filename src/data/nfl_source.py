@@ -51,6 +51,11 @@ PBP_REDZONE_COLS: tuple[str, ...] = (
     "pass_attempt",
     "play_type",
     "yardline_100",
+    # Two-point-conversion plays sit at yardline_100==2 (inside the 20) and carry
+    # a rusher/receiver id + pass_attempt/play_type=="run", so without this column
+    # they inflate red-zone carries/targets even though 2pt conversions are scored
+    # separately from the rushing/receiving TDs these features predict (#369 F28).
+    "two_point_attempt",
 )
 PBP_KICKER_COLS: tuple[str, ...] = (
     "season",

@@ -85,6 +85,13 @@ def _aggregate_one_season(pbp: pd.DataFrame) -> pd.DataFrame:
     == 1`` so designed runs from shotgun (with a ``receiver_player_id`` field
     set by the parser) don't leak into the target count.
 
+    All three aggregates also exclude two-point-conversion plays
+    (``two_point_attempt == 1``): they sit at ``yardline_100 == 2`` and carry a
+    rusher/receiver id + ``play_type``/``pass_attempt``, so they'd otherwise
+    inflate red-zone carries, targets, and the team pass-attempt denominator —
+    but a 2pt conversion is scored separately from the rushing/receiving TDs
+    these features predict (#369 F28).
+
     Regular-season-only filter applied defensively. The public caller in
     this module already filters before delegating; the redundant guard here
     keeps the invariant local so direct/ad-hoc callers (notebooks, REPL)
@@ -95,7 +102,11 @@ def _aggregate_one_season(pbp: pd.DataFrame) -> pd.DataFrame:
     in_rz = pbp["yardline_100"] <= 20
 
     # --- Rushing-side aggregates ---
-    rush = pbp[(pbp["rusher_player_id"].notna()) & (pbp["play_type"] == "run")].copy()
+    rush = pbp[
+        (pbp["rusher_player_id"].notna())
+        & (pbp["play_type"] == "run")
+        & (pbp["two_point_attempt"] != 1)
+    ].copy()
     rush_yl = rush["yardline_100"]
     rush["_rz_carry"] = (rush_yl <= 20).astype("int32")
     rush["_in10_carry"] = (rush_yl <= 10).astype("int32")
@@ -113,7 +124,11 @@ def _aggregate_one_season(pbp: pd.DataFrame) -> pd.DataFrame:
     )
 
     # --- Receiving-side aggregates ---
-    recv = pbp[(pbp["receiver_player_id"].notna()) & (pbp["pass_attempt"] == 1)].copy()
+    recv = pbp[
+        (pbp["receiver_player_id"].notna())
+        & (pbp["pass_attempt"] == 1)
+        & (pbp["two_point_attempt"] != 1)
+    ].copy()
     recv["_rz_target"] = (recv["yardline_100"] <= 20).astype("int32")
 
     receiving = (
@@ -125,7 +140,7 @@ def _aggregate_one_season(pbp: pd.DataFrame) -> pd.DataFrame:
 
     # --- Team red-zone pass attempts (denominator for redzone_target_share) ---
     team_rz_pass = (
-        pbp[(pbp["pass_attempt"] == 1) & in_rz]
+        pbp[(pbp["pass_attempt"] == 1) & in_rz & (pbp["two_point_attempt"] != 1)]
         .groupby(["posteam", "season", "week"], dropna=True)
         .size()
         .rename("team_rz_pass_attempts")

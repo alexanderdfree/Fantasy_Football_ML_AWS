@@ -786,8 +786,11 @@ def season_split(k_df: pd.DataFrame) -> tuple:
     other positions.
     """
     train = k_df[k_df["season"] <= _TRAIN_MAX_SEASON].copy()
-    val = k_df[k_df["season"] == 2024].copy()
-    test = k_df[k_df["season"] == 2025].copy()
+    # Derive val/test from the train ceiling instead of hardcoding 2024/2025 so
+    # the three boundaries can't drift apart (val == +1, test == +2). Inert today
+    # (2024 == _TRAIN_MAX_SEASON + 1, 2025 == + 2). (#362 F3)
+    val = k_df[k_df["season"] == _TRAIN_MAX_SEASON + 1].copy()
+    test = k_df[k_df["season"] == _TRAIN_MAX_SEASON + 2].copy()
 
     # Train-only MIN_GAMES filter: regress on starters with enough sample for
     # rolling features to stabilize, but evaluate on every active kicker.
