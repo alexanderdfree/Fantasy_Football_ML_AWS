@@ -10,7 +10,7 @@ struct UpcomingPlayerCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: FFSpacing.md) {
             HStack(spacing: FFSpacing.sm) {
-                Headshot(url: player.headshot, position: player.position, size: 40)
+                Headshot(url: player.headshot, name: player.name, position: player.position, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(player.name).font(.headline).foregroundStyle(FFColor.textPrimary).lineLimit(1)
                     HStack(spacing: 6) {

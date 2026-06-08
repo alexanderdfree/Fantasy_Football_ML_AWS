@@ -6,6 +6,11 @@ struct ModelArchitecture: Codable, Sendable {
     let trainingLoop: TrainingLoop
     let positions: [String: PositionArch]
 
+    enum CodingKeys: String, CodingKey {
+        case overview, positions
+        case trainingLoop = "training_loop"
+    }
+
     struct Overview: Codable, Sendable {
         let framework: String
         let device: String

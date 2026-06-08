@@ -336,6 +336,24 @@ class TestIndexRoute:
         assert "image/svg+xml" in r.content_type
         assert b"<svg" in r.data
 
+    def test_privacy_route_returns_app_store_policy(self, client):
+        r = client.get("/privacy")
+        assert r.status_code == 200
+        assert "text/html" in r.content_type
+        body = r.get_data(as_text=True)
+        assert "Privacy Policy" in body
+        assert "No third-party analytics SDK" in body
+        assert "No advertising or cross-app tracking" in body
+
+    def test_support_route_returns_contact_options(self, client):
+        r = client.get("/support")
+        assert r.status_code == 200
+        assert "text/html" in r.content_type
+        body = r.get_data(as_text=True)
+        assert "Support" in body
+        assert "GitHub Issues" in body
+        assert "fantasy.alexfree.me" in body
+
 
 # `app.py`'s global `@app.errorhandler(Exception)` catches every exception,
 # including werkzeug HTTPExceptions (404 NotFound, 405 MethodNotAllowed). For

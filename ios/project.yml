@@ -25,6 +25,7 @@ targets:
     platform: iOS
     sources:
       - Sources
+      - Resources/Assets.xcassets
     settings:
       base:
         INFOPLIST_FILE: Resources/Info.plist
@@ -43,3 +44,20 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: me.alexfree.ffpredictor.tests
+schemes:
+  FFPredictor:
+    build:
+      targets:
+        FFPredictor: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - FFPredictorTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

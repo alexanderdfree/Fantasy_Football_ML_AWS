@@ -9,7 +9,7 @@ struct LeaderRow: View {
     var body: some View {
         VStack(spacing: FFSpacing.sm) {
             HStack(spacing: FFSpacing.sm) {
-                Headshot(url: player.headshot, position: player.position, size: 32)
+                Headshot(url: player.headshot, name: player.name, position: player.position, size: 32)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(player.name).font(.subheadline.weight(.semibold)).foregroundStyle(FFColor.textPrimary).lineLimit(1)
                     HStack(spacing: 6) {

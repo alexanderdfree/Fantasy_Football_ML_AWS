@@ -38,7 +38,7 @@ struct PlayerDetailView: View {
 
     private func header(_ detail: PlayerDetail) -> some View {
         HStack(spacing: FFSpacing.md) {
-            Headshot(url: detail.headshot, position: detail.position, size: 64)
+            Headshot(url: detail.headshot, name: detail.name, position: detail.position, size: 64)
             VStack(alignment: .leading, spacing: 4) {
                 Text(detail.name).font(.title2.weight(.bold)).foregroundStyle(FFColor.textPrimary)
                 HStack(spacing: 6) {

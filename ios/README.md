@@ -5,9 +5,10 @@ read-only client of the existing public API (`https://fantasy.alexfree.me`) and
 mirrors the web dashboard: live next-week projections, season leaders, model
 accuracy, model-vs-expert comparison, architecture, training history, and docs.
 
-No backend changes — the app consumes the same JSON the website does, showing
-all four models (Ridge / NN / Attention NN / LightGBM) side by side across PPR /
-Half-PPR / Standard scoring.
+The app consumes the same JSON the website does, showing all four models (Ridge
+/ NN / Attention NN / LightGBM) side by side across PPR / Half-PPR / Standard
+scoring. The serving app also exposes `/privacy` and `/support` pages for App
+Store metadata.
 
 > Design + rationale: `/.claude/plans/design-an-iphone-app-velvety-pretzel.md`.
 
@@ -64,10 +65,37 @@ and charts use **Swift Charts**.
 
 `Tests/DecodingTests.swift` decodes every model against real captured payloads in
 `Tests/Fixtures/*.json` (refresh them with `curl https://fantasy.alexfree.me/api/...`).
-Run with **⌘U** in Xcode — this is the layer that's verifiable without the UI.
+Run with **⌘U** in Xcode or:
+
+```bash
+cd ios
+xcodebuild -project FFPredictor.xcodeproj -scheme FFPredictor \
+  -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0' \
+  CODE_SIGNING_ALLOWED=NO test
+```
+
+This is the layer that's verifiable without the UI.
+
+## App Store v1
+
+The App Store listing metadata is tracked in `AppStoreMetadata.md`.
+
+- App display name: `Alex's Fantasy Predictions`
+- Bundle ID: `me.alexfree.ffpredictor`
+- Version/build: `1.0` / `1`
+- Price: free
+- Categories: Sports primary, Entertainment secondary
+- Privacy/support URLs: `https://fantasy.alexfree.me/privacy` and
+  `https://fantasy.alexfree.me/support`
+- App icon: owned, generated from `scripts/generate_app_icon.py`; no team,
+  league, player, text, number, or third-party mark appears in the icon.
+- Player photos: remote NFL/ESPN headshots are disabled for v1 while content
+  rights are unverified; the UI shows app-owned initials/glyph placeholders.
+- Analytics: deferred for v1; no analytics SDK, ads, tracking, accounts, IAP, or
+  subscriptions.
 
 ## Not in v1 (future)
 
-- App icon (uses the default), `NWPathMonitor` offline banner, K/DST in the live
-  Upcoming slate (the API itself defers them — skill positions only), iPad layout,
-  widgets / App Store distribution (needs an Apple Developer account).
+- `NWPathMonitor` offline banner, K/DST in the live Upcoming slate (the API
+  itself defers them — skill positions only), iPad layout, widgets, analytics,
+  and verified third-party player imagery.
