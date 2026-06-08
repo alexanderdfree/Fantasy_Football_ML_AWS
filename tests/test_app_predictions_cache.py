@@ -208,24 +208,67 @@ def test_fingerprint_skips_missing_paths(tmp_path, monkeypatch):
     assert not any("missing.pkl" in r for r in rels)
 
 
-def test_fingerprint_ignores_expert_source_caches(tmp_path, monkeypatch):
+def test_fingerprint_ignores_non_serving_raw_caches(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "_REPO_ROOT", str(tmp_path))
     raw_dir = tmp_path / "data" / "raw"
     raw_dir.mkdir(parents=True)
-    for name in (
+
+    serving_raw = {
+        "depth_charts_v2_2012_2025.parquet",
+        "injuries_2012_2025.parquet",
+        "kicker_pbp_2015_2024.parquet",
+        "kicker_kicks_pbp_2015_2025.parquet",
+        "rosters_2012_2025.parquet",
+        "schedules_2012_2025.parquet",
+        "snap_counts_2012_2025.parquet",
+        "team_stats_2012_2025.parquet",
         "weekly_2012_2025.parquet",
+    }
+    local_only_raw = {
+        "contracts_2012_2025.parquet",
+        "depth_charts_2012_2025.parquet",
+        "ff_opportunity_2012_2025.parquet",
+        "player_ids_2012_2025.parquet",
+        "qbr_weekly_2012_2025.parquet",
+        "redzone_pbp_2012_2025.parquet",
+        "weekly_2023_2023.parquet",
         "nflcom_projections_v1_2025_2025_w1-18.parquet",
         "nflcom_projections_joined_v1_2025_2025_mr90.parquet",
         "sleeper_projections_v2_2025_2025_w1-18_DEF-QB-RB-TE-WR.parquet",
         "sleeper_projections_joined_v2_2025_2025.parquet",
-    ):
+    }
+    for name in serving_raw | local_only_raw:
         (raw_dir / name).write_bytes(b"x")
 
     rels = {os.path.relpath(path, tmp_path) for path in core._iter_fingerprint_paths()}
 
-    assert "data/raw/weekly_2012_2025.parquet" in rels
+    assert {f"data/raw/{name}" for name in serving_raw}.issubset(rels)
+    for name in local_only_raw:
+        assert f"data/raw/{name}" not in rels
     assert not any("nflcom_projections" in rel for rel in rels)
     assert not any("sleeper_projections" in rel for rel in rels)
+
+
+def test_fingerprint_sha_ignores_extra_local_raw_caches(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "_REPO_ROOT", str(tmp_path))
+    raw_dir = tmp_path / "data" / "raw"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "weekly_2012_2025.parquet").write_bytes(b"weekly")
+
+    sha_before, _ = core._compute_models_fingerprint()
+
+    for name in (
+        "contracts_2012_2025.parquet",
+        "redzone_pbp_2012_2025.parquet",
+        "nflcom_projections_v1_2025_2025_w1-18.parquet",
+        "sleeper_projections_v2_2025_2025_w1-18_DEF-QB-RB-TE-WR.parquet",
+    ):
+        (raw_dir / name).write_bytes(b"local-only")
+
+    sha_after, files = core._compute_models_fingerprint()
+
+    assert sha_after == sha_before
+    assert [f["path"] for f in files] == ["data/raw/weekly_2012_2025.parquet"]
 
 
 # ---------------------------------------------------------------------------
