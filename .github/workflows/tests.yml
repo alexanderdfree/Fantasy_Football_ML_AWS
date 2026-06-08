@@ -139,6 +139,12 @@ jobs:
     # so a future detect-rule bug surfaces as a skip rather than a crash.
     if: needs.detect.outputs.shards != '[]'
     runs-on: ubuntu-latest
+    # DIAGNOSTIC bound: a healthy shard finishes in <5 min; the faulthandler_timeout
+    # (180s) only DUMPS a hung test's threads, it does not kill it. This caps total
+    # job time so a true hang is terminated minutes after the dump lands in the log,
+    # not at the 360-min GHA default. Drop back to the implicit default once the flake
+    # is root-caused.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -200,43 +206,31 @@ jobs:
         id: shard
         run: |
           shard="${{ matrix.shard }}"
-          # Fewer-fatter workers on the model-TRAINING shards: give each training test
-          # (incl. the single-test tail) `threads` cores, and halve the worker count so
-          # peak memory halves (the OOM "node down" flake). half = vCPUs / 2 (so 2 workers
-          # x 2 threads on a 4-vCPU runner = all vCPUs, no oversubscription). The "Show
-          # runner CPU topology" step logs the real nproc/lscpu for tuning.
-          half=$(( $(nproc) / 2 )); [ "$half" -lt 1 ] && half=1
+          # DIAGNOSTIC config: main's proven thread setup (-n auto, 1 math thread/worker via
+          # conftest) + the serving-shard split, plus crash/hang instrumentation in "Run
+          # tests" below. The OMP=2 "fewer-fatter" threading experiment is reverted -- it did
+          # NOT stop the worker crashes (they hit the e2e TRAINING tests regardless of -n/OMP)
+          # and added a 16-min post-crash hang. Goal now: reproduce + DUMP the crashing test.
           if [ "$shard" = "serving" ]; then
-            # Serving suite (tests/test_app*, ~219 Flask/model-LOADING tests): memory-heavy
-            # but NOT CPU-training and has no module-scoped trained fixtures. Keep -n auto +
-            # worksteal (proven green in #1057): loading-bound wants max test parallelism,
-            # and worksteal sidesteps the loadfile replacement-worker KeyError.
+            # Serving suite (tests/test_app*, ~219 Flask/model-LOADING tests), own shard
+            # (#1056). No module-scoped trained fixtures -> worksteal is safe + sidesteps the
+            # loadfile replacement-worker KeyError. Proven green.
             echo "paths=tests/test_app*.py" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src.serving --cov=src" >> "$GITHUB_OUTPUT"
-            echo "nproc=auto" >> "$GITHUB_OUTPUT"
-            echo "threads=1" >> "$GITHUB_OUTPUT"
             echo "dist=worksteal" >> "$GITHUB_OUTPUT"
           elif [ "$shard" = "shared" ]; then
             # tests/ root + shared/batch/scripts; ignore per-position dirs (own shards) AND
-            # the serving suite (its own shard). The root tests/test_pipeline_e2e.py trains
-            # 6 pipelines (the tail); its module-scoped fixture must stay on ONE worker so
-            # each position trains ONCE -> loadfile (worksteal retrains per worker, which
-            # kept this shard OOMing). Fewer-fatter workers (-n half x 2 threads).
+            # the serving suite (its own shard). loadfile keeps tests/test_pipeline_e2e.py
+            # (module fixture, 6 pipelines) on ONE worker so each position trains once.
             echo "paths=tests/ --ignore=tests/qb --ignore=tests/rb --ignore=tests/wr --ignore=tests/te --ignore=tests/k --ignore=tests/dst --ignore-glob=tests/test_app*.py" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src" >> "$GITHUB_OUTPUT"
-            echo "nproc=$half" >> "$GITHUB_OUTPUT"
-            echo "threads=2" >> "$GITHUB_OUTPUT"
             echo "dist=loadfile" >> "$GITHUB_OUTPUT"
           else
             shard_lower=$(echo "$shard" | tr '[:upper:]' '[:lower:]')
             echo "paths=tests/${shard_lower}/" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src.${shard_lower} --cov=src" >> "$GITHUB_OUTPUT"
-            echo "nproc=$half" >> "$GITHUB_OUTPUT"
-            echo "threads=2" >> "$GITHUB_OUTPUT"
-            # Per-position shards have module-scoped fixtures that TRAIN once and compare
-            # across tests in-file (tests/{rb,k,te,dst}/test_regression.py + test_pipeline_e2e).
-            # loadfile pins a file's tests to one worker (train once); worksteal would retrain
-            # per worker (slow + 60s-timeout risk). Fewer-fatter workers (-n half x 2 threads).
+            # loadfile: per-position module-scoped trained fixtures (test_regression.py +
+            # test_pipeline_e2e.py) must stay on one worker.
             echo "dist=loadfile" >> "$GITHUB_OUTPUT"
           fi
 
@@ -250,21 +244,25 @@ jobs:
           lscpu | grep -E 'Model name|^CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|Socket\(s\)' || true
 
       - name: Run tests
-        # Training shards run fewer-fatter workers: ${{ steps.shard.outputs.nproc }} xdist
-        # workers x ${{ steps.shard.outputs.threads }} math threads each, so each training
-        # test (incl. the single-test tail) gets `threads` cores and N*T == vCPUs (no
-        # oversubscription). conftest.py reads OMP_NUM_THREADS for the torch intra-op cap.
+        # DIAGNOSTIC instrumentation for the "node down" worker crashes (which hit the e2e
+        # TRAINING tests):
+        #   * PYTHONFAULTHANDLER=1 -> dump C+Python traceback + the signal on a fatal crash
+        #     (SIGSEGV etc.). No dump on a clean SIGKILL == OOM, which is itself a signal.
+        #   * -o faulthandler_timeout=180 -> dump EVERY thread's stack if a test runs >180s
+        #     (catches a C-level hang the thread-method timeout can't preempt; names the test).
+        #   * --max-worker-restart=0 -> a crashed worker FAILS FAST (no 16-min post-crash
+        #     replacement hang) and xdist reports the test it was running.
+        #   * -v names each test as it resolves. Threads stay 1 (conftest), -n auto.
         env:
-          OMP_NUM_THREADS: ${{ steps.shard.outputs.threads }}
-          MKL_NUM_THREADS: ${{ steps.shard.outputs.threads }}
-          OPENBLAS_NUM_THREADS: ${{ steps.shard.outputs.threads }}
-          NUMEXPR_NUM_THREADS: ${{ steps.shard.outputs.threads }}
-          LGBM_N_JOBS: ${{ steps.shard.outputs.threads }}
+          PYTHONFAULTHANDLER: "1"
         run: >-
           python -m pytest
           ${{ steps.shard.outputs.paths }}
-          -n ${{ steps.shard.outputs.nproc }} --dist=${{ steps.shard.outputs.dist }}
-          --durations=15
+          -n auto --dist=${{ steps.shard.outputs.dist }}
+          --max-worker-restart=0
+          -o faulthandler_timeout=180
+          -v -ra
+          --durations=25
           ${{ steps.shard.outputs.cov }}
           --cov-report=xml:coverage-${{ matrix.shard }}.xml
           --junitxml=junit-${{ matrix.shard }}.xml
