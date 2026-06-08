@@ -36,6 +36,7 @@ def _results_frame() -> pd.DataFrame:
             "recent_team": ["KC", "KC", "KC"],
             "season": [2025, 2025, 2025],
             "week": [1, 1, 1],
+            "fantasy_points": [10.0, 7.0, 4.0],
         }
     )
 
@@ -146,6 +147,46 @@ def test_apply_expert_predictions_joins_sources_and_formats():
     assert np.isnan(dst["nflcom_pred_ppr"])
     assert dst["rotowire_pred_ppr"] == pytest.approx(dst["rotowire_pred_standard"])
     assert np.isfinite(dst["rotowire_pred_ppr"])
+
+
+def test_apply_expert_predictions_ignores_unplayed_future_rows_for_loader_seasons():
+    results = pd.concat(
+        [
+            _results_frame(),
+            pd.DataFrame(
+                {
+                    "player_id": ["RB_FUTURE"],
+                    "player_display_name": ["Future RB"],
+                    "position": ["RB"],
+                    "recent_team": ["KC"],
+                    "season": [2027],
+                    "week": [1],
+                    "fantasy_points": [np.nan],
+                }
+            ),
+        ],
+        ignore_index=True,
+    )
+    seen: dict[str, list[int]] = {}
+
+    def _nflcom_loader(*, seasons):
+        seen["nflcom"] = seasons
+        return _nflcom_raw()
+
+    def _rotowire_loader(seasons):
+        seen["rotowire"] = seasons
+        return _rotowire_raw()
+
+    core._apply_expert_predictions(
+        results,
+        nflcom_loader=_nflcom_loader,
+        rotowire_loader=_rotowire_loader,
+    )
+
+    assert seen == {"nflcom": [2025], "rotowire": [2025]}
+    future = results.set_index("player_id").loc["RB_FUTURE"]
+    assert np.isnan(future["nflcom_pred_ppr"])
+    assert np.isnan(future["rotowire_pred_ppr"])
 
 
 def test_apply_expert_predictions_loader_failure_leaves_stable_null_columns():

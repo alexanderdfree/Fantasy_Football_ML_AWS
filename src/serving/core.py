@@ -135,6 +135,17 @@ def _empty_expert_frame(value_col: str) -> pd.DataFrame:
     return pd.DataFrame(columns=[*_EXPERT_KEY_COLS, value_col])
 
 
+def _historical_expert_seasons(results: pd.DataFrame) -> list[int]:
+    """Seasons with played rows that can be joined to historical expert feeds."""
+    if results.empty or "season" not in results.columns:
+        return []
+    mask = pd.Series(True, index=results.index)
+    if "fantasy_points" in results.columns:
+        mask &= pd.to_numeric(results["fantasy_points"], errors="coerce").notna()
+    seasons = pd.to_numeric(results.loc[mask, "season"], errors="coerce").dropna()
+    return sorted(seasons.astype(int).unique())
+
+
 def _project_rotowire_to_fantasy(
     raw_df: pd.DataFrame | None, pos: str, scoring_format: str
 ) -> pd.DataFrame:
@@ -221,11 +232,7 @@ def _apply_expert_predictions(
             results[_pred_col(source, fmt)] = np.nan
         results[f"{source}_pred"] = np.nan
 
-    if results.empty or "season" not in results.columns:
-        return
-    seasons = sorted(
-        pd.to_numeric(results["season"], errors="coerce").dropna().astype(int).unique()
-    )
+    seasons = _historical_expert_seasons(results)
     if not seasons:
         return
     if nflcom_loader is None:
@@ -1356,7 +1363,7 @@ _PREDICTIONS_CACHE_DIR = os.path.join(_REPO_ROOT, "data", "serving_cache")
 _PREDICTIONS_PARQUET = "predictions.parquet"
 _METRICS_JSON = "metrics.json"
 _FINGERPRINT_JSON = "fingerprint.json"
-_PREDICTIONS_CACHE_SCHEMA_VERSION = 2
+_PREDICTIONS_CACHE_SCHEMA_VERSION = 3
 # Browser-ready snapshot the frontend hydrates its first paint from (see
 # /api/snapshot + static/js/app.js). Auxiliary to the cache triple above —
 # its absence is non-fatal (frontend falls back to /api/predictions), so it is
