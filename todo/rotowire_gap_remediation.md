@@ -41,53 +41,84 @@ So RotoWire's edge is **not** "they have injury/Vegas/snap data we lack." It is 
 intelligence** — who inherits volume when a starter sits — which we hold only as crude raw inputs and
 never turn into the derived signal that drives booms. **No new data source is required.**
 
-## Hypothesis
+## Phase 0 result — COMPLETE (2026-06-08)
 
-The model's worst Q4 boom under-calls are **role-vacancy events** (a backup RB who gets a workhorse
-load because the starter is inactive; a WR promoted up the depth chart). We have injury + depth +
-teammate snaps as raw columns but never compute *vacated opportunity*; RotoWire's analysts encode it
-by hand.
+**0a — injury alignment: PASS.** Across all 2013+ seasons, 0.0% (RB) / 0.2% (WR) of player-weeks
+labelled OUT/Doubtful appear in the played frame — OUT reliably means "did not play," so the injury
+report is a clean pre-kickoff signal (no leakage).
 
-## Plan (validation-gated)
+**0b — the lever, correctly specified:**
+- **Crude "any teammate OUT" is a NULL across 2013+** (it was a false positive on 2025 alone). Pooled
+  WR lift −0.12 FP (positive in only 6/13 seasons), RB +0.26; boom rate flat for both. A usage-weighted
+  "a ≥0.4-snap starter is OUT" measure is *also* null (WR corr −0.013, RB +0.001; boom rate flat). The
+  dilution: averaging over *all* remaining same-position players drowns the one who actually inherits.
+- **The inheritor (next-man-up), measured within-player, is a strong multi-season signal.** Restricting
+  to the player who becomes the snap-leader when a starter sits, vs that player's own other weeks:
+  **RB +6.36 FP (±0.38 se), 84% of players; WR +2.08 FP (±0.26 se), 59%**; boom rate (≥20 FP)
+  **RB 21% vs 8%, WR 19% vs 8%.** The model is blind to it — `snap_pct` is lagged (still the backup's
+  prior-week value) and `depth_chart_rank` is inertial — which is exactly the RotoWire edge.
 
-### Phase 0 — Validate the lever (read-only, no model change) ← GO/NO-GO
-Per the project rule "don't build a feature without a tracked subgroup metric showing the gap" and
-"verify the activation precondition, not just the code smell."
-- **0a. Audit injury alignment.** Reuse the [`audit_depth_alignment.py`](../src/analysis/audit_depth_alignment.py)
-  pattern: does `game_status` for week W reflect the *pre-kickoff* designation, or is it stale/leaky?
-  Restrict to transition rows (new OUT designations). Injury alignment is an OPEN, never-audited gap
-  and a prerequisite for trusting any injury-derived feature.
-- **0b. Vacancy attribution on the worst Q4 misses.** The diagnostic already lists them; for each,
-  check whether a higher-depth same-team/position teammate was OUT/inactive that week. **Quantify the
-  fraction of the model's Q4 *excess* error (vs RotoWire) that coincides with vacated roles.**
-- **Gate:** meaningful vacancy share → Phase 1. Mostly established-star monster games (no vacancy) →
-  gap is irreducible; report and stop (don't build a feature that can't move the metric).
+**Independent confirmation + the success metric:** the existing **ascension cohort**
+([`src/analysis/cohort_analysis.py`](../src/analysis/cohort_analysis.py): `find_ascension_events`,
+`label_ascension_rows`, `add_injury_attribution`) already measured this for RB — **every model
+under-calls the ascension week by ~12 FP** (LightGBM −12.5, Ridge −11.8, NN −12.1, Attn −12.2; 205
+events 2012–2025, ~60% injury-linked) — and [`rb_ascension_findings.md`](../src/analysis/rb_ascension_findings.md)
+explicitly recommends a forward-looking vacated-volume feature. **That cohort is the tracked subgroup
+metric** (the cohort is ~1% of rows, so judge the fix on cohort bias, not overall MAE).
 
-### Phase 1 — Build opportunity-vacancy features (derived from existing data; no new source)
-- `teammate_snap_vacated` — Σ prior-week `snap_pct` of higher-depth same-team/position players who are
-  OUT/Doubtful this week.
-- `effective_depth_rank` — depth rank after removing injured-out players above.
-- `is_promoted` / `lead_back_out` — is this player now the top *available* at their position/team.
-- Wire per conventions: [`src/{rb,wr}/features.py`](../src/rb/features.py) + `include_features`
-  whitelist (RB + WR) + `ATTN_STATIC_FEATURES` (pre-kickoff, week-specific, **non-temporal** → static
-  branch; NOT rolling, per the stop-rule) + test fixtures. Build in the **shared** path so serving
-  gets parity. Align on pre-kickoff injury status (Phase 0a guards this).
+**Verdict: GO**, correctly specified as *role inheritance* (next-man-up) — RB primary (bigger,
+documented), WR secondary.
 
-### Phase 2 — Validate with the real pipeline (the metric that matters)
-- `python -m src.{rb,wr}.run_pipeline`, **≥3 seeds** (5–8 if borderline), then re-run
-  `rmse_gap_decomposition` before/after.
-- **Success = Q4 correlation lift + RMSE/R² toward RotoWire, without regressing the Q1–Q3 wins or
-  overall MAE.** Judge by Q4 correlation across seeds (subgroup direction), not single-seed overall
-  MAE (noise). Slice `result["test_df"]`; don't reimplement models. Ceiling ~0.2 RMSE; if Q4 corr
+## Placement decision (where the feature goes)
+
+The signal is **this week's vacancy** — a pre-kickoff, point-in-time, non-windowed fact. So:
+- **Ridge + LightGBM + NN static branch — YES, in one edit.** Add to `include_features["contextual"]`
+  for RB/WR. That feeds Ridge + LGBM automatically *and* the NN static branch, because
+  `attn_static_features = derive_attn_static_features(_INCLUDE_FEATURES, ["prior_season","matchup",
+  "contextual","weather_vegas"])` and `contextual` is in that set — the same path `depth_chart_rank`
+  already takes. No separate `ATTN_STATIC_FEATURES` edit needed.
+- **Attention HISTORY branch — NO.** (1) The history sequence is the player's *past* games (lagged);
+  the vacancy is about *this* week — wrong temporal frame. (2) A per-game "was-inheritor" stat is
+  redundant — a past inheritance game already shows up as a high `snap_pct_raw`/`game_carry_share` game
+  (RB) the attention pool can attend to. (3) The per-target head fuses static×history by concatenation,
+  so the NN learns "big vacancy this week × this player absorbs volume" with the vacancy in static
+  alone. Adding it to history violates the "don't double-feed the temporal branch" stop-rule for no
+  marginal signal.
+- **Separate WR-history note (not this feature):** WR's `ATTN_HISTORY_STATS` carries only `snap_pct_raw`
+  for usage and **lacks `game_target_share`** (RB has it) — a real per-game-usage gap worth its own A/B
+  if WR underperforms, but distinct from inheritance.
+
+## Phase 1 — Build the role-inheritance feature (RB + WR)
+
+Current-week, pre-kickoff, derived from existing injury + depth + prior usage (no new data source):
+- `vacated_opportunity` — Σ prior usage (season-mean snap share / prior-3 opp) of same-team/position
+  players **OUT/Doubtful on week-W's report** and ranked above this player. Sizes the freed volume.
+- `effective_depth_rank` — depth rank after removing OUT players above (captures "I'm now the lead").
+
+Reuse `add_injury_attribution`, `compute_team_{rb,wr}_totals`, `safe_divide`, `label_ascension_rows`
+(`cohort_analysis.py` / `src/{rb,wr}/data.py`). **Data-plumbing note:** OUT players are dropped from the
+splits (no snap), so the teammate-vacancy aggregate must be computed where the full injury table + all
+players are present (loader / engineer, *pre-filter*), then joined onto surviving rows — NOT in the
+per-position `features.py` (which only sees survivors). **Leakage guard:** only the injured teammate's
+*prior* usage + the pre-kickoff injury report (0a confirmed OUT→0 snaps).
+
+**Wiring:** add to `include_features["contextual"]` (RB + WR) → Ridge + LGBM + NN static automatically.
+Build in the **shared** feature path for serving parity, and ensure serving fetches the current-week
+injury report (today it leans on pre-computed splits — the main integration risk). Update fixtures
+(`tests/conftest.py` / `tests/{rb,wr}/conftest.py`).
+
+## Phase 2 — Validate (the metric that matters)
+- `python -m src.{rb,wr}.run_pipeline`, **≥3 seeds**, **all four models**; re-run `cohort_analysis`
+  (ascension bias, RB; build a targets-based WR analog) + the committed `rmse_gap_decomposition`
+  Q4/inheritor cut, before/after.
+- **Success = ascension-cohort / Q4 bias reduction, with overall MAE held flat.** Cohort is 1–4% of
+  rows, so judge the subgroup (the draft-capital trap), across seeds, all models. If the cohort bias
   doesn't move across seeds, revert.
 
-### Phase 3 — only if Phase 2 pays off
-Add per-game availability/role to `ATTN_HISTORY_STATS` (temporal branch — the NN sees no role
-trajectory today); Vegas up-weighting for the week-1 empty-history regime (separate OPEN issue).
-
 ## Stop-rules / risks
-- Editing `src/{rb,wr}/features.py`+config fires an RB/WR retrain (expected — we're changing features).
-- Injury alignment is the main landmine (Phase 0a is the guard). Attention static must stay
-  non-temporal (stop-rule). Maintain train/serve parity (build in the shared path).
-- Expected payoff is modest and boom-concentrated. Phase 0 protects against spending feature work on
-  an irreducible gap.
+- Subgroup-not-overall-MAE (cohort is ~1–4% of rows). Pre-kickoff-only (leakage). Serving parity for
+  live injuries. Static stays non-temporal. Editing `src/{rb,wr}/features.py`+config (and possibly the
+  loader/engineer for the teammate aggregate) fires the RB/WR (or 6-position, if loader) retrain.
+- The attention **history branch is decided out** for this feature (see Placement) — do not re-propose.
+- The **crude "any teammate OUT" measure is a tested NULL across 2013+** — the signal is the *inheritor*
+  (next-man-up), not generic vacancy. Don't rebuild the crude version.
