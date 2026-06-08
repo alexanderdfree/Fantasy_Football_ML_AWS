@@ -19,6 +19,7 @@ from sklearn.preprocessing import StandardScaler
 
 from src.k.config import POSITION_CONFIG
 
+HEAD_LOSSES = POSITION_CONFIG.head_losses
 HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
 TARGETS = POSITION_CONFIG.targets
@@ -173,6 +174,7 @@ def test_nn_within_25pct_of_lightgbm(k_training_arrays, lightgbm_mae):
         target_names=TARGETS,
         loss_weights=LOSS_WEIGHTS,
         huber_deltas=HUBER_DELTAS,
+        head_losses=HEAD_LOSSES,
     )
     trainer = MultiHeadTrainer(
         model=model,

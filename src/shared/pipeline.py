@@ -1614,7 +1614,14 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     agg = cfg.get("aggregate_fn")
 
     def _total(preds):
-        return agg(preds) if agg is not None else sum(preds[t] for t in targets)
+        if agg is None:
+            raise ValueError(
+                "Pipeline config is missing 'aggregate_fn'; a raw-stat sum is "
+                "wrong-sign for negative-weighted heads (fumbles/INTs, K, DST). "
+                "build_pipeline_config sets it for every position — fail loud "
+                "rather than report a silently-wrong total (#369 F18)."
+            )
+        return agg(preds)
 
     pos_test = pos_test.copy()
     pos_test["pred_ridge_total"] = _total(ridge_test_preds)
@@ -2151,7 +2158,14 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     agg = cfg.get("aggregate_fn")
 
     def _total(preds):
-        return agg(preds) if agg is not None else sum(preds[t] for t in targets)
+        if agg is None:
+            raise ValueError(
+                "Pipeline config is missing 'aggregate_fn'; a raw-stat sum is "
+                "wrong-sign for negative-weighted heads (fumbles/INTs, K, DST). "
+                "build_pipeline_config sets it for every position — fail loud "
+                "rather than report a silently-wrong total (#369 F18)."
+            )
+        return agg(preds)
 
     pos_test = pos_test.copy()
     pos_test["pred_ridge_total"] = _total(ridge_test_preds)
@@ -2272,6 +2286,17 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         plt.close()
 
     print(f"\n{pos} CV pipeline complete. Outputs saved to {output_dir}/")
+    per_target_preds = {
+        "ridge": ridge_test_preds,
+        "nn": nn_test_preds,
+    }
+    if enet_test_preds is not None:
+        per_target_preds["elasticnet"] = enet_test_preds
+    if attn_test_preds is not None:
+        per_target_preds["attn_nn"] = attn_test_preds
+    if lgbm_test_preds is not None:
+        per_target_preds["lgbm"] = lgbm_test_preds
+
     result = {
         "cv_metrics": cv_metrics,
         "best_cv_alphas": best_cv_alphas,
@@ -2281,6 +2306,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         "nn_ranking": nn_ranking,
         "history": history,
         "sim_results": sim_results,
+        "test_df": pos_test,
+        "per_target_preds": per_target_preds,
     }
     if lgbm_metrics is not None:
         result["lgbm_metrics"] = lgbm_metrics
