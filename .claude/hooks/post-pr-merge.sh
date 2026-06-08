@@ -29,7 +29,11 @@ fi
 
 # Run from a path inside the repo so `git worktree list` resolves the parent.
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
-status=$(claude_refresh_parent_main || true)
+# (1) fast-forward the parent's main; (2) promote the worktree's locally-built
+# data/splits to the parent if this merge changed splits-affecting code.
+main_status=$(claude_refresh_parent_main || true)
+splits_status=$(claude_promote_worktree_splits || true)
+status=$(printf '%s\n%s\n' "$main_status" "$splits_status" | sed '/^[[:space:]]*$/d')
 [ -n "$status" ] || exit 0
 
 # Surface the outcome to the turn that ran the merge.

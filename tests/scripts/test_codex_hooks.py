@@ -663,3 +663,106 @@ class TestCodexHooks:
         assert result.returncode == 0
         context = json.loads(result.stdout)["hookSpecificOutput"]
         assert "not main" in context["additionalContext"]
+
+
+def _python3_available() -> bool:
+    return shutil.which("python3") is not None or shutil.which("python") is not None
+
+
+def _git(path: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True)
+
+
+def _vendor_scope_positions(repo_root: Path) -> None:
+    """Copy the real (pure-stdlib) scope_positions into a temp repo so the promote
+    hook's scope_positions gate runs against the real path→positions mapping."""
+    scripts = repo_root / "src" / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (repo_root / "src" / "__init__.py").write_text("")
+    (scripts / "__init__.py").write_text("")
+    shutil.copy(PROJECT_ROOT / "src/scripts/scope_positions.py", scripts / "scope_positions.py")
+
+
+def _write_splits(splits_dir: Path, content: str) -> None:
+    splits_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("train", "val", "test"):
+        (splits_dir / f"{name}.parquet").write_text(content)
+
+
+def _setup_promote_repo(tmp_path: Path, *, splits_affecting: bool) -> tuple[Path, Path]:
+    """main checkout + a feature worktree. The merged commit (origin/main tip)
+    touches splits-affecting code (src/features) or just docs. The parent holds
+    its own (STALE) data/splits; the worktree its own (FRESH) local one."""
+    remote = tmp_path / "remote.git"
+    main = tmp_path / "main"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    subprocess.run(["git", "init", "-b", "main", str(main)], check=True, capture_output=True)
+    _git(main, "config", "user.email", "codex-hooks@example.test")
+    _git(main, "config", "user.name", "Codex Hooks")
+    _git(main, "config", "commit.gpgsign", "false")
+    (main / ".gitignore").write_text("data/\n")
+    _vendor_scope_positions(main)
+    (main / "src" / "features").mkdir(parents=True, exist_ok=True)
+    (main / "src" / "features" / "foo.py").write_text("x = 1\n")
+    _git(main, "add", "-A")
+    _git(main, "commit", "-m", "init")
+    _git(main, "remote", "add", "origin", str(remote))
+    _git(main, "push", "-u", "origin", "main")
+    if splits_affecting:
+        (main / "src" / "features" / "foo.py").write_text("x = 2\n")
+        _git(main, "add", "src/features/foo.py")
+    else:
+        (main / "README.md").write_text("docs\n")
+        _git(main, "add", "README.md")
+    _git(main, "commit", "-m", "merge")
+    _git(main, "push", "origin", "main")
+    worktree = tmp_path / "feature"
+    _git(main, "worktree", "add", "-b", "feature", str(worktree), "main")
+    _write_splits(main / "data" / "splits", "STALE")
+    _write_splits(worktree / "data" / "splits", "FRESH")
+    return main, worktree
+
+
+@pytest.mark.skipif(not _jq_available(), reason="post-pr-merge hook needs jq to emit context")
+@pytest.mark.skipif(not _python3_available(), reason="splits-promote gate needs python3")
+class TestCodexPromoteSplits:
+    def _parent_splits(self, main: Path) -> set[str]:
+        return {
+            (main / "data/splits" / f"{n}.parquet").read_text() for n in ("train", "val", "test")
+        }
+
+    def test_promotes_worktree_splits_on_splits_affecting_merge(self, tmp_path: Path):
+        main, worktree = _setup_promote_repo(tmp_path, splits_affecting=True)
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 1 --squash"}},
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+        assert self._parent_splits(main) == {"FRESH"}
+        context = json.loads(result.stdout)["hookSpecificOutput"]
+        assert "splits promote: copied" in context["additionalContext"]
+
+    def test_skips_when_worktree_splits_is_symlink(self, tmp_path: Path):
+        main, worktree = _setup_promote_repo(tmp_path, splits_affecting=True)
+        shutil.rmtree(worktree / "data/splits")
+        (worktree / "data/splits").symlink_to(main / "data/splits")
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 1 --squash"}},
+            worktree,
+        )
+        assert result.returncode == 0
+        assert self._parent_splits(main) == {"STALE"}
+        assert "splits promote: copied" not in result.stdout
+
+    def test_skips_when_merge_not_splits_affecting(self, tmp_path: Path):
+        main, worktree = _setup_promote_repo(tmp_path, splits_affecting=False)
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 1 --squash"}},
+            worktree,
+        )
+        assert result.returncode == 0
+        assert self._parent_splits(main) == {"STALE"}
+        assert "splits promote: copied" not in result.stdout
