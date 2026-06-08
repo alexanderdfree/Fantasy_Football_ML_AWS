@@ -1,11 +1,11 @@
 ---
 name: solve-issues
-description: Triage the open [claude-audit] per-finding GitHub issues (one finding per issue, labeled by severity + area), then plan parallel-worker fixes bundled into 2–3 tier-by-risk PRs for user approval. Enters plan mode. Verifies each open finding, classifies FIX vs LEAVE (skipping stale claims, false positives, and feature-drift suggestions that violate project stop-rules), closes the LEAVE issues, partitions the FIX set into file-disjoint bundles across Tier A/B/C risk tiers, then exits plan mode for approval. Trigger with `/solve-issues` when the user wants to clear the audit backlog; not for one-off bug fixes. Also runs a verify-then-close mode for an already-remediated backlog passed explicitly (e.g. a legacy batch issue or a `#NNN split` set like `/solve-issues #338-348`): confirms each finding's fix is on `main` (or its LEAVE still holds), then closes the tracking issue(s).
+description: Triage the open [claude-audit]/[codex-audit] per-finding GitHub issues (one finding per issue, labeled by severity + area), then plan parallel-worker fixes bundled into 2–3 tier-by-risk PRs for user approval. Enters plan mode. Verifies each open finding, classifies FIX vs LEAVE (skipping stale claims, false positives, and feature-drift suggestions that violate project stop-rules), closes the LEAVE issues, partitions the FIX set into file-disjoint bundles across Tier A/B/C risk tiers, then exits plan mode for approval. Trigger with `/solve-issues` when the user wants to clear the audit backlog; not for one-off bug fixes. Also runs a verify-then-close mode for an already-remediated backlog passed explicitly (e.g. a legacy batch issue or a `#NNN split` set like `/solve-issues #338-348`): confirms each finding's fix is on `main` (or its LEAVE still holds), then closes the tracking issue(s).
 ---
 
 # Solve audit-job issues
 
-The scheduled `[claude-audit]` routine files **one GitHub issue per finding**, each labeled `claude-audit` + a severity label (`severity-high`/`severity-medium`) + an area label (`qb`/`shared`/`docs`/…). The open severity-labeled issues are the live backlog; a closed `[claude-audit] checkpoint …` issue per fire records the audited SHA (it is **not** a finding — it carries no severity label, so it never appears in the backlog query). A meaningful fraction of findings are real bugs; the rest are noise: stale claims, false positives, or suggestions that re-introduce reverted designs (rolling features into the attention static branch, training on `fantasy_points`, loss-config knobs in `tune_nn.py`, etc. — see [AGENTS.md](AGENTS.md) "Stop rules").
+The scheduled audit routines file **one GitHub issue per finding**, each labeled with the producer label (`claude-audit` or `codex-audit`) + a severity label (`severity-high`/`severity-medium`) + an area label (`qb`/`shared`/`docs`/…). The open severity-labeled issues across both labels are the live backlog; a closed `[claude-audit] checkpoint …` or `[codex-audit] checkpoint …` issue per fire records the audited SHA (it is **not** a finding — it carries no severity label, so it never appears in the backlog query). A meaningful fraction of findings are real bugs; the rest are noise: stale claims, false positives, or suggestions that re-introduce reverted designs (rolling features into the attention static branch, training on `fantasy_points`, loss-config knobs in `tune_nn.py`, etc. — see [AGENTS.md](AGENTS.md) "Stop rules").
 
 This skill enters plan mode, triages each open finding into **FIX** or **LEAVE** (with a category), then drafts the fix plan using the project's tier-by-risk PR consolidation pattern (CLAUDE.md "Sub-agent contract — two shapes" + auto-memory `feedback_tier_by_risk_pr_consolidation`). It produces a verdict + bundle plan for `ExitPlanMode` approval — **no branches cut, no workers spawned for code changes, until the user approves**.
 
@@ -14,7 +14,7 @@ This skill enters plan mode, triages each open finding into **FIX** or **LEAVE**
 This skill runs in one of two modes, chosen after Phase 1 fetches the target issue(s):
 
 - **Mode A — triage-and-fix** (the default; everything in Phases 1–5 and "How to act on the approved plan" below). The open per-finding issues are fresh/unaddressed → triage each FIX/LEAVE → close the LEAVE issues → bundle the FIX set into tier-by-risk PRs (whose merges close the FIX issues via `Closes #N`). This is the mode for the live open backlog.
-- **Mode B — verify-and-close** (the "## Mode B" section below). The target issue(s) **already carry a remediation record** — a comment mapping each finding to a merged fix PR or a categorized LEAVE. The job is to CONFIRM the remediation actually landed on `main` and is sound, then CLOSE the issue(s). This applies to a **legacy batch issue** (a dated multi-finding `[claude-audit] <date> — N findings` dump or a `#NNN split — <Area>`) passed explicitly, or to re-confirming a previously-worked set.
+- **Mode B — verify-and-close** (the "## Mode B" section below). The target issue(s) **already carry a remediation record** — a comment mapping each finding to a merged fix PR or a categorized LEAVE. The job is to CONFIRM the remediation actually landed on `main` and is sound, then CLOSE the issue(s). This applies to a **legacy batch issue** (a dated multi-finding `[claude-audit] <date> — N findings` or `[codex-audit] <date> — N findings` dump or a `#NNN split — <Area>`) passed explicitly, or to re-confirming a previously-worked set.
 
 **Detecting the mode** (do this right after Phase 1's fetch): choose **Mode B** iff —
 
@@ -28,7 +28,7 @@ Otherwise run **Mode A**. A large SHA-drift (the issue's `@<sha>` is many commit
 - User invokes `/solve-issues` (optionally with an explicit `<issue-number>`, a range `#A-B`, or a list `#A,#B,…` to override auto-detection).
 - User asks to "work down the audit findings", "triage the audit backlog", "clear the audit backlog", or similar → usually **Mode A**.
 - User asks to "confirm/close an already-worked audit backlog", "verify the split issues are done", "mark the audit issues done if fixed", or points at a `#NNN split` set → **Mode B** (verify-then-close).
-- After a fresh `[claude-audit]` cycle has added findings → **Mode A**.
+- After a fresh `[claude-audit]` or `[codex-audit]` cycle has added findings → **Mode A**.
 
 Skip when:
 
@@ -43,17 +43,19 @@ If not already in plan mode, call `EnterPlanMode` first. The skill produces a tr
 ### Phase 1 — Fetch the target issue(s)
 
 1. Resolve the target:
-   - **Default (no arg)** — the open per-finding backlog. Use the same `severity-*` filter the producer dedups on (`prompt.md` STEP 1c):
+   - **Default (no arg)** — the open per-finding backlog. Use the same `severity-*` filter the producers dedupe on (`routines/audit/instructions.md` Step 1):
      ```
-     gh issue list --label claude-audit --state open --json number,title,labels,updatedAt --limit 400 \
-       --jq '.[] | select(any(.labels[]; .name=="severity-high" or .name=="severity-medium"))'
+     for label in claude-audit codex-audit; do
+       gh issue list --label "$label" --state open --json number,title,labels,updatedAt --limit 400 \
+         --jq '.[] | select(any(.labels[]; .name=="severity-high" or .name=="severity-medium"))'
+     done | jq -s 'unique_by(.number) | sort_by(.number)'
      ```
      The filter drops the closed `checkpoint` issues automatically (they carry no severity label) and yields the live finding set. Each kept issue is ONE finding.
-   - Explicit `/solve-issues <N>` → use `<N>` (one issue). If it carries a severity label it's a single per-finding issue; if it's a **legacy batch issue** (`[claude-audit] <date> — N findings`) or a `#NNN split`, treat its body as multi-finding (see step 3's legacy fallback).
+   - Explicit `/solve-issues <N>` → use `<N>` (one issue). If it carries a severity label it's a single per-finding issue; if it's a **legacy batch issue** (`[claude-audit] <date> — N findings` or `[codex-audit] <date> — N findings`) or a `#NNN split`, treat its body as multi-finding (see step 3's legacy fallback).
    - Explicit **range/list** `/solve-issues #A-B` or `#A,#B,…` → expand to the set and run per-issue.
 2. Fetch full body + comments for each target issue: `gh issue view <N> --json number,title,body,labels,comments`.
 3. Parse into per-finding records `{id (=issue #), severity, area, title, file, line, what, why_suspect, suggested_action, evidence_snippet}`:
-   - **Per-finding issue (default):** one issue = one finding. Read `severity` and `area` from the **labels** (`severity-*` / the area label), the rest from the body fields. **Prefer the machine-readable `json` block** (schema `claude-audit/v1`, appended at the END of the body) when present — it carries `file`, `line`, `category`, `first_seen_sha`; extract it CRLF-safely the same way `prompt.md` STEP 1c does (strip `\r` from the `gh issue view <N> --json body --jq '.body'` output, slice the fenced json block, `jq` it). If the block is absent (legacy issue) or unparseable, FALL BACK to the prose `**File**:`/`**What**:`/… body fields. Severity and area still come from LABELS either way; `category` (if present) seeds the triage hint, not the FIX/LEAVE verdict. `id` is the issue number — keep it; you'll cite `Closes #id` (FIX) or close it directly (LEAVE).
+   - **Per-finding issue (default):** one issue = one finding. Read `severity` and `area` from the **labels** (`severity-*` / the area label), the rest from the body fields. **Prefer the machine-readable `json` block** (schema `agent-audit/v1`, or legacy `claude-audit/v1`, appended at the END of the body) when present — it carries `file`, `line`, `category`, `first_seen_sha`, and for new issues the producer `audit_label`; extract it CRLF-safely the same way `routines/audit/instructions.md` Step 1 does (strip `\r` from the `gh issue view <N> --json body --jq '.body'` output, slice the fenced json block, `jq` it). If the block is absent (legacy issue) or unparseable, FALL BACK to the prose `**File**:`/`**What**:`/… body fields. Severity and area still come from LABELS either way; `category` (if present) seeds the triage hint, not the FIX/LEAVE verdict. `id` is the issue number — keep it; you'll cite `Closes #id` (FIX) or close it directly (LEAVE).
    - **Legacy fallback (explicitly-passed multi-finding issue):** if the body groups findings under area headers (`### QB`, `### Shared`, …) or it's a `#NNN split`, parse each `#### …` finding block into its own record (severity from the finding header, area from the section / split title). This drains the pre-migration batch issues without re-filing them.
 4. Compare the head SHA (`@<sha>` in a finding's First-seen line, or a batch title) against `git rev-parse origin/main`. If drifted by > a handful of commits, note it ("auditor SHA is N commits behind `main`; some findings may already be stale or remediated at head").
 5. **Pick the mode** (see "## Two modes"): if the target issue(s) already carry a remediation comment whose cited PRs are merged → **Mode B** (jump to "## Mode B: verify-then-close"). Otherwise → **Mode A** (continue to Phase 2).
@@ -137,7 +139,7 @@ For shared-code signature changes (a worker bundle modifies a function's signatu
 
 Write the plan to the plan file with these sections:
 
-0. **Master backlog (severity-ordered)** — the at-a-glance ranked view of everything open: all findings sorted by **severity (HIGH first)**, then area, then issue #: `severity | area | #issue | title | verdict | tier-if-FIX`. This answers "what's open, by severity"; sections 3–5 answer "what to fix first / together". (The same view is available any time without the skill via `gh issue list --label claude-audit --label severity-high`.)
+0. **Master backlog (severity-ordered)** — the at-a-glance ranked view of everything open: all findings sorted by **severity (HIGH first)**, then area, then issue #: `severity | area | #issue | title | verdict | tier-if-FIX`. This answers "what's open, by severity"; sections 3–5 answer "what to fix first / together". (The same view is available any time without the skill by listing severity-labeled issues under both `claude-audit` and `codex-audit`.)
 1. **Triage table** — one row per finding: `#issue | severity | area | file:line | verdict | category-if-LEAVE | tier-if-FIX`
 2. **LEAVE rationale + issues to close** — grouped by category, one line per finding pointing to the stop-rule or evidence. These issues are closed (with a reason comment) on approval — list the `#issue`s explicitly.
 3. **FIX bundles per tier** — Tier A → B → C, each tier listing bundles with `bundle_id | finding_ids (#issues) | files | worker_brief_summary`
@@ -192,7 +194,7 @@ Write the plan with: (1) the **confirmation table**; (2) the **per-issue close l
 
 Once the user approves the plan via `ExitPlanMode`:
 
-**First, retire the LEAVE issues.** For each finding triaged LEAVE (`false_positive` / `feature_drift` / `stale` / `speculative`), label it `leave` and close it as **not planned** with a one-line reason (for `feature_drift`, cite the AGENTS.md stop-rule by section name). The `leave` label + `not planned` state distinguish a noise issue from a genuinely-fixed one (which closes `completed`), so the audit routine can compute a per-area real-vs-noise **yield** to weight its worker budgets ([audit prompt.md](../../routines/audit/prompt.md) STEP 1d):
+**First, retire the LEAVE issues.** For each finding triaged LEAVE (`false_positive` / `feature_drift` / `stale` / `speculative`), label it `leave` and close it as **not planned** with a one-line reason (for `feature_drift`, cite the AGENTS.md stop-rule by section name). The `leave` label + `not planned` state distinguish a noise issue from a genuinely-fixed one (which closes `completed`), so each audit producer can compute a per-area real-vs-noise **yield** to weight its worker budgets ([shared audit instructions](../../../routines/audit/instructions.md) Step 1):
 ```
 gh label create leave --color CCCCCC --description "Audit finding triaged as noise (false positive / stale / stop-rule drift)" 2>/dev/null || true
 gh issue edit <#> --add-label leave
@@ -230,7 +232,7 @@ gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>):
 11. **Get explicit user merge sign-off, then merge.** After green CI, show the user the PR diff (`gh pr diff <N>`) and — for Tier C — the benchmark deltas from the PR body, and ask for explicit approval (AskUserQuestion). Only after the user approves: `gh pr merge <N> --squash`, then `git push origin --delete <branch>` separately — memory `gh_pr_merge_worktree`. Never auto-merge a solve-issues PR on green CI alone — `.claude/hooks/post-pr-create.sh` injects the same stop for `audit-*/tier-*` branches.
 12. **Confirm closure** — the merged PR's `Closes #N` auto-closes each finding-issue it fixed. Spot-check with `gh issue view #N --json state` (CLOSED); manually `gh issue close #N` any that GitHub didn't auto-close (wording mismatch, etc.). LEAVE issues were already closed at the top of this section.
 
-After all tier PRs land, the open `severity-*`-labeled backlog should show only `out_of_scope` + UNCERTAIN→deferred findings. The next `[claude-audit]` cycle won't re-file the fixed/closed ones — its dedup spans **closed** issues too.
+After all tier PRs land, the open `severity-*`-labeled backlog should show only `out_of_scope` + UNCERTAIN→deferred findings. The next `[claude-audit]` or `[codex-audit]` cycle won't re-file the fixed/closed ones — producer dedupe spans **closed** issues from both labels too.
 
 ### Mode B execution (verify-then-close)
 
@@ -251,7 +253,7 @@ Once the verify-then-close plan is approved:
 - **CI-friendly PR cadence** — 2–3 PRs instead of 50+ per-bug PRs cuts ~95% of `tests.yml`'s 7-shard matrix runs.
 - **Plan-mode-first + merge sign-off** — verdict list and bundling strategy are user-approved before any branches are cut or workers spawn. Workers operate on a vetted plan; nothing speculative ships. And beyond plan approval, each tier PR stops for **explicit user merge sign-off** (the diff + Tier C benchmark deltas) — a solve-issues PR is never auto-merged on green CI alone (enforced by `post-pr-create.sh` for `audit-*/tier-*` branches).
 - **Reuses established orchestration** — the per-tier worker → cherry-pick → staging-branch → one-PR flow has shipped 6+ tier PRs (the code-review remediation rollup #312/#314/#315, audit-318 cycles) without conflict-driven rebundles.
-- **Verify-then-close (Mode B) retires remediated backlogs** — confirms a remediation actually held on `main` (not merely that PRs merged — memory `feedback_squash_merge_verify_content`) and closes the finite tracking issues, so the next `[claude-audit]` re-scan starts from a true-clean state instead of re-flagging already-fixed findings or leaving split issues open indefinitely.
+- **Verify-then-close (Mode B) retires remediated backlogs** — confirms a remediation actually held on `main` (not merely that PRs merged — memory `feedback_squash_merge_verify_content`) and closes the finite tracking issues, so the next `[claude-audit]` or `[codex-audit]` re-scan starts from a true-clean state instead of re-flagging already-fixed findings or leaving split issues open indefinitely.
 
 ## Format example — triage table excerpt
 

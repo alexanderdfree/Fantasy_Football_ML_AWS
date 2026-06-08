@@ -1,9 +1,9 @@
 ---
-description: Triage claude-audit issues into tier-by-risk Codex PRs
+description: Triage agent audit issues into tier-by-risk Codex PRs
 argument-hint: [ISSUES="<numbers or range>"] [DRY_RUN=1]
 ---
 
-Run the Final-Project Codex workflow for `claude-audit` findings. This is the Codex equivalent of the Claude `solve-issues` skill, adapted for Codex prompts, optional Codex subagents, `.codex/hooks/pre-pr.sh`, and `/prompts:pre-pr-judge`.
+Run the Final-Project Codex workflow for `claude-audit` and `codex-audit` findings. This is the Codex equivalent of the Claude `solve-issues` skill, adapted for Codex prompts, optional Codex subagents, `.codex/hooks/pre-pr.sh`, and `/prompts:pre-pr-judge`.
 
 If `DRY_RUN=1`, stop after the classification and tier plan. Do not edit files, close issues, commit, push, or open PRs.
 
@@ -14,14 +14,14 @@ Read `AGENTS.md` first, especially stop-rules, worktree workflow, large-cleanup 
 Resolve the target issues:
 
 - If `ISSUES` is supplied, expand one issue, a range such as `#338-348`, or a comma list such as `#338,#341`.
-- Otherwise enumerate the open actionable backlog:
-  `gh issue list --label claude-audit --state open --json number,title,labels,updatedAt --limit 400 --jq '.[] | select(any(.labels[]; .name=="severity-high" or .name=="severity-medium"))'`
+- Otherwise enumerate the open actionable backlog across both audit labels:
+  `for label in claude-audit codex-audit; do gh issue list --label "$label" --state open --json number,title,labels,updatedAt --limit 400 --jq '.[] | select(any(.labels[]; .name=="severity-high" or .name=="severity-medium"))'; done | jq -s 'unique_by(.number) | sort_by(.number)'`
 - Fetch each target with `gh issue view <N> --json number,title,body,labels,comments`.
 
 Parse each issue into finding records:
 
-- Per-finding issue: one GitHub issue equals one finding. Read `severity` and `area` from labels. Prefer the final fenced JSON block with `schema=="claude-audit/v1"`; it carries `file`, `line`, `category`, and `first_seen_sha`. Strip CRLF before slicing/parsing. Fall back to prose fields such as `**File**:` only when JSON is absent or malformed.
-- Explicit legacy or split issue: if the issue is a dated `[claude-audit] <date> - N findings` batch, a `#NNN split`, or has area sections such as `### QB` / `### Shared`, parse each `#### ...` finding block into its own record. Use the parent issue plus an area/index suffix as the finding id, but close the parent issue only when all of its findings are confirmed.
+- Per-finding issue: one GitHub issue equals one finding. Read `severity` and `area` from labels. Prefer the final fenced JSON block with `schema=="agent-audit/v1"` or the legacy `schema=="claude-audit/v1"`; it carries `file`, `line`, `category`, and `first_seen_sha`. Strip CRLF before slicing/parsing. Fall back to prose fields such as `**File**:` only when JSON is absent or malformed.
+- Explicit legacy or split issue: if the issue is a dated `[claude-audit] <date> - N findings` or `[codex-audit] <date> - N findings` batch, a `#NNN split`, or has area sections such as `### QB` / `### Shared`, parse each `#### ...` finding block into its own record. Use the parent issue plus an area/index suffix as the finding id, but close the parent issue only when all of its findings are confirmed.
 - FIX PR bodies must cite `Closes #N` for per-finding issues. LEAVE per-finding issues are closed directly; legacy/split parent issues follow the Mode B close rules.
 
 Check freshness and choose the mode:

@@ -53,7 +53,12 @@ OpenAI now marks custom prompts deprecated in favor of skills, but prompts are s
 - Claude's `SessionStart` can mutate the remote session environment through `CLAUDE_ENV_FILE`; Codex hooks can add context but cannot persist `VIRTUAL_ENV`, `PATH`, `PYTHONPATH`, or a new working directory for later shell tools.
 - Claude's worktree guard sees explicit `file_path` fields from Edit/Write tools. Codex primarily edits through `apply_patch`, so the guard parses patch headers and does not attempt broad Bash write detection.
 - Claude's `/review` skill is an interactive tool. Codex's closest local equivalent is `scripts/codex-review-quiet.sh --base origin/main`, a wrapper around `codex review` that filters known loader-warning noise.
-- Claude's scheduled audit routine is a claude.ai cloud routine. Codex has no matching scheduled local routine in this repo yet; Codex can consume the resulting `claude-audit` issue backlog through `/prompts:solve-issues`.
+
+## Audit Automation Wrapper
+
+Claude and Codex share audit behavior from [`routines/audit/instructions.md`](routines/audit/instructions.md). The Claude cloud routine sets `AUDIT_LABEL=claude-audit`; the tracked Codex wrapper at [`.codex/automations/audit/prompt.md`](.codex/automations/audit/prompt.md) sets `AUDIT_LABEL=codex-audit`. Both producers dedupe against open and closed severity-labeled issues from `claude-audit` and `codex-audit`, while keeping separate checkpoint history.
+
+This repo tracks the Codex wrapper only; it does not create an active Codex app cron automation. If one is created later, point it at `.codex/automations/audit/prompt.md` and run it from a repo workspace. `/prompts:solve-issues` consumes both audit labels.
 
 ## Auto-memory
 
