@@ -412,7 +412,9 @@ def _build_inheritance_features(
     """Add ``is_top_available`` + ``inherited_opportunity`` per (position, recent_team,
     season, week), within position.
 
-    * role(player, W) = prior-to-W expanding mean of the position's opportunity proxy.
+    * role(player, W) = prior-to-W expanding mean of the position's opportunity proxy, falling
+      back to the player's prior-season mean role when there is no current-season game yet
+      (Week 1 / cold-start) so the vacancy signal is not silently zeroed (#1106 finding B).
     * ``is_top_available`` = top prior-role among *present* same-position teammates that week.
     * ``inherited_opportunity`` = Σ prior-role of same-team, same-position OUT/Doubtful
       teammates ranked above, only for the top-available one. The out-set is the injury
@@ -477,8 +479,15 @@ def _build_inheritance_features(
             ):
                 outmap.setdefault((pos, s, t, w), set()).add(g)
 
-    # per-position prior-to-W expanding-mean role table: (player, season) -> (weeks, cum-mean)
+    # per-position prior-to-W expanding-mean role table: (player, season) -> (weeks, cum-mean),
+    # plus a prior-SEASON mean-role fallback: (player, season) -> the mean role the player posted
+    # in season-1. The within-season expanding mean is identically 0 in Week 1 and for any player
+    # with no current-season games yet (rookies / just-returned / just-traded), which silently
+    # zeroed the vacancy signal exactly when a newly-out starter should be inherited (#1106
+    # finding B). Falling back to the player's prior-season average role restores a non-zero
+    # role_before there. Prior-season aggregates are wholly in the past, so this stays leakage-safe.
     pref: dict = {}
+    prior_role: dict = {}
     for pos in _INHERITANCE_POSITIONS:
         col = _INHERITANCE_ROLE_COL[pos]
         if col not in df.columns:
@@ -486,19 +495,25 @@ def _build_inheritance_features(
         table: dict = {}
         sub_pos = df[df["position"] == pos][["player_id", "season", "week", col]].copy()
         sub_pos["player_id"] = sub_pos["player_id"].astype(str)
+        sub_pos[col] = np.nan_to_num(sub_pos[col].to_numpy(float), nan=0.0)
         for (p, s), sub in sub_pos.sort_values("week").groupby(["player_id", "season"]):
             wks = sub["week"].to_numpy()
-            vals = np.nan_to_num(sub[col].to_numpy(float), nan=0.0)
+            vals = sub[col].to_numpy(float)
             table[(p, s)] = (wks, np.cumsum(vals) / np.arange(1, len(vals) + 1))
         pref[pos] = table
+        # mean role per (player, season), exposed as the fallback in the FOLLOWING season
+        season_mean = sub_pos.groupby(["player_id", "season"])[col].mean()
+        prior_role[pos] = {(p, int(s) + 1): float(v) for (p, s), v in season_mean.items()}
 
     def role_before(pos, p, s, w):
         e = pref.get(pos, {}).get((p, s))
-        if e is None:
-            return 0.0
-        wks, cm = e
-        i = int(np.searchsorted(wks, w, side="left")) - 1  # largest week < w
-        return float(cm[i]) if i >= 0 else 0.0
+        if e is not None:
+            wks, cm = e
+            i = int(np.searchsorted(wks, w, side="left")) - 1  # largest week < w
+            if i >= 0:
+                return float(cm[i])
+        # No current-season history yet (Week 1 / cold-start) -> prior-season mean role.
+        return prior_role.get(pos, {}).get((p, s), 0.0)
 
     for pos in _INHERITANCE_POSITIONS:
         if pos not in pref:

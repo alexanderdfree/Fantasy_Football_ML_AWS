@@ -553,3 +553,54 @@ def test_inheritance_ir_roster_status_out_set():
     ina = rosters.assign(status="INA")
     g1 = _build_inheritance_features(df, None, rosters_df=ina).set_index(["player_id", "week"])
     assert g1.loc[("B", 3), "inherited_opportunity"] == 0.0
+
+
+def test_inheritance_prior_season_fallback_week1():
+    """#1106 finding B: in Week 1 (no current-season history) the within-season expanding role is
+    identically 0, which silently zeroed the vacancy signal. ``role_before`` now falls back to the
+    player's prior-season mean role, so a newly-out prior-season starter is still inherited by the
+    next man up on the opener."""
+    from src.features.engineer import _build_inheritance_features
+
+    rows = []
+    # Prior season (2022): A is the lead RB (snap .8), B the backup (.4).
+    for wk in (1, 2, 3):
+        for pid, snap in (("A", 0.8), ("B", 0.4)):
+            rows.append(
+                dict(
+                    player_id=pid,
+                    position="RB",
+                    recent_team="KC",
+                    season=2022,
+                    week=wk,
+                    snap_pct_raw=snap,
+                    targets=0.0,
+                )  # fmt: skip
+            )
+    # 2023 Week-1 opener: A is Out (absent), B plays. No current-season history exists yet.
+    rows.append(
+        dict(
+            player_id="B",
+            position="RB",
+            recent_team="KC",
+            season=2023,
+            week=1,
+            snap_pct_raw=0.5,
+            targets=0.0,
+        )  # fmt: skip
+    )
+    df = pd.DataFrame(rows)
+    inj = pd.DataFrame(
+        [dict(gsis_id="A", position="RB", team="KC", season=2023, week=1, report_status="Out")]
+    )
+
+    g = _build_inheritance_features(df, inj).set_index(["player_id", "season", "week"])
+    # B is the only present back -> top-available; A (prior-season role .8) is Out and ranked above
+    # B (prior-season role .4), so B inherits A's prior-season role on the opener.
+    assert g.loc[("B", 2023, 1), "is_top_available"] == 1.0
+    assert g.loc[("B", 2023, 1), "inherited_opportunity"] == pytest.approx(0.8)
+
+    # Without a prior season the fallback is absent -> Week-1 inheritance stays 0 (old behavior).
+    df_no_prior = df[df["season"] == 2023].copy()
+    g2 = _build_inheritance_features(df_no_prior, inj).set_index(["player_id", "season", "week"])
+    assert g2.loc[("B", 2023, 1), "inherited_opportunity"] == 0.0
