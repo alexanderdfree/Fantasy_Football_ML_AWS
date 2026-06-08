@@ -200,3 +200,58 @@ class TestFullTrainTeamTotals:
         out_default, _, _ = add_specific_features(df.copy(), val.copy(), test.copy())
         out_none, _, _ = add_specific_features(df.copy(), val.copy(), test.copy(), full_train=None)
         pd.testing.assert_frame_equal(out_default, out_none)
+
+
+@pytest.mark.unit
+class TestWRBoomFeatures:
+    """Production build of the red-zone / opportunity boom block (A/B +all,
+    src/tuning/ab_boom_signals_wr.py). The per-game shares/index feed attention history;
+    the L3 rollings feed the whitelist. Byte-identical to the validated A/B injector on
+    real splits — this locks the production per-game formulas + leakage-safe rolling
+    against a regression the A/B-spec test (which exercises the injector) wouldn't catch.
+    """
+
+    def _frame(self) -> pd.DataFrame:
+        # KC: WR A (lead, 8 tgt) + WR B (2 tgt), 3 weeks; A redzone_targets 2/0/1.
+        rows = []
+        for wk, a_rz in zip((1, 2, 3), (2.0, 0.0, 1.0), strict=True):
+            for pid, tgt, rec, rz in (("A", 8, 5, a_rz), ("B", 2, 1, 0.0)):
+                rows.append(
+                    dict(
+                        player_id=pid,
+                        season=2023,
+                        week=wk,
+                        recent_team="KC",
+                        targets=tgt,
+                        carries=0,
+                        receptions=rec,
+                        receiving_yards=rec * 12,
+                        receiving_air_yards=tgt * 10,
+                        receiving_yards_after_catch=rec * 5,
+                        receiving_epa=1.0,
+                        receiving_first_downs=1,
+                        redzone_targets=rz,
+                        redzone_target_share=0.25 if pid == "A" else 0.0,
+                    )  # fmt: skip
+                )
+        return pd.DataFrame(rows)
+
+    def test_per_game_shares_and_opportunity_index(self):
+        df = self._frame()
+        _compute_features(df)
+        g = df.set_index(["player_id", "week"])
+        # WR-scoped team targets = 8 + 2 = 10 → A share 0.8, B share 0.2.
+        assert g.loc[("A", 1), "game_target_share"] == pytest.approx(0.8)
+        assert g.loc[("B", 1), "game_target_share"] == pytest.approx(0.2)
+        # HHI = 0.8² + 0.2² = 0.68 (WR concentration that game).
+        assert g.loc[("A", 1), "game_target_hhi"] == pytest.approx(0.68)
+        # Weighted opportunity index (carries 0): player 2·8=16 / team 2·10=20 = 0.8.
+        assert g.loc[("A", 1), "game_opportunity_index"] == pytest.approx(0.8)
+
+    def test_redzone_rolling_is_leakage_safe(self):
+        df = self._frame()
+        _compute_features(df)
+        a = df[df["player_id"] == "A"].set_index("week")["redzone_targets_L3"]
+        assert pd.isna(a.loc[1])  # shift(1): week 1 has no prior game → NaN (fill_nans backfills)
+        assert a.loc[2] == pytest.approx(2.0)  # mean(week1=2)
+        assert a.loc[3] == pytest.approx(1.0)  # mean(week1=2, week2=0)
