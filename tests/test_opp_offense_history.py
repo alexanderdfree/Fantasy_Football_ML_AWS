@@ -111,10 +111,17 @@ class TestBuildOppOffensePerGameDf:
         for col in OPP_OFFENSE_HISTORY_STATS:
             assert col in out.columns
 
-    def test_missing_schedules_falls_back_to_zero_pts(self, monkeypatch, tmp_path):
-        """If the schedules parquet is absent, off_pts_scored falls back to 0
-        but the player-derived columns survive."""
-        monkeypatch.setattr("src.features.engineer.CACHE_DIR", str(tmp_path))
+    def test_missing_schedules_falls_back_to_zero_pts(self, monkeypatch):
+        """If _load_schedules can't find the parquet, off_pts_scored falls back
+        to 0 but the player-derived columns survive."""
+
+        def _raise():
+            raise FileNotFoundError("schedules parquet absent")
+
+        # The helper now routes through _load_schedules (#757); patch it to raise
+        # so the FileNotFoundError zero-fill fallback is exercised. (Patching
+        # CACHE_DIR no longer reaches the read — _load_schedules owns it.)
+        monkeypatch.setattr("src.features.engineer._load_schedules", _raise)
         df = _synthetic_offense_df()
         out = build_opp_offense_per_game_df(df)
         assert (out["off_pts_scored"] == 0.0).all()
@@ -186,10 +193,14 @@ class TestEndToEndChain:
     frame picks the wrong path in pipeline/serving, the resulting tensor
     would be all-zero — this test catches that class of bug."""
 
-    def test_chain_yields_nonzero_history(self, monkeypatch, tmp_path):
-        # Force the no-schedules fallback so off_pts_scored is zero but
-        # all other off_* columns flow through with real values.
-        monkeypatch.setattr("src.features.engineer.CACHE_DIR", str(tmp_path))
+    def test_chain_yields_nonzero_history(self, monkeypatch):
+        # Force the no-schedules fallback so off_pts_scored is zero but all other
+        # off_* columns flow through with real values. The helper routes through
+        # _load_schedules now (#757), so patch that to raise.
+        def _raise():
+            raise FileNotFoundError("schedules parquet absent")
+
+        monkeypatch.setattr("src.features.engineer._load_schedules", _raise)
         df = _synthetic_offense_df()
         per_game = build_opp_offense_per_game_df(df)
 

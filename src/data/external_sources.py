@@ -198,7 +198,15 @@ def bridge_qbr_to_gsis(qbr: pd.DataFrame, ids: pd.DataFrame) -> pd.DataFrame:
     q = q.assign(week=pd.to_numeric(wk, errors="coerce")).dropna(subset=["week"])
     q["week"] = q["week"].astype(int)
     # ESPN id -> gsis id bridge (dedupe on espn_id so the merge can't fan out).
-    x = ids[["espn_id", "gsis_id"]].dropna().drop_duplicates(subset=["espn_id"], keep="first")
+    # Deterministic pre-sort before keep="first": ids comes from nflreadpy
+    # (polars-backed, no row-order guarantee), so without a sort the chosen
+    # gsis_id for a colliding espn_id flips across library versions. (#823)
+    x = (
+        ids[["espn_id", "gsis_id"]]
+        .dropna()
+        .sort_values(["espn_id", "gsis_id"])
+        .drop_duplicates(subset=["espn_id"], keep="first")
+    )
     x = x.assign(espn_id=pd.to_numeric(x["espn_id"], errors="coerce")).dropna(subset=["espn_id"])
     q["espn_player_id"] = pd.to_numeric(q["player_id"], errors="coerce")
     q = (

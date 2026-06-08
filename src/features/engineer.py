@@ -4,13 +4,11 @@ import numpy as np
 import pandas as pd
 
 from src.config import (
-    CACHE_DIR,
     EWMA_SPANS,
     EWMA_STATS,
     OPP_ROLLING_WINDOW,
     ROLL_STATS,
     ROLLING_WINDOWS,
-    SEASONS,
     SHARE_WINDOWS,
     TREND_STATS,
 )
@@ -653,17 +651,18 @@ def build_opp_defense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Points allowed — sourced from schedule scores (away_score for the home
-    # team and vice versa). Same pattern as ``_build_defense_matchup_features``.
-    schedules_path = f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    # team and vice versa). Route via _load_schedules (REG-filtered + cached) so
+    # the tests/conftest.py autouse fixture catches this read too — mirrors
+    # _build_defense_matchup_features. _load_schedules raises FileNotFoundError
+    # when the parquet is absent; keep the zero-fill fallback for that. (#757)
     try:
-        schedules = pd.read_parquet(schedules_path)
+        schedules_reg = _load_schedules().copy()
     except FileNotFoundError:
-        # Tests and callers without the schedules cache still get the five
+        # Degraded callers without the schedules cache still get the five
         # player-derived stats; pts_allowed falls back to 0.
         def_stats["def_pts_allowed"] = 0.0
         return def_stats[["opponent_team", "season", "week"] + OPP_DEFENSE_HISTORY_STATS]
 
-    schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
     # Normalize historical team codes (OAK→LV, SD→LAC, STL→LA) so the join
     # finds rows for relocated franchises in their pre-relocation seasons.
     # Mirrors _build_team_schedule_lookup / build_implied_team_total_lookup
@@ -792,25 +791,21 @@ def build_opp_offense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Points scored — sourced from schedule scores. Each schedule row
-    # contributes home_team -> home_score and away_team -> away_score.
-    schedules_path = f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    # contributes home_team -> home_score and away_team -> away_score. Route via
+    # _load_schedules (REG-filtered + cached) so the tests/conftest.py autouse
+    # fixture catches this read too — mirrors _build_defense_matchup_features.
+    # _load_schedules raises FileNotFoundError when the parquet is absent. (#757)
     try:
-        schedules = pd.read_parquet(schedules_path)
+        schedules_reg = _load_schedules().copy()
     except FileNotFoundError:
-        # Tests and degraded callers still get the six player-derived stats;
-        # off_pts_scored falls back to 0. Kept as a warning + fallback rather
-        # than re-raising to preserve the test contract in
-        # tests/test_opp_offense_history.py::test_missing_schedules_falls_back_to_zero_pts
-        # (file outside this worker bundle).
+        # Degraded callers without the schedules cache still get the six
+        # player-derived stats; off_pts_scored falls back to 0.
         logger.warning(
-            "build_opp_offense_per_game_df: schedules parquet not found at "
-            "%s — off_pts_scored falls back to 0.",
-            schedules_path,
+            "build_opp_offense_per_game_df: schedules unavailable — off_pts_scored falls back to 0."
         )
         off_stats["off_pts_scored"] = 0.0
         return off_stats[["opponent_team", "season", "week"] + OPP_OFFENSE_HISTORY_STATS]
 
-    schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
     # Normalize historical team codes (OAK→LV, SD→LAC, STL→LA) — mirror of the
     # def-side normalization in build_opp_defense_per_game_df. Without it,
     # off_pts_scored for relocated franchises in pre-relocation seasons
