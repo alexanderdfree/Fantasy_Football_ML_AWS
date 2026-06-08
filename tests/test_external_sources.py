@@ -70,6 +70,28 @@ def test_derive_active_contracts_picks_latest_signed_strictly_before_season():
 
 
 @pytest.mark.unit
+def test_derive_active_contracts_drops_year_signed_zero():
+    """OTC uses ``year_signed == 0`` as a missing-year placeholder (~1.1k mostly
+    retired / practice-squad players). Left in, ``contract_age = season - 0 ≈
+    season`` — a wildly out-of-distribution value the live serving override
+    (``src.serving.live_sources.fetch_contract_features``) would feed straight to
+    inference for any such rostered player. It must be dropped (treated as no
+    contract), like a null ``gsis_id`` / ``year_signed``."""
+    contracts = pd.DataFrame(
+        {
+            "gsis_id": ["00-REAL", "00-ZERO"],
+            "year_signed": [2022, 0],
+            "years": [4.0, 4.0],
+            "guaranteed": [50.0, 99.0],
+            "apy_cap_pct": [0.10, 0.20],
+        }
+    )
+    out = derive_active_contracts(contracts, [2024])
+    assert set(out["player_id"]) == {"00-REAL"}  # year_signed==0 row dropped
+    assert (out["contract_age"] < 100).all()  # no season-as-age garbage
+
+
+@pytest.mark.unit
 def test_derive_active_contracts_absent_until_season_after_signing():
     """#645: a season on/before the player's earliest signing yields no row —
     a 2023 signing is effective from 2024 (not known before the early weeks of
