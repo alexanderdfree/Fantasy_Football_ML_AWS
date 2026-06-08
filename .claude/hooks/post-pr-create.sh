@@ -32,7 +32,7 @@ fi
 
 # Detect a solve-issues autonomous-fix PR by its staging branch (`audit-NNN/tier-X`,
 # cut by the solve-issues skill). Those PRs must NOT auto-merge — they stop for
-# explicit user merge sign-off (the user reviews the diff + Tier C benchmark deltas
+# explicit user merge sign-off (the user reviews the diff + any regress-risk-high benchmark deltas
 # before anything lands on main). Every other PR keeps the auto-merge workflow.
 cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || true
 branch=$(git branch --show-current 2>/dev/null || true)
@@ -56,7 +56,7 @@ if [[ "$branch" =~ ^audit-.*/tier- ]]; then
 
 6. Do NOT auto-merge — this is a solve-issues autonomous-fix PR. After steps 1-5:
    a. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry or use \`--admin\`.
-   b. Show the user the final diff (\`gh pr diff <N>\`) and — for Tier C — the benchmark deltas from the PR body, and ask for EXPLICIT merge sign-off (AskUserQuestion). Do NOT merge until the user approves.
+   b. Show the user the final diff (\`gh pr diff <N>\`) and any \`regress-risk-high\` benchmark deltas from the PR body, then ask for EXPLICIT merge sign-off (AskUserQuestion). Do NOT merge until the user approves.
    c. Only after the user approves: \`gh pr merge <N> --squash\`, then \`git push origin --delete <branch-name>\` (do NOT use \`--delete-branch\` — it fails in worktrees)."
 else
   step6="

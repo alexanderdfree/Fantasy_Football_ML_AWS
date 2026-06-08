@@ -23,7 +23,7 @@ verification depth, stop rules, or checkpoint behavior below.
 
 Review the Fantasy_Football_ML_AWS repo for bugs and quirks in parallel when the
 provider supports it. Use per-area location auditors plus standing cross-cutting
-lenses. Each worker emits HIGH/MED-only findings with verbatim evidence.
+lenses. Each worker emits severity-labeled findings with verbatim evidence.
 
 The orchestrator verifies every cited line, dedupes against open and closed audit
 issues from all labels in `DEDUPE_AUDIT_LABELS`, drops anything already covered by
@@ -43,7 +43,7 @@ Working directory is the repo root. Time budget is 2 hours wall-clock.
 The routine is read-only on repo files. Writing to `/tmp/*` is allowed. The only
 GitHub writes permitted are:
 
-- `gh label create` for audit/severity labels, idempotently.
+- `gh label create` for audit/severity/regress-risk labels, idempotently.
 - `gh issue create` for per-finding issues and this run's checkpoint.
 - `gh issue comment` only on issues created in this same run, for related links.
 - `gh issue close` only on the checkpoint issue created in this same run.
@@ -59,10 +59,10 @@ Each surviving finding becomes one GitHub issue:
   - `<area>` is one of `qb`, `rb`, `wr`, `te`, `k`, `dst`, `shared`, `data`,
     `serving`, `batch`, `ci`, `docs`, or `cross-position`.
   - `<title>` is the finding title, under 80 characters.
-  - Severity is never in the title; it is a label, so HIGH/MED reclassification
-    does not mint a new title and break dedupe.
-- **Labels**: `<AUDIT_LABEL>`, `severity-high` or `severity-medium`, and the area
-  label when the area label exists.
+  - Severity and regress-risk are never in the title; they are labels, so
+    reclassification does not mint a new title and break dedupe.
+- **Labels**: `<AUDIT_LABEL>`, exactly one severity label, exactly one
+  regress-risk label, and the area label when the area label exists.
 - **Area mapping**:
   - `src/qb/*` -> `qb`; `src/rb/*` -> `rb`; `src/wr/*` -> `wr`;
     `src/te/*` -> `te`; `src/k/*` -> `k`; `src/dst/*` -> `dst`.
@@ -80,11 +80,37 @@ Each surviving finding becomes one GitHub issue:
   - Config-invariant/broken-reference lens findings take the area of the
     position they pertain to.
 
+## Severity and model regress-risk
+
+Severity is bug impact:
+
+- `severity-docs`: docs/comment-only findings, including stale prose, dead
+  links, wrong documented counts, or wrong checked-in agent instructions.
+- `severity-low`: latent, no-op, unreachable, or unlikely-to-fire defects.
+- `severity-medium`: plausible correctness bug between low and high impact.
+- `severity-high`: likely regressing error metrics, silently producing wrong
+  results, security-sensitive, or causing live production problems now.
+
+Model regress-risk is the likelihood that the fix changes model error metrics
+or trained artifacts. It is not about serving UI/API/display behavior unless the
+fix changes training, feature values, targets, scoring, evaluation, artifacts, or
+model inputs.
+
+- `regress-risk-docs`: docs/comment-only fix.
+- `regress-risk-low`: model change is not possible.
+- `regress-risk-medium`: model change is possible but unlikely, or the issue is
+  currently no-op/latent for model metrics.
+- `regress-risk-high`: model change is likely; fixes should be urged to rerun
+  the relevant pipeline or benchmark.
+
+Docs/comment-only findings always use `severity-docs` and `regress-risk-docs`.
+
 Canonical body:
 
 ~~~markdown
 - **File**: `<path>:<line>`
-- **Severity**: HIGH | MED
+- **Severity**: DOCS | LOW | MEDIUM | HIGH
+- **Model regress-risk**: docs | low | medium | high
 - **Area**: <area>
 - **First seen**: @<short_sha> on <YYYY-MM-DD>
 - **What**: <2-3 sentences>
@@ -94,7 +120,7 @@ Canonical body:
 - **Related**: #<other_issue> [optional, added by comment after creation]
 
 ```json
-{"schema":"agent-audit/v1","audit_label":"<AUDIT_LABEL>","provider":"<AUDIT_PROVIDER>","file":"<path>","line":<int>,"severity":"HIGH|MED","area":"<area>","category":"<category>","first_seen_sha":"<short_sha>"}
+{"schema":"agent-audit/v1","audit_label":"<AUDIT_LABEL>","provider":"<AUDIT_PROVIDER>","file":"<path>","line":<int>,"severity":"DOCS|LOW|MEDIUM|HIGH","regress_risk":"docs|low|medium|high","area":"<area>","category":"<category>","first_seen_sha":"<short_sha>"}
 ```
 ~~~
 
@@ -115,8 +141,14 @@ Ensure labels exist at the start of every run:
 
 ```bash
 gh label create "$AUDIT_LABEL" --color 5319E7 --description "Automated code audit finding/checkpoint" 2>/dev/null || true
-gh label create severity-high --color B60205 --description "Audit: wrong result / silent loss / security / benchmark-changing" 2>/dev/null || true
-gh label create severity-medium --color FBCA04 --description "Audit: unfinished-PR artifact / invariant / drift / orphan code" 2>/dev/null || true
+gh label create severity-docs --color 6F42C1 --description "Audit: docs/comment-only issue" 2>/dev/null || true
+gh label create severity-low --color 0E8A16 --description "Audit: latent / no-op / unlikely-to-fire defect" 2>/dev/null || true
+gh label create severity-medium --color FBCA04 --description "Audit: plausible correctness bug between low and high impact" 2>/dev/null || true
+gh label create severity-high --color B60205 --description "Audit: likely metric regression / live prod issue / security" 2>/dev/null || true
+gh label create regress-risk-docs --color 6F42C1 --description "Audit fix: docs/comment-only, no model change" 2>/dev/null || true
+gh label create regress-risk-low --color C2E0C6 --description "Audit fix: model change not possible" 2>/dev/null || true
+gh label create regress-risk-medium --color FEF2C0 --description "Audit fix: model change possible but unlikely or currently no-op" 2>/dev/null || true
+gh label create regress-risk-high --color D93F0B --description "Audit fix: model change likely; rerun pipeline/benchmark" 2>/dev/null || true
 ```
 
 ## Step 1: Prep
@@ -133,7 +165,7 @@ gh label create severity-medium --color FBCA04 --description "Audit: unfinished-
 : > /tmp/known_issues.tsv
 for label in $DEDUPE_AUDIT_LABELS; do
   gh issue list --label "$label" --state all --limit 400 --json number,title,labels \
-    --jq '.[] | select(any(.labels[]; .name=="severity-high" or .name=="severity-medium")) | "\(.number)\t\(.title)"' \
+    --jq '.[] | select(any(.labels[]; .name | test("^severity-(docs|low|medium|high)$"))) | "\(.number)\t\(.title)"' \
     >> /tmp/known_issues.tsv
 done
 sort -u /tmp/known_issues.tsv -o /tmp/known_issues.tsv
@@ -297,13 +329,20 @@ SELF-VERIFY every candidate before emitting it:
 3. Only survivors may be emitted. When in doubt, DROP.
 
 SEVERITY:
-HIGH = wrong result / silent loss / security / benchmark-changing correctness
-bug. MED = unfinished-PR artifact / within-position invariant violation /
-broken-reference drift / semantic merge conflict / orphan code under live test
-coverage. No LOW.
+DOCS = docs/comment-only findings. LOW = latent, no-op, unreachable, or
+unlikely-to-fire defects. MEDIUM = plausible correctness bug between low and
+high impact. HIGH = likely regressing error metrics, silently producing wrong
+results, security-sensitive, or causing live production problems now.
+
+MODEL REGRESS-RISK:
+docs = docs/comment-only fix. low = model change is not possible. medium =
+model change is possible but unlikely, or currently no-op/latent for model
+metrics. high = model change is likely; fixes should be urged to rerun the
+relevant pipeline or benchmark. This is about MSE/MAE/FP-MAE and trained
+artifacts, not serving UI/API/display behavior by itself.
 
 OUTPUT: JSON array only. Each object:
-{"file":"<path>","line":<int>,"severity":"HIGH|MED","category":"unfinished_pr|merge_conflict|orphan_code|invariant|broken_reference|train_serve_drift|wrong_result|security|other","title":"<<80 chars>","what":"<2-3 sentences>","why_suspect":"<2-3 sentences>","suggested_action":"<one sentence>","evidence_quote":"<verbatim line from file>","verification":"<one-line note of what you checked + result>"}
+{"file":"<path>","line":<int>,"severity":"DOCS|LOW|MEDIUM|HIGH","regress_risk":"docs|low|medium|high","category":"unfinished_pr|merge_conflict|orphan_code|invariant|broken_reference|train_serve_drift|wrong_result|security|other","title":"<<80 chars>","what":"<2-3 sentences>","why_suspect":"<2-3 sentences>","suggested_action":"<one sentence>","evidence_quote":"<verbatim line from file>","verification":"<one-line note of what you checked + result>"}
 
 Workers do not create issues and do not assign issue numbers.
 ```
@@ -325,8 +364,8 @@ For each new worker finding, the orchestrator re-verifies as a backstop:
    elsewhere.
 5. Drop anything matching NOT FINDINGS patterns.
 
-Hold `/tmp/new_findings.jsonl` with survivors and counters for total, HIGH, and
-MED.
+Hold `/tmp/new_findings.jsonl` with survivors and counters for total plus
+DOCS/LOW/MEDIUM/HIGH severities and docs/low/medium/high regress-risk values.
 
 ## Step 3b: Consolidate duplicates within this run
 
@@ -373,8 +412,9 @@ append the machine-readable block:
     --arg provider "$AUDIT_PROVIDER" \
     --arg file "$file" --argjson line "$line" \
     --arg sev "$severity" --arg area "$area" \
+    --arg regress_risk "$regress_risk" \
     --arg cat "${category:-other}" --arg sha "$SHORT_SHA" \
-    '{schema:$schema,audit_label:$audit_label,provider:$provider,file:$file,line:$line,severity:$sev,area:$area,category:$cat,first_seen_sha:$sha}'
+    '{schema:$schema,audit_label:$audit_label,provider:$provider,file:$file,line:$line,severity:$sev,regress_risk:$regress_risk,area:$area,category:$cat,first_seen_sha:$sha}'
   printf '\n```\n'
 } >> /tmp/body.md
 ```
@@ -382,10 +422,20 @@ append the machine-readable block:
 Create the issue:
 
 ```bash
-SEV_LABEL=$( [ "$severity" = "HIGH" ] && echo severity-high || echo severity-medium )
+case "$severity" in
+  DOCS) SEV_LABEL=severity-docs ;;
+  LOW) SEV_LABEL=severity-low ;;
+  MEDIUM|MED) SEV_LABEL=severity-medium ;;
+  HIGH) SEV_LABEL=severity-high ;;
+  *) SEV_LABEL=severity-medium ;;
+esac
+case "$regress_risk" in
+  docs|low|medium|high) RISK_LABEL="regress-risk-$regress_risk" ;;
+  *) RISK_LABEL=regress-risk-medium ;;
+esac
 URL=$(gh issue create \
   --title "[$AUDIT_LABEL] ${area}: ${title}" \
-  --label "$AUDIT_LABEL" --label "$SEV_LABEL" --label "$area" \
+  --label "$AUDIT_LABEL" --label "$SEV_LABEL" --label "$RISK_LABEL" --label "$area" \
   --body-file /tmp/body.md)
 NUM=${URL##*/}
 printf '%s\t%s\t%s\n' "$tID" "$NUM" "$URL" >> /tmp/filed.tsv
@@ -412,7 +462,9 @@ HEAD-SHORT: ${SHORT_SHA}
 Date: ${DATE}
 Provider: ${AUDIT_PROVIDER}
 Audit label: ${AUDIT_LABEL}
-Findings filed this run: ${N_NEW} (${N_NEW_HIGH} HIGH, ${N_NEW_MED} MED)
+Findings filed this run: ${N_NEW}
+Severity counts: ${N_NEW_DOCS} DOCS, ${N_NEW_LOW} LOW, ${N_NEW_MEDIUM} MEDIUM, ${N_NEW_HIGH} HIGH
+Regress-risk counts: ${N_RISK_DOCS} docs, ${N_RISK_LOW} low, ${N_RISK_MEDIUM} medium, ${N_RISK_HIGH} high
 Filed: <comma-separated #numbers from /tmp/filed.tsv, or "none (clean checkpoint)">
 EOF
 
@@ -426,7 +478,7 @@ write failed, print the unsent bodies to stdout.
 ## Final constraints
 
 - One issue per finding.
-- Severity is a label, never a title token.
+- Severity and regress-risk are labels, never title tokens.
 - Area is both the title prefix and an area label where that label exists.
 - First seen is the SHA/date of the run that first files the finding.
 - Existing issues are left untouched.

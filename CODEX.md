@@ -56,7 +56,7 @@ OpenAI now marks custom prompts deprecated in favor of skills, but prompts are s
 
 ## Audit Automation Wrapper
 
-Claude and Codex share audit behavior from [`routines/audit/instructions.md`](routines/audit/instructions.md). The Claude cloud routine sets `AUDIT_LABEL=claude-audit`; the tracked Codex wrapper at [`.codex/automations/audit/prompt.md`](.codex/automations/audit/prompt.md) sets `AUDIT_LABEL=codex-audit`. Both producers dedupe against open and closed severity-labeled issues from `claude-audit` and `codex-audit`, while keeping separate checkpoint history.
+Claude and Codex share audit behavior from [`routines/audit/instructions.md`](routines/audit/instructions.md). The Claude cloud routine sets `AUDIT_LABEL=claude-audit`; the tracked Codex wrapper at [`.codex/automations/audit/prompt.md`](.codex/automations/audit/prompt.md) sets `AUDIT_LABEL=codex-audit`. Both producers dedupe against open and closed severity-labeled issues from `claude-audit` and `codex-audit`, while keeping separate checkpoint history. The shared instructions own both the bug-impact severity labels and the model regress-risk labels.
 
 This repo tracks the Codex wrapper only; it does not create an active Codex app cron automation. If one is created later, point it at `.codex/automations/audit/prompt.md` and run it from a repo workspace. `/prompts:solve-issues` consumes both audit labels.
 
