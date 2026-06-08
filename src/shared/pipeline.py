@@ -56,6 +56,7 @@ from src.shared.models import (
     RidgeModel,
     RidgeMultiTarget,
     SeasonAverageBaseline,
+    TabPFNMultiTarget,
 )
 from src.shared.neural_net import (
     build_multihead_net,
@@ -1233,6 +1234,51 @@ def _train_lightgbm(
     return model, test_preds, metrics
 
 
+def _build_tabpfn(targets, cfg, seed):
+    """Construct a ``TabPFNMultiTarget`` from cfg hyperparameters.
+
+    Device follows the same FF_DEVICE-aware resolution as the NN (``cuda_enabled``):
+    TabPFN runs its forward pass on CUDA when available and the operator hasn't
+    pinned CPU, else CPU (TabPFN has no MPS path, so non-CUDA -> CPU).
+    """
+    return TabPFNMultiTarget(
+        target_names=targets,
+        device="cuda" if cuda_enabled() else "cpu",
+        n_estimators=cfg.get("tabpfn_n_estimators", 8),
+        ignore_pretraining_limits=cfg.get("tabpfn_ignore_pretraining_limits", False),
+        pca_n_components=cfg.get("tabpfn_pca_components"),
+        seed=seed,
+        # Carry the per-head clamp set so heads clamp like every other model
+        # (predict() below also passes it explicitly); ``None`` -> clamp every head.
+        non_negative_targets=cfg.get("nn_non_negative_targets"),
+    )
+
+
+def _train_tabpfn(
+    X_train,
+    X_val,
+    X_test,
+    y_train_dict,
+    y_val_dict,
+    y_test_dict,
+    cfg,
+    targets,
+    feature_cols,
+    seed,
+):
+    """Train a TabPFN multi-target model. Returns (model, test_preds, metrics).
+
+    ``X_val`` / ``y_val_dict`` are unused (TabPFN is in-context — no gradient
+    training or early stopping) but kept in the signature to mirror
+    ``_train_lightgbm`` so the holdout call site reads identically.
+    """
+    model = _build_tabpfn(targets, cfg, seed)
+    model.fit(X_train, y_train_dict, feature_names=feature_cols)
+    test_preds = model.predict(X_test, non_negative_targets=cfg.get("nn_non_negative_targets"))
+    metrics = compute_target_metrics(y_test_dict, test_preds, targets)
+    return model, test_preds, metrics
+
+
 def _train_elasticnet(
     X_train,
     X_test,
@@ -1472,6 +1518,26 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                     n_jobs=_nj,
                 )
 
+        # --- TabPFN Multi-Target (conditional; pretrained tabular transformer) ---
+        tabpfn_test_preds = None
+        tabpfn_metrics = None
+        tabpfn_model = None
+        if cfg.get("train_tabpfn", False):
+            print(f"\n=== {pos} TabPFN Multi-Target ===")
+            with timed("tabpfn_train", store=phase_seconds):
+                tabpfn_model, tabpfn_test_preds, tabpfn_metrics = _train_tabpfn(
+                    X_train,
+                    X_val,
+                    X_test,
+                    y_train_dict,
+                    y_val_dict,
+                    y_test_dict,
+                    cfg,
+                    targets,
+                    feature_cols,
+                    seed,
+                )
+
         return {
             "ridge_model": ridge_model,
             "ridge_test_preds": ridge_test_preds,
@@ -1482,6 +1548,9 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             "lgbm_model": lgbm_model,
             "lgbm_test_preds": lgbm_test_preds,
             "lgbm_metrics": lgbm_metrics,
+            "tabpfn_model": tabpfn_model,
+            "tabpfn_test_preds": tabpfn_test_preds,
+            "tabpfn_metrics": tabpfn_metrics,
         }
 
     def _gpu_branch():
@@ -1571,6 +1640,10 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     lgbm_model = cpu_results["lgbm_model"]
     lgbm_test_preds = cpu_results["lgbm_test_preds"]
     lgbm_metrics = cpu_results["lgbm_metrics"]
+    # tabpfn_model intentionally not unpacked — the pilot reads only the metrics /
+    # preds and skips persisting the (large, train-set-carrying) TabPFN artifact.
+    tabpfn_test_preds = cpu_results["tabpfn_test_preds"]
+    tabpfn_metrics = cpu_results["tabpfn_metrics"]
     model = gpu_results["model"]
     nn_scaler = gpu_results["nn_scaler"]
     nn_test_preds = gpu_results["nn_test_preds"]
@@ -1602,6 +1675,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             result["elasticnet_metrics"] = enet_metrics
         if lgbm_metrics is not None:
             result["lgbm_metrics"] = lgbm_metrics
+        if tabpfn_metrics is not None:
+            result["tabpfn_metrics"] = tabpfn_metrics
         return result
 
     # --- Comparison ---
@@ -1616,6 +1691,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         comparison[f"{pos} Attention NN"] = attn_nn_metrics
     if lgbm_metrics is not None:
         comparison[f"{pos} LightGBM"] = lgbm_metrics
+    if tabpfn_metrics is not None:
+        comparison[f"{pos} TabPFN"] = tabpfn_metrics
     print_comparison_table(comparison, position=pos, target_names=targets)
 
     # --- Attach predictions to test DataFrame ---
@@ -1683,6 +1760,15 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         backtest_pred_columns["LightGBM"] = "pred_lgbm_total"
         lgbm_ranking = compute_ranking_metrics(pos_test, pred_col="pred_lgbm_total")
         print(f"LightGBM Top-12 Hit Rate: {lgbm_ranking['season_avg_hit_rate']:.3f}")
+
+    tabpfn_ranking = None
+    if tabpfn_test_preds is not None:
+        pos_test["pred_tabpfn_total"] = _total(tabpfn_test_preds)
+        for t in targets:
+            pos_test[f"pred_tabpfn_{t}"] = tabpfn_test_preds[t]
+        backtest_pred_columns["TabPFN"] = "pred_tabpfn_total"
+        tabpfn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_tabpfn_total")
+        print(f"TabPFN Top-12 Hit Rate: {tabpfn_ranking['season_avg_hit_rate']:.3f}")
 
     # --- Weekly backtest ---
     print("\n=== Weekly Backtest ===")
@@ -1791,6 +1877,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         per_target_preds["attn_nn"] = attn_nn_test_preds
     if lgbm_test_preds is not None:
         per_target_preds["lgbm"] = lgbm_test_preds
+    if tabpfn_test_preds is not None:
+        per_target_preds["tabpfn"] = tabpfn_test_preds
 
     result = {
         "ridge_metrics": ridge_metrics,
@@ -1818,6 +1906,9 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     if lgbm_metrics is not None:
         result["lgbm_metrics"] = lgbm_metrics
         result["lgbm_ranking"] = lgbm_ranking
+    if tabpfn_metrics is not None:
+        result["tabpfn_metrics"] = tabpfn_metrics
+        result["tabpfn_ranking"] = tabpfn_ranking
     return result
 
 

@@ -217,6 +217,11 @@ def build_pipeline_config(
         "lgbm_min_child_samples": pc.lgbm_min_child_samples,
         "lgbm_min_split_gain": pc.lgbm_min_split_gain,
         "lgbm_objective": pc.lgbm_objective,
+        # === TabPFN (5th model variant) ===
+        "train_tabpfn": pc.train_tabpfn,
+        "tabpfn_n_estimators": pc.tabpfn_n_estimators,
+        "tabpfn_pca_components": pc.tabpfn_pca_components,
+        "tabpfn_ignore_pretraining_limits": pc.tabpfn_ignore_pretraining_limits,
     }
 
     # === Optional scheduler-family keys ===

@@ -242,6 +242,16 @@ class PositionConfig:
     lgbm_min_split_gain: float = 0.0
     lgbm_objective: str = "huber"
 
+    # === TabPFN (pretrained tabular transformer; 5th model variant) ===
+    # Off by default — only positions that opt in run it (and the env must have
+    # the optional ``tabpfn`` package). ``tabpfn_pca_components`` reduces the
+    # feature matrix under TabPFN's ~500-feature pretraining cap when needed;
+    # ``tabpfn_ignore_pretraining_limits`` lets it run past the cap as-is instead.
+    train_tabpfn: bool = False
+    tabpfn_n_estimators: int = 8
+    tabpfn_pca_components: int | None = None
+    tabpfn_ignore_pretraining_limits: bool = False
+
     # === RB-only TD model variants ===
     td_model_type: str | None = None
     two_stage_targets: dict[str, dict[str, Any]] = field(default_factory=dict)
