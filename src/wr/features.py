@@ -71,8 +71,23 @@ def _compute_features(df: pd.DataFrame) -> None:
 
     team_wr_totals = compute_team_wr_totals(df)
     df_merged = df.merge(team_wr_totals, on=["recent_team", "season", "week"], how="left")
-    player_tgt_roll = rolling_agg(df_merged, "targets", grp, window=3)
-    team_wr_tgt_roll = rolling_agg(df_merged, "team_wr_targets", grp, window=3)
+    # Stint-aware grouping for the team-WR-target-share rolling: a WR traded
+    # mid-season would otherwise have their 3-week rolling team_wr_targets
+    # denominator concatenate the OLD team's WR-target volume with the NEW
+    # team's for ~3 weeks post-trade, mixing two teams' totals into one share.
+    # Build stint_id locally (the engineer.py one is dropped before we run) by
+    # flagging each in-season team change and cumsum-ing it — mirrors
+    # src.features.engineer's target_share_L{w} (#674). df is already sorted by
+    # (player_id, season, week) above, so the merge (1-to-1 on recent_team,
+    # season, week) preserves order and stint_id carries onto df_merged.
+    df_merged["_team_changed"] = (
+        df_merged.groupby(["player_id", "season"])["recent_team"].shift(1)
+        != df_merged["recent_team"]
+    ).fillna(False)
+    df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+    stint_grp = ["player_id", "season", "stint_id"]
+    player_tgt_roll = rolling_agg(df_merged, "targets", stint_grp, window=3)
+    team_wr_tgt_roll = rolling_agg(df_merged, "team_wr_targets", stint_grp, window=3)
     df["team_wr_target_share_L3"] = safe_divide(player_tgt_roll, team_wr_tgt_roll).values
 
     df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)

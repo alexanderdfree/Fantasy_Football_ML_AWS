@@ -239,4 +239,21 @@ def fill_nans(
     Called AFTER temporal_split() and AFTER add_specific_features().
     Uses ONLY training set statistics to prevent leakage.
     """
-    return fill_nans_with_train_means(train_df, val_df, test_df, rb_feature_cols)
+    # prior_season_mean_catch_rate / prior_season_mean_yards_per_carry are in
+    # INCLUDE_FEATURES["prior_season"] (so the model uses them) but absent from
+    # _SPECIFIC_FEATURES — the column set the pipeline passes here as
+    # rb_feature_cols — so without this they skip the leak-safe train-mean fill
+    # and fall through to build_position_features' catch-all .fillna(0). For a
+    # rookie / no-prior-season RB (and the ≥0.5/game volume guard in
+    # _compute_features) that 0 is far from the league-average rate and maps to
+    # a strong negative z-score post-scaler. Give them the same train-only-mean
+    # treatment as the rest. Same class as DST #856. (#390)
+    prior_cols = [
+        c
+        for c in (
+            "prior_season_mean_catch_rate",
+            "prior_season_mean_yards_per_carry",
+        )
+        if c in train_df.columns and c not in rb_feature_cols
+    ]
+    return fill_nans_with_train_means(train_df, val_df, test_df, [*rb_feature_cols, *prior_cols])

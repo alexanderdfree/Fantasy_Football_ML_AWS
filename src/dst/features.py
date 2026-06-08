@@ -73,13 +73,22 @@ def compute_features(df: pd.DataFrame) -> None:
     )
 
     # dst_scoring_std_L3 — derived from raw stats (post raw-target migration),
-    # same linear combo ``defensive_production`` used to represent.
+    # same linear combo ``defensive_production`` used to represent. Point
+    # weights mirror the DST scoring in
+    # src.shared.aggregate_targets.predictions_to_fantasy_points: sacks×1,
+    # INT×2, fumble_rec×2, FF×1, safety×2, def_TD×6, blocked_kick×2, ST_TD×6.
+    # def_tds / def_blocked_kicks / special_teams_tds were omitted originally,
+    # so the volatility feature understated variance in any 3-game window where
+    # a defensive/ST TD or blocked kick scored. (#437)
     df["_dst_defensive_production_tmp"] = (
         df["def_sacks"].fillna(0)
         + df["def_ints"].fillna(0) * 2
         + df["def_fumble_rec"].fillna(0) * 2
         + df["def_fumbles_forced"].fillna(0)
         + df["def_safeties"].fillna(0) * 2
+        + df["def_tds"].fillna(0) * 6
+        + df["def_blocked_kicks"].fillna(0) * 2
+        + df["special_teams_tds"].fillna(0) * 6
     )
     df["dst_scoring_std_L3"] = (
         df.groupby(grp)["_dst_defensive_production_tmp"]
