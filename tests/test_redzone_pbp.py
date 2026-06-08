@@ -48,6 +48,7 @@ def _synthetic_pbp(season: int) -> pd.DataFrame:
             "pass_attempt": 0,
             "play_type": None,
             "yardline_100": np.nan,
+            "two_point_attempt": 0,
         }
         base.update(kw)
         rows.append(base)
@@ -204,6 +205,78 @@ def test_reconstruct_redzone_from_pbp_happy_path(tmp_path, monkeypatch):
     # Team RZ-pass-attempts for KC week 1 = 2 (WR-X x2; WR-Y at y=30 doesn't
     # qualify). So WR-X redzone_target_share = 2/2 = 1.0.
     assert wr_x_w1["redzone_target_share"] == pytest.approx(1.0)
+
+
+@pytest.mark.unit
+def test_two_point_conversions_excluded_from_redzone(tmp_path, monkeypatch):
+    """2pt-conversion plays (``two_point_attempt == 1``) sit at ``yardline_100 ==
+    2`` with a rusher/receiver id, but must NOT count toward red-zone carries /
+    targets or the team pass-attempt denominator — a 2pt conversion is scored
+    separately from the rushing/receiving TDs these features predict (#369 F28).
+    """
+    import src.data.redzone_pbp as rz
+
+    base = {
+        "season": 2020,
+        "season_type": "REG",
+        "rusher_player_id": np.nan,
+        "receiver_player_id": np.nan,
+        "pass_attempt": 0,
+        "play_type": None,
+        "yardline_100": np.nan,
+        "two_point_attempt": 0,
+    }
+
+    def _row(**kw):
+        r = dict(base)
+        r.update(kw)
+        return r
+
+    pbp = pd.DataFrame(
+        [
+            # One legit RZ carry (y=4) + one legit RZ target (y=8) for KC week 1...
+            _row(week=1, posteam="KC", rusher_player_id="RB-A", play_type="run", yardline_100=4),
+            _row(
+                week=1,
+                posteam="KC",
+                receiver_player_id="WR-X",
+                pass_attempt=1,
+                play_type="pass",
+                yardline_100=8,
+            ),
+            # ...plus a 2pt rush AND a 2pt pass at y=2 that must be excluded.
+            _row(
+                week=1,
+                posteam="KC",
+                rusher_player_id="RB-A",
+                play_type="run",
+                yardline_100=2,
+                two_point_attempt=1,
+            ),
+            _row(
+                week=1,
+                posteam="KC",
+                receiver_player_id="WR-X",
+                pass_attempt=1,
+                play_type="pass",
+                yardline_100=2,
+                two_point_attempt=1,
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(rz.nfl_source, "pbp_data", lambda seasons, cols: pbp)
+    out = rz.reconstruct_redzone_from_pbp([2020], cache_dir=str(tmp_path))
+
+    rb_a = out[(out["player_id"] == "RB-A") & (out["week"] == 1)].iloc[0]
+    wr_x = out[(out["player_id"] == "WR-X") & (out["week"] == 1)].iloc[0]
+    # Only the legit carry/target count; the two 2pt plays are dropped. Without
+    # the filter these would read 2 carries / 2 targets and a denominator of 2.
+    assert rb_a["redzone_carries"] == 1
+    assert rb_a["inside5_carries"] == 1
+    assert wr_x["redzone_targets"] == 1
+    # Team RZ pass-attempt denominator excludes the 2pt pass → 1/1.
+    assert wr_x["redzone_target_share"] == pytest.approx(1.0)
 
 
 @pytest.mark.unit

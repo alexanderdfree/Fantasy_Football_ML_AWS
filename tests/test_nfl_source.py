@@ -80,6 +80,7 @@ def test_pbp_data_selects_only_requested_columns(monkeypatch):
             "receiver_player_id": [None],
             "pass_attempt": [0],
             "play_type": ["run"],
+            "two_point_attempt": [0],
             "extra_unused_col": [99],
         }
     )
