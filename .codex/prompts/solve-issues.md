@@ -70,7 +70,7 @@ For more than ten fixes, use file-disjoint bundles:
 
 - Use Codex subagents when available. Workers draft commits only; they do not push or open PRs.
 - If subagents are unavailable, work tier by tier manually in the same file-disjoint order.
-- Target one PR per non-empty tier, 2-3 PRs total. If a tier must split, split and open PRs in regress-risk ascending order before using file area as the tiebreaker, but keep the total at four PRs or fewer.
+- Target one PR per non-empty tier, 2-3 PRs total. If a tier must split, split and open PRs in regress-risk ascending order before using file area as the tiebreaker, but keep the total at four PRs or fewer. Name split branches with the risk slice, e.g. `audit-<issue-or-batch>/tier-C-low` and `audit-<issue-or-batch>/tier-C-high`, so slices cannot reuse the same branch.
 - Prefer not to mix `regress-risk-high` findings with lower-risk findings when file-disjointness and the PR-count cap allow separation; if mixed, mark the bundle and PR by the highest regress-risk it contains.
 - If a bundle changes a shared function signature, grep every caller before committing. Re-bundle or add an orchestrator bridge commit if needed.
 
@@ -95,7 +95,7 @@ Then for each closeable LEAVE per-finding issue:
 
 For each non-empty tier, execute sequentially; when a tier has multiple PRs, execute them from lower to higher regress-risk:
 
-1. Create a staging branch from latest `origin/main`, named `audit-<issue-or-batch>/tier-<A|B|C>`.
+1. Create a staging branch from latest `origin/main`, named `audit-<issue-or-batch>/tier-<A|B|C>` for a single PR tier, or `audit-<issue-or-batch>/tier-<A|B|C>-<risk>` when the tier is split by regress-risk.
 2. Apply or cherry-pick the bundle commits for that tier in the planned regress-risk ascending bundle order. After any conflict resolution, verify `grep -c '<<<<<<<' <file>` is zero before staging.
 3. Add an orchestrator bridge commit if cross-bundle test-contract gaps or shared-signature changes require it.
 4. Run `ruff check .`, `ruff format --check .`, and `pytest -m unit -q` in the foreground.
