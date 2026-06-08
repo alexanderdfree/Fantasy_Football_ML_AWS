@@ -176,7 +176,11 @@ def merge_scenario_codex(launcher_repo: tuple[Path, Path], tmp_path: Path) -> tu
         capture_output=True,
     )
     other = tmp_path / "other"
-    subprocess.run(["git", "clone", str(remote), str(other)], check=True, capture_output=True)
+    # -b main: origin/main exists (launcher_repo pushed it), but the bare's HEAD
+    # may be `master` in CI, which would otherwise leave `other` off `main`.
+    subprocess.run(
+        ["git", "clone", "-b", "main", str(remote), str(other)], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(other), "config", "user.email", "codex-hooks@example.test"], check=True
     )

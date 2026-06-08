@@ -167,19 +167,26 @@ def merge_scenario(tmp_path: Path) -> tuple[Path, Path]:
     remote = tmp_path / "remote.git"
     main = tmp_path / "main"
     other = tmp_path / "other"
+    # Pin `main` explicitly — CI's git defaults init/clone to `master`, so a
+    # clone-of-empty + `push origin main` fails ("src refspec main does not
+    # match any").
     subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
-    subprocess.run(["git", "clone", str(remote), str(main)], check=True, capture_output=True)
+    subprocess.run(["git", "init", "-b", "main", str(main)], check=True, capture_output=True)
     _git(main, "config", "user.email", "claude-hooks@example.test")
     _git(main, "config", "user.name", "Claude Hooks")
     _git(main, "config", "commit.gpgsign", "false")
     (main / "README.md").write_text("init\n")
     _git(main, "add", "README.md")
     _git(main, "commit", "-m", "init")
+    _git(main, "remote", "add", "origin", str(remote))
     _git(main, "push", "-u", "origin", "main")
     worktree = tmp_path / "feature"
     _git(main, "worktree", "add", "-b", "feature", str(worktree))
     # advance origin/main from an independent clone so the parent is behind
-    subprocess.run(["git", "clone", str(remote), str(other)], check=True, capture_output=True)
+    # (-b main: origin/main exists, but the bare's HEAD may be `master` in CI)
+    subprocess.run(
+        ["git", "clone", "-b", "main", str(remote), str(other)], check=True, capture_output=True
+    )
     _git(other, "config", "user.email", "claude-hooks@example.test")
     _git(other, "config", "user.name", "Claude Hooks")
     _git(other, "config", "commit.gpgsign", "false")
