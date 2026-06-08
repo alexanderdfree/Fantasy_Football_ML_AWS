@@ -68,7 +68,7 @@ def _inject_inheritance(train, val, test):
         out["team"],
         out["week"].astype(int),
         out["gsis_id"].astype(str),
-        strict=False,
+        strict=True,  # all four are columns of `out` → equal-length by construction
     ):
         outmap.setdefault((s, t, w), set()).add(g)
 
