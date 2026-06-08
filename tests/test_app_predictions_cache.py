@@ -208,6 +208,26 @@ def test_fingerprint_skips_missing_paths(tmp_path, monkeypatch):
     assert not any("missing.pkl" in r for r in rels)
 
 
+def test_fingerprint_ignores_expert_source_caches(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "_REPO_ROOT", str(tmp_path))
+    raw_dir = tmp_path / "data" / "raw"
+    raw_dir.mkdir(parents=True)
+    for name in (
+        "weekly_2012_2025.parquet",
+        "nflcom_projections_v1_2025_2025_w1-18.parquet",
+        "nflcom_projections_joined_v1_2025_2025_mr90.parquet",
+        "sleeper_projections_v2_2025_2025_w1-18_DEF-QB-RB-TE-WR.parquet",
+        "sleeper_projections_joined_v2_2025_2025.parquet",
+    ):
+        (raw_dir / name).write_bytes(b"x")
+
+    rels = {os.path.relpath(path, tmp_path) for path in core._iter_fingerprint_paths()}
+
+    assert "data/raw/weekly_2012_2025.parquet" in rels
+    assert not any("nflcom_projections" in rel for rel in rels)
+    assert not any("sleeper_projections" in rel for rel in rels)
+
+
 # ---------------------------------------------------------------------------
 # Persist + hydrate round-trip
 # ---------------------------------------------------------------------------

@@ -149,7 +149,7 @@ def test_apply_expert_predictions_joins_sources_and_formats():
     assert np.isfinite(dst["rotowire_pred_ppr"])
 
 
-def test_apply_expert_predictions_ignores_unplayed_future_rows_for_loader_seasons():
+def test_apply_expert_predictions_ignores_future_rows_for_loader_seasons():
     results = pd.concat(
         [
             _results_frame(),
@@ -161,7 +161,7 @@ def test_apply_expert_predictions_ignores_unplayed_future_rows_for_loader_season
                     "recent_team": ["KC"],
                     "season": [2027],
                     "week": [1],
-                    "fantasy_points": [np.nan],
+                    "fantasy_points": [0.0],
                 }
             ),
         ],
