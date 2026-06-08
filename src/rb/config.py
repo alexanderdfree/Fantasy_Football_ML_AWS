@@ -214,6 +214,11 @@ CONFIG_TINY = {
         "receiving_yards": 0.0667,
     },
     "huber_deltas": {"rushing_yards": 15.0, "receiving_yards": 15.0},
+    # Exercise the receptions head-width override plumbing in the e2e shard:
+    # production sizes this head wider for the hurdle-NegBin outputs; tiny just
+    # needs it non-None so the override path runs. _TINY_OVERRIDES forces None
+    # and CONFIG_TINY is merged last, so this restores a non-None override. (#576)
+    "nn_head_hidden_overrides": {"receptions": 8},
 }
 
 
