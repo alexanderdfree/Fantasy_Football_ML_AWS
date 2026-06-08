@@ -175,6 +175,114 @@ def test_snap_pct_static_lag_is_stint_aware():
     assert week3 == 0.0  # explicit guard against the old carryover (would be 0.6)
 
 
+def _traded_with_varying_stats_frame() -> pd.DataFrame:
+    """Traded WR ``P1`` (KC weeks 1-2 → BUF weeks 3-4) with *distinct* per-week
+    stats so a stint-aware trailing feature differs visibly from the old
+    cross-team blend, plus a teammate ``T1`` on each team so air-yard shares
+    aren't trivially 1.0.
+
+    P1 targets: KC 10, 20 → BUF 2, 4. Air yards (P1, T1):
+    KC wk1 (90, 10), wk2 (80, 20); BUF wk3 (30, 70), wk4 (40, 60) → P1 raw
+    air-yards share 0.90, 0.80, 0.30, 0.40.
+    """
+    spec = [
+        # (player_id, week, team, targets, p_air_yards, team_air_yards_partner)
+        ("P1", 1, "KC", 10, 90),
+        ("T1", 1, "KC", 1, 10),
+        ("P1", 2, "KC", 20, 80),
+        ("T1", 2, "KC", 1, 20),
+        ("P1", 3, "BUF", 2, 30),
+        ("T1", 3, "BUF", 1, 70),
+        ("P1", 4, "BUF", 4, 40),
+        ("T1", 4, "BUF", 1, 60),
+    ]
+    rows = []
+    for pid, wk, team, tgts, air in spec:
+        rows.append(
+            dict(
+                player_id=pid,
+                player_name=pid,
+                position="WR",
+                season=2023,
+                week=wk,
+                recent_team=team,
+                opponent_team="DAL",
+                snap_pct=0.6,
+                targets=tgts,
+                carries=0,
+                receptions=2,
+                receiving_yards=float(air) * 0.6,
+                rushing_yards=0,
+                passing_yards=0,
+                attempts=0,
+                completions=0,
+                interceptions=0,
+                fumbles_lost=0,
+                passing_tds=0,
+                rushing_tds=0,
+                receiving_tds=0,
+                receiving_air_yards=float(air),
+                receiving_yards_after_catch=10,
+                receiving_first_downs=1,
+                receiving_epa=1.0,
+                rushing_epa=0.0,
+                rushing_first_downs=0,
+                sacks=0,
+                sack_yards=0,
+                fantasy_points=float(tgts),
+            )
+        )
+    return pd.DataFrame(rows)
+
+
+@pytest.mark.unit
+def test_rolling_features_are_stint_aware():
+    """#722: rolling / EWMA / trend windowed features must reset at a mid-season
+    team change. A traded player's first weeks at the new team must NOT blend
+    the prior team's trailing games. Positive control on ``P1`` (KC 10, 20 →
+    BUF 2, 4 targets):
+
+      * week 3 (first BUF game): stint-aware ``rolling_mean_targets_L3`` has no
+        prior BUF game → NaN. The OLD non-stint-aware grouping produced the KC
+        blend (10+20)/2 = 15.0.
+      * week 4: stint-aware mean = the lone prior BUF game (2.0). The OLD
+        grouping blended KC: (10+20+2)/3 ≈ 10.67.
+    """
+    out = build_features(_traded_with_varying_stats_frame())
+    p1 = out[out["player_id"] == "P1"].sort_values("week")
+    by_week = dict(zip(p1["week"], p1["rolling_mean_targets_L3"], strict=True))
+
+    # Week 3: stint-fresh → NaN (no prior game in the BUF stint), NOT the 15.0
+    # KC blend the old groupby produced.
+    assert pd.isna(by_week[3])
+    # Week 4: only the BUF week-3 game (targets=2) is in the trailing window —
+    # NOT 10.67, which would require blending the KC weeks.
+    assert by_week[4] == pytest.approx(2.0)
+    # EWMA resets too (week 4 sees only BUF week 3 → 2.0, not a KC-blended value).
+    ewma4 = p1[p1["week"] == 4]["ewma_targets_L3"].iloc[0]
+    assert ewma4 == pytest.approx(2.0)
+
+
+@pytest.mark.unit
+def test_air_yards_share_lag_is_stint_aware():
+    """#666: the ``air_yards_share`` lag must reset at a mid-season team change,
+    matching its sibling share features (``target_share`` / ``carry_share``). A
+    traded player's first game with the new team must NOT carry the previous
+    team's last-week air-yards share. P1 raw air-yards share = 0.90, 0.80
+    (KC) → 0.30, 0.40 (BUF); the lagged feature:
+
+      * week 3 (first BUF game): stint-aware → 0.0 (no prior BUF game), NOT the
+        0.80 KC week-2 carryover the old non-stint-aware lag produced.
+      * week 4: the lagged BUF week-3 raw share (0.30).
+    """
+    out = build_features(_traded_with_varying_stats_frame())
+    p1 = out[out["player_id"] == "P1"].sort_values("week")
+    by_week = dict(zip(p1["week"], p1["air_yards_share"], strict=True))
+
+    assert by_week[3] == pytest.approx(0.0)  # stint-fresh, NOT 0.80 (KC carryover)
+    assert by_week[4] == pytest.approx(0.30)  # lagged BUF week-3 raw share
+
+
 @pytest.mark.unit
 def test_snap_pct_history_uses_raw_not_prelagged():
     """#788: the attention game-history default uses ``snap_pct_raw`` (un-lagged)

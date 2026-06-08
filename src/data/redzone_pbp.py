@@ -139,9 +139,20 @@ def _aggregate_one_season(pbp: pd.DataFrame) -> pd.DataFrame:
         .rename(columns={"receiver_player_id": "player_id", "posteam": "recent_team"})
     )
 
-    # --- Team red-zone pass attempts (denominator for redzone_target_share) ---
+    # --- Team red-zone targets (denominator for redzone_target_share) ---
+    # Must share the numerator's domain (#923): the ``redzone_targets``
+    # numerator above counts in-RZ passes that have a ``receiver_player_id``, so
+    # the denominator excludes throwaways / spikes / no-receiver plays
+    # (``pass_attempt == 1`` but ``receiver_player_id`` NaN). Counting those in
+    # the denominator only systematically deflated every player's share by the
+    # throwaway rate. ``team_rz_pass_attempts`` is now "team RZ targets".
     team_rz_pass = (
-        pbp[(pbp["pass_attempt"] == 1) & in_rz & (pbp["two_point_attempt"] != 1)]
+        pbp[
+            (pbp["pass_attempt"] == 1)
+            & in_rz
+            & (pbp["two_point_attempt"] != 1)
+            & (pbp["receiver_player_id"].notna())
+        ]
         .groupby(["posteam", "season", "week"], dropna=True)
         .size()
         .rename("team_rz_pass_attempts")

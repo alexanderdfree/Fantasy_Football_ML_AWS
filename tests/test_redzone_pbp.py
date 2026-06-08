@@ -280,6 +280,69 @@ def test_two_point_conversions_excluded_from_redzone(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
+def test_redzone_throwaways_excluded_from_denominator(tmp_path, monkeypatch):
+    """#923: RZ throwaways / spikes (``pass_attempt == 1`` but
+    ``receiver_player_id`` NaN) must NOT count toward the team-RZ-target
+    denominator — the ``redzone_targets`` numerator already excludes them, so
+    counting them only in the denominator systematically deflated every
+    player's ``redzone_target_share``.
+
+    Positive control: KC week 1 has one real RZ target (WR-X, y=8) and one RZ
+    throwaway (no receiver, y=10). Under the OLD code the denominator counted
+    both → share = 1/2 = 0.5. With the throwaway excluded, denominator = 1 →
+    share = 1/1 = 1.0.
+    """
+    import src.data.redzone_pbp as rz
+
+    base = {
+        "season": 2020,
+        "season_type": "REG",
+        "rusher_player_id": np.nan,
+        "receiver_player_id": np.nan,
+        "pass_attempt": 0,
+        "play_type": None,
+        "yardline_100": np.nan,
+        "two_point_attempt": 0,
+    }
+
+    def _row(**kw):
+        r = dict(base)
+        r.update(kw)
+        return r
+
+    pbp = pd.DataFrame(
+        [
+            # Real RZ target to WR-X.
+            _row(
+                week=1,
+                posteam="KC",
+                receiver_player_id="WR-X",
+                pass_attempt=1,
+                play_type="pass",
+                yardline_100=8,
+            ),
+            # RZ throwaway: a pass attempt in the RZ with NO receiver (NaN).
+            _row(
+                week=1,
+                posteam="KC",
+                receiver_player_id=np.nan,
+                pass_attempt=1,
+                play_type="pass",
+                yardline_100=10,
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(rz.nfl_source, "pbp_data", lambda seasons, cols: pbp)
+    out = rz.reconstruct_redzone_from_pbp([2020], cache_dir=str(tmp_path))
+
+    wr_x = out[(out["player_id"] == "WR-X") & (out["week"] == 1)].iloc[0]
+    assert wr_x["redzone_targets"] == 1
+    # Denominator excludes the no-receiver throwaway → 1/1 = 1.0 (was 1/2 = 0.5).
+    assert wr_x["redzone_target_share"] == pytest.approx(1.0)
+
+
+@pytest.mark.unit
 def test_redzone_target_share_zero_when_team_has_no_redzone_passes(tmp_path, monkeypatch):
     """BUF week 1 has zero RZ pass attempts (only a non-RZ rush). The
     rushing-only row for RB-C must carry redzone_target_share=0, not NaN."""
