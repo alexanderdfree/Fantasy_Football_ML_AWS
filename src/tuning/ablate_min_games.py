@@ -28,16 +28,25 @@ needed).
 
 Two-phase protocol:
     # Phase 1 — deterministic Ridge+LGBM signal, full threshold curve, 1 seed
-    python -m src.tuning.ablate_min_games --positions rb wr
+    python -m src.tuning.ablate_min_games --positions RB WR
 
     # Phase 2 — confirm the best (NN/attention) model on the decisive pair
-    python -m src.tuning.ablate_min_games --positions rb wr --thresholds 1 6 --seeds 8
+    python -m src.tuning.ablate_min_games --positions RB WR --variants thr1,thr6 --seeds 42,43,44,45,46,47,48,49
+
+Variants
+--------
+Each variant encodes a min-games threshold:
+  thr1  → min_games_per_season = 1
+  thr3  → min_games_per_season = 3
+  thr6  → min_games_per_season = 6  (production default)
+  thr8  → min_games_per_season = 8
 
 Notes:
-  * ``--seeds N`` runs seeds ``[42, 43, ..., 42+N-1]`` — the SAME list across every
-    threshold, so threshold comparisons are paired. Deterministic models (Ridge,
-    LightGBM) show std~=0; the seed spread is the NN/attention signal.
-  * Default positions are rb/wr (highest low-volume fraction). K/DST are inert —
+  * ``--seeds`` is a comma-separated list (e.g. ``42,43,44``) — the SAME list
+    across every threshold, so threshold comparisons are paired. Deterministic
+    models (Ridge, LightGBM) show std~=0; the seed spread is the NN/attention
+    signal.
+  * Default positions are RB/WR (highest low-volume fraction). K/DST are inert —
     DST has no <6-game team-seasons and K floors its own ``min_games`` in
     ``src/k/data.py`` before the shared filter, so the shared knob barely bites; the
     UNRELIABLE train-row flag marks K/DST (their ``filter_fn`` is identity on the
@@ -50,21 +59,39 @@ import argparse
 import copy
 import os
 import sys
-from importlib import import_module
+from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+import numpy as np
+import pandas as pd
 
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-
-from src.config import SPLITS_DIR  # noqa: E402
-from src.tuning.history import append_ablation_run  # noqa: E402
+from src.config import SPLITS_DIR
+from src.shared.registry import get_config, get_runner
+from src.tuning.ablation_runner import (
+    AblationJob,
+    AblationResult,
+    format_dry_run_table,
+    parse_seed_list,
+    resolve_max_workers,
+    run_grid,
+    select_variants,
+    write_history,
+)
 
 ABLATION_NAME = "min_games_filter"
-HISTORY_DIR = "benchmark_history"
-DEFAULT_THRESHOLDS = [1, 3, 6, 8]
-DEFAULT_POSITIONS = ["rb", "wr"]
-BASE_SEED = 42
+DEFAULT_LOG_DIR = os.path.join("logs", "ablations", ABLATION_NAME)
+DEFAULT_POSITIONS = ("RB", "WR")
+DEFAULT_SEEDS = (42,)
+BASELINE_VARIANT = "thr6"
+
+# Threshold variants: key -> min_games_per_season value
+VARIANTS: dict[str, int] = {
+    "thr1": 1,
+    "thr3": 3,
+    "thr6": 6,
+    "thr8": 8,
+}
+DEFAULT_VARIANTS = ("thr1", "thr3", "thr6", "thr8")
+
 # Buckets printed in the headline tables (the rest feed the JSON + finer curve).
 KEY_BUCKETS = ["ALL", "would_filter(<6)", "kept(>=6)"]
 
@@ -86,11 +113,6 @@ def _bucket_masks(g: pd.Series) -> dict[str, pd.Series]:
     }
 
 
-def _load_position(pos: str):
-    mod = import_module(f"src.{pos}.run_pipeline")
-    return mod.run, mod.CONFIG
-
-
 def _pred_total_cols(test_df: pd.DataFrame) -> list[str]:
     """Per-model fantasy-point total columns attached by run_pipeline
     (``pred_ridge_total``, ``pred_nn_total``, ``pred_lgbm_total``,
@@ -104,7 +126,7 @@ def _short(pred_col: str) -> str:
     return pred_col[len("pred_") : -len("_total")]
 
 
-def _subgroup_mae(test_df: pd.DataFrame, targets, agg) -> dict[str, dict]:
+def _subgroup_mae(test_df: pd.DataFrame, targets: list[str], agg: Any) -> dict[str, dict]:
     """Per-(bucket, model) fantasy-point MAE on the test set.
 
     The actual FP total reuses ``cfg["aggregate_fn"]`` applied to the actual stat
@@ -135,7 +157,9 @@ def _subgroup_mae(test_df: pd.DataFrame, targets, agg) -> dict[str, dict]:
     return out
 
 
-def _train_rows_by_threshold(cfg, thresholds) -> tuple[dict[int, int], bool]:
+def _train_rows_by_threshold(
+    cfg: dict[str, Any], thresholds: list[int]
+) -> tuple[dict[int, int], bool]:
     """Surviving TRAIN rows at each threshold — replicates the production filter
     (filter-to-position, then ``groupby(player_id, season).week.count() >= thr``) so
     the table shows how much each threshold strips.
@@ -156,26 +180,47 @@ def _train_rows_by_threshold(cfg, thresholds) -> tuple[dict[int, int], bool]:
     return {int(thr): int((g >= thr).sum()) for thr in thresholds}, reliable
 
 
-def run_one(pos: str, run_fn, cfg, threshold: int, seed: int, base_config=None) -> dict:
-    """One production pipeline run with the train min-games filter set to ``threshold``.
+def _make_cfg(
+    base_cfg: dict[str, Any],
+    threshold: int,
+    *,
+    skip_nn: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return a deep-copied config with ``min_games_per_season`` set to ``threshold``.
 
-    ``base_config`` is the optional Phase-1 fast-path config (NN/attention heads
-    disabled — the deterministic Ridge + LightGBM stay at full production config, a
-    skip, not a weakened proxy). Either way it is deep-copied and forced to
-    ``min_games_per_season=threshold``; the pipeline reads that cfg key (the global
-    ``MIN_GAMES_PER_SEASON`` is only the ``None`` fallback) so the cfg override — not
-    a monkeypatch, which the position's own ``min_games_per_season`` would shadow — is
-    what moves the filter. Deep-copying per call avoids mutating a shared override.
+    When ``skip_nn`` is True the NN/attention heads run at minimal epochs (Phase-1
+    fast path); the degraded NN preds are excluded from the summary table by
+    ``_execute_min_games_job``. The deterministic Ridge + LightGBM stay at full
+    production config — not a weakened proxy.
     """
-    cfg_run = copy.deepcopy(base_config if base_config is not None else cfg)
-    cfg_run["min_games_per_season"] = threshold
-    mode = "Ridge+LGBM only" if base_config is not None else "all models"
-    print(f"\n{'=' * 72}\n{pos.upper()}  threshold={threshold}  seed={seed}  [{mode}]\n{'=' * 72}")
-    result = run_fn(seed=seed, config=cfg_run)
+    cfg = copy.deepcopy(base_cfg)
+    cfg["min_games_per_season"] = threshold
+    if skip_nn:
+        cfg["nn_epochs"] = 2
+        cfg["train_attention_nn"] = False
+        cfg["train_elasticnet"] = False
+    metadata: dict[str, Any] = {
+        "threshold": threshold,
+        "skip_nn": skip_nn,
+        "run_kind": "experiment",
+    }
+    return cfg, metadata
+
+
+def _execute_min_games_job(job: AblationJob) -> dict[str, Any]:
+    """Run one pipeline call and extract per-subgroup fantasy-point MAE."""
+    threshold = VARIANTS[job.variant]
+    skip_nn = bool(job.metadata.get("skip_nn", False))
+    cfg, run_metadata = _make_cfg(job.base_cfg, threshold, skip_nn=skip_nn)
+    run_metadata.update(job.metadata)
+
+    run_fn = get_runner(job.position)
+    result = run_fn(seed=job.seed, config=cfg)
     test_df = result["test_df"]
     buckets = _subgroup_mae(test_df, cfg["targets"], cfg.get("aggregate_fn"))
     pred_cols = _pred_total_cols(test_df)
-    if base_config is not None:
+
+    if skip_nn:
         # Skip-nn fast path: the base NN ran at minimal epochs (degraded) and
         # attention was skipped — report only the deterministic Ridge/LightGBM/ENet.
         pred_cols = [c for c in pred_cols if "nn" not in _short(c)]
@@ -183,7 +228,48 @@ def run_one(pos: str, run_fn, cfg, threshold: int, seed: int, base_config=None) 
             b: {k: v for k, v in rec.items() if k == "n" or k in pred_cols}
             for b, rec in buckets.items()
         }
-    return {"buckets": buckets, "pred_cols": pred_cols}
+
+    metrics: dict[str, Any] = {
+        "buckets": buckets,
+        "pred_cols": pred_cols,
+    }
+    timings: dict[str, Any] = {}
+    phase_seconds = result.get("phase_seconds") or {}
+    if phase_seconds:
+        timings["phase_seconds"] = {k: float(v) for k, v in phase_seconds.items()}
+
+    return {"metrics": metrics, "timings": timings, "metadata": run_metadata}
+
+
+def _build_jobs(
+    *,
+    positions: list[str],
+    seeds: list[int],
+    variants: list[str],
+    skip_nn: bool,
+) -> list[AblationJob]:
+    jobs: list[AblationJob] = []
+    for position in positions:
+        base_cfg = get_config(position)
+        for seed in seeds:
+            for variant_key in variants:
+                jobs.append(
+                    AblationJob(
+                        position=position,
+                        seed=seed,
+                        variant=variant_key,
+                        label=f"thr={VARIANTS[variant_key]}",
+                        run_fn=_execute_min_games_job,
+                        base_cfg=base_cfg,
+                        metadata={"run_kind": "experiment", "skip_nn": skip_nn},
+                    )
+                )
+    return jobs
+
+
+# ---------------------------------------------------------------------------
+# Summary helpers (preserved from the original implementation)
+# ---------------------------------------------------------------------------
 
 
 def _aggregate_seeds(seed_runs: list[dict]) -> tuple[dict, list[str]]:
@@ -212,6 +298,25 @@ def _fmt(cell: dict | None, multi_seed: bool) -> str:
     return f"{cell['mean']:>11.3f}"
 
 
+def _results_to_seed_runs(
+    results: list[AblationResult],
+    position: str,
+    variant: str,
+) -> list[dict]:
+    """Re-package AblationResult metrics back into the per-seed dict shape that
+    ``_aggregate_seeds`` and ``print_position_summary`` expect."""
+    runs = []
+    for r in results:
+        if r.position == position and r.variant == variant and r.error is None:
+            runs.append(
+                {
+                    "buckets": r.metrics.get("buckets", {}),
+                    "pred_cols": r.metrics.get("pred_cols", []),
+                }
+            )
+    return runs
+
+
 def print_position_summary(
     pos: str,
     train_rows: dict,
@@ -219,6 +324,12 @@ def print_position_summary(
     baseline_threshold: int,
     train_rows_reliable: bool = True,
 ) -> None:
+    """Print position-level threshold comparison table.
+
+    ``per_threshold`` maps each threshold int to a list of per-seed run-dicts
+    (shape: ``{"buckets": ..., "pred_cols": [...]}``) — same as the original
+    implementation.
+    """
     thresholds = sorted(per_threshold)
     agg_by_thr = {thr: _aggregate_seeds(per_threshold[thr])[0] for thr in thresholds}
     pred_cols = _aggregate_seeds(per_threshold[thresholds[0]])[1]
@@ -280,92 +391,195 @@ def print_position_summary(
         )
 
 
-def _write_ablation(args, all_results: dict) -> None:
-    append_ablation_run(
-        ABLATION_NAME,
-        {
-            "thresholds": args.thresholds,
-            "baseline_threshold": args.baseline_threshold,
-            "seeds": [BASE_SEED + i for i in range(args.seeds)],
-            "skip_nn": args.skip_nn,
-            "positions": args.positions,
-            "results": all_results,
-        },
-        history_dir=HISTORY_DIR,
+def _summarize_results(
+    results: list[AblationResult],
+    positions: list[str],
+    variants: list[str],
+    baseline_threshold: int,
+    skip_nn: bool,
+) -> dict[str, Any]:
+    """Build the per-position summary dict written to history."""
+    out: dict[str, Any] = {}
+    for pos in positions:
+        thresholds = sorted(VARIANTS[v] for v in variants)
+        per_threshold: dict[int, list[dict]] = {}
+        for variant in variants:
+            thr = VARIANTS[variant]
+            seed_runs = _results_to_seed_runs(results, pos, variant)
+            if seed_runs:
+                per_threshold[thr] = seed_runs
+        if not per_threshold:
+            continue
+        out[pos] = {
+            "aggregated": {
+                thr: _aggregate_seeds(per_threshold[thr])[0]
+                for thr in thresholds
+                if thr in per_threshold
+            },
+        }
+    return out
+
+
+def _parse_positions(raw_positions: list[str]) -> list[str]:
+    from src.shared.registry import ALL_POSITIONS
+
+    positions = [pos.upper() for pos in raw_positions]
+    unknown = [pos for pos in positions if pos not in ALL_POSITIONS]
+    if unknown:
+        raise ValueError(f"unknown position(s): {unknown}; choose from {sorted(ALL_POSITIONS)}")
+    return positions
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-
-
-def parse_args(argv=None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument(
+    parser.add_argument(
         "--positions",
         nargs="+",
-        default=DEFAULT_POSITIONS,
-        help="positions to ablate (default: rb wr)",
+        default=list(DEFAULT_POSITIONS),
+        help="Positions to run (default: RB WR)",
     )
-    p.add_argument(
-        "--thresholds",
-        nargs="+",
-        type=int,
-        default=DEFAULT_THRESHOLDS,
-        help="MIN_GAMES_PER_SEASON values to sweep (default: 1 3 6 8)",
-    )
-    p.add_argument(
+    parser.add_argument(
         "--seeds",
-        type=int,
-        default=1,
-        help="number of seeds (42..42+N-1), same list across thresholds",
+        default=",".join(str(s) for s in DEFAULT_SEEDS),
+        help=(
+            "Comma-separated seeds, same list across thresholds (default: 42). "
+            "Deterministic models show std~=0; spread is NN signal. "
+            "Use e.g. --seeds 42,43,44 for multi-seed A/Bs."
+        ),
     )
-    p.add_argument(
+    parser.add_argument(
+        "--variants",
+        default=",".join(DEFAULT_VARIANTS),
+        help=(
+            "Comma-separated threshold variants to sweep, or 'all'. "
+            "Choices: thr1 thr3 thr6 thr8 (default: all four). "
+            "Example: --variants thr1,thr6"
+        ),
+    )
+    parser.add_argument(
         "--baseline-threshold",
         type=int,
         default=6,
-        help="threshold to diff against in the verdict (default: 6, production)",
+        help="Threshold to diff against in the verdict (default: 6, production)",
     )
-    p.add_argument(
+    parser.add_argument(
         "--skip-nn",
         action="store_true",
-        help="Phase-1 fast path: train only the production Ridge+LightGBM "
-        "(NN/attention skipped, not weakened). Deterministic and ~seed-invariant.",
+        help=(
+            "Phase-1 fast path: train only the production Ridge+LightGBM "
+            "(NN/attention skipped, not weakened). Deterministic and ~seed-invariant."
+        ),
     )
-    p.add_argument(
-        "--no-history", action="store_true", help="skip writing benchmark_history/ablations/"
+    parser.add_argument(
+        "--max-workers",
+        default="auto",
+        help=(
+            "Process workers for jobs. Use an integer or 'auto' "
+            "(default: local many-core CUDA -> 6, otherwise 1; pass 1 for clean timing)."
+        ),
     )
-    return p.parse_args(argv)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the planned jobs without running them",
+    )
+    parser.add_argument(
+        "--no-history",
+        action="store_true",
+        help="Skip writing benchmark_history/ablations/",
+    )
+    parser.add_argument(
+        "--log-dir",
+        default=DEFAULT_LOG_DIR,
+        help=f"Directory for per-job logs (default: {DEFAULT_LOG_DIR})",
+    )
+    args = parser.parse_args(argv)
 
+    try:
+        positions = _parse_positions(args.positions)
+        seeds = parse_seed_list(args.seeds)
+        variants = select_variants(args.variants, VARIANTS, DEFAULT_VARIANTS)
+    except ValueError as exc:
+        parser.error(str(exc))
 
-def main(argv=None) -> None:
-    args = parse_args(argv)
-    seeds = [BASE_SEED + i for i in range(args.seeds)]
-    all_results: dict[str, dict] = {}
-    for pos in args.positions:
-        run_fn, cfg = _load_position(pos)
-        run_config = None
-        if args.skip_nn:
-            # Train only the production Ridge + LightGBM at FULL config. run_pipeline
-            # assigns ``pred_nn_total`` unconditionally, so the base NN can't be cleanly
-            # disabled — it runs at minimal epochs and its degraded preds are dropped
-            # from the table in run_one; attention (the expensive path) is skipped.
-            run_config = copy.deepcopy(cfg)
-            run_config["nn_epochs"] = 2
-            run_config["train_attention_nn"] = False
-            run_config["train_elasticnet"] = False
-        train_rows, train_rows_reliable = _train_rows_by_threshold(cfg, args.thresholds)
-        per_threshold = {
-            thr: [run_one(pos, run_fn, cfg, thr, s, run_config) for s in seeds]
-            for thr in args.thresholds
-        }
-        all_results[pos] = {
-            "train_rows": train_rows,
-            "train_rows_reliable": train_rows_reliable,
-            "aggregated": {thr: _aggregate_seeds(per_threshold[thr])[0] for thr in args.thresholds},
-        }
-        print_position_summary(
-            pos, train_rows, per_threshold, args.baseline_threshold, train_rows_reliable
-        )
+    # Derive the baseline variant key from the --baseline-threshold integer.
+    baseline_threshold: int = args.baseline_threshold
+    baseline_variant_key = next((k for k, v in VARIANTS.items() if v == baseline_threshold), None)
+    if baseline_variant_key is not None and baseline_variant_key not in variants:
+        # Silently include baseline threshold in the variant set so paired verdicts work.
+        variants = list(variants) + [baseline_variant_key]
+
+    jobs = _build_jobs(
+        positions=positions,
+        seeds=seeds,
+        variants=variants,
+        skip_nn=args.skip_nn,
+    )
+
+    try:
+        max_workers = resolve_max_workers(args.max_workers, job_count=len(jobs))
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if args.dry_run:
+        print(format_dry_run_table(jobs))
+        print(f"\nExperiment workers: {max_workers} ({args.max_workers})")
+        print(f"Job logs: {args.log_dir}")
+        return
+
+    print(f"\nRunning min-games filter ablation jobs ({len(jobs)} total)...")
+    results = run_grid(jobs, max_workers=max_workers, log_dir=args.log_dir, progress=True)
+
+    # Build per_threshold dicts for the summary printer (original shape).
+    for pos in positions:
+        per_threshold: dict[int, list[dict]] = {}
+        for variant in variants:
+            thr = VARIANTS[variant]
+            seed_runs = _results_to_seed_runs(results, pos, variant)
+            if seed_runs:
+                per_threshold[thr] = seed_runs
+
+        # Train-row sentinel: load once per position for the selected thresholds.
+        cfg = get_config(pos)
+        selected_thresholds = sorted(VARIANTS[v] for v in variants)
+        try:
+            train_rows, train_rows_reliable = _train_rows_by_threshold(cfg, selected_thresholds)
+        except Exception:  # noqa: BLE001 — sentinel is informational, never blocks results
+            train_rows = {thr: -1 for thr in selected_thresholds}
+            train_rows_reliable = False
+
+        if per_threshold:
+            print_position_summary(
+                pos, train_rows, per_threshold, baseline_threshold, train_rows_reliable
+            )
+
+    errors = [r for r in results if r.error]
+    if errors:
+        for r in errors:
+            print(f"ERROR {r.position} seed={r.seed} variant={r.variant}: {r.error}")
+
     if not args.no_history:
-        _write_ablation(args, all_results)
+        summary = _summarize_results(results, positions, variants, baseline_threshold, args.skip_nn)
+        write_history(
+            ABLATION_NAME,
+            results,
+            metadata={
+                "positions": positions,
+                "seeds": seeds,
+                "variants": variants,
+                "baseline_threshold": baseline_threshold,
+                "skip_nn": args.skip_nn,
+                "max_workers": max_workers,
+                "log_dir": args.log_dir,
+                "summary": summary,
+            },
+        )
+
+    if errors:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

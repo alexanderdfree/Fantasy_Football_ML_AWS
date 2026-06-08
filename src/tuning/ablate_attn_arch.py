@@ -53,29 +53,38 @@ Method (mirrors ablate_backbone_norm.py):
     runs did not see the same data/seed and the deltas are meaningless.
 
 Usage:
-    python -m src.tuning.ablate_attn_arch                       # RB, seed 42, all flags
-    python -m src.tuning.ablate_attn_arch --seeds 42,7,123,5    # multi-seed (>=8 advised)
-    python -m src.tuning.ablate_attn_arch --only alibi          # baseline + one flag
-    python -m src.tuning.ablate_attn_arch --flags alibi,seqdrop,temp,swiglu  # subset
-    python -m src.tuning.ablate_attn_arch --position QB         # different position
+    python -m src.tuning.ablate_attn_arch                          # RB, seed 42, all flags
+    python -m src.tuning.ablate_attn_arch --seeds 42,7,123,5       # multi-seed (>=8 advised)
+    python -m src.tuning.ablate_attn_arch --variants alibi         # baseline + one flag
+    python -m src.tuning.ablate_attn_arch --variants alibi,seqdrop,temp,swiglu  # subset
+    python -m src.tuning.ablate_attn_arch --position QB            # different position
+    python -m src.tuning.ablate_attn_arch --dry-run                # show plan, no training
 """
 
 from __future__ import annotations
 
 import argparse
 import copy
-import importlib
-import os
 import statistics
 import sys
+from typing import Any
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-
-from src.tuning.ablation_runner import fmt_mean_std  # noqa: E402
-from src.tuning.history import append_ablation_run
+from src.shared.registry import get_config, get_runner
+from src.tuning.ablation_runner import (
+    AblationJob,
+    AblationResult,
+    fmt_mean_std,
+    format_dry_run_table,
+    parse_seed_list,
+    resolve_max_workers,
+    run_grid,
+    select_variants,
+    write_history,
+)
 
 ABLATION_NAME = "attn_arch"
-HISTORY_DIR = "benchmark_history"
+DEFAULT_LOG_DIR = f"logs/ablations/{ABLATION_NAME}"
+DEFAULT_POSITION = "RB"
 
 # A mean Δ FP MAE smaller than this (or within seed noise) counts as "no
 # meaningful difference" — ~0.5% of a typical ~4 pt/game baseline.
@@ -106,6 +115,9 @@ VARIANTS: dict[str, tuple[str, dict]] = {
 }
 FLAG_VARIANTS = [k for k in VARIANTS if k != BASELINE]
 
+# Default variant set for --variants "all" and dry-run: baseline + all flags.
+DEFAULT_VARIANTS = [BASELINE] + FLAG_VARIANTS
+
 # Every cfg key any variant is allowed to touch. Guards against a typo silently
 # producing a no-op variant (the failure mode the project explicitly warns about
 # — an unread cfg key falls through to its OFF default with no error).
@@ -135,53 +147,96 @@ def _make_cfg(base_cfg: dict, overrides: dict) -> dict:
     return cfg
 
 
-def run_variant(variant: str, seed: int, run_fn, base_cfg: dict, targets: list[str]) -> dict:
-    label, overrides = VARIANTS[variant]
-    cfg = _make_cfg(base_cfg, overrides)
-    print(f"\n{'=' * 72}")
-    print(f"Variant {variant!r} (seed {seed}): {label}")
-    if overrides:
-        print(f"  overrides: {overrides}")
-    print(f"{'=' * 72}")
-    result = run_fn(seed=seed, config=cfg)
-    return _extract(result, variant, seed, targets)
-
-
-def _extract(result: dict, variant: str, seed: int, targets: list[str]) -> dict:
+def _extract_run_payload(
+    result: dict[str, Any],
+    *,
+    targets: list[str],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Extract metrics/timings from a pipeline result dict into an AblationJob payload."""
     attn = result.get("attn_nn_metrics")
     base = result.get("nn_metrics")
     ridge = result.get("ridge_metrics")
     if attn is None or base is None or ridge is None:
         raise RuntimeError(
-            f"variant {variant}: missing metrics (attn/base/ridge) in result keys "
-            f"{sorted(result.keys())}"
+            f"missing metrics (attn/base/ridge) in result keys {sorted(result.keys())}"
         )
-    return {
-        "variant": variant,
-        "seed": seed,
-        "attn_fp_mae": attn["total"]["mae"],
-        "base_fp_mae": base["total"]["mae"],
-        "ridge_fp_mae": ridge["total"]["mae"],
-        "attn_targets": {t: attn[t]["mae"] for t in targets},
+    metrics = {
+        "attn_fp_mae": float(attn["total"]["mae"]),
+        "base_fp_mae": float(base["total"]["mae"]),
+        "ridge_fp_mae": float(ridge["total"]["mae"]),
+        "attn_targets": {t: float(attn[t]["mae"]) for t in targets},
     }
+    timings: dict[str, Any] = {}
+    return {"metrics": metrics, "timings": timings, "metadata": metadata}
+
+
+def _execute_attn_arch_job(job: AblationJob) -> dict[str, Any]:
+    """Run one attn-arch ablation job and return a metrics/timings/metadata payload."""
+    label, overrides = VARIANTS[job.variant]
+    cfg = _make_cfg(job.base_cfg, overrides)
+    run_fn = get_runner(job.position)
+    result = run_fn(seed=job.seed, config=cfg)
+    run_metadata = {"variant_label": label, "overrides": dict(overrides), **job.metadata}
+    return _extract_run_payload(result, targets=cfg["targets"], metadata=run_metadata)
+
+
+def _build_jobs(
+    *,
+    position: str,
+    seeds: list[int],
+    variants: list[str],
+) -> list[AblationJob]:
+    base_cfg = get_config(position)
+    jobs: list[AblationJob] = []
+    for seed in seeds:
+        for variant_key in variants:
+            label, _ = VARIANTS[variant_key]
+            jobs.append(
+                AblationJob(
+                    position=position,
+                    seed=seed,
+                    variant=variant_key,
+                    label=label,
+                    run_fn=_execute_attn_arch_job,
+                    base_cfg=base_cfg,
+                    metadata={"run_kind": "experiment"},
+                )
+            )
+    return jobs
+
+
+# ---------------------------------------------------------------------------
+# Summary / verdict helpers — these operate on raw dicts (as before) so
+# they are callable from tests without constructing AblationResult objects.
+# ---------------------------------------------------------------------------
 
 
 def _vals(by: dict, variant: str, seeds: list[int], key: str) -> list[float]:
-    return [by[(variant, s)][key] for s in seeds if (variant, s) in by]
+    return [by[(variant, s)]["metrics"][key] for s in seeds if (variant, s) in by]
 
 
 def _paired_deltas(by: dict, variant: str, seeds: list[int], key: str) -> list[float]:
     """Per-seed (variant - baseline) for seeds where both ran — a paired delta
     (same seed, same data) has far less variance than comparing the two means."""
     return [
-        by[(variant, s)][key] - by[(BASELINE, s)][key]
+        by[(variant, s)]["metrics"][key] - by[(BASELINE, s)]["metrics"][key]
         for s in seeds
         if (variant, s) in by and (BASELINE, s) in by
     ]
 
 
-def print_summary(rows: list[dict], targets: list[str], variants_run: list[str]) -> bool:
+def print_summary(
+    results: list[AblationResult], targets: list[str], variants_run: list[str]
+) -> bool:
     """Print the decision table. Returns the data-identity sentinel result."""
+    # Build a lookup: (variant, seed) -> flat metrics dict (preserving the old dict shape
+    # for the helper functions above).
+    rows = [
+        {"variant": r.variant, "seed": r.seed, "metrics": r.metrics}
+        for r in results
+        if r.error is None
+    ]
     seeds = sorted({r["seed"] for r in rows})
     by = {(r["variant"], r["seed"]): r for r in rows}
     flags = [v for v in variants_run if v != BASELINE]
@@ -214,7 +269,7 @@ def print_summary(rows: list[dict], targets: list[str], variants_run: list[str])
     print("\nData-identity sentinel (Ridge FP MAE — must be identical across variants):")
     sentinel_ok = bool(seeds)
     for s in seeds:
-        vals = [by[(v, s)]["ridge_fp_mae"] for v in variants_run if (v, s) in by]
+        vals = [by[(v, s)]["metrics"]["ridge_fp_mae"] for v in variants_run if (v, s) in by]
         if len(vals) < 2:
             continue
         spread = max(vals) - min(vals)
@@ -229,8 +284,16 @@ def print_summary(rows: list[dict], targets: list[str], variants_run: list[str])
         for v in flags:
             parts = []
             for t in targets:
-                vv = [by[(v, s)]["attn_targets"][t] for s in seeds if (v, s) in by]
-                bb = [by[(BASELINE, s)]["attn_targets"][t] for s in seeds if (BASELINE, s) in by]
+                vv = [
+                    by[(v, s)]["metrics"]["attn_targets"][t]
+                    for s in seeds
+                    if (v, s) in by and t in by[(v, s)]["metrics"]["attn_targets"]
+                ]
+                bb = [
+                    by[(BASELINE, s)]["metrics"]["attn_targets"][t]
+                    for s in seeds
+                    if (BASELINE, s) in by and t in by[(BASELINE, s)]["metrics"]["attn_targets"]
+                ]
                 if vv and bb:
                     parts.append(f"{t}={statistics.mean(vv) - statistics.mean(bb):+.4f}")
             if parts:
@@ -297,65 +360,97 @@ def _verdict(
             )
 
 
-def _write_ablation(
-    rows: list[dict], position: str, seeds: list[int], variants_run: list[str]
-) -> None:
-    append_ablation_run(
-        ABLATION_NAME,
-        {"position": position, "seeds": seeds, "variants_run": variants_run, "results": rows},
-        history_dir=HISTORY_DIR,
-    )
-
-
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--position", default="RB", help="Position to ablate (default: RB)")
+    parser.add_argument(
+        "--position", default=DEFAULT_POSITION, help="Position to ablate (default: RB)"
+    )
     parser.add_argument(
         "--seeds",
         default="42",
         help="Comma-separated seeds (default: 42; ≥8 advised for a verdict)",
     )
     parser.add_argument(
-        "--only", choices=sorted(FLAG_VARIANTS), help="Run baseline + a single flag variant"
+        "--variants",
+        default=None,
+        help=(
+            "Comma-separated subset of variants (baseline always included), or 'all'. "
+            f"Choices: {sorted(VARIANTS)}. Default: all."
+        ),
     )
-    parser.add_argument(
-        "--flags",
-        help="Comma-separated subset of flag variants to run (baseline always included)",
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Print the plan without training")
     parser.add_argument(
         "--no-history",
         action="store_true",
         help="Skip writing results to benchmark_history/ablations/",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--max-workers",
+        default="auto",
+        help=(
+            "Process workers. Use an integer or 'auto' "
+            "(default: local many-core CUDA -> 6, otherwise 1; pass 1 for clean timing)."
+        ),
+    )
+    parser.add_argument(
+        "--log-dir",
+        default=DEFAULT_LOG_DIR,
+        help=f"Directory for per-job logs (default: {DEFAULT_LOG_DIR})",
+    )
+    args = parser.parse_args(argv)
 
-    seeds = [int(s) for s in args.seeds.split(",") if s.strip()]
-    if args.only:
-        selected = [args.only]
-    elif args.flags:
-        selected = [f.strip() for f in args.flags.split(",") if f.strip()]
-        bad = [f for f in selected if f not in FLAG_VARIANTS]
-        if bad:
-            parser.error(f"unknown flag variant(s): {bad}; choose from {sorted(FLAG_VARIANTS)}")
-    else:
-        selected = list(FLAG_VARIANTS)
-    variants_run = [BASELINE] + selected
+    try:
+        seeds = parse_seed_list(args.seeds)
+        variants = select_variants(args.variants, VARIANTS, DEFAULT_VARIANTS)
+    except ValueError as exc:
+        parser.error(str(exc))
 
-    mod = importlib.import_module(f"src.{args.position.lower()}.run_pipeline")
-    base_cfg, run_fn = mod.CONFIG, mod.run
+    if BASELINE not in variants:
+        # Ensure baseline is always present for paired deltas.
+        variants = [BASELINE] + [v for v in variants if v != BASELINE]
+
+    position = args.position.upper()
+    jobs = _build_jobs(position=position, seeds=seeds, variants=variants)
+
+    try:
+        max_workers = resolve_max_workers(args.max_workers, job_count=len(jobs))
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if args.dry_run:
+        print(format_dry_run_table(jobs))
+        print(f"\nExperiment workers: {max_workers} ({args.max_workers})")
+        print(f"Job logs: {args.log_dir}")
+        return
+
+    results = run_grid(jobs, max_workers=max_workers, log_dir=args.log_dir, progress=True)
+
+    # Targets come from the position's base config (same across variants).
+    base_cfg = get_config(position)
     targets = base_cfg["targets"]
+    print_summary(results, targets, variants)
 
-    # Run every variant for one seed before advancing — each run re-seeds
-    # internally and the feature cache is seed- and flag-independent, so feature
-    # engineering happens once and every run trains on identical features.
-    rows = [run_variant(v, s, run_fn, base_cfg, targets) for s in seeds for v in variants_run]
-
-    print_summary(rows, targets, variants_run)
     if not args.no_history:
-        _write_ablation(rows, args.position.upper(), seeds, variants_run)
+        write_history(
+            ABLATION_NAME,
+            results,
+            metadata={
+                "position": position,
+                "seeds": seeds,
+                "variants_run": variants,
+                "max_workers": max_workers,
+                "log_dir": args.log_dir,
+            },
+        )
+
+    errors = [r for r in results if r.error]
+    if errors:
+        for r in errors:
+            print(f"ERROR {r.position} seed={r.seed} variant={r.variant}: {r.error}")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
