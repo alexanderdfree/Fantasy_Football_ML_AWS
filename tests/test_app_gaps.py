@@ -11,7 +11,6 @@ This file fills in:
   circuit
 - ``_position_arch_payload`` scheduler-string branches and include_features
   list-vs-dict branch
-- ``/api/top_players`` position filter + ALL paths (via ``client_with_data``)
 """
 
 from __future__ import annotations
@@ -450,22 +449,6 @@ def test_position_arch_payload_include_features_as_dict():
     # 'specific' is injected into the grouped dict since it wasn't a key.
     assert "specific" in features
     assert features["specific"] == ["pos_specific"]
-
-
-# --------------------------------------------------------------------------
-# /health degraded branch (already covered in test_app_apply_position_models)
-# and /api/top_players ALL vs position path
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.integration
-def test_top_players_position_filter_path(client_with_data):
-    """Explicit ``position=QB`` → only positions_loaded branch, no _get_data call."""
-    resp = client_with_data.get("/api/top_players?position=QB&week=1")
-    assert resp.status_code == 200
-    body = resp.get_json()
-    # Response is a dict with a list of players
-    assert isinstance(body, dict)
 
 
 # --------------------------------------------------------------------------

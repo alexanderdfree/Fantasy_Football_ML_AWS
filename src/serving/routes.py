@@ -50,8 +50,8 @@ def _results_for_position(position, scoring):
     """Results rows for ``position`` ("ALL" → all positions).
 
     A single position triggers its lazy per-position load and slices the shared
-    ``_cache["results"]``; "ALL" returns the full multi-position frame. Shared by
-    /api/predictions and /api/top_players.
+    ``_cache["results"]``; "ALL" returns the full multi-position frame. Used by
+    /api/predictions.
     """
     if position != "ALL":
         core._ensure_position_loaded(position)
@@ -288,52 +288,6 @@ def api_predictions_breakdown():
             "unavailable": False,
         }
     )
-
-
-@app.route("/api/top_players")
-def api_top_players():
-    position = request.args.get("position", "ALL")
-    scoring = _validate_scoring(request.args.get("scoring", "ppr"))
-    if position != "ALL" and position not in POSITION_INFO:
-        return jsonify({"error": f"Unknown position: {position}"}), 400
-
-    df = _results_for_position(position, scoring)
-
-    agg_dict = {
-        "avg_actual": (_actual_col(scoring), "mean"),
-        "avg_ridge": (_pred_col("ridge", scoring), "mean"),
-        "avg_nn": (_pred_col("nn", scoring), "mean"),
-        "avg_attn_nn": (_pred_col("attn_nn", scoring), "mean"),
-        "avg_lgbm": (_pred_col("lgbm", scoring), "mean"),
-        "games": ("week", "count"),
-    }
-    avg = (
-        df.groupby(["player_id", "player_display_name", "position", "recent_team"])
-        .agg(
-            **agg_dict,
-        )
-        .reset_index()
-    )
-    avg = avg[avg["games"] >= 6]
-    avg = avg.sort_values("avg_actual", ascending=False).head(25)
-
-    rows = [
-        {
-            "player_id": _safe_str(r["player_id"]),
-            "name": _safe_str(r["player_display_name"]),
-            "position": _safe_str(r["position"]),
-            "team": _safe_str(r["recent_team"]),
-            "avg_actual": _round_or_none(r["avg_actual"]),
-            "avg_ridge": _round_or_none(r["avg_ridge"]),
-            "avg_nn": _round_or_none(r["avg_nn"]),
-            "avg_attn_nn": _round_or_none(r["avg_attn_nn"]),
-            "avg_lgbm": _round_or_none(r["avg_lgbm"]),
-            "games": int(r["games"]),
-        }
-        for r in avg.to_dict(orient="records")
-    ]
-
-    return jsonify({"players": rows, "scoring": scoring})
 
 
 @app.route("/api/weekly_accuracy")
