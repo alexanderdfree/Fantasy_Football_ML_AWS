@@ -887,26 +887,36 @@ class LightGBMMultiTarget:
 
 
 class TabPFNMultiTarget:
-    """Separate TabPFN-v2 regressors per target (mirrors LightGBMMultiTarget interface).
+    """Separate TabPFN regressors per target (mirrors LightGBMMultiTarget interface).
 
-    TabPFN is a *pretrained* transformer foundation model for small tabular data
+    TabPFN is a *pretrained* transformer foundation model for tabular data
     (Hollmann et al., Nature 2025). It does in-context prediction — ``fit`` caches
     the training rows and ``predict`` runs a forward pass — so it neither trains a
     gradient model nor early-stops, and the saved artifact carries the train set.
     It is architecture-distinct from Ridge (linear), LightGBM (trees), and the
     attention NN (sequence), which is the whole point of adding it as a 5th column.
 
-    TabPFN does its own internal preprocessing, so the raw (unscaled) feature
-    matrix is passed through by default. Two knobs handle its pretraining limits
-    (~10k rows, ~500 features) for wider positions:
+    Pinned to the **TabPFN-3** line (the ``tabpfn`` 8.x package default,
+    ``model_path='auto'``; lineage v2 -> 2.5 -> 2.6 -> 3). TabPFN-3 runs every
+    position's split *in-regime* — its envelope (up to ~1M rows / ~2k features at
+    lower row counts) swallows the largest one (WR, ~25k rows × 112 feats), so it
+    is far faster than the v2 line was on the same data (KV-cached predict) and the
+    two cap knobs below are effectively no-ops at this scale, kept only for
+    unusually wide inputs:
       - ``pca_n_components`` — StandardScaler -> PCA before TabPFN (mirrors
-        ``RidgeModel``), the principled way to fit under the feature cap.
-      - ``ignore_pretraining_limits`` — let TabPFN run past the cap as-is.
+        ``RidgeModel``), the principled way to fit under a feature cap.
+      - ``ignore_pretraining_limits`` — let TabPFN run past a cap as-is.
 
-    The ``tabpfn`` import is lazy (only when a regressor is constructed) so the 5
+    The ``tabpfn`` import is lazy (only when a regressor is constructed) so the
     positions that don't enable TabPFN — and CI, which doesn't install it — can
     import this module without the dependency. Same per-head ``non_negative_targets``
     clamp contract as the other multi-target models.
+
+    License: the open-weights v2 checkpoint was Apache-2.0 + attribution, but
+    TabPFN-2.5/2.6/3 ship under a *non-commercial* license and gate weight
+    downloads behind a Prior Labs account (``TABPFN_TOKEN``). This stays a
+    default-off, internal-benchmark-only variant — never trained, served, or
+    displayed in production. See ADR-0003.
     """
 
     def __init__(
@@ -926,8 +936,9 @@ class TabPFNMultiTarget:
         self.ignore_pretraining_limits = ignore_pretraining_limits
         self.pca_n_components = pca_n_components
         self.seed = seed
-        # TabPFN's ``n_jobs`` governs CPU-side preprocessing parallelism (the model
-        # forward pass runs on ``device``). ``None`` -> all cores, like its default.
+        # CPU-side preprocessing parallelism (the model forward pass runs on
+        # ``device``); maps to 8.x's ``n_preprocessing_jobs`` in _new_regressor.
+        # ``None`` -> all cores (-1).
         self.n_jobs = -1 if n_jobs is None else int(n_jobs)
         # Mirror RidgeMultiTarget / LightGBMMultiTarget: ``None`` clamps every head.
         self.non_negative_targets = (
@@ -943,12 +954,18 @@ class TabPFNMultiTarget:
         # (and CI) that never construct this model.
         from tabpfn import TabPFNRegressor
 
+        # ``model_path='auto'`` is the 8.x package default -> the latest open
+        # TabPFN-3 checkpoint. Pin a specific checkpoint here (e.g. the HF id for
+        # ``tabpfn_2_5``) to freeze the benchmark to an exact model version.
+        # 8.x renamed the CPU-preprocessing-parallelism knob ``n_jobs`` ->
+        # ``n_preprocessing_jobs`` (passing ``n_jobs`` is a deprecated no-op).
         return TabPFNRegressor(
             n_estimators=self.n_estimators,
+            model_path="auto",
             device=self.device,
             ignore_pretraining_limits=self.ignore_pretraining_limits,
             random_state=self.seed,
-            n_jobs=self.n_jobs,
+            n_preprocessing_jobs=self.n_jobs,
         )
 
     def _fit_transform(self, X: np.ndarray) -> np.ndarray:
