@@ -47,6 +47,16 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/privacy")
+def privacy():
+    return render_template("privacy.html")
+
+
+@app.route("/support")
+def support():
+    return render_template("support.html")
+
+
 @app.route("/favicon.ico")
 def favicon():
     """Serve the SVG favicon for clients that request /favicon.ico directly.

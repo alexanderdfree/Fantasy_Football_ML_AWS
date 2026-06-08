@@ -16,6 +16,12 @@ struct MoreView: View {
                 NavigationLink { WikiIndexView() } label: {
                     Label("Docs & Wiki", systemImage: "book")
                 }
+                Link(destination: URL(string: "https://fantasy.alexfree.me/support")!) {
+                    Label("Support", systemImage: "questionmark.circle")
+                }
+                Link(destination: URL(string: "https://fantasy.alexfree.me/privacy")!) {
+                    Label("Privacy Policy", systemImage: "hand.raised")
+                }
             }
             .listRowBackground(FFColor.bgSecondary)
 
