@@ -46,7 +46,17 @@ _VALID_SCORING = ("ppr", "half_ppr", "standard")
 
 _ARTIFACT_NAME = "upcoming_week.json"
 _ESPN_HEADSHOT = "https://a.espncdn.com/i/headshots/nfl/players/full/{espn_id}.png"
-_REFRESH_INTERVAL_S = int(os.environ.get("FF_UPCOMING_REFRESH_INTERVAL_S", "10800"))
+
+# The artifact is built OUT of serving (a scheduled CI job — see
+# .github/workflows/refresh-upcoming-week.yml) and uploaded to S3; the serving
+# container only DOWNLOADS + serves it. Running the full data+feature build in
+# the 2-worker serving task OOM'd it (PBP rebuild + 2025-PBP download), so the
+# build never runs here. This is the ADR-0018 CI-artifact path.
+_ENV_BUCKET = "FF_MODEL_S3_BUCKET"
+_ENV_PREFIX = "FF_MODEL_S3_PREFIX"
+# How often the serving container re-pulls the artifact from S3 (a cheap GET);
+# 0 disables. Default 10 min so a fresh CI build shows up without a redeploy.
+_DOWNLOAD_INTERVAL_S = int(os.environ.get("FF_UPCOMING_SYNC_INTERVAL_S", "600"))
 
 # Per-player, slowly-changing attributes that load_raw_data merges per game but
 # the synthetic upcoming rows lack (no current-week merge exists yet). They're
@@ -413,37 +423,76 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     _write_artifact(payload)
     with _state_lock:
         _last_signature = sig
-    _maybe_upload_to_s3()
+    upload_artifact_to_s3()
     print(f"[upcoming_week] refreshed {season} W{week}: {len(results)} players")
     return payload
 
 
-def _maybe_upload_to_s3() -> None:
-    """S3 persistence is intentionally skipped for now.
+# --------------------------------------------------------------------------
+# S3 transfer (CI builds + uploads; serving downloads)
+# --------------------------------------------------------------------------
+def _s3_artifact_key() -> str:
+    prefix = os.environ.get(_ENV_PREFIX, "models").strip("/")
+    return f"{prefix}/predictions_cache/{_ARTIFACT_NAME}"
 
-    ``model_sync.upload_predictions_cache_to_s3`` is hardcoded to the three
-    legacy serving-cache files and lives in ``src/shared`` (editing it would fire
-    a 6-position retrain), so the upcoming-week artifact isn't persisted to S3.
-    It's cheap to rebuild and the poller re-primes it on every container boot, so
-    losing it across restarts is harmless. (Follow-up: add it to the S3 cache set
-    when that helper is generalized.)
-    """
-    return
+
+def upload_artifact_to_s3() -> bool:
+    """Upload the local artifact to S3 (the CI builder). Best-effort; ``False`` on
+    unset bucket / missing file / any S3 error (never raises)."""
+    bucket = os.environ.get(_ENV_BUCKET, "").strip()
+    path = _artifact_path()
+    if not bucket or not os.path.isfile(path):
+        return False
+    try:
+        import boto3
+
+        boto3.client("s3").upload_file(
+            path, bucket, _s3_artifact_key(), ExtraArgs={"ContentType": "application/json"}
+        )
+        print(f"[upcoming_week] uploaded artifact -> s3://{bucket}/{_s3_artifact_key()}")
+        return True
+    except Exception as e:  # noqa: BLE001 - best-effort
+        print(f"[upcoming_week] S3 artifact upload failed: {e!r}")
+        return False
+
+
+def sync_artifact_from_s3() -> bool:
+    """Download the CI-built artifact from S3 into data/serving_cache (serving).
+    Best-effort: unset bucket / missing object / error → ``False`` and the route
+    serves 503 ``warming`` until the next sync."""
+    bucket = os.environ.get(_ENV_BUCKET, "").strip()
+    if not bucket:
+        return False
+    path = _artifact_path()
+    tmp = f"{path}.s3.{os.getpid()}.tmp"
+    try:
+        import boto3
+
+        os.makedirs(core._PREDICTIONS_CACHE_DIR, exist_ok=True)
+        boto3.client("s3").download_file(bucket, _s3_artifact_key(), tmp)
+        os.replace(tmp, path)
+        return True
+    except Exception as e:  # noqa: BLE001 - best-effort
+        print(f"[upcoming_week] S3 artifact sync skipped: {e!r}")
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        return False
 
 
 # --------------------------------------------------------------------------
-# Background poller (mirror model_sync.start_refresh_poller)
+# Serving-side download poller (lightweight — no build, just an S3 GET)
 # --------------------------------------------------------------------------
-def start_upcoming_week_poller(
+def start_artifact_download_poller(
     interval_s: int | None = None, stop_event: threading.Event | None = None
 ) -> threading.Thread | None:
-    """Start a daemon thread that refreshes the upcoming-week artifact.
+    """Daemon thread that re-pulls the CI-built artifact from S3 so a fresh build
+    appears without a redeploy.
 
-    Interval from ``FF_UPCOMING_REFRESH_INTERVAL_S`` (default 3h); ``0`` disables
-    (returns ``None``). Broad try/except so a transient ESPN/data failure never
-    kills the loop.
+    Interval from ``FF_UPCOMING_SYNC_INTERVAL_S`` (default 10 min); ``0`` disables.
+    Cheap (a single S3 GET) — none of the build/PBP/OOM cost that the in-serving
+    build had. Broad try/except so a transient S3 error never kills the loop.
     """
-    interval = _REFRESH_INTERVAL_S if interval_s is None else interval_s
+    interval = _DOWNLOAD_INTERVAL_S if interval_s is None else interval_s
     if interval <= 0:
         return None
     ev = stop_event or threading.Event()
@@ -451,11 +500,22 @@ def start_upcoming_week_poller(
     def _loop():
         while not ev.is_set():
             try:
-                refresh_upcoming_week_cache()
+                sync_artifact_from_s3()
             except Exception as e:  # noqa: BLE001 - poller must never die
-                print(f"[upcoming_week] poll failed: {e!r}")
+                print(f"[upcoming_week] artifact sync failed: {e!r}")
             ev.wait(interval)
 
-    t = threading.Thread(target=_loop, name="upcoming-week-poller", daemon=True)
+    t = threading.Thread(target=_loop, name="upcoming-week-sync", daemon=True)
     t.start()
     return t
+
+
+def main() -> None:
+    """CLI entry for the scheduled CI builder: build the upcoming-week artifact
+    from the live ESPN slate + the models/data on disk, write it, and upload to
+    S3. Run by .github/workflows/refresh-upcoming-week.yml."""
+    refresh_upcoming_week_cache(force=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,89 @@
+name: Refresh upcoming-week projections
+
+# Builds the live next-week projections artifact (data/serving_cache/
+# upcoming_week.json) OUT of the serving container and uploads it to
+# s3://${S3_BUCKET}/models/predictions_cache/upcoming_week.json. The serving
+# container only downloads + serves it (src/serving/upcoming_week.py:
+# sync_artifact_from_s3 / start_artifact_download_poller). See ADR-0018: the
+# in-serving build OOM'd the 2-worker task (PBP rebuild + a runtime 2025-PBP
+# download), so the heavy load_raw_data + build_features + inference runs here,
+# where network + memory are ample.
+#
+# Fires on:
+#   - schedule: every 3h, to keep the live ESPN inputs (Vegas lines, injuries)
+#     fresh. Tighten the cron near game days if desired.
+#   - workflow_run: after "Train on Batch (Spot)" completes — new models change
+#     the projections, so rebuild immediately (the other half of "fresh": models
+#     change rarely, lines/injuries change continuously, so we need both).
+#   - workflow_dispatch: manual kick.
+
+on:
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_run:
+    workflows: ["Train on Batch (Spot)"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-upcoming-week
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  S3_BUCKET: ff-predictor-training
+  FF_MODEL_S3_BUCKET: ff-predictor-training
+  FF_MODEL_S3_PREFIX: models
+  # uv otherwise refuses the PyTorch CPU index for multi-registry transitive
+  # deps (mirrors tests.yml / refresh-splits.yml).
+  UV_INDEX_STRATEGY: unsafe-best-match
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Don't rebuild on a FAILED train run (models didn't change); cron/manual
+    # always run.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        # Pinned per CodeQL actions/unpinned-tag (matches refresh-splits.yml).
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b  # v6.2.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements*.txt"
+
+      - name: Install dependencies
+        # requirements-dev.txt (= requirements.txt + CPU torch): the build runs
+        # the full pipeline (load_raw_data + build_features) and NN inference, so
+        # torch is required (matches refresh-splits.yml).
+        run: uv pip install --system -r requirements-dev.txt
+
+      - name: Build + upload upcoming-week artifact
+        # Pull the same models + data the serving container uses (data/raw,
+        # data/splits, models) from S3, then build the artifact off the live ESPN
+        # slate and upload it. FF_MODEL_S3_BUCKET makes both the model load and
+        # the artifact upload target prod. ESPN + nflverse PBP are fetched live
+        # (CI has reliable network — the exact thing the serving task lacked).
+        run: |
+          python - <<'PY'
+          from src.shared.model_sync import sync_data_from_s3, sync_models_from_s3
+          sync_data_from_s3()
+          sync_models_from_s3()
+          PY
+          python -m src.serving.upcoming_week
