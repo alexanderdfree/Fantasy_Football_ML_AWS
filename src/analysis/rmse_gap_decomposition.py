@@ -258,9 +258,7 @@ def _tiers(df: pd.DataFrame, model: str, n_tiers: int = 4) -> pd.DataFrame:
     return out.merge(means.reset_index(), on="tier", how="left")
 
 
-def _culprits(
-    df: pd.DataFrame, pos: str, model: str, targets, weights, n: int = 15
-) -> pd.DataFrame:
+def _culprits(df: pd.DataFrame, model: str, targets, weights, n: int = 15) -> pd.DataFrame:
     """Top-N worst FP residuals with the dominant head (largest |c_t|) attributed."""
     work = df.copy()
     actual_fp = work["actual_fp"].to_numpy(dtype=np.float64)
@@ -435,7 +433,7 @@ def _print_position(pos: str, train, val, test) -> None:
         f"\n  Worst 15 FP residuals — model: {headline}  (dom_head = largest single-head FP miss)"
     )
     print("  " + "-" * 60)
-    culprits = _culprits(df, pos, headline, targets, weights, n=15)
+    culprits = _culprits(df, headline, targets, weights, n=15)
     print(culprits.to_string(index=False))
 
 
