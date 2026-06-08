@@ -28,6 +28,7 @@ from src.serving.metadata import _ALL_TARGETS as _ALL_TARGETS
 # app's own code no longer references them — hence the explicit ``X as X``
 # re-exports, which ruff preserves.
 from src.serving.metadata import POSITION_INFO as POSITION_INFO
+from src.serving.serialization import _EXPERT_PRED_PREFIXES as _EXPERT_PRED_PREFIXES
 from src.serving.serialization import _MODEL_PRED_PREFIXES as _MODEL_PRED_PREFIXES
 from src.serving.serialization import _actual_col as _actual_col
 from src.serving.serialization import _pred_col as _pred_col

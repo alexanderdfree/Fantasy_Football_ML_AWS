@@ -81,6 +81,8 @@ const COLORS = {
     nn: "#22c55e",
     attn_nn: "#a855f7",
     lgbm: "#f59e0b",
+    nflcom: "#06b6d4",
+    rotowire: "#ec4899",
     actual: "#e8eaed",
     ridgeBg: "rgba(59, 130, 246, 0.2)",
     nnBg: "rgba(34, 197, 94, 0.2)",
@@ -116,6 +118,29 @@ function formatTargetMae(val, targetKey, unit, scoring) {
     return mult != null ? `${raw} (${fmt(val * mult, 2)} pts)` : raw;
 }
 
+const COLUMN_FILTER_STORAGE_KEY = "seasonLeaderColumns";
+const TABLE_COLUMNS = [
+    { key: "rank", label: "#", cls: "col-rank", always: true, render: (_p, ctx) => `<span class="row-caret">▸</span>${ctx.rank}` },
+    { key: "player", label: "Player", cls: "col-player", sort: "name", always: true, render: p => renderPlayerCell(p) },
+    { key: "position", label: "Pos", cls: "col-pos", sort: "position", defaultVisible: true, render: p => `<span class="pos-badge pos-${escapeHtml(p.position)}">${escapeHtml(p.position)}</span>` },
+    { key: "team", label: "Team", cls: "col-team", sort: "team", defaultVisible: true, render: p => escapeHtml(p.team) },
+    { key: "week", label: "Wk", cls: "col-week", sort: "week", defaultVisible: true, render: p => p.week },
+    { key: "actual", label: "Actual", cls: "col-actual", sort: "actual", defaultVisible: true, render: p => `<strong>${fmt(p.actual)}</strong>` },
+    { key: "ridge_pred", label: "Ridge", cls: "col-pred ridge-col", sort: "ridge_pred", defaultVisible: true, render: p => fmt(p.ridge_pred) },
+    { key: "nn_pred", label: "NN", cls: "col-pred nn-col", sort: "nn_pred", defaultVisible: true, render: p => fmt(p.nn_pred) },
+    { key: "attn_nn_pred", label: "Attn NN", cls: "col-pred attn-nn-col", sort: "attn_nn_pred", defaultVisible: true, render: p => fmt(p.attn_nn_pred) },
+    { key: "lgbm_pred", label: "LGBM", cls: "col-pred lgbm-col", sort: "lgbm_pred", defaultVisible: true, render: p => fmt(p.lgbm_pred) },
+    { key: "nflcom_pred", label: "NFL.com", cls: "col-pred nflcom-col", sort: "nflcom_pred", defaultVisible: true, render: p => fmt(p.nflcom_pred) },
+    { key: "rotowire_pred", label: "RotoWire", cls: "col-pred rotowire-col", sort: "rotowire_pred", defaultVisible: true, render: p => fmt(p.rotowire_pred) },
+    { key: "ridge_err", label: "Ridge Err", cls: "col-delta ridge-col", sort: "ridge_err", defaultVisible: true, render: p => renderDeltaCell(p.ridge_pred, p.actual) },
+    { key: "nn_err", label: "NN Err", cls: "col-delta nn-col", sort: "nn_err", defaultVisible: true, render: p => renderDeltaCell(p.nn_pred, p.actual) },
+    { key: "attn_err", label: "Attn Err", cls: "col-delta attn-nn-col", sort: "attn_err", defaultVisible: true, render: p => renderDeltaCell(p.attn_nn_pred, p.actual) },
+    { key: "lgbm_err", label: "LGBM Err", cls: "col-delta lgbm-col", sort: "lgbm_err", defaultVisible: true, render: p => renderDeltaCell(p.lgbm_pred, p.actual) },
+];
+const TOGGLEABLE_TABLE_COLUMNS = TABLE_COLUMNS.filter(c => !c.always);
+const TABLE_COLUMN_KEYS = new Set(TABLE_COLUMNS.map(c => c.key));
+let visibleColumnKeys = loadVisibleColumnKeys();
+
 // ---------------------------------------------------------------------------
 // Initialization
 // ---------------------------------------------------------------------------
@@ -127,7 +152,7 @@ async function init() {
     setupSortHeaders();
     setupModal();
     setupSearch();
-    setupModelToggle();
+    setupColumnFilter();
     setupScoringToggle();
     setupHistoryControls();
     setupWikiClickHandler();
@@ -331,16 +356,91 @@ function setupSearch() {
 }
 
 // ---------------------------------------------------------------------------
-// Model Toggle
+// Season Leaders Column Filter
 // ---------------------------------------------------------------------------
-function setupModelToggle() {
-    document.getElementById("model-display").addEventListener("change", e => {
-        const val = e.target.value;
-        document.body.classList.remove("model-ridge", "model-nn", "model-attn_nn", "model-lgbm");
-        if (val === "ridge") document.body.classList.add("model-ridge");
-        else if (val === "nn") document.body.classList.add("model-nn");
-        else if (val === "attn_nn") document.body.classList.add("model-attn_nn");
-        else if (val === "lgbm") document.body.classList.add("model-lgbm");
+function loadVisibleColumnKeys() {
+    try {
+        const raw = localStorage.getItem(COLUMN_FILTER_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        if (Array.isArray(parsed)) {
+            const valid = parsed.filter(k => TABLE_COLUMN_KEYS.has(k));
+            if (valid.length) return new Set(valid);
+        }
+    } catch (_e) { /* storage may be disabled or stale JSON may be present */ }
+    return new Set(TOGGLEABLE_TABLE_COLUMNS.filter(c => c.defaultVisible).map(c => c.key));
+}
+
+function saveVisibleColumnKeys() {
+    try {
+        localStorage.setItem(COLUMN_FILTER_STORAGE_KEY, JSON.stringify([...visibleColumnKeys]));
+    } catch (_e) { /* storage may be disabled — non-fatal */ }
+}
+
+function isColumnVisible(key) {
+    const col = TABLE_COLUMNS.find(c => c.key === key);
+    return Boolean(col && (col.always || visibleColumnKeys.has(key)));
+}
+
+function visibleTableColumns() {
+    return TABLE_COLUMNS.filter(c => c.always || visibleColumnKeys.has(c.key));
+}
+
+function visibleTableColumnCount() {
+    return visibleTableColumns().length;
+}
+
+function sortColumnKey(sortKey) {
+    const col = TABLE_COLUMNS.find(c => c.sort === sortKey);
+    return col ? col.key : null;
+}
+
+function normalizeSortForVisibleColumns() {
+    const key = sortColumnKey(currentSort);
+    if (key && !isColumnVisible(key)) {
+        currentSort = "actual";
+        currentOrder = "desc";
+    }
+}
+
+function setupColumnFilter() {
+    const button = document.getElementById("column-filter-button");
+    const menu = document.getElementById("column-filter-menu");
+    if (!button || !menu) return;
+    renderColumnFilterMenu();
+    button.addEventListener("click", e => {
+        e.stopPropagation();
+        const nextHidden = !menu.hidden;
+        menu.hidden = nextHidden;
+        button.setAttribute("aria-expanded", String(!nextHidden));
+    });
+    menu.addEventListener("click", e => e.stopPropagation());
+    document.addEventListener("click", () => {
+        menu.hidden = true;
+        button.setAttribute("aria-expanded", "false");
+    });
+}
+
+function renderColumnFilterMenu() {
+    const button = document.getElementById("column-filter-button");
+    const menu = document.getElementById("column-filter-menu");
+    if (!button || !menu) return;
+    const selected = TOGGLEABLE_TABLE_COLUMNS.filter(c => visibleColumnKeys.has(c.key)).length;
+    button.textContent = `Columns (${selected})`;
+    menu.innerHTML = TOGGLEABLE_TABLE_COLUMNS.map(c => `
+        <label class="column-filter-option">
+            <input type="checkbox" value="${escapeHtml(c.key)}" ${visibleColumnKeys.has(c.key) ? "checked" : ""}>
+            <span>${escapeHtml(c.label)}</span>
+        </label>
+    `).join("");
+    menu.querySelectorAll("input[type='checkbox']").forEach(input => {
+        input.addEventListener("change", () => {
+            if (input.checked) visibleColumnKeys.add(input.value);
+            else visibleColumnKeys.delete(input.value);
+            saveVisibleColumnKeys();
+            normalizeSortForVisibleColumns();
+            renderColumnFilterMenu();
+            renderTable();
+        });
     });
 }
 
@@ -401,25 +501,20 @@ function onScoringChanged() {
 // Sort Headers
 // ---------------------------------------------------------------------------
 function setupSortHeaders() {
-    document.querySelectorAll("th.sortable").forEach(th => {
-        th.addEventListener("click", () => {
-            const sort = th.dataset.sort;
-            if (currentSort === sort) {
-                currentOrder = currentOrder === "desc" ? "asc" : "desc";
-            } else {
-                currentSort = sort;
-                currentOrder = "desc";
-            }
-            // Update UI
-            document.querySelectorAll("th.sortable").forEach(t => {
-                t.classList.remove("active-sort");
-                t.querySelector(".sort-arrow").textContent = "";
-            });
-            th.classList.add("active-sort");
-            th.querySelector(".sort-arrow").textContent = currentOrder === "desc" ? "\u25BC" : "\u25B2";
-            currentPage = 1;
-            renderTable();
-        });
+    const head = document.getElementById("predictions-head");
+    if (!head) return;
+    head.addEventListener("click", e => {
+        const th = e.target.closest("th.sortable");
+        if (!th || !head.contains(th)) return;
+        const sort = th.dataset.sort;
+        if (currentSort === sort) {
+            currentOrder = currentOrder === "desc" ? "asc" : "desc";
+        } else {
+            currentSort = sort;
+            currentOrder = "desc";
+        }
+        currentPage = 1;
+        renderTable();
     });
 }
 
@@ -567,7 +662,7 @@ async function loadPredictions() {
         console.error("Failed to load predictions:", e);
         allPlayers = [];
         document.getElementById("predictions-body").innerHTML =
-            '<tr><td colspan="14" class="error-message">Failed to load predictions.</td></tr>';
+            `<tr><td colspan="${visibleTableColumnCount()}" class="error-message">Failed to load predictions.</td></tr>`;
     } finally {
         container.classList.remove("loading");
     }
@@ -605,7 +700,14 @@ function getFilteredPlayers() {
         if (team !== "ALL" && p.team !== team) return false;
         if (search && !(p.name || "").toLowerCase().includes(search)) return false;
         if (!isNaN(minPts)) {
-            const preds = [p.ridge_pred, p.nn_pred, p.attn_nn_pred, p.lgbm_pred].filter(v => v != null);
+            const preds = [
+                p.ridge_pred,
+                p.nn_pred,
+                p.attn_nn_pred,
+                p.lgbm_pred,
+                p.nflcom_pred,
+                p.rotowire_pred,
+            ].filter(v => v != null);
             if (!preds.length || Math.max(...preds) < minPts) return false;
         }
         return true;
@@ -629,7 +731,36 @@ function errDelta(pred, actual) {
     return (pred != null && actual != null) ? pred - actual : null;
 }
 
+function renderPlayerCell(p) {
+    const headshot = p.position === "DST"
+        ? ""
+        : p.headshot
+            ? `<img class="player-headshot" src="${escapeHtml(sizedHeadshot(p.headshot, 400))}" alt="" loading="lazy" decoding="async">`
+            : `<div class="player-headshot"></div>`;
+    return `<div class="player-cell">${headshot}<span class="player-name">${escapeHtml(p.name)}</span></div>`;
+}
+
+function renderDeltaCell(pred, actual) {
+    const d = errDelta(pred, actual);
+    if (d == null) return "--";
+    return `<span class="${deltaClass(d)}">${fmtDelta(d.toFixed(1))}</span>`;
+}
+
+function renderTableHeader() {
+    normalizeSortForVisibleColumns();
+    const head = document.getElementById("predictions-head");
+    const cols = visibleTableColumns();
+    head.innerHTML = `<tr>${cols.map(c => {
+        const sortable = c.sort ? " sortable" : "";
+        const active = c.sort === currentSort ? " active-sort" : "";
+        const dataSort = c.sort ? ` data-sort="${escapeHtml(c.sort)}"` : "";
+        const arrow = c.sort === currentSort ? (currentOrder === "desc" ? "\u25BC" : "\u25B2") : "";
+        return `<th class="${c.cls}${sortable}${active}"${dataSort}>${escapeHtml(c.label)}${c.sort ? ` <span class="sort-arrow">${arrow}</span>` : ""}</th>`;
+    }).join("")}</tr>`;
+}
+
 function renderTable() {
+    renderTableHeader();
     // Sort locally for instant re-sorting. Handles numeric columns (preds,
     // errors, week), string columns (name/position/team), and pushes
     // missing/null values to the bottom regardless of sort direction.
@@ -654,43 +785,17 @@ function renderTable() {
         `${sorted.length.toLocaleString()} player-week${sorted.length !== 1 ? "s" : ""}`;
 
     const tbody = document.getElementById("predictions-body");
+    const cols = visibleTableColumns();
     tbody.innerHTML = page.map((p, i) => {
         const rank = start + i + 1;
-
-        const delta = (pred) => (pred != null && p.actual != null) ? (pred - p.actual).toFixed(1) : null;
-        const ridgeDelta = delta(p.ridge_pred);
-        const nnDelta = delta(p.nn_pred);
-        const attnDelta = delta(p.attn_nn_pred);
-        const lgbmDelta = delta(p.lgbm_pred);
-        const cls = (d) => d != null ? deltaClass(d) : "delta-neutral";
-
-        // D/ST is a team unit with no player photo — drop the avatar entirely
-        // (it otherwise renders an empty placeholder circle).
-        const headshot = p.position === "DST"
-            ? ""
-            : p.headshot
-                ? `<img class="player-headshot" src="${escapeHtml(sizedHeadshot(p.headshot, 400))}" alt="" loading="lazy" decoding="async">`
-                : `<div class="player-headshot"></div>`;
 
         // Main row is followed by a hidden detail row (the per-stat breakdown,
         // fetched lazily on first expand). The caret toggles the breakdown;
         // clicking elsewhere on the row still opens the week-trend modal.
+        const cells = cols.map(c => `<td class="${c.cls}">${c.render(p, { rank })}</td>`).join("");
         return `<tr class="predictions-row-expandable" data-player-id="${escapeHtml(p.player_id)}" data-week="${p.week}">
-            <td class="col-rank"><span class="row-caret">▸</span>${rank}</td>
-            <td class="col-player"><div class="player-cell">${headshot}<span class="player-name">${escapeHtml(p.name)}</span></div></td>
-            <td class="col-pos"><span class="pos-badge pos-${escapeHtml(p.position)}">${escapeHtml(p.position)}</span></td>
-            <td class="col-team">${escapeHtml(p.team)}</td>
-            <td class="col-week">${p.week}</td>
-            <td class="col-actual"><strong>${fmt(p.actual)}</strong></td>
-            <td class="col-pred ridge-col">${fmt(p.ridge_pred)}</td>
-            <td class="col-pred nn-col">${fmt(p.nn_pred)}</td>
-            <td class="col-pred attn-nn-col">${fmt(p.attn_nn_pred)}</td>
-            <td class="col-pred lgbm-col">${fmt(p.lgbm_pred)}</td>
-            <td class="col-delta ridge-col ${cls(ridgeDelta)}">${ridgeDelta != null ? fmtDelta(ridgeDelta) : "--"}</td>
-            <td class="col-delta nn-col ${cls(nnDelta)}">${nnDelta != null ? fmtDelta(nnDelta) : "--"}</td>
-            <td class="col-delta attn-nn-col ${cls(attnDelta)}">${attnDelta != null ? fmtDelta(attnDelta) : "--"}</td>
-            <td class="col-delta lgbm-col ${cls(lgbmDelta)}">${lgbmDelta != null ? fmtDelta(lgbmDelta) : "--"}</td>
-        </tr><tr class="predictions-detail-row" hidden><td colspan="14"></td></tr>`;
+            ${cells}
+        </tr><tr class="predictions-detail-row" hidden><td colspan="${cols.length}"></td></tr>`;
     }).join("");
 
     // Caret toggles the inline per-stat breakdown; clicking elsewhere on the row
@@ -1079,7 +1184,7 @@ async function openPlayerModal(playerId, fallback = null) {
             img.style.display = "none";
         }
 
-        // Chart — Actual plus up to 4 predictions (null entries where a model isn't available)
+        // Chart — Actual plus model/expert predictions (null entries where unavailable)
         const weeks = data.weekly.map(w => `Wk ${w.week}`);
         const actual = data.weekly.map(w => w.actual);
         const predSeries = [
@@ -1087,6 +1192,8 @@ async function openPlayerModal(playerId, fallback = null) {
             { label: "NN Pred", key: "nn_pred", color: COLORS.nn },
             { label: "Attn NN Pred", key: "attn_nn_pred", color: COLORS.attn_nn },
             { label: "LGBM Pred", key: "lgbm_pred", color: COLORS.lgbm },
+            { label: "NFL.com Pred", key: "nflcom_pred", color: COLORS.nflcom },
+            { label: "RotoWire Pred", key: "rotowire_pred", color: COLORS.rotowire },
         ];
         const chartDatasets = [
             { label: "Actual", data: actual, borderColor: COLORS.actual, borderWidth: 2.5, tension: 0.3, pointRadius: 5, pointHoverRadius: 7 },
@@ -2151,4 +2258,3 @@ function setupWikiClickHandler() {
         if (parsed) loadWikiPage(parsed.slug, parsed.anchor);
     });
 }
-

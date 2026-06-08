@@ -67,6 +67,12 @@ def _fake_results(n: int = 4) -> pd.DataFrame:
             "fantasy_points_standard": rng.uniform(0, 30, size=n).round(2),
             "ridge_pred_ppr": rng.uniform(0, 30, size=n).round(2),
             "nn_pred_ppr": rng.uniform(0, 30, size=n).round(2),
+            "nflcom_pred_ppr": rng.uniform(0, 30, size=n).round(2),
+            "rotowire_pred_ppr": rng.uniform(0, 30, size=n).round(2),
+            "nflcom_pred_half_ppr": rng.uniform(0, 30, size=n).round(2),
+            "rotowire_pred_half_ppr": rng.uniform(0, 30, size=n).round(2),
+            "nflcom_pred_standard": rng.uniform(0, 30, size=n).round(2),
+            "rotowire_pred_standard": rng.uniform(0, 30, size=n).round(2),
         }
     )
 
@@ -227,6 +233,9 @@ def test_persist_then_hydrate_round_trips_results_and_metrics(
     # All three artifacts present after persist.
     for name in ("predictions.parquet", "metrics.json", "fingerprint.json"):
         assert (cache_dir / name).is_file()
+    with open(cache_dir / "fingerprint.json") as f:
+        fp = json.load(f)
+    assert fp["schema_version"] == core._PREDICTIONS_CACHE_SCHEMA_VERSION
 
     # Clear the in-memory cache and hydrate from disk.
     app_mod._cache.clear()
@@ -261,6 +270,24 @@ def test_hydrate_returns_false_on_fingerprint_mismatch(cache_dir, fingerprint_fi
     # Cache stayed empty — no partial state.
     assert "results" not in app_mod._cache
     assert "metrics_by_format" not in app_mod._cache
+
+
+def test_hydrate_returns_false_on_old_cache_schema(cache_dir, fingerprint_files, monkeypatch):
+    import src.serving.app as app_mod
+
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    app_mod._cache["results"] = _fake_results()
+    app_mod._cache["metrics_by_format"] = _fake_metrics()
+    core._persist_cache_to_disk()
+
+    with open(cache_dir / "fingerprint.json") as f:
+        fp = json.load(f)
+    fp.pop("schema_version")
+    (cache_dir / "fingerprint.json").write_text(json.dumps(fp))
+
+    app_mod._cache.clear()
+    assert core._try_hydrate_from_disk() is False
+    assert "results" not in app_mod._cache
 
 
 @pytest.mark.parametrize(
@@ -457,6 +484,7 @@ def test_persist_writes_browser_snapshot(cache_dir, fingerprint_files, monkeypat
     # Rows are exactly what /api/predictions would serialize for each format.
     for fmt in ("ppr", "half_ppr", "standard"):
         assert snap["scoring"][fmt] == app_mod._records_to_player_rows(results, scoring=fmt)
+        assert {"nflcom_pred", "rotowire_pred"}.issubset(snap["scoring"][fmt][0])
 
 
 def test_hydrate_regenerates_snapshot_when_absent(cache_dir, fingerprint_files, monkeypatch):

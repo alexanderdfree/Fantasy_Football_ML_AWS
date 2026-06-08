@@ -195,6 +195,10 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                 # rows mirror production by leaving the cells NaN.
                 base_attn = float(actual + rng.normal(0, 2)) if pos not in ("K", "DST") else np.nan
                 base_lgbm = float(actual + rng.normal(0, 2)) if pos not in ("K", "DST") else np.nan
+                # Expert coverage mirrors production: NFL.com has no DST feed;
+                # RotoWire has no K feed.
+                base_nflcom = float(actual + rng.normal(0, 2)) if pos != "DST" else np.nan
+                base_rotowire = float(actual + rng.normal(0, 2)) if pos != "K" else np.nan
                 row = {
                     "player_id": f"{pos}{i:03d}",
                     "player_display_name": f"{pos} Player {i}",
@@ -211,6 +215,8 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                     "nn_pred": base_nn,
                     "attn_nn_pred": base_attn,
                     "lgbm_pred": base_lgbm,
+                    "nflcom_pred": base_nflcom,
+                    "rotowire_pred": base_rotowire,
                 }
                 # Per-format pred columns. NaN preds (K/DST attn/lgbm) stay NaN
                 # across all three formats — multiplying by a constant preserves
@@ -222,6 +228,12 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                         base_attn * m if not np.isnan(base_attn) else np.nan
                     )
                     row[f"lgbm_pred_{fmt}"] = base_lgbm * m if not np.isnan(base_lgbm) else np.nan
+                    row[f"nflcom_pred_{fmt}"] = (
+                        base_nflcom * m if not np.isnan(base_nflcom) else np.nan
+                    )
+                    row[f"rotowire_pred_{fmt}"] = (
+                        base_rotowire * m if not np.isnan(base_rotowire) else np.nan
+                    )
                 # Per-target raw-stat columns: NaN everywhere, then fill this
                 # position's own targets (sparse, mirrors _load_base_data_locked).
                 # lgbm stays NaN for K/DST (no LightGBM trained there).

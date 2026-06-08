@@ -11,6 +11,8 @@ import numpy as np
 
 _VALID_SCORING = ("ppr", "half_ppr", "standard")
 _MODEL_PRED_PREFIXES = ("ridge", "nn", "attn_nn", "lgbm")
+_EXPERT_PRED_PREFIXES = ("nflcom", "rotowire")
+_ROW_PRED_PREFIXES = (*_MODEL_PRED_PREFIXES, *_EXPERT_PRED_PREFIXES)
 
 # (display_name, column_prefix) pairs — the per-model metrics loop in
 # core._compute_metrics_locked iterates these. (comparison.py keys its per-model
@@ -83,6 +85,8 @@ _PLAYER_ROW_COLS = [
     "nn_pred",
     "attn_nn_pred",
     "lgbm_pred",
+    "nflcom_pred",
+    "rotowire_pred",
     "ridge_pred_ppr",
     "ridge_pred_half_ppr",
     "ridge_pred_standard",
@@ -95,6 +99,12 @@ _PLAYER_ROW_COLS = [
     "lgbm_pred_ppr",
     "lgbm_pred_half_ppr",
     "lgbm_pred_standard",
+    "nflcom_pred_ppr",
+    "nflcom_pred_half_ppr",
+    "nflcom_pred_standard",
+    "rotowire_pred_ppr",
+    "rotowire_pred_half_ppr",
+    "rotowire_pred_standard",
     "headshot_url",
 ]
 
@@ -115,7 +125,7 @@ def _round_or_none(v):
 def _records_to_player_rows(df, scoring="ppr"):
     cols = [c for c in _PLAYER_ROW_COLS if c in df.columns]
     actual_key = _actual_col(scoring)
-    pred_keys = {prefix: _pred_col(prefix, scoring) for prefix in _MODEL_PRED_PREFIXES}
+    pred_keys = {prefix: _pred_col(prefix, scoring) for prefix in _ROW_PRED_PREFIXES}
     return [
         {
             "player_id": _safe_str(r.get("player_id")),
@@ -128,6 +138,8 @@ def _records_to_player_rows(df, scoring="ppr"):
             "nn_pred": _safe_num(r.get(pred_keys["nn"])),
             "attn_nn_pred": _safe_num(r.get(pred_keys["attn_nn"])),
             "lgbm_pred": _safe_num(r.get(pred_keys["lgbm"])),
+            "nflcom_pred": _safe_num(r.get(pred_keys["nflcom"])),
+            "rotowire_pred": _safe_num(r.get(pred_keys["rotowire"])),
             "headshot": _safe_str(r.get("headshot_url", "")),
         }
         for r in df[cols].to_dict(orient="records")
