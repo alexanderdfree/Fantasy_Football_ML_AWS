@@ -91,7 +91,7 @@ def compute_positions(changed_files: Iterable[str]) -> list[str]:
     return [pos for pos in ALL_POSITIONS if any(f.startswith(f"src/{pos.lower()}/") for f in files)]
 
 
-ALL_TEST_SHARDS: tuple[str, ...] = (*ALL_POSITIONS, "shared")
+ALL_TEST_SHARDS: tuple[str, ...] = (*ALL_POSITIONS, "serving", "shared")
 
 _TEST_DOCS_REGEX = re.compile(
     r"\.md$|^docs/|^benchmark_history/|^\.github/ISSUE_TEMPLATE/|^\.gitignore$|^LICENSE"
@@ -105,9 +105,14 @@ _TEST_GLOBAL_REGEX = re.compile(
     r"|^requirements.*\.txt$"
     r"|^\.github/workflows/tests\.yml$"
 )
+# Serving suite (Flask app + serving libs): memory-heavy model-loading tests
+# (tests/test_app*.py) that were tipping the `shared` shard over the runner's RAM
+# under -n auto. Split into its own matrix shard (#1056). Anchored so a deeper
+# look-alike path (tests/sub/test_app_x.py) can't spuriously match.
+_TEST_SERVING_REGEX = re.compile(r"^src/serving/" r"|^tests/test_app[^/]*\.py$")
 _TEST_SHARED_REGEX = re.compile(
-    r"^src/(serving|batch|scripts|benchmarking|tuning|analysis)/"
-    r"|^tests/[^/]+\.py$"
+    r"^src/(batch|scripts|benchmarking|tuning|analysis)/"
+    r"|^tests/(?!test_app[^/]*\.py$)[^/]+\.py$"
     r"|^tests/(analysis|batch|scripts|integration|shared|tuning)/"
 )
 _TEST_PER_POSITION_REGEX = {
@@ -116,16 +121,17 @@ _TEST_PER_POSITION_REGEX = {
 
 
 def compute_test_shards(changed_files: Iterable[str]) -> list[str]:
-    """Return test matrix shards (positions + 'shared') given changed paths.
+    """Return test matrix shards (positions + 'serving' + 'shared') given changed paths.
 
     Rules (in order):
       1. Strip docs/license-only paths. If nothing remains → [].
-      2. Any global trigger (shared code, infra, deps, test plumbing) → all 7.
+      2. Any global trigger (shared code, infra, deps, test plumbing) → all 8.
       3. Per-position: src/{pos}/ or tests/{pos}/ → that position.
-      4. Cross-cutting dirs (src/serving, src/batch, src/scripts, src/benchmarking,
-         src/tuning, src/analysis, top-level tests/*.py, tests/{analysis,batch,
-         scripts,integration,shared,tuning}/) → 'shared'.
-      5. Fallback: if no rule matched, run all 7 (conservative).
+      4. Serving: src/serving/ or tests/test_app*.py → 'serving'.
+      5. Cross-cutting dirs (src/batch, src/scripts, src/benchmarking, src/tuning,
+         src/analysis, other top-level tests/*.py, tests/{analysis,batch,scripts,
+         integration,shared,tuning}/) → 'shared'.
+      6. Fallback: if no rule matched, run all 8 (conservative).
     """
     files = [f for f in changed_files if f]
     non_docs = [f for f in files if not _TEST_DOCS_REGEX.search(f)]
@@ -138,6 +144,8 @@ def compute_test_shards(changed_files: Iterable[str]) -> list[str]:
         for pos, per_pos in _TEST_PER_POSITION_REGEX.items()
         if any(per_pos.search(f) for f in non_docs)
     ]
+    if any(_TEST_SERVING_REGEX.search(f) for f in non_docs):
+        shards.append("serving")
     if any(_TEST_SHARED_REGEX.search(f) for f in non_docs):
         shards.append("shared")
     if not shards:

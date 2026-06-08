@@ -378,7 +378,7 @@ class TestRegistryDriftGuard:
 # --------------------------------------------------------------------------
 
 
-ALL_SEVEN = list(scope_positions.ALL_TEST_SHARDS)
+ALL_EIGHT = list(scope_positions.ALL_TEST_SHARDS)
 
 
 class TestComputeTestShards:
@@ -419,8 +419,8 @@ class TestComputeTestShards:
             ".github/workflows/tests.yml",
         ],
     )
-    def test_global_path_fans_out_to_all_seven(self, path):
-        assert scope_positions.compute_test_shards([path]) == ALL_SEVEN
+    def test_global_path_fans_out_to_all_eight(self, path):
+        assert scope_positions.compute_test_shards([path]) == ALL_EIGHT
 
     @pytest.mark.parametrize(
         "pos",
@@ -457,7 +457,6 @@ class TestComputeTestShards:
     @pytest.mark.parametrize(
         "path",
         [
-            "src/serving/app.py",
             "src/batch/launch.py",
             "src/scripts/promote.py",
             "src/benchmarking/benchmark.py",
@@ -475,10 +474,51 @@ class TestComputeTestShards:
     def test_shared_shard(self, path):
         assert scope_positions.compute_test_shards([path]) == ["shared"]
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/serving/app.py",
+            "src/serving/core.py",
+            "src/serving/routes.py",
+            "src/serving/comparison.py",
+            "tests/test_app.py",
+            "tests/test_app_boot.py",
+            "tests/test_app_comparison.py",
+            "tests/test_app_warm.py",
+        ],
+    )
+    def test_serving_shard(self, path):
+        assert scope_positions.compute_test_shards([path]) == ["serving"]
+
+    def test_top_level_non_serving_py_still_shared(self):
+        for p in [
+            "tests/test_data_loader.py",
+            "tests/test_engineer.py",
+            "tests/test_pipeline_e2e.py",
+            "tests/test_invariants.py",
+        ]:
+            assert scope_positions.compute_test_shards([p]) == ["shared"], p
+
+    def test_nested_test_app_lookalike_falls_back_to_all_eight(self):
+        # Anchored regexes: tests/sub/test_app_x.py matches neither serving
+        # (^tests/test_app...) nor shared (not a top-level *.py, dir not listed)
+        # -> conservative all-eight fallback, NOT ["shared"].
+        assert scope_positions.compute_test_shards(["tests/sub/test_app_x.py"]) == ALL_EIGHT
+
     def test_position_plus_shared(self):
         assert scope_positions.compute_test_shards(
-            ["src/qb/features.py", "src/serving/app.py"]
+            ["src/qb/features.py", "src/batch/launch.py"]
         ) == ["QB", "shared"]
+
+    def test_position_plus_serving(self):
+        assert scope_positions.compute_test_shards(
+            ["src/qb/features.py", "src/serving/app.py"]
+        ) == ["QB", "serving"]
+
+    def test_position_serving_shared_ordered(self):
+        assert scope_positions.compute_test_shards(
+            ["src/qb/features.py", "src/serving/app.py", "src/batch/launch.py"]
+        ) == ["QB", "serving", "shared"]
 
     def test_mixed_docs_and_code(self):
         assert scope_positions.compute_test_shards(["README.md", "src/qb/features.py"]) == ["QB"]
@@ -491,8 +531,8 @@ class TestComputeTestShards:
             ["unrelated/path/file.py"],
         ],
     )
-    def test_unmatched_falls_back_to_all_seven(self, files):
-        assert scope_positions.compute_test_shards(files) == ALL_SEVEN
+    def test_unmatched_falls_back_to_all_eight(self, files):
+        assert scope_positions.compute_test_shards(files) == ALL_EIGHT
 
     def test_empty_input(self):
         assert scope_positions.compute_test_shards([]) == []
