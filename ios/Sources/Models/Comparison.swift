@@ -50,7 +50,7 @@ struct Comparison: Codable, Sendable {
 
     struct ExpertReliability: Codable, Sendable {
         let note: String?
-        let positions: [String: [String: ExpertReliabilityCell]]
+        let positions: [String: [String: ExpertReliabilityCell?]]
         let seasons: [Int]?
 
         enum CodingKeys: String, CodingKey { case note, positions, seasons }

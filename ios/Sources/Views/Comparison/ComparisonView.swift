@@ -160,7 +160,7 @@ struct ReliabilityGroup: View {
             let m = comparison.modelReliability(position: position.rawValue, model: source.key)
             return Cell(source: source, sigma: m?.sigma, bias: m?.bias, n: m?.n, totalsOnly: false)
         }
-        let cell = comparison.expertReliability?.positions[position.rawValue]?[source.key]
+        let cell = comparison.expertReliability?.positions[position.rawValue]?[source.key] ?? nil
         let season = cell?.perSeason?["2025"]
         return Cell(source: source, sigma: season?.sigma, bias: season?.bias, n: season?.n, totalsOnly: cell?.totalsOnly ?? false)
     }

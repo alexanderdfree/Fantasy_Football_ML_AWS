@@ -79,8 +79,10 @@ final class DecodingTests: XCTestCase {
         XCTAssertNotNil(comparison.cell(subset: "top30", position: "RB", source: "lgbm"))
         XCTAssertNotNil(comparison.modelReliability(position: "QB", model: "ridge")?.sigma)
         XCTAssertNotNil(comparison.intervals)
-        let expert = comparison.expertReliability?.positions["QB"]?["nflcom"]
+        let expert = comparison.expertReliability?.positions["QB"]?["nflcom"] ?? nil
         XCTAssertNotNil(expert?.perSeason?["2025"]?.sigma)
+        let unavailableExpert = comparison.expertReliability?.positions["DST"]?["nflcom"] ?? nil
+        XCTAssertNil(unavailableExpert)
     }
 
     func testBenchmarkHistory() throws {
