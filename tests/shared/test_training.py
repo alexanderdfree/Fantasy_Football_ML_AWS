@@ -15,7 +15,23 @@ from __future__ import annotations
 import pytest
 import torch
 
-from src.shared.training import _GPUResidentBatcher
+from src.shared.training import _gpu_resident_device, _GPUResidentBatcher
+
+
+@pytest.mark.unit
+def test_gpu_resident_device_opt_in_by_caller_device():
+    """Residency is opt-in by the caller's *training* device, not global CUDA.
+
+    A CPU-device trainer on a GPU box (the per-position ``@integration`` tests,
+    and any ``FF_DEVICE=cpu`` run) must fall through to the plain ``DataLoader``;
+    only an explicit CUDA device engages the resident batcher. Guards the
+    GPU-box regression-test flake fix (see ``todo/fixed-archive.md``). Pure
+    ``.type`` gating, so it needs no CUDA to run.
+    """
+    assert _gpu_resident_device(None) is None
+    assert _gpu_resident_device(torch.device("cpu")) is None
+    cuda_dev = torch.device("cuda")
+    assert _gpu_resident_device(cuda_dev) is cuda_dev
 
 
 @pytest.mark.unit

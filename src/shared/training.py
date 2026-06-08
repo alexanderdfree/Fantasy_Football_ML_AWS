@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from src.shared.utils import amp_dtype, cuda_enabled, cuda_graph_enabled
+from src.shared.utils import amp_dtype, cuda_graph_enabled
 
 SUPPORTED_HEAD_LOSSES = ("huber", "mse", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
 _TRUE_ENV = {"1", "true", "yes", "on"}
@@ -397,17 +397,23 @@ class _GPUResidentBatcher:
             yield (*sliced_features, sliced_y)
 
 
-def _gpu_resident_device() -> torch.device | None:
-    """Return the CUDA device when the GPU-resident batcher path is eligible.
+def _gpu_resident_device(device=None) -> torch.device | None:
+    """Return the CUDA device for the GPU-resident batcher, else ``None``.
 
-    Returns ``None`` on CPU/MPS hosts so callers fall through to the DataLoader
-    path. Centralising the check keeps the four ``make_*_dataloaders`` branches
-    consistent and lets ``run_pipeline --device`` (via ``cuda_enabled``) gate the
-    path: ``--device cpu`` returns ``None`` here so the NN trains through the
-    DataLoader path even on a CUDA-visible host.
+    Residency is **opt-in by the caller's training device**: the caller passes
+    the device its trainer will run on, and the resident path engages only when
+    that device is CUDA. ``device=None`` (the default — unit/integration tests,
+    and any code that builds a ``device="cpu"`` trainer on a CUDA-visible host)
+    returns ``None`` so the plain ``DataLoader`` path is used. Production
+    (``src/shared/pipeline.py``) passes the resolved ``_nn_device()``, so on a
+    GPU host residency engages exactly as before — but a CPU-device trainer no
+    longer receives mismatched GPU-resident loaders (the source of the
+    non-deterministic GPU-box ``@integration`` regression-test flakes; see
+    ``todo/fixed-archive.md``). ``run_pipeline --device cpu`` / ``FF_DEVICE=cpu``
+    resolves ``_nn_device()`` to CPU, so it short-circuits here too.
     """
-    if cuda_enabled():
-        return torch.device("cuda")
+    if device is not None and getattr(device, "type", None) == "cuda":
+        return device
     return None
 
 
@@ -515,6 +521,7 @@ def make_history_dataloaders(
     val_history_mask,
     y_val_dict,
     batch_size=256,
+    device=None,
 ):
     """Create DataLoaders for attention model with game history.
 
@@ -526,7 +533,7 @@ def make_history_dataloaders(
     :func:`make_dataloaders` for the rationale. CPU/MPS hosts retain the
     original DataLoader path bit-for-bit.
     """
-    gpu_device = _gpu_resident_device()
+    gpu_device = _gpu_resident_device(device)
     if gpu_device is not None:
         # Bool masks match ``MultiTargetHistoryDataset.__init__``'s
         # ``torch.from_numpy(np.asarray(..., dtype=bool))``; the downstream
@@ -554,7 +561,7 @@ def make_history_dataloaders(
     return _dataloader_pair(train_ds, val_ds, batch_size)
 
 
-def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
+def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256, device=None):
     """Create DataLoaders for multi-target training.
 
     On CUDA hosts the full training+val tensors are moved to the GPU once and
@@ -570,7 +577,7 @@ def make_dataloaders(X_train, y_train_dict, X_val, y_val_dict, batch_size=256):
     allocate page-locked host tensors but the CUDA branch above bypasses
     DataLoader entirely so the flag is no longer relevant there.
     """
-    gpu_device = _gpu_resident_device()
+    gpu_device = _gpu_resident_device(device)
     if gpu_device is not None:
         # One-time numpy → tensor → GPU move (see ``_to_gpu_float`` for the
         # dtype-match-the-Dataset rationale).
@@ -1183,6 +1190,7 @@ def make_history_with_opp_dataloaders(
     val_opp_history_mask,
     y_val_dict,
     batch_size=256,
+    device=None,
 ):
     """Create DataLoaders for the two-branch attention model.
 
@@ -1194,7 +1202,7 @@ def make_history_with_opp_dataloaders(
     :func:`make_dataloaders` for the rationale. CPU/MPS hosts retain the
     original DataLoader path bit-for-bit.
     """
-    gpu_device = _gpu_resident_device()
+    gpu_device = _gpu_resident_device(device)
     if gpu_device is not None:
         return _resident_loader_pair(
             [
@@ -1330,6 +1338,7 @@ def make_nested_kick_dataloaders(
     batch_size=256,
     X_train_history=None,
     X_val_history=None,
+    device=None,
 ):
     """Build train/val DataLoaders for the nested-history attention model.
 
@@ -1343,7 +1352,7 @@ def make_nested_kick_dataloaders(
     On CUDA hosts the GPU-resident batcher replaces the DataLoader path; see
     :func:`make_dataloaders` for the rationale.
     """
-    gpu_device = _gpu_resident_device()
+    gpu_device = _gpu_resident_device(device)
     if gpu_device is not None:
         # Outer/inner masks are bool in ``MultiTargetNestedKickDataset.__init__``.
         train_feats = [
