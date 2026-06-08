@@ -38,9 +38,6 @@ _REQUIRED_PBP_COLUMNS = frozenset(
         "fg_made",
         "fg_missed",
         "fg_yards_made",
-        "fg_made_0_19",
-        "fg_made_20_29",
-        "fg_made_30_39",
         "fg_made_40_49",
         "fg_made_50_59",
         "fg_made_60_",
@@ -133,9 +130,9 @@ def reconstruct_kicker_weekly_from_pbp(
             # Distance buckets matching weekly_data schema
             d = fg["kick_distance"]
             made = fg["fg_made_flag"].astype(bool)
-            fg["fg_made_0_19"] = ((d < 20) & made).astype(int)
-            fg["fg_made_20_29"] = ((d >= 20) & (d < 30) & made).astype(int)
-            fg["fg_made_30_39"] = ((d >= 30) & (d < 40) & made).astype(int)
+            # 0-39yd made buckets (fg_made_0_19/20_29/30_39) dropped: they were
+            # computed, cached, and schema-required but never read — only the 40+
+            # buckets feed long_fg_rate_L3 in features.py. (#470)
             fg["fg_made_40_49"] = ((d >= 40) & (d < 50) & made).astype(int)
             fg["fg_made_50_59"] = ((d >= 50) & (d < 60) & made).astype(int)
             fg["fg_made_60_"] = ((d >= 60) & made).astype(int)
@@ -159,9 +156,6 @@ def reconstruct_kicker_weekly_from_pbp(
                     fg_att=("fg_made_flag", "count"),
                     fg_made=("fg_made_flag", "sum"),
                     fg_missed=("fg_missed_flag", "sum"),
-                    fg_made_0_19=("fg_made_0_19", "sum"),
-                    fg_made_20_29=("fg_made_20_29", "sum"),
-                    fg_made_30_39=("fg_made_30_39", "sum"),
                     fg_made_40_49=("fg_made_40_49", "sum"),
                     fg_made_50_59=("fg_made_50_59", "sum"),
                     fg_made_60_=("fg_made_60_", "sum"),

@@ -132,8 +132,11 @@ def synthetic_parquets(tmp_path, monkeypatch):
     weekly.to_parquet(cache_dir / f"weekly_{_SEASONS[0]}_{_SEASONS[-1]}.parquet")
     schedules.to_parquet(cache_dir / f"schedules_{_SEASONS[0]}_{_SEASONS[-1]}.parquet")
 
-    monkeypatch.setattr(dst_data, "CACHE_DIR", str(cache_dir))
-    monkeypatch.setattr(dst_data, "SEASONS", _SEASONS)
+    # Patch the source module (src.config), not dst_data's namespace: build_data
+    # now reads src.config.CACHE_DIR/SEASONS lazily, so a post-import mutation is
+    # what it honors. (#475)
+    monkeypatch.setattr("src.config.CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr("src.config.SEASONS", _SEASONS)
     monkeypatch.setattr(dst_data, "load_team_week_stats", lambda seasons: team_stats)
 
     # Stub nfl_source.teams so the logo lookup branch runs without
