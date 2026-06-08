@@ -46,6 +46,20 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/favicon.ico")
+def favicon():
+    """Serve the SVG favicon for clients that request /favicon.ico directly.
+
+    The ``<link rel="icon" type="image/svg+xml">`` in index.html covers
+    HTML-parsing browsers; this route keeps the auto-requested /favicon.ico from
+    404-ing for everything else. All current major browsers render an SVG served
+    here.
+    """
+    resp = send_file(os.path.join(app.static_folder, "favicon.svg"), mimetype="image/svg+xml")
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
 def _results_for_position(position, scoring):
     """Results rows for ``position`` ("ALL" → all positions).
 

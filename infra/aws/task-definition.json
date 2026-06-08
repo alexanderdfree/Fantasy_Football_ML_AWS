@@ -6,7 +6,7 @@
     "cpuArchitecture": "ARM64",
     "operatingSystemFamily": "LINUX"
   },
-  "cpu": "2048",
+  "cpu": "4096",
   "memory": "8192",
   "executionRoleArn": "arn:aws:iam::__ACCOUNT_ID__:role/ecsTaskExecutionRole",
   "taskRoleArn": "arn:aws:iam::__ACCOUNT_ID__:role/fantasyTaskRole",
