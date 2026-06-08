@@ -169,10 +169,17 @@ def format_dry_run_table(jobs: list[AblationJob]) -> str:
     return "\n".join(lines)
 
 
-def _cap_worker_threads() -> None:
+def _cap_worker_threads(lgbm_n_jobs: int | None = None) -> None:
     for name in _THREAD_CAP_VARS:
         os.environ[name] = "1"
     os.environ["LOKY_MAX_CPU_COUNT"] = "1"
+    # LightGBM has its own ``LGBM_N_JOBS`` (not covered by the BLAS/OMP caps). When fanning
+    # out (``max_workers > 1``) each worker must get a bounded share or N workers × an
+    # env-set ``LGBM_N_JOBS`` (e.g. 16 via wsl-env.sh) oversubscribes the box — the doc's
+    # "physical cores ÷ per-run thread budget" rule. Serial runs leave it untouched so one
+    # ablation still uses every core for LightGBM.
+    if lgbm_n_jobs is not None:
+        os.environ["LGBM_N_JOBS"] = str(max(1, lgbm_n_jobs))
 
 
 def resolve_max_workers(raw: str | int, *, job_count: int) -> int:
@@ -282,12 +289,16 @@ def _isolated_outputs(data_dir: str):
 
 
 def _run_job(
-    job: AblationJob, log_path: str | None = None, data_dir: str | None = None
+    job: AblationJob,
+    log_path: str | None = None,
+    data_dir: str | None = None,
+    lgbm_n_jobs: int | None = None,
 ) -> AblationResult:
     """Run one job, capturing failures. When ``data_dir`` points at a real ``data/`` dir,
     the job runs output-isolated (``log_path`` must be absolute so the log still lands in
-    the orchestrator's log dir, which ``run_grid`` guarantees)."""
-    _cap_worker_threads()
+    the orchestrator's log dir, which ``run_grid`` guarantees). ``lgbm_n_jobs`` bounds
+    LightGBM's per-worker threads under fan-out (``run_grid`` sets it; ``None`` = serial)."""
+    _cap_worker_threads(lgbm_n_jobs)
 
     def _body() -> AblationResult:
         if log_path:
@@ -332,6 +343,13 @@ def run_grid(
         for idx, job in enumerate(jobs)
     ]
     data_dir = os.path.abspath("data")
+    # Under fan-out, bound LightGBM's per-worker threads to physical_cores ÷ workers so N
+    # workers don't oversubscribe (serial keeps the env default → all cores for one run).
+    lgbm_n_jobs: int | None = None
+    if max_workers > 1:
+        from src.benchmarking.parallel_train import physical_cores
+
+        lgbm_n_jobs = max(1, len(physical_cores()) // max_workers)
     if max_workers == 1:
         results = []
         for idx, job in enumerate(jobs):
@@ -352,7 +370,7 @@ def run_grid(
     mp_context = mp.get_context("spawn")
     with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_context) as pool:
         futures = {
-            pool.submit(_run_job, job, log_paths[idx], data_dir): (idx, job)
+            pool.submit(_run_job, job, log_paths[idx], data_dir, lgbm_n_jobs): (idx, job)
             for idx, job in enumerate(jobs)
         }
         for future in as_completed(futures):

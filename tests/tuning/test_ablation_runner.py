@@ -113,9 +113,9 @@ def test_run_grid_parallel_path_can_preserve_or_completion_order(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-        def submit(self, fn, job, log_path=None, data_dir=None):
+        def submit(self, fn, job, log_path=None, data_dir=None, lgbm_n_jobs=None):
             submitted.append((self.max_workers, job.seed))
-            return FakeFuture(fn(job, log_path, data_dir))
+            return FakeFuture(fn(job, log_path, data_dir, lgbm_n_jobs))
 
     monkeypatch.setattr(ar, "ProcessPoolExecutor", FakePool)
     monkeypatch.setattr(ar, "as_completed", lambda futures: list(reversed(list(futures))))
@@ -229,6 +229,18 @@ def test_run_grid_isolates_pos_outputs(tmp_path, monkeypatch):
     assert seen["cwd"] != str(tmp_path)  # ran in an isolated tmp dir
     assert os.getcwd() == str(tmp_path)  # cwd restored
     assert not (tmp_path / "qb").exists()  # served {pos}/outputs untouched
+
+
+def test_cap_worker_threads_bounds_lgbm_only_under_fanout(monkeypatch):
+    # Serial leaves LGBM_N_JOBS to the env (one run uses all cores); fan-out bounds it per
+    # worker so N workers don't oversubscribe LightGBM (BLAS/OMP are always pinned to 1).
+    monkeypatch.setenv("LGBM_N_JOBS", "_restore_")  # registered for teardown restore
+    monkeypatch.delenv("LGBM_N_JOBS", raising=False)
+    ar._cap_worker_threads()
+    assert "LGBM_N_JOBS" not in os.environ
+    assert os.environ["OMP_NUM_THREADS"] == "1"
+    ar._cap_worker_threads(lgbm_n_jobs=4)
+    assert os.environ["LGBM_N_JOBS"] == "4"
 
 
 def test_write_history_payload_shape(tmp_path):
