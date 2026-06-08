@@ -94,6 +94,9 @@ def make_wr_player_games(
     receiving_epa: float = 2.0,
     receiving_first_downs: int = 3,
     recent_team: str = "KC",
+    carries: int = 0,
+    redzone_targets: float = 1.0,
+    redzone_target_share: float = 0.2,
 ) -> pd.DataFrame:
     """Build a multi-week single-player WR DataFrame matching feature inputs.
 
@@ -101,7 +104,9 @@ def make_wr_player_games(
     pytest fixture) and by ``install_parameterized_features`` in
     ``tests/wr/test_features.py`` (which runs at import time and can't
     resolve fixtures). Single source of truth for the canonical WR
-    multi-week row layout.
+    multi-week row layout. ``carries`` + ``redzone_targets`` /
+    ``redzone_target_share`` feed the red-zone / opportunity boom block in
+    ``_compute_features`` (carries default 0 — WR rushing is rare).
     """
     return pd.DataFrame(
         {
@@ -110,11 +115,14 @@ def make_wr_player_games(
             "week": list(range(1, n_weeks + 1)),
             "receptions": [receptions] * n_weeks,
             "targets": [targets] * n_weeks,
+            "carries": [carries] * n_weeks,
             "receiving_yards": [receiving_yards] * n_weeks,
             "receiving_air_yards": [receiving_air_yards] * n_weeks,
             "receiving_yards_after_catch": [receiving_yards_after_catch] * n_weeks,
             "receiving_epa": [receiving_epa] * n_weeks,
             "receiving_first_downs": [receiving_first_downs] * n_weeks,
+            "redzone_targets": [redzone_targets] * n_weeks,
+            "redzone_target_share": [redzone_target_share] * n_weeks,
             "recent_team": [recent_team] * n_weeks,
         }
     )

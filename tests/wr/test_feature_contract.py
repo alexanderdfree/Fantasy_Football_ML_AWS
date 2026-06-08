@@ -52,6 +52,13 @@ _SPECIFIC_CONTRACT = [
     ("yac_per_reception_L3", 0.0, 200.0, 0.0),
     # EPA can be negative; wider allowed range
     ("receiving_epa_per_target_L3", -10.0, 10.0, 0.0),
+    # Red-zone / opportunity boom features (rolling_agg shift=1, NOT safe_divide-wrapped),
+    # so season-opener rows carry a leading-edge NaN that fill_nans backfills downstream —
+    # same profile as RB's opportunity_index_L3 (_COMPUTED_L3_FEATURES). The NaN ceiling
+    # (0.25) bounds the 1/n_weeks opener fraction in the 5-week fixture.
+    ("redzone_targets_L3", 0.0, 50.0, 0.25),
+    ("redzone_target_share_L3", 0.0, 1.0, 0.25),
+    ("opportunity_index_L3", 0.0, 1.0, 0.25),
 ]
 
 
@@ -67,6 +74,7 @@ def _make_wr_df(n_players: int = 3, n_weeks: int = 5, seed: int = 42) -> pd.Data
         for week in range(1, n_weeks + 1):
             targets = int(rng.integers(4, 12))
             receptions = int(rng.integers(1, targets + 1))
+            rz_tgt = int(rng.integers(0, 4))
             rows.append(
                 {
                     "player_id": f"W{p_idx}",
@@ -75,11 +83,16 @@ def _make_wr_df(n_players: int = 3, n_weeks: int = 5, seed: int = 42) -> pd.Data
                     "recent_team": "KC",
                     "targets": targets,
                     "receptions": receptions,
+                    "carries": 0,  # WR rushing is rare; the opportunity index still uses it
                     "receiving_yards": float(rng.uniform(20, 130)),
                     "receiving_air_yards": float(rng.uniform(30, 180)),
                     "receiving_yards_after_catch": float(rng.uniform(5, 80)),
                     "receiving_epa": float(rng.normal(1.0, 2.0)),
                     "receiving_first_downs": int(rng.integers(0, receptions + 1)),
+                    # Red-zone receiving (from the splits in production) — feeds the
+                    # redzone_targets_L3 / redzone_target_share_L3 boom features.
+                    "redzone_targets": float(rz_tgt),
+                    "redzone_target_share": float(rng.uniform(0, 0.5)),
                 }
             )
     return pd.DataFrame(rows)
@@ -139,9 +152,10 @@ class TestWRFeatureContract:
         _compute_features(df)
         series = df[feature]
 
-        # Finite check
-        non_finite = (~np.isfinite(series)).sum()
-        assert non_finite == 0, f"{feature} has {non_finite} non-finite values"
+        # Inf is never allowed; leading-edge NaN (shift(1) rolling on season openers,
+        # backfilled by fill_nans) is bounded by the per-feature ceiling instead.
+        n_inf = int(np.isinf(series.to_numpy(dtype=float)).sum())
+        assert n_inf == 0, f"{feature} has {n_inf} inf values"
 
         # NaN ceiling
         nan_frac = series.isna().mean()
@@ -184,9 +198,10 @@ class TestWRFeatureContract:
         assert len(cols) == len(set(cols)), "Duplicate feature names"
 
     def test_specific_features_count(self):
-        """SPECIFIC_FEATURES must contain exactly 8 WR-specific features."""
-        assert len(SPECIFIC_FEATURES) == 8
-        assert len(set(SPECIFIC_FEATURES)) == 8
+        """SPECIFIC_FEATURES must contain exactly 11 WR-specific features (8 rate/share
+        + the 3 red-zone/opportunity boom features added via ab_boom_signals_wr)."""
+        assert len(SPECIFIC_FEATURES) == 11
+        assert len(set(SPECIFIC_FEATURES)) == 11
 
     def test_specific_features_excluded_from_attn_static(self):
         """SPECIFIC_FEATURES are per-game signals consumed by the attention

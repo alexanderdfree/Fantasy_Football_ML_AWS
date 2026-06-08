@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from src.features.engineer import flatten_include_features
@@ -16,7 +17,7 @@ def get_feature_columns() -> list[str]:
 
 
 def add_specific_features(train_df, val_df, test_df, full_train=None):
-    """Add 8 WR-specific engineered features to each split.
+    """Add the WR-specific engineered features to each split.
 
     ``team_wr_target_share_L3`` divides player targets by the team's WR-target
     total per game. When ``full_train`` (the pre-min-games-filter train) is
@@ -35,7 +36,14 @@ def add_specific_features(train_df, val_df, test_df, full_train=None):
 
 
 def _compute_features(df: pd.DataFrame) -> None:
-    """Compute all 8 WR-specific features in-place.
+    """Compute the WR-specific engineered features in-place.
+
+    The 8 rate/share features (``*_L3``, ``team_wr_target_share_L3``) plus the
+    red-zone / opportunity boom-tier block (``game_target_share`` / ``_hhi`` /
+    ``game_opportunity_index`` → attention history; ``opportunity_index_L3`` /
+    ``redzone_targets_L3`` / ``redzone_target_share_L3`` / ``prior_season_mean_catch_rate``
+    → whitelist). The boom block was validated in the 6-seed WR A/B
+    (``src/tuning/ab_boom_signals_wr.py``, ``+all`` arm) and mirrors ``src/rb/features.py``.
 
     Side-effect contract: per-group rolling aggregates require chronological
     row order, so the function physically reorders ``df`` by
@@ -92,6 +100,49 @@ def _compute_features(df: pd.DataFrame) -> None:
 
     df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
     df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
+
+    # --- Red-zone receiving + opportunity (boom-tier signal) ---
+    # Validated in the 6-seed WR boom A/B (src/tuning/ab_boom_signals_wr.py, +all arm:
+    # direction-robust modest gain on the Q4 / receiving-TD subgroup across Ridge, LightGBM
+    # and the attention NN). Mirrors src/rb/features.py. Team totals are WR-scoped (sum over
+    # this team-game's WR rows — transform("sum"), matching the validated A/B injector);
+    # redzone_targets/_share come from the splits (engineer via redzone_pbp).
+    team_g = df.groupby(["recent_team", "season", "week"])
+    team_tgt = team_g["targets"].transform("sum").to_numpy(dtype=float)
+    team_car = team_g["carries"].transform("sum").to_numpy(dtype=float)
+    p_tgt = df["targets"].fillna(0).to_numpy(dtype=float)
+    p_car = df["carries"].fillna(0).to_numpy(dtype=float)
+    # Per-game shares + weighted-opportunity index — raw current-week values fed ONLY to the
+    # attention history (build_game_history_arrays applies its own prior-games shift, so they
+    # never leak into a static feature). np.divide(..., where=) maps 0/0 (no WR targets that
+    # game) to 0 without a warning.
+    df["game_target_share"] = np.divide(
+        p_tgt, team_tgt, out=np.zeros_like(p_tgt), where=team_tgt > 0
+    )
+    df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
+        "game_target_share"
+    ].transform(lambda x: (x**2).sum())
+    team_w = team_car + 2.0 * team_tgt
+    player_w = p_car + 2.0 * p_tgt
+    df["game_opportunity_index"] = np.divide(
+        player_w, team_w, out=np.zeros_like(player_w), where=team_w > 0
+    )
+    # Leakage-safe rolling forms (rolling_agg shift=1) → whitelist (Ridge/LGBM/NN-static).
+    df["opportunity_index_L3"] = rolling_agg(
+        df, "game_opportunity_index", grp, window=3, agg="mean"
+    )
+    df["redzone_targets_L3"] = rolling_agg(df, "redzone_targets", grp, window=3, agg="mean")
+    df["redzone_target_share_L3"] = rolling_agg(
+        df, "redzone_target_share", grp, window=3, agg="mean"
+    )
+    # Prior-season catch rate (S-1 → S), low-volume-guarded like src/rb/features.py.
+    if {"prior_season_mean_receptions", "prior_season_mean_targets"} <= set(df.columns):
+        catch_rate = safe_divide(
+            df["prior_season_mean_receptions"], df["prior_season_mean_targets"]
+        )
+        df["prior_season_mean_catch_rate"] = catch_rate.where(
+            df["prior_season_mean_targets"] >= 0.5
+        )
 
 
 def fill_nans(train_df, val_df, test_df, wr_feature_cols):
