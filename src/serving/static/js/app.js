@@ -197,7 +197,7 @@ function populateTeams(teams) {
 // sub-page navigation (inside loadWikiPage) replaceState so intra-wiki link
 // clicks don't pile up history entries.
 // ---------------------------------------------------------------------------
-const TAB_VIEWS = new Set(["predictions", "standings", "model-performance", "comparison", "model-architecture", "wiki", "history"]);
+const TAB_VIEWS = new Set(["predictions", "model-performance", "comparison", "model-architecture", "wiki", "history"]);
 
 function viewFromHash(hash) {
     if (!hash || hash === "#") return "predictions";
@@ -220,7 +220,6 @@ function activateTab(view) {
         v.classList.toggle("active", v.id === `view-${view}`);
     });
     if (view === "model-performance") loadMetrics();
-    else if (view === "standings") loadStandings();
     else if (view === "comparison") loadComparison();
     else if (view === "model-architecture") loadModelArchitecture();
     else if (view === "wiki") loadWiki();
@@ -264,7 +263,6 @@ function applyInitialRoute() {
 // ---------------------------------------------------------------------------
 function setupPositionFilters() {
     setupPillGroup("position-filter", () => { currentPage = 1; loadPredictions(); });
-    setupPillGroup("standings-position-filter", () => loadStandings());
 }
 
 function setupPillGroup(containerId, callback) {
@@ -351,7 +349,6 @@ function onScoringChanged() {
     // Refresh whichever secondary tab is currently visible.
     const activeTab = document.querySelector(".nav-tabs .tab.active");
     const view = activeTab ? activeTab.dataset.view : null;
-    if (view === "standings") loadStandings();
     if (view === "model-performance") loadMetrics();
     // History detail rows show per-target fantasy-point equivalents, so refresh
     // them too (collapses any open detail; re-opening uses the new format).
@@ -661,47 +658,6 @@ function renderPagination(totalPages) {
             document.querySelector(".table-container").scrollIntoView({ behavior: "smooth" });
         });
     });
-}
-
-// ---------------------------------------------------------------------------
-// Season Leaders
-// ---------------------------------------------------------------------------
-async function loadStandings() {
-    const position = getActivePosition("standings-position-filter");
-    const container = document.querySelector("#view-standings .table-container");
-    container.classList.add("loading");
-
-    try {
-        const data = await fetchJSON(
-            `/api/top_players?position=${position}&scoring=${currentScoring}`,
-        );
-
-        const tbody = document.getElementById("standings-body");
-        tbody.innerHTML = data.players.map((p, i) => `
-            <tr data-player-id="${escapeHtml(p.player_id)}">
-                <td class="col-rank">${i + 1}</td>
-                <td class="col-player"><span class="player-name">${escapeHtml(p.name)}</span></td>
-                <td class="col-pos"><span class="pos-badge pos-${escapeHtml(p.position)}">${escapeHtml(p.position)}</span></td>
-                <td class="col-team">${escapeHtml(p.team)}</td>
-                <td class="col-games">${p.games}</td>
-                <td class="col-actual"><strong>${fmt(p.avg_actual)}</strong></td>
-                <td class="col-pred">${fmt(p.avg_ridge)}</td>
-                <td class="col-pred">${fmt(p.avg_nn)}</td>
-                <td class="col-pred">${fmt(p.avg_attn_nn)}</td>
-                <td class="col-pred">${fmt(p.avg_lgbm)}</td>
-            </tr>
-        `).join("");
-
-        tbody.querySelectorAll("tr").forEach(row => {
-            row.addEventListener("click", () => openPlayerModal(row.dataset.playerId));
-        });
-    } catch (e) {
-        console.error("Failed to load standings:", e);
-        document.getElementById("standings-body").innerHTML =
-            '<tr><td colspan="10" class="error-message">Failed to load standings.</td></tr>';
-    } finally {
-        container.classList.remove("loading");
-    }
 }
 
 // ---------------------------------------------------------------------------

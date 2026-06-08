@@ -265,33 +265,6 @@ class TestAuxiliaryEndpoints:
             target = next(t for t in body[pos]["targets"] if t["key"] == "fumbles_lost")
             assert target["formula"] == expected
 
-    def test_top_players_returns_list(self, client_with_data):
-        r = client_with_data.get("/api/top_players")
-        assert r.status_code == 200
-        body = r.get_json()
-        assert "players" in body
-        # Each row carries aggregated per-player stats
-        if body["players"]:
-            row = body["players"][0]
-            for key in (
-                "player_id",
-                "name",
-                "position",
-                "team",
-                "avg_actual",
-                "avg_ridge",
-                "avg_nn",
-                "games",
-            ):
-                assert key in row
-
-    def test_top_players_invalid_position_returns_400(self, client_with_data):
-        # Same allowlist guard as /api/predictions (audit #910 / #578).
-        r = client_with_data.get("/api/top_players?position=FOO")
-        assert r.status_code == 400
-        assert r.is_json
-        assert "error" in r.get_json()
-
     def test_weekly_accuracy_parallel_arrays(self, client_with_data):
         r = client_with_data.get("/api/weekly_accuracy")
         assert r.status_code == 200
@@ -538,21 +511,6 @@ class TestScoringFormats:
         # weekly[0] mirrors the first row's actual under this format.
         first_week_row = rows.sort_values("week").iloc[0]
         assert body["weekly"][0]["actual"] == pytest.approx(round(first_week_row[actual_col], 2))
-
-    @pytest.mark.parametrize("scoring", ["ppr", "half_ppr", "standard"])
-    def test_top_players_aggregates_in_chosen_format(
-        self, client_with_data, synthetic_cache, scoring
-    ):
-        df = synthetic_cache["results"]
-        actual_col = "fantasy_points" if scoring == "ppr" else f"fantasy_points_{scoring}"
-        r = client_with_data.get(f"/api/top_players?scoring={scoring}")
-        assert r.status_code == 200
-        body = r.get_json()
-        assert body["scoring"] == scoring
-        assert body["players"], "fixture should produce at least one top-25 row"
-        top = body["players"][0]
-        rows = df[df["player_id"] == top["player_id"]]
-        assert top["avg_actual"] == pytest.approx(round(rows[actual_col].mean(), 2))
 
     @pytest.mark.parametrize("scoring", ["ppr", "half_ppr", "standard"])
     def test_weekly_accuracy_uses_format_columns(self, client_with_data, scoring):

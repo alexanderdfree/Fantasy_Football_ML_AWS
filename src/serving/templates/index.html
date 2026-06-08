@@ -35,8 +35,7 @@
 
     <!-- Navigation Tabs -->
     <nav class="nav-tabs">
-        <button class="tab active" data-view="predictions">Predictions</button>
-        <button class="tab" data-view="standings">Season Leaders</button>
+        <button class="tab active" data-view="predictions">Season Leaders</button>
         <button class="tab" data-view="model-performance">Model Performance</button>
         <button class="tab" data-view="comparison">Comparison</button>
         <button class="tab" data-view="model-architecture">Model Architecture</button>
@@ -154,44 +153,6 @@
 
             <!-- Pagination -->
             <div class="pagination" id="pagination"></div>
-        </section>
-
-        <!-- ============ STANDINGS VIEW ============ -->
-        <section id="view-standings" class="view">
-            <div class="filters-bar">
-                <div class="filter-group">
-                    <label>Position</label>
-                    <div class="pill-group" id="standings-position-filter">
-                        <button class="pill active" data-value="ALL">All</button>
-                        <button class="pill" data-value="QB">QB</button>
-                        <button class="pill" data-value="RB">RB</button>
-                        <button class="pill" data-value="WR">WR</button>
-                        <button class="pill" data-value="TE">TE</button>
-                        <button class="pill" data-value="K">K</button>
-                        <button class="pill" data-value="DST">DST</button>
-                    </div>
-                </div>
-            </div>
-            <div class="table-container">
-                <table id="standings-table">
-                    <thead>
-                        <tr>
-                            <th class="col-rank">#</th>
-                            <th class="col-player">Player</th>
-                            <th class="col-pos">Pos</th>
-                            <th class="col-team">Team</th>
-                            <th class="col-games">GP</th>
-                            <th class="col-actual">Avg Actual</th>
-                            <th class="col-pred">Avg Ridge</th>
-                            <th class="col-pred">Avg NN</th>
-                            <th class="col-pred">Avg Attn NN</th>
-                            <th class="col-pred">Avg LGBM</th>
-                        </tr>
-                    </thead>
-                    <tbody id="standings-body">
-                    </tbody>
-                </table>
-            </div>
         </section>
 
         <!-- ============ MODEL PERFORMANCE VIEW ============ -->
