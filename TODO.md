@@ -9,10 +9,11 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 ## Open
 
 ### [PRIORITY] Shared parallel A/B / ablation harness (device-autodetect)
-- **Plan doc:** [todo/ab_harness_priority.md](todo/ab_harness_priority.md) — read first.
-- **What:** Build `src/tuning/ab_harness.py` — one reusable harness that runs the position×variant×seed A/B grid **in parallel** (gated on `detect_platform()`: GPU-launch-bound fan-out on the 5080, 16-physical-core pool with capped BLAS on the 9950X3D; `FF_AB_JOBS` override, CPU-considerate), **artifact-isolated** (chdir+symlink `data/` so it never clobbers served `{pos}/outputs`), with a variant=(cfg-mutator, frame-injector) / metric=fn(result) abstraction and mean±std + Ridge-invariance aggregation. Composes the existing `parallel_train`/`core_pool`/`detect_platform` primitives — don't reinvent.
+- **Plan doc:** [todo/ab_harness_priority.md](todo/ab_harness_priority.md) — read first (now has a "What shipped" summary).
+- **What:** `src/tuning/ab_harness.py` — one reusable harness that runs the position×variant×seed A/B grid **in parallel** (gated on `detect_platform()`: GPU-launch-bound fan-out on the 5080, 16-physical-core pool with capped BLAS on the 9950X3D; `FF_AB_JOBS` override, CPU-considerate), **artifact-isolated** (chdir+symlink `data/` so it never clobbers served `{pos}/outputs`), with a `Variant=(cfg-mutator, frame-injector)` / `metric=fn(result)` abstraction and mean±std + Ridge-invariance aggregation. Composes `parallel_train`/`core_pool`/`detect_platform`.
 - **Why:** the 2026-06-08 role-inheritance A/B was hand-rolled, **sequential** (5080 + 14 cores idle), and **clobbered the served RB artifacts 3×**. AGENTS.md now mandates the harness for A/Bs/ablations.
-- **Status:** planned, not built. Priority.
+- **Status:** **BUILT** + `ab_example.py` template + tests; smoke-verified on TE (frame injection) + K (cfg-only), served outputs byte-identical. **Caveat:** `frame_injector` is QB/RB/WR/TE-only — K/DST `run(seed, config)` build their own splits (cfg-mutator works for all six; the harness raises if a frame-injector targets K/DST).
+- **Follow-ups:** (1) reproduce the role-inheritance A/B once its *feature* is built (Phase 1 of [rotowire_gap_remediation.md](todo/rotowire_gap_remediation.md)); (2) port the existing `ablate_*` scripts onto the harness to parallelize + isolate them.
 
 ### [REFACTOR] Serving `app.py` decomposition — split the 3085-line monolith into modules
 - **Spec:** [todo/serving-decomposition.md](todo/serving-decomposition.md) — target module layout, the ~137-monkeypatch repoint constraint (the reason this is more than a code move), per-increment plan, and the local test invocation that avoids the `-n auto` xdist crash.
