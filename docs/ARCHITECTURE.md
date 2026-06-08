@@ -190,3 +190,4 @@ Standing follow-ups, mapped to decisions (item 1 is also tracked in the [TODO.md
 | PR #215 | Infra | `infra/batch/` provisioning scripts (CE/JQ/JD/IAM) for Spot fan-out (D13) |
 | PR #216 | Infra | `batch-image.yml` cold-start opts — ECR pull-through cache + SOCI v2 lazy-load (D13) |
 | PR #217 | Infra | `train-batch.yml` workflow + `train-ec2.yml` gate on `BATCH_ACTIVE` + `launch.py --skip-upload` (D13) |
+| PR #1069 | Serving | Live upcoming-week predictions homepage (new default tab) — ESPN-sourced slate, QB/RB/WR/TE projections for the next unplayed week (D18) |
