@@ -26,6 +26,13 @@ _SPECIFIC_FEATURES = [
     "team_wr_target_share_L3",
     "receiving_epa_per_target_L3",
     "receiving_first_down_rate_L3",
+    # Boom-tier red-zone / opportunity (rolling, leakage-safe shift=1; built in
+    # src/wr/features.py). "specific" is NOT an ATTN_STATIC category, so these feed
+    # Ridge+LGBM+plain-NN but stay out of the attention static branch (the rolling
+    # stop-rule). Validated A/B src/tuning/ab_boom_signals_wr.py (+all).
+    "redzone_targets_L3",
+    "redzone_target_share_L3",
+    "opportunity_index_L3",
 ]
 
 _ROLLING_STATS = [
@@ -57,6 +64,14 @@ _INCLUDE_FEATURES = {
         "prior_season_mean_total_fantasy_points_exp",
         "prior_season_mean_rec_yards_gained_exp",
         "prior_season_mean_receptions_exp",
+        # Boom-tier parity adds (prior-season, static-eligible; A/B +all,
+        # src/tuning/ab_boom_signals_wr.py). Red-zone touch prior + games-played
+        # are already baked into the splits (src.features.engineer, all positions);
+        # catch_rate is derived in src/wr/features.py (S-1 mean recv / mean tgt).
+        "prior_season_total_redzone_touches",
+        "prior_season_mean_redzone_touches_per_game",
+        "prior_season_games_played",
+        "prior_season_mean_catch_rate",
     ],
     # All EWMA dropped (>0.98 corr with rolling means).
     "ewma": [],
@@ -281,6 +296,17 @@ POSITION_CONFIG = PositionConfig(
         "team_pass_attempts",
         "team_passing_yards",
         "team_rush_attempts",
+        # Boom-tier red-zone + per-game usage tokens (raw per-game, genuinely absent
+        # from WR's sequence — AGENTS.md history reach #2, the RB pattern; NOT the
+        # rejected windowed inheritance token). redzone_targets/_share come from the
+        # splits; game_target_share/_hhi/_opportunity_index are built in
+        # src/wr/features.py. Leakage-safe via build_game_history_arrays' own shift.
+        # Validated A/B src/tuning/ab_boom_signals_wr.py (+all).
+        "redzone_targets",
+        "redzone_target_share",
+        "game_target_share",
+        "game_target_hhi",
+        "game_opportunity_index",
     ],
     attn_static_features=derive_attn_static_features(_INCLUDE_FEATURES, ATTN_STATIC_CATEGORIES),
     attn_gated=True,

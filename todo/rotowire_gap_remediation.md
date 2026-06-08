@@ -147,3 +147,30 @@ Done via the shared parallel A/B harness ([src/tuning/ab_history_token.py](../sr
   stop-rule added. The *static* current-week value is the win (the vacancy is in no past sequence).
 - **Merge fires** refresh-splits + a 6-position retrain (`engineer.py` is global; RB/WR use the feature,
   the other four are inert / byte-identical).
+
+## Round 2 — WR red-zone + opportunity (boom tier), SHIPPED 2026-06-08
+
+Lever #2 after inheritance. A broader signal scan (two-agent feature-landscape audit) found **WR is
+blind to red-zone receiving in every branch** (RB carries it everywhere) and thin on per-game usage /
+priors vs RB. The closable edge is correlation/signal on the boom tier, so the bet was red-zone +
+opportunity parity. A/B: [src/tuning/ab_boom_signals_wr.py](../src/tuning/ab_boom_signals_wr.py).
+
+- **Shipped feature (`+all` arm)**: red-zone rolling (`redzone_targets_L3`, `redzone_target_share_L3`)
+  + prior (`prior_season_total_redzone_touches`/`_per_game`, already in splits) + parity priors
+  (`prior_season_games_played`, `prior_season_mean_catch_rate`) + `opportunity_index_L3` → WR whitelist
+  (Ridge/LGBM/NN-static); raw per-game `redzone_targets`/`_share` + `game_target_share`/`_hhi`/
+  `game_opportunity_index` → `attn_history_stats` (NN history, AGENTS.md reach #2 — raw per-game,
+  genuinely absent from WR's sequence; NOT the rejected windowed inheritance token). Built in
+  [src/wr/features.py](../src/wr/features.py) (pipeline-time, mirrors RB) + the already-baked priors
+  whitelisted in [src/wr/config.py](../src/wr/config.py).
+- **Parity / scope**: serving auto-parity via shared `build_position_features` (no serving change); no
+  `engineer.py`/splits change → **WR-only retrain** (not 6-position). Production build is **byte-identical**
+  to the validated A/B injector on the test split (max|Δ|=0).
+- **Validated** (6 seeds, **boom subgroup** Q4 / receiving-TD games — NOT overall MAE): **real but
+  modest, direction-robust** — 12/12 boom deltas positive across Ridge/LGBM/Attn for `+all`. Attention NN
+  (best WR model): q4_bias +0.218, q4_corr +0.004, rztd_bias +0.177 (~1.5σ, all positive). LightGBM
+  q4_bias +0.058 (~1σ), corr flat. `+rz` and `+parity` alone are each weaker/mixed — the win is the
+  interaction (`+all` dominates every arm on every model's boom bias). Effect is ~3% of the boom
+  under-call — exactly the "incremental, mostly-irreducible" gap the diagnosis predicted.
+- **Deferred** (next levers if pursued): air-yards opportunity (WOPR/aDOT/RACR — buildable, no new
+  source) and route participation / TPRR (needs a new FTN/nflverse source, 2022+ only).
