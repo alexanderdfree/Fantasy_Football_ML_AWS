@@ -181,6 +181,9 @@ def test_expanding_window_folds_imputes_snap_pct_train_only():
         {"season": 2022, "week": 1, "player_id": "V2", "position": "QB", "snap_pct": np.nan}
     )
     df = pd.DataFrame(rows)
+    # All synthetic rows are regular-season; expanding_window_folds now asserts
+    # season_type is present and filters to REG, like its peer splitters.
+    df["season_type"] = "REG"
 
     folds = expanding_window_folds(df, val_seasons=[2022], min_train_season=2021)
     _, train0, val0 = folds[0]

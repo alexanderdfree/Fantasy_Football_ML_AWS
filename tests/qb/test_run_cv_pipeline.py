@@ -58,6 +58,9 @@ def synthetic_cv_splits():
         ignore_index=True,
     )
     all_df = build_features(all_df)
+    # Synthetic rows are all regular-season; expanding_window_folds (like its
+    # peer splitters) now asserts season_type is present and filters to REG.
+    all_df["season_type"] = "REG"
     full_df = all_df[all_df["season"] <= 2024].copy()
     test_df = all_df[all_df["season"] == 2025].copy()
     return full_df, test_df
