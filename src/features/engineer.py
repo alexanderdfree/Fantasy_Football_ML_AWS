@@ -813,9 +813,13 @@ def build_opp_defense_history_arrays(
 
 def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     """Build opponent/matchup features."""
-    # Determine opponent from schedule or opponent_team column
+    # Determine opponent from schedule or opponent_team column. Normalize to
+    # modern team codes (mirrors _build_defense_matchup_features and the opp-
+    # defense aggregator): inert today since weekly opponent_team is already
+    # modern, but keeps the group/merge key from splitting a relocated team
+    # across legacy+modern codes if an upstream source ever mixed them (#440/#549).
     if "opponent_team" in df.columns:
-        df["opponent"] = df["opponent_team"]
+        df["opponent"] = df["opponent_team"].replace(_TEAM_CODE_NORMALIZATION)
     else:
         df["opponent"] = None
 
