@@ -307,18 +307,29 @@ def _signal_stats(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     y_pred = np.asarray(y_pred, dtype=np.float64)
     n = int(y_true.size)
     rmse = float(np.sqrt(np.mean((y_pred - y_true) ** 2))) if n else float("nan")
+    # bias = mean signed error (pred - actual): >0 over-call, <0 under-call. The
+    # calibration offset that pairs with corr (signal) to explain a tier's RMSE.
+    bias = float(np.mean(y_pred - y_true)) if n else float("nan")
     if n < 3 or np.std(y_pred) < 1e-9 or np.std(y_true) < 1e-9:
         return {
             "n": n,
             "corr": float("nan"),
             "slope": float("nan"),
+            "bias": bias,
             "rmse": rmse,
             "recal_rmse": rmse,
         }
     corr = float(np.corrcoef(y_pred, y_true)[0, 1])
     slope = float(np.cov(y_pred, y_true, bias=True)[0, 1] / np.var(y_pred))
     recal_rmse = float(np.std(y_true) * np.sqrt(max(0.0, 1.0 - corr**2)))
-    return {"n": n, "corr": corr, "slope": slope, "rmse": rmse, "recal_rmse": recal_rmse}
+    return {
+        "n": n,
+        "corr": corr,
+        "slope": slope,
+        "bias": bias,
+        "rmse": rmse,
+        "recal_rmse": recal_rmse,
+    }
 
 
 def _print_position(pos: str, train, val, test) -> None:
@@ -509,12 +520,16 @@ def _with_experts(positions, train, val, test) -> None:
                 )
                 print(cmp.round(3).to_string(index=False))
 
-                # Signal/calibration: corr sets the best RMSE any rescale can reach.
-                # model recal_rmse <= expert rmse  => gap is calibration (rescale closes it).
-                # expert corr > model corr         => gap is information (need more signal).
-                q4 = merged[merged["tier"] == "Q4"]
+                # Signal/calibration per tier (Q1-Q4) + overall, so a tier where the
+                # expert beats us is classifiable:
+                #   expert corr > model corr       => information gap (more signal closes it)
+                #   model recal_rmse <= expert rmse => calibration gap (a rescale closes it,
+                #                                      but production can't tier-condition)
+                scopes = [("overall", merged)]
+                for _t in ("Q1", "Q2", "Q3", "Q4"):
+                    scopes.append((_t, merged[merged["tier"] == _t]))
                 sig_rows = []
-                for scope_name, scope in (("overall", merged), ("Q4", q4)):
+                for scope_name, scope in scopes:
                     ms = _signal_stats(
                         scope["actual_fp"].to_numpy(), scope[f"pred_{headline}_total"].to_numpy()
                     )
@@ -522,15 +537,16 @@ def _with_experts(positions, train, val, test) -> None:
                     sig_rows.append({"scope": scope_name, "who": f"model:{headline}", **ms})
                     sig_rows.append({"scope": scope_name, "who": f"expert:{label}", **es})
                 sig = pd.DataFrame(sig_rows)[
-                    ["scope", "who", "n", "corr", "slope", "rmse", "recal_rmse"]
+                    ["scope", "who", "n", "corr", "slope", "bias", "rmse", "recal_rmse"]
                 ]
                 print(
-                    f"\n  {pos} signal/calibration vs {label} — corr sets the rescale floor (recal_rmse)"
+                    f"\n  {pos} signal/calibration vs {label} (per tier) — "
+                    "corr=signal, bias=calibration offset, recal_rmse=rescale floor"
                 )
                 print(
-                    sig.round({"corr": 3, "slope": 2, "rmse": 2, "recal_rmse": 2}).to_string(
-                        index=False
-                    )
+                    sig.round(
+                        {"corr": 3, "slope": 2, "bias": 2, "rmse": 2, "recal_rmse": 2}
+                    ).to_string(index=False)
                 )
         except Exception as e:  # noqa: BLE001
             print(f"  {pos}: expert comparison skipped — {e!r}")
