@@ -30,6 +30,9 @@ def _make_player_games(
     receiving_first_downs=3,
     receiving_tds=1,
     recent_team="KC",
+    carries=0,
+    redzone_targets=1.0,
+    redzone_target_share=0.2,
 ):
     """Build a multi-week single-player DataFrame matching TE feature inputs."""
     return pd.DataFrame(
@@ -46,6 +49,10 @@ def _make_player_games(
             "receiving_first_downs": [receiving_first_downs] * n_weeks,
             "receiving_tds": [receiving_tds] * n_weeks,
             "recent_team": [recent_team] * n_weeks,
+            # Red-zone / opportunity boom-block inputs (#1061 parity).
+            "carries": [carries] * n_weeks,
+            "redzone_targets": [redzone_targets] * n_weeks,
+            "redzone_target_share": [redzone_target_share] * n_weeks,
         }
     )
 
@@ -59,6 +66,10 @@ FEATURE_COLS = [
     "receiving_first_down_rate_L3",
     "air_yards_per_target_L3",
     "td_rate_per_target_L3",
+    # Red-zone / opportunity boom block (#1061 parity with RB/WR).
+    "redzone_targets_L3",
+    "redzone_target_share_L3",
+    "opportunity_index_L3",
 ]
 
 

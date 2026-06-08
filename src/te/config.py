@@ -26,6 +26,12 @@ _SPECIFIC_FEATURES = [
     "receiving_first_down_rate_L3",
     "air_yards_per_target_L3",
     "td_rate_per_target_L3",
+    # Red-zone receiving + opportunity (boom-tier) — parity with RB/WR (#1061).
+    # Rolling (shift=1) → whitelist only; built in src/te/features.py. The 8-seed TE
+    # A/B found these MAE-neutral / no robust boom gain (unlike WR); shipped for parity.
+    "redzone_targets_L3",
+    "redzone_target_share_L3",
+    "opportunity_index_L3",
 ]
 
 _ROLLING_STATS = [
@@ -55,6 +61,13 @@ _INCLUDE_FEATURES = {
         "prior_season_mean_total_fantasy_points_exp",
         "prior_season_mean_rec_yards_gained_exp",
         "prior_season_mean_receptions_exp",
+        # Red-zone + parity priors (boom-tier block, #1061 parity with RB/WR).
+        # redzone-touch priors + games_played are in the splits; catch_rate is
+        # derived S-1 in src/te/features.py. All static-eligible (prior_season).
+        "prior_season_total_redzone_touches",
+        "prior_season_mean_redzone_touches_per_game",
+        "prior_season_games_played",
+        "prior_season_mean_catch_rate",
     ],
     "ewma": [],
     "trend": ["trend_targets", "trend_carries", "trend_snap_pct"],
@@ -99,6 +112,14 @@ _INCLUDE_FEATURES = {
         "contract_guaranteed",
         "contract_years_remaining",
         "contract_age",
+        # Role-inheritance (#1053 parity with RB/WR): this-week vacancy when a higher-role
+        # TE is Out/Doubtful. Current-week, pre-kickoff → static branch (the depth_chart_rank
+        # path); NOT attn_history (AGENTS.md stop-rule — a past spot-start is already in the
+        # usage tokens). Computed in engineer._build_inheritance_features (TE role proxy =
+        # targets). 6-seed TE A/B: inheritor bias corrected 24/24, served NN/Attn overall MAE
+        # improve ~0.02-0.03 (modest; Ridge/LGBM bias overshoots).
+        "is_top_available",
+        "inherited_opportunity",
     ],
     # Keep 3 features with signal: implied_team_total (r=-0.035),
     # implied_opp_total (r=0.029), is_dome (r=0.027).
@@ -255,6 +276,15 @@ POSITION_CONFIG = PositionConfig(
         "team_pass_attempts",
         "team_passing_yards",
         "team_rush_attempts",
+        # Red-zone + per-game usage (boom-tier, #1061 parity with RB/WR). Raw per-game
+        # signals genuinely absent from TE's sequence (AGENTS.md reach #2 — NOT the
+        # rejected windowed inheritance token). redzone_targets/_share from the splits;
+        # game_* built in src/te/features.py. Leakage-safe via build_game_history_arrays.
+        "redzone_targets",
+        "redzone_target_share",
+        "game_target_share",
+        "game_target_hhi",
+        "game_opportunity_index",
     ],
     attn_static_features=derive_attn_static_features(_INCLUDE_FEATURES, ATTN_STATIC_CATEGORIES),
     attn_gated=True,

@@ -93,7 +93,12 @@ def te_player_games_factory():
         receiving_first_downs: int = 3,
         receiving_tds: int = 1,
         recent_team: str = "KC",
+        carries: int = 0,
+        redzone_targets: float = 1.0,
+        redzone_target_share: float = 0.2,
     ) -> pd.DataFrame:
+        # ``carries`` + ``redzone_targets`` / ``redzone_target_share`` feed the red-zone /
+        # opportunity boom block in src/te/features.py (#1061 parity with RB/WR).
         return pd.DataFrame(
             {
                 "player_id": [player_id] * n_weeks,
@@ -108,6 +113,9 @@ def te_player_games_factory():
                 "receiving_first_downs": [receiving_first_downs] * n_weeks,
                 "receiving_tds": [receiving_tds] * n_weeks,
                 "recent_team": [recent_team] * n_weeks,
+                "carries": [carries] * n_weeks,
+                "redzone_targets": [redzone_targets] * n_weeks,
+                "redzone_target_share": [redzone_target_share] * n_weeks,
             }
         )
 
@@ -181,6 +189,8 @@ def _build_tiny_splits(seed: int = 42):
                         "targets": base_targets,
                         "receptions": base_rec,
                         "carries": 0,
+                        "redzone_targets": int(rng.binomial(max(int(base_targets), 1), 0.15)),
+                        "redzone_target_share": 0.2,
                         "rushing_yards": rushing_yards,
                         "rushing_tds": rushing_tds,
                         "receiving_yards": receiving_yards,
