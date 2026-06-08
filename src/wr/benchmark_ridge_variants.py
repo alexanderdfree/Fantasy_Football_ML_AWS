@@ -154,6 +154,7 @@ def main():
     pos_train = filter_to_position(train_df)
     pos_val = filter_to_position(val_df)
     pos_test = filter_to_position(test_df)
+    n_val = len(pos_val)  # row count only — the val split isn't scored below
 
     games_per_season = pos_train.groupby(["player_id", "season"])["week"].transform("count")
     # Match production's per-position floor (WR sets min_games_per_season=1); None → global.
@@ -163,20 +164,30 @@ def main():
     pos_train = pos_train[games_per_season >= min_games].copy()
 
     pos_train = compute_targets(pos_train)
-    pos_val = compute_targets(pos_val)
     pos_test = compute_targets(pos_test)
 
-    pos_train, pos_val, pos_test = add_specific_features(pos_train, pos_val, pos_test)
-    pos_train, pos_val, pos_test = fill_nans(
+    # The val split is loaded for its row count only — this CLI trains on train
+    # and evaluates on test (a Ridge-variant sweep, no early-stopping on val), so
+    # feature-engineering the full val frame was dead work. Pass an empty
+    # same-schema frame through the tri-frame helpers (their train-mean stats are
+    # computed from ``pos_train``, so the train/test outputs are unchanged).
+    empty_val = pos_train.iloc[0:0]
+    pos_train, _empty_val, pos_test = add_specific_features(pos_train, empty_val, pos_test)
+    pos_train, _empty_val, pos_test = fill_nans(
         pos_train,
-        pos_val,
+        empty_val,
         pos_test,
         SPECIFIC_FEATURES,
     )
 
-    # Base feature columns (current WR config)
-    base_cols = get_feature_columns()
-    for df in [pos_train, pos_val, pos_test]:
+    # Base feature columns (current WR config). Intersect with the columns
+    # actually present in the loaded splits: weather/Vegas cols (is_dome,
+    # implied_team_total, wind_adjusted, temp_adjusted, implied_opp_total, ...)
+    # are added downstream by ``merge_schedule_features`` at pipeline time and
+    # are absent from the raw splits parquet this CLI reads directly — without
+    # the intersect, ``df[base_cols]`` KeyErrors on a real run.
+    base_cols = [c for c in get_feature_columns() if c in pos_train.columns]
+    for df in [pos_train, pos_test]:
         df[base_cols] = df[base_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
     # Aggressive-drop columns
@@ -188,7 +199,7 @@ def main():
     y_train_dict["total"] = sum(pos_train[t].values for t in TARGETS)
     y_test_dict["total"] = sum(pos_test[t].values for t in TARGETS)
 
-    print(f"Train: {len(pos_train)}, Val: {len(pos_val)}, Test: {len(pos_test)}")
+    print(f"Train: {len(pos_train)}, Val: {n_val}, Test: {len(pos_test)}")
     print(f"Base features: {len(base_cols)}, Aggressive features: {len(aggressive_cols)}")
     print(f"Dropped by aggressive: {len(base_cols) - len(aggressive_cols)}")
     dropped = sorted(set(base_cols) - set(aggressive_cols))
@@ -248,10 +259,15 @@ def main():
         "receptions": "recs",
         "fumbles_lost": "fum_lost",
     }
+    # The "total" metric is the MAE/R2 of the SUM of the four raw-stat targets
+    # (receiving_yards + receptions + receiving_tds + fumbles_lost) — NOT fantasy
+    # points (those are computed post-prediction via predictions_to_fantasy_points
+    # and weight the heads differently). Label it "RawSum" so the table isn't read
+    # as a fantasy-point figure, per the raw-stat-targets convention.
     target_header = " ".join(f"{label_map.get(t, t[:8]):>8}" for t in TARGETS)
     header = (
         f"{'Variant':<28} {'Feats':>5} {'PCA':>4} {'Cond#':>10} "
-        f"{'Total MAE':>10} {'Total R2':>9} "
+        f"{'RawSum MAE':>10} {'RawSum R2':>9} "
         f"{target_header} {'Time':>6}"
     )
     table_width = len(header)
@@ -282,7 +298,8 @@ def main():
     # (recv_td/recv_yd/recs) and dropped fumbles_lost (M18 fix was incomplete
     # here \u2014 the MAE table above was migrated but this R2 table was missed).
     r2_target_header = " ".join(f"{label_map.get(t, t[:8]):>8}" for t in TARGETS)
-    r2_hdr = f"{'Variant':<28} {'Total':>8} {r2_target_header}"
+    # "RawSum" = raw-stat-sum R2 (see the comparison-table note), not fantasy points.
+    r2_hdr = f"{'Variant':<28} {'RawSum':>8} {r2_target_header}"
     r2_width = len(r2_hdr)
     print(f"\n{'=' * r2_width}")
     print("  PER-TARGET R\u00b2 BY VARIANT")
@@ -295,12 +312,12 @@ def main():
         print(f"{r['name']:<28} {m['total']['r2']:>8.3f} {r2_cells}")
     print(f"{'=' * r2_width}")
 
-    # Best variant
+    # Best variant (ranked by raw-stat-sum MAE, not fantasy points).
     best = min(results, key=lambda r: r["metrics"]["total"]["mae"])
     print(
         f"\nBest variant: {best['name']} "
-        f"(MAE={best['metrics']['total']['mae']:.3f}, "
-        f"R2={best['metrics']['total']['r2']:.3f})"
+        f"(RawSum MAE={best['metrics']['total']['mae']:.3f}, "
+        f"RawSum R2={best['metrics']['total']['r2']:.3f})"
     )
     print(f"  Best alphas: {best['best_alphas']}")
 

@@ -45,7 +45,7 @@ _schedule_cache_lock = threading.Lock()
 # the one documented join-direction difference: nflverse schedule/weekly data
 # canonicalize the Rams to ``"LA"`` (STL -> LA), whereas the NFL.com/roster
 # universe uses ``"LAR"``. Resolves to ``{"OAK": "LV", "SD": "LAC", "STL": "LA"}``.
-_TEAM_CODE_NORMALIZATION = schedule_team_code_normalization()
+TEAM_CODE_NORMALIZATION = schedule_team_code_normalization()
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +95,8 @@ def build_implied_team_total_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
     sched = schedules[
         ["season", "week", "home_team", "away_team", "spread_line", "total_line"]
     ].copy()
-    sched["home_team"] = sched["home_team"].replace(_TEAM_CODE_NORMALIZATION)
-    sched["away_team"] = sched["away_team"].replace(_TEAM_CODE_NORMALIZATION)
+    sched["home_team"] = sched["home_team"].replace(TEAM_CODE_NORMALIZATION)
+    sched["away_team"] = sched["away_team"].replace(TEAM_CODE_NORMALIZATION)
 
     # spread_line is from home perspective (negative = home favored).
     home_total = (sched["total_line"] - sched["spread_line"]) / 2
@@ -139,8 +139,8 @@ def _build_team_schedule_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
         "div_game",
     ]
     sched = schedules[cols + ["home_team", "away_team"]].copy()
-    sched["home_team"] = sched["home_team"].replace(_TEAM_CODE_NORMALIZATION)
-    sched["away_team"] = sched["away_team"].replace(_TEAM_CODE_NORMALIZATION)
+    sched["home_team"] = sched["home_team"].replace(TEAM_CODE_NORMALIZATION)
+    sched["away_team"] = sched["away_team"].replace(TEAM_CODE_NORMALIZATION)
 
     # Home team rows
     home = sched.copy()

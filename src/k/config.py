@@ -238,7 +238,10 @@ POSITION_CONFIG = PositionConfig(
     lgbm_min_split_gain=0.0,
     lgbm_objective="regression",
     seasons=_SEASONS,
-    # Cross-season split, matching other positions.
+    # Cross-season split, matching other positions. NOTE: this value is dead at
+    # training time — the shared pipeline filters on ``MIN_GAMES_PER_SEASON`` (=6,
+    # src/config.py) via ``cfg.get("min_games_per_season")`` in src/shared/pipeline.py,
+    # not on this ``min_games`` field, so the effective floor is 6, not 4.
     min_games=4,
     # K's serving aggregator (app.py) uses ``target_signs`` to combine the
     # four raw-count heads into fantasy points: positive for scoring heads,

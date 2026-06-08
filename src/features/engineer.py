@@ -16,7 +16,7 @@ from src.config import (
 )
 from src.data.external_sources import EXTERNAL_PRIOR_STATS
 from src.shared.weather_features import (
-    _TEAM_CODE_NORMALIZATION,
+    TEAM_CODE_NORMALIZATION,
     _load_schedules,
     build_implied_team_total_lookup,
 )
@@ -499,7 +499,7 @@ def build_opp_defense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     # below. A no-op on nflverse weekly data (already modern: LA/LAC/LV); closes
     # the silent-miss gap if a source ever feeds historical codes (OAK/SD/STL).
     df = df.copy()
-    df["opponent_team"] = df["opponent_team"].replace(_TEAM_CODE_NORMALIZATION)
+    df["opponent_team"] = df["opponent_team"].replace(TEAM_CODE_NORMALIZATION)
 
     def_stats = (
         df.groupby(["opponent_team", "season", "week"])
@@ -531,8 +531,8 @@ def build_opp_defense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     # in src.shared.weather_features. Without this, def_pts_allowed for a
     # team like OAK in 2017–2019 silently fills with 0 because the schedule
     # already uses "LV" while the player frame still carries "OAK".
-    schedules_reg["away_team"] = schedules_reg["away_team"].replace(_TEAM_CODE_NORMALIZATION)
-    schedules_reg["home_team"] = schedules_reg["home_team"].replace(_TEAM_CODE_NORMALIZATION)
+    schedules_reg["away_team"] = schedules_reg["away_team"].replace(TEAM_CODE_NORMALIZATION)
+    schedules_reg["home_team"] = schedules_reg["home_team"].replace(TEAM_CODE_NORMALIZATION)
     away_pts = schedules_reg[["season", "week", "away_team", "home_score"]].copy()
     away_pts.columns = ["season", "week", "team", "def_pts_allowed"]
     home_pts = schedules_reg[["season", "week", "home_team", "away_score"]].copy()
@@ -630,7 +630,7 @@ def build_opp_offense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     # off_pts_scored below. nflverse weekly data already emits modern codes
     # (LA/LAC/LV), so this is a no-op in production; it closes the silent-miss
     # gap should any upstream source feed historical codes (OAK/SD/STL).
-    work["recent_team"] = work["recent_team"].replace(_TEAM_CODE_NORMALIZATION)
+    work["recent_team"] = work["recent_team"].replace(TEAM_CODE_NORMALIZATION)
     work["_fumbles_lost"] = (
         work["sack_fumbles_lost"].fillna(0)
         + work["rushing_fumbles_lost"].fillna(0)
@@ -675,8 +675,8 @@ def build_opp_offense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     # def-side normalization in build_opp_defense_per_game_df. Without it,
     # off_pts_scored for relocated franchises in pre-relocation seasons
     # silently fills with 0 because the schedule already uses the new code.
-    schedules_reg["home_team"] = schedules_reg["home_team"].replace(_TEAM_CODE_NORMALIZATION)
-    schedules_reg["away_team"] = schedules_reg["away_team"].replace(_TEAM_CODE_NORMALIZATION)
+    schedules_reg["home_team"] = schedules_reg["home_team"].replace(TEAM_CODE_NORMALIZATION)
+    schedules_reg["away_team"] = schedules_reg["away_team"].replace(TEAM_CODE_NORMALIZATION)
     home_pts = schedules_reg[["season", "week", "home_team", "home_score"]].copy()
     home_pts.columns = ["season", "week", "team", "off_pts_scored"]
     away_pts = schedules_reg[["season", "week", "away_team", "away_score"]].copy()
@@ -819,7 +819,7 @@ def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     # modern, but keeps the group/merge key from splitting a relocated team
     # across legacy+modern codes if an upstream source ever mixed them (#440/#549).
     if "opponent_team" in df.columns:
-        df["opponent"] = df["opponent_team"].replace(_TEAM_CODE_NORMALIZATION)
+        df["opponent"] = df["opponent_team"].replace(TEAM_CODE_NORMALIZATION)
     else:
         df["opponent"] = None
 
@@ -915,9 +915,9 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     # (OAK/SD/STL). A one-sided (schedule-only) normalization cannot survive
     # that case. See nflcom_loader.schedule_team_code_normalization.
     df = df.copy()
-    df["opponent_team"] = df["opponent_team"].replace(_TEAM_CODE_NORMALIZATION)
+    df["opponent_team"] = df["opponent_team"].replace(TEAM_CODE_NORMALIZATION)
     if "recent_team" in df.columns:
-        df["recent_team"] = df["recent_team"].replace(_TEAM_CODE_NORMALIZATION)
+        df["recent_team"] = df["recent_team"].replace(TEAM_CODE_NORMALIZATION)
 
     # Aggregate offensive stats allowed by each defense per game
     def_stats = (
@@ -966,8 +966,8 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     # pre-relocation seasons. Mirrors build_opp_defense_per_game_df's
     # normalization. Without this, opp_def_pts_allowed_L5 for a team like
     # OAK in 2017–2019 silently fills with 0.
-    schedules_reg["away_team"] = schedules_reg["away_team"].replace(_TEAM_CODE_NORMALIZATION)
-    schedules_reg["home_team"] = schedules_reg["home_team"].replace(_TEAM_CODE_NORMALIZATION)
+    schedules_reg["away_team"] = schedules_reg["away_team"].replace(TEAM_CODE_NORMALIZATION)
+    schedules_reg["home_team"] = schedules_reg["home_team"].replace(TEAM_CODE_NORMALIZATION)
     away_pts = schedules_reg[["season", "week", "away_team", "home_score"]].copy()
     away_pts.columns = ["season", "week", "team", "points_allowed"]
     home_pts = schedules_reg[["season", "week", "home_team", "away_score"]].copy()

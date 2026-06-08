@@ -7,7 +7,7 @@ from src.config import CACHE_DIR
 from src.config import SEASONS as GLOBAL_SEASONS
 from src.data import nfl_source
 from src.k.config import POSITION_CONFIG
-from src.shared.weather_features import _TEAM_CODE_NORMALIZATION
+from src.shared.weather_features import TEAM_CODE_NORMALIZATION
 
 SEASONS = POSITION_CONFIG.seasons
 MIN_GAMES = POSITION_CONFIG.min_games
@@ -394,7 +394,7 @@ def load_data() -> pd.DataFrame:
     # whether roof/surface are present, so the schedule merge below
     # (``is_home`` + Vegas lines) misses for all pre-2017 OAK/SD/STL games
     # without this normalisation, not just the venue-fallback pass.
-    schedule_info["recent_team"] = schedule_info["recent_team"].replace(_TEAM_CODE_NORMALIZATION)
+    schedule_info["recent_team"] = schedule_info["recent_team"].replace(TEAM_CODE_NORMALIZATION)
     # Suffix the venue cols so we don't overwrite PBP-populated values on rows
     # where PBP already has them — we only want to fill where PBP is NaN/"".
     if has_venue:

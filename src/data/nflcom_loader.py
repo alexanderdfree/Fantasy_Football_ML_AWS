@@ -127,7 +127,7 @@ _ALL_TARGET_COLUMNS = {
 # via ``schedule_team_code_normalization()`` below, which remaps the Rams back
 # to ``LA`` and drops the historical ``STL`` to ``LA`` (not ``LAR``). That
 # helper is the *one* place the schedule-universe variant is defined;
-# ``src/shared/weather_features._TEAM_CODE_NORMALIZATION`` is built from it.
+# ``src/shared/weather_features.TEAM_CODE_NORMALIZATION`` is built from it.
 TEAM_CODE_MAP: dict[str, str] = {
     "OAK": "LV",
     "SD": "LAC",
@@ -189,7 +189,7 @@ def schedule_team_code_normalization() -> dict[str, str]:
     relocated franchises ever differ between the schedule's historical codes
     and the player frame's modern codes.
 
-    Consumed by ``src.shared.weather_features._TEAM_CODE_NORMALIZATION`` so the
+    Consumed by ``src.shared.weather_features.TEAM_CODE_NORMALIZATION`` so the
     schedule-side normalization has exactly one definition.
     """
     base = {k: v for k, v in TEAM_CODE_MAP.items() if k in ("OAK", "SD", "STL")}

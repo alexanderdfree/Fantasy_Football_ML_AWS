@@ -4,7 +4,7 @@ import pandas as pd
 from src.config import CACHE_DIR, SEASONS, TRAIN_SEASONS
 from src.data import nfl_source
 from src.data.loader import load_team_week_stats
-from src.shared.weather_features import _TEAM_CODE_NORMALIZATION
+from src.shared.weather_features import TEAM_CODE_NORMALIZATION
 
 
 def build_data() -> pd.DataFrame:
@@ -32,8 +32,8 @@ def build_data() -> pd.DataFrame:
     # pre-relocation DST rows miss every merge below and the fillna(0) loop
     # silently zeros their defensive + special-teams stats. Mirrors src/k/data.py
     # (distinct from #971's away-row spread_line SIGN fix). (#728)
-    schedules_reg["home_team"] = schedules_reg["home_team"].replace(_TEAM_CODE_NORMALIZATION)
-    schedules_reg["away_team"] = schedules_reg["away_team"].replace(_TEAM_CODE_NORMALIZATION)
+    schedules_reg["home_team"] = schedules_reg["home_team"].replace(TEAM_CODE_NORMALIZATION)
+    schedules_reg["away_team"] = schedules_reg["away_team"].replace(TEAM_CODE_NORMALIZATION)
 
     # --- 1. Points allowed from schedule scores ---
     away_pts = schedules_reg[["season", "week", "away_team", "home_score"]].copy()
