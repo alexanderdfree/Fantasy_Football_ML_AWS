@@ -177,29 +177,46 @@ def build_upcoming_week_frame(
     slate: pd.DataFrame,
     roster: pd.DataFrame,
     injuries_df: pd.DataFrame | None = None,
+    depth_chart_ranks: dict[str, float] | None = None,
+    game_status_map: dict[str, float] | None = None,
 ):
     """Featurize the upcoming (season, week) via the real offline pipeline.
 
     Returns the ``build_features`` output rows for that (season, week) — the same
     engineered columns the training splits carry, so serving inference treats
     them identically. ``injuries_df`` feeds the role-inheritance feature
-    (``None`` → it degrades to 0).
+    (``None`` → it degrades to 0). ``depth_chart_ranks`` / ``game_status_map`` are
+    the live ESPN role/health signals applied in ``_fill_current_week_context``
+    (``None`` → carry-forward / defaults only).
     """
     history = _load_history()
     skel = _build_skeleton(season, week, slate, roster, history.columns)
     combined = pd.concat([history, skel], ignore_index=True)
     featurized = build_features(combined, injuries_df=injuries_df)
     sl = featurized[(featurized["season"] == season) & (featurized["week"] == week)].copy()
-    return _fill_current_week_context(sl, history)
+    return _fill_current_week_context(sl, history, depth_chart_ranks, game_status_map)
 
 
-def _fill_current_week_context(slice_df: pd.DataFrame, history: pd.DataFrame) -> pd.DataFrame:
+def _fill_current_week_context(
+    slice_df: pd.DataFrame,
+    history: pd.DataFrame,
+    depth_chart_ranks: dict[str, float] | None = None,
+    game_status_map: dict[str, float] | None = None,
+) -> pd.DataFrame:
     """Populate the current-week contextual columns the synthetic rows lack.
 
-    Carries each player's most-recent ``_CARRYFORWARD_ATTRS`` value forward, then
-    applies ``_CONTEXT_DEFAULTS`` to anything still missing. These are pass-through
+    Precedence per column: **live ESPN signal → carry-forward → default**.
+    ``depth_chart_rank`` is taken from the live depth chart (``depth_chart_ranks``)
+    when available, else carried forward from the player's most-recent historical
+    row, else defaulted. ``game_status`` is set from the live injury map
+    (``game_status_map``) for flagged players, else defaulted. The remaining
+    ``_CARRYFORWARD_ATTRS`` (contracts) carry forward. All are pass-through
     features, so filling the built slice is equivalent to filling pre-build.
     """
+    # Live depth chart wins over the (possibly 2-seasons-stale) carried value.
+    if depth_chart_ranks and "depth_chart_rank" in slice_df.columns:
+        live = slice_df["player_id"].map(depth_chart_ranks)
+        slice_df["depth_chart_rank"] = live.where(live.notna(), slice_df["depth_chart_rank"])
     present = [c for c in _CARRYFORWARD_ATTRS if c in history.columns and c in slice_df.columns]
     if present:
         latest = (
@@ -210,6 +227,10 @@ def _fill_current_week_context(slice_df: pd.DataFrame, history: pd.DataFrame) ->
         for c in present:
             carried = slice_df["player_id"].map(latest[c])
             slice_df[c] = slice_df[c].where(slice_df[c].notna(), carried)
+    # Live injury status overrides the healthy default for flagged players.
+    if game_status_map and "game_status" in slice_df.columns:
+        gs = slice_df["player_id"].map(game_status_map)
+        slice_df["game_status"] = gs.where(gs.notna(), slice_df["game_status"])
     for col, default in _CONTEXT_DEFAULTS.items():
         if col in slice_df.columns:
             slice_df[col] = slice_df[col].fillna(default)
@@ -336,9 +357,17 @@ def _build_artifact(season: int, week: int, results: pd.DataFrame) -> dict:
     }
 
 
-def _input_signature(season, week, slate: pd.DataFrame, roster: pd.DataFrame) -> str:
-    """Stable hash of (models + slate lines + roster id-set) — recompute only on
-    a real change (model swap, line/roster move)."""
+def _input_signature(
+    season,
+    week,
+    slate: pd.DataFrame,
+    roster: pd.DataFrame,
+    depth_chart_ranks: dict[str, float] | None = None,
+    game_status_map: dict[str, float] | None = None,
+) -> str:
+    """Stable hash of (models + slate lines + roster id-set + live depth chart +
+    injury statuses) — recompute only on a real change (model swap, line/roster
+    move, depth-chart shuffle, injury update)."""
     try:
         model_fp = core._compute_models_fingerprint()
     except Exception:  # noqa: BLE001
@@ -347,7 +376,9 @@ def _input_signature(season, week, slate: pd.DataFrame, roster: pd.DataFrame) ->
         ["recent_team", "opponent_team", "is_home", "spread_line", "total_line"]
     ].to_csv(index=False)
     roster_part = ",".join(sorted(roster["player_id"].astype(str)))
-    blob = f"{season}|{week}|{model_fp}|{slate_part}|{roster_part}"
+    depth_part = ",".join(f"{k}:{v}" for k, v in sorted((depth_chart_ranks or {}).items()))
+    inj_part = ",".join(f"{k}:{v}" for k, v in sorted((game_status_map or {}).items()))
+    blob = f"{season}|{week}|{model_fp}|{slate_part}|{roster_part}|{depth_part}|{inj_part}"
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
@@ -411,13 +442,27 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     if out_ids:
         roster = roster[~roster["player_id"].isin(out_ids)].copy()
 
-    sig = _input_signature(season, week, slate, roster)
+    # Live role + health signals the synthetic rows otherwise lack: the depth
+    # chart sets depth_chart_rank (else it's stale-carried-forward / defaulted to
+    # backup), and the injury map sets game_status for Questionable/Doubtful.
+    depth_chart_ranks = espn_live.fetch_depth_chart_ranks(season, team_id_to_code)
+    game_status_map = espn_live.fetch_injury_status_map(season, week)
+
+    sig = _input_signature(season, week, slate, roster, depth_chart_ranks, game_status_map)
     with _state_lock:
         if not force and sig == _last_signature and read_cached_artifact() is not None:
             return read_cached_artifact()
 
     _augment_schedules_cache(sched_rows)
-    featurized = build_upcoming_week_frame(season, week, slate, roster, injuries_df=injuries_df)
+    featurized = build_upcoming_week_frame(
+        season,
+        week,
+        slate,
+        roster,
+        injuries_df=injuries_df,
+        depth_chart_ranks=depth_chart_ranks,
+        game_status_map=game_status_map,
+    )
     results = run_upcoming_inference(featurized, roster, slate)
     payload = _build_artifact(season, week, results)
     _write_artifact(payload)
