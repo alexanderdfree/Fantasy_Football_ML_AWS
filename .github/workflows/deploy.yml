@@ -202,8 +202,14 @@ jobs:
           task-definition: ${{ steps.render-task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE }}
           cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
-          wait-for-minutes: 20
+          # Don't block the workflow on full service stability — push the new
+          # task def + deployment and return. The ECS deployment circuit breaker
+          # (enabled on the service, rollback=true) still guards prod: a task set
+          # that can't pass ELB health checks is rolled back automatically. This
+          # trades the (up to 20 min) in-workflow stability wait for a faster
+          # "deploy to live ASAP" turnaround; confirm a rollout via
+          # `aws ecs describe-services` if you need the post-deploy status.
+          wait-for-service-stability: false
           force-new-deployment: true
 
       - name: Warm serving cache

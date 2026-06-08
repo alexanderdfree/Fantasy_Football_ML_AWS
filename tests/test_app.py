@@ -323,6 +323,17 @@ class TestIndexRoute:
         # index.html is rendered as HTML, not JSON
         assert "text/html" in r.content_type
 
+    def test_index_links_favicon(self, client):
+        r = client.get("/")
+        assert b'rel="icon"' in r.data
+        assert b"/static/favicon.svg" in r.data
+
+    def test_favicon_route_serves_svg(self, client):
+        r = client.get("/favicon.ico")
+        assert r.status_code == 200
+        assert "image/svg+xml" in r.content_type
+        assert b"<svg" in r.data
+
 
 # `app.py`'s global `@app.errorhandler(Exception)` catches every exception,
 # including werkzeug HTTPExceptions (404 NotFound, 405 MethodNotAllowed). For
