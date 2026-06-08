@@ -40,6 +40,16 @@ and the redundant token slightly hurts. The static arm is the win because the *c
 vacancy is genuinely new (it's in no past-game sequence). Built-in invariant confirmed:
 LGBM/NN/Ridge byte-identical between the two ``+`` arms (the token is Attention-NN-only). Don't
 re-propose role/inheritance in ``attn_history_stats`` — see AGENTS.md stop-rules.
+
+Static-feature productionization (``--only +static``, 3 seeds, 2026-06-07):
+* **RB — robust win, ship it.** +static helps *every* model: Ridge −0.053, LGBM −0.048, NN −0.028
+  MAE, and +1.13 FP on the ascension cohort (n=14). A concentrated-workload position: when the
+  lead back sits, one back absorbs the carries — a clean, learnable signal.
+* **WR — not robust, do NOT ship.** With *either* opportunity proxy (``snap_pct_raw`` or
+  ``targets``) the feature helps only the Attention NN (−0.034 / −0.032 MAE) and is flat-to-worse
+  for Ridge (+0.022 / +0.006), LGBM (~0), NN (+0.02); cohort n=2 (unusable). Targets shrank the
+  Ridge regression but didn't flip it positive. A distributed position: when WR1 sits, targets
+  redistribute diffusely across WR2/WR3/TE/RB, so there is no clean single "next man up" to learn.
 """
 
 from __future__ import annotations
@@ -56,7 +66,12 @@ SEEDS = [42, 123, 7]
 # so one injector serves both the RB and WR cells. WR was added for the productionization
 # validation (the history-token science was RB-only; run WR with `--only +static`).
 _POSITIONS = ("RB", "WR")
-_SNAP = "snap_pct_raw"
+# Position-appropriate opportunity proxy for the "role" estimate (prior-to-W expanding mean).
+# RB: snap-share (snaps ≈ carries ≈ opportunity — validated). WR: per-game targets (a WR's
+# value is *targets*, not snaps; a slot WR is high-snap/low-target, so snap-based inheritance
+# was mis-specified for WR — it only helped the Attention NN and regressed Ridge). Scaled
+# per-feature by the pipeline, so the snap-fraction vs target-count unit mismatch is fine.
+_ROLE_COL = {"RB": "snap_pct_raw", "WR": "targets"}
 _STATIC = ["is_top_available", "inherited_opportunity"]  # → Ridge + LGBM + NN-static
 _HISTORY = ["inherited_opportunity"]  # → NN history sequence (per-game spot-start token)
 
@@ -67,8 +82,8 @@ _HISTORY = ["inherited_opportunity"]  # → NN history sequence (per-game spot-s
 def _inject_inheritance(train, val, test):
     """Add ``is_top_available`` + ``inherited_opportunity`` per player-week, within position.
 
-    * role(player, W) = mean snap over that player's weeks < W (in-season) — prior-to-W,
-      so no week-W outcome leaks in.
+    * role(player, W) = mean of the position's opportunity proxy (``_ROLE_COL``: RB snap-share,
+      WR per-game targets) over that player's weeks < W (in-season) — prior-to-W, no leak.
     * ``is_top_available`` = this player has the top prior-role among *present* same-position
       teammates that week.
     * ``inherited_opportunity`` = Σ prior-role of same-team, same-position OUT/Doubtful
@@ -100,14 +115,21 @@ def _inject_inheritance(train, val, test):
 
     def _add(df):
         df["player_id"] = df["player_id"].astype(str)
-        pref: dict = {}  # (player, season) -> (weeks_sorted, cumulative-mean-incl-i)
-        for (p, s), sub in df.sort_values("week").groupby(["player_id", "season"]):
-            wks = sub["week"].to_numpy()
-            snaps = sub[_SNAP].to_numpy(float)
-            pref[(p, s)] = (wks, np.cumsum(snaps) / np.arange(1, len(snaps) + 1))
+        # Per-position prior-to-W expanding-mean role table, each from its own opportunity
+        # proxy (_ROLE_COL). Keyed by position so an OUT player's role reads the right column.
+        pref: dict = {}  # position -> {(player, season): (weeks_sorted, cumulative-mean)}
+        for pos in _POSITIONS:
+            col = _ROLE_COL[pos]
+            table: dict = {}
+            sub_pos = df[df["position"] == pos].sort_values("week")
+            for (p, s), sub in sub_pos.groupby(["player_id", "season"]):
+                wks = sub["week"].to_numpy()
+                vals = np.nan_to_num(sub[col].to_numpy(float), nan=0.0)
+                table[(p, s)] = (wks, np.cumsum(vals) / np.arange(1, len(vals) + 1))
+            pref[pos] = table
 
-        def role_before(p, s, w):
-            e = pref.get((p, s))
+        def role_before(pos, p, s, w):
+            e = pref[pos].get((p, s))
             if e is None:
                 return 0.0
             wks, cm = e
@@ -121,9 +143,9 @@ def _inject_inheritance(train, val, test):
             for (s, tm, w), idx in grp.groupby(["season", "recent_team", "week"]).groups.items():
                 si, wi = int(s), int(w)
                 pids = df.loc[idx, "player_id"].to_numpy()
-                roles = np.array([role_before(p, si, wi) for p in pids])
+                roles = np.array([role_before(pos, p, si, wi) for p in pids])
                 out_set = outmap.get((pos, si, tm, wi), set())
-                out_roles = np.array([role_before(g, si, wi) for g in out_set])
+                out_roles = np.array([role_before(pos, g, si, wi) for g in out_set])
                 for j, rp in enumerate(roles):
                     top = 1.0 if (roles > rp).sum() == 0 else 0.0
                     oa = float(out_roles[out_roles > rp].sum()) if out_roles.size else 0.0
