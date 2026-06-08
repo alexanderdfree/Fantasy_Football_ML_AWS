@@ -319,6 +319,13 @@ def build_pipeline_config(
         cfg["attn_history_structure"] = "nested"
         cfg["attn_static_from_df"] = True
         cfg["attn_kick_dim"] = pc.attn_kick_dim
+        # K's nested-attention window shape. ``run_pipeline``'s kick-history
+        # closure reads these via ``cfg.get("attn_max_games", POSITION_CONFIG.
+        # attn_max_games)`` / ``cfg.get("attn_max_kicks_per_game", ...)``, so
+        # emitting them here (same values as that fallback) makes cfg the single
+        # source of truth instead of relying on the module-level default. (#542)
+        cfg["attn_max_games"] = pc.attn_max_games
+        cfg["attn_max_kicks_per_game"] = pc.attn_max_kicks_per_game
 
     # === DST-only: very-rare-count Poisson targets ===
     if pos == Position.DST:

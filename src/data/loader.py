@@ -127,6 +127,12 @@ def _normalize_espn_depth(espn: pd.DataFrame, schedules: pd.DataFrame, season: i
     )
     out["season"] = season
     out["formation"] = "Offense"
+    # Drop rows whose latest snapshot has a NaN rank before the int cast — a NaN
+    # ``pos_rank`` (e.g. a player listed without a numeric depth) would otherwise
+    # raise IntCastingNaNError and abort the whole ESPN-season normalize. These
+    # rows carry no usable rank anyway; dropping them mirrors the missing-rank
+    # gap the loader's -1 sentinel already covers. (#924)
+    out = out.dropna(subset=["depth_team"])
     out["depth_team"] = out["depth_team"].astype("int64").astype(str)
     return out[_DEPTH_CANONICAL_COLS]
 
@@ -301,7 +307,15 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
                 "https://github.com/nflverse/nflverse-data/releases/download/"
                 f"depth_charts/depth_charts_{s}.parquet"
             )
-            parts.append(_normalize_espn_depth(pd.read_parquet(url), schedules, s))
+            # The nflverse ESPN release for the current season can 404 mid-season;
+            # skip that season (mirrors the team_week_stats skip above) so a
+            # transient miss doesn't abort the depth-chart load for all six
+            # positions. The loader's -1 sentinel + consumer-side impute cover the
+            # gap. (#830)
+            try:
+                parts.append(_normalize_espn_depth(pd.read_parquet(url), schedules, s))
+            except Exception as e:
+                print(f"WARNING: ESPN depth_charts fetch failed for {s} ({e}); skipping")
         depth = pd.concat(parts, ignore_index=True)
         depth.to_parquet(depth_path)
         return depth
