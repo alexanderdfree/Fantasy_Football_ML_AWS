@@ -143,6 +143,9 @@ def _historical_expert_seasons(results: pd.DataFrame) -> list[int]:
     if "fantasy_points" in results.columns:
         mask &= pd.to_numeric(results["fantasy_points"], errors="coerce").notna()
     seasons = pd.to_numeric(results.loc[mask, "season"], errors="coerce").dropna()
+    allowed = {int(s) for s in TEST_SEASONS}
+    if allowed:
+        seasons = seasons[seasons.astype(int).isin(allowed)]
     return sorted(seasons.astype(int).unique())
 
 
@@ -1363,7 +1366,7 @@ _PREDICTIONS_CACHE_DIR = os.path.join(_REPO_ROOT, "data", "serving_cache")
 _PREDICTIONS_PARQUET = "predictions.parquet"
 _METRICS_JSON = "metrics.json"
 _FINGERPRINT_JSON = "fingerprint.json"
-_PREDICTIONS_CACHE_SCHEMA_VERSION = 3
+_PREDICTIONS_CACHE_SCHEMA_VERSION = 4
 # Browser-ready snapshot the frontend hydrates its first paint from (see
 # /api/snapshot + static/js/app.js). Auxiliary to the cache triple above —
 # its absence is non-fatal (frontend falls back to /api/predictions), so it is
@@ -1371,6 +1374,12 @@ _PREDICTIONS_CACHE_SCHEMA_VERSION = 3
 # all-or-nothing; a missing member forces a 30-60s recompute). It rides the
 # best-effort model_sync._PREDICTIONS_CACHE_OPTIONAL path instead.
 _SNAPSHOT_JSON = "snapshot.json"
+_EXPERT_SOURCE_CACHE_PREFIXES = (
+    "nflcom_projections_",
+    "nflcom_projections_joined_",
+    "sleeper_projections_",
+    "sleeper_projections_joined_",
+)
 
 
 def _iter_fingerprint_paths():
@@ -1408,6 +1417,8 @@ def _iter_fingerprint_paths():
     raw_dir = os.path.join(_REPO_ROOT, "data", "raw")
     if os.path.isdir(raw_dir):
         for fname in sorted(os.listdir(raw_dir)):
+            if fname.startswith(_EXPERT_SOURCE_CACHE_PREFIXES):
+                continue
             if fname.endswith(".parquet"):
                 yield os.path.join(raw_dir, fname)
 
