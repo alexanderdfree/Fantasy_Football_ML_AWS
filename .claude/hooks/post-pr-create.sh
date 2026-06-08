@@ -31,7 +31,7 @@ if ! claude_command_invokes_gh_pr_create "$cmd"; then
 fi
 
 # Detect a solve-issues autonomous-fix PR by its staging branch (`audit-NNN/tier-X`,
-# cut by the solve-issues skill). Those PRs must NOT auto-merge — they stop for
+# cut by the solve-issues wrapper/shared workflow). Those PRs must NOT auto-merge — they stop for
 # explicit user merge sign-off (the user reviews the diff + any regress-risk-high benchmark deltas
 # before anything lands on main). Every other PR keeps the auto-merge workflow.
 cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || true
@@ -72,7 +72,7 @@ ctx_tail="
 
 7. End-of-turn summary: report what was applied (one line for the commit), what (if anything) was surfaced for user judgment, and whether the PR was merged.
 
-Separately: if this session had a non-routine moment — user corrected your approach mid-flight, a CLAUDE.md stop-rule bit you, or something went unusually well because of a specific rule — invoke the post-session-critique skill before moving on, to capture the prompt lesson. Skip if the session was routine (do not run the skill just because this hook fired). See .claude/skills/post-session-critique/SKILL.md."
+Separately: if this session had a non-routine moment — user corrected your approach mid-flight, a CLAUDE.md stop-rule bit you, or something went unusually well because of a specific rule — invoke the post-session-critique skill before moving on, to capture the prompt lesson. Skip if the session was routine (do not run the skill just because this hook fired). Wrapper: .claude/skills/post-session-critique/SKILL.md; shared behavior: agent-workflows/post-session-critique/instructions.md."
 
 ctx="${ctx_head}${step6}${ctx_tail}"
 

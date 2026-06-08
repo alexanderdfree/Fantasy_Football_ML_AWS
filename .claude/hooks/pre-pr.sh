@@ -436,9 +436,9 @@ fi
 # deterministic gate single-sourced, but point the nudge at the active agent's
 # entrypoint when Codex wraps this hook.
 if [ "${CODEX_PRE_PR_WRAPPER:-}" = "1" ]; then
-  echo "pre-pr hook: deterministic checks passed. if /prompts:pre-pr-judge has not run this session, invoke it before this PR opens (catches scope creep — see .codex/prompts/pre-pr-judge.md)." >&2
+  echo "pre-pr hook: deterministic checks passed. if /prompts:pre-pr-judge has not run this session, invoke it before this PR opens (catches scope creep — wrapper .codex/prompts/pre-pr-judge.md; shared behavior agent-workflows/pre-pr-judge/instructions.md)." >&2
 else
-  echo "pre-pr hook: deterministic checks passed. if pre-pr-judge has not run this session, invoke it before this PR opens (catches scope creep — see .claude/skills/pre-pr-judge/SKILL.md)." >&2
+  echo "pre-pr hook: deterministic checks passed. if pre-pr-judge has not run this session, invoke it before this PR opens (catches scope creep — wrapper .claude/skills/pre-pr-judge/SKILL.md; shared behavior agent-workflows/pre-pr-judge/instructions.md)." >&2
 fi
 
 exit 0

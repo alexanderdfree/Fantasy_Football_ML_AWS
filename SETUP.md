@@ -340,12 +340,12 @@ scripts/codex-fresh-worktree.sh
 
 It reuses the current directory only when it is already a clean Codex-owned worktree under `${CODEX_HOME:-~/.codex}/worktrees/*/Final-Project`. Otherwise it fetches `origin/main`, creates a fresh `codex/session-<id>` worktree under `${CODEX_HOME:-~/.codex}/worktrees/<id>/Final-Project`, best-effort links ignored `data/raw` and `data/splits` from the main checkout, and starts Codex with `--cd` pointed at the fresh worktree. Useful launcher options: `--force-new`, `--base <ref>`, `--branch <name>`, `--no-fetch`, and `--print-path`.
 
-Codex custom slash prompts are local-user files, not repo-scoped files. The repo keeps templates in [`.codex/prompts/`](.codex/prompts/); install or refresh the actual `~/.codex/prompts/*.md` copies with:
+Codex custom slash prompts are local-user files, not repo-scoped files. The repo keeps wrapper templates in [`.codex/prompts/`](.codex/prompts/); shared cross-agent workflow behavior lives under [agent-workflows/](agent-workflows/). Install or refresh the actual `~/.codex/prompts/*.md` copies with:
 
 ```bash
 scripts/bootstrap-codex-local.sh
 ```
 
-Restart Codex after installing prompts. They appear as `/prompts:pre-pr-judge`, `/prompts:pre-pr-gate`, `/prompts:post-pr-followup`, `/prompts:post-session-critique`, and `/prompts:solve-issues`.
+Restart Codex after installing prompt wrapper changes. Shared instruction changes under `agent-workflows/` are read from the repo at invocation time as long as the installed wrapper is current. The prompts appear as `/prompts:pre-pr-judge`, `/prompts:pre-pr-gate`, `/prompts:post-pr-followup`, `/prompts:post-session-critique`, and `/prompts:solve-issues`.
 
 Known difference from Claude Code: Codex `SessionStart` hooks can add model-visible context, but they cannot persist environment exports like Claude's `CLAUDE_ENV_FILE` flow or move the active session into a new worktree. Use the normal setup instructions above for the Python environment; the Codex pre-PR hook will probe the main worktree's `.venv` when the current worktree lacks one.

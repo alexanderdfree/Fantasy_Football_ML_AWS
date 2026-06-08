@@ -3,39 +3,24 @@ description: Vet the current branch against the original task before opening a P
 argument-hint: [ORIGINAL_TASK="<quoted task>"] [BASE=origin/main]
 ---
 
-Run the Final-Project pre-PR scope judge.
+Run the Final-Project Codex pre-PR judge wrapper.
 
-Use `BASE` if supplied; otherwise use `origin/main`. If `ORIGINAL_TASK` is supplied, treat it as authoritative. Otherwise infer the original task from the current thread, including only scope refinements the user explicitly approved.
+The authoritative instructions are version-controlled at `agent-workflows/pre-pr-judge/instructions.md`. That file, not this wrapper, defines the mission, skip rules, rebase requirement, verdict shape, and WARN handling.
 
-Skip this judge entirely (the change is trivially in-scope) when:
+Codex runtime values:
 
-- it is a one-line typo, formatting-only fix, lockfile bump, or comment/docstring-only edit;
-- it is a mass mechanical sweep the user asked for (e.g. ruff autofixes across the tree, or a docs cross-ref sweep);
-- the user explicitly broadened scope mid-task ("while you're at it, also fix X") — that addition is in-scope by definition.
+- `WORKFLOW_PROVIDER=Codex`
+- `WORKFLOW_ENTRYPOINT=/prompts:pre-pr-judge`
+- `WORKFLOW_WRAPPER=.codex/prompts/pre-pr-judge.md`
+- `WORKFLOW_SHARED_INSTRUCTIONS=agent-workflows/pre-pr-judge/instructions.md`
+- `WORKFLOW_BASE=BASE if supplied, otherwise origin/main`
+- `WORKFLOW_ORIGINAL_TASK=ORIGINAL_TASK if supplied, otherwise infer from the current thread`
+- `WORKFLOW_PRE_PR_GATE=/prompts:pre-pr-gate`
+- `WORKFLOW_REVIEW_TOOL=scripts/codex-review-quiet.sh --base origin/main`
+- `WORKFLOW_SUBAGENTS=Codex subagents when available; otherwise direct orchestrator judgment`
 
-Otherwise, run the judge.
+Execution:
 
-Steps:
-
-1. Resolve `BASE` to the supplied value or `origin/main`.
-2. Rebase before judging: run `git fetch origin main --quiet` and then `git rebase BASE`. If the rebase conflicts, run `git rebase --abort`, report the conflict, and stop. Do not judge or open a PR from a stale or conflicted branch.
-3. Collect `git status --short`, `git log BASE..HEAD --oneline`, and `git diff BASE...HEAD`.
-4. Judge only scope alignment. Do not do a general code review; the deterministic hooks and `codex review` cover code quality.
-5. If Codex subagents are available, delegate the diff-vs-intent read to one subagent and ask for a verdict under 200 words. Otherwise perform the same check directly.
-
-Return this shape:
-
-**Verdict**: PASS or WARN
-
-**In-scope**:
-- One bullet per logical change that matches the task.
-
-**Out-of-scope**:
-- One bullet per change that was not requested, with file path and reason.
-
-**Missing**:
-- Any task-implied change absent from the diff.
-
-**Recommendation**: open as-is / mention drift in the PR description / split before PR
-
-If the verdict is WARN, stop and ask the user how to proceed before running `gh pr create`.
+1. Read `agent-workflows/pre-pr-judge/instructions.md`.
+2. If it is missing or empty, STOP NOW: do not run `gh pr create` and do not improvise the judge.
+3. Otherwise, execute that file to completion using the Codex runtime values and supplied arguments above.

@@ -74,7 +74,7 @@ Each surviving finding becomes one GitHub issue:
   - `src/scripts/*`, `.github/workflows/*`, `.claude/hooks/*`, and
     `.codex/hooks/*` -> `ci`.
   - `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `README.md`, `SETUP.md`, `TODO.md`,
-    `docs/*`, `.claude/skills/*`, `.codex/prompts/*`,
+    `docs/*`, `agent-workflows/*`, `.claude/skills/*`, `.codex/prompts/*`,
     `.claude/routines/audit/*`, `.codex/automations/audit/*`,
     `routines/audit/*`, and `scripts/bootstrap-codex-local.sh` -> `docs`.
   - Config-invariant/broken-reference lens findings take the area of the
@@ -222,8 +222,8 @@ Layer A location-auditor scopes:
 10. Batch+CI auditor: `src/batch/`, `.github/workflows/`, `.claude/hooks/`,
     `.codex/hooks/`
 11. Docs/tooling consistency auditor: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`,
-    `README.md`, `SETUP.md`, `TODO.md`, `docs/`, `.claude/skills/`,
-    `.codex/prompts/`, `.claude/routines/audit/`,
+    `README.md`, `SETUP.md`, `TODO.md`, `docs/`, `agent-workflows/`,
+    `.claude/skills/`, `.codex/prompts/`, `.claude/routines/audit/`,
     `.codex/automations/audit/`, `routines/audit/`,
     `scripts/bootstrap-codex-local.sh`
 
@@ -244,7 +244,7 @@ Layer B standing cross-cutting lenses:
   `.claude/settings.json`, `.claude/hooks/`, `.claude/skills/`,
   `.claude/routines/audit/`, `.codex/hooks.json`, `.codex/hooks/`,
   `.codex/prompts/`, `.codex/automations/audit/`, `routines/audit/`,
-  `scripts/bootstrap-codex-local.sh`, `scripts/bootstrap-claude-wsl.sh`,
+  `agent-workflows/`, `scripts/bootstrap-codex-local.sh`, `scripts/bootstrap-claude-wsl.sh`,
   `scripts/claude-memory-sync.sh`, `scripts/codex-memory-sync.sh`,
   `scripts/agent-memory-sync.sh`, and `SETUP.md`. Report substantive provider
   parity breaks promised by docs; do not report intentional provider differences.

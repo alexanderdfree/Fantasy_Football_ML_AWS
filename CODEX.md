@@ -31,13 +31,13 @@ Useful options: `--force-new`, `--base <ref>`, `--branch <name>`, `--no-fetch`, 
 
 ## Slash Prompts
 
-Codex custom prompts are user-home scoped, not repo-scoped. The version-controlled prompt templates live in `.codex/prompts/`; install/update local copies with:
+Codex custom prompts are user-home scoped, not repo-scoped. The version-controlled prompt templates live in `.codex/prompts/`; the cross-agent repo workflows are thin wrappers over shared instructions under `agent-workflows/`. Install/update local copies with:
 
 ```bash
 scripts/bootstrap-codex-local.sh
 ```
 
-Restart Codex after installing. The prompts appear as:
+Restart Codex after installing wrapper changes. Shared instruction changes under `agent-workflows/` are read from the repo at invocation time as long as the installed wrapper is current. The prompts appear as:
 
 - `/prompts:pre-pr-judge`
 - `/prompts:pre-pr-gate`
@@ -45,7 +45,7 @@ Restart Codex after installing. The prompts appear as:
 - `/prompts:post-session-critique`
 - `/prompts:solve-issues`
 
-OpenAI now marks custom prompts deprecated in favor of skills, but prompts are still the closest Codex equivalent to Claude slash commands for this repo. If these workflows become stable enough to share across machines without a bootstrap copy step, graduate them into Codex skills.
+OpenAI now marks custom prompts deprecated in favor of skills, but prompts are still the closest Codex equivalent to Claude slash commands for this repo. If these workflows become stable enough to share across machines without a bootstrap copy step, graduate the wrappers into Codex skills while keeping behavior in `agent-workflows/`.
 
 ## Gaps Versus Claude Code
 
@@ -58,7 +58,7 @@ OpenAI now marks custom prompts deprecated in favor of skills, but prompts are s
 
 Claude and Codex share audit behavior from [`routines/audit/instructions.md`](routines/audit/instructions.md). The Claude cloud routine sets `AUDIT_LABEL=claude-audit`; the tracked Codex wrapper at [`.codex/automations/audit/prompt.md`](.codex/automations/audit/prompt.md) sets `AUDIT_LABEL=codex-audit`. Both producers dedupe against open and closed severity-labeled issues from `claude-audit` and `codex-audit`, while keeping separate checkpoint history. The shared instructions own both the bug-impact severity labels and the model regress-risk labels.
 
-This repo tracks the Codex wrapper only; it does not create an active Codex app cron automation. If one is created later, point it at `.codex/automations/audit/prompt.md` and run it from a repo workspace. `/prompts:solve-issues` consumes both audit labels.
+This repo tracks the Codex wrapper only; it does not create an active Codex app cron automation. If one is created later, point it at `.codex/automations/audit/prompt.md` and run it from a repo workspace. `/prompts:solve-issues` consumes both audit labels through [`agent-workflows/solve-issues/instructions.md`](agent-workflows/solve-issues/instructions.md).
 
 ## Auto-memory
 
