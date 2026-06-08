@@ -56,7 +56,9 @@ env:
   # Public serving URL for the post-deploy cache-warm probe (plain HTTPS GET
   # to /warm; see the final step). Fresh tasks hydrate the S3 cache at boot
   # when models are unchanged — this just warms any worker that raced traffic.
-  SERVICE_URL: https://alexfree.me
+  # NB: the Flask app is on the `fantasy` subdomain; the apex `alexfree.me` is a
+  # separate static portfolio, so a /warm probe there 404s (was the bug here).
+  SERVICE_URL: https://fantasy.alexfree.me
 
 # Read-only GITHUB_TOKEN — the deploy job authenticates to AWS via secrets
 # (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY), not via OIDC, so no
