@@ -41,6 +41,9 @@ def git_worktree_pair(tmp_path: Path) -> tuple[Path, Path]:
         check=True,
     )
     subprocess.run(["git", "-C", str(main), "config", "user.name", "Codex Hooks"], check=True)
+    # Temp repos must never sign commits — a global commit.gpgsign / signing
+    # server makes ``git commit`` fail (exit 128) in some CI/sandbox envs.
+    subprocess.run(["git", "-C", str(main), "config", "commit.gpgsign", "false"], check=True)
     (main / "README.md").write_text("test repo\n")
     subprocess.run(["git", "-C", str(main), "add", "README.md"], check=True)
     subprocess.run(
@@ -112,6 +115,9 @@ def launcher_repo(tmp_path: Path) -> tuple[Path, Path]:
         check=True,
     )
     subprocess.run(["git", "-C", str(main), "config", "user.name", "Codex Hooks"], check=True)
+    # Temp repos must never sign commits — a global commit.gpgsign / signing
+    # server makes ``git commit`` fail (exit 128) in some CI/sandbox envs.
+    subprocess.run(["git", "-C", str(main), "config", "commit.gpgsign", "false"], check=True)
     (main / ".gitignore").write_text("data/raw/\ndata/splits/\n.venv/\n")
     (main / "README.md").write_text("test repo\n")
     subprocess.run(["git", "-C", str(main), "add", ".gitignore", "README.md"], check=True)
