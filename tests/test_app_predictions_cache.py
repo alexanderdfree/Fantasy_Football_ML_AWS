@@ -284,10 +284,12 @@ def test_hydrate_returns_false_on_old_cache_schema(cache_dir, fingerprint_files,
         fp = json.load(f)
     fp.pop("schema_version")
     (cache_dir / "fingerprint.json").write_text(json.dumps(fp))
+    assert (cache_dir / "snapshot.json").is_file()
 
     app_mod._cache.clear()
     assert core._try_hydrate_from_disk() is False
     assert "results" not in app_mod._cache
+    assert not (cache_dir / "snapshot.json").exists()
 
 
 @pytest.mark.parametrize(

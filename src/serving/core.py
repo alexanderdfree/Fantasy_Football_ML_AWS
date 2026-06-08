@@ -1507,6 +1507,15 @@ def _write_snapshot_json():
     )
 
 
+def _drop_snapshot_json(reason: str) -> None:
+    """Remove the optional browser snapshot when the required cache is invalid."""
+    path = os.path.join(_PREDICTIONS_CACHE_DIR, _SNAPSHOT_JSON)
+    if os.path.isfile(path):
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+        print(f"[snapshot] dropped stale snapshot ({reason})")
+
+
 def _try_hydrate_from_disk():
     """Populate ``_cache`` directly from data/serving_cache/ when the stored
     fingerprint matches the live one. Caller must hold ``_cache_lock``.
@@ -1527,12 +1536,14 @@ def _try_hydrate_from_disk():
         and os.path.isfile(metrics_path)
         and os.path.isfile(fingerprint_path)
     ):
+        _drop_snapshot_json("required-cache-file-missing")
         return False
     try:
         with open(fingerprint_path) as f:
             stored = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         print(f"[predcache] fingerprint read failed: {e!r} — will recompute")
+        _drop_snapshot_json("fingerprint-read-failed")
         return False
     live_sha, _ = _compute_models_fingerprint()
     if stored.get("schema_version") != _PREDICTIONS_CACHE_SCHEMA_VERSION:
@@ -1541,6 +1552,7 @@ def _try_hydrate_from_disk():
             f"(cache={stored.get('schema_version')!r}, "
             f"live={_PREDICTIONS_CACHE_SCHEMA_VERSION}) — will recompute"
         )
+        _drop_snapshot_json("schema-mismatch")
         return False
     if stored.get("sha256") != live_sha:
         print(
@@ -1548,6 +1560,7 @@ def _try_hydrate_from_disk():
             f"(cache={(stored.get('sha256') or '<none>')[:8]}, live={live_sha[:8]}) "
             f"— will recompute"
         )
+        _drop_snapshot_json("fingerprint-mismatch")
         return False
     try:
         results = pd.read_parquet(parquet_path)
@@ -1555,6 +1568,7 @@ def _try_hydrate_from_disk():
             metrics_payload = json.load(f)
     except Exception as e:  # noqa: BLE001 — corrupt cache must not crash boot
         print(f"[predcache] cache read failed: {e!r} — will recompute")
+        _drop_snapshot_json("cache-read-failed")
         return False
     # metrics.json schema:
     #   Old (pre-M16): the bare metrics_by_format dict ({"ppr": {...}, ...}).
