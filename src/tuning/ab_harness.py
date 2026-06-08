@@ -459,7 +459,9 @@ def _launch_worker(cell: Cell, spec: Spec, out_path: str, cores, nice, pool_addr
     from src.shared.core_pool import ENV_ADDR, ENV_POS
 
     env = dict(os.environ)
-    env[_ENV_CACHE_DISABLE] = "1"
+    # Cache-disable is inherited from run_ab (set per --feature-cache); default to
+    # disabled only if a worker is somehow launched outside run_ab.
+    env.setdefault(_ENV_CACHE_DISABLE, "1")
     env[ENV_POS] = cell.key
     if pool_addr:
         env[ENV_ADDR] = pool_addr
@@ -767,20 +769,22 @@ def run_ab(
     if not os.path.isdir(data_dir):
         raise FileNotFoundError(f"data dir not found: {data_dir} (need data/splits/*.parquet)")
 
+    # Disable the feature cache by default (it keys on data, not code → a sibling
+    # variant could silently reuse features → false Δ=0). Set it *explicitly*
+    # (not just when disabling) so subprocess workers inherit the right value and
+    # ``--feature-cache`` is honoured in parallel mode too, not only sequential.
     prev_cache = os.environ.get(_ENV_CACHE_DISABLE)
-    if not feature_cache:
-        os.environ[_ENV_CACHE_DISABLE] = "1"
+    os.environ[_ENV_CACHE_DISABLE] = "0" if feature_cache else "1"
     try:
         if jobs <= 1:
             results = run_sequential(resolved, cells, data_dir)
         else:
             results = run_parallel(resolved, cells, jobs, data_dir)
     finally:
-        if not feature_cache:
-            if prev_cache is None:
-                os.environ.pop(_ENV_CACHE_DISABLE, None)
-            else:
-                os.environ[_ENV_CACHE_DISABLE] = prev_cache
+        if prev_cache is None:
+            os.environ.pop(_ENV_CACHE_DISABLE, None)
+        else:
+            os.environ[_ENV_CACHE_DISABLE] = prev_cache
 
     agg = aggregate(resolved, results)
     print_report(resolved, agg, jobs=jobs)

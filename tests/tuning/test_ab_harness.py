@@ -537,6 +537,28 @@ def test_cli_requires_spec(capsys):
     assert "spec" in capsys.readouterr().err
 
 
+def test_run_ab_sets_and_restores_cache_env(tmp_path, monkeypatch):
+    # The feature cache is disabled by default and re-enabled by feature_cache=True,
+    # set explicitly during the run (so workers inherit) and restored afterwards.
+    captured = {}
+
+    def fake_seq(spec, cells, data_dir):
+        captured["during"] = os.environ.get("FF_FEATURE_CACHE_DISABLE")
+        return []
+
+    monkeypatch.setattr(H, "run_sequential", fake_seq)
+    monkeypatch.delenv("FF_FEATURE_CACHE_DISABLE", raising=False)
+    mod = SimpleNamespace(VARIANTS=[Variant("baseline")], POSITIONS=["K"], SEEDS=[1])
+
+    H.run_ab(mod, sequential=True, data_dir=str(tmp_path))
+    assert captured["during"] == "1"  # disabled by default
+    assert "FF_FEATURE_CACHE_DISABLE" not in os.environ  # restored (was unset)
+
+    H.run_ab(mod, sequential=True, feature_cache=True, data_dir=str(tmp_path))
+    assert captured["during"] == "0"  # --feature-cache re-enables
+    assert "FF_FEATURE_CACHE_DISABLE" not in os.environ
+
+
 # --------------------------------------------------------------------------- #
 # ab_example template (pure variant fns — lock the copy-me behaviour)
 # --------------------------------------------------------------------------- #
