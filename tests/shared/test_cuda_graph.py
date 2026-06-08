@@ -176,6 +176,26 @@ def test_nested_history_trainer_graph_noop_even_when_enabled(monkeypatch):
 
 
 @pytest.mark.unit
+def test_base_trainer_graph_noop_when_device_cpu_even_if_enabled(monkeypatch):
+    """A CPU-device trainer must NOT capture even when the host autodetects graphs ON.
+
+    ``cuda_graph_enabled()`` reports *host* capability (sm_80+); the trainer's own
+    ``self.device`` gates capture. Pre-fix the base trainer entered the guard on a
+    GPU host regardless of device and called ``make_graphed_callables`` on a CPU
+    model → NaN MAE / non-decreasing loss. Regression guard for the FF_CUDA_GRAPH
+    "K NN test flake" (#690). With the bug present this raises (it would reach
+    ``next(iter(object()))``); the device gate must short-circuit first.
+    """
+    monkeypatch.setenv("FF_CUDA_GRAPH", "1")
+    monkeypatch.setattr("src.shared.training.cuda_graph_enabled", lambda: True)
+    model = nn.Linear(3, 2)
+    tr = _bare_trainer(MultiHeadTrainer, model, targets=["y"])  # device=cpu
+    tr._maybe_graph_model(train_loader=object())  # must return before touching the loader
+    assert tr.model is model
+    assert tr._graphed is False
+
+
+@pytest.mark.unit
 def test_batchnorm_snapshot_restore_covers_running_buffers():
     bn = nn.BatchNorm1d(3)
     bn.train()

@@ -773,7 +773,14 @@ class MultiHeadTrainer:
         outside the forward in :meth:`train`) would then need re-validation that it
         sees post-replay state. It is 0 / off in every current config.
         """
-        if self._graphed or not cuda_graph_enabled():
+        # Gate on THIS trainer's device, not just the global capability.
+        # cuda_graph_enabled() reports the *host* is sm_80+ CUDA, but a trainer
+        # constructed with device=cpu (FF_DEVICE=cpu runs, and several unit tests)
+        # on a GPU host must NOT be graphed: torch.cuda.make_graphed_callables on
+        # a CPU model captures garbage → NaN MAE / non-decreasing loss. Mirrors
+        # the device.type=="cuda" AMP gate in __init__ and the _cuda guard in
+        # train(); FF_CUDA_GRAPH=1 still can't force capture on a CPU trainer.
+        if self._graphed or self.device.type != "cuda" or not cuda_graph_enabled():
             return
         sample_args = self._graph_inputs(next(iter(train_loader)))
         self.model.train()
