@@ -28,6 +28,12 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 - **Standing guidance:** **all models matter** here — judge interventions on the tail across Ridge/NN/Attn/LightGBM, not just the served best model.
 - **Status:** Phase 1 diagnostic + expert-tier comparison shipped; Huber→MSE switch (PR #870) being measured on a GPU benchmark.
 
+### [PLAN] Close the RB/WR RMSE/R² gap vs RotoWire (boom-tier correlation)
+- **Plan doc:** [todo/rotowire_gap_remediation.md](todo/rotowire_gap_remediation.md) — read first; measurement instrument is [src/analysis/rmse_gap_decomposition.py](src/analysis/rmse_gap_decomposition.py) (PR #1037, re-run before/after).
+- **What:** The decomposition diagnostic pinned the "experts beat us on RMSE/R²" gap to the **Q4 boom tier only** (we beat both NFL.com and RotoWire on Q1–Q3). It is **not** loss-family or calibration; ~78% is the near-irreducible shared boom under-call, and the one closable edge is **RotoWire's correlation** (more signal — our Q4 corr already exceeds theirs). Injury/depth/snap/Vegas already exist and are wired, so the lever is a **derived opportunity-vacancy feature** (role inheritance when a starter sits), not a new data source.
+- **Next:** Phase 0 (read-only go/no-go) — audit injury alignment + attribute the worst Q4 misses to vacated roles; then Phase 1 build vacancy features, Phase 2 validate Q4 correlation across ≥3 seeds.
+- **Status:** diagnostic shipped (PR #1037); Phase 0 validation starting.
+
 ### [ANALYSIS] ATTN week-by-week & subgroup accuracy — patterns + leads
 - **Findings doc:** [todo/attn_accuracy_findings.md](todo/attn_accuracy_findings.md); reusable diagnostic [src/analysis/attn_weekly_accuracy.py](src/analysis/attn_weekly_accuracy.py) (read-only, multi-seed). Rerun: `python -m src.analysis.attn_weekly_accuracy --report report.md --figdir figs`.
 - **What (robust across seeds 42+123, 7,177 test rows/seed):** the four models are ~tied overall (LightGBM 4.142 ≈ ATTN 4.158 < NN 4.198 < Ridge 4.307); the trustworthy signal is **per-position direction** — ATTN is the **best model on DST** and the **worst-of-the-learned-models on K** (Ridge wins K cleanly), loses by a hair on QB/RB/TE, and is a seed-coin-flip on WR. The dominant error structure is **regression-to-the-mean shared by all models** (over-predict Q1 by +2.7–3.5, under-predict Q4 ceiling games by −7 to −8); ATTN is the best-calibrated *learned* model at both tails.
