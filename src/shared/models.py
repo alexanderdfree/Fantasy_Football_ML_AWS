@@ -1,4 +1,4 @@
-"""Generic multi-target models for any position (Ridge, Ordinal, LightGBM).
+"""Generic multi-target models for any position (Ridge, Ordinal, LightGBM, TabPFN).
 
 Single-target building blocks (``RidgeModel``, ``ElasticNetModel``,
 ``SeasonAverageBaseline``) used to live in
@@ -884,3 +884,163 @@ class LightGBMMultiTarget:
         self._models = {}
         for name in self.target_names:
             self._models[name] = joblib.load(f"{lgb_dir}/{name}.pkl")
+
+
+class TabPFNMultiTarget:
+    """Separate TabPFN-v2 regressors per target (mirrors LightGBMMultiTarget interface).
+
+    TabPFN is a *pretrained* transformer foundation model for small tabular data
+    (Hollmann et al., Nature 2025). It does in-context prediction — ``fit`` caches
+    the training rows and ``predict`` runs a forward pass — so it neither trains a
+    gradient model nor early-stops, and the saved artifact carries the train set.
+    It is architecture-distinct from Ridge (linear), LightGBM (trees), and the
+    attention NN (sequence), which is the whole point of adding it as a 5th column.
+
+    TabPFN does its own internal preprocessing, so the raw (unscaled) feature
+    matrix is passed through by default. Two knobs handle its pretraining limits
+    (~10k rows, ~500 features) for wider positions:
+      - ``pca_n_components`` — StandardScaler -> PCA before TabPFN (mirrors
+        ``RidgeModel``), the principled way to fit under the feature cap.
+      - ``ignore_pretraining_limits`` — let TabPFN run past the cap as-is.
+
+    The ``tabpfn`` import is lazy (only when a regressor is constructed) so the 5
+    positions that don't enable TabPFN — and CI, which doesn't install it — can
+    import this module without the dependency. Same per-head ``non_negative_targets``
+    clamp contract as the other multi-target models.
+    """
+
+    def __init__(
+        self,
+        target_names,
+        device: str = "auto",
+        n_estimators: int = 8,
+        ignore_pretraining_limits: bool = False,
+        pca_n_components: int | None = None,
+        seed: int = 42,
+        n_jobs: int | None = None,
+        non_negative_targets: set | None = None,
+    ):
+        self.target_names = target_names
+        self.device = device
+        self.n_estimators = n_estimators
+        self.ignore_pretraining_limits = ignore_pretraining_limits
+        self.pca_n_components = pca_n_components
+        self.seed = seed
+        # TabPFN's ``n_jobs`` governs CPU-side preprocessing parallelism (the model
+        # forward pass runs on ``device``). ``None`` -> all cores, like its default.
+        self.n_jobs = -1 if n_jobs is None else int(n_jobs)
+        # Mirror RidgeMultiTarget / LightGBMMultiTarget: ``None`` clamps every head.
+        self.non_negative_targets = (
+            set(target_names) if non_negative_targets is None else non_negative_targets
+        )
+        self.scaler = None
+        self.pca = None
+        self._models = {}
+        self._feature_names = None
+
+    def _new_regressor(self):
+        # Lazy import: keeps ``tabpfn`` an optional dependency for the positions
+        # (and CI) that never construct this model.
+        from tabpfn import TabPFNRegressor
+
+        return TabPFNRegressor(
+            n_estimators=self.n_estimators,
+            device=self.device,
+            ignore_pretraining_limits=self.ignore_pretraining_limits,
+            random_state=self.seed,
+            n_jobs=self.n_jobs,
+        )
+
+    def _fit_transform(self, X: np.ndarray) -> np.ndarray:
+        if not self.pca_n_components:
+            self.scaler = None
+            self.pca = None
+            return X
+        from sklearn.decomposition import PCA
+
+        self.scaler = StandardScaler()
+        X_scaled = self.scaler.fit_transform(X)
+        self.pca = PCA(n_components=self.pca_n_components)
+        return self.pca.fit_transform(X_scaled)
+
+    def _transform(self, X: np.ndarray) -> np.ndarray:
+        if self.pca is None:
+            return X
+        return self.pca.transform(self.scaler.transform(X))
+
+    def fit(self, X_train, y_train_dict, X_val=None, y_val_dict=None, feature_names=None):
+        # ``X_val`` / ``y_val_dict`` are accepted for signature parity with the
+        # gradient-trained models but unused — TabPFN is in-context (no early stop).
+        self._feature_names = feature_names
+        X_in = self._fit_transform(np.asarray(X_train))
+        self._models = {}
+        for name in self.target_names:
+            reg = self._new_regressor()
+            reg.fit(X_in, np.asarray(y_train_dict[name]))
+            self._models[name] = reg
+
+    def predict(self, X, non_negative_targets: set[str] | None = None):
+        """Per-target predictions, clamping the non-negative subset to >= 0.
+
+        ``non_negative_targets`` mirrors the kwarg on the other multi-target
+        models; when omitted it falls back to ``self.non_negative_targets`` (set at
+        construction / restored by ``load``), which defaults to "clamp every head".
+        """
+        X_in = self._transform(np.asarray(X))
+        clamp_set = (
+            self.non_negative_targets if non_negative_targets is None else non_negative_targets
+        )
+        preds = {}
+        for name, model in self._models.items():
+            pred = np.asarray(model.predict(X_in))
+            if name in clamp_set:
+                pred = np.maximum(pred, 0)
+            preds[name] = pred
+        return preds
+
+    def get_feature_importance(self, feature_names):
+        # TabPFN exposes no native per-feature importance; callers that print
+        # importances (Ridge/LGBM) skip an empty dict.
+        return {}
+
+    def save(self, model_dir):
+        tabpfn_dir = f"{model_dir}/tabpfn"
+        os.makedirs(tabpfn_dir, exist_ok=True)
+        for name, model in self._models.items():
+            joblib.dump(model, f"{tabpfn_dir}/{name}.pkl")
+        if self.scaler is not None:
+            joblib.dump(self.scaler, f"{tabpfn_dir}/scaler.pkl")
+        if self.pca is not None:
+            joblib.dump(self.pca, f"{tabpfn_dir}/pca.pkl")
+        meta = {
+            "target_names": self.target_names,
+            "device": self.device,
+            "n_estimators": self.n_estimators,
+            "ignore_pretraining_limits": self.ignore_pretraining_limits,
+            "pca_n_components": self.pca_n_components,
+            "seed": self.seed,
+            "non_negative_targets": sorted(self.non_negative_targets),
+        }
+        if self._feature_names is not None:
+            meta["feature_names"] = list(self._feature_names)
+        with open(f"{tabpfn_dir}/meta.json", "w") as f:
+            json.dump(meta, f)
+
+    def load(self, model_dir):
+        tabpfn_dir = f"{model_dir}/tabpfn"
+        with open(f"{tabpfn_dir}/meta.json") as f:
+            meta = json.load(f)
+        self.target_names = meta["target_names"]
+        self.device = meta.get("device", "auto")
+        self.n_estimators = meta.get("n_estimators", 8)
+        self.ignore_pretraining_limits = meta.get("ignore_pretraining_limits", False)
+        self.pca_n_components = meta.get("pca_n_components")
+        self.seed = meta.get("seed", 42)
+        self._feature_names = meta.get("feature_names")
+        if "non_negative_targets" in meta:
+            self.non_negative_targets = set(meta["non_negative_targets"])
+        scaler_path = f"{tabpfn_dir}/scaler.pkl"
+        pca_path = f"{tabpfn_dir}/pca.pkl"
+        self.scaler = joblib.load(scaler_path) if os.path.exists(scaler_path) else None
+        self.pca = joblib.load(pca_path) if os.path.exists(pca_path) else None
+        self._models = {name: joblib.load(f"{tabpfn_dir}/{name}.pkl") for name in self.target_names}
