@@ -412,6 +412,16 @@ def _apply_position_models(train, val, test, pos, results):
                     if opp_attn_kind == "offense":
                         weekly_cache_path = f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
                         opp_source_df = pd.read_parquet(weekly_cache_path)
+                        # Match training (src/shared/pipeline.py): the raw weekly
+                        # cache carries postseason rows; the "defense" concat below
+                        # is already REG-only (built from REG splits). Drop playoff
+                        # rows so the opp-offense per-game aggregates align with the
+                        # REG-only training path (#424). Guarded for frames missing
+                        # the column (synthetic test caches).
+                        if "season_type" in opp_source_df.columns:
+                            opp_source_df = opp_source_df[
+                                opp_source_df["season_type"] == "REG"
+                            ].copy()
                     else:
                         opp_source_df = pd.concat([train, val, test], ignore_index=True)
                     opp_per_game = builder(opp_source_df)

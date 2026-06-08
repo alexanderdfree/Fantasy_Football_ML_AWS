@@ -620,6 +620,14 @@ class _MultiTargetLinear:
             if os.path.isdir(target_dir):
                 shutil.rmtree(target_dir)
             model.save(target_dir)
+        # Persist the per-head non-negative set so a reload (serving / smoke
+        # test) honors a position's clamp choice instead of reverting to the
+        # constructor default (``None`` -> clamp every head). predict() reads
+        # ``self.non_negative_targets``, so without this a position that opts a
+        # signed head out of the clamp would have it silently zero-clamped at
+        # inference. Sets aren't JSON-serializable; store a sorted list.
+        with open(f"{model_dir}/non_negative_targets.json", "w") as f:
+            json.dump({"non_negative_targets": sorted(self.non_negative_targets)}, f)
 
     def load(self, model_dir: str) -> None:
         for name in self.target_names:
@@ -637,6 +645,13 @@ class _MultiTargetLinear:
             else:
                 self._models[name] = self._default_estimator()
             self._models[name].load(target_dir)
+        # Restore the per-head non-negative set written by save(). Older
+        # artifacts predate the sidecar — fall back to the constructor default
+        # already set in __init__ (clamp every head), preserving prior behavior.
+        nn_path = f"{model_dir}/non_negative_targets.json"
+        if os.path.exists(nn_path):
+            with open(nn_path) as f:
+                self.non_negative_targets = set(json.load(f)["non_negative_targets"])
 
 
 class RidgeMultiTarget(_MultiTargetLinear):
@@ -745,8 +760,16 @@ class LightGBMMultiTarget:
         objective="huber",
         seed=42,
         n_jobs=None,
+        non_negative_targets: set | None = None,
     ):
         self.target_names = target_names
+        # Which heads clamp to >= 0. Default (``None``) clamps every head — the
+        # long-standing behavior. Stored so ``save``/``load`` can round-trip it
+        # and ``predict`` can fall back to it when the caller omits the kwarg
+        # (mirrors ``RidgeMultiTarget.non_negative_targets``).
+        self.non_negative_targets = (
+            set(target_names) if non_negative_targets is None else non_negative_targets
+        )
         self._params = dict(
             n_estimators=n_estimators,
             learning_rate=learning_rate,
@@ -795,11 +818,12 @@ class LightGBMMultiTarget:
         """Return per-target predictions, clamping the non-negative subset to >= 0.
 
         ``non_negative_targets`` mirrors the kwarg on ``RidgeMultiTarget.predict``
-        / ``ElasticNetMultiTarget.predict``. Default ``None`` preserves the
-        long-standing behavior of clamping every target (kicker miss counts,
-        DST sacks, etc. can't physically be negative). Pass an explicit set
-        to opt a position with a signed head (e.g. a future bonus that can
-        go negative) out of the blanket clamp without flipping it globally.
+        / ``ElasticNetMultiTarget.predict``. When omitted (``None``) it falls
+        back to ``self.non_negative_targets`` (set at construction / restored by
+        ``load``), which itself defaults to "clamp every target" — preserving the
+        long-standing behavior for callers that never set it. Pass an explicit
+        set to opt a position with a signed head (e.g. a future bonus that can go
+        negative) out of the blanket clamp without flipping it globally.
         """
         # Always wrap X in a DataFrame with whatever names fit saw so sklearn
         # doesn't warn. lightgbm auto-assigns "Column_i" names during a numpy
@@ -811,7 +835,9 @@ class LightGBMMultiTarget:
         else:
             first = next(iter(self._models.values()))
             X_in = pd.DataFrame(X, columns=getattr(first, "feature_names_in_", None))
-        clamp_set = set(self.target_names) if non_negative_targets is None else non_negative_targets
+        clamp_set = (
+            self.non_negative_targets if non_negative_targets is None else non_negative_targets
+        )
         preds = {}
         for name, model in self._models.items():
             pred = model.predict(X_in)
@@ -833,7 +859,13 @@ class LightGBMMultiTarget:
         os.makedirs(lgb_dir, exist_ok=True)
         for name, model in self._models.items():
             joblib.dump(model, f"{lgb_dir}/{name}.pkl")
-        meta = {"target_names": self.target_names, "params": self._params}
+        meta = {
+            "target_names": self.target_names,
+            "params": self._params,
+            # Round-trip the per-head clamp set so a reload honors it (serving
+            # calls predict() without the kwarg). Sets aren't JSON-serializable.
+            "non_negative_targets": sorted(self.non_negative_targets),
+        }
         if self._feature_names is not None:
             meta["feature_names"] = list(self._feature_names)
         with open(f"{lgb_dir}/meta.json", "w") as f:
@@ -845,6 +877,10 @@ class LightGBMMultiTarget:
             meta = json.load(f)
         self.target_names = meta["target_names"]
         self._feature_names = meta.get("feature_names")
+        # Older artifacts predate the meta key — fall back to the constructor
+        # default already set in __init__ (clamp every head).
+        if "non_negative_targets" in meta:
+            self.non_negative_targets = set(meta["non_negative_targets"])
         self._models = {}
         for name in self.target_names:
             self._models[name] = joblib.load(f"{lgb_dir}/{name}.pkl")

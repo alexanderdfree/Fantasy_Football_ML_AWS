@@ -173,6 +173,37 @@ class TestElasticNetMultiTarget:
         for t in TARGETS:
             np.testing.assert_allclose(loaded_preds[t], preds[t], rtol=1e-6)
 
+    def test_non_negative_targets_survive_save_load(self, multi_target_data, tmp_path):
+        """A per-head non-negative subset must round-trip through save/load.
+
+        Regression for audit #393: ``save`` previously dropped
+        ``non_negative_targets``, so a reload (serving / smoke test) constructed
+        with the default ``None`` and reverted to clamping *every* head — silently
+        zero-clamping a head a position opted out of. The loaded model must honor
+        the persisted subset, not the constructor default.
+        """
+        X, y_dict = multi_target_data
+        subset = {"rushing_yards"}  # deliberately excludes receiving_yards / rushing_tds
+        model = ElasticNetMultiTarget(
+            target_names=TARGETS,
+            alpha={t: 0.3 for t in TARGETS},
+            l1_ratio={t: 0.4 for t in TARGETS},
+            non_negative_targets=subset,
+        )
+        model.fit(X, y_dict)
+        model.save(str(tmp_path))
+
+        # Reload with the default constructor (no non_negative_targets) — the
+        # exact serving/smoke-test pattern. Without the fix this would be the
+        # clamp-all default ``set(TARGETS)``.
+        loaded = ElasticNetMultiTarget(
+            target_names=TARGETS,
+            alpha={t: 0.0 for t in TARGETS},
+            l1_ratio={t: 0.0 for t in TARGETS},
+        )
+        loaded.load(str(tmp_path))
+        assert loaded.non_negative_targets == subset
+
     def test_missing_alpha_raises(self):
         with pytest.raises(ValueError, match="alpha dict missing keys"):
             ElasticNetMultiTarget(

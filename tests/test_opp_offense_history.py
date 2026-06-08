@@ -131,6 +131,39 @@ class TestBuildOppOffensePerGameDf:
         # 2 players × (0.25 + 0.5 + 0.5) = 2.5 per team-week.
         assert (out["off_fumbles_lost"] == 2.5).all()
 
+    def test_offense_read_must_drop_postseason_rows(self, tmp_path):
+        """Audit #424: the raw weekly cache the DST opp-offense branch reads
+        carries postseason rows (it is written unfiltered by
+        ``src/data/loader.py``), unlike every other REG-only signal. The
+        pipeline / serving read now applies the same ``season_type == "REG"``
+        filter ``_read_split`` uses before aggregating. This pins that contract:
+        a POST game must not inflate the opp-offense per-game aggregate.
+        """
+        df = _synthetic_offense_df(weeks=(1, 2))
+        # Append a postseason row for team X, week 1 (overlapping REG week number,
+        # exactly the case that silently double-counts without a season_type
+        # filter). REG rows have season_type REG.
+        df["season_type"] = "REG"
+        post = df[(df["recent_team"] == "X") & (df["week"] == 1)].copy()
+        post["season_type"] = "POST"
+        post["passing_yards"] = 999.0  # detectable inflation if it leaks through
+        weekly = pd.concat([df, post], ignore_index=True)
+
+        cache = tmp_path / "weekly.parquet"
+        weekly.to_parquet(cache)
+
+        # Replicate the pipeline/serving read seam (src/shared/pipeline.py,
+        # src/serving/core.py): read, then drop non-REG rows before aggregation.
+        read = pd.read_parquet(cache)
+        if "season_type" in read.columns:
+            read = read[read["season_type"] == "REG"].copy()
+
+        out = build_opp_offense_per_game_df(read).sort_values(["opponent_team", "season", "week"])
+        # Team X week 1 reflects only the two REG players (2 × 150 = 300), NOT
+        # the 999-yard POST row — proving the postseason game was excluded.
+        x_w1 = out[(out["opponent_team"] == "X") & (out["week"] == 1)]
+        assert (x_w1["off_pass_yards"] == 300.0).all()
+
 
 @pytest.mark.unit
 class TestDispatchTable:
