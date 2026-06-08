@@ -1,0 +1,181 @@
+{
+  "run_id": "2026-06-08T02:41:49_e65f845",
+  "timestamp": "2026-06-08T02:41:49",
+  "git_hash": "e65f845",
+  "note": "Batch Spot auto-run (e65f845)",
+  "backend": "batch",
+  "instance_type": "g6.xlarge (L4, Spot, CUDA-graph)",
+  "positions": [
+    "QB"
+  ],
+  "results": [
+    {
+      "position": "QB",
+      "ridge_mae": 6.118,
+      "ridge_r2": 0.347,
+      "nn_mae": 5.954,
+      "nn_r2": 0.357,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "passing_yards": {
+          "mae": 62.516,
+          "r2": 0.437,
+          "rmse": 78.325
+        },
+        "rushing_yards": {
+          "mae": 11.784,
+          "r2": 0.211,
+          "rmse": 15.636
+        },
+        "passing_tds": {
+          "mae": 0.813,
+          "r2": 0.234,
+          "rmse": 1.03
+        },
+        "rushing_tds": {
+          "mae": 0.266,
+          "r2": 0.071,
+          "rmse": 0.427
+        },
+        "interceptions": {
+          "mae": 0.63,
+          "r2": 0.005,
+          "rmse": 0.779
+        },
+        "fumbles_lost": {
+          "mae": 0.272,
+          "r2": 0.004,
+          "rmse": 0.404
+        }
+      },
+      "ridge_per_target": {
+        "passing_yards": {
+          "mae": 63.406,
+          "r2": 0.433,
+          "rmse": 78.609
+        },
+        "rushing_yards": {
+          "mae": 12.026,
+          "r2": 0.205,
+          "rmse": 15.694
+        },
+        "passing_tds": {
+          "mae": 0.832,
+          "r2": 0.227,
+          "rmse": 1.035
+        },
+        "rushing_tds": {
+          "mae": 0.266,
+          "r2": 0.045,
+          "rmse": 0.433
+        },
+        "interceptions": {
+          "mae": 0.619,
+          "r2": 0.035,
+          "rmse": 0.768
+        },
+        "fumbles_lost": {
+          "mae": 0.287,
+          "r2": -0.002,
+          "rmse": 0.405
+        }
+      },
+      "ridge_top12": 0.532,
+      "nn_top12": 0.532,
+      "ridge_rmse": 7.496,
+      "nn_rmse": 7.438,
+      "attn_nn_mae": 5.963,
+      "attn_nn_r2": 0.361,
+      "attn_nn_rmse": 7.416,
+      "attn_nn_per_target": {
+        "passing_yards": {
+          "mae": 61.174,
+          "r2": 0.44,
+          "rmse": 78.112
+        },
+        "rushing_yards": {
+          "mae": 11.112,
+          "r2": 0.262,
+          "rmse": 15.127
+        },
+        "passing_tds": {
+          "mae": 0.813,
+          "r2": 0.206,
+          "rmse": 1.049
+        },
+        "rushing_tds": {
+          "mae": 0.258,
+          "r2": 0.091,
+          "rmse": 0.423
+        },
+        "interceptions": {
+          "mae": 0.601,
+          "r2": 0.053,
+          "rmse": 0.76
+        },
+        "fumbles_lost": {
+          "mae": 0.28,
+          "r2": -0.049,
+          "rmse": 0.414
+        }
+      },
+      "attn_nn_top12": 0.514,
+      "lgbm_mae": 5.899,
+      "lgbm_r2": 0.378,
+      "lgbm_rmse": 7.314,
+      "lgbm_per_target": {
+        "passing_yards": {
+          "mae": 60.786,
+          "r2": 0.47,
+          "rmse": 75.993
+        },
+        "rushing_yards": {
+          "mae": 11.751,
+          "r2": 0.224,
+          "rmse": 15.512
+        },
+        "passing_tds": {
+          "mae": 0.817,
+          "r2": 0.251,
+          "rmse": 1.019
+        },
+        "rushing_tds": {
+          "mae": 0.26,
+          "r2": 0.067,
+          "rmse": 0.428
+        },
+        "interceptions": {
+          "mae": 0.632,
+          "r2": 0.031,
+          "rmse": 0.769
+        },
+        "fumbles_lost": {
+          "mae": 0.295,
+          "r2": -0.009,
+          "rmse": 0.406
+        }
+      },
+      "lgbm_top12": 0.514,
+      "elapsed_sec": 50.6,
+      "phase_seconds": {
+        "assert_gpu": 0.3,
+        "sync_raw_data": 1.7,
+        "download_data": 0.3,
+        "read_parquets": 0.6,
+        "run_pipeline": 47.0,
+        "copy_artifacts": 0.0,
+        "pipeline.prepare_data": 8.9,
+        "pipeline.ridge_tune": 4.3,
+        "pipeline.ridge_fit": 0.1,
+        "pipeline.lgbm_train": 3.2,
+        "pipeline.nn_train": 27.9,
+        "pipeline.attn_nn_train": 5.4,
+        "pipeline.train_models_total": 33.3,
+        "pipeline.backtest": 0.4,
+        "pipeline.save_artifacts": 0.0,
+        "pipeline.figures": 3.9
+      }
+    }
+  ],
+  "pr_number": 1042
+}
