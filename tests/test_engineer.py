@@ -415,10 +415,10 @@ def test_inheritance_features_next_man_up():
 
 
 def test_inheritance_ir_roster_status_out_set():
-    """#1106 finding A: a starter lost to IR is absent from BOTH the weekly frame and the injury
-    report, so the vacancy is invisible unless rosters ``status == "RES"`` is folded into the
-    out-set. With ``rosters_df`` the next man up inherits the IR'd starter's role; without it (or
-    for a non-RES status) inheritance stays 0."""
+    """#1106: a starter lost to IR (or scratched on game day) is absent from BOTH the weekly frame
+    and the injury report, so the vacancy is invisible unless rosters ``status`` in {"RES", "INA"}
+    is folded into the out-set. With ``rosters_df`` the next man up inherits the out starter's role
+    (for RES and INA); a truly-active status stays 0; without ``rosters_df`` it stays 0."""
     from src.features.engineer import _build_inheritance_features
 
     rows = []
@@ -463,7 +463,12 @@ def test_inheritance_ir_roster_status_out_set():
     g0 = _build_inheritance_features(df, None).set_index(["player_id", "week"])
     assert g0.loc[("B", 3), "inherited_opportunity"] == 0.0
 
-    # A non-RES roster status (e.g. game-day INA) is deliberately excluded by this change.
+    # Game-day INA is also folded in (leakage-audited pre-kickoff inactives list).
     ina = rosters.assign(status="INA")
     g1 = _build_inheritance_features(df, None, rosters_df=ina).set_index(["player_id", "week"])
-    assert g1.loc[("B", 3), "inherited_opportunity"] == 0.0
+    assert g1.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
+
+    # A truly-active status is still excluded.
+    act = rosters.assign(status="ACT")
+    g2 = _build_inheritance_features(df, None, rosters_df=act).set_index(["player_id", "week"])
+    assert g2.loc[("B", 3), "inherited_opportunity"] == 0.0
