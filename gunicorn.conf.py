@@ -64,22 +64,26 @@ def on_starting(server):
     else:
         print("[model_sync] in-flight refresh poller disabled (FF_MODEL_REFRESH_INTERVAL_S=0)")
 
-    # Start the upcoming-week projections poller: ESPN live slate -> build_features
-    # -> inference -> data/serving_cache/upcoming_week.json. One builder in the
-    # master (like the model poller) writes the shared artifact; all workers serve
-    # it off disk. Its first iteration primes the artifact (refresh-then-wait)
-    # while workers return 503 "warming". Heavy build, so a long default interval
-    # (3h, FF_UPCOMING_REFRESH_INTERVAL_S); self-disables at 0. Wrapped so a
-    # startup hiccup here never blocks the model path or worker boot.
+    # Upcoming-week projections: the artifact is built OUT of serving (a scheduled
+    # CI job) and uploaded to S3 — running the full data+feature build in this
+    # 2-worker task OOM'd it. Here we only DOWNLOAD it at boot and re-pull it
+    # periodically (a cheap S3 GET) so a fresh CI build appears without a redeploy.
+    # Wrapped so a startup hiccup never blocks the model path or worker boot.
     try:
-        from src.serving.upcoming_week import start_upcoming_week_poller
+        from src.serving.upcoming_week import (
+            start_artifact_download_poller,
+            sync_artifact_from_s3,
+        )
 
-        if start_upcoming_week_poller() is not None:
-            print("[upcoming_week] projections poller started")
+        sync_artifact_from_s3()  # prime from the last CI build (503 "warming" if absent)
+        if start_artifact_download_poller() is not None:
+            print("[upcoming_week] artifact download poller started")
         else:
-            print("[upcoming_week] projections poller disabled (FF_UPCOMING_REFRESH_INTERVAL_S=0)")
-    except Exception as e:  # noqa: BLE001 — never block boot on the upcoming-week poller
-        print(f"[upcoming_week] poller start failed: {e!r}")
+            print(
+                "[upcoming_week] artifact download poller disabled (FF_UPCOMING_SYNC_INTERVAL_S=0)"
+            )
+    except Exception as e:  # noqa: BLE001 — never block boot on the upcoming-week sync
+        print(f"[upcoming_week] artifact sync setup failed: {e!r}")
 
 
 def post_fork(server, worker):

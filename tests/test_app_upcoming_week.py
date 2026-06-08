@@ -220,6 +220,26 @@ def test_read_cached_artifact_missing_returns_none(monkeypatch, tmp_path):
     assert upcoming_week.read_cached_artifact() is None
 
 
+@pytest.mark.unit
+def test_s3_artifact_key_under_predictions_cache(monkeypatch):
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "models")
+    assert upcoming_week._s3_artifact_key() == "models/predictions_cache/upcoming_week.json"
+
+
+@pytest.mark.unit
+def test_s3_sync_and_upload_noop_without_bucket(monkeypatch, tmp_path):
+    # No FF_MODEL_S3_BUCKET → both are best-effort no-ops (False), no boto3 call.
+    monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
+    monkeypatch.setattr(upcoming_week.core, "_PREDICTIONS_CACHE_DIR", str(tmp_path))
+    assert upcoming_week.sync_artifact_from_s3() is False
+    assert upcoming_week.upload_artifact_to_s3() is False
+
+
+@pytest.mark.unit
+def test_download_poller_disabled_at_zero_interval():
+    assert upcoming_week.start_artifact_download_poller(interval_s=0) is None
+
+
 @pytest.mark.integration
 def test_route_503_when_artifact_absent(client):
     """No primed artifact (fresh tmp cache dir) -> 503 warming."""

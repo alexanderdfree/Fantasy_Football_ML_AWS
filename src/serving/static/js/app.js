@@ -42,6 +42,24 @@ function fmt(n, d = 1) {
     return (n == null || isNaN(n)) ? "--" : Number(n).toFixed(d);
 }
 
+// Request a small, face-cropped headshot instead of the full-size source image.
+// The source photos are huge (NFL Cloudinary ~318KB, ESPN ~234KB) and the
+// browser downloads them in full only to shrink to 32–64px; both CDNs can serve
+// a sized variant (~90×/25× smaller), so resize at the URL for a much faster load.
+function sizedHeadshot(url, size) {
+    if (!url) return url;
+    // nflverse → NFL Cloudinary: insert a width/height/face-crop transform.
+    if (url.indexOf("static.www.nfl.com/image/") !== -1 && url.indexOf("/f_auto,q_auto/") !== -1) {
+        return url.replace("/f_auto,q_auto/", `/f_auto,q_auto,w_${size},h_${size},c_fill,g_face/`);
+    }
+    // ESPN full-size headshot → route through the resizing combiner.
+    const m = url.match(/^https:\/\/a\.espncdn\.com(\/i\/headshots\/.+\.png)$/);
+    if (m) {
+        return `https://a.espncdn.com/combiner/i?img=${m[1]}&w=${size}&h=${size}`;
+    }
+    return url;
+}
+
 // Chart.js defaults
 Chart.defaults.color = "#9aa0b0";
 Chart.defaults.borderColor = "#2e3347";
@@ -629,9 +647,13 @@ function renderTable() {
         const lgbmDelta = delta(p.lgbm_pred);
         const cls = (d) => d != null ? deltaClass(d) : "delta-neutral";
 
-        const headshot = p.headshot
-            ? `<img class="player-headshot" src="${escapeHtml(p.headshot)}" alt="" loading="lazy">`
-            : `<div class="player-headshot"></div>`;
+        // D/ST is a team unit with no player photo — drop the avatar entirely
+        // (it otherwise renders an empty placeholder circle).
+        const headshot = p.position === "DST"
+            ? ""
+            : p.headshot
+                ? `<img class="player-headshot" src="${escapeHtml(sizedHeadshot(p.headshot, 400))}" alt="" loading="lazy" decoding="async">`
+                : `<div class="player-headshot"></div>`;
 
         // Main row is followed by a hidden detail row (the per-stat breakdown,
         // fetched lazily on first expand). The caret toggles the breakdown;
@@ -1029,7 +1051,7 @@ async function openPlayerModal(playerId) {
 
         const img = document.getElementById("modal-headshot");
         if (data.headshot) {
-            img.src = data.headshot;
+            img.src = sizedHeadshot(data.headshot, 400);
             img.alt = data.name;
             img.style.display = "block";
         } else {

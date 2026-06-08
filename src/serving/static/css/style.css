@@ -486,10 +486,11 @@ tbody tr:last-child td {
 }
 
 .player-headshot {
-    width: 32px;
-    height: 32px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
-    background: var(--bg-primary);
+    /* Slightly lighter than the page bg so the (often dark-jersey) cutout pops. */
+    background: var(--bg-hover);
     object-fit: cover;
     flex-shrink: 0;
 }
@@ -709,10 +710,10 @@ tbody tr:last-child td {
 }
 
 .modal-headshot {
-    width: 64px;
-    height: 64px;
+    width: 88px;
+    height: 88px;
     border-radius: 50%;
-    background: var(--bg-primary);
+    background: var(--bg-hover);
     object-fit: cover;
 }
 
@@ -780,7 +781,7 @@ tbody tr:last-child td {
     thead th { padding: 10px 10px; }
     tbody td { padding: 9px 10px; font-size: 13px; }
     .col-player { min-width: 150px; }
-    .player-headshot { width: 26px; height: 26px; }
+    .player-headshot { width: 32px; height: 32px; }
 
     /* Modal: use nearly the full viewport and a slightly shorter chart. */
     .modal-content { width: 95%; padding: 20px 16px; max-height: 90vh; }

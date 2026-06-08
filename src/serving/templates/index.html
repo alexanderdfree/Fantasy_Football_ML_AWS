@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fantasy Football Predictor</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <!-- Warm the player-headshot CDNs (NFL Cloudinary + ESPN) so the first photo
+         fetch skips the cold DNS+TLS handshake. -->
+    <link rel="preconnect" href="https://static.www.nfl.com" crossorigin>
+    <link rel="preconnect" href="https://a.espncdn.com" crossorigin>
+    <link rel="dns-prefetch" href="https://static.www.nfl.com">
+    <link rel="dns-prefetch" href="https://a.espncdn.com">
     <link rel="stylesheet" href="/static/css/style.css">
     <!-- Self-hosted (was cdn.jsdelivr.net/npm/chart.js@4.4.0). A blocked CDN
          left `Chart` undefined, and app.js references it at init, so the whole
@@ -572,7 +578,7 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
         <div class="modal-content">
             <button class="modal-close" id="modal-close">&times;</button>
             <div class="modal-header">
-                <img id="modal-headshot" class="modal-headshot" alt="" loading="lazy">
+                <img id="modal-headshot" class="modal-headshot" alt="" loading="lazy" decoding="async">
                 <div>
                     <h2 id="modal-name"></h2>
                     <span id="modal-pos-team" class="modal-pos-team"></span>
