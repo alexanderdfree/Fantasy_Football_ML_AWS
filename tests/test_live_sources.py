@@ -30,6 +30,17 @@ def test_nflverse_practice_map_encodes_worst_per_player_and_filters_week(monkeyp
 
 
 @pytest.mark.unit
+def test_nflverse_practice_map_empty_when_source_raises(monkeypatch):
+    # Live offseason behavior: nflverse rejects a future season
+    # ("Season must be between 2009 and 2025"); the except must swallow it → {}.
+    def _boom(seasons):
+        raise ValueError("Season must be between 2009 and 2025")
+
+    monkeypatch.setattr(live_sources.nfl_source, "injuries", _boom)
+    assert live_sources._nflverse_practice_map(2026, 1) == {}
+
+
+@pytest.mark.unit
 def test_parse_sleeper_practice_maps_known_skips_unknown_and_missing_gsis():
     payload = {
         "1": {"gsis_id": "A", "practice_participation": "Limited"},
