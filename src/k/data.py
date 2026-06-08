@@ -345,6 +345,13 @@ def load_data() -> pd.DataFrame:
             "surface",
             "is_dome",
             "fg_yards_made",
+            # Missed-distance buckets ``compute_features`` sums for
+            # ``_long_fg_att`` (40+ proportion). The 2025+ weekly feed may lack
+            # them; NaN-init here so the column exists and fillna(0)s like the
+            # other initialized buckets rather than KeyError-ing. (#391)
+            "fg_missed_40_49",
+            "fg_missed_50_59",
+            "fg_missed_60_",
         ]:
             if col not in k_weekly.columns:
                 k_weekly[col] = float("nan")
@@ -633,7 +640,7 @@ def _cached_kick_pbp_is_current(cache_path: str) -> bool:
 
 def reconstruct_kicker_kicks_from_pbp(
     seasons: list[int],
-    cache_dir: str = CACHE_DIR,
+    cache_dir: str | None = None,
 ) -> pd.DataFrame:
     """Extract individual FG + XP records from play-by-play data.
 
@@ -647,6 +654,11 @@ def reconstruct_kicker_kicks_from_pbp(
     consumers can sort kicks within a game and apply deterministic
     most-recent truncation.
     """
+    # Resolve at call time so module-level monkeypatches of CACHE_DIR take
+    # effect (mirrors reconstruct_kicker_weekly_from_pbp; a ``cache_dir: str =
+    # CACHE_DIR`` default would freeze the value at function-definition time).
+    if cache_dir is None:
+        cache_dir = CACHE_DIR
     if not seasons:
         return pd.DataFrame(columns=_KICKS_SCHEMA)
 

@@ -316,13 +316,18 @@ def test_comparison_includes_live_model_reliability(app_module, synthetic_cache,
 
 
 @pytest.mark.integration
-def test_comparison_scoring_param_passthrough(app_module, synthetic_cache, monkeypatch):
+def test_comparison_scoring_pinned_to_ppr(app_module, synthetic_cache, monkeypatch):
+    # The committed expert columns are baked PPR-only, so /api/comparison ignores
+    # any ?scoring= and always scores the model block at — and echoes — ppr
+    # (audit #653). The frontend only ever requests it with no scoring param.
     monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
     app_module._cache.update(synthetic_cache)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
-        assert c.get("/api/comparison?scoring=half_ppr").get_json()["scoring"] == "half_ppr"
-        # Unknown scoring silently falls back to ppr (matches other endpoints).
+        assert c.get("/api/comparison").get_json()["scoring"] == "ppr"
+        # A non-ppr request arg is ignored — the response stays ppr so the model
+        # block and the PPR-only experts compare apples-to-apples.
+        assert c.get("/api/comparison?scoring=half_ppr").get_json()["scoring"] == "ppr"
         assert c.get("/api/comparison?scoring=bogus").get_json()["scoring"] == "ppr"
 
 

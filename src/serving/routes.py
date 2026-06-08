@@ -599,7 +599,14 @@ def api_comparison():
     """Our model (live) vs NFL.com / RotoWire (static), by position, for two
     subsets (all rostered players + top-30 per position). MAE/RMSE/R² each.
     """
-    scoring = _validate_scoring(request.args.get("scoring", "ppr"))
+    # The committed expert columns (``comparison_experts.json`` via
+    # ``build_comparison_summary.SCORING_FORMAT="ppr"``) are baked PPR-only, so
+    # honoring a non-ppr ``?scoring=`` here would re-score the model block at X
+    # while the experts stay at PPR — an apples-to-oranges table. The frontend
+    # only ever fetches /api/comparison with no scoring param (defaults ppr), so
+    # pin the endpoint to ppr for both the model block and the echoed value;
+    # ignore the request arg. (audit #653)
+    scoring = "ppr"
     experts = comparison._load_comparison_experts()
     if experts is None:
         return jsonify({"error": "Comparison data unavailable"}), 500
