@@ -645,6 +645,30 @@ def test_reconstruct_kicks_pbp_skips_failing_seasons(tmp_path, monkeypatch, caps
     assert "per-kick PBP extraction failed" in capsys.readouterr().out
 
 
+@pytest.mark.unit
+def test_reconstruct_kicks_pbp_partial_failure_raises(tmp_path, monkeypatch):
+    """If only SOME seasons fail, the per-kick builder must FAIL LOUD rather
+    than return the partial survivors. Returning partial kick history would
+    feed K's attention NN empty inner-pool tensors for the failed season(s)
+    with no exception or degraded-health sentinel — a poisoned kick history is
+    worse than a loud failure (#726). The partial cache must NOT be written.
+    """
+    import src.k.data as k_data
+
+    def _selective(seasons, cols):
+        yr = seasons[0]
+        if yr == 2021:
+            raise RuntimeError("upstream 502 for 2021")
+        return _synthetic_pbp(yr)
+
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _selective)
+
+    with pytest.raises(RuntimeError, match="2021"):
+        k_data.reconstruct_kicker_kicks_from_pbp([2020, 2021], cache_dir=str(tmp_path))
+    # No poisoned partial cache.
+    assert not (tmp_path / "kicker_kicks_pbp_2020_2021.parquet").exists()
+
+
 # --------------------------------------------------------------------------
 # Tests — load_data (cache-hit shortcut path only; the full PBP path
 # is exercised by reconstruct_* tests above).
@@ -1167,6 +1191,82 @@ def test_load_data_treats_empty_string_surface_as_missing(tmp_path, monkeypatch)
 
 
 @pytest.mark.unit
+def test_load_data_redrives_is_dome_when_schedule_corrects_empty_roof(tmp_path, monkeypatch):
+    """#473: if PBP returns an empty roof that the venue backfill maps to a
+    STALE ``is_dome=0`` (outdoors), and the schedules merge then corrects roof
+    to "dome", ``is_dome`` must be re-derived to 1. The pre-fix guard only fired
+    on ``is_dome.isna()`` and left the stale 0 untouched, misclassifying a dome
+    game as outdoor.
+    """
+    import src.k.data as k_data
+    from src.config import SEASONS
+
+    monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(k_data, "SEASONS", [2024, 2025])
+    monkeypatch.setattr(k_data, "MIN_GAMES", 1)
+
+    def _no_network(*args, **kwargs):
+        raise AssertionError("pbp_data must not be called when the cache hits")
+
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _no_network)
+
+    pd.DataFrame([_kicker_pbp_cache_row("K00", 2024, 1)]).to_parquet(
+        tmp_path / "kicker_pbp_2024_2024.parquet"
+    )
+
+    # 2025 weekly: roof initialised NaN (the load_data 2025 NaN-init), no surface.
+    weekly_path = tmp_path / f"weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    pd.DataFrame(
+        {
+            "player_id": ["K01"],
+            "player_name": ["Kicker 01"],
+            "recent_team": ["KC"],
+            "season": [2025],
+            "week": [1],
+            "position": ["K"],
+            "season_type": ["REG"],
+            "fg_att": [3.0],
+            "fg_made": [2.0],
+            "fg_missed": [1.0],
+            "pat_att": [3.0],
+            "pat_made": [3.0],
+            "pat_missed": [0.0],
+        }
+    ).to_parquet(weekly_path)
+
+    # Schedules say this KC game is a dome.
+    sched_path = tmp_path / f"schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    pd.DataFrame(
+        {
+            "season": [2024, 2025],
+            "week": [1, 1],
+            "home_team": ["KC", "KC"],
+            "away_team": ["BUF", "BUF"],
+            "spread_line": [-3.0, -3.0],
+            "total_line": [47.0, 47.0],
+            "game_type": ["REG", "REG"],
+            "roof": ["outdoors", "dome"],
+            "surface": ["grass", "matrixturf"],
+        }
+    ).to_parquet(sched_path)
+
+    # Stub the backfill to reproduce the stale state: empty-string roof + a
+    # stale is_dome=0 (as the venue backfill would compute from ""), exactly the
+    # case the schedules merge later corrects.
+    def _stub_stale_backfill(df, seasons):
+        m = df["season"].isin(seasons)
+        df.loc[m, "roof"] = ""
+        df.loc[m, "is_dome"] = 0
+
+    monkeypatch.setattr(k_data, "_backfill_2025_pbp_columns", _stub_stale_backfill)
+
+    df = k_data.load_data()
+    row = df[(df["season"] == 2025) & (df["player_id"] == "K01")].iloc[0]
+    assert row["roof"] == "dome"
+    assert row["is_dome"] == 1, "is_dome must be re-derived to 1 after roof corrected to dome"
+
+
+@pytest.mark.unit
 def test_load_kicker_kicks_with_stubbed_reconstruct(monkeypatch):
     """load_kicks delegates to ``reconstruct_kicker_kicks_from_pbp``;
     stub that out and verify the merge + is_home fill logic."""
@@ -1200,4 +1300,48 @@ def test_load_kicker_kicks_with_stubbed_reconstruct(monkeypatch):
     out = k_data.load_kicks(k_df)
     assert len(out) == 3
     assert "is_home" in out.columns
+    assert out["is_home"].isin([0, 1]).all()
+
+
+@pytest.mark.unit
+def test_load_kicks_conflicting_is_home_does_not_duplicate(monkeypatch):
+    """#541: if a (player_id, season, week) has two conflicting ``is_home``
+    values in the weekly frame, the home-lookup dedup must collapse to a single
+    row on the MERGE KEY so the left-merge stays 1-to-1 — otherwise every kick
+    of that game is duplicated into the attention NN's per-kick history tensor.
+    """
+    import src.k.data as k_data
+
+    # One kick for K01 in 2024 wk1.
+    stub_kicks = pd.DataFrame(
+        {
+            "player_id": ["K01"],
+            "season": [2024],
+            "week": [1],
+            "play_id": [101],
+            "is_fg": [1],
+            "is_xp": [0],
+            "kick_distance": [35.0],
+            "kick_made": [1],
+            "fg_prob": [0.85],
+            "is_q4": [0],
+            "score_diff": [-3.0],
+            "game_wind": [5.0],
+        }
+    )
+    monkeypatch.setattr(k_data, "reconstruct_kicker_kicks_from_pbp", lambda s: stub_kicks)
+
+    # Two k_df rows for the SAME (K01, 2024, 1) with conflicting is_home.
+    k_df = pd.DataFrame(
+        {
+            "player_id": ["K01", "K01"],
+            "season": [2024, 2024],
+            "week": [1, 1],
+            "is_home": [1, 0],
+        }
+    )
+    out = k_data.load_kicks(k_df)
+    # Exactly one kick row survives — the conflicting is_home pair did NOT
+    # duplicate the kick.
+    assert len(out) == 1
     assert out["is_home"].isin([0, 1]).all()

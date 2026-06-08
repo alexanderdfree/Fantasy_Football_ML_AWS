@@ -435,6 +435,7 @@ def load_data() -> pd.DataFrame:
     # PBP-derived value is NaN or "" — surface is occasionally an empty string
     # in PBP for games nflverse hasn't fully populated (e.g. 2025 KC@LAC wk 1).
     if has_venue:
+        roof_changed = pd.Series(False, index=k_df.index)
         for col in ("roof", "surface"):
             sched_col = f"{col}_sched"
             if sched_col not in k_df.columns:
@@ -442,12 +443,24 @@ def load_data() -> pd.DataFrame:
             if k_df[col].dtype != object:
                 k_df[col] = k_df[col].astype(object)
             empty_or_nan = k_df[col].isna() | (k_df[col] == "")
+            # Only the rows where the schedule value actually differs from the
+            # (empty/NaN) PBP value count as "changed" for is_dome re-derivation.
+            filled = empty_or_nan & k_df[sched_col].notna()
             k_df.loc[empty_or_nan, col] = k_df.loc[empty_or_nan, sched_col]
+            if col == "roof":
+                roof_changed = filled
         k_df.drop(columns=["roof_sched", "surface_sched"], inplace=True)
-        # Re-derive is_dome where roof is now populated but is_dome was missed.
+        # Re-derive is_dome from the (post-backfill) roof for both (a) rows where
+        # is_dome was never populated and (b) rows whose roof the schedule
+        # backfill just CHANGED. Case (b) matters because PBP can return an empty
+        # roof that the FG/venue backfill maps to is_dome=0 (outdoors); once the
+        # schedule corrects roof to "dome"/"closed", the stale is_dome=0 would
+        # otherwise misclassify a dome game as outdoor. Restricting to these two
+        # masks leaves rows whose is_dome already agrees with an unchanged roof
+        # untouched. (#473)
         if "is_dome" not in k_df.columns:
             k_df["is_dome"] = float("nan")
-        needs_redrv = k_df["is_dome"].isna() & k_df["roof"].notna()
+        needs_redrv = (k_df["is_dome"].isna() & k_df["roof"].notna()) | roof_changed
         k_df.loc[needs_redrv, "is_dome"] = (
             k_df.loc[needs_redrv, "roof"].isin(["dome", "closed"]).astype(int)
         )
@@ -745,15 +758,24 @@ def reconstruct_kicker_kicks_from_pbp(
     ).reset_index(drop=True)
 
     if skipped_seasons:
-        # Don't poison the combined cache key with a partial result — the next
-        # call would treat it as authoritative for the full range and silently
-        # serve kickers from the skipped season(s) with zero kick history.
-        # Mirrors the same guard in ``reconstruct_kicker_weekly_from_pbp``; the
-        # per-kick path was added later and originally cached unconditionally,
-        # so a transient nflverse 502 on one season permanently corrupted the
-        # attention NN's inner-pool inputs for that season.
-        print(f"  Skipped seasons {skipped_seasons}; not caching partial result to {cache_path}")
-        return result
+        # FAIL LOUD on a partial kick history. Not caching the partial frame
+        # (the prior guard) stops a poisoned cache from PERSISTING, but the
+        # current call still returned the partial frame — so the failed
+        # season(s) yielded zero kicks, ``build_nested_kick_history`` found no
+        # prior weeks for any ``(pid, failed_year)`` pair, and K's attention NN
+        # silently trained/served on empty inner-pool tensors with no exception
+        # and no degraded-health sentinel. A poisoned kick-history is worse than
+        # a loud failure: raise so the caller surfaces the degradation and can
+        # re-attempt once the upstream season recovers, rather than serving
+        # distorted predictions. Mirrors the fail-loud discipline in
+        # ``_backfill_2025_pbp_columns`` (the all-NaN fg_yards_made guard). (#726)
+        raise RuntimeError(
+            f"per-kick PBP extraction failed for seasons {skipped_seasons} of "
+            f"{seasons} — returning partial kick history would feed K's attention "
+            f"NN empty inner-pool tensors for the failed season(s) with no error. "
+            f"Not caching the partial result; check nfl_source PBP availability / "
+            f"schema and retry."
+        )
 
     os.makedirs(cache_dir, exist_ok=True)
     result.to_parquet(cache_path)
@@ -774,8 +796,22 @@ def load_kicks(k_df: pd.DataFrame) -> pd.DataFrame:
     valid_keys = k_df[["player_id", "season"]].drop_duplicates()
     kicks_df = kicks_df.merge(valid_keys, on=["player_id", "season"], how="inner")
 
-    home_lookup = k_df[["player_id", "season", "week", "is_home"]].drop_duplicates()
+    # Dedup on the MERGE KEY only — keeping ``is_home`` in the dedup subset would
+    # let a (player_id, season, week) with two conflicting ``is_home`` values
+    # survive as two rows, and the left-merge below would then duplicate every
+    # kick of that game into the attention NN's per-kick history tensor. Sort
+    # first so the single kept row is deterministic (highest ``is_home`` wins on
+    # a conflict, but conflicts shouldn't occur for a real schedule). (#541)
+    home_lookup = (
+        k_df[["player_id", "season", "week", "is_home"]]
+        .sort_values(["player_id", "season", "week", "is_home"], kind="stable")
+        .drop_duplicates(subset=["player_id", "season", "week"], keep="last")
+    )
+    n_before = len(kicks_df)
     kicks_df = kicks_df.merge(home_lookup, on=["player_id", "season", "week"], how="left")
+    # The lookup is now unique on the merge key, so the left-merge is 1-to-1 and
+    # cannot inflate the per-kick row count.
+    assert len(kicks_df) == n_before, "load_kicks is_home merge duplicated per-kick rows"
     kicks_df["is_home"] = kicks_df["is_home"].fillna(0).astype(int)
 
     return kicks_df
