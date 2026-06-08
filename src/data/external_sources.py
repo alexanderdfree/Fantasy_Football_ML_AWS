@@ -42,6 +42,7 @@ import pyarrow.parquet as pq
 
 from src.config import CACHE_DIR
 from src.data import nfl_source
+from src.data.cache_io import atomic_write_parquet
 
 # --- ff_opportunity (ffverse expected points) ------------------------------
 # Union of the expected-stat columns the skill positions wire into their
@@ -151,7 +152,7 @@ def load_ff_opportunity(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.Da
     # downstream left-merge can't fan out).
     out = df[cols].drop_duplicates(subset=["player_id", "season", "week"], keep="first")
     out = _coerce_merge_keys(out)
-    out.to_parquet(path)
+    atomic_write_parquet(out, path)
     return out
 
 
@@ -233,7 +234,7 @@ def load_qbr_weekly(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFr
         print(f"WARNING: QBR fetch failed ({e}); skipping")
         return pd.DataFrame(columns=keep)
     out = _coerce_merge_keys(bridge_qbr_to_gsis(raw, ids))
-    out.to_parquet(path)
+    atomic_write_parquet(out, path)
     return out
 
 
@@ -316,5 +317,5 @@ def load_contracts(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFra
         print(f"WARNING: contracts fetch failed ({e}); skipping")
         return pd.DataFrame(columns=["player_id", "season", *CONTRACT_FEATURE_COLUMNS])
     out = _coerce_merge_keys(derive_active_contracts(raw, list(seasons)))
-    out.to_parquet(path)
+    atomic_write_parquet(out, path)
     return out

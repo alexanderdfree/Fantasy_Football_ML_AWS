@@ -35,6 +35,7 @@ import pandas as pd
 
 from src.config import CACHE_DIR
 from src.data import nfl_source
+from src.data.cache_io import atomic_write_parquet
 
 NFLCOM_BASE = "https://raw.githubusercontent.com/hvpkod/NFL-Data/main/NFL-data-Players"
 NFLCOM_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K")
@@ -451,7 +452,7 @@ def load_nflcom_projections(
     # Sort for deterministic cache contents (parallel fetch returns rows in
     # nondeterministic order); makes diffs across re-fetches stable.
     df = df.sort_values(["season", "week", "position", "player_name"]).reset_index(drop=True)
-    df.to_parquet(cache_path)
+    atomic_write_parquet(df, cache_path)
     return df
 
 
@@ -638,5 +639,5 @@ def load_nflcom_with_gsis_id(
         )
 
     primary = primary.drop(columns=["norm_name"])
-    primary.to_parquet(cache_path)
+    atomic_write_parquet(primary, cache_path)
     return primary

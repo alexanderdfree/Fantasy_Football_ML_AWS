@@ -12,6 +12,7 @@ from src.config import (
     SEASONS,
 )
 from src.data import nfl_source
+from src.data.cache_io import atomic_write_parquet
 from src.data.external_sources import (
     CONTRACT_FEATURE_COLUMNS,
     FF_OPP_FEATURE_COLUMNS,
@@ -183,7 +184,7 @@ def load_team_week_stats(
         # in redzone_pbp / k.data). (#807)
         print(f"WARNING: team_stats partial coverage (skipped seasons {skipped}); not caching")
         return df
-    df.to_parquet(path)
+    atomic_write_parquet(df, path)
     return df
 
 
@@ -232,7 +233,7 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         # every season (previously ≤2024 used nfl_data_py and ≥2025 read the
         # stats_player parquet directly, with the rename inlined here).
         weekly = nfl_source.weekly_data(seasons)
-        weekly.to_parquet(weekly_path)
+        atomic_write_parquet(weekly, weekly_path)
         return weekly
 
     def _fetch_rosters():
@@ -244,14 +245,14 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         for col in rosters.columns:
             if rosters[col].dtype == object:
                 rosters[col] = rosters[col].astype(str)
-        rosters.to_parquet(rosters_path)
+        atomic_write_parquet(rosters, rosters_path)
         return rosters
 
     def _fetch_schedules():
         if os.path.exists(schedules_path):
             return pd.read_parquet(schedules_path)
         schedules = nfl_source.schedules(seasons)
-        schedules.to_parquet(schedules_path)
+        atomic_write_parquet(schedules, schedules_path)
         return schedules
 
     def _fetch_snap_counts():
@@ -259,14 +260,14 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
             return pd.read_parquet(snap_path)
         snap_seasons = [s for s in seasons if s >= 2012]
         snap_counts = nfl_source.snap_counts(snap_seasons) if snap_seasons else pd.DataFrame()
-        snap_counts.to_parquet(snap_path)
+        atomic_write_parquet(snap_counts, snap_path)
         return snap_counts
 
     def _fetch_injuries():
         if os.path.exists(injury_path):
             return pd.read_parquet(injury_path)
         injuries = nfl_source.injuries(seasons)
-        injuries.to_parquet(injury_path)
+        atomic_write_parquet(injuries, injury_path)
         return injuries
 
     def _fetch_depth(schedules):
@@ -317,7 +318,7 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
             except Exception as e:
                 print(f"WARNING: ESPN depth_charts fetch failed for {s} ({e}); skipping")
         depth = pd.concat(parts, ignore_index=True)
-        depth.to_parquet(depth_path)
+        atomic_write_parquet(depth, depth_path)
         return depth
 
     def _fetch_redzone():
