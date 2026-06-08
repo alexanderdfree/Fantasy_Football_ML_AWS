@@ -142,6 +142,14 @@ _INCLUDE_FEATURES = {
         # overprediction without reintroducing draft-capital pedigree features.
         *_ROOKIE_PHASE_FEATURES,
         *_CURRENT_ROLE_FEATURES,
+        # Role-inheritance (next-man-up): current-week vacancy when a higher-role QB is
+        # Out/Doubtful. Built in src.features.engineer._build_inheritance_features with the
+        # ff_opportunity expected-FP proxy (``total_fantasy_points_exp``); binary {Out,Doubtful}
+        # out-set. "contextual" is an ATTN_STATIC category, so these feed Ridge+LGBM+NN-static.
+        # NOT attn_history_stats — the history branch is blind to a current-week teammate vacancy.
+        # Spot-start blind spot, issue #1102; A/B src/tuning/ab_qb_inheritance.py.
+        "is_top_available",
+        "inherited_opportunity",
     ],
     "weather_vegas": [
         "implied_team_total",
