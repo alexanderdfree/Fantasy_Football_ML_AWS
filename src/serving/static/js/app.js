@@ -1153,6 +1153,7 @@ async function openPlayerModal(playerId, fallback = null) {
         } else {
             document.getElementById("modal-name").textContent = "Error loading player";
             document.getElementById("modal-pos-team").textContent = "";
+            setModalNote("");
         }
         document.getElementById("player-modal").classList.add("open");
         modalOpen = true;
