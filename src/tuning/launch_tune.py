@@ -48,6 +48,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.batch.launch import (  # noqa: E402
     AWS_REGION,
     JOB_DEFINITION,
+    JOB_DEFINITION_REVISION,
     JOB_QUEUE,
     POLL_INTERVAL_SECONDS,
     RETRY_STRATEGY,
@@ -81,6 +82,23 @@ DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 7200
 def _batch_storage_backend(parallel_backend: str) -> str:
     """The remote Batch target is g6/L4, so auto resolves to MPS there."""
     return "mps" if parallel_backend == "auto" else parallel_backend
+
+
+def _tune_job_definition() -> str:
+    """Resolve the job definition for a tune submission, pinning the revision.
+
+    Mirrors ``src/batch/launch.py``'s ``_job_definition_for`` revision-append
+    logic: when ``FF_JOB_DEFINITION_REVISION`` is set (``batch-image.yml``
+    stashes it and ``retune-nn-batch.yml`` exports it), append ``:N`` so a
+    submission pins to that exact revision instead of AWS Batch resolving the
+    bare name to the latest active revision at submit time — which lets two
+    concurrent image builds race onto the same (latest) revision. Tune always
+    uses the GPU job def (no CPU-only carve-out — see ``submit_tune_job``), so
+    there's no CPU-def guard to mirror.
+    """
+    if JOB_DEFINITION_REVISION:
+        return f"{JOB_DEFINITION}:{JOB_DEFINITION_REVISION}"
+    return JOB_DEFINITION
 
 
 def submit_tune_job(
@@ -135,8 +153,9 @@ def submit_tune_job(
         # branch attention — launch.py's ``cpu_only`` CPU-job-def carve-out
         # for K/DST applies only to the training path (which falls back to
         # Ridge/LGBM for those positions when an NN isn't trained); tuning
-        # always trains the attention NN.
-        jobDefinition=JOB_DEFINITION,
+        # always trains the attention NN. Pin the revision (mirrors
+        # launch.py) so concurrent image builds don't race onto the latest.
+        jobDefinition=_tune_job_definition(),
         retryStrategy=RETRY_STRATEGY,
         timeout={"attemptDurationSeconds": int(attempt_timeout)},
         containerOverrides={
@@ -178,7 +197,9 @@ def _print_plan(
     print(f"  region:       {AWS_REGION}")
     print(f"  bucket:       {S3_BUCKET}")
     print(f"  queue:        {JOB_QUEUE}")
-    print(f"  definition:   {JOB_DEFINITION}")
+    # Render the resolved (revision-pinned) job def actually submitted, not
+    # the bare name — mirrors launch.py's _print_plan.
+    print(f"  definition:   {_tune_job_definition()}")
     print(f"  wait timeout: {WAIT_TIMEOUT_SECONDS}s")
     print(f"  attempt cap:  {attempt_timeout}s")
     print(f"  n_trials:     {n_trials}")
