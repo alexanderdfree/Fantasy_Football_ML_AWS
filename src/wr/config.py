@@ -150,7 +150,9 @@ CONFIG_TINY = {
     "nn_backbone_layers": [8, 8],
     "nn_head_hidden": 4,
     "nn_dropout": 0.0,
-    "nn_head_hidden_overrides": None,
+    # Non-None so the e2e shard exercises the receptions head-width override
+    # plumbing (_TINY_OVERRIDES forces None; CONFIG_TINY merges last). (#565)
+    "nn_head_hidden_overrides": {"receptions": 8},
     "nn_lr": 1e-3,
     "nn_weight_decay": 0.0,
     "nn_epochs": 1,
