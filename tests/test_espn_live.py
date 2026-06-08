@@ -244,6 +244,20 @@ def test_fetch_depth_chart_ranks_clamps_to_three_and_maps_gsis(monkeypatch):
 
 
 @pytest.mark.unit
+def test_fetch_depth_chart_ranks_falls_back_to_prior_season(monkeypatch):
+    # The requested season's chart isn't posted yet (empty) — the offseason case
+    # that's live right now — so the per-team fallback uses the prior season.
+    prior = {"items": [{"positions": {"qb": {"athletes": [_dc(1, "100")]}}}]}
+
+    def fake_get_json(url):
+        return {"items": []} if "/seasons/2026/" in url else prior
+
+    monkeypatch.setattr(espn_live, "_get_json", fake_get_json)
+    monkeypatch.setattr(espn_live, "espn_to_gsis_map", lambda: {"100": "00-A"})
+    assert espn_live.fetch_depth_chart_ranks(2026, {"33": "BAL"}) == {"00-A": 1.0}
+
+
+@pytest.mark.unit
 def test_fetch_injury_status_map_encodes_and_omits_active(monkeypatch):
     payload = {
         "injuries": [
