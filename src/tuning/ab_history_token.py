@@ -41,15 +41,22 @@ vacancy is genuinely new (it's in no past-game sequence). Built-in invariant con
 LGBM/NN/Ridge byte-identical between the two ``+`` arms (the token is Attention-NN-only). Don't
 re-propose role/inheritance in ``attn_history_stats`` — see AGENTS.md stop-rules.
 
-Static-feature productionization (``--only +static``, 3 seeds, 2026-06-07):
-* **RB — robust win, ship it.** +static helps *every* model: Ridge −0.053, LGBM −0.048, NN −0.028
-  MAE, and +1.13 FP on the ascension cohort (n=14). A concentrated-workload position: when the
-  lead back sits, one back absorbs the carries — a clean, learnable signal.
-* **WR — not robust, do NOT ship.** With *either* opportunity proxy (``snap_pct_raw`` or
-  ``targets``) the feature helps only the Attention NN (−0.034 / −0.032 MAE) and is flat-to-worse
-  for Ridge (+0.022 / +0.006), LGBM (~0), NN (+0.02); cohort n=2 (unusable). Targets shrank the
-  Ridge regression but didn't flip it positive. A distributed position: when WR1 sits, targets
-  redistribute diffusely across WR2/WR3/TE/RB, so there is no clean single "next man up" to learn.
+Static-feature productionization (``--only +static``, 3 seeds, 2026-06-07). **Judge on the
+inheritor subgroup (``inherited_opportunity > 0``), NOT overall MAE** — the feature fires on ~1%
+of rows so overall MAE dilutes it to noise (RB Ridge overall −0.053 was the shadow of a −1.6 FP
+subgroup effect). Earlier "WR not robust" was an artifact of reading overall MAE + a WR-inapplicable
+RB ascension labeler (n=2). Proper subgroup: RB n=33, WR n=41.
+* **RB — strong, robust win, ship it.** On RB inheritors (+static vs baseline): inh-MAE Ridge
+  −1.61 / LGBM −0.71 / NN −0.72 / Attn −0.93; inh-bias (under-call→0) Ridge +3.16 / LGBM +2.17 /
+  NN +2.62 / Attn +3.31. Baseline under-predicts inheritors ~4–6 FP; +static cuts it ~half across
+  *every* model. Concentrated-workload position — when the lead back sits, one back absorbs the
+  carries (clean signal). This is the boom-tier gap, invisible in overall MAE.
+* **WR — modest but real on bias; flat on MAE.** On WR inheritors: inh-bias Ridge +0.80 / LGBM
+  +0.24 / NN +1.22 / Attn +0.19 (under-call reduced across all four, cleanest on deterministic
+  Ridge) but inh-MAE flat (Ridge −0.00 / LGBM +0.07 / NN −0.08 / Attn +0.14) and overall MAE costs
+  a trivial +0.006. Distributed position — a WR1 absence redistributes targets diffusely, so the
+  feature shifts the center up correctly (bias) but can't pin the noisy individual outcomes (MAE).
+  ~4× weaker than RB; ship-WR is a judgment call, not a slam dunk.
 """
 
 from __future__ import annotations
@@ -181,33 +188,46 @@ def _whitelist_static_and_history(cfg):
 # Metric — per-model overall + ascension-cohort bias
 # --------------------------------------------------------------------------- #
 def metric_fn(result, position):
-    from src.analysis.cohort_analysis import (
-        available_models,
-        label_ascension_rows,
-        per_model_metrics,
-    )
+    """Per-model overall MAE/bias PLUS the inheritor-subgroup MAE/bias.
+
+    The feature fires on few rows (the next-man-up when a higher same-position teammate is
+    Out), so its effect is invisible in overall MAE — judge it on the **targeted subgroup**
+    instead (project rule: subgroup error = bias; MAE-delta is fine on a *fixed* ablation
+    slice). The subgroup is ``inherited_opportunity > 0`` — feature-active rows — which is
+    position-general (works for WR, unlike the RB-specific ascension labeler that matched
+    ~0 WR rows). The column is injected into *every* arm (baseline carries it un-whitelisted,
+    so the model is unchanged but the slice is identical across arms).
+    """
+    from src.analysis.cohort_analysis import available_models, per_model_metrics
 
     df = result["test_df"]
     models = available_models(df)
     overall = per_model_metrics(df, models)
-    try:
-        lab = label_ascension_rows(df)
-        asc = df[lab.to_numpy() == "ascension"]
-    except Exception:
-        asc = df.iloc[0:0]
-    asc_m = per_model_metrics(asc, models) if len(asc) else {}
+    if "inherited_opportunity" in df.columns:
+        sub = df[df["inherited_opportunity"] > 0]
+    else:
+        sub = df.iloc[0:0]
+    sub_m = per_model_metrics(sub, models) if len(sub) else {}
     out: dict = {}
     for m, mv in overall.items():
         row = {"mae": float(mv["mae"]), "bias": float(mv["bias"])}
-        if m in asc_m:
-            row["asc_bias"] = float(asc_m[m]["bias"])
-            row["asc_n"] = float(asc_m[m]["n"])
+        if m in sub_m:
+            row["inh_mae"] = float(sub_m[m]["mae"])
+            row["inh_bias"] = float(sub_m[m]["bias"])
+            row["inh_n"] = float(sub_m[m]["n"])
         out[m] = row
     return out
 
 
 VARIANTS = [
-    Variant("baseline", label="baseline (production config)"),
+    Variant(
+        "baseline",
+        # Inject the column (for the inheritor-subgroup slice) but do NOT whitelist it — the
+        # baseline model is unchanged (Ridge MAE must match production), the slice is identical
+        # to the +static arm's.
+        frame_injector=_inject_inheritance,
+        label="baseline (model unchanged; inh col carried for slicing)",
+    ),
     Variant(
         "+static",
         cfg_mutator=_whitelist_static,
