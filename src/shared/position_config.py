@@ -249,10 +249,18 @@ class PositionConfig:
     # cap knobs are no-ops at this scale (kept for unusually wide inputs):
     # ``tabpfn_pca_components`` reduces the feature matrix via PCA;
     # ``tabpfn_ignore_pretraining_limits`` lets it run past a cap as-is.
+    # Tuning levers (forwarded to TabPFNRegressor; defaults match TabPFN's own, so
+    # inert until changed): ``tabpfn_softmax_temperature`` (calibration),
+    # ``tabpfn_auto_scale_n_estimators`` (False -> honor n_estimators exactly),
+    # ``tabpfn_inference_config`` (dict passthrough to the advanced surface, e.g.
+    # ``REGRESSION_Y_PREPROCESS_TRANSFORMS`` for skewed targets).
     train_tabpfn: bool = False
     tabpfn_n_estimators: int = 8
     tabpfn_pca_components: int | None = None
     tabpfn_ignore_pretraining_limits: bool = False
+    tabpfn_softmax_temperature: float = 0.9
+    tabpfn_auto_scale_n_estimators: bool = True
+    tabpfn_inference_config: dict | None = None
 
     # === RB-only TD model variants ===
     td_model_type: str | None = None

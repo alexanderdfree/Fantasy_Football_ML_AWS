@@ -150,6 +150,55 @@ class TestTabPFNMultiTarget:
         assert restored.non_negative_targets == set(TARGETS)
         assert restored.target_names == TARGETS
 
+    def test_new_regressor_forwards_tuning_kwargs(self, monkeypatch):
+        # The wrapper must forward the tuning levers to the real TabPFNRegressor.
+        # ``tabpfn`` isn't installed in CI, so inject a fake module that records the
+        # constructor kwargs — this exercises _new_regressor itself, which the
+        # _patch_fake tests deliberately bypass.
+        import sys
+        import types
+
+        captured = {}
+
+        class _RecordingRegressor:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        fake_mod = types.ModuleType("tabpfn")
+        fake_mod.TabPFNRegressor = _RecordingRegressor
+        monkeypatch.setitem(sys.modules, "tabpfn", fake_mod)
+
+        model = TabPFNMultiTarget(
+            target_names=TARGETS,
+            softmax_temperature=0.5,
+            auto_scale_n_estimators=False,
+            inference_config={"REGRESSION_Y_PREPROCESS_TRANSFORMS": [None]},
+        )
+        model._new_regressor()
+        assert captured["softmax_temperature"] == 0.5
+        assert captured["auto_scale_n_estimators"] is False
+        assert captured["inference_config"] == {"REGRESSION_Y_PREPROCESS_TRANSFORMS": [None]}
+        assert captured["model_path"] == "auto"
+        assert captured["n_preprocessing_jobs"] == -1  # n_jobs=None -> all cores
+
+    def test_save_load_roundtrips_tuning_knobs(self, monkeypatch, tabpfn_data, tmp_path):
+        X, y = tabpfn_data
+        model = TabPFNMultiTarget(
+            target_names=TARGETS,
+            softmax_temperature=0.5,
+            auto_scale_n_estimators=False,
+            inference_config={"OUTLIER_REMOVAL_STD": 9.0},
+        )
+        _patch_fake(monkeypatch, model)
+        model.fit(X, y)
+        model_dir = str(tmp_path / "m")
+        model.save(model_dir)
+        restored = TabPFNMultiTarget(target_names=TARGETS)
+        restored.load(model_dir)
+        assert restored.softmax_temperature == 0.5
+        assert restored.auto_scale_n_estimators is False
+        assert restored.inference_config == {"OUTLIER_REMOVAL_STD": 9.0}
+
     def test_end_to_end_real_tabpfn(self, tabpfn_data):
         # Real weight-loading path; only when the optional dep is present
         # (skipped in CI). Keeps the wrapper honest against the real estimator.
@@ -178,3 +227,6 @@ def test_config_plumbing_defaults_off_for_every_position():
         assert "tabpfn_n_estimators" in cfg
         assert "tabpfn_pca_components" in cfg
         assert "tabpfn_ignore_pretraining_limits" in cfg
+        assert "tabpfn_softmax_temperature" in cfg
+        assert "tabpfn_auto_scale_n_estimators" in cfg
+        assert "tabpfn_inference_config" in cfg

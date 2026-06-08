@@ -36,6 +36,9 @@ It ships **disabled for every position** (`PositionConfig.train_tabpfn=False`), 
 
 **To enable later (benchmark only):** set `train_tabpfn=True` on a position's `POSITION_CONFIG`, `pip install tabpfn` (8.x → TabPFN-3), accept the license and export `TABPFN_TOKEN`. Locally, run via a uv overlay without mutating the shared venv: `TABPFN_TOKEN=… uv run --no-sync --project <repo> --with tabpfn python -m src.wr.run_pipeline`. To pin the intermediate 2.5 instead, point `model_path` at the `Prior-Labs/tabpfn_2_5` checkpoint in `_new_regressor` — but 3 dominates 2.5 for 112-feature / 25k-row data.
 
+**Tuning levers (per position, 2026-06-08).** Beyond `tabpfn_n_estimators` / `tabpfn_pca_components` / `tabpfn_ignore_pretraining_limits`, `PositionConfig` exposes `tabpfn_softmax_temperature` (predictive-distribution calibration), `tabpfn_auto_scale_n_estimators` (set `False` to honor `n_estimators` exactly), and `tabpfn_inference_config` (a dict passthrough to TabPFN's advanced `InferenceConfig` — e.g. `REGRESSION_Y_PREPROCESS_TRANSFORMS` for skewed targets). All default to TabPFN's own values, so they are inert until changed; they thread `PositionConfig → build_pipeline_config → _build_tabpfn → TabPFNMultiTarget → _new_regressor`.
+
 ## Changelog
 
 - 2026-06-08 · Added `TabPFNMultiTarget` as an opt-in, default-off 5th model variant (dormant infrastructure; not in prod). Decision unchanged — independent comparison, no ensemble. (PR for the TabPFN model variant)
+- 2026-06-08 · v2 → TabPFN-3 upgrade (#1079; best on the WR pilot at 3.912 FP MAE) + per-position tuning levers exposed (`tabpfn_softmax_temperature` / `tabpfn_auto_scale_n_estimators` / `tabpfn_inference_config`, inert defaults). Still default-off, non-commercial / benchmark-only.
