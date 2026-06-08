@@ -1,0 +1,10 @@
+{
+  "run_id": "2026-06-08T15:53:48_0081bd9",
+  "timestamp": "2026-06-08T15:53:48",
+  "git_hash": "0081bd9",
+  "note": "Training skipped \u2014 docs-only or no model-relevant paths changed",
+  "results": [],
+  "positions": [],
+  "training_skipped": true,
+  "pr_number": 1097
+}
