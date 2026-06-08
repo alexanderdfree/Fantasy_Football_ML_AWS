@@ -41,10 +41,11 @@ def build_features(
     diagnostic rebuild) degrades ``inherited_opportunity`` to 0 but still emits the columns.
 
     ``rosters_df`` is the raw nflverse weekly rosters frame (``src.data.nfl_source.rosters``).
-    Players on injured reserve (``status == "RES"``) are absent from BOTH the weekly frame and
-    the injury report, so without it a starter lost to IR is invisible to the vacancy signal
-    (#1106 finding A; serving already sees IR because ESPN maps it to ``Out``). Passed alongside
-    ``injuries_df`` by the splits callers; ``None`` just means IR vacancies aren't counted.
+    Players on injured reserve or the game-day inactives list (``status`` in {"RES", "INA"}) are
+    absent from BOTH the weekly frame and the injury report, so without it a starter lost to IR or
+    scratched is invisible to the vacancy signal (#1106; serving already sees the injury subset
+    because ESPN maps IR/out to ``Out``). Passed alongside ``injuries_df`` by the splits callers;
+    ``None`` just means those vacancies aren't counted.
     """
     df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
@@ -418,9 +419,9 @@ def _build_inheritance_features(
     * ``is_top_available`` = top prior-role among *present* same-position teammates that week.
     * ``inherited_opportunity`` = Σ prior-role of same-team, same-position OUT/Doubtful
       teammates ranked above, only for the top-available one. The out-set is the injury
-      report (Out/Doubtful) plus, when ``rosters_df`` is given, players on injured reserve
-      (``status == "RES"``) — absent from BOTH the weekly frame and the report, so a starter
-      lost to IR is otherwise invisible to the vacancy signal (#1106 finding A).
+      report (Out/Doubtful) plus, when ``rosters_df`` is given, players on reserve or the
+      game-day inactives list (``status`` in {"RES", "INA"}) — absent from BOTH the weekly
+      frame and the report, so a starter lost to IR or scratched is otherwise invisible (#1106).
 
     Runs on the full pre-split frame; ``role_before`` indexes only weeks < W, so it stays
     leakage-safe despite future weeks being present. Mirrors the validated injector in
@@ -457,16 +458,19 @@ def _build_inheritance_features(
             ):
                 outmap.setdefault((pos, s, t, w), set()).add(g)
 
-    # IR / reserve players (rosters ``status == "RES"``) are absent from BOTH the weekly frame
-    # and the injury report, so a starter lost to IR is otherwise invisible to the vacancy
-    # signal (#1106 finding A). Fold them into the same out-set. ``RES`` only — game-day ``INA``
-    # is a same-day signal (leakage audit pending) and is excluded. The IR player's role_before
-    # resolves from their current-season games before the IR week (or the prior-season fallback).
+    # Reserve / inactive players (rosters ``status`` in {"RES" (IR), "INA" (game-day inactive)})
+    # are absent from BOTH the weekly frame and the injury report, so a starter lost to IR or
+    # scratched on game day is otherwise invisible to the vacancy signal (#1106). Fold them into
+    # the same out-set. ``INA`` is the official ~90-min-pre-kickoff inactives list (leakage-audited
+    # — it is NOT a box-score backfill: 22.5% of ACT players logged no stats yet are not INA), so
+    # it is leakage-safe here, though it cuts both ways (sizes a vacancy whether or not the backup
+    # produces). The out player's role_before resolves from their current-season games before the
+    # absence (or the prior-season fallback).
     if rosters_df is not None and len(rosters_df):
         rcols = ("status", "position", "season", "team", "week", "player_id")
         if all(c in rosters_df.columns for c in rcols):
             ir = rosters_df[
-                (rosters_df["status"] == "RES")
+                rosters_df["status"].isin(["RES", "INA"])
                 & rosters_df["position"].isin(_INHERITANCE_POSITIONS)
             ]
             for pos, s, t, w, g in zip(
