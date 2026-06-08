@@ -706,15 +706,16 @@ def _train_nn(
     cfg = _maybe_force_dropout_zero(cfg)
     nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
 
+    device = _nn_device()
     train_loader, val_loader = make_dataloaders(
         X_train_s,
         y_train_dict,
         X_val_s,
         y_val_dict,
         batch_size=cfg["nn_batch_size"],
+        device=device,
     )
 
-    device = _nn_device()
     model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
 
     history = _run_nn_training(
@@ -796,6 +797,7 @@ def _train_attention_nn(
     nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
+    device = _nn_device()
     if use_opp:
         train_loader, val_loader = make_history_with_opp_dataloaders(
             X_train_s,
@@ -811,6 +813,7 @@ def _train_attention_nn(
             opp_mask_val,
             y_val_dict,
             batch_size=attn_batch_size,
+            device=device,
         )
         trainer_cls = MultiHeadHistoryWithOppTrainer
     else:
@@ -824,10 +827,10 @@ def _train_attention_nn(
             mask_val,
             y_val_dict,
             batch_size=attn_batch_size,
+            device=device,
         )
         trainer_cls = MultiHeadHistoryTrainer
 
-    device = _nn_device()
     model = build_multihead_net_with_history(
         cfg,
         static_dim=X_train_s.shape[1],
@@ -910,6 +913,7 @@ def _train_nested_attention_nn(
     nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
+    device = _nn_device()
     train_loader, val_loader = make_nested_kick_dataloaders(
         X_train_s,
         hist_train,
@@ -924,11 +928,11 @@ def _train_nested_attention_nn(
         batch_size=attn_batch_size,
         X_train_history=game_hist_train,
         X_val_history=game_hist_val,
+        device=device,
     )
 
     game_dim = 0 if game_hist_train is None else game_hist_train.shape[-1]
 
-    device = _nn_device()
     model = build_multihead_net_with_nested_history(
         cfg,
         static_dim=X_train_s.shape[1],
@@ -1891,15 +1895,16 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         # NN training for this fold
         _, (X_train_s, X_val_s) = _scale_xs(X_train, X_val)
 
+        device = _nn_device()
         train_loader, val_loader = make_dataloaders(
             X_train_s,
             y_train_dict,
             X_val_s,
             y_val_dict,
             batch_size=cfg["nn_batch_size"],
+            device=device,
         )
 
-        device = _nn_device()
         model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
 
         _run_nn_training(
