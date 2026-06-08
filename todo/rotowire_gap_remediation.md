@@ -122,3 +122,28 @@ injury report (today it leans on pre-computed splits — the main integration ri
 - The attention **history branch is decided out** for this feature (see Placement) — do not re-propose.
 - The **crude "any teammate OUT" measure is a tested NULL across 2013+** — the signal is the *inheritor*
   (next-man-up), not generic vacancy. Don't rebuild the crude version.
+
+## Outcome — SHIPPED (2026-06-08, PR #1053)
+
+Done via the shared parallel A/B harness ([src/tuning/ab_history_token.py](../src/tuning/ab_history_token.py)), not bespoke loops.
+
+- **Shipped feature** (final names): `is_top_available` + `inherited_opportunity` (= the plan's
+  "effective_depth_rank" / "vacated_opportunity" concept). Computed in
+  [src/features/engineer.py](../src/features/engineer.py)`._build_inheritance_features` — the shared,
+  pre-split path, with the raw injuries frame threaded through `build_features(df, injuries_df)` from
+  `refresh-splits.yml` (OUT teammates are dropped from splits, so the out-set must come from the report).
+  Whitelisted into RB+WR `include_features["contextual"]` → Ridge+LGBM+NN-static + the NN static branch.
+  Role proxy: RB `snap_pct_raw`, **WR `targets`** (snap-share is the wrong opportunity proxy for WR).
+- **Parity:** baked into `data/splits/*.parquet`; serving reads the same columns → **no serving change**.
+  `refresh-splits` regenerates splits (fail-loud on injury-fetch error); `train-batch` race-gate waits.
+- **Validated** (3 seeds, **inheritor subgroup** `inherited_opportunity>0`, n=33 RB / 41 WR — NOT overall
+  MAE, which dilutes a ~1%-of-rows feature to noise): **RB strong, all models** (inh-MAE Ridge −1.61 /
+  LGBM −0.71 / Attn −0.93; inh-bias under-call ~halved, +2.2…+3.3). **WR modest-but-real on bias**
+  (inh-bias +0.2…+1.2 all models; inh-MAE flat — diffuse target redistribution). Production
+  `_build_inheritance_features` is **byte-identical** to the A/B injector on the real test split.
+- **History branch REJECTED** (the user's hypothesis, tested): routing the signal through
+  `attn_history_stats` is −0.32 FP / ~3σ *worse* on the RB cohort — a past spot-start is already encoded
+  by the history branch's `snap_pct_raw`/usage tokens (redundant; averaging an average). AGENTS.md
+  stop-rule added. The *static* current-week value is the win (the vacancy is in no past sequence).
+- **Merge fires** refresh-splits + a 6-position retrain (`engineer.py` is global; RB/WR use the feature,
+  the other four are inert / byte-identical).

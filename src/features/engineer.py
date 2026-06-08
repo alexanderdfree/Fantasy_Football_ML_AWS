@@ -24,13 +24,19 @@ from src.shared.weather_features import (
 logger = logging.getLogger(__name__)
 
 
-def build_features(df: pd.DataFrame) -> pd.DataFrame:
+def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) -> pd.DataFrame:
     """Build the engineered feature columns from preprocessed data.
 
     Covers rolling / prior-season / EWMA / trend / share / opponent-defense
     aggregates plus the per-game history columns and the external-source
     (ff_opportunity / QBR / contract) signals merged upstream by
     src.data.loader. Each position's config opts into the subset it consumes.
+
+    ``injuries_df`` is the raw nflverse injuries frame (``src.data.nfl_source.injuries``)
+    used by the RB/WR role-inheritance features — the OUT teammates whose role gets
+    inherited are absent from the weekly frame, so the out-set must come from the injury
+    report. Passed by the splits-building callers (refresh-splits); ``None`` (e.g. a
+    diagnostic rebuild) degrades ``inherited_opportunity`` to 0 but still emits the columns.
     """
     df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
@@ -323,6 +329,112 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     pos_cols = {f"pos_{p}": (df["position"] == p).astype(int) for p in ["QB", "RB", "WR", "TE"]}
     df = pd.concat([df, pd.DataFrame(pos_cols, index=df.index)], axis=1)
 
+    # --- Role-inheritance features (RB/WR static branch) ---
+    df = _build_inheritance_features(df, injuries_df)
+
+    return df
+
+
+# === Role-inheritance features (RB/WR static branch) ===
+# When a higher-role same-position teammate is Out/Doubtful, the top-available teammate (the
+# "next man up") inherits the vacated role. Validated A/B: src/tuning/ab_history_token.py — a
+# real win on the inheritor subgroup (inherited_opportunity>0): RB strong across all models,
+# WR modest-but-real on bias. Whitelisted into RB/WR ``include_features``["contextual"] →
+# Ridge+LGBM+NN-static AND (via derive_attn_static_features) the NN static branch. Deliberately
+# NOT in ATTN_HISTORY_STATS — a past spot-start is already encoded by the history branch's
+# snap_pct_raw/usage tokens, so a derived token there is redundant (tested-rejected, same A/B).
+_INHERITANCE_POSITIONS = ("RB", "WR")
+# Position-appropriate opportunity proxy: RB snap-share (snaps≈carries), WR per-game targets
+# (a WR's value is targets, not snaps). Scaled per-feature downstream, so the unit mismatch is fine.
+_INHERITANCE_ROLE_COL = {"RB": "snap_pct_raw", "WR": "targets"}
+
+
+def _build_inheritance_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None) -> pd.DataFrame:
+    """Add ``is_top_available`` + ``inherited_opportunity`` per (position, recent_team,
+    season, week), within position.
+
+    * role(player, W) = prior-to-W expanding mean of the position's opportunity proxy.
+    * ``is_top_available`` = top prior-role among *present* same-position teammates that week.
+    * ``inherited_opportunity`` = Σ prior-role of same-team, same-position OUT/Doubtful
+      teammates ranked above, only for the top-available one.
+
+    Runs on the full pre-split frame; ``role_before`` indexes only weeks < W, so it stays
+    leakage-safe despite future weeks being present. Mirrors the validated injector in
+    src/tuning/ab_history_token.py. ``injuries_df`` None → ``inherited_opportunity`` stays 0
+    (``is_top_available`` is still computed from present-teammate ranks).
+    """
+    df = df.reset_index(drop=True)
+    is_top = np.zeros(len(df))
+    inh = np.zeros(len(df))
+    required = ("position", "recent_team", "season", "week", "player_id")
+    if not all(c in df.columns for c in required):
+        df["is_top_available"] = is_top
+        df["inherited_opportunity"] = inh
+        return df
+
+    pid = df["player_id"].astype(str).to_numpy()
+
+    # out-set per (position, season, team, week) from the injury report
+    outmap: dict = {}
+    if injuries_df is not None and len(injuries_df):
+        cols = ("report_status", "position", "season", "team", "week", "gsis_id")
+        if all(c in injuries_df.columns for c in cols):
+            out = injuries_df[
+                injuries_df["report_status"].isin(["Out", "Doubtful"])
+                & injuries_df["position"].isin(_INHERITANCE_POSITIONS)
+            ]
+            for pos, s, t, w, g in zip(
+                out["position"],
+                out["season"].astype(int),
+                out["team"],
+                out["week"].astype(int),
+                out["gsis_id"].astype(str),
+                strict=True,
+            ):
+                outmap.setdefault((pos, s, t, w), set()).add(g)
+
+    # per-position prior-to-W expanding-mean role table: (player, season) -> (weeks, cum-mean)
+    pref: dict = {}
+    for pos in _INHERITANCE_POSITIONS:
+        col = _INHERITANCE_ROLE_COL[pos]
+        if col not in df.columns:
+            continue
+        table: dict = {}
+        sub_pos = df[df["position"] == pos][["player_id", "season", "week", col]].copy()
+        sub_pos["player_id"] = sub_pos["player_id"].astype(str)
+        for (p, s), sub in sub_pos.sort_values("week").groupby(["player_id", "season"]):
+            wks = sub["week"].to_numpy()
+            vals = np.nan_to_num(sub[col].to_numpy(float), nan=0.0)
+            table[(p, s)] = (wks, np.cumsum(vals) / np.arange(1, len(vals) + 1))
+        pref[pos] = table
+
+    def role_before(pos, p, s, w):
+        e = pref.get(pos, {}).get((p, s))
+        if e is None:
+            return 0.0
+        wks, cm = e
+        i = int(np.searchsorted(wks, w, side="left")) - 1  # largest week < w
+        return float(cm[i]) if i >= 0 else 0.0
+
+    for pos in _INHERITANCE_POSITIONS:
+        if pos not in pref:
+            continue
+        grp = df[df["position"] == pos]
+        for (s, tm, w), idx in grp.groupby(["season", "recent_team", "week"]).groups.items():
+            si, wi = int(s), int(w)
+            rows = idx.to_numpy()  # df is reset_index'd → labels ARE row positions
+            pids = pid[rows]
+            roles = np.array([role_before(pos, p, si, wi) for p in pids])
+            out_set = outmap.get((pos, si, tm, wi), set())
+            out_roles = np.array([role_before(pos, g, si, wi) for g in out_set])
+            for j, rp in enumerate(roles):
+                top = 1.0 if (roles > rp).sum() == 0 else 0.0
+                oa = float(out_roles[out_roles > rp].sum()) if out_roles.size else 0.0
+                is_top[rows[j]] = top
+                inh[rows[j]] = top * oa
+
+    df["is_top_available"] = is_top
+    df["inherited_opportunity"] = inh
     return df
 
 

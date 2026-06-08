@@ -178,12 +178,20 @@ jobs:
           NFLREADPY_CACHE: "off"  # data/raw is the authoritative cache (matches tests.yml)
         run: |
           python - <<'PY'
+          from src.config import SEASONS
+          from src.data import nfl_source
           from src.data.loader import load_raw_data
           from src.data.preprocessing import preprocess
           from src.features.engineer import build_features
           from src.data.split import temporal_split
 
-          df = build_features(preprocess(load_raw_data()))
+          # Raw injuries = the OUT-teammate out-set for the RB/WR role-inheritance
+          # features (those teammates are absent from the weekly frame, so the out-set
+          # must come from the injury report). build_features bakes is_top_available +
+          # inherited_opportunity into the splits. A fetch failure raises here, failing
+          # the step before any S3 upload (no silent all-zero feature).
+          injuries = nfl_source.injuries(list(SEASONS))
+          df = build_features(preprocess(load_raw_data()), injuries_df=injuries)
           temporal_split(df)
           PY
 
