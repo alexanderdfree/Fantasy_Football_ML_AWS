@@ -164,4 +164,17 @@ def fill_nans(
     dst_feature_cols: list[str],
 ) -> tuple:
     """Fill NaNs in D/ST feature columns using training set statistics."""
-    return fill_nans_with_train_means(train_df, val_df, test_df, dst_feature_cols)
+    # prior_season_* are contextual features (in all_features, so the model uses
+    # them) but absent from _SPECIFIC_FEATURES — the column set the pipeline passes
+    # here — so without this they skip the leak-safe train-mean fill and fall through
+    # to build_position_features' catch-all .fillna(0). That 0 is a structurally-
+    # impossible "0 fantasy pts / 0 PA over a whole season" for relocated teams
+    # (LV 2020 / LAC 2017 / LAR 2016 have no prior-season row under their new code)
+    # and every 2012 row (no 2011 history) — a strong negative z-score post-scaler.
+    # Give them the same train-only-mean treatment as the rest. (#856)
+    prior_cols = [
+        c
+        for c in ("prior_season_dst_pts_avg", "prior_season_pts_allowed_avg")
+        if c in train_df.columns and c not in dst_feature_cols
+    ]
+    return fill_nans_with_train_means(train_df, val_df, test_df, [*dst_feature_cols, *prior_cols])

@@ -259,10 +259,12 @@ POSITION_CONFIG = PositionConfig(
         "special_teams_tds",
         "points_allowed",
         "yards_allowed",
-        # Per-game opponent context (not pre-rolled)
-        "opp_scoring",
-        "opp_fumbles",
-        "opp_interceptions",
+        # Per-game opponent context (not pre-rolled). opp_scoring / opp_fumbles /
+        # opp_interceptions were dropped: each was column-by-column identical to
+        # points_allowed / def_fumble_rec / def_ints above (the same schedule score,
+        # the same opposing-offense turnover sums — only keyed via opponent_team vs
+        # recent_team), so they were 3 redundant per-game dims with no unique signal.
+        # opp_qb_epa is the one genuinely-orthogonal opponent-side value. (#649)
         "opp_qb_epa",
     ],
     # Explicit whitelist of static-branch features for the attention NN.
