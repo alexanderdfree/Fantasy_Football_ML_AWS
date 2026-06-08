@@ -234,6 +234,36 @@ body {
     display: none;
 }
 
+/* Homepage (Next Week) projections banner — informational, not a warning. */
+.homepage-banner {
+    background: rgba(59, 130, 246, 0.10);
+    border: 1px solid rgba(59, 130, 246, 0.30);
+    border-left: 3px solid rgb(59, 130, 246);
+    color: var(--text-muted);
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin: 0 0 12px;
+}
+
+.homepage-banner.hidden {
+    display: none;
+}
+
+/* K/DST chips on the homepage are "coming soon" until those pipelines land. */
+.pill:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.col-matchup {
+    white-space: nowrap;
+}
+
+.col-total {
+    text-align: right;
+}
+
 .loading-sub {
     font-size: 13px !important;
     color: var(--text-muted) !important;

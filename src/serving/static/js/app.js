@@ -8,6 +8,10 @@ let allPlayers = [];
 // `snapshotData`. When false we fell back to the live /api/predictions API.
 let usingSnapshot = false;
 let snapshotData = null;
+// Homepage (live next-week projections) state: the /api/upcoming_week artifact
+// (all three scoring formats) + the current load state for messaging.
+let upcomingData = null;
+let upcomingState = "loading"; // loading | warming | offseason | ready | error
 let currentPage = 1;
 let currentSort = "actual";
 let currentOrder = "desc";
@@ -197,17 +201,17 @@ function populateTeams(teams) {
 // sub-page navigation (inside loadWikiPage) replaceState so intra-wiki link
 // clicks don't pile up history entries.
 // ---------------------------------------------------------------------------
-const TAB_VIEWS = new Set(["predictions", "model-performance", "comparison", "model-architecture", "wiki", "history"]);
+const TAB_VIEWS = new Set(["homepage", "predictions", "model-performance", "comparison", "model-architecture", "wiki", "history"]);
 
 function viewFromHash(hash) {
-    if (!hash || hash === "#") return "predictions";
+    if (!hash || hash === "#") return "homepage";
     if (hash.startsWith("#wiki:") || hash === "#wiki") return "wiki";
     const v = hash.slice(1);
-    return TAB_VIEWS.has(v) ? v : "predictions";
+    return TAB_VIEWS.has(v) ? v : "homepage";
 }
 
 function hashForView(view) {
-    if (view === "predictions") return "";
+    if (view === "homepage") return "";
     if (view === "wiki") return wikiCurrentSlug ? `#wiki:${wikiCurrentSlug}` : "#wiki";
     return `#${view}`;
 }
@@ -219,7 +223,8 @@ function activateTab(view) {
     document.querySelectorAll(".view").forEach(v => {
         v.classList.toggle("active", v.id === `view-${view}`);
     });
-    if (view === "model-performance") loadMetrics();
+    if (view === "homepage") loadHomepage();
+    else if (view === "model-performance") loadMetrics();
     else if (view === "comparison") loadComparison();
     else if (view === "model-architecture") loadModelArchitecture();
     else if (view === "wiki") loadWiki();
@@ -247,11 +252,12 @@ function setupNavTabs() {
 }
 
 function applyInitialRoute() {
-    // Predictions is already `.active` in the HTML, so we only need to switch
-    // when the hash routes elsewhere. Normalize unknown hashes so a paste of
-    // /#bogus lands cleanly on /.
+    // Homepage is already `.active` in the HTML (the default landing), so we only
+    // need to switch when the hash routes elsewhere. Normalize unknown hashes so
+    // a paste of /#bogus lands cleanly on /.
     const view = viewFromHash(location.hash);
-    if (view !== "predictions") activateTab(view);
+    if (view !== "homepage") activateTab(view);
+    else loadHomepage();
     const expectedHash = hashForView(view);
     if ((location.hash || "") !== expectedHash) {
         history.replaceState(null, "", location.pathname + location.search + expectedHash);
@@ -263,6 +269,9 @@ function applyInitialRoute() {
 // ---------------------------------------------------------------------------
 function setupPositionFilters() {
     setupPillGroup("position-filter", () => { currentPage = 1; loadPredictions(); });
+    if (document.getElementById("homepage-position-filter")) {
+        setupPillGroup("homepage-position-filter", () => renderHomepage());
+    }
 }
 
 function setupPillGroup(containerId, callback) {
@@ -288,7 +297,13 @@ function setupSearch() {
     let timeout;
     document.getElementById("search-input").addEventListener("input", e => {
         clearTimeout(timeout);
-        timeout = setTimeout(() => { currentPage = 1; loadPredictions(); }, 300);
+        timeout = setTimeout(() => {
+            // Re-filter whichever player table is active (both filter by name).
+            const active = document.querySelector(".nav-tabs .tab.active");
+            if (active && active.dataset.view === "homepage") { renderHomepage(); return; }
+            currentPage = 1;
+            loadPredictions();
+        }, 300);
     });
 }
 
@@ -343,12 +358,14 @@ function setupScoringToggle() {
 }
 
 function onScoringChanged() {
-    // Always reload the predictions table — it's the default landing view.
+    // Keep the (eagerly-loaded) predictions table in sync; it's one tab away.
     currentPage = 1;
     loadPredictions();
     // Refresh whichever secondary tab is currently visible.
     const activeTab = document.querySelector(".nav-tabs .tab.active");
     const view = activeTab ? activeTab.dataset.view : null;
+    // Homepage holds all three scoring formats — just re-render the active one.
+    if (view === "homepage") renderHomepage();
     if (view === "model-performance") loadMetrics();
     // History detail rows show per-target fantasy-point equivalents, so refresh
     // them too (collapses any open detail; re-opening uses the new format).
@@ -386,6 +403,103 @@ function setupSortHeaders() {
 // ---------------------------------------------------------------------------
 // Predictions
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Homepage — live next-week projections (served off /api/upcoming_week)
+// ---------------------------------------------------------------------------
+async function loadHomepage() {
+    const banner = document.getElementById("homepage-banner");
+    try {
+        const resp = await fetch("/api/upcoming_week");
+        if (resp.status === 503) {
+            upcomingState = "warming";
+            renderHomepageMessage("Building this week's projections… check back in a minute.");
+            return;
+        }
+        const data = await resp.json();
+        if (!data || data.available === false) {
+            upcomingState = "offseason";
+            renderHomepageMessage("No upcoming games scheduled — live projections resume when the next slate is posted.");
+            return;
+        }
+        upcomingData = data;
+        upcomingState = "ready";
+        if (banner) {
+            banner.textContent = `${data.week_label} — projected fantasy points (no games played yet)`;
+            banner.classList.remove("hidden");
+        }
+        renderHomepage();
+    } catch (e) {
+        console.error("Failed to load upcoming week:", e);
+        upcomingState = "error";
+        renderHomepageMessage("Failed to load next-week projections.");
+    }
+}
+
+function renderHomepageMessage(msg) {
+    const banner = document.getElementById("homepage-banner");
+    if (banner) banner.classList.add("hidden");
+    const tbody = document.getElementById("homepage-body");
+    if (tbody) tbody.innerHTML = `<tr><td colspan="10" class="arch-loading">${escapeHtml(msg)}</td></tr>`;
+    const count = document.getElementById("homepage-count");
+    if (count) count.textContent = "";
+}
+
+// Best available model projection for a row (Attention NN preferred — best WR/RB
+// model — falling back across the others), used for the default sort.
+function upcomingProjection(p) {
+    if (p.attn_nn_pred != null) return p.attn_nn_pred;
+    if (p.lgbm_pred != null) return p.lgbm_pred;
+    if (p.ridge_pred != null) return p.ridge_pred;
+    return p.nn_pred;
+}
+
+function getFilteredUpcoming() {
+    if (!upcomingData) return [];
+    const rows = (upcomingData.scoring && upcomingData.scoring[currentScoring]) || [];
+    const position = getActivePosition("homepage-position-filter");
+    const search = (document.getElementById("search-input").value || "").trim().toLowerCase();
+    return rows.filter(p => {
+        if (position !== "ALL" && p.position !== position) return false;
+        if (search && !(p.name || "").toLowerCase().includes(search)) return false;
+        return true;
+    });
+}
+
+function renderHomepage() {
+    if (upcomingState !== "ready") return;
+    const rows = getFilteredUpcoming().slice().sort((a, b) => {
+        const va = upcomingProjection(a), vb = upcomingProjection(b);
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        return vb - va;
+    });
+    const count = document.getElementById("homepage-count");
+    if (count) count.textContent = `${rows.length.toLocaleString()} player${rows.length !== 1 ? "s" : ""}`;
+    const tbody = document.getElementById("homepage-body");
+    tbody.innerHTML = rows.map((p, i) => {
+        const matchup = p.opponent
+            ? (p.is_home === 1 ? `vs ${escapeHtml(p.opponent)}` : `@ ${escapeHtml(p.opponent)}`)
+            : "—";
+        return `
+            <tr data-player-id="${escapeHtml(p.player_id)}">
+                <td class="col-rank">${i + 1}</td>
+                <td class="col-player"><span class="player-name">${escapeHtml(p.name)}</span></td>
+                <td class="col-pos"><span class="pos-badge pos-${escapeHtml(p.position)}">${escapeHtml(p.position)}</span></td>
+                <td class="col-team">${escapeHtml(p.team)}</td>
+                <td class="col-matchup">${matchup}</td>
+                <td class="col-total">${fmt(p.implied_team_total)}</td>
+                <td class="col-pred ridge-col">${fmt(p.ridge_pred)}</td>
+                <td class="col-pred nn-col">${fmt(p.nn_pred)}</td>
+                <td class="col-pred attn-nn-col">${fmt(p.attn_nn_pred)}</td>
+                <td class="col-pred lgbm-col">${fmt(p.lgbm_pred)}</td>
+            </tr>`;
+    }).join("");
+    tbody.querySelectorAll("tr").forEach(row => {
+        row.addEventListener("click", () => openPlayerModal(row.dataset.playerId));
+    });
+}
+
 async function loadPredictions() {
     if (usingSnapshot) {
         // The snapshot already holds every player-week for each scoring format.

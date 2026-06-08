@@ -64,6 +64,23 @@ def on_starting(server):
     else:
         print("[model_sync] in-flight refresh poller disabled (FF_MODEL_REFRESH_INTERVAL_S=0)")
 
+    # Start the upcoming-week projections poller: ESPN live slate -> build_features
+    # -> inference -> data/serving_cache/upcoming_week.json. One builder in the
+    # master (like the model poller) writes the shared artifact; all workers serve
+    # it off disk. Its first iteration primes the artifact (refresh-then-wait)
+    # while workers return 503 "warming". Heavy build, so a long default interval
+    # (3h, FF_UPCOMING_REFRESH_INTERVAL_S); self-disables at 0. Wrapped so a
+    # startup hiccup here never blocks the model path or worker boot.
+    try:
+        from src.serving.upcoming_week import start_upcoming_week_poller
+
+        if start_upcoming_week_poller() is not None:
+            print("[upcoming_week] projections poller started")
+        else:
+            print("[upcoming_week] projections poller disabled (FF_UPCOMING_REFRESH_INTERVAL_S=0)")
+    except Exception as e:  # noqa: BLE001 — never block boot on the upcoming-week poller
+        print(f"[upcoming_week] poller start failed: {e!r}")
+
 
 def post_fork(server, worker):
     def _warm():

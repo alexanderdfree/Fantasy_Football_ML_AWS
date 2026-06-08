@@ -23,7 +23,7 @@ import src.serving.core as core
 import src.te.config as te_cfg
 import src.wr.config as wr_cfg
 from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
-from src.serving import benchmark_history, comparison
+from src.serving import benchmark_history, comparison, upcoming_week
 from src.serving.app import app
 from src.serving.metadata import _ALL_POSITIONS, POSITION_INFO
 from src.serving.serialization import (
@@ -127,6 +127,25 @@ def api_snapshot():
     # Snapshot content changes on retrain; send_file stamps a size/mtime ETag,
     # so "no-cache" makes browsers revalidate cheaply (304 when unchanged)
     # rather than serving a stale snapshot after a model refresh.
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+@app.route("/api/upcoming_week")
+def api_upcoming_week():
+    """Serve the precomputed next-week projections artifact straight off disk.
+
+    Built off the request path by the upcoming-week poller (see
+    ``src.serving.upcoming_week``) — no compute / model load here. Missing
+    artifact (never primed) -> 503 ``warming``; an offseason / no-slate artifact
+    carries ``{"available": false}`` and is served 200. The frontend filters
+    scoring / position / search client-side, mirroring ``/api/snapshot``.
+    """
+    path = upcoming_week._artifact_path()
+    if not os.path.isfile(path):
+        return jsonify({"status": "warming"}), 503
+    resp = send_file(path, mimetype="application/json", conditional=True)
+    # Refreshed by the poller on line/roster/model changes; revalidate cheaply.
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 

@@ -35,7 +35,8 @@
 
     <!-- Navigation Tabs -->
     <nav class="nav-tabs">
-        <button class="tab active" data-view="predictions">Season Leaders</button>
+        <button class="tab active" data-view="homepage">Next Week</button>
+        <button class="tab" data-view="predictions">Season Leaders</button>
         <button class="tab" data-view="model-performance">Model Performance</button>
         <button class="tab" data-view="comparison">Comparison</button>
         <button class="tab" data-view="model-architecture">Model Architecture</button>
@@ -54,8 +55,56 @@
 
     <!-- Main Content -->
     <main class="main-content">
-        <!-- ============ PREDICTIONS VIEW ============ -->
-        <section id="view-predictions" class="view active">
+        <!-- ============ HOMEPAGE (Next Week) VIEW ============ -->
+        <section id="view-homepage" class="view active">
+            <div class="filters-bar">
+                <div class="filters-row-top">
+                    <div class="filter-group">
+                        <label>Position</label>
+                        <div class="pill-group" id="homepage-position-filter">
+                            <button class="pill active" data-value="ALL">All</button>
+                            <button class="pill" data-value="QB">QB</button>
+                            <button class="pill" data-value="RB">RB</button>
+                            <button class="pill" data-value="WR">WR</button>
+                            <button class="pill" data-value="TE">TE</button>
+                            <button class="pill" data-value="K" disabled title="Coming soon">K</button>
+                            <button class="pill" data-value="DST" disabled title="Coming soon">DST</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="homepage-banner" class="homepage-banner hidden" role="status" aria-live="polite"></div>
+
+            <div class="results-info">
+                <span id="homepage-count">0 players</span>
+            </div>
+
+            <div class="table-container">
+                <table id="homepage-table">
+                    <thead>
+                        <tr>
+                            <th class="col-rank">#</th>
+                            <th class="col-player">Player</th>
+                            <th class="col-pos">Pos</th>
+                            <th class="col-team">Team</th>
+                            <th class="col-matchup">Matchup</th>
+                            <th class="col-total" title="Vegas implied team total">Impl. Tot.</th>
+                            <th class="col-pred ridge-col">Ridge</th>
+                            <th class="col-pred nn-col">NN</th>
+                            <th class="col-pred attn-nn-col">Attn NN</th>
+                            <th class="col-pred lgbm-col">LGBM</th>
+                        </tr>
+                    </thead>
+                    <tbody id="homepage-body">
+                        <tr><td colspan="10" class="arch-loading">Loading next week's projections…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============ PREDICTIONS (Season Leaders) VIEW ============ -->
+        <section id="view-predictions" class="view">
             <!-- Filters -->
             <div class="filters-bar">
                 <div class="filters-row-top">
