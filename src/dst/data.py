@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.config import CACHE_DIR, SEASONS, TRAIN_SEASONS
+from src import config
 from src.data import nfl_source
 from src.data.loader import load_team_week_stats
 from src.shared.weather_features import TEAM_CODE_NORMALIZATION
@@ -21,9 +21,14 @@ def build_data() -> pd.DataFrame:
       - yards_allowed: opponent's passing_yards + rushing_yards from stats_team
       - Special teams TDs: from player stats per team (mostly complete)
     """
-    weekly = pd.read_parquet(f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet")
-    schedules = pd.read_parquet(f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
-    team_stats = load_team_week_stats(SEASONS)
+    # Read src.config lazily (module-attr access, not an import-time name bind)
+    # so a post-import mutation of src.config.SEASONS / CACHE_DIR — a mid-process
+    # season rollover or a tuner broadening the range — is honored here. (#475)
+    cache_dir = config.CACHE_DIR
+    seasons = config.SEASONS
+    weekly = pd.read_parquet(f"{cache_dir}/weekly_{seasons[0]}_{seasons[-1]}.parquet")
+    schedules = pd.read_parquet(f"{cache_dir}/schedules_{seasons[0]}_{seasons[-1]}.parquet")
+    team_stats = load_team_week_stats(seasons)
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
     # Normalize historical team codes (OAK/SD/STL → LV/LAC/LA) at the source so
     # every downstream ``team`` / ``opponent_team`` derived from the schedule
@@ -383,7 +388,7 @@ def build_data() -> pd.DataFrame:
     # Constant fills below (is_home/rest_days/div_game/is_dome and the 0-fills
     # above) don't depend on the data distribution, so they need no split-aware
     # treatment.
-    train_rows = dst_df[dst_df["season"].isin(TRAIN_SEASONS)]
+    train_rows = dst_df[dst_df["season"].isin(config.TRAIN_SEASONS)]
 
     def _train_stat(col: str, agg: str) -> float:
         """Train-only median/mean for ``col``, falling back to the full frame

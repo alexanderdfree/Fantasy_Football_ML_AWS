@@ -158,7 +158,11 @@ def _flat_nn_kwargs(pc: PositionConfig) -> dict:
     return kwargs
 
 
-@cache
+# Intentionally NOT @cache'd: the spec snapshots bound module callables
+# (filter_to_position / compute_targets / features_mod.*) and POSITION_CONFIG
+# state, so caching froze those refs at first call — silently ignoring a
+# test/tuner/reload that monkeypatches them. Rebuilt per call (~25 attr reads +
+# sys.modules-cached imports), negligible beside the S3/torch load it precedes. (#394)
 def get_inference_spec(pos: str) -> dict:
     """Build the inference-time spec dict consumed by app.py.
 
