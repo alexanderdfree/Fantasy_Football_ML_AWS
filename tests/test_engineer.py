@@ -337,6 +337,19 @@ def test_rolling_features_carry_across_season_boundary():
 
 
 @pytest.mark.unit
+def test_opp_defense_static_features_carry_across_season_boundary():
+    """The static ``opp_def_*_L5`` rolling columns (distinct from the attention
+    opp-defense history sequence, which stays season-isolated) carry a defense's
+    trailing form across the offseason — same Week-1 fix as the player windows.
+    In ``_two_season_frame`` everyone plays vs ``DAL``: DAL allowed 190 rush yds in
+    2023 wk16 (100+90) and 230 in wk17 (120+110), so a 2024 Week-1 row vs DAL must
+    see the carried mean (210), NOT 0."""
+    out = build_features(_two_season_frame())
+    w1 = out[(out["season"] == 2024) & (out["week"] == 1)].iloc[0]
+    assert w1["opp_def_rush_yds_allowed_L5"] == pytest.approx(210.0)  # (190+230)/2, carried
+
+
+@pytest.mark.unit
 def test_air_yards_share_lag_is_stint_aware():
     """#666: the ``air_yards_share`` lag must reset at a mid-season team change,
     matching its sibling share features (``target_share`` / ``carry_share``). A
