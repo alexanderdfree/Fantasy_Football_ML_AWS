@@ -244,9 +244,11 @@ class PositionConfig:
 
     # === TabPFN (pretrained tabular transformer; 5th model variant) ===
     # Off by default — only positions that opt in run it (and the env must have
-    # the optional ``tabpfn`` package). ``tabpfn_pca_components`` reduces the
-    # feature matrix under TabPFN's ~500-feature pretraining cap when needed;
-    # ``tabpfn_ignore_pretraining_limits`` lets it run past the cap as-is instead.
+    # the optional ``tabpfn`` package + a Prior Labs ``TABPFN_TOKEN``). Pinned to
+    # the TabPFN-3 line, whose envelope covers every position in-regime, so the two
+    # cap knobs are no-ops at this scale (kept for unusually wide inputs):
+    # ``tabpfn_pca_components`` reduces the feature matrix via PCA;
+    # ``tabpfn_ignore_pretraining_limits`` lets it run past a cap as-is.
     train_tabpfn: bool = False
     tabpfn_n_estimators: int = 8
     tabpfn_pca_components: int | None = None
