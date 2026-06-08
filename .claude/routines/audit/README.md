@@ -3,8 +3,8 @@
 Claude wrapper for the shared code-audit routine. A Claude Code scheduled remote
 agent runs every 2 hours, fans out parallel auditor subagents over the repo, dedupes
 against open+closed `claude-audit` and `codex-audit` GitHub issues, and files
-**one issue per finding** under `claude-audit` — labeled by severity
-(`severity-high`/`severity-medium`) and area, HIGH/MED only — plus one closed
+**one issue per finding** under `claude-audit` — labeled by severity,
+model regress-risk, and area — plus one closed
 `[claude-audit] checkpoint ...` issue per fire recording the audited SHA (a
 per-fire audit-trail entry; it carries no severity label, so it's excluded from
 the actionable backlog). The per-finding issues it produces are consumed by the

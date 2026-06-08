@@ -1,11 +1,11 @@
 ---
 name: solve-issues
-description: Triage the open [claude-audit]/[codex-audit] per-finding GitHub issues (one finding per issue, labeled by severity + area), then plan parallel-worker fixes bundled into 2–3 tier-by-risk PRs for user approval. Enters plan mode. Verifies each open finding, classifies FIX vs LEAVE (skipping stale claims, false positives, and feature-drift suggestions that violate project stop-rules), closes the LEAVE issues, partitions the FIX set into file-disjoint bundles across Tier A/B/C risk tiers, then exits plan mode for approval. Trigger with `/solve-issues` when the user wants to clear the audit backlog; not for one-off bug fixes. Also runs a verify-then-close mode for an already-remediated backlog passed explicitly (e.g. a legacy batch issue or a `#NNN split` set like `/solve-issues #338-348`): confirms each finding's fix is on `main` (or its LEAVE still holds), then closes the tracking issue(s).
+description: Triage the open [claude-audit]/[codex-audit] per-finding GitHub issues (one finding per issue, labeled by severity + model regress-risk + area), then plan parallel-worker fixes bundled into 2–3 tier-by-risk PRs for user approval. Enters plan mode. Verifies each open finding, classifies FIX vs LEAVE (skipping stale claims, false positives, and feature-drift suggestions that violate project stop-rules), closes the LEAVE issues, partitions the FIX set into file-disjoint bundles across Tier A/B/C risk tiers, then exits plan mode for approval. Trigger with `/solve-issues` when the user wants to clear the audit backlog; not for one-off bug fixes. Also runs a verify-then-close mode for an already-remediated backlog passed explicitly (e.g. a legacy batch issue or a `#NNN split` set like `/solve-issues #338-348`): confirms each finding's fix is on `main` (or its LEAVE still holds), then closes the tracking issue(s).
 ---
 
 # Solve audit-job issues
 
-The scheduled audit routines file **one GitHub issue per finding**, each labeled with the producer label (`claude-audit` or `codex-audit`) + a severity label (`severity-high`/`severity-medium`) + an area label (`qb`/`shared`/`docs`/…). The open severity-labeled issues across both labels are the live backlog; a closed `[claude-audit] checkpoint …` or `[codex-audit] checkpoint …` issue per fire records the audited SHA (it is **not** a finding — it carries no severity label, so it never appears in the backlog query). A meaningful fraction of findings are real bugs; the rest are noise: stale claims, false positives, or suggestions that re-introduce reverted designs (rolling features into the attention static branch, training on `fantasy_points`, loss-config knobs in `tune_nn.py`, etc. — see [AGENTS.md](AGENTS.md) "Stop rules").
+The scheduled audit routines file **one GitHub issue per finding**, each labeled with the producer label (`claude-audit` or `codex-audit`) + one severity label (`severity-docs`/`severity-low`/`severity-medium`/`severity-high`) + one model regress-risk label (`regress-risk-docs`/`regress-risk-low`/`regress-risk-medium`/`regress-risk-high`) + an area label (`qb`/`shared`/`docs`/…). The open severity-labeled issues across both labels are the live backlog; a closed `[claude-audit] checkpoint …` or `[codex-audit] checkpoint …` issue per fire records the audited SHA (it is **not** a finding — it carries no severity label, so it never appears in the backlog query). A meaningful fraction of findings are real bugs; the rest are noise: stale claims, false positives, or suggestions that re-introduce reverted designs (rolling features into the attention static branch, training on `fantasy_points`, loss-config knobs in `tune_nn.py`, etc. — see [AGENTS.md](AGENTS.md) "Stop rules").
 
 This skill enters plan mode, triages each open finding into **FIX** or **LEAVE** (with a category), then drafts the fix plan using the project's tier-by-risk PR consolidation pattern (CLAUDE.md "Sub-agent contract — two shapes" + auto-memory `feedback_tier_by_risk_pr_consolidation`). It produces a verdict + bundle plan for `ExitPlanMode` approval — **no branches cut, no workers spawned for code changes, until the user approves**.
 
@@ -47,16 +47,16 @@ If not already in plan mode, call `EnterPlanMode` first. The skill produces a tr
      ```
      for label in claude-audit codex-audit; do
        gh issue list --label "$label" --state open --json number,title,labels,updatedAt --limit 400 \
-         --jq '.[] | select(any(.labels[]; .name=="severity-high" or .name=="severity-medium"))'
+         --jq '.[] | select(any(.labels[]; .name | test("^severity-(docs|low|medium|high)$")))'
      done | jq -s 'unique_by(.number) | sort_by(.number)'
      ```
      The filter drops the closed `checkpoint` issues automatically (they carry no severity label) and yields the live finding set. Each kept issue is ONE finding.
    - Explicit `/solve-issues <N>` → use `<N>` (one issue). If it carries a severity label it's a single per-finding issue; if it's a **legacy batch issue** (`[claude-audit] <date> — N findings` or `[codex-audit] <date> — N findings`) or a `#NNN split`, treat its body as multi-finding (see step 3's legacy fallback).
    - Explicit **range/list** `/solve-issues #A-B` or `#A,#B,…` → expand to the set and run per-issue.
 2. Fetch full body + comments for each target issue: `gh issue view <N> --json number,title,body,labels,comments`.
-3. Parse into per-finding records `{id (=issue #), severity, area, title, file, line, what, why_suspect, suggested_action, evidence_snippet}`:
-   - **Per-finding issue (default):** one issue = one finding. Read `severity` and `area` from the **labels** (`severity-*` / the area label), the rest from the body fields. **Prefer the machine-readable `json` block** (schema `agent-audit/v1`, or legacy `claude-audit/v1`, appended at the END of the body) when present — it carries `file`, `line`, `category`, `first_seen_sha`, and for new issues the producer `audit_label`; extract it CRLF-safely the same way `routines/audit/instructions.md` Step 1 does (strip `\r` from the `gh issue view <N> --json body --jq '.body'` output, slice the fenced json block, `jq` it). If the block is absent (legacy issue) or unparseable, FALL BACK to the prose `**File**:`/`**What**:`/… body fields. Severity and area still come from LABELS either way; `category` (if present) seeds the triage hint, not the FIX/LEAVE verdict. `id` is the issue number — keep it; you'll cite `Closes #id` (FIX) or close it directly (LEAVE).
-   - **Legacy fallback (explicitly-passed multi-finding issue):** if the body groups findings under area headers (`### QB`, `### Shared`, …) or it's a `#NNN split`, parse each `#### …` finding block into its own record (severity from the finding header, area from the section / split title). This drains the pre-migration batch issues without re-filing them.
+3. Parse into per-finding records `{id (=issue #), severity, regress_risk, area, title, file, line, what, why_suspect, suggested_action, evidence_snippet}`:
+   - **Per-finding issue (default):** one issue = one finding. Read `severity`, `regress_risk`, and `area` from the **labels** (`severity-*` / `regress-risk-*` / the area label), the rest from the body fields. **Prefer the machine-readable `json` block** (schema `agent-audit/v1`, or legacy `claude-audit/v1`, appended at the END of the body) when present — it carries `file`, `line`, `category`, `first_seen_sha`, and for new issues the producer `audit_label` plus `regress_risk`; extract it CRLF-safely the same way `routines/audit/instructions.md` Step 1 does (strip `\r` from the `gh issue view <N> --json body --jq '.body'` output, slice the fenced json block, `jq` it). If the block is absent (legacy issue) or unparseable, FALL BACK to the prose `**File**:`/`**What**:`/… body fields. Severity and area still come from LABELS either way; `category` (if present) seeds the triage hint, not the FIX/LEAVE verdict. If any issue shape lacks `regress_risk`, infer it conservatively from the files/fix shape during triage. `id` is the issue number — keep it; you'll cite `Closes #id` (FIX) or close it directly (LEAVE).
+   - **Legacy fallback (explicitly-passed multi-finding issue):** if the body groups findings under area headers (`### QB`, `### Shared`, …) or it's a `#NNN split`, parse each `#### …` finding block into its own record (severity from the finding header, area from the section / split title, and `regress_risk` from labels/JSON when available or conservative inference otherwise). This drains the pre-migration batch issues without re-filing them.
 4. Compare the head SHA (`@<sha>` in a finding's First-seen line, or a batch title) against `git rev-parse origin/main`. If drifted by > a handful of commits, note it ("auditor SHA is N commits behind `main`; some findings may already be stale or remediated at head").
 5. **Pick the mode** (see "## Two modes"): if the target issue(s) already carry a remediation comment whose cited PRs are merged → **Mode B** (jump to "## Mode B: verify-then-close"). Otherwise → **Mode A** (continue to Phase 2).
 
@@ -78,6 +78,7 @@ Worker brief (template — fill the `{...}` slots, send all workers in one paral
 >   leave_category: <if LEAVE — one of: stale | false_positive | feature_drift | out_of_scope | speculative>
 >   evidence: <what you observed — quote 1–3 lines from the cited file, or test output, or grep result>
 >   reasoning: <one sentence — why this verdict>
+>   regress_risk: docs | low | medium | high
 >   fix_tier_if_FIX: A | B | C
 >   files_touched_if_FIX: [list]
 >   ```
@@ -123,15 +124,20 @@ Apply the project's tier definitions (CLAUDE.md "Sub-agent contract" + memory `f
 
 - **Tier A** — tests, docstrings, dead-symbol cleanup, operator tools (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`), CLI scripts under `src/scripts/`. **No production behavior change.**
 - **Tier B** — behavior-equivalent fixes: refactors, dedup, in-place → return, mechanical wiring, new validators. **May touch training-adjacent files; no MAE delta.**
-- **Tier C** — bounded behavior changes: feature plumbing, data-leakage fixes, bug fixes in training/serving paths, cache fingerprint changes. **Requires per-position benchmark verification by the worker; benchmark deltas reported in the PR body.**
+- **Tier C** — bounded behavior changes: feature plumbing, data-leakage fixes, bug fixes in training/serving paths, cache fingerprint changes. A `regress-risk-high` finding requires per-position pipeline/benchmark verification by the worker; benchmark deltas are reported in the PR body.
 
-Within each tier, partition findings into **file-disjoint bundles** (one worker per bundle, target ~8–13 bundles per tier — the established sweet spot from the audit-318 cycle ([#323](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/323)/[#325](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/325)/[#326](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/326))). Each bundle:
+Regress-risk ordering is ascending: `docs → low → medium → high`. Tier remains
+the primary PR partition; within each tier, sort FIX findings by regress-risk,
+then area, then issue # before bundling or sequencing PRs.
+
+Within each tier, partition findings into **file-disjoint bundles** (one worker per bundle, target ~8–13 bundles per tier — the established sweet spot from the audit-318 cycle ([#323](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/323)/[#325](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/325)/[#326](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/326))). Prefer not to mix `regress-risk-high` findings with lower-risk findings when file-disjointness and the PR-count cap allow separation; if mixed, mark the bundle and PR by the highest regress-risk it contains. Each bundle:
 
 - Lists its `finding_id`s
+- Lists its max `regress_risk`
 - Lists its `files_touched` (file-disjointness verified across all bundles in the tier — write the table in the plan)
 - Has a one-line task summary for the worker brief
 
-**PR count target: 2–3 PRs** (one per non-empty tier). If Tier C has > ~10 bundles, split Tier C into C1/C2 by file area (e.g. position-specific vs shared) — but **max 4 PRs total** to keep `tests.yml`'s 7-shard matrix CI load light. If a tier is empty after triage, skip it entirely.
+**PR count target: 2–3 PRs** (one per non-empty tier). If a tier must split, split and open PRs in regress-risk ascending order before using file area as the tiebreaker (for example, Tier C low/medium before Tier C high) — but **max 4 PRs total** to keep `tests.yml`'s 7-shard matrix CI load light. If a tier is empty after triage, skip it entirely.
 
 For shared-code signature changes (a worker bundle modifies a function's signature in `src/shared/`), add **"grep every caller of any function whose signature you change"** to that worker's brief (CLAUDE.md "File-disjointness is for parallelism, not correctness"). If the grep finds callers in other bundles, the orchestrator either re-bundles to combine them or plans an **orchestrator-bridge commit** on the staging branch (memory `feedback_tier_by_risk_pr_consolidation` — orchestrator-bridge pattern).
 
@@ -139,12 +145,12 @@ For shared-code signature changes (a worker bundle modifies a function's signatu
 
 Write the plan to the plan file with these sections:
 
-0. **Master backlog (severity-ordered)** — the at-a-glance ranked view of everything open: all findings sorted by **severity (HIGH first)**, then area, then issue #: `severity | area | #issue | title | verdict | tier-if-FIX`. This answers "what's open, by severity"; sections 3–5 answer "what to fix first / together". (The same view is available any time without the skill by listing severity-labeled issues under both `claude-audit` and `codex-audit`.)
-1. **Triage table** — one row per finding: `#issue | severity | area | file:line | verdict | category-if-LEAVE | tier-if-FIX`
+0. **Master backlog (severity-ordered)** — the at-a-glance ranked view of everything open: all findings sorted by **severity (HIGH → MEDIUM → LOW → DOCS)**, then regress-risk ascending (`docs → low → medium → high`), then area, then issue #: `severity | regress-risk | area | #issue | title | verdict | tier-if-FIX`. This answers "what's open, by severity"; sections 3–5 answer "what to fix first / together". (The same view is available any time without the skill by listing severity-labeled issues under both `claude-audit` and `codex-audit`.)
+1. **Triage table** — one row per finding: `#issue | severity | regress-risk | area | file:line | verdict | category-if-LEAVE | tier-if-FIX`
 2. **LEAVE rationale + issues to close** — grouped by category, one line per finding pointing to the stop-rule or evidence. These issues are closed (with a reason comment) on approval — list the `#issue`s explicitly.
-3. **FIX bundles per tier** — Tier A → B → C, each tier listing bundles with `bundle_id | finding_ids (#issues) | files | worker_brief_summary`
+3. **FIX bundles per tier** — Tier A → B → C, and within each tier regress-risk ascending, listing bundles with `bundle_id | max_regress_risk | finding_ids (#issues) | files | worker_brief_summary`
 4. **File-disjointness verification** — per-tier table proving no file appears in two bundles
-5. **Execution sequence** — Tier A PR → wait green/merge → Tier B PR → … (the CI-light cadence). Each PR body cites `Closes #N` for every finding-issue it fixes, so merging auto-closes them.
+5. **Execution sequence** — Tier A PR(s) from lower to higher regress-risk → wait green/merge → Tier B PR(s) lower to higher regress-risk → … (the CI-light cadence). Each PR body cites `Closes #N` for every finding-issue it fixes, so merging auto-closes them.
 6. **Open questions for user** — anything UNCERTAIN that needs the user's call before workers spawn
 
 Then call `ExitPlanMode`.
@@ -200,7 +206,7 @@ gh label create leave --color CCCCCC --description "Audit finding triaged as noi
 gh issue edit <#> --add-label leave
 gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>): <reason / stop-rule section>. Not a fix target."
 ```
-`out_of_scope` and UNCERTAIN-deferred issues stay **open** — they remain the visible backlog (they are NOT noise; do not label them `leave`). Then execute the FIX tiers one at a time. For each tier:
+`out_of_scope` and UNCERTAIN-deferred issues stay **open** — they remain the visible backlog (they are NOT noise; do not label them `leave`). Then execute the FIX tiers one at a time, and execute split PRs within a tier in regress-risk ascending order. For each tier:
 
 1. **Staging branch from `origin/main`**:
    ```
@@ -210,26 +216,26 @@ gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>):
 2. **Spawn all bundle workers in parallel** with `Agent` + `isolation: "worktree"`. Each worker:
    - Symlinks data dirs in its worktree (memory `feedback_worktree_data_symlink`): `main_root="$(dirname "$(git rev-parse --git-common-dir)")"; ln -sf "$main_root/data/"{splits,raw} data/` (portable — derives the parent checkout from git, no hardcoded path)
    - Applies its bundle's fixes
-   - For Tier C bundles: runs `python -m src.{pos}.run_pipeline` for the affected position(s) and diffs `benchmark_history/` (or `{pos}/outputs/`) against `origin/main` baseline
+   - For bundles whose max regress-risk is `high`: runs `python -m src.{pos}.run_pipeline` for the affected position(s) and diffs `benchmark_history/` (or `{pos}/outputs/`) against `origin/main` baseline
    - Runs `pytest -m unit -q` + `ruff check . && ruff format --check .` (**foreground** — memory `feedback_background_pytest_terminates_agents`)
    - Commits to its worktree branch, **does NOT push, does NOT open a PR** (CLAUDE.md "Sub-agent contract — >10 items shape")
    - Reports back: commit SHA, branch name, files modified, findings skipped + why, any cross-bundle test-contract gaps flagged
 3. **Verify worker output**: `git worktree list | grep agent-` should show one worktree per spawned worker (memory `feedback_agent_isolation_with_background` — async returns can lag). For any worker that did NOT report a commit SHA, take over the worktree directly (memory `feedback_take_over_interrupted_agent`).
-4. **Cherry-pick each bundle commit onto the staging branch** in bundle-ID order. After any conflict resolution via Edit, **grep for `<<<<<<<` markers before `git add`** (memory `feedback_verify_no_conflict_markers`).
+4. **Cherry-pick each bundle commit onto the staging branch** in the planned regress-risk ascending bundle order. After any conflict resolution via Edit, **grep for `<<<<<<<` markers before `git add`** (memory `feedback_verify_no_conflict_markers`).
 5. **Orchestrator-bridge commit (if any)** for cross-bundle test-contract gaps. Subject: `fix(audit-NNN, orchestrator, <tier>): <short summary>`.
 6. **Run `.claude/hooks/pre-pr.sh`** locally. If a gate false-positives (e.g. mtime on stash-pop), surface the 3 options to the user (eat cost / authorized bypass / fix the gate) — memory `feedback_surface_gate_friction`. Do not `--no-verify`.
 7. **Rebase** to ensure clean against `origin/main`: `git fetch origin main && git rebase origin/main` (memory `feedback_rebase_before_pre_pr_judge`).
 8. **Invoke `pre-pr-judge` skill** (mandatory — see [CLAUDE.md](CLAUDE.md) "Before `gh pr create`").
 9. **Open the tier PR** with body following the PR [#325](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/325) / [#326](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/326) structure:
-   - **Summary** — tier name, bundle count, finding count, cherry-pick method
+   - **Summary** — tier name, max regress-risk, bundle count, finding count, cherry-pick method
    - **Closes** — `Closes #N` for every finding-issue fixed in this tier (so merge auto-closes them)
-   - **Bundles** — grouped by area, each with bundle ID, commit SHA, files, one-line description
-   - **Deferred** — bundles bumped to a later tier and why
-   - **Risk** — what behavior changes (Tier B: none; Tier C: bounded, list the metric deltas)
+   - **Bundles** — grouped by regress-risk then area, each with bundle ID, commit SHA, files, one-line description
+   - **Deferred** — bundles bumped to a later tier/regress-risk split and why
+   - **Risk** — behavior risk plus model regress-risk; for `regress-risk-high`, list the metric deltas
    - **Test plan** — pytest / ruff / benchmark checklist
    - For Tier C: **mandatory Batch dry-run callout** if any bundle touches GPU code paths (memory `feedback_gpu_guarded_code_needs_gpu_test`)
 10. **Wait green CI** (`gh pr checks <N> --watch`) before opening the next tier's PR. This is the CI-load-light cadence — sequential PRs, not all three open at once.
-11. **Get explicit user merge sign-off, then merge.** After green CI, show the user the PR diff (`gh pr diff <N>`) and — for Tier C — the benchmark deltas from the PR body, and ask for explicit approval (AskUserQuestion). Only after the user approves: `gh pr merge <N> --squash`, then `git push origin --delete <branch>` separately — memory `gh_pr_merge_worktree`. Never auto-merge a solve-issues PR on green CI alone — `.claude/hooks/post-pr-create.sh` injects the same stop for `audit-*/tier-*` branches.
+11. **Get explicit user merge sign-off, then merge.** After green CI, show the user the PR diff (`gh pr diff <N>`) and — for `regress-risk-high` fixes — the benchmark deltas from the PR body, and ask for explicit approval (AskUserQuestion). Only after the user approves: `gh pr merge <N> --squash`, then `git push origin --delete <branch>` separately — memory `gh_pr_merge_worktree`. Never auto-merge a solve-issues PR on green CI alone — `.claude/hooks/post-pr-create.sh` injects the same stop for `audit-*/tier-*` branches.
 12. **Confirm closure** — the merged PR's `Closes #N` auto-closes each finding-issue it fixed. Spot-check with `gh issue view #N --json state` (CLOSED); manually `gh issue close #N` any that GitHub didn't auto-close (wording mismatch, etc.). LEAVE issues were already closed at the top of this section.
 
 After all tier PRs land, the open `severity-*`-labeled backlog should show only `out_of_scope` + UNCERTAIN→deferred findings. The next `[claude-audit]` or `[codex-audit]` cycle won't re-file the fixed/closed ones — producer dedupe spans **closed** issues from both labels too.
@@ -251,20 +257,20 @@ Once the verify-then-close plan is approved:
 
 - **Feature-drift LEAVE category** encodes the project's stop-rules from AGENTS.md and auto-memory directly into the verification rubric. Audit suggestions that violate "no rolling into ATTN_STATIC_FEATURES" or "no training on fantasy_points" get caught at triage, not at PR review.
 - **CI-friendly PR cadence** — 2–3 PRs instead of 50+ per-bug PRs cuts ~95% of `tests.yml`'s 7-shard matrix runs.
-- **Plan-mode-first + merge sign-off** — verdict list and bundling strategy are user-approved before any branches are cut or workers spawn. Workers operate on a vetted plan; nothing speculative ships. And beyond plan approval, each tier PR stops for **explicit user merge sign-off** (the diff + Tier C benchmark deltas) — a solve-issues PR is never auto-merged on green CI alone (enforced by `post-pr-create.sh` for `audit-*/tier-*` branches).
+- **Plan-mode-first + merge sign-off** — verdict list and bundling strategy are user-approved before any branches are cut or workers spawn. Workers operate on a vetted plan; nothing speculative ships. And beyond plan approval, each tier PR stops for **explicit user merge sign-off** (the diff + any `regress-risk-high` benchmark deltas) — a solve-issues PR is never auto-merged on green CI alone (enforced by `post-pr-create.sh` for `audit-*/tier-*` branches).
 - **Reuses established orchestration** — the per-tier worker → cherry-pick → staging-branch → one-PR flow has shipped 6+ tier PRs (the code-review remediation rollup #312/#314/#315, audit-318 cycles) without conflict-driven rebundles.
 - **Verify-then-close (Mode B) retires remediated backlogs** — confirms a remediation actually held on `main` (not merely that PRs merged — memory `feedback_squash_merge_verify_content`) and closes the finite tracking issues, so the next `[claude-audit]` or `[codex-audit]` re-scan starts from a true-clean state instead of re-flagging already-fixed findings or leaving split issues open indefinitely.
 
 ## Format example — triage table excerpt
 
 ```
-| #issue | sev  | area   | file:line                          | verdict | category       | tier |
-|--------|------|--------|------------------------------------|---------|----------------|------|
-| #412   | HIGH | k      | tests/k/test_attn_pipeline.py:80   | FIX     | —              | B    |
-| #418   | MED  | dst    | src/dst/data.py:358                | FIX     | —              | C    |
-| #421   | MED  | docs   | docs/method_contracts.md:217       | FIX     | —              | A    |
-| #409   | MED  | qb     | src/qb/config.py:142               | LEAVE   | feature_drift  | —    |
-| #415   | MED  | shared | src/shared/pipeline.py:512         | LEAVE   | false_positive | —    |
+| #issue | sev    | regress-risk | area   | file:line                          | verdict | category       | tier |
+|--------|--------|--------------|--------|------------------------------------|---------|----------------|------|
+| #412   | HIGH   | low          | k      | tests/k/test_attn_pipeline.py:80   | FIX     | —              | B    |
+| #418   | MEDIUM | high         | dst    | src/dst/data.py:358                | FIX     | —              | C    |
+| #421   | DOCS   | docs         | docs   | docs/method_contracts.md:217       | FIX     | —              | A    |
+| #409   | LOW    | medium       | qb     | src/qb/config.py:142               | LEAVE   | feature_drift  | —    |
+| #415   | MEDIUM | low          | shared | src/shared/pipeline.py:512         | LEAVE   | false_positive | —    |
 ```
 
 ## Format example — bundle plan excerpt
@@ -272,11 +278,11 @@ Once the verify-then-close plan is approved:
 ```
 ### Tier A — docs + tests (3 bundles, 1 PR)
 
-| bundle    | findings      | files                            | brief                                          |
-|-----------|---------------|----------------------------------|------------------------------------------------|
-| W.DOCS    | #421, #423    | docs/method_contracts.md         | Fix stale feature counts; remove deleted refs. |
-| W.TESTS-K | #412          | tests/k/test_attn_pipeline.py    | Route cfg through build_pipeline_config.       |
-| W.SCRIPTS | #407          | src/qb/diagnose_outliers.py      | Update _train_nn callsite to new signature.    |
+| bundle    | max regress-risk | findings   | files                            | brief                                          |
+|-----------|------------------|------------|----------------------------------|------------------------------------------------|
+| W.DOCS    | docs             | #421, #423 | docs/method_contracts.md         | Fix stale feature counts; remove deleted refs. |
+| W.TESTS-K | low              | #412       | tests/k/test_attn_pipeline.py    | Route cfg through build_pipeline_config.       |
+| W.SCRIPTS | low              | #407       | src/qb/diagnose_outliers.py      | Update _train_nn callsite to new signature.    |
 
 File-disjointness: ✓ (no file in two bundles).
 ```
