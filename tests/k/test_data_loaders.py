@@ -57,11 +57,12 @@ def _kicker_pbp_cache_row(player_id: str, season: int, week: int, recent_team: s
         "pat_att": 3,
         "pat_made": 3,
         "pat_missed": 0,
-        # Sentinel proving this row was written by the post-XP-venue-backfill
-        # code path; the cache schema gate (`_REQUIRED_PBP_COLUMNS`) rejects
-        # parquets without it so stale caches regenerate. Test fixtures must
-        # include it to walk the cache-hit branch.
+        # Sentinels proving this row was written by the post-XP-venue and
+        # post-XP-weather backfill code paths; the cache schema gate
+        # (`_REQUIRED_PBP_COLUMNS`) rejects parquets without them so stale caches
+        # regenerate. Test fixtures must include both to walk the cache-hit branch.
         "_xp_venue_backfilled": True,
+        "_xp_weather_backfilled": True,
     }
 
 
@@ -257,6 +258,65 @@ def test_reconstruct_weekly_from_pbp_xp_only_game_gets_venue(tmp_path, monkeypat
     # had no rows so they would default to NaN without the XP fallback).
     assert k01["recent_team"] == "KC"
     assert k01["player_name"] == "Kicker 1"
+
+
+@pytest.mark.unit
+def test_reconstruct_weekly_from_pbp_xp_only_outdoor_gets_weather(tmp_path, monkeypatch):
+    """An outdoor kicker-week with only XPs (no FGs) must get the actual game
+    wind/temp from its XP plays — not NaN -> downstream train-mean fill (#357 F2).
+
+    The FG groupby was the sole producer of game_wind/game_temp, so XP-only
+    kicker-weeks left them NaN; only dome rows got the (65, 0) rewrite, and
+    outdoor XP-only games (e.g. a cold-weather XP after a TD with no FG attempt)
+    silently received train-mean weather, drifting train inputs from the same
+    physical game's real conditions. Sibling to
+    ``test_reconstruct_weekly_from_pbp_xp_only_game_gets_venue`` for the weather
+    columns.
+    """
+    import src.k.data as k_data
+
+    def _xp_only_outdoor_pbp(seasons, cols):
+        """Synthetic PBP where K09 has only XPs (no FGs) in an outdoor game."""
+        yr = seasons[0]
+        rows = []
+        for i in range(2):
+            rows.append(
+                {
+                    "season": yr,
+                    "season_type": "REG",
+                    "week": 1,
+                    "posteam": "BUF",
+                    "kicker_player_id": "K09",
+                    "kicker_player_name": "Cold Kicker",
+                    "play_id": 3000 + i,
+                    "field_goal_attempt": 0,
+                    "extra_point_attempt": 1,
+                    "field_goal_result": None,
+                    "extra_point_result": "good",
+                    "kick_distance": 33,
+                    "score_differential": 0,
+                    "qtr": 2,
+                    "fg_prob": 0.99,
+                    # Distinctive non-dome readings: proves the values are the
+                    # real XP-play weather, not the (65, 0) dome rewrite or a
+                    # downstream train-mean fill.
+                    "wind": 18.0,
+                    "temp": 24.0,
+                    "roof": "outdoors",
+                    "surface": "grass",
+                }
+            )
+        return pd.DataFrame(rows)
+
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _xp_only_outdoor_pbp)
+    out = k_data.reconstruct_kicker_weekly_from_pbp([2020], cache_dir=str(tmp_path))
+
+    k09 = out[out["player_id"] == "K09"].iloc[0]
+    assert k09["fg_att"] == 0  # confirms the XP-only branch
+    assert k09["is_dome"] == 0  # outdoor, so no (65, 0) dome rewrite
+    # Actual game weather from the XP plays, not NaN/train-mean/dome-default.
+    assert k09["game_wind"] == 18.0
+    assert k09["game_temp"] == 24.0
 
 
 @pytest.mark.unit
