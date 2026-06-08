@@ -26,6 +26,11 @@ let currentScoring = (() => {
     return VALID_SCORING.includes(stored) ? stored : "ppr";
 })();
 let currentPlayerId = null;
+// When the modal is opened for a player who may be absent from the backtest
+// results cache (upcoming-week homepage rows), stash the row's known identity
+// here so a /api/player 404 degrades to a name+headshot card instead of an
+// "Error loading player" message. Null for Season-Leaders rows (always present).
+let currentModalFallback = null;
 let modalOpen = false;
 
 function escapeHtml(str) {
@@ -389,7 +394,7 @@ function onScoringChanged() {
     // them too (collapses any open detail; re-opening uses the new format).
     if (view === "history") loadHistory();
     // If the player modal is open, re-fetch with the new format.
-    if (modalOpen && currentPlayerId) openPlayerModal(currentPlayerId);
+    if (modalOpen && currentPlayerId) openPlayerModal(currentPlayerId, currentModalFallback);
 }
 
 // ---------------------------------------------------------------------------
@@ -457,7 +462,7 @@ function renderHomepageMessage(msg) {
     const banner = document.getElementById("homepage-banner");
     if (banner) banner.classList.add("hidden");
     const tbody = document.getElementById("homepage-body");
-    if (tbody) tbody.innerHTML = `<tr><td colspan="10" class="arch-loading">${escapeHtml(msg)}</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="9" class="arch-loading">${escapeHtml(msg)}</td></tr>`;
     const count = document.getElementById("homepage-count");
     if (count) count.textContent = "";
 }
@@ -499,22 +504,34 @@ function renderHomepage() {
         const matchup = p.opponent
             ? (p.is_home === 1 ? `vs ${escapeHtml(p.opponent)}` : `@ ${escapeHtml(p.opponent)}`)
             : "—";
+        // Headshot avatar, mirroring the Season Leaders table. DST is a team unit
+        // with no player photo (homepage is skill-only today, but keep the guard);
+        // a missing headshot falls back to the empty-circle placeholder.
+        const headshot = p.position === "DST"
+            ? ""
+            : p.headshot
+                ? `<img class="player-headshot" src="${escapeHtml(sizedHeadshot(p.headshot, 400))}" alt="" loading="lazy" decoding="async">`
+                : `<div class="player-headshot"></div>`;
         return `
             <tr data-player-id="${escapeHtml(p.player_id)}">
                 <td class="col-rank">${i + 1}</td>
-                <td class="col-player"><span class="player-name">${escapeHtml(p.name)}</span></td>
+                <td class="col-player"><div class="player-cell">${headshot}<span class="player-name">${escapeHtml(p.name)}</span></div></td>
                 <td class="col-pos"><span class="pos-badge pos-${escapeHtml(p.position)}">${escapeHtml(p.position)}</span></td>
                 <td class="col-team">${escapeHtml(p.team)}</td>
                 <td class="col-matchup">${matchup}</td>
-                <td class="col-total">${fmt(p.implied_team_total)}</td>
                 <td class="col-pred ridge-col">${fmt(p.ridge_pred)}</td>
                 <td class="col-pred nn-col">${fmt(p.nn_pred)}</td>
                 <td class="col-pred attn-nn-col">${fmt(p.attn_nn_pred)}</td>
                 <td class="col-pred lgbm-col">${fmt(p.lgbm_pred)}</td>
             </tr>`;
     }).join("");
-    tbody.querySelectorAll("tr").forEach(row => {
-        row.addEventListener("click", () => openPlayerModal(row.dataset.playerId));
+    // Row order matches `rows` (flat, one <tr> per player), so index straight in
+    // to hand openPlayerModal the row's identity as a /api/player 404 fallback.
+    tbody.querySelectorAll("tr").forEach((row, i) => {
+        const p = rows[i];
+        row.addEventListener("click", () => openPlayerModal(p.player_id, {
+            name: p.name, position: p.position, team: p.team, headshot: p.headshot,
+        }));
     });
 }
 
@@ -1037,13 +1054,15 @@ function setupModal() {
     document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
 }
 
-async function openPlayerModal(playerId) {
+async function openPlayerModal(playerId, fallback = null) {
     currentPlayerId = playerId;
+    currentModalFallback = fallback;
     try {
         const data = await fetchJSON(
             `/api/player/${encodeURIComponent(playerId)}?scoring=${currentScoring}`,
         );
 
+        setModalNote("");
         document.getElementById("modal-name").textContent = data.name;
         document.getElementById("modal-pos-team").textContent = `${data.position} - ${data.team}`;
         document.getElementById("modal-avg").textContent = fmt(data.season_avg);
@@ -1110,8 +1129,32 @@ async function openPlayerModal(playerId) {
         modalOpen = true;
     } catch (e) {
         console.error("Failed to load player:", e);
-        document.getElementById("modal-name").textContent = "Error loading player";
-        document.getElementById("modal-pos-team").textContent = "";
+        if (fallback) {
+            // The player isn't in the backtest results cache — a rookie / backup
+            // with no prior-season game log, common for upcoming-week homepage
+            // rows. Show their identity (from the row) instead of an error.
+            document.getElementById("modal-name").textContent = fallback.name || "—";
+            document.getElementById("modal-pos-team").textContent =
+                [fallback.position, fallback.team].filter(Boolean).join(" - ");
+            document.getElementById("modal-avg").textContent = "--";
+            document.getElementById("modal-total").textContent = "--";
+            const img = document.getElementById("modal-headshot");
+            if (fallback.headshot) {
+                img.src = sizedHeadshot(fallback.headshot, 400);
+                img.alt = fallback.name || "";
+                img.style.display = "block";
+            } else {
+                img.removeAttribute("src");
+                img.alt = "";
+                img.style.display = "none";
+            }
+            if (playerChart) { playerChart.destroy(); playerChart = null; }
+            setModalNote("No prior-season game log to chart yet.");
+        } else {
+            document.getElementById("modal-name").textContent = "Error loading player";
+            document.getElementById("modal-pos-team").textContent = "";
+            setModalNote("");
+        }
         document.getElementById("player-modal").classList.add("open");
         modalOpen = true;
     }
@@ -1121,6 +1164,25 @@ function closeModal() {
     document.getElementById("player-modal").classList.remove("open");
     modalOpen = false;
     currentPlayerId = null;
+    currentModalFallback = null;
+}
+
+// Toggle the modal between its chart and a short inline note (shown when a
+// player has no prior-season game log to plot). An empty message restores the
+// chart canvas for the next player that does have history.
+function setModalNote(msg) {
+    const note = document.getElementById("modal-note");
+    const canvas = document.getElementById("player-chart");
+    if (!note) return;
+    if (msg) {
+        note.textContent = msg;
+        note.classList.remove("hidden");
+        if (canvas) canvas.style.display = "none";
+    } else {
+        note.textContent = "";
+        note.classList.add("hidden");
+        if (canvas) canvas.style.display = "";
+    }
 }
 
 // ---------------------------------------------------------------------------

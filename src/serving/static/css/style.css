@@ -658,6 +658,24 @@ tbody tr:last-child td {
     height: 100% !important;
 }
 
+/* Shown in place of the player chart when a player has no prior-season game log
+   to plot (e.g. a rookie / backup surfaced on the upcoming-week homepage who
+   isn't in the backtest results). Centered in the fixed-height .modal .chart-box. */
+.modal-note {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    margin: 0;
+    padding: 0 16px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+.modal-note.hidden {
+    display: none;
+}
+
 /* === Modal === */
 .modal {
     display: none;
