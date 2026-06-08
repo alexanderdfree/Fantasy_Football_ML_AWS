@@ -345,6 +345,10 @@ def _eval_alpha_cv(X, y, folds, alpha, pca_n_components=None):
     for train_idx, val_idx in folds:
         model = RidgeModel(alpha=alpha, pca_n_components=pca_n_components)
         model.fit(X[train_idx], y[train_idx])
+        # Unconditional >=0 clamp is safe: every position's raw-stat targets are
+        # non-negative (all six set nn_non_negative_targets=set(_TARGETS)), so no
+        # signed head is wrongly truncated here today. Gate on the non-negative
+        # set only if a position ever adds a signed target (#351 F13).
         preds = np.maximum(model.predict(X[val_idx]), 0)
         maes.append(np.mean(np.abs(preds - y[val_idx])))
     return np.mean(maes)
@@ -433,6 +437,8 @@ def _eval_enet_cv(X, y, folds, alpha, l1_ratio):
     for train_idx, val_idx in folds:
         model = ElasticNetModel(alpha=alpha, l1_ratio=l1_ratio)
         model.fit(X[train_idx], y[train_idx])
+        # Unconditional >=0 clamp — safe because all targets are non-negative raw
+        # stats; see _ridge_cv_mae for the precondition (#351 F13).
         preds = np.maximum(model.predict(X[val_idx]), 0)
         maes.append(np.mean(np.abs(preds - y[val_idx])))
     return np.mean(maes)

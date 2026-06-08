@@ -269,6 +269,11 @@ class MultiTargetLoss(nn.Module):
         (``tests/{te,dst}/test_training.py::test_components_are_scalars``).
         """
         per_target_losses = {}
+        # FP32 accumulator on purpose: under AMP autocast the per-target losses
+        # may be FP16, but ``combined`` is the value handed to .backward(), so
+        # reducing in FP32 keeps the weighted multi-head sum numerically stable
+        # (no FP16 round-off accumulating across heads). Not a missed-cast perf
+        # regression (#369 F20).
         combined = torch.tensor(0.0, device=next(iter(preds.values())).device)
         for name in self.target_names:
             lt = self.head_losses[name]

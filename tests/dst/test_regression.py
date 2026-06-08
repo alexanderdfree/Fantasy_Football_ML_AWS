@@ -36,6 +36,7 @@ from sklearn.preprocessing import StandardScaler
 from src.dst.config import POSITION_CONFIG
 
 ALL_FEATURES = POSITION_CONFIG.all_features
+HEAD_LOSSES = POSITION_CONFIG.head_losses
 HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
 NN_NON_NEGATIVE_TARGETS = POSITION_CONFIG.nn_non_negative_targets
@@ -170,6 +171,7 @@ def regression_results(tiny_dataset):
         target_names=TARGETS,
         loss_weights=LOSS_WEIGHTS,
         huber_deltas=HUBER_DELTAS,
+        head_losses=HEAD_LOSSES,
     )
     trainer = MultiHeadTrainer(
         model,
