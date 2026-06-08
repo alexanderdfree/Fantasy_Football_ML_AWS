@@ -24,6 +24,18 @@ Run::
 The role estimate is **prior-to-W only** (the season-mean leak inflated the first manual cut
 ~60%); the Ridge sentinel checks the static feature *took*, not that it's honest — leakage-safety
 is owned here.
+
+Result (RB, 3 seeds, 2026-06-07) — **the history token does NOT help; static-only wins.**
+On the Attention NN, ``+static+history`` is −0.32 FP / ~3σ *worse* on the ascension-cohort bias
+than ``+static`` (−10.72 vs −10.40; baseline −11.53) and the overall-MAE flicker (−0.017) is
+inside the seed band. Why: a past spot-start is *already* encoded in the existing history tokens
+(``snap_pct_raw``, ``game_carry_share``, carries, production) — the attention pool can already
+learn it — so a derived ``inherited_opportunity`` token (an expanding-mean of ``snap_pct_raw``)
+re-encodes existing signal *and* averages an already-averaged quantity. The branch gains nothing
+and the redundant token slightly hurts. The static arm is the win because the *current-week*
+vacancy is genuinely new (it's in no past-game sequence). Built-in invariant confirmed:
+LGBM/NN/Ridge byte-identical between the two ``+`` arms (the token is Attention-NN-only). Don't
+re-propose role/inheritance in ``attn_history_stats`` — see AGENTS.md stop-rules.
 """
 
 from __future__ import annotations
