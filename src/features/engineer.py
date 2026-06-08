@@ -368,10 +368,12 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
 # Ridge+LGBM+NN-static AND (via derive_attn_static_features) the NN static branch. Deliberately
 # NOT in ATTN_HISTORY_STATS — a past spot-start is already encoded by the history branch's
 # snap_pct_raw/usage tokens, so a derived token there is redundant (tested-rejected, same A/B).
-_INHERITANCE_POSITIONS = ("RB", "WR")
-# Position-appropriate opportunity proxy: RB snap-share (snaps≈carries), WR per-game targets
-# (a WR's value is targets, not snaps). Scaled per-feature downstream, so the unit mismatch is fine.
-_INHERITANCE_ROLE_COL = {"RB": "snap_pct_raw", "WR": "targets"}
+_INHERITANCE_POSITIONS = ("RB", "WR", "TE")
+# Position-appropriate opportunity proxy: RB snap-share (snaps≈carries), WR/TE per-game targets
+# (a WR's/TE's value is targets, not snaps). Scaled per-feature downstream, so the unit mismatch is
+# fine. TE added #1053-parity: 6-seed TE A/B corrected the inheritor under-call (bias 24/24 robust,
+# served NN/Attn overall MAE -0.02..-0.03; modest, Ridge/LGBM bias overshoots).
+_INHERITANCE_ROLE_COL = {"RB": "snap_pct_raw", "WR": "targets", "TE": "targets"}
 
 
 def _build_inheritance_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None) -> pd.DataFrame:

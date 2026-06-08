@@ -43,6 +43,10 @@ EXPECTED_TE_SPECIFIC = [
     "receiving_first_down_rate_L3",
     "air_yards_per_target_L3",
     "td_rate_per_target_L3",
+    # Red-zone / opportunity boom block (#1061 parity with RB/WR).
+    "redzone_targets_L3",
+    "redzone_target_share_L3",
+    "opportunity_index_L3",
 ]
 
 
@@ -79,6 +83,10 @@ def _make_minimal_split(
                     "receiving_epa": float(rng.normal(1.0, 1.5)),
                     "receiving_first_downs": int(rng.poisson(2)),
                     "receiving_tds": int(rng.binomial(1, 0.2)),
+                    # Red-zone / opportunity boom-block inputs (#1061 parity).
+                    "carries": 0,
+                    "redzone_targets": float(rng.binomial(3, 0.3)),
+                    "redzone_target_share": float(rng.uniform(0, 0.4)),
                 }
             )
     return pd.DataFrame(rows)
