@@ -412,3 +412,58 @@ def test_inheritance_features_next_man_up():
     none_out = _build_inheritance_features(df, None)
     assert "is_top_available" in none_out.columns
     assert (none_out["inherited_opportunity"] == 0.0).all()
+
+
+def test_inheritance_ir_roster_status_out_set():
+    """#1106 finding A: a starter lost to IR is absent from BOTH the weekly frame and the injury
+    report, so the vacancy is invisible unless rosters ``status == "RES"`` is folded into the
+    out-set. With ``rosters_df`` the next man up inherits the IR'd starter's role; without it (or
+    for a non-RES status) inheritance stays 0."""
+    from src.features.engineer import _build_inheritance_features
+
+    rows = []
+    # KC RBs: A leads (snap .8) weeks 1-2, B backs up (.4) weeks 1-3. Week 3: A is on IR -> no
+    # weekly row and NOT on the injury report; B plays and should inherit A's vacated role.
+    for wk in (1, 2):
+        rows.append(
+            dict(
+                player_id="A",
+                position="RB",
+                recent_team="KC",
+                season=2023,
+                week=wk,
+                snap_pct_raw=0.8,
+                targets=0.0,
+            )  # fmt: skip
+        )
+    for wk in (1, 2, 3):
+        rows.append(
+            dict(
+                player_id="B",
+                position="RB",
+                recent_team="KC",
+                season=2023,
+                week=wk,
+                snap_pct_raw=0.4,
+                targets=0.0,
+            )  # fmt: skip
+        )
+    df = pd.DataFrame(rows)
+    # Only the RES row matters; A on IR in week 3.
+    rosters = pd.DataFrame(
+        [dict(player_id="A", position="RB", team="KC", season=2023, week=3, status="RES")]
+    )
+
+    # No injury report -> the only out-set source is rosters RES.
+    g = _build_inheritance_features(df, None, rosters_df=rosters).set_index(["player_id", "week"])
+    assert g.loc[("B", 3), "is_top_available"] == 1.0
+    assert g.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
+
+    # Without rosters_df the IR vacancy is invisible -> inheritance stays 0 (old behavior).
+    g0 = _build_inheritance_features(df, None).set_index(["player_id", "week"])
+    assert g0.loc[("B", 3), "inherited_opportunity"] == 0.0
+
+    # A non-RES roster status (e.g. game-day INA) is deliberately excluded by this change.
+    ina = rosters.assign(status="INA")
+    g1 = _build_inheritance_features(df, None, rosters_df=ina).set_index(["player_id", "week"])
+    assert g1.loc[("B", 3), "inherited_opportunity"] == 0.0
