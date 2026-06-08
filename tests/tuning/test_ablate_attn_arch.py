@@ -1,4 +1,4 @@
-"""Smoke tests for src/tuning/ablate_attn_arch.py.
+"""Unit tests for src/tuning/ablate_attn_arch.py.
 
 Cover loadability, the variant→cfg-key mapping, the config-build surface, and the
 decision-table sentinel — without invoking the real pipeline ``run`` (a
@@ -19,8 +19,14 @@ import pytest
 
 import src.shared.neural_net as nn_mod
 from src.tuning import ablate_attn_arch as aaa
+from src.tuning.ablation_runner import AblationJob, AblationResult
 
 pytestmark = pytest.mark.unit
+
+
+# ---------------------------------------------------------------------------
+# Module surface checks
+# ---------------------------------------------------------------------------
 
 
 def test_module_imports_cleanly():
@@ -29,11 +35,13 @@ def test_module_imports_cleanly():
         "FLAG_VARIANTS",
         "KNOWN_FLAG_KEYS",
         "BASELINE",
+        "DEFAULT_VARIANTS",
         "main",
         "print_summary",
-        "run_variant",
-        "_extract",
+        "_execute_attn_arch_job",
+        "_extract_run_payload",
         "_make_cfg",
+        "_build_jobs",
     ):
         assert hasattr(aaa, attr)
 
@@ -58,6 +66,11 @@ def test_variants_cover_the_seven_prs_plus_baseline_and_alibi_split():
     }
     assert aaa.BASELINE not in aaa.FLAG_VARIANTS
     assert set(aaa.FLAG_VARIANTS) == set(aaa.VARIANTS) - {"baseline"}
+
+
+def test_default_variants_is_baseline_plus_all_flags():
+    assert aaa.DEFAULT_VARIANTS[0] == aaa.BASELINE
+    assert set(aaa.DEFAULT_VARIANTS) == set(aaa.VARIANTS)
 
 
 def test_baseline_override_is_empty():
@@ -99,6 +112,11 @@ def test_flag_keys_are_read_by_the_factory():
         assert f'cfg.get("{key}"' in source, key
 
 
+# ---------------------------------------------------------------------------
+# _make_cfg
+# ---------------------------------------------------------------------------
+
+
 def test_make_cfg_disables_lightgbm_applies_override_and_deep_copies():
     base = {
         "targets": ["rushing_yards", "rushing_tds"],
@@ -117,34 +135,143 @@ def test_make_cfg_disables_lightgbm_applies_override_and_deep_copies():
     assert base["huber_deltas"]["rushing_yards"] == 15.0
 
 
-def test_extract_raises_when_metrics_missing():
+def test_make_cfg_baseline_only_disables_lightgbm():
+    """Baseline override is empty — only LightGBM is flipped."""
+    base = {"targets": ["rushing_yards"], "train_lightgbm": True, "train_ridge": True}
+    cfg = aaa._make_cfg(base, {})
+    assert cfg["train_lightgbm"] is False
+    assert cfg["train_ridge"] is True
+
+
+# ---------------------------------------------------------------------------
+# _extract_run_payload
+# ---------------------------------------------------------------------------
+
+
+def test_extract_run_payload_raises_when_metrics_missing():
     with pytest.raises(RuntimeError, match="missing metrics"):
-        aaa._extract({"attn_nn_metrics": {}}, "alibi", 42, ["rushing_yards"])
+        aaa._extract_run_payload(
+            {"attn_nn_metrics": None, "nn_metrics": None, "ridge_metrics": None},
+            targets=["rushing_yards"],
+            metadata={},
+        )
 
 
-def _row(variant: str, seed: int, attn: float, base: float, ridge: float) -> dict:
-    return {
-        "variant": variant,
-        "seed": seed,
-        "attn_fp_mae": attn,
-        "base_fp_mae": base,
-        "ridge_fp_mae": ridge,
-        "attn_targets": {"rushing_yards": 20.2, "rushing_tds": 0.29},
+def test_extract_run_payload_raises_when_only_attn_present():
+    result = {
+        "attn_nn_metrics": {"total": {"mae": 4.0}, "rushing_yards": {"mae": 20.0}},
+        # nn_metrics and ridge_metrics missing
     }
+    with pytest.raises(RuntimeError, match="missing metrics"):
+        aaa._extract_run_payload(result, targets=["rushing_yards"], metadata={})
 
 
-def test_print_summary_handles_empty_rows():
-    """Edge case: empty rows must not raise (no mean-of-empty crash)."""
-    assert aaa.print_summary([], ["rushing_yards"], [aaa.BASELINE]) is False
+def test_extract_run_payload_maps_all_fields():
+    result = {
+        "attn_nn_metrics": {
+            "total": {"mae": 4.21},
+            "rushing_yards": {"mae": 20.5},
+            "rushing_tds": {"mae": 0.3},
+        },
+        "nn_metrics": {"total": {"mae": 4.50}},
+        "ridge_metrics": {"total": {"mae": 4.72}},
+    }
+    payload = aaa._extract_run_payload(
+        result,
+        targets=["rushing_yards", "rushing_tds"],
+        metadata={"variant_label": "alibi"},
+    )
+
+    assert payload["metrics"]["attn_fp_mae"] == pytest.approx(4.21)
+    assert payload["metrics"]["base_fp_mae"] == pytest.approx(4.50)
+    assert payload["metrics"]["ridge_fp_mae"] == pytest.approx(4.72)
+    assert payload["metrics"]["attn_targets"] == {
+        "rushing_yards": pytest.approx(20.5),
+        "rushing_tds": pytest.approx(0.3),
+    }
+    assert payload["timings"] == {}
+    assert payload["metadata"]["variant_label"] == "alibi"
+
+
+# ---------------------------------------------------------------------------
+# _build_jobs
+# ---------------------------------------------------------------------------
+
+
+def test_build_jobs_produces_correct_job_count_and_shape(monkeypatch):
+    monkeypatch.setattr(
+        aaa,
+        "get_config",
+        lambda pos: {"targets": ["rushing_yards"], "train_lightgbm": True},
+    )
+    jobs = aaa._build_jobs(
+        position="RB",
+        seeds=[42, 43, 44],
+        variants=["baseline", "alibi", "seqdrop"],
+    )
+    # 3 seeds × 3 variants = 9 jobs
+    assert len(jobs) == 9
+    assert all(isinstance(j, AblationJob) for j in jobs)
+    assert all(j.position == "RB" for j in jobs)
+    assert all(j.run_fn is aaa._execute_attn_arch_job for j in jobs)
+    assert all(j.metadata["run_kind"] == "experiment" for j in jobs)
+    # Every (seed, variant) pair appears exactly once.
+    pairs = [(j.seed, j.variant) for j in jobs]
+    assert len(set(pairs)) == 9
+
+
+def test_build_jobs_label_matches_variants_dict(monkeypatch):
+    monkeypatch.setattr(
+        aaa,
+        "get_config",
+        lambda pos: {"targets": ["rushing_yards"], "train_lightgbm": True},
+    )
+    jobs = aaa._build_jobs(position="RB", seeds=[42], variants=["alibi"])
+    job = jobs[0]
+    assert job.label == aaa.VARIANTS["alibi"][0]
+
+
+# ---------------------------------------------------------------------------
+# print_summary (decision table + sentinel)
+# ---------------------------------------------------------------------------
+
+
+def _make_result(
+    variant: str,
+    seed: int,
+    attn: float,
+    base: float,
+    ridge: float,
+    targets: dict[str, float] | None = None,
+) -> AblationResult:
+    return AblationResult(
+        position="RB",
+        seed=seed,
+        variant=variant,
+        metrics={
+            "attn_fp_mae": attn,
+            "base_fp_mae": base,
+            "ridge_fp_mae": ridge,
+            "attn_targets": targets or {"rushing_yards": 20.2, "rushing_tds": 0.29},
+        },
+        timings={},
+        metadata={"run_kind": "experiment"},
+    )
+
+
+def test_print_summary_handles_empty_results():
+    """Edge case: empty results list must not raise."""
+    ok = aaa.print_summary([], ["rushing_yards"], [aaa.BASELINE])
+    assert ok is False
 
 
 def test_print_summary_sentinel_passes_when_ridge_matches(capsys):
     targets = ["rushing_yards", "rushing_tds"]
-    rows = [
-        _row("baseline", 42, 4.21, 4.15, 4.72),
-        _row("alibi", 42, 4.18, 4.15, 4.72),
+    results = [
+        _make_result("baseline", 42, 4.21, 4.15, 4.72),
+        _make_result("alibi", 42, 4.18, 4.15, 4.72),
     ]
-    ok = aaa.print_summary(rows, targets, ["baseline", "alibi"])
+    ok = aaa.print_summary(results, targets, ["baseline", "alibi"])
     out = capsys.readouterr().out
     assert ok is True
     assert "VERDICT" in out
@@ -155,11 +282,106 @@ def test_print_summary_sentinel_fails_when_ridge_differs(capsys):
     """A Ridge-MAE mismatch means the variants saw different data/seed — flag it
     (False) rather than report a bogus flag delta."""
     targets = ["rushing_yards", "rushing_tds"]
-    rows = [
-        _row("baseline", 42, 4.21, 4.15, 4.72),
-        _row("alibi", 42, 4.18, 4.15, 4.99),
+    results = [
+        _make_result("baseline", 42, 4.21, 4.15, 4.72),
+        _make_result("alibi", 42, 4.18, 4.15, 4.99),
     ]
-    ok = aaa.print_summary(rows, targets, ["baseline", "alibi"])
+    ok = aaa.print_summary(results, targets, ["baseline", "alibi"])
     out = capsys.readouterr().out
     assert ok is False
     assert "MISMATCH" in out
+
+
+def test_print_summary_verdict_labels_promising_and_flat(capsys):
+    """A variant better than FLAT_NOISE_THRESHOLD gets 'PROMISING'; a tiny delta
+    stays 'FLAT'. Uses two seeds so stdev is defined."""
+    targets = ["rushing_yards"]
+    results = [
+        # seed 42
+        _make_result("baseline", 42, 4.50, 4.00, 4.72),
+        _make_result("alibi", 42, 4.40, 4.00, 4.72),  # Δ = -0.10 (promising)
+        _make_result("temp", 42, 4.495, 4.00, 4.72),  # Δ = -0.005 (flat)
+        # seed 43
+        _make_result("baseline", 43, 4.50, 4.00, 4.72),
+        _make_result("alibi", 43, 4.40, 4.00, 4.72),
+        _make_result("temp", 43, 4.496, 4.00, 4.72),
+    ]
+    ok = aaa.print_summary(results, targets, ["baseline", "alibi", "temp"])
+    out = capsys.readouterr().out
+    assert ok is True
+    assert "PROMISING" in out
+    assert "FLAT" in out
+
+
+def test_print_summary_verdict_single_seed_note(capsys):
+    """Single-seed run prints the 'Directional only' caveat."""
+    targets = ["rushing_yards"]
+    results = [
+        _make_result("baseline", 42, 4.50, 4.00, 4.72),
+        _make_result("alibi", 42, 4.30, 4.00, 4.72),  # Δ = -0.20 (clearly promising)
+    ]
+    aaa.print_summary(results, targets, ["baseline", "alibi"])
+    out = capsys.readouterr().out
+    assert "Directional only" in out
+
+
+def test_print_summary_errors_are_skipped(capsys):
+    """Results with error set are excluded from the table gracefully."""
+    targets = ["rushing_yards"]
+    results = [
+        _make_result("baseline", 42, 4.50, 4.00, 4.72),
+        AblationResult(
+            position="RB",
+            seed=42,
+            variant="alibi",
+            metrics={},
+            timings={},
+            metadata={},
+            error="RuntimeError: something went wrong",
+        ),
+    ]
+    # Only baseline is present → not enough for a paired delta.
+    ok = aaa.print_summary(results, targets, ["baseline", "alibi"])
+    # Sentinel sees only 1 value → skips the spread check → remains True.
+    assert ok is True
+
+
+# ---------------------------------------------------------------------------
+# CLI dry-run
+# ---------------------------------------------------------------------------
+
+
+def test_cli_dry_run_does_not_train(monkeypatch, capsys):
+    monkeypatch.setattr(
+        aaa,
+        "get_config",
+        lambda pos: {"targets": ["rushing_yards"], "train_lightgbm": True},
+    )
+
+    def fail_run_grid(*args, **kwargs):
+        raise AssertionError("dry-run should not execute jobs")
+
+    monkeypatch.setattr(aaa, "run_grid", fail_run_grid)
+
+    aaa.main(["--dry-run", "--position", "RB", "--seeds", "42,43"])
+    out = capsys.readouterr().out
+
+    # 2 seeds × len(DEFAULT_VARIANTS) variants
+    expected_jobs = 2 * len(aaa.DEFAULT_VARIANTS)
+    assert f"Planned ablation jobs: {expected_jobs}" in out
+    assert "Experiment workers:" in out
+    assert "RB" in out
+
+
+def test_cli_dry_run_variant_subset(monkeypatch, capsys):
+    monkeypatch.setattr(
+        aaa,
+        "get_config",
+        lambda pos: {"targets": ["rushing_yards"], "train_lightgbm": True},
+    )
+    monkeypatch.setattr(aaa, "run_grid", lambda *a, **kw: (_ for _ in ()).throw(AssertionError()))
+
+    aaa.main(["--dry-run", "--position", "RB", "--seeds", "42", "--variants", "alibi,seqdrop"])
+    out = capsys.readouterr().out
+    # baseline is prepended automatically when absent: 1 seed × 3 variants = 3
+    assert "Planned ablation jobs: 3" in out

@@ -1,9 +1,10 @@
-# [PRIORITY] Shared ablation runner with intelligent multithreading (foundation built)
+# [PRIORITY] Shared ablation runner with intelligent multithreading (built + all scripts migrated)
 
-**Status update:** the shared runner foundation now exists at
-[`src/tuning/ablation_runner.py`](../src/tuning/ablation_runner.py), with
-[`src/tuning/ablate_batch_lr.py`](../src/tuning/ablate_batch_lr.py) as the first consumer.
-Older ablation scripts have not been migrated yet.
+**Status update:** the shared runner exists at
+[`src/tuning/ablation_runner.py`](../src/tuning/ablation_runner.py), and **all six `ablate_*`
+scripts are now migrated onto it** (`ablate_batch_lr` first, then `rb_gate` / `ridge_pca` /
+`min_games` / `injury_features` / `backbone_norm` / `attn_arch` in #1054). Only the priority
+ablation *runs* remain (tracked in #1055).
 
 ## Built
 - `AblationJob` / `AblationResult` dataclasses for one position x seed x variant run.
@@ -23,13 +24,20 @@ Older ablation scripts have not been migrated yet.
   cache instead; ablations keep it — only the model-artifact writes are redirected).
 
 ## Still To Do
-- Migrate existing `src/tuning/ablate_*.py` scripts one at a time; keep each script's variant
-  definitions and decision table local. (Longer-term, the cleanest convergence is to fold ablations
-  into [`ab_harness.py`](../src/tuning/ab_harness.py) as cfg-mutator variants and retire the
-  `ablation_runner.py` / `ab_harness.py` overlap — both now share the autodetect + isolation.)
+- **Run the priority ablations** — QB batch-size A/B (≥8 seeds), attention-architecture flag pass,
+  PCA-before-Ridge for QB/TE. Tracked in **#1055** (the harnesses are migrated, so the runs are cheap).
+- Longer-term convergence (open): fold ablations into [`ab_harness.py`](../src/tuning/ab_harness.py)
+  as cfg-mutator variants and retire the `ablation_runner.py` / `ab_harness.py` overlap — both now
+  share the autodetect + isolation.
 - Add an explicit feature-cache warmup hook only when migrating a script that can safely prime
   features without changing the measured quantity. The batch/LR ablation keeps timing clean by
   defaulting to serial execution.
+
+## Done
+- **All six `ablate_*` scripts migrated onto `run_grid`** (#1054): `rb_gate`/`ridge_pca`/`min_games`/
+  `injury_features`/`backbone_norm`/`attn_arch` build `AblationJob` grids + run via the runner with
+  the shared autodetect + output-isolation; each keeps its variant definitions + decision table local.
+  `backbone_norm`'s LayerNorm monkeypatch is applied inside the run_fn (spawn-worker-safe).
 
 ## Original Design Constraints
 **"Intelligent" = contention-aware, not a blind thread pool:**
