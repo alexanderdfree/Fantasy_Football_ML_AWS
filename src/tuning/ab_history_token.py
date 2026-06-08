@@ -1,6 +1,10 @@
 """A/B: does a per-game role-inheritance token in the attention HISTORY branch help?
 
-Three arms on RB (the validated role-inheritance position, todo/rotowire_gap_remediation.md):
+Also the productionization-validation harness for the *static* inheritance feature on RB
+and WR (run ``--only +static``). The injector computes inheritance within each of
+``_POSITIONS`` so one spec covers both.
+
+Three arms (RB is the validated role-inheritance position, todo/rotowire_gap_remediation.md):
 
 * ``baseline``         — production config.
 * ``+static``          — ``is_top_available`` + ``inherited_opportunity`` whitelisted into
@@ -44,10 +48,14 @@ import numpy as np
 
 from src.tuning.ab_harness import Variant, ab_main
 
-POSITIONS = ["RB"]
+POSITIONS = ["RB", "WR"]
 SEEDS = [42, 123, 7]
 
-_POS = "RB"
+# Inheritance is computed WITHIN each of these positions (rank teammates of the same
+# position; the splits are all-position). A cell reads only its own position's column,
+# so one injector serves both the RB and WR cells. WR was added for the productionization
+# validation (the history-token science was RB-only; run WR with `--only +static`).
+_POSITIONS = ("RB", "WR")
 _SNAP = "snap_pct_raw"
 _STATIC = ["is_top_available", "inherited_opportunity"]  # → Ridge + LGBM + NN-static
 _HISTORY = ["inherited_opportunity"]  # → NN history sequence (per-game spot-start token)
@@ -57,32 +65,38 @@ _HISTORY = ["inherited_opportunity"]  # → NN history sequence (per-game spot-s
 # Frame injector — leakage-clean role-inheritance columns (within-position)
 # --------------------------------------------------------------------------- #
 def _inject_inheritance(train, val, test):
-    """Add ``is_top_available`` + ``inherited_opportunity`` per player-week.
+    """Add ``is_top_available`` + ``inherited_opportunity`` per player-week, within position.
 
     * role(player, W) = mean snap over that player's weeks < W (in-season) — prior-to-W,
       so no week-W outcome leaks in.
-    * ``is_top_available`` = this RB has the top prior-role among *present* RBs that week.
-    * ``inherited_opportunity`` = Σ prior-role of same-team OUT/Doubtful RBs ranked above,
-      but only for the top-available RB (the next-man-up who actually absorbs the role).
+    * ``is_top_available`` = this player has the top prior-role among *present* same-position
+      teammates that week.
+    * ``inherited_opportunity`` = Σ prior-role of same-team, same-position OUT/Doubtful
+      players ranked above, but only for the top-available one (the next-man-up who absorbs
+      the role).
 
-    Computed WITHIN position (the splits are all-position; a cross-position group makes an
-    RB never "top" — a QB at snap~1.0 outranks every RB). Same column serves both branches:
-    its week-W value is the static feature; its per-game sequence is the history token.
+    Computed WITHIN each position in ``_POSITIONS`` (the splits are all-position; a
+    cross-position group makes a back never "top" — a QB at snap~1.0 outranks every RB).
+    The injector has no view of the cell's position, so it computes the column for every
+    position in ``_POSITIONS`` and each cell reads only its own rows. Same column serves
+    both branches: its week-W value is the static feature; its per-game sequence is the
+    history token.
     """
     from src.data import nfl_source
 
     seasons = sorted({int(s) for df in (train, val, test) for s in df["season"].unique()})
     inj = nfl_source.injuries(seasons)
-    out = inj[(inj["report_status"].isin(["Out", "Doubtful"])) & (inj["position"] == _POS)]
-    outmap: dict = {}
-    for s, t, w, g in zip(
+    out = inj[(inj["report_status"].isin(["Out", "Doubtful"])) & (inj["position"].isin(_POSITIONS))]
+    outmap: dict = {}  # (position, season, team, week) -> {out player ids}
+    for pos, s, t, w, g in zip(
+        out["position"],
         out["season"].astype(int),
         out["team"],
         out["week"].astype(int),
         out["gsis_id"].astype(str),
-        strict=True,  # all four are columns of `out` → equal-length by construction
+        strict=True,  # all five are columns of `out` → equal-length by construction
     ):
-        outmap.setdefault((s, t, w), set()).add(g)
+        outmap.setdefault((pos, s, t, w), set()).add(g)
 
     def _add(df):
         df["player_id"] = df["player_id"].astype(str)
@@ -102,18 +116,20 @@ def _inject_inheritance(train, val, test):
 
         is_top = np.zeros(len(df))
         inh = np.zeros(len(df))
-        rb = df[df["position"] == _POS]
-        for (s, tm, w), idx in rb.groupby(["season", "recent_team", "week"]).groups.items():
-            si, wi = int(s), int(w)
-            pids = df.loc[idx, "player_id"].to_numpy()
-            roles = np.array([role_before(p, si, wi) for p in pids])
-            out_roles = np.array([role_before(g, si, wi) for g in outmap.get((si, tm, wi), set())])
-            for j, rp in enumerate(roles):
-                top = 1.0 if (roles > rp).sum() == 0 else 0.0
-                oa = float(out_roles[out_roles > rp].sum()) if out_roles.size else 0.0
-                pi = df.index.get_loc(idx[j])
-                is_top[pi] = top
-                inh[pi] = top * oa
+        for pos in _POSITIONS:
+            grp = df[df["position"] == pos]
+            for (s, tm, w), idx in grp.groupby(["season", "recent_team", "week"]).groups.items():
+                si, wi = int(s), int(w)
+                pids = df.loc[idx, "player_id"].to_numpy()
+                roles = np.array([role_before(p, si, wi) for p in pids])
+                out_set = outmap.get((pos, si, tm, wi), set())
+                out_roles = np.array([role_before(g, si, wi) for g in out_set])
+                for j, rp in enumerate(roles):
+                    top = 1.0 if (roles > rp).sum() == 0 else 0.0
+                    oa = float(out_roles[out_roles > rp].sum()) if out_roles.size else 0.0
+                    pi = df.index.get_loc(idx[j])
+                    is_top[pi] = top
+                    inh[pi] = top * oa
         df["is_top_available"] = is_top
         df["inherited_opportunity"] = inh
         return df

@@ -142,7 +142,7 @@ def test_history_token_spec_resolves_as_dotted():
     NN-history token on top of the static arm's mutations."""
     spec = H.resolve_spec("src.tuning.ab_history_token")
     assert spec.dotted == "src.tuning.ab_history_token"
-    assert spec.positions == ["RB"]
+    assert spec.positions == ["RB", "WR"]
     assert set(spec.variants) == {"baseline", "+static", "+static+history"}
     for name in ("+static", "+static+history"):
         v = spec.variants[name]
