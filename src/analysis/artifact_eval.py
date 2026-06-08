@@ -245,6 +245,13 @@ def build_test_df_from_artifacts(
                         opp_source_df = pd.read_parquet(
                             f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
                         )
+                        # Match training/serving: the raw weekly cache carries
+                        # postseason rows; drop them so the opp-offense aggregates
+                        # reproduce the REG-only path the model trained on (#424).
+                        if "season_type" in opp_source_df.columns:
+                            opp_source_df = opp_source_df[
+                                opp_source_df["season_type"] == "REG"
+                            ].copy()
                     else:
                         opp_source_df = pd.concat([train_df, val_df, test_df], ignore_index=True)
                     opp_per_game = builder(opp_source_df)

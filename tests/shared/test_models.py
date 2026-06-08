@@ -360,3 +360,46 @@ class TestLightGBMMultiTarget:
         model = LightGBMMultiTarget(target_names=TARGETS, n_estimators=10)
         model.fit(X, y_dict, feature_names=names)
         assert model._feature_names == names
+
+    def test_predict_falls_back_to_instance_non_negative_targets(self, multi_target_data):
+        """predict() with no kwarg uses ``self.non_negative_targets`` (audit #393).
+
+        The constructor default still clamps every head; an explicit subset must
+        be honored at predict-time even when the caller (serving) omits the
+        kwarg. Force a target negative so the clamp is observable.
+        """
+        X, y_dict = multi_target_data
+        # Train so every head learns a strongly-negative constant for one target.
+        y_neg = dict(y_dict)
+        y_neg["rushing_tds"] = np.full(len(X), -5.0, dtype=np.float32)
+        model = LightGBMMultiTarget(
+            target_names=TARGETS,
+            n_estimators=10,
+            non_negative_targets={"rushing_yards", "receiving_yards"},  # excludes rushing_tds
+        )
+        model.fit(X, y_neg)
+        preds = model.predict(X)  # no kwarg -> falls back to instance set
+        # Excluded head keeps its negative learned value (not clamped to 0).
+        assert (preds["rushing_tds"] < 0).any()
+        # Clamped heads stay >= 0.
+        assert (preds["rushing_yards"] >= 0).all()
+
+    def test_non_negative_targets_survive_save_load(self, multi_target_data, tmp_path):
+        """The per-head clamp set round-trips through save/load (audit #393).
+
+        ``meta.json`` previously omitted ``non_negative_targets``, so a reload
+        constructed with the default and reverted to clamp-every-head. The loaded
+        model (default constructor — the serving pattern) must honor the subset.
+        """
+        X, y_dict = multi_target_data
+        subset = {"rushing_yards"}
+        model = LightGBMMultiTarget(
+            target_names=TARGETS, n_estimators=10, non_negative_targets=subset
+        )
+        model.fit(X, y_dict)
+        model_dir = str(tmp_path / "lgbm")
+        model.save(model_dir)
+
+        loaded = LightGBMMultiTarget(target_names=TARGETS)  # default = clamp-all
+        loaded.load(model_dir)
+        assert loaded.non_negative_targets == subset

@@ -1119,6 +1119,16 @@ def _train_attention_holdout(
         if opp_attn_kind == "offense":
             weekly_cache_path = f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
             opp_source_df = pd.read_parquet(weekly_cache_path)
+            # The raw weekly cache is written unfiltered (src/data/loader.py
+            # ``_fetch_weekly``), so it carries postseason rows. Every other
+            # signal in this pipeline is REG-only — the "defense" branch below
+            # concats the already-``_read_split``-filtered frames. Drop playoff
+            # rows here too so DST's opp-offense per-game aggregates align with
+            # the rest of the REG-only worldview instead of mixing in playoff
+            # games (#424). Guarded like ``_read_split`` for frames/tests that
+            # lack the column.
+            if "season_type" in opp_source_df.columns:
+                opp_source_df = opp_source_df[opp_source_df["season_type"] == "REG"].copy()
         else:
             opp_source_df = pd.concat(list(opp_source_frames), ignore_index=True)
         opp_per_game = builder(opp_source_df)
@@ -1188,6 +1198,11 @@ def _build_lgbm(targets, cfg, seed, n_jobs):
         objective=cfg.get("lgbm_objective", "huber"),
         seed=seed,
         n_jobs=n_jobs,
+        # Carry the per-head clamp set so the saved model persists it (predict()
+        # below still passes it explicitly, so this changes no training metric;
+        # it makes the serving reload, which calls predict() without the kwarg,
+        # honor the position's choice). ``None`` -> clamp every head (default).
+        non_negative_targets=cfg.get("nn_non_negative_targets"),
     )
 
 
