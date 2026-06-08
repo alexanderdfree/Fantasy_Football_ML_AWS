@@ -1,7 +1,56 @@
 # [PRIORITY] Shared parallel A/B / ablation harness (device-autodetect)
 
-**Status:** planned, not built. Motivated by the 2026-06-08 role-inheritance A/B
-([todo/rotowire_gap_remediation.md](rotowire_gap_remediation.md)).
+**Status: BUILT.** [src/tuning/ab_harness.py](../src/tuning/ab_harness.py) (library + CLI + worker),
+[src/tuning/ab_example.py](../src/tuning/ab_example.py) (copy-me template + smoke target),
+[tests/tuning/test_ab_harness.py](../tests/tuning/test_ab_harness.py). Motivated by the
+2026-06-08 role-inheritance A/B ([todo/rotowire_gap_remediation.md](rotowire_gap_remediation.md)).
+The design below is preserved for reference; **what actually shipped** is summarized here.
+
+## What shipped
+- **Spec = a module** exposing `VARIANTS: list[Variant]` (+ optional `POSITIONS` / `SEEDS` /
+  `metric_fn` / `BASELINE`). `Variant(name, cfg_mutator=None, frame_injector=None,
+  expect_ridge_identical=None, label="")`. A spec runs itself via `ab_main(__spec__.name)` in
+  `__main__`; programmatic callers use `run_ab(spec, …)`.
+- **CLI:** `python -m src.tuning.<spec> [--positions …] [--seeds …] [--only V …] [-j N]
+  [--sequential] [--device cpu|cuda|…] [--feature-cache] [--list]`.
+- **Two execution modes, same cell results:** sequential **in-process** (low-core / CI / the
+  unit-test path) and parallel **subprocess-per-cell** (the perf path; chdir isolation is
+  process-global, so a cell must be its own process). The parallel path *composes*
+  `parallel_train.physical_cores` + `core_pool.start_coordinator` — nothing new in `src/shared/`.
+- **Jobs autodetect** (`resolve_jobs`, gate = `FF_DEVICE` + `detect_platform()`): CUDA → `min(cells,6)`
+  (GPU-launch-bound, share the one GPU); CPU+`cpu_count≥12` → one cell per **physical** core (pool
+  fair-shares the joblib/LGBM stages, BLAS pinned to 1); MPS / small boxes → sequential. `FF_AB_JOBS`
+  / `-j` override; workers are `nice`-d (`FF_AB_NICE`, default 10 — the owner games on this box).
+- **Artifact isolation:** every cell `chdir`s into a private tmp dir with `data/` symlinked in, so the
+  hard-coded `{pos}/outputs` writes land there and the served artifacts are never touched. The
+  feature cache is **`FF_FEATURE_CACHE_DISABLE`-d by default** (it keys on data, not code → a sibling
+  variant's features could be silently reused → false `Δ=0`); `--feature-cache` opts back in.
+- **Aggregation:** mean±std per (position, variant, model, metric) + Δ-vs-baseline (order-independent)
+  + the **Ridge-invariance sentinel** keyed on `expect_ridge_identical` (`False` ⇒ a feature MUST move
+  Ridge; `True` ⇒ an NN-only change must NOT; `None` ⇒ report-only). Default `metric_fn` =
+  `cohort_analysis.per_model_metrics` on `result["test_df"]`.
+
+### Caveat found while building — frame injection is QB/RB/WR/TE-only
+**K and DST `run(seed, config)` build their own splits internally** (PBP-reconstructed kicker /
+defense data) — they take no `train/val/test` args. So `frame_injector` variants only work for the
+four skill positions; `cfg_mutator` variants work for all six. The harness detects the `run`
+signature and raises a clear error if a `frame_injector` variant targets K/DST. (This is the kind of
+subprocess-only break unit tests can't see — caught by the smoke, not CI.)
+
+### Verified (smoke, on the 5080)
+- **TE** baseline + `+season_recency` (frame injection) × 2 seeds, `-j4`: 4 cells ran concurrently
+  (~90s wall vs ~330s sequential); Ridge moved `Δ=-0.0028` ⇒ sentinel `expect=differ` → "data changed";
+  served `te/outputs` byte-identical before/after; clean ±std table.
+- **K** baseline + `nn_dropout=0` (cfg-only, K's no-frames path) × 1 seed: Ridge `Δ=+0.00000` ⇒ sentinel
+  `expect=identical` → "data-identical"; served `k/outputs` byte-identical.
+
+### Follow-ups (not in this PR)
+- **Reproduce the role-inheritance A/B** (verification item 1) is deferred — it needs the
+  role-inheritance *feature* itself (Phase 1 of [rotowire_gap_remediation.md](rotowire_gap_remediation.md)),
+  which isn't built yet. The harness is ready to run it (RB/WR, frame-injection shape).
+- **Port the existing `ablate_*` scripts** (`ablate_rb_gate`, `ablate_injury_features`,
+  `ablate_backbone_norm`, …) onto the harness so they parallelize + isolate too. Mechanical; left out
+  here to keep the PR to the harness itself.
 
 ## Why (the anti-pattern this kills)
 That A/B was a hand-rolled `/tmp` script looping `for s in 42 123 7; do … done`:

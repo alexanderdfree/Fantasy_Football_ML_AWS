@@ -110,6 +110,7 @@ python -m src.qb.run_pipeline                       # one position, full pipelin
 python -m src.benchmarking.benchmark RB --no-sync   # benchmark one position
 python -m src.tuning.tune_nn RB --n-trials 30       # Optuna NN tuning
 python -m src.tuning.tune_lgbm RB                   # Optuna LightGBM tuning (3 seeds)
+python -m src.tuning.ab_example --positions RB WR   # A/B harness (template); copy ab_example.py for a real A/B
 ```
 
 Each `tune_nn` / `tune_lgbm` run also appends a git-tracked history entry under
