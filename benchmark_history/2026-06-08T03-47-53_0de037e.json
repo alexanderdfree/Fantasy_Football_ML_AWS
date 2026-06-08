@@ -1,0 +1,259 @@
+{
+  "run_id": "2026-06-08T03:47:53_0de037e",
+  "timestamp": "2026-06-08T03:47:53",
+  "git_hash": "0de037e",
+  "note": "Batch Spot auto-run (0de037e)",
+  "backend": "batch",
+  "instance_type": "g6.xlarge (L4, Spot, CUDA-graph)",
+  "positions": [
+    "DST"
+  ],
+  "results": [
+    {
+      "position": "DST",
+      "ridge_mae": 5.096,
+      "ridge_r2": 0.081,
+      "nn_mae": 5.123,
+      "nn_r2": 0.103,
+      "nn_wins_mae": false,
+      "nn_per_target": {
+        "def_sacks": {
+          "mae": 1.362,
+          "r2": 0.015,
+          "rmse": 1.768
+        },
+        "def_ints": {
+          "mae": 0.686,
+          "r2": 0.008,
+          "rmse": 0.833
+        },
+        "def_fumble_rec": {
+          "mae": 0.54,
+          "r2": -0.014,
+          "rmse": 0.651
+        },
+        "def_fumbles_forced": {
+          "mae": 0.698,
+          "r2": -0.024,
+          "rmse": 0.848
+        },
+        "def_safeties": {
+          "mae": 0.049,
+          "r2": -0.1,
+          "rmse": 0.154
+        },
+        "def_tds": {
+          "mae": 0.113,
+          "r2": -0.028,
+          "rmse": 0.224
+        },
+        "def_blocked_kicks": {
+          "mae": 0.113,
+          "r2": -0.005,
+          "rmse": 0.253
+        },
+        "special_teams_tds": {
+          "mae": 0.119,
+          "r2": -0.045,
+          "rmse": 0.231
+        },
+        "points_allowed": {
+          "mae": 7.401,
+          "r2": 0.133,
+          "rmse": 9.252
+        },
+        "yards_allowed": {
+          "mae": 60.892,
+          "r2": 0.11,
+          "rmse": 76.702
+        }
+      },
+      "ridge_per_target": {
+        "def_sacks": {
+          "mae": 1.385,
+          "r2": 0.057,
+          "rmse": 1.73
+        },
+        "def_ints": {
+          "mae": 0.687,
+          "r2": -0.006,
+          "rmse": 0.839
+        },
+        "def_fumble_rec": {
+          "mae": 0.558,
+          "r2": -0.021,
+          "rmse": 0.654
+        },
+        "def_fumbles_forced": {
+          "mae": 0.693,
+          "r2": -0.038,
+          "rmse": 0.853
+        },
+        "def_safeties": {
+          "mae": 0.053,
+          "r2": -0.014,
+          "rmse": 0.148
+        },
+        "def_tds": {
+          "mae": 0.124,
+          "r2": -0.034,
+          "rmse": 0.225
+        },
+        "def_blocked_kicks": {
+          "mae": 0.112,
+          "r2": -0.009,
+          "rmse": 0.254
+        },
+        "special_teams_tds": {
+          "mae": 0.086,
+          "r2": -0.003,
+          "rmse": 0.226
+        },
+        "points_allowed": {
+          "mae": 7.34,
+          "r2": 0.136,
+          "rmse": 9.231
+        },
+        "yards_allowed": {
+          "mae": 61.155,
+          "r2": 0.091,
+          "rmse": 77.528
+        }
+      },
+      "ridge_top12": 0.556,
+      "nn_top12": 0.528,
+      "ridge_rmse": 6.624,
+      "nn_rmse": 6.543,
+      "attn_nn_mae": 5.046,
+      "attn_nn_r2": 0.097,
+      "attn_nn_rmse": 6.563,
+      "attn_nn_per_target": {
+        "def_sacks": {
+          "mae": 1.412,
+          "r2": 0.024,
+          "rmse": 1.76
+        },
+        "def_ints": {
+          "mae": 0.69,
+          "r2": -0.003,
+          "rmse": 0.838
+        },
+        "def_fumble_rec": {
+          "mae": 0.552,
+          "r2": -0.013,
+          "rmse": 0.651
+        },
+        "def_fumbles_forced": {
+          "mae": 0.694,
+          "r2": -0.031,
+          "rmse": 0.85
+        },
+        "def_safeties": {
+          "mae": 0.022,
+          "r2": -0.023,
+          "rmse": 0.148
+        },
+        "def_tds": {
+          "mae": 0.12,
+          "r2": -0.019,
+          "rmse": 0.223
+        },
+        "def_blocked_kicks": {
+          "mae": 0.112,
+          "r2": -0.003,
+          "rmse": 0.253
+        },
+        "special_teams_tds": {
+          "mae": 0.09,
+          "r2": -0.003,
+          "rmse": 0.226
+        },
+        "points_allowed": {
+          "mae": 7.31,
+          "r2": 0.173,
+          "rmse": 9.032
+        },
+        "yards_allowed": {
+          "mae": 60.488,
+          "r2": 0.107,
+          "rmse": 76.825
+        }
+      },
+      "attn_nn_top12": 0.569,
+      "lgbm_mae": 5.111,
+      "lgbm_r2": 0.102,
+      "lgbm_rmse": 6.545,
+      "lgbm_per_target": {
+        "def_sacks": {
+          "mae": 1.399,
+          "r2": 0.048,
+          "rmse": 1.738
+        },
+        "def_ints": {
+          "mae": 0.693,
+          "r2": -0.017,
+          "rmse": 0.844
+        },
+        "def_fumble_rec": {
+          "mae": 0.555,
+          "r2": -0.005,
+          "rmse": 0.648
+        },
+        "def_fumbles_forced": {
+          "mae": 0.694,
+          "r2": -0.039,
+          "rmse": 0.854
+        },
+        "def_safeties": {
+          "mae": 0.052,
+          "r2": -0.004,
+          "rmse": 0.147
+        },
+        "def_tds": {
+          "mae": 0.126,
+          "r2": -0.022,
+          "rmse": 0.223
+        },
+        "def_blocked_kicks": {
+          "mae": 0.113,
+          "r2": -0.004,
+          "rmse": 0.253
+        },
+        "special_teams_tds": {
+          "mae": 0.086,
+          "r2": 0.002,
+          "rmse": 0.225
+        },
+        "points_allowed": {
+          "mae": 7.287,
+          "r2": 0.16,
+          "rmse": 9.106
+        },
+        "yards_allowed": {
+          "mae": 60.171,
+          "r2": 0.129,
+          "rmse": 75.892
+        }
+      },
+      "lgbm_top12": 0.565,
+      "elapsed_sec": 70.6,
+      "phase_seconds": {
+        "assert_gpu": 0.2,
+        "sync_raw_data": 1.3,
+        "run_pipeline": 68.5,
+        "copy_artifacts": 0.0,
+        "pipeline.prepare_data": 0.3,
+        "pipeline.ridge_tune": 6.0,
+        "pipeline.ridge_fit": 0.1,
+        "pipeline.lgbm_train": 2.0,
+        "pipeline.nn_train": 41.0,
+        "pipeline.attn_nn_train": 8.8,
+        "pipeline.train_models_total": 49.8,
+        "pipeline.backtest": 0.4,
+        "pipeline.save_artifacts": 0.0,
+        "pipeline.figures": 5.7
+      }
+    }
+  ],
+  "pr_number": 1047
+}
