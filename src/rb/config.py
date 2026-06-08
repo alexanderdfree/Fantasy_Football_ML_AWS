@@ -176,6 +176,13 @@ _INCLUDE_FEATURES = {
         "contract_guaranteed",
         "contract_years_remaining",
         "contract_age",
+        # Role-inheritance (next-man-up): current-week vacancy when a higher-snap
+        # RB is Out/Doubtful. Built in src.features.engineer._build_inheritance_features;
+        # validated A/B src/tuning/ab_history_token.py (strong on the inheritor subgroup,
+        # all models). "contextual" is an ATTN_STATIC category, so these feed the NN static
+        # branch too (NOT attn_history_stats — redundant there, tested-rejected).
+        "is_top_available",
+        "inherited_opportunity",
     ],
     # implied_team + implied_opp encodes both game total and spread direction
     # without the perfect collinearity of keeping total_line alongside.

@@ -183,3 +183,93 @@ def test_snap_pct_history_uses_raw_not_prelagged():
     double-lag the snap-share signal in the sequence."""
     assert "snap_pct_raw" in GAME_HISTORY_STATS
     assert "snap_pct" not in GAME_HISTORY_STATS
+
+
+@pytest.mark.unit
+def test_inheritance_features_next_man_up():
+    """``_build_inheritance_features`` (the production mirror of the validated A/B
+    src/tuning/ab_history_token.py): when a higher-role same-position teammate is Out, the
+    top-available teammate inherits the vacated role. RB ranks on ``snap_pct_raw``, WR on
+    ``targets``; only same-position, same-team, higher-ranked OUT players count, and only
+    for the top-available player. Role is prior-to-W (leakage-safe)."""
+    from src.features.engineer import _build_inheritance_features
+
+    rows = []
+    # KC RBs weeks 1-2: A lead (snap .8), B second (.4), C third (.1). Week 3: A is Out.
+    for wk in (1, 2):
+        for pid, snap in (("A", 0.8), ("B", 0.4), ("C", 0.1)):
+            rows.append(
+                dict(
+                    player_id=pid,
+                    position="RB",
+                    recent_team="KC",
+                    season=2023,
+                    week=wk,
+                    snap_pct_raw=snap,
+                    targets=0.0,
+                )  # fmt: skip
+            )
+    for pid, snap in (("B", 0.45), ("C", 0.1)):  # week 3: A absent (Out); .45 must be ignored
+        rows.append(
+            dict(
+                player_id=pid,
+                position="RB",
+                recent_team="KC",
+                season=2023,
+                week=3,
+                snap_pct_raw=snap,
+                targets=0.0,
+            )  # fmt: skip
+        )
+    # KC WRs weeks 1-2: D lead (targets 9), E second (4). Week 3: D Out -> E inherits.
+    for wk in (1, 2):
+        for pid, tgt in (("D", 9.0), ("E", 4.0)):
+            rows.append(
+                dict(
+                    player_id=pid,
+                    position="WR",
+                    recent_team="KC",
+                    season=2023,
+                    week=wk,
+                    snap_pct_raw=0.0,
+                    targets=tgt,
+                )  # fmt: skip
+            )
+    rows.append(
+        dict(
+            player_id="E",
+            position="WR",
+            recent_team="KC",
+            season=2023,
+            week=3,
+            snap_pct_raw=0.0,
+            targets=5.0,
+        )  # fmt: skip
+    )
+    df = pd.DataFrame(rows)
+    inj = pd.DataFrame(
+        [
+            dict(gsis_id="A", position="RB", team="KC", season=2023, week=3, report_status="Out"),
+            dict(gsis_id="D", position="WR", team="KC", season=2023, week=3, report_status="Out"),
+        ]
+    )
+
+    g = _build_inheritance_features(df, inj).set_index(["player_id", "week"])
+
+    # Week 2 (roles differentiated by week-1, nobody Out): the lead is top, no inheritance.
+    assert g.loc[("A", 2), "is_top_available"] == 1.0
+    assert g.loc[("B", 2), "is_top_available"] == 0.0
+    assert g.loc[("A", 2), "inherited_opportunity"] == 0.0
+    # Week 3 RB: A Out (prior role .8), B is now top-available and inherits A's role; C does not.
+    assert g.loc[("B", 3), "is_top_available"] == 1.0
+    assert g.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
+    assert g.loc[("C", 3), "is_top_available"] == 0.0
+    assert g.loc[("C", 3), "inherited_opportunity"] == 0.0
+    # Week 3 WR: D Out (prior targets-role 9), E inherits via the `targets` proxy.
+    assert g.loc[("E", 3), "is_top_available"] == 1.0
+    assert g.loc[("E", 3), "inherited_opportunity"] == pytest.approx(9.0)
+
+    # injuries_df=None -> columns still emitted, inherited_opportunity all zero (no out-set).
+    none_out = _build_inheritance_features(df, None)
+    assert "is_top_available" in none_out.columns
+    assert (none_out["inherited_opportunity"] == 0.0).all()

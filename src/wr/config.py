@@ -97,6 +97,13 @@ _INCLUDE_FEATURES = {
         "contract_guaranteed",
         "contract_years_remaining",
         "contract_age",
+        # Role-inheritance (next-man-up): current-week vacancy when a higher-target
+        # WR is Out/Doubtful. Built in src.features.engineer._build_inheritance_features
+        # (WR role proxy = per-game targets); validated A/B src/tuning/ab_history_token.py
+        # (modest-but-real on the inheritor-subgroup bias, all models). "contextual" is an
+        # ATTN_STATIC category, so these feed the NN static branch too (NOT attn_history_stats).
+        "is_top_available",
+        "inherited_opportunity",
     ],
     # WR carries wind_adjusted/temp_adjusted (TE's config omits them by
     # design): the deep/sideline routes that drive WR receiving_yards are
