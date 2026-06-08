@@ -23,6 +23,7 @@ import pyarrow.parquet as pq
 
 from src.config import CACHE_DIR
 from src.data import nfl_source
+from src.data.external_sources import _seasons_cache_signature
 
 # Feature columns the current implementation produces (excluding the four
 # ``player_id``/``season``/``week``/``recent_team`` merge keys). Single
@@ -193,7 +194,7 @@ def reconstruct_redzone_from_pbp(
     """
     if cache_dir is None:
         cache_dir = CACHE_DIR
-    cache_path = f"{cache_dir}/redzone_pbp_{seasons[0]}_{seasons[-1]}.parquet"
+    cache_path = f"{cache_dir}/redzone_pbp_{_seasons_cache_signature(seasons)}.parquet"
     if os.path.exists(cache_path) and _cached_rz_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
 
