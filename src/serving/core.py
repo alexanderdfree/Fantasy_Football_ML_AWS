@@ -1366,7 +1366,7 @@ _PREDICTIONS_CACHE_DIR = os.path.join(_REPO_ROOT, "data", "serving_cache")
 _PREDICTIONS_PARQUET = "predictions.parquet"
 _METRICS_JSON = "metrics.json"
 _FINGERPRINT_JSON = "fingerprint.json"
-_PREDICTIONS_CACHE_SCHEMA_VERSION = 4
+_PREDICTIONS_CACHE_SCHEMA_VERSION = 5
 # Browser-ready snapshot the frontend hydrates its first paint from (see
 # /api/snapshot + static/js/app.js). Auxiliary to the cache triple above —
 # its absence is non-fatal (frontend falls back to /api/predictions), so it is
@@ -1380,27 +1380,39 @@ _EXPERT_SOURCE_CACHE_PREFIXES = (
     "sleeper_projections_",
     "sleeper_projections_joined_",
 )
+_K_PBP_SEASONS = tuple(s for s in k_data.SEASONS if s <= 2024)
+_SERVING_RAW_FINGERPRINT_FILES = frozenset(
+    {
+        f"depth_charts_v2_{SEASONS[0]}_{SEASONS[-1]}.parquet",
+        f"injuries_{SEASONS[0]}_{SEASONS[-1]}.parquet",
+        *(
+            {f"kicker_pbp_{_K_PBP_SEASONS[0]}_{_K_PBP_SEASONS[-1]}.parquet"}
+            if _K_PBP_SEASONS
+            else set()
+        ),
+        f"kicker_kicks_pbp_{k_data.SEASONS[0]}_{k_data.SEASONS[-1]}.parquet",
+        f"rosters_{SEASONS[0]}_{SEASONS[-1]}.parquet",
+        f"schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet",
+        f"snap_counts_{SEASONS[0]}_{SEASONS[-1]}.parquet",
+        f"team_stats_{SEASONS[0]}_{SEASONS[-1]}.parquet",
+        f"weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet",
+    }
+)
 
 
 def _iter_fingerprint_paths():
     """Yield absolute paths whose (size, mtime) define cache validity.
 
-    Walks each position's model dir, the base data splits, and every
-    ``data/raw/*.parquet`` file. Any change to a trained model, a split, or
-    a raw cache invalidates the predictions cache automatically.
+    Walks each position's model dir, the base data splits, and the production
+    serving raw inputs. Any change to a trained model, a split, or one of those
+    raw inputs invalidates the predictions cache automatically.
 
-    Why widen to all of ``data/raw/`` rather than just the kicker PBP cache:
-    ``sync_data_from_s3`` pulls every ``data/raw/*.parquet`` at boot, and
-    serving inference reads many of them at request time
-    (``weekly_*.parquet``, ``schedules_*.parquet``,
-    ``team_stats_*.parquet``, ``injuries_*.parquet``,
-    ``depth_charts_*.parquet``, ``snap_counts_*.parquet``,
-    ``rosters_*.parquet`` — via ``build_position_features`` for weather /
-    Vegas / depth-chart features). A refreshed weekly cache without a
-    fingerprint bump would let a new container hydrate stale predictions
-    paired against newer raw data. The kicker PBP file is the only one
-    that affects K's own feature build directly, but every position picks
-    up weather/Vegas/etc. from the shared raws.
+    Do not fingerprint every local ``data/raw/*.parquet``. Developer checkouts
+    often contain analysis-only or loader-side-effect caches (contracts,
+    redzone, expert-source joins, older kicker PBP, generated team_stats, etc.)
+    that the production container does not boot-sync before trying to hydrate
+    the S3 prediction cache. Including them makes locally seeded caches miss in
+    ECS even when the actual serving inputs are identical.
     """
     for pos in _ALL_POSITIONS:
         model_dir = os.path.join(_REPO_ROOT, "src", pos.lower(), "outputs", "models")
@@ -1419,7 +1431,7 @@ def _iter_fingerprint_paths():
         for fname in sorted(os.listdir(raw_dir)):
             if fname.startswith(_EXPERT_SOURCE_CACHE_PREFIXES):
                 continue
-            if fname.endswith(".parquet"):
+            if fname in _SERVING_RAW_FINGERPRINT_FILES:
                 yield os.path.join(raw_dir, fname)
 
 
