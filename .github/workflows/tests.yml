@@ -156,6 +156,17 @@ jobs:
       # silently, matching the historical behavior. Remove the moment a CI
       # data step is wired up — that's the whole point of the latent guard.
       ALLOW_SKIP_E2E: "1"
+      # OOM "node down" flake, round 2 (#1056/#1057 reduced but did not close it).
+      # The procs that crash are the pytest-xdist workers themselves (addopts
+      # ``-n auto``, capped to ``-n2`` by #1057) on the 4 vCPU / ~15 GiB runner;
+      # their dominant per-worker cost is COVERAGE — the default C-trace core
+      # instruments the whole ``src`` tree and holds it per-worker, so the two
+      # workers peak together past RAM (recent #1061/#1054 growth re-tipped it).
+      # Python 3.12's sys.monitoring backend cuts coverage memory sharply for
+      # identical line coverage (coverage>=7.4) — the per-worker lever #1057 left
+      # on the table. (#1057's "loky CV processes" note was a misread: those are
+      # the xdist workers; the alpha-CV is ``prefer="threads"``.)
+      COVERAGE_CORE: "sysmon"
 
     steps:
       - uses: actions/checkout@v6
