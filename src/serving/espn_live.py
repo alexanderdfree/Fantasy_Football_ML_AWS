@@ -35,6 +35,9 @@ import pandas as pd
 from src.data import nfl_source
 
 _ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl"
+# Depth charts live on the separate "core" host (the site API doesn't expose
+# them); fetched through the same _get_json timeout/retry treatment.
+_CORE_BASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
 _TIMEOUT_S = 15
 _RETRIES = 3
 _RETRY_BACKOFF_S = 1.5
@@ -61,6 +64,27 @@ _INJURY_STATUS_MAP = {
     "suspension": "Out",
     "doubtful": "Doubtful",
 }
+
+# ESPN item-level status -> game_status numeric, matching the TRAINING encoding
+# in src/data/loader.py (status_map): Questionable 0.5 / Doubtful 0.1 / Out 0.0.
+# Worst-per-player is taken by fetch_injury_status_map; Active/unknown statuses
+# are omitted so those rows keep build_features' healthy default (1.0).
+_GAME_STATUS_NUM = {
+    "out": 0.0,
+    "injured reserve": 0.0,
+    "ir": 0.0,
+    "doubtful": 0.1,
+    "questionable": 0.5,
+}
+
+# nflverse depth_chart_rank is capped at 3 (the training distribution is
+# {-1, 1, 2, 3} for every skill position), so ESPN's per-position depth ORDER is
+# clamped to [1, 3] to stay on the scale the models trained on.
+_MAX_DEPTH_RANK = 3
+# ESPN depthchart position keys -> our skill position. Some teams split WR into
+# lwr/rwr/swr slots; those pool into WR (so order is depth within the WR corps,
+# mirroring nflverse, which can carry >1 rank-1 WR via alignment).
+_DEPTHCHART_POS_KEYS = {"qb": "QB", "rb": "RB", "hb": "RB", "wr": "WR", "te": "TE"}
 
 # Module-cached espn_id -> gsis_id crosswalk (built once; nflverse is stable).
 _espn_to_gsis: dict[str, str] | None = None
@@ -262,6 +286,52 @@ def _parse_injuries(payload: dict) -> list[dict]:
     return out
 
 
+def _norm_depth_pos(key: str | None) -> str | None:
+    """Map an ESPN depthchart position key to our skill position (or ``None``).
+
+    Handles the consolidated ``wr`` key and split ``lwr``/``rwr``/``swr`` slots
+    (all -> WR), plus ``hb`` -> RB.
+    """
+    k = (key or "").lower()
+    if k in _DEPTHCHART_POS_KEYS:
+        return _DEPTHCHART_POS_KEYS[k]
+    if k.endswith("wr"):
+        return "WR"
+    return None
+
+
+def _parse_depthchart(payload: dict) -> list[dict]:
+    """Normalize an ESPN core ``/depthcharts`` payload into ordered skill entries:
+    ``[{espn_id, position, order}]`` where ``order`` is 1-based depth WITHIN that
+    position (1 = starter).
+
+    ESPN's raw per-athlete ``rank`` is grid-numbered (WRs come back 1, 4, 7, 10),
+    so we RE-RANK by sorted order rather than trusting the raw value, pooling
+    split WR slots into one WR list. The caller clamps to the nflverse [1, 3]
+    scale and maps espn_id -> gsis.
+    """
+    pooled: dict[str, list[tuple[float, str]]] = {}
+    for group in payload.get("items", []) or []:
+        for key, pos_obj in (group.get("positions") or {}).items():
+            pos = _norm_depth_pos(key)
+            if pos is None:
+                continue
+            for a in pos_obj.get("athletes") or []:
+                ref = (a.get("athlete") or {}).get("$ref") or ""
+                m = re.search(r"/athletes/(\d+)", ref)
+                if not m:
+                    continue
+                rank = a.get("rank")
+                pooled.setdefault(pos, []).append(
+                    (float(rank) if rank is not None else float("inf"), m.group(1))
+                )
+    out: list[dict] = []
+    for pos, lst in pooled.items():
+        for order, (_, espn_id) in enumerate(sorted(lst, key=lambda t: t[0]), start=1):
+            out.append({"espn_id": espn_id, "position": pos, "order": order})
+    return out
+
+
 # --------------------------------------------------------------------------
 # Public fetchers (defensive — never raise into the poller)
 # --------------------------------------------------------------------------
@@ -420,3 +490,62 @@ def fetch_injuries_df(season: int, week: int) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame(columns=_INJURIES_COLUMNS)
     return pd.DataFrame(rows)
+
+
+def fetch_depth_chart_ranks(season: int, team_id_to_code: dict[str, str]) -> dict[str, float]:
+    """``{player_id: depth_chart_rank}`` from ESPN's live depth charts.
+
+    For each team, GET the core ``/depthcharts`` endpoint, re-rank each skill
+    position by order (1 = starter), clamp to nflverse's [1, 3] scale, and map
+    espn_id -> gsis. Falls back to the prior season's chart per team when the
+    requested season isn't posted yet (offseason). ``{}`` on total failure —
+    callers then keep the carry-forward / default behavior.
+    """
+    crosswalk = espn_to_gsis_map()
+    ranks: dict[str, float] = {}
+    for team_id in team_id_to_code:
+        if not team_id:
+            continue
+        entries: list[dict] = []
+        for yr in (season, season - 1):
+            try:
+                payload = _get_json(f"{_CORE_BASE}/seasons/{yr}/teams/{team_id}/depthcharts")
+            except Exception as e:  # noqa: BLE001 - network boundary
+                print(f"[espn_live] depthchart fetch failed for team {team_id} ({yr}): {e!r}")
+                continue
+            entries = _parse_depthchart(payload)
+            if entries:
+                break
+        for e in entries:
+            gsis = crosswalk.get(e["espn_id"])
+            if not gsis:
+                continue
+            ranks[gsis] = float(min(e["order"], _MAX_DEPTH_RANK))
+    return ranks
+
+
+def fetch_injury_status_map(season: int, week: int) -> dict[str, float]:
+    """``{player_id: game_status}`` from ESPN injuries, on the training encoding.
+
+    Maps ESPN status -> the same numeric scale as src/data/loader.py's
+    ``status_map`` (Questionable 0.5 / Doubtful 0.1 / Out 0.0), worst-per-player.
+    Active/unknown statuses are omitted so those rows keep build_features' healthy
+    default (1.0). ESPN exposes no practice participation, so ``practice_status``
+    is deliberately NOT filled here. ``{}`` on failure.
+    """
+    crosswalk = espn_to_gsis_map()
+    out: dict[str, float] = {}
+    try:
+        records = _parse_injuries(_get_json(f"{_ESPN_BASE}/injuries"))
+    except Exception as e:  # noqa: BLE001 - network boundary
+        print(f"[espn_live] injury status fetch failed: {e!r}")
+        return {}
+    for rec in records:
+        num = _GAME_STATUS_NUM.get((rec.get("status") or "").lower())
+        if num is None:
+            continue
+        gsis = crosswalk.get(rec["espn_id"]) if rec.get("espn_id") else None
+        if not gsis:
+            continue
+        out[gsis] = min(num, out.get(gsis, 1.0))
+    return out

@@ -193,3 +193,88 @@ def test_injury_status_map_only_out_doubtful():
     assert m["doubtful"] == "Doubtful"
     assert "questionable" not in m
     assert "active" not in m
+
+
+@pytest.mark.unit
+def test_parse_depthchart_reranks_by_order_and_pools_wr():
+    # ESPN's raw `rank` is grid-numbered (WRs 1, 4, 7); we re-rank by sorted
+    # order. Defense + fullback are dropped; split WR slots pool into one WR list.
+    payload = {
+        "items": [
+            {"name": "Base D", "positions": {"lde": {"athletes": [_dc(1, "999")]}}},
+            {
+                "name": "3WR 1TE",
+                "positions": {
+                    "qb": {"athletes": [_dc(2, "101"), _dc(1, "100")]},
+                    "wr": {"athletes": [_dc(7, "202"), _dc(1, "200"), _dc(4, "201")]},
+                    "fb": {"athletes": [_dc(1, "300")]},
+                },
+            },
+        ]
+    }
+    entries = espn_live._parse_depthchart(payload)
+    by_id = {e["espn_id"]: e for e in entries}
+    assert "999" not in by_id and "300" not in by_id  # defense + FB excluded
+    assert (by_id["100"]["position"], by_id["100"]["order"]) == ("QB", 1)
+    assert by_id["101"]["order"] == 2
+    # WR re-ranked by raw rank 1<4<7 -> order 1,2,3.
+    assert [by_id[i]["order"] for i in ("200", "201", "202")] == [1, 2, 3]
+
+
+@pytest.mark.unit
+def test_fetch_depth_chart_ranks_clamps_to_three_and_maps_gsis(monkeypatch):
+    payload = {
+        "items": [
+            {
+                "positions": {
+                    "qb": {"athletes": [_dc(1, "100"), _dc(2, "101"), _dc(3, "102"), _dc(4, "103")]}
+                }
+            }
+        ]
+    }
+    monkeypatch.setattr(espn_live, "_get_json", lambda url: payload)
+    monkeypatch.setattr(
+        espn_live,
+        "espn_to_gsis_map",
+        lambda: {"100": "00-A", "101": "00-B", "102": "00-C", "103": "00-D"},
+    )
+    ranks = espn_live.fetch_depth_chart_ranks(2026, {"33": "BAL"})
+    # Order 1/2/3 map straight; the 4th-string clamps to the nflverse [1,3] cap.
+    assert ranks == {"00-A": 1.0, "00-B": 2.0, "00-C": 3.0, "00-D": 3.0}
+
+
+@pytest.mark.unit
+def test_fetch_injury_status_map_encodes_and_omits_active(monkeypatch):
+    payload = {
+        "injuries": [
+            {
+                "injuries": [
+                    {"status": "Questionable", "athlete": _inj_ath("200")},
+                    {"status": "Out", "athlete": _inj_ath("201")},
+                    {"status": "Active", "athlete": _inj_ath("202")},
+                ]
+            }
+        ]
+    }
+    monkeypatch.setattr(espn_live, "_get_json", lambda url: payload)
+    monkeypatch.setattr(
+        espn_live, "espn_to_gsis_map", lambda: {"200": "00-Q", "201": "00-O", "202": "00-ACT"}
+    )
+    m = espn_live.fetch_injury_status_map(2026, 1)
+    # Questionable->0.5, Out->0.0 (matching loader.py's status_map); Active omitted
+    # so that row keeps build_features' healthy default.
+    assert m == {"00-Q": 0.5, "00-O": 0.0}
+
+
+def _dc(rank, athlete_id):
+    """A depthchart athlete entry (rank + an athlete $ref carrying the id)."""
+    return {"rank": rank, "athlete": {"$ref": f"http://core/athletes/{athlete_id}?lang=en"}}
+
+
+def _inj_ath(espn_id):
+    """An injury athlete object (id is pulled from the headshot href)."""
+    return {
+        "position": {"abbreviation": "WR"},
+        "team": {"abbreviation": "BAL"},
+        "headshot": {"href": f"https://a.espncdn.com/i/headshots/nfl/players/full/{espn_id}.png"},
+    }

@@ -186,6 +186,47 @@ def test_fill_current_week_context_carries_forward_and_defaults():
 
 
 @pytest.mark.unit
+def test_fill_current_week_context_live_signals_win():
+    # 'vet' carried a stale rank-1 forward (a 2024 spot start), but the live depth
+    # chart now lists him a backup; 'backup' has no history (would default to 3)
+    # but the live chart makes him a starter; 'healthy' has neither.
+    history = pd.DataFrame(
+        {
+            "player_id": ["vet"],
+            "season": [2024],
+            "week": [3],
+            "depth_chart_rank": [1.0],
+            "contract_guaranteed": [110.0],
+        }
+    )
+    slice_df = pd.DataFrame(
+        {
+            "player_id": ["vet", "backup", "healthy"],
+            "depth_chart_rank": [np.nan, np.nan, np.nan],
+            "contract_guaranteed": [np.nan, np.nan, np.nan],
+            "game_status": [np.nan, np.nan, np.nan],
+            "practice_status": [np.nan, np.nan, np.nan],
+        }
+    )
+    depth = {"vet": 2.0, "backup": 1.0}
+    gstat = {"vet": 0.5}  # vet is Questionable
+    out = upcoming_week._fill_current_week_context(slice_df, history, depth, gstat)
+    vet = out[out["player_id"] == "vet"].iloc[0]
+    backup = out[out["player_id"] == "backup"].iloc[0]
+    healthy = out[out["player_id"] == "healthy"].iloc[0]
+    # Precedence: live ESPN rank wins over the stale carry-forward AND the default.
+    assert vet["depth_chart_rank"] == 2.0  # live (2) beats carried 1.0
+    assert backup["depth_chart_rank"] == 1.0  # live (1) beats default 3.0
+    assert healthy["depth_chart_rank"] == 3.0  # no live, no history -> default
+    assert vet["contract_guaranteed"] == 110.0  # contracts still carry forward
+    # Live injury game_status overrides the healthy default; others stay default.
+    assert vet["game_status"] == 0.5
+    assert healthy["game_status"] == 1.0
+    # practice_status is never filled from ESPN -> always the default.
+    assert set(out["practice_status"]) == {2.0}
+
+
+@pytest.mark.unit
 def test_input_signature_changes_with_lines():
     slate = pd.DataFrame(
         {
