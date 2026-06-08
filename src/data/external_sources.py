@@ -239,12 +239,28 @@ def load_qbr_weekly(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFr
 
 def derive_active_contracts(contracts: pd.DataFrame, seasons: list[int]) -> pd.DataFrame:
     """Collapse one-row-per-contract OTC data to the contract in effect as of
-    each season (latest ``year_signed`` <= season), per gsis player.
+    each season (latest ``year_signed`` **strictly before** season), per gsis
+    player.
 
     Returns ``[player_id, season]`` + ``CONTRACT_FEATURE_COLUMNS``. A
-    (player, season) with no contract signed on/before that season is absent
-    (the downstream left-merge + ``fillna(0)`` handles it). ``year_signed`` is
-    known at the start of its season, so this is leakage-safe.
+    (player, season) with no contract signed before that season is absent
+    (the downstream left-merge + ``fillna(0)`` handles it).
+
+    **Leakage (#645):** OTC stores only the integer ``year_signed``, with no
+    sub-season date. A contract signed in season ``S`` may be an offseason deal
+    (known before week 1) or a mid-season extension / free-agent signing (an
+    October QB/RB/WR extension) that is *not* known before the early weeks of
+    ``S`` — and the contract APY feature is a per-``(player, season)`` static
+    value applied to every week of the season. Attaching a season-``S`` contract
+    to season ``S`` therefore leaks the team's in-season reaction to the player
+    into predictions of that season's earlier weeks. Because the integer year
+    can't distinguish the two cases, a contract is treated as effective only
+    from ``year_signed + 1`` (``year_signed < season``): by the start of the
+    following season any signing — offseason or mid-season — is definitely
+    known. This defers a genuinely-known offseason signing by one season (the
+    conservative price of integer-only resolution) but keeps every prior-year
+    contract: ``merge_asof`` still resolves to the most recent
+    ``year_signed < season``.
     """
     base_cols = ["player_id", "season", *CONTRACT_FEATURE_COLUMNS]
     need = {"gsis_id", "year_signed", "years", "guaranteed", "apy_cap_pct"}
@@ -255,7 +271,12 @@ def derive_active_contracts(contracts: pd.DataFrame, seasons: list[int]) -> pd.D
         ["gsis_id", "year_signed", "years", "guaranteed", "apy_cap_pct"],
     ].copy()
     c["year_signed"] = c["year_signed"].astype("int64")
-    c = c.sort_values("year_signed")
+    # Effective the season AFTER signing — see the leakage note above. merge_asof
+    # then joins on this (so season S only sees contracts signed in S-1 or
+    # earlier); ``contract_age``/``contract_years_remaining`` below still derive
+    # from the true ``year_signed``.
+    c["effective_season"] = c["year_signed"] + 1
+    c = c.sort_values("effective_season")
     grid = pd.DataFrame(
         [(g, s) for g in c["gsis_id"].unique() for s in seasons],
         columns=["gsis_id", "season"],
@@ -266,7 +287,7 @@ def derive_active_contracts(contracts: pd.DataFrame, seasons: list[int]) -> pd.D
         grid,
         c,
         left_on="season",
-        right_on="year_signed",
+        right_on="effective_season",
         by="gsis_id",
         direction="backward",
     ).dropna(subset=["year_signed"])

@@ -23,9 +23,11 @@ from src.data.external_sources import (
 
 
 @pytest.mark.unit
-def test_derive_active_contracts_picks_latest_signed_on_or_before_season():
-    """Each (player, season) takes the contract with the largest
-    ``year_signed <= season``; age + years_remaining derive from it."""
+def test_derive_active_contracts_picks_latest_signed_strictly_before_season():
+    """#645 (leak-safe): each (player, season) takes the contract with the
+    largest ``year_signed < season`` (effective the season *after* signing,
+    since the integer year can't tell an offseason deal from a mid-season
+    signing); age + years_remaining derive from the true ``year_signed``."""
     contracts = pd.DataFrame(
         {
             "gsis_id": ["00-A", "00-A", "00-B", None],
@@ -44,25 +46,35 @@ def test_derive_active_contracts_picks_latest_signed_on_or_before_season():
     def row(pid, season):
         return out[(out["player_id"] == pid) & (out["season"] == season)].iloc[0]
 
-    # A@2022 → the 2020 contract (2023 not yet signed): age 2, 4-2 remaining.
+    # A@2022 → the 2020 contract (2023 signed in-season, not yet effective):
+    # age 2, 4-2 remaining.
     a22 = row("00-A", 2022)
     assert a22["contract_apy_cap_pct"] == 0.05
     assert a22["contract_age"] == 2
     assert a22["contract_years_remaining"] == 2
-    # A@2023 → the freshly-signed 2023 contract: age 0, full 3 remaining.
+    # A@2023 → STILL the 2020 contract: the 2023 signing isn't known before the
+    # early weeks of 2023, so it only becomes effective in 2024. age 3, 4-3=1.
     a23 = row("00-A", 2023)
-    assert a23["contract_apy_cap_pct"] == 0.10
-    assert a23["contract_age"] == 0
-    assert a23["contract_years_remaining"] == 3
+    assert a23["contract_apy_cap_pct"] == 0.05
+    assert a23["contract_age"] == 3
+    assert a23["contract_years_remaining"] == 1
+    # A@2024 → now the 2023 contract is effective (signed strictly before 2024):
+    # age 1, 3-1=2 remaining.
+    a24 = row("00-A", 2024)
+    assert a24["contract_apy_cap_pct"] == 0.10
+    assert a24["contract_age"] == 1
+    assert a24["contract_years_remaining"] == 2
     # B@2024 → 2021 contract long expired: years_remaining clamps at 0 (not -1).
     b24 = row("00-B", 2024)
     assert b24["contract_years_remaining"] == 0
 
 
 @pytest.mark.unit
-def test_derive_active_contracts_absent_before_first_signing():
-    """A season before the player's earliest contract yields no row (the
-    downstream left-merge + fillna(0) covers it)."""
+def test_derive_active_contracts_absent_until_season_after_signing():
+    """#645: a season on/before the player's earliest signing yields no row —
+    a 2023 signing is effective from 2024 (not known before the early weeks of
+    2023). The downstream left-merge + fillna(0) covers the absent seasons; the
+    contract still appears once its effective season arrives (not dropped)."""
     contracts = pd.DataFrame(
         {
             "gsis_id": ["00-A"],
@@ -72,8 +84,12 @@ def test_derive_active_contracts_absent_before_first_signing():
             "apy_cap_pct": [0.08],
         }
     )
-    out = derive_active_contracts(contracts, [2021, 2022, 2023])
-    assert set(out["season"]) == {2023}  # 2021/2022 absent (no contract yet)
+    out = derive_active_contracts(contracts, [2021, 2022, 2023, 2024])
+    # 2021/2022/2023 absent (the 2023 signing isn't effective until 2024).
+    assert set(out["season"]) == {2024}
+    a24 = out[out["season"] == 2024].iloc[0]
+    assert a24["contract_apy_cap_pct"] == 0.08
+    assert a24["contract_age"] == 1
 
 
 @pytest.mark.unit

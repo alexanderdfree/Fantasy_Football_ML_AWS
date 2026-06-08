@@ -40,10 +40,26 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
     """
     df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
+    # Stint-aware grouping key, built up-front so every per-player windowed
+    # feature below (rolling / EWMA / trend / share / air_yards_share) shares it.
+    # A player traded mid-season gets a fresh ``stint_id`` at the new team, so
+    # trailing features at his first weeks there don't blend the prior team's
+    # games (#722 umbrella; #666 for air_yards_share). Built here (was at the
+    # share block) purely so the rolling/EWMA/trend blocks can consume it too;
+    # ``team_changed`` + ``stint_id`` are dropped together at the cleanup near
+    # the end. The frame is already sorted by (player_id, season, week) above,
+    # so the per-group shift is chronological. Non-traded players have exactly
+    # one stint per season, so their grouping is unchanged — only traded players
+    # differ.
+    df["team_changed"] = (
+        df.groupby(["player_id", "season"])["recent_team"].shift(1) != df["recent_team"]
+    ).fillna(False)
+    df["stint_id"] = df.groupby(["player_id", "season"])["team_changed"].cumsum()
+
     # --- Rolling Features (84: 81 mean/std/max + 3 min) ---
     rolling_cols: dict[str, pd.Series] = {}
     for stat in ROLL_STATS:
-        grouped = df.groupby(["player_id", "season"])[stat]
+        grouped = df.groupby(["player_id", "season", "stint_id"])[stat]
         for window in ROLLING_WINDOWS:
             rolling_cols[f"rolling_mean_{stat}_L{window}"] = grouped.transform(
                 lambda x, w=window: x.shift(1).rolling(w, min_periods=1).mean()
@@ -215,9 +231,11 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
         df = df.merge(prior_external, on=["player_id", "season"], how="left")
 
     # --- EWMA Features (14) ---
+    # Stint-aware (#722): grouped by (player_id, season, stint_id) so a traded
+    # player's first weeks at the new team don't blend the prior team's EWMA.
     ewma_cols: dict[str, pd.Series] = {}
     for stat in EWMA_STATS:
-        grouped = df.groupby(["player_id", "season"])[stat]
+        grouped = df.groupby(["player_id", "season", "stint_id"])[stat]
         for span in EWMA_SPANS:
             ewma_cols[f"ewma_{stat}_L{span}"] = grouped.transform(
                 lambda x, s=span: x.shift(1).ewm(span=s, min_periods=1).mean()
@@ -225,11 +243,13 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
     df = pd.concat([df, pd.DataFrame(ewma_cols, index=df.index)], axis=1)
 
     # --- Trend / Momentum Features (4) ---
+    # Stint-aware (#722): the short/long trailing means reset at a mid-season
+    # team change, matching the rolling/EWMA blocks above.
     for stat in TREND_STATS:
-        short = df.groupby(["player_id", "season"])[stat].transform(
+        short = df.groupby(["player_id", "season", "stint_id"])[stat].transform(
             lambda x: x.shift(1).rolling(3, min_periods=1).mean()
         )
-        long = df.groupby(["player_id", "season"])[stat].transform(
+        long = df.groupby(["player_id", "season", "stint_id"])[stat].transform(
             lambda x: x.shift(1).rolling(8, min_periods=1).mean()
         )
         df[f"trend_{stat}"] = short - long
@@ -245,12 +265,12 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
     )
     df = df.merge(team_totals, on=["recent_team", "season", "week"], how="left")
 
-    # Detect team changes for stint-aware grouping
+    # ``stint_id`` is the up-front key built right after the initial sort (top of
+    # build_features, #722); the (player_id, season) merges above are all
+    # left-joins on keys unique in the right frame, so they preserve row order
+    # and ``stint_id`` survives unchanged. Re-sort defensively to restore the
+    # (player_id, season, week) order the stint-aware ``shift(1)`` below assumes.
     df = df.sort_values(["player_id", "season", "week"])
-    df["team_changed"] = (
-        df.groupby(["player_id", "season"])["recent_team"].shift(1) != df["recent_team"]
-    ).fillna(False)
-    df["stint_id"] = df.groupby(["player_id", "season"])["team_changed"].cumsum()
 
     share_cols: dict[str, pd.Series] = {}
     stint_g = df.groupby(["player_id", "season", "stint_id"])
@@ -276,7 +296,10 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
         )
     df = pd.concat([df, pd.DataFrame(share_cols, index=df.index)], axis=1)
 
-    # air_yards_share (lagged to prevent data leakage)
+    # air_yards_share (lagged to prevent data leakage). The lag is stint-aware
+    # (#666) to match its sibling share features (target_share / carry_share
+    # above): a player traded mid-season starts fresh at the new team rather than
+    # carrying the previous team's last-week air-yards share into his first game.
     if "receiving_air_yards" in df.columns:
         team_air_yards = df.groupby(["recent_team", "season", "week"])[
             "receiving_air_yards"
@@ -285,7 +308,9 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
             (df["receiving_air_yards"] / team_air_yards).replace([np.inf, -np.inf], 0).fillna(0)
         )
         df["air_yards_share"] = (
-            df.groupby(["player_id", "season"])["_raw_air_yards_share"].shift(1).fillna(0)
+            df.groupby(["player_id", "season", "stint_id"])["_raw_air_yards_share"]
+            .shift(1)
+            .fillna(0)
         )
         df.drop(columns=["_raw_air_yards_share"], inplace=True)
     else:
