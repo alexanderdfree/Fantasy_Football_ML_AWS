@@ -46,15 +46,31 @@ if [ "$VPC_ID" = "None" ] || [ -z "$VPC_ID" ]; then
   log "ERROR: no default VPC in $REGION."
   exit 1
 fi
+# Default subnet per AZ, but ONLY in AZs that actually offer $INSTANCE_TYPE. Older AZs
+# (e.g. us-east-1e / use1-az3) don't carry newer GPU types like g6.xlarge; including such a
+# subnet makes the capacity-optimized Spot fleet throw "InvalidFleetConfiguration - instance
+# type not supported in your requested Availability Zone" for that AZ on every launch attempt
+# (it can never land an instance there). describe-instance-type-offerings is the source of
+# truth for which AZs can launch the type, so intersect it with the default subnets.
+OFFERING_AZS=$(aws ec2 describe-instance-type-offerings \
+  --location-type availability-zone \
+  --filters "Name=instance-type,Values=$INSTANCE_TYPE" \
+  --query 'InstanceTypeOfferings[].Location' --output text --region "$REGION")
+if [ -z "$OFFERING_AZS" ]; then
+  log "ERROR: $INSTANCE_TYPE is not offered in any AZ of $REGION."
+  exit 1
+fi
+OFFERING_AZS_CSV=$(echo $OFFERING_AZS | tr ' ' ',')
 SUBNET_IDS=$(aws ec2 describe-subnets \
   --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" \
+            "Name=availability-zone,Values=$OFFERING_AZS_CSV" \
   --query 'Subnets[].SubnetId' --output text --region "$REGION")
 SUBNET_COUNT=$(echo "$SUBNET_IDS" | wc -w | tr -d ' ')
 if [ "$SUBNET_COUNT" -lt 2 ]; then
-  log "ERROR: need >=2 default subnets for Spot diversification; found $SUBNET_COUNT."
+  log "ERROR: need >=2 default subnets in $INSTANCE_TYPE-offering AZs for Spot diversification; found $SUBNET_COUNT (offering AZs: $OFFERING_AZS)."
   exit 1
 fi
-log "Account $ACCOUNT_ID, VPC $VPC_ID, $SUBNET_COUNT default subnets"
+log "Account $ACCOUNT_ID, VPC $VPC_ID, $SUBNET_COUNT subnets in $INSTANCE_TYPE-offering AZs ($OFFERING_AZS)"
 
 # --- 2. Spot quota check ------------------------------------------------
 log "Checking Spot G+VT vCPU quota (need >= $MAX_VCPUS)..."
