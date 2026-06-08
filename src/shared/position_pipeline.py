@@ -222,6 +222,9 @@ def build_pipeline_config(
         "tabpfn_n_estimators": pc.tabpfn_n_estimators,
         "tabpfn_pca_components": pc.tabpfn_pca_components,
         "tabpfn_ignore_pretraining_limits": pc.tabpfn_ignore_pretraining_limits,
+        "tabpfn_softmax_temperature": pc.tabpfn_softmax_temperature,
+        "tabpfn_auto_scale_n_estimators": pc.tabpfn_auto_scale_n_estimators,
+        "tabpfn_inference_config": pc.tabpfn_inference_config,
     }
 
     # === Optional scheduler-family keys ===

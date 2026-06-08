@@ -907,6 +907,12 @@ class TabPFNMultiTarget:
         ``RidgeModel``), the principled way to fit under a feature cap.
       - ``ignore_pretraining_limits`` — let TabPFN run past a cap as-is.
 
+    Tuning levers forwarded to ``TabPFNRegressor``: ``softmax_temperature``
+    (predictive-distribution calibration), ``auto_scale_n_estimators`` (set False
+    to honor ``n_estimators`` exactly), and ``inference_config`` (a dict passthrough
+    to the advanced surface, e.g. ``REGRESSION_Y_PREPROCESS_TRANSFORMS``). Each
+    defaults to TabPFN's own default, so they are inert until changed.
+
     The ``tabpfn`` import is lazy (only when a regressor is constructed) so the
     positions that don't enable TabPFN — and CI, which doesn't install it — can
     import this module without the dependency. Same per-head ``non_negative_targets``
@@ -928,6 +934,9 @@ class TabPFNMultiTarget:
         pca_n_components: int | None = None,
         seed: int = 42,
         n_jobs: int | None = None,
+        softmax_temperature: float = 0.9,
+        auto_scale_n_estimators: bool = True,
+        inference_config: dict | None = None,
         non_negative_targets: set | None = None,
     ):
         self.target_names = target_names
@@ -936,6 +945,11 @@ class TabPFNMultiTarget:
         self.ignore_pretraining_limits = ignore_pretraining_limits
         self.pca_n_components = pca_n_components
         self.seed = seed
+        # TabPFNRegressor tuning levers (see class docstring). Defaults match
+        # TabPFN's own, so leaving them unset is byte-identical to stock behavior.
+        self.softmax_temperature = softmax_temperature
+        self.auto_scale_n_estimators = auto_scale_n_estimators
+        self.inference_config = inference_config
         # CPU-side preprocessing parallelism (the model forward pass runs on
         # ``device``); maps to 8.x's ``n_preprocessing_jobs`` in _new_regressor.
         # ``None`` -> all cores (-1).
@@ -961,6 +975,9 @@ class TabPFNMultiTarget:
         # ``n_preprocessing_jobs`` (passing ``n_jobs`` is a deprecated no-op).
         return TabPFNRegressor(
             n_estimators=self.n_estimators,
+            auto_scale_n_estimators=self.auto_scale_n_estimators,
+            softmax_temperature=self.softmax_temperature,
+            inference_config=self.inference_config,
             model_path="auto",
             device=self.device,
             ignore_pretraining_limits=self.ignore_pretraining_limits,
@@ -1033,6 +1050,9 @@ class TabPFNMultiTarget:
             "target_names": self.target_names,
             "device": self.device,
             "n_estimators": self.n_estimators,
+            "auto_scale_n_estimators": self.auto_scale_n_estimators,
+            "softmax_temperature": self.softmax_temperature,
+            "inference_config": self.inference_config,
             "ignore_pretraining_limits": self.ignore_pretraining_limits,
             "pca_n_components": self.pca_n_components,
             "seed": self.seed,
@@ -1050,6 +1070,9 @@ class TabPFNMultiTarget:
         self.target_names = meta["target_names"]
         self.device = meta.get("device", "auto")
         self.n_estimators = meta.get("n_estimators", 8)
+        self.auto_scale_n_estimators = meta.get("auto_scale_n_estimators", True)
+        self.softmax_temperature = meta.get("softmax_temperature", 0.9)
+        self.inference_config = meta.get("inference_config")
         self.ignore_pretraining_limits = meta.get("ignore_pretraining_limits", False)
         self.pca_n_components = meta.get("pca_n_components")
         self.seed = meta.get("seed", 42)

@@ -1247,6 +1247,9 @@ def _build_tabpfn(targets, cfg, seed):
         n_estimators=cfg.get("tabpfn_n_estimators", 8),
         ignore_pretraining_limits=cfg.get("tabpfn_ignore_pretraining_limits", False),
         pca_n_components=cfg.get("tabpfn_pca_components"),
+        softmax_temperature=cfg.get("tabpfn_softmax_temperature", 0.9),
+        auto_scale_n_estimators=cfg.get("tabpfn_auto_scale_n_estimators", True),
+        inference_config=cfg.get("tabpfn_inference_config"),
         seed=seed,
         # Carry the per-head clamp set so heads clamp like every other model
         # (predict() below also passes it explicitly); ``None`` -> clamp every head.
