@@ -149,3 +149,41 @@ rookies are to be addressed, the candidate levers and how to judge them:
 
 Reproduce: `python -m src.analysis.cohort_analysis rookie --with-model-error`
 (add `--no-model` for instant cohort sizes, `--positions RB` to scope).
+
+## 2026-06-07 — QB current-role features (`season_starts_to_date` + `prior_season_games_played`)
+
+**Motivation.** `src/analysis/rmse_gap_decomposition.py` showed QB beats both
+experts overall on the top-30 2025 slice but loses the Q3 "solid-starter" tier to
+RotoWire, with ~38% of that gap in ≤1-season QBs (the entrenched-rookie /
+`rookie_rest` under-prediction). Hypothesis: rookies' `prior_season_*` are
+NaN→`fillna(0)`, so the model reads them as zero-production; a missingness/
+entrenchment signal should help. Added two **non-temporal static** features:
+`season_starts_to_date` (within-season `_game_idx` cumcount — entrenchment axis,
+distinct from `week` for later-season debuts) and `prior_season_games_played`
+(already built by `src.features.engineer`; whitelisted for QB, mirroring RB).
+
+**Method.** Clean 2-seed (42, 43) A/B via `run(seed)`, **same splits**, baseline =
+`origin/main` worktree, `FF_FEATURE_CACHE_DISABLE=1` (the cache keys on data not
+code). Judged on the rookie cohort bias + the ≤1-season Q3-vs-RotoWire subgroup,
+per the stop-rule above (not overall MAE).
+
+**Result — NN/attn-scoped, benchmark-flat for the headline lgbm.**
+- Overall FP-MAE (2-seed mean): base-NN **6.41→6.15**, attn_nn 6.08→6.05, lgbm
+  6.02→5.99 (within seed noise), ridge 6.17→6.18. No regression.
+- `rookie_early` over-prediction eased for lgbm (**+2.67→+2.47**) and attn_nn
+  (**+2.28→+1.88**); flat/worse for nn/ridge. `rookie_rest` mixed — attn_nn
+  *worse* (−0.77→−1.47).
+- **Q3-vs-RotoWire low-history (n=31) gap: FLAT, +0.88→+0.89** (the original
+  target did not move; the single-seed −0.075 was noise — baseline alone swings
+  +1.01↔+0.75 across seeds).
+- **lgbm barely uses them**: both features rank ~50–82/103 in lgbm gain
+  (0.1–0.45%) — redundant with the 0-imputed `prior_season_*` block a tree
+  already splits on. That, plus the flat headline, is the mechanism.
+
+**Takeaway.** History-derived role features can't close the RotoWire Q3 gap —
+RotoWire's edge is *current-week* role/news (who's starting this week), which our
+features don't supply. Shipped **NN/attn-scoped** (owner decision): real base-NN
+gain + modest `rookie_early` bias reduction, no regression, surfaced on the
+Comparison tab's per-model columns; explicitly **not** an lgbm/MAE play. A future
+attempt at the Q3 gap needs a current-week signal (depth-chart promotion timing
+or an external in-week projection/role feed), not more prior-season aggregates.

@@ -181,6 +181,9 @@ class TestAttnStaticWhitelistIncludesStatic:
 
     def test_prior_season_present(self):
         assert "prior_season_mean_passing_yards" in _static_cols("QB")
+        # Current-role / low-history calibration signals (non-temporal).
+        assert "prior_season_games_played" in _static_cols("QB")
+        assert "season_starts_to_date" in _static_cols("QB")
 
     def test_contextual_present(self):
         """DST static set keeps is_home, is_dome, spread/total, prior-season means."""

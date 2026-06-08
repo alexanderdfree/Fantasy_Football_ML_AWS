@@ -49,6 +49,26 @@ _TARGETS = [
 
 _ROOKIE_PHASE_FEATURES = ["rookie_early"]
 
+# Current-season role state. ``season_starts_to_date`` is the player's count of
+# prior in-season games (surfaced from the existing ``_game_idx`` cumcount in
+# ``src.qb.features._add_rookie_phase_features``). It is a season-to-date COUNT —
+# static-legal for the attention branch (not a rolling/ewma/L3 window) — and the
+# entrenchment axis distinguishing a week-1 rookie starter from an entrenched
+# mid-season one. Unlike ``week`` it is 0 for a later-season debut, so it
+# isolates games-played from calendar week.
+#
+# Measured (2-seed same-split QB A/B, FF_FEATURE_CACHE_DISABLE=1, paired with
+# ``prior_season_games_played`` below): base-NN FP-MAE 6.41->6.15, attn_nn -0.03,
+# and lgbm/attn rookie_early over-prediction eased modestly (lgbm +2.67->+2.47);
+# no overall regression. BUT benchmark-FLAT for the headline lgbm (these two
+# features rank ~50-80/103 in lgbm gain — redundant with the 0-imputed
+# prior_season_* block a tree already splits on) and it does NOT close the
+# Q3-vs-RotoWire low-history gap (flat +0.88->+0.89): RotoWire's edge there is
+# current-week role/news that history-derived features can't supply. Kept for
+# the NN/attn per-model calibration surfaced on the Comparison tab. Full A/B in
+# src/analysis/rookie_cohort_findings.md.
+_CURRENT_ROLE_FEATURES = ["season_starts_to_date"]
+
 # Explicit feature whitelist — new columns must be opted in, preventing
 # silent leakage. L5 mean/std/max dropped (>0.97 corr with L3/L8) except
 # snap_pct; passing_yards EWMA kept (others >0.98 corr with rolling means).
@@ -75,6 +95,14 @@ _INCLUDE_FEATURES = {
         # the prior-season mean is the static-legal shape.
         "prior_season_mean_qbr_total",
         "prior_season_mean_pts_added",
+        # Prior-season games-active count (built by src.features.engineer for
+        # every position; mirrors RB's whitelist). After build_position_features'
+        # fillna(0) it is 0 for rookies / no-prior-season players, so it lets the
+        # model read the other (also-0) prior_season_* aggregates as a rookie
+        # placeholder rather than genuine zero production. Pairs with
+        # season_starts_to_date (NN/attn-scoped gain; benchmark-flat for lgbm —
+        # measured A/B in src/analysis/rookie_cohort_findings.md).
+        "prior_season_games_played",
     ],
     "ewma": ["ewma_passing_yards_L3", "ewma_passing_yards_L5"],
     "trend": ["trend_carries", "trend_snap_pct"],
@@ -113,6 +141,7 @@ _INCLUDE_FEATURES = {
         # static context, used to cancel the measured early-rookie QB
         # overprediction without reintroducing draft-capital pedigree features.
         *_ROOKIE_PHASE_FEATURES,
+        *_CURRENT_ROLE_FEATURES,
     ],
     "weather_vegas": [
         "implied_team_total",
@@ -184,7 +213,9 @@ POSITION_CONFIG = PositionConfig(
     # ``specific_features`` is the set add_specific_features owns/fills and
     # keys into the feature cache. Rookie phase is categorized as contextual
     # above so the attention static branch may consume it.
-    specific_features=_INCLUDE_FEATURES["specific"] + _ROOKIE_PHASE_FEATURES,
+    specific_features=_INCLUDE_FEATURES["specific"]
+    + _ROOKIE_PHASE_FEATURES
+    + _CURRENT_ROLE_FEATURES,
     include_features=_INCLUDE_FEATURES,
     # Yards on (-2,3) grid; counts on (-1,4) per target scale.
     ridge_alpha_grids={
