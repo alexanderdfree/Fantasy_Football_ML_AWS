@@ -1,0 +1,139 @@
+{
+  "run_id": "2026-06-09T01:26:09_8570cf2",
+  "timestamp": "2026-06-09T01:26:09",
+  "git_hash": "8570cf2",
+  "note": "Batch Spot auto-run (8570cf2)",
+  "backend": "batch",
+  "instance_type": "g6.xlarge (L4, Spot, CUDA-graph)",
+  "positions": [
+    "K"
+  ],
+  "results": [
+    {
+      "position": "K",
+      "ridge_mae": 3.997,
+      "ridge_r2": 0.025,
+      "nn_mae": 4.067,
+      "nn_r2": -0.046,
+      "nn_wins_mae": false,
+      "nn_per_target": {
+        "fg_yard_points": {
+          "mae": 3.972,
+          "r2": -0.024,
+          "rmse": 5.15
+        },
+        "pat_points": {
+          "mae": 1.109,
+          "r2": 0.029,
+          "rmse": 1.402
+        },
+        "fg_misses": {
+          "mae": 0.397,
+          "r2": -0.009,
+          "rmse": 0.488
+        },
+        "xp_misses": {
+          "mae": 0.144,
+          "r2": -0.022,
+          "rmse": 0.287
+        }
+      },
+      "ridge_per_target": {
+        "fg_yard_points": {
+          "mae": 3.988,
+          "r2": 0.01,
+          "rmse": 5.065
+        },
+        "pat_points": {
+          "mae": 1.064,
+          "r2": 0.141,
+          "rmse": 1.319
+        },
+        "fg_misses": {
+          "mae": 0.411,
+          "r2": -0.009,
+          "rmse": 0.488
+        },
+        "xp_misses": {
+          "mae": 0.177,
+          "r2": -0.026,
+          "rmse": 0.287
+        }
+      },
+      "ridge_top12": 0.486,
+      "nn_top12": 0.509,
+      "ridge_rmse": 5.056,
+      "nn_rmse": 5.237,
+      "attn_nn_mae": 4.162,
+      "attn_nn_r2": -0.049,
+      "attn_nn_rmse": 5.245,
+      "attn_nn_per_target": {
+        "fg_yard_points": {
+          "mae": 4.038,
+          "r2": -0.042,
+          "rmse": 5.195
+        },
+        "pat_points": {
+          "mae": 1.095,
+          "r2": 0.093,
+          "rmse": 1.355
+        },
+        "fg_misses": {
+          "mae": 0.409,
+          "r2": -0.009,
+          "rmse": 0.488
+        },
+        "xp_misses": {
+          "mae": 0.172,
+          "r2": -0.045,
+          "rmse": 0.29
+        }
+      },
+      "attn_nn_top12": 0.458,
+      "lgbm_mae": 4.034,
+      "lgbm_r2": 0.013,
+      "lgbm_rmse": 5.086,
+      "lgbm_per_target": {
+        "fg_yard_points": {
+          "mae": 3.995,
+          "r2": 0.005,
+          "rmse": 5.076
+        },
+        "pat_points": {
+          "mae": 1.069,
+          "r2": 0.124,
+          "rmse": 1.332
+        },
+        "fg_misses": {
+          "mae": 0.413,
+          "r2": -0.01,
+          "rmse": 0.488
+        },
+        "xp_misses": {
+          "mae": 0.185,
+          "r2": -0.029,
+          "rmse": 0.288
+        }
+      },
+      "lgbm_top12": 0.468,
+      "elapsed_sec": 26.0,
+      "phase_seconds": {
+        "assert_gpu": 0.3,
+        "sync_raw_data": 2.9,
+        "run_pipeline": 21.8,
+        "copy_artifacts": 0.0,
+        "pipeline.prepare_data": 0.2,
+        "pipeline.ridge_tune": 0.8,
+        "pipeline.ridge_fit": 0.0,
+        "pipeline.lgbm_train": 1.0,
+        "pipeline.nn_train": 10.3,
+        "pipeline.attn_nn_train": 6.0,
+        "pipeline.train_models_total": 16.3,
+        "pipeline.backtest": 0.5,
+        "pipeline.save_artifacts": 0.0,
+        "pipeline.figures": 3.0
+      }
+    }
+  ],
+  "pr_number": 1071
+}
