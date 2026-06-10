@@ -145,7 +145,8 @@ def mps_enabled() -> bool:
 def cuda_graph_enabled() -> bool:
     """Whether hand-rolled CUDA graph capture is active for NN training.
 
-    **Autodetect-on for CUDA sm_80+** (g6/L4 ``sm_89``, RTX 5080 ``sm_120``):
+    **Autodetect-on for CUDA sm_80+** (g5/A10G ``sm_86``, g6/L4 ``sm_89``,
+    RTX 5080 ``sm_120``):
     capturing the NN's forward+backward once and replaying it collapses the
     hundreds of thousands of microsecond kernel launches the tiny attention
     model is bottlenecked on (it is GPU-launch-bound, not compute-bound) —

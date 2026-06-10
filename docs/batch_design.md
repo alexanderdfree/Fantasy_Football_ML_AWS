@@ -1,6 +1,6 @@
 # AWS Batch Training Design Doc
 
-> **Status (2026-05-31): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six g6.xlarge Spot instances, one position per host (migrated from g4dn.xlarge 2026-05-31 — T4 → L4 for BF16 + torch.compile re-eligibility; see ARCHITECTURE.md Update history). **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself), which is now train-batch.yml's dominant wall-clock cost — PR #330 removed the forced "Refresh ECS service" (`update-service --force-new-deployment`) step from train-batch.yml (per-position in-flight model refresh via `src/shared/model_sync.py` makes new artifacts live within one ~30s poll interval; ECS rolling redeploy via deploy.yml's ALB-tuned ~3 min path is now decoupled from the train workflow). The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate.** Warm-EC2 rollback path: ~120-min sequential loop. Cold-start: ~120 s image pull on a fresh Spot host (was a ~3.7 GB conda base; slimmed to `nvidia/cuda:*-base` + pip torch 2026-06-07 to cut the pull — see §"Cold-start optimization" 2d; new pull window measured post-merge). **SOCI lazy-loading was REMOVED 2026-06-07 — it never worked and cannot work on AWS Batch: Batch runs on ECS-managed EC2 and the `amazon-ecs-agent` does not pull through the soci snapshotter (Fargate-only; [containers-roadmap#1832](https://github.com/aws/containers-roadmap/issues/1832)). See §2a + [todo/fixed-archive.md](../todo/fixed-archive.md).** Image size is now dominated by the torch CUDA wheel (the slim `nvidia/cuda:*-base` base is ~86 MB); `.dockerignore` + explicit `COPY` trim the app side. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
+> **Status (2026-06-08): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six 4-vCPU GPU Spot hosts, one position per host. The job queue prefers `g6.xlarge` / L4 (`ff-gpu-spot`, order 1) and falls back to `g5.xlarge` / A10G (`ff-gpu-spot-g5`, order 2) when g6 cannot provide suitable capacity. **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself), which is now train-batch.yml's dominant wall-clock cost — PR #330 removed the forced "Refresh ECS service" (`update-service --force-new-deployment`) step from train-batch.yml (per-position in-flight model refresh via `src/shared/model_sync.py` makes new artifacts live within one ~30s poll interval; ECS rolling redeploy via deploy.yml's ALB-tuned ~3 min path is now decoupled from the train workflow). The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate.** Warm-EC2 rollback path: ~120-min sequential loop. Cold-start: ~120 s image pull on a fresh Spot host (was a ~3.7 GB conda base; slimmed to `nvidia/cuda:*-base` + pip torch 2026-06-07 to cut the pull — see §"Cold-start optimization" 2d; new pull window measured post-merge). **SOCI lazy-loading was REMOVED 2026-06-07 — it never worked and cannot work on AWS Batch: Batch runs on ECS-managed EC2 and the `amazon-ecs-agent` does not pull through the soci snapshotter (Fargate-only; [containers-roadmap#1832](https://github.com/aws/containers-roadmap/issues/1832)). See §2a + [todo/fixed-archive.md](../todo/fixed-archive.md).** Image size is now dominated by the torch CUDA wheel (the slim `nvidia/cuda:*-base` base is ~86 MB); `.dockerignore` + explicit `COPY` trim the app side. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
 >
 > Rollback: `gh variable set BATCH_ACTIVE --body "false"` returns push-driven training to the warm-EC2 path ([docs/ec2_design.md](ec2_design.md)) on the next push to `main`. Both paths remain provisioned.
 
@@ -27,7 +27,7 @@ src/batch/launch.py ─────────────> S3: s3://ff-trainin
        │                               test.parquet
        │
        ├─> Batch Job: ff-rb-xxx ───> CloudWatch Logs
-       │     (g6.xlarge Spot)          stdout/stderr streamed
+       │     (g6 Spot, g5 fallback)    stdout/stderr streamed
        │     src.batch.train --position RB
        │       ├─ boto3: download data from S3
        │       ├─ src.rb.run_pipeline.run(train_df, val_df, test_df)
@@ -224,7 +224,7 @@ aws batch create-compute-environment \
     "allocationStrategy": "SPOT_PRICE_CAPACITY_OPTIMIZED",
     "minvCpus": 0,
     "maxvCpus": 24,
-    "instanceTypes": ["g6.xlarge"],
+    "instanceTypes": ["g6.xlarge"],          # primary CE
     "subnets": ["SUBNET_A", "SUBNET_B"],
     "securityGroupIds": ["DEFAULT_SG"],
     "instanceRole": "ecsInstanceRole",
@@ -234,7 +234,7 @@ aws batch create-compute-environment \
 
 - `type=SPOT` — 70% cheaper than on-demand
 - `minvCpus=0` — scales to zero when idle (no cost)
-- `maxvCpus=24` — up to 6 concurrent g6.xlarge (4 vCPUs each, same as g4dn)
+- `maxvCpus=24` — up to 6 concurrent 4-vCPU GPU hosts per CE (`g6.xlarge` primary, `g5.xlarge` fallback)
 - `allocationStrategy=SPOT_PRICE_CAPACITY_OPTIMIZED` — AWS-recommended strategy that weighs *both* capacity (lowest current reclaim risk) and Spot price. Strict superset of `SPOT_CAPACITY_OPTIMIZED`: same reclaim-avoidance behaviour plus price awareness
 
 ### Job Queue
@@ -244,7 +244,9 @@ aws batch create-job-queue \
   --job-queue-name ff-training-queue \
   --state ENABLED \
   --priority 1 \
-  --compute-environment-order order=1,computeEnvironment=ff-gpu-spot
+  --compute-environment-order \
+    order=1,computeEnvironment=ff-gpu-spot \
+    order=2,computeEnvironment=ff-gpu-spot-g5
 ```
 
 ### Job Definition
@@ -281,7 +283,7 @@ aws batch register-job-definition \
   }'
 ```
 
-- `vcpus=4, memory=15000` — matches g6.xlarge (4 vCPU, 16 GB RAM; identical sizing to g4dn pre-2026-05-31)
+- `vcpus=4, memory=15000` — matches both g6.xlarge and g5.xlarge (4 vCPU, 16 GB RAM; identical CPU/RAM sizing to g4dn pre-2026-05-31)
 - `resourceRequirements: GPU=1` — ensures GPU scheduling
 - `timeout: 1800` — 30-minute max **per attempt** (wall-clock cap)
 - `retry-strategy` — up to 3 attempts; `evaluateOnExit` retries only on Spot reclaim (`Host EC2*`) or transient ECR pull errors. Anything else (`onReason: "*"`) is treated as a genuine app failure and fails immediately so app crashes don't loop. With the 30-min per-attempt cap, worst-case wall-clock is bounded at 90 min per position.
@@ -322,7 +324,7 @@ docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/ff-training:latest
 
 1. Create ECR repository (`ff-training`)
 2. Create IAM roles (`BatchTrainingRole` + reuse `ecsTaskExecutionRole`)
-3. Create Compute Environment (`ff-gpu-spot`)
+3. Create Compute Environments (`ff-gpu-spot` primary, `ff-gpu-spot-g5` fallback)
 4. Create Job Queue (`ff-training-queue`)
 5. Register Job Definition (`ff-training-job`)
 6. Build and push training image to ECR

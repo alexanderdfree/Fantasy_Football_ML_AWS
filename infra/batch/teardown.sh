@@ -9,7 +9,7 @@
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
-COMPUTE_ENV="ff-gpu-spot"
+COMPUTE_ENVS=("ff-gpu-spot-g5" "ff-gpu-spot")
 JOB_QUEUE="ff-training-queue"
 JOB_DEF="ff-training-job"
 JOB_ROLE="BatchTrainingRole"
@@ -66,32 +66,34 @@ if [ "$JQ_EXISTS" != "None" ] && [ -n "$JQ_EXISTS" ] && [ "$JQ_EXISTS" != "null"
   done
 fi
 
-# --- 3. Disable + delete Compute Environment ----------------------------
-CE_EXISTS=$(aws batch describe-compute-environments \
-  --compute-environments "$COMPUTE_ENV" \
-  --region "$REGION" \
-  --query 'computeEnvironments[0].computeEnvironmentName' \
-  --output text 2>/dev/null || echo "None")
-if [ "$CE_EXISTS" != "None" ] && [ -n "$CE_EXISTS" ] && [ "$CE_EXISTS" != "null" ]; then
-  log "Disabling Compute Environment $COMPUTE_ENV..."
-  aws batch update-compute-environment \
-    --compute-environment "$COMPUTE_ENV" \
-    --state DISABLED \
-    --region "$REGION" || true
-  log "Waiting for CE to reach VALID (after disable)..."
-  for i in $(seq 1 30); do
-    STATUS=$(aws batch describe-compute-environments \
-      --compute-environments "$COMPUTE_ENV" \
-      --region "$REGION" \
-      --query 'computeEnvironments[0].status' --output text)
-    [ "$STATUS" = "VALID" ] && break
-    sleep 5
-  done
-  log "Deleting Compute Environment $COMPUTE_ENV..."
-  aws batch delete-compute-environment \
-    --compute-environment "$COMPUTE_ENV" \
-    --region "$REGION" || true
-fi
+# --- 3. Disable + delete Compute Environments ---------------------------
+for compute_env in "${COMPUTE_ENVS[@]}"; do
+  CE_EXISTS=$(aws batch describe-compute-environments \
+    --compute-environments "$compute_env" \
+    --region "$REGION" \
+    --query 'computeEnvironments[0].computeEnvironmentName' \
+    --output text 2>/dev/null || echo "None")
+  if [ "$CE_EXISTS" != "None" ] && [ -n "$CE_EXISTS" ] && [ "$CE_EXISTS" != "null" ]; then
+    log "Disabling Compute Environment $compute_env..."
+    aws batch update-compute-environment \
+      --compute-environment "$compute_env" \
+      --state DISABLED \
+      --region "$REGION" || true
+    log "Waiting for CE to reach VALID (after disable)..."
+    for i in $(seq 1 30); do
+      STATUS=$(aws batch describe-compute-environments \
+        --compute-environments "$compute_env" \
+        --region "$REGION" \
+        --query 'computeEnvironments[0].status' --output text)
+      [ "$STATUS" = "VALID" ] && break
+      sleep 5
+    done
+    log "Deleting Compute Environment $compute_env..."
+    aws batch delete-compute-environment \
+      --compute-environment "$compute_env" \
+      --region "$REGION" || true
+  fi
+done
 
 # --- 3b. Launch Template ------------------------------------------------
 # Safe to delete after CE deletion: AWS Batch holds a reference while the

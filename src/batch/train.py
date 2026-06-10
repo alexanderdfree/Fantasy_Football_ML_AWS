@@ -442,7 +442,7 @@ def _hardware_metadata() -> dict:
     the instance label from what the job ACTUALLY ran on — ``gpu_name`` and
     whether CUDA-graph capture was active (``cuda_graph_active``) — instead of a
     hardcoded workflow string that silently drifts when the compute environment
-    migrates (e.g. T4/g4dn -> L4/g6). ``sm`` records the compute capability that
+    changes (e.g. T4/g4dn -> L4/g6, or A10G/g5 fallback). ``sm`` records the compute capability that
     gates capture, so a reader can see *why* it was on/off (sm_75 < sm_80 -> off).
 
     On a non-CUDA box (CPU-only positions in a CPU container, dry-run, dev/CI)

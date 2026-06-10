@@ -5,7 +5,8 @@ the WR pipeline config and runs the full training path (ridge + regular NN +
 attention NN; lightgbm disabled). The interesting signal is per-epoch
 wall-clock of the *attention NN*: if doubling batch_size leaves wall-clock
 roughly flat, the GPU was idle waiting on the host for small batches. Originally
-written to profile T4 (g4dn) underutilization; now runs on L4 (g6) post-migration.
+written to profile T4 (g4dn) underutilization; now runs on the Batch Spot GPU
+pool (g6/L4 preferred, g5/A10G fallback).
 
 The sweep parses per-epoch lines emitted by :class:`MultiHeadTrainer`
 (``epoch_sec=X.XX peak_mem_gb=Y.YY``). The marker line ``"Attention static
@@ -14,7 +15,7 @@ regular NN's epoch lines (before) from the attention NN's (after).
 
 Run modes:
 
-* **Batch job** (preferred — runs on the g6.xlarge L4 we want to profile)::
+* **Batch job** (preferred — runs on the production Batch GPU pool)::
 
     python -m src.batch.train --position WR --sweep
 

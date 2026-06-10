@@ -2,8 +2,9 @@ name: Train on Batch (Spot)
 
 # Active training path when BATCH_ACTIVE=true. Fires after batch-image.yml
 # pushes a fresh image to ECR, then submits one Batch job per position to the
-# ff-gpu-spot Compute Environment. Each position trains in parallel on its own
-# Spot g6.xlarge. See docs/batch_design.md.
+# ff-training-queue queue backed by ordered Spot compute environments:
+# ff-gpu-spot (g6 primary) then ff-gpu-spot-g5 (g5 fallback). Each position
+# trains in parallel on its own 4-vCPU GPU host. See docs/batch_design.md.
 #
 # When BATCH_ACTIVE != 'true' the gate on the `train` job below skips this
 # workflow on workflow_run; train-ec2.yml stays active. workflow_dispatch
@@ -305,7 +306,8 @@ jobs:
           # from the run's expected SHA. Manual dispatch stamps the dispatch
           # ref SHA unless image_sha was provided for a specific image.
           FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
-          # CUDA graphs autodetect ON in the container on the g6/L4 (sm_89) —
+          # CUDA graphs autodetect ON in the container on the Batch GPU pool
+          # (g6/L4 sm_89 primary, g5/A10G sm_86 fallback) —
           # cuda_graph_enabled() defaults on for sm_80+, so the fan-out is
           # graphed by default. This repo variable is an optional FLEET OVERRIDE,
           # not the trigger: leave it unset for the autodetect default, or set
@@ -404,10 +406,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
           FF_MODEL_S3_PREFIX: models
-          # The L4 Batch path autodetects graphs ON, so rows are labeled graphed
-          # below (keeps them separate from the pre-cutover eager baseline —
-          # graphed and eager rows aren't bit-comparable). This optional fleet
-          # override (FF_BATCH_CUDA_GRAPH=0) forces eager + the plain label.
+          # The sm_80+ Batch GPU path autodetects graphs ON, so rows are
+          # labeled graphed below (keeps them separate from the pre-cutover eager
+          # baseline — graphed and eager rows aren't bit-comparable). This
+          # optional fleet override (FF_BATCH_CUDA_GRAPH=0) forces eager + the
+          # plain label.
           FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
           POSITIONS: ${{ needs.detect.outputs.positions }}
           # Branch + head SHA come from a workflow_run trigger whose payload
@@ -455,16 +458,17 @@ jobs:
           # Hardware label for the History tab is DERIVED AT RUNTIME by
           # src/batch/benchmark.py from the gpu_name + cuda_graph_active fields
           # src/batch/train.py stamps into each position's benchmark_metrics.json,
-          # so it tracks the live CE with no edit here (g6.xlarge / L4 sm_89 +
-          # ", CUDA-graph" today; auto-updates if the CE ever changes again) —
+          # so it tracks the live CE with no edit here (g6.xlarge / L4 sm_89 or
+          # g5.xlarge / A10G sm_86 + ", CUDA-graph" today; auto-updates if the
+          # CE ever changes again) —
           # the silent-drift the old hardcoded string risked is gone. The value
           # below is only a FALLBACK, used when a run carries no GPU metadata
-          # (pre-stamping artifacts / all-CPU run); it mirrors the current g6/L4
-          # graphed reality, and the force-off case keeps the fallback honest
-          # when FF_CUDA_GRAPH disables capture.
-          INSTANCE_TYPE="g6.xlarge (Spot, CUDA-graph)"
+          # (pre-stamping artifacts / all-CPU run); it mirrors the current
+          # g6-preferred/g5-fallback graphed pool, and the force-off case keeps
+          # the fallback honest when FF_CUDA_GRAPH disables capture.
+          INSTANCE_TYPE="g6.xlarge/g5.xlarge (Spot, CUDA-graph)"
           case "$(echo "${FF_CUDA_GRAPH:-}" | tr 'A-Z' 'a-z')" in
-            0|false|no|off) INSTANCE_TYPE="g6.xlarge (Spot)" ;;
+            0|false|no|off) INSTANCE_TYPE="g6.xlarge/g5.xlarge (Spot)" ;;
           esac
           python -m src.batch.benchmark \
             --download-only \

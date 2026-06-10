@@ -3,7 +3,8 @@
 The single canonical "what hardware am I on?" helper for the project's target
 environments (see the *Platform & hardware targets* section of CLAUDE.md):
 Apple Silicon macOS, Windows 11 / WSL2 on an RTX 5080 (Blackwell ``sm_120``),
-and AWS g4dn.xlarge (T4, ``sm_75``) / g6.xlarge (L4, ``sm_89``).
+and AWS g4dn.xlarge (T4, ``sm_75``) / g5.xlarge (A10G, ``sm_86``) /
+g6.xlarge (L4, ``sm_89``).
 
 This module *reports* capabilities; it does **not** choose the run's device or
 dtype. Device resolution stays in :mod:`src.shared.utils` (``requested_device`` /
@@ -100,7 +101,7 @@ def detect_platform() -> PlatformInfo:
             sm=f"sm_{major}{minor}",
             supports_bf16=cc >= _BF16_MIN_CAPABILITY,
             cpu_count=os.cpu_count(),
-            # Blackwell (sm_120) needs the cu128 wheel; T4/L4 run on cu126.
+            # Blackwell (sm_120) needs the cu128 wheel; T4/A10G/L4 run on cu126.
             recommended_cuda_wheel="cu128" if major >= 12 else "cu126",
         )
 

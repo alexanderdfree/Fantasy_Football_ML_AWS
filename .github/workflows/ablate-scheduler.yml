@@ -2,8 +2,8 @@ name: Ablate LR-scheduler type (Batch)
 
 # Manually-triggered LR-scheduler-type A/B across positions. Mirrors
 # retune-nn-batch.yml's per-position Spot fan-out — one Batch job per position
-# (g6.xlarge / L4 / sm_89 is the live compute environment, PR #952) — but runs
-# `--ablation scheduler-type` instead of `--mode tune`. Each container runs the
+# (g6.xlarge / L4 / sm_89 primary, g5.xlarge / A10G / sm_86 fallback) — but
+# runs `--ablation scheduler-type` instead of `--mode tune`. Each container runs the
 # 3-way (onecycle / cosine_warm_restarts / plateau) A/B across SEEDS and uploads
 # s3://$S3_BUCKET/ablate_scheduler/{pos}/result.json; the aggregate job merges
 # them into a step-summary table + an artifact.
