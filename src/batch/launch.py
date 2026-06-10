@@ -12,13 +12,11 @@ Usage:
 Config (environment variables, all optional):
     FF_S3_BUCKET        (default: ff-predictor-training)
     FF_JOB_QUEUE        (default: ff-training-queue)
-    FF_JOB_QUEUE_CPU    (optional)                          CPU-only queue
+    FF_JOB_QUEUE_CPU    (optional)                          CPU split queue
     FF_JOB_DEFINITION   (default: ff-training-job)          GPU job definition
-    FF_JOB_DEFINITION_CPU  (optional)                       CPU job definition
-        STALE — DO NOT ENABLE: K and DST now train an attention NN on GPU, so
-        routing them to a CPU pool craters wall-clock instead of saving. If set,
-        K/DST submit with this definition; unset, they use the GPU definition.
-        See docs/batch_design.md.
+    FF_JOB_DEFINITION_CPU  (optional)                       CPU split job definition
+    FF_JOB_DEFINITION_REVISION       (optional)             GPU job-def revision pin
+    FF_JOB_DEFINITION_CPU_REVISION   (optional)             CPU job-def revision pin
     FF_WAIT_TIMEOUT     (default: 10800, i.e. 3h)
 """
 
@@ -41,10 +39,11 @@ S3_BUCKET = os.environ.get("FF_S3_BUCKET", "ff-predictor-training")
 JOB_QUEUE = os.environ.get("FF_JOB_QUEUE", "ff-training-queue")
 JOB_QUEUE_CPU = os.environ.get("FF_JOB_QUEUE_CPU", "") or None
 JOB_DEFINITION = os.environ.get("FF_JOB_DEFINITION", "ff-training-job")
-# Optional CPU-only job definition. When set, K and DST route here instead of
-# the default GPU definition so we don't waste GPU Spot-hours on Ridge/LGBM.
-# Set to an empty string to leave unset — we treat empty as "not configured".
+# CPU job definition used by split cpu/merge branches. Legacy full-mode K/DST
+# routing still honors it when explicitly set, but production leaves it unset
+# unless --split is active so the full path remains GPU-backed.
 JOB_DEFINITION_CPU = os.environ.get("FF_JOB_DEFINITION_CPU", "") or None
+JOB_DEFINITION_CPU_REVISION = os.environ.get("FF_JOB_DEFINITION_CPU_REVISION", "") or None
 # Pin job submissions to a specific job-definition revision. batch-image.yml
 # registers a new revision each time it pushes an image and stashes the
 # revision number at s3://ff-predictor-training/job-def-revisions/{sha}.txt;
@@ -102,6 +101,12 @@ RETRY_STRATEGY = {
         {"onReason": "*", "action": "EXIT"},
     ],
 }
+
+
+def _job_label(key) -> str:
+    if isinstance(key, tuple):
+        return "/".join(str(part) for part in key)
+    return str(key)
 
 
 def _console_encode(s: str) -> str:
@@ -171,53 +176,71 @@ def upload_data(s3_bucket, s3_client=None, force: bool = False):
     print(f"Data upload complete: {uploaded} uploaded, {skipped} skipped.\n")
 
 
-def _job_definition_for(position: str) -> str:
+def _job_definition_for(position: str, branch: str = "full") -> str:
     """Pick the right job definition for a position.
 
-    CPU-only positions use JOB_DEFINITION_CPU if it's configured; otherwise
-    they fall back to the default (GPU) definition so this is safe to deploy
-    before the CPU infra exists.
-
-    When FF_JOB_DEFINITION_REVISION is set, append ``:N`` to pin the
-    submission to that revision — but only when the resolved job-def is the
-    GPU one. ``batch-image.yml`` registers a new revision against
-    ``$JOB_DEFINITION`` (the GPU def) only; the CPU def has no matching
-    revision number, so appending the GPU's revision to a CPU submission
-    would reference a non-existent ``{cpu-def}:N`` and AWS Batch's
-    ``submit_job`` raises ``ClientException`` (it does NOT fall back to the
-    bare-name latest resolution) — the job would fail to submit. Latent
-    today (no CPU Spot path is wired up), but pinning would break the
-    moment one is — so guard explicitly here, not "we'll catch it
-    when the CPU path lands".
+    Full mode keeps the legacy default. Split ``nn`` always uses the GPU
+    definition; split ``cpu``/``merge`` require the CPU definition and pin it
+    with FF_JOB_DEFINITION_CPU_REVISION, never the GPU revision.
     """
+    if branch in {"cpu", "merge"}:
+        if not JOB_DEFINITION_CPU:
+            raise RuntimeError("FF_JOB_DEFINITION_CPU is required for split CPU/merge jobs")
+        return (
+            f"{JOB_DEFINITION_CPU}:{JOB_DEFINITION_CPU_REVISION}"
+            if JOB_DEFINITION_CPU_REVISION
+            else JOB_DEFINITION_CPU
+        )
+    if branch == "nn":
+        return (
+            f"{JOB_DEFINITION}:{JOB_DEFINITION_REVISION}"
+            if JOB_DEFINITION_REVISION
+            else JOB_DEFINITION
+        )
+
     use_cpu = position in CPU_ONLY_POSITIONS and JOB_DEFINITION_CPU
     base = JOB_DEFINITION_CPU if use_cpu else JOB_DEFINITION
+    if use_cpu and JOB_DEFINITION_CPU_REVISION:
+        return f"{base}:{JOB_DEFINITION_CPU_REVISION}"
     if JOB_DEFINITION_REVISION and not use_cpu:
         return f"{base}:{JOB_DEFINITION_REVISION}"
     return base
 
 
-def _job_queue_for(position: str) -> str:
+def _job_queue_for(position: str, branch: str = "full") -> str:
     """Pick the right Batch queue for a position.
 
-    CPU-only positions can route to a separate CPU queue when both the CPU job
-    definition and queue are configured. If either is absent, keep the old
-    default queue behaviour so a partial rollout remains safe.
+    Split CPU/merge branches require the CPU queue. Full mode preserves the
+    legacy CPU-only route only when both CPU env vars are explicitly configured.
     """
+    if branch in {"cpu", "merge"}:
+        if not JOB_QUEUE_CPU:
+            raise RuntimeError("FF_JOB_QUEUE_CPU is required for split CPU/merge jobs")
+        return JOB_QUEUE_CPU
+    if branch == "nn":
+        return JOB_QUEUE
     if position in CPU_ONLY_POSITIONS and JOB_DEFINITION_CPU and JOB_QUEUE_CPU:
         return JOB_QUEUE_CPU
     return JOB_QUEUE
 
 
-def submit_job(position, seed=42, batch_client=None):
-    """Submit a single Batch job for one position. Returns (position, job_id)."""
+def submit_job(
+    position,
+    seed=42,
+    batch_client=None,
+    *,
+    branch: str = "full",
+    split_run_id: str | None = None,
+    depends_on: list[dict] | None = None,
+):
+    """Submit a single Batch job. Returns (position-or-branch-key, job_id)."""
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
     # int-seconds timestamp collides if two launches happen in the same second;
     # a short uuid suffix makes the name unique without sacrificing readability.
     timestamp = int(time.time())
     suffix = uuid.uuid4().hex[:6]
-    job_definition = _job_definition_for(position)
-    job_queue = _job_queue_for(position)
+    job_definition = _job_definition_for(position, branch=branch)
+    job_queue = _job_queue_for(position, branch=branch)
     environment = [
         {"name": "S3_BUCKET", "value": S3_BUCKET},
         {"name": "S3_DATA_PREFIX", "value": "data"},
@@ -240,19 +263,80 @@ def submit_job(position, seed=42, batch_client=None):
     model_prefix = os.environ.get("FF_MODEL_S3_PREFIX", "").strip()
     if model_prefix:
         environment.append({"name": "FF_MODEL_S3_PREFIX", "value": model_prefix})
-    response = batch.submit_job(
-        jobName=f"ff-{position.lower()}-{timestamp}-{suffix}",
+    if branch != "full":
+        if not split_run_id:
+            raise RuntimeError("split_run_id is required for split branch jobs")
+        environment.append({"name": "FF_SPLIT_RUN_ID", "value": split_run_id})
+    if branch == "cpu":
+        environment.extend(
+            [
+                {"name": "FF_CPU_BRANCH_CORES", "value": "4"},
+                {"name": "FF_DEVICE", "value": "cpu"},
+                {"name": "LGBM_N_JOBS", "value": "1"},
+                {"name": "LOKY_MAX_CPU_COUNT", "value": "4"},
+                {"name": "OPENBLAS_NUM_THREADS", "value": "1"},
+                {"name": "OMP_NUM_THREADS", "value": "1"},
+                {"name": "MKL_NUM_THREADS", "value": "1"},
+                {"name": "NUMEXPR_NUM_THREADS", "value": "1"},
+            ]
+        )
+    command = ["--position", position, "--seed", str(seed)]
+    if branch != "full":
+        command.extend(["--branch", branch, "--split-run-id", split_run_id])
+
+    submit_kwargs = dict(
+        jobName=(
+            f"ff-{position.lower()}-{branch}-{timestamp}-{suffix}"
+            if branch != "full"
+            else f"ff-{position.lower()}-{timestamp}-{suffix}"
+        ),
         jobQueue=job_queue,
         jobDefinition=job_definition,
         retryStrategy=RETRY_STRATEGY,
         containerOverrides={
-            "command": ["--position", position, "--seed", str(seed)],
+            "command": command,
             "environment": environment,
         },
     )
+    if depends_on:
+        submit_kwargs["dependsOn"] = depends_on
+    response = batch.submit_job(**submit_kwargs)
     job_id = response["jobId"]
-    print(f"[{position}] Submitted job {job_id} (queue: {job_queue}, definition: {job_definition})")
-    return position, job_id
+    key = (position, branch) if branch != "full" else position
+    label = f"{position}/{branch}" if branch != "full" else position
+    print(f"[{label}] Submitted job {job_id} (queue: {job_queue}, definition: {job_definition})")
+    return key, job_id
+
+
+def _submit_split_for_position(position: str, seed: int, split_run_id: str, batch_client=None):
+    """Submit NN, CPU, and merge jobs for one split position."""
+    _, nn_job_id = submit_job(
+        position,
+        seed,
+        batch_client,
+        branch="nn",
+        split_run_id=split_run_id,
+    )
+    _, cpu_job_id = submit_job(
+        position,
+        seed,
+        batch_client,
+        branch="cpu",
+        split_run_id=split_run_id,
+    )
+    merge_key, merge_job_id = submit_job(
+        position,
+        seed,
+        batch_client,
+        branch="merge",
+        split_run_id=split_run_id,
+        depends_on=[{"jobId": nn_job_id}, {"jobId": cpu_job_id}],
+    )
+    return {
+        (position, "nn"): nn_job_id,
+        (position, "cpu"): cpu_job_id,
+        merge_key: merge_job_id,
+    }
 
 
 def wait_for_jobs(job_ids, timeout_seconds=None, batch_client=None):
@@ -296,8 +380,9 @@ def wait_for_jobs(job_ids, timeout_seconds=None, batch_client=None):
             # Find position for this job_id
             pos = next(p for p, jid in remaining.items() if jid == job_id)
 
+            label = _job_label(pos)
             if last_status.get(job_id) != status:
-                print(f"[{pos}] {status}")
+                print(f"[{label}] {status}")
                 last_status[job_id] = status
 
             if status in TERMINAL_STATES:
@@ -307,17 +392,17 @@ def wait_for_jobs(job_ids, timeout_seconds=None, batch_client=None):
                     reason = job.get("statusReason") or ""
                     container = job.get("container") or {}
                     stream = container.get("logStreamName")
-                    print(f"[{pos}] FAILED reason: {reason}")
+                    print(f"[{label}] FAILED reason: {reason}")
                     if stream:
-                        print(f"[{pos}] log stream: {stream}")
-                        print(f"[{pos}] console:    {_cloudwatch_url(stream)}")
+                        print(f"[{label}] log stream: {stream}")
+                        print(f"[{label}] console:    {_cloudwatch_url(stream)}")
                         print(
-                            f"[{pos}] cli:        aws logs get-log-events "
+                            f"[{label}] cli:        aws logs get-log-events "
                             f"--log-group-name {BATCH_LOG_GROUP} "
                             f"--log-stream-name '{stream}' --region {AWS_REGION}"
                         )
                     else:
-                        print(f"[{pos}] (no log stream — job never started a container)")
+                        print(f"[{label}] (no log stream — job never started a container)")
                 del remaining[pos]
 
         if remaining:
@@ -419,26 +504,55 @@ def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
             print(f"[{pos}] WARNING: all manifest entries failed; tried={tried!r}")
 
 
-def _print_plan(positions, seed):
+def _print_plan(positions, seed, *, split: bool = False, split_run_id: str | None = None):
     """--dry-run: print what would be submitted, touch nothing."""
     print("DRY RUN — no AWS calls will be made.")
     print(f"  region:       {AWS_REGION}")
     print(f"  bucket:       {S3_BUCKET}")
     print(f"  queue:        {JOB_QUEUE}")
     print(f"  definition:   {JOB_DEFINITION}")
+    if JOB_DEFINITION_REVISION:
+        print(f"  definition rev: {JOB_DEFINITION_REVISION}")
     if JOB_DEFINITION_CPU:
         # Render the actual cpu-only set (the same one driving _job_*_for at
         # L192/206) rather than a hardcoded "(K, DST)" that silently goes stale
         # if a position's cpu_only flag changes (#351 F21).
-        _cpu_route = ", ".join(sorted(CPU_ONLY_POSITIONS)) or "none"
+        _cpu_route = "split cpu/merge branches" if split else ", ".join(sorted(CPU_ONLY_POSITIONS))
+        _cpu_route = _cpu_route or "none"
         if JOB_QUEUE_CPU:
             print(f"  cpu queue:    {JOB_QUEUE_CPU} ({_cpu_route} route here)")
         print(f"  cpu def:      {JOB_DEFINITION_CPU} ({_cpu_route} route here)")
+        if JOB_DEFINITION_CPU_REVISION:
+            print(f"  cpu def rev:  {JOB_DEFINITION_CPU_REVISION}")
     print(f"  wait timeout: {WAIT_TIMEOUT_SECONDS}s")
     print(f"  seed:         {seed}")
+    if split:
+        print("  split:        true")
+        print(f"  split run id: {split_run_id}")
     print("  jobs:")
     for pos in positions:
-        print(f"    - {pos:<4} -> definition {_job_definition_for(pos)}")
+        if split:
+            print(
+                f"    - {pos:<4} nn    -> queue {_job_queue_for(pos, branch='nn')}, "
+                f"definition {_job_definition_for(pos, branch='nn')}, "
+                f"command --position {pos} --seed {seed} --branch nn "
+                f"--split-run-id {split_run_id}"
+            )
+            print(
+                f"    - {pos:<4} cpu   -> queue {_job_queue_for(pos, branch='cpu')}, "
+                f"definition {_job_definition_for(pos, branch='cpu')}, "
+                f"command --position {pos} --seed {seed} --branch cpu "
+                f"--split-run-id {split_run_id}"
+            )
+            print(
+                f"    - {pos:<4} merge -> queue {_job_queue_for(pos, branch='merge')}, "
+                f"definition {_job_definition_for(pos, branch='merge')}, "
+                "dependsOn nn+cpu, "
+                f"command --position {pos} --seed {seed} --branch merge "
+                f"--split-run-id {split_run_id}"
+            )
+        else:
+            print(f"    - {pos:<4} -> definition {_job_definition_for(pos)}")
 
 
 def _append_benchmark_history(positions, *, note):
@@ -510,13 +624,29 @@ def main():
             "the image SHA + PR number."
         ),
     )
+    parser.add_argument(
+        "--split",
+        action="store_true",
+        help="Submit split NN/GPU + Ridge/LGBM CPU branch jobs plus a merge job per position.",
+    )
+    parser.add_argument(
+        "--split-run-id",
+        default=os.environ.get("FF_SPLIT_RUN_ID"),
+        help="Namespace for staged split artifacts. Auto-generated when --split is set.",
+    )
     args = parser.parse_args()
     wait = args.wait.lower() == "true"
     append_history = args.append_history.lower() == "true"
     wait_timeout = args.wait_timeout if args.wait_timeout is not None else WAIT_TIMEOUT_SECONDS
+    split_run_id = args.split_run_id
+    if args.split:
+        if not split_run_id:
+            split_run_id = f"{int(time.time())}-{uuid.uuid4().hex[:8]}"
+        if not JOB_DEFINITION_CPU or not JOB_QUEUE_CPU:
+            parser.error("--split requires FF_JOB_DEFINITION_CPU and FF_JOB_QUEUE_CPU")
 
     if args.dry_run:
-        _print_plan(args.positions, args.seed)
+        _print_plan(args.positions, args.seed, split=args.split, split_run_id=split_run_id)
         return
 
     # Shared boto3 clients — boto3 clients are thread-safe, no need per-thread.
@@ -530,18 +660,40 @@ def main():
         upload_data(S3_BUCKET, s3_client=s3_client, force=args.force_upload)
 
     # Submit all positions in parallel
-    print(f"Submitting {len(args.positions)} Batch jobs: {args.positions}")
+    if args.split:
+        print(
+            f"Submitting split Batch jobs for {len(args.positions)} positions: "
+            f"{args.positions} (split_run_id={split_run_id})"
+        )
+    else:
+        print(f"Submitting {len(args.positions)} Batch jobs: {args.positions}")
     job_ids = {}  # position -> job_id
     submit_failures = []  # positions whose submit_job raised — never enter job_ids
     with ThreadPoolExecutor(max_workers=len(args.positions)) as pool:
-        futures = {
-            pool.submit(submit_job, pos, args.seed, batch_client): pos for pos in args.positions
-        }
+        if args.split:
+            futures = {
+                pool.submit(
+                    _submit_split_for_position,
+                    pos,
+                    args.seed,
+                    split_run_id,
+                    batch_client,
+                ): pos
+                for pos in args.positions
+            }
+        else:
+            futures = {
+                pool.submit(submit_job, pos, args.seed, batch_client): pos for pos in args.positions
+            }
         for future in as_completed(futures):
             pos = futures[future]
             try:
-                pos, job_id = future.result()
-                job_ids[pos] = job_id
+                submitted = future.result()
+                if args.split:
+                    job_ids.update(submitted)
+                else:
+                    pos, job_id = submitted
+                    job_ids[pos] = job_id
             except Exception as e:
                 print(f"[{pos}] FAILED to submit: {e}")
                 submit_failures.append(pos)
@@ -561,10 +713,24 @@ def main():
     )
     results = wait_for_jobs(job_ids, timeout_seconds=wait_timeout, batch_client=batch_client)
 
-    succeeded = [pos for pos, (status, _) in results.items() if status == "SUCCEEDED"]
-    failed = [pos for pos, (status, _) in results.items() if status == "FAILED"]
-    timed_out = [pos for pos, (status, _) in results.items() if status == "TIMED_OUT"]
-    stopped_at_by_pos = {pos: stopped_at for pos, (_, stopped_at) in results.items()}
+    if args.split:
+        succeeded = [
+            key[0]
+            for key, (status, _) in results.items()
+            if isinstance(key, tuple) and key[1] == "merge" and status == "SUCCEEDED"
+        ]
+    else:
+        succeeded = [pos for pos, (status, _) in results.items() if status == "SUCCEEDED"]
+    failed = [key for key, (status, _) in results.items() if status == "FAILED"]
+    timed_out = [key for key, (status, _) in results.items() if status == "TIMED_OUT"]
+    if args.split:
+        stopped_at_by_pos = {
+            key[0]: stopped_at
+            for key, (_, stopped_at) in results.items()
+            if isinstance(key, tuple) and key[1] == "merge"
+        }
+    else:
+        stopped_at_by_pos = {pos: stopped_at for pos, (_, stopped_at) in results.items()}
 
     if failed:
         print(f"\nFailed positions: {failed}")

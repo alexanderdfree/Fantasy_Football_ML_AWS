@@ -34,6 +34,7 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECR_REPOSITORY: ff-training
   JOB_DEFINITION: ff-training-job
+  JOB_DEFINITION_CPU: ff-training-cpu-job
   # Same bucket train-batch.yml uses. The revision-stash step below writes to
   # s3://${S3_BUCKET}/job-def-revisions/${sha}.txt so train-batch.yml can pin
   # FF_JOB_DEFINITION_REVISION to the revision the image build registered.
@@ -309,3 +310,69 @@ jobs:
             --region "$AWS_REGION" \
             --no-cli-pager
           echo "Stashed revision $REVISION at s3://${S3_BUCKET}/job-def-revisions/${GITHUB_SHA}.txt"
+
+          aws batch describe-job-definitions \
+            --job-definition-name "$JOB_DEFINITION_CPU" \
+            --status ACTIVE \
+            --max-results 1 \
+            --region "$AWS_REGION" > current-cpu.json
+
+          jq --arg image "$IMAGE_URI" \
+             --argjson retry "$RETRY_STRATEGY" \
+             --argjson timeout "$TIMEOUT" '
+            .jobDefinitions[0] as $d |
+            {
+              jobDefinitionName: $d.jobDefinitionName,
+              type: $d.type,
+              containerProperties: (
+                $d.containerProperties
+                | .image = $image
+                | .vcpus = 4
+                | .memory = 7500
+                | del(.resourceRequirements)
+                | .environment = (
+                    ((.environment // []) | map(select(
+                      .name != "REQUIRE_GPU"
+                      and .name != "FF_DEVICE"
+                      and .name != "FF_CPU_BRANCH_CORES"
+                      and .name != "LGBM_N_JOBS"
+                      and .name != "LOKY_MAX_CPU_COUNT"
+                      and .name != "OMP_NUM_THREADS"
+                      and .name != "MKL_NUM_THREADS"
+                      and .name != "OPENBLAS_NUM_THREADS"
+                      and .name != "NUMEXPR_NUM_THREADS"
+                    )))
+                    + [
+                        {name: "REQUIRE_GPU", value: "0"},
+                        {name: "FF_DEVICE", value: "cpu"},
+                        {name: "FF_CPU_BRANCH_CORES", value: "4"},
+                        {name: "LGBM_N_JOBS", value: "1"},
+                        {name: "LOKY_MAX_CPU_COUNT", value: "4"},
+                        {name: "OMP_NUM_THREADS", value: "1"},
+                        {name: "MKL_NUM_THREADS", value: "1"},
+                        {name: "OPENBLAS_NUM_THREADS", value: "1"},
+                        {name: "NUMEXPR_NUM_THREADS", value: "1"}
+                      ]
+                  )
+              ),
+              retryStrategy: $retry,
+              timeout: $timeout,
+              platformCapabilities: ($d.platformCapabilities // []),
+              propagateTags: ($d.propagateTags // false),
+              tags: ($d.tags // {})
+            } | with_entries(select(.value != null and .value != "" and .value != []))
+          ' current-cpu.json > new-cpu.json
+
+          CPU_REVISION=$(aws batch register-job-definition \
+            --cli-input-json file://new-cpu.json \
+            --region "$AWS_REGION" \
+            --query 'revision' \
+            --output text)
+          echo "Registered new revision of $JOB_DEFINITION_CPU: revision $CPU_REVISION"
+
+          echo -n "$CPU_REVISION" > /tmp/revision-cpu.txt
+          aws s3 cp /tmp/revision-cpu.txt \
+            "s3://${S3_BUCKET}/job-def-revisions/cpu/${GITHUB_SHA}.txt" \
+            --region "$AWS_REGION" \
+            --no-cli-pager
+          echo "Stashed CPU revision $CPU_REVISION at s3://${S3_BUCKET}/job-def-revisions/cpu/${GITHUB_SHA}.txt"

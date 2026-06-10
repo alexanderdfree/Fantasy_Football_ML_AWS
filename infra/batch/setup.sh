@@ -19,6 +19,9 @@ COMPUTE_ENV="ff-gpu-spot"
 FALLBACK_COMPUTE_ENV="ff-gpu-spot-g5"
 JOB_QUEUE="ff-training-queue"
 JOB_DEF="ff-training-job"
+CPU_COMPUTE_ENV="ff-cpu-spot"
+CPU_JOB_QUEUE="ff-cpu-training-queue"
+CPU_JOB_DEF="ff-training-cpu-job"
 JOB_ROLE="BatchTrainingRole"
 INSTANCE_ROLE="ecsInstanceRole"
 INSTANCE_PROFILE="ecsInstanceRole"
@@ -28,7 +31,10 @@ ECR_REPO="ff-training"
 LOG_GROUP="/aws/batch/job"
 # "All G and VT Spot Instance Requests" — service quota code.
 SPOT_QUOTA_CODE="L-3819A6DF"
+# "All Standard (A, C, D, H, I, M, R, T, Z) Spot Instance Requests".
+STANDARD_SPOT_QUOTA_CODE="L-34B43A08"
 MAX_VCPUS=24
+CPU_MAX_VCPUS=64
 # GPU Spot instance types for the fan-out. Keep them in separate compute
 # environments so queue order can enforce preference: g6/L4 first, then g5/A10G
 # only when the primary CE can't provide suitable capacity. Both are 4 vCPU /
@@ -37,6 +43,9 @@ MAX_VCPUS=24
 PRIMARY_INSTANCE_TYPE="g6.xlarge"
 FALLBACK_INSTANCE_TYPE="g5.xlarge"
 ALL_GPU_INSTANCE_TYPES=("$PRIMARY_INSTANCE_TYPE" "$FALLBACK_INSTANCE_TYPE")
+CPU_PRIMARY_INSTANCE_TYPE="c8a.xlarge"
+CPU_FALLBACK_INSTANCE_TYPE="m8a.xlarge"
+CPU_INSTANCE_TYPES_JSON="[\"$CPU_PRIMARY_INSTANCE_TYPE\",\"$CPU_FALLBACK_INSTANCE_TYPE\"]"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { echo "[batch-setup] $*"; }
@@ -101,6 +110,26 @@ resolve_default_subnets_for_instance_type() {
 
 log "Account $ACCOUNT_ID, VPC $VPC_ID, preferred GPU order: $PRIMARY_INSTANCE_TYPE -> $FALLBACK_INSTANCE_TYPE"
 
+CPU_OFFERING_AZS=$(aws ec2 describe-instance-type-offerings \
+  --location-type availability-zone \
+  --filters "Name=instance-type,Values=$CPU_PRIMARY_INSTANCE_TYPE" \
+  --query 'InstanceTypeOfferings[].Location' --output text --region "$REGION")
+if [ -z "$CPU_OFFERING_AZS" ]; then
+  log "ERROR: $CPU_PRIMARY_INSTANCE_TYPE is not offered in any AZ of $REGION."
+  exit 1
+fi
+CPU_OFFERING_AZS_CSV=$(echo $CPU_OFFERING_AZS | tr ' ' ',')
+CPU_SUBNET_IDS=$(aws ec2 describe-subnets \
+  --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" \
+            "Name=availability-zone,Values=$CPU_OFFERING_AZS_CSV" \
+  --query 'Subnets[].SubnetId' --output text --region "$REGION")
+CPU_SUBNET_COUNT=$(echo "$CPU_SUBNET_IDS" | wc -w | tr -d ' ')
+if [ "$CPU_SUBNET_COUNT" -lt 2 ]; then
+  log "ERROR: need >=2 default subnets in $CPU_PRIMARY_INSTANCE_TYPE-offering AZs for CPU Spot diversification; found $CPU_SUBNET_COUNT (offering AZs: $CPU_OFFERING_AZS)."
+  exit 1
+fi
+log "$CPU_SUBNET_COUNT CPU subnets in $CPU_PRIMARY_INSTANCE_TYPE-offering AZs ($CPU_OFFERING_AZS)"
+
 # --- 2. Spot quota check ------------------------------------------------
 log "Checking Spot G+VT vCPU quota (need >= $MAX_VCPUS)..."
 QUOTA=$(aws service-quotas get-service-quota \
@@ -118,6 +147,23 @@ if [ "$QUOTA_INT" -lt "$MAX_VCPUS" ]; then
   exit 1
 fi
 log "Quota OK: $QUOTA vCPUs"
+
+log "Checking Standard Spot vCPU quota (need >= $CPU_MAX_VCPUS)..."
+CPU_QUOTA=$(aws service-quotas get-service-quota \
+  --service-code ec2 \
+  --quota-code "$STANDARD_SPOT_QUOTA_CODE" \
+  --region "$REGION" \
+  --query 'Quota.Value' \
+  --output text)
+CPU_QUOTA_INT=${CPU_QUOTA%.*}
+if [ "$CPU_QUOTA_INT" -lt "$CPU_MAX_VCPUS" ]; then
+  log "ERROR: Standard Spot quota is $CPU_QUOTA; need >= $CPU_MAX_VCPUS (16 x c8a.xlarge x 4 vCPU)."
+  log "Request an increase:"
+  log "  aws service-quotas request-service-quota-increase --service-code ec2 \\"
+  log "    --quota-code $STANDARD_SPOT_QUOTA_CODE --desired-value $CPU_MAX_VCPUS --region $REGION"
+  exit 1
+fi
+log "Standard Spot quota OK: $CPU_QUOTA vCPUs"
 
 # --- 3. BatchTrainingRole (container/job role) --------------------------
 if ! aws iam get-role --role-name "$JOB_ROLE" >/dev/null 2>&1; then
@@ -340,6 +386,115 @@ ensure_compute_environment() {
 ensure_compute_environment "$COMPUTE_ENV" "$PRIMARY_INSTANCE_TYPE"
 ensure_compute_environment "$FALLBACK_COMPUTE_ENV" "$FALLBACK_INSTANCE_TYPE"
 
+# --- 11. CPU Compute Environment ----------------------------------------
+CPU_SUBNETS_JSON=$(printf '"%s",' $CPU_SUBNET_IDS | sed 's/,$//')
+CPU_CE_STATUS=$(aws batch describe-compute-environments \
+  --compute-environments "$CPU_COMPUTE_ENV" \
+  --region "$REGION" \
+  --query 'computeEnvironments[0].status' \
+  --output text 2>/dev/null || echo "None")
+if [ "$CPU_CE_STATUS" = "None" ] || [ -z "$CPU_CE_STATUS" ] || [ "$CPU_CE_STATUS" = "null" ]; then
+  log "Creating CPU Compute Environment $CPU_COMPUTE_ENV..."
+  aws batch create-compute-environment \
+    --compute-environment-name "$CPU_COMPUTE_ENV" \
+    --type MANAGED \
+    --state ENABLED \
+    --compute-resources "{
+      \"type\": \"SPOT\",
+      \"allocationStrategy\": \"SPOT_PRICE_CAPACITY_OPTIMIZED\",
+      \"minvCpus\": 0,
+      \"maxvCpus\": $CPU_MAX_VCPUS,
+      \"instanceTypes\": $CPU_INSTANCE_TYPES_JSON,
+      \"subnets\": [$CPU_SUBNETS_JSON],
+      \"securityGroupIds\": [\"$SG_ID\"],
+      \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\"
+    }" \
+    --region "$REGION"
+  log "Waiting for CPU CE to reach VALID..."
+  for i in $(seq 1 60); do
+    STATUS=$(aws batch describe-compute-environments \
+      --compute-environments "$CPU_COMPUTE_ENV" \
+      --region "$REGION" \
+      --query 'computeEnvironments[0].status' \
+      --output text)
+    if [ "$STATUS" = "VALID" ]; then
+      log "CPU CE is VALID"
+      break
+    fi
+    if [ "$STATUS" = "INVALID" ]; then
+      REASON=$(aws batch describe-compute-environments \
+        --compute-environments "$CPU_COMPUTE_ENV" \
+        --region "$REGION" \
+        --query 'computeEnvironments[0].statusReason' \
+        --output text)
+      log "ERROR: CPU CE is INVALID — $REASON"
+      exit 1
+    fi
+    sleep 5
+  done
+else
+  log "CPU Compute Environment $CPU_COMPUTE_ENV already exists (status: $CPU_CE_STATUS)"
+  CURRENT_CPU_MAX=$(aws batch describe-compute-environments \
+    --compute-environments "$CPU_COMPUTE_ENV" \
+    --region "$REGION" \
+    --query 'computeEnvironments[0].computeResources.maxvCpus' \
+    --output text 2>/dev/null || echo "0")
+  CURRENT_CPU_TYPES=$(aws batch describe-compute-environments \
+    --compute-environments "$CPU_COMPUTE_ENV" \
+    --region "$REGION" \
+    --query 'join(`,`, computeEnvironments[0].computeResources.instanceTypes)' \
+    --output text 2>/dev/null || echo "")
+  DESIRED_CPU_TYPES="$CPU_PRIMARY_INSTANCE_TYPE,$CPU_FALLBACK_INSTANCE_TYPE"
+  if [ "$CURRENT_CPU_MAX" != "$CPU_MAX_VCPUS" ] || [ "$CURRENT_CPU_TYPES" != "$DESIRED_CPU_TYPES" ]; then
+    log "Reconciling CPU CE resources: maxVcpus $CURRENT_CPU_MAX -> $CPU_MAX_VCPUS, instanceTypes [$CURRENT_CPU_TYPES] -> [$DESIRED_CPU_TYPES]..."
+    log "  step 1/3: DISABLE"
+    aws batch update-compute-environment \
+      --compute-environment "$CPU_COMPUTE_ENV" \
+      --state DISABLED \
+      --region "$REGION" >/dev/null
+    for i in $(seq 1 30); do
+      STATUS=$(aws batch describe-compute-environments \
+        --compute-environments "$CPU_COMPUTE_ENV" \
+        --region "$REGION" \
+        --query 'computeEnvironments[0].status' \
+        --output text)
+      [ "$STATUS" = "VALID" ] && break
+      sleep 5
+    done
+    log "  step 2/3: UPDATE compute resources"
+    aws batch update-compute-environment \
+      --compute-environment "$CPU_COMPUTE_ENV" \
+      --compute-resources "{\"maxvCpus\": $CPU_MAX_VCPUS, \"instanceTypes\": $CPU_INSTANCE_TYPES_JSON}" \
+      --region "$REGION" >/dev/null
+    for i in $(seq 1 30); do
+      STATUS=$(aws batch describe-compute-environments \
+        --compute-environments "$CPU_COMPUTE_ENV" \
+        --region "$REGION" \
+        --query 'computeEnvironments[0].status' \
+        --output text)
+      [ "$STATUS" = "VALID" ] && break
+      sleep 5
+    done
+    log "  step 3/3: ENABLE"
+    aws batch update-compute-environment \
+      --compute-environment "$CPU_COMPUTE_ENV" \
+      --state ENABLED \
+      --region "$REGION" >/dev/null
+    for i in $(seq 1 30); do
+      STATUS=$(aws batch describe-compute-environments \
+        --compute-environments "$CPU_COMPUTE_ENV" \
+        --region "$REGION" \
+        --query 'computeEnvironments[0].status' \
+        --output text)
+      [ "$STATUS" = "VALID" ] && break
+      sleep 5
+    done
+    log "CPU CE reconciled."
+  else
+    log "CPU CE already matches desired resources."
+  fi
+fi
+
 # --- 12. Job Queue ------------------------------------------------------
 CE_ORDER_ARGS=(
   "order=1,computeEnvironment=$COMPUTE_ENV"
@@ -394,6 +549,36 @@ else
   done
 fi
 
+CPU_JQ_STATUS=$(aws batch describe-job-queues \
+  --job-queues "$CPU_JOB_QUEUE" \
+  --region "$REGION" \
+  --query 'jobQueues[0].status' \
+  --output text 2>/dev/null || echo "None")
+if [ "$CPU_JQ_STATUS" = "None" ] || [ -z "$CPU_JQ_STATUS" ] || [ "$CPU_JQ_STATUS" = "null" ]; then
+  log "Creating CPU Job Queue $CPU_JOB_QUEUE..."
+  aws batch create-job-queue \
+    --job-queue-name "$CPU_JOB_QUEUE" \
+    --state ENABLED \
+    --priority 1 \
+    --compute-environment-order "order=1,computeEnvironment=$CPU_COMPUTE_ENV" \
+    --region "$REGION"
+  log "Waiting for CPU JQ to reach VALID..."
+  for i in $(seq 1 30); do
+    STATUS=$(aws batch describe-job-queues \
+      --job-queues "$CPU_JOB_QUEUE" \
+      --region "$REGION" \
+      --query 'jobQueues[0].status' \
+      --output text)
+    if [ "$STATUS" = "VALID" ]; then
+      log "CPU JQ is VALID"
+      break
+    fi
+    sleep 5
+  done
+else
+  log "CPU Job Queue $CPU_JOB_QUEUE already exists (status: $CPU_JQ_STATUS)"
+fi
+
 # --- 13. Job Definition (register rev 1 against :latest) ----------------
 # Solves the chicken-and-egg with batch-image.yml: its re-registration step
 # reads the previous revision; without a seed revision, jq breaks. Once
@@ -442,6 +627,59 @@ else
   log "Job Definition $JOB_DEF already exists; CI will re-register on next push."
 fi
 
+CPU_JD_NAME=$(aws batch describe-job-definitions \
+  --job-definition-name "$CPU_JOB_DEF" \
+  --status ACTIVE \
+  --max-results 1 \
+  --region "$REGION" \
+  --query 'jobDefinitions[0].jobDefinitionName' \
+  --output text 2>/dev/null || echo "None")
+if [ "$CPU_JD_NAME" = "None" ] || [ -z "$CPU_JD_NAME" ] || [ "$CPU_JD_NAME" = "null" ]; then
+  log "Registering CPU Job Definition $CPU_JOB_DEF rev 1..."
+  aws batch register-job-definition \
+    --job-definition-name "$CPU_JOB_DEF" \
+    --type container \
+    --platform-capabilities EC2 \
+    --container-properties "{
+      \"image\": \"$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$ECR_REPO:latest\",
+      \"vcpus\": 4,
+      \"memory\": 7500,
+      \"jobRoleArn\": \"arn:aws:iam::$ACCOUNT_ID:role/$JOB_ROLE\",
+      \"executionRoleArn\": \"arn:aws:iam::$ACCOUNT_ID:role/$TASK_EXEC_ROLE\",
+      \"environment\": [
+        {\"name\": \"REQUIRE_GPU\", \"value\": \"0\"},
+        {\"name\": \"FF_DEVICE\", \"value\": \"cpu\"},
+        {\"name\": \"FF_CPU_BRANCH_CORES\", \"value\": \"4\"},
+        {\"name\": \"LGBM_N_JOBS\", \"value\": \"1\"},
+        {\"name\": \"LOKY_MAX_CPU_COUNT\", \"value\": \"4\"},
+        {\"name\": \"OPENBLAS_NUM_THREADS\", \"value\": \"1\"},
+        {\"name\": \"OMP_NUM_THREADS\", \"value\": \"1\"},
+        {\"name\": \"MKL_NUM_THREADS\", \"value\": \"1\"},
+        {\"name\": \"NUMEXPR_NUM_THREADS\", \"value\": \"1\"}
+      ],
+      \"logConfiguration\": {
+        \"logDriver\": \"awslogs\",
+        \"options\": {
+          \"awslogs-group\": \"$LOG_GROUP\",
+          \"awslogs-region\": \"$REGION\",
+          \"awslogs-stream-prefix\": \"ff-training\"
+        }
+      }
+    }" \
+    --timeout '{"attemptDurationSeconds": 1800}' \
+    --retry-strategy '{
+      "attempts": 3,
+      "evaluateOnExit": [
+        {"onStatusReason": "Host EC2*", "action": "RETRY"},
+        {"onReason": "CannotPullContainerError*", "action": "RETRY"},
+        {"onReason": "*", "action": "EXIT"}
+      ]
+    }' \
+    --region "$REGION"
+else
+  log "CPU Job Definition $CPU_JOB_DEF already exists; CI will re-register on next push."
+fi
+
 cat <<EOF
 
 ────────────────────────────────────────────────────────────────
@@ -451,6 +689,9 @@ Batch + Spot infrastructure ready:
   Fallback CE:         $FALLBACK_COMPUTE_ENV ($FALLBACK_INSTANCE_TYPE, maxVcpus=$MAX_VCPUS, order=2)
   Job queue:           $JOB_QUEUE
   Job definition:      $JOB_DEF (image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$ECR_REPO:latest)
+  CPU environment:     $CPU_COMPUTE_ENV (maxVcpus=$CPU_MAX_VCPUS, types=$CPU_PRIMARY_INSTANCE_TYPE,$CPU_FALLBACK_INSTANCE_TYPE)
+  CPU job queue:       $CPU_JOB_QUEUE
+  CPU job definition:  $CPU_JOB_DEF (4 vCPU, 7500 MiB, no GPU)
   Job role:            arn:aws:iam::$ACCOUNT_ID:role/$JOB_ROLE
   Instance role:       arn:aws:iam::$ACCOUNT_ID:role/$INSTANCE_ROLE
   Task exec role:      arn:aws:iam::$ACCOUNT_ID:role/$TASK_EXEC_ROLE

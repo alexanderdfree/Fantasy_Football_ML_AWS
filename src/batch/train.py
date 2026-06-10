@@ -12,6 +12,7 @@ Environment variables set via job definition / container overrides:
 
 import argparse
 import contextlib
+import copy
 import datetime
 import hashlib
 import io
@@ -32,6 +33,7 @@ import pandas as pd
 import torch
 
 from src.shared.artifact_gc import prune as _gc_prune
+from src.shared.core_pool import ENV_ADDR, ENV_POS, lease_cores, start_coordinator
 from src.shared.model_sync import (
     build_manifest,
     load_manifest,
@@ -44,12 +46,16 @@ from src.shared.registry import (
     ALL_POSITIONS,
     INFERENCE_REGISTRY,
     accepts_dataframes,
+    get_config,
     get_runner,
     is_cpu_only,
 )
 from src.shared.smoke_test import SmokeTestFailed, run_smoke_test
 from src.shared.utils import cuda_graph_enabled, seed_everything
 from src.shared.utils import timed as _timed
+
+SPLIT_BRANCHES = {"nn", "cpu"}
+SPLIT_ROOT_PREFIX = "split-runs"
 
 
 def _download_if_stale(s3, bucket, key, local_path):
@@ -475,9 +481,9 @@ def _extract_metrics(position, result):
     for model_key in ["ridge", "elasticnet", "nn", "attn_nn", "lgbm"]:
         m_key = f"{model_key}_metrics"
         r_key = f"{model_key}_ranking"
-        if m_key not in result:
+        m = result.get(m_key)
+        if not m:
             continue
-        m = result[m_key]
         metrics[m_key] = {
             "total": {
                 k: (round(v, 4) if isinstance(v, (int, float)) else v)
@@ -551,6 +557,375 @@ def _replace_model_dir_contents(src: str, dst: str) -> None:
         else:
             os.remove(child)
     shutil.copytree(src, dst, dirs_exist_ok=True)
+
+
+def _split_root_prefix() -> str:
+    return os.environ.get("FF_SPLIT_S3_PREFIX", SPLIT_ROOT_PREFIX).strip("/") or SPLIT_ROOT_PREFIX
+
+
+def _split_key(split_run_id: str, position: str, branch: str, name: str) -> str:
+    return f"{_split_root_prefix()}/{split_run_id}/{position}/{branch}/{name}"
+
+
+def _branch_config(position: str, branch: str) -> dict:
+    """Build a partial-training config for one split branch."""
+    if branch not in SPLIT_BRANCHES:
+        raise ValueError(f"Unsupported split branch: {branch}")
+    cfg = copy.deepcopy(get_config(position))
+    cfg["_artifact_branch"] = branch
+    # Split mode intentionally publishes only the served model families.
+    cfg["train_elasticnet"] = False
+    cfg["train_tabpfn"] = False
+    if branch == "nn":
+        cfg["train_base_nn"] = True
+        cfg["train_attention_nn"] = True
+        cfg["train_ridge"] = False
+        cfg["train_lightgbm"] = False
+    else:
+        cfg["train_base_nn"] = False
+        cfg["train_attention_nn"] = False
+        cfg["train_ridge"] = True
+        cfg["train_lightgbm"] = True
+    return cfg
+
+
+def _available_core_ids() -> list[int]:
+    try:
+        cores = sorted(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        cores = list(range(os.cpu_count() or 1))
+    if not cores:
+        raise RuntimeError("No CPU cores visible to the training container")
+    return cores
+
+
+@contextlib.contextmanager
+def _dynamic_cpu_core_pool(position: str):
+    """Activate the work-conserving 4-core pool for one CPU split job."""
+    visible_cores = _available_core_ids()
+    requested = int(os.environ.get("FF_CPU_BRANCH_CORES", str(len(visible_cores))))
+    if requested < 1:
+        raise RuntimeError(f"FF_CPU_BRANCH_CORES must be >= 1, got {requested}")
+    if len(visible_cores) < requested:
+        raise RuntimeError(
+            f"CPU split branch requested {requested} cores but only "
+            f"{len(visible_cores)} are visible: {visible_cores}"
+        )
+    cores = visible_cores[:requested]
+    socket_dir = tempfile.mkdtemp(prefix="ff-core-pool-")
+    addr, set_active_count, stop = start_coordinator(cores, socket_dir)
+    set_active_count(1)
+
+    managed_env = {
+        ENV_ADDR: addr,
+        ENV_POS: position,
+        "FF_DEVICE": "cpu",
+        "LGBM_N_JOBS": "1",
+        "LOKY_MAX_CPU_COUNT": str(requested),
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "NUMEXPR_NUM_THREADS": "1",
+    }
+    previous = {key: os.environ.get(key) for key in managed_env}
+    os.environ.update(managed_env)
+    try:
+        with lease_cores("probe_preflight", default=0) as granted:
+            if granted != requested:
+                raise RuntimeError(
+                    f"CPU core-pool preflight leased {granted} cores; expected {requested}"
+                )
+        print(f"[split-cpu] core pool active for {position}: cores={cores}, addr={addr}")
+        yield
+    finally:
+        for key, old_value in previous.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
+        stop()
+        shutil.rmtree(socket_dir, ignore_errors=True)
+
+
+def _tar_directory(directory: str, tmp_path: str) -> None:
+    items = os.listdir(directory)
+    if not items:
+        raise RuntimeError(f"{directory} is empty; refusing to create split artifact")
+    with tarfile.open(tmp_path, "w:gz") as tar:
+        for item in items:
+            full_path = os.path.join(directory, item)
+            tar.add(full_path, arcname=item)
+
+
+def _validate_split_dir(position: str, branch: str, directory: str) -> None:
+    if not os.path.isdir(directory):
+        raise RuntimeError(f"{branch} split artifact directory missing: {directory}")
+    required = {"benchmark_metrics.json", "split_branch.json"}
+    reg = INFERENCE_REGISTRY[position]
+    if branch == "nn":
+        required.update({reg["nn_file"], "nn_scaler.pkl", "nn_scaler_meta.json"})
+        if reg.get("train_attention_nn") and reg.get("attn_nn_file"):
+            required.update(
+                {
+                    reg["attn_nn_file"],
+                    "attention_nn_scaler.pkl",
+                    "attention_nn_scaler_meta.json",
+                }
+            )
+    elif branch == "cpu":
+        required.update(set(reg["targets"]))
+        if reg.get("train_lightgbm", False):
+            required.add("lightgbm")
+    else:
+        raise ValueError(f"Unsupported split branch: {branch}")
+
+    missing = [
+        name for name in sorted(required) if not os.path.exists(os.path.join(directory, name))
+    ]
+    if missing:
+        raise RuntimeError(
+            f"{position} {branch} split artifact is incomplete; missing {missing}. "
+            f"Contents: {sorted(os.listdir(directory))}"
+        )
+
+
+def _write_split_branch_metadata(
+    *,
+    position: str,
+    branch: str,
+    split_run_id: str,
+    seed: int,
+    model_dir: str,
+) -> None:
+    doc = {
+        "schema_version": 1,
+        "position": position,
+        "branch": branch,
+        "split_run_id": split_run_id,
+        "seed": seed,
+        "git_sha": os.environ.get("FF_TRAIN_GIT_SHA", "").strip(),
+        "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
+    }
+    with open(os.path.join(model_dir, "split_branch.json"), "w") as f:
+        json.dump(doc, f, indent=2)
+
+
+def _upload_split_branch_artifacts(
+    s3_bucket: str,
+    position: str,
+    branch: str,
+    split_run_id: str,
+    model_dir: str,
+    seed: int,
+) -> None:
+    """Upload a branch artifact to split staging without touching prod manifests."""
+    _validate_split_dir(position, branch, model_dir)
+    s3 = boto3.client("s3")
+    with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        _tar_directory(model_dir, tmp_path)
+        with open(tmp_path, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        sha7 = digest[:7]
+        size = os.path.getsize(tmp_path)
+        uploaded_at = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+        tar_key = _split_key(split_run_id, position, branch, "model.tar.gz")
+        manifest_key_ = _split_key(split_run_id, position, branch, "manifest.json")
+        print(f"[split-{branch}] Uploading staged artifact to s3://{s3_bucket}/{tar_key}")
+        s3.upload_file(tmp_path, s3_bucket, tar_key)
+        manifest = {
+            "schema_version": 1,
+            "split_run_id": split_run_id,
+            "position": position,
+            "branch": branch,
+            "seed": seed,
+            "git_sha": os.environ.get("FF_TRAIN_GIT_SHA", "").strip(),
+            "key": tar_key,
+            "sha256": digest,
+            "sha7": sha7,
+            "bytes": size,
+            "uploaded_at": uploaded_at,
+        }
+        s3.put_object(
+            Bucket=s3_bucket,
+            Key=manifest_key_,
+            Body=json.dumps(manifest, indent=2).encode(),
+            ContentType="application/json",
+        )
+        print(f"[split-{branch}] Wrote manifest s3://{s3_bucket}/{manifest_key_}")
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp_path)
+
+
+def _load_split_manifest(s3, bucket: str, split_run_id: str, position: str, branch: str) -> dict:
+    key = _split_key(split_run_id, position, branch, "manifest.json")
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+    except Exception as e:
+        raise RuntimeError(f"Missing split manifest s3://{bucket}/{key}: {e}") from e
+    try:
+        manifest = json.loads(obj["Body"].read())
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Split manifest s3://{bucket}/{key} is invalid JSON: {e}") from e
+    expected = {"split_run_id": split_run_id, "position": position, "branch": branch}
+    mismatches = {
+        name: (manifest.get(name), value)
+        for name, value in expected.items()
+        if manifest.get(name) != value
+    }
+    if mismatches:
+        raise RuntimeError(f"Split manifest s3://{bucket}/{key} mismatch: {mismatches}")
+    return manifest
+
+
+def _download_split_branch_artifacts(
+    s3,
+    bucket: str,
+    split_run_id: str,
+    position: str,
+    branch: str,
+    expected_git_sha: str,
+    parent_dir: str,
+) -> tuple[str, dict]:
+    manifest = _load_split_manifest(s3, bucket, split_run_id, position, branch)
+    git_sha = str(manifest.get("git_sha") or "")
+    if expected_git_sha and git_sha != expected_git_sha:
+        raise RuntimeError(
+            f"{position} {branch} split artifact SHA mismatch: "
+            f"manifest={git_sha!r}, expected={expected_git_sha!r}"
+        )
+    key = manifest.get("key")
+    if not key:
+        raise RuntimeError(f"{position} {branch} split manifest has no artifact key")
+
+    tmp_tar = os.path.join(parent_dir, f"{branch}.tar.gz")
+    out_dir = os.path.join(parent_dir, branch)
+    os.makedirs(out_dir, exist_ok=True)
+    print(f"[split-merge] Downloading {branch} artifact s3://{bucket}/{key}")
+    s3.download_file(bucket, key, tmp_tar)
+    with open(tmp_tar, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    if manifest.get("sha256") and digest != manifest["sha256"]:
+        raise RuntimeError(
+            f"{position} {branch} split artifact checksum mismatch: "
+            f"downloaded={digest}, manifest={manifest['sha256']}"
+        )
+    if manifest.get("bytes") and os.path.getsize(tmp_tar) != int(manifest["bytes"]):
+        raise RuntimeError(
+            f"{position} {branch} split artifact size mismatch: "
+            f"downloaded={os.path.getsize(tmp_tar)}, manifest={manifest['bytes']}"
+        )
+    try:
+        with tarfile.open(tmp_tar, "r:gz") as tar:
+            tar.extractall(out_dir, filter="data")
+    except tarfile.TarError as e:
+        raise RuntimeError(f"{position} {branch} split artifact is not a valid tarball") from e
+    _validate_split_dir(position, branch, out_dir)
+
+    with open(os.path.join(out_dir, "split_branch.json")) as f:
+        branch_doc = json.load(f)
+    for name, value in {
+        "split_run_id": split_run_id,
+        "position": position,
+        "branch": branch,
+    }.items():
+        if branch_doc.get(name) != value:
+            raise RuntimeError(
+                f"{position} {branch} split_branch.json mismatch for {name}: "
+                f"{branch_doc.get(name)!r} != {value!r}"
+            )
+    return out_dir, manifest
+
+
+def _copy_merge_artifacts(src: str, dst: str) -> None:
+    os.makedirs(dst, exist_ok=True)
+    skipped = {"benchmark_metrics.json", "split_branch.json"}
+    for name in os.listdir(src):
+        if name in skipped:
+            continue
+        source = os.path.join(src, name)
+        target = os.path.join(dst, name)
+        if os.path.exists(target):
+            raise RuntimeError(f"Split merge artifact conflict at {target}")
+        if os.path.isdir(source) and not os.path.islink(source):
+            shutil.copytree(source, target)
+        else:
+            shutil.copy2(source, target)
+
+
+def _read_json_file(path: str) -> dict:
+    with open(path) as f:
+        return json.load(f)
+
+
+def _merge_split_artifacts(
+    s3_bucket: str,
+    position: str,
+    split_run_id: str,
+    model_dir: str,
+    phase_seconds: dict[str, float],
+    t_total: float,
+) -> None:
+    """Download staged CPU+NN tarballs, merge them, and promote the full artifact."""
+    expected_git_sha = os.environ.get("FF_TRAIN_GIT_SHA", "").strip()
+    s3 = boto3.client("s3")
+    with tempfile.TemporaryDirectory(prefix=f"ff-split-merge-{position}-") as tmpdir:
+        nn_dir, nn_manifest = _download_split_branch_artifacts(
+            s3, s3_bucket, split_run_id, position, "nn", expected_git_sha, tmpdir
+        )
+        cpu_dir, cpu_manifest = _download_split_branch_artifacts(
+            s3, s3_bucket, split_run_id, position, "cpu", expected_git_sha, tmpdir
+        )
+        if (
+            nn_manifest.get("git_sha")
+            and cpu_manifest.get("git_sha")
+            and nn_manifest["git_sha"] != cpu_manifest["git_sha"]
+        ):
+            raise RuntimeError(
+                f"{position} split artifact SHA mismatch between branches: "
+                f"nn={nn_manifest['git_sha']}, cpu={cpu_manifest['git_sha']}"
+            )
+        _replace_model_dir_contents(nn_dir, model_dir)
+        # Drop branch-only metadata copied by the first replace before adding CPU files.
+        for name in ("benchmark_metrics.json", "split_branch.json"):
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(os.path.join(model_dir, name))
+        _copy_merge_artifacts(cpu_dir, model_dir)
+
+        nn_metrics = _read_json_file(os.path.join(nn_dir, "benchmark_metrics.json"))
+        cpu_metrics = _read_json_file(os.path.join(cpu_dir, "benchmark_metrics.json"))
+
+    metrics = {
+        "position": position,
+        "split_merged": True,
+        "split_run_id": split_run_id,
+        "seed": nn_metrics.get("seed", cpu_metrics.get("seed")),
+        "elapsed_sec": round(time.monotonic() - t_total, 1),
+        "phase_seconds": dict(phase_seconds),
+    }
+    for branch, branch_metrics in (("nn", nn_metrics), ("cpu", cpu_metrics)):
+        for key, value in branch_metrics.items():
+            if key.endswith("_metrics") or key.endswith("_ranking"):
+                if key in metrics:
+                    raise RuntimeError(f"Duplicate metric key during split merge: {key}")
+                metrics[key] = value
+        for phase, secs in (branch_metrics.get("phase_seconds") or {}).items():
+            metrics["phase_seconds"][f"split.{branch}.{phase}"] = secs
+        if branch_metrics.get("elapsed_sec") is not None:
+            metrics["phase_seconds"][f"split.{branch}.elapsed_sec"] = branch_metrics["elapsed_sec"]
+
+    for key in ("git_sha", "gpu_name", "sm", "cuda_graph_active"):
+        if key in nn_metrics:
+            metrics[key] = nn_metrics[key]
+
+    metrics_path = os.path.join(model_dir, "benchmark_metrics.json")
+    with open(metrics_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"[split-merge] Wrote merged metrics to {metrics_path}")
+
+    upload_artifacts(s3_bucket, position, model_dir)
 
 
 def _run_rb_gate_ablation(train_df, val_df, test_df, seed: int) -> None:
@@ -684,6 +1059,22 @@ def main():
         ),
     )
     parser.add_argument(
+        "--branch",
+        choices=["full", "nn", "cpu", "merge"],
+        default="full",
+        help=(
+            "Split-training branch. 'full' preserves the existing monolithic "
+            "path. 'nn' stages base+attention NN artifacts, 'cpu' stages "
+            "Ridge+LightGBM artifacts, and 'merge' combines staged artifacts "
+            "then publishes the normal manifest."
+        ),
+    )
+    parser.add_argument(
+        "--split-run-id",
+        default=os.environ.get("FF_SPLIT_RUN_ID"),
+        help="Required for --branch nn/cpu/merge; namespaces staged split artifacts.",
+    )
+    parser.add_argument(
         "--n-trials",
         type=int,
         default=None,
@@ -711,6 +1102,13 @@ def main():
 
     pos = args.position
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()] if args.seeds else [args.seed]
+    if args.branch != "full":
+        if args.mode == "tune":
+            parser.error("--mode=tune is mutually exclusive with --branch")
+        if args.ablation or args.sweep:
+            parser.error("--branch is mutually exclusive with --ablation/--sweep")
+        if not args.split_run_id and not args.dry_run:
+            parser.error("--split-run-id is required for --branch nn/cpu/merge")
     if args.ablation == "rb-gate" and pos != "RB":
         parser.error("--ablation rb-gate requires --position RB")
     if args.sweep and pos != "WR":
@@ -759,7 +1157,12 @@ def main():
         print(f"[dry-run] skipping _assert_gpu for {pos}")
     else:
         with _timed("assert_gpu", store=phase_seconds):
-            _assert_gpu(pos)
+            if args.branch in {"cpu", "merge"}:
+                print(f"[gpu] branch={args.branch}; skipping REQUIRE_GPU assertion")
+            elif args.branch == "nn":
+                _assert_gpu(pos, force=True)
+            else:
+                _assert_gpu(pos)
     seed_everything(args.seed)
 
     s3_bucket = os.environ.get("S3_BUCKET", "ff-predictor-training")
@@ -783,7 +1186,21 @@ def main():
         print(f"[dry-run] Completed for {pos}; skipping S3 upload.")
         return
 
+    if args.branch == "merge":
+        with _timed("merge_split_artifacts", store=phase_seconds):
+            _merge_split_artifacts(
+                s3_bucket,
+                pos,
+                args.split_run_id,
+                model_dir,
+                phase_seconds,
+                _t_total,
+            )
+        print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
+        return
+
     run_fn = get_runner(pos)
+    branch_cfg = _branch_config(pos, args.branch) if args.branch in SPLIT_BRANCHES else None
 
     # data/raw/*.parquet is needed for weather features (all positions) and
     # for K/DST's self-contained data loaders. Sync before branching.
@@ -829,10 +1246,28 @@ def main():
                 _stop_nvidia_smi_sidecar(sweep_sidecar)
             print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
             return
-        gpu_sidecar = _start_nvidia_smi_sidecar(gpu_profile_csv)
+        gpu_sidecar = _start_nvidia_smi_sidecar(gpu_profile_csv) if args.branch != "cpu" else None
         try:
             with _timed("run_pipeline", store=phase_seconds):
-                result = run_fn(train_df, val_df, test_df, seed=args.seed)
+                if branch_cfg is None:
+                    result = run_fn(train_df, val_df, test_df, seed=args.seed)
+                elif args.branch == "cpu":
+                    with _dynamic_cpu_core_pool(pos):
+                        result = run_fn(
+                            train_df,
+                            val_df,
+                            test_df,
+                            seed=args.seed,
+                            config=branch_cfg,
+                        )
+                else:
+                    result = run_fn(
+                        train_df,
+                        val_df,
+                        test_df,
+                        seed=args.seed,
+                        config=branch_cfg,
+                    )
         finally:
             _stop_nvidia_smi_sidecar(gpu_sidecar)
     else:
@@ -844,10 +1279,16 @@ def main():
                 _run_scheduler_type_ablation(pos, seeds, s3_bucket, frames=None)
             print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
             return
-        gpu_sidecar = _start_nvidia_smi_sidecar(gpu_profile_csv)
+        gpu_sidecar = _start_nvidia_smi_sidecar(gpu_profile_csv) if args.branch != "cpu" else None
         try:
             with _timed("run_pipeline", store=phase_seconds):
-                result = run_fn(seed=args.seed)
+                if branch_cfg is None:
+                    result = run_fn(seed=args.seed)
+                elif args.branch == "cpu":
+                    with _dynamic_cpu_core_pool(pos):
+                        result = run_fn(seed=args.seed, config=branch_cfg)
+                else:
+                    result = run_fn(seed=args.seed, config=branch_cfg)
         finally:
             _stop_nvidia_smi_sidecar(gpu_sidecar)
 
@@ -871,6 +1312,10 @@ def main():
     # upload_artifacts() requires benchmark_metrics.json, so this must come
     # before the upload.
     metrics = _extract_metrics(pos, result)
+    if args.branch in SPLIT_BRANCHES:
+        metrics["split_branch"] = args.branch
+        metrics["split_run_id"] = args.split_run_id
+        metrics["seed"] = args.seed
     # Fold the inner pipeline breakdown (ridge_tune, nn_train, attn_nn_train,
     # lgbm_train, etc.) into the outer phase dict under a ``pipeline.`` prefix
     # so persisted metrics distinguish "data sync + S3 + outer wrap" from the
@@ -897,6 +1342,26 @@ def main():
     # so the tarball contains both artifacts and benchmark_metrics.json.
     if os.path.exists(gpu_profile_csv):
         shutil.copy2(gpu_profile_csv, os.path.join(model_dir, f"gpu_profile_{pos}.csv"))
+
+    if args.branch in SPLIT_BRANCHES:
+        _write_split_branch_metadata(
+            position=pos,
+            branch=args.branch,
+            split_run_id=args.split_run_id,
+            seed=args.seed,
+            model_dir=model_dir,
+        )
+        with _timed("upload_split_branch_artifacts", store=phase_seconds):
+            _upload_split_branch_artifacts(
+                s3_bucket,
+                pos,
+                args.branch,
+                args.split_run_id,
+                model_dir,
+                args.seed,
+            )
+        print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
+        return
 
     # Upload artifacts to S3 (raises if model_dir is empty or metrics missing)
     with _timed("upload_artifacts", store=phase_seconds):

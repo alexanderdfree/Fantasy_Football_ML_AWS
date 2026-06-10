@@ -1659,13 +1659,50 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     attn_history = gpu_results["attn_history"]
     attn_feature_cols = gpu_results["attn_feature_cols"]
 
-    # Tuning short-circuit: Ridge / base NN skipped (set by src/tuning/tune_nn.py
-    # per-trial cfg, since the Optuna objective only reads attn_history.val_loss).
+    # Tuning / split-branch short-circuit: Ridge or base NN may be skipped.
     # Everything below — comparison table, prediction attachment, ranking,
-    # backtest, save_artifacts, figures — requires ridge_test_preds and
-    # nn_test_preds. Bail out with a minimal result instead of guarding each
-    # consumer. Production never hits this branch (gates default True).
+    # backtest, full-artifact save, figures — requires both ridge_test_preds
+    # and nn_test_preds. Split Batch branch runs opt into saving the partial
+    # model artifacts they did train before returning the minimal result.
     if ridge_test_preds is None or nn_test_preds is None:
+        artifact_branch = cfg.get("_artifact_branch")
+        if artifact_branch in {"cpu", "nn"}:
+            with timed("save_artifacts", store=phase_seconds):
+                os.makedirs(f"{output_dir}/models", exist_ok=True)
+                if artifact_branch == "cpu":
+                    if ridge_model is None:
+                        raise RuntimeError("CPU split branch did not train Ridge artifacts")
+                    ridge_model.save(f"{output_dir}/models")
+                    if lgbm_model is not None:
+                        lgbm_model.save(f"{output_dir}/models")
+                else:
+                    if model is None or nn_scaler is None:
+                        raise RuntimeError("NN split branch did not train base NN artifacts")
+                    torch.save(
+                        wrap_state_dict(model.state_dict(), feature_cols, targets),
+                        f"{output_dir}/models/{pos_lower}_multihead_nn.pt",
+                    )
+                    joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
+                    write_scaler_meta(
+                        f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets
+                    )
+                    if attn_model is not None:
+                        if cfg.get("attn_static_from_df", False):
+                            attn_static_cols = attn_feature_cols
+                        else:
+                            attn_static_cols = get_attn_static_columns(
+                                attn_feature_cols, cfg["attn_static_features"]
+                            )
+                        torch.save(
+                            wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
+                            f"{output_dir}/models/{pos_lower}_attention_nn.pt",
+                        )
+                        joblib.dump(attn_nn_scaler, f"{output_dir}/models/attention_nn_scaler.pkl")
+                        write_scaler_meta(
+                            f"{output_dir}/models/attention_nn_scaler_meta.json",
+                            attn_static_cols,
+                            targets,
+                        )
         result = {
             "ridge_metrics": ridge_metrics,
             "nn_metrics": nn_metrics,

@@ -100,6 +100,8 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D15 | [Attention-NN hyperparameter tuning via Optuna + Batch Spot fan-out](adr/0015-attention-nn-hyperparameter-tuning-via-optuna-batch-spot-fan-out.md) | Accepted |
 | D16 | [External opportunity / quality / value signals (ff_opportunity, ESPN QBR, contracts)](adr/0016-external-opportunity-quality-value-signals.md) | Accepted |
 | D17 | [Platform autodetection & per-arch optimization policy](adr/0017-platform-autodetection-per-arch-optimization-policy.md) | Accepted |
+| D18 | [Live upcoming-week predictions via ESPN + S3 artifact build](adr/0018-live-upcoming-week-predictions-espn.md) | Accepted |
+| D19 | [Split Batch training: GPU NN + c8a CPU Ridge/LightGBM](adr/0019-split-batch-training-gpu-nn-cpu-ridge-lgbm.md) | Accepted |
 
 ## 4. Cross-Cutting Consequences
 

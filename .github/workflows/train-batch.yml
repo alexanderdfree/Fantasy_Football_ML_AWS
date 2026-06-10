@@ -227,10 +227,12 @@ jobs:
         id: revision
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
+          BATCH_SPLIT_ACTIVE: ${{ vars.BATCH_SPLIT_ACTIVE }}
         run: |
           if [ -z "$HEAD_SHA" ]; then
             echo "No image SHA supplied; falling back to bare job-definition resolution."
             echo "revision=" >> "$GITHUB_OUTPUT"
+            echo "cpu_revision=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           REVISION=$(aws s3 cp \
@@ -244,6 +246,22 @@ jobs:
           fi
           echo "Pinning job submissions to ${JOB_DEFINITION:-ff-training-job}:${REVISION}"
           echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
+          split_active=$(echo "${BATCH_SPLIT_ACTIVE:-false}" | tr 'A-Z' 'a-z')
+          if [ "$split_active" = "true" ]; then
+            CPU_REVISION=$(aws s3 cp \
+              "s3://${S3_BUCKET}/job-def-revisions/cpu/${HEAD_SHA}.txt" - \
+              --region "$AWS_REGION" \
+              --no-cli-pager)
+            if [ -z "$CPU_REVISION" ]; then
+              echo "ERROR: no CPU revision file at s3://${S3_BUCKET}/job-def-revisions/cpu/${HEAD_SHA}.txt" >&2
+              echo "Refusing to submit split CPU jobs without a CPU job-definition revision pin." >&2
+              exit 1
+            fi
+            echo "Pinning CPU job submissions to ff-training-cpu-job:${CPU_REVISION}"
+            echo "cpu_revision=${CPU_REVISION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "cpu_revision=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Wait for fresh data splits (refresh-splits race gate)
         # refresh-splits.yml rebuilds + uploads data/splits/ to S3 on the same
@@ -300,6 +318,7 @@ jobs:
           # launch.py treats empty as "no revision" and falls back to name-only
           # resolution (current behavior).
           FF_JOB_DEFINITION_REVISION: ${{ steps.revision.outputs.revision }}
+          FF_JOB_DEFINITION_CPU_REVISION: ${{ steps.revision.outputs.cpu_revision }}
           # The SHA the image being trained was built from. Threads through
           # launch.py → containerOverrides → train.py → benchmark_metrics.json,
           # so benchmark.py can warn when any position's recorded SHA diverges
@@ -314,6 +333,8 @@ jobs:
           # FF_BATCH_CUDA_GRAPH=0 to force the whole fan-out back to the eager
           # path. launch.py forwards it to the container only when set.
           FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
+          BATCH_SPLIT_ACTIVE: ${{ vars.BATCH_SPLIT_ACTIVE }}
+          EVENT_NAME: ${{ github.event_name }}
           SEED: ${{ github.event.inputs.seed || '42' }}
         run: |
           STARTED_AT=$(date +%s)
@@ -332,11 +353,30 @@ jobs:
           # benchmark.py --download-only with the image SHA + PR number;
           # letting launch.py also auto-append would write a duplicate,
           # mislabeled row per run.
-          python -m src.batch.launch \
-            --positions $POSITIONS \
-            --seed "$SEED" \
-            --skip-upload \
+          LAUNCH_ARGS=(
+            --positions $POSITIONS
+            --seed "$SEED"
+            --skip-upload
             --append-history false
+          )
+          split_active=$(echo "${BATCH_SPLIT_ACTIVE:-false}" | tr 'A-Z' 'a-z')
+          if [ "$split_active" = "true" ]; then
+            if [ -z "${FF_JOB_DEFINITION_CPU_REVISION:-}" ]; then
+              if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+                echo "Split mode has no CPU revision pin on workflow_dispatch; using bare CPU job definition."
+              else
+                echo "ERROR: split mode is active but FF_JOB_DEFINITION_CPU_REVISION is empty." >&2
+                exit 1
+              fi
+            fi
+            export FF_JOB_DEFINITION_CPU="ff-training-cpu-job"
+            export FF_JOB_QUEUE_CPU="ff-cpu-training-queue"
+            split_sha="${FF_TRAIN_GIT_SHA:-$GITHUB_SHA}"
+            SPLIT_RUN_ID="${split_sha}-${GITHUB_RUN_ID}"
+            LAUNCH_ARGS+=(--split --split-run-id "$SPLIT_RUN_ID")
+            echo "Split Batch mode active: split_run_id=$SPLIT_RUN_ID"
+          fi
+          python -m src.batch.launch "${LAUNCH_ARGS[@]}"
 
       - name: Verify model artifact freshness
         # Anchor on when training STARTED, not "now" — Spot parallelism makes
