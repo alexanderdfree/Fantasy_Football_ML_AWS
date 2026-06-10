@@ -120,6 +120,15 @@ class TestEnvVarOverrides:
             assert mod.JOB_DEFINITION_REVISION == "42"
         self._reload()
 
+    def test_cpu_job_definition_revision_optional(self):
+        with mock.patch.dict(os.environ, {"FF_JOB_DEFINITION_CPU_REVISION": ""}):
+            mod = self._reload()
+            assert mod.JOB_DEFINITION_CPU_REVISION is None
+        with mock.patch.dict(os.environ, {"FF_JOB_DEFINITION_CPU_REVISION": "7"}):
+            mod = self._reload()
+            assert mod.JOB_DEFINITION_CPU_REVISION == "7"
+        self._reload()
+
     def test_job_definition_for_appends_revision_when_set(self):
         with mock.patch.dict(
             os.environ,
@@ -157,6 +166,22 @@ class TestEnvVarOverrides:
             assert mod._job_definition_for("K") == "ff-training-job-cpu"
             assert mod._job_definition_for("DST") == "ff-training-job-cpu"
             assert mod._job_definition_for("QB") == "ff-training-job:9"
+        self._reload()
+
+    def test_split_job_definitions_pin_gpu_and_cpu_separately(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "FF_JOB_DEFINITION": "gpu-def",
+                "FF_JOB_DEFINITION_REVISION": "9",
+                "FF_JOB_DEFINITION_CPU": "cpu-def",
+                "FF_JOB_DEFINITION_CPU_REVISION": "3",
+            },
+        ):
+            mod = self._reload()
+            assert mod._job_definition_for("WR", branch="nn") == "gpu-def:9"
+            assert mod._job_definition_for("WR", branch="cpu") == "cpu-def:3"
+            assert mod._job_definition_for("WR", branch="merge") == "cpu-def:3"
         self._reload()
 
     def test_wait_timeout_override(self):
@@ -450,6 +475,76 @@ class TestSubmitJob:
             mod.submit_job("K", batch_client=mock_batch)
 
         assert mock_batch.submit_job.call_args.kwargs["jobDefinition"] == mod.JOB_DEFINITION
+
+    def test_submit_split_cpu_uses_cpu_queue_def_and_command(self):
+        import src.batch.launch as mod
+
+        mock_batch = mock.MagicMock()
+        mock_batch.submit_job.return_value = {"jobId": "cpu-job"}
+
+        with (
+            mock.patch.object(mod, "JOB_DEFINITION_CPU", "cpu-def"),
+            mock.patch.object(mod, "JOB_DEFINITION_CPU_REVISION", "5"),
+            mock.patch.object(mod, "JOB_QUEUE_CPU", "cpu-queue"),
+        ):
+            key, job_id = mod.submit_job(
+                "WR",
+                seed=42,
+                batch_client=mock_batch,
+                branch="cpu",
+                split_run_id="run-123",
+            )
+
+        assert key == ("WR", "cpu")
+        assert job_id == "cpu-job"
+        call_kwargs = mock_batch.submit_job.call_args.kwargs
+        assert call_kwargs["jobQueue"] == "cpu-queue"
+        assert call_kwargs["jobDefinition"] == "cpu-def:5"
+        assert call_kwargs["containerOverrides"]["command"] == [
+            "--position",
+            "WR",
+            "--seed",
+            "42",
+            "--branch",
+            "cpu",
+            "--split-run-id",
+            "run-123",
+        ]
+        env = {e["name"]: e["value"] for e in call_kwargs["containerOverrides"]["environment"]}
+        assert env["FF_SPLIT_RUN_ID"] == "run-123"
+        assert env["FF_CPU_BRANCH_CORES"] == "4"
+        assert env["FF_DEVICE"] == "cpu"
+
+    def test_submit_split_for_position_adds_merge_dependencies(self):
+        import src.batch.launch as mod
+
+        mock_batch = mock.MagicMock()
+        mock_batch.submit_job.side_effect = [
+            {"jobId": "nn-job"},
+            {"jobId": "cpu-job"},
+            {"jobId": "merge-job"},
+        ]
+
+        with (
+            mock.patch.object(mod, "JOB_DEFINITION_CPU", "cpu-def"),
+            mock.patch.object(mod, "JOB_DEFINITION_CPU_REVISION", "2"),
+            mock.patch.object(mod, "JOB_QUEUE_CPU", "cpu-queue"),
+        ):
+            job_ids = mod._submit_split_for_position("WR", 42, "run-123", mock_batch)
+
+        assert job_ids == {
+            ("WR", "nn"): "nn-job",
+            ("WR", "cpu"): "cpu-job",
+            ("WR", "merge"): "merge-job",
+        }
+        merge_call = mock_batch.submit_job.call_args_list[2].kwargs
+        assert merge_call["dependsOn"] == [{"jobId": "nn-job"}, {"jobId": "cpu-job"}]
+        assert merge_call["containerOverrides"]["command"][4:] == [
+            "--branch",
+            "merge",
+            "--split-run-id",
+            "run-123",
+        ]
 
 
 # ---------------------------------------------------------------------------

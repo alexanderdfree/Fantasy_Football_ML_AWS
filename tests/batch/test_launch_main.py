@@ -49,6 +49,28 @@ def test_main_dry_run_makes_no_aws_calls(monkeypatch, capsys):
     assert "DRY RUN" in out
 
 
+@pytest.mark.unit
+def test_main_split_dry_run_prints_branch_plan(monkeypatch, capsys):
+    """``--split --dry-run`` should render nn/cpu/merge commands and dependencies."""
+    from src.batch import launch as lm
+
+    def _boom(*args, **kwargs):
+        raise AssertionError(f"boto3.client called during --dry-run: {args} {kwargs}")
+
+    monkeypatch.setattr(lm.boto3, "client", _boom)
+    monkeypatch.setattr(lm, "JOB_DEFINITION_CPU", "cpu-def")
+    monkeypatch.setattr(lm, "JOB_QUEUE_CPU", "cpu-queue")
+    monkeypatch.setattr("sys.argv", ["launch.py", "--positions", "WR", "--split", "--dry-run"])
+    lm.main()
+
+    out = capsys.readouterr().out
+    assert "split:        true" in out
+    assert "WR   nn" in out
+    assert "WR   cpu" in out
+    assert "WR   merge" in out
+    assert "dependsOn nn+cpu" in out
+
+
 @pytest.fixture()
 def _main_happy_stubs(monkeypatch):
     """Stub every external call in ``main()`` non-dry path. Returns call log."""

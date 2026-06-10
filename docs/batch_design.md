@@ -1,6 +1,6 @@
 # AWS Batch Training Design Doc
 
-> **Status (2026-06-08): Active when `BATCH_ACTIVE=true`.** Parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml) — six 4-vCPU GPU Spot hosts, one position per host. The job queue prefers `g6.xlarge` / L4 (`ff-gpu-spot`, order 1) and falls back to `g5.xlarge` / A10G (`ff-gpu-spot-g5`, order 2) when g6 cannot provide suitable capacity. **Measured 2026-05-21: ~10 min for the "Submit Batch jobs and wait" step (training itself), which is now train-batch.yml's dominant wall-clock cost — PR #330 removed the forced "Refresh ECS service" (`update-service --force-new-deployment`) step from train-batch.yml (per-position in-flight model refresh via `src/shared/model_sync.py` makes new artifacts live within one ~30s poll interval; ECS rolling redeploy via deploy.yml's ALB-tuned ~3 min path is now decoupled from the train workflow). The original 2026-05-20 design estimate was ~25–30 min — actual came in faster mainly because per-position training is closer to ~2 min than the 5 min estimate.** Warm-EC2 rollback path: ~120-min sequential loop. Cold-start: ~120 s image pull on a fresh Spot host (was a ~3.7 GB conda base; slimmed to `nvidia/cuda:*-base` + pip torch 2026-06-07 to cut the pull — see §"Cold-start optimization" 2d; new pull window measured post-merge). **SOCI lazy-loading was REMOVED 2026-06-07 — it never worked and cannot work on AWS Batch: Batch runs on ECS-managed EC2 and the `amazon-ecs-agent` does not pull through the soci snapshotter (Fargate-only; [containers-roadmap#1832](https://github.com/aws/containers-roadmap/issues/1832)). See §2a + [todo/fixed-archive.md](../todo/fixed-archive.md).** Image size is now dominated by the torch CUDA wheel (the slim `nvidia/cuda:*-base` base is ~86 MB); `.dockerignore` + explicit `COPY` trim the app side. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) for the decision; [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
+> **Status (2026-06-10): Active when `BATCH_ACTIVE=true`.** Default mode remains the D13 parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml): six 4-vCPU GPU Spot hosts, one position per host. The GPU job queue prefers `g6.xlarge` / L4 (`ff-gpu-spot`, order 1) and falls back to `g5.xlarge` / A10G (`ff-gpu-spot-g5`, order 2) when g6 cannot provide suitable capacity. **Split mode is opt-in via `BATCH_SPLIT_ACTIVE=true` / `src.batch.launch --split`: NN work stays on the GPU queue, while Ridge+LightGBM run on a new c8a CPU Spot queue and a merge job publishes the complete artifact only after both staged branches validate (ADR-0019).** Measured 2026-05-21 monolithic path: ~10 min for the "Submit Batch jobs and wait" step. Warm-EC2 rollback path: ~120-min sequential loop. Cold-start: ~120 s image pull on a fresh Spot host; SOCI lazy-loading was removed 2026-06-07 because ECS-EC2 Batch cannot use it. Image size is now dominated by the torch CUDA wheel; `.dockerignore` + explicit `COPY` trim the app side. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) and [ADR-0019 (split Batch training)](adr/0019-split-batch-training-gpu-nn-cpu-ridge-lgbm.md); [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
 >
 > Rollback: `gh variable set BATCH_ACTIVE --body "false"` returns push-driven training to the warm-EC2 path ([docs/ec2_design.md](ec2_design.md)) on the next push to `main`. Both paths remain provisioned.
 
@@ -48,6 +48,28 @@ src/batch/launch.py <───────────────────�
     src/rb/outputs/models/            wr/history/{ts}-{sha7}/model.tar.gz
     src/wr/outputs/models/            ...
 ```
+
+### Split GPU/CPU Mode
+
+`src.batch.launch --split` submits three jobs per position:
+
+1. `nn` branch on `ff-training-queue` / `ff-training-job`: trains base NN and
+   attention NN only, then uploads a staged tarball under
+   `split-runs/{run_id}/{POS}/nn/`.
+2. `cpu` branch on `ff-cpu-training-queue` / `ff-training-cpu-job`: trains Ridge
+   and LightGBM only, with `FF_CORE_POOL_ADDR` active so Ridge CV and LightGBM
+   lease all 4 c8a cores dynamically. Staged output lands under
+   `split-runs/{run_id}/{POS}/cpu/`.
+3. `merge` branch on the CPU queue with Batch `dependsOn` both branch jobs:
+   downloads staged artifacts, checks branch/position/SHA/size/checksum, merges
+   the model files into one normal artifact directory, runs the existing smoke
+   test, and only then promotes `models/{POS}/manifest.json`.
+
+The CPU compute environment is `ff-cpu-spot` with `c8a.xlarge` primary,
+`m8a.xlarge` fallback, 4 vCPU / 7500 MiB per job, and `maxvCpus=64` so the
+fleet can run up to 16 CPU branch/merge jobs concurrently. The old monolithic
+path remains available by leaving `--split` off or setting
+`BATCH_SPLIT_ACTIVE=false`.
 
 ### Data Staging
 
@@ -121,7 +143,7 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 | `LOG_EVERY` | `1` (batch) / `10` (default) | Epoch logging frequency; read by `shared.pipeline._resolve_nn_log_every` |
 | `S3_BUCKET` | (required) | S3 bucket for data and artifacts |
 | `S3_DATA_PREFIX` | `data` | S3 key prefix for training data |
-| `REQUIRE_GPU` | `1` | Fail fast if CUDA unavailable. **Auto-skipped for K/DST** — relaxes the *assertion* only; K/DST still train a GPU attention NN when one is present (see the stale "CPU-only Queue" caveat below). |
+| `REQUIRE_GPU` | `1` | Fail fast if CUDA unavailable. **Auto-skipped for K/DST** — relaxes the *assertion* only; K/DST still train a GPU attention NN when one is present. Split CPU jobs set `REQUIRE_GPU=0` and disable NN work. |
 
 ### Launcher Environment Variables (`src/batch/launch.py`)
 
@@ -130,7 +152,11 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 | `FF_S3_BUCKET` | `ff-predictor-training` | Override bucket name (for staging accounts) |
 | `FF_JOB_QUEUE` | `ff-training-queue` | Override Batch job queue |
 | `FF_JOB_DEFINITION` | `ff-training-job` | Override Batch job definition (GPU) |
-| `FF_JOB_DEFINITION_CPU` | (unset) | **Optional CPU job definition for K/DST. ⚠️ STALE — DO NOT ENABLE** (see *CPU-only Queue for K/DST* below): K/DST now train an attention NN on GPU, so CPU routing craters wall-clock instead of saving. When set, K/DST jobs submit here instead of the GPU queue; falls back to the GPU definition when unset. |
+| `FF_JOB_QUEUE_CPU` | (unset) | CPU queue for split `cpu` and `merge` branch jobs (`ff-cpu-training-queue`) |
+| `FF_JOB_DEFINITION_CPU` | (unset) | CPU job definition for split `cpu` and `merge` branch jobs (`ff-training-cpu-job`) |
+| `FF_JOB_DEFINITION_REVISION` | (unset) | GPU job-definition revision pin written by `batch-image.yml` |
+| `FF_JOB_DEFINITION_CPU_REVISION` | (unset) | CPU job-definition revision pin written by `batch-image.yml` under `job-def-revisions/cpu/{sha}.txt` |
+| `FF_SPLIT_RUN_ID` | (unset) | Optional split artifact namespace; `launch.py --split` auto-generates one when absent |
 | `FF_WAIT_TIMEOUT` | `10800` (3h) | Wall-clock cap for `wait_for_jobs` |
 
 ### Container Dependencies (`src/batch/requirements.txt`)
@@ -324,11 +350,12 @@ docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/ff-training:latest
 
 1. Create ECR repository (`ff-training`)
 2. Create IAM roles (`BatchTrainingRole` + reuse `ecsTaskExecutionRole`)
-3. Create Compute Environments (`ff-gpu-spot` primary, `ff-gpu-spot-g5` fallback)
-4. Create Job Queue (`ff-training-queue`)
-5. Register Job Definition (`ff-training-job`)
-6. Build and push training image to ECR
-7. Run: `python -m src.batch.launch`
+3. Create GPU Compute Environments (`ff-gpu-spot` primary, `ff-gpu-spot-g5` fallback)
+4. Create CPU Compute Environment (`ff-cpu-spot`)
+5. Create Job Queues (`ff-training-queue`, `ff-cpu-training-queue`)
+6. Register Job Definitions (`ff-training-job`, `ff-training-cpu-job`)
+7. Build and push training image to ECR
+8. Run: `python -m src.batch.launch`
 
 ## Rollback
 
@@ -336,43 +363,30 @@ The existing Flask Dockerfile and `src/serving/app.py` inference code are comple
 CUDA auto-detection in `src/shared/pipeline.py` falls back to CPU. Local pipeline scripts
 (`python -m src.qb.run_pipeline`) work identically without any AWS dependencies.
 
-## CPU-only Queue for K/DST (optional) — ⚠️ STALE, DO NOT ENABLE
+## CPU Split Queue
 
-> **Superseded (2026-06): do not enable this.** The premise below is no longer
-> true. All six positions — **including K and DST** — now train an attention NN
-> (`train_attention_nn=True` in their `POSITION_CONFIG`; K landed via `801b61a`,
-> DST via `cc0c627`). The `cpu_only=True` flag on K/DST now only relaxes the
-> `REQUIRE_GPU` *assertion* in `src/batch/train.py::_assert_gpu`; it does **not**
-> mean the pipeline skips CUDA. Routing K/DST to a GPU-less CPU Spot pool would
-> push their attention-NN training onto the CPU, where the launch-bound trainer
-> craters (DST is already a top long-pole even on the L4) — and because the
-> sweep waits for all six positions, that **regresses** the whole-run wall-clock
-> instead of saving anything. The `FF_JOB_DEFINITION_CPU` / `FF_JOB_QUEUE_CPU`
-> plumbing below stays in the code as dormant-and-unset; revisit only if K/DST
-> ever drop their NN heads.
+The CPU queue is now for split `cpu` and `merge` branches, not for routing K/DST
+monolithic jobs away from GPU. K and DST train attention NNs, so a full K/DST
+job still belongs on the GPU queue. `train-batch.yml` exports
+`FF_JOB_DEFINITION_CPU` and `FF_JOB_QUEUE_CPU` only when
+`BATCH_SPLIT_ACTIVE=true`; otherwise those env vars stay unset and the default
+monolithic path remains GPU-backed.
 
-The original (now-obsolete) rationale and mechanism, kept for reference:
+The CPU job definition uses the same image as the GPU job definition but no GPU
+resource requirement:
 
-K and DST pipelines were Ridge/LGBM only — they never touched CUDA. Running them on
-g6.xlarge Spot costs ~$0.35/hr of GPU time they won't use (higher than the g4dn
-era's ~$0.16/hr; the gap is now bigger so the CPU-queue optimization is more
-worthwhile). To route them to a cheaper CPU Spot pool:
-
-1. Register a CPU compute env (e.g. `c6i.large` Spot) + job queue + CPU job
-   definition (`ff-training-job-cpu`) pointing at the same ECR image.
-2. Export `FF_JOB_DEFINITION_CPU=ff-training-job-cpu` before running
-   `python -m src.batch.launch`. K and DST will submit there; QB/RB/WR/TE stay on the GPU
-   queue.
-3. When `FF_JOB_DEFINITION_CPU` is unset, K/DST fall back to the GPU definition —
-   so it's safe to deploy this code before the CPU infra exists.
+- `vcpus=4`, `memory=7500`
+- `REQUIRE_GPU=0`, `FF_DEVICE=cpu`
+- `FF_CPU_BRANCH_CORES=4`
+- BLAS/OMP/LightGBM fallback caps set to 1, with `LOKY_MAX_CPU_COUNT=4`
 
 ## CI/CD
 
 Three workflows cover the training image and the inference service:
 
 - `.github/workflows/batch-image.yml` — builds `src/batch/Dockerfile.train`, pushes
-  to ECR (`ff-training`), and registers a new revision of the `ff-training-job`
-  Batch job definition pinned to the new image SHA. Triggered by any change
+  to ECR (`ff-training`), and registers new revisions of both `ff-training-job`
+  and `ff-training-cpu-job` pinned to the new image SHA. Triggered by any change
   under `src/**` (excluding `**/tests/**` and `**/*.md`) or `requirements.txt`.
 - `.github/workflows/deploy.yml` — builds the inference `Dockerfile`, pushes to
   ECR (`fantasy-predictor`), and updates the ECS service. Now gated on the

@@ -649,6 +649,70 @@ class TestMetricExtraction:
         metrics = _extract_metrics("QB", {"ridge_metrics": {"total": {"mae": 6.0}}})
         assert "git_sha" not in metrics
 
+    def test_skips_none_metrics_from_partial_split_result(self):
+        from src.batch.train import _extract_metrics
+
+        metrics = _extract_metrics(
+            "WR",
+            {
+                "ridge_metrics": None,
+                "nn_metrics": {"total": {"mae": 5.5, "r2": 0.1}},
+            },
+        )
+        assert "ridge_metrics" not in metrics
+        assert metrics["nn_metrics"]["total"]["mae"] == 5.5
+
+
+class TestSplitBranchHelpers:
+    def test_branch_config_cpu_disables_nn_and_keeps_ridge_lgbm(self):
+        from src.batch.train import _branch_config
+
+        cfg = _branch_config("WR", "cpu")
+        assert cfg["_artifact_branch"] == "cpu"
+        assert cfg["train_ridge"] is True
+        assert cfg["train_lightgbm"] is True
+        assert cfg["train_base_nn"] is False
+        assert cfg["train_attention_nn"] is False
+        assert cfg["train_elasticnet"] is False
+        assert cfg["train_tabpfn"] is False
+
+    def test_branch_config_nn_disables_cpu_models(self):
+        from src.batch.train import _branch_config
+
+        cfg = _branch_config("WR", "nn")
+        assert cfg["_artifact_branch"] == "nn"
+        assert cfg["train_base_nn"] is True
+        assert cfg["train_attention_nn"] is True
+        assert cfg["train_ridge"] is False
+        assert cfg["train_lightgbm"] is False
+
+    def test_download_split_branch_rejects_wrong_git_sha(self, tmp_path):
+        from src.batch.train import _download_split_branch_artifacts
+
+        manifest = {
+            "schema_version": 1,
+            "split_run_id": "run-1",
+            "position": "WR",
+            "branch": "nn",
+            "git_sha": "old-sha",
+            "key": "split-runs/run-1/WR/nn/model.tar.gz",
+        }
+
+        class _FakeS3:
+            def get_object(self, Bucket, Key):  # noqa: N803
+                return {"Body": _FakeBody(json.dumps(manifest).encode())}
+
+        with pytest.raises(RuntimeError, match="SHA mismatch"):
+            _download_split_branch_artifacts(
+                _FakeS3(),
+                "bucket",
+                "run-1",
+                "WR",
+                "nn",
+                "new-sha",
+                str(tmp_path),
+            )
+
 
 # ---------------------------------------------------------------------------
 # Hardware metadata stamping (drives benchmark.py's History-tab label)
