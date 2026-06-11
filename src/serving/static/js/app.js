@@ -557,17 +557,18 @@ function renderHomepageMessage(msg) {
     const banner = document.getElementById("homepage-banner");
     if (banner) banner.classList.add("hidden");
     const tbody = document.getElementById("homepage-body");
-    if (tbody) tbody.innerHTML = `<tr><td colspan="9" class="arch-loading">${escapeHtml(msg)}</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="arch-loading">${escapeHtml(msg)}</td></tr>`;
     const count = document.getElementById("homepage-count");
     if (count) count.textContent = "";
 }
 
 // Best available model projection for a row (Attention NN preferred — best WR/RB
-// model — falling back across the others), used for the default sort.
+// model — falling back across the others), used for the default sort. Ridge is
+// deliberately absent: it's hidden on this view (not accurate enough to surface
+// for upcoming weeks), and rows shouldn't rank by an invisible value.
 function upcomingProjection(p) {
     if (p.attn_nn_pred != null) return p.attn_nn_pred;
     if (p.lgbm_pred != null) return p.lgbm_pred;
-    if (p.ridge_pred != null) return p.ridge_pred;
     return p.nn_pred;
 }
 
@@ -614,7 +615,6 @@ function renderHomepage() {
                 <td class="col-pos"><span class="pos-badge pos-${escapeHtml(p.position)}">${escapeHtml(p.position)}</span></td>
                 <td class="col-team">${escapeHtml(p.team)}</td>
                 <td class="col-matchup">${matchup}</td>
-                <td class="col-pred ridge-col">${fmt(p.ridge_pred)}</td>
                 <td class="col-pred nn-col">${fmt(p.nn_pred)}</td>
                 <td class="col-pred attn-nn-col">${fmt(p.attn_nn_pred)}</td>
                 <td class="col-pred lgbm-col">${fmt(p.lgbm_pred)}</td>
