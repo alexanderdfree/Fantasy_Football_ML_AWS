@@ -366,12 +366,14 @@ CUDA auto-detection in `src/shared/pipeline.py` falls back to CPU. Local pipelin
 
 ## CPU Split Queue
 
-The CPU queue is now for split `cpu` and `merge` branches, not for routing K/DST
+The CPU queue is for split `cpu` and `merge` branches, not for routing K/DST
 monolithic jobs away from GPU. K and DST train attention NNs, so a full K/DST
 job still belongs on the GPU queue. `train-batch.yml` exports
 `FF_JOB_DEFINITION_CPU` and `FF_JOB_QUEUE_CPU` only when
-`BATCH_SPLIT_ACTIVE=true`; otherwise those env vars stay unset and the default
-monolithic path remains GPU-backed.
+`BATCH_SPLIT_ACTIVE=true` — **the production default since 2026-06-11** (first
+full split run validated Δ=0.0000 vs the monolithic baseline across all
+models/positions; see ADR-0019's changelog). Unset the variable to fall back
+to the monolithic GPU-backed path.
 
 The CPU job definition uses the same image as the GPU job definition but no GPU
 resource requirement:
