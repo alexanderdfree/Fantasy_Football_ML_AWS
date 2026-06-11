@@ -609,3 +609,58 @@ def test_inheritance_prior_season_fallback_week1():
     df_no_prior = df[df["season"] == 2023].copy()
     g2 = _build_inheritance_features(df_no_prior, inj).set_index(["player_id", "season", "week"])
     assert g2.loc[("B", 2023, 1), "inherited_opportunity"] == 0.0
+
+
+def test_inheritance_season_granular_rosters_warns_and_noops(caplog):
+    """Granularity tripwire (#1106 activation bug, 2026-06-11): the SEASONAL
+    load_rosters frame also carries week/status columns, so the column guard
+    passes — but with ~1 row per player-season the out-set registers ~no
+    vacancies. The block must warn loudly so the inert path is visible."""
+    import logging
+
+    from src.features.engineer import _build_inheritance_features
+
+    rows = []
+    for wk in (1, 2):
+        rows.append(
+            dict(
+                player_id="A",
+                position="RB",
+                recent_team="KC",
+                season=2023,
+                week=wk,
+                snap_pct_raw=0.8,
+                targets=0.0,
+            )  # fmt: skip
+        )
+    for wk in (1, 2, 3):
+        rows.append(
+            dict(
+                player_id="B",
+                position="RB",
+                recent_team="KC",
+                season=2023,
+                week=wk,
+                snap_pct_raw=0.4,
+                targets=0.0,
+            )  # fmt: skip
+        )
+    df = pd.DataFrame(rows)
+    # Season-granular: ONE row for A with a week column (the seasonal frame
+    # shape) — has every guard column yet cannot describe the week-3 absence.
+    seasonal = pd.DataFrame(
+        [dict(player_id="A", position="RB", team="KC", season=2023, week=1, status="RES")]
+    )
+
+    with caplog.at_level(logging.WARNING, logger="src.features.engineer"):
+        g = _build_inheritance_features(df, None, rosters_df=seasonal).set_index(
+            ["player_id", "week"]
+        )
+    assert any("season-granular" in r.message for r in caplog.records)
+    # And the missing-columns variant warns too (no silent skip).
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="src.features.engineer"):
+        _build_inheritance_features(df, None, rosters_df=seasonal.drop(columns=["week"]))
+    assert any("missing columns" in r.message for r in caplog.records)
+    # Week-3 vacancy invisible to the seasonal frame -> B inherits nothing.
+    assert g.loc[("B", 3), "inherited_opportunity"] == 0.0

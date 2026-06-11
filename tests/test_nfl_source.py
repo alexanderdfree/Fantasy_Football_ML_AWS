@@ -118,3 +118,28 @@ def test_teams_passthrough_has_logo_columns(monkeypatch):
     assert isinstance(out, pd.DataFrame)
     assert {"team_abbr", "team_logo_espn"} <= set(out.columns)
     assert out.iloc[0]["team_logo_espn"].endswith("kc.png")
+
+
+@pytest.mark.unit
+def test_rosters_weekly_adds_player_id_from_gsis(monkeypatch):
+    """``load_rosters_weekly`` is the per-(player, week) status frame the
+    inheritance out-set consumes (#1106); like ``rosters``, the shim adds the
+    ``player_id`` alias from ``gsis_id``."""
+    ros = pl.DataFrame(
+        {
+            "gsis_id": ["00-0000001", "00-0000001"],
+            "season": [2023, 2023],
+            "week": [1, 2],
+            "position": ["RB", "RB"],
+            "team": ["KC", "KC"],
+            "status": ["ACT", "INA"],
+        }
+    )
+    monkeypatch.setattr(nfl_source._nflreadpy, "load_rosters_weekly", lambda seasons: ros)
+
+    out = nfl_source.rosters_weekly([2023])
+
+    assert isinstance(out, pd.DataFrame)
+    assert "player_id" in out.columns
+    assert len(out) == 2  # one row per week, not per season
+    assert set(out["status"]) == {"ACT", "INA"}

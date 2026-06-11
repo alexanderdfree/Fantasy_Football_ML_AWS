@@ -109,6 +109,22 @@ def rosters(seasons: list[int]) -> pd.DataFrame:
     return df
 
 
+def rosters_weekly(seasons: list[int]) -> pd.DataFrame:
+    """Per-(player, season, week) roster snapshots with weekly ``status``.
+
+    Distinct from :func:`rosters` (``load_rosters``), which is one row per
+    player-season: the SEASONAL frame also carries ``week``/``status`` columns,
+    so a column-presence guard cannot tell them apart — only this weekly frame
+    actually has a row (and a status: ACT/RES/INA/...) for every rostered week.
+    The inheritance vacancy out-set (#1106 findings A/INA) must use this one;
+    building it from the seasonal frame silently registers ~no vacancies.
+    """
+    df = _to_pandas(_nflreadpy.load_rosters_weekly(seasons))
+    if "player_id" not in df.columns and "gsis_id" in df.columns:
+        df["player_id"] = df["gsis_id"]
+    return df
+
+
 def schedules(seasons: list[int]) -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_schedules(seasons))
 

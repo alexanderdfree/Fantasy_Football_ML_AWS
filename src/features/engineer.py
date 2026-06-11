@@ -40,7 +40,9 @@ def build_features(
     report. Passed by the splits-building callers (refresh-splits); ``None`` (e.g. a
     diagnostic rebuild) degrades ``inherited_opportunity`` to 0 but still emits the columns.
 
-    ``rosters_df`` is the raw nflverse weekly rosters frame (``src.data.nfl_source.rosters``).
+    ``rosters_df`` is the raw nflverse WEEKLY rosters frame
+    (``src.data.nfl_source.rosters_weekly`` — NOT the seasonal ``rosters``, which shares the
+    column schema but has ~1 row per player-season and yields an empty out-set).
     Players on injured reserve or the game-day inactives list (``status`` in {"RES", "INA"}) are
     absent from BOTH the weekly frame and the injury report, so without it a starter lost to IR or
     scratched is invisible to the vacancy signal (#1106; serving already sees the injury subset
@@ -468,7 +470,28 @@ def _build_inheritance_features(
     # absence (or the prior-season fallback).
     if rosters_df is not None and len(rosters_df):
         rcols = ("status", "position", "season", "team", "week", "player_id")
-        if all(c in rosters_df.columns for c in rcols):
+        missing = [c for c in rcols if c not in rosters_df.columns]
+        if missing:
+            logger.warning(
+                "inheritance: rosters_df missing columns %s — reserve/inactive "
+                "vacancies will NOT be counted (pass nfl_source.rosters_weekly output)",
+                missing,
+            )
+        else:
+            # Granularity tripwire: the SEASONAL load_rosters frame also carries
+            # week/status columns (so the column guard above cannot tell them
+            # apart) but has ~1 row per player-season — built from it, the
+            # out-set silently registers ~no vacancies (caught 2026-06-11: the
+            # shipped RES/INA ingestion was inert in production splits). Weekly
+            # rosters have 18+ distinct weeks in any modern season.
+            max_weeks = int(rosters_df.groupby("season")["week"].nunique().max())
+            if max_weeks < 5:
+                logger.warning(
+                    "inheritance: rosters_df looks season-granular (max %d distinct "
+                    "weeks/season) — use nfl_source.rosters_weekly, else the "
+                    "reserve/inactive out-set is effectively empty",
+                    max_weeks,
+                )
             sidelined = rosters_df[
                 rosters_df["status"].isin(["RES", "INA"])
                 & rosters_df["position"].isin(_INHERITANCE_POSITIONS)
