@@ -58,6 +58,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.benchmarking.benchmark import (  # noqa: E402 — after sys.path bootstrap
     HISTORY_DIR,
     RESULTS_FILE,
+    _cohorts_block,
     _maybe_upload_to_s3,
     _print_rolling_origin_table,
     _significance_block,
@@ -214,6 +215,9 @@ def _run_worker(pos: str, summary_out: str, rolling_origin: bool, significance: 
             sig = _significance_block(pos, result)
             if sig is not None:
                 summary["significance"] = sig
+        cohorts = _cohorts_block(pos, result)
+        if cohorts is not None:
+            summary["cohorts"] = cohorts
     with open(summary_out, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"[{pos}] worker complete — summary -> {summary_out}")
