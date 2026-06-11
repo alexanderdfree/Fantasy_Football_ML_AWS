@@ -224,7 +224,7 @@ question is closed on measurement (the pre-D2 8-on-4 result was not stale after 
 
 ---
 
-## Lever C — vmap seed-ensembles for multi-seed A/Bs — TESTED, REJECTED 2026-06-11 (owner call)
+## Lever C — vmap seed-ensembles — REJECTED then REVERSED as opt-in for comparative pipelines (both 2026-06-11, owner calls)
 
 The oversubscription probes (8-on-4 eager, 5-on-4 post-D2) proved ~1 trial per vCPU for
 HETEROGENEOUS jobs — but the multi-seed A/B workload (≥8 seeds × same config) is
@@ -298,12 +298,28 @@ sub-ULP level; fp32+Adam amplifies into macroscopic forks). Verdict: keep the
 **1 trial : 1 vCPU** doctrine for everything (tune already runs `--n-jobs auto` → 1:1;
 multi-seed A/Bs stay process-parallel eager via ab_harness, which IS per-seed
 deterministic). E2 (`ab_harness --stacked-seeds`) is NOT built.
-[src/tuning/ab_ensemble_seeds.py](../src/tuning/ab_ensemble_seeds.py) stays merged as a
-benchmark-only shelf prototype (TabPFN-style: documented, default-off, wired into
-nothing; its Batch env-dispatch in tune_nn is inert unless `FF_TUNE_ENSEMBLE_AB=1`).
 Reports from both gate runs: `s3://ff-predictor-training/ensemble_ab/RB/report.json`.
 Archive entry: [todo/fixed-archive.md](fixed-archive.md) "[TESTED, REJECTED] vmap
 stacked seed-ensemble training (Lever C)".
+
+**REVERSAL (same day, owner call): sanctioned as OPT-IN for the comparative pipelines.**
+After the throughput framing (4.4–4.6× per host thread; ~32 vs 4 concurrent seeds on a
+4-vCPU host), the owner directed wiring stacked mode into the A/B and NN-tuning Batch
+pipelines. The determinism finding stands — a stacked run is NOT seed-comparable to an
+eager run (and depends on stack width N) — so the integration ships with hard scoping:
+**(1)** `ab_harness --stacked-seeds` (E2): the unit becomes a (position, variant) GROUP —
+Phase A one real eager run at seeds[0] with attention OFF (non-attention models +
+reference test_df + the Ridge sentinel), Phase B captures all seeds and trains the
+attention ensemble under `ensemble_env` (restored on exit), per-member test preds
+overwrite `pred_attn_nn_total` per seed; aggregation/sentinel contracts unchanged;
+QB/RB/WR/TE only (K/DST fall back to eager cells); compare stacked runs ONLY against
+stacked runs. **(2)** NN tuning: `FF_TUNE_STACKED_SEEDS=N` (env rides the fixed
+ENTRYPOINT) makes each Optuna trial evaluate its config as a stacked N-seed ensemble —
+per-epoch stacked val pass reports the across-member MEAN val loss (seed-averaged
+objective; the "single-seed NN MAE is noise" fix) — in a `_ens{N}x{E}`-suffixed study
+namespace (fixed-epochs ensemble regime ≠ the eager early-stop objective). **(3)**
+Production training stays eager; nothing changes there. Peak-compute profiling
+(CPU/RSS/cgroup/GPU) of the stacked paths is the follow-up investigation.
 
 ## Lever B — single process + per-position CUDA streams (the MPS substitute)
 
