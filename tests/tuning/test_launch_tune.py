@@ -177,3 +177,38 @@ def test_submit_tune_job_can_disable_full_graph_only():
     }
     assert env["FF_CUDA_GRAPH_FULL"] == "0"
     assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v2_mps_graph"
+
+
+def test_submit_tune_job_stacked_env_and_namespace():
+    """stacked_seeds >= 2 forwards the env pair, forces the graphs off (the
+    in-container apply_ensemble_env will anyway), and predicts the graph-less
+    base namespace + _ens{N}x{E} suffix."""
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "job-stk"}
+
+    launch_tune.submit_tune_job(
+        "RB", n_trials=8, stacked_seeds=4, stacked_epochs=30, batch_client=batch
+    )
+    kwargs = batch.submit_job.call_args.kwargs
+    env = {e["name"]: e["value"] for e in kwargs["containerOverrides"]["environment"]}
+    assert env["FF_TUNE_STACKED_SEEDS"] == "4"
+    assert env["FF_TUNE_STACKED_EPOCHS"] == "30"
+    assert env["FF_CUDA_GRAPH"] == "0"
+    assert env["FF_CUDA_GRAPH_FULL"] == "0"
+    assert env["TUNE_NN_STORAGE_VERSION"].endswith("_ens4x30")
+    assert "graph" not in env["TUNE_NN_STORAGE_VERSION"]
+
+    with pytest.raises(SystemExit):
+        launch_tune.submit_tune_job("RB", stacked_seeds=1, batch_client=batch)
+
+
+def test_submit_tune_job_eager_has_no_stacked_env():
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "job-eager"}
+    launch_tune.submit_tune_job("RB", n_trials=8, batch_client=batch)
+    env = {
+        e["name"]: e["value"]
+        for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+    }
+    assert "FF_TUNE_STACKED_SEEDS" not in env
+    assert "FF_TUNE_STACKED_EPOCHS" not in env

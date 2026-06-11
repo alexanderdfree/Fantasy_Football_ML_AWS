@@ -64,6 +64,8 @@ ENV_RUN_ID = "FF_AB_RUN_ID"
 ENV_S3_PREFIX = "FF_AB_S3_PREFIX"
 ENV_SEEDS = "FF_AB_SEEDS"
 ENV_ONLY = "FF_AB_ONLY"
+ENV_STACKED = "FF_AB_STACKED"
+ENV_STACKED_EPOCHS = "FF_AB_STACKED_EPOCHS"
 DEFAULT_S3_PREFIX = "ab_runs"
 
 
@@ -145,20 +147,79 @@ def run_batch_entry(position: str) -> None:
     _ensure_data_from_s3()
 
     spec = resolve_spec(spec_dotted, positions=[position], seeds=seeds, only=only)
-    cells = build_cells(spec)
     s3 = boto3.client("s3")
     done = _list_done_cells(s3, bucket, s3_prefix, run_id)
     provenance = _provenance()
     data_dir = os.path.abspath("data")
 
-    print(
-        f"[ab-batch] {position}: spec={spec_dotted} run_id={run_id} "
-        f"variants={list(spec.variants)} seeds={spec.seeds} -> {len(cells)} cells "
-        f"({len(done & {c.key for c in cells})} already complete)",
-        flush=True,
-    )
-
+    stacked = os.environ.get(ENV_STACKED, "").strip() == "1"
+    stacked_epochs = int(os.environ.get(ENV_STACKED_EPOCHS, "30") or 30)
     failures = 0
+    if stacked:
+        # Stacked-seeds mode (owner-sanctioned opt-in; see ab_harness): this
+        # position's (variant) groups train all seeds as ONE vmap ensemble;
+        # per-seed result JSONs land under the SAME cell keys, so the
+        # launcher's collector is unchanged. Resume granularity is the group
+        # (rerun unless every seed's JSON already landed — the stacked arms
+        # are one training run, so partial resume can't splice). A K/DST
+        # position submitted with --stacked falls through to eager cells.
+        from src.tuning.ab_harness import (
+            _group_failed,
+            build_stacked_units,
+            run_group_stacked,
+        )
+
+        groups, cells = build_stacked_units(spec)
+        print(
+            f"[ab-batch] {position}: spec={spec_dotted} run_id={run_id} STACKED "
+            f"(epochs={stacked_epochs}) variants={list(spec.variants)} seeds={spec.seeds} "
+            f"-> {len(groups)} groups + {len(cells)} eager cells",
+            flush=True,
+        )
+        for gi, group in enumerate(groups, 1):
+            group_cell_keys = {f"{group.position}-{group.variant}-{s}" for s in group.seeds}
+            if group_cell_keys <= done:
+                print(f"[ab-batch] group {gi}/{len(groups)} {group.key}: resume-skip", flush=True)
+                continue
+            variant = spec.variants[group.variant]
+            print(f"[ab-batch] group {gi}/{len(groups)} {group.key}: running", flush=True)
+            t0 = time.time()
+            try:
+                results = run_group_stacked(
+                    group,
+                    variant,
+                    spec.metric_fn,
+                    data_dir=data_dir,
+                    stacked_epochs=stacked_epochs,
+                )
+            except Exception as exc:  # noqa: BLE001 — one group must not sink the job
+                print(f"[ab-batch] group {group.key} FAILED: {exc}", file=sys.stderr, flush=True)
+                results = _group_failed(group, variant, exc)
+            elapsed = round(time.time() - t0, 1)
+            for r in results:
+                r["elapsed_sec"] = elapsed
+                r["provenance"] = provenance
+                if not r["ok"]:
+                    failures += 1
+                key = cell_result_key(
+                    s3_prefix, run_id, f"{r['position']}-{r['variant']}-{r['seed']}"
+                )
+                s3.put_object(
+                    Bucket=bucket,
+                    Key=key,
+                    Body=json.dumps(r).encode(),
+                    ContentType="application/json",
+                )
+            tag = "ok" if all(r["ok"] for r in results) else "FAILED"
+            print(f"[ab-batch] group {group.key} {tag} in {elapsed}s", flush=True)
+    else:
+        cells = build_cells(spec)
+        print(
+            f"[ab-batch] {position}: spec={spec_dotted} run_id={run_id} "
+            f"variants={list(spec.variants)} seeds={spec.seeds} -> {len(cells)} cells "
+            f"({len(done & {c.key for c in cells})} already complete)",
+            flush=True,
+        )
     for i, cell in enumerate(cells, 1):
         if cell.key in done:
             print(f"[ab-batch] cell {i}/{len(cells)} {cell.key}: resume-skip", flush=True)

@@ -679,7 +679,9 @@ def _sample_overrides(trial: optuna.Trial) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _make_objective(pos: str, base_cfg: dict, seed: int):
+def _make_objective(
+    pos: str, base_cfg: dict, seed: int, *, stacked_n: int = 0, stacked_epochs: int = 30
+):
     """Return the Optuna objective for ``pos``.
 
     Each trial:
@@ -697,8 +699,21 @@ def _make_objective(pos: str, base_cfg: dict, seed: int):
     ``optuna.TrialPruned`` raised inside the callback propagates up through
     ``trainer.train()`` and out of ``run()``; Optuna's ``study.optimize``
     treats it as a pruned trial, not a failure.
+
+    ``stacked_n >= 2`` switches each trial to the vmap seed-ensemble path
+    (owner-sanctioned opt-in, 2026-06-11): capture ``stacked_n`` seeds of the
+    trial config, train them as ONE stacked ensemble for ``stacked_epochs``
+    fixed epochs (the ensemble regime — the caller applies
+    ``apply_ensemble_env`` process-wide), and report the across-member MEAN
+    val loss per epoch. The objective becomes seed-averaged (the
+    "single-seed NN val loss is noise" fix) at ~1.5–2× single-seed trial
+    cost; results live in ``_ens{N}x{E}``-suffixed study namespaces because
+    the objective semantics differ from the eager early-stop path.
     """
     runner = get_runner(pos)
+
+    if stacked_n >= 2:
+        return _make_stacked_objective(pos, base_cfg, seed, stacked_n, stacked_epochs)
 
     def objective(trial: optuna.Trial) -> float:
         overrides = _sample_overrides(trial)
@@ -756,6 +771,54 @@ def _make_objective(pos: str, base_cfg: dict, seed: int):
                 f"Is train_attention_nn enabled in the position's CONFIG?"
             )
         return float(min(val_losses))
+
+    return objective
+
+
+def _make_stacked_objective(
+    pos: str, base_cfg: dict, seed: int, stacked_n: int, stacked_epochs: int
+):
+    """The vmap seed-ensemble trial body (see ``_make_objective``'s docstring).
+
+    Per trial: capture ``stacked_n`` seed constructions of the sampled config
+    through the REAL pipeline (non-attention branches disabled, the worker's
+    trial-data memo shared), train them as one stacked ensemble, and report
+    the across-member MEAN combined val loss per epoch via
+    ``train_stacked(epoch_callback=...)``. ``optuna.TrialPruned`` raised in
+    the callback propagates out of ``train_stacked``. Objective value =
+    ``min`` over the seed-averaged trajectory.
+    """
+
+    def objective(trial: optuna.Trial) -> float:
+        import torch
+
+        from src.tuning.ab_ensemble_seeds import capture_seeds, train_stacked
+
+        overrides = _sample_overrides(trial)
+        _validate_overrides(overrides)
+        cfg = copy.deepcopy(base_cfg)
+        cfg.update(overrides)
+        _apply_attention_scheduler_overrides(cfg, overrides)
+
+        captured: list[float] = []
+
+        def epoch_callback(epoch: int, mean_val_loss: float) -> None:
+            captured.append(float(mean_val_loss))
+            trial.report(float(mean_val_loss), epoch)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
+
+        seeds = [seed + k for k in range(stacked_n)]
+        with _lease_cores("tune_nn_trial", default=None):
+            captures, _ = capture_seeds(pos, seeds, base_cfg=cfg, memo=_TRIAL_DATA_MEMO)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            train_stacked(captures, cfg, device, stacked_epochs, epoch_callback=epoch_callback)
+        if not captured:
+            raise RuntimeError(
+                f"{pos}: stacked trial {trial.number} captured no val trajectory "
+                f"(stacked_epochs={stacked_epochs})"
+            )
+        return float(min(captured))
 
     return objective
 
@@ -1013,7 +1076,11 @@ def _create_or_load_study(
     sqlite_timeout: int,
     base_cfg: dict | None = None,
     sampler_seed: int = 42,
+    max_resource: int | None = None,
 ) -> optuna.Study:
+    """``max_resource`` overrides the pruner's epoch ceiling — the stacked
+    objective trains a FIXED epoch count (ensemble regime), so its rung
+    ladder must top out there, not at the eager path's ``nn_epochs``."""
     return optuna.create_study(
         study_name=_study_name(pos, storage_version),
         storage=_make_storage(_study_db_path(pos, storage_version), sqlite_timeout),
@@ -1023,7 +1090,11 @@ def _create_or_load_study(
         pruner=HyperbandPruner(
             min_resource=_HYPERBAND_MIN_RESOURCE,
             reduction_factor=_HYPERBAND_REDUCTION_FACTOR,
-            max_resource=int((base_cfg or get_config(pos))["nn_epochs"]),
+            max_resource=(
+                int(max_resource)
+                if max_resource is not None
+                else int((base_cfg or get_config(pos))["nn_epochs"])
+            ),
         ),
     )
 
@@ -1052,6 +1123,8 @@ def _mps_worker_entry(
     sqlite_timeout: int,
     deadline_epoch: float | None,
     env_overrides: dict[str, str],
+    stacked_n: int = 0,
+    stacked_epochs: int = 30,
 ) -> None:
     os.environ.update(env_overrides)
     os.environ[_CORE_POOL_POS_ENV] = f"{pos}-tune-{worker_idx}"
@@ -1066,7 +1139,9 @@ def _mps_worker_entry(
     db_path = _study_db_path(pos, storage_version)
     _configure_sqlite_for_parallel(db_path, sqlite_timeout)
     base_cfg = get_config(pos)
-    objective = _make_objective(pos, base_cfg, seed)
+    objective = _make_objective(
+        pos, base_cfg, seed, stacked_n=stacked_n, stacked_epochs=stacked_epochs
+    )
 
     for iteration in itertools.count():
         study = _create_or_load_study(
@@ -1075,6 +1150,7 @@ def _mps_worker_entry(
             sqlite_timeout=sqlite_timeout,
             base_cfg=base_cfg,
             sampler_seed=_worker_sampler_seed(worker_idx, iteration),
+            max_resource=stacked_epochs if stacked_n >= 2 else None,
         )
         if _completed_trials(study) >= target_completed_trials:
             return
@@ -1105,6 +1181,8 @@ def _run_mps_optimize(
     sqlite_timeout: int,
     checkpoint: "_S3Checkpoint | None",
     checkpoint_interval: int,
+    stacked_n: int = 0,
+    stacked_epochs: int = 30,
 ) -> int:
     """Run the spawn-based MPS optimize loop.
 
@@ -1140,6 +1218,11 @@ def _run_mps_optimize(
         env_overrides["FF_AMP_DTYPE"] = os.environ["FF_AMP_DTYPE"]
     if "FF_COMPILE" in os.environ:
         env_overrides["FF_COMPILE"] = os.environ["FF_COMPILE"]
+    # Stacked mode: carry the ensemble regime explicitly (spawn inherits the
+    # parent env anyway; explicit mirrors the FF_CUDA_GRAPH pattern above).
+    for _key in ("FF_NN_NORM", "FF_NN_FIXED_EPOCHS"):
+        if _key in os.environ:
+            env_overrides[_key] = os.environ[_key]
 
     workers = [
         ctx.Process(
@@ -1153,6 +1236,8 @@ def _run_mps_optimize(
                 sqlite_timeout,
                 deadline,
                 env_overrides,
+                stacked_n,
+                stacked_epochs,
             ),
             name=f"tune-nn-{pos.lower()}-{idx}",
         )
@@ -1284,6 +1369,24 @@ def main():
         ),
     )
     parser.add_argument(
+        "--stacked-seeds",
+        type=int,
+        default=int(os.environ.get("FF_TUNE_STACKED_SEEDS", "0") or 0),
+        help=(
+            "N >= 2 evaluates each trial as a vmap-stacked N-seed ensemble "
+            "(seed-averaged objective, ensemble regime, fixed --stacked-epochs; "
+            "studies land in _ens{N}x{E} namespaces). 0 (default) = eager "
+            "single-seed trials. Env default: FF_TUNE_STACKED_SEEDS — the "
+            "Batch route, since train.py forwards a fixed argv. QB/RB/WR/TE only."
+        ),
+    )
+    parser.add_argument(
+        "--stacked-epochs",
+        type=int,
+        default=int(os.environ.get("FF_TUNE_STACKED_EPOCHS", "30") or 30),
+        help="Fixed epochs per stacked trial (env default: FF_TUNE_STACKED_EPOCHS; default 30).",
+    )
+    parser.add_argument(
         "--print-best",
         action="store_true",
         help="Load existing studies and print best params without running new trials.",
@@ -1327,6 +1430,24 @@ def main():
         ab_run_batch_entry(positions[0])
         return
 
+    stacked_n = max(0, int(args.stacked_seeds))
+    stacked_epochs = int(args.stacked_epochs)
+    if stacked_n == 1:
+        raise SystemExit("--stacked-seeds needs N >= 2 (N=1 is just the eager objective)")
+    if stacked_n and not args.print_best:
+        from src.tuning.ab_ensemble_seeds import ENSEMBLE_POSITIONS, apply_ensemble_env
+
+        bad = [p for p in positions if p not in ENSEMBLE_POSITIONS]
+        if bad:
+            raise SystemExit(
+                f"--stacked-seeds supports {ENSEMBLE_POSITIONS} (flat-history); got {bad}"
+            )
+        # Regime BEFORE backend/namespace resolution: ensemble mode forces the
+        # graphs off (the hand-rolled vmapped loop is eager) and FP32/LN, so
+        # the storage version resolves graph-less and then gets the explicit
+        # _ens{N}x{E} suffix below.
+        apply_ensemble_env(stacked_epochs)
+
     requested_backend = args.parallel_backend
     parallel_backend = _resolve_parallel_backend(requested_backend)
     n_jobs = _resolve_n_jobs(args.n_jobs, parallel_backend)
@@ -1334,6 +1455,10 @@ def main():
     # resolver below keys the study namespace off cuda_graph[_full]_enabled().
     _force_eager_for_concurrent_thread_trials(parallel_backend, n_jobs)
     storage_version, cuda_graph, cuda_graph_full = _resolve_storage_version(parallel_backend)
+    if stacked_n:
+        # Seed-averaged fixed-epochs objective ≠ the eager early-stop objective;
+        # never mix their trials in one study.
+        storage_version = f"{storage_version}_ens{stacked_n}x{stacked_epochs}"
 
     if not args.print_best:
         _ensure_data_from_s3()
@@ -1386,6 +1511,7 @@ def main():
             storage_version=storage_version,
             sqlite_timeout=args.sqlite_timeout,
             base_cfg=base_cfg,
+            max_resource=stacked_epochs if stacked_n else None,
         )
         if parallel_backend == _MPS_BACKEND:
             _configure_sqlite_for_parallel(db_path, args.sqlite_timeout)
@@ -1393,7 +1519,12 @@ def main():
         completed = sum(1 for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE)
         remaining = max(0, args.n_trials - completed)
 
-        objective = _make_objective(pos, base_cfg, args.seed)
+        objective = _make_objective(
+            pos, base_cfg, args.seed, stacked_n=stacked_n, stacked_epochs=stacked_epochs
+        )
+        from src.tuning.resource_probe import ResourceProbe
+
+        probe = ResourceProbe().start()
         callbacks = []
         if checkpoint is not None:
             # Optuna invokes callbacks after every trial regardless of state
@@ -1429,12 +1560,15 @@ def main():
                         sqlite_timeout=args.sqlite_timeout,
                         checkpoint=checkpoint,
                         checkpoint_interval=args.checkpoint_interval,
+                        stacked_n=stacked_n,
+                        stacked_epochs=stacked_epochs,
                     )
                 study = _create_or_load_study(
                     pos,
                     storage_version=storage_version,
                     sqlite_timeout=args.sqlite_timeout,
                     base_cfg=base_cfg,
+                    max_resource=stacked_epochs if stacked_n else None,
                 )
             else:
                 study.optimize(
@@ -1455,6 +1589,7 @@ def main():
         else:
             print(f"[{pos}] all {args.n_trials} trials already completed; skipping optimize()")
 
+        resources = probe.stop()
         elapsed = time.time() - t0
         best = _trial_to_params(study.best_trial)
         state_counts = _study_state_counts(study)
@@ -1481,6 +1616,11 @@ def main():
             "cuda_graph": cuda_graph,
             "cuda_graph_full": cuda_graph_full,
             "elapsed_seconds": round(elapsed, 1),
+            # Stacked-objective provenance + the peak-compute investigation
+            # block (cgroup peak covers the MPS worker processes too).
+            "stacked_seeds": stacked_n,
+            "stacked_epochs": stacked_epochs if stacked_n else None,
+            "resources": resources,
         }
 
         if checkpoint is not None:

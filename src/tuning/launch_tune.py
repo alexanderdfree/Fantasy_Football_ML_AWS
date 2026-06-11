@@ -111,6 +111,11 @@ def _tune_job_definition() -> str:
     return JOB_DEFINITION
 
 
+def _stacked_suffix(stacked_seeds: int, stacked_epochs: int) -> str:
+    """Mirror of tune_nn.main's stacked namespace suffix (keep in sync)."""
+    return f"_ens{stacked_seeds}x{stacked_epochs}" if stacked_seeds >= 2 else ""
+
+
 def submit_tune_job(
     position: str,
     n_trials: int = DEFAULT_N_TRIALS,
@@ -120,6 +125,8 @@ def submit_tune_job(
     parallel_backend: str = DEFAULT_PARALLEL_BACKEND,
     cuda_graph: bool = DEFAULT_CUDA_GRAPH,
     cuda_graph_full: bool = DEFAULT_CUDA_GRAPH_FULL,
+    stacked_seeds: int = 0,
+    stacked_epochs: int = 30,
     attempt_timeout: int = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
     batch_client=None,
 ) -> tuple[str, str]:
@@ -131,10 +138,19 @@ def submit_tune_job(
     ``_ensure_data_from_s3`` can populate ``data/splits/`` and ``data/raw/``
     on first invocation (Spot resilience: study DB resumes via S3 if the
     job is retried after a Host EC2 interruption).
+
+    ``stacked_seeds >= 2`` rides the FF_TUNE_STACKED_SEEDS env (train.py
+    forwards a fixed argv, so flags can't reach tune_nn from here): each
+    trial trains a vmap-stacked N-seed ensemble in the ensemble regime —
+    graphs forced OFF in-container by ``apply_ensemble_env``, so the
+    predicted namespace is the graph-less base + ``_ens{N}x{E}``.
     """
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
     timestamp = int(time.time())
     suffix = uuid.uuid4().hex[:6]
+    if stacked_seeds == 1:
+        raise SystemExit("--stacked-seeds needs N >= 2 (N=1 is just the eager objective)")
+    stacked = stacked_seeds >= 2
 
     command = [
         "--position",
@@ -155,9 +171,11 @@ def submit_tune_job(
 
     storage_version = resolve_search_space_version(
         _batch_storage_backend(parallel_backend),
-        cuda_graph=cuda_graph,
-        full_graph=cuda_graph_full,
-    )
+        # In-container, apply_ensemble_env forces the graphs off before the
+        # namespace resolves — predict the same graph-less base here.
+        cuda_graph=cuda_graph and not stacked,
+        full_graph=cuda_graph_full and not stacked,
+    ) + _stacked_suffix(stacked_seeds, stacked_epochs)
     response = batch.submit_job(
         jobName=f"ff-tune-{position.lower()}-{timestamp}-{suffix}",
         jobQueue=JOB_QUEUE,
@@ -182,8 +200,13 @@ def submit_tune_job(
                 # "1" leaves autodetect ON and "0" is the force-off override,
                 # so the container lands on the same storage_version predicted
                 # above. Keep the env value and the cuda_graph bool coupled.
-                {"name": "FF_CUDA_GRAPH", "value": "1" if cuda_graph else "0"},
-                {"name": "FF_CUDA_GRAPH_FULL", "value": "1" if cuda_graph_full else "0"},
+                # Stacked mode forces both off (apply_ensemble_env would
+                # override anyway; keep the env coherent with the prediction).
+                {"name": "FF_CUDA_GRAPH", "value": "1" if (cuda_graph and not stacked) else "0"},
+                {
+                    "name": "FF_CUDA_GRAPH_FULL",
+                    "value": "1" if (cuda_graph_full and not stacked) else "0",
+                },
                 {"name": "FF_AMP_DTYPE", "value": "auto"},
                 {"name": "FF_COMPILE", "value": "0"},
                 {"name": "TUNE_NN_STORAGE_VERSION", "value": storage_version},
@@ -191,6 +214,14 @@ def submit_tune_job(
                 # trials × ~200 epochs each — 1 line per epoch would flood
                 # CloudWatch with ~6000 lines/trial × 30 trials = 180k lines.
                 {"name": "LOG_EVERY", "value": "20"},
+                *(
+                    [
+                        {"name": "FF_TUNE_STACKED_SEEDS", "value": str(stacked_seeds)},
+                        {"name": "FF_TUNE_STACKED_EPOCHS", "value": str(stacked_epochs)},
+                    ]
+                    if stacked
+                    else []
+                ),
             ],
         },
     )
@@ -209,12 +240,15 @@ def _print_plan(
     cuda_graph: bool,
     cuda_graph_full: bool,
     attempt_timeout: int,
+    stacked_seeds: int = 0,
+    stacked_epochs: int = 30,
 ) -> None:
+    stacked = stacked_seeds >= 2
     storage_version = resolve_search_space_version(
         _batch_storage_backend(parallel_backend),
-        cuda_graph=cuda_graph,
-        full_graph=cuda_graph_full,
-    )
+        cuda_graph=cuda_graph and not stacked,
+        full_graph=cuda_graph_full and not stacked,
+    ) + _stacked_suffix(stacked_seeds, stacked_epochs)
     print("DRY RUN — no AWS calls will be made.")
     print(f"  region:       {AWS_REGION}")
     print(f"  bucket:       {S3_BUCKET}")
@@ -229,6 +263,9 @@ def _print_plan(
     print(f"  backend:      {parallel_backend}")
     print(f"  cuda graph:   {cuda_graph}")
     print(f"  graph full:   {cuda_graph_full}")
+    print(
+        f"  stacked:      {f'{stacked_seeds} seeds x {stacked_epochs} epochs' if stacked else 'off'}"
+    )
     print(f"  storage:      {storage_version}")
     print(f"  timeout:      {timeout if timeout is not None else 'no cap'}")
     print(f"  seed:         {seed}")
@@ -297,6 +334,23 @@ def main():
         ),
     )
     parser.add_argument(
+        "--stacked-seeds",
+        type=int,
+        default=0,
+        help=(
+            "N >= 2: each trial trains a vmap-stacked N-seed ensemble "
+            "(seed-averaged objective; rides FF_TUNE_STACKED_SEEDS through the "
+            "fixed ENTRYPOINT; QB/RB/WR/TE only; studies land in _ens{N}x{E} "
+            "namespaces with graphs forced off). 0 (default) = eager trials."
+        ),
+    )
+    parser.add_argument(
+        "--stacked-epochs",
+        type=int,
+        default=30,
+        help="Fixed epochs per stacked trial (default 30).",
+    )
+    parser.add_argument(
         "--attempt-timeout",
         type=int,
         default=DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
@@ -338,6 +392,13 @@ def main():
             raise SystemExit("--n-jobs must be >= 1")
     if args.attempt_timeout <= 0:
         raise SystemExit("--attempt-timeout must be > 0")
+    stacked_seeds = max(0, int(args.stacked_seeds))
+    if stacked_seeds == 1:
+        raise SystemExit("--stacked-seeds needs N >= 2 (N=1 is just the eager objective)")
+    if stacked_seeds:
+        bad = [p for p in positions if p not in ("QB", "RB", "WR", "TE")]
+        if bad:
+            raise SystemExit(f"--stacked-seeds supports QB/RB/WR/TE (flat-history); got {bad}")
 
     if args.dry_run:
         _print_plan(
@@ -350,6 +411,8 @@ def main():
             cuda_graph,
             cuda_graph_full,
             args.attempt_timeout,
+            stacked_seeds=stacked_seeds,
+            stacked_epochs=args.stacked_epochs,
         )
         return
 
@@ -370,6 +433,8 @@ def main():
                 parallel_backend=args.parallel_backend,
                 cuda_graph=cuda_graph,
                 cuda_graph_full=cuda_graph_full,
+                stacked_seeds=stacked_seeds,
+                stacked_epochs=args.stacked_epochs,
                 attempt_timeout=args.attempt_timeout,
                 batch_client=batch_client,
             ): pos
@@ -391,9 +456,9 @@ def main():
             sys.exit(1)
         storage_version = resolve_search_space_version(
             _batch_storage_backend(args.parallel_backend),
-            cuda_graph=cuda_graph,
-            full_graph=cuda_graph_full,
-        )
+            cuda_graph=cuda_graph and not stacked_seeds,
+            full_graph=cuda_graph_full and not stacked_seeds,
+        ) + _stacked_suffix(stacked_seeds, args.stacked_epochs)
         print(
             f"Results land at s3://{S3_BUCKET}/{s3_prefix(storage_version)}/"
             "{pos}/results.json per position."
@@ -418,9 +483,9 @@ def main():
         print(f"\nSucceeded positions: {succeeded}")
         storage_version = resolve_search_space_version(
             _batch_storage_backend(args.parallel_backend),
-            cuda_graph=cuda_graph,
-            full_graph=cuda_graph_full,
-        )
+            cuda_graph=cuda_graph and not stacked_seeds,
+            full_graph=cuda_graph_full and not stacked_seeds,
+        ) + _stacked_suffix(stacked_seeds, args.stacked_epochs)
         print(
             f"  Per-position results: s3://{S3_BUCKET}/{s3_prefix(storage_version)}/"
             "{pos}/results.json"

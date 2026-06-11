@@ -165,3 +165,53 @@ def test_tune_nn_main_dispatches_on_ab_spec_env(monkeypatch):
     tune_nn.main()
 
     assert called == ["QB"]
+
+
+def test_run_batch_entry_stacked_uploads_per_seed_and_group_resume(batch_env, monkeypatch):
+    """FF_AB_STACKED=1 runs (variant) GROUPS via run_group_stacked, uploads
+    each member's JSON under the unchanged per-seed cell key (the collector
+    contract), and resume-skips a group only when EVERY seed JSON landed."""
+    monkeypatch.setenv("FF_AB_STACKED", "1")
+    monkeypatch.setenv("FF_AB_STACKED_EPOCHS", "3")
+    ran = []
+
+    def fake_group(group, variant, metric_fn, *, data_dir, stacked_epochs):
+        ran.append((group.key, stacked_epochs))
+        return [
+            {
+                "position": group.position,
+                "variant": group.variant,
+                "seed": s,
+                "label": group.variant,
+                "ok": True,
+                "metrics": {},
+                "ridge_mae": 1.0,
+                "error": None,
+                "stacked": True,
+            }  # fmt: skip
+            for s in group.seeds
+        ]
+
+    monkeypatch.setattr("src.tuning.ab_harness.run_group_stacked", fake_group)
+    # baseline group fully complete -> resume-skip; the --only variant has one
+    # seed missing -> the whole group reruns (stacked arms can't splice).
+    s3 = _fake_s3(
+        existing_keys=[
+            "ab_runs/test-run/cells/TE-baseline-42.json",
+            "ab_runs/test-run/cells/TE-baseline-123.json",
+            "ab_runs/test-run/cells/TE-nn_dropout=0-42.json",
+        ]
+    )
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+
+    ab_batch.run_batch_entry("TE")
+
+    assert ran == [("TE-nn_dropout=0-stacked2", 3)]
+    assert s3.put_object.call_count == 2  # both seeds of the rerun group
+    keys = {c.kwargs["Key"] for c in s3.put_object.call_args_list}
+    assert keys == {
+        "ab_runs/test-run/cells/TE-nn_dropout=0-42.json",
+        "ab_runs/test-run/cells/TE-nn_dropout=0-123.json",
+    }
+    body = json.loads(s3.put_object.call_args_list[0].kwargs["Body"])
+    assert body["stacked"] is True and body["provenance"] == {"git_sha": "abc"}
