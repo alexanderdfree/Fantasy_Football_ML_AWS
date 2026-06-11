@@ -341,11 +341,29 @@ SUCCEEDED — capture 33.9 s + stacked train 23.2 s; **one 8-seed lane = `cpu_ut
 1.0 flat, cgroup peak 1.53 GiB, GPU 0.64 alloc / 0.83 GiB reserved of 24**.
 **Packing math (g6.xlarge):** cores bind first (4 lanes × 1.0 core), RAM second
 (~1.7-2.5 GiB/lane → ~6-8 lanes if oversubscription ever paid, which the n_jobs=5 probe says
-it doesn't), VRAM never (~0.85 GiB/lane). Width (seeds per lane) is the cheap axis: host
-cost is N-invariant; the free-lunch ceiling is where per-step GPU math outgrows the ~5-7 ms
-host gap, estimated **N ≈ 50-70/lane (~200-280 seeds/host)** — unmeasured beyond N=8, and
-the *useful* width is 8-16 (A/B doctrine / σ/√N returns), so spend surplus on width-per-trial,
-not more lanes. Eager-vs-stacked tuning rate: 35 trials (8C/27P) in 8.6 min at 4 seeds/trial
+it doesn't), VRAM never at doctrine widths.
+
+**Width-scaling curve MEASURED (2026-06-11, jobs b12a4b6a/330a698a, RB × 30 epochs, L4,
+one lane):**
+
+| N (seeds) | stacked train | s/seed | CPU cores | cgroup RAM | GPU reserved |
+|---|---|---|---|---|---|
+| 1 (eager, derived) | ~14.4 s | 14.4 | 1.0 | ~1.5 GiB | ~0.5 GiB |
+| 8 | 23.2 s | 2.90 | 1.0 | 1.53 GiB | 0.83 GiB |
+| 24 | 24.3 s | **1.01** | 1.0 | 1.53 GiB | 2.53 GiB |
+| 50 | 57.5 s | 1.15 | 1.0 | 1.54 GiB | 5.16 GiB |
+
+8 → 24 is FREE (+5% wall for 3× seeds — the launch-bound lunch extends to 24); the knee is
+in (24, 50]: N=50 costs 2.37× N=24's wall for 2.08× the seeds (the lane goes GPU/
+bandwidth-bound; 2×24 sequential beats 1×50 — 48.6 s/48 seeds vs 57.5 s/50). **Per-seed
+optimum ≈ N=24 (~1.0 s/seed, 14× eager); CPU and RAM are width-INVARIANT (1.0 core,
+1.53 GiB at every N); GPU memory is the only width cost (~0.10 GiB/seed reserved).**
+Host packing at the optimum: 4 lanes × 24 = **96 concurrent seeds per g6.xlarge**
+(~10 GiB VRAM of 24, ~7 GiB RAM, 4 cores); fleet ceiling at the 64-vCPU Spot quota ≈
+1,500 concurrent seeds. The *useful* width for decisions stays 8-16 (σ/√N returns; A/B
+doctrine) — the headroom to 24 is free sharpening when wanted. Trials still cannot stack
+(per-trial architectures differ; vmap needs one module structure) — width multiplies
+seeds-per-config, lanes/hosts multiply configs. Eager-vs-stacked tuning rate: 35 trials (8C/27P) in 8.6 min at 4 seeds/trial
 (eager-regime vmapped, no graphs) vs 18.7 single-seed trials/min in the graphfull eager
 namespace — stacked trials cost ~2× an eager-regime trial for 4× the seeds.
 **Latent bug surfaced (chip filed):** `launch_tune --n-jobs auto` (the #1119 default) dies in
