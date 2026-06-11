@@ -62,6 +62,7 @@ the historical thread backend unless an operator explicitly forces
 import argparse
 import contextlib
 import copy
+import itertools
 import json
 import multiprocessing as mp
 import os
@@ -930,6 +931,21 @@ def _create_or_load_study(
     )
 
 
+def _worker_sampler_seed(worker_idx: int, iteration: int) -> int:
+    """Sampler seed for one MPS-worker loop iteration.
+
+    Rebuilding the study + sampler every iteration is the standard
+    distributed-Optuna pattern (TPE must see fresh history), but a FIXED
+    per-worker seed makes each fresh TPESampler replay the identical random
+    draw during the startup phase (n_startup_trials=10) — observed as
+    bit-identical duplicate trials on Batch (2026-06-10 RB run). Vary the
+    seed by iteration; 1009 is prime and far above any plausible n_jobs, so
+    worker seed streams never collide. Cross-run search-path reproducibility
+    is already lost to concurrent trial-completion timing.
+    """
+    return 42 + worker_idx + 1009 * iteration
+
+
 def _mps_worker_entry(
     pos: str,
     worker_idx: int,
@@ -955,13 +971,13 @@ def _mps_worker_entry(
     base_cfg = get_config(pos)
     objective = _make_objective(pos, base_cfg, seed)
 
-    while True:
+    for iteration in itertools.count():
         study = _create_or_load_study(
             pos,
             storage_version=storage_version,
             sqlite_timeout=sqlite_timeout,
             base_cfg=base_cfg,
-            sampler_seed=42 + worker_idx,
+            sampler_seed=_worker_sampler_seed(worker_idx, iteration),
         )
         if _completed_trials(study) >= target_completed_trials:
             return
