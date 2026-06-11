@@ -211,12 +211,15 @@ def test_stacked_matches_sequential(cfg_overrides, criterion_kwargs):
 
 
 def test_single_batch_grad_parity():
-    """Protocol tier (b): POST-CLIP GRADIENTS on one batch — stacked member
-    grads must match per-model eager grads tightly. Gradients are the direct
-    kernel-order-affected quantity; params after even ONE Adam step are
-    ill-conditioned for this check (near-zero grads make Adam's g/sqrt(v)
-    sign-like, so ulp-level grad diffs become full-lr param diffs — that's
-    inherent Adam behavior, not a loop bug, and tier (c) bounds it)."""
+    """Protocol tier (b), real path: POST-CLIP GRADIENTS on one batch —
+    stacked member grads must match per-model eager grads tightly — and then
+    post-Adam-step params must match on the WELL-CONDITIONED mask. At step 1
+    Adam's update is lr*g/(|g|+eps): sign-like near g=0, where ulp-level
+    kernel-order grad noise flips signs into full-lr param diffs (inherent
+    Adam behavior, not a loop bug). Away from zero (|g| > 1e-4) the update
+    is insensitive to that noise, so the masked comparison restores the
+    tight post-step check; the g≈0 region is covered exactly by
+    test_adam_step_parity_with_injected_grads (noise-free grads)."""
     import torch.func as tf
 
     cfg = _tiny_cfg()
@@ -254,6 +257,67 @@ def test_single_batch_grad_parity():
                 continue
             torch.testing.assert_close(
                 stacked_grads[name][i], p.grad, rtol=1e-5, atol=1e-7, msg=name
+            )
+
+    # Masked post-Adam-step param parity (the restored real-path check).
+    hp = {"lr": 1e-2, "weight_decay": 1e-4, "betas": (0.9, 0.999), "eps": 1e-8}
+    torch.optim.AdamW(list(params.values()), foreach=True, **hp).step()
+    checked = 0
+    for i, m in enumerate(models):
+        torch.optim.AdamW(m.parameters(), foreach=True, **hp).step()
+        for name, p in m.named_parameters():
+            if p.grad is None:
+                continue
+            mask = p.grad.abs() > 1e-4
+            if not mask.any():
+                continue
+            checked += int(mask.sum())
+            torch.testing.assert_close(
+                params[name][i][mask], p.detach()[mask], rtol=0.0, atol=1e-7, msg=name
+            )
+    assert checked > 0  # the mask must not silently empty the check
+
+
+def test_adam_step_parity_with_injected_grads():
+    """The well-conditioned reformulation of post-Adam-step parity: with
+    IDENTICAL injected gradients (no kernel-order noise) one stacked
+    foreach-AdamW over [N, *shape] params must equal N independent AdamWs
+    BITWISE across multiple steps and lr changes — AdamW is elementwise, so
+    stacking is purely a layout change. This pins per-member optimizer-state
+    independence (exp_avg/exp_avg_sq never couple across members), hyperparam
+    wiring, and bias-correction step counting; combined with the tight grad
+    parity above it covers what the naive post-step param comparison (removed
+    for Adam's sign-like step-1 ill-conditioning near g=0) could not."""
+    import torch.func as tf
+
+    cfg = _tiny_cfg()
+    models = _build_models(cfg, n_members=3)
+    seq_models = [copy.deepcopy(m) for m in models]
+    seq_named = [dict(m.named_parameters()) for m in seq_models]
+
+    params, _ = tf.stack_module_state([copy.deepcopy(m) for m in models])
+    hp = {"lr": 3e-3, "weight_decay": 1e-2, "betas": (0.9, 0.999), "eps": 1e-8}
+    opt_stacked = torch.optim.AdamW(list(params.values()), foreach=True, **hp)
+    opts_seq = [torch.optim.AdamW(m.parameters(), foreach=True, **hp) for m in seq_models]
+
+    gen = torch.Generator().manual_seed(11)
+    for lr in (3e-3, 1e-3, 5e-4):  # lr changes mimic a scheduler across steps
+        for opt in (opt_stacked, *opts_seq):
+            for group in opt.param_groups:
+                group["lr"] = lr
+        for name, stacked_p in params.items():
+            g = torch.randn(stacked_p.shape, generator=gen)
+            stacked_p.grad = g
+            for i, named in enumerate(seq_named):
+                named[name].grad = g[i].clone()
+        opt_stacked.step()
+        for opt in opts_seq:
+            opt.step()
+
+    for i, named in enumerate(seq_named):
+        for name, p in named.items():
+            torch.testing.assert_close(
+                params[name][i], p, rtol=0.0, atol=0.0, msg=f"{name}[member {i}]"
             )
 
 
@@ -314,9 +378,22 @@ def test_dropout_draws_differ_across_members():
 
 
 def test_apply_ensemble_env_sets_regime_and_rejects_compile(monkeypatch):
-    for k in ("FF_NN_NORM", "FF_AMP_DTYPE", "FF_CUDA_GRAPH", "FF_NN_FIXED_EPOCHS"):
-        monkeypatch.delenv(k, raising=False)
-    monkeypatch.delenv("FF_COMPILE", raising=False)
+    # apply_ensemble_env writes os.environ directly (it's the CLI regime
+    # setter), so route every key it touches through monkeypatch.setenv FIRST:
+    # that registers an undo to the pre-test state, which teardown applies
+    # regardless of what the function wrote. The plain-delenv version leaked
+    # FF_NN_FIXED_EPOCHS=30 into the xdist worker and made a later trainer
+    # test run 30 epochs instead of 3.
+    for k in (
+        "FF_NN_NORM",
+        "FF_AMP_DTYPE",
+        "FF_CUDA_GRAPH",
+        "FF_CUDA_GRAPH_FULL",
+        "FF_NN_FIXED_EPOCHS",
+        "FF_COMPILE",
+    ):
+        monkeypatch.setenv(k, "managed-for-restore")
+        monkeypatch.delenv(k)
     apply_ensemble_env(30)
     import os
 
@@ -356,3 +433,77 @@ def test_capture_patch_stashes_and_restores():
     # Patches restored.
     assert MultiHeadTrainer.train is orig_train
     assert neural_net.MultiHeadNetWithHistory.predict_numpy is orig_predict
+
+
+# ---------------------------------------------------------------------------
+# Batch route (FF_TUNE_ENSEMBLE_AB env dispatch)
+# ---------------------------------------------------------------------------
+
+
+def test_tune_nn_env_dispatch_routes_to_batch_entry(monkeypatch):
+    """FF_TUNE_ENSEMBLE_AB=1 must route tune_nn.main() into
+    ab_ensemble_seeds.run_batch_entry(position) right after argparse —
+    before backend/n_jobs resolution and the data bootstrap (this is the
+    fixed-ENTRYPOINT Batch route; see run_batch_entry's docstring)."""
+    import sys
+
+    from src.tuning import tune_nn
+
+    calls: list[str] = []
+    monkeypatch.setattr("src.tuning.ab_ensemble_seeds.run_batch_entry", calls.append)
+
+    def _boom(*a, **k):
+        raise AssertionError("must dispatch before any tune-path work")
+
+    monkeypatch.setattr(tune_nn, "_ensure_data_from_s3", _boom)
+    monkeypatch.setattr(tune_nn, "_resolve_n_jobs", _boom)
+    monkeypatch.setenv("FF_TUNE_ENSEMBLE_AB", "1")
+    monkeypatch.setattr(sys, "argv", ["tune_nn", "rb", "--checkpoint-s3", "--seed", "42"])
+    tune_nn.main()
+    assert calls == ["RB"]
+
+
+def test_run_batch_entry_env_knobs_and_parity_gate(monkeypatch):
+    import os
+
+    import src.tuning.ab_ensemble_seeds as ab
+
+    seen: dict = {}
+
+    def fake_run(position, n_seeds, fixed_epochs, parity_check):
+        seen.update(
+            position=position, n_seeds=n_seeds, fixed_epochs=fixed_epochs, parity=parity_check
+        )
+        return {"position": position, "parity": {"ok": True, "worst_diff_over_spread": 0.001}}
+
+    monkeypatch.setattr(ab, "run_ensemble_ab", fake_run)
+    monkeypatch.setattr("src.tuning.tune_nn._ensure_data_from_s3", lambda: None)
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+    monkeypatch.setenv("FF_ENSEMBLE_SEEDS", "4")
+    monkeypatch.setenv("FF_ENSEMBLE_FIXED_EPOCHS", "7")
+    monkeypatch.setenv("FF_ENSEMBLE_PARITY", "1")
+    # run_batch_entry writes FF_FORCE_DROPOUT_ZERO directly; manage the key
+    # via setenv-then-delenv so teardown force-restores it (no worker leak).
+    monkeypatch.setenv("FF_FORCE_DROPOUT_ZERO", "managed-for-restore")
+    monkeypatch.delenv("FF_FORCE_DROPOUT_ZERO")
+    ab.run_batch_entry("RB")
+    assert seen == {"position": "RB", "n_seeds": 4, "fixed_epochs": 7, "parity": True}
+    assert os.environ["FF_FORCE_DROPOUT_ZERO"] == "1"
+
+    # FF_ENSEMBLE_PARITY=0: no sequential arm, no dropout-zero forcing.
+    monkeypatch.setenv("FF_ENSEMBLE_PARITY", "0")
+    monkeypatch.delenv("FF_FORCE_DROPOUT_ZERO", raising=False)
+    seen.clear()
+    ab.run_batch_entry("RB")
+    assert seen["parity"] is False
+    assert "FF_FORCE_DROPOUT_ZERO" not in os.environ
+
+    # Parity drift must fail the Batch job (non-zero exit), report already out.
+    monkeypatch.setenv("FF_ENSEMBLE_PARITY", "1")
+    monkeypatch.setattr(
+        ab,
+        "run_ensemble_ab",
+        lambda *a, **k: {"parity": {"ok": False, "worst_diff_over_spread": 9.9}},
+    )
+    with pytest.raises(SystemExit):
+        ab.run_batch_entry("RB")

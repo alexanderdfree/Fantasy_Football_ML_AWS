@@ -1304,6 +1304,19 @@ def main():
     args = parser.parse_args()
 
     positions = [p.upper() for p in args.positions]
+
+    # Batch env-flag dispatch: the training image's ENTRYPOINT is fixed to
+    # src.batch.train, whose --mode=tune forwards a fixed argv here — there is
+    # no arg-level channel for other src/tuning modules, and editing
+    # src/batch/train.py fires a 6-position retrain. The ensemble A/B harness
+    # therefore rides the tune route via FF_TUNE_ENSEMBLE_AB=1 in the job
+    # environment (containerOverrides.environment passes through untouched).
+    if os.environ.get("FF_TUNE_ENSEMBLE_AB", "").strip() == "1":
+        from src.tuning.ab_ensemble_seeds import run_batch_entry
+
+        run_batch_entry(positions[0])
+        return
+
     requested_backend = args.parallel_backend
     parallel_backend = _resolve_parallel_backend(requested_backend)
     n_jobs = _resolve_n_jobs(args.n_jobs, parallel_backend)

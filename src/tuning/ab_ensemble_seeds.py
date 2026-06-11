@@ -38,6 +38,12 @@ Usage (GPU box — the 5080 is the primary target):
         --position RB --seeds 8 --fixed-epochs 30 --parity-check
     python -m src.tuning.ab_ensemble_seeds --position RB --seeds 8 \\
         --fixed-epochs 30          # speedup measurement, dropout live
+
+AWS Batch (one-off GPU run without a 5080): the training image's ENTRYPOINT
+is fixed to ``src.batch.train``, so submit a ``--mode tune`` job with
+``FF_TUNE_ENSEMBLE_AB=1`` in the container environment —
+``src.tuning.tune_nn.main`` dispatches into :func:`run_batch_entry` before
+any Optuna work. See ``run_batch_entry`` for the env knobs.
 """
 
 from __future__ import annotations
@@ -395,6 +401,113 @@ def _parity_report(seq_preds: list[dict], stacked_preds: list[dict]) -> dict:
     return {"worst_diff_over_spread": worst, "ok": worst < 0.01}
 
 
+def run_ensemble_ab(position: str, n_seeds: int, fixed_epochs: int, parity_check: bool) -> dict:
+    """Run the stacked ensemble (and optionally the sequential parity arm);
+    return the report dict. Shared by the CLI and the Batch entry."""
+    apply_ensemble_env(fixed_epochs)
+    if parity_check and os.environ.get("FF_FORCE_DROPOUT_ZERO", "0") != "1":
+        raise SystemExit(
+            "--parity-check requires FF_FORCE_DROPOUT_ZERO=1 (dropout "
+            "draws are not comparable across arms otherwise)"
+        )
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    seeds = list(range(42, 42 + n_seeds))
+    print(f"[ensemble] capturing {len(seeds)} seed constructions for {position}...")
+    t0 = time.perf_counter()
+    captures, test_capture = capture_seeds(position, seeds, base_cfg=None)
+    from src.shared.platform_detect import detect_platform
+    from src.shared.registry import get_config
+
+    cfg = get_config(position)
+    capture_sec = time.perf_counter() - t0
+    n_epochs = fixed_epochs
+
+    print(f"[ensemble] training stacked N={len(seeds)} for {n_epochs} epochs...")
+    t0 = time.perf_counter()
+    params, buffers, template = train_stacked(captures, cfg, device, n_epochs)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    stacked_sec = time.perf_counter() - t0
+    stacked_preds = predict_stacked(template, params, buffers, test_capture, device)
+
+    report = {
+        "position": position,
+        "n_seeds": len(seeds),
+        "n_epochs": n_epochs,
+        "device": str(device),
+        "gpu_name": detect_platform().gpu_name,
+        "capture_sec": round(capture_sec, 2),
+        "stacked_train_sec": round(stacked_sec, 2),
+    }
+
+    if parity_check:
+        print("[ensemble] training sequential reference arm...")
+        t0 = time.perf_counter()
+        seq_models = train_sequential(captures, cfg, device, n_epochs)
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        seq_sec = time.perf_counter() - t0
+        seq_preds = [predict_single(m, test_capture, device) for m in seq_models]
+        report["sequential_train_sec"] = round(seq_sec, 2)
+        report["speedup"] = round(seq_sec / stacked_sec, 2)
+        report["parity"] = _parity_report(seq_preds, stacked_preds)
+    return report
+
+
+def run_batch_entry(position: str) -> None:
+    """AWS Batch entry, reached via ``FF_TUNE_ENSEMBLE_AB=1`` in the job env.
+
+    The training image's ENTRYPOINT is fixed to ``src.batch.train``, whose
+    ``--mode=tune`` forwards a fixed argv into ``src.tuning.tune_nn.main``;
+    that main dispatches here on the env flag (``containerOverrides.
+    environment`` passes through the entrypoint untouched), so a one-off GPU
+    run needs no ``src/batch`` edit — which would fire a 6-position retrain.
+
+    Env knobs:
+      FF_ENSEMBLE_SEEDS         ensemble width N           (default 8)
+      FF_ENSEMBLE_FIXED_EPOCHS  fixed epochs per arm       (default 30)
+      FF_ENSEMBLE_PARITY        "1" trains the sequential arm and FAILS the
+                                job when the parity gate misses (default 1);
+                                forces FF_FORCE_DROPOUT_ZERO=1
+
+    The report JSON goes to stdout (CloudWatch) and, when ``S3_BUCKET`` is
+    set, to ``s3://$S3_BUCKET/ensemble_ab/{POS}/report.json``.
+    """
+    # Fail before the multi-minute S3 data sync, not inside capture_seeds.
+    if position not in ENSEMBLE_POSITIONS:
+        raise SystemExit(f"ensemble mode supports {ENSEMBLE_POSITIONS}, got {position}")
+    n_seeds = int(os.environ.get("FF_ENSEMBLE_SEEDS", "8"))
+    fixed_epochs = int(os.environ.get("FF_ENSEMBLE_FIXED_EPOCHS", "30"))
+    parity = os.environ.get("FF_ENSEMBLE_PARITY", "1").strip() == "1"
+    if parity:
+        os.environ["FF_FORCE_DROPOUT_ZERO"] = "1"
+
+    from src.tuning.tune_nn import _ensure_data_from_s3
+
+    _ensure_data_from_s3()
+    report = run_ensemble_ab(position, n_seeds, fixed_epochs, parity_check=parity)
+    print(json.dumps(report, indent=2))
+
+    bucket = os.environ.get("S3_BUCKET")
+    if bucket:
+        import boto3
+
+        key = f"ensemble_ab/{position.upper()}/report.json"
+        boto3.client("s3").put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=json.dumps(report, indent=2).encode(),
+            ContentType="application/json",
+        )
+        print(f"[ensemble] uploaded report to s3://{bucket}/{key}")
+
+    # Fail the Batch job loudly on parity drift — the report is already in
+    # S3/CloudWatch, and RETRY_STRATEGY exits (no retry) on task failures.
+    if parity and not report["parity"]["ok"]:
+        raise SystemExit(f"[ensemble] parity gate FAILED: {report['parity']}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--position", required=True, choices=list(ENSEMBLE_POSITIONS))
@@ -407,53 +520,7 @@ def main() -> None:
         "(requires FF_FORCE_DROPOUT_ZERO=1)",
     )
     args = parser.parse_args()
-
-    apply_ensemble_env(args.fixed_epochs)
-    if args.parity_check and os.environ.get("FF_FORCE_DROPOUT_ZERO", "0") != "1":
-        raise SystemExit(
-            "--parity-check requires FF_FORCE_DROPOUT_ZERO=1 (dropout "
-            "draws are not comparable across arms otherwise)"
-        )
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    seeds = list(range(42, 42 + args.seeds))
-    print(f"[ensemble] capturing {len(seeds)} seed constructions for {args.position}...")
-    t0 = time.perf_counter()
-    captures, test_capture = capture_seeds(args.position, seeds, base_cfg=None)
-    from src.shared.registry import get_config
-
-    cfg = get_config(args.position)
-    capture_sec = time.perf_counter() - t0
-    n_epochs = args.fixed_epochs
-
-    print(f"[ensemble] training stacked N={len(seeds)} for {n_epochs} epochs...")
-    t0 = time.perf_counter()
-    params, buffers, template = train_stacked(captures, cfg, device, n_epochs)
-    if device.type == "cuda":
-        torch.cuda.synchronize()
-    stacked_sec = time.perf_counter() - t0
-    stacked_preds = predict_stacked(template, params, buffers, test_capture, device)
-
-    report = {
-        "position": args.position,
-        "n_seeds": len(seeds),
-        "n_epochs": n_epochs,
-        "device": str(device),
-        "capture_sec": round(capture_sec, 2),
-        "stacked_train_sec": round(stacked_sec, 2),
-    }
-
-    if args.parity_check:
-        print("[ensemble] training sequential reference arm...")
-        t0 = time.perf_counter()
-        seq_models = train_sequential(captures, cfg, device, n_epochs)
-        if device.type == "cuda":
-            torch.cuda.synchronize()
-        seq_sec = time.perf_counter() - t0
-        seq_preds = [predict_single(m, test_capture, device) for m in seq_models]
-        report["sequential_train_sec"] = round(seq_sec, 2)
-        report["speedup"] = round(seq_sec / stacked_sec, 2)
-        report["parity"] = _parity_report(seq_preds, stacked_preds)
+    report = run_ensemble_ab(args.position, args.seeds, args.fixed_epochs, args.parity_check)
     print(json.dumps(report, indent=2))
 
 
