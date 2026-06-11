@@ -12,7 +12,7 @@ GRAPH_SEARCH_SPACE_VERSION = f"{SEARCH_SPACE_VERSION}_graph"
 
 
 def resolve_search_space_version(
-    parallel_backend: str = "thread", *, cuda_graph: bool = False
+    parallel_backend: str = "thread", *, cuda_graph: bool = False, full_graph: bool = False
 ) -> str:
     """Storage namespace for the execution profile.
 
@@ -32,10 +32,22 @@ def resolve_search_space_version(
     as ``FF_CUDA_GRAPH`` — never a raw env-truthy read. Post-cutover the env is
     a force-OFF override only: an sm_80+ box with it unset trains graphed, and
     a sub-sm_80 box with ``FF_CUDA_GRAPH=1`` trains eager.
+
+    ``full_graph`` (FF_CUDA_GRAPH_FULL: gather+forward+loss in one capture)
+    appends ``full`` to the graph namespaces — yet another trajectory regime,
+    same separation rationale, same resolved-decision rule (the trainer's
+    ``cuda_graph_full_enabled()``, or the launcher's submit-side CLI bool). It
+    composes only WITH ``cuda_graph`` (the trainer's full-step gate requires
+    the base gate), so full-without-graph resolves to the plain namespace
+    rather than inventing an unreachable one.
     """
     if parallel_backend == "mps":
-        return MPS_GRAPH_SEARCH_SPACE_VERSION if cuda_graph else MPS_SEARCH_SPACE_VERSION
-    return GRAPH_SEARCH_SPACE_VERSION if cuda_graph else SEARCH_SPACE_VERSION
+        base = MPS_GRAPH_SEARCH_SPACE_VERSION if cuda_graph else MPS_SEARCH_SPACE_VERSION
+    else:
+        base = GRAPH_SEARCH_SPACE_VERSION if cuda_graph else SEARCH_SPACE_VERSION
+    if full_graph and cuda_graph:
+        return f"{base}full"
+    return base
 
 
 def s3_prefix(version: str = SEARCH_SPACE_VERSION) -> str:

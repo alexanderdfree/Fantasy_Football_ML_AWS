@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from src.shared.utils import amp_dtype, cuda_graph_enabled
+from src.shared.utils import amp_dtype, cuda_graph_enabled, cuda_graph_full_enabled
 
 SUPPORTED_HEAD_LOSSES = ("huber", "mse", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
 _TRUE_ENV = {"1", "true", "yes", "on"}
@@ -149,6 +149,37 @@ def hurdle_poisson_value_loss(preds: dict, targets: dict, name: str) -> torch.Te
         frac_pos = pos_mask.float().mean()
         return frac_pos * ztp_nll
     return torch.zeros((), device=y.device, dtype=y.dtype)
+
+
+def hurdle_negbin_value_loss_capturable(preds: dict, targets: dict, name: str) -> torch.Tensor:
+    """Branch-free ``hurdle_negbin_value_loss`` for CUDA-graph capture.
+
+    The branchy original's ``if pos_mask.any():`` is a host-side, data-
+    dependent branch — it forces a GPU→CPU sync AND aborts graph capture.
+    Algebraic identity used here:
+    ``frac_pos * mean_over_pos(nll) == masked_nll_sum / N``, and the
+    no-positives case degenerates to the same 0. Masked-out lanes are fed
+    ``y=1`` substitutes so the log-prob stays finite before the mask zeroes
+    it (``0 * inf`` would poison the sum).
+    """
+    y = targets[name]
+    mu = preds[f"{name}_value_mu"]
+    log_alpha = preds[f"{name}_value_log_alpha"]
+    mask = (y > 0).to(y.dtype)
+    y_safe = torch.where(y > 0, y, torch.ones_like(y))
+    log_prob = ztnb2_log_prob(y_safe, mu, log_alpha)
+    return -(log_prob * mask).sum() / y.shape[0]
+
+
+def hurdle_poisson_value_loss_capturable(preds: dict, targets: dict, name: str) -> torch.Tensor:
+    """Branch-free ``hurdle_poisson_value_loss`` — same identity as
+    :func:`hurdle_negbin_value_loss_capturable`, ZTP value family."""
+    y = targets[name]
+    mu = preds[f"{name}_value_mu"]
+    mask = (y > 0).to(y.dtype)
+    y_safe = torch.where(y > 0, y, torch.ones_like(y))
+    log_prob = ztp_log_prob(y_safe, mu)
+    return -(log_prob * mask).sum() / y.shape[0]
 
 
 class MultiTargetLoss(nn.Module):
@@ -309,6 +340,38 @@ class MultiTargetLoss(nn.Module):
         components = {k: v.item() for k, v in tensor_components.items()}
         return combined, components
 
+    def compute_combined_capturable(self, preds: dict, targets: dict) -> torch.Tensor:
+        """``combined`` only, with branch-free hurdle dispatch — CUDA-graph-safe.
+
+        Numerically equivalent to ``_compute_loss_components``'s ``combined``
+        for every head family: Huber / MSE / PoissonNLL / gate-BCE are already
+        pure tensor ops, and the hurdle families swap their data-dependent
+        ``if pos_mask.any():`` host branch for the algebraically identical
+        masked-sum form (see ``hurdle_*_value_loss_capturable``). The
+        per-head dispatch below is config-static (same branch every step), so
+        it does not break capture. Used by ``_GraphedTrainStep``; eager paths
+        keep the branchy originals byte-identical.
+        """
+        combined = torch.tensor(0.0, device=next(iter(preds.values())).device)
+        for name in self.target_names:
+            lt = self.head_losses[name]
+            if lt == "hurdle_negbin":
+                loss = hurdle_negbin_value_loss_capturable(preds, targets, name)
+            elif lt == "hurdle_poisson":
+                loss = hurdle_poisson_value_loss_capturable(preds, targets, name)
+            else:
+                loss = self.loss_fns[name](preds[name], targets[name])
+            combined = combined + self.loss_weights[name] * loss
+
+        for gated_name in self.gated_targets:
+            gate_key = f"{gated_name}_gate_logit"
+            if gate_key in preds:
+                gate_loss = F.binary_cross_entropy_with_logits(
+                    preds[gate_key], (targets[gated_name] > 0).float()
+                )
+                combined = combined + self.gate_weight * gate_loss
+        return combined
+
 
 class _GPUResidentBatcher:
     """Iterates pre-loaded GPU tensors in shuffled mini-batches without DataLoader.
@@ -366,6 +429,35 @@ class _GPUResidentBatcher:
             return self._n // self._batch_size
         return (self._n + self._batch_size - 1) // self._batch_size
 
+    @property
+    def features(self) -> tuple:
+        """The resident on-device feature tensors, in model-positional order."""
+        return self._features
+
+    @property
+    def y_dict(self) -> dict:
+        """The resident on-device target tensors."""
+        return self._y_dict
+
+    def index_batches(self):
+        """Yield per-step index tensors instead of sliced batches.
+
+        The full-step CUDA-graph path (``_GraphedTrainStep``) does its own
+        ``index_select`` *inside* the captured graph, so the loop only needs
+        the indices. Consumes the CPU global RNG identically to ``__iter__``
+        (one ``torch.randperm`` per pass) so both paths see the same
+        per-epoch batch order at the same seed.
+        """
+        if self._n == 0:
+            return
+        if self._shuffle:
+            perm = torch.randperm(self._n).to(self._device)
+        else:
+            perm = torch.arange(self._n, device=self._device)
+        last = (self._n // self._batch_size) * self._batch_size if self._drop_last else self._n
+        for i in range(0, last, self._batch_size):
+            yield perm[i : i + self._batch_size]
+
     def __iter__(self):
         if self._n == 0:
             return
@@ -400,6 +492,38 @@ class _GPUResidentBatcher:
             # Yield in the same nested shape the existing Dataset + default
             # collate path produces (positional features..., target dict).
             yield (*sliced_features, sliced_y)
+
+
+class _GraphedTrainStep(nn.Module):
+    """Batch gather + model forward + combined loss as ONE graphable callable.
+
+    ``make_graphed_callables`` captures this module's forward+backward, so the
+    train step's eager remainder shrinks to: the idx slice handoff, one graph
+    replay, and the GradScaler/clip/optimizer tail. The wrapped model module
+    itself stays eager — validation, prediction, and ``state_dict`` are
+    untouched (unlike the model-only capture, which patches
+    ``model.forward``).
+
+    The resident feature/target tensors are held by reference (plain attrs,
+    NOT registered buffers — they are the batcher's storage, not state to
+    serialize) and must keep stable addresses for the capture's lifetime;
+    ``_GPUResidentBatcher`` never reallocates them after construction. The
+    gather runs on whatever index tensor is copied into the graph's static
+    input each replay, so shuffled epochs work unchanged.
+    """
+
+    def __init__(self, model: nn.Module, criterion: nn.Module, features: tuple, y_dict: dict):
+        super().__init__()
+        self.model = model
+        self.criterion = criterion
+        self._features = features
+        self._y_dict = y_dict
+
+    def forward(self, idx: torch.Tensor) -> torch.Tensor:
+        feats = tuple(t.index_select(0, idx) for t in self._features)
+        y = {k: v.index_select(0, idx) for k, v in self._y_dict.items()}
+        preds = self.model(*feats)
+        return self.criterion.compute_combined_capturable(preds, y)
 
 
 def _gpu_resident_device(device=None) -> torch.device | None:
@@ -685,6 +809,10 @@ class MultiHeadTrainer:
         # Flipped True once make_graphed_callables has wrapped self.model
         # (FF_CUDA_GRAPH path); guards _maybe_graph_model against re-capturing.
         self._graphed = False
+        # Set to the captured _GraphedTrainStep when FULL-STEP capture engages
+        # (FF_CUDA_GRAPH_FULL path); the train loop then iterates index
+        # batches and the model-only capture is skipped.
+        self._graphed_step = None
 
     def _autocast(self):
         """Return the autocast context when AMP is active, else nullcontext.
@@ -760,6 +888,82 @@ class MultiHeadTrainer:
         X_batch, _ = batch
         return (X_batch.to(self.device, non_blocking=True),)
 
+    def _maybe_graph_full_step(self, train_loader) -> bool:
+        """Opt-in FULL-STEP capture (``FF_CUDA_GRAPH_FULL`` + the base
+        sm_80+ gate): one graph covering batch gather + model forward +
+        combined loss via :class:`_GraphedTrainStep`.
+
+        Strictly wider capture than :meth:`_maybe_graph_model` — the eager
+        per-step remainder drops from {gather, forward-replay, criterion
+        (~dozens of launches), backward-replay} to {idx handoff, one
+        fwd+bwd replay} plus the shared GradScaler/clip/optimizer tail.
+        Returns True when engaged (sets ``self._graphed_step``); the train
+        loop then iterates ``index_batches()``, and the model-only capture
+        MUST be skipped (capturing a wrapper around an already-graphed model
+        would nest replays inside a capture — invalid).
+
+        Engagement requirements, all config-static:
+        - ``cuda_graph_full_enabled()`` and a CUDA-device trainer;
+        - a ``_GPUResidentBatcher`` train loader with ``drop_last`` (static
+          shapes; the resident tensors give the gather stable storage);
+        - the attention entropy regulariser dormant (``attn_entropy_coeff``
+          0/absent) — its side-channel buffer read is not validated under
+          this capture;
+        - capture itself succeeding — any failure logs and falls back to the
+          model-only path, so a position that can't capture still trains.
+        """
+        if (
+            self._graphed
+            or self._graphed_step is not None
+            or self.device.type != "cuda"
+            or not cuda_graph_full_enabled()
+            or not isinstance(train_loader, _GPUResidentBatcher)
+            or not train_loader._drop_last
+            or getattr(self.model, "attn_entropy_coeff", 0.0)
+        ):
+            return False
+        step = _GraphedTrainStep(
+            self.model, self.criterion, train_loader.features, train_loader.y_dict
+        )
+        step.train()
+        # arange, not a sampled permutation slice: valid indices with the
+        # static train batch shape, and it consumes NO RNG (the model-only
+        # capture's ``next(iter(train_loader))`` draws a permutation; this
+        # path keeps capture RNG-free so epoch batch order matches the eager
+        # iterator at the same seed).
+        sample_idx = torch.arange(train_loader._batch_size, device=self.device)
+        capture_ctx = (
+            torch.amp.autocast(device_type="cuda", dtype=self._amp_dtype, cache_enabled=False)
+            if self._use_amp
+            else contextlib.nullcontext()
+        )
+        bn_snapshot = (
+            _snapshot_batchnorm_state(self.model)
+            if _env_truthy(_CUDA_GRAPH_RESTORE_BN_ENV)
+            else None
+        )
+        try:
+            with capture_ctx:
+                graphed = torch.cuda.make_graphed_callables(
+                    step,
+                    (sample_idx,),
+                    num_warmup_iters=3,
+                    allow_unused_input=True,
+                )
+        except Exception as e:
+            print(
+                f"[cuda-graph] full-step capture failed ({e!r}); "
+                "falling back to model-only capture",
+                flush=True,
+            )
+            return False
+        finally:
+            if bn_snapshot is not None:
+                _restore_batchnorm_state(bn_snapshot)
+        self._graphed_step = graphed
+        self._graphed = True
+        return True
+
     def _maybe_graph_model(self, train_loader) -> None:
         """Autodetect-ON for CUDA sm_80+ (``FF_CUDA_GRAPH`` is the force-off
         override): replace ``self.model`` with a CUDA graph capture of its
@@ -825,8 +1029,11 @@ class MultiHeadTrainer:
         self._graphed = True
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
-        # CUDA graph capture: autodetect-ON for sm_80+ (FF_CUDA_GRAPH=0 forces eager); no-op otherwise.
-        self._maybe_graph_model(train_loader)
+        # CUDA graph capture, widest applicable scope first: opt-in full-step
+        # (gather+fwd+loss, FF_CUDA_GRAPH_FULL) subsumes the autodetect-ON
+        # model-only capture (FF_CUDA_GRAPH=0 forces eager); no-op otherwise.
+        if not self._maybe_graph_full_step(train_loader):
+            self._maybe_graph_model(train_loader)
         # FF_NN_FIXED_EPOCHS=<N> (test-only): train exactly N epochs, never
         # early-stop, keep last-epoch weights (skip best-val restore). Makes
         # model selection independent of the (graph-perturbed) val curve, so a
@@ -877,16 +1084,24 @@ class MultiHeadTrainer:
             epoch_train_loss = torch.zeros((), device=self.device, dtype=torch.float32)
             n_train_batches = 0
 
-            for batch in train_loader:
+            # Full-step graph path iterates bare index tensors (the gather
+            # happens inside the captured graph); eager / model-only-graph
+            # paths iterate sliced batches. Same RNG consumption either way.
+            full_step = self._graphed_step
+            batch_iter = train_loader.index_batches() if full_step is not None else train_loader
+            for batch in batch_iter:
                 self.optimizer.zero_grad(set_to_none=True)
                 with self._autocast():
-                    preds, y_batch = self._forward_batch(batch)
-                    # _compute_loss_components, NOT forward(): forward()'s
-                    # float components dict costs one .item() GPU sync per
-                    # target/gate head (~7-9 syncs per step) and this branch
-                    # discards it. The val branch below already calls the
-                    # tensor-returning path for the same reason.
-                    loss, _ = self.criterion._compute_loss_components(preds, y_batch)
+                    if full_step is not None:
+                        loss = full_step(batch)
+                    else:
+                        preds, y_batch = self._forward_batch(batch)
+                        # _compute_loss_components, NOT forward(): forward()'s
+                        # float components dict costs one .item() GPU sync per
+                        # target/gate head (~7-9 syncs per step) and this branch
+                        # discards it. The val branch below already calls the
+                        # tensor-returning path for the same reason.
+                        loss, _ = self.criterion._compute_loss_components(preds, y_batch)
                     # Attention entropy regulariser (additive). ``entropy_fn``
                     # is hoisted above the epoch loop; it returns ``None`` when
                     # the feature is off.
@@ -1427,6 +1642,13 @@ class MultiHeadNestedHistoryTrainer(MultiHeadTrainer):
         correctly while the flat-history positions use graph capture.
         """
         return
+
+    def _maybe_graph_full_step(self, train_loader) -> bool:
+        """Full-step capture no-ops for the same kwarg/None-leaf reasons as
+        ``_maybe_graph_model`` above — ``_GraphedTrainStep`` calls
+        ``model(*feats)`` positionally and the 5-tuple legacy path carries a
+        ``None`` history leaf. K stays eager under FF_CUDA_GRAPH_FULL too."""
+        return False
 
     def _forward_batch(self, batch) -> tuple[dict, dict]:
         if len(batch) == 5:

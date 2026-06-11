@@ -101,6 +101,25 @@ rebaseline. K's nested trainer still no-ops capture, and CPU/CI/T4 stay eager
 
 **Fixed-scale follow-up (2026-06-01):** lower explicit scales were tested on RB with fixed 30 epochs, dropout disabled, deterministic mode on, and graph BN warmup restored. `init_scale=2048` and `1024` still overflowed in the graph arm; `512` completed both graph and eager with identical scale/skip traces (2130 steps, 0 scale changes) but still produced a graph-vs-eager MAE delta (`4.044157` vs `4.060941`). That isolates the remaining difference to the expected multi-step FP16 trajectory drift from graph replay/kernel ordering. Fixed scale is not a bit-comparable bridge to eager and is its own worse-quality training regime, so the decision is: **graphed runs compare to graphed runs, not to eager baselines**; use a graphed local rebaseline for `FF_CUDA_GRAPH=1` A/Bs.
 
+### Lever A2 — FULL-STEP capture (`FF_CUDA_GRAPH_FULL`) — BUILT 2026-06-11, GPU gates pending
+
+Lever A collapsed the launches *inside* the model, but the L4 step remained ~7.5 ms of
+host dispatch for ≲0.1 ms of GPU math (measured 2026-06-10: per-step time is
+batch-size-invariant — bs512 0.25 s/epoch over 33 steps ≈ bs256 0.47 s over 66 — and the
+eager remainder is gather + MultiTargetLoss (~dozens of launches) + GradScaler/clip/AdamW +
+the Python loop). A2 widens the capture: `_GraphedTrainStep` (training.py) graphs
+gather+forward+combined-loss as one callable (branch-free hurdle dispatch via
+`compute_combined_capturable`; the train loop feeds bare idx tensors from
+`_GPUResidentBatcher.index_batches()`), leaving only the idx handoff + scaler/optimizer
+tail eager. **Opt-in** (`cuda_graph_full_enabled()`: `FF_CUDA_GRAPH_FULL` truthy AND the
+base sm_80+ gate) — training default-off (one approved rebaseline, not two); tune jobs
+default-on via `launch_tune --cuda-graph-full` with studies isolated in `*_graphfull`
+namespaces; capture failure falls back to the model-only graph; K no-ops. Ship gates (run
+on Batch): step-ms ≥2× vs model-only graph, graph-vs-graph same-seed Δ=0, tune smoke
+≥1.7× trials/min with pruning live, flat `memory_reserved` across ≥30 sequential trials
+per worker. Context: under the 24-vCPU Spot quota (~1 launch-bound trial per vCPU), host-CPU
+per trial is the only lever that raises fleet tune throughput.
+
 ---
 
 ## Lever B — single process + per-position CUDA streams (the MPS substitute)

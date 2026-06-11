@@ -91,6 +91,7 @@ from src.shared.registry import get_config, get_runner
 # Already paid for: detect_platform imports torch at module level, so pulling
 # in the capture resolver adds no new import weight to the tune CLI.
 from src.shared.utils import cuda_graph_enabled as _cuda_graph_enabled
+from src.shared.utils import cuda_graph_full_enabled as _cuda_graph_full_enabled
 from src.tuning.history import append_tuning_run
 from src.tuning.tune_nn_storage import (
     SEARCH_SPACE_VERSION as _DEFAULT_SEARCH_SPACE_VERSION,
@@ -247,7 +248,7 @@ def _resolve_parallel_backend(requested: str) -> str:
     return _THREAD_BACKEND
 
 
-def _resolve_storage_version(parallel_backend: str) -> tuple[str, bool]:
+def _resolve_storage_version(parallel_backend: str) -> tuple[str, bool, bool]:
     """Storage namespace for this run, plus the capture decision it keys on.
 
     Keyed on ``cuda_graph_enabled()`` — the same autodetect + force-off-override
@@ -260,7 +261,14 @@ def _resolve_storage_version(parallel_backend: str) -> tuple[str, bool]:
     training trajectory (ADR-0017: graphed and eager are not comparable).
     """
     cuda_graph = _cuda_graph_enabled()
-    return _resolve_search_space_version(parallel_backend, cuda_graph=cuda_graph), cuda_graph
+    full_graph = _cuda_graph_full_enabled()
+    return (
+        _resolve_search_space_version(
+            parallel_backend, cuda_graph=cuda_graph, full_graph=full_graph
+        ),
+        cuda_graph,
+        full_graph,
+    )
 
 
 def _make_storage(db_path: str, sqlite_timeout: int = _DEFAULT_SQLITE_TIMEOUT_SECONDS):
@@ -1070,6 +1078,8 @@ def _run_mps_optimize(
     }
     if "FF_CUDA_GRAPH" in os.environ:
         env_overrides["FF_CUDA_GRAPH"] = os.environ["FF_CUDA_GRAPH"]
+    if "FF_CUDA_GRAPH_FULL" in os.environ:
+        env_overrides["FF_CUDA_GRAPH_FULL"] = os.environ["FF_CUDA_GRAPH_FULL"]
     if "FF_AMP_DTYPE" in os.environ:
         env_overrides["FF_AMP_DTYPE"] = os.environ["FF_AMP_DTYPE"]
     if "FF_COMPILE" in os.environ:
@@ -1241,7 +1251,7 @@ def main():
     requested_backend = args.parallel_backend
     parallel_backend = _resolve_parallel_backend(requested_backend)
     n_jobs = _resolve_n_jobs(args.n_jobs, parallel_backend)
-    storage_version, cuda_graph = _resolve_storage_version(parallel_backend)
+    storage_version, cuda_graph, cuda_graph_full = _resolve_storage_version(parallel_backend)
 
     if not args.print_best:
         _ensure_data_from_s3()
@@ -1318,7 +1328,8 @@ def main():
         )
         print(
             f"  backend={parallel_backend} requested_backend={requested_backend} n_jobs={n_jobs} "
-            f"storage={storage_version} cuda_graph={cuda_graph}"
+            f"storage={storage_version} cuda_graph={cuda_graph} "
+            f"cuda_graph_full={cuda_graph_full}"
         )
         print(f"{'=' * 70}")
 
@@ -1383,9 +1394,10 @@ def main():
             # (see _ram_safe_n_jobs), and tuning-history provenance must
             # record what ran, not what was asked for.
             "n_jobs": effective_n_jobs,
-            # The actual capture decision (cuda_graph_enabled()), not the raw
-            # env — tuning-history provenance must record what ran.
+            # The actual capture decisions (cuda_graph[_full]_enabled()), not
+            # the raw env — tuning-history provenance must record what ran.
             "cuda_graph": cuda_graph,
+            "cuda_graph_full": cuda_graph_full,
             "elapsed_seconds": round(elapsed, 1),
         }
 

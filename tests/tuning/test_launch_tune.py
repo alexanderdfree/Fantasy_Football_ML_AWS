@@ -66,8 +66,11 @@ def test_submit_tune_job_builds_expected_command():
     env = {e["name"]: e["value"] for e in overrides["environment"]}
     assert env["FF_DEVICE"] == "cuda"
     assert env["FF_CUDA_GRAPH"] == "1"
+    # Full-step capture is the tune-job default; studies land in the
+    # *_graphfull namespace so they never mix with model-only-graph studies.
+    assert env["FF_CUDA_GRAPH_FULL"] == "1"
     assert env["FF_COMPILE"] == "0"
-    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v2_mps_graph"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v2_mps_graphfull"
     assert kwargs["timeout"] == {"attemptDurationSeconds": 7200}
     # Retry strategy comes from launch.py — Spot interruptions retry, other
     # errors exit fast.
@@ -155,5 +158,22 @@ def test_submit_tune_job_can_disable_cuda_graph_and_change_workers():
     assert cmd[cmd.index("--n-jobs") + 1] == "2"
     env = {e["name"]: e["value"] for e in kwargs["containerOverrides"]["environment"]}
     assert env["FF_CUDA_GRAPH"] == "0"
+    # full_graph composes only WITH cuda_graph: graph disabled -> plain
+    # eager namespace even though --cuda-graph-full defaults true.
     assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v2"
     assert kwargs["timeout"] == {"attemptDurationSeconds": 900}
+
+
+def test_submit_tune_job_can_disable_full_graph_only():
+    """cuda_graph on + full off -> the model-only-graph mps namespace."""
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "fake"}
+    launch_tune.submit_tune_job(
+        "QB", n_trials=6, cuda_graph=True, cuda_graph_full=False, batch_client=batch
+    )
+    env = {
+        e["name"]: e["value"]
+        for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+    }
+    assert env["FF_CUDA_GRAPH_FULL"] == "0"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v2_mps_graph"

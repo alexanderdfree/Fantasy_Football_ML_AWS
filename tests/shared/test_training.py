@@ -14,8 +14,16 @@ from __future__ import annotations
 
 import pytest
 import torch
+from torch import nn
 
-from src.shared.training import _gpu_resident_device, _GPUResidentBatcher
+from src.shared.training import (
+    MultiHeadNestedHistoryTrainer,
+    MultiHeadTrainer,
+    MultiTargetLoss,
+    _gpu_resident_device,
+    _GPUResidentBatcher,
+    _GraphedTrainStep,
+)
 
 
 @pytest.mark.unit
@@ -199,3 +207,108 @@ class TestGPUResidentBatcher:
             assert len(batches) == len(batcher), (
                 f"drop_last={drop_last}: len()={len(batcher)} but yielded {len(batches)}"
             )
+
+
+@pytest.mark.unit
+class TestGraphedTrainStep:
+    """CPU-eager checks for the full-step capture pieces. The capture itself
+    is CUDA-only (GPU-dry-run-gated, like all graph paths); these pin the
+    wrapper's math and the index iterator's RNG contract, which are
+    device-agnostic."""
+
+    def _tiny_setup(self, n=12, d=5, batch_size=4):
+        torch.manual_seed(7)
+        feats = (torch.randn(n, d),)
+        y = {"a": torch.randn(n).abs(), "b": torch.randn(n).abs()}
+        batcher = _GPUResidentBatcher(
+            feature_tensors=feats, y_dict=y, batch_size=batch_size, shuffle=True, drop_last=True
+        )
+
+        class _TwoHead(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.fc = nn.Linear(d, 2)
+
+            def forward(self, x):
+                out = self.fc(x)
+                # softplus keeps the poisson_nll head's rate positive — an
+                # untrained Linear emits negatives, which NaN the NLL (the
+                # production model clamps via non_negative_targets instead).
+                return {"a": out[:, 0], "b": torch.nn.functional.softplus(out[:, 1])}
+
+        model = _TwoHead()
+        criterion = MultiTargetLoss(
+            target_names=["a", "b"],
+            loss_weights={"a": 1.0, "b": 2.0},
+            head_losses={"a": "huber", "b": "poisson_nll"},
+        )
+        return feats, y, batcher, model, criterion
+
+    def test_wrapper_matches_eager_gather_plus_loss(self):
+        feats, y, batcher, model, criterion = self._tiny_setup()
+        step = _GraphedTrainStep(model, criterion, batcher.features, batcher.y_dict)
+        idx = torch.tensor([3, 0, 7, 5])
+        wrapped = step(idx)
+        preds = model(feats[0].index_select(0, idx))
+        y_sel = {k: v.index_select(0, idx) for k, v in y.items()}
+        eager, _ = criterion._compute_loss_components(preds, y_sel)
+        assert wrapped.item() == pytest.approx(eager.item(), rel=1e-6)
+
+    def test_wrapper_backward_reaches_model_params(self):
+        _, _, batcher, model, criterion = self._tiny_setup()
+        step = _GraphedTrainStep(model, criterion, batcher.features, batcher.y_dict)
+        loss = step(torch.tensor([0, 1, 2, 3]))
+        loss.backward()
+        assert model.fc.weight.grad is not None
+
+    def test_index_batches_matches_iter_rng_and_order(self):
+        feats, y, batcher, _, _ = self._tiny_setup()
+        torch.manual_seed(123)
+        sliced = [b[0] for b in batcher]  # first feature tensor per batch
+        torch.manual_seed(123)
+        idxs = list(batcher.index_batches())
+        assert len(idxs) == len(sliced) == len(batcher)
+        for idx, ref in zip(idxs, sliced, strict=True):
+            assert torch.equal(feats[0].index_select(0, idx), ref)
+
+    def test_full_step_gating_noops_on_cpu_and_off_knob(self, monkeypatch):
+        _, _, batcher, model, criterion = self._tiny_setup()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        trainer = MultiHeadTrainer(
+            model=model,
+            optimizer=optimizer,
+            scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer),
+            criterion=criterion,
+            device=torch.device("cpu"),
+            target_names=["a", "b"],
+            patience=3,
+        )
+        # CPU device -> never engages, even with the env forced on.
+        monkeypatch.setenv("FF_CUDA_GRAPH_FULL", "1")
+        assert trainer._maybe_graph_full_step(batcher) is False
+        assert trainer._graphed_step is None
+        # And a CPU train() runs the plain path end-to-end with the env on.
+        val_loader = _GPUResidentBatcher(
+            feature_tensors=batcher.features,
+            y_dict=batcher.y_dict,
+            batch_size=4,
+            shuffle=False,
+            drop_last=False,
+        )
+        history = trainer.train(batcher, val_loader, n_epochs=2)
+        assert len(history["train_loss"]) == 2
+
+    def test_full_step_gating_noops_for_nested_k_trainer(self, monkeypatch):
+        _, _, batcher, model, criterion = self._tiny_setup()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        trainer = MultiHeadNestedHistoryTrainer(
+            model=model,
+            optimizer=optimizer,
+            scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer),
+            criterion=criterion,
+            device=torch.device("cpu"),
+            target_names=["a", "b"],
+            patience=3,
+        )
+        monkeypatch.setenv("FF_CUDA_GRAPH_FULL", "1")
+        assert trainer._maybe_graph_full_step(batcher) is False
