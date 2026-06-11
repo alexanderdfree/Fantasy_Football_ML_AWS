@@ -192,14 +192,22 @@ jobs:
 
           # Raw injuries = the OUT-teammate out-set for the role-inheritance features
           # (those teammates are absent from the weekly frame, so the out-set must come
-          # from the injury report). Raw rosters add reserve / game-day-inactive players
-          # (status "RES" or "INA"), who are absent from BOTH the weekly frame AND the
-          # injury report, so a starter lost to IR or scratched is otherwise invisible
-          # to the vacancy signal (#1106).
+          # from the injury report). WEEKLY rosters add reserve / game-day-inactive
+          # players (status "RES" or "INA"), who are absent from BOTH the weekly frame
+          # AND the injury report, so a starter lost to IR or scratched is otherwise
+          # invisible to the vacancy signal (#1106). Must be rosters_weekly — the
+          # seasonal nfl_source.rosters frame also carries week/status columns but has
+          # only ~1 row per player-season, which silently registered ~no vacancies
+          # (caught 2026-06-11); the assert below makes that failure mode loud.
           # build_features bakes is_top_available + inherited_opportunity into the splits.
           # A fetch failure raises here, failing the step before any S3 upload.
           injuries = nfl_source.injuries(list(SEASONS))
-          rosters = nfl_source.rosters(list(SEASONS))
+          rosters = nfl_source.rosters_weekly(list(SEASONS))
+          max_weeks = int(rosters.groupby("season")["week"].nunique().max())
+          assert max_weeks >= 5, (
+              f"rosters frame is not weekly-granular (max {max_weeks} distinct "
+              "weeks/season) — inheritance out-set would be silently empty"
+          )
           df = build_features(
               preprocess(load_raw_data()), injuries_df=injuries, rosters_df=rosters
           )
