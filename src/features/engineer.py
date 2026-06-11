@@ -51,25 +51,23 @@ def build_features(
     """
     df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
-    # ``stint_id`` (per-season, team-change-aware) is consumed ONLY by the
-    # team-relative SHARE features below (target/carry/air_yards share + the
-    # snap_pct static lag): a player traded mid-season starts a fresh stint so
-    # those team-relative ratios don't blend the prior team (#666 air_yards_share;
-    # #677 snap_pct). ``team_changed`` + ``stint_id`` are dropped at the cleanup
-    # near the end. The frame is already sorted by (player_id, season, week)
+    # ``stint_id`` (per-season, team-change-aware) is consumed by the
+    # team-relative SHARE features (target/carry/air_yards share + the snap_pct
+    # static lag; #666/#677) AND by the recent-FORM windows (rolling / EWMA /
+    # trend) below: every windowed feature resets at the season boundary and at
+    # a mid-season team change. ``team_changed`` + ``stint_id`` are dropped at
+    # the cleanup near the end. The frame is sorted by (player_id, season, week)
     # above, so the per-group shift is chronological.
     #
-    # The recent-FORM windows (rolling / EWMA / trend) deliberately do NOT use
-    # ``stint_id`` — they group by ``player_id`` alone (below), so a player's
-    # trailing production carries across the offseason AND across trades. The old
-    # per-(player, season[, stint]) grouping reset every rolling feature to 0 at
-    # each season's Week 1 (and at the first game after a trade); since the
-    # upcoming-week board only ever shows Week 1, Ridge — which leans on these
-    # windows and amplifies them through its PCA — collapsed every elite
-    # projection toward the mean at the opener (NN/LGBM lean on prior_season_*
-    # and were unaffected). A player's prior recent average is a far better
-    # estimate than 0. Leakage stays prevented by the ``shift(1)`` on the
-    # chronologically-sorted frame (each row still sees only past games).
+    # REVERT NOTE (#1109, shipped + reverted 2026-06-11): grouping the form
+    # windows by ``player_id`` alone (cross-season/cross-trade carry) fixed the
+    # Week-1 Ridge collapse on the upcoming board, but a same-code isolation A/B
+    # showed the carried prior-season form misleads QB ``passing_yards`` at
+    # openers (NN/LGBM regressed; worst on year-over-year changers) and the
+    # owner chose the per-season reset. Reverting re-introduces the Week-1
+    # Ridge collapse — see the fixed-archive entry "Ridge collapsed every elite
+    # projection at Week 1"; a future re-fix needs a Week-1-specific treatment
+    # (e.g. ridge-side imputation), not a blanket carry into every model.
     df["team_changed"] = (
         df.groupby(["player_id", "season"])["recent_team"].shift(1) != df["recent_team"]
     ).fillna(False)
@@ -78,7 +76,7 @@ def build_features(
     # --- Rolling Features (84: 81 mean/std/max + 3 min) ---
     rolling_cols: dict[str, pd.Series] = {}
     for stat in ROLL_STATS:
-        grouped = df.groupby("player_id")[stat]
+        grouped = df.groupby(["player_id", "season", "stint_id"])[stat]
         for window in ROLLING_WINDOWS:
             rolling_cols[f"rolling_mean_{stat}_L{window}"] = grouped.transform(
                 lambda x, w=window: x.shift(1).rolling(w, min_periods=1).mean()
@@ -250,13 +248,12 @@ def build_features(
         df = df.merge(prior_external, on=["player_id", "season"], how="left")
 
     # --- EWMA Features (14) ---
-    # Player-level (carries across seasons + trades): grouped by ``player_id``
-    # alone so the EWMA never resets to 0 at a season opener — see the rolling
-    # block / stint comment above for why (the Week-1 Ridge collapse). ``shift(1)``
-    # keeps it leakage-safe.
+    # Stint-scoped like the rolling block (see the stint/REVERT comment above):
+    # resets at the season boundary and at a team change. ``shift(1)`` keeps it
+    # leakage-safe.
     ewma_cols: dict[str, pd.Series] = {}
     for stat in EWMA_STATS:
-        grouped = df.groupby("player_id")[stat]
+        grouped = df.groupby(["player_id", "season", "stint_id"])[stat]
         for span in EWMA_SPANS:
             ewma_cols[f"ewma_{stat}_L{span}"] = grouped.transform(
                 lambda x, s=span: x.shift(1).ewm(span=s, min_periods=1).mean()
@@ -264,14 +261,13 @@ def build_features(
     df = pd.concat([df, pd.DataFrame(ewma_cols, index=df.index)], axis=1)
 
     # --- Trend / Momentum Features (4) ---
-    # Player-level (carries across seasons + trades), matching the rolling/EWMA
-    # blocks above: the short/long trailing means group by ``player_id`` alone so
-    # the trend doesn't reset to 0 at the opener.
+    # Stint-scoped, matching the rolling/EWMA blocks above (see the REVERT
+    # comment): short/long trailing means reset at season + team boundaries.
     for stat in TREND_STATS:
-        short = df.groupby("player_id")[stat].transform(
+        short = df.groupby(["player_id", "season", "stint_id"])[stat].transform(
             lambda x: x.shift(1).rolling(3, min_periods=1).mean()
         )
-        long = df.groupby("player_id")[stat].transform(
+        long = df.groupby(["player_id", "season", "stint_id"])[stat].transform(
             lambda x: x.shift(1).rolling(8, min_periods=1).mean()
         )
         df[f"trend_{stat}"] = short - long
@@ -1078,15 +1074,13 @@ def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
         )
 
         def_pts = def_pts.sort_values(["opponent", "position", "season", "week"])
-        # Grouped by (opponent, position) ALONE (not per-season) so points-allowed-
-        # to-position carries across the offseason instead of resetting to 0 at
-        # every Week 1 — same season-opener fix as the opp-defense / player
-        # rolling windows. Sorted by (opponent, position, season, week), so
-        # shift(1) stays chronological and leakage-safe across the boundary.
+        # Per-season grouping (reverted with #1109's player-window carry — see
+        # the REVERT note in build_features): points-allowed-to-position resets
+        # at the season boundary. shift(1) keeps it leakage-safe.
         for col in ["pts_allowed_to_pos", "rush_pts_allowed_to_pos", "recv_pts_allowed_to_pos"]:
-            def_pts[f"opp_{col}"] = def_pts.groupby(["opponent", "position"])[col].transform(
-                lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
-            )
+            def_pts[f"opp_{col}"] = def_pts.groupby(["opponent", "position", "season"])[
+                col
+            ].transform(lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean())
 
         def_pts.rename(
             columns={
@@ -1176,13 +1170,9 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
 
     def_stats.sort_values(["opponent_team", "season", "week"], inplace=True)
 
-    # L5 rolling averages with shift(1) for leakage prevention. Grouped by
-    # ``opponent_team`` ALONE (not per-season) so a defense's trailing form
-    # carries across the offseason instead of resetting to 0 at every Week 1 —
-    # the same season-opener fix applied to the player rolling/EWMA/trend windows
-    # above (a Week-1 board with opp_def = 0 for every game collapses Ridge).
-    # ``def_stats`` is sorted by (opponent_team, season, week), so shift(1) stays
-    # chronological and leakage-safe across the boundary.
+    # L5 rolling averages with shift(1) for leakage prevention. Per-season
+    # grouping (reverted with #1109's carry — see the REVERT note in
+    # build_features): a defense's trailing form resets at the season boundary.
     stat_map = {
         "_def_sacks": "opp_def_sacks_L5",
         "_def_pass_yds": "opp_def_pass_yds_allowed_L5",
@@ -1191,7 +1181,7 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
         "_def_rush_yds": "opp_def_rush_yds_allowed_L5",
     }
     for raw_col, out_col in stat_map.items():
-        def_stats[out_col] = def_stats.groupby("opponent_team")[raw_col].transform(
+        def_stats[out_col] = def_stats.groupby(["opponent_team", "season"])[raw_col].transform(
             lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
         )
 
