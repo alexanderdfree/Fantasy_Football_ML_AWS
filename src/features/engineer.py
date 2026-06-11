@@ -469,16 +469,16 @@ def _build_inheritance_features(
     if rosters_df is not None and len(rosters_df):
         rcols = ("status", "position", "season", "team", "week", "player_id")
         if all(c in rosters_df.columns for c in rcols):
-            ir = rosters_df[
+            sidelined = rosters_df[
                 rosters_df["status"].isin(["RES", "INA"])
                 & rosters_df["position"].isin(_INHERITANCE_POSITIONS)
             ]
             for pos, s, t, w, g in zip(
-                ir["position"],
-                ir["season"].astype(int),
-                ir["team"],
-                ir["week"].astype(int),
-                ir["player_id"].astype(str),
+                sidelined["position"],
+                sidelined["season"].astype(int),
+                sidelined["team"],
+                sidelined["week"].astype(int),
+                sidelined["player_id"].astype(str),
                 strict=True,
             ):
                 outmap.setdefault((pos, s, t, w), set()).add(g)
