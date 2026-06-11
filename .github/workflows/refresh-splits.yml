@@ -192,9 +192,10 @@ jobs:
 
           # Raw injuries = the OUT-teammate out-set for the role-inheritance features
           # (those teammates are absent from the weekly frame, so the out-set must come
-          # from the injury report). Raw rosters add IR/reserve players (status "RES"),
-          # who are absent from BOTH the weekly frame AND the injury report, so a starter
-          # lost to IR is otherwise invisible to the vacancy signal (#1106 finding A).
+          # from the injury report). Raw rosters add reserve / game-day-inactive players
+          # (status "RES" or "INA"), who are absent from BOTH the weekly frame AND the
+          # injury report, so a starter lost to IR or scratched is otherwise invisible
+          # to the vacancy signal (#1106).
           # build_features bakes is_top_available + inherited_opportunity into the splits.
           # A fetch failure raises here, failing the step before any S3 upload.
           injuries = nfl_source.injuries(list(SEASONS))
