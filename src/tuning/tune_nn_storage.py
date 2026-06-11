@@ -8,6 +8,7 @@ and pulling in Optuna.
 SEARCH_SPACE_VERSION = "scheduler_v2"
 MPS_GRAPH_SEARCH_SPACE_VERSION = f"{SEARCH_SPACE_VERSION}_mps_graph"
 MPS_SEARCH_SPACE_VERSION = f"{SEARCH_SPACE_VERSION}_mps"
+GRAPH_SEARCH_SPACE_VERSION = f"{SEARCH_SPACE_VERSION}_graph"
 
 
 def resolve_search_space_version(
@@ -19,10 +20,15 @@ def resolve_search_space_version(
     follows a different training trajectory from the eager local default. Keep
     those studies separate so Batch graph-enabled results never resume from an
     older eager study DB.
+
+    The thread backend honors ``cuda_graph`` too: since the 2026-06-05
+    autodetect-ON cutover, sm_80+ boxes run graphed by default, so a
+    thread-backend tune on such a box must not resume (or pollute) the eager
+    ``scheduler_v2`` study — graphed runs compare to graphed runs (ADR-0017).
     """
     if parallel_backend == "mps":
         return MPS_GRAPH_SEARCH_SPACE_VERSION if cuda_graph else MPS_SEARCH_SPACE_VERSION
-    return SEARCH_SPACE_VERSION
+    return GRAPH_SEARCH_SPACE_VERSION if cuda_graph else SEARCH_SPACE_VERSION
 
 
 def s3_prefix(version: str = SEARCH_SPACE_VERSION) -> str:
