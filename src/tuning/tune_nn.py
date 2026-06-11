@@ -177,6 +177,14 @@ _PARALLEL_BACKENDS = (_THREAD_BACKEND, _MPS_BACKEND, _AUTO_BACKEND)
 # rather than the configured epoch ceiling.
 _HYPERBAND_MIN_RESOURCE = 8
 _HYPERBAND_REDUCTION_FACTOR = 3
+# Per-process trial-data memo, injected into each trial's cfg AFTER the
+# per-trial deepcopy (never put it in base_cfg — entries hold large numpy
+# arrays/frames that must not be deepcopied). The pipeline consults it via
+# cfg["trial_data_memo"] to skip the per-trial split re-read, frame hashing,
+# and attention history-array rebuild (PR D1). Thread mode shares it across
+# concurrent trials: first concurrent trials may duplicate the compute and
+# both store equivalent values — a benign race, so no lock.
+_TRIAL_DATA_MEMO: dict = {}
 # Backbone-layer presets keyed by an integer index. Optuna's persistent storage
 # (SQLite, JSON) only round-trips scalar categorical choices (None/bool/int/
 # float/str); a tuple like ``(128, 64)`` triggers a UserWarning and may not
@@ -717,6 +725,8 @@ def _make_objective(pos: str, base_cfg: dict, seed: int):
         cfg["train_elasticnet"] = False
         cfg["train_lightgbm"] = False
         cfg["train_base_nn"] = False
+        # Post-deepcopy on purpose (see _TRIAL_DATA_MEMO).
+        cfg["trial_data_memo"] = _TRIAL_DATA_MEMO
 
         captured: list[float] = []
 
@@ -1074,6 +1084,14 @@ def _mps_worker_entry(
             if timeout <= 0:
                 return
         study.optimize(objective, n_trials=1, timeout=timeout, show_progress_bar=False)
+        # Release the finished trial's CUDA-graph private pools + allocator
+        # slack between trials — graph captures otherwise ratchet
+        # reserved memory across a worker's sequential trials (gate-v
+        # observation, todo/gpu_launch_bound_levers.md).
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 def _run_mps_optimize(
