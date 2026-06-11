@@ -406,6 +406,167 @@ def run_cell(
 
 
 # --------------------------------------------------------------------------- #
+# Stacked-seeds mode (opt-in): one (position, variant) GROUP trains all seeds
+# at once via the vmap ensemble harness (src.tuning.ab_ensemble_seeds).
+# Owner-sanctioned 2026-06-11 for comparative pipelines: ~4.5x per host thread,
+# within-mode consistent; NOT seed-comparable to eager runs — never mix arms
+# across modes in one comparison (see the ab_ensemble_seeds module banner).
+# --------------------------------------------------------------------------- #
+_STACKED_POSITIONS = ("QB", "RB", "WR", "TE")  # flat-history only (= ENSEMBLE_POSITIONS)
+DEFAULT_STACKED_EPOCHS = 30  # the established fixed-epochs A/B-isolation regime
+
+
+@dataclass(frozen=True)
+class Group:
+    """Stacked unit of work: one (position, variant) across ALL seeds."""
+
+    position: str
+    variant: str
+    seeds: tuple[int, ...]
+
+    @property
+    def key(self) -> str:
+        return f"{self.position}-{self.variant}-stacked{len(self.seeds)}"
+
+
+def build_stacked_units(spec: Spec) -> tuple[list[Group], list[Cell]]:
+    """Stacked groups for flat-history positions; eager per-seed cells for the
+    rest (K's nested trainer / DST's own-splits run() are excluded from the
+    vmap harness)."""
+    groups = [
+        Group(p, v, tuple(spec.seeds))
+        for p in spec.positions
+        if p in _STACKED_POSITIONS
+        for v in spec.variants
+    ]
+    cells = [
+        Cell(p, v, s)
+        for p in spec.positions
+        if p not in _STACKED_POSITIONS
+        for v in spec.variants
+        for s in spec.seeds
+    ]
+    return groups, cells
+
+
+def run_group_stacked(
+    group: Group,
+    variant: Variant,
+    metric_fn: Callable[[dict, str], dict],
+    *,
+    data_dir: str,
+    stacked_epochs: int = DEFAULT_STACKED_EPOCHS,
+    run_fn: Callable | None = None,
+) -> list[dict]:
+    """Run one stacked (position, variant) group; return one result per seed.
+
+    Phase A: ONE real full run at ``seeds[0]`` in the DEFAULT regime with
+    attention disabled — it supplies the non-attention models' predictions,
+    the reference ``test_df``, and the Ridge sentinel value (so frame
+    injection + the data-identity tell stay exactly as honest as eager mode).
+    Phase B: capture all seeds + stacked attention training in the ensemble
+    regime (LN/FP32/fixed-epochs; env restored on exit), then per-member test
+    predictions overwrite ``pred_attn_nn_total`` on a copy of the reference
+    ``test_df`` and ``metric_fn`` recomputes per-seed metrics.
+
+    Contract notes: non-attention models repeat Phase-A values across seeds
+    (std=0 by construction) — stacked mode measures ATTENTION deltas; custom
+    ``metric_fn``s must derive from ``result["test_df"]`` (other result keys
+    are passed through from Phase A and do not reflect the stacked arm).
+    """
+    from src.shared.aggregate_targets import predictions_to_fantasy_points
+    from src.shared.utils import cuda_enabled
+    from src.tuning.ab_ensemble_seeds import (
+        capture_seeds,
+        ensemble_env,
+        predict_stacked,
+        train_stacked,
+    )
+
+    pos = group.position
+    mod = importlib.import_module(f"src.{pos.lower()}.run_pipeline")
+    if run_fn is None:
+        run_fn = mod.run
+    base_cfg = mod.CONFIG
+    cfg = _apply_config(variant, base_cfg)
+
+    orig_cwd = os.getcwd()
+    tmp_dir = tempfile.mkdtemp(prefix=f"ff-ab-{group.key}-")
+    try:
+        os.chdir(tmp_dir)
+        link = Path(tmp_dir) / "data"
+        if not link.exists():
+            link.symlink_to(data_dir, target_is_directory=True)
+
+        frames = None
+        if variant.frame_injector is not None:
+            frames = variant.frame_injector(*_load_general_splits())
+
+        cfg_a = copy.deepcopy(cfg)
+        cfg_a["train_attention_nn"] = False  # Phase B supplies attention
+        seed0 = group.seeds[0]
+        if frames is not None:
+            result0 = run_fn(
+                frames[0].copy(), frames[1].copy(), frames[2].copy(), seed=seed0, config=cfg_a
+            )
+        else:
+            result0 = run_fn(None, None, None, seed=seed0, config=cfg_a)
+        # metric_fn is NOT called on the Phase-A result: its test_df has no
+        # attention column yet, and a custom metric_fn may require it. Each
+        # per-seed metrics_k below carries the (constant) Ridge value instead.
+
+        import torch
+
+        with ensemble_env(stacked_epochs):
+            captures, test_capture = capture_seeds(
+                pos, list(group.seeds), base_cfg=cfg, frames=frames
+            )
+            device = torch.device("cuda" if cuda_enabled() else "cpu")
+            params, buffers, template = train_stacked(captures, cfg, device, stacked_epochs)
+            member_preds = predict_stacked(template, params, buffers, test_capture, device)
+
+        out = []
+        for seed, preds in zip(group.seeds, member_preds, strict=True):
+            df_k = result0["test_df"].copy()
+            df_k["pred_attn_nn_total"] = predictions_to_fantasy_points(pos, preds)
+            metrics_k = metric_fn({**result0, "test_df": df_k}, pos)
+            out.append(
+                {
+                    "position": pos,
+                    "variant": group.variant,
+                    "seed": seed,
+                    "label": variant.label or group.variant,
+                    "ok": True,
+                    "metrics": metrics_k,
+                    "ridge_mae": metrics_k.get(RIDGE_MODEL, {}).get("mae"),
+                    "error": None,
+                    "stacked": True,
+                }
+            )
+        return out
+    finally:
+        os.chdir(orig_cwd)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _group_failed(group: Group, variant: Variant, exc: BaseException) -> list[dict]:
+    return [
+        {
+            "position": group.position,
+            "variant": group.variant,
+            "seed": s,
+            "label": variant.label or group.variant,
+            "ok": False,
+            "metrics": {},
+            "ridge_mae": None,
+            "error": f"{type(exc).__name__}: {exc}",
+            "stacked": True,
+        }
+        for s in group.seeds
+    ]
+
+
+# --------------------------------------------------------------------------- #
 # Sequential (in-process) orchestration
 # --------------------------------------------------------------------------- #
 def _cell_failed(cell: Cell, variant: Variant, exc: BaseException) -> dict:
@@ -437,6 +598,39 @@ def run_sequential(spec: Spec, cells: list[Cell], data_dir: str) -> list[dict]:
     return results
 
 
+def run_sequential_stacked(
+    spec: Spec, groups: list[Group], cells: list[Cell], data_dir: str, stacked_epochs: int
+) -> list[dict]:
+    """Stacked groups + leftover eager cells, one at a time, in-process."""
+    results: list[dict] = []
+    total = len(groups) + len(cells)
+    for i, group in enumerate(groups, 1):
+        variant = spec.variants[group.variant]
+        print(f"[ab] group {i}/{total}: {group.key}", flush=True)
+        try:
+            results.extend(
+                run_group_stacked(
+                    group,
+                    variant,
+                    spec.metric_fn,
+                    data_dir=data_dir,
+                    stacked_epochs=stacked_epochs,
+                )  # fmt: skip
+            )
+        except Exception as exc:  # noqa: BLE001 — one group's failure must not sink the run
+            print(f"[ab] group {group.key} FAILED: {exc}", file=sys.stderr, flush=True)
+            results.extend(_group_failed(group, variant, exc))
+    for j, cell in enumerate(cells, len(groups) + 1):
+        variant = spec.variants[cell.variant]
+        print(f"[ab] cell {j}/{total}: {cell.key} (eager fallback)", flush=True)
+        try:
+            results.append(run_cell(cell, variant, spec.metric_fn, data_dir=data_dir))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ab] cell {cell.key} FAILED: {exc}", file=sys.stderr, flush=True)
+            results.append(_cell_failed(cell, variant, exc))
+    return results
+
+
 # --------------------------------------------------------------------------- #
 # Parallel (subprocess-per-cell) orchestration
 # --------------------------------------------------------------------------- #
@@ -453,7 +647,8 @@ def _worker_preexec(cores: list[int], nice: int):
     return _fn
 
 
-def _launch_worker(cell: Cell, spec: Spec, out_path: str, cores, nice, pool_addr, data_dir, logdir):
+def _spawn_worker(key: str, argv: list[str], out_path: str, cores, nice, pool_addr, logdir):
+    """Popen one worker with the harness env (cache-disable, core pool, BLAS=1)."""
     import subprocess
 
     from src.shared.core_pool import ENV_ADDR, ENV_POS
@@ -462,33 +657,38 @@ def _launch_worker(cell: Cell, spec: Spec, out_path: str, cores, nice, pool_addr
     # Cache-disable is inherited from run_ab (set per --feature-cache); default to
     # disabled only if a worker is somehow launched outside run_ab.
     env.setdefault(_ENV_CACHE_DISABLE, "1")
-    env[ENV_POS] = cell.key
+    env[ENV_POS] = key
     if pool_addr:
         env[ENV_ADDR] = pool_addr
     for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
         env.setdefault(k, "1")
     # FF_DEVICE is deliberately NOT forced — a CPU A/B on the 5080 box (FF_DEVICE=cpu)
     # must use the CPU pool, a CUDA A/B the GPU-launch-bound pool. The user/env decides.
-    argv = [
-        sys.executable, "-m", "src.tuning.ab_harness", "--worker",
-        "--spec", spec.dotted, "--position", cell.position,
-        "--variant", cell.variant, "--seed", str(cell.seed),
-        "--out", out_path, "--data-dir", data_dir,
-    ]  # fmt: skip
-    log_path = os.path.join(logdir, f"ab-{cell.key}.log")
+    log_path = os.path.join(logdir, f"ab-{key}.log")
     logf = open(log_path, "w")  # noqa: SIM115 — owned by the orchestrator until the proc exits
     proc = subprocess.Popen(
         argv, env=env, stdout=logf, stderr=subprocess.STDOUT, cwd=os.getcwd(),
         preexec_fn=_worker_preexec(cores, nice),
     )  # fmt: skip
     return {
-        "cell": cell,
         "proc": proc,
         "logf": logf,
         "out": out_path,
         "log": log_path,
         "t0": time.time(),
     }
+
+
+def _launch_worker(cell: Cell, spec: Spec, out_path: str, cores, nice, pool_addr, data_dir, logdir):
+    argv = [
+        sys.executable, "-m", "src.tuning.ab_harness", "--worker",
+        "--spec", spec.dotted, "--position", cell.position,
+        "--variant", cell.variant, "--seed", str(cell.seed),
+        "--out", out_path, "--data-dir", data_dir,
+    ]  # fmt: skip
+    info = _spawn_worker(cell.key, argv, out_path, cores, nice, pool_addr, logdir)
+    info["cell"] = cell
+    return info
 
 
 def run_parallel(spec: Spec, cells: list[Cell], jobs: int, data_dir: str) -> list[dict]:
@@ -571,6 +771,125 @@ def _collect_worker(info: dict, rc: int, elapsed: float) -> dict:
         }  # fmt: skip
     result["elapsed_sec"] = round(elapsed, 1)
     return result
+
+
+def run_parallel_stacked(
+    spec: Spec,
+    groups: list[Group],
+    cells: list[Cell],
+    jobs: int,
+    data_dir: str,
+    stacked_epochs: int,
+) -> list[dict]:
+    """Fan stacked groups (+ leftover eager cells) out as subprocess workers.
+
+    Same queue/poll/reap shape as :func:`run_parallel`; a group worker writes a
+    JSON LIST (one result per seed), an eager cell worker the usual dict.
+    """
+    if not spec.dotted:
+        raise ValueError(
+            "parallel mode needs an importable spec (a dotted module path); pass the spec "
+            "as a string or run with --sequential"
+        )
+    from src.benchmarking.parallel_train import physical_cores
+    from src.shared.core_pool import start_coordinator
+
+    nice = int(os.environ.get(_ENV_NICE, _DEFAULT_NICE))
+    phys = physical_cores()
+    logdir = "logs"
+    os.makedirs(logdir, exist_ok=True)
+    tmpdir = tempfile.mkdtemp(prefix="ff-ab-pool-")
+    pool_addr, set_active_count, pool_stop = start_coordinator(phys, tmpdir)
+
+    units: list[tuple[str, object]] = [("group", g) for g in groups]
+    units += [("cell", c) for c in cells]
+    queue = deque(units)
+    active: OrderedDict[str, dict] = OrderedDict()
+    by_key: dict[str, list[dict]] = {}
+    print(
+        f"[ab] {len(groups)} stacked groups + {len(cells)} eager cells, -j {jobs}, "
+        f"{len(phys)} physical cores; core pool {pool_addr}; nice {nice}; "
+        f"logs -> {logdir}/ab-<unit>.log",
+        flush=True,
+    )
+    try:
+        while queue or active:
+            while queue and len(active) < jobs:
+                kind, work = queue.popleft()
+                out_path = os.path.join(tmpdir, f"{work.key}.json")
+                if kind == "group":
+                    argv = [
+                        sys.executable, "-m", "src.tuning.ab_harness", "--worker-group",
+                        "--spec", spec.dotted, "--position", work.position,
+                        "--variant", work.variant,
+                        "--seeds", *[str(s) for s in work.seeds],
+                        "--stacked-epochs", str(stacked_epochs),
+                        "--out", out_path, "--data-dir", data_dir,
+                    ]  # fmt: skip
+                else:
+                    argv = [
+                        sys.executable, "-m", "src.tuning.ab_harness", "--worker",
+                        "--spec", spec.dotted, "--position", work.position,
+                        "--variant", work.variant, "--seed", str(work.seed),
+                        "--out", out_path, "--data-dir", data_dir,
+                    ]  # fmt: skip
+                info = _spawn_worker(work.key, argv, out_path, phys, nice, pool_addr, logdir)
+                info["unit"] = (kind, work)
+                active[work.key] = info
+                print(f"[ab] launched {work.key} (pid {info['proc'].pid})", flush=True)
+            set_active_count(len(active))
+
+            done = [k for k, info in active.items() if info["proc"].poll() is not None]
+            if not done:
+                time.sleep(0.4)
+                continue
+            for k in done:
+                info = active.pop(k)
+                info["logf"].close()
+                rc = info["proc"].returncode
+                elapsed = time.time() - info["t0"]
+                by_key[k] = _collect_unit(info, rc, elapsed)
+                tag = "ok" if all(r.get("ok") for r in by_key[k]) else f"FAILED (rc={rc})"
+                print(f"[ab] {k} {tag} in {elapsed:.1f}s (log: {info['log']})", flush=True)
+            set_active_count(len(active))
+    finally:
+        pool_stop()
+    ordered: list[dict] = []
+    for _, work in units:
+        ordered.extend(by_key[work.key])
+    return ordered
+
+
+def _collect_unit(info: dict, rc: int, elapsed: float) -> list[dict]:
+    """Read a unit worker's JSON (list for groups, dict for cells) → flat list."""
+    kind, work = info["unit"]
+    payload = None
+    try:
+        with open(info["out"]) as f:
+            payload = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        payload = None
+    if payload is None:
+        err = f"worker rc={rc}, no result JSON; see {info['log']}"
+        seeds = work.seeds if kind == "group" else (work.seed,)
+        return [
+            {
+                "position": work.position,
+                "variant": work.variant,
+                "seed": s,
+                "label": work.variant,
+                "ok": False,
+                "metrics": {},
+                "ridge_mae": None,
+                "error": err,
+                "elapsed_sec": round(elapsed, 1),
+            }  # fmt: skip
+            for s in seeds
+        ]
+    results = payload if isinstance(payload, list) else [payload]
+    for r in results:
+        r["elapsed_sec"] = round(elapsed, 1)
+    return results
 
 
 # --------------------------------------------------------------------------- #
@@ -755,19 +1074,41 @@ def run_ab(
     sequential: bool = False,
     feature_cache: bool = False,
     data_dir: str | None = None,
+    stacked_seeds: bool = False,
+    stacked_epochs: int = DEFAULT_STACKED_EPOCHS,
 ) -> dict:
     """Resolve the spec, run the grid (parallel or sequential), aggregate, print.
 
     Returns the aggregation dict. ``spec`` is a module/object (sequential) or a
     dotted path string (required for parallel). The feature cache is disabled by
     default for A/B correctness; ``feature_cache=True`` re-enables it.
+
+    ``stacked_seeds=True`` switches the unit of work from one (position,
+    variant, seed) cell to one (position, variant) GROUP whose attention NN
+    trains all seeds at once via the vmap ensemble harness (~4.5× per host
+    thread; see :func:`run_group_stacked` for regime + contract). Results stay
+    per-seed, so aggregation, Δ-vs-baseline, and the Ridge sentinel are
+    unchanged. Stacked results are within-mode consistent — never compare a
+    stacked arm against an eager arm seed-by-seed.
     """
     resolved = resolve_spec(spec, positions=positions, seeds=seeds, only=only)
-    cells = build_cells(resolved)
-    jobs = resolve_jobs(len(cells), jobs, sequential=sequential)
     data_dir = os.path.abspath(data_dir or "data")
     if not os.path.isdir(data_dir):
         raise FileNotFoundError(f"data dir not found: {data_dir} (need data/splits/*.parquet)")
+
+    if stacked_seeds:
+        groups, leftover = build_stacked_units(resolved)
+        if leftover:
+            skipped = sorted({c.position for c in leftover})
+            print(
+                f"[ab] stacked mode: {skipped} excluded from vmap stacking "
+                "(nested-history / own-splits run()); their cells run eager.",
+                flush=True,
+            )
+        jobs = resolve_jobs(len(groups) + len(leftover), jobs, sequential=sequential)
+    else:
+        cells = build_cells(resolved)
+        jobs = resolve_jobs(len(cells), jobs, sequential=sequential)
 
     # Disable the feature cache by default (it keys on data, not code → a sibling
     # variant could silently reuse features → false Δ=0). Set it *explicitly*
@@ -776,7 +1117,16 @@ def run_ab(
     prev_cache = os.environ.get(_ENV_CACHE_DISABLE)
     os.environ[_ENV_CACHE_DISABLE] = "0" if feature_cache else "1"
     try:
-        if jobs <= 1:
+        if stacked_seeds:
+            if jobs <= 1:
+                results = run_sequential_stacked(
+                    resolved, groups, leftover, data_dir, stacked_epochs
+                )
+            else:
+                results = run_parallel_stacked(
+                    resolved, groups, leftover, jobs, data_dir, stacked_epochs
+                )
+        elif jobs <= 1:
             results = run_sequential(resolved, cells, data_dir)
         else:
             results = run_parallel(resolved, cells, jobs, data_dir)
@@ -788,6 +1138,13 @@ def run_ab(
 
     agg = aggregate(resolved, results)
     print_report(resolved, agg, jobs=jobs)
+    if stacked_seeds:
+        print(
+            "[ab] stacked-seeds mode: attention = vmap ensemble (LN/FP32/"
+            f"fixed-epochs={stacked_epochs}); non-attention models repeat "
+            "Phase-A values across seeds (std=0). Compare stacked runs only "
+            "against stacked runs."
+        )
     return agg
 
 
@@ -811,9 +1168,24 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--device", choices=["auto", "cpu", "cuda", "mps"], help="Set FF_DEVICE for the run"
     )
+    p.add_argument(
+        "--stacked-seeds",
+        action="store_true",
+        help="Train each (position, variant)'s seeds as ONE vmap ensemble "
+        "(~4.5x/thread; QB/RB/WR/TE only, others fall back to eager cells). "
+        "Within-mode consistent — compare stacked runs only against stacked runs.",
+    )
+    p.add_argument(
+        "--stacked-epochs",
+        type=int,
+        default=DEFAULT_STACKED_EPOCHS,
+        help=f"Fixed epochs for stacked attention training (default {DEFAULT_STACKED_EPOCHS})",
+    )
     p.add_argument("--list", action="store_true", help="Print the resolved grid + jobs and exit")
-    # Internal worker invocation (one cell, spawned by the orchestrator).
+    # Internal worker invocation (one cell / one stacked group, spawned by the
+    # orchestrator).
     p.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--worker-group", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--position", help=argparse.SUPPRESS)
     p.add_argument("--variant", help=argparse.SUPPRESS)
     p.add_argument("--seed", type=int, help=argparse.SUPPRESS)
@@ -841,6 +1213,28 @@ def _run_worker(args) -> int:
     return 0 if result["ok"] else 1
 
 
+def _run_worker_group(args) -> int:
+    """Execute one stacked group in this fresh process; write a result LIST."""
+    os.environ.setdefault(_ENV_CACHE_DISABLE, "1")
+    spec = resolve_spec(args.spec, positions=[args.position])
+    variant = spec.variants[args.variant]
+    group = Group(args.position.upper(), args.variant, tuple(int(s) for s in args.seeds))
+    data_dir = os.path.abspath(args.data_dir or "data")
+    try:
+        results = run_group_stacked(
+            group,
+            variant,
+            spec.metric_fn,
+            data_dir=data_dir,
+            stacked_epochs=int(args.stacked_epochs),
+        )
+    except Exception as exc:  # noqa: BLE001 — report the failure via JSON, exit non-zero
+        results = _group_failed(group, variant, exc)
+    with open(args.out, "w") as f:
+        json.dump(results, f)
+    return 0 if all(r["ok"] for r in results) else 1
+
+
 def main(argv: list[str] | None = None, *, default_spec: str | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.device:
@@ -848,6 +1242,8 @@ def main(argv: list[str] | None = None, *, default_spec: str | None = None) -> i
 
     if args.worker:
         return _run_worker(args)
+    if args.worker_group:
+        return _run_worker_group(args)
 
     spec_ref = args.spec or default_spec
     if not spec_ref:
@@ -856,12 +1252,20 @@ def main(argv: list[str] | None = None, *, default_spec: str | None = None) -> i
 
     if args.list:
         spec = resolve_spec(spec_ref, positions=args.positions, seeds=args.seeds, only=args.only)
-        cells = build_cells(spec)
-        jobs = resolve_jobs(len(cells), args.jobs, sequential=args.sequential)
         print(f"spec={spec.dotted or spec.name} baseline={spec.baseline}")
         print(f"variants={list(spec.variants)}")
         print(f"positions={spec.positions} seeds={spec.seeds}")
-        print(f"{len(cells)} cells, -j {jobs}")
+        if args.stacked_seeds:
+            groups, leftover = build_stacked_units(spec)
+            jobs = resolve_jobs(len(groups) + len(leftover), args.jobs, sequential=args.sequential)
+            print(
+                f"{len(groups)} stacked groups (epochs={args.stacked_epochs}) "
+                f"+ {len(leftover)} eager cells, -j {jobs}"
+            )
+        else:
+            cells = build_cells(spec)
+            jobs = resolve_jobs(len(cells), args.jobs, sequential=args.sequential)
+            print(f"{len(cells)} cells, -j {jobs}")
         return 0
 
     run_ab(
@@ -872,6 +1276,8 @@ def main(argv: list[str] | None = None, *, default_spec: str | None = None) -> i
         jobs=args.jobs,
         sequential=args.sequential,
         feature_cache=args.feature_cache,
+        stacked_seeds=args.stacked_seeds,
+        stacked_epochs=args.stacked_epochs,
     )
     return 0
 

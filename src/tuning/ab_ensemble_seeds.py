@@ -1,15 +1,18 @@
 """Stacked seed-ensemble training for multi-seed attention-NN A/Bs.
 
-TESTED, REJECTED 2026-06-11 — SHELF PROTOTYPE, wired into nothing by default.
-Two L4 Batch gate runs measured 4.4-4.6x speedup and the machinery is proven
-correct (bitwise stacked-AdamW parity, fork follows seed not slot), but
-fp32+Adam trajectory chaos forks same-seed stacked-vs-eager runs (all 8
-members at 0.3-0.8 FP RMS by 30 GPU epochs), which violates the project
-requirement that same-seed runs stay deterministic across execution modes.
-Multi-seed A/Bs stay 1 trial : 1 vCPU, process-parallel eager. Verdict +
-measurements: todo/gpu_launch_bound_levers.md (Lever C) and the fixed-archive
-entry "[TESTED, REJECTED] vmap stacked seed-ensemble training". Do not wire
-into ab_harness without revisiting that decision.
+STATUS (owner decisions, both 2026-06-11): first REJECTED on cross-mode
+same-seed determinism (stacked-vs-eager runs of the same seed fork — fp32+Adam
+amplifies sub-ULP vmapped-vs-eager kernel diffs; all 8 members 0.3-0.8 FP RMS
+by 30 GPU epochs), then REVERSED for the COMPARATIVE pipelines after the
+throughput numbers (4.4-4.6x per host thread on L4; ~32 vs 4 seeds per 4-vCPU
+host): stacked mode is sanctioned as an OPT-IN regime for ab_harness
+(``--stacked-seeds``) and NN tuning (``FF_TUNE_STACKED_SEEDS``), where
+within-mode consistency is what the decision consumes and every artifact is
+namespace-/flag-separated from eager baselines. Production training stays
+eager — same-seed determinism there is unchanged. A stacked run is
+reproducible within (mode, stack width N); it is NOT comparable seed-by-seed
+to an eager run — never mix arms across modes in one comparison. History:
+todo/gpu_launch_bound_levers.md (Lever C) + the fixed-archive entry.
 
 One host thread trains N seeds of the SAME config simultaneously via
 ``torch.func`` (``stack_module_state`` + ``functional_call`` + ``vmap``), so
@@ -77,6 +80,15 @@ _CLIP_MAX_NORM = 1.0  # mirrors the hardcoded clip_grad_norm_(1.0) in MultiHeadT
 _EPOCH_SEED_STRIDE = 9973  # prime; shared-batch-order reseed = base + stride * epoch
 
 
+_ENSEMBLE_ENV_KEYS = (
+    "FF_NN_NORM",
+    "FF_AMP_DTYPE",
+    "FF_CUDA_GRAPH",
+    "FF_CUDA_GRAPH_FULL",
+    "FF_NN_FIXED_EPOCHS",
+)
+
+
 def apply_ensemble_env(fixed_epochs: int) -> None:
     """Force the documented ensemble regime (see module docstring)."""
     os.environ["FF_NN_NORM"] = "layer"
@@ -89,6 +101,27 @@ def apply_ensemble_env(fixed_epochs: int) -> None:
             "FF_COMPILE must be unset/0 for ensemble mode: a compiled "
             "OptimizedModule cannot be stacked by torch.func."
         )
+
+
+@contextlib.contextmanager
+def ensemble_env(fixed_epochs: int):
+    """``apply_ensemble_env`` with restore-on-exit.
+
+    The in-process callers (ab_harness sequential mode runs several
+    (position, variant) groups in one interpreter, with eager Phase-A runs
+    between them) must not leak the regime into the next eager run — the
+    exact env-leak shape that bit the #1138 test suite.
+    """
+    previous = {k: os.environ.get(k) for k in _ENSEMBLE_ENV_KEYS}
+    apply_ensemble_env(fixed_epochs)
+    try:
+        yield
+    finally:
+        for k, v in previous.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 # ---------------------------------------------------------------------------
@@ -158,9 +191,22 @@ def capture_attention_construction(captures: list, test_capture: dict):
         neural_net.MultiHeadNetWithHistory.predict_numpy = orig_predict
 
 
-def capture_seeds(position: str, seeds: list[int], base_cfg: dict) -> tuple[list, dict]:
+def capture_seeds(
+    position: str,
+    seeds: list[int],
+    base_cfg: dict,
+    *,
+    frames: tuple | None = None,
+    memo: dict | None = None,
+) -> tuple[list, dict]:
     """Run the position's REAL ``run()`` once per seed with every non-attention
     branch disabled, capturing the fully-built attention trainer per seed.
+
+    ``frames`` (train, val, test) routes injected dataframes into each capture
+    run (the ab_harness frame-injector path; copied per call because the
+    pipeline mutates its inputs). ``memo`` lets a caller share a longer-lived
+    trial-data memo (the tune worker's ``_TRIAL_DATA_MEMO``) instead of the
+    per-invocation one.
     """
     from src.shared.registry import get_config, get_runner
 
@@ -170,7 +216,8 @@ def capture_seeds(position: str, seeds: list[int], base_cfg: dict) -> tuple[list
     runner = get_runner(position)
     captures: list = []
     test_capture: dict = {}
-    memo: dict = {}
+    if memo is None:
+        memo = {}
     with capture_attention_construction(captures, test_capture):
         for s in seeds:
             cfg = copy.deepcopy(base_cfg if base_cfg is not None else get_config(position))
@@ -186,7 +233,11 @@ def capture_seeds(position: str, seeds: list[int], base_cfg: dict) -> tuple[list
             cfg["train_lightgbm"] = False
             cfg["train_base_nn"] = False
             cfg["trial_data_memo"] = memo  # reuse prepared frames across seed captures
-            runner(seed=s, config=cfg)
+            if frames is not None:
+                train_df, val_df, test_df = frames
+                runner(train_df.copy(), val_df.copy(), test_df.copy(), seed=s, config=cfg)
+            else:
+                runner(seed=s, config=cfg)
     if len(captures) != len(seeds):
         raise RuntimeError(
             f"expected {len(seeds)} captured trainers, got {len(captures)} — "
@@ -253,12 +304,41 @@ def _optimizer_hyperparams(trainer) -> dict:
     }
 
 
+def stacked_val_losses(template, params, buffers, criterion, val_loader, device) -> list[float]:
+    """Per-member combined val loss (mean over val batches), eval mode.
+
+    Mirrors the trainer's val pass semantics (``model.eval()`` + no_grad +
+    the combined criterion averaged over batches) so a stacked tune trial
+    reports the same quantity per member that an eager trial reports.
+    """
+
+    def member_loss_eval(p, b, feats, y):
+        preds = torch.func.functional_call(template, (p, b), feats)
+        return criterion.compute_combined_capturable(preds, y)
+
+    veval = torch.vmap(member_loss_eval, in_dims=(0, 0, None, None))
+    template.eval()
+    totals = None
+    n_batches = 0
+    with torch.no_grad():
+        for batch in val_loader:
+            feats, y = _batch_to_device(batch, device)
+            losses = veval(params, buffers, feats, y)
+            totals = losses if totals is None else totals + losses
+            n_batches += 1
+    template.train()
+    if totals is None or n_batches == 0:
+        raise RuntimeError("stacked val pass saw no batches — empty val loader?")
+    return [float(v) for v in (totals / n_batches).cpu()]
+
+
 def train_stacked(
     captures: list,
     cfg: dict,
     device: torch.device,
     n_epochs: int,
     base_order_seed: int = 0,
+    epoch_callback=None,
 ) -> tuple[dict, dict, object]:
     """Train all captured seeds simultaneously; returns (params, buffers, template).
 
@@ -267,12 +347,18 @@ def train_stacked(
     scheduler) under the documented FP32/no-scaler ensemble regime. The
     capturable combined loss is the same function the full-step CUDA graph
     uses, so loss math shares one source of truth with production.
+
+    ``epoch_callback(epoch, mean_val_loss)`` — when set, a stacked val pass
+    runs after every epoch and the callback receives the across-member MEAN
+    combined val loss (the stacked tune objective's per-epoch report; an
+    ``optuna.TrialPruned`` raised inside it propagates out).
     """
     from src.shared.pipeline import _build_scheduler
 
     trainer0 = captures[0]["trainer"]
     criterion = trainer0.criterion
     train_loader = captures[0]["train_loader"]
+    val_loader = captures[0]["val_loader"]
     models = [c["trainer"].model for c in captures]
     template, params, buffers = stack_models(models, device)
     template.train()
@@ -302,6 +388,11 @@ def train_stacked(
                 scheduler.step()
         if not per_batch:
             scheduler.step()
+        if epoch_callback is not None:
+            member_vals = stacked_val_losses(
+                template, params, buffers, criterion, val_loader, device
+            )
+            epoch_callback(epoch, sum(member_vals) / len(member_vals))
     return params, buffers, template
 
 

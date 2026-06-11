@@ -611,3 +611,186 @@ def test_example_variants_declare_sentinel_expectations():
     by_name = {v.name: v for v in ex.VARIANTS}
     assert by_name["+season_recency"].expect_ridge_identical is False  # feature MUST move Ridge
     assert by_name["nn_dropout=0"].expect_ridge_identical is True  # NN-only MUST NOT
+
+
+# --------------------------------------------------------------------------- #
+# Stacked-seeds mode (E2): groups, group runner contract, orchestration
+# --------------------------------------------------------------------------- #
+def test_build_stacked_units_split():
+    """Flat-history positions become groups; K/DST fall back to eager cells."""
+    spec = _spec(
+        [Variant("baseline"), Variant("v", cfg_mutator=lambda c: c)],
+        positions=("QB", "K"),
+        seeds=(42, 123),
+    )
+    groups, cells = H.build_stacked_units(spec)
+    assert [(g.position, g.variant, g.seeds) for g in groups] == [
+        ("QB", "baseline", (42, 123)),
+        ("QB", "v", (42, 123)),
+    ]
+    assert {(c.position, c.variant, c.seed) for c in cells} == {
+        ("K", "baseline", 42), ("K", "baseline", 123), ("K", "v", 42), ("K", "v", 123),
+    }  # fmt: skip
+
+
+def _rb_member_preds(n, scale):
+    """Per-member predict_stacked stub output: all RB raw targets, constant."""
+    import numpy as np
+
+    targets = (
+        "rushing_yards", "receiving_yards", "rushing_tds",
+        "receiving_tds", "receptions", "fumbles_lost",
+    )  # fmt: skip
+    return {t: np.full(n, scale if t == "rushing_yards" else 0.0) for t in targets}
+
+
+def _stacked_metric_fn(result, position):
+    df = result["test_df"]
+    attn = float((df["pred_attn_nn_total"] - df["fantasy_points"]).abs().mean())
+    return {"Ridge": {"mae": 1.5}, "Attention NN": {"mae": attn}}
+
+
+def test_run_group_stacked_contract(tmp_path, monkeypatch):
+    """Phase A runs ONCE (attention off), Phase B supplies per-member attention
+    preds; per-seed dicts carry recomputed metrics, a constant ridge_mae, and
+    the ensemble env is restored afterwards."""
+    import numpy as np
+
+    seen = {"runs": [], "captures": []}
+
+    def stub_run(train, val, test, *, seed, config):
+        seen["runs"].append((train, seed, config["train_attention_nn"]))
+        return {
+            "test_df": pd.DataFrame(
+                {"fantasy_points": [0.0, 0.0, 0.0], "pred_ridge_total": [1.0, 2.0, 3.0]}
+            )
+        }
+
+    def stub_capture(position, seeds, base_cfg, *, frames=None, memo=None):
+        seen["captures"].append((position, tuple(seeds), base_cfg["train_attention_nn"], frames))
+        return ["cap0", "cap1"], {"args": None}
+
+    monkeypatch.setattr("src.tuning.ab_ensemble_seeds.capture_seeds", stub_capture)
+    monkeypatch.setattr(
+        "src.tuning.ab_ensemble_seeds.train_stacked", lambda *a, **k: (None, None, None)
+    )
+    monkeypatch.setattr(
+        "src.tuning.ab_ensemble_seeds.predict_stacked",
+        lambda *a, **k: [_rb_member_preds(3, 0.0), _rb_member_preds(3, 10.0)],
+    )
+    monkeypatch.delenv("FF_NN_NORM", raising=False)
+
+    group = H.Group("RB", "v", (42, 123))
+    cwd = os.getcwd()
+    results = H.run_group_stacked(
+        group,
+        Variant("v"),
+        _stacked_metric_fn,
+        data_dir=str(tmp_path),
+        stacked_epochs=3,
+        run_fn=stub_run,
+    )
+    assert os.getcwd() == cwd
+    assert "FF_NN_NORM" not in os.environ  # ensemble env restored
+
+    # Phase A: exactly one real run, seed=seeds[0], attention disabled, no frames.
+    assert seen["runs"] == [(None, 42, False)]
+    # Capture got the variant cfg with attention still enabled and no frames.
+    assert seen["captures"] == [("RB", (42, 123), True, None)]
+
+    assert [r["seed"] for r in results] == [42, 123]
+    assert all(r["ok"] and r["stacked"] for r in results)
+    assert {r["ridge_mae"] for r in results} == {1.5}
+    # Member 0 predicts 0 rushing yards -> FP 0 -> MAE 0; member 1 predicts
+    # 10 rushing yards -> 1.0 FP per row -> MAE 1.0 (PPR: yards/10).
+    assert results[0]["metrics"]["Attention NN"]["mae"] == pytest.approx(0.0)
+    assert results[1]["metrics"]["Attention NN"]["mae"] == pytest.approx(1.0)
+    assert isinstance(results[0]["metrics"]["Attention NN"]["mae"], float)
+    assert np is not None  # keep the local import honest
+
+
+def test_run_group_stacked_threads_frames(tmp_path, monkeypatch):
+    """A frame-injector variant's frames reach BOTH Phase A and the captures."""
+    injected = pd.DataFrame({"x": [1]})
+    monkeypatch.setattr(H, "_load_general_splits", lambda: (injected, injected, injected))
+    seen = {}
+
+    def stub_run(train, val, test, *, seed, config):
+        seen["phase_a_frames"] = (train is not None, val is not None, test is not None)
+        return {"test_df": pd.DataFrame({"fantasy_points": [0.0], "pred_ridge_total": [1.0]})}
+
+    def stub_capture(position, seeds, base_cfg, *, frames=None, memo=None):
+        seen["capture_frames"] = frames is not None
+        return ["c"], {"args": None}
+
+    monkeypatch.setattr("src.tuning.ab_ensemble_seeds.capture_seeds", stub_capture)
+    monkeypatch.setattr(
+        "src.tuning.ab_ensemble_seeds.train_stacked", lambda *a, **k: (None, None, None)
+    )
+    monkeypatch.setattr(
+        "src.tuning.ab_ensemble_seeds.predict_stacked", lambda *a, **k: [_rb_member_preds(1, 0.0)]
+    )
+
+    variant = Variant("inj", frame_injector=lambda tr, va, te: (tr, va, te))
+    H.run_group_stacked(
+        H.Group("RB", "inj", (42,)),
+        variant,
+        _stacked_metric_fn,
+        data_dir=str(tmp_path),
+        stacked_epochs=2,
+        run_fn=stub_run,
+    )
+    assert seen["phase_a_frames"] == (True, True, True)
+    assert seen["capture_frames"] is True
+
+
+def test_run_sequential_stacked_flattens_and_isolates_failures(monkeypatch):
+    """Group results flatten per seed; a failing group yields per-seed failure
+    dicts without sinking the run; leftover eager cells still execute."""
+    spec = _spec(
+        [Variant("baseline"), Variant("v", cfg_mutator=lambda c: c)],
+        positions=("QB", "K"),
+        seeds=(42, 123),
+    )
+    groups, cells = H.build_stacked_units(spec)
+
+    def fake_group(group, variant, metric_fn, *, data_dir, stacked_epochs):
+        if group.variant == "v":
+            raise RuntimeError("boom")
+        return [
+            {
+                "position": group.position,
+                "variant": group.variant,
+                "seed": s,
+                "label": group.variant,
+                "ok": True,
+                "metrics": {},
+                "ridge_mae": 1.0,
+                "error": None,
+                "stacked": True,
+            }  # fmt: skip
+            for s in group.seeds
+        ]
+
+    monkeypatch.setattr(H, "run_group_stacked", fake_group)
+    monkeypatch.setattr(
+        H,
+        "run_cell",
+        lambda cell, variant, metric_fn, *, data_dir, run_fn=None: {
+            "position": cell.position,
+            "variant": cell.variant,
+            "seed": cell.seed,
+            "label": cell.variant,
+            "ok": True,
+            "metrics": {},
+            "ridge_mae": 2.0,
+            "error": None,
+        },  # fmt: skip
+    )
+    results = H.run_sequential_stacked(spec, groups, cells, data_dir="data", stacked_epochs=3)
+    assert len(results) == 8  # 2 groups x 2 seeds + 4 eager K cells
+    ok_by_variant = {(r["variant"], r["ok"]) for r in results if r["position"] == "QB"}
+    assert ok_by_variant == {("baseline", True), ("v", False)}
+    assert all(r["ok"] for r in results if r["position"] == "K")
+    failed = [r for r in results if not r["ok"]]
+    assert {r["seed"] for r in failed} == {42, 123} and all("boom" in r["error"] for r in failed)
