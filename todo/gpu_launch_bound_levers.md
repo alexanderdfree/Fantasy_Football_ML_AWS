@@ -241,10 +241,31 @@ REAL pipeline per seed (streams-prototype monkeypatch trick); the loss is the
 per-member grad clip (a global clip would couple members). CPU tests pin per-member-clip ≡
 `clip_grad_norm_`, step-0 forward parity (1e-6), single-batch post-clip grad parity
 (1e-5), and trained-end parity (1e-2 — fp32 vmap kernel-order compounding, same
-amplification physics as the graph drift). **Pending gates (GPU)**: N=8 speedup ≥3× vs
-same-regime sequential (`FF_FORCE_DROPOUT_ZERO=1 python -m src.tuning.ab_ensemble_seeds
---position RB --seeds 8 --fixed-epochs 30 --parity-check` on the 5080), plus one
-historical-A/B reproduction; ab_harness `--stacked-seeds` integration (E2) only after.
+amplification physics as the graph drift).
+
+**Adam-step parity, fixed 2026-06-11.** The naive post-Adam-step param comparison was
+ill-conditioned, not wrong: at step 1 Adam's update is `lr·g/(|g|+eps)` (v̂=g²), i.e.
+sign-like near g=0, so ulp-level vmapped-vs-eager kernel-order grad noise flips signs
+into full-lr param diffs. Restored tight coverage via a well-conditioned decomposition:
+(1) `test_adam_step_parity_with_injected_grads` — identical injected grads ⇒ ONE stacked
+foreach-AdamW must equal N independent AdamWs **bitwise** (rtol=0/atol=0 passes; AdamW is
+elementwise so stacking is purely layout) across steps + lr changes, pinning per-member
+state independence; (2) the grad-parity test now also steps both arms' optimizers and
+compares params on the well-conditioned mask `|g| > 1e-4` (atol=1e-7). Together: grads
+tight + optimizer exact ⇒ the real-path step is covered everywhere except the inherent
+sign discontinuity, which tier (c)'s spread-scaled trained-end gate bounds.
+
+**Batch route (no 5080 needed).** The training image's ENTRYPOINT is pinned to
+`src.batch.train` and editing it fires a 6-position retrain, so the harness rides the
+tune dispatch: submit a `--mode tune` job with `FF_TUNE_ENSEMBLE_AB=1` in the container
+env — `tune_nn.main` dispatches to `ab_ensemble_seeds.run_batch_entry` right after
+argparse (env knobs `FF_ENSEMBLE_SEEDS`/`FF_ENSEMBLE_FIXED_EPOCHS`/`FF_ENSEMBLE_PARITY`;
+parity forces `FF_FORCE_DROPOUT_ZERO=1`, report → stdout +
+`s3://$S3_BUCKET/ensemble_ab/{POS}/report.json`, parity drift exits non-zero).
+**Pending gates (GPU, Batch L4/A10G)**: N=8 speedup ≥3× vs same-regime sequential +
+`parity.worst_diff_over_spread < 0.01` (one job: RB, seeds=8, fixed-epochs=30,
+parity=1), plus one historical-A/B reproduction; ab_harness `--stacked-seeds`
+integration (E2) only after.
 
 ## Lever B — single process + per-position CUDA streams (the MPS substitute)
 
