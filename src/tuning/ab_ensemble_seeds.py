@@ -384,10 +384,11 @@ def predict_single(model, test_capture: dict, device) -> dict:
 
 # Gate: every member's stacked-vs-sequential fork (RMS in FP space) must stay
 # under this fraction of the seed-to-seed FP spread the A/B averages over.
-# Measured CPU (RB real config, 2 seeds x 3 epochs): forked seed ~0.02,
-# faithful seed ~1e-4, vs seed noise ~1 — so 0.2 has ~10x headroom over the
-# inherent fork while a systematic training bug (coupled members, wrong lr,
-# coupled clip) lands at O(1) and still fails.
+# Measured CPU (RB real config, 3 seeds x 3 epochs): forks [1e-5, 0.015,
+# 0.024] vs seed noise 0.62 -> ratio 0.039, so 0.2 has ~5x headroom over the
+# inherent fork (GPU kernels over 30 epochs may amplify somewhat) while a
+# systematic training bug (coupled members, wrong lr, coupled clip) lands at
+# O(1) and still fails.
 _PARITY_FORK_GATE = 0.2
 
 
