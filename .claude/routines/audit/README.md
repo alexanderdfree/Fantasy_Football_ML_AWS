@@ -2,8 +2,8 @@
 
 Claude wrapper for the shared code-audit routine. A Claude Code remote agent
 runs on demand (the recurring cron is disabled — see "Firing it manually"),
-works through per-area scopes and standing cross-cutting lenses over the repo —
-parallel workers at the agent's discretion — dedupes
+works through per-area scopes and standing cross-cutting lenses over the repo
+(parallel workers at the agent's discretion), dedupes
 against open+closed `claude-audit` and `codex-audit` GitHub issues, and files
 **one issue per finding** under `claude-audit` — labeled by severity,
 model regress-risk, and area — plus one closed
@@ -64,7 +64,8 @@ takes effect the moment it lands on `main` — no dashboard push needed.
    - runs `RemoteTrigger get` to fetch the **current full** `job_config`,
    - sets `job_config.ccr.events[0].data.message.content` to the contents of `shim.md`,
    - applies any `config.json` changes (model → `session_context.model`, cron →
-     `cron_expression`, allowed tools → `session_context.allowed_tools`),
+     top-level `cron_expression`, enabled → top-level `enabled`, allowed tools →
+     `session_context.allowed_tools`),
    - generates a **fresh** lowercase v4 UUID for `events[0].data.uuid`,
    - calls `RemoteTrigger update trigger_id=trig_013gKH4q2g2TToBbCr4QDQcJ body={...}`.
 4. Verify: `RemoteTrigger get` → `next_run_at` is future-dated and `events[0].data.message.content`
