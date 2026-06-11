@@ -178,7 +178,40 @@ per trial is the only lever that raises fleet tune throughput.
 - **(ii) graph-vs-graph same-seed Δ=0 and (iii) 3-seed regime sanity (FF_NN_FIXED_EPOCHS=30,
   FF_FORCE_DROPOUT_ZERO=1, vs model-only graph within the ~0.5% worst-target envelope):
   PENDING** — required before proposing the knob anywhere beyond tuning (training stays
-  default-off regardless until an owner-approved rebaseline).
+  default-off regardless until an owner-approved rebaseline). 5080 recipe (Batch
+  `--mode train` would pollute prod artifacts, so run locally):
+  `FF_CUDA_GRAPH_FULL=1 FF_NN_FIXED_EPOCHS=30 FF_FORCE_DROPOUT_ZERO=1 python -m src.rb.run_pipeline`
+  twice same-seed → diff attn metrics for (ii); 3 seeds × `FF_CUDA_GRAPH_FULL={1,0}`
+  (same fixed-epoch knobs) → worst-target attn FP-MAE delta ≤ ~0.5% for (iii).
+  Note the graphfull regime now INCLUDES the graphed val pass (D2 below).
+
+### Round 2 — per-trial fixed costs (D1 #1127) + graphed val pass (D2 #1128), 2026-06-11
+
+The 1.65× trials/min vs 2.4× step-ms gap was Amdahl: per-trial fixed costs + the eager
+per-epoch val pass. D1 added `cfg["trial_data_memo"]` (tune-only, injected post-deepcopy):
+trials 2+ of a worker skip the split parquet re-read + frame hashing + the attention
+history/opp array rebuild (`prepare_data 0.0s`, `[trial_memo]` log lines) — plus
+`empty_cache()` between MPS worker trials. D2 captures the val pass as ONE
+`torch.cuda.CUDAGraph` over all K full-size val batches (baked `narrow` views, in-graph
+FP32 accumulation, pred output buffers; ragged tail eager; permanent eager fallback on
+build failure) — graphfull regime := graphed train step + graphed val (the day-old smoke
+studies were wiped at the redefinition; no production studies existed).
+
+**Measured (RB, 20-complete-target, mps n_jobs=4, fresh studies each):**
+
+| stage | trials (complete) | wall | trials/min | epoch_sec bs512 / bs256 |
+|---|---|---|---|---|
+| 2026-06-10 morning (pre-everything) | 10 (6) | 117.7 s | 5.1 | 0.25 / 0.47 |
+| Tier-1..3 base (model-only graphs + sync+sampler fixes) | 45 (22) | 331 s | 8.2 | — |
+| + full-step train capture (#1122/#1124) | 58 (21) | 260.1 s | 13.4 | 0.16–0.18 / 0.30–0.37 |
+| + D1 trial-data memo (#1127, COLD feature cache: 4×~40 s first-trial misses) | 67 (23) | 242.3 s | 16.6 | — |
+| + D2 graphed val (#1128) | 60 (23) | 192.2 s | **18.7** | **0.14–0.16 / 0.26–0.27** |
+
+D1+D2 = **+40% trials/min** over the full-step base (plan predicted +20–30%), zero capture
+failures train or val, best-val stable (58.7–59.2 across runs). Net for the day: **~3.7×
+trials per GPU-hour** on identical hardware. Remaining levers are the rejected
+whole-iteration capture — this closes the planned throughput rounds; next bottleneck is
+per-trial capture build (~1–2 s) + Optuna/study churn, not worth chasing.
 
 ---
 
