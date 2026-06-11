@@ -1,0 +1,125 @@
+name: A/B on Batch (Spot)
+
+# Manually-triggered run of a src/tuning/ab_harness spec on the AWS Batch GPU
+# Spot fleet — the production metric path (g6/L4 sm_89 with g5/A10G fallback,
+# FP16 AMP, CUDA graphs autodetect-ON) instead of a local box. One Spot job
+# per position (mirrors retune-nn-batch.yml's fan-out); inside each job the
+# position's variant x seed cells run sequentially with per-cell S3
+# checkpointing, so a Spot reclaim resumes instead of restarting. See
+# docs/adr/0020-batch-gpu-execution-path-for-ab-harness.md and
+# src/tuning/launch_ab.py (which this workflow merely drives).
+#
+# To A/B an UNMERGED branch: dispatch batch-image.yml on that branch first
+# (non-main builds push only ff-training:{sha} — no :latest move, no
+# production job-definition registration), then dispatch THIS workflow on the
+# same branch. Dispatched on main it A/Bs the current production image.
+#
+# NO model artifact upload, NO benchmark_history append, NO ECS refresh:
+# results land under s3://ff-predictor-training/ab_runs/{run_id}/ and the
+# aggregated report (mean±std, Δ-vs-baseline, Ridge-invariance sentinel)
+# prints to the step summary.
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: "Dotted A/B spec module (e.g. src.tuning.ab_example)"
+        required: true
+      positions:
+        description: "Space-separated positions override (blank = spec POSITIONS)"
+        default: ""
+      seeds:
+        description: "Space-separated seeds override (blank = spec SEEDS)"
+        default: ""
+      only:
+        description: "Space-separated variant names to run (blank = all; baseline always kept)"
+        default: ""
+      image_sha:
+        description: "ff-training image tag to run (blank = this ref's head SHA)"
+        default: ""
+      cuda_graph:
+        description: "auto (production graphed path) / true / false (eager, bit-comparable)"
+        default: "auto"
+      attempt_timeout_seconds:
+        description: "AWS Batch attempt timeout per position job, seconds"
+        default: "10800"
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  S3_BUCKET: ff-predictor-training
+  # Stream launch_ab's poll loop as it happens instead of one flush at exit
+  # (same rationale as train-batch.yml).
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  ab:
+    runs-on: ubuntu-latest
+    # A 10-cell-per-position grid is ~30-80 min of Batch wall-clock; Spot
+    # retries can stretch that. 4h matches retune-nn-batch's ceiling.
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
+        # major version comment. SHA = aws-actions/configure-aws-credentials v4
+        # tip as of 2026-05-21.
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b  # v6.2.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install launch deps
+        # launch_ab imports src.batch.launch (numpy via registry) and resolves
+        # the spec module locally to print/validate the grid — pandas covers
+        # spec modules that import it at module level. Heavy deps stay in ECR.
+        run: pip install boto3 numpy pandas
+
+      - name: Launch A/B + wait + aggregate
+        env:
+          SPEC: ${{ github.event.inputs.spec }}
+          POSITIONS: ${{ github.event.inputs.positions }}
+          SEEDS: ${{ github.event.inputs.seeds }}
+          ONLY: ${{ github.event.inputs.only }}
+          IMAGE_SHA: ${{ github.event.inputs.image_sha }}
+          CUDA_GRAPH: ${{ github.event.inputs.cuda_graph }}
+          ATTEMPT_TIMEOUT_SECONDS: ${{ github.event.inputs.attempt_timeout_seconds }}
+        run: |
+          set -eu
+          # Default to the dispatched ref's head SHA — with checkout@v6 that
+          # is exactly the code this runner is executing, so the grid the
+          # launcher prints matches the spec baked into the image (assuming
+          # batch-image.yml ran on the same SHA).
+          if [ -z "$IMAGE_SHA" ]; then
+            IMAGE_SHA="$GITHUB_SHA"
+          fi
+          ARGS="--spec $SPEC --image-sha $IMAGE_SHA --cuda-graph $CUDA_GRAPH --attempt-timeout $ATTEMPT_TIMEOUT_SECONDS"
+          # Inputs are space-separated lists; intentionally unquoted below so
+          # argparse nargs="+" sees separate argv entries (same convention as
+          # retune-nn-batch.yml's $POSITIONS).
+          if [ -n "$POSITIONS" ]; then ARGS="$ARGS --positions $POSITIONS"; fi
+          if [ -n "$SEEDS" ]; then ARGS="$ARGS --seeds $SEEDS"; fi
+          if [ -n "$ONLY" ]; then ARGS="$ARGS --only $ONLY"; fi
+          echo "launch_ab args: $ARGS"
+          python -m src.tuning.launch_ab $ARGS 2>&1 | tee /tmp/ab_run.log
+
+      - name: Publish report to step summary
+        # always(): a failed cell or Spot timeout still produced a partial
+        # report worth reading (per-cell checkpointing collects what landed).
+        if: always()
+        run: |
+          {
+            echo "## A/B report"
+            echo '```'
+            tail -n 600 /tmp/ab_run.log 2>/dev/null || echo "(no log produced)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

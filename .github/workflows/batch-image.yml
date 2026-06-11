@@ -161,6 +161,19 @@ jobs:
             echo "Pull-through cache not configured; base image pulls from dockerhub directly."
           fi
 
+          # Branch builds (workflow_dispatch on a non-main ref — used to bake
+          # an unmerged branch into ff-training:{sha} for src/tuning/launch_ab
+          # A/B jobs) must NOT move :latest: the EC2 rollback path
+          # (infra/ec2/user-data.sh) and the ablate-rb-gate / retune-lgbm
+          # workflows all resolve :latest, so tagging it from a branch would
+          # silently route their next run onto unmerged code. The SHA tag is
+          # all the A/B job definition needs.
+          LATEST_TAG_ARG="--tag $IMAGE_URI:latest"
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            LATEST_TAG_ARG=""
+            echo "Non-main ref $GITHUB_REF: skipping the :latest tag."
+          fi
+
           docker buildx build \
             --platform linux/amd64 \
             --provenance=false \
@@ -171,7 +184,7 @@ jobs:
             --cache-to type=gha,mode=max \
             --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
             --tag "$IMAGE_URI:$IMAGE_TAG" \
-            --tag "$IMAGE_URI:latest" \
+            $LATEST_TAG_ARG \
             --push .
           echo "image_uri=$IMAGE_URI:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
@@ -193,7 +206,13 @@ jobs:
         # Gated behind BATCH_ACTIVE so Batch can ride on the image path while
         # the active trainer is the 24/7 EC2 instance (docs/ec2_design.md).
         # Flip the repo variable BATCH_ACTIVE=true to re-sync the job definition.
-        if: vars.BATCH_ACTIVE == 'true'
+        # Main-only: a branch-dispatched build (the launch_ab A/B image path)
+        # must not register ff-training-job/-cpu-job revisions — bare-name
+        # submissions resolve to the LATEST active revision, so a branch image
+        # would silently become what un-pinned submitters train. The A/B path
+        # instead clones its own ff-ab-job definition at submit time
+        # (src/tuning/launch_ab.py::resolve_job_definition).
+        if: vars.BATCH_ACTIVE == 'true' && github.ref == 'refs/heads/main'
         env:
           IMAGE_URI: ${{ steps.build.outputs.image_uri }}
         run: |

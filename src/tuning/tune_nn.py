@@ -1317,6 +1317,16 @@ def main():
         run_batch_entry(positions[0])
         return
 
+    # Same env-flag route for the shared A/B harness: FF_TUNE_AB_SPEC=<dotted
+    # spec module> (set by src/tuning/launch_ab.py) runs this position's
+    # variant x seed cells with per-cell S3 checkpointing instead of Optuna.
+    # See src/tuning/ab_batch.py for the env contract.
+    if os.environ.get("FF_TUNE_AB_SPEC", "").strip():
+        from src.tuning.ab_batch import run_batch_entry as ab_run_batch_entry
+
+        ab_run_batch_entry(positions[0])
+        return
+
     requested_backend = args.parallel_backend
     parallel_backend = _resolve_parallel_backend(requested_backend)
     n_jobs = _resolve_n_jobs(args.n_jobs, parallel_backend)
