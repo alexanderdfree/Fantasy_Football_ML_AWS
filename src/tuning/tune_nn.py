@@ -984,7 +984,13 @@ def _run_mps_optimize(
     sqlite_timeout: int,
     checkpoint: "_S3Checkpoint | None",
     checkpoint_interval: int,
-) -> None:
+) -> int:
+    """Run the spawn-based MPS optimize loop.
+
+    Returns the effective worker count actually launched (RAM clamp may
+    reduce the requested ``n_jobs``) so callers record what ran, not what
+    was asked for.
+    """
     n_jobs = max(1, int(n_jobs))
     n_jobs, ram_warning = _ram_safe_n_jobs(n_jobs, _cgroup_memory_limit_bytes())
     if ram_warning:
@@ -1073,6 +1079,7 @@ def _run_mps_optimize(
         shutil.rmtree(core_pool_dir, ignore_errors=True)
         if checkpoint is not None:
             checkpoint.upload_study_db()
+    return n_jobs
 
 
 # ---------------------------------------------------------------------------
@@ -1259,10 +1266,11 @@ def main():
         )
         print(f"{'=' * 70}")
 
+        effective_n_jobs = args.n_jobs
         if remaining > 0:
             if parallel_backend == _MPS_BACKEND:
                 with _NvidiaMPS(enabled=True):
-                    _run_mps_optimize(
+                    effective_n_jobs = _run_mps_optimize(
                         pos,
                         n_jobs=args.n_jobs,
                         n_trials=args.n_trials,
@@ -1315,7 +1323,10 @@ def main():
             "storage_version": storage_version,
             "parallel_backend": parallel_backend,
             "requested_parallel_backend": requested_backend,
-            "n_jobs": args.n_jobs,
+            # Effective worker count: the MPS path may RAM-clamp the request
+            # (see _ram_safe_n_jobs), and tuning-history provenance must
+            # record what ran, not what was asked for.
+            "n_jobs": effective_n_jobs,
             "cuda_graph": _env_truthy("FF_CUDA_GRAPH"),
             "elapsed_seconds": round(elapsed, 1),
         }
