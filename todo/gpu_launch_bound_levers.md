@@ -39,7 +39,8 @@ g6.xlarge runs Linux on an L4 (`sm_89`). The NN tuner now has a true
 process-backed MPS backend for that environment:
 
 - `src.tuning.launch_tune` defaults Batch tune jobs to
-  `--parallel-backend auto --n-jobs 3`, preserving the outer six-position
+  `--parallel-backend auto --n-jobs auto` (auto n_jobs = CPU count, RAM-clamped
+  for mps → 4 on the g6.xlarge shape), preserving the outer six-position
   fan-out (one g6.xlarge per position). The container resolves `auto` through
   `detect_platform()`: native-Linux L4/g6 -> MPS; Mac/MPS, WSL/native 5080, and
   non-L4 CUDA hosts -> the existing thread backend.

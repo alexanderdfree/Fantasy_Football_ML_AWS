@@ -288,3 +288,49 @@ class TestMultiTargetLossDispatch:
                 head_losses={"y": "hurdle_poisson"},
                 gated_targets=[],
             )
+
+
+@pytest.mark.unit
+class TestTrainBranchLossPath:
+    """The train branch calls ``_compute_loss_components`` directly (not
+    ``forward``) to skip the per-component ``.item()`` GPU syncs whose float
+    dict it discards. These tests pin the two paths to the same combined
+    loss and a working backward, so that call-site swap stays inert."""
+
+    def _loss_fn(self):
+        return MultiTargetLoss(
+            target_names=["a", "b"],
+            loss_weights={"a": 2.0, "b": 0.5},
+            head_losses={"a": "huber", "b": "poisson_nll"},
+        )
+
+    def _batch(self):
+        preds = {
+            "a": torch.tensor([1.0, 2.0, 3.0], requires_grad=True),
+            "b": torch.tensor([0.5, 1.5, 2.5], requires_grad=True),
+        }
+        targets = {
+            "a": torch.tensor([1.5, 0.0, 3.0]),
+            "b": torch.tensor([1.0, 1.0, 2.0]),
+        }
+        return preds, targets
+
+    def test_combined_identical_to_forward(self):
+        loss_fn = self._loss_fn()
+        preds, targets = self._batch()
+        combined_direct, comps_t = loss_fn._compute_loss_components(preds, targets)
+        combined_forward, comps_f = loss_fn(preds, targets)
+        assert combined_direct.item() == combined_forward.item()
+        # Contract split: direct path keeps tensors on-device; forward
+        # returns the historical float dict.
+        assert all(torch.is_tensor(v) for v in comps_t.values())
+        assert all(isinstance(v, float) for v in comps_f.values())
+        assert set(comps_t) == set(comps_f)
+
+    def test_backward_flows_through_direct_path(self):
+        loss_fn = self._loss_fn()
+        preds, targets = self._batch()
+        combined, _ = loss_fn._compute_loss_components(preds, targets)
+        combined.backward()
+        assert preds["a"].grad is not None
+        assert preds["b"].grad is not None

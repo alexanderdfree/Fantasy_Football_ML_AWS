@@ -45,7 +45,7 @@ def test_submit_tune_job_builds_expected_command():
         "--parallel-backend",
         "auto",
         "--n-jobs",
-        "3",
+        "auto",
         "--timeout",
         "600",
     ]
@@ -87,7 +87,9 @@ def test_submit_tune_job_omits_timeout_when_none():
     assert "--n-trials" in cmd
     assert cmd[cmd.index("--n-trials") + 1] == "15"
     assert cmd[cmd.index("--parallel-backend") + 1] == "auto"
-    assert cmd[cmd.index("--n-jobs") + 1] == "3"
+    # Default n_jobs is the "auto" sentinel, resolved inside the container by
+    # tune_nn._resolve_n_jobs (CPU count, RAM-clamped for mps).
+    assert cmd[cmd.index("--n-jobs") + 1] == "auto"
 
 
 def test_cli_rejects_unknown_position_name(monkeypatch):

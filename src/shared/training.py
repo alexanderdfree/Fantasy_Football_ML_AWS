@@ -881,7 +881,12 @@ class MultiHeadTrainer:
                 self.optimizer.zero_grad(set_to_none=True)
                 with self._autocast():
                     preds, y_batch = self._forward_batch(batch)
-                    loss, _ = self.criterion(preds, y_batch)
+                    # _compute_loss_components, NOT forward(): forward()'s
+                    # float components dict costs one .item() GPU sync per
+                    # target/gate head (~7-9 syncs per step) and this branch
+                    # discards it. The val branch below already calls the
+                    # tensor-returning path for the same reason.
+                    loss, _ = self.criterion._compute_loss_components(preds, y_batch)
                     # Attention entropy regulariser (additive). ``entropy_fn``
                     # is hoisted above the epoch loop; it returns ``None`` when
                     # the feature is off.

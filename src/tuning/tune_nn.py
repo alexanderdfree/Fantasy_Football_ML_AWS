@@ -5,7 +5,7 @@ Usage:
     python -m src.tuning.tune_nn QB RB WR TE            # multiple (sequential)
     python -m src.tuning.tune_nn RB --n-trials 30
     python -m src.tuning.tune_nn RB --timeout 7200      # seconds, per position
-    python -m src.tuning.tune_nn RB --n-jobs 3          # concurrent trials (RAM/CPU-bound)
+    python -m src.tuning.tune_nn RB --n-jobs auto       # concurrent trials (RAM/CPU-bound)
     python -m src.tuning.tune_nn RB --print-best        # inspect saved study
 
 MVP scope (v1)
@@ -352,6 +352,32 @@ def _ram_safe_n_jobs(n_jobs: int, limit_bytes: int | None) -> tuple[int, str | N
         "reserve); exceeding it gets workers OOM-killed (exit=-9)"
     )
     return fits, warning
+
+
+def _resolve_n_jobs(raw: "str | int", parallel_backend: str) -> int:
+    """Resolve ``--n-jobs``: a positive int, or ``auto`` to size to the host.
+
+    ``auto`` = CPU count — the training loop is host/launch-bound, so ~1
+    useful concurrent trial per vCPU — additionally RAM-clamped for the
+    process-per-trial mps backend via :func:`_ram_safe_n_jobs` (each spawned
+    worker carries its own ~2 GiB torch+CUDA runtime; the thread backend
+    shares one runtime, so only CPUs bind). On the Batch g6.xlarge shape
+    (4 vCPU / 15000 MiB) auto resolves to 4.
+    """
+    text = str(raw).strip().lower()
+    if text == "auto":
+        cpus = max(1, len(_current_cpu_ids()))
+        if parallel_backend == _MPS_BACKEND:
+            fit, _ = _ram_safe_n_jobs(cpus, _cgroup_memory_limit_bytes())
+            return fit
+        return cpus
+    try:
+        value = int(text)
+    except ValueError:
+        raise SystemExit(f"--n-jobs must be a positive integer or 'auto', got {raw!r}") from None
+    if value < 1:
+        raise SystemExit("--n-jobs must be >= 1")
+    return value
 
 
 class _NvidiaMPS:
@@ -1132,16 +1158,18 @@ def main():
     )
     parser.add_argument(
         "--n-jobs",
-        type=int,
-        default=_DEFAULT_N_JOBS,
+        type=str,
+        default=str(_DEFAULT_N_JOBS),
         help=(
-            "Concurrent Optuna trials. GPU VRAM is NOT the constraint (~0.1 GiB/"
-            "trial); the binding resources are container/host RAM (~2 GiB per MPS "
-            "worker process — measured 2026-06-10 on the 4-vCPU/15000-MiB Batch "
-            "job: 4 fits, 8 OOMs mid-run, 32 OOMs at startup) and CPU cores "
-            "(~1 core per trial; the training loop is launch-bound). MPS mode "
-            "clamps to the container's cgroup memory limit; thread mode shares "
-            "one process (GIL) and tops out around 2-3."
+            "Concurrent Optuna trials, or 'auto' to size to the host (thread: "
+            "CPU count; mps: CPU count, RAM-clamped). GPU VRAM is NOT the "
+            "constraint (~0.1 GiB/trial); the binding resources are container/"
+            "host RAM (~2 GiB per MPS worker process — measured 2026-06-10 on "
+            "the 4-vCPU/15000-MiB Batch job: 4 fits, 8 OOMs mid-run, 32 OOMs "
+            "at startup) and CPU cores (~1 core per trial; the training loop "
+            "is launch-bound). MPS mode clamps to the container's cgroup "
+            "memory limit; thread mode shares one process (GIL) and tops out "
+            "around 2-3."
         ),
     )
     parser.add_argument(
@@ -1195,10 +1223,9 @@ def main():
     args = parser.parse_args()
 
     positions = [p.upper() for p in args.positions]
-    if args.n_jobs < 1:
-        raise SystemExit("--n-jobs must be >= 1")
     requested_backend = args.parallel_backend
     parallel_backend = _resolve_parallel_backend(requested_backend)
+    n_jobs = _resolve_n_jobs(args.n_jobs, parallel_backend)
     storage_version = _resolve_search_space_version(
         parallel_backend, cuda_graph=_env_truthy("FF_CUDA_GRAPH")
     )
@@ -1277,18 +1304,18 @@ def main():
             f"running {remaining} more"
         )
         print(
-            f"  backend={parallel_backend} requested_backend={requested_backend} n_jobs={args.n_jobs} "
+            f"  backend={parallel_backend} requested_backend={requested_backend} n_jobs={n_jobs} "
             f"storage={storage_version} cuda_graph={_env_truthy('FF_CUDA_GRAPH')}"
         )
         print(f"{'=' * 70}")
 
-        effective_n_jobs = args.n_jobs
+        effective_n_jobs = n_jobs
         if remaining > 0:
             if parallel_backend == _MPS_BACKEND:
                 with _NvidiaMPS(enabled=True):
                     effective_n_jobs = _run_mps_optimize(
                         pos,
-                        n_jobs=args.n_jobs,
+                        n_jobs=n_jobs,
                         n_trials=args.n_trials,
                         seed=args.seed,
                         timeout=args.timeout,
@@ -1316,7 +1343,7 @@ def main():
                     # threads contend on the GIL, so thread mode tops out ~2-3.
                     # For more concurrency use the mps backend (worker processes),
                     # where container RAM (~2 GiB/worker) is what binds.
-                    n_jobs=args.n_jobs,
+                    n_jobs=n_jobs,
                     callbacks=callbacks,
                 )
         else:

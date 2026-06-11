@@ -28,8 +28,8 @@ on:
         description: "Per-position wall-clock cap in seconds (blank = no cap; Batch wait timeout still applies)"
         default: ""
       mps_workers:
-        description: "Concurrent MPS worker processes per Batch GPU"
-        default: "3"
+        description: "Concurrent MPS worker processes per Batch GPU, or 'auto' (CPU count, RAM-clamped in-container)"
+        default: "auto"
       cuda_graph:
         description: "Enable FF_CUDA_GRAPH for Batch tuning (true/false)"
         default: "true"
@@ -90,8 +90,8 @@ jobs:
             echo "(probable operator typo; bump the ceiling in this workflow if you really want it)" >&2
             exit 1
           fi
-          if ! [[ "$MPS_WORKERS" =~ ^[0-9]+$ ]] || [ "$MPS_WORKERS" -lt 1 ]; then
-            echo "mps_workers must be a positive integer" >&2
+          if [ "$MPS_WORKERS" != "auto" ] && { ! [[ "$MPS_WORKERS" =~ ^[0-9]+$ ]] || [ "$MPS_WORKERS" -lt 1 ]; }; then
+            echo "mps_workers must be a positive integer or 'auto'" >&2
             exit 1
           fi
           if ! [[ "$ATTEMPT_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$ATTEMPT_TIMEOUT_SECONDS" -lt 60 ]; then
