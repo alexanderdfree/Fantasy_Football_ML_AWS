@@ -87,6 +87,9 @@ permissions:
   # ``actions: write`` is needed only for the optional ``kick_off_train``
   # step's ``gh workflow run batch-image.yml`` call. Scoped to this workflow.
   actions: write
+  # ``issues: write`` is needed only for the ``File issue on failure`` step's
+  # ``gh issue create``/``gh issue comment`` stale-splits alert.
+  issues: write
 
 jobs:
   refresh:
@@ -257,11 +260,25 @@ jobs:
           # not by ``build_features``. Without this carve-out the verify
           # step false-positive-failed the 2026-05-21 refresh-splits run
           # on PR #337 — the parquet was correct; the gate was wrong.
+          #
+          # GENERAL RULE: any ``include_features`` col that a position's
+          # ``src/{pos}/features.py`` assigns (``df["col"] = ...``) needs an
+          # entry here — it will never be in the parquet. The recurrence
+          # class is real: PRs #1061/#1082 whitelisted WR/TE
+          # ``prior_season_mean_catch_rate`` without extending this map and
+          # every refresh-splits run failed pre-upload for 2 days (S3 splits
+          # stale, unnoticed). ``tests/test_refresh_splits_workflow.py``
+          # now derives the required entries from the features.py sources
+          # and fails the offending PR's unit shard at PR time.
           runtime_added_per_pos = {
               "RB": {
                   "prior_season_mean_catch_rate",
                   "prior_season_mean_yards_per_carry",
               },
+              # WR/TE boom-tier parity (#1061/#1082): same derived S-1 rate,
+              # computed in src/{wr,te}/features.py, never in the parquet.
+              "WR": {"prior_season_mean_catch_rate"},
+              "TE": {"prior_season_mean_catch_rate"},
           }
 
           missing_by_pos = {}
@@ -280,7 +297,10 @@ jobs:
               raise SystemExit(
                   "Regenerated train.parquet is missing whitelisted feature "
                   "columns; refusing to upload to S3. This usually means "
-                  "build_features() did not run in the Regenerate step."
+                  "build_features() did not run in the Regenerate step — or a "
+                  "position config whitelists a training-time-computed column "
+                  "(built in src/{pos}/features.py) that is missing from the "
+                  "runtime_added_per_pos carve-out map above."
               )
           print(
               f"OK: train.parquet has all whitelisted cols for QB/RB/WR/TE "
@@ -518,6 +538,36 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run batch-image.yml --ref main
+
+      - name: File issue on failure (stale-splits alert)
+        # A failed run here means data/splits/ in S3 silently lags main until
+        # some later run succeeds — exactly what happened 2026-06-08→10, when
+        # 7 consecutive runs failed the verify gate and nobody noticed for two
+        # days (PRs #1061/#1082 whitelisted a training-time-computed col
+        # without extending the carve-out map). File/refresh ONE open issue so
+        # the failure lands in the issue backlog (picked up by the scheduled
+        # audit / solve-issues flow) instead of an unread CI email. Placed
+        # last-but-one so ``if: failure()`` sees a failure in ANY earlier step
+        # (regen, verify gate, S3 upload, ECS kick). Best-effort throughout:
+        # alerting must never mask or alter the original failure.
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set +e
+          TITLE="[refresh-splits] run failed — S3 splits going stale"
+          BODY=$(printf 'Refresh-splits run failed: %s\n\nS3 data/splits/ now lags main until a refresh-splits run succeeds.\nIf the "Verify engineered columns present" step failed: a whitelisted training-time-computed column is likely missing from the runtime_added_per_pos carve-out map (see the workflow comment and tests/test_refresh_splits_workflow.py).' "$RUN_URL")
+          # Word-match search to find candidates, then exact-title filter in
+          # jq — GitHub search tokenizes away brackets/punctuation, so an
+          # exact match must happen client-side or a similarly-worded issue
+          # could absorb the alert.
+          EXISTING=$(gh issue list --state open --search 'refresh-splits run failed in:title' --json number,title --jq "[.[] | select(.title == \"$TITLE\")][0].number" 2>/dev/null)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY" || true
+          else
+            gh issue create --title "$TITLE" --body "$BODY" || true
+          fi
 
       - name: Summary
         if: always()

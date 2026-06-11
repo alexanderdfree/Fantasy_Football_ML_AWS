@@ -25,12 +25,15 @@ catches it.
 
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 
 import pytest
 import yaml
 
-WORKFLOW_PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "refresh-splits.yml"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "refresh-splits.yml"
 
 pytestmark = pytest.mark.unit
 
@@ -198,35 +201,146 @@ def test_verify_step_gates_s3_upload():
     )
 
 
-def test_verify_step_carves_out_rb_runtime_computed_cols():
-    """The verify step's ``runtime_added_per_pos`` map MUST exclude RB's
-    ``prior_season_mean_catch_rate`` and ``prior_season_mean_yards_per_carry``.
-    Both cols live under ``_INCLUDE_FEATURES["prior_season"]`` in
-    [src/rb/config.py](../src/rb/config.py) for semantic reasons but are
-    actually computed at training time by
-    [src/rb/features.py](../src/rb/features.py)'s ``_compute_features``,
-    not by ``build_features`` — so they will never be in the parquet,
-    and without the carve-out the verify step false-positive-fails every
-    refresh-splits run (regression observed on the 2026-05-21 run of
-    PR #337's squash-merge commit ``6e82c2a``)."""
+def _verify_step_run_body() -> str:
     steps = _refresh_job_steps()
     verify_steps = [s for s in steps if s.get("name") == "Verify engineered columns present"]
     assert len(verify_steps) == 1, (
         f"expected exactly 1 'Verify engineered columns present' step, found {len(verify_steps)}"
     )
-    run_body = verify_steps[0].get("run", "") or ""
+    return verify_steps[0].get("run", "") or ""
+
+
+def _parsed_runtime_added_per_pos() -> dict[str, set[str]]:
+    """Extract and evaluate the verify step's ``runtime_added_per_pos`` dict
+    literal. The map is pure literals (dict of sets of str) by construction;
+    the regex captures up to the first ``}`` at column 0 (entries inside the
+    dict are indented, so inner ``},`` lines don't terminate the match)."""
+    run_body = _verify_step_run_body()
     assert "runtime_added_per_pos" in run_body, (
         "verify step is missing the runtime_added_per_pos exception map; "
-        "without it, RB will false-positive-fail on prior_season_mean_catch_rate "
-        "and prior_season_mean_yards_per_carry (computed at training time, "
-        "not in the parquet)."
+        "without it, every position whose features.py computes a whitelisted "
+        "col at training time false-positive-fails the gate."
     )
-    for col in ("prior_season_mean_catch_rate", "prior_season_mean_yards_per_carry"):
-        assert col in run_body, (
-            f"verify step is missing RB carve-out for {col!r} — see "
-            f"src/rb/features.py::_compute_features which builds it at "
-            f"training time, not in src/features/engineer.py::build_features."
+    match = re.search(r"runtime_added_per_pos\s*=\s*(\{.*?\n\})", run_body, re.DOTALL)
+    assert match is not None, (
+        "could not extract the runtime_added_per_pos dict literal from the "
+        "verify step — keep it a plain literal closed by a column-0 '}'."
+    )
+    return ast.literal_eval(match.group(1))
+
+
+# Literal column-assignment in a position's features.py, e.g.
+# ``df["prior_season_mean_catch_rate"] = ...``. ``(?!=)`` keeps ``==``
+# comparisons out; ``+=``-style in-place tweaks of parquet-resident cols
+# don't match either (the col already exists upstream, no carve-out needed).
+_FEATURES_PY_ASSIGN_RE = re.compile(r"""df\[("|')(\w+)\1\]\s*=(?!=)""")
+
+
+def test_verify_step_carves_out_runtime_computed_cols():
+    """The verify step's ``runtime_added_per_pos`` map MUST exclude every
+    ``include_features`` col that is computed at training time by a
+    position's ``features.py`` rather than by ``build_features`` — those
+    cols are never in the parquet, and without the carve-out the verify
+    step false-positive-fails every refresh-splits run.
+
+    Pinned entries: RB puts ``prior_season_mean_catch_rate`` /
+    ``prior_season_mean_yards_per_carry`` under
+    ``_INCLUDE_FEATURES["prior_season"]`` for semantic reasons but builds
+    them in [src/rb/features.py](../src/rb/features.py)'s
+    ``_compute_features`` (regression observed 2026-05-21 on PR #337's
+    squash-merge ``6e82c2a``). WR/TE gained the same derived
+    ``prior_season_mean_catch_rate`` in PRs #1061/#1082 *without* a
+    carve-out — every refresh-splits run from 2026-06-08T08:32 failed the
+    gate pre-upload and S3 splits went stale for two days."""
+    carve_outs = _parsed_runtime_added_per_pos()
+    assert carve_outs.get("RB", set()) >= {
+        "prior_season_mean_catch_rate",
+        "prior_season_mean_yards_per_carry",
+    }, f"RB carve-out lost its runtime-computed cols: {carve_outs.get('RB')!r}"
+    for pos in ("WR", "TE"):
+        assert "prior_season_mean_catch_rate" in carve_outs.get(pos, set()), (
+            f"{pos} carve-out is missing 'prior_season_mean_catch_rate' — it is "
+            f"computed at training time by src/{pos.lower()}/features.py "
+            f"(PRs #1061/#1082), never present in the parquet, so the verify "
+            f"step false-positive-fails every refresh-splits run without it."
         )
+
+
+def test_verify_step_carve_outs_cover_features_py_assignments():
+    """Self-deriving guard for the #1061/#1082 recurrence class: any col a
+    position's ``src/{pos}/features.py`` assigns literally
+    (``df["col"] = ...``) that also appears in that position's
+    ``include_features`` whitelist (and is not already excluded via
+    ``specific_features``) MUST have a ``runtime_added_per_pos`` carve-out
+    in the workflow — ``build_features`` never produces it, so the gate
+    would false-positive-fail post-merge, silently blocking the S3 splits
+    refresh. This test derives the required entries from the sources, so
+    the *offending PR itself* fails the unit shard instead.
+
+    One-directional on purpose (derived ⊆ carve-out map): non-literal
+    assignment styles under-derive, so requiring set equality could
+    false-fail a legitimate hand-added carve-out."""
+    from src.features.engineer import flatten_include_features
+    from src.qb.config import POSITION_CONFIG as QB_CFG
+    from src.rb.config import POSITION_CONFIG as RB_CFG
+    from src.te.config import POSITION_CONFIG as TE_CFG
+    from src.wr.config import POSITION_CONFIG as WR_CFG
+
+    carve_outs = _parsed_runtime_added_per_pos()
+    for pos, cfg in [("qb", QB_CFG), ("rb", RB_CFG), ("wr", WR_CFG), ("te", TE_CFG)]:
+        features_src = (REPO_ROOT / "src" / pos / "features.py").read_text()
+        assigned = {m.group(2) for m in _FEATURES_PY_ASSIGN_RE.finditer(features_src)}
+        whitelisted = set(flatten_include_features(cfg.include_features)) - set(
+            cfg.specific_features or []
+        )
+        missing = sorted((assigned & whitelisted) - carve_outs.get(pos.upper(), set()))
+        assert not missing, (
+            f"{pos.upper()}: include_features col(s) {missing} are computed at "
+            f"training time by src/{pos}/features.py but have no "
+            f"runtime_added_per_pos carve-out in refresh-splits.yml's verify "
+            f"step — build_features never produces them, so the gate will "
+            f"false-positive-fail every refresh-splits run and S3 splits will "
+            f"go stale (the #1061/#1082 regression). Add them to the "
+            f"carve-out map."
+        )
+
+
+def test_failure_alert_step_exists_and_fires_late():
+    """A ``File issue on failure`` step MUST exist with ``if: failure()``,
+    positioned after 'Upload to S3 with force' so it catches failures in
+    any operative step (regen, verify gate, upload, ECS kick), and the
+    workflow MUST grant ``issues: write`` for its gh calls. Origin:
+    2026-06-08→10, seven consecutive refresh-splits failures (the verify
+    gate's #1061/#1082 false positive) went unnoticed for two days while
+    S3 splits silently went stale — failures must land in the issue
+    backlog, not an unread CI email."""
+    steps = _refresh_job_steps()
+    names = _step_names()
+    upload_idx = names.index("Upload to S3 with force")
+    alert_idx = None
+    for idx, step in enumerate(steps):
+        run_body = step.get("run", "") or ""
+        if "gh issue create" in run_body and "gh issue comment" in run_body:
+            alert_idx = idx
+            alert_step = step
+            break
+    assert alert_idx is not None, (
+        "no step files/refreshes a GitHub issue on failure — a failed "
+        "refresh-splits run silently leaves S3 splits stale (2026-06-08→10 "
+        "went unnoticed for two days)."
+    )
+    assert str(alert_step.get("if", "")).strip() == "failure()", (
+        f"the issue-alert step must run on `if: failure()`; got {alert_step.get('if')!r}."
+    )
+    assert alert_idx > upload_idx, (
+        f"the issue-alert step (idx {alert_idx}) must come AFTER 'Upload to "
+        f"S3 with force' (idx {upload_idx}) so an upload failure is alerted too."
+    )
+    doc = _load_workflow()
+    assert doc.get("permissions", {}).get("issues") == "write", (
+        "workflow must grant `issues: write` for the failure-alert step's "
+        "gh issue create/comment calls."
+    )
 
 
 def test_build_position_features_raises_on_missing_whitelist_cols():
