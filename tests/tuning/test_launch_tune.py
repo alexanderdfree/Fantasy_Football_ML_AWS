@@ -44,8 +44,6 @@ def test_submit_tune_job_builds_expected_command():
         "30",
         "--parallel-backend",
         "auto",
-        "--n-jobs",
-        "auto",
         "--timeout",
         "600",
     ]
@@ -61,10 +59,12 @@ def test_submit_tune_job_builds_expected_command():
         "FF_CUDA_GRAPH",
         "FF_AMP_DTYPE",
         "FF_COMPILE",
+        "FF_TUNE_N_JOBS",
         "TUNE_NN_STORAGE_VERSION",
     } <= env_keys
     env = {e["name"]: e["value"] for e in overrides["environment"]}
     assert env["FF_DEVICE"] == "cuda"
+    assert env["FF_TUNE_N_JOBS"] == "auto"
     assert env["FF_CUDA_GRAPH"] == "1"
     # Full-step capture is the tune-job default; studies land in the
     # *_graphfull namespace so they never mix with model-only-graph studies.
@@ -90,9 +90,24 @@ def test_submit_tune_job_omits_timeout_when_none():
     assert "--n-trials" in cmd
     assert cmd[cmd.index("--n-trials") + 1] == "15"
     assert cmd[cmd.index("--parallel-backend") + 1] == "auto"
-    # Default n_jobs is the "auto" sentinel, resolved inside the container by
-    # tune_nn._resolve_n_jobs (CPU count, RAM-clamped for mps).
-    assert cmd[cmd.index("--n-jobs") + 1] == "auto"
+
+
+@pytest.mark.parametrize("n_jobs", ["auto", 4])
+def test_submit_tune_job_n_jobs_rides_env_never_argv(n_jobs):
+    """--n-jobs must NEVER appear in the container command: the fixed
+    ENTRYPOINT parses argv with src/batch/train.py, whose --n-jobs is
+    type=int — the default "auto" sentinel died at argparse (exit 2, Batch
+    job 23b157e3, 2026-06-11). The value rides FF_TUNE_N_JOBS instead, which
+    feeds tune_nn's --n-jobs default (same env-over-argv channel as
+    FF_TUNE_STACKED_SEEDS). Ints take the same path so there is exactly one
+    channel to reason about."""
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "fake"}
+    launch_tune.submit_tune_job("QB", n_trials=5, n_jobs=n_jobs, batch_client=batch)
+    overrides = batch.submit_job.call_args.kwargs["containerOverrides"]
+    assert "--n-jobs" not in overrides["command"]
+    env = {e["name"]: e["value"] for e in overrides["environment"]}
+    assert env["FF_TUNE_N_JOBS"] == str(n_jobs)
 
 
 def test_cli_rejects_unknown_position_name(monkeypatch):
@@ -136,6 +151,10 @@ def test_dry_run_does_not_call_aws(monkeypatch, capsys):
     assert "QB" in out
     assert "backend:      auto" in out
     assert "cuda graph:   True" in out
+    # The plan must mirror the real submission shape: n_jobs rides the env,
+    # never the command (train.py's --n-jobs is type=int; 'auto' would exit 2).
+    assert "FF_TUNE_N_JOBS=auto" in out
+    assert "--n-jobs" not in out
 
 
 def test_submit_tune_job_can_disable_cuda_graph_and_change_workers():
@@ -155,8 +174,8 @@ def test_submit_tune_job_can_disable_cuda_graph_and_change_workers():
     kwargs = batch.submit_job.call_args.kwargs
     cmd = kwargs["containerOverrides"]["command"]
     assert cmd[cmd.index("--parallel-backend") + 1] == "thread"
-    assert cmd[cmd.index("--n-jobs") + 1] == "2"
     env = {e["name"]: e["value"] for e in kwargs["containerOverrides"]["environment"]}
+    assert env["FF_TUNE_N_JOBS"] == "2"
     assert env["FF_CUDA_GRAPH"] == "0"
     # full_graph composes only WITH cuda_graph: graph disabled -> plain
     # eager namespace even though --cuda-graph-full defaults true.
