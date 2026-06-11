@@ -778,3 +778,89 @@ def test_multihead_trainer_runs_when_callback_is_none():
     history = trainer.train(train_loader, val_loader, n_epochs=2)
     assert "val_loss" in history
     assert len(history["val_loss"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# RAM-aware n_jobs clamp (container OOM guardrail)
+# ---------------------------------------------------------------------------
+
+_BATCH_JOB_LIMIT_BYTES = 15000 * 1024**2  # the 15000-MiB ff-training-job shape
+
+
+def test_cgroup_limit_reads_v2_value(tmp_path):
+    v2 = tmp_path / "memory.max"
+    v2.write_text(f"{_BATCH_JOB_LIMIT_BYTES}\n")
+    assert (
+        tune_nn._cgroup_memory_limit_bytes(v2_path=str(v2), v1_path=str(tmp_path / "absent"))
+        == _BATCH_JOB_LIMIT_BYTES
+    )
+
+
+def test_cgroup_limit_v2_max_means_unlimited(tmp_path):
+    v2 = tmp_path / "memory.max"
+    v2.write_text("max\n")
+    assert (
+        tune_nn._cgroup_memory_limit_bytes(v2_path=str(v2), v1_path=str(tmp_path / "absent"))
+        is None
+    )
+
+
+def test_cgroup_limit_falls_back_to_v1(tmp_path):
+    v1 = tmp_path / "memory.limit_in_bytes"
+    v1.write_text(f"{_BATCH_JOB_LIMIT_BYTES}\n")
+    assert (
+        tune_nn._cgroup_memory_limit_bytes(v2_path=str(tmp_path / "absent"), v1_path=str(v1))
+        == _BATCH_JOB_LIMIT_BYTES
+    )
+
+
+def test_cgroup_limit_v1_no_limit_sentinel_means_unlimited(tmp_path):
+    v1 = tmp_path / "memory.limit_in_bytes"
+    v1.write_text("9223372036854771712\n")  # v1 "unlimited" (2**63 page-rounded)
+    assert (
+        tune_nn._cgroup_memory_limit_bytes(v2_path=str(tmp_path / "absent"), v1_path=str(v1))
+        is None
+    )
+
+
+def test_cgroup_limit_none_when_files_absent(tmp_path):
+    assert (
+        tune_nn._cgroup_memory_limit_bytes(
+            v2_path=str(tmp_path / "absent"), v1_path=str(tmp_path / "also-absent")
+        )
+        is None
+    )
+
+
+def test_ram_safe_n_jobs_no_limit_passes_through():
+    assert tune_nn._ram_safe_n_jobs(32, None) == (32, None)
+
+
+def test_ram_safe_n_jobs_single_worker_never_clamped():
+    # n_jobs=1 must run even in a tiny container — clamping to zero would
+    # deadlock the study.
+    assert tune_nn._ram_safe_n_jobs(1, 1 * 1024**3) == (1, None)
+
+
+def test_ram_safe_n_jobs_fits_unchanged_no_warning():
+    # The validated Batch config: n_jobs=4 on the 15000-MiB job shape.
+    assert tune_nn._ram_safe_n_jobs(4, _BATCH_JOB_LIMIT_BYTES) == (4, None)
+
+
+@pytest.mark.parametrize("requested", [8, 32])
+def test_ram_safe_n_jobs_clamps_overcommit_on_batch_shape(requested):
+    # Both observed OOM cases (8 mid-run, 32 at startup) clamp to the same
+    # fit: (15000 MiB - 1 GiB reserve) // 2 GiB = 6 workers.
+    clamped, warning = tune_nn._ram_safe_n_jobs(requested, _BATCH_JOB_LIMIT_BYTES)
+    assert clamped == 6
+    assert warning is not None
+    assert f"clamping n_jobs {requested} -> 6" in warning
+    assert "OOM-killed" in warning
+
+
+def test_ram_safe_n_jobs_floor_is_one_worker():
+    # A container too small for even one estimated worker still gets one —
+    # the guardrail degrades to "try anyway", never to zero workers.
+    clamped, warning = tune_nn._ram_safe_n_jobs(4, 2 * 1024**3)
+    assert clamped == 1
+    assert warning is not None
