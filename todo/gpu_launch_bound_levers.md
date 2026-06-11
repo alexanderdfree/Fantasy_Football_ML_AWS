@@ -224,7 +224,7 @@ question is closed on measurement (the pre-D2 8-on-4 result was not stale after 
 
 ---
 
-## Lever C — vmap seed-ensembles for multi-seed A/Bs — E1 BUILT 2026-06-11, GPU gates pending
+## Lever C — vmap seed-ensembles for multi-seed A/Bs — TESTED, REJECTED 2026-06-11 (owner call)
 
 The oversubscription probes (8-on-4 eager, 5-on-4 post-D2) proved ~1 trial per vCPU for
 HETEROGENEOUS jobs — but the multi-seed A/B workload (≥8 seeds × same config) is
@@ -282,9 +282,28 @@ A/B actually averages over. Measured CPU (RB, 3 seeds × 3 epochs): forks
 [1e-5, 0.015, 0.024] vs seed noise 0.62 → ratio 0.039, ~5× headroom; a systematic bug
 (coupled clip/optimizer, wrong lr) lands at O(1) and still fails. The raw per-key
 worst-over-spread table ships in the report as diagnostics only.
-**Pending (GPU, Batch L4/A10G)**: re-run the gate job (RB, seeds=8, fixed-epochs=30,
-parity=1) on the redefined gate, plus one historical-A/B reproduction; ab_harness
-`--stacked-seeds` integration (E2) only after.
+**Second Batch gate run (L4, 2026-06-11) and VERDICT: REJECTED.** Speedup confirmed
+4.58× (capture 35.4 s / stacked 25.1 s / sequential 114.9 s), but at 8 seeds × 30 GPU
+epochs **every member forks**: per-member FP fork RMS [0.43, 0.77, 0.68, 0.77, 0.43,
+0.40, 0.39, 0.33] vs seed-to-seed FP spread 1.21 → worst ratio 0.64 (gate 0.2). Uniform
+magnitudes across all 8 slots again rule out a positional bug — this is trajectory
+chaos growing with step count (900 steps vs the CPU diag's 90) and CUDA kernel
+diversity. Estimated effect on the decision statistic was small (per-member MAE shift
+≈ 0.8·f²/(2σₑ) ≈ 0.02 FP, common-mode across variants), and a decision-level
+MAE-equivalence gate was designed — **but the owner rejected the redefinition: the
+instrument requirement is SAME-SEED DETERMINISM, including across concurrent execution
+modes ("runs of the same seed should stay deterministic"), which stacked-vs-eager
+training structurally cannot satisfy** (vmapped batched kernels ≠ eager kernels at the
+sub-ULP level; fp32+Adam amplifies into macroscopic forks). Verdict: keep the
+**1 trial : 1 vCPU** doctrine for everything (tune already runs `--n-jobs auto` → 1:1;
+multi-seed A/Bs stay process-parallel eager via ab_harness, which IS per-seed
+deterministic). E2 (`ab_harness --stacked-seeds`) is NOT built.
+[src/tuning/ab_ensemble_seeds.py](../src/tuning/ab_ensemble_seeds.py) stays merged as a
+benchmark-only shelf prototype (TabPFN-style: documented, default-off, wired into
+nothing; its Batch env-dispatch in tune_nn is inert unless `FF_TUNE_ENSEMBLE_AB=1`).
+Reports from both gate runs: `s3://ff-predictor-training/ensemble_ab/RB/report.json`.
+Archive entry: [todo/fixed-archive.md](fixed-archive.md) "[TESTED, REJECTED] vmap
+stacked seed-ensemble training (Lever C)".
 
 ## Lever B — single process + per-position CUDA streams (the MPS substitute)
 

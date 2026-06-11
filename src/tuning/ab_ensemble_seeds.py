@@ -1,5 +1,16 @@
 """Stacked seed-ensemble training for multi-seed attention-NN A/Bs.
 
+TESTED, REJECTED 2026-06-11 — SHELF PROTOTYPE, wired into nothing by default.
+Two L4 Batch gate runs measured 4.4-4.6x speedup and the machinery is proven
+correct (bitwise stacked-AdamW parity, fork follows seed not slot), but
+fp32+Adam trajectory chaos forks same-seed stacked-vs-eager runs (all 8
+members at 0.3-0.8 FP RMS by 30 GPU epochs), which violates the project
+requirement that same-seed runs stay deterministic across execution modes.
+Multi-seed A/Bs stay 1 trial : 1 vCPU, process-parallel eager. Verdict +
+measurements: todo/gpu_launch_bound_levers.md (Lever C) and the fixed-archive
+entry "[TESTED, REJECTED] vmap stacked seed-ensemble training". Do not wire
+into ab_harness without revisiting that decision.
+
 One host thread trains N seeds of the SAME config simultaneously via
 ``torch.func`` (``stack_module_state`` + ``functional_call`` + ``vmap``), so
 the launch-bound per-step host cost is paid ~once instead of N times. This is
