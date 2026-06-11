@@ -144,6 +144,12 @@ def submit_tune_job(
     trial trains a vmap-stacked N-seed ensemble in the ensemble regime —
     graphs forced OFF in-container by ``apply_ensemble_env``, so the
     predicted namespace is the graph-less base + ``_ens{N}x{E}``.
+
+    ``n_jobs`` rides the FF_TUNE_N_JOBS env for the same reason, never the
+    command: train.py's ``--n-jobs`` is ``type=int``, so the "auto" sentinel
+    dies at its argparse (exit 2 — Batch job 23b157e3, 2026-06-11). tune_nn
+    reads the env as its ``--n-jobs`` default; an explicit ``--n-jobs``
+    in a hand-built submission's command still wins over the env.
     """
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
     timestamp = int(time.time())
@@ -163,8 +169,7 @@ def submit_tune_job(
         str(n_trials),
         "--parallel-backend",
         parallel_backend,
-        "--n-jobs",
-        str(n_jobs),
+        # NO --n-jobs here: it goes through FF_TUNE_N_JOBS below (see docstring).
     ]
     if timeout is not None:
         command += ["--timeout", str(timeout)]
@@ -209,6 +214,12 @@ def submit_tune_job(
                 },
                 {"name": "FF_AMP_DTYPE", "value": "auto"},
                 {"name": "FF_COMPILE", "value": "0"},
+                # Trial concurrency: env, not argv — the fixed ENTRYPOINT
+                # (src/batch/train.py) parses --n-jobs as type=int, so the
+                # "auto" sentinel can't ride the command (exit 2). tune_nn's
+                # --n-jobs default reads this (same channel as
+                # FF_TUNE_STACKED_SEEDS / FF_TUNE_AB_SPEC).
+                {"name": "FF_TUNE_N_JOBS", "value": str(n_jobs)},
                 {"name": "TUNE_NN_STORAGE_VERSION", "value": storage_version},
                 # Quieter than training (default LOG_EVERY=1). Tuning runs N
                 # trials × ~200 epochs each — 1 line per epoch would flood
@@ -235,7 +246,7 @@ def _print_plan(
     n_trials: int,
     timeout: int | None,
     seed: int,
-    n_jobs: int,
+    n_jobs: int | str,
     parallel_backend: str,
     cuda_graph: bool,
     cuda_graph_full: bool,
@@ -271,9 +282,11 @@ def _print_plan(
     print(f"  seed:         {seed}")
     print("  jobs:")
     for pos in positions:
+        # n_jobs rides the job environment, not the command — train.py's
+        # --n-jobs is type=int and would reject the "auto" sentinel.
         print(
             f"    - {pos:<4} -> --mode=tune --n-trials={n_trials} "
-            f"--parallel-backend={parallel_backend} --n-jobs={n_jobs}"
+            f"--parallel-backend={parallel_backend} FF_TUNE_N_JOBS={n_jobs}"
         )
 
 

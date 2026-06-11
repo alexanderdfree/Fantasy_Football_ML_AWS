@@ -449,6 +449,20 @@ def _resolve_n_jobs(raw: "str | int", parallel_backend: str) -> int:
     return value
 
 
+def _default_n_jobs_text() -> str:
+    """argparse default for ``--n-jobs``: the ``FF_TUNE_N_JOBS`` env wins.
+
+    The Batch route: the training image's ENTRYPOINT parses argv with
+    ``src/batch/train.py``, whose ``--n-jobs`` is ``type=int`` — the "auto"
+    sentinel can't ride the command (exit 2 — Batch job 23b157e3), so
+    ``src/tuning/launch_tune.py`` passes it via the job environment instead
+    (same fixed-ENTRYPOINT channel as FF_TUNE_STACKED_SEEDS / FF_TUNE_AB_SPEC).
+    An explicit ``--n-jobs`` flag still wins over the env value; either way
+    the value is validated by :func:`_resolve_n_jobs`.
+    """
+    return os.environ.get("FF_TUNE_N_JOBS", "").strip() or str(_DEFAULT_N_JOBS)
+
+
 class _NvidiaMPS:
     """Per-job NVIDIA CUDA MPS daemon wrapper.
 
@@ -1325,7 +1339,7 @@ def main():
     parser.add_argument(
         "--n-jobs",
         type=str,
-        default=str(_DEFAULT_N_JOBS),
+        default=_default_n_jobs_text(),
         help=(
             "Concurrent Optuna trials, or 'auto' to size to the host (thread: "
             "CPU count; mps: CPU count, RAM-clamped). GPU VRAM is NOT the "
@@ -1335,7 +1349,9 @@ def main():
             "at startup) and CPU cores (~1 core per trial; the training loop "
             "is launch-bound). MPS mode clamps to the container's cgroup "
             "memory limit; thread mode shares one process (GIL) and tops out "
-            "around 2-3."
+            f"around 2-3. Env default: FF_TUNE_N_JOBS, else {_DEFAULT_N_JOBS} — "
+            "the Batch route, since train.py's fixed argv parses --n-jobs as "
+            "int and can't carry 'auto'."
         ),
     )
     parser.add_argument(

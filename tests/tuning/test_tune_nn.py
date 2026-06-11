@@ -1023,6 +1023,44 @@ def test_resolve_n_jobs_auto_mps_cpu_bound_when_ram_ample(monkeypatch):
     assert tune_nn._resolve_n_jobs("auto", "mps") == 4
 
 
+def test_default_n_jobs_text_prefers_env(monkeypatch):
+    """FF_TUNE_N_JOBS feeds the --n-jobs default: the Batch env-over-argv
+    channel, since the fixed ENTRYPOINT (src/batch/train.py) parses --n-jobs
+    as type=int and can't carry the 'auto' sentinel (exit 2, job 23b157e3)."""
+    monkeypatch.setenv("FF_TUNE_N_JOBS", "auto")
+    assert tune_nn._default_n_jobs_text() == "auto"
+    monkeypatch.setenv("FF_TUNE_N_JOBS", " 4 ")
+    assert tune_nn._default_n_jobs_text() == "4"
+
+
+def test_default_n_jobs_text_falls_back_when_unset_or_blank(monkeypatch):
+    monkeypatch.delenv("FF_TUNE_N_JOBS", raising=False)
+    assert tune_nn._default_n_jobs_text() == str(tune_nn._DEFAULT_N_JOBS)
+    monkeypatch.setenv("FF_TUNE_N_JOBS", "   ")
+    assert tune_nn._default_n_jobs_text() == str(tune_nn._DEFAULT_N_JOBS)
+
+
+def test_main_n_jobs_env_default_feeds_parser(tmp_path, monkeypatch):
+    """End-to-end wiring: with no --n-jobs flag, main() must consume
+    FF_TUNE_N_JOBS via the argparse default — a bogus env value dies in
+    _resolve_n_jobs's validation exactly like a bogus CLI value."""
+    monkeypatch.chdir(tmp_path)  # study db path is CWD-relative
+    monkeypatch.setenv("FF_TUNE_N_JOBS", "bogus")
+    monkeypatch.setattr("sys.argv", ["tune_nn", "QB", "--print-best"])
+    with pytest.raises(SystemExit, match="positive integer or 'auto'"):
+        tune_nn.main()
+
+
+def test_main_explicit_n_jobs_flag_beats_env(tmp_path, monkeypatch, capsys):
+    """An explicit --n-jobs CLI flag must win over FF_TUNE_N_JOBS — train.py
+    still forwards --n-jobs when a hand-built submission passes an int."""
+    monkeypatch.chdir(tmp_path)  # study db path is CWD-relative
+    monkeypatch.setenv("FF_TUNE_N_JOBS", "bogus")
+    monkeypatch.setattr("sys.argv", ["tune_nn", "QB", "--print-best", "--n-jobs", "1"])
+    tune_nn.main()  # no SystemExit: the env value was overridden pre-validation
+    assert "No saved study for QB" in capsys.readouterr().out
+
+
 def test_graphfull_storage_profiles_compose_only_with_graph():
     """FF_CUDA_GRAPH_FULL appends 'full' to the GRAPH namespaces only —
     full-step capture requires the base graph gate, so full-without-graph
