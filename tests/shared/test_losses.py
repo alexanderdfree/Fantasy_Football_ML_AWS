@@ -400,6 +400,11 @@ class TestCapturableLossEquivalence:
         branchy, _ = loss_fn._compute_loss_components(preds, targets)
         branchless = loss_fn.compute_combined_capturable(preds, targets)
         assert branchless.item() == pytest.approx(branchy.item(), rel=1e-6)
+        # Both paths accumulate in FP32 on purpose (#369 F20) — and via a
+        # device-native torch.zeros, never torch.tensor(0.0, device=) whose
+        # pageable-CPU staging copy aborts CUDA graph capture.
+        assert branchless.dtype == torch.float32
+        assert branchy.dtype == torch.float32
 
     def test_combined_capturable_backward_flows(self):
         loss_fn = MultiTargetLoss(

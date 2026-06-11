@@ -304,8 +304,11 @@ class MultiTargetLoss(nn.Module):
         # may be FP16, but ``combined`` is the value handed to .backward(), so
         # reducing in FP32 keeps the weighted multi-head sum numerically stable
         # (no FP16 round-off accumulating across heads). Not a missed-cast perf
-        # regression (#369 F20).
-        combined = torch.tensor(0.0, device=next(iter(preds.values())).device)
+        # regression (#369 F20). ``torch.zeros`` (device-native fill), NOT
+        # ``torch.tensor(0.0, device=)`` — the latter stages a Python scalar
+        # through pageable CPU memory, a hidden H2D copy per step on the eager
+        # path and a capture-abort inside a CUDA graph.
+        combined = torch.zeros((), device=next(iter(preds.values())).device, dtype=torch.float32)
         for name in self.target_names:
             lt = self.head_losses[name]
             if lt == "hurdle_negbin":
@@ -351,8 +354,16 @@ class MultiTargetLoss(nn.Module):
         per-head dispatch below is config-static (same branch every step), so
         it does not break capture. Used by ``_GraphedTrainStep``; eager paths
         keep the branchy originals byte-identical.
+
+        The accumulator MUST be ``torch.zeros`` (device-native fill):
+        ``torch.tensor(0.0, device=)`` stages the scalar through pageable CPU
+        memory, and that unpinned H2D copy aborts CUDA graph capture
+        ("Cannot copy between CPU and CUDA tensors during CUDA graph
+        capture") — measured on the first Batch graphfull smoke, 2026-06-11,
+        where every trial fell back to the model-only graph. FP32 dtype
+        mirrors ``_compute_loss_components``'s deliberate FP32 accumulation.
         """
-        combined = torch.tensor(0.0, device=next(iter(preds.values())).device)
+        combined = torch.zeros((), device=next(iter(preds.values())).device, dtype=torch.float32)
         for name in self.target_names:
             lt = self.head_losses[name]
             if lt == "hurdle_negbin":
