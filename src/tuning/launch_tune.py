@@ -168,6 +168,11 @@ def submit_tune_job(
                 {"name": "S3_BUCKET", "value": S3_BUCKET},
                 {"name": "S3_DATA_PREFIX", "value": "data"},
                 {"name": "FF_DEVICE", "value": "cuda"},
+                # tune_nn re-resolves its namespace in-container from
+                # cuda_graph_enabled(); on the sm_80+ tune CEs (g6/L4, g5/A10G)
+                # "1" leaves autodetect ON and "0" is the force-off override,
+                # so the container lands on the same storage_version predicted
+                # above. Keep the env value and the cuda_graph bool coupled.
                 {"name": "FF_CUDA_GRAPH", "value": "1" if cuda_graph else "0"},
                 {"name": "FF_AMP_DTYPE", "value": "auto"},
                 {"name": "FF_COMPILE", "value": "0"},

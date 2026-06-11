@@ -25,6 +25,13 @@ def resolve_search_space_version(
     autodetect-ON cutover, sm_80+ boxes run graphed by default, so a
     thread-backend tune on such a box must not resume (or pollute) the eager
     ``scheduler_v2`` study — graphed runs compare to graphed runs (ADR-0017).
+
+    ``cuda_graph`` must be the trainer's *actual* capture decision —
+    ``src.shared.utils.cuda_graph_enabled()`` on the box that trains, or, for
+    the Batch launcher's submit-side prediction, the CLI bool it also injects
+    as ``FF_CUDA_GRAPH`` — never a raw env-truthy read. Post-cutover the env is
+    a force-OFF override only: an sm_80+ box with it unset trains graphed, and
+    a sub-sm_80 box with ``FF_CUDA_GRAPH=1`` trains eager.
     """
     if parallel_backend == "mps":
         return MPS_GRAPH_SEARCH_SPACE_VERSION if cuda_graph else MPS_SEARCH_SPACE_VERSION

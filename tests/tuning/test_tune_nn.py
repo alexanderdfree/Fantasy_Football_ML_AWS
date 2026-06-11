@@ -452,6 +452,32 @@ def test_thread_graph_storage_profile_is_separate_from_eager():
     assert tune_nn._resolve_search_space_version("mps", cuda_graph=False) == "scheduler_v2_mps"
 
 
+def test_resolve_storage_version_follows_live_capture_decision(monkeypatch):
+    """main() keys the study namespace on cuda_graph_enabled() — the trainer's
+    actual capture decision — for both backends, and returns the same bool for
+    the log line + results-dict provenance."""
+    monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: True)
+    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2_graph", True)
+    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v2_mps_graph", True)
+
+    monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: False)
+    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2", False)
+    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v2_mps", False)
+
+
+def test_resolve_storage_version_ignores_env_when_capture_disagrees(monkeypatch):
+    """The two post-cutover mislabel cases: FF_CUDA_GRAPH truthiness alone must
+    not steer the namespace (the env is a force-OFF override, not the trigger)."""
+    # T4 + FF_CUDA_GRAPH=1: the sm_80+ gate refuses capture -> eager namespace.
+    monkeypatch.setenv("FF_CUDA_GRAPH", "1")
+    monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: False)
+    assert tune_nn._resolve_storage_version("mps")[0] == "scheduler_v2_mps"
+    # sm_80+ box + env unset: autodetect captures -> graph namespace.
+    monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
+    monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: True)
+    assert tune_nn._resolve_storage_version("thread")[0] == "scheduler_v2_graph"
+
+
 # ---------------------------------------------------------------------------
 # _worker_sampler_seed — MPS worker startup-phase draws
 # ---------------------------------------------------------------------------
